@@ -177,7 +177,7 @@ build_backend() {
 
   install -m 0755 "$tmpbin" "$BIN_PATH"
   rm -f "$tmpbin"
-  _ok "installed $BIN_PATH ($("$BIN_PATH" --help 2>/dev/null | head -1 || echo "version=$version"))"
+  _ok "installed $BIN_PATH (version=$version)"
 }
 
 # ---------- step 6: env file + systemd unit ---------------------------------

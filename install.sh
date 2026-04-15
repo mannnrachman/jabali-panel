@@ -37,7 +37,11 @@ GO_VERSION="${JABALI_GO_VERSION:-1.25.1}"
 GO_ROOT="${JABALI_GO_ROOT:-/usr/local/go}"
 SERVICE_USER="${JABALI_SERVICE_USER:-jabali}"
 SERVICE_NAME="${JABALI_SERVICE_NAME:-jabali-panel}"
-PANEL_ADDR="${JABALI_PANEL_ADDR:-127.0.0.1:8443}"
+# Default binds all interfaces. This is intentional: during development and
+# testing we want the panel reachable over the LAN without needing nginx.
+# In production, flip this to 127.0.0.1:8443 and put nginx in front so TLS
+# termination and rate limiting happen at the proxy (blueprint §5.1).
+PANEL_ADDR="${JABALI_PANEL_ADDR:-0.0.0.0:8443}"
 BIN_PATH="/usr/local/bin/jabali-panel"
 ENV_FILE="/etc/jabali/panel.env"
 GITEA_TOKEN="${JABALI_GITEA_TOKEN:-${1:-}}"

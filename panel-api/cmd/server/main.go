@@ -16,6 +16,7 @@ import (
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/app"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/db"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/logger"
 )
 
@@ -59,6 +60,35 @@ func main() {
 		"log_format", cfg.Log.Format,
 		"config_path", cfgPath,
 	)
+
+	// Phase 3: connect to MariaDB and apply pending migrations. Tests bypass
+	// this path; production boots fail fast if the DB is unreachable.
+	if cfg.Database.URL != "" && cfg.Database.URL != "placeholder-until-phase-3" {
+		if os.Getenv("SKIP_MIGRATIONS") != "true" {
+			if err := db.Migrate(cfg.Database.URL); err != nil {
+				log.Error("migrations failed", "err", err)
+				os.Exit(3)
+			}
+			log.Info("migrations up-to-date")
+		}
+
+		gdb, err := db.Open(db.Options{
+			DSN:    cfg.Database.URL,
+			Silent: cfg.Server.Env == config.EnvProduction,
+		})
+		if err != nil {
+			log.Error("db open failed", "err", err)
+			os.Exit(3)
+		}
+		if err := db.Ping(gdb); err != nil {
+			log.Error("db ping failed", "err", err)
+			os.Exit(3)
+		}
+		log.Info("db connected")
+		_ = gdb // wired into handlers in Phase 6
+	} else {
+		log.Warn("DATABASE_URL not set (or placeholder); running without DB")
+	}
 
 	srv := &http.Server{
 		Addr:              cfg.Server.Addr,

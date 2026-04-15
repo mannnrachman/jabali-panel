@@ -34,6 +34,16 @@ jabali2/
 └── panel-ui/                     # React SPA (Phase 8)
 ```
 
+## One-line install (fresh Debian 13 / Ubuntu 24.04 server)
+
+```bash
+curl -fsSL https://git.linux-hosting.co.il/shukivaknin/jabali2/raw/branch/main/install.sh | bash
+```
+
+Installs Go 1.25, creates a `jabali` service user, builds the binary, writes a
+systemd unit, starts it, and smoke-tests `/health`. Idempotent — re-run to
+upgrade.
+
 ## Dev quickstart
 
 ```bash

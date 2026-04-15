@@ -18,11 +18,12 @@
 # React SPA, install nginx, wire SSL, etc. For now this is deliberately
 # scoped to what Phase 1 actually ships.
 #
-# Usage:
+# Usage (public repo):
 #   curl -fsSL https://git.linux-hosting.co.il/shukivaknin/jabali2/raw/branch/main/install.sh | bash
-#   # or with a token for a private repo:
+#
+# If you fork the repo privately, pass a Gitea token to authenticate clone/pull:
 #   curl -fsSL <...>/install.sh | bash -s -- <GITEA_TOKEN>
-#   # or local checkout:
+#   # or:
 #   JABALI_GITEA_TOKEN=xxx bash install.sh
 
 set -euo pipefail
@@ -79,12 +80,79 @@ preflight() {
 # ---------- step 1: base packages -------------------------------------------
 
 install_base_packages() {
-  _log "installing base packages (git, curl, ca-certificates, build-essential)"
+  _log "installing base packages (git, curl, ca-certificates, build-essential, mariadb)"
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y -qq --no-install-recommends \
-    git curl ca-certificates build-essential tar
+    git curl ca-certificates build-essential tar openssl \
+    mariadb-server mariadb-client
   _ok "base packages ready"
+}
+
+# ---------- step 2.5: MariaDB DB + scoped user ------------------------------
+
+provision_mariadb() {
+  _log "provisioning MariaDB database + user"
+
+  systemctl enable --quiet --now mariadb
+  # Wait briefly for the socket to appear on a freshly-installed box.
+  for i in 1 2 3 4 5; do
+    if mariadb -e 'SELECT 1' >/dev/null 2>&1; then break; fi
+    sleep 1
+  done
+  if ! mariadb -e 'SELECT 1' >/dev/null 2>&1; then
+    _die "MariaDB unreachable via unix_socket auth as root"
+  fi
+
+  local db_name="jabali_panel"
+  local db_user="jabali_panel_app"
+  local pw_file="/etc/jabali/db-password"
+
+  if [[ -f "$pw_file" ]]; then
+    _ok "DB password already generated at $pw_file"
+  else
+    _log "generating DB password → $pw_file"
+    install -d -m 0750 -o root -g "$SERVICE_USER" "$(dirname "$pw_file")"
+    umask 077
+    openssl rand -hex 32 >"$pw_file"
+    chmod 0640 "$pw_file"
+    chown root:"$SERVICE_USER" "$pw_file"
+  fi
+  local db_pass
+  db_pass="$(cat "$pw_file")"
+
+  # Create DB and user. Privileges are scoped to the panel's own DB — the
+  # panel user has no rights over customer-hosted databases that will live
+  # on the same MariaDB instance.
+  mariadb -e "
+    CREATE DATABASE IF NOT EXISTS \`${db_name}\`
+      CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    CREATE USER IF NOT EXISTS '${db_user}'@'localhost' IDENTIFIED BY '${db_pass}';
+    ALTER USER '${db_user}'@'localhost' IDENTIFIED BY '${db_pass}';
+    GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER,
+          REFERENCES, LOCK TABLES
+      ON \`${db_name}\`.* TO '${db_user}'@'localhost';
+    FLUSH PRIVILEGES;
+  "
+
+  # Expose the DSN via /etc/jabali/panel.env so the service picks it up.
+  local dsn="mysql://${db_user}:${db_pass}@127.0.0.1:3306/${db_name}?parseTime=true&charset=utf8mb4&loc=UTC"
+  if grep -q '^DATABASE_URL=' "$ENV_FILE" 2>/dev/null; then
+    # Only rewrite if it's the Phase-2 placeholder or an obvious mismatch.
+    if grep -q '^DATABASE_URL=placeholder' "$ENV_FILE" || ! grep -q "^DATABASE_URL=.*${db_user}@" "$ENV_FILE"; then
+      _log "updating DATABASE_URL in $ENV_FILE"
+      sed -i "s|^DATABASE_URL=.*|DATABASE_URL=${dsn}|" "$ENV_FILE"
+    else
+      _ok "DATABASE_URL in $ENV_FILE already points at ${db_user}@localhost"
+    fi
+  else
+    _log "adding DATABASE_URL to $ENV_FILE"
+    echo "DATABASE_URL=${dsn}" >>"$ENV_FILE"
+  fi
+  chmod 0640 "$ENV_FILE"
+  chown root:"$SERVICE_USER" "$ENV_FILE"
+
+  _ok "MariaDB provisioned: DB=${db_name}, user=${db_user}"
 }
 
 # ---------- step 2: Go toolchain --------------------------------------------
@@ -296,6 +364,7 @@ main() {
   install_base_packages
   install_go
   ensure_user_and_dirs
+  provision_mariadb
   clone_or_update_repo
   build_backend
   write_env_file

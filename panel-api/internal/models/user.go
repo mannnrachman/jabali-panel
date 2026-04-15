@@ -1,0 +1,41 @@
+// Package models holds the GORM struct definitions that mirror the panel's
+// own database schema (the `jabali_panel` DB on MariaDB). Customer-hosted
+// databases are a separate concern and are NOT modelled here.
+package models
+
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
+
+// User is a panel account. Two personas share the table:
+//
+//   - Admin users: panel operators (is_admin=true). Managed by the
+//     seed/bootstrap flow; is_admin is never settable via the public API.
+//   - Hosting users: panel customers (is_admin=false) mapped to a Linux UID
+//     once the agent provisions the OS user; linux_uid is NULL until then.
+type User struct {
+	// ID is a 26-char ULID (Crockford base32). See internal/ids.
+	ID string `gorm:"type:char(26);primaryKey" json:"id"`
+
+	Email        string `gorm:"type:varchar(255);uniqueIndex:ux_users_email;not null" json:"email"`
+	NameFirst    string `gorm:"type:varchar(100);not null;default:''"                 json:"name_first"`
+	NameLast     string `gorm:"type:varchar(100);not null;default:''"                 json:"name_last"`
+	PasswordHash string `gorm:"type:varchar(255);not null"                            json:"-"`
+
+	// IsAdmin is stored as TINYINT(1). Never written from a request DTO —
+	// only by an admin-only handler (Phase 6) or the bootstrap seed.
+	IsAdmin bool `gorm:"type:tinyint(1);not null;default:0" json:"is_admin"`
+
+	// LinuxUID is set by the handler after the agent successfully creates
+	// the OS user. NULL until then, or for admin-only accounts.
+	LinuxUID *uint32 `gorm:"type:int unsigned" json:"linux_uid,omitempty"`
+
+	CreatedAt time.Time      `gorm:"type:datetime(6);not null" json:"created_at"`
+	UpdatedAt time.Time      `gorm:"type:datetime(6);not null" json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"type:datetime(6);index:ix_users_deleted_at" json:"-"`
+}
+
+// TableName pins the plural form in case GORM ever changes its default.
+func (User) TableName() string { return "users" }

@@ -1,0 +1,42 @@
+# Binaries
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test + coverage
+coverage.out
+coverage.html
+*.test
+*.prof
+
+# Go workspaces (optional; not used here)
+go.work
+go.work.sum
+
+# Frontend build output
+panel-ui/dist/
+panel-ui/node_modules/
+panel-ui/.vite/
+
+# Secrets / local config — NEVER commit
+.env
+.env.local
+.env.*.local
+config.local.toml
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Docker
+.docker/

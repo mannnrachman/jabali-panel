@@ -62,7 +62,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              cfg.Server.Addr,
-		Handler:           app.New(),
+		Handler:           app.NewWith(cfg),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
 		WriteTimeout:      writeTimeout,

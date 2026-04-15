@@ -31,6 +31,8 @@ func NewWith(cfg *config.Config) *gin.Engine {
 	r.Use(gin.Recovery())
 	r.HandleMethodNotAllowed = true
 
+	api.RegisterIndexRoutes(r)
 	api.RegisterHealthRoutes(r)
+	api.RegisterNotFoundHandlers(r)
 	return r
 }

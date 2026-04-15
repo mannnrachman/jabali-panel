@@ -30,7 +30,13 @@ test-integration: ## Run integration tests (requires JABALI_TEST_DATABASE_URL + 
 	$(GO) test -race -count=1 -tags=integration -coverprofile=$(COVER) -covermode=atomic -coverpkg=./panel-api/internal/... ./panel-api/internal/...
 	$(GO) tool cover -func=$(COVER) | tail -n 1
 
-coverage-check: test-coverage ## Fail if coverage below MIN_COV
+coverage-check: ## Fail if combined (unit+integration) coverage below MIN_COV
+	@if [ -z "$$JABALI_TEST_DATABASE_URL" ]; then \
+		echo "coverage-check requires JABALI_TEST_DATABASE_URL (real MariaDB)"; \
+		echo "  set it, or run 'make test-coverage' for unit-only (no gate)"; \
+		exit 1; \
+	fi
+	@$(MAKE) --no-print-directory test-integration
 	@pct=$$($(GO) tool cover -func=$(COVER) | awk '/total:/ {gsub("%","",$$3); print $$3}'); \
 	awk -v p="$$pct" -v m="$(MIN_COV)" 'BEGIN { if (p+0 < m+0) { printf "coverage %s%% below %s%%\n", p, m; exit 1 } else { printf "coverage %s%% OK\n", p } }'
 

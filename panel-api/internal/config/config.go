@@ -69,6 +69,12 @@ type AuthConfig struct {
 	JWTSecret  string        `toml:"jwt_secret"`
 	AccessTTL  time.Duration `toml:"access_ttl"`
 	RefreshTTL time.Duration `toml:"refresh_ttl"`
+
+	// CookieSecure marks the refresh cookie Secure. When nil, defaults to
+	// env=production. Only set to false in dev when serving over plain HTTP
+	// without a TLS-terminating proxy in front; browsers + curl silently
+	// drop Secure cookies received over http://.
+	CookieSecure *bool `toml:"cookie_secure"`
 }
 
 // AgentConfig holds the Unix-socket path and per-call timeout for the PHP agent.
@@ -175,6 +181,10 @@ func applyEnv(cfg *Config) error {
 		}
 		cfg.Auth.RefreshTTL = d
 	}
+	if v := os.Getenv("AUTH_COOKIE_SECURE"); v != "" {
+		b := v == "true" || v == "1"
+		cfg.Auth.CookieSecure = &b
+	}
 	if v := os.Getenv("AGENT_SOCKET"); v != "" {
 		cfg.Agent.SocketPath = v
 	}
@@ -229,6 +239,15 @@ func (c *Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+// CookieSecureResolved returns the effective Secure flag for the refresh
+// cookie. Explicit config wins; otherwise it mirrors env=production.
+func (c *Config) CookieSecureResolved() bool {
+	if c.Auth.CookieSecure != nil {
+		return *c.Auth.CookieSecure
+	}
+	return c.Server.Env == EnvProduction
 }
 
 func splitAndTrim(s, sep string) []string {

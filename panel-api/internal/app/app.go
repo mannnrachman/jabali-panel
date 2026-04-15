@@ -53,7 +53,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		api.RegisterAuthRoutes(r, api.AuthHandlerConfig{
 			Service:            deps.Auth,
 			RefreshTTL:         cfg.Auth.RefreshTTL,
-			CookieSecure:       cfg.Server.Env == config.EnvProduction,
+			CookieSecure:       cfg.CookieSecureResolved(),
 			CookieSameSiteNone: false,
 		})
 	}

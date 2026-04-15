@@ -48,6 +48,7 @@ func newAuthRouter(t *testing.T, svc *fakeAuthService) *gin.Engine {
 	r := gin.New()
 	api.RegisterAuthRoutes(r, api.AuthHandlerConfig{
 		Service:            svc,
+		AccessTTL:          15 * time.Minute,
 		RefreshTTL:         24 * time.Hour,
 		CookieName:         "jabali_refresh",
 		CookieSecure:       false, // plain http in tests

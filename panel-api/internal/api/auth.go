@@ -21,10 +21,11 @@ type AuthService interface {
 }
 
 // AuthHandlerConfig captures everything the handler needs to emit cookies
-// correctly. RefreshTTL must match the server-side refresh TTL so the
-// cookie and the DB row expire together.
+// correctly. RefreshTTL bounds the cookie Max-Age (and DB row lifetime);
+// AccessTTL is reported to the client as expires_in per OAuth2 semantics.
 type AuthHandlerConfig struct {
 	Service    AuthService
+	AccessTTL  time.Duration
 	RefreshTTL time.Duration
 
 	// CookieName: the refresh cookie name. Default "jabali_refresh".
@@ -150,7 +151,7 @@ func (h *authHandler) buildLoginResponse(out *auth.LoginOutput) loginResponse {
 	resp := loginResponse{
 		AccessToken: out.AccessToken,
 		TokenType:   "Bearer",
-		ExpiresIn:   int64(h.cfg.RefreshTTL.Seconds()),
+		ExpiresIn:   int64(h.cfg.AccessTTL.Seconds()),
 	}
 	if out.User != nil {
 		resp.User = &userResponse{

@@ -3,38 +3,53 @@
 package app
 
 import (
+	"time"
+
 	"github.com/gin-gonic/gin"
+	"golang.org/x/time/rate"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 )
 
-// Deps bundles the collaborators app.NewWithDeps needs so main.go keeps its
-// argument list short. Anything a handler family needs — auth service,
-// repositories, agent client — plugs in here.
+// Deps bundles the collaborators NewWithDeps needs so main.go keeps its
+// argument list short. Anything a handler family needs — auth service, JWT
+// issuer, repositories — plugs in here.
 type Deps struct {
-	Auth api.AuthService
+	Auth      api.AuthService
+	JWTIssuer *auth.JWTIssuer
 }
 
-// New returns a Gin engine configured with development defaults. Used by
-// tests and any caller that doesn't need to override. Production callers
-// should use NewWith so they can pass the loaded Config.
+// Default tier: chosen so a reasonable SPA (polling, a few concurrent
+// tabs) never notices, but a misbehaving client does. Tunable later via
+// config if we hit real-world ceilings.
+const (
+	rateDefaultPerSec = 10.0
+	rateDefaultBurst  = 40
+
+	// Strict tier: credential endpoints. 5 req/min with a burst of 5
+	// permits a typo-and-retry session without opening the door to
+	// brute force from a single IP.
+	rateStrictPerSec = 5.0 / 60.0
+	rateStrictBurst  = 5
+
+	rateLimiterIdleCleanup = 10 * time.Minute
+	rateLimiterSweepEvery  = 5 * time.Minute
+)
+
+// New returns a Gin engine configured with development defaults — no auth,
+// no DB. Used by tests and any caller that doesn't need downstream deps.
+// Production callers should use NewWithDeps so auth routes are mounted.
 func New() *gin.Engine {
-	return NewWith(config.Defaults())
-}
-
-// NewWith builds a Gin engine with only config-driven concerns wired up —
-// no auth, no DB. Useful in tests and for servicing health/index when the
-// downstream deps aren't ready yet. Production callers should use
-// NewWithDeps so auth routes are mounted.
-func NewWith(cfg *config.Config) *gin.Engine {
-	return NewWithDeps(cfg, Deps{})
+	return NewWithDeps(config.Defaults(), Deps{})
 }
 
 // NewWithDeps is the canonical constructor for the server. Handlers that
-// depend on external collaborators (auth service, DB repositories) are
-// mounted only when their dep is non-nil, so early-phase deployments can
-// still boot with a partial Deps.
+// depend on external collaborators (auth service, JWT issuer) are mounted
+// only when their dep is non-nil, so early-phase deployments can still boot
+// with a partial Deps.
 func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 	if cfg.Server.Env == config.EnvProduction {
 		gin.SetMode(gin.ReleaseMode)
@@ -43,8 +58,26 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 	}
 
 	r := gin.New()
-	r.Use(gin.Recovery())
 	r.HandleMethodNotAllowed = true
+
+	// Global middleware. Order matters:
+	//   1. Recovery so a panic never leaves a connection open.
+	//   2. RequestID so all subsequent log lines (including panics) carry it.
+	//   3. CORS so preflights short-circuit before rate limit consumes tokens.
+	r.Use(gin.Recovery())
+	r.Use(middleware.RequestID())
+	r.Use(middleware.CORS(cfg.CORS.AllowedOrigins))
+
+	// Rate limiter — shared across handler mounts so both tiers count against
+	// the same per-IP state. A background goroutine reaps idle buckets.
+	rl := middleware.NewRateLimiter(middleware.RateLimiterConfig{
+		DefaultRate:  rate.Limit(rateDefaultPerSec),
+		DefaultBurst: rateDefaultBurst,
+		StrictRate:   rate.Limit(rateStrictPerSec),
+		StrictBurst:  rateStrictBurst,
+	})
+	startRateLimiterSweeper(rl)
+	r.Use(rl.Default())
 
 	api.RegisterIndexRoutes(r)
 	api.RegisterHealthRoutes(r)
@@ -56,9 +89,29 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			RefreshTTL:         cfg.Auth.RefreshTTL,
 			CookieSecure:       cfg.CookieSecureResolved(),
 			CookieSameSiteNone: false,
+			StrictRateLimit:    rl.Strict(),
 		})
+	}
+
+	if deps.JWTIssuer != nil {
+		// Protected API group — everything under /api/v1/* except /auth
+		// flows through RequireAuth.
+		v1 := r.Group("/api/v1", middleware.RequireAuth(deps.JWTIssuer))
+		api.RegisterMeRoutes(v1)
 	}
 
 	api.RegisterNotFoundHandlers(r)
 	return r
+}
+
+// startRateLimiterSweeper launches a background goroutine that drops idle
+// per-IP buckets so the limiter's memory stays bounded. Safe to call once
+// per process; the goroutine lives for the program's lifetime.
+func startRateLimiterSweeper(rl *middleware.RateLimiter) {
+	ticker := time.NewTicker(rateLimiterSweepEvery)
+	go func() {
+		for range ticker.C {
+			rl.Cleanup(rateLimiterIdleCleanup)
+		}
+	}()
 }

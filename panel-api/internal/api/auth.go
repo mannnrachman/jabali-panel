@@ -36,6 +36,11 @@ type AuthHandlerConfig struct {
 	// the SPA is served from a different origin than the API. Default false
 	// (Strict).
 	CookieSameSiteNone bool
+
+	// StrictRateLimit, if non-nil, is applied as middleware on the /auth
+	// group before the individual POST handlers. Intended to bound brute
+	// force against credential endpoints. Leave nil to skip.
+	StrictRateLimit gin.HandlerFunc
 }
 
 // DefaultRefreshCookieName is used when AuthHandlerConfig.CookieName is blank.
@@ -48,6 +53,9 @@ func RegisterAuthRoutes(r *gin.Engine, cfg AuthHandlerConfig) {
 	}
 	h := &authHandler{cfg: cfg}
 	g := r.Group("/api/v1/auth")
+	if cfg.StrictRateLimit != nil {
+		g.Use(cfg.StrictRateLimit)
+	}
 	g.POST("/login", h.login)
 	g.POST("/refresh", h.refresh)
 	g.POST("/logout", h.logout)

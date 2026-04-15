@@ -1,46 +1,67 @@
 // Command server is the entry point for the Jabali Panel API.
 //
-// Phase 1: starts a minimal Gin server with only /health wired. Config,
-// database, auth, agent RPC and the user surface come in later phases.
+// Phase 2: config + slog logger wired in front of the Gin engine. Future
+// phases add DB, auth, agent RPC, and the full route surface.
 package main
 
 import (
+	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
-	"regexp"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/app"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/logger"
 )
 
-// addrPattern accepts :PORT or HOST:PORT with a limited charset.
-// Keeps gosec happy (no taint via env) and catches operator typos early.
-var addrPattern = regexp.MustCompile(`^([A-Za-z0-9.\-]+)?:[0-9]{1,5}$`)
-
 const (
-	defaultAddr       = ":8443"
+	defaultConfigPath = "/etc/jabali/config.toml"
+
 	readHeaderTimeout = 10 * time.Second
 	readTimeout       = 30 * time.Second
 	writeTimeout      = 30 * time.Second
 	idleTimeout       = 90 * time.Second
+	shutdownTimeout   = 10 * time.Second
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	slog.SetDefault(logger)
+	// Bootstrap logger so config-load errors are visible. Replaced once
+	// real config is loaded.
+	bootLog := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-	addr := os.Getenv("PANEL_ADDR")
-	if addr == "" {
-		addr = defaultAddr
+	cfgPath := os.Getenv("JABALI_CONFIG")
+	if cfgPath == "" {
+		cfgPath = defaultConfigPath
 	}
-	if !addrPattern.MatchString(addr) {
-		slog.Error("invalid PANEL_ADDR", "value", addr)
+
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		bootLog.Error("config load failed", "path", cfgPath, "err", err)
+		os.Exit(2)
+	}
+	if err := cfg.Validate(); err != nil {
+		bootLog.Error("config validation failed", "err", err)
 		os.Exit(2)
 	}
 
+	log := logger.New(cfg.Log, os.Stdout)
+	slog.SetDefault(log)
+
+	log.Info("starting jabali-panel",
+		"addr", cfg.Server.Addr,
+		"env", cfg.Server.Env,
+		"log_level", cfg.Log.Level,
+		"log_format", cfg.Log.Format,
+		"config_path", cfgPath,
+	)
+
 	srv := &http.Server{
-		Addr:              addr,
+		Addr:              cfg.Server.Addr,
 		Handler:           app.New(),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
@@ -48,9 +69,27 @@ func main() {
 		IdleTimeout:       idleTimeout,
 	}
 
-	slog.Info("starting jabali-panel", "addr", addr)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		slog.Error("server exited", "err", err)
-		os.Exit(1)
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.ListenAndServe() }()
+
+	// Graceful shutdown on SIGTERM / SIGINT.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case err := <-serveErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("server exited", "err", err)
+			os.Exit(1)
+		}
+	case sig := <-stop:
+		log.Info("shutdown signal", "signal", sig.String())
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Error("graceful shutdown failed", "err", err)
+			os.Exit(1)
+		}
 	}
+	log.Info("jabali-panel stopped")
 }

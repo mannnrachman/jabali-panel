@@ -191,11 +191,29 @@ write_env_file() {
   cat >"$ENV_FILE" <<EOF
 # Jabali Panel — environment for jabali-panel.service
 # Generated $(date -Iseconds). Edit as needed, then: systemctl restart $SERVICE_NAME
+# Secrets belong here (DATABASE_URL, JWT_SECRET). Non-secret config goes in
+# $(dirname "$ENV_FILE")/config.toml.
 
 PANEL_ADDR=$PANEL_ADDR
+PANEL_ENV=production
 EOF
   chmod 0640 "$ENV_FILE"
   chown root:"$SERVICE_USER" "$ENV_FILE"
+}
+
+write_config_file() {
+  local dest="$(dirname "$ENV_FILE")/config.toml"
+  local src="$REPO_DIR/config.example.toml"
+  if [[ -f "$dest" ]]; then
+    _ok "config file exists: $dest (not overwriting)"
+    return
+  fi
+  if [[ ! -f "$src" ]]; then
+    _warn "no $src; skipping config seed"
+    return
+  fi
+  _log "seeding config file: $dest"
+  install -m 0640 -o root -g "$SERVICE_USER" "$src" "$dest"
 }
 
 write_systemd_unit() {
@@ -278,6 +296,7 @@ main() {
   clone_or_update_repo
   build_backend
   write_env_file
+  write_config_file
   write_systemd_unit
   start_and_verify
   _ok "jabali-panel installed. Status: systemctl status $SERVICE_NAME"

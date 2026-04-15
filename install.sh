@@ -258,7 +258,9 @@ write_env_file() {
     _ok "env file exists: $ENV_FILE (not overwriting)"
     return
   fi
-  _log "writing env file: $ENV_FILE"
+  local jwt_secret
+  jwt_secret="$(openssl rand -hex 32)"
+  _log "writing env file: $ENV_FILE (generating JWT_SECRET)"
   cat >"$ENV_FILE" <<EOF
 # Jabali Panel — environment for jabali-panel.service
 # Generated $(date -Iseconds). Edit as needed, then: systemctl restart $SERVICE_NAME
@@ -267,6 +269,7 @@ write_env_file() {
 
 PANEL_ADDR=$PANEL_ADDR
 PANEL_ENV=production
+JWT_SECRET=$jwt_secret
 EOF
   chmod 0640 "$ENV_FILE"
   chown root:"$SERVICE_USER" "$ENV_FILE"
@@ -364,10 +367,13 @@ main() {
   install_base_packages
   install_go
   ensure_user_and_dirs
+  # Order matters: write_env_file seeds PANEL_ADDR / PANEL_ENV / JWT_SECRET
+  # hooks BEFORE provision_mariadb appends DATABASE_URL. Reversing the two
+  # would leave a fresh install with only the DB URL and no server config.
+  write_env_file
   provision_mariadb
   clone_or_update_repo
   build_backend
-  write_env_file
   write_config_file
   write_systemd_unit
   start_and_verify

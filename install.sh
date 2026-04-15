@@ -135,23 +135,26 @@ ensure_user_and_dirs() {
 # ---------- step 4: clone / update repo -------------------------------------
 
 clone_or_update_repo() {
-  local clone_url="$REPO_URL"
+  # For both clone and fetch, pass the token via a transient credential
+  # helper instead of baking it into the saved remote URL. That keeps
+  # `git remote -v` and `.git/config` free of secrets.
+  local git_args=()
   if [[ -n "$GITEA_TOKEN" ]]; then
-    # Inject token only for this operation, then strip it from the persisted
-    # remote URL so `git remote -v` doesn't leak it.
-    clone_url="$(echo "$REPO_URL" | sed "s|https://|https://oauth2:${GITEA_TOKEN}@|")"
+    # shellcheck disable=SC2016
+    git_args+=(
+      -c "credential.helper="
+      -c "credential.helper=!f() { echo username=oauth2; echo password=$GITEA_TOKEN; }; f"
+    )
   fi
 
   if [[ -d "$REPO_DIR/.git" ]]; then
     _log "pulling latest $REPO_BRANCH into $REPO_DIR"
-    sudo -u "$SERVICE_USER" -H git -C "$REPO_DIR" fetch --quiet origin "$REPO_BRANCH"
+    sudo -u "$SERVICE_USER" -H git "${git_args[@]}" -C "$REPO_DIR" fetch --quiet origin "$REPO_BRANCH"
     sudo -u "$SERVICE_USER" -H git -C "$REPO_DIR" reset --hard "origin/$REPO_BRANCH"
   else
     _log "cloning $REPO_URL into $REPO_DIR"
-    sudo -u "$SERVICE_USER" -H git clone --quiet --branch "$REPO_BRANCH" \
-      "$clone_url" "$REPO_DIR"
-    # Strip token from saved remote
-    sudo -u "$SERVICE_USER" -H git -C "$REPO_DIR" remote set-url origin "$REPO_URL"
+    sudo -u "$SERVICE_USER" -H git "${git_args[@]}" clone --quiet --branch "$REPO_BRANCH" \
+      "$REPO_URL" "$REPO_DIR"
   fi
   _ok "repo at $(sudo -u "$SERVICE_USER" -H git -C "$REPO_DIR" rev-parse --short HEAD)"
 }

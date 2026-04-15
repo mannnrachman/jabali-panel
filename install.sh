@@ -137,20 +137,16 @@ provision_mariadb() {
 
   # Expose the DSN via /etc/jabali/panel.env so the service picks it up.
   local dsn="mysql://${db_user}:${db_pass}@127.0.0.1:3306/${db_name}?parseTime=true&charset=utf8mb4&loc=UTC"
-  if grep -q '^DATABASE_URL=' "$ENV_FILE" 2>/dev/null; then
-    # Only rewrite if it's the Phase-2 placeholder or an obvious mismatch.
-    if grep -q '^DATABASE_URL=placeholder' "$ENV_FILE" || ! grep -q "^DATABASE_URL=.*${db_user}@" "$ENV_FILE"; then
-      _log "updating DATABASE_URL in $ENV_FILE"
-      sed -i "s|^DATABASE_URL=.*|DATABASE_URL=${dsn}|" "$ENV_FILE"
-    else
-      _ok "DATABASE_URL in $ENV_FILE already points at ${db_user}@localhost"
-    fi
-  else
-    _log "adding DATABASE_URL to $ENV_FILE"
-    echo "DATABASE_URL=${dsn}" >>"$ENV_FILE"
-  fi
-  chmod 0640 "$ENV_FILE"
-  chown root:"$SERVICE_USER" "$ENV_FILE"
+
+  # Rewrite the line without sed (DSNs contain `&` which sed would expand
+  # as the matched text). We strip any existing DATABASE_URL line and
+  # append a fresh one.
+  local tmp
+  tmp="$(mktemp --tmpdir jabali-env.XXXXXX)"
+  grep -v '^DATABASE_URL=' "$ENV_FILE" >"$tmp" || true
+  echo "DATABASE_URL=${dsn}" >>"$tmp"
+  install -m 0640 -o root -g "$SERVICE_USER" "$tmp" "$ENV_FILE"
+  rm -f "$tmp"
 
   _ok "MariaDB provisioned: DB=${db_name}, user=${db_user}"
 }

@@ -1,41 +1,42 @@
-// App root — Refine + AntD + React Router.
+// App root — Refine + AntD + React Router with two fully separated shells.
 //
-// Layout:
-//   Protected routes sit under <ThemedLayoutV2>, which provides the
-//   sidebar + header. Refine reads the `resources` prop to auto-populate
-//   the sidebar with links to the register'd resources.
+// URL layout:
+//   /login                       → LoginPage (shared)
+//   /jabali-admin/*              → AdminShell  (admins only, gated)
+//   /jabali-panel/*              → UserShell   (non-admins only, gated)
+//   /                            → role-based redirect
 //
-// Routes:
-//   /login              → LoginPage (public)
-//   /                   → redirects to /users (first resource)
-//   /users              → UserList
-//   /users/create       → UserCreate
-//   /users/edit/:id     → UserEdit
-//   everything else     → 404 via AntD's ErrorComponent
+// Why two shells instead of one role-filtered tree:
+//   - No runtime risk of an admin menu item rendering for a user (the
+//     two shells use distinct, hardcoded sidebars).
+//   - URLs themselves are segregated, so browser history, bookmarks,
+//     and any future access logs make the two surfaces unambiguous.
+//   - Adding an admin page can't accidentally add a user page.
+//
+// The shells share providers: one Refine component wraps the whole app
+// so authProvider and dataProvider state is consistent regardless of
+// which shell you're in.
 import { Authenticated, Refine } from "@refinedev/core";
-import {
-  ErrorComponent,
-  RefineThemes,
-  ThemedLayoutV2,
-  ThemedTitleV2,
-  useNotificationProvider,
-} from "@refinedev/antd";
+import { RefineThemes, useNotificationProvider } from "@refinedev/antd";
 import routerProvider, {
   CatchAllNavigate,
   DocumentTitleHandler,
-  NavigateToResource,
   UnsavedChangesNotifier,
 } from "@refinedev/react-router";
 import { BrowserRouter, Outlet, Route, Routes } from "react-router";
 import { ConfigProvider } from "antd";
-import { TeamOutlined } from "@ant-design/icons";
 
 import { authProvider } from "./authProvider";
 import { dataProvider } from "./dataProvider";
+import { AdminLayout } from "./shells/AdminLayout";
+import { UserLayout } from "./shells/UserLayout";
+import { RoleGate } from "./shells/RoleGate";
+import { LandingRedirect } from "./shells/LandingRedirect";
+import { UserCreate } from "./shells/admin/users/UserCreate";
+import { UserEdit } from "./shells/admin/users/UserEdit";
+import { UserList } from "./shells/admin/users/UserList";
+import { MyProfile } from "./shells/user/MyProfile";
 import { LoginPage } from "./pages/Login";
-import { UserCreate } from "./pages/users/UserCreate";
-import { UserEdit } from "./pages/users/UserEdit";
-import { UserList } from "./pages/users/UserList";
 
 const App = () => {
   return (
@@ -46,61 +47,99 @@ const App = () => {
           dataProvider={dataProvider}
           routerProvider={routerProvider}
           notificationProvider={useNotificationProvider}
+          // Resource metadata is still useful for Refine's data hooks
+          // (invalidation after mutation, etc) even though the sidebars
+          // are hardcoded per shell.
           resources={[
             {
               name: "users",
-              list: "/users",
-              create: "/users/create",
-              edit: "/users/edit/:id",
-              meta: { label: "Users", icon: <TeamOutlined /> },
+              list: "/jabali-admin/users",
+              create: "/jabali-admin/users/create",
+              edit: "/jabali-admin/users/edit/:id",
             },
           ]}
           options={{
             warnWhenUnsavedChanges: true,
-            // Route UX polish: reflect list filters / sorts in the URL
-            // so a back-button click brings you back to the same view.
             syncWithLocation: true,
           }}
         >
           <Routes>
-            {/* Protected group: wrapped in the full admin layout. */}
+            {/* ---------------- admin shell ---------------- */}
             <Route
+              path="/jabali-admin"
               element={
                 <Authenticated
-                  key="protected"
+                  key="admin-auth"
                   fallback={<CatchAllNavigate to="/login" />}
                 >
-                  <ThemedLayoutV2
-                    Title={({ collapsed }) => (
-                      <ThemedTitleV2 collapsed={collapsed} text="Jabali Panel" />
-                    )}
-                  >
-                    <Outlet />
-                  </ThemedLayoutV2>
+                  <RoleGate require="admin">
+                    <AdminLayout />
+                  </RoleGate>
                 </Authenticated>
               }
             >
-              <Route index element={<NavigateToResource resource="users" />} />
-
-              <Route path="/users">
+              {/* bare /jabali-admin → users list */}
+              <Route index element={<UserList />} />
+              <Route path="users">
                 <Route index element={<UserList />} />
                 <Route path="create" element={<UserCreate />} />
                 <Route path="edit/:id" element={<UserEdit />} />
               </Route>
-
-              <Route path="*" element={<ErrorComponent />} />
             </Route>
 
-            {/* Public group: login only. Already-authed → redirect home. */}
+            {/* ---------------- user shell ----------------- */}
+            <Route
+              path="/jabali-panel"
+              element={
+                <Authenticated
+                  key="user-auth"
+                  fallback={<CatchAllNavigate to="/login" />}
+                >
+                  <RoleGate require="user">
+                    <UserLayout />
+                  </RoleGate>
+                </Authenticated>
+              }
+            >
+              <Route index element={<MyProfile />} />
+              <Route path="profile" element={<MyProfile />} />
+            </Route>
+
+            {/* ---------------- public ---------------- */}
             <Route
               element={
                 <Authenticated key="public" fallback={<Outlet />}>
-                  <NavigateToResource resource="users" />
+                  <LandingRedirect />
                 </Authenticated>
               }
             >
               <Route path="/login" element={<LoginPage />} />
             </Route>
+
+            {/* landing / catch-all */}
+            <Route
+              path="/"
+              element={
+                <Authenticated
+                  key="landing"
+                  fallback={<CatchAllNavigate to="/login" />}
+                >
+                  <LandingRedirect />
+                </Authenticated>
+              }
+            />
+
+            <Route
+              path="*"
+              element={
+                <Authenticated
+                  key="catchall"
+                  fallback={<CatchAllNavigate to="/login" />}
+                >
+                  <LandingRedirect />
+                </Authenticated>
+              }
+            />
           </Routes>
 
           <UnsavedChangesNotifier />

@@ -1,10 +1,12 @@
-// Edit user. useForm in 'edit' mode auto-loads the record via
-// dataProvider.getOne(), populates the form, and PATCHes on submit.
+// Edit user — admin-only page. Only admins can reach this route (URL
+// sits under /jabali-admin/* which is gated by RoleGate + Authenticated),
+// so we never need the current_password field here: admins can reset
+// any user's password without proving the old one.
 //
-// Password is optional on edit (leave blank to keep). The
-// current_password field only matters when the caller is editing their
-// own account and isn't an admin — the server enforces this, we just
-// offer the field so the form *can* succeed in that case.
+// Users changing their OWN password go through /jabali-panel/profile,
+// which hits the same PATCH /users/:id endpoint with current_password.
+//
+// Password is optional on edit — a blank field means "keep current".
 import { Edit, useForm } from "@refinedev/antd";
 import { Form, Input, Switch } from "antd";
 
@@ -14,7 +16,6 @@ type UserEditInput = {
   name_last?: string;
   is_admin?: boolean;
   password?: string;
-  current_password?: string;
 };
 
 export const UserEdit = () => {
@@ -28,12 +29,11 @@ export const UserEdit = () => {
       <Form
         {...formProps}
         layout="vertical"
-        // Strip blank password fields before sending so the server doesn't
+        // Strip blank password before sending so the server doesn't
         // try to validate / re-hash an empty string.
         onFinish={(raw) => {
           const clean = { ...(raw as UserEditInput) };
           if (!clean.password) delete clean.password;
-          if (!clean.current_password) delete clean.current_password;
           return formProps.onFinish?.(clean);
         }}
       >
@@ -66,14 +66,6 @@ export const UserEdit = () => {
           rules={[{ min: 10, message: "At least 10 characters" }]}
         >
           <Input.Password autoComplete="new-password" />
-        </Form.Item>
-
-        <Form.Item
-          label="Current password"
-          name="current_password"
-          tooltip="Only required when changing your own password as a non-admin."
-        >
-          <Input.Password autoComplete="current-password" />
         </Form.Item>
       </Form>
     </Edit>

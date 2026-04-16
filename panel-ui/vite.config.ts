@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 // Jabali Panel SPA — Vite config.
 //
 // Dev mode: runs on :5173 with a /api proxy into the panel-api on :8443.
@@ -33,10 +34,37 @@ export default defineConfig(({ mode }) => {
         "/health": { target: apiTarget, changeOrigin: true },
       },
     },
+    test: {
+      globals: true,
+      environment: "happy-dom",
+      setupFiles: ["./src/test/setup.ts"],
+      // Default `include` already catches **/*.{test,spec}.{ts,tsx}; no
+      // override needed. css: false keeps CSS imports from cratering tests
+      // that don't need styling.
+      css: false,
+    },
     build: {
-      // Smaller chunks: AntD is huge, better to split so caching helps on
-      // subsequent navs. 600kb cap matches vite's default warning.
-      chunkSizeWarningLimit: 600,
+      // Split vendor code into stable chunks so a panel-ui release that
+      // only changes our src/ doesn't bust the AntD/Refine cache. The
+      // initial uncached load is slightly larger (parallel chunk fetches
+      // cost a bit of HTTP overhead), but every subsequent release gets
+      // the big chunks for free out of the browser cache.
+      chunkSizeWarningLimit: 900,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes("node_modules")) return;
+            // Keep antd + icons together — splitting them triggers
+            // rollup's circular-chunk warning because antd imports from
+            // @ant-design/cssinjs and back. Ant Design's React primitives
+            // dwarf the icons anyway, so the split wasn't buying much.
+            if (id.includes("/antd/") || id.includes("@ant-design/")) return "antd";
+            if (id.includes("@refinedev/")) return "refine";
+            if (id.includes("react-router") || id.includes("@remix-run/")) return "router";
+            return "vendor";
+          },
+        },
+      },
     },
   };
 });

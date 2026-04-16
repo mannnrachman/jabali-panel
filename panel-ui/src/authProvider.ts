@@ -3,12 +3,20 @@
 // The refresh token is a HttpOnly cookie set by the panel on successful
 // /auth/login; we never touch it from JS. The access token lives only in
 // memory (see apiClient.ts) so an XSS on the SPA can't steal it.
+//
+// Role-based routing: after login we fetch the identity and redirect to
+// the appropriate shell — admins go to /jabali-admin, everyone else to
+// /jabali-panel. Same logic on check() when we land on a bare / URL.
 import type { AuthProvider } from "@refinedev/core";
 import axios, { AxiosError } from "axios";
 
 import { apiClient, getAccessToken, setAccessToken } from "./apiClient";
+import { clearIdentity, getIdentity } from "./identity";
 
 type LoginPayload = { access_token: string };
+
+const ADMIN_HOME = "/jabali-admin";
+const USER_HOME = "/jabali-panel";
 
 export const authProvider: AuthProvider = {
   login: async ({ email, password }) => {
@@ -18,14 +26,15 @@ export const authProvider: AuthProvider = {
         password,
       });
       setAccessToken(resp.data.access_token);
+      // Freshly signed in — any stale cached identity is wrong.
+      clearIdentity();
+      const me = await getIdentity();
       return {
         success: true,
-        redirectTo: "/",
+        redirectTo: me?.isAdmin ? ADMIN_HOME : USER_HOME,
         successNotification: { message: "Welcome back" },
       };
     } catch (err) {
-      // Map the panel's typed error codes to user-facing messages without
-      // leaking backend wording to the user verbatim.
       const ax = err as AxiosError<{ error?: string }>;
       const code = ax.response?.data?.error ?? "login_failed";
       return {
@@ -50,54 +59,37 @@ export const authProvider: AuthProvider = {
       // best-effort; cookie/token may already be stale
     }
     setAccessToken(null);
+    clearIdentity();
     return { success: true, redirectTo: "/login" };
   },
 
-  // check: Refine calls this on route change. With no in-memory token, we
-  // try a silent refresh (axios interceptor will do it on the first 401)
-  // by calling /me. If that 401s after refresh, we're truly logged out.
+  // check: called by Refine on route transitions. Fast-path uses the
+  // in-memory token; otherwise we try /me, which the axios refresh
+  // interceptor will silently retry with a refreshed token.
   check: async () => {
-    // Fast path — we still have a token in memory, trust it optimistically.
-    if (getAccessToken()) {
-      return { authenticated: true };
-    }
-    // Otherwise attempt a /me call; the interceptor refreshes under the
-    // hood. If we get here without a token AFTER refresh, bail.
-    try {
-      await apiClient.get("/me");
-      return { authenticated: true };
-    } catch {
-      return {
-        authenticated: false,
-        redirectTo: "/login",
-        logout: true,
-      };
-    }
+    if (getAccessToken()) return { authenticated: true };
+    const me = await getIdentity();
+    return me
+      ? { authenticated: true }
+      : { authenticated: false, redirectTo: "/login", logout: true };
   },
 
-  // getIdentity: populates the <ThemedLayout> header with who's logged in.
+  // getIdentity: read-through the shared cache so Refine components
+  // (ThemedLayoutV2 header, etc.) see the same object RoleGate uses.
   getIdentity: async () => {
-    try {
-      const resp = await apiClient.get<{
-        id: string;
-        email: string;
-        is_admin: boolean;
-      }>("/me");
-      return {
-        id: resp.data.id,
-        name: resp.data.email,
-        email: resp.data.email,
-        isAdmin: resp.data.is_admin,
-      };
-    } catch {
-      return null;
-    }
+    const me = await getIdentity();
+    if (!me) return null;
+    return {
+      id: me.id,
+      name: me.email,
+      email: me.email,
+      isAdmin: me.isAdmin,
+    };
   },
 
   onError: async (error) => {
-    // Any 401 that bubbles out (i.e. refresh already tried and failed) →
-    // force logout. Other errors fall through unchanged.
     if (axios.isAxiosError(error) && error.response?.status === 401) {
+      clearIdentity();
       return { logout: true, redirectTo: "/login" };
     }
     return { error };

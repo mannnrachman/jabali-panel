@@ -32,23 +32,17 @@ type ListEnvelope<T> = {
 export const dataProvider: DataProvider = {
   getApiUrl: () => API_URL,
 
-  getList: async ({ resource, pagination, sorters }) => {
+  getList: async ({ resource, pagination }) => {
+    // Sort / filter params are deliberately NOT forwarded. Our API
+    // currently returns rows in created_at DESC order with no filter
+    // support; adding the params to the wire would just be cosmetic
+    // noise in the network tab. When the server grows ORDER BY + WHERE
+    // support, re-introduce sorter/filter handling here.
     const page = pagination?.current ?? 1;
     const pageSize = pagination?.pageSize ?? 20;
 
-    const params: Record<string, string | number> = {
-      page,
-      page_size: pageSize,
-    };
-    if (sorters && sorters.length > 0) {
-      // Our API doesn't actually support sort yet (v1 is created_at DESC),
-      // but we send it so Refine can show the UI; the server ignores it.
-      params._sort = sorters[0].field;
-      params._order = sorters[0].order;
-    }
-
     const resp = await apiClient.get<ListEnvelope<unknown>>(`/${resource}`, {
-      params,
+      params: { page, page_size: pageSize },
     });
     return {
       data: resp.data.data as never,

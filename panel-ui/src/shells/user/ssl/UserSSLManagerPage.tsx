@@ -21,7 +21,7 @@ export const UserSSLManagerPage = () => {
       </Space>
 
       <Card>
-        <SSLManagerTable endpoint="/api/v1/ssl-certificates" showOwner={false} />
+        <SSLManagerTable endpoint="/ssl-certificates" showOwner={false} />
       </Card>
     </div>
   );

@@ -22,7 +22,7 @@ export const SSLManagerPage = () => {
 
       <Card>
         <SSLManagerTable
-          endpoint="/api/v1/admin/ssl-certificates"
+          endpoint="/admin/ssl-certificates"
           showOwner={true}
         />
       </Card>

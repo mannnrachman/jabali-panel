@@ -117,6 +117,9 @@ access_ttl = "20m"
 
 [agent]
 socket_path = "/tmp/a.sock"
+
+[pdns]
+dsn = "jabali_pdns:test_password@tcp(127.0.0.1:3306)/jabali_pdns?charset=utf8mb4&parseTime=true"
 `), 0o600))
 
 	cfg, err := config.Load(path)
@@ -127,6 +130,7 @@ socket_path = "/tmp/a.sock"
 	assert.Equal(t, "json", cfg.Log.Format) // derived from env=production
 	assert.Equal(t, 20*time.Minute, cfg.Auth.AccessTTL)
 	assert.Equal(t, "/tmp/a.sock", cfg.Agent.SocketPath)
+	assert.Equal(t, "jabali_pdns:test_password@tcp(127.0.0.1:3306)/jabali_pdns?charset=utf8mb4&parseTime=true", cfg.PDNS.DSN)
 }
 
 func TestLoad_EnvWinsOverFile(t *testing.T) {

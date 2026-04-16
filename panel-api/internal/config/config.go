@@ -38,6 +38,7 @@ type Config struct {
 	Auth     AuthConfig     `toml:"auth"`
 	Agent    AgentConfig    `toml:"agent"`
 	CORS     CORSConfig     `toml:"cors"`
+	PDNS     PDNSConfig     `toml:"pdns"`
 }
 
 // ServerConfig controls HTTP listener and runtime mode.
@@ -105,6 +106,14 @@ type AgentConfig struct {
 // CORSConfig holds the SPA origin whitelist.
 type CORSConfig struct {
 	AllowedOrigins []string `toml:"allowed_origins"`
+}
+
+// PDNSConfig holds the PowerDNS backend database credentials for the
+// reconciler to push zones and records.
+type PDNSConfig struct {
+	// DSN is a MySQL connection string for the jabali_pdns database,
+	// e.g. "user:pass@tcp(127.0.0.1:3306)/jabali_pdns?charset=utf8mb4&parseTime=true"
+	DSN string `toml:"dsn"`
 }
 
 // Defaults returns a Config populated with sensible development defaults.

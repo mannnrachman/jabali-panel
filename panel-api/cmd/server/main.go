@@ -23,6 +23,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/app"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
@@ -100,8 +101,17 @@ func main() {
 		log.Warn("DATABASE_URL not set (or placeholder); running without DB")
 	}
 
+	// ---- agent wiring (lazy: connect-per-call so the panel can boot
+	// while the agent is still coming up). ----
+	agentCli := agent.NewClient(agent.Config{
+		SocketPath: cfg.Agent.SocketPath,
+		Timeout:    cfg.Agent.Timeout,
+	})
+	log.Info("agent client configured", "socket", cfg.Agent.SocketPath, "timeout", cfg.Agent.Timeout.String())
+
 	// ---- auth wiring (only if DB is up — no DB means no auth) ----
 	var deps app.Deps
+	deps.Agent = agentCli
 	if gdb != nil {
 		userRepo := repository.NewUserRepository(gdb)
 		tokenRepo := repository.NewRefreshTokenRepository(gdb)

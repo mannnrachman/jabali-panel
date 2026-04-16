@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
 
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
@@ -22,6 +23,7 @@ type Deps struct {
 	Auth      api.AuthService
 	JWTIssuer *auth.JWTIssuer
 	Users     repository.UserRepository
+	Agent     agent.AgentInterface
 }
 
 // Default tier: chosen so a reasonable SPA (polling, a few concurrent
@@ -83,6 +85,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 
 	api.RegisterIndexRoutes(r)
 	api.RegisterHealthRoutes(r)
+	if deps.Agent != nil {
+		api.RegisterAgentHealthRoute(r, deps.Agent)
+	}
 
 	if deps.Auth != nil {
 		api.RegisterAuthRoutes(r, api.AuthHandlerConfig{

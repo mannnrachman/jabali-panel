@@ -1,26 +1,31 @@
 .PHONY: help build run test test-short test-coverage coverage-check lint fmt vet tidy clean
 
-GO       := go
-API_PKG  := ./panel-api/...
-BIN      := ./bin/jabali
-COVER    := coverage.out
-MIN_COV  := 80
+GO         := go
+API_PKG    := ./panel-api/...
+AGENT_PKG  := ./panel-agent/...
+WIRE_PKG   := ./agentwire/...
+ALL_PKG    := $(API_PKG) $(AGENT_PKG) $(WIRE_PKG)
+BIN        := ./bin/jabali
+AGENT_BIN  := ./bin/jabali-agent
+COVER      := coverage.out
+MIN_COV    := 80
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-build: ## Compile the server binary
+build: ## Compile both binaries (panel + agent)
 	mkdir -p bin
 	$(GO) build -o $(BIN) ./panel-api/cmd/server
+	$(GO) build -o $(AGENT_BIN) ./panel-agent/cmd/jabali-agent
 
-run: ## Run the server (dev)
+run: ## Run the panel server (dev)
 	$(GO) run ./panel-api/cmd/server
 
-test: ## Run all Go tests
-	$(GO) test -race -count=1 $(API_PKG)
+test: ## Run all Go tests across the workspace
+	$(GO) test -race -count=1 $(ALL_PKG)
 
 test-short: ## Run only fast unit tests (skip integration)
-	$(GO) test -race -count=1 -short $(API_PKG)
+	$(GO) test -race -count=1 -short $(ALL_PKG)
 
 test-coverage: ## Run tests with coverage (internal packages only)
 	$(GO) test -race -count=1 -coverprofile=$(COVER) -covermode=atomic -coverpkg=./panel-api/internal/... ./panel-api/internal/...
@@ -40,14 +45,14 @@ coverage-check: ## Fail if combined (unit+integration) coverage below MIN_COV
 	@pct=$$($(GO) tool cover -func=$(COVER) | awk '/total:/ {gsub("%","",$$3); print $$3}'); \
 	awk -v p="$$pct" -v m="$(MIN_COV)" 'BEGIN { if (p+0 < m+0) { printf "coverage %s%% below %s%%\n", p, m; exit 1 } else { printf "coverage %s%% OK\n", p } }'
 
-lint: ## Run golangci-lint
-	golangci-lint run $(API_PKG)
+lint: ## Run golangci-lint across the workspace
+	golangci-lint run $(ALL_PKG)
 
 fmt: ## Format all Go code
-	$(GO) fmt $(API_PKG)
+	$(GO) fmt $(ALL_PKG)
 
 vet: ## Run go vet
-	$(GO) vet $(API_PKG)
+	$(GO) vet $(ALL_PKG)
 
 tidy: ## Tidy module deps
 	$(GO) mod tidy

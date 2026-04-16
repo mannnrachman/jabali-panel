@@ -55,7 +55,8 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, "text", cfg.Log.Format) // dev default
 	assert.Equal(t, 15*time.Minute, cfg.Auth.AccessTTL)
 	assert.Equal(t, 7*24*time.Hour, cfg.Auth.RefreshTTL)
-	assert.Equal(t, 5*time.Second, cfg.Agent.Timeout)
+	assert.Equal(t, 30*time.Second, cfg.Agent.Timeout)
+	assert.Equal(t, "/run/jabali/agent.sock", cfg.Agent.SocketPath)
 	assert.Empty(t, cfg.CORS.AllowedOrigins)
 }
 

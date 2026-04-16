@@ -43,6 +43,9 @@ SERVICE_NAME="${JABALI_SERVICE_NAME:-jabali-panel}"
 # termination and rate limiting happen at the proxy (blueprint §5.1).
 PANEL_ADDR="${JABALI_PANEL_ADDR:-0.0.0.0:8443}"
 BIN_PATH="/usr/local/bin/jabali-panel"
+AGENT_BIN_PATH="/usr/local/bin/jabali-agent"
+AGENT_SOCKET="/run/jabali/agent.sock"
+AGENT_SERVICE_NAME="jabali-agent"
 ENV_FILE="/etc/jabali/panel.env"
 GITEA_TOKEN="${JABALI_GITEA_TOKEN:-${1:-}}"
 
@@ -230,25 +233,29 @@ clone_or_update_repo() {
 # ---------- step 5: build backend -------------------------------------------
 
 build_backend() {
-  _log "building panel-api"
+  _log "building panel-api + jabali-agent"
   local version
   version="$(sudo -u "$SERVICE_USER" -H git -C "$REPO_DIR" rev-parse --short HEAD)"
 
-  # Build into a temp path as the service user (no write to /usr/local needed
-  # during compile), then atomically move into place as root.
-  local tmpbin="$REPO_DIR/bin/jabali-panel.new"
   install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" "$REPO_DIR/bin"
+  local tmp_panel="$REPO_DIR/bin/jabali-panel.new"
+  local tmp_agent="$REPO_DIR/bin/jabali-agent.new"
 
+  # One invocation of go, two binaries — shared module, shared build cache.
   sudo -u "$SERVICE_USER" -H env \
     PATH="$GO_ROOT/bin:/usr/bin:/bin" \
     HOME="$REPO_DIR" \
     GOCACHE="$REPO_DIR/.cache/go-build" \
     GOMODCACHE="$REPO_DIR/.cache/go-mod" \
-    bash -c "cd '$REPO_DIR' && go build -trimpath -ldflags '-s -w -X git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api.Version=$version' -o '$tmpbin' ./panel-api/cmd/server"
+    bash -c "cd '$REPO_DIR' && \
+      go build -trimpath -ldflags '-s -w -X git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api.Version=$version' -o '$tmp_panel' ./panel-api/cmd/server && \
+      go build -trimpath -ldflags '-s -w -X main.version=$version' -o '$tmp_agent' ./panel-agent/cmd/jabali-agent"
 
-  install -m 0755 "$tmpbin" "$BIN_PATH"
-  rm -f "$tmpbin"
+  install -m 0755 "$tmp_panel" "$BIN_PATH"
+  install -m 0755 "$tmp_agent" "$AGENT_BIN_PATH"
+  rm -f "$tmp_panel" "$tmp_agent"
   _ok "installed $BIN_PATH (version=$version)"
+  _ok "installed $AGENT_BIN_PATH (version=$version)"
 }
 
 # ---------- step 6: env file + systemd unit ---------------------------------
@@ -290,13 +297,72 @@ write_config_file() {
   install -m 0640 -o root -g "$SERVICE_USER" "$src" "$dest"
 }
 
+write_agent_systemd_unit() {
+  _log "writing systemd unit: /etc/systemd/system/${AGENT_SERVICE_NAME}.service"
+  # The agent runs as root because its whole purpose is to perform
+  # privileged operations (create Linux users, manage services, etc).
+  # Access control is enforced via socket permissions: RuntimeDirectory
+  # creates /run/jabali owned root:jabali 0750, and the agent itself
+  # chowns its socket to root:jabali 0660 so only the panel (jabali group)
+  # can connect. Hardening knobs that make sense for a root daemon:
+  #   - ProtectHome/ProtectKernel* keep the agent out of bystander state
+  #   - NoNewPrivileges stays false because future commands may need
+  #     capabilities-aware subprocess spawns (package install etc).
+  local jabali_gid
+  jabali_gid="$(getent group "$SERVICE_USER" | cut -d: -f3)"
+  [[ -n "$jabali_gid" ]] || _die "can't resolve gid of $SERVICE_USER"
+
+  cat >"/etc/systemd/system/${AGENT_SERVICE_NAME}.service" <<EOF
+[Unit]
+Description=Jabali Agent (privileged host operations)
+After=network-online.target
+Wants=network-online.target
+# Panel depends on us via Requires= in its unit, so ordering is enforced both ways.
+
+[Service]
+Type=simple
+User=root
+Group=root
+# systemd creates /run/jabali on start with mode 0750 owned root:root; we
+# fix the group to jabali so the panel can enter it. Preserve=no → cleaned
+# up on stop (we don't want stale sockets surviving a crash loop).
+RuntimeDirectory=jabali
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=no
+ExecStartPre=/bin/chgrp $SERVICE_USER /run/jabali
+ExecStart=$AGENT_BIN_PATH -socket $AGENT_SOCKET -gid $jabali_gid
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+
+# Hardening for a root daemon. We can't NoNewPrivileges because future
+# commands may need to re-exec tooling that escalates (chpasswd, useradd
+# etc).
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
 write_systemd_unit() {
   _log "writing systemd unit: /etc/systemd/system/${SERVICE_NAME}.service"
   cat >"/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
 [Unit]
 Description=Jabali Panel API
-After=network-online.target
+After=network-online.target ${AGENT_SERVICE_NAME}.service
 Wants=network-online.target
+# Panel hard-requires the agent at boot; without the socket we can't do
+# privileged ops. If the agent crashes post-boot the panel stays up —
+# individual handlers will return 503 with agent:unavailable.
+Requires=${AGENT_SERVICE_NAME}.service
 
 [Service]
 Type=simple
@@ -328,10 +394,35 @@ WantedBy=multi-user.target
 EOF
 
   systemctl daemon-reload
+  systemctl enable --quiet "$AGENT_SERVICE_NAME.service"
   systemctl enable --quiet "$SERVICE_NAME.service"
 }
 
 # ---------- step 7: start + smoke test --------------------------------------
+
+start_and_verify_agent() {
+  _log "starting $AGENT_SERVICE_NAME"
+  systemctl restart "$AGENT_SERVICE_NAME"
+
+  # Give the socket a moment to appear. Agents boot in <100ms usually but
+  # we don't want to race.
+  local ok=0
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if [[ -S "$AGENT_SOCKET" ]]; then ok=1; break; fi
+    sleep 0.3
+  done
+  if (( ok == 0 )); then
+    _warn "agent socket never appeared; dumping last 20 log lines"
+    journalctl -u "$AGENT_SERVICE_NAME" -n 20 --no-pager || true
+    _die "$AGENT_SERVICE_NAME did not come up"
+  fi
+
+  # Sanity-check: socket must be root:jabali 0660 — anything else and the
+  # panel won't be able to connect.
+  local sock_perms
+  sock_perms="$(stat -c '%a %U:%G' "$AGENT_SOCKET")"
+  _ok "agent socket ready ($AGENT_SOCKET, perms=$sock_perms)"
+}
 
 start_and_verify() {
   _log "starting $SERVICE_NAME"
@@ -375,9 +466,13 @@ main() {
   clone_or_update_repo
   build_backend
   write_config_file
+  write_agent_systemd_unit
   write_systemd_unit
+  start_and_verify_agent
   start_and_verify
-  _ok "jabali-panel installed. Status: systemctl status $SERVICE_NAME"
+  _ok "jabali-panel + jabali-agent installed. Status:"
+  _ok "  systemctl status $AGENT_SERVICE_NAME"
+  _ok "  systemctl status $SERVICE_NAME"
 }
 
 main "$@"

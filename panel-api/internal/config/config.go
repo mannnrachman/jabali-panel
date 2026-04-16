@@ -77,7 +77,8 @@ type AuthConfig struct {
 	CookieSecure *bool `toml:"cookie_secure"`
 }
 
-// AgentConfig holds the Unix-socket path and per-call timeout for the PHP agent.
+// AgentConfig holds the Unix-socket path and per-call timeout for the
+// jabali-agent daemon.
 type AgentConfig struct {
 	SocketPath string        `toml:"socket_path"`
 	Timeout    time.Duration `toml:"timeout"`
@@ -106,7 +107,11 @@ func Defaults() *Config {
 			RefreshTTL: 7 * 24 * time.Hour,
 		},
 		Agent: AgentConfig{
-			Timeout: 5 * time.Second,
+			SocketPath: "/run/jabali/agent.sock",
+			// 30s: generous for most commands, short enough that a wedged
+			// agent doesn't hold an HTTP request hostage for minutes.
+			// Per-call ctx.Deadline() overrides this when tighter.
+			Timeout: 30 * time.Second,
 		},
 	}
 }

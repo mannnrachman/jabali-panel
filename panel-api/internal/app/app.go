@@ -13,6 +13,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/webui"
 	panelui "git.linux-hosting.co.il/shukivaknin/jabali2/panel-ui"
@@ -22,12 +23,13 @@ import (
 // argument list short. Anything a handler family needs — auth service, JWT
 // issuer, repositories — plugs in here.
 type Deps struct {
-	Auth      api.AuthService
-	JWTIssuer *auth.JWTIssuer
-	Users     repository.UserRepository
-	Packages  repository.PackageRepository
-	Domains   repository.DomainRepository
-	Agent     agent.AgentInterface
+	Auth        api.AuthService
+	JWTIssuer   *auth.JWTIssuer
+	Users       repository.UserRepository
+	Packages    repository.PackageRepository
+	Domains     repository.DomainRepository
+	Agent       agent.AgentInterface
+	Reconciler  *reconciler.Reconciler
 }
 
 // Default tier: chosen so a reasonable SPA (polling, a few concurrent
@@ -117,10 +119,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		}
 		if deps.Domains != nil {
 			api.RegisterDomainRoutes(v1, api.DomainHandlerConfig{
-				Domains:  deps.Domains,
-				Users:    deps.Users,
-				Packages: deps.Packages,
-				Agent:    deps.Agent,
+				Domains:    deps.Domains,
+				Users:      deps.Users,
+				Packages:   deps.Packages,
+				Agent:      deps.Agent,
+				Reconciler: deps.Reconciler,
 			})
 		}
 		if deps.Agent != nil {

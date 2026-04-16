@@ -1,8 +1,6 @@
 package api
 
 import (
-	"context"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,14 +13,16 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 type DomainHandlerConfig struct {
-	Domains  repository.DomainRepository
-	Users    repository.UserRepository
-	Packages repository.PackageRepository
-	Agent    agent.AgentInterface
+	Domains    repository.DomainRepository
+	Users      repository.UserRepository
+	Packages   repository.PackageRepository
+	Agent      agent.AgentInterface
+	Reconciler *reconciler.Reconciler
 }
 
 const (
@@ -189,38 +189,11 @@ func (h *domainHandler) create(c *gin.Context) {
 		return
 	}
 
-	// Call agent (best-effort). If OS plumbing isn't ready yet (user
-	// doesn't exist, nginx misconfigured, etc.) we keep the DB row but
-	// mark it disabled so nginx never tries to serve an un-provisioned
-	// vhost, and surface a warning so the admin knows manual action is
-	// needed.
-	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	_, agentErr := h.cfg.Agent.Call(agentCtx, "domain.create", map[string]string{
-		"username":    domainLinuxUser(user.Email),
-		"domain":      req.Name,
-		"doc_root":    docRoot,
-		"php_version": "8.3",
-	})
-	if agentErr != nil {
-		slog.Warn("domain agent provisioning failed",
-			"domain", domain.Name,
-			"domain_id", domain.ID,
-			"err", agentErr)
-		domain.IsEnabled = false
-		_ = h.cfg.Domains.Update(ctx, domain)
-		c.JSON(http.StatusCreated, gin.H{
-			"id":                      domain.ID,
-			"user_id":                 domain.UserID,
-			"name":                    domain.Name,
-			"doc_root":                domain.DocRoot,
-			"is_enabled":              domain.IsEnabled,
-			"nginx_custom_directives": domain.NginxCustomDirectives,
-			"created_at":              domain.CreatedAt,
-			"updated_at":              domain.UpdatedAt,
-			"provision_warning":       "domain saved but agent provisioning failed: " + agentErr.Error(),
-		})
-		return
+	// Schedule reconciliation. The reconciler will converge the domain's
+	// OS-level state (nginx vhost, PHP pool, etc.) with the DB state.
+	// This is non-blocking and out-of-band.
+	if h.cfg.Reconciler != nil {
+		h.cfg.Reconciler.Schedule(domain.ID)
 	}
 
 	c.JSON(http.StatusCreated, domain)
@@ -256,16 +229,6 @@ func (h *domainHandler) update(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	if req.IsEnabled != nil && *req.IsEnabled != domain.IsEnabled {
-		cmd := "domain.enable"
-		if !*req.IsEnabled {
-			cmd = "domain.disable"
-		}
-		_, agentErr := h.cfg.Agent.Call(ctx, cmd, map[string]string{"domain": domain.Name})
-		if agentErr != nil {
-			status, body := translateAgentError(agentErr)
-			c.JSON(status, body)
-			return
-		}
 		domain.IsEnabled = *req.IsEnabled
 	}
 
@@ -282,6 +245,12 @@ func (h *domainHandler) update(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+
+	// Schedule reconciliation to sync the domain state with the agent.
+	if h.cfg.Reconciler != nil {
+		h.cfg.Reconciler.Schedule(domain.ID)
+	}
+
 	c.JSON(http.StatusOK, domain)
 }
 
@@ -297,21 +266,19 @@ func (h *domainHandler) delete(c *gin.Context) {
 		return
 	}
 
-	// Best-effort agent teardown. If the nginx vhost / PHP pool is
-	// already gone (or was never created), we still want the DB row to
-	// disappear so the user isn't stuck with a zombie record.
-	_, agentErr := h.cfg.Agent.Call(ctx, "domain.delete", map[string]string{"domain": domain.Name})
-	if agentErr != nil {
-		slog.Warn("domain agent teardown failed",
-			"domain", domain.Name,
-			"domain_id", domain.ID,
-			"err", agentErr)
-	}
-
 	if err := h.cfg.Domains.Delete(ctx, domain.ID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+
+	// Schedule reconciliation to tear down the domain's OS-level resources.
+	// The reconciler will notice the domain is gone from the DB and invoke
+	// domain.delete on the agent. Best-effort: if teardown fails, the user
+	// is not blocked because the DB row is already gone.
+	if h.cfg.Reconciler != nil {
+		h.cfg.Reconciler.Schedule(domain.ID)
+	}
+
 	c.Status(http.StatusNoContent)
 }
 

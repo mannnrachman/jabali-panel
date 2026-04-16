@@ -9,8 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/clientapi"
 )
 
 func newPackageCmd() *cobra.Command {
@@ -31,23 +30,31 @@ func newPackageListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
 		Short:   "List all hosting packages",
-		PreRunE: requireDB,
+		PreRunE: requireConfig,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
-			pkgs, _, err := packageRepoFromDB().List(ctx, 0, 1000)
+			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
+			if err != nil {
+				return fmt.Errorf("create api client: %w", err)
+			}
+
+			resp, err := client.ListPackages(ctx, 1, 1000)
 			if err != nil {
 				return fmt.Errorf("list packages: %w", err)
 			}
 
 			if jsonOutput {
-				return printJSON(pkgs)
+				return printJSON(map[string]interface{}{
+					"packages": resp.Data,
+					"total":    resp.Total,
+				})
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "ID\tNAME\tDISK MB\tBW MB\tDOMAINS\tEMAIL\tDB\tSSH")
-			for _, p := range pkgs {
+			for _, p := range resp.Data {
 				ssh := "no"
 				if p.SSHEnabled {
 					ssh = "yes"
@@ -63,28 +70,35 @@ func newPackageListCmd() *cobra.Command {
 
 func newPackageCreateCmd() *cobra.Command {
 	var (
-		name       string
-		diskMB     uint32
-		bwMB       uint32
-		domains    uint32
-		emails     uint32
-		databases  uint32
-		ftp        uint32
-		sshEnabled bool
+		name        string
+		diskMB      uint32
+		bwMB        uint32
+		domains     uint32
+		emails      uint32
+		databases   uint32
+		ftp         uint32
+		sshEnabled  bool
+		cgiEnabled  bool
 	)
 
 	cmd := &cobra.Command{
 		Use:     "create",
 		Short:   "Create a hosting package",
-		PreRunE: requireDB,
+		PreRunE: requireConfig,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if name == "" {
 				return fmt.Errorf("--name is required")
 			}
 
-			now := time.Now().UTC()
-			pkg := &models.HostingPackage{
-				ID:               ids.NewULID(),
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+
+			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
+			if err != nil {
+				return fmt.Errorf("create api client: %w", err)
+			}
+
+			req := &clientapi.CreatePackageRequest{
 				Name:             name,
 				DiskQuotaMB:      diskMB,
 				BandwidthQuotaMB: bwMB,
@@ -93,13 +107,11 @@ func newPackageCreateCmd() *cobra.Command {
 				MaxDatabases:     databases,
 				MaxFTPAccounts:   ftp,
 				SSHEnabled:       sshEnabled,
-				CreatedAt:        now,
-				UpdatedAt:        now,
+				CGIEnabled:       cgiEnabled,
 			}
 
-			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
-			defer cancel()
-			if err := packageRepoFromDB().Create(ctx, pkg); err != nil {
+			pkg, err := client.CreatePackage(ctx, req)
+			if err != nil {
 				return fmt.Errorf("create package: %w", err)
 			}
 
@@ -119,6 +131,7 @@ func newPackageCreateCmd() *cobra.Command {
 	cmd.Flags().Uint32Var(&databases, "databases", 0, "max databases (0=unlimited)")
 	cmd.Flags().Uint32Var(&ftp, "ftp", 0, "max FTP accounts (0=unlimited)")
 	cmd.Flags().BoolVar(&sshEnabled, "ssh", false, "enable SSH access")
+	cmd.Flags().BoolVar(&cgiEnabled, "cgi", false, "enable CGI")
 
 	return cmd
 }
@@ -133,57 +146,68 @@ func newPackageEditCmd() *cobra.Command {
 		databases  uint32
 		ftp        uint32
 		sshEnabled string
+		cgiEnabled string
 	)
 
 	cmd := &cobra.Command{
 		Use:     "edit <package-id>",
 		Short:   "Edit a hosting package",
 		Args:    cobra.ExactArgs(1),
-		PreRunE: requireDB,
+		PreRunE: requireConfig,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			packageID := args[0]
+
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
-			repo := packageRepoFromDB()
-			pkg, err := repo.FindByID(ctx, args[0])
+			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
 			if err != nil {
-				return fmt.Errorf("find package: %w", err)
+				return fmt.Errorf("create api client: %w", err)
 			}
 
+			req := &clientapi.UpdatePackageRequest{}
 			changed := false
+
 			if cmd.Flags().Changed("name") {
-				pkg.Name = name
+				req.Name = &name
 				changed = true
 			}
 			if cmd.Flags().Changed("disk-mb") {
-				pkg.DiskQuotaMB = diskMB
+				req.DiskQuotaMB = &diskMB
 				changed = true
 			}
 			if cmd.Flags().Changed("bw-mb") {
-				pkg.BandwidthQuotaMB = bwMB
+				req.BandwidthQuotaMB = &bwMB
 				changed = true
 			}
 			if cmd.Flags().Changed("domains") {
-				pkg.MaxDomains = domains
+				req.MaxDomains = &domains
 				changed = true
 			}
 			if cmd.Flags().Changed("emails") {
-				pkg.MaxEmailAccounts = emails
+				req.MaxEmailAccounts = &emails
 				changed = true
 			}
 			if cmd.Flags().Changed("databases") {
-				pkg.MaxDatabases = databases
+				req.MaxDatabases = &databases
 				changed = true
 			}
 			if cmd.Flags().Changed("ftp") {
-				pkg.MaxFTPAccounts = ftp
+				req.MaxFTPAccounts = &ftp
 				changed = true
 			}
 			if sshEnabled == "true" {
-				pkg.SSHEnabled = true
+				req.SSHEnabled = boolPtr(true)
 				changed = true
 			} else if sshEnabled == "false" {
-				pkg.SSHEnabled = false
+				req.SSHEnabled = boolPtr(false)
+				changed = true
+			}
+			if cgiEnabled == "true" {
+				req.CGIEnabled = boolPtr(true)
+				changed = true
+			} else if cgiEnabled == "false" {
+				req.CGIEnabled = boolPtr(false)
 				changed = true
 			}
 
@@ -191,8 +215,8 @@ func newPackageEditCmd() *cobra.Command {
 				return fmt.Errorf("no changes specified")
 			}
 
-			pkg.UpdatedAt = time.Now().UTC()
-			if err := repo.Update(ctx, pkg); err != nil {
+			pkg, err := client.UpdatePackage(ctx, packageID, req)
+			if err != nil {
 				return fmt.Errorf("update package: %w", err)
 			}
 
@@ -212,6 +236,7 @@ func newPackageEditCmd() *cobra.Command {
 	cmd.Flags().Uint32Var(&databases, "databases", 0, "max databases")
 	cmd.Flags().Uint32Var(&ftp, "ftp", 0, "max FTP")
 	cmd.Flags().StringVar(&sshEnabled, "ssh", "", "SSH access (true/false)")
+	cmd.Flags().StringVar(&cgiEnabled, "cgi", "", "CGI access (true/false)")
 
 	return cmd
 }
@@ -223,15 +248,22 @@ func newPackageDeleteCmd() *cobra.Command {
 		Use:     "delete <package-id>",
 		Short:   "Delete a hosting package",
 		Args:    cobra.ExactArgs(1),
-		PreRunE: requireDB,
+		PreRunE: requireConfig,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			packageID := args[0]
+
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
-			repo := packageRepoFromDB()
-			pkg, err := repo.FindByID(ctx, args[0])
+			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
 			if err != nil {
-				return fmt.Errorf("find package: %w", err)
+				return fmt.Errorf("create api client: %w", err)
+			}
+
+			// Fetch package to get name for confirmation
+			pkg, err := client.GetPackage(ctx, packageID)
+			if err != nil {
+				return fmt.Errorf("fetch package: %w", err)
 			}
 
 			if !force {
@@ -244,12 +276,12 @@ func newPackageDeleteCmd() *cobra.Command {
 				}
 			}
 
-			if err := repo.Delete(ctx, pkg.ID); err != nil {
+			if err := client.DeletePackage(ctx, packageID); err != nil {
 				return fmt.Errorf("delete package: %w", err)
 			}
 
 			if jsonOutput {
-				return printJSON(map[string]string{"deleted": pkg.ID})
+				return printJSON(map[string]string{"deleted": packageID})
 			}
 			fmt.Printf("Deleted package %s (%s)\n", pkg.ID, pkg.Name)
 			return nil

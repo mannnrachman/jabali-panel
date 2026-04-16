@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -10,8 +9,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/clientapi"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 )
 
 func newDomainCmd() *cobra.Command {
@@ -36,41 +35,36 @@ func newDomainListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "list",
 		Short:   "List domains",
-		PreRunE: requireDB,
+		PreRunE: requireConfig,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
-			repo := domainRepoFromDB()
-			var domains []models.Domain
-			var total int64
-			var err error
-
-			if userID != "" {
-				domains, total, err = repo.ListByUserID(ctx, userID, 0, 1000)
-			} else {
-				domains, total, err = repo.List(ctx, 0, 1000)
+			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
+			if err != nil {
+				return fmt.Errorf("create api client: %w", err)
 			}
 
+			resp, err := client.ListDomains(ctx, 1, 1000)
 			if err != nil {
 				return fmt.Errorf("list domains: %w", err)
 			}
 
 			if jsonOutput {
 				return printJSON(map[string]interface{}{
-					"domains": domains,
-					"total":   total,
+					"domains": resp.Data,
+					"total":   resp.Total,
 				})
 			}
 
-			if len(domains) == 0 {
+			if len(resp.Data) == 0 {
 				fmt.Println("No domains found")
 				return nil
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "ID\tNAME\tUSER_ID\tENABLED\tDOC_ROOT")
-			for _, d := range domains {
+			for _, d := range resp.Data {
 				enabled := "no"
 				if d.IsEnabled {
 					enabled = "yes"
@@ -81,7 +75,7 @@ func newDomainListCmd() *cobra.Command {
 			return w.Flush()
 		},
 	}
-	cmd.Flags().StringVar(&userID, "user-id", "", "Filter by user ID")
+	cmd.Flags().StringVar(&userID, "user-id", "", "Filter by user ID (currently ignored, use API filtering)")
 	return cmd
 }
 
@@ -92,7 +86,7 @@ func newDomainCreateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "create",
 		Short:   "Create a new domain",
-		PreRunE: requireDBAndAgent,
+		PreRunE: requireConfig,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if name == "" {
 				return fmt.Errorf("--name is required")
@@ -104,60 +98,30 @@ func newDomainCreateCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
-			domainRepo := domainRepoFromDB()
-			userRepo := userRepo()
-
-			// Look up user to derive linux username
-			user, err := userRepo.FindByID(ctx, userID)
+			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
 			if err != nil {
-				return fmt.Errorf("fetch user: %w", err)
-			}
-			if user == nil {
-				return fmt.Errorf("user not found: %s", userID)
+				return fmt.Errorf("create api client: %w", err)
 			}
 
-			// Generate doc_root if not provided
-			if docRoot == "" {
-				docRoot = "/home/" + deriveLinuxUsername(user.Email) + "/public_html/" + name
+			req := &clientapi.CreateDomainRequest{
+				Name:    name,
+				UserID:  userID,
+				DocRoot: docRoot,
 			}
 
-			// Create domain in DB
-			id := newDomainID()
-			domain := &models.Domain{
-				ID:        id,
-				UserID:    userID,
-				Name:      name,
-				DocRoot:   docRoot,
-				IsEnabled: true,
-				CreatedAt: time.Now(),
-				UpdatedAt: time.Now(),
-			}
-
-			if err := domainRepo.Create(ctx, domain); err != nil {
+			domain, err := client.CreateDomain(ctx, req)
+			if err != nil {
 				return fmt.Errorf("create domain: %w", err)
-			}
-
-			// Call agent to create the domain
-			agentParams := map[string]interface{}{
-				"username":     deriveLinuxUsername(user.Email),
-				"domain":       name,
-				"doc_root":     docRoot,
-				"php_version":  "8.3",
-			}
-			paramsJSON, _ := json.Marshal(agentParams)
-
-			_, err = sharedAgent.Call(ctx, "domain.create", json.RawMessage(paramsJSON))
-			if err != nil {
-				// Rollback the DB creation on agent error
-				_ = domainRepo.Delete(ctx, id)
-				return fmt.Errorf("agent create domain: %w", err)
 			}
 
 			if jsonOutput {
 				return printJSON(domain)
 			}
 
-			fmt.Printf("Domain created: %s (ID: %s)\n", name, id)
+			fmt.Printf("Domain created: %s (ID: %s)\n", domain.Name, domain.ID)
+			if domain.ProvisionWarning != "" {
+				fmt.Printf("Warning: %s\n", domain.ProvisionWarning)
+			}
 			return nil
 		},
 	}
@@ -173,44 +137,25 @@ func newDomainEnableCmd() *cobra.Command {
 		Use:     "enable <domain-id>",
 		Short:   "Enable a domain",
 		Args:    cobra.ExactArgs(1),
-		PreRunE: requireDBAndAgent,
+		PreRunE: requireConfig,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
-			domainRepo := domainRepoFromDB()
-
-			domain, err := domainRepo.FindByID(ctx, id)
+			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
 			if err != nil {
-				return fmt.Errorf("fetch domain: %w", err)
-			}
-			if domain == nil {
-				return fmt.Errorf("domain not found: %s", id)
+				return fmt.Errorf("create api client: %w", err)
 			}
 
-			if domain.IsEnabled {
-				fmt.Printf("Domain %s is already enabled\n", domain.Name)
-				return nil
+			req := &clientapi.UpdateDomainRequest{
+				IsEnabled: boolPtr(true),
 			}
 
-			// Call agent
-			agentParams := map[string]interface{}{
-				"domain": domain.Name,
-			}
-			paramsJSON, _ := json.Marshal(agentParams)
-
-			_, err = sharedAgent.Call(ctx, "domain.enable", json.RawMessage(paramsJSON))
+			domain, err := client.UpdateDomain(ctx, id, req)
 			if err != nil {
-				return fmt.Errorf("agent enable domain: %w", err)
-			}
-
-			// Update DB
-			domain.IsEnabled = true
-			domain.UpdatedAt = time.Now()
-			if err := domainRepo.Update(ctx, domain); err != nil {
-				return fmt.Errorf("update domain: %w", err)
+				return fmt.Errorf("enable domain: %w", err)
 			}
 
 			fmt.Printf("Domain %s enabled\n", domain.Name)
@@ -225,44 +170,25 @@ func newDomainDisableCmd() *cobra.Command {
 		Use:     "disable <domain-id>",
 		Short:   "Disable a domain",
 		Args:    cobra.ExactArgs(1),
-		PreRunE: requireDBAndAgent,
+		PreRunE: requireConfig,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
-			domainRepo := domainRepoFromDB()
-
-			domain, err := domainRepo.FindByID(ctx, id)
+			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
 			if err != nil {
-				return fmt.Errorf("fetch domain: %w", err)
-			}
-			if domain == nil {
-				return fmt.Errorf("domain not found: %s", id)
+				return fmt.Errorf("create api client: %w", err)
 			}
 
-			if !domain.IsEnabled {
-				fmt.Printf("Domain %s is already disabled\n", domain.Name)
-				return nil
+			req := &clientapi.UpdateDomainRequest{
+				IsEnabled: boolPtr(false),
 			}
 
-			// Call agent
-			agentParams := map[string]interface{}{
-				"domain": domain.Name,
-			}
-			paramsJSON, _ := json.Marshal(agentParams)
-
-			_, err = sharedAgent.Call(ctx, "domain.disable", json.RawMessage(paramsJSON))
+			domain, err := client.UpdateDomain(ctx, id, req)
 			if err != nil {
-				return fmt.Errorf("agent disable domain: %w", err)
-			}
-
-			// Update DB
-			domain.IsEnabled = false
-			domain.UpdatedAt = time.Now()
-			if err := domainRepo.Update(ctx, domain); err != nil {
-				return fmt.Errorf("update domain: %w", err)
+				return fmt.Errorf("disable domain: %w", err)
 			}
 
 			fmt.Printf("Domain %s disabled\n", domain.Name)
@@ -279,21 +205,22 @@ func newDomainDeleteCmd() *cobra.Command {
 		Use:     "delete <domain-id>",
 		Short:   "Delete a domain",
 		Args:    cobra.ExactArgs(1),
-		PreRunE: requireDBAndAgent,
+		PreRunE: requireConfig,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
-			domainRepo := domainRepoFromDB()
+			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
+			if err != nil {
+				return fmt.Errorf("create api client: %w", err)
+			}
 
-			domain, err := domainRepo.FindByID(ctx, id)
+			// Fetch domain to get the name for confirmation
+			domain, err := client.GetDomain(ctx, id)
 			if err != nil {
 				return fmt.Errorf("fetch domain: %w", err)
-			}
-			if domain == nil {
-				return fmt.Errorf("domain not found: %s", id)
 			}
 
 			// Confirm deletion unless --force is set
@@ -307,19 +234,7 @@ func newDomainDeleteCmd() *cobra.Command {
 				}
 			}
 
-			// Call agent to remove the domain
-			agentParams := map[string]interface{}{
-				"domain": domain.Name,
-			}
-			paramsJSON, _ := json.Marshal(agentParams)
-
-			_, err = sharedAgent.Call(ctx, "domain.delete", json.RawMessage(paramsJSON))
-			if err != nil {
-				return fmt.Errorf("agent delete domain: %w", err)
-			}
-
-			// Soft-delete the DB row
-			if err := domainRepo.Delete(ctx, id); err != nil {
+			if err := client.DeleteDomain(ctx, id); err != nil {
 				return fmt.Errorf("delete domain: %w", err)
 			}
 

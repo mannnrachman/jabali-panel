@@ -9,21 +9,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/crypto/bcrypt"
 
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/clientapi"
 )
-
-// Suppress unused import lint — repository is used via userRepo() in root.go.
-
-
-func requireDB(cmd *cobra.Command, args []string) error {
-	if err := initConfig(); err != nil {
-		return err
-	}
-	return initDB()
-}
 
 func newUserCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -45,23 +33,31 @@ func newUserListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
 		Short:   "List all users",
-		PreRunE: requireDB,
+		PreRunE: requireConfig,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
-			users, _, err := userRepo().List(ctx, 0, 1000)
+			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
+			if err != nil {
+				return fmt.Errorf("create api client: %w", err)
+			}
+
+			resp, err := client.ListUsers(ctx, 1, 1000)
 			if err != nil {
 				return fmt.Errorf("list users: %w", err)
 			}
 
 			if jsonOutput {
-				return printJSON(users)
+				return printJSON(map[string]interface{}{
+					"users": resp.Data,
+					"total": resp.Total,
+				})
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "ID\tEMAIL\tNAME\tROLE\tCREATED")
-			for _, u := range users {
+			for _, u := range resp.Data {
 				role := "user"
 				if u.IsAdmin {
 					role = "admin"
@@ -92,42 +88,37 @@ func newUserCreateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "create",
 		Short:   "Create a new user",
-		PreRunE: requireDB,
+		PreRunE: requireConfig,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if email == "" || password == "" {
 				return fmt.Errorf("--email and --password are required")
 			}
-			if len(password) < 10 {
-				return fmt.Errorf("password must be at least 10 characters")
-			}
-
-			hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-			if err != nil {
-				return fmt.Errorf("hash password: %w", err)
-			}
-
-			now := time.Now().UTC()
-			u := &models.User{
-				ID:           ids.NewULID(),
-				Email:        email,
-				PasswordHash: string(hash),
-				NameFirst:    nameFirst,
-				NameLast:     nameLast,
-				IsAdmin:      isAdmin,
-				CreatedAt:    now,
-				UpdatedAt:    now,
-			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
-			if err := userRepo().Create(ctx, u); err != nil {
+
+			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
+			if err != nil {
+				return fmt.Errorf("create api client: %w", err)
+			}
+
+			req := &clientapi.CreateUserRequest{
+				Email:     email,
+				Password:  password,
+				NameFirst: nameFirst,
+				NameLast:  nameLast,
+				IsAdmin:   isAdmin,
+			}
+
+			user, err := client.CreateUser(ctx, req)
+			if err != nil {
 				return fmt.Errorf("create user: %w", err)
 			}
 
 			if jsonOutput {
-				return printJSON(u)
+				return printJSON(user)
 			}
-			fmt.Printf("Created user %s (%s)\n", u.ID, u.Email)
+			fmt.Printf("Created user %s (%s)\n", user.ID, user.Email)
 			return nil
 		},
 	}
@@ -156,48 +147,42 @@ func newUserEditCmd() *cobra.Command {
 		Use:     "edit <user-id>",
 		Short:   "Edit an existing user",
 		Args:    cobra.ExactArgs(1),
-		PreRunE: requireDB,
+		PreRunE: requireConfig,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			userID := args[0]
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
-			repo := userRepo()
-			u, err := repo.FindByID(ctx, userID)
+			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
 			if err != nil {
-				return fmt.Errorf("find user: %w", err)
+				return fmt.Errorf("create api client: %w", err)
 			}
 
+			req := &clientapi.UpdateUserRequest{}
 			changed := false
+
 			if email != "" {
-				u.Email = email
+				req.Email = &email
 				changed = true
 			}
 			if cmd.Flags().Changed("name-first") {
-				u.NameFirst = nameFirst
+				req.NameFirst = &nameFirst
 				changed = true
 			}
 			if cmd.Flags().Changed("name-last") {
-				u.NameLast = nameLast
-				changed = true
-			}
-			if setAdmin == "true" {
-				u.IsAdmin = true
-				changed = true
-			} else if setAdmin == "false" {
-				u.IsAdmin = false
+				req.NameLast = &nameLast
 				changed = true
 			}
 			if password != "" {
-				if len(password) < 10 {
-					return fmt.Errorf("password must be at least 10 characters")
-				}
-				hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-				if err != nil {
-					return fmt.Errorf("hash password: %w", err)
-				}
-				u.PasswordHash = string(hash)
+				req.Password = &password
+				changed = true
+			}
+			if setAdmin == "true" {
+				req.IsAdmin = boolPtr(true)
+				changed = true
+			} else if setAdmin == "false" {
+				req.IsAdmin = boolPtr(false)
 				changed = true
 			}
 
@@ -205,15 +190,15 @@ func newUserEditCmd() *cobra.Command {
 				return fmt.Errorf("no changes specified")
 			}
 
-			u.UpdatedAt = time.Now().UTC()
-			if err := repo.Update(ctx, u); err != nil {
+			user, err := client.UpdateUser(ctx, userID, req)
+			if err != nil {
 				return fmt.Errorf("update user: %w", err)
 			}
 
 			if jsonOutput {
-				return printJSON(u)
+				return printJSON(user)
 			}
-			fmt.Printf("Updated user %s (%s)\n", u.ID, u.Email)
+			fmt.Printf("Updated user %s (%s)\n", user.ID, user.Email)
 			return nil
 		},
 	}
@@ -236,21 +221,27 @@ func newUserDeleteCmd() *cobra.Command {
 		Use:     "delete <user-id>",
 		Short:   "Delete a user",
 		Args:    cobra.ExactArgs(1),
-		PreRunE: requireDB,
+		PreRunE: requireConfig,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			userID := args[0]
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
-			repo := userRepo()
-			u, err := repo.FindByID(ctx, userID)
+			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
 			if err != nil {
-				return fmt.Errorf("find user: %w", err)
+				return fmt.Errorf("create api client: %w", err)
 			}
 
+			// Fetch user to get email for confirmation
+			user, err := client.GetUser(ctx, userID)
+			if err != nil {
+				return fmt.Errorf("fetch user: %w", err)
+			}
+
+			// Confirm deletion unless --force is set
 			if !force {
-				fmt.Printf("Delete user %s (%s)? [y/N]: ", u.ID, u.Email)
+				fmt.Printf("Delete user %s (%s)? [y/N]: ", user.ID, user.Email)
 				var confirm string
 				fmt.Scanln(&confirm)
 				if confirm != "y" && confirm != "Y" {
@@ -259,14 +250,14 @@ func newUserDeleteCmd() *cobra.Command {
 				}
 			}
 
-			if err := repo.Delete(ctx, userID); err != nil {
+			if err := client.DeleteUser(ctx, userID); err != nil {
 				return fmt.Errorf("delete user: %w", err)
 			}
 
 			if jsonOutput {
 				return printJSON(map[string]string{"deleted": userID})
 			}
-			fmt.Printf("Deleted user %s (%s)\n", u.ID, u.Email)
+			fmt.Printf("Deleted user %s (%s)\n", user.ID, user.Email)
 			return nil
 		},
 	}

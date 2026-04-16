@@ -86,8 +86,9 @@ type AuthConfig struct {
 // AgentConfig holds the Unix-socket path and per-call timeout for the
 // jabali-agent daemon.
 type AgentConfig struct {
-	SocketPath string        `toml:"socket_path"`
-	Timeout    time.Duration `toml:"timeout"`
+	SocketPath         string        `toml:"socket_path"`
+	Timeout            time.Duration `toml:"timeout"`
+	ReconcilerInterval time.Duration `toml:"reconciler_interval"`
 }
 
 // CORSConfig holds the SPA origin whitelist.
@@ -117,7 +118,8 @@ func Defaults() *Config {
 			// 30s: generous for most commands, short enough that a wedged
 			// agent doesn't hold an HTTP request hostage for minutes.
 			// Per-call ctx.Deadline() overrides this when tighter.
-			Timeout: 30 * time.Second,
+			Timeout:            30 * time.Second,
+			ReconcilerInterval: 60 * time.Second,
 		},
 	}
 }

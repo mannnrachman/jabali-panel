@@ -16,6 +16,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/app"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/db"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -107,6 +108,19 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.Packages = packageRepo
 		deps.Domains = domainRepo
 
+		// Reconciler: database as source of truth, agent state as derived state.
+		rec := reconciler.New(
+			domainRepo,
+			userRepo,
+			sharedAgent,
+			sharedLog,
+			reconciler.Config{
+				Interval:  cfg.Agent.ReconcilerInterval,
+				QueueLen:  100,
+			},
+		)
+		deps.Reconciler = rec
+
 		// Admin bootstrap.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		res, err := auth.BootstrapAdmin(ctx, userRepo, auth.BootstrapOptions{
@@ -138,6 +152,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 		IdleTimeout:       idleTimeout,
 	}
 
+	// Start reconciler background loop if it's configured.
+	ctx, cancel := context.WithCancel(context.Background())
+	if deps.Reconciler != nil {
+		go deps.Reconciler.Start(ctx)
+	}
+
 	serveErr := make(chan error, 1)
 	if useTLS {
 		log.Info("TLS enabled", "cert", cfg.Server.TLSCert, "key", cfg.Server.TLSKey)
@@ -153,14 +173,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	select {
 	case err := <-serveErr:
+		cancel() // Stop reconciler on any serve error
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
 	case sig := <-stop:
 		log.Info("shutdown signal", "signal", sig.String())
-		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancel()
-		if err := srv.Shutdown(ctx); err != nil {
+		cancel() // Stop reconciler
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer shutdownCancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
 			return err
 		}
 	}

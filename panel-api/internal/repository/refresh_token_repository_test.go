@@ -34,7 +34,7 @@ func TestRefreshTokenRepository_Create(t *testing.T) {
 	mock.ExpectExec(`INSERT INTO .refresh_tokens.`).
 		WithArgs(
 			tok.ID, tok.UserID, tok.DeviceID, tok.TokenHash,
-			tok.ExpiresAt, nil, nil, sqlmock.AnyArg(),
+			tok.ExpiresAt, nil, nil, nil, sqlmock.AnyArg(),
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
@@ -68,11 +68,11 @@ func TestRefreshTokenRepository_Rotate_HappyPath(t *testing.T) {
 		WithArgs(oldHash, 1).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "user_id", "device_id", "token_hash", "expires_at",
-			"revoked_at", "last_used_at", "created_at",
+			"revoked_at", "last_used_at", "impersonated_by", "created_at",
 		}).AddRow(
 			"01HRCWR7CKMCBEDF2PYQ7G0D2K",
 			newTok.UserID, "dev-1", oldHash,
-			now.Add(time.Hour), nil, nil, now,
+			now.Add(time.Hour), nil, nil, nil, now,
 		))
 
 	// UPDATE revoked_at
@@ -84,7 +84,7 @@ func TestRefreshTokenRepository_Rotate_HappyPath(t *testing.T) {
 	mock.ExpectExec(`INSERT INTO .refresh_tokens.`).
 		WithArgs(
 			newTok.ID, newTok.UserID, newTok.DeviceID, newTok.TokenHash,
-			newTok.ExpiresAt, nil, nil, sqlmock.AnyArg(),
+			newTok.ExpiresAt, nil, nil, nil, sqlmock.AnyArg(),
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
@@ -107,10 +107,10 @@ func TestRefreshTokenRepository_Rotate_AlreadyRevoked(t *testing.T) {
 		WithArgs("old-hash", 1).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "user_id", "device_id", "token_hash", "expires_at",
-			"revoked_at", "last_used_at", "created_at",
+			"revoked_at", "last_used_at", "impersonated_by", "created_at",
 		}).AddRow(
 			"01HRCWR7CKMCBEDF2PYQ7G0D2K", "u", "dev", "old-hash",
-			time.Now().UTC().Add(time.Hour), revoked, nil, time.Now().UTC(),
+			time.Now().UTC().Add(time.Hour), revoked, nil, nil, time.Now().UTC(),
 		))
 	// No UPDATE / INSERT expected — repo rolls back.
 	mock.ExpectRollback()

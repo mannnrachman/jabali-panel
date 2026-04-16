@@ -24,10 +24,10 @@ func TestRefreshTokenRepository_FindByHash_Found(t *testing.T) {
 		WithArgs("abc", 1).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "user_id", "device_id", "token_hash", "expires_at",
-			"revoked_at", "last_used_at", "created_at",
+			"revoked_at", "last_used_at", "impersonated_by", "created_at",
 		}).AddRow(
 			"01HRCWR7CKMCBEDF2PYQ7G0D2K", "u1", "dev", "abc",
-			now.Add(time.Hour), nil, nil, now,
+			now.Add(time.Hour), nil, nil, nil, now,
 		))
 
 	tok, err := repo.FindByHash(context.Background(), "abc")

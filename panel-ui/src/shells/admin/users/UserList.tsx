@@ -6,6 +6,7 @@
 import { useTable, EditButton, CreateButton } from "@refinedev/antd";
 import { Space, Table, Tag, Typography } from "antd";
 import { UserDeleteAction } from "./UserDeleteAction";
+import { UserImpersonateAction } from "./UserImpersonateAction";
 
 type User = {
   id: string;
@@ -61,6 +62,11 @@ export const UserList = () => {
           dataIndex="actions"
           render={(_, r) => (
             <Space>
+              <UserImpersonateAction
+                recordItemId={r.id}
+                userEmail={r.email}
+                isAdmin={r.is_admin}
+              />
               <EditButton hideText size="small" recordItemId={r.id} />
               <UserDeleteAction recordItemId={r.id} userEmail={r.email} />
             </Space>

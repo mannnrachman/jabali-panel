@@ -25,6 +25,7 @@ import { Outlet, useLocation, useNavigate } from "react-router";
 import type { MenuProps } from "antd";
 
 import { getIdentity } from "../identity";
+import { ImpersonationBanner } from "../components/ImpersonationBanner";
 import { useEffect, useState } from "react";
 
 const { Header, Sider, Content } = Layout;
@@ -118,6 +119,7 @@ export function AdminLayout() {
             </Button>
           </Dropdown>
         </Header>
+        <ImpersonationBanner />
         <Content style={{ background: "#f5f5f5" }}>
           <Outlet />
         </Content>

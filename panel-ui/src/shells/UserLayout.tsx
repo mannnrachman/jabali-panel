@@ -18,6 +18,7 @@ import type { MenuProps } from "antd";
 
 import { getIdentity } from "../identity";
 import { useEffect, useState } from "react";
+import { ImpersonationBanner } from "../components/ImpersonationBanner";
 
 const { Header, Sider, Content } = Layout;
 
@@ -103,6 +104,7 @@ export function UserLayout() {
             </Button>
           </Dropdown>
         </Header>
+        <ImpersonationBanner />
         <Content style={{ background: "#f5f5f5" }}>
           <Outlet />
         </Content>

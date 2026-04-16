@@ -10,6 +10,7 @@ export type Identity = {
   id: string;
   email: string;
   isAdmin: boolean;
+  impersonatedBy: string | null;
 };
 
 let cached: Identity | null = null;
@@ -33,11 +34,13 @@ export async function getIdentity(): Promise<Identity | null> {
         id: string;
         email: string;
         is_admin: boolean;
+        impersonated_by?: string | null;
       }>("/me");
       cached = {
         id: resp.data.id,
         email: resp.data.email,
         isAdmin: resp.data.is_admin,
+        impersonatedBy: resp.data.impersonated_by ?? null,
       };
       return cached;
     } catch {

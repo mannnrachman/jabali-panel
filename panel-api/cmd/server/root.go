@@ -55,6 +55,7 @@ func newRootCmd() *cobra.Command {
 		newSystemCmd(),
 		newMigrateCmd(),
 		newUpdateCmd(),
+		newReconcileCmd(),
 	)
 
 	return cmd

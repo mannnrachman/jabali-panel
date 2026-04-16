@@ -145,6 +145,15 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		if deps.Agent != nil {
 			api.RegisterSystemRoutes(v1, deps.Agent)
 		}
+
+		// Admin routes
+		if deps.Reconciler != nil {
+			admin := v1.Group("/admin", middleware.RequireAdmin())
+			api.RegisterReconcileRoutes(admin, &api.ReconcileHandlerConfig{
+				Reconciler: deps.Reconciler,
+				Log:        deps.Log,
+			})
+		}
 	}
 
 	// Static SPA: owns r.NoRoute — serves embedded panel-ui/dist for

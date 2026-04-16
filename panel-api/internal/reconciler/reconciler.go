@@ -195,6 +195,25 @@ func (r *Reconciler) ReconcileOne(ctx context.Context, domainID string) error {
 	return nil
 }
 
+// ReconcileAllForce forces regeneration of all domains from the database,
+// regardless of their current state on the agent. Every domain gets a fresh
+// domain.create call to ensure all configurations are up-to-date.
+func (r *Reconciler) ReconcileAllForce(ctx context.Context) error {
+	allDomains, _, err := r.domains.List(ctx, 0, 10000)
+	if err != nil {
+		return fmt.Errorf("failed to list domains: %w", err)
+	}
+
+	for i := range allDomains {
+		d := &allDomains[i]
+		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		r.createDomainOnAgent(agentCtx, d)
+		cancel()
+	}
+
+	return nil
+}
+
 // createDomainOnAgent calls the agent to provision a domain.
 // Logs errors but doesn't return them so reconciliation can continue.
 func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Domain) {

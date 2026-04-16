@@ -381,6 +381,78 @@ func TestReconcileOne_PassesCustomDirectives(t *testing.T) {
 	require.Equal(t, customDirectives, params["custom_directives"])
 }
 
+func TestReconcileAllForce_RerendersEveryDomain(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+
+	// Setup: one user with multiple domains (enabled and disabled)
+	now := time.Now().UTC()
+	username := "testuser"
+	user := &models.User{
+		ID:       "user-1",
+		Email:    "test@example.com",
+		Username: &username,
+	}
+	userRepo.users[user.ID] = user
+
+	domain1 := &models.Domain{
+		ID:        "domain-1",
+		UserID:    user.ID,
+		Name:      "enabled.com",
+		DocRoot:   "/home/testuser/domains/enabled.com/public_html",
+		IsEnabled: true,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	domain2 := &models.Domain{
+		ID:        "domain-2",
+		UserID:    user.ID,
+		Name:      "disabled.com",
+		DocRoot:   "/home/testuser/domains/disabled.com/public_html",
+		IsEnabled: false,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	domain3 := &models.Domain{
+		ID:        "domain-3",
+		UserID:    user.ID,
+		Name:      "another.com",
+		DocRoot:   "/home/testuser/domains/another.com/public_html",
+		IsEnabled: true,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	domainRepo.domains[domain1.ID] = domain1
+	domainRepo.domains[domain2.ID] = domain2
+	domainRepo.domains[domain3.ID] = domain3
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second})
+
+	// Run ReconcileAllForce
+	err := r.ReconcileAllForce(ctx)
+	require.NoError(t, err)
+
+	// Verify that domain.create was called 3 times (one for each domain)
+	require.Len(t, agent.calls, 3)
+	for i := 0; i < 3; i++ {
+		require.Equal(t, "domain.create", agent.calls[i].method)
+	}
+
+	// Verify all three domains appear in the calls
+	domainNames := make(map[string]bool)
+	for _, call := range agent.calls {
+		params := call.params.(map[string]any)
+		domainNames[params["domain"].(string)] = true
+	}
+	require.True(t, domainNames["enabled.com"])
+	require.True(t, domainNames["disabled.com"])
+	require.True(t, domainNames["another.com"])
+}
+
 func TestSchedule_NonBlocking(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 

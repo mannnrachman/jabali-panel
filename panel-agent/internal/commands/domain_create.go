@@ -5,11 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html/template"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"text/template"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 )
@@ -127,6 +128,19 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
+	// Write a default index.html so a fresh domain serves a welcome
+	// page instead of nginx's 403 on empty directory. Idempotent: if
+	// the file already exists (e.g. the user uploaded real content, or
+	// the reconciler re-ran domain.create), leave it alone.
+	indexPath := filepath.Join(p.DocRoot, "index.html")
+	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
+		if werr := writeDefaultIndex(ctx, indexPath, p.Username, p.Domain, p.DocRoot); werr != nil {
+			// non-fatal — the vhost still works, it'll just 403 until
+			// the user uploads content.
+			log.Printf("domain.create: failed to write default index.html for %s: %v", p.Domain, werr)
+		}
+	}
+
 	// Generate vhost configuration
 	tmpl, err := template.New("vhost").Parse(vhostTemplate)
 	if err != nil {
@@ -206,6 +220,76 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		DocRoot:    p.DocRoot,
 		ConfigPath: configPath,
 	}, nil
+}
+
+func writeDefaultIndex(ctx context.Context, path, username, domain, docRoot string) error {
+	const tmpl = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{.Domain}}</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 640px; margin: 4rem auto; padding: 0 1.25rem; color: #222; line-height: 1.5; }
+    h1 { color: #1976d2; margin-bottom: 0.25em; }
+    .muted { color: #666; margin-top: 0; }
+    code { background: #f5f5f5; padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.92em; font-family: ui-monospace, Menlo, Consolas, monospace; }
+    hr { border: none; border-top: 1px solid #eee; margin: 2rem 0; }
+    small { color: #888; }
+  </style>
+</head>
+<body>
+  <h1>{{.Domain}}</h1>
+  <p class="muted">This domain is hosted by Jabali Panel. The site is provisioned and waiting for your content.</p>
+  <hr>
+  <p>Upload your files to the document root:</p>
+  <p><code>{{.DocRoot}}</code></p>
+  <p><small>Logged in as <code>{{.Username}}</code>.</small></p>
+</body>
+</html>
+`
+
+	t, err := template.New("index").Parse(tmpl)
+	if err != nil {
+		return fmt.Errorf("parse template: %w", err)
+	}
+
+	// Write to a temp file first, then rename — avoids a half-written
+	// index.html if we crash mid-write.
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".index.*.html.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // cleanup if rename fails
+
+	data := struct {
+		Domain, Username, DocRoot string
+	}{Domain: domain, Username: username, DocRoot: docRoot}
+	if err := t.Execute(tmp, data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("execute template: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp: %w", err)
+	}
+
+	// Set permissions + ownership before rename so the final file
+	// is correct from the first ls. 0644 for world-readable by nginx.
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		return fmt.Errorf("chmod: %w", err)
+	}
+
+	// Chown to <user>:www-data so it matches the docroot's ownership.
+	// Using exec.Command since os.Chown needs numeric IDs we don't have.
+	if err := exec.CommandContext(ctx, "chown", username+":www-data", tmpName).Run(); err != nil {
+		return fmt.Errorf("chown: %w", err)
+	}
+
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("rename: %w", err)
+	}
+	return nil
 }
 
 func init() {

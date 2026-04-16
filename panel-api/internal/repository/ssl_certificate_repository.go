@@ -17,6 +17,8 @@ type SSLCertificateRepository interface {
 	FindByDomainID(ctx context.Context, domainID string) (*models.SSLCertificate, error)
 	UpdateStatus(ctx context.Context, id string, status string, lastError *string) error
 	UpdateAfterIssuance(ctx context.Context, id string, issuedAt, expiresAt time.Time, certPath, keyPath string) error
+	UpdateAfterRenewal(ctx context.Context, id string, issuedAt, expiresAt time.Time, certPath, keyPath string) error
+	MarkRevoked(ctx context.Context, id string) error
 	DeleteByDomainID(ctx context.Context, domainID string) error
 	ListDueForRenewal(ctx context.Context, within time.Duration) ([]models.SSLCertificate, error)
 }
@@ -69,6 +71,39 @@ func (r *sslCertificateRepo) UpdateAfterIssuance(ctx context.Context, id string,
 			"key_path":    keyPath,
 			"status":      models.SSLStatusIssued,
 			"updated_at":  time.Now(),
+		}).Error
+}
+
+// UpdateAfterRenewal does what UpdateAfterIssuance does plus bumps the
+// renewal_count and stamps last_renewed_at. Used by the reconciler after a
+// successful ssl.renew agent call.
+func (r *sslCertificateRepo) UpdateAfterRenewal(ctx context.Context, id string, issuedAt, expiresAt time.Time, certPath, keyPath string) error {
+	now := time.Now()
+	return r.db.WithContext(ctx).Model(&models.SSLCertificate{}).Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"issued_at":       issuedAt,
+			"expires_at":      expiresAt,
+			"cert_path":       certPath,
+			"key_path":        keyPath,
+			"status":          models.SSLStatusIssued,
+			"last_renewed_at": now,
+			"renewal_count":   gorm.Expr("renewal_count + 1"),
+			"last_error":      nil,
+			"updated_at":      now,
+		}).Error
+}
+
+// MarkRevoked flips status='revoked' and clears cert/key paths + last_error.
+// Called after a successful ssl.revoke; the nginx vhost regen that runs next
+// will read the cleared paths and drop the 443 server block.
+func (r *sslCertificateRepo) MarkRevoked(ctx context.Context, id string) error {
+	return r.db.WithContext(ctx).Model(&models.SSLCertificate{}).Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"status":     models.SSLStatusRevoked,
+			"cert_path":  nil,
+			"key_path":   nil,
+			"last_error": nil,
+			"updated_at": time.Now(),
 		}).Error
 }
 

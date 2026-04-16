@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/dnscompile"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
@@ -26,6 +27,7 @@ type Reconciler struct {
 	dnsRecords     repository.DNSRecordRepository
 	sslCerts       repository.SSLCertificateRepository
 	serverSettings repository.ServerSettingsRepository
+	cfg            *config.Config
 	agent          agent.AgentInterface
 	log            *slog.Logger
 	interval       time.Duration
@@ -37,6 +39,13 @@ type Reconciler struct {
 // Call this before using SSL certificate reconciliation.
 func (r *Reconciler) WithSSLCerts(sslCerts repository.SSLCertificateRepository) *Reconciler {
 	r.sslCerts = sslCerts
+	return r
+}
+
+// WithConfig injects the application config so the reconciler can read
+// runtime flags (e.g. cfg.ACME.StagingOnly) during SSL convergence.
+func (r *Reconciler) WithConfig(cfg *config.Config) *Reconciler {
+	r.cfg = cfg
 	return r
 }
 
@@ -209,6 +218,12 @@ func (r *Reconciler) ReconcileOne(ctx context.Context, domainID string) error {
 		return nil
 	}
 
+	// Converge SSL state first so createDomainOnAgent picks up any
+	// newly-issued (or revoked) cert paths when it regenerates the vhost.
+	sslCtx, sslCancel := context.WithTimeout(ctx, 2*time.Minute)
+	r.reconcileSSLForDomain(sslCtx, domain)
+	sslCancel()
+
 	// Always call domain.create with is_enabled to converge to desired state.
 	// The agent handles both enabled and disabled via the is_enabled parameter.
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -229,6 +244,10 @@ func (r *Reconciler) ReconcileAllForce(ctx context.Context) error {
 
 	for i := range allDomains {
 		d := &allDomains[i]
+		sslCtx, sslCancel := context.WithTimeout(ctx, 2*time.Minute)
+		r.reconcileSSLForDomain(sslCtx, d)
+		sslCancel()
+
 		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		r.createDomainOnAgent(agentCtx, d)
 		cancel()
@@ -429,4 +448,211 @@ func linuxUserFromEmail(email string) string {
 		}
 	}
 	return email
+}
+
+// sslIssueResult mirrors the shape panel-agent/internal/commands/ssl_issue.go
+// returns on success. Timestamps come back as RFC3339 strings.
+type sslIssueResult struct {
+	CertPath  string `json:"cert_path"`
+	KeyPath   string `json:"key_path"`
+	IssuedAt  string `json:"issued_at"`
+	ExpiresAt string `json:"expires_at"`
+	Staging   bool   `json:"staging"`
+}
+
+// reconcileSSLForDomain converges the ssl_certificates row for a domain to
+// reflect the state the DB has declared:
+//   - ssl_enabled && (no row | pending | failed)  → call ssl.issue
+//   - ssl_enabled && status='renewing'            → call ssl.renew
+//   - !ssl_enabled && status='issued'             → call ssl.revoke
+//
+// On success the row is updated (paths + timestamps + status). On failure
+// status flips to 'failed' with last_error set. Errors are logged, never
+// returned — SSL failures must not block the rest of the reconciler loop.
+func (r *Reconciler) reconcileSSLForDomain(ctx context.Context, domain *models.Domain) {
+	if r.sslCerts == nil || r.serverSettings == nil {
+		return // SSL feature not wired — skip
+	}
+
+	cert, err := r.sslCerts.FindByDomainID(ctx, domain.ID)
+	if err != nil && !errors.Is(err, repository.ErrNotFound) {
+		r.log.Error("ssl: find cert failed", "domain", domain.Name, "err", err)
+		return
+	}
+
+	switch {
+	case domain.SSLEnabled && needsIssue(cert):
+		r.sslIssueForDomain(ctx, domain, cert)
+	case domain.SSLEnabled && cert != nil && cert.Status == models.SSLStatusRenewing:
+		r.sslRenewForDomain(ctx, domain, cert)
+	case !domain.SSLEnabled && cert != nil && cert.Status == models.SSLStatusIssued:
+		r.sslRevokeForDomain(ctx, domain, cert)
+	}
+}
+
+// needsIssue returns true when a certificate should be issued fresh: either
+// there is no cert row yet, or the row is in a state that wants to try again
+// (pending after API enable, or failed from a prior attempt).
+func needsIssue(cert *models.SSLCertificate) bool {
+	if cert == nil {
+		return true
+	}
+	return cert.Status == models.SSLStatusPending || cert.Status == models.SSLStatusFailed
+}
+
+// sslIssueForDomain issues a new certificate by calling the agent. If no
+// cert row exists yet, one is created first so we have an id to write back
+// status + paths to.
+func (r *Reconciler) sslIssueForDomain(ctx context.Context, domain *models.Domain, cert *models.SSLCertificate) {
+	srv, err := r.serverSettings.Get(ctx)
+	if err != nil || srv == nil {
+		r.log.Error("ssl: read server_settings failed", "domain", domain.Name, "err", err)
+		return
+	}
+
+	// Ensure a cert row exists so we have an id to thread status updates through.
+	if cert == nil {
+		cert = &models.SSLCertificate{
+			ID:        ids.NewULID(),
+			DomainID:  domain.ID,
+			Status:    models.SSLStatusPending,
+			CreatedAt: time.Now().UTC(),
+			UpdatedAt: time.Now().UTC(),
+		}
+		if err := r.sslCerts.Create(ctx, cert); err != nil {
+			r.log.Error("ssl: create cert row failed", "domain", domain.Name, "err", err)
+			return
+		}
+	}
+
+	if srv.AdminEmail == "" {
+		msg := "server_settings.admin_email not set"
+		_ = r.sslCerts.UpdateStatus(ctx, cert.ID, models.SSLStatusFailed, &msg)
+		r.log.Warn("ssl: cannot issue without admin email", "domain", domain.Name)
+		return
+	}
+
+	staging := false
+	if r.cfg != nil {
+		staging = r.cfg.ACME.StagingOnly
+	}
+
+	params := map[string]any{
+		"domain":  domain.Name,
+		"webroot": domain.DocRoot,
+		"email":   srv.AdminEmail,
+		"staging": staging,
+	}
+
+	raw, err := r.agent.Call(ctx, "ssl.issue", params)
+	if err != nil {
+		msg := firstLine(err.Error())
+		_ = r.sslCerts.UpdateStatus(ctx, cert.ID, models.SSLStatusFailed, &msg)
+		r.log.Error("ssl: ssl.issue failed", "domain", domain.Name, "err", err)
+		return
+	}
+
+	issued, expires, ok := parseSSLIssueResult(raw, r.log, domain.Name)
+	if !ok {
+		msg := "agent returned unparseable ssl.issue result"
+		_ = r.sslCerts.UpdateStatus(ctx, cert.ID, models.SSLStatusFailed, &msg)
+		return
+	}
+
+	var res sslIssueResult
+	_ = json.Unmarshal(raw, &res)
+	if err := r.sslCerts.UpdateAfterIssuance(ctx, cert.ID, issued, expires, res.CertPath, res.KeyPath); err != nil {
+		r.log.Error("ssl: write issuance failed", "domain", domain.Name, "err", err)
+		return
+	}
+	r.log.Info("ssl: issued", "domain", domain.Name, "expires_at", expires.Format(time.RFC3339))
+}
+
+// sslRenewForDomain runs an ACME renewal and updates the cert row on success.
+func (r *Reconciler) sslRenewForDomain(ctx context.Context, domain *models.Domain, cert *models.SSLCertificate) {
+	raw, err := r.agent.Call(ctx, "ssl.renew", map[string]any{"domain": domain.Name})
+	if err != nil {
+		msg := firstLine(err.Error())
+		_ = r.sslCerts.UpdateStatus(ctx, cert.ID, models.SSLStatusFailed, &msg)
+		r.log.Error("ssl: ssl.renew failed", "domain", domain.Name, "err", err)
+		return
+	}
+	issued, expires, ok := parseSSLIssueResult(raw, r.log, domain.Name)
+	if !ok {
+		msg := "agent returned unparseable ssl.renew result"
+		_ = r.sslCerts.UpdateStatus(ctx, cert.ID, models.SSLStatusFailed, &msg)
+		return
+	}
+	var res sslIssueResult
+	_ = json.Unmarshal(raw, &res)
+	if err := r.sslCerts.UpdateAfterRenewal(ctx, cert.ID, issued, expires, res.CertPath, res.KeyPath); err != nil {
+		r.log.Error("ssl: write renewal failed", "domain", domain.Name, "err", err)
+		return
+	}
+	r.log.Info("ssl: renewed", "domain", domain.Name, "expires_at", expires.Format(time.RFC3339))
+}
+
+// sslRevokeForDomain revokes an issued cert when ssl_enabled flips off.
+func (r *Reconciler) sslRevokeForDomain(ctx context.Context, domain *models.Domain, cert *models.SSLCertificate) {
+	_, err := r.agent.Call(ctx, "ssl.revoke", map[string]any{
+		"domain": domain.Name,
+		"reason": "superseded",
+	})
+	if err != nil {
+		msg := firstLine(err.Error())
+		_ = r.sslCerts.UpdateStatus(ctx, cert.ID, models.SSLStatusFailed, &msg)
+		r.log.Error("ssl: ssl.revoke failed", "domain", domain.Name, "err", err)
+		return
+	}
+	// Mark revoked AND clear paths so createDomainOnAgent stops emitting
+	// the 443 server block next time it runs.
+	if err := r.sslCerts.MarkRevoked(ctx, cert.ID); err != nil {
+		r.log.Error("ssl: mark revoked failed", "domain", domain.Name, "err", err)
+		return
+	}
+	r.log.Info("ssl: revoked", "domain", domain.Name)
+}
+
+// parseSSLIssueResult decodes the agent's ssl.issue / ssl.renew response
+// (which agent.Call delivers as json.RawMessage) and parses the timestamps.
+// Returns ok=false on any parse failure — caller should mark the cert row
+// 'failed' in that case.
+func parseSSLIssueResult(raw json.RawMessage, log *slog.Logger, domain string) (time.Time, time.Time, bool) {
+	var res sslIssueResult
+	if err := json.Unmarshal(raw, &res); err != nil {
+		log.Error("ssl: decode agent result failed", "domain", domain, "err", err)
+		return time.Time{}, time.Time{}, false
+	}
+	issued, err := time.Parse("2006-01-02T15:04:05Z", res.IssuedAt)
+	if err != nil {
+		log.Error("ssl: parse issued_at failed", "domain", domain, "err", err, "value", res.IssuedAt)
+		return time.Time{}, time.Time{}, false
+	}
+	expires, err := time.Parse("2006-01-02T15:04:05Z", res.ExpiresAt)
+	if err != nil {
+		log.Error("ssl: parse expires_at failed", "domain", domain, "err", err, "value", res.ExpiresAt)
+		return time.Time{}, time.Time{}, false
+	}
+	return issued, expires, true
+}
+
+// firstLine returns the first line of s, bounded at 512 bytes so we never
+// stuff a giant stderr dump into last_error.
+func firstLine(s string) string {
+	if i := indexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	if len(s) > 512 {
+		s = s[:512]
+	}
+	return s
+}
+
+func indexByte(s string, b byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == b {
+			return i
+		}
+	}
+	return -1
 }

@@ -107,53 +107,92 @@ prompt_server_settings() {
   sys_ipv4="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1 || true)"
   sys_ipv6="$(ip -6 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1 || true)"
 
+  # `curl | bash` consumes stdin for the script itself, so `read` would
+  # hit EOF instantly. Fix: read from /dev/tty (the controlling terminal)
+  # if one exists. If it doesn't — CI / cloud-init / no TTY at all —
+  # fall back to auto-detected defaults and env-var overrides instead of
+  # silently exiting.
+  local input_fd
+  if [[ -r /dev/tty ]]; then
+    exec 3</dev/tty
+    input_fd=3
+  elif [[ -t 0 ]]; then
+    input_fd=0
+  else
+    input_fd=""
+  fi
+
   echo ""
   echo "=============================================================="
   echo "  Jabali Panel — Server Settings"
   echo "=============================================================="
   echo ""
-  echo "A few details about this server before we start. You can"
-  echo "change any of these later from the admin panel."
-  echo ""
 
   local inp_hostname inp_ipv4 inp_ipv6 inp_ns1_name inp_ns1_ip inp_ns2_name inp_ns2_ip
-  while true; do
-    read -rp "Server hostname [${sys_hostname}]: " inp_hostname
-    inp_hostname="${inp_hostname:-$sys_hostname}"
-    [[ "$inp_hostname" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$ ]] && break
-    _warn "invalid hostname; use letters/digits/dots/hyphens"
-  done
 
-  while true; do
-    read -rp "Public IPv4 [${sys_ipv4}]: " inp_ipv4
-    inp_ipv4="${inp_ipv4:-$sys_ipv4}"
-    [[ "$inp_ipv4" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && break
-    _warn "invalid IPv4"
-  done
-
-  read -rp "Public IPv6 (optional) [${sys_ipv6}]: " inp_ipv6
-  inp_ipv6="${inp_ipv6:-$sys_ipv6}"
-
-  local default_ns1="ns1.${inp_hostname}"
-  read -rp "Primary nameserver name [${default_ns1}]: " inp_ns1_name
-  inp_ns1_name="${inp_ns1_name:-$default_ns1}"
-
-  read -rp "Primary nameserver IPv4 [${inp_ipv4}]: " inp_ns1_ip
-  inp_ns1_ip="${inp_ns1_ip:-$inp_ipv4}"
-
-  echo ""
-  echo "(ns2 is optional — leave blank to skip; you can add it later.)"
-  local default_ns2="ns2.${inp_hostname}"
-  read -rp "Secondary nameserver name (blank to skip) [${default_ns2}]: " inp_ns2_name
-  inp_ns2_name="${inp_ns2_name:-$default_ns2}"
-  if [[ "$inp_ns2_name" == "skip" || "$inp_ns2_name" == "-" ]]; then
-    inp_ns2_name=""
-    inp_ns2_ip=""
-  else
-    read -rp "Secondary nameserver IPv4 (blank to skip): " inp_ns2_ip
-    if [[ -z "$inp_ns2_ip" ]]; then
-      inp_ns2_name=""  # clearing IP clears both — keep them in sync
+  if [[ -z "$input_fd" ]]; then
+    _warn "no TTY available — using auto-detected defaults + env vars."
+    _warn "override via JABALI_HOSTNAME / JABALI_PUBLIC_IPV4 / JABALI_PUBLIC_IPV6 /"
+    _warn "JABALI_NS1_NAME / JABALI_NS1_IPV4 / JABALI_NS2_NAME / JABALI_NS2_IPV4"
+    inp_hostname="${JABALI_HOSTNAME:-$sys_hostname}"
+    inp_ipv4="${JABALI_PUBLIC_IPV4:-$sys_ipv4}"
+    inp_ipv6="${JABALI_PUBLIC_IPV6:-$sys_ipv6}"
+    inp_ns1_name="${JABALI_NS1_NAME:-ns1.${inp_hostname}}"
+    inp_ns1_ip="${JABALI_NS1_IPV4:-$inp_ipv4}"
+    inp_ns2_name="${JABALI_NS2_NAME:-}"
+    inp_ns2_ip="${JABALI_NS2_IPV4:-}"
+    if [[ ! "$inp_hostname" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$ ]]; then
+      _die "no TTY and no valid JABALI_HOSTNAME (detected: '$inp_hostname')"
     fi
+    if [[ ! "$inp_ipv4" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      _die "no TTY and no valid JABALI_PUBLIC_IPV4 (detected: '$inp_ipv4')"
+    fi
+  else
+    echo "A few details about this server before we start. You can"
+    echo "change any of these later from the admin panel."
+    echo ""
+
+    while true; do
+      read -rp "Server hostname [${sys_hostname}]: " -u "$input_fd" inp_hostname || true
+      inp_hostname="${inp_hostname:-$sys_hostname}"
+      [[ "$inp_hostname" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$ ]] && break
+      _warn "invalid hostname; use letters/digits/dots/hyphens"
+    done
+
+    while true; do
+      read -rp "Public IPv4 [${sys_ipv4}]: " -u "$input_fd" inp_ipv4 || true
+      inp_ipv4="${inp_ipv4:-$sys_ipv4}"
+      [[ "$inp_ipv4" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && break
+      _warn "invalid IPv4"
+    done
+
+    read -rp "Public IPv6 (optional) [${sys_ipv6}]: " -u "$input_fd" inp_ipv6 || true
+    inp_ipv6="${inp_ipv6:-$sys_ipv6}"
+
+    local default_ns1="ns1.${inp_hostname}"
+    read -rp "Primary nameserver name [${default_ns1}]: " -u "$input_fd" inp_ns1_name || true
+    inp_ns1_name="${inp_ns1_name:-$default_ns1}"
+
+    read -rp "Primary nameserver IPv4 [${inp_ipv4}]: " -u "$input_fd" inp_ns1_ip || true
+    inp_ns1_ip="${inp_ns1_ip:-$inp_ipv4}"
+
+    echo ""
+    echo "(ns2 is optional — leave blank to skip; you can add it later.)"
+    local default_ns2="ns2.${inp_hostname}"
+    read -rp "Secondary nameserver name (blank to skip) [${default_ns2}]: " -u "$input_fd" inp_ns2_name || true
+    inp_ns2_name="${inp_ns2_name:-$default_ns2}"
+    if [[ "$inp_ns2_name" == "skip" || "$inp_ns2_name" == "-" ]]; then
+      inp_ns2_name=""
+      inp_ns2_ip=""
+    else
+      read -rp "Secondary nameserver IPv4 (blank to skip): " -u "$input_fd" inp_ns2_ip || true
+      if [[ -z "$inp_ns2_ip" ]]; then
+        inp_ns2_name=""  # clearing IP clears both — keep them in sync
+      fi
+    fi
+
+    # Close the TTY FD so we don't leak it to child processes.
+    [[ "$input_fd" == "3" ]] && exec 3<&-
   fi
 
   # Apply hostname at the OS layer now so later steps see the right name.

@@ -1,5 +1,5 @@
 import { useTable } from "@refinedev/antd";
-import { DeleteButton, EditButton } from "@refinedev/antd";
+import { DeleteButton } from "@refinedev/antd";
 import { PlusSquareOutlined } from "@ant-design/icons";
 import { Button, Space, Table, Tag, Typography } from "antd";
 import { useNavigate } from "react-router";
@@ -61,10 +61,7 @@ export const UserDomainList = () => {
           title="Actions"
           dataIndex="actions"
           render={(_, r) => (
-            <Space>
-              <EditButton hideText size="small" recordItemId={r.id} />
-              <DeleteButton hideText size="small" recordItemId={r.id} />
-            </Space>
+            <DeleteButton hideText size="small" recordItemId={r.id} />
           )}
         />
       </Table>

@@ -139,11 +139,11 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 		}
 	}
 
-	// 2. Disabled DB domain that IS in agent set -> call domain.disable
+	// 2. Disabled DB domain that IS in agent set -> call domain.create with is_enabled=false
 	for name, domain := range disabledDomains {
 		if agentSites[name] {
 			r.log.Info("reconcile: disabling unwanted domain", "domain", name)
-			r.disableDomainOnAgent(ctx, domain)
+			r.createDomainOnAgent(ctx, domain)
 		}
 	}
 
@@ -178,24 +178,17 @@ func (r *Reconciler) ReconcileOne(ctx context.Context, domainID string) error {
 	domain, err := r.domains.FindByID(ctx, domainID)
 	if err != nil {
 		// Domain not found in DB (e.g., it was deleted). Assume it's supposed to be gone.
-		// Try to disable it on the agent in case there's leftover config.
-		r.log.Info("domain not found in DB, treating as deleted", "domain_id", domainID)
 		// We don't know the domain name without a DB row, so we can't disable it.
 		// This is okay; the next ReconcileAll will catch any orphans.
+		r.log.Info("domain not found in DB, treating as deleted", "domain_id", domainID)
 		return nil
 	}
 
-	if domain.IsEnabled {
-		// Domain should exist on agent
-		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		r.createDomainOnAgent(agentCtx, domain)
-	} else {
-		// Domain should be disabled/removed on agent
-		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		r.disableDomainOnAgent(agentCtx, domain)
-	}
+	// Always call domain.create with is_enabled to converge to desired state.
+	// The agent handles both enabled and disabled via the is_enabled parameter.
+	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	r.createDomainOnAgent(agentCtx, domain)
 
 	return nil
 }
@@ -216,11 +209,12 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	}
 	username := *user.Username
 
-	params := map[string]string{
+	params := map[string]any{
 		"username":    username,
 		"domain":      domain.Name,
 		"doc_root":    domain.DocRoot,
 		"php_version": "8.3", // TODO: make configurable
+		"is_enabled":  domain.IsEnabled,
 	}
 
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -250,25 +244,6 @@ func (r *Reconciler) ReconcileDeleted(ctx context.Context, domainName string) {
 	if err != nil {
 		r.log.Warn("domain delete failed on agent",
 			"domain", domainName,
-			"err", err)
-	}
-}
-
-// disableDomainOnAgent calls the agent to disable (not delete) a domain.
-// Logs errors but doesn't return them so reconciliation can continue.
-func (r *Reconciler) disableDomainOnAgent(ctx context.Context, domain *models.Domain) {
-	params := map[string]string{
-		"domain": domain.Name,
-	}
-
-	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	_, err := r.agent.Call(callCtx, "domain.disable", params)
-	if err != nil {
-		r.log.Error("domain disable failed on agent",
-			"domain_id", domain.ID,
-			"domain", domain.Name,
 			"err", err)
 	}
 }

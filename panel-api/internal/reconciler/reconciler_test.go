@@ -33,8 +33,6 @@ func (f *fakeAgent) Call(ctx context.Context, method string, params interface{})
 		})
 	case "domain.create":
 		return json.Marshal(map[string]string{"domain": "", "status": "created"})
-	case "domain.disable":
-		return json.Marshal(map[string]string{"domain": "", "enabled": "false"})
 	default:
 		return nil, nil
 	}
@@ -258,10 +256,10 @@ func TestReconcileAll_DisabledDomainPresent(t *testing.T) {
 	err := r.ReconcileAll(ctx)
 	require.NoError(t, err)
 
-	// Verify that domain.disable was called
-	require.Len(t, agent.calls, 2) // domain.list + domain.disable
+	// Verify that domain.create was called (unified with is_enabled=false)
+	require.Len(t, agent.calls, 2) // domain.list + domain.create
 	require.Equal(t, "domain.list", agent.calls[0].method)
-	require.Equal(t, "domain.disable", agent.calls[1].method)
+	require.Equal(t, "domain.create", agent.calls[1].method)
 }
 
 func TestReconcileAll_OrphanLogsWarning(t *testing.T) {

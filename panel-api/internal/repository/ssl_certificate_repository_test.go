@@ -257,3 +257,131 @@ func TestSSLCertificateRepository_ListDueForRenewal(t *testing.T) {
 	assert.Equal(t, models.SSLStatusIssued, certs[0].Status)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestSSLCertificateRepository_ListAll(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := repository.NewSSLCertificateRepository(gdb)
+	ctx := context.Background()
+
+	now := time.Now()
+
+	// Expect a SELECT joining ssl_certificates, domains, and users
+	mock.ExpectQuery(
+		regexp.QuoteMeta("SELECT sc.id, sc.domain_id, d.name as domain_name,\n\t\t        d.user_id, u.username as user_username,\n\t\t        sc.status, sc.issued_at, sc.expires_at,\n\t\t        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging FROM ssl_certificates sc JOIN domains d ON sc.domain_id = d.id JOIN users u ON d.user_id = u.id ORDER BY sc.created_at DESC")).
+		WillReturnRows(
+			sqlmock.NewRows([]string{
+				"id", "domain_id", "domain_name", "user_id", "user_username",
+				"status", "issued_at", "expires_at", "renewal_count", "last_renewed_at", "last_error", "staging",
+			}).
+				AddRow(
+					"01ARWX4FRYXZ73AK7EQQ69G5NV",
+					"01ARZ3NDEKTSV4RRFFQ69G5FAV",
+					"example.com",
+					"01ARZ3NDEKTSV4RRFFQ69G5F00",
+					"testuser",
+					models.SSLStatusIssued,
+					now.Add(-30*24*time.Hour),
+					now.Add(60*24*time.Hour),
+					0,
+					nil,
+					nil,
+					false,
+				).
+				AddRow(
+					"01ARWX4FRYXZ73AK7EQQ69G5N0",
+					"01ARZ3NDEKTSV4RRFFQ69G5FA0",
+					"example2.com",
+					"01ARZ3NDEKTSV4RRFFQ69G5F01",
+					"testuser2",
+					models.SSLStatusPending,
+					nil,
+					nil,
+					0,
+					nil,
+					nil,
+					true,
+				),
+		)
+
+	certs, err := repo.ListAll(ctx)
+	require.NoError(t, err)
+	assert.Len(t, certs, 2)
+	assert.Equal(t, "example.com", certs[0].DomainName)
+	assert.Equal(t, "testuser", certs[0].UserUsername)
+	assert.Equal(t, "example2.com", certs[1].DomainName)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSSLCertificateRepository_ListByUserID(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := repository.NewSSLCertificateRepository(gdb)
+	ctx := context.Background()
+
+	userID := "01ARZ3NDEKTSV4RRFFQ69G5F00"
+	now := time.Now()
+
+	// Expect a SELECT with WHERE on user_id
+	mock.ExpectQuery(
+		regexp.QuoteMeta("SELECT sc.id, sc.domain_id, d.name as domain_name,\n\t\t        d.user_id, u.username as user_username,\n\t\t        sc.status, sc.issued_at, sc.expires_at,\n\t\t        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging FROM ssl_certificates sc JOIN domains d ON sc.domain_id = d.id JOIN users u ON d.user_id = u.id WHERE d.user_id = ? ORDER BY sc.created_at DESC")).
+		WithArgs(userID).
+		WillReturnRows(
+			sqlmock.NewRows([]string{
+				"id", "domain_id", "domain_name", "user_id", "user_username",
+				"status", "issued_at", "expires_at", "renewal_count", "last_renewed_at", "last_error", "staging",
+			}).
+				AddRow(
+					"01ARWX4FRYXZ73AK7EQQ69G5NV",
+					"01ARZ3NDEKTSV4RRFFQ69G5FAV",
+					"example.com",
+					userID,
+					"testuser",
+					models.SSLStatusIssued,
+					now.Add(-30*24*time.Hour),
+					now.Add(60*24*time.Hour),
+					1,
+					now.Add(-7*24*time.Hour),
+					nil,
+					false,
+				),
+		)
+
+	certs, err := repo.ListByUserID(ctx, userID)
+	require.NoError(t, err)
+	assert.Len(t, certs, 1)
+	assert.Equal(t, userID, certs[0].UserID)
+	assert.Equal(t, "example.com", certs[0].DomainName)
+	assert.Equal(t, "testuser", certs[0].UserUsername)
+	assert.Equal(t, 1, certs[0].RenewalCount)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSSLCertificateRepository_ListByUserID_Empty(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := repository.NewSSLCertificateRepository(gdb)
+	ctx := context.Background()
+
+	userID := "01ARZ3NDEKTSV4RRFFQ69G5F99"
+
+	// Expect an empty result set
+	mock.ExpectQuery(
+		regexp.QuoteMeta("SELECT sc.id, sc.domain_id, d.name as domain_name,\n\t\t        d.user_id, u.username as user_username,\n\t\t        sc.status, sc.issued_at, sc.expires_at,\n\t\t        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging FROM ssl_certificates sc JOIN domains d ON sc.domain_id = d.id JOIN users u ON d.user_id = u.id WHERE d.user_id = ? ORDER BY sc.created_at DESC")).
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "domain_id", "domain_name", "user_id", "user_username",
+			"status", "issued_at", "expires_at", "renewal_count", "last_renewed_at", "last_error", "staging",
+		}))
+
+	certs, err := repo.ListByUserID(ctx, userID)
+	require.NoError(t, err)
+	assert.Len(t, certs, 0)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

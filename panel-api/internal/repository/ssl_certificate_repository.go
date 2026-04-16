@@ -10,6 +10,23 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 )
 
+// SSLCertificateWithDomain is a read-only projection joining ssl_certificates, domains, and users.
+// Used by list endpoints to provide a unified view without follow-up queries.
+type SSLCertificateWithDomain struct {
+	ID            string     `json:"id"`
+	DomainID      string     `json:"domain_id"`
+	DomainName    string     `json:"domain_name"`
+	UserID        string     `json:"user_id"`
+	UserUsername  string     `json:"user_username"`
+	Status        string     `json:"status"`
+	IssuedAt      *time.Time `json:"issued_at"`
+	ExpiresAt     *time.Time `json:"expires_at"`
+	RenewalCount  int        `json:"renewal_count"`
+	LastRenewedAt *time.Time `json:"last_renewed_at"`
+	LastError     *string    `json:"last_error"`
+	Staging       bool       `json:"staging"`
+}
+
 // SSLCertificateRepository covers the ssl_certificates table.
 // Tracks ACME certificate lifecycle per domain.
 type SSLCertificateRepository interface {
@@ -21,6 +38,8 @@ type SSLCertificateRepository interface {
 	MarkRevoked(ctx context.Context, id string) error
 	DeleteByDomainID(ctx context.Context, domainID string) error
 	ListDueForRenewal(ctx context.Context, within time.Duration) ([]models.SSLCertificate, error)
+	ListAll(ctx context.Context) ([]SSLCertificateWithDomain, error)
+	ListByUserID(ctx context.Context, userID string) ([]SSLCertificateWithDomain, error)
 }
 
 type sslCertificateRepo struct{ db *gorm.DB }
@@ -129,4 +148,45 @@ func (r *sslCertificateRepo) ListDueForRenewal(ctx context.Context, within time.
 		return nil, err
 	}
 	return certs, nil
+}
+
+// ListAll returns all SSL certificates joined with their domain and user info.
+// Used by admin to view all certificates across all domains and users.
+func (r *sslCertificateRepo) ListAll(ctx context.Context) ([]SSLCertificateWithDomain, error) {
+	var results []SSLCertificateWithDomain
+	err := r.db.WithContext(ctx).
+		Select(`sc.id, sc.domain_id, d.name as domain_name,
+		        d.user_id, u.username as user_username,
+		        sc.status, sc.issued_at, sc.expires_at,
+		        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging`).
+		Table("ssl_certificates sc").
+		Joins("JOIN domains d ON sc.domain_id = d.id").
+		Joins("JOIN users u ON d.user_id = u.id").
+		Order("sc.created_at DESC").
+		Scan(&results).Error
+	if err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+// ListByUserID returns all SSL certificates for a specific user,
+// joining with domain and user info. Used by users to view their own certificates.
+func (r *sslCertificateRepo) ListByUserID(ctx context.Context, userID string) ([]SSLCertificateWithDomain, error) {
+	var results []SSLCertificateWithDomain
+	err := r.db.WithContext(ctx).
+		Select(`sc.id, sc.domain_id, d.name as domain_name,
+		        d.user_id, u.username as user_username,
+		        sc.status, sc.issued_at, sc.expires_at,
+		        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging`).
+		Table("ssl_certificates sc").
+		Joins("JOIN domains d ON sc.domain_id = d.id").
+		Joins("JOIN users u ON d.user_id = u.id").
+		Where("d.user_id = ?", userID).
+		Order("sc.created_at DESC").
+		Scan(&results).Error
+	if err != nil {
+		return nil, err
+	}
+	return results, nil
 }

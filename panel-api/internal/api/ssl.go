@@ -9,6 +9,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -61,6 +62,10 @@ func RegisterSSLRoutes(g *gin.RouterGroup, cfg SSLHandlerConfig) {
 		domains.DELETE("/ssl", h.disableSSL)
 		domains.POST("/ssl/renew", h.renewSSL)
 	}
+
+	// List endpoints
+	g.GET("/admin/ssl-certificates", middleware.RequireAdmin(), h.listAllSSL)
+	g.GET("/ssl-certificates", h.listUserSSL)
 }
 
 // getSSL retrieves the current SSL certificate status for a domain.
@@ -276,6 +281,36 @@ func (h *sslHandler) renewSSL(c *gin.Context) {
 	h.cfg.Reconciler.Schedule(domainID)
 
 	c.Status(http.StatusAccepted)
+}
+
+// listAllSSL lists all SSL certificates across all users (admin-only).
+// GET /api/v1/admin/ssl-certificates
+func (h *sslHandler) listAllSSL(c *gin.Context) {
+	certs, err := h.cfg.SSLCerts.ListAll(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"items": certs})
+}
+
+// listUserSSL lists all SSL certificates for the caller's domains.
+// GET /api/v1/ssl-certificates
+func (h *sslHandler) listUserSSL(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+
+	certs, err := h.cfg.SSLCerts.ListByUserID(c.Request.Context(), claims.UserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"items": certs})
 }
 
 // loadDomainOwned fetches the domain by ID and enforces that the

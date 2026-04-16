@@ -50,25 +50,44 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 	goBin := goRoot + "/bin/go"
 
+	// The repo is owned by the jabali service user. Run git/npm/go as
+	// that user to avoid git's "dubious ownership" check and to keep
+	// node_modules/go-cache owned correctly.
+	serviceUser := os.Getenv("JABALI_SERVICE_USER")
+	if serviceUser == "" {
+		serviceUser = "jabali"
+	}
+
+	asUser := func(dir string, name string, args ...string) error {
+		allArgs := append([]string{"-u", serviceUser, "-H", "env",
+			"HOME=" + repoDir,
+			"PATH=" + goRoot + "/bin:/usr/bin:/bin",
+			"GOCACHE=" + repoDir + "/.cache/go-build",
+			"GOMODCACHE=" + repoDir + "/.cache/go-mod",
+		}, name)
+		allArgs = append(allArgs, args...)
+		return run(dir, "sudo", allArgs...)
+	}
+
 	steps := []struct {
 		name string
 		fn   func() error
 	}{
 		{"git pull", func() error {
-			return run(repoDir, "git", "pull", "--ff-only", "origin", "main")
+			return asUser(repoDir, "git", "pull", "--ff-only", "origin", "main")
 		}},
 		{"npm ci", func() error {
-			return run(repoDir+"/panel-ui", "npm", "ci", "--no-audit", "--no-fund")
+			return asUser(repoDir+"/panel-ui", "npm", "ci", "--no-audit", "--no-fund")
 		}},
 		{"build frontend", func() error {
-			return run(repoDir+"/panel-ui", "npm", "run", "build")
+			return asUser(repoDir+"/panel-ui", "npm", "run", "build")
 		}},
 		{"build panel-api", func() error {
-			return run(repoDir, goBin, "build", "-trimpath", "-ldflags", "-s -w",
+			return asUser(repoDir, goBin, "build", "-trimpath", "-ldflags", "-s -w",
 				"-o", repoDir+"/bin/jabali-panel.new", "./panel-api/cmd/server")
 		}},
 		{"build panel-agent", func() error {
-			return run(repoDir, goBin, "build", "-trimpath", "-ldflags", "-s -w",
+			return asUser(repoDir, goBin, "build", "-trimpath", "-ldflags", "-s -w",
 				"-o", repoDir+"/bin/jabali-agent.new", "./panel-agent/cmd/jabali-agent")
 		}},
 		{"install binaries", func() error {

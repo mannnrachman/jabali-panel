@@ -556,6 +556,42 @@ PDNSCONF
   _ok "PowerDNS running on port 53"
 }
 
+# ---------- step 2.7: Certbot (Let's Encrypt SSL) ---------------------------
+setup_certbot() {
+  _log "installing Certbot for Let's Encrypt SSL certificates"
+
+  # Check if certbot is already installed (idempotent).
+  if command -v certbot &>/dev/null; then
+    local version
+    version="$(certbot --version 2>/dev/null | head -n1)"
+    _ok "Certbot already installed: $version"
+    return 0
+  fi
+
+  # Install certbot and the nginx plugin. Stock Debian/Ubuntu package names.
+  # The nginx plugin allows certbot to verify domain ownership via .well-known/acme-challenge
+  # served through nginx, and can optionally auto-configure SSL in nginx.
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    certbot python3-certbot-nginx
+
+  # Verify installation succeeded.
+  if ! command -v certbot &>/dev/null; then
+    _die "Certbot installation failed"
+  fi
+
+  local version
+  version="$(certbot --version 2>/dev/null | head -n1)"
+  _ok "Certbot installed: $version"
+
+  # Pre-create the letsencrypt directories with correct ownership.
+  # The panel-agent will write certificates here; nginx may also read them.
+  mkdir -p /etc/letsencrypt/{archive,live,renewal}
+  chmod 0755 /etc/letsencrypt
+  chmod 0755 /etc/letsencrypt/{archive,live,renewal}
+
+  _ok "Certbot ready for SSL certificate management"
+}
+
 # ---------- step 2: Go toolchain --------------------------------------------
 
 install_go() {
@@ -1005,6 +1041,7 @@ main() {
   write_env_file
   provision_mariadb
   install_powerdns
+  setup_certbot
   clone_or_update_repo
   build_frontend
   build_backend

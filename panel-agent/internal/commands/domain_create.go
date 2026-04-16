@@ -24,6 +24,7 @@ type domainCreateParams struct {
 	PHPVersion         string `json:"php_version"`
 	CustomDirectives   string `json:"custom_directives"`
 	RedirectDirectives string `json:"redirect_directives"`
+	RuleDirectives     string `json:"rule_directives"`
 	IndexPriority      string `json:"index_priority"`
 	// IsEnabled controls whether the vhost serves the tenant's docroot
 	// (true) or a branded "site disabled" placeholder (false). Pointer
@@ -65,6 +66,7 @@ const vhostTemplate = `server {
     error_log /var/log/nginx/{{.Domain}}-error.log;
 
     {{.RedirectDirectives}}
+    {{.RuleDirectives}}
     {{.CustomDirectives}}
 {{ else }}
     # Domain is administratively disabled. Serve the branded
@@ -86,6 +88,7 @@ type vhostData struct {
 	Username           string
 	IndexDirective     string
 	RedirectDirectives string
+	RuleDirectives     string
 	CustomDirectives   string
 	IsEnabled          bool
 }
@@ -135,7 +138,7 @@ func pathsUnderHome(username, docRoot string) []string {
 // writeVhost generates and writes the nginx vhost configuration, then tests and reloads nginx.
 // This is the core logic shared by domain.create and domain.enable/disable.
 // If the config content is unchanged, nginx reload is skipped for efficiency.
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, customDirectives, indexPriority string, isEnabled bool) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, indexPriority string, isEnabled bool) (string, error) {
 	// Generate vhost configuration
 	tmpl, err := template.New("vhost").Parse(vhostTemplate)
 	if err != nil {
@@ -149,6 +152,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		Username:           username,
 		IndexDirective:     indexDirectiveFor(indexPriority),
 		RedirectDirectives: redirectDirectives,
+		RuleDirectives:     ruleDirectives,
 		CustomDirectives:   customDirectives,
 		IsEnabled:          isEnabled,
 	}
@@ -281,7 +285,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		isEnabled = *p.IsEnabled
 	}
 
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.CustomDirectives, p.IndexPriority, isEnabled)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, p.IndexPriority, isEnabled)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

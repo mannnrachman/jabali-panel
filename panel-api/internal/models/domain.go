@@ -56,6 +56,71 @@ func (p *PageRedirects) Scan(src any) error {
 	return json.Unmarshal(b, p)
 }
 
+// NginxRule is one entry in a domain's nginx_rules JSON array. Rules
+// are discriminated by the Type field; each type consumes a different
+// subset of the remaining fields. Keeping a single flat struct (vs
+// interface/any) avoids an unmarshalling foot-gun and matches how
+// PageRedirect is structured.
+type NginxRule struct {
+	Type string `json:"type"`
+
+	// custom_header
+	Name   string `json:"name,omitempty"`
+	Value  string `json:"value,omitempty"`
+	Always *bool  `json:"always,omitempty"`
+
+	// rewrite
+	Pattern     string `json:"pattern,omitempty"`
+	Replacement string `json:"replacement,omitempty"`
+	Flag        string `json:"flag,omitempty"` // last|break|redirect|permanent
+
+	// proxy_pass
+	Target string `json:"target,omitempty"`
+
+	// proxy_pass, ip_access
+	Path string `json:"path,omitempty"`
+
+	// ip_access
+	Mode string   `json:"mode,omitempty"` // allow_list | deny_list
+	IPs  []string `json:"ips,omitempty"`
+
+	// max_upload_size
+	Size string `json:"size,omitempty"`
+}
+
+// NginxRules implements driver.Valuer / sql.Scanner so GORM can
+// persist it to a JSON column. An empty slice round-trips as SQL NULL
+// (keeps the column genuinely empty, not a literal "[]").
+type NginxRules []NginxRule
+
+func (n NginxRules) Value() (driver.Value, error) {
+	if len(n) == 0 {
+		return nil, nil
+	}
+	return json.Marshal(n)
+}
+
+func (n *NginxRules) Scan(src any) error {
+	if src == nil {
+		*n = nil
+		return nil
+	}
+	var b []byte
+	switch v := src.(type) {
+	case []byte:
+		b = v
+	case string:
+		b = []byte(v)
+	default:
+		return fmt.Errorf("NginxRules.Scan: unsupported type %T", src)
+	}
+	if len(b) == 0 {
+		*n = nil
+		return nil
+	}
+	return json.Unmarshal(b, n)
+}
+
 // Domain represents a hosted domain bound to a user account. Each domain
 // gets an nginx vhost config managed by the agent and a document root
 // under the user's home directory.
@@ -95,6 +160,12 @@ type Domain struct {
 	// URL, and HTTP status code. Supports Active toggle (nil = true for
 	// backwards compat) and Wildcard prefix matching (v2 feature).
 	PageRedirects PageRedirects `gorm:"type:json" json:"page_redirects,omitempty"`
+
+	// NginxRules is a JSON array of typed rule-builder entries that
+	// compile to nginx directives server-side (see internal/nginxrules).
+	// Separate from NginxCustomDirectives (which holds raw user snippets)
+	// and from PageRedirects (which has its own dedicated UI).
+	NginxRules NginxRules `gorm:"type:json" json:"nginx_rules,omitempty"`
 
 	// IndexPriority picks which file(s) nginx serves as the default
 	// directory index. Enum values (html_first/php_first/html_only/

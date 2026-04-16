@@ -56,6 +56,7 @@ type updateDomainRequest struct {
 	RedirectAllTo         *string               `json:"redirect_all_to,omitempty"`
 	RedirectAllType       *string               `json:"redirect_all_type,omitempty"`
 	PageRedirects         *models.PageRedirects `json:"page_redirects,omitempty"`
+	NginxRules            *models.NginxRules    `json:"nginx_rules,omitempty"`
 	IndexPriority         *string               `json:"index_priority,omitempty"`
 }
 
@@ -625,8 +626,92 @@ func validatePageRedirects(prs models.PageRedirects) error {
 	return nil
 }
 
-// isValidIndexPriority returns true for the enum values the agent knows
-// how to map to nginx `index` directives.
+
+func isValidNginxRuleType(s string) bool {
+	switch s {
+	case "custom_header", "rewrite", "proxy_pass", "ip_access", "php_setting", "max_upload_size":
+		return true
+	}
+	return false
+}
+
+// validateNginxRules checks each rule has the fields required by its
+// Type. Field-level constraints (e.g. header name format, valid CIDR)
+// are intentionally lenient — nginx -t on the agent is the final check.
+
+// validateNginxRules checks each rule has the fields required by its
+// Type. Field-level constraints (e.g. header name format, valid CIDR)
+// are intentionally lenient — nginx -t on the agent is the final check.
+func validateNginxRules(rules models.NginxRules) error {
+	if len(rules) > 50 {
+		return fmt.Errorf("too many rules (max 50)")
+	}
+	for i, r := range rules {
+		if !isValidNginxRuleType(r.Type) {
+			return fmt.Errorf("rule %d: unknown type %q", i, r.Type)
+		}
+		switch r.Type {
+		case "custom_header":
+			if r.Name == "" {
+				return fmt.Errorf("rule %d: header name required", i)
+			}
+			if r.Value == "" {
+			return fmt.Errorf("rule %d: header value required", i)
+		}
+		if strings.ContainsAny(r.Name, " \t\n\r:;") {
+				return fmt.Errorf("rule %d: invalid chars in header name", i)
+			}
+		case "rewrite":
+			if r.Pattern == "" || r.Replacement == "" {
+				return fmt.Errorf("rule %d: pattern and replacement required", i)
+			}
+			switch r.Flag {
+			case "", "last", "break", "redirect", "permanent":
+			default:
+				return fmt.Errorf("rule %d: invalid flag %q", i, r.Flag)
+			}
+		case "proxy_pass":
+			if r.Path == "" || r.Target == "" {
+				return fmt.Errorf("rule %d: path and target required", i)
+			}
+			if !strings.HasPrefix(r.Target, "http://") && !strings.HasPrefix(r.Target, "https://") {
+				return fmt.Errorf("rule %d: target must be an http(s) URL", i)
+			}
+		case "ip_access":
+			if r.Path == "" {
+				return fmt.Errorf("rule %d: path required", i)
+			}
+			if r.Mode != "allow_list" && r.Mode != "deny_list" {
+				return fmt.Errorf("rule %d: mode must be allow_list or deny_list", i)
+			}
+			if len(r.IPs) == 0 {
+				return fmt.Errorf("rule %d: at least one IP required", i)
+			}
+		case "php_setting":
+			if r.Name == "" || r.Value == "" {
+				return fmt.Errorf("rule %d: name and value required", i)
+			}
+		case "max_upload_size":
+			if r.Size == "" {
+				return fmt.Errorf("rule %d: size required", i)
+			}
+		}
+		// Forbid control characters everywhere to prevent newline injection into vhost
+		allText := r.Name + r.Value + r.Pattern + r.Replacement + r.Target + r.Path + r.Size
+		for _, c := range allText {
+			if c < 32 && c != '\t' {
+				return fmt.Errorf("rule %d: contains invalid control chars", i)
+			}
+		}
+		for _, ip := range r.IPs {
+			if strings.ContainsAny(ip, " \t\n\r") {
+				return fmt.Errorf("rule %d: invalid chars in IP %q", i, ip)
+			}
+		}
+	}
+	return nil
+}
+
 func isValidIndexPriority(s string) bool {
 	switch s {
 	case "html_first", "php_first", "html_only", "php_only", "full":

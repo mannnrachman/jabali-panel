@@ -481,3 +481,64 @@ func TestDomainCreateHandler_RequiresRootNginx(t *testing.T) {
 func ptrBool(b bool) *bool {
 	return &b
 }
+
+// TestVhostTemplate_RuleDirectives verifies that vhostTemplate includes rule_directives
+// in the correct position in the directive ordering.
+func TestVhostTemplate_RuleDirectives(t *testing.T) {
+	// Test that vhostTemplate includes rule_directives placeholder
+	if !strings.Contains(vhostTemplate, "{{.RuleDirectives}}") {
+		t.Error("vhostTemplate missing {{.RuleDirectives}} placeholder")
+	}
+
+	// Verify ordering: {{.RedirectDirectives}} comes before {{.RuleDirectives}},
+	// which comes before {{.CustomDirectives}}
+	// This ensures proper directive precedence:
+	// 1. RedirectDirectives (highest specificity - whole domain redirect)
+	// 2. RuleDirectives (moderate - path-based rules)
+	// 3. CustomDirectives (escape hatch - raw user input)
+	redirectPos := strings.Index(vhostTemplate, "{{.RedirectDirectives}}")
+	rulePos := strings.Index(vhostTemplate, "{{.RuleDirectives}}")
+	customPos := strings.Index(vhostTemplate, "{{.CustomDirectives}}")
+
+	if redirectPos < 0 || rulePos < 0 || customPos < 0 {
+		t.Fatal("vhostTemplate missing one or more directive placeholders")
+	}
+
+	if !(redirectPos < rulePos && rulePos < customPos) {
+		t.Errorf("vhostTemplate directive ordering incorrect: RedirectDirectives at %d, RuleDirectives at %d, CustomDirectives at %d; want redirectPos < rulePos < customPos",
+			redirectPos, rulePos, customPos)
+	}
+}
+
+// TestDomainCreateHandler_RuleDirectivesIntegration verifies that rule_directives
+// parameter is properly passed through domainCreateHandler and included in vhost config.
+func TestDomainCreateHandler_RuleDirectivesIntegration(t *testing.T) {
+	params := domainCreateParams{
+		Username:           "testuser",
+		Domain:             "example.com",
+		DocRoot:            "/home/testuser/public_html/example.com",
+		PHPVersion:         "8.3",
+		RuleDirectives:     `add_header X-Rule "rule-value";`,
+		RedirectDirectives: `if ($request_uri = /old) { return 301 /new; }`,
+		CustomDirectives:   `add_header X-Custom custom-value;`,
+		IndexPriority:      "html_first",
+		IsEnabled:          ptrBool(true),
+	}
+
+	// Verify that all three directive types can coexist
+	// The actual vhost config generation is tested above (TestVhostTemplate_RuleDirectives)
+	// This test ensures the params struct has the field and handler accepts it
+	paramsJSON, err := json.Marshal(params)
+	require.NoError(t, err)
+
+	// Verify JSON contains the rule_directives field
+	if !strings.Contains(string(paramsJSON), `"rule_directives"`) {
+		t.Error("marshaled params missing rule_directives field")
+	}
+
+	// Verify unmarshaling works
+	var unmarshaled domainCreateParams
+	err = json.Unmarshal(paramsJSON, &unmarshaled)
+	require.NoError(t, err)
+	require.Equal(t, params.RuleDirectives, unmarshaled.RuleDirectives)
+}

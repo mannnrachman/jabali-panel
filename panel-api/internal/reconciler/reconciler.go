@@ -9,6 +9,7 @@ import (
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/nginxrules"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/redirects"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -225,6 +226,8 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	}
 
 	params["redirect_directives"] = redirects.Compile(domain)
+	params["rule_directives"] = nginxrules.Compile(domain)
+
 	params["index_priority"] = domain.IndexPriority
 
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)

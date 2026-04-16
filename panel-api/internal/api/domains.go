@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -49,8 +51,11 @@ type createDomainRequest struct {
 }
 
 type updateDomainRequest struct {
-	IsEnabled             *bool   `json:"is_enabled,omitempty"`
-	NginxCustomDirectives *string `json:"nginx_custom_directives,omitempty"`
+	IsEnabled             *bool                 `json:"is_enabled,omitempty"`
+	NginxCustomDirectives *string               `json:"nginx_custom_directives,omitempty"`
+	RedirectAllTo         *string               `json:"redirect_all_to,omitempty"`
+	RedirectAllType       *string               `json:"redirect_all_type,omitempty"`
+	PageRedirects         *models.PageRedirects `json:"page_redirects,omitempty"`
 }
 
 func (h *domainHandler) list(c *gin.Context) {
@@ -259,6 +264,39 @@ func (h *domainHandler) update(c *gin.Context) {
 		domain.NginxCustomDirectives = req.NginxCustomDirectives
 	}
 
+	if req.RedirectAllTo != nil {
+		trimmed := strings.TrimSpace(*req.RedirectAllTo)
+		if trimmed == "" {
+			domain.RedirectAllTo = nil
+		} else {
+			if err := validateRedirectURL(trimmed); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			domain.RedirectAllTo = &trimmed
+		}
+	}
+
+	if req.RedirectAllType != nil {
+		trimmed := strings.TrimSpace(*req.RedirectAllType)
+		if trimmed == "" {
+			domain.RedirectAllType = nil
+		} else if !isValidRedirectType(trimmed) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid redirect type"})
+			return
+		} else {
+			domain.RedirectAllType = &trimmed
+		}
+	}
+
+	if req.PageRedirects != nil {
+		if err := validatePageRedirects(*req.PageRedirects); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		domain.PageRedirects = *req.PageRedirects
+	}
+
 	domain.UpdatedAt = time.Now().UTC()
 	if err := h.cfg.Domains.Update(ctx, domain); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
@@ -318,71 +356,71 @@ func (h *domainHandler) delete(c *gin.Context) {
 // the agent still runs nginx -t before applying, so malformed input is caught there.
 var allowedNginxDirectives = map[string]struct{}{
 	// Headers/response
-	"add_header":           {},
-	"add_trailer":          {},
-	"expires":              {},
-	"etag":                 {},
-	"if_modified_since":    {},
-	"return":               {},
+	"add_header":        {},
+	"add_trailer":       {},
+	"expires":           {},
+	"etag":              {},
+	"if_modified_since": {},
+	"return":            {},
 	// Rewrites
-	"rewrite":     {},
-	"set":         {},
-	"if":          {},
-	"break":       {},
-	"error_page":  {},
+	"rewrite":    {},
+	"set":        {},
+	"if":         {},
+	"break":      {},
+	"error_page": {},
 	// Proxy
-	"proxy_pass":                 {},
-	"proxy_set_header":           {},
-	"proxy_hide_header":          {},
-	"proxy_pass_header":          {},
-	"proxy_buffering":            {},
-	"proxy_buffer_size":          {},
-	"proxy_buffers":              {},
-	"proxy_http_version":         {},
-	"proxy_read_timeout":         {},
-	"proxy_connect_timeout":      {},
-	"proxy_send_timeout":         {},
-	"proxy_redirect":             {},
-	"proxy_ssl_verify":           {},
-	"proxy_ssl_server_name":      {},
-	"proxy_request_buffering":    {},
-	"proxy_cache_bypass":         {},
-	"proxy_no_cache":             {},
+	"proxy_pass":              {},
+	"proxy_set_header":        {},
+	"proxy_hide_header":       {},
+	"proxy_pass_header":       {},
+	"proxy_buffering":         {},
+	"proxy_buffer_size":       {},
+	"proxy_buffers":           {},
+	"proxy_http_version":      {},
+	"proxy_read_timeout":      {},
+	"proxy_connect_timeout":   {},
+	"proxy_send_timeout":      {},
+	"proxy_redirect":          {},
+	"proxy_ssl_verify":        {},
+	"proxy_ssl_server_name":   {},
+	"proxy_request_buffering": {},
+	"proxy_cache_bypass":      {},
+	"proxy_no_cache":          {},
 	// Body/upload
 	"client_max_body_size":    {},
 	"client_body_buffer_size": {},
 	"client_body_timeout":     {},
 	"client_header_timeout":   {},
 	// FastCGI
-	"fastcgi_read_timeout":  {},
-	"fastcgi_send_timeout":  {},
-	"fastcgi_buffer_size":   {},
-	"fastcgi_buffers":       {},
-	"fastcgi_param":         {},
+	"fastcgi_read_timeout": {},
+	"fastcgi_send_timeout": {},
+	"fastcgi_buffer_size":  {},
+	"fastcgi_buffers":      {},
+	"fastcgi_param":        {},
 	// Static/locations
-	"location":              {},
-	"try_files":             {},
-	"index":                 {},
-	"autoindex":             {},
-	"autoindex_exact_size":  {},
-	"autoindex_localtime":   {},
-	"sub_filter":            {},
-	"sub_filter_once":       {},
-	"sub_filter_types":      {},
-	"charset":               {},
-	"default_type":          {},
-	"types":                 {},
-	"log_not_found":         {},
+	"location":             {},
+	"try_files":            {},
+	"index":                {},
+	"autoindex":            {},
+	"autoindex_exact_size": {},
+	"autoindex_localtime":  {},
+	"sub_filter":           {},
+	"sub_filter_once":      {},
+	"sub_filter_types":     {},
+	"charset":              {},
+	"default_type":         {},
+	"types":                {},
+	"log_not_found":        {},
 	// Access
-	"allow":                    {},
-	"deny":                     {},
-	"satisfy":                  {},
-	"auth_basic":               {},
-	"auth_basic_user_file":     {},
-	"limit_except":             {},
-	"limit_req":                {},
-	"limit_req_zone":           {},
-	"limit_conn":               {},
+	"allow":                {},
+	"deny":                 {},
+	"satisfy":              {},
+	"auth_basic":           {},
+	"auth_basic_user_file": {},
+	"limit_except":         {},
+	"limit_req":            {},
+	"limit_req_zone":       {},
+	"limit_conn":           {},
 	// Gzip
 	"gzip":            {},
 	"gzip_types":      {},
@@ -392,10 +430,10 @@ var allowedNginxDirectives = map[string]struct{}{
 	"gzip_disable":    {},
 	"gzip_proxied":    {},
 	// Caching
-	"open_file_cache":             {},
-	"open_file_cache_valid":       {},
-	"open_file_cache_min_uses":    {},
-	"open_file_cache_errors":      {},
+	"open_file_cache":          {},
+	"open_file_cache_valid":    {},
+	"open_file_cache_min_uses": {},
+	"open_file_cache_errors":   {},
 }
 
 func validateNginxDirectives(directives string) string {
@@ -527,6 +565,50 @@ func extractDirective(line string) string {
 		return ""
 	}
 	return fields[0]
+}
+
+func validateRedirectURL(s string) error {
+	u, err := url.Parse(s)
+	if err != nil {
+		return fmt.Errorf("invalid destination URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("destination URL must use http or https scheme")
+	}
+	if u.Host == "" {
+		return fmt.Errorf("destination URL must have a host")
+	}
+	return nil
+}
+
+func isValidRedirectType(s string) bool {
+	switch s {
+	case "301", "302", "307", "308":
+		return true
+	default:
+		return false
+	}
+}
+
+func validatePageRedirects(prs models.PageRedirects) error {
+	if len(prs) > 100 {
+		return fmt.Errorf("too many redirects (max 100)")
+	}
+	for _, pr := range prs {
+		if !strings.HasPrefix(pr.Source, "/") {
+			return fmt.Errorf("source must start with /")
+		}
+		if strings.ContainsAny(pr.Source, "\n\x00") {
+			return fmt.Errorf("source contains invalid chars")
+		}
+		if err := validateRedirectURL(pr.Destination); err != nil {
+			return fmt.Errorf("invalid page redirect destination: %w", err)
+		}
+		if !isValidRedirectType(pr.Type) {
+			return fmt.Errorf("invalid type for page redirect: %s", pr.Type)
+		}
+	}
+	return nil
 }
 
 func domainLinuxUser(email string) string {

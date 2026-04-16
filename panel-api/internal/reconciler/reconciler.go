@@ -9,6 +9,7 @@ import (
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/redirects"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -222,6 +223,8 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	} else {
 		params["custom_directives"] = ""
 	}
+
+	params["redirect_directives"] = redirects.Compile(domain)
 
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()

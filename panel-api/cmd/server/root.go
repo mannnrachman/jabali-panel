@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"gorm.io/gorm"
@@ -14,6 +16,8 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/logger"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
+
+const defaultEnvFile = "/etc/jabali/panel.env"
 
 // Shared state populated by initConfig / initDB / initAgent helpers.
 // Subcommands call these in their own PreRunE so `jabali help` stays fast.
@@ -43,6 +47,7 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(
 		newServeCmd(),
 		newUserCmd(),
+		newPackageCmd(),
 		newSystemCmd(),
 		newMigrateCmd(),
 		newUpdateCmd(),
@@ -53,10 +58,18 @@ func newRootCmd() *cobra.Command {
 
 // initConfig loads config + sets up the logger. Called by subcommands that
 // need configuration. Idempotent — safe to call multiple times.
+//
+// When running outside systemd (CLI commands), env vars like DATABASE_URL
+// aren't set. We auto-load /etc/jabali/panel.env if it exists so the CLI
+// has the same config as the service without manual `source`.
 func initConfig() error {
 	if sharedCfg != nil {
 		return nil
 	}
+
+	// Load the systemd env file so CLI commands see DATABASE_URL, JWT_SECRET, etc.
+	loadEnvFile(defaultEnvFile)
+
 	path := cfgPath
 	if path == "" {
 		path = os.Getenv("JABALI_CONFIG")
@@ -77,6 +90,35 @@ func initConfig() error {
 	sharedLog = logger.New(cfg.Log, os.Stdout)
 	slog.SetDefault(sharedLog)
 	return nil
+}
+
+// loadEnvFile reads a KEY=VALUE file (like systemd EnvironmentFile) and
+// sets each pair via os.Setenv. Existing env vars are NOT overwritten so
+// explicit exports still win. Silently skips if the file doesn't exist.
+func loadEnvFile(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || line[0] == '#' {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		// Don't overwrite — explicit env wins over file.
+		if _, exists := os.LookupEnv(k); !exists {
+			os.Setenv(k, v)
+		}
+	}
 }
 
 // initDB opens the database. Requires initConfig first.
@@ -123,4 +165,9 @@ func initAgent() error {
 // userRepo is a convenience that returns a UserRepository from the shared DB.
 func userRepo() repository.UserRepository {
 	return repository.NewUserRepository(sharedDB)
+}
+
+// packageRepo is a convenience that returns a PackageRepository from the shared DB.
+func packageRepoFromDB() repository.PackageRepository {
+	return repository.NewPackageRepository(sharedDB)
 }

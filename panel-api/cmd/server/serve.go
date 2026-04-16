@@ -81,6 +81,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if sharedDB != nil {
 		userRepo := repository.NewUserRepository(sharedDB)
 		tokenRepo := repository.NewRefreshTokenRepository(sharedDB)
+		packageRepo := repository.NewPackageRepository(sharedDB)
 
 		jwtIss, err := auth.NewJWTIssuer(auth.JWTConfig{
 			Secret:    []byte(cfg.Auth.JWTSecret),
@@ -102,6 +103,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.Auth = authSvc
 		deps.JWTIssuer = jwtIss
 		deps.Users = userRepo
+		deps.Packages = packageRepo
 
 		// Admin bootstrap.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

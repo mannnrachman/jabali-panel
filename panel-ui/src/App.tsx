@@ -36,6 +36,9 @@ import { Dashboard } from "./shells/admin/Dashboard";
 import { UserCreate } from "./shells/admin/users/UserCreate";
 import { UserEdit } from "./shells/admin/users/UserEdit";
 import { UserList } from "./shells/admin/users/UserList";
+import { PackageCreate } from "./shells/admin/packages/PackageCreate";
+import { PackageEdit } from "./shells/admin/packages/PackageEdit";
+import { PackageList } from "./shells/admin/packages/PackageList";
 import { MyProfile } from "./shells/user/MyProfile";
 import { LoginPage } from "./pages/Login";
 
@@ -57,6 +60,12 @@ const App = () => {
               list: "/jabali-admin/users",
               create: "/jabali-admin/users/create",
               edit: "/jabali-admin/users/edit/:id",
+            },
+            {
+              name: "packages",
+              list: "/jabali-admin/packages",
+              create: "/jabali-admin/packages/create",
+              edit: "/jabali-admin/packages/edit/:id",
             },
           ]}
           options={{
@@ -86,6 +95,11 @@ const App = () => {
                 <Route index element={<UserList />} />
                 <Route path="create" element={<UserCreate />} />
                 <Route path="edit/:id" element={<UserEdit />} />
+              </Route>
+              <Route path="packages">
+                <Route index element={<PackageList />} />
+                <Route path="create" element={<PackageCreate />} />
+                <Route path="edit/:id" element={<PackageEdit />} />
               </Route>
             </Route>
 

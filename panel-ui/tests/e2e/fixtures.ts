@@ -20,11 +20,27 @@ export type MockUser = {
   updated_at: string;
 };
 
+export type MockPackage = {
+  id: string;
+  name: string;
+  disk_quota_mb: number;
+  bandwidth_quota_mb: number;
+  max_domains: number;
+  max_email_accounts: number;
+  max_databases: number;
+  max_ftp_accounts: number;
+  ssh_enabled: boolean;
+  cgi_enabled: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
 export type MockState = {
   // /me response (identity). null → treat as unauthenticated.
   me: MockUser | null;
   // users list returned by GET /users (the list endpoint); default []
   users?: MockUser[];
+  packages?: MockPackage[];
 };
 
 // ---------- core installer ----------
@@ -39,11 +55,13 @@ export async function mockApi(page: Page, initial: MockState): Promise<void> {
     expected: MockUser | null; // identity that login will accept
     session: MockUser | null; // currently signed-in user (null = logged out)
     users: MockUser[];
+    packages: MockPackage[];
     accessToken: string | null;
   } = {
     expected: initial.me,
     session: null,
     users: initial.users ?? (initial.me ? [initial.me] : []),
+    packages: initial.packages ?? [],
     accessToken: null,
   };
 
@@ -230,6 +248,84 @@ export async function mockApi(page: Page, initial: MockState): Promise<void> {
     if (req.method() === "DELETE") {
       if (idx < 0) return notFound(route);
       state.users.splice(idx, 1);
+      return route.fulfill({ status: 204, body: "" });
+    }
+    return unsupported(route);
+  });
+
+  // ---- packages CRUD ----
+  await page.route(/\/api\/v1\/packages(\?.*)?$/, async (route) => {
+    const req = route.request();
+    if (req.method() === "GET") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: state.packages,
+          total: state.packages.length,
+          page: 1,
+          page_size: 20,
+        }),
+      });
+    }
+    if (req.method() === "POST") {
+      const body = req.postDataJSON() as Partial<MockPackage>;
+      const now = new Date().toISOString();
+      const newPackage: MockPackage = {
+        id: `01${Math.random().toString(36).slice(2, 10).toUpperCase().padEnd(24, "0")}`,
+        name: body.name ?? "",
+        disk_quota_mb: body.disk_quota_mb ?? 0,
+        bandwidth_quota_mb: body.bandwidth_quota_mb ?? 0,
+        max_domains: body.max_domains ?? 0,
+        max_email_accounts: body.max_email_accounts ?? 0,
+        max_databases: body.max_databases ?? 0,
+        max_ftp_accounts: body.max_ftp_accounts ?? 0,
+        ssh_enabled: body.ssh_enabled ?? false,
+        cgi_enabled: body.cgi_enabled ?? false,
+        created_at: now,
+        updated_at: now,
+      };
+      state.packages.push(newPackage);
+      return route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify(newPackage),
+      });
+    }
+    return unsupported(route);
+  });
+
+  await page.route(/\/api\/v1\/packages\/[^/?]+(\?.*)?$/, async (route) => {
+    const req = route.request();
+    const url = new URL(req.url());
+    const id = decodeURIComponent(url.pathname.split("/").pop() ?? "");
+    const idx = state.packages.findIndex((p) => p.id === id);
+
+    if (req.method() === "GET") {
+      if (idx < 0) return notFound(route);
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(state.packages[idx]),
+      });
+    }
+    if (req.method() === "PATCH") {
+      if (idx < 0) return notFound(route);
+      const patch = req.postDataJSON() as Partial<MockPackage>;
+      state.packages[idx] = {
+        ...state.packages[idx],
+        ...patch,
+        updated_at: new Date().toISOString(),
+      };
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(state.packages[idx]),
+      });
+    }
+    if (req.method() === "DELETE") {
+      if (idx < 0) return notFound(route);
+      state.packages.splice(idx, 1);
       return route.fulfill({ status: 204, body: "" });
     }
     return unsupported(route);

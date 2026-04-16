@@ -28,6 +28,9 @@ type User struct {
 	// only by an admin-only handler (Phase 6) or the bootstrap seed.
 	IsAdmin bool `gorm:"type:tinyint(1);not null;default:0" json:"is_admin"`
 
+	// PackageID links to hosting_packages. NULL for admin-only accounts.
+	PackageID *string `gorm:"type:char(26)" json:"package_id,omitempty"`
+
 	// LinuxUID is set by the handler after the agent successfully creates
 	// the OS user. NULL until then, or for admin-only accounts.
 	LinuxUID *uint32 `gorm:"type:int unsigned" json:"linux_uid,omitempty"`

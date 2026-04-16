@@ -10,6 +10,7 @@
 // in?" boolean branching inside.
 import { useLogout } from "@refinedev/core";
 import {
+  AppstoreOutlined,
   DashboardOutlined,
   LogoutOutlined,
   SettingOutlined,
@@ -30,6 +31,7 @@ const { Header, Sider, Content } = Layout;
 const MENU: { key: string; path: string; label: string; icon: JSX.Element }[] = [
   { key: "dashboard", path: "/jabali-admin/dashboard", label: "Dashboard", icon: <DashboardOutlined /> },
   { key: "users", path: "/jabali-admin/users", label: "Users", icon: <TeamOutlined /> },
+  { key: "packages", path: "/jabali-admin/packages", label: "Packages", icon: <AppstoreOutlined /> },
 ];
 
 export function AdminLayout() {

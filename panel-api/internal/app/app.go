@@ -25,6 +25,7 @@ type Deps struct {
 	Auth      api.AuthService
 	JWTIssuer *auth.JWTIssuer
 	Users     repository.UserRepository
+	Packages  repository.PackageRepository
 	Agent     agent.AgentInterface
 }
 
@@ -109,6 +110,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		api.RegisterMeRoutes(v1)
 		if deps.Users != nil {
 			api.RegisterUserRoutes(v1, api.UserHandlerConfig{Repo: deps.Users})
+		}
+		if deps.Packages != nil {
+			api.RegisterPackageRoutes(v1, api.PackageHandlerConfig{Repo: deps.Packages})
 		}
 		if deps.Agent != nil {
 			api.RegisterSystemRoutes(v1, deps.Agent)

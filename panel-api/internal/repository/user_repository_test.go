@@ -64,6 +64,7 @@ func TestUserRepository_Create(t *testing.T) {
 			"", // name_last default
 			u.PasswordHash,
 			false,            // is_admin
+			nil,              // package_id
 			nil,              // linux_uid
 			sqlmock.AnyArg(), // created_at
 			sqlmock.AnyArg(), // updated_at

@@ -40,6 +40,10 @@ type SSLCertificateRepository interface {
 	ListDueForRenewal(ctx context.Context, within time.Duration) ([]models.SSLCertificate, error)
 	ListAll(ctx context.Context) ([]SSLCertificateWithDomain, error)
 	ListByUserID(ctx context.Context, userID string) ([]SSLCertificateWithDomain, error)
+	UpdateSelfSigned(ctx context.Context, id string, certPath, keyPath string, expiresAt time.Time) error
+	UpdateAfterACMEFailure(ctx context.Context, id string, lastError string, nextRetryAt time.Time, retryCount int, fallbackCertPath, fallbackKeyPath *string, fallbackExpiresAt *time.Time) error
+	MarkFailed(ctx context.Context, id string, lastError string) error
+	ListDueForACMERetry(ctx context.Context, now time.Time, limit int) ([]models.SSLCertificate, error)
 }
 
 type sslCertificateRepo struct{ db *gorm.DB }
@@ -189,4 +193,69 @@ func (r *sslCertificateRepo) ListByUserID(ctx context.Context, userID string) ([
 		return nil, err
 	}
 	return results, nil
+}
+
+// UpdateSelfSigned sets the certificate to self-signed fallback status
+// with the given cert/key paths and expiration, clearing last_error.
+func (r *sslCertificateRepo) UpdateSelfSigned(ctx context.Context, id string, certPath, keyPath string, expiresAt time.Time) error {
+	return r.db.WithContext(ctx).Model(&models.SSLCertificate{}).Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"status":      models.SSLStatusSelfSigned,
+			"cert_path":   certPath,
+			"key_path":    keyPath,
+			"expires_at":  expiresAt,
+			"last_error":  nil,
+			"updated_at":  time.Now(),
+		}).Error
+}
+
+// UpdateAfterACMEFailure sets status to pending_acme_retry, records the error,
+// and schedules the next retry via next_retry_at and retry_count.
+// If fallback paths are provided, also writes those (for first failure with self-signed).
+func (r *sslCertificateRepo) UpdateAfterACMEFailure(ctx context.Context, id string, lastError string, nextRetryAt time.Time, retryCount int, fallbackCertPath, fallbackKeyPath *string, fallbackExpiresAt *time.Time) error {
+	updates := map[string]interface{}{
+		"status":         models.SSLStatusPendingACMERetry,
+		"last_error":     lastError,
+		"next_retry_at":  nextRetryAt,
+		"retry_count":    retryCount,
+		"updated_at":     time.Now(),
+	}
+	if fallbackCertPath != nil {
+		updates["cert_path"] = *fallbackCertPath
+	}
+	if fallbackKeyPath != nil {
+		updates["key_path"] = *fallbackKeyPath
+	}
+	if fallbackExpiresAt != nil {
+		updates["expires_at"] = *fallbackExpiresAt
+	}
+	return r.db.WithContext(ctx).Model(&models.SSLCertificate{}).Where("id = ?", id).
+		Updates(updates).Error
+}
+
+// MarkFailed sets status='failed' and clears next_retry_at (manual retry only).
+func (r *sslCertificateRepo) MarkFailed(ctx context.Context, id string, lastError string) error {
+	return r.db.WithContext(ctx).Model(&models.SSLCertificate{}).Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"status":         models.SSLStatusFailed,
+			"last_error":     lastError,
+			"next_retry_at":  nil,
+			"updated_at":     time.Now(),
+		}).Error
+}
+
+// ListDueForACMERetry returns pending_acme_retry certificates with
+// next_retry_at <= now, ordered by next_retry_at ascending, limited to limit.
+func (r *sslCertificateRepo) ListDueForACMERetry(ctx context.Context, now time.Time, limit int) ([]models.SSLCertificate, error) {
+	var certs []models.SSLCertificate
+	err := r.db.WithContext(ctx).
+		Where("status = ? AND next_retry_at IS NOT NULL AND next_retry_at <= ?",
+			models.SSLStatusPendingACMERetry, now).
+		Order("next_retry_at ASC").
+		Limit(limit).
+		Find(&certs).Error
+	if err != nil {
+		return nil, err
+	}
+	return certs, nil
 }

@@ -11,7 +11,9 @@ type SSLStatus =
   | "issued"
   | "failed"
   | "revoked"
-  | "renewing";
+  | "renewing"
+  | "self_signed"
+  | "pending_acme_retry";
 
 type SSLCertificate = {
   status: SSLStatus;
@@ -23,6 +25,8 @@ type SSLCertificate = {
   staging: boolean;
   cert_path?: string;
   key_path?: string;
+  next_retry_at?: string;
+  retry_count: number;
 };
 
 type ServerSettings = {
@@ -36,6 +40,8 @@ const STATUS_COLORS: Record<SSLStatus, string> = {
   issued: "green",
   failed: "red",
   revoked: "default",
+  self_signed: "orange",
+  pending_acme_retry: "gold",
 };
 
 function daysUntil(iso?: string): number | null {
@@ -124,6 +130,19 @@ export const DomainSSLSection = ({ domainId, sslEnabled, onToggled }: Props) => 
     }
   };
 
+  const onRetry = async () => {
+    setRenewing(true);
+    try {
+      await apiClient.post(`/domains/${domainId}/ssl/retry`);
+      message.success("Retry queued");
+      await fetchCert();
+    } catch {
+      message.error("Failed to queue retry");
+    } finally {
+      setRenewing(false);
+    }
+  };
+
   if (loading) return <Skeleton active paragraph={{ rows: 2 }} />;
 
   const status = cert?.status;
@@ -145,6 +164,37 @@ export const DomainSSLSection = ({ domainId, sslEnabled, onToggled }: Props) => 
         />
       )}
 
+      {status === "self_signed" || status === "pending_acme_retry" ? (
+        <Alert
+          type="warning"
+          showIcon
+          message="Using self-signed certificate"
+          description="This domain is using a self-signed certificate while Let's Encrypt issuance retries. Browsers will show a security warning until the real cert is issued."
+        />
+      ) : null}
+
+      {status === "failed" ? (
+        <Alert
+          type="error"
+          showIcon
+          message="ACME issuance failed"
+          description={
+            <>
+              {cert?.last_error && <div>Error: {cert.last_error}</div>}
+              <Button
+                size="small"
+                type="primary"
+                loading={renewing}
+                onClick={onRetry}
+                style={{ marginTop: 8 }}
+              >
+                Retry
+              </Button>
+            </>
+          }
+        />
+      ) : null}
+
       <Space size="middle" align="center">
         <Switch
           checked={sslEnabled}
@@ -159,7 +209,9 @@ export const DomainSSLSection = ({ domainId, sslEnabled, onToggled }: Props) => 
         )}
         {status && (
           <Tooltip title={status === "failed" ? cert?.last_error : undefined}>
-            <Tag color={STATUS_COLORS[status]}>{status}</Tag>
+            <Tag color={STATUS_COLORS[status]}>
+              {status.replace(/_/g, " ")}
+            </Tag>
           </Tooltip>
         )}
         {status === "issued" && days !== null && (

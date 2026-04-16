@@ -476,15 +476,41 @@ type sslIssueResult struct {
 	Staging   bool   `json:"staging"`
 }
 
+// sslSelfSignResult mirrors the shape of ssl.self_sign agent response.
+type sslSelfSignResult struct {
+	CertPath  string `json:"cert_path"`
+	KeyPath   string `json:"key_path"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+// computeBackoff returns the exponential backoff duration for a given retry count.
+// Backoff: retry_count 1→5m, 2→15m, 3→1h, 4→4h, 5+→4h (capped).
+func computeBackoff(retryCount int) time.Duration {
+	switch retryCount {
+	case 1:
+		return 5 * time.Minute
+	case 2:
+		return 15 * time.Minute
+	case 3:
+		return 1 * time.Hour
+	default:
+		return 4 * time.Hour
+	}
+}
+
 // reconcileSSLForDomain converges the ssl_certificates row for a domain to
-// reflect the state the DB has declared:
-//   - ssl_enabled && (no row | pending | failed)  → call ssl.issue
-//   - ssl_enabled && status='renewing'            → call ssl.renew
-//   - !ssl_enabled && status='issued'             → call ssl.revoke
+// reflect the state the DB has declared. State machine:
+//   - ssl_enabled && (no row | pending, retry_count=0)                              → tryACMEOrFallback
+//   - ssl_enabled && status='pending_acme_retry' && next_retry_at <= now           → tryACMEOrFallback
+//   - ssl_enabled && status='renewing'                                             → sslRenewForDomain
+//   - ssl_enabled && status='self_signed'                                          → tryACMEOrFallback (attempt upgrade)
+//   - !ssl_enabled && status='issued'                                              → sslRevokeForDomain
+//   - !ssl_enabled && status='self_signed'                                         → no-op
 //
-// On success the row is updated (paths + timestamps + status). On failure
-// status flips to 'failed' with last_error set. Errors are logged, never
-// returned — SSL failures must not block the rest of the reconciler loop.
+// On ACME success the row is updated (paths + timestamps + status=issued).
+// On first ACME failure, ssl.self_sign is called for fallback, then status=pending_acme_retry
+// with exponential backoff. After 20 failures, status=failed (manual retry only).
+// Errors are logged, never returned — SSL failures must not block the rest of the reconciler loop.
 func (r *Reconciler) reconcileSSLForDomain(ctx context.Context, domain *models.Domain) {
 	if r.sslCerts == nil || r.serverSettings == nil {
 		return // SSL feature not wired — skip
@@ -497,12 +523,19 @@ func (r *Reconciler) reconcileSSLForDomain(ctx context.Context, domain *models.D
 	}
 
 	switch {
-	case domain.SSLEnabled && needsIssue(cert):
-		r.sslIssueForDomain(ctx, domain, cert)
+	case domain.SSLEnabled && cert == nil:
+		r.tryACMEOrFallback(ctx, domain, nil)
+	case domain.SSLEnabled && cert != nil && cert.Status == models.SSLStatusPending && cert.RetryCount == 0:
+		r.tryACMEOrFallback(ctx, domain, cert)
+	case domain.SSLEnabled && cert != nil && cert.Status == models.SSLStatusPendingACMERetry && cert.NextRetryAt != nil && cert.NextRetryAt.Before(time.Now().UTC()):
+		r.tryACMEOrFallback(ctx, domain, cert)
 	case domain.SSLEnabled && cert != nil && cert.Status == models.SSLStatusRenewing:
 		r.sslRenewForDomain(ctx, domain, cert)
+	case domain.SSLEnabled && cert != nil && cert.Status == models.SSLStatusSelfSigned:
+		r.tryACMEOrFallback(ctx, domain, cert)
 	case !domain.SSLEnabled && cert != nil && cert.Status == models.SSLStatusIssued:
 		r.sslRevokeForDomain(ctx, domain, cert)
+	// !ssl_enabled && status='self_signed' is a no-op; leave cert in place
 	}
 }
 

@@ -149,6 +149,25 @@ export const SSLManagerTable = ({
     },
   });
 
+  // Retry certificate mutation
+  const retryMutation = useMutation({
+    mutationFn: async (domainId: string) => {
+      await apiClient.post(`/domains/${domainId}/ssl/retry`);
+    },
+    onSuccess: () => {
+      message.success("Retry queued");
+      queryClient.invalidateQueries({ queryKey: ["ssl-manager", endpoint] });
+    },
+    onError: (error: unknown) => {
+      const status = (error as { response?: { status?: number; data?: { error?: string } } })?.response;
+      if (status?.status === 409) {
+        message.info("Already retryable — will attempt on next tick");
+      } else {
+        message.error("Failed to queue retry");
+      }
+    },
+  });
+
   if (error) {
     return (
       <Empty
@@ -182,14 +201,24 @@ export const SSLManagerTable = ({
       title: "Status",
       dataIndex: "status",
       key: "status",
-      render: (status: string) => (
-        <Tag
-          color={STATUS_COLORS[status] || "default"}
-          icon={STATUS_ICONS[status]}
-        >
-          {status.charAt(0).toUpperCase() + status.slice(1)}
-        </Tag>
-      ),
+      render: (status: string, record: SSLCertificate) => {
+        let tooltip = "";
+        if (status === "self_signed") {
+          tooltip = "Stop-gap self-signed cert — ACME will retry shortly";
+        } else if (status === "pending_acme_retry") {
+          tooltip = `ACME failed — retrying at ${formatDate(record.next_retry_at)}`;
+        }
+        return (
+          <Tooltip title={tooltip}>
+            <Tag
+              color={STATUS_COLORS[status] || "default"}
+              icon={STATUS_ICONS[status]}
+            >
+              {status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, " ")}
+            </Tag>
+          </Tooltip>
+        );
+      },
     },
     {
       title: "Issued",
@@ -201,7 +230,16 @@ export const SSLManagerTable = ({
       title: "Expires",
       dataIndex: "expires_at",
       key: "expires_at",
-      render: (dateStr: string | null) => formatExpiry(dateStr),
+      render: (dateStr: string | null, record: SSLCertificate) => {
+        if (record.status === "self_signed") {
+          return (
+            <span style={{ color: "#999" }}>
+              {formatDate(dateStr)} <em>(self-signed)</em>
+            </span>
+          );
+        }
+        return formatExpiry(dateStr);
+      },
     },
     {
       title: "Staging",
@@ -213,33 +251,51 @@ export const SSLManagerTable = ({
     {
       title: "Actions",
       key: "actions",
-      render: (_: unknown, record: SSLCertificate) => (
-        <Space>
-          <Tooltip title="Renew certificate">
-            <Button
-              type="primary"
-              size="small"
-              icon={<ReloadOutlined />}
-              loading={renewMutation.isPending}
-              onClick={() => renewMutation.mutate(record.domain_id)}
-            />
-          </Tooltip>
-          <Popconfirm
-            title="Revoke Certificate"
-            description="Are you sure you want to revoke this certificate?"
-            onConfirm={() => revokeMutation.mutate(record.domain_id)}
-            okText="Yes"
-            cancelText="No"
-          >
-            <Button
-              danger
-              size="small"
-              icon={<DeleteOutlined />}
-              loading={revokeMutation.isPending}
-            />
-          </Popconfirm>
-        </Space>
-      ),
+      render: (_: unknown, record: SSLCertificate) => {
+        const isRetryable = record.status === "failed" ||
+          (record.status === "pending_acme_retry" && record.next_retry_at && new Date(record.next_retry_at) < new Date());
+        return (
+          <Space>
+            {isRetryable && (
+              <Tooltip title="Force ACME retry now">
+                <Button
+                  size="small"
+                  icon={<RedoOutlined />}
+                  loading={retryMutation.isPending}
+                  onClick={() => retryMutation.mutate(record.domain_id)}
+                />
+              </Tooltip>
+            )}
+            {record.status === "issued" && (
+              <Tooltip title="Renew certificate">
+                <Button
+                  type="primary"
+                  size="small"
+                  icon={<ReloadOutlined />}
+                  loading={renewMutation.isPending}
+                  onClick={() => renewMutation.mutate(record.domain_id)}
+                />
+              </Tooltip>
+            )}
+            {record.status === "issued" && (
+              <Popconfirm
+                title="Revoke Certificate"
+                description="Are you sure you want to revoke this certificate?"
+                onConfirm={() => revokeMutation.mutate(record.domain_id)}
+                okText="Yes"
+                cancelText="No"
+              >
+                <Button
+                  danger
+                  size="small"
+                  icon={<DeleteOutlined />}
+                  loading={revokeMutation.isPending}
+                />
+              </Popconfirm>
+            )}
+          </Space>
+        );
+      },
     },
   ];
 

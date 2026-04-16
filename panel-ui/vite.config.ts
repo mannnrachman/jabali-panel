@@ -38,33 +38,20 @@ export default defineConfig(({ mode }) => {
       globals: true,
       environment: "happy-dom",
       setupFiles: ["./src/test/setup.ts"],
-      // Default `include` already catches **/*.{test,spec}.{ts,tsx}; no
-      // override needed. css: false keeps CSS imports from cratering tests
-      // that don't need styling.
+      // Exclude Playwright E2E tests — those run via `npx playwright test`.
+      exclude: ["tests/e2e/**", "node_modules/**"],
       css: false,
     },
     build: {
-      // Split vendor code into stable chunks so a panel-ui release that
-      // only changes our src/ doesn't bust the AntD/Refine cache. The
-      // initial uncached load is slightly larger (parallel chunk fetches
-      // cost a bit of HTTP overhead), but every subsequent release gets
-      // the big chunks for free out of the browser cache.
-      chunkSizeWarningLimit: 900,
-      rollupOptions: {
-        output: {
-          manualChunks(id) {
-            if (!id.includes("node_modules")) return;
-            // Keep antd + icons together — splitting them triggers
-            // rollup's circular-chunk warning because antd imports from
-            // @ant-design/cssinjs and back. Ant Design's React primitives
-            // dwarf the icons anyway, so the split wasn't buying much.
-            if (id.includes("/antd/") || id.includes("@ant-design/")) return "antd";
-            if (id.includes("@refinedev/")) return "refine";
-            if (id.includes("react-router") || id.includes("@remix-run/")) return "router";
-            return "vendor";
-          },
-        },
-      },
+      // Single bundle. Earlier attempts to manually split react / antd /
+      // refine into named chunks tripped on init-order bugs: antd was
+      // calling React.createContext before the 'vendor' chunk that held
+      // react had finished loading, which crashed the app on boot with
+      // "Cannot read properties of undefined (reading 'createContext')".
+      // The caching win from splitting would've been real, but shipping
+      // a silently-broken SPA isn't worth chasing it. Revisit when we
+      // either move to lazy route chunks or adopt a vendor-import-map.
+      chunkSizeWarningLimit: 1800,
     },
   };
 });

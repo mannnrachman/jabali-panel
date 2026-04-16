@@ -88,6 +88,11 @@ type Domain struct {
 	// URL, and HTTP status code.
 	PageRedirects PageRedirects `gorm:"type:json" json:"page_redirects,omitempty"`
 
+	// IndexPriority picks which file(s) nginx serves as the default
+	// directory index. Enum values (html_first/php_first/html_only/
+	// php_only/full) map to nginx `index` directives in the agent.
+	IndexPriority string `gorm:"type:varchar(32);not null;default:'html_first'" json:"index_priority"`
+
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }

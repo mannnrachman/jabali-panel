@@ -56,6 +56,7 @@ type updateDomainRequest struct {
 	RedirectAllTo         *string               `json:"redirect_all_to,omitempty"`
 	RedirectAllType       *string               `json:"redirect_all_type,omitempty"`
 	PageRedirects         *models.PageRedirects `json:"page_redirects,omitempty"`
+	IndexPriority         *string               `json:"index_priority,omitempty"`
 }
 
 func (h *domainHandler) list(c *gin.Context) {
@@ -295,6 +296,15 @@ func (h *domainHandler) update(c *gin.Context) {
 			return
 		}
 		domain.PageRedirects = *req.PageRedirects
+	}
+
+	if req.IndexPriority != nil {
+		p := strings.TrimSpace(*req.IndexPriority)
+		if !isValidIndexPriority(p) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_index_priority"})
+			return
+		}
+		domain.IndexPriority = p
 	}
 
 	domain.UpdatedAt = time.Now().UTC()
@@ -609,6 +619,16 @@ func validatePageRedirects(prs models.PageRedirects) error {
 		}
 	}
 	return nil
+}
+
+// isValidIndexPriority returns true for the enum values the agent knows
+// how to map to nginx `index` directives.
+func isValidIndexPriority(s string) bool {
+	switch s {
+	case "html_first", "php_first", "html_only", "php_only", "full":
+		return true
+	}
+	return false
 }
 
 func domainLinuxUser(email string) string {

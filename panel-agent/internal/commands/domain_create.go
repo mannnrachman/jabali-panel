@@ -24,6 +24,7 @@ type domainCreateParams struct {
 	PHPVersion         string `json:"php_version"`
 	CustomDirectives   string `json:"custom_directives"`
 	RedirectDirectives string `json:"redirect_directives"`
+	IndexPriority      string `json:"index_priority"`
 	// IsEnabled controls whether the vhost serves the tenant's docroot
 	// (true) or a branded "site disabled" placeholder (false). Pointer
 	// so omitted fields default to true (backwards compat).
@@ -48,7 +49,7 @@ const vhostTemplate = `server {
     server_name {{.Domain}};
 {{ if .IsEnabled }}
     root {{.DocRoot}};
-    index index.html index.php;
+    {{.IndexDirective}}
 
     location / {
         try_files $uri $uri/ /index.php?$query_string;
@@ -83,9 +84,31 @@ type vhostData struct {
 	DocRoot            string
 	PHPVersion         string
 	Username           string
+	IndexDirective     string
 	RedirectDirectives string
 	CustomDirectives   string
 	IsEnabled          bool
+}
+
+// indexDirectiveFor maps the panel's index_priority enum to the concrete
+// nginx `index ...;` directive. Unknown values fall back to the prior
+// hardcoded behaviour so a mis-plumbed reconciler can't silently break
+// a tenant's site.
+func indexDirectiveFor(priority string) string {
+	switch priority {
+	case "php_first":
+		return "index index.php index.html;"
+	case "html_only":
+		return "index index.html;"
+	case "php_only":
+		return "index index.php;"
+	case "full":
+		return "index index.php index.html index.htm;"
+	case "html_first", "":
+		fallthrough
+	default:
+		return "index index.html index.php;"
+	}
 }
 
 // pathsUnderHome returns each directory from docRoot up to but NOT
@@ -112,7 +135,7 @@ func pathsUnderHome(username, docRoot string) []string {
 // writeVhost generates and writes the nginx vhost configuration, then tests and reloads nginx.
 // This is the core logic shared by domain.create and domain.enable/disable.
 // If the config content is unchanged, nginx reload is skipped for efficiency.
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, customDirectives string, isEnabled bool) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, customDirectives, indexPriority string, isEnabled bool) (string, error) {
 	// Generate vhost configuration
 	tmpl, err := template.New("vhost").Parse(vhostTemplate)
 	if err != nil {
@@ -124,6 +147,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		DocRoot:            docRoot,
 		PHPVersion:         phpVersion,
 		Username:           username,
+		IndexDirective:     indexDirectiveFor(indexPriority),
 		RedirectDirectives: redirectDirectives,
 		CustomDirectives:   customDirectives,
 		IsEnabled:          isEnabled,
@@ -257,7 +281,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		isEnabled = *p.IsEnabled
 	}
 
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.CustomDirectives, isEnabled)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.CustomDirectives, p.IndexPriority, isEnabled)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

@@ -225,6 +225,7 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	}
 
 	params["redirect_directives"] = redirects.Compile(domain)
+	params["index_priority"] = domain.IndexPriority
 
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()

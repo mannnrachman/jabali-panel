@@ -1,6 +1,6 @@
 import { useTable } from "@refinedev/antd";
 import { DeleteButton } from "@refinedev/antd";
-import { PlusSquareOutlined } from "@ant-design/icons";
+import { PlusSquareOutlined, GlobalOutlined } from "@ant-design/icons";
 import { Button, Space, Table, Tag, Typography } from "antd";
 import { useNavigate } from "react-router";
 
@@ -71,6 +71,14 @@ export const UserDomainList = () => {
           dataIndex="actions"
           render={(_, r) => (
             <Space size="small">
+              <Button
+                type="text"
+                size="small"
+                icon={<GlobalOutlined />}
+                onClick={() => navigate(`/jabali-panel/domains/${r.id}/dns`)}
+              >
+                DNS
+              </Button>
               <DomainRedirectsButton domain={r} />
               <DomainIndexButton domain={r} />
               <DomainSettingsButton domain={r} />

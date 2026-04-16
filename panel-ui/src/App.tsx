@@ -47,6 +47,7 @@ import { ServerSettingsPage } from "./shells/admin/settings/ServerSettingsPage";
 import { MyProfile } from "./shells/user/MyProfile";
 import { UserDomainList } from "./shells/user/domains/UserDomainList";
 import { UserDomainCreate } from "./shells/user/domains/UserDomainCreate";
+import { DNSRecordsPage } from "./shells/dns/DNSRecordsPage";
 import { LoginPage } from "./pages/Login";
 
 const App = () => {
@@ -120,6 +121,7 @@ const App = () => {
                 <Route index element={<DomainList />} />
                 <Route path="create" element={<DomainCreate />} />
                 <Route path="edit/:id" element={<DomainEdit />} />
+                <Route path=":id/dns" element={<DNSRecordsPage />} />
               </Route>
               <Route path="settings" element={<ServerSettingsPage />} />
             </Route>
@@ -143,6 +145,7 @@ const App = () => {
               <Route path="domains">
                 <Route index element={<UserDomainList />} />
                 <Route path="create" element={<UserDomainCreate />} />
+                <Route path=":id/dns" element={<DNSRecordsPage />} />
               </Route>
             </Route>
 

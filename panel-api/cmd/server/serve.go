@@ -88,6 +88,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		domainRepo := repository.NewDomainRepository(sharedDB)
 		dnsZoneRepo := repository.NewDNSZoneRepository(sharedDB)
 		dnsRecordRepo := repository.NewDNSRecordRepository(sharedDB)
+		sslCertRepo := repository.NewSSLCertificateRepository(sharedDB)
 
 		serverSettingsRepo := repository.NewServerSettingsRepository(sharedDB)
 		jwtIss, err := auth.NewJWTIssuer(auth.JWTConfig{
@@ -126,6 +127,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			},
 		)
 		rec.WithDNSRepos(dnsZoneRepo, dnsRecordRepo, serverSettingsRepo)
+		rec.WithSSLCerts(sslCertRepo)
 		deps.Reconciler = rec
 		deps.DNSZones = dnsZoneRepo
 		deps.DNSRecords = dnsRecordRepo

@@ -24,12 +24,20 @@ type Reconciler struct {
 	users          repository.UserRepository
 	dnsZones       repository.DNSZoneRepository
 	dnsRecords     repository.DNSRecordRepository
+	sslCerts       repository.SSLCertificateRepository
 	serverSettings repository.ServerSettingsRepository
 	agent          agent.AgentInterface
 	log            *slog.Logger
 	interval       time.Duration
 	// queue holds domain IDs to reconcile out-of-band (non-blocking enqueue)
 	queue chan string
+}
+
+// WithSSLCerts adds SSL certificate repository support to the reconciler.
+// Call this before using SSL certificate reconciliation.
+func (r *Reconciler) WithSSLCerts(sslCerts repository.SSLCertificateRepository) *Reconciler {
+	r.sslCerts = sslCerts
+	return r
 }
 
 // Config bundles reconciler configuration.

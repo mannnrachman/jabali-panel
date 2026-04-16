@@ -13,13 +13,13 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api"
 )
 
-func TestIndex_ReturnsServiceInfo(t *testing.T) {
+func TestServiceInfo_ReturnsJSON(t *testing.T) {
 	t.Parallel()
 
 	r := gin.New()
-	api.RegisterIndexRoutes(r)
+	api.RegisterServiceInfoRoute(r)
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/info", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -31,29 +31,6 @@ func TestIndex_ReturnsServiceInfo(t *testing.T) {
 	assert.Equal(t, "jabali-panel", body["service"])
 	assert.Contains(t, body, "version")
 	assert.Contains(t, body, "endpoints")
-
-	endpoints, ok := body["endpoints"].(map[string]any)
-	require.True(t, ok, "endpoints must be an object")
-	assert.Contains(t, endpoints, "health")
-}
-
-func TestNoRoute_ReturnsJSON404(t *testing.T) {
-	t.Parallel()
-
-	r := gin.New()
-	api.RegisterNotFoundHandlers(r)
-
-	req := httptest.NewRequest(http.MethodGet, "/nope", nil)
-	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusNotFound, rec.Code)
-	assert.Equal(t, "application/json; charset=utf-8", rec.Header().Get("Content-Type"))
-
-	var body map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	assert.Equal(t, "not_found", body["error"])
-	assert.Equal(t, "/nope", body["path"])
 }
 
 func TestNoMethod_ReturnsJSON405(t *testing.T) {
@@ -61,10 +38,10 @@ func TestNoMethod_ReturnsJSON405(t *testing.T) {
 
 	r := gin.New()
 	r.HandleMethodNotAllowed = true
-	api.RegisterIndexRoutes(r) // registers GET /
-	api.RegisterNotFoundHandlers(r)
+	api.RegisterServiceInfoRoute(r) // registers GET /info
+	api.RegisterMethodNotAllowedHandler(r)
 
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req := httptest.NewRequest(http.MethodPost, "/info", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 

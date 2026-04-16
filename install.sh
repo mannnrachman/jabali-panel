@@ -91,9 +91,36 @@ install_base_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y -qq --no-install-recommends \
-    git curl ca-certificates build-essential tar openssl \
+    git curl ca-certificates build-essential tar openssl gnupg \
     mariadb-server mariadb-client
   _ok "base packages ready"
+}
+
+# ---------- step 1b: Node.js 22 LTS (for panel-ui) --------------------------
+
+install_node() {
+  # Idempotent: skip if a new-enough node is already installed. NodeSource
+  # ships v22 for Debian 13 / Ubuntu 24.04 so apt stays consistent.
+  if command -v node >/dev/null 2>&1; then
+    local cur_major
+    cur_major="$(node -v | sed -E 's/^v([0-9]+).*/\1/')"
+    if [[ "$cur_major" -ge 22 ]]; then
+      _ok "Node $(node -v) already installed"
+      return
+    fi
+    _warn "upgrading Node $cur_major → 22"
+  fi
+
+  _log "installing Node.js 22 LTS (NodeSource)"
+  install -d -m 0755 /etc/apt/keyrings
+  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+    | gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg
+  chmod 0644 /etc/apt/keyrings/nodesource.gpg
+  echo 'deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main' \
+    >/etc/apt/sources.list.d/nodesource.list
+  apt-get update -qq
+  apt-get install -y -qq --no-install-recommends nodejs
+  _ok "Node $(node -v) / npm $(npm -v) installed"
 }
 
 # ---------- step 2.5: MariaDB DB + scoped user ------------------------------
@@ -231,6 +258,23 @@ clone_or_update_repo() {
 }
 
 # ---------- step 5: build backend -------------------------------------------
+
+# ---------- step 5a: build React SPA -----------------------------------
+
+build_frontend() {
+  _log "building panel-ui (npm ci + npm run build)"
+  # npm ci needs lock + no partial node_modules. Run as the service user so
+  # the node_modules cache sits in the project dir, not /root.
+  sudo -u "$SERVICE_USER" -H env \
+    HOME="$REPO_DIR" \
+    PATH="/usr/bin:/bin" \
+    bash -c "cd '$REPO_DIR/panel-ui' && npm ci --no-audit --no-fund --prefer-offline"
+  sudo -u "$SERVICE_USER" -H env \
+    HOME="$REPO_DIR" \
+    PATH="/usr/bin:/bin" \
+    bash -c "cd '$REPO_DIR/panel-ui' && npm run build"
+  _ok "panel-ui built → $REPO_DIR/panel-ui/dist/"
+}
 
 build_backend() {
   _log "building panel-api + jabali-agent"
@@ -457,6 +501,7 @@ start_and_verify() {
 main() {
   preflight
   install_base_packages
+  install_node
   install_go
   ensure_user_and_dirs
   # Order matters: write_env_file seeds PANEL_ADDR / PANEL_ENV / JWT_SECRET
@@ -465,6 +510,7 @@ main() {
   write_env_file
   provision_mariadb
   clone_or_update_repo
+  build_frontend
   build_backend
   write_config_file
   write_agent_systemd_unit

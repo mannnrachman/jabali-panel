@@ -1,0 +1,9 @@
+node_modules/
+*.local
+
+# Ignore everything in dist/ except the .gitkeep. The .gitkeep ensures the
+# embed directive in embed.go finds a non-empty directory on a fresh clone
+# before `npm run build` has run; the SPA payload itself is rebuilt per
+# install and never committed.
+dist/*
+!dist/.gitkeep

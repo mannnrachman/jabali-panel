@@ -6,44 +6,33 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RegisterIndexRoutes wires a lightweight service-info endpoint at /.
-//
-// Blueprint §13 defines /jabali-admin and /jabali-panel as the personas'
-// entry points. Both are served by the SPA (Phase 8). Until that ships,
-// hitting / returns a structured JSON payload so operators who browse the
-// bare URL see something useful (version, known routes, docs link) rather
-// than a stock 404.
-func RegisterIndexRoutes(r *gin.Engine) {
-	r.GET("/", indexHandler)
+// RegisterServiceInfoRoute wires GET /info — a lightweight JSON endpoint
+// that returns version / service metadata. `/` is owned by the SPA (Phase
+// 8+), so operators who want a machine-readable status hit /info or
+// /health instead.
+func RegisterServiceInfoRoute(r *gin.Engine) {
+	r.GET("/info", infoHandler)
 }
 
-func indexHandler(c *gin.Context) {
+func infoHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"service": "jabali-panel",
 		"version": Version,
 		"status":  "ok",
 		"endpoints": gin.H{
-			"health":   "/health",
-			"api":      "/api/v1/ (not yet implemented)",
-			"admin_ui": "/jabali-admin/ (not yet implemented)",
-			"user_ui":  "/jabali-panel/ (not yet implemented)",
-			"bridge":   "/api/bridge/v1/ (not yet implemented)",
-			"ws":       "/ws/ (not yet implemented)",
+			"health": "/health",
+			"api":    "/api/v1/",
+			"ui":     "/ (SPA)",
 		},
 		"docs": "https://git.linux-hosting.co.il/shukivaknin/jabali2",
 	})
 }
 
-// RegisterNotFoundHandlers installs JSON handlers for unmatched routes and
-// disallowed methods. Keeps API consumers on a single content-type contract
-// and avoids leaking Gin's default plain-text responses.
-func RegisterNotFoundHandlers(r *gin.Engine) {
-	r.NoRoute(func(c *gin.Context) {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "not_found",
-			"path":  c.Request.URL.Path,
-		})
-	})
+// RegisterMethodNotAllowedHandler installs a JSON response for NoMethod.
+// NoRoute is owned by the SPA static-file handler (internal/webui) which
+// serves index.html as a fallback for client-side routes and JSON 404s for
+// API-ish paths.
+func RegisterMethodNotAllowedHandler(r *gin.Engine) {
 	r.NoMethod(func(c *gin.Context) {
 		c.JSON(http.StatusMethodNotAllowed, gin.H{
 			"error":  "method_not_allowed",

@@ -14,6 +14,8 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/webui"
+	panelui "git.linux-hosting.co.il/shukivaknin/jabali2/panel-ui"
 )
 
 // Deps bundles the collaborators NewWithDeps needs so main.go keeps its
@@ -83,7 +85,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 	startRateLimiterSweeper(rl)
 	r.Use(rl.Default())
 
-	api.RegisterIndexRoutes(r)
+	api.RegisterServiceInfoRoute(r)
 	api.RegisterHealthRoutes(r)
 	if deps.Agent != nil {
 		api.RegisterAgentHealthRoute(r, deps.Agent)
@@ -110,7 +112,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		}
 	}
 
-	api.RegisterNotFoundHandlers(r)
+	// Static SPA: owns r.NoRoute — serves embedded panel-ui/dist for
+	// unknown paths with client-side routing fallback, JSON 404 for
+	// API-ish prefixes.
+	webui.RegisterStatic(r, panelui.Assets())
+	// Method-not-allowed handler stays on the api side for JSON symmetry.
+	api.RegisterMethodNotAllowedHandler(r)
 	return r
 }
 

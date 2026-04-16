@@ -202,6 +202,7 @@ func (h *domainHandler) create(c *gin.Context) {
 		Name:      req.Name,
 		DocRoot:   docRoot,
 		IsEnabled: true,
+		SSLEnabled: true,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}

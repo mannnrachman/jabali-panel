@@ -35,12 +35,24 @@ export type MockPackage = {
   updated_at: string;
 };
 
+export type MockDomain = {
+  id: string;
+  user_id: string;
+  name: string;
+  doc_root: string;
+  is_enabled: boolean;
+  nginx_custom_directives: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type MockState = {
   // /me response (identity). null → treat as unauthenticated.
   me: MockUser | null;
   // users list returned by GET /users (the list endpoint); default []
   users?: MockUser[];
   packages?: MockPackage[];
+  domains?: MockDomain[];
 };
 
 // ---------- core installer ----------
@@ -56,12 +68,14 @@ export async function mockApi(page: Page, initial: MockState): Promise<void> {
     session: MockUser | null; // currently signed-in user (null = logged out)
     users: MockUser[];
     packages: MockPackage[];
+    domains: MockDomain[];
     accessToken: string | null;
   } = {
     expected: initial.me,
     session: null,
     users: initial.users ?? (initial.me ? [initial.me] : []),
     packages: initial.packages ?? [],
+    domains: initial.domains ?? [],
     accessToken: null,
   };
 
@@ -326,6 +340,80 @@ export async function mockApi(page: Page, initial: MockState): Promise<void> {
     if (req.method() === "DELETE") {
       if (idx < 0) return notFound(route);
       state.packages.splice(idx, 1);
+      return route.fulfill({ status: 204, body: "" });
+    }
+    return unsupported(route);
+  });
+
+  // ---- domains CRUD ----
+  await page.route(/\/api\/v1\/domains(\?.*)?$/, async (route) => {
+    const req = route.request();
+    if (req.method() === "GET") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: state.domains,
+          total: state.domains.length,
+          page: 1,
+          page_size: 20,
+        }),
+      });
+    }
+    if (req.method() === "POST") {
+      const body = req.postDataJSON() as Partial<MockDomain>;
+      const now = new Date().toISOString();
+      const newDomain: MockDomain = {
+        id: `01${Math.random().toString(36).slice(2, 10).toUpperCase().padEnd(24, "0")}`,
+        user_id: body.user_id ?? state.session?.id ?? "",
+        name: body.name ?? "",
+        doc_root: body.doc_root ?? "/var/www/" + (body.name ?? "example").replace(/\./g, "_"),
+        is_enabled: body.is_enabled ?? true,
+        nginx_custom_directives: body.nginx_custom_directives ?? "",
+        created_at: now,
+        updated_at: now,
+      };
+      state.domains.push(newDomain);
+      return route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify(newDomain),
+      });
+    }
+    return unsupported(route);
+  });
+
+  await page.route(/\/api\/v1\/domains\/[^/?]+(\?.*)?$/, async (route) => {
+    const req = route.request();
+    const url = new URL(req.url());
+    const id = decodeURIComponent(url.pathname.split("/").pop() ?? "");
+    const idx = state.domains.findIndex((d) => d.id === id);
+
+    if (req.method() === "GET") {
+      if (idx < 0) return notFound(route);
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(state.domains[idx]),
+      });
+    }
+    if (req.method() === "PATCH") {
+      if (idx < 0) return notFound(route);
+      const patch = req.postDataJSON() as Partial<MockDomain>;
+      state.domains[idx] = {
+        ...state.domains[idx],
+        ...patch,
+        updated_at: new Date().toISOString(),
+      };
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(state.domains[idx]),
+      });
+    }
+    if (req.method() === "DELETE") {
+      if (idx < 0) return notFound(route);
+      state.domains.splice(idx, 1);
       return route.fulfill({ status: 204, body: "" });
     }
     return unsupported(route);

@@ -6,6 +6,7 @@
 // it's a source-code bug, not a runtime misconfiguration.
 import { useLogout } from "@refinedev/core";
 import {
+  GlobalOutlined,
   HomeOutlined,
   LogoutOutlined,
   UserOutlined,
@@ -21,7 +22,8 @@ const { Header, Sider, Content } = Layout;
 
 const MENU: { key: string; path: string; label: string; icon: JSX.Element }[] = [
   { key: "profile", path: "/jabali-panel/profile", label: "My profile", icon: <UserOutlined /> },
-  // future: domains, email, dns, databases, wordpress, ssl, cron, …
+  { key: "domains", path: "/jabali-panel/domains", label: "Domains", icon: <GlobalOutlined /> },
+  // future: email, dns, databases, wordpress, ssl, cron, …
 ];
 
 export function UserLayout() {

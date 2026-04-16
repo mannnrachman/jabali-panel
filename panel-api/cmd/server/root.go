@@ -171,3 +171,19 @@ func userRepo() repository.UserRepository {
 func packageRepoFromDB() repository.PackageRepository {
 	return repository.NewPackageRepository(sharedDB)
 }
+
+// domainRepoFromDB returns a DomainRepository from the shared DB.
+func domainRepoFromDB() repository.DomainRepository {
+	return repository.NewDomainRepository(sharedDB)
+}
+
+// requireDBAndAgent initializes config, DB, and agent client.
+func requireDBAndAgent(cmd *cobra.Command, args []string) error {
+	if err := initConfig(); err != nil {
+		return err
+	}
+	if err := initDB(); err != nil {
+		return err
+	}
+	return initAgent()
+}

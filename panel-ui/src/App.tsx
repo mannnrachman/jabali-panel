@@ -40,7 +40,12 @@ import { UserList } from "./shells/admin/users/UserList";
 import { PackageCreate } from "./shells/admin/packages/PackageCreate";
 import { PackageEdit } from "./shells/admin/packages/PackageEdit";
 import { PackageList } from "./shells/admin/packages/PackageList";
+import { DomainCreate } from "./shells/admin/domains/DomainCreate";
+import { DomainEdit } from "./shells/admin/domains/DomainEdit";
+import { DomainList } from "./shells/admin/domains/DomainList";
 import { MyProfile } from "./shells/user/MyProfile";
+import { UserDomainList } from "./shells/user/domains/UserDomainList";
+import { UserDomainCreate } from "./shells/user/domains/UserDomainCreate";
 import { LoginPage } from "./pages/Login";
 
 const App = () => {
@@ -69,6 +74,12 @@ const App = () => {
               list: "/jabali-admin/packages",
               create: "/jabali-admin/packages/create",
               edit: "/jabali-admin/packages/edit/:id",
+            },
+            {
+              name: "domains",
+              list: "/jabali-admin/domains",
+              create: "/jabali-admin/domains/create",
+              edit: "/jabali-admin/domains/edit/:id",
             },
           ]}
           options={{
@@ -104,6 +115,11 @@ const App = () => {
                 <Route path="create" element={<PackageCreate />} />
                 <Route path="edit/:id" element={<PackageEdit />} />
               </Route>
+              <Route path="domains">
+                <Route index element={<DomainList />} />
+                <Route path="create" element={<DomainCreate />} />
+                <Route path="edit/:id" element={<DomainEdit />} />
+              </Route>
             </Route>
 
             {/* ---------------- user shell ----------------- */}
@@ -122,6 +138,10 @@ const App = () => {
             >
               <Route index element={<MyProfile />} />
               <Route path="profile" element={<MyProfile />} />
+              <Route path="domains">
+                <Route index element={<UserDomainList />} />
+                <Route path="create" element={<UserDomainCreate />} />
+              </Route>
             </Route>
 
             {/* ---------------- public ---------------- */}

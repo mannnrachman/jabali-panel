@@ -21,10 +21,17 @@
 # Usage (public repo):
 #   curl -fsSL https://git.linux-hosting.co.il/shukivaknin/jabali2/raw/branch/main/install.sh | bash
 #
-# If you fork the repo privately, pass a Gitea token to authenticate clone/pull:
-#   curl -fsSL <...>/install.sh | bash -s -- <GITEA_TOKEN>
-#   # or:
-#   JABALI_GITEA_TOKEN=xxx bash install.sh
+# Flags (all optional, can be combined):
+#   --hostname <fqdn>  Server hostname; skips the TTY prompt. Equivalent
+#                      to setting JABALI_HOSTNAME. --hostname=<fqdn> also works.
+#   --token <gitea>    Private-repo access token. Equivalent to
+#                      setting JABALI_GITEA_TOKEN.
+#
+# Examples:
+#   curl -fsSL <...>/install.sh | bash -s -- --hostname=panel.example.com
+#   curl -fsSL <...>/install.sh | bash -s -- --hostname panel.example.com --token <GITEA_TOKEN>
+#
+# Legacy: `bash -s -- <GITEA_TOKEN>` (positional token) still works.
 
 set -euo pipefail
 
@@ -47,7 +54,38 @@ AGENT_BIN_PATH="/usr/local/bin/jabali-agent"
 AGENT_SOCKET="/run/jabali/agent.sock"
 AGENT_SERVICE_NAME="jabali-agent"
 ENV_FILE="/etc/jabali/panel.env"
-GITEA_TOKEN="${JABALI_GITEA_TOKEN:-${1:-}}"
+
+# ---------- CLI flag parsing ------------------------------------------------
+#
+# We support --hostname and --token as named flags, and keep the legacy
+# positional arg ($1 = gitea token) working by deferring it until after flag
+# parsing. This way `bash -s -- --hostname=foo` and the old
+# `bash -s -- <TOKEN>` both do the right thing.
+
+_cli_hostname=""
+_cli_token=""
+_positional=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --hostname=*) _cli_hostname="${1#*=}"; shift ;;
+    --hostname)   _cli_hostname="${2:-}"; shift 2 ;;
+    --token=*)    _cli_token="${1#*=}"; shift ;;
+    --token)      _cli_token="${2:-}"; shift 2 ;;
+    --)           shift; while [[ $# -gt 0 ]]; do _positional+=("$1"); shift; done ;;
+    --*)          printf 'install.sh: unknown flag: %s\n' "$1" >&2; exit 64 ;;
+    *)            _positional+=("$1"); shift ;;
+  esac
+done
+
+# --hostname CLI arg wins over JABALI_HOSTNAME env; re-export so downstream
+# functions (notably prompt_server_settings) pick it up via the same env var.
+if [[ -n "$_cli_hostname" ]]; then
+  JABALI_HOSTNAME="$_cli_hostname"
+  export JABALI_HOSTNAME
+fi
+
+# --token precedence: CLI flag > JABALI_GITEA_TOKEN env > legacy positional.
+GITEA_TOKEN="${_cli_token:-${JABALI_GITEA_TOKEN:-${_positional[0]:-}}}"
 
 # ---------- tiny logger -----------------------------------------------------
 
@@ -181,17 +219,25 @@ prompt_server_settings() {
   inp_ipv4="${JABALI_PUBLIC_IPV4:-$detected_ipv4}"
   inp_ipv6="${JABALI_PUBLIC_IPV6:-$detected_ipv6}"
 
-  if [[ -z "$input_fd" ]]; then
-    _warn "no TTY available — using auto-detected defaults + env vars."
-    _warn "override hostname via JABALI_HOSTNAME"
-    inp_hostname="${JABALI_HOSTNAME:-$sys_hostname}"
-    if [[ ! "$inp_hostname" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$ ]]; then
-      _die "no TTY and no valid JABALI_HOSTNAME (detected: '$inp_hostname')"
+  # If the hostname was pre-supplied (via --hostname flag or JABALI_HOSTNAME
+  # env), skip the prompt entirely — even when a TTY is available. This
+  # enables non-interactive provisioning (Ansible, CI images, etc.).
+  local _hostname_regex='^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$'
+  if [[ -n "${JABALI_HOSTNAME:-}" ]]; then
+    if [[ ! "$JABALI_HOSTNAME" =~ $_hostname_regex ]]; then
+      _die "invalid JABALI_HOSTNAME: '$JABALI_HOSTNAME' (use letters/digits/dots/hyphens)"
     fi
-    inp_ns1_name="ns1.${inp_hostname}"
-    inp_ns1_ip="${inp_ipv4}"
-    inp_ns2_name="ns2.${inp_hostname}"
-    inp_ns2_ip="${inp_ipv4}"
+    inp_hostname="$JABALI_HOSTNAME"
+    _ok "using hostname from flag/env: $inp_hostname"
+    # Close the TTY FD even though we didn't read from it.
+    [[ "$input_fd" == "3" ]] && exec 3<&-
+  elif [[ -z "$input_fd" ]]; then
+    _warn "no TTY available — using auto-detected defaults + env vars."
+    _warn "override hostname via --hostname flag or JABALI_HOSTNAME env"
+    inp_hostname="$sys_hostname"
+    if [[ ! "$inp_hostname" =~ $_hostname_regex ]]; then
+      _die "no TTY and no --hostname given (detected: '$inp_hostname')"
+    fi
   else
     echo "Just one thing — your server's hostname. You can change it"
     echo "later from the admin panel."
@@ -200,22 +246,22 @@ prompt_server_settings() {
     while true; do
       read -rp "Server hostname [${sys_hostname}]: " -u "$input_fd" inp_hostname || true
       inp_hostname="${inp_hostname:-$sys_hostname}"
-      [[ "$inp_hostname" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$ ]] && break
+      [[ "$inp_hostname" =~ $_hostname_regex ]] && break
       _warn "invalid hostname; use letters/digits/dots/hyphens"
     done
-
-    # NS names + IPs are auto-derived from the hostname — no prompt.
-    # Both nameservers get the same IPv4 at install time; the operator
-    # later points ns2 at a separate server via the admin Server
-    # Settings page, which triggers a zone re-push automatically.
-    inp_ns1_name="ns1.${inp_hostname}"
-    inp_ns1_ip="${inp_ipv4}"
-    inp_ns2_name="ns2.${inp_hostname}"
-    inp_ns2_ip="${inp_ipv4}"
 
     # Close the TTY FD so we don't leak it to child processes.
     [[ "$input_fd" == "3" ]] && exec 3<&-
   fi
+
+  # NS names + IPs are auto-derived from the hostname — no prompt.
+  # Both nameservers get the same IPv4 at install time; the operator
+  # later points ns2 at a separate server via the admin Server
+  # Settings page, which triggers a zone re-push automatically.
+  inp_ns1_name="ns1.${inp_hostname}"
+  inp_ns1_ip="${inp_ipv4}"
+  inp_ns2_name="ns2.${inp_hostname}"
+  inp_ns2_ip="${inp_ipv4}"
 
   # Apply hostname at the OS layer now so later steps see the right name.
   hostnamectl set-hostname "$inp_hostname" 2>/dev/null || true

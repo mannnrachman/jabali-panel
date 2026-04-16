@@ -77,5 +77,5 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 4. Update this README with a link to the new ADR
 
 ### Related Documents
-- `docs/dns-secondary-nameserver.md` — Secondary nameserver setup (references ADR-0011)
+- `docs/runbooks/dns-secondary-nameserver.md` — Secondary nameserver setup (references ADR-0011)
 - `BLUEPRINT.md` — Feature roadmap and milestones

@@ -34,4 +34,4 @@ Authoritative nameserver = PowerDNS 4.9 on the local node. Backend = separate `j
 ## References
 - `panel-api/internal/reconciler/dns.go` — DNS record push logic
 - `panel-api/internal/agent/` — agent-side PowerDNS transaction handling
-- `docs/dns-secondary-nameserver.md` — secondary nameserver setup
+- `docs/runbooks/dns-secondary-nameserver.md` — secondary nameserver setup

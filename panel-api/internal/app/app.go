@@ -137,6 +137,14 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Reconciler: deps.Reconciler,
 			})
 		}
+		if deps.Domains != nil && deps.DNSZones != nil && deps.DNSRecords != nil {
+			api.RegisterDNSRoutes(v1, api.DNSHandlerConfig{
+				Domains:    deps.Domains,
+				Zones:      deps.DNSZones,
+				Records:    deps.DNSRecords,
+				Reconciler: deps.Reconciler,
+			})
+		}
 		if deps.ServerSettings != nil {
 			api.RegisterServerSettingsRoutes(v1, api.ServerSettingsHandlerConfig{
 				Repo:  deps.ServerSettings,

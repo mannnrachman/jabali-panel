@@ -37,9 +37,9 @@ type AuthHandlerConfig struct {
 	// (Strict).
 	CookieSameSiteNone bool
 
-	// StrictRateLimit, if non-nil, is applied as middleware on the /auth
-	// group before the individual POST handlers. Intended to bound brute
-	// force against credential endpoints. Leave nil to skip.
+	// StrictRateLimit, if non-nil, is applied to /login and /logout only
+	// (credential endpoints where brute-force throttling matters). /refresh
+	// is gated by the HttpOnly cookie and rides the global default limiter.
 	StrictRateLimit gin.HandlerFunc
 }
 
@@ -53,12 +53,21 @@ func RegisterAuthRoutes(r *gin.Engine, cfg AuthHandlerConfig) {
 	}
 	h := &authHandler{cfg: cfg}
 	g := r.Group("/api/v1/auth")
+
+	// Strict rate limit (credential brute-force protection) applies to
+	// login + logout only. /refresh is gated by the HttpOnly cookie
+	// and is hit on every page load by normal browsing, so it rides
+	// the global default limiter instead — throttling it here caused
+	// users to get logged out when they double-reloaded quickly.
+	loginChain := []gin.HandlerFunc{}
+	logoutChain := []gin.HandlerFunc{}
 	if cfg.StrictRateLimit != nil {
-		g.Use(cfg.StrictRateLimit)
+		loginChain = append(loginChain, cfg.StrictRateLimit)
+		logoutChain = append(logoutChain, cfg.StrictRateLimit)
 	}
-	g.POST("/login", h.login)
+	g.POST("/login", append(loginChain, h.login)...)
 	g.POST("/refresh", h.refresh)
-	g.POST("/logout", h.logout)
+	g.POST("/logout", append(logoutChain, h.logout)...)
 }
 
 type authHandler struct{ cfg AuthHandlerConfig }

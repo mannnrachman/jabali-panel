@@ -216,6 +216,14 @@ func (h *domainHandler) create(c *gin.Context) {
 		return
 	}
 
+	// Attempt SSL inline (30s timeout): try ACME first with fallback to self-signed.
+	// Never errors out — just logs; cert state is already in DB.
+	if h.cfg.Reconciler != nil {
+		inlineCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		h.cfg.Reconciler.ReconcileSSLInline(inlineCtx, domain)
+		cancel()
+	}
+
 	// Schedule reconciliation. The reconciler will converge the domain's
 	// OS-level state (nginx vhost, PHP pool, etc.) with the DB state.
 	// This is non-blocking and out-of-band.

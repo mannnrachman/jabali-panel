@@ -46,6 +46,8 @@ func TestSSLCertificateRepository_Create(t *testing.T) {
 			false,          // staging
 			nil,            // cert_path
 			nil,            // key_path
+			nil,            // next_retry_at
+			0,              // retry_count
 			sqlmock.AnyArg(), // created_at
 			sqlmock.AnyArg(), // updated_at
 		).
@@ -75,7 +77,7 @@ func TestSSLCertificateRepository_FindByDomainID_Success(t *testing.T) {
 			sqlmock.NewRows([]string{
 				"id", "domain_id", "status", "issued_at", "expires_at",
 				"renewal_count", "last_renewed_at", "last_error", "staging",
-				"cert_path", "key_path", "created_at", "updated_at",
+				"cert_path", "key_path", "next_retry_at", "retry_count", "created_at", "updated_at",
 			}).AddRow(
 				"01ARWX4FRYXZ73AK7EQQ69G5NV",
 				domainID,
@@ -88,6 +90,8 @@ func TestSSLCertificateRepository_FindByDomainID_Success(t *testing.T) {
 				false,
 				"/etc/letsencrypt/live/example.com/fullchain.pem",
 				"/etc/letsencrypt/live/example.com/privkey.pem",
+				nil,       // next_retry_at
+				0,         // retry_count
 				now,
 				now,
 			),
@@ -117,7 +121,7 @@ func TestSSLCertificateRepository_FindByDomainID_NotFound(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "domain_id", "status", "issued_at", "expires_at",
 			"renewal_count", "last_renewed_at", "last_error", "staging",
-			"cert_path", "key_path", "created_at", "updated_at",
+			"cert_path", "key_path", "next_retry_at", "retry_count", "created_at", "updated_at",
 		}))
 
 	cert, err := repo.FindByDomainID(ctx, domainID)
@@ -233,7 +237,7 @@ func TestSSLCertificateRepository_ListDueForRenewal(t *testing.T) {
 			sqlmock.NewRows([]string{
 				"id", "domain_id", "status", "issued_at", "expires_at",
 				"renewal_count", "last_renewed_at", "last_error", "staging",
-				"cert_path", "key_path", "created_at", "updated_at",
+				"cert_path", "key_path", "next_retry_at", "retry_count", "created_at", "updated_at",
 			}).AddRow(
 				"01ARWX4FRYXZ73AK7EQQ69G5NV",
 				"01ARZ3NDEKTSV4RRFFQ69G5FAV",
@@ -246,6 +250,8 @@ func TestSSLCertificateRepository_ListDueForRenewal(t *testing.T) {
 				false,
 				"/etc/letsencrypt/live/example.com/fullchain.pem",
 				"/etc/letsencrypt/live/example.com/privkey.pem",
+				nil,       // next_retry_at
+				0,         // retry_count
 				now,
 				now,
 			),

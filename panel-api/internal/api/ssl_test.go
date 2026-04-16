@@ -85,6 +85,29 @@ func (m *MockSSLCertificateRepository) ListByUserID(ctx context.Context, userID 
 	return args.Get(0).([]repository.SSLCertificateWithDomain), args.Error(1)
 }
 
+func (m *MockSSLCertificateRepository) UpdateSelfSigned(ctx context.Context, id string, certPath, keyPath string, expiresAt time.Time) error {
+	args := m.Called(ctx, id, certPath, keyPath, expiresAt)
+	return args.Error(0)
+}
+
+func (m *MockSSLCertificateRepository) UpdateAfterACMEFailure(ctx context.Context, id string, lastError string, nextRetryAt time.Time, retryCount int, fallbackCertPath, fallbackKeyPath *string, fallbackExpiresAt *time.Time) error {
+	args := m.Called(ctx, id, lastError, nextRetryAt, retryCount, fallbackCertPath, fallbackKeyPath, fallbackExpiresAt)
+	return args.Error(0)
+}
+
+func (m *MockSSLCertificateRepository) MarkFailed(ctx context.Context, id string, lastError string) error {
+	args := m.Called(ctx, id, lastError)
+	return args.Error(0)
+}
+
+func (m *MockSSLCertificateRepository) ListDueForACMERetry(ctx context.Context, now time.Time, limit int) ([]models.SSLCertificate, error) {
+	args := m.Called(ctx, now, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]models.SSLCertificate), args.Error(1)
+}
+
 // MockDomainRepository implements repository.DomainRepository
 type MockDomainRepository struct {
 	mock.Mock

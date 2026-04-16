@@ -95,6 +95,10 @@ func (r *Reconciler) Start(ctx context.Context) {
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()
 
+	// SSL retry ticker: process pending ACME retries every 1 minute
+	sslRetryTicker := time.NewTicker(1 * time.Minute)
+	defer sslRetryTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -108,6 +112,8 @@ func (r *Reconciler) Start(ctx context.Context) {
 			if err := r.ReconcileAll(ctx); err != nil {
 				r.log.Error("periodic reconcile failed", "err", err)
 			}
+		case <-sslRetryTicker.C:
+			r.RetrySSLDueForACME(ctx)
 		}
 	}
 }
@@ -549,10 +555,10 @@ func needsIssue(cert *models.SSLCertificate) bool {
 	return cert.Status == models.SSLStatusPending || cert.Status == models.SSLStatusFailed
 }
 
-// sslIssueForDomain issues a new certificate by calling the agent. If no
-// cert row exists yet, one is created first so we have an id to write back
-// status + paths to.
-func (r *Reconciler) sslIssueForDomain(ctx context.Context, domain *models.Domain, cert *models.SSLCertificate) {
+// tryACMEOrFallback attempts ACME issuance; on failure, calls ssl.self_sign
+// for a fallback cert and schedules ACME retry with exponential backoff.
+// Called by reconcileSSLForDomain when ACME should be attempted.
+func (r *Reconciler) tryACMEOrFallback(ctx context.Context, domain *models.Domain, cert *models.SSLCertificate) {
 	srv, err := r.serverSettings.Get(ctx)
 	if err != nil || srv == nil {
 		r.log.Error("ssl: read server_settings failed", "domain", domain.Name, "err", err)
@@ -565,6 +571,7 @@ func (r *Reconciler) sslIssueForDomain(ctx context.Context, domain *models.Domai
 			ID:        ids.NewULID(),
 			DomainID:  domain.ID,
 			Status:    models.SSLStatusPending,
+			RetryCount: 0,
 			CreatedAt: time.Now().UTC(),
 			UpdatedAt: time.Now().UTC(),
 		}
@@ -586,6 +593,10 @@ func (r *Reconciler) sslIssueForDomain(ctx context.Context, domain *models.Domai
 		staging = r.cfg.ACME.StagingOnly
 	}
 
+	// Try ACME with 60s timeout
+	issueCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
 	params := map[string]any{
 		"domain":  domain.Name,
 		"webroot": domain.DocRoot,
@@ -593,28 +604,75 @@ func (r *Reconciler) sslIssueForDomain(ctx context.Context, domain *models.Domai
 		"staging": staging,
 	}
 
-	raw, err := r.agent.Call(ctx, "ssl.issue", params)
-	if err != nil {
-		msg := firstLine(err.Error())
-		_ = r.sslCerts.UpdateStatus(ctx, cert.ID, models.SSLStatusFailed, &msg)
-		r.log.Error("ssl: ssl.issue failed", "domain", domain.Name, "err", err)
+	raw, err := r.agent.Call(issueCtx, "ssl.issue", params)
+	if err == nil {
+		// ACME success
+		issued, expires, ok := parseSSLIssueResult(raw, r.log, domain.Name)
+		if !ok {
+			msg := "agent returned unparseable ssl.issue result"
+			_ = r.sslCerts.UpdateStatus(ctx, cert.ID, models.SSLStatusFailed, &msg)
+			return
+		}
+		var res sslIssueResult
+		_ = json.Unmarshal(raw, &res)
+		if err := r.sslCerts.UpdateAfterIssuance(ctx, cert.ID, issued, expires, res.CertPath, res.KeyPath); err != nil {
+			r.log.Error("ssl: write issuance failed", "domain", domain.Name, "err", err)
+			return
+		}
+		r.log.Info("ssl: issued", "domain", domain.Name, "expires_at", expires.Format(time.RFC3339))
 		return
 	}
 
-	issued, expires, ok := parseSSLIssueResult(raw, r.log, domain.Name)
-	if !ok {
-		msg := "agent returned unparseable ssl.issue result"
-		_ = r.sslCerts.UpdateStatus(ctx, cert.ID, models.SSLStatusFailed, &msg)
+	// ACME failed: increment retry count and decide whether to fallback
+	newRetryCount := cert.RetryCount + 1
+	lastError := firstLine(err.Error())
+
+	// If this is the first failure (retry_count == 0 → 1) and we don't have a cert file yet,
+	// try to generate a self-signed fallback
+	var fallbackCertPath *string
+	var fallbackKeyPath *string
+	var fallbackExpiresAt *time.Time
+
+	if cert.RetryCount == 0 && cert.CertPath == nil {
+		// No cert file yet; generate self-signed fallback
+		selfSignCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+
+		raw, err := r.agent.Call(selfSignCtx, "ssl.self_sign", map[string]any{
+			"domain": domain.Name,
+			"days":   365,
+		})
+		if err != nil {
+			r.log.Warn("ssl: self_sign fallback failed", "domain", domain.Name, "err", err)
+		} else {
+			var res sslSelfSignResult
+			if err := json.Unmarshal(raw, &res); err != nil {
+				r.log.Warn("ssl: parse self_sign result failed", "domain", domain.Name, "err", err)
+			} else {
+				expiresAt, err := time.Parse(time.RFC3339, res.ExpiresAt)
+				if err != nil {
+					r.log.Warn("ssl: parse self_sign expires_at failed", "domain", domain.Name, "err", err)
+				} else {
+					fallbackCertPath = &res.CertPath
+					fallbackKeyPath = &res.KeyPath
+					fallbackExpiresAt = &expiresAt
+					r.log.Info("ssl: self-signed fallback generated", "domain", domain.Name, "expires_at", expiresAt.Format(time.RFC3339))
+				}
+			}
+		}
+	}
+
+	// Check if we've exceeded max retries
+	if newRetryCount >= 20 {
+		_ = r.sslCerts.MarkFailed(ctx, cert.ID, lastError)
+		r.log.Error("ssl: max retry count exceeded, marking failed", "domain", domain.Name, "retry_count", newRetryCount, "err", lastError)
 		return
 	}
 
-	var res sslIssueResult
-	_ = json.Unmarshal(raw, &res)
-	if err := r.sslCerts.UpdateAfterIssuance(ctx, cert.ID, issued, expires, res.CertPath, res.KeyPath); err != nil {
-		r.log.Error("ssl: write issuance failed", "domain", domain.Name, "err", err)
-		return
-	}
-	r.log.Info("ssl: issued", "domain", domain.Name, "expires_at", expires.Format(time.RFC3339))
+	// Schedule next retry with exponential backoff
+	nextRetry := time.Now().UTC().Add(computeBackoff(newRetryCount))
+	_ = r.sslCerts.UpdateAfterACMEFailure(ctx, cert.ID, lastError, nextRetry, newRetryCount, fallbackCertPath, fallbackKeyPath, fallbackExpiresAt)
+	r.log.Warn("ssl: acme failed, scheduling retry", "domain", domain.Name, "retry_count", newRetryCount, "next_retry_at", nextRetry.Format(time.RFC3339), "err", lastError)
 }
 
 // sslRenewForDomain runs an ACME renewal and updates the cert row on success.
@@ -660,6 +718,72 @@ func (r *Reconciler) sslRevokeForDomain(ctx context.Context, domain *models.Doma
 		return
 	}
 	r.log.Info("ssl: revoked", "domain", domain.Name)
+}
+
+// ReconcileSSLInline attempts ACME issuance synchronously with a timeout.
+// Called during domain create to ensure the cert is available before the HTTP response.
+// Never errors out — failures are logged; the cert state is already in the database.
+func (r *Reconciler) ReconcileSSLInline(ctx context.Context, domain *models.Domain) {
+	if r.sslCerts == nil || !domain.SSLEnabled {
+		return // SSL feature not wired or not enabled — skip
+	}
+
+	// Create a cert row for this domain if one doesn't exist
+	cert, err := r.sslCerts.FindByDomainID(ctx, domain.ID)
+	if err != nil && !errors.Is(err, repository.ErrNotFound) {
+		r.log.Error("ssl inline: find cert failed", "domain", domain.Name, "err", err)
+		return
+	}
+
+	if cert == nil {
+		cert = &models.SSLCertificate{
+			ID:        ids.NewULID(),
+			DomainID:  domain.ID,
+			Status:    models.SSLStatusPending,
+			RetryCount: 0,
+			CreatedAt: time.Now().UTC(),
+			UpdatedAt: time.Now().UTC(),
+		}
+		if err := r.sslCerts.Create(ctx, cert); err != nil {
+			r.log.Error("ssl inline: create cert row failed", "domain", domain.Name, "err", err)
+			return
+		}
+	}
+
+	// Attempt ACME issuance synchronously
+	r.tryACMEOrFallback(ctx, domain, cert)
+}
+
+// RetrySSLDueForACME finds all certificates due for ACME retry
+// and attempts to reissue them. Called by the SSL retry ticker.
+func (r *Reconciler) RetrySSLDueForACME(ctx context.Context) {
+	if r.sslCerts == nil {
+		return // SSL feature not wired — skip
+	}
+
+	certs, err := r.sslCerts.ListDueForACMERetry(ctx, time.Now().UTC(), 10)
+	if err != nil {
+		r.log.Error("ssl: list due for acme retry failed", "err", err)
+		return
+	}
+
+	if len(certs) == 0 {
+		return
+	}
+
+	r.log.Debug("ssl: processing acme retries", "count", len(certs))
+
+	for _, cert := range certs {
+		// Fetch the domain for context
+		domain, err := r.domains.FindByID(ctx, cert.DomainID)
+		if err != nil {
+			r.log.Error("ssl: find domain failed for retry", "domain_id", cert.DomainID, "err", err)
+			continue
+		}
+
+		r.log.Debug("ssl: retrying acme issuance", "domain", domain.Name, "retry_count", cert.RetryCount)
+		r.tryACMEOrFallback(ctx, domain, &cert)
+	}
 }
 
 // parseSSLIssueResult decodes the agent's ssl.issue / ssl.renew response

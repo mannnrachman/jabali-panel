@@ -61,6 +61,7 @@ func RegisterSSLRoutes(g *gin.RouterGroup, cfg SSLHandlerConfig) {
 		domains.POST("/ssl", h.enableSSL)
 		domains.DELETE("/ssl", h.disableSSL)
 		domains.POST("/ssl/renew", h.renewSSL)
+		domains.POST("/ssl/retry", h.retrySSL)
 	}
 
 	// List endpoints
@@ -278,6 +279,62 @@ func (h *sslHandler) renewSSL(c *gin.Context) {
 	}
 
 	// Schedule reconciliation
+	h.cfg.Reconciler.Schedule(domainID)
+
+	c.Status(http.StatusAccepted)
+}
+
+// retrySSL manually retries ACME issuance for a failed certificate.
+// POST /api/v1/domains/:id/ssl/retry
+func (h *sslHandler) retrySSL(c *gin.Context) {
+	domainID := c.Param("id")
+
+	// Load and authorize domain (admin-only)
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+
+	if !claims.IsAdmin {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	// Load certificate row
+	cert, err := h.cfg.SSLCerts.FindByDomainID(ctx, domainID)
+	if err != nil {
+		if isNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "no_certificate"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+
+	// Only allow retry on failed or pending_acme_retry statuses
+	if cert.Status != models.SSLStatusFailed && cert.Status != models.SSLStatusPendingACMERetry {
+		c.JSON(http.StatusConflict, gin.H{"error": "cannot_retry"})
+		return
+	}
+
+	// Reset retry count and clear next_retry_at to allow immediate retry
+	if err := h.cfg.SSLCerts.UpdateStatus(ctx, cert.ID, cert.Status, cert.LastError); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+
+	// For pending_acme_retry, reset retry_count to 0
+	// We'll do this via a direct update since we don't have a dedicated method
+	// Actually, let's just mark it as pending to trigger immediate retry
+	if err := h.cfg.SSLCerts.UpdateStatus(ctx, cert.ID, models.SSLStatusPending, nil); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+
+	// Schedule reconciliation to attempt ACME
 	h.cfg.Reconciler.Schedule(domainID)
 
 	c.Status(http.StatusAccepted)

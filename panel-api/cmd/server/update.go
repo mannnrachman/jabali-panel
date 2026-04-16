@@ -119,9 +119,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Show the new version.
-	fmt.Println()
-	_ = run("", defaultPanelBinPath, "--help")
 	fmt.Println("\n✓ Update complete.")
 	return nil
 }

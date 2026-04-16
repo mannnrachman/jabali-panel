@@ -32,6 +32,8 @@ type Deps struct {
 	Agent               agent.AgentInterface
 	Reconciler          *reconciler.Reconciler
 	ServerSettings      repository.ServerSettingsRepository
+	DNSZones            repository.DNSZoneRepository
+	DNSRecords          repository.DNSRecordRepository
 	Log                 *slog.Logger
 }
 

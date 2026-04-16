@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
@@ -178,7 +179,13 @@ func (s *Service) issueAccessAndRefresh(ctx context.Context, u *models.User, dev
 // The CLI token must:
 // - Be valid and not expired
 // - Have purpose="cli_login"
-// - Reference an existing admin user
+// - Reference an existing user
+//
+// If the token has impersonated_by set, it indicates an admin impersonation:
+// - Issue only an access token with 1h TTL, no refresh token (one-shot tab)
+//
+// If impersonated_by is empty, it indicates a break-glass admin login:
+// - Issue access + refresh tokens via the normal path (persistent session)
 func (s *Service) RedeemCLIToken(ctx context.Context, cliToken string, deviceID string) (*LoginOutput, error) {
 	claims, err := s.cfg.JWT.Verify(cliToken)
 	if err != nil {
@@ -190,16 +197,35 @@ func (s *Service) RedeemCLIToken(ctx context.Context, cliToken string, deviceID 
 		return nil, ErrInvalidToken
 	}
 
-	// Load user and verify they still exist and are admin
+	// Load user and verify they still exist
 	u, err := s.cfg.Users.FindByID(ctx, claims.UserID)
 	if err != nil {
 		return nil, ErrInvalidToken
 	}
+
+	// If impersonated_by is set, this is an impersonation token (one-shot, admin-initiated)
+	// Issue only access token, no refresh token
+	if claims.ImpersonatedBy != "" {
+		// Issue access token with 1h TTL, preserve impersonated_by claim
+		access, err := s.cfg.JWT.IssueAccessWithTTL(AccessClaims{
+			UserID:        u.ID,
+			Email:         u.Email,
+			IsAdmin:       u.IsAdmin,
+			ImpersonatedBy: claims.ImpersonatedBy,
+		}, 1*time.Hour)
+		if err != nil {
+			return nil, err
+		}
+		// RawRefresh is empty to signal no refresh cookie should be set
+		return &LoginOutput{AccessToken: access, RawRefresh: "", User: u}, nil
+	}
+
+	// Break-glass admin login: issue fresh access + refresh tokens via the normal path
+	// (implies the token was issued for a regular admin user, not impersonation)
 	if !u.IsAdmin {
 		return nil, ErrInvalidToken
 	}
 
-	// Issue fresh access + refresh tokens via the normal path
 	access, raw, err := s.issueAccessAndRefresh(ctx, u, deviceID)
 	if err != nil {
 		return nil, err
@@ -249,4 +275,33 @@ func (s *Service) IssueImpersonation(ctx context.Context, targetUser *models.Use
 	}
 
 	return &ImpersonationOutput{AccessToken: access, RawRefresh: raw}, nil
+}
+
+// GenerateImpersonationLoginURL creates a one-time login URL for admin impersonation.
+// The URL contains a 60-second cli_login JWT with impersonated_by set to adminID.
+// The URL does not create a persistent refresh token — the impersonated session is 1h-only.
+func (s *Service) GenerateImpersonationLoginURL(
+	ctx context.Context,
+	targetUser *models.User,
+	adminID string,
+	scheme string,
+	hostname string,
+	port string,
+) (string, error) {
+	// Issue JWT with purpose="cli_login", impersonated_by=adminID, 60-second TTL
+	claims := AccessClaims{
+		UserID:        targetUser.ID,
+		Email:         targetUser.Email,
+		IsAdmin:       targetUser.IsAdmin,
+		ImpersonatedBy: adminID,
+		Purpose:       "cli_login",
+	}
+	token, err := s.cfg.JWT.IssueAccessWithTTL(claims, 60*time.Second)
+	if err != nil {
+		return "", err
+	}
+
+	// Build login URL
+	loginURL := fmt.Sprintf("%s://%s:%s/login?cli_token=%s", scheme, hostname, port, token)
+	return loginURL, nil
 }

@@ -20,7 +20,7 @@ type AuthService interface {
 	Refresh(ctx context.Context, in auth.RefreshInput) (*auth.LoginOutput, error)
 	Logout(ctx context.Context, raw string) error
 	RedeemCLIToken(ctx context.Context, cliToken string, deviceID string) (*auth.LoginOutput, error)
-	IssueImpersonation(ctx context.Context, targetUser *models.User, adminID string) (*auth.ImpersonationOutput, error)
+	GenerateImpersonationLoginURL(ctx context.Context, targetUser *models.User, adminID string, scheme string, hostname string, port string) (string, error)
 }
 
 // AuthHandlerConfig captures everything the handler needs to emit cookies

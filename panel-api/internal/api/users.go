@@ -14,7 +14,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
@@ -36,7 +35,7 @@ type UserHandlerConfig struct {
 	Reconciler      *reconciler.Reconciler
 	// For impersonation endpoint
 	AuthService interface {
-		IssueImpersonation(ctx context.Context, targetUser *models.User, adminID string) (*auth.ImpersonationOutput, error)
+		GenerateImpersonationLoginURL(ctx context.Context, targetUser *models.User, adminID string, scheme string, hostname string, port string) (string, error)
 	}
 	AccessTTL  time.Duration
 	RefreshTTL time.Duration
@@ -645,16 +644,39 @@ func (h *userHandler) impersonate(c *gin.Context) {
 		return
 	}
 
-	// AuthService must be non-nil and support IssueImpersonation
+	// AuthService must be non-nil and support GenerateImpersonationLoginURL
 	if h.cfg.AuthService == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
 
-	// Issue impersonation tokens
-	output, err := h.cfg.AuthService.IssueImpersonation(ctx, targetUser, claims.UserID)
+	// Extract scheme, hostname, and port from request
+	scheme := c.Request.URL.Scheme
+	if scheme == "" {
+		if c.Request.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	hostname := c.Request.Host
+	if idx := strings.Index(hostname, ":"); idx != -1 {
+		// Host includes port, extract just the hostname
+		hostname = hostname[:idx]
+	}
+	port := c.Request.URL.Port()
+	if port == "" {
+		if scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+
+	// Generate impersonation login URL
+	loginURL, err := h.cfg.AuthService.GenerateImpersonationLoginURL(ctx, targetUser, claims.UserID, scheme, hostname, port)
 	if err != nil {
-		slog.Error("impersonation token issue failed",
+		slog.Error("impersonation login URL generation failed",
 			"admin_id", claims.UserID,
 			"target_id", id,
 			"err", err)
@@ -662,31 +684,18 @@ func (h *userHandler) impersonate(c *gin.Context) {
 		return
 	}
 
-	// Set refresh token cookie
-	c.SetCookie(
-		h.cfg.CookieName,
-		output.RawRefresh,
-		int(h.cfg.RefreshTTL.Seconds()),
-		"/",
-		"",
-		h.cfg.CookieSecure,
-		true, // httpOnly
-	)
-
 	// Audit log
 	if h.cfg.Log != nil {
 		h.cfg.Log.Info("audit",
-			"event", "impersonation_started",
+			"event", "impersonation_link_generated",
 			"actor_id", claims.UserID,
 			"target_id", id,
 			"target_email", targetUser.Email)
 	}
 
 	// Response
-	expiresAt := time.Now().Add(h.cfg.AccessTTL)
 	c.JSON(http.StatusOK, gin.H{
-		"access_token": output.AccessToken,
-		"expires_at":   expiresAt.Format(time.RFC3339),
+		"login_url": loginURL,
 	})
 }
 

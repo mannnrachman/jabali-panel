@@ -32,6 +32,10 @@ func (h *authHandler) cliLogin(c *gin.Context) {
 		return
 	}
 
-	h.setRefreshCookie(c, out.RawRefresh)
+	// Only set refresh cookie if RawRefresh is not empty (non-impersonation sessions).
+	// Impersonation tokens return empty RawRefresh to signal a one-shot tab.
+	if out.RawRefresh != "" {
+		h.setRefreshCookie(c, out.RawRefresh)
+	}
 	c.JSON(http.StatusOK, h.buildLoginResponse(out))
 }

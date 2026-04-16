@@ -49,12 +49,15 @@ func (f *fakeAuthService) RedeemCLIToken(_ context.Context, cliToken, deviceID s
 	return f.refreshOut, f.refreshErr
 }
 
-func (f *fakeAuthService) IssueImpersonation(_ context.Context, targetUser *models.User, adminID string) (*auth.ImpersonationOutput, error) {
-	return &auth.ImpersonationOutput{
-		AccessToken: "impersonation-jwt",
-		RawRefresh:  "impersonation-refresh",
-	}, nil
+func (f *fakeAuthService) GenerateImpersonationLoginURL(_ context.Context, _ *models.User, _ string, scheme string, hostname string, port string) (string, error) {
+	return scheme + "://" + hostname + ":" + port + "/login?cli_token=test-token", nil
 }
+
+
+
+
+
+
 
 func newAuthRouter(t *testing.T, svc *fakeAuthService) *gin.Engine {
 	t.Helper()

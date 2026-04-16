@@ -165,7 +165,7 @@ func TestImpersonate_HappyPath(t *testing.T) {
 	userRepo.seed(adminUser)
 	userRepo.seed(targetUser)
 
-	r, _, jwtIssuer := buildRouterForImpersonation(
+	r, _, _ := buildRouterForImpersonation(
 		t,
 		userRepo,
 		refreshRepo,
@@ -191,34 +191,23 @@ func TestImpersonate_HappyPath(t *testing.T) {
 	err := json.NewDecoder(w.Body).Decode(&resp)
 	require.NoError(t, err)
 
-	// Verify response contains access token and expires_at
-	assert.NotEmpty(t, resp["access_token"])
-	assert.NotEmpty(t, resp["expires_at"])
+	// Verify response contains login_url
+	loginURL, ok := resp["login_url"].(string)
+	require.True(t, ok, "response should contain login_url string field")
+	assert.NotEmpty(t, loginURL)
+	assert.Contains(t, loginURL, "/login?cli_token=")
 
-	// Parse the token to verify claims
-	accessToken := resp["access_token"].(string)
-	claims, err := jwtIssuer.Verify(accessToken)
-	require.NoError(t, err)
-
-	// Verify impersonated_by claim is set
-	assert.Equal(t, targetUser.ID, claims.UserID)
-	assert.Equal(t, targetUser.Email, claims.Email)
-	assert.False(t, claims.IsAdmin)
-	assert.Equal(t, adminUser.ID, claims.ImpersonatedBy)
-
-	// Verify refresh cookie is set
+	// Verify NO refresh cookie is set (impersonation sessions are one-shot)
 	cookies := w.Result().Cookies()
 	var refreshCookie *http.Cookie
 	for _, c := range cookies {
-		if c.Name == "refresh_token" {
+		if c.Name == "jabali_refresh" {
 			refreshCookie = c
 			break
 		}
 	}
-	assert.NotNil(t, refreshCookie, "refresh_token cookie should be set")
-	assert.NotEmpty(t, refreshCookie.Value)
+	assert.Nil(t, refreshCookie, "refresh_token cookie should NOT be set for impersonation")
 }
-
 func TestImpersonate_NonAdminForbidden(t *testing.T) {
 	t.Parallel()
 

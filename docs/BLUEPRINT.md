@@ -5,7 +5,7 @@ which code owns each capability. Use this as a map when onboarding, scoping new
 features, or deciding where existing logic already lives.
 
 > **Sources of truth.** This blueprint reflects what's shipped on `main` as of
-> 2026-04-16. Architecture rules and conventions live in `docs/adr/`. Cross-repo
+> 2026-04-17. Architecture rules and conventions live in `docs/adr/`. Cross-repo
 > coordination with sibling projects lives in `~/projects/jabali-shared/CONTEXT.md`.
 
 ---
@@ -229,16 +229,45 @@ registered, error propagation.
   user_delete, user_password)
 - **Evidence:** Commits throughout; registry `panel-agent/internal/commands/registry.go`
 
-### 4.7 Reconciler
+### 4.7 SSL / Let's Encrypt (M5a/b/c)
+
+**Shipped (Phase 2):** Per-domain SSL toggle, Let's Encrypt issuance with try-ACME-first
+strategy, fallback to self-signed certificates on ACME failure, exponential backoff retry
+scheduling (5m → 15m → 1h → 4h, capped), manual retry endpoint, SSL Manager UI pages (admin + user),
+and stopgap `ssl.self_sign` agent command for emergency fallback.
+
+- **Files:** `panel-api/internal/api/ssl.go`, `panel-agent/internal/commands/ssl_*.go`
+- **Migrations:** `000014_add_ssl_enabled_to_domains.sql`, `000015_create_ssl_certificates.sql`,
+  `000017_ssl_enabled_default_true.sql`, `000018_add_next_retry_at_to_ssl_certificates.sql`
+- **Agent commands:** `ssl.issue`, `ssl.renew`, `ssl.revoke`, `ssl.self_sign`
+- **API:** `/api/v1/domains/{id}/ssl` (GET status, POST issue, DELETE revoke), `/api/v1/domains/:id/ssl/retry` (admin-only manual retry)
+- **UI pages:** SSL Manager pages for both admin and user shells; per-domain toggle + status display
+- **Evidence:** Commits `ba54273`, `66ae6d2`, `34379db`, `786079a`, `fc8ff7d`
+- **Related ADRs:** ADR-0017 (try-ACME-then-selfsigned-with-backoff)
+
+### 4.8 Authentication & Authorization — Phase 2 (M5a/b)
+
+**Shipped:** Admin impersonation (log in as a specific user without their password),
+break-glass CLI login (emergency admin access via `/auth/cli-login` with `purpose=cli_login` claim
+and configurable one-time token lifetime), impersonation banner in UI, graceful exit flow.
+
+- **Files:** `panel-api/internal/api/auth.go`, auth middleware updates
+- **Migrations:** `000016_add_impersonated_by_to_refresh_tokens.sql`
+- **API:** `/admin/users/{id}/impersonate` (POST), `/auth/cli-login` (POST with secret), (no dedicated exit endpoint — UI calls `/auth/logout` then redirects to re-login)
+- **UI:** Impersonation banner (red bar showing "Logged in as user X, impersonated by admin Y") with exit button
+- **Evidence:** Commits `7bc292f`, `c587144`, `5b14b4c`
+- **Related ADRs:** ADR-0015 (admin-impersonation-jwt-claim), ADR-0016 (break-glass-cli-admin-login)
+
+### 4.9 Reconciler
 
 **Shipped:** In-process goroutine inside panel-api that listens for domain DB changes,
 issues agent commands to create/update/delete domains on agent, reconciles DNS zones
-to PowerDNS MySQL backend, runs every 30s by default (configurable), manual trigger
-endpoints for admin.
+to PowerDNS MySQL backend, reconciles SSL certificates (try-ACME-first, fallback to self-signed),
+runs every 30s by default (configurable), manual trigger endpoints for admin.
 
 - **Files:** `panel-api/internal/reconciler/reconciler.go`
 - **API:** `/api/v1/reconcile/all` (admin-only), `/api/v1/reconcile/{domainID}` (admin-only)
-- **Evidence:** Commits `cb4ae39`, `0ae7213`, `3037db1`
+- **Evidence:** Commits `cb4ae39`, `0ae7213`, `3037db1`, `ba54273`
 
 ### 4.8 Install script
 
@@ -253,7 +282,7 @@ guards (checks for existing config files before overwriting).
 
 ### 4.9 Database schema (GORM migrations)
 
-13 migrations:
+18 migrations:
 1. `000001_init_users.sql` — users table
 2. `000002_init_refresh_tokens.sql` — refresh_tokens table
 3. `000003_init_hosting_packages.sql` — hosting_packages table
@@ -267,6 +296,11 @@ guards (checks for existing config files before overwriting).
 11. `000011_add_nginx_rules_to_domains.sql` — nginx_rules JSONB field
 12. `000012_create_server_settings.sql` — server_settings table (hostname, ns1, ns2, public_ipv4, public_ipv6)
 13. `000013_create_dns_tables.sql` — dns_zones, dns_records, dns_axfr_allow_list tables
+14. `000014_add_ssl_enabled_to_domains.sql` — ssl_enabled boolean field on domains
+15. `000015_create_ssl_certificates.sql` — ssl_certificates table (cert, key, issued_at, expires_at, status, failure_reason, retry_count)
+16. `000016_add_impersonated_by_to_refresh_tokens.sql` — impersonated_by FK (tracks admin impersonation trail)
+17. `000017_ssl_enabled_default_true.sql` — SSL enabled by default (=1) on new domains
+18. `000018_add_next_retry_at_to_ssl_certificates.sql` — next_retry_at timestamp for exponential backoff retry scheduling
 
 ---
 
@@ -363,27 +397,64 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Depends on:** M2 (domains must exist before zones)
 
-### M5: SSL / Let's Encrypt (PLANNED)
+### M5: SSL / Let's Encrypt (SHIPPED)
 
 **Goal:** Admins and users can issue and renew SSL certificates via Let's Encrypt
-  on a per-domain basis, with automatic daily renewal ticker.
+  on a per-domain basis, with resilient ACME issuance and automatic fallback.
 
-**Deliverables:**
-- New migration: `000014_create_ssl_certificates.sql` (cert, key, issued_at, expires_at, renewal_count, last_renewed_at)
-- SSL CRUD (read-only for users; admin can manually renew or revoke)
-- Admin email from Server Settings (single contact email for all cert issuance)
-- Per-domain opt-in SSL toggle
+**Phase 1 (M5a): Core SSL + UI (Shipped)**
+- Per-domain opt-in SSL toggle (ssl_enabled boolean; default=true on new domains)
+- SSL CRUD (read-only for users; admin can manually issue/revoke)
 - Certbot webroot issuer (agent command places acme-challenge on filesystem)
-- In-process daily renewal ticker (goroutine checks certificates expiring within 30 days, renews via agent)
 - Agent commands: `ssl.issue`, `ssl.renew`, `ssl.revoke`
 - API: `/api/v1/domains/{id}/ssl` (GET status, POST issue, DELETE revoke)
-- UI: per-domain SSL status + issue button
-- Staging mode flag in config for testing (`acme.staging_only=true`)
-- Reconciler: auto-issue for domain if toggle enabled
+- UI: SSL Manager pages (admin + user shells) with per-domain toggle + status display
 
-**Status:** Planned
+**Phase 2 (M5b): Resilient ACME + Fallback (Shipped)**
+- Try-ACME-first strategy with 60s timeout
+- Fallback to self-signed if ACME fails (generates 30-day self-signed cert)
+- Exponential backoff retry scheduling (5m → 15m → 1h → 4h, capped at 4h)
+- next_retry_at timestamp + retry_count tracking in ssl_certificates table
+- Max 20 retries; mark cert as permanently failed if exceeded
+- Manual retry endpoint: `/api/v1/domains/:id/ssl/retry` (admin-only)
+- Agent command: `ssl.self_sign` (stopgap emergency fallback)
+- Reconciler: syncs SSL state for all domains every 30s, respects retry backoff
+
+**Status:** Shipped (commits `ba54273`, `66ae6d2`, `34379db`, `786079a`, `fc8ff7d`)
 
 **Depends on:** M2 (domains must exist)
+
+### M5a: Admin Impersonation (SHIPPED)
+
+**Goal:** Admins can log in as a specific user to debug or support without knowing their password.
+
+**Deliverables:**
+- `/admin/users/{id}/impersonate` endpoint (POST, returns new JWT with `impersonated_by` claim)
+- `impersonated_by` FK column on refresh_tokens (tracks which admin is impersonating)
+- Impersonation banner in UI (red bar: "Logged in as user X, impersonated by admin Y")
+- Exit flow reuses `/auth/logout` — no separate endpoint. UI clears in-memory token + redirects to login
+- Support for nested impersonation: admin X impersonates user Y's session (audit trail via impersonated_by chain)
+
+**Status:** Shipped (commit `7bc292f`)
+
+**Depends on:** M1 (auth infrastructure)
+
+### M5b: Break-Glass CLI Login (SHIPPED)
+
+**Goal:** Provide emergency admin access when primary auth (GUI) is unavailable or compromised.
+
+**Deliverables:**
+- `/auth/cli-login` endpoint (POST, requires `secret` query param matching `CLI_LOGIN_SECRET` env var)
+- Returns JWT with `purpose=cli_login` claim (identifies as emergency login, not normal auth)
+- CLI login token lifetime configurable via `CLI_LOGIN_SECRET_TTL` env var (default 1 hour)
+- Audit logging (records all CLI logins in application logs with timestamp + IP)
+- No UI exposure: CLI login endpoint for tooling / shell scripts only
+
+**Status:** Shipped (commit `c587144`)
+
+**Depends on:** M1 (auth infrastructure)
+
+**Related ADR:** ADR-0016 (break-glass-cli-admin-login.md)
 
 ### M6: Email (Stalwart integration) (PLANNED)
 
@@ -703,7 +774,9 @@ Use this table to navigate the codebase when adding a new capability:
 | M2: Domain lifecycle + Nginx + Redirects | 2026-02-XX | `fb3abea`, `0e92a04` |
 | M3: Server Settings + Hostname + IPs | 2026-03-XX | `6b5dea4`, `ab47b7d` |
 | M4: DNS zones + records + Secondary NS | 2026-04-16 | `f7464a2`, `4b87395` |
-| M5: SSL / Let's Encrypt | Planned | — |
+| M5: SSL / Let's Encrypt (core + resilient ACME) | 2026-04-17 | `ba54273`, `66ae6d2`, `34379db`, `786079a`, `fc8ff7d` |
+| M5a: Admin Impersonation | 2026-04-17 | `7bc292f`, `5b14b4c` |
+| M5b: Break-Glass CLI Login | 2026-04-17 | `c587144` |
 | M6: Email (Stalwart) | Planned | — |
 | M7: Databases | Planned | — |
 | M8: Cron | Planned | — |
@@ -718,4 +791,4 @@ Use this table to navigate the codebase when adding a new capability:
 
 ---
 
-**Last updated:** 2026-04-16
+**Last updated:** 2026-04-17

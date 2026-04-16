@@ -7,18 +7,17 @@ See [`BLUEPRINT.md`](../BLUEPRINT.md) for the full feature map.
 
 ## Status
 
-**Phase 1 — repo skeleton.** This is the first focused vertical slice:
+**Phase 2 — Domain lifecycle + Auth enhancements + SSL.** Shipped milestones (as of 2026-04-17):
 
-1. Skeleton + tooling (this phase)
-2. Config loader + logger
-3. DB layer (Postgres via golang-migrate + GORM)
-4. Auth (JWT + refresh rotation)
-5. Middleware (CORS, rate-limit, request-ID, JWT, RBAC)
-6. Users CRUD
-7. AgentClient (Unix socket + mock)
-8. React skeleton (Vite + Refine + AntD)
-9. Users page (admin-only CRUD)
-10. Test harness + coverage gates
+- **M1:** Foundations (auth, users, hosting packages)
+- **M2:** Domain lifecycle (CRUD, nginx vhosts, redirects, custom rules)
+- **M3:** Server settings (hostname, nameservers, public IPs)
+- **M4:** DNS zones + records + secondary NS (PowerDNS integration)
+- **M5:** SSL / Let's Encrypt (try-ACME-first, self-signed fallback, exponential backoff retry)
+- **M5a:** Admin impersonation (log in as user for support/debug)
+- **M5b:** Break-glass CLI login (emergency admin access via `/auth/cli-login`)
+
+See [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) for the full feature roadmap and what's planned next.
 
 ## Layout
 
@@ -47,11 +46,18 @@ upgrade.
 ## Dev quickstart
 
 ```bash
-make run            # start the server (currently just /health)
-make test           # run tests with race detector
-make lint           # run golangci-lint
-make test-coverage  # generate coverage.out
-make coverage-check # fail if coverage < 80%
+make build          # compile both binaries (panel-api + panel-agent)
+make run            # start the panel server (dev mode)
+make test           # run all Go tests with race detector
+make test-short     # run fast unit tests only (skip integration)
+make test-coverage  # run tests with coverage (unit tests only)
+make test-integration  # run integration tests (requires JABALI_TEST_DATABASE_URL + MariaDB)
+make coverage-check # fail if coverage < 80% (requires JABALI_TEST_DATABASE_URL)
+make lint           # run golangci-lint across workspace
+make fmt            # format all Go code
+make vet            # run go vet
+make tidy           # tidy module dependencies
+make clean          # remove build artifacts
 make help           # list all targets
 ```
 

@@ -7,8 +7,11 @@
 //     are ignored entirely (single `return N $url;` directive).
 //   - Page redirects compile to `location = /src { return N "url"; }`
 //     so unrelated paths still hit the docroot.
+//   - Wildcard (prefix) redirects compile to `location ^~ /src { rewrite ... }`.
 //   - Destination URLs emit as double-quoted nginx strings with embedded
 //     quotes and backslashes escaped; nginx still interpolates $vars.
+//   - Active is optional (nil means true); inactive entries are skipped.
+//   - Wildcard only supports 301/302; 307/308 are rejected at the validator.
 package redirects
 
 import (
@@ -17,6 +20,12 @@ import (
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 )
+
+// isActive returns true if a PageRedirect is active.
+// nil Active field is treated as true for backwards compatibility.
+func isActive(pr models.PageRedirect) bool {
+	return pr.Active == nil || *pr.Active
+}
 
 func Compile(d *models.Domain) string {
 	if d == nil {
@@ -32,10 +41,55 @@ func Compile(d *models.Domain) string {
 		return b.String()
 	}
 	for _, pr := range d.PageRedirects {
-		fmt.Fprintf(&b, "    location = %s {\n        return %s %s;\n    }\n",
-			quoteNginxLocation(pr.Source), pr.Type, quoteNginxURL(pr.Destination))
+		// Skip inactive entries
+		if !isActive(pr) {
+			continue
+		}
+
+		if pr.Wildcard {
+			// Wildcard (prefix) match: location ^~ /src, rewrite to strip prefix and redirect.
+			// Use rewrite to capture the remainder after source and append to destination.
+			// Supports 301/302 status codes via the rewrite flag.
+			fmt.Fprintf(&b, "    location ^~ %s {\n", quoteNginxLocation(pr.Source))
+
+			statusFlag := "permanent" // 301
+			if pr.Type == "302" {
+				statusFlag = "redirect" // 302
+			}
+
+			// Capture everything after the source prefix (with optional trailing slash handling)
+			// and append it to the destination URL
+			escapedSource := escapeRegex(pr.Source)
+			fmt.Fprintf(&b, "        rewrite ^%s/?(.*)$ %s %s;\n",
+				escapedSource, quoteNginxURL(pr.Destination+"/$1"), statusFlag)
+			fmt.Fprintf(&b, "    }\n")
+		} else {
+			// Exact-match: location = /src, plain return
+			fmt.Fprintf(&b, "    location = %s {\n        return %s %s;\n    }\n",
+				quoteNginxLocation(pr.Source), pr.Type, quoteNginxURL(pr.Destination))
+		}
 	}
 	return b.String()
+}
+
+// escapeRegex escapes special regex characters in a path so it's safe in rewrite patterns.
+func escapeRegex(s string) string {
+	// Escape regex metacharacters: . ^ $ * + ? { } [ ] ( ) | \
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, ".", `\.`)
+	s = strings.ReplaceAll(s, "^", `\^`)
+	s = strings.ReplaceAll(s, "$", `\$`)
+	s = strings.ReplaceAll(s, "*", `\*`)
+	s = strings.ReplaceAll(s, "+", `\+`)
+	s = strings.ReplaceAll(s, "?", `\?`)
+	s = strings.ReplaceAll(s, "{", `\{`)
+	s = strings.ReplaceAll(s, "}", `\}`)
+	s = strings.ReplaceAll(s, "[", `\[`)
+	s = strings.ReplaceAll(s, "]", `\]`)
+	s = strings.ReplaceAll(s, "(", `\(`)
+	s = strings.ReplaceAll(s, ")", `\)`)
+	s = strings.ReplaceAll(s, "|", `\|`)
+	return s
 }
 
 func quoteNginxURL(s string) string {

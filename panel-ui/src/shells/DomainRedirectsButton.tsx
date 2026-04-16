@@ -1,13 +1,16 @@
 // Redirects modal for per-domain and per-page redirects.
 // Opens a modal with two sections:
 // 1. Whole-domain redirect toggle + URL + type selector
-// 2. Page-level redirects list with add/delete controls
+// 2. Page-level redirects list with add/delete controls (v2: drag-reorder, active toggle, wildcard)
 import { useState } from "react";
 import {
   SwapOutlined,
   CheckOutlined,
   DeleteOutlined,
   PlusOutlined,
+  DragOutlined,
+  DownOutlined,
+  UpOutlined,
 } from "@ant-design/icons";
 import {
   Button,
@@ -21,6 +24,23 @@ import {
   Typography,
 } from "antd";
 import { useInvalidate, useNotification } from "@refinedev/core";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 import { apiClient } from "../apiClient";
 
@@ -28,6 +48,8 @@ export type PageRedirect = {
   source: string;
   destination: string;
   type: "301" | "302" | "307" | "308";
+  active?: boolean;
+  wildcard?: boolean;
 };
 
 export type DomainRedirectsTarget = {
@@ -45,6 +67,156 @@ const REDIRECT_TYPE_OPTIONS = [
   { value: "308", label: "Permanent (308) - preserves method" },
 ];
 
+// Sortable card item for drag-reorder
+interface SortableCardProps {
+  idx: number;
+  pr: PageRedirect;
+  isExpanded: boolean;
+  onToggleExpanded: (idx: number) => void;
+  onRemove: (idx: number) => void;
+  onUpdate: (idx: number, key: keyof PageRedirect, value: string | boolean) => void;
+}
+
+const SortableCard = ({
+  idx,
+  pr,
+  isExpanded,
+  onToggleExpanded,
+  onRemove,
+  onUpdate,
+}: SortableCardProps) => {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: idx,
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style}>
+      <Card
+        size="small"
+        style={{ marginBottom: 12 }}
+        bodyStyle={{ padding: 12 }}
+      >
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 12, gap: 8 }}>
+          <button
+            {...attributes}
+            {...listeners}
+            style={{
+              cursor: "grab",
+              background: "none",
+              border: "none",
+              padding: 4,
+              display: "flex",
+              alignItems: "center",
+            }}
+          >
+            <DragOutlined style={{ color: "#999" }} />
+          </button>
+
+          <Switch
+            checked={pr.active ?? true}
+            onChange={(checked) => onUpdate(idx, "active", checked)}
+            style={{ marginRight: 4 }}
+          />
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Active
+          </Typography.Text>
+
+          <div style={{ flex: 1 }} />
+
+          <Typography.Text type="secondary">
+            → {pr.type}
+          </Typography.Text>
+          <Button
+            type="text"
+            icon={isExpanded ? <UpOutlined /> : <DownOutlined />}
+            onClick={() => onToggleExpanded(idx)}
+            style={{ padding: 4 }}
+          />
+          <Button
+            danger
+            icon={<DeleteOutlined />}
+            type="text"
+            size="small"
+            onClick={() => onRemove(idx)}
+          />
+        </div>
+
+        {isExpanded && (
+          <>
+            <Row gutter={16} style={{ marginBottom: 12 }}>
+              <Col span={12}>
+                <div style={{ marginBottom: 8 }}>
+                  <Typography.Text>
+                    Source Path <span style={{ color: "red" }}>*</span>
+                  </Typography.Text>
+                </div>
+                <Input
+                  placeholder="/old-page"
+                  value={pr.source}
+                  onChange={(e) => onUpdate(idx, "source", e.target.value)}
+                />
+                <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 4 }}>
+                  Path to redirect from (e.g., /old-page)
+                </Typography.Text>
+              </Col>
+              <Col span={12}>
+                <div style={{ marginBottom: 8 }}>
+                  <Typography.Text>
+                    Destination URL <span style={{ color: "red" }}>*</span>
+                  </Typography.Text>
+                </div>
+                <Input
+                  placeholder="https://example.com/new-page"
+                  value={pr.destination}
+                  onChange={(e) => onUpdate(idx, "destination", e.target.value)}
+                />
+                <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 4 }}>
+                  Full URL to redirect to
+                </Typography.Text>
+              </Col>
+            </Row>
+
+            <Row gutter={16} style={{ marginBottom: 12 }}>
+              <Col span={12}>
+                <div style={{ marginBottom: 8 }}>
+                  <Typography.Text>
+                    Type <span style={{ color: "red" }}>*</span>
+                  </Typography.Text>
+                </div>
+                <Select
+                  value={pr.type}
+                  onChange={(value) => onUpdate(idx, "type", value)}
+                  options={REDIRECT_TYPE_OPTIONS}
+                  style={{ width: "100%" }}
+                />
+              </Col>
+              <Col span={12}>
+                <div style={{ marginBottom: 8 }}>
+                  <Typography.Text>Wildcard Matching</Typography.Text>
+                </div>
+                <Switch
+                  checked={pr.wildcard ?? false}
+                  onChange={(checked) => onUpdate(idx, "wildcard", checked)}
+                  style={{ marginRight: 8 }}
+                />
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Prefix match + capture path (301/302 only)
+                </Typography.Text>
+              </Col>
+            </Row>
+          </>
+        )}
+      </Card>
+    </div>
+  );
+};
+
 export const DomainRedirectsButton = ({
   domain,
 }: {
@@ -58,8 +230,26 @@ export const DomainRedirectsButton = ({
     domain.page_redirects ?? []
   );
   const [isSaving, setIsSaving] = useState(false);
+  const [expandedCards, setExpandedCards] = useState<Set<number>>(new Set());
   const invalidate = useInvalidate();
   const { open } = useNotification();
+
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id) {
+      const oldIndex = Number(active.id);
+      const newIndex = Number(over.id);
+      setPageRedirects(arrayMove(pageRedirects, oldIndex, newIndex));
+    }
+  };
 
   const handleOpenModal = () => {
     // Re-sync from prop in case the value was updated elsewhere
@@ -77,7 +267,7 @@ export const DomainRedirectsButton = ({
   const addPageRedirect = () => {
     setPageRedirects([
       ...pageRedirects,
-      { source: "", destination: "", type: "301" },
+      { source: "", destination: "", type: "301", active: true, wildcard: false },
     ]);
   };
 
@@ -88,7 +278,7 @@ export const DomainRedirectsButton = ({
   const updatePageRedirect = (
     idx: number,
     key: keyof PageRedirect,
-    value: string
+    value: string | boolean
   ) => {
     const updated = [...pageRedirects];
     updated[idx] = { ...updated[idx], [key]: value };
@@ -121,6 +311,8 @@ export const DomainRedirectsButton = ({
         source: pr.source.trim(),
         destination: pr.destination.trim(),
         type: pr.type,
+        active: pr.active ?? true,
+        wildcard: pr.wildcard ?? false,
       }));
       // Don't send half-filled rows — drop blank ones silently
       body.page_redirects = clean.filter((pr) => pr.source && pr.destination);
@@ -244,87 +436,38 @@ export const DomainRedirectsButton = ({
           </div>
 
           <div style={{ marginBottom: 16 }}>
-            {pageRedirects.map((pr, idx) => (
-              <Card
-                key={idx}
-                size="small"
-                style={{ marginBottom: 12 }}
-                bodyStyle={{ padding: 12 }}
+            {pageRedirects.length > 0 && (
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleDragEnd}
               >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginBottom: 12,
-                  }}
+                <SortableContext
+                  items={pageRedirects.map((_, idx) => idx)}
+                  strategy={verticalListSortingStrategy}
                 >
-                  <Typography.Text type="secondary">
-                    → {pr.type}
-                  </Typography.Text>
-                  <Button
-                    danger
-                    icon={<DeleteOutlined />}
-                    type="text"
-                    size="small"
-                    onClick={() => removePageRedirect(idx)}
-                  />
-                </div>
-
-                <Row gutter={16} style={{ marginBottom: 12 }}>
-                  <Col span={12}>
-                    <div style={{ marginBottom: 8 }}>
-                      <Typography.Text>
-                        Source Path <span style={{ color: "red" }}>*</span>
-                      </Typography.Text>
-                    </div>
-                    <Input
-                      placeholder="/old-page"
-                      value={pr.source}
-                      onChange={(e) =>
-                        updatePageRedirect(idx, "source", e.target.value)
-                      }
+                  {pageRedirects.map((pr, idx) => (
+                    <SortableCard
+                      key={idx}
+                      idx={idx}
+                      pr={pr}
+                      isExpanded={expandedCards.has(idx)}
+                      onToggleExpanded={(i) => {
+                        const newSet = new Set(expandedCards);
+                        if (newSet.has(i)) {
+                          newSet.delete(i);
+                        } else {
+                          newSet.add(i);
+                        }
+                        setExpandedCards(newSet);
+                      }}
+                      onRemove={removePageRedirect}
+                      onUpdate={updatePageRedirect}
                     />
-                    <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 4 }}>
-                      Path to redirect from (e.g., /old-page)
-                    </Typography.Text>
-                  </Col>
-                  <Col span={12}>
-                    <div style={{ marginBottom: 8 }}>
-                      <Typography.Text>
-                        Destination URL <span style={{ color: "red" }}>*</span>
-                      </Typography.Text>
-                    </div>
-                    <Input
-                      placeholder="https://example.com/new-page"
-                      value={pr.destination}
-                      onChange={(e) =>
-                        updatePageRedirect(idx, "destination", e.target.value)
-                      }
-                    />
-                    <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 4 }}>
-                      Full URL to redirect to
-                    </Typography.Text>
-                  </Col>
-                </Row>
-
-                <div style={{ marginBottom: 0 }}>
-                  <div style={{ marginBottom: 8 }}>
-                    <Typography.Text>
-                      Type <span style={{ color: "red" }}>*</span>
-                    </Typography.Text>
-                  </div>
-                  <Select
-                    value={pr.type}
-                    onChange={(value) =>
-                      updatePageRedirect(idx, "type", value)
-                    }
-                    options={REDIRECT_TYPE_OPTIONS}
-                    style={{ width: "100%" }}
-                  />
-                </div>
-              </Card>
-            ))}
+                  ))}
+                </SortableContext>
+              </DndContext>
+            )}
           </div>
 
           <div style={{ textAlign: "center", marginBottom: 16 }}>
@@ -334,7 +477,7 @@ export const DomainRedirectsButton = ({
           </div>
 
           <Typography.Text type="secondary">
-            Redirect specific paths to other URLs
+            Redirect specific paths to other URLs. Drag to reorder, toggle active status, or enable wildcard matching.
           </Typography.Text>
         </div>
       </Modal>

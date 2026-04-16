@@ -10,10 +10,17 @@ import (
 // PageRedirect is one entry in a domain's page_redirects JSON array.
 // Source is a path starting with "/"; Destination is a full URL; Type
 // is a redirect HTTP status code as a short string ("301"/"302"/"307"/"308").
+// Active is optional; nil means true (backwards compatibility for rows stored without this field).
+// Wildcard matches all paths starting with Source (prefix match with captured remainder).
+// NOTE: PageRedirects is stored as JSON in a DB column. No schema migration needed —
+// GORM serializes the full struct. When rows stored without Active field are Unmarshaled,
+// Active becomes nil and must be treated as true for backwards compatibility.
 type PageRedirect struct {
 	Source      string `json:"source"`
 	Destination string `json:"destination"`
 	Type        string `json:"type"`
+	Active      *bool  `json:"active,omitempty"`
+	Wildcard    bool   `json:"wildcard,omitempty"`
 }
 
 // PageRedirects implements driver.Valuer / sql.Scanner so GORM can
@@ -85,7 +92,8 @@ type Domain struct {
 
 	// PageRedirects is a JSON array of per-path redirects applied when
 	// RedirectAllTo is nil. Each entry has a source path, destination
-	// URL, and HTTP status code.
+	// URL, and HTTP status code. Supports Active toggle (nil = true for
+	// backwards compat) and Wildcard prefix matching (v2 feature).
 	PageRedirects PageRedirects `gorm:"type:json" json:"page_redirects,omitempty"`
 
 	// IndexPriority picks which file(s) nginx serves as the default

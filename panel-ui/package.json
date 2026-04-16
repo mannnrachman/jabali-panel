@@ -2,7 +2,7 @@
   "name": "jabali-panel-ui",
   "private": true,
   "version": "0.1.0",
-  "description": "Jabali Panel SPA \u2014 React + Refine + Ant Design",
+  "description": "Jabali Panel SPA — React + Refine + Ant Design",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,6 +15,9 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@rc-component/util": "^1.10.1",
     "@refinedev/antd": "^5.45.3",
     "@refinedev/core": "^4.57.10",

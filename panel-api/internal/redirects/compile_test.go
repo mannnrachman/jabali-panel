@@ -94,7 +94,7 @@ func TestCompile(t *testing.T) {
 `,
 		},
 		{
-			name: "multiple page redirects",
+			name: "multiple page redirects in order",
 			domain: &models.Domain{
 				PageRedirects: models.PageRedirects{
 					models.PageRedirect{Source: "/old1", Destination: "https://new.com/page1", Type: "301"},
@@ -146,6 +146,85 @@ func TestCompile(t *testing.T) {
 			},
 			expected: "",
 		},
+		// v2 features: Active, Wildcard
+		{
+			name: "active nil means active (backwards compat)",
+			domain: &models.Domain{
+				PageRedirects: models.PageRedirects{
+					models.PageRedirect{Source: "/old", Destination: "https://new.com/page", Type: "301", Active: nil},
+				},
+			},
+			expected: `    location = /old {
+        return 301 "https://new.com/page";
+    }
+`,
+		},
+		{
+			name: "active false skips entry",
+			domain: &models.Domain{
+				PageRedirects: models.PageRedirects{
+					models.PageRedirect{Source: "/old1", Destination: "https://new.com/page1", Type: "301", Active: ptr(false)},
+					models.PageRedirect{Source: "/old2", Destination: "https://new.com/page2", Type: "301", Active: ptr(true)},
+				},
+			},
+			expected: `    location = /old2 {
+        return 301 "https://new.com/page2";
+    }
+`,
+		},
+		{
+			name: "wildcard 301",
+			domain: &models.Domain{
+				PageRedirects: models.PageRedirects{
+					models.PageRedirect{Source: "/old-prefix", Destination: "https://new.com/new", Type: "301", Wildcard: true},
+				},
+			},
+			expected: `    location ^~ /old-prefix {
+        rewrite ^/old-prefix/?(.*)$ "https://new.com/new/$1" permanent;
+    }
+`,
+		},
+		{
+			name: "wildcard 302",
+			domain: &models.Domain{
+				PageRedirects: models.PageRedirects{
+					models.PageRedirect{Source: "/old-prefix", Destination: "https://new.com/new", Type: "302", Wildcard: true},
+				},
+			},
+			expected: `    location ^~ /old-prefix {
+        rewrite ^/old-prefix/?(.*)$ "https://new.com/new/$1" redirect;
+    }
+`,
+		},
+		{
+			name: "wildcard with special regex chars in source (escaped)",
+			domain: &models.Domain{
+				PageRedirects: models.PageRedirects{
+					models.PageRedirect{Source: "/api.v2", Destination: "https://new.com/api", Type: "301", Wildcard: true},
+				},
+			},
+			expected: `    location ^~ /api.v2 {
+        rewrite ^/api\.v2/?(.*)$ "https://new.com/api/$1" permanent;
+    }
+`,
+		},
+		{
+			name: "ordering preserved with mixed active/inactive",
+			domain: &models.Domain{
+				PageRedirects: models.PageRedirects{
+					models.PageRedirect{Source: "/first", Destination: "https://new.com/1", Type: "301", Active: ptr(true)},
+					models.PageRedirect{Source: "/second", Destination: "https://new.com/2", Type: "301", Active: ptr(false)},
+					models.PageRedirect{Source: "/third", Destination: "https://new.com/3", Type: "301", Active: ptr(true)},
+				},
+			},
+			expected: `    location = /first {
+        return 301 "https://new.com/1";
+    }
+    location = /third {
+        return 301 "https://new.com/3";
+    }
+`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -156,6 +235,10 @@ func TestCompile(t *testing.T) {
 			}
 		})
 	}
+}
+
+func ptr[T any](v T) *T {
+	return &v
 }
 
 func str(s string) *string {

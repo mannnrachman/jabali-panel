@@ -604,18 +604,22 @@ func validatePageRedirects(prs models.PageRedirects) error {
 	if len(prs) > 100 {
 		return fmt.Errorf("too many redirects (max 100)")
 	}
-	for _, pr := range prs {
+	for i, pr := range prs {
 		if !strings.HasPrefix(pr.Source, "/") {
-			return fmt.Errorf("source must start with /")
+			return fmt.Errorf("entry %d: source must start with /", i)
 		}
 		if strings.ContainsAny(pr.Source, "\n\x00") {
-			return fmt.Errorf("source contains invalid chars")
+			return fmt.Errorf("entry %d: source contains invalid chars", i)
 		}
 		if err := validateRedirectURL(pr.Destination); err != nil {
-			return fmt.Errorf("invalid page redirect destination: %w", err)
+			return fmt.Errorf("entry %d: invalid page redirect destination: %w", i, err)
 		}
 		if !isValidRedirectType(pr.Type) {
-			return fmt.Errorf("invalid type for page redirect: %s", pr.Type)
+			return fmt.Errorf("entry %d: invalid type for page redirect: %s", i, pr.Type)
+		}
+		// Wildcard only supports 301 and 302
+		if pr.Wildcard && pr.Type != "301" && pr.Type != "302" {
+			return fmt.Errorf("entry %d: wildcard redirects only support 301 or 302", i)
 		}
 	}
 	return nil

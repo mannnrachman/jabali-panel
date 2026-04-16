@@ -76,6 +76,16 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		{"git pull", func() error {
 			return asUser(repoDir, "git", "pull", "--ff-only", "origin", "main")
 		}},
+		{"install deps", func() error {
+			// Re-run the install script's dependency functions for any
+			// new packages added since the last update.
+			return run("", "bash", "-c",
+				"export DEBIAN_FRONTEND=noninteractive && "+
+					"apt-get install -y -qq --no-install-recommends nginx >/dev/null 2>&1; "+
+					"install -d -m 0755 /etc/nginx/sites-available; "+
+					"install -d -m 0755 /etc/nginx/sites-enabled; "+
+					"true")
+		}},
 		{"npm ci", func() error {
 			return asUser(repoDir+"/panel-ui", "npm", "ci", "--no-audit", "--no-fund")
 		}},

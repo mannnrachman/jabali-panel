@@ -96,7 +96,33 @@ install_base_packages() {
   _ok "base packages ready"
 }
 
-# ---------- step 1b: Node.js 22 LTS (for panel-ui) --------------------------
+# ---------- step 1b: nginx ----------------------------------------------------
+
+install_nginx() {
+  if command -v nginx >/dev/null 2>&1; then
+    _ok "nginx already installed ($(nginx -v 2>&1 | awk -F/ '{print $2}'))"
+  else
+    _log "installing nginx"
+    apt-get install -y -qq --no-install-recommends nginx
+    _ok "nginx installed"
+  fi
+
+  # Ensure sites-available / sites-enabled dirs exist (some minimal
+  # nginx packages skip them).
+  install -d -m 0755 /etc/nginx/sites-available
+  install -d -m 0755 /etc/nginx/sites-enabled
+
+  # Enable the include if not already present.
+  if ! grep -q 'sites-enabled' /etc/nginx/nginx.conf 2>/dev/null; then
+    _log "adding sites-enabled include to nginx.conf"
+    sed -i '/http {/a \    include /etc/nginx/sites-enabled/*.conf;' /etc/nginx/nginx.conf
+  fi
+
+  systemctl enable --quiet nginx
+  systemctl start nginx 2>/dev/null || true
+}
+
+# ---------- step 1c: Node.js 22 LTS (for panel-ui) --------------------------
 
 install_node() {
   # Idempotent: skip if a new-enough node is already installed. NodeSource
@@ -580,6 +606,7 @@ start_and_verify() {
 main() {
   preflight
   install_base_packages
+  install_nginx
   install_node
   install_go
   ensure_user_and_dirs

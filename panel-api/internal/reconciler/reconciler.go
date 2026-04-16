@@ -169,6 +169,7 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	for name, domain := range enabledDomains {
 		if !agentSites[name] {
 			r.log.Info("reconcile: creating missing domain", "domain", name)
+			r.reconcileDNSZone(ctx, domain)
 			r.createDomainOnAgent(ctx, domain)
 		}
 	}
@@ -177,6 +178,7 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	for name, domain := range disabledDomains {
 		if agentSites[name] {
 			r.log.Info("reconcile: disabling unwanted domain", "domain", name)
+			r.reconcileDNSZone(ctx, domain)
 			r.createDomainOnAgent(ctx, domain)
 		}
 	}
@@ -218,7 +220,18 @@ func (r *Reconciler) ReconcileOne(ctx context.Context, domainID string) error {
 		return nil
 	}
 
-	// Converge SSL state first so createDomainOnAgent picks up any
+	// DNS zone convergence runs FIRST and independently of the nginx/
+	// user provisioning below. Previously this lived at the end of
+	// createDomainOnAgent, so any early return there (missing
+	// user.Username, user lookup failure, etc.) skipped DNS push →
+	// PowerDNS never learned the zone → NXDOMAIN/REFUSED for live
+	// queries. DNS and nginx are orthogonal concerns and must not
+	// share a failure path.
+	dnsCtx, dnsCancel := context.WithTimeout(ctx, 30*time.Second)
+	r.reconcileDNSZone(dnsCtx, domain)
+	dnsCancel()
+
+	// Converge SSL state next so createDomainOnAgent picks up any
 	// newly-issued (or revoked) cert paths when it regenerates the vhost.
 	sslCtx, sslCancel := context.WithTimeout(ctx, 2*time.Minute)
 	r.reconcileSSLForDomain(sslCtx, domain)
@@ -244,6 +257,12 @@ func (r *Reconciler) ReconcileAllForce(ctx context.Context) error {
 
 	for i := range allDomains {
 		d := &allDomains[i]
+
+		// DNS runs independently — see ReconcileOne for rationale.
+		dnsCtx, dnsCancel := context.WithTimeout(ctx, 30*time.Second)
+		r.reconcileDNSZone(dnsCtx, d)
+		dnsCancel()
+
 		sslCtx, sslCancel := context.WithTimeout(ctx, 2*time.Minute)
 		r.reconcileSSLForDomain(sslCtx, d)
 		sslCancel()
@@ -314,9 +333,6 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 			"domain", domain.Name,
 			"err", err)
 	}
-
-	// Reconcile DNS zone if DNS repos are wired
-	r.reconcileDNSZone(ctx, domain)
 }
 
 // ReconcileDeleted tears down an OS-level domain whose DB row has already

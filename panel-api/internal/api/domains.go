@@ -313,15 +313,220 @@ func (h *domainHandler) delete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// allowedNginxDirectives is a per-line allowlist of nginx directives that users
+// can safely include in the server {} block. This is a FIRST line of defense;
+// the agent still runs nginx -t before applying, so malformed input is caught there.
+var allowedNginxDirectives = map[string]struct{}{
+	// Headers/response
+	"add_header":           {},
+	"add_trailer":          {},
+	"expires":              {},
+	"etag":                 {},
+	"if_modified_since":    {},
+	"return":               {},
+	// Rewrites
+	"rewrite":     {},
+	"set":         {},
+	"if":          {},
+	"break":       {},
+	"error_page":  {},
+	// Proxy
+	"proxy_pass":                 {},
+	"proxy_set_header":           {},
+	"proxy_hide_header":          {},
+	"proxy_pass_header":          {},
+	"proxy_buffering":            {},
+	"proxy_buffer_size":          {},
+	"proxy_buffers":              {},
+	"proxy_http_version":         {},
+	"proxy_read_timeout":         {},
+	"proxy_connect_timeout":      {},
+	"proxy_send_timeout":         {},
+	"proxy_redirect":             {},
+	"proxy_ssl_verify":           {},
+	"proxy_ssl_server_name":      {},
+	"proxy_request_buffering":    {},
+	"proxy_cache_bypass":         {},
+	"proxy_no_cache":             {},
+	// Body/upload
+	"client_max_body_size":    {},
+	"client_body_buffer_size": {},
+	"client_body_timeout":     {},
+	"client_header_timeout":   {},
+	// FastCGI
+	"fastcgi_read_timeout":  {},
+	"fastcgi_send_timeout":  {},
+	"fastcgi_buffer_size":   {},
+	"fastcgi_buffers":       {},
+	"fastcgi_param":         {},
+	// Static/locations
+	"location":              {},
+	"try_files":             {},
+	"index":                 {},
+	"autoindex":             {},
+	"autoindex_exact_size":  {},
+	"autoindex_localtime":   {},
+	"sub_filter":            {},
+	"sub_filter_once":       {},
+	"sub_filter_types":      {},
+	"charset":               {},
+	"default_type":          {},
+	"types":                 {},
+	"log_not_found":         {},
+	// Access
+	"allow":                    {},
+	"deny":                     {},
+	"satisfy":                  {},
+	"auth_basic":               {},
+	"auth_basic_user_file":     {},
+	"limit_except":             {},
+	"limit_req":                {},
+	"limit_req_zone":           {},
+	"limit_conn":               {},
+	// Gzip
+	"gzip":            {},
+	"gzip_types":      {},
+	"gzip_min_length": {},
+	"gzip_comp_level": {},
+	"gzip_vary":       {},
+	"gzip_disable":    {},
+	"gzip_proxied":    {},
+	// Caching
+	"open_file_cache":             {},
+	"open_file_cache_valid":       {},
+	"open_file_cache_min_uses":    {},
+	"open_file_cache_errors":      {},
+}
+
 func validateNginxDirectives(directives string) string {
-	forbidden := []string{"proxy_pass", "lua_", "load_module", "ssl_certificate"}
-	lower := strings.ToLower(directives)
-	for _, word := range forbidden {
-		if strings.Contains(lower, word) {
-			return "forbidden directive: " + word
+	// Reject if input contains null bytes (binary/injection attempt).
+	if strings.ContainsRune(directives, '\x00') {
+		return "forbidden directive: null byte detected"
+	}
+
+	lines := strings.Split(directives, "\n")
+	blockDepth := 0
+	maxNestingDepth := 3
+
+	for _, line := range lines {
+		// Strip comments while respecting strings.
+		cleaned := stripComments(line)
+		cleaned = strings.TrimSpace(cleaned)
+
+		// Empty lines are allowed.
+		if cleaned == "" {
+			continue
+		}
+
+		// Count opening and closing braces in this line (respecting strings).
+		opens, closes := countBraces(cleaned)
+
+		for i := 0; i < opens; i++ {
+			blockDepth++
+			if blockDepth > maxNestingDepth {
+				return "forbidden directive: nesting depth exceeded (max " + strconv.Itoa(maxNestingDepth) + ")"
+			}
+		}
+		for i := 0; i < closes; i++ {
+			blockDepth--
+			if blockDepth < 0 {
+				return "forbidden directive: unbalanced braces (extra closing })"
+			}
+		}
+
+		// Handle lines that are purely {, }, or {}.
+		if cleaned == "{" || cleaned == "}" || cleaned == "{}" {
+			continue
+		}
+
+		// Extract the directive name (first token).
+		directive := extractDirective(cleaned)
+		if directive == "" {
+			continue
+		}
+
+		// Skip if the first token is a brace.
+		if directive == "{" || directive == "}" {
+			continue
+		}
+
+		// Normalize to lowercase and check against allowlist.
+		directive = strings.ToLower(directive)
+		if _, allowed := allowedNginxDirectives[directive]; !allowed {
+			return "forbidden directive: " + directive
 		}
 	}
+
+	// Ensure braces are balanced.
+	if blockDepth != 0 {
+		return "forbidden directive: unbalanced braces (unclosed {)"
+	}
+
 	return ""
+}
+
+// countBraces counts opening and closing braces in a line, respecting quoted strings.
+func countBraces(line string) (opens, closes int) {
+	inSingleQuote := false
+	inDoubleQuote := false
+
+	for _, ch := range line {
+		switch ch {
+		case '\'':
+			if !inDoubleQuote {
+				inSingleQuote = !inSingleQuote
+			}
+		case '"':
+			if !inSingleQuote {
+				inDoubleQuote = !inDoubleQuote
+			}
+		case '{':
+			if !inSingleQuote && !inDoubleQuote {
+				opens++
+			}
+		case '}':
+			if !inSingleQuote && !inDoubleQuote {
+				closes++
+			}
+		}
+	}
+	return
+}
+
+// stripComments removes everything from # onwards, but respects # inside
+// single or double-quoted strings.
+func stripComments(line string) string {
+	inSingleQuote := false
+	inDoubleQuote := false
+
+	for i, ch := range line {
+		switch ch {
+		case '\'':
+			if !inDoubleQuote {
+				inSingleQuote = !inSingleQuote
+			}
+		case '"':
+			if !inSingleQuote {
+				inDoubleQuote = !inDoubleQuote
+			}
+		case '#':
+			if !inSingleQuote && !inDoubleQuote {
+				return line[:i]
+			}
+		}
+	}
+	return line
+}
+
+// extractDirective returns the first whitespace-delimited token from a line.
+func extractDirective(line string) string {
+	fields := strings.FieldsFunc(line, func(r rune) bool {
+		return r == ' ' || r == '\t'
+	})
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
 }
 
 func domainLinuxUser(email string) string {

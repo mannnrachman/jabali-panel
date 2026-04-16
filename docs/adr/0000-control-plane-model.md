@@ -1,6 +1,7 @@
-# ADR 0001 — Control plane model
+# ADR 0000 — Control plane model (overview)
 
 **Status:** Accepted (2026-04-16)
+**Superseded in scope by:** [ADR 0002](0002-database-source-of-truth.md), [ADR 0003](0003-one-write-path-the-api.md), [ADR 0004](0004-reconciler-driven-convergence.md) — which decompose this overview into single-topic decisions. This document remains as the cross-cutting rationale.
 
 ## Context
 

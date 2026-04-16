@@ -756,22 +756,27 @@ write_config_file() {
   _log "seeding config file: $dest"
   install -m 0640 -o root -g "$SERVICE_USER" "$src" "$dest"
 
-  # Append the [server] block with what prompt_server_settings captured.
-  # The panel reads this on first boot to seed the server_settings DB row.
-  if [[ "${JABALI_SERVER_CONFIGURED:-1}" == "0" ]]; then
-    cat >> "$dest" <<EOF
-
-[server]
-hostname    = "${JABALI_SRV_HOSTNAME}"
-public_ipv4 = "${JABALI_SRV_IPV4}"
-public_ipv6 = "${JABALI_SRV_IPV6}"
-ns1_name    = "${JABALI_SRV_NS1_NAME}"
-ns1_ipv4    = "${JABALI_SRV_NS1_IPV4}"
-ns2_name    = "${JABALI_SRV_NS2_NAME}"
-ns2_ipv4    = "${JABALI_SRV_NS2_IPV4}"
-EOF
-    _ok "seeded [server] block in $dest"
-  fi
+  # Write the [server] block with runtime + identity keys. The panel reads
+  # these on first boot to seed the server_settings DB row; the DB is the
+  # source of truth afterwards (see docs/adr/0002). config.example.toml no
+  # longer declares [server] itself, so this is the sole writer.
+  local srv_env="production"
+  [[ "${JABALI_DEV:-0}" == "1" ]] && srv_env="development"
+  {
+    printf '\n[server]\n'
+    printf 'addr        = "127.0.0.1:8443"\n'
+    printf 'env         = "%s"\n' "$srv_env"
+    if [[ "${JABALI_SERVER_CONFIGURED:-1}" == "0" ]]; then
+      printf 'hostname    = "%s"\n' "${JABALI_SRV_HOSTNAME}"
+      printf 'public_ipv4 = "%s"\n' "${JABALI_SRV_IPV4}"
+      printf 'public_ipv6 = "%s"\n' "${JABALI_SRV_IPV6}"
+      printf 'ns1_name    = "%s"\n' "${JABALI_SRV_NS1_NAME}"
+      printf 'ns1_ipv4    = "%s"\n' "${JABALI_SRV_NS1_IPV4}"
+      printf 'ns2_name    = "%s"\n' "${JABALI_SRV_NS2_NAME}"
+      printf 'ns2_ipv4    = "%s"\n' "${JABALI_SRV_NS2_IPV4}"
+    fi
+  } >> "$dest"
+  _ok "seeded [server] block in $dest"
 
   # PowerDNS backend DSN for the reconciler. Reads creds from pdns.env
   # so the two files stay in sync. If prompt_server_settings was

@@ -3,15 +3,25 @@
 # anything set here (see panel-api/internal/config/config.go for the full
 # list of env-var names).
 
-[server]
-# Listen address. Default: 127.0.0.1:8443 (loopback only; nginx proxies
-# PANEL_PORT → this in production deployments).
-addr = "127.0.0.1:8443"
-
-# "development" or "production". Production enforces stricter validation
-# (JWT secret ≥32 bytes, database.url required) and defaults log.format to
-# "json".
-env = "development"
+# [server] is populated by install.sh on first install. It combines runtime
+# listen settings and server identity (hostname, public IPs, nameservers).
+# The panel reads these on first boot to seed the server_settings DB row;
+# the DB is the source of truth afterwards (see docs/adr/0002).
+#
+# Example populated block:
+#   [server]
+#   addr        = "127.0.0.1:8443"   # listen address; nginx proxies PANEL_PORT → this
+#   env         = "production"        # development | production
+#   hostname    = "panel.example.com"
+#   public_ipv4 = "203.0.113.10"
+#   public_ipv6 = "2001:db8::10"
+#   ns1_name    = "ns1.example.com"
+#   ns1_ipv4    = "203.0.113.10"
+#   ns2_name    = "ns2.example.com"
+#   ns2_ipv4    = "203.0.113.11"
+#
+# Any of these can be overridden via env vars at startup
+# (see panel-api/internal/config/config.go for the full mapping).
 
 [log]
 # debug | info | warn | error

@@ -1,13 +1,18 @@
 package api
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
@@ -16,10 +21,12 @@ import (
 )
 
 // UserHandlerConfig plugs the users resource handlers into the router. Repo
-// is the only required field; BcryptCost defaults to bcrypt.DefaultCost.
+// is the only required field; BcryptCost defaults to bcrypt.DefaultCost;
+// Agent is optional and used for best-effort OS user provisioning.
 type UserHandlerConfig struct {
 	Repo       repository.UserRepository
 	BcryptCost int
+	Agent      agent.AgentInterface
 }
 
 // Paging defaults/limits chosen so a misbehaving client can't issue
@@ -57,11 +64,12 @@ type userHandler struct{ cfg UserHandlerConfig }
 // ---------- request / response shapes ----------
 
 type createUserRequest struct {
-	Email     string `json:"email"      binding:"required,email"`
-	Password  string `json:"password"   binding:"required,min=10"`
-	NameFirst string `json:"name_first"`
-	NameLast  string `json:"name_last"`
-	IsAdmin   bool   `json:"is_admin"`
+	Email           string `json:"email"           binding:"required,email"`
+	Password        string `json:"password"        binding:"required,min=10"`
+	NameFirst       string `json:"name_first"`
+	NameLast        string `json:"name_last"`
+	IsAdmin         bool   `json:"is_admin"`
+	SkipProvision   bool   `json:"skip_provision,omitempty"`
 }
 
 // updateUserRequest uses pointers so the handler can distinguish "omit this
@@ -131,6 +139,34 @@ func (h *userHandler) create(c *gin.Context) {
 		h.translateErr(c, err)
 		return
 	}
+
+	// Best-effort OS user provisioning. Write DB first, then agent call.
+	// If agent fails, return 201 with provision_warning but keep the DB row.
+	if h.cfg.Agent != nil && !req.SkipProvision {
+		username := linuxUserFromEmail(req.Email)
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+		defer cancel()
+
+		_, err := h.cfg.Agent.Call(ctx, "user.create", map[string]any{
+			"username": username,
+			"home_dir": "/home/" + username,
+			"shell":    "/bin/bash",
+			"password": req.Password,
+		})
+		if err != nil {
+			slog.Warn("user agent provisioning failed",
+				"user_id", u.ID, "email", u.Email, "err", err)
+			c.JSON(http.StatusCreated, struct {
+				*models.User
+				ProvisionWarning string `json:"provision_warning"`
+			}{
+				User:             u,
+				ProvisionWarning: "user saved but OS account provisioning failed: " + err.Error(),
+			})
+			return
+		}
+	}
+
 	c.JSON(http.StatusCreated, u)
 }
 
@@ -263,10 +299,32 @@ func (h *userHandler) delete(c *gin.Context) {
 		}
 	}
 
+	// Capture email BEFORE deleting so we can tear down the OS user
+	// even after the DB row is gone.
+	username := linuxUserFromEmail(target.Email)
+
 	if err := h.cfg.Repo.Delete(c.Request.Context(), id); err != nil {
 		h.translateErr(c, err)
 		return
 	}
+
+	// Best-effort OS teardown. remove_home=false so tenant data is
+	// preserved for manual recovery; ops can opt into cleanup later.
+	if h.cfg.Agent != nil && username != "" {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_, err := h.cfg.Agent.Call(ctx, "user.delete", map[string]any{
+				"username":    username,
+				"remove_home": false,
+			})
+			if err != nil {
+				slog.Warn("user agent teardown failed",
+					"user_id", id, "username", username, "err", err)
+			}
+		}()
+	}
+
 	c.Status(http.StatusNoContent)
 }
 
@@ -301,4 +359,14 @@ func parsePagination(c *gin.Context) (page, pageSize int) {
 		pageSize = maxUsersPageSize
 	}
 	return page, pageSize
+}
+
+// linuxUserFromEmail derives a Linux username from an email. Takes the
+// part before '@'. Callers are expected to validate downstream (the
+// agent's user.create enforces the POSIX regex).
+func linuxUserFromEmail(email string) string {
+	if i := strings.IndexByte(email, '@'); i > 0 {
+		return email[:i]
+	}
+	return ""
 }

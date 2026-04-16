@@ -445,6 +445,34 @@ EOF
 
 # ---------- step 7: start + smoke test --------------------------------------
 
+# ---------- step 6b: seed admin credentials ---------------------------------
+
+seed_admin_env() {
+  # If bootstrap vars are already set (e.g. re-run), don't regenerate —
+  # the panel's BootstrapAdmin is idempotent and will detect the existing
+  # admin row.
+  if grep -q '^JABALI_BOOTSTRAP_ADMIN_EMAIL=' "$ENV_FILE" 2>/dev/null; then
+    _ok "admin bootstrap vars already in $ENV_FILE"
+    return
+  fi
+
+  local admin_email="admin@jabali.local"
+  local admin_pass
+  admin_pass="$(openssl rand -base64 18)"
+
+  _log "seeding admin bootstrap credentials"
+  cat >>"$ENV_FILE" <<EOF
+
+# Admin bootstrap (consumed once on first boot, safe to leave).
+JABALI_BOOTSTRAP_ADMIN_EMAIL=$admin_email
+JABALI_BOOTSTRAP_ADMIN_PASSWORD=$admin_pass
+EOF
+
+  # Store the generated password so the final banner can display it.
+  JABALI_SEED_EMAIL="$admin_email"
+  JABALI_SEED_PASS="$admin_pass"
+}
+
 start_and_verify_agent() {
   _log "starting $AGENT_SERVICE_NAME"
   systemctl restart "$AGENT_SERVICE_NAME"
@@ -513,6 +541,7 @@ main() {
   build_frontend
   build_backend
   write_config_file
+  seed_admin_env
   write_agent_systemd_unit
   write_systemd_unit
   start_and_verify_agent
@@ -520,6 +549,26 @@ main() {
   _ok "jabali-panel + jabali-agent installed. Status:"
   _ok "  systemctl status $AGENT_SERVICE_NAME"
   _ok "  systemctl status $SERVICE_NAME"
+
+  # Display credentials if this was a fresh install.
+  if [[ -n "${JABALI_SEED_EMAIL:-}" ]]; then
+    local panel_host="${PANEL_ADDR%:*}"
+    local panel_port="${PANEL_ADDR##*:}"
+    [[ "$panel_host" == "0.0.0.0" || -z "$panel_host" ]] && panel_host="$(hostname -I | awk '{print $1}')"
+
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║                     JABALI PANEL                           ║"
+    echo "╠══════════════════════════════════════════════════════════════╣"
+    echo "║                                                            ║"
+    printf "║  URL:      http://%-40s ║\n" "${panel_host}:${panel_port}"
+    printf "║  Email:    %-48s ║\n" "$JABALI_SEED_EMAIL"
+    printf "║  Password: %-48s ║\n" "$JABALI_SEED_PASS"
+    echo "║                                                            ║"
+    echo "║  Change this password immediately after first login.       ║"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo ""
+  fi
 }
 
 main "$@"

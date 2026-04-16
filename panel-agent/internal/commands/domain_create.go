@@ -108,12 +108,22 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
-	// Set ownership
-	chownCmd := exec.CommandContext(ctx, "chown", p.Username+":"+p.Username, p.DocRoot)
+	// Chown docroot to <user>:www-data so nginx can read files via group
+	// perms while the user retains full ownership.
+	chownCmd := exec.CommandContext(ctx, "chown", p.Username+":www-data", p.DocRoot)
 	if err := chownCmd.Run(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
 			Message: fmt.Sprintf("chown failed: %v", err),
+		}
+	}
+
+	// 0750: owner (user) rwx, group (www-data) rx, others nothing.
+	chmodCmd := exec.CommandContext(ctx, "chmod", "0750", p.DocRoot)
+	if err := chmodCmd.Run(); err != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("docroot chmod failed: %v", err),
 		}
 	}
 

@@ -24,9 +24,10 @@ import (
 // is the only required field; BcryptCost defaults to bcrypt.DefaultCost;
 // Agent is optional and used for best-effort OS user provisioning.
 type UserHandlerConfig struct {
-	Repo       repository.UserRepository
-	BcryptCost int
-	Agent      agent.AgentInterface
+	Repo            repository.UserRepository
+	BcryptCost      int
+	Agent           agent.AgentInterface
+	StrictRateLimit gin.HandlerFunc
 }
 
 // Paging defaults/limits chosen so a misbehaving client can't issue
@@ -57,7 +58,12 @@ func RegisterUserRoutes(g *gin.RouterGroup, cfg UserHandlerConfig) {
 	g.GET("/users/:id", middleware.RequireOwner("id"), h.get)
 	g.PATCH("/users/:id", middleware.RequireOwner("id"), h.update)
 	g.DELETE("/users/:id", middleware.RequireAdmin(), h.delete)
-	g.POST("/users/:id/reprovision", middleware.RequireAdmin(), h.reprovision)
+	reprov := []gin.HandlerFunc{middleware.RequireAdmin()}
+	if cfg.StrictRateLimit != nil {
+		reprov = append(reprov, cfg.StrictRateLimit)
+	}
+	reprov = append(reprov, h.reprovision)
+	g.POST("/users/:id/reprovision", reprov...)
 }
 
 type userHandler struct{ cfg UserHandlerConfig }
@@ -258,6 +264,14 @@ func (h *userHandler) update(c *gin.Context) {
 		return
 	}
 
+	if req.Password != nil && claims.UserID != id {
+		slog.Info("audit",
+			"event", "admin_password_reset",
+			"actor_id", claims.UserID,
+			"target_id", id,
+			"target_email", existing.Email)
+	}
+
 	// Best-effort password sync to OS user. Only for non-admins
 	// (admins have full system access). Run in background so client
 	// sees DB update immediately; if agent fails, user can still log in
@@ -350,6 +364,14 @@ func (h *userHandler) delete(c *gin.Context) {
 		}()
 	}
 
+	if purge {
+		slog.Info("audit",
+			"event", "user_purge_deleted",
+			"actor_id", claims.UserID,
+			"target_id", id,
+			"target_email", target.Email)
+	}
+
 	c.Status(http.StatusNoContent)
 }
 
@@ -401,7 +423,8 @@ func (h *userHandler) reprovision(c *gin.Context) {
 	if agentErr != nil {
 		// If the OS user already exists, steer the admin to the
 		// password-sync path instead — useradd would just fail.
-		if strings.Contains(agentErr.Error(), "already exists") {
+		var ae *agent.AgentError
+		if errors.As(agentErr, &ae) && ae.Code == agent.CodeAlreadyExists {
 			c.JSON(http.StatusConflict, gin.H{
 				"error":  "os_user_exists",
 				"detail": "OS user already exists — use PATCH /users/:id { password } to sync the password only",
@@ -427,6 +450,15 @@ func (h *userHandler) reprovision(c *gin.Context) {
 	if err := h.cfg.Repo.Update(ctx, user); err != nil {
 		h.translateErr(c, err)
 		return
+	}
+
+	claims := ginctx.Claims(c)
+	if claims != nil {
+		slog.Info("audit",
+			"event", "user_reprovisioned",
+			"actor_id", claims.UserID,
+			"target_id", id,
+			"target_email", user.Email)
 	}
 
 	c.JSON(http.StatusOK, user)

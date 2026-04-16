@@ -91,11 +91,19 @@ func userCreateHandler(ctx context.Context, params json.RawMessage) (any, error)
 		}
 	}
 
-	// Set home directory permissions to 0755.
-	// 0755 allows other users (including www-data/nginx) to traverse the directory
-	// and read web content from public_html, which is standard for shared hosting.
-	// A tighter per-user group isolation will be added in a follow-up.
-	chmodCmd := exec.CommandContext(ctx, "chmod", "0755", p.HomeDir)
+	// Chown home to <user>:www-data so nginx (running as www-data) can
+	// read the docroot via group perms. Tenants stay isolated: other
+	// regular users can't read /home/<user>.
+	chownCmd := exec.CommandContext(ctx, "chown", p.Username+":www-data", p.HomeDir)
+	if err := chownCmd.Run(); err != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("chown failed: %v", err),
+		}
+	}
+
+	// 0750: owner (user) rwx, group (www-data) rx, others nothing.
+	chmodCmd := exec.CommandContext(ctx, "chmod", "0750", p.HomeDir)
 	if err := chmodCmd.Run(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

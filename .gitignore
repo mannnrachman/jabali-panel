@@ -44,3 +44,9 @@ logs/
 
 # Docker
 .docker/
+
+# Top-level build artifacts occasionally produced by local `go build`
+/server
+/jabali-agent
+/panel-api/server
+/panel-agent/jabali-agent

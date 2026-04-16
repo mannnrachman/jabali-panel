@@ -218,6 +218,25 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	}
 }
 
+// ReconcileDeleted tears down an OS-level domain whose DB row has already
+// been removed. Called by the DELETE handler after it deletes the row,
+// because once the row is gone ReconcileOne(id) can no longer find it
+// and orphan detection in ReconcileAll is intentionally conservative
+// (log-only). This is the explicit "yes, actually tear this down" path.
+func (r *Reconciler) ReconcileDeleted(ctx context.Context, domainName string) {
+	if domainName == "" {
+		return
+	}
+	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	_, err := r.agent.Call(callCtx, "domain.delete", map[string]string{"domain": domainName})
+	if err != nil {
+		r.log.Warn("domain delete failed on agent",
+			"domain", domainName,
+			"err", err)
+	}
+}
+
 // disableDomainOnAgent calls the agent to disable (not delete) a domain.
 // Logs errors but doesn't return them so reconciliation can continue.
 func (r *Reconciler) disableDomainOnAgent(ctx context.Context, domain *models.Domain) {

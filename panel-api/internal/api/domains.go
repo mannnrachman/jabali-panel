@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -266,17 +267,20 @@ func (h *domainHandler) delete(c *gin.Context) {
 		return
 	}
 
+	// Capture name BEFORE deleting — once the DB row is gone, the
+	// reconciler can't look it up by ID. We pass the name to
+	// ReconcileDeleted which targets the agent-side teardown directly.
+	name := domain.Name
 	if err := h.cfg.Domains.Delete(ctx, domain.ID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
 
-	// Schedule reconciliation to tear down the domain's OS-level resources.
-	// The reconciler will notice the domain is gone from the DB and invoke
-	// domain.delete on the agent. Best-effort: if teardown fails, the user
-	// is not blocked because the DB row is already gone.
+	// Tear down OS-level resources out-of-band. Best-effort: the user
+	// sees the row gone immediately; if agent teardown fails, the next
+	// ReconcileAll tick logs the orphan for ops to investigate.
 	if h.cfg.Reconciler != nil {
-		h.cfg.Reconciler.Schedule(domain.ID)
+		go h.cfg.Reconciler.ReconcileDeleted(context.Background(), name)
 	}
 
 	c.Status(http.StatusNoContent)

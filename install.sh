@@ -526,8 +526,7 @@ gmysql-password=${pdns_password}
 # Bind on all interfaces so ns1 can be reached externally. Operator can
 # narrow this via /etc/powerdns/pdns.conf if they run a firewall in
 # front.
-local-address=0.0.0.0
-local-ipv6=::
+local-address=0.0.0.0, ::
 
 # socket-dir is intentionally not set — Debian's pdns.service has
 # RuntimeDirectory=powerdns which auto-creates /run/powerdns with the

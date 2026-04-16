@@ -72,7 +72,7 @@ export const UserDomainList = () => {
               <DomainRedirectsButton domain={r} />
               <DomainSettingsButton domain={r} />
               <DomainToggleButton domain={r} />
-              <DeleteButton hideText size="small" recordItemId={r.id} />
+              <DeleteButton hideText size="small" type="text" recordItemId={r.id} />
             </Space>
           )}
         />

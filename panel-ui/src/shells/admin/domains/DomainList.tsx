@@ -68,7 +68,7 @@ export const DomainList = () => {
               <DomainSettingsButton domain={r} />
               <DomainToggleButton domain={r} />
               <EditButton hideText size="small" recordItemId={r.id} />
-              <DeleteButton hideText size="small" recordItemId={r.id} />
+              <DeleteButton hideText size="small" type="text" recordItemId={r.id} />
             </Space>
           )}
         />

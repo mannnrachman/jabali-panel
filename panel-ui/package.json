@@ -2,7 +2,7 @@
   "name": "jabali-panel-ui",
   "private": true,
   "version": "0.1.0",
-  "description": "Jabali Panel SPA — React + Refine + Ant Design",
+  "description": "Jabali Panel SPA \u2014 React + Refine + Ant Design",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -20,17 +20,15 @@
     "@refinedev/core": "^4.57.10",
     "@refinedev/react-router": "^1.0.1",
     "@refinedev/simple-rest": "^5.0.10",
-    "@testing-library/dom": "^10.4.1",
     "antd": "^5.22.3",
-    "antd-style": "^4.1.0",
     "axios": "^1.7.9",
-    "clsx": "^2.1.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router": "^7.1.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
+    "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
     "@types/node": "^22.10.1",

@@ -21,7 +21,10 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/go-sql-driver/mysql"
+
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-agent/internal/commands"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-agent/internal/pdns"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-agent/internal/server"
 )
 
@@ -70,6 +73,16 @@ func main() {
 	if err := os.MkdirAll(filepath.Dir(*socketPath), 0750); err != nil {
 		log.Error("mkdir socket dir failed", "err", err)
 		os.Exit(2)
+	}
+
+	// Initialize PowerDNS backend client. Non-fatal if unavailable — dev boxes
+	// may not have PowerDNS installed. Handlers will return a friendly error.
+	if cl, err := pdns.ReadEnvAndConnect(); err != nil {
+		log.Warn("pdns backend not available; dns.* commands will error", "err", err)
+	} else {
+		pdns.SetDefault(cl)
+		log.Info("pdns backend connected")
+		// Note: we hold the client for the process lifetime; no defer Close().
 	}
 
 	srv, err := server.New(server.Config{

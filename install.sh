@@ -92,35 +92,39 @@ preflight() {
 # config.toml already contains [server].hostname, the prompts are skipped
 # so `install.sh` is safe to re-run for updates.
 
-# Query a small set of public HTTP services that echo the caller's IP.
-# Resilient across providers — we try each in turn with a short timeout
-# so a blocked outbound doesn't hang the install forever. Falls back to
-# the first non-loopback local address if nothing external responds
-# (e.g. an air-gapped lab server), with a clear warning.
+# Read the primary interface IPs straight from the kernel. We pick the
+# interface that owns the default route and take its first global-scope
+# address. This matches what the panel will serve customers with and
+# behaves sensibly behind NAT (returns the LAN IP; operators correct
+# via the admin Server Settings page if the server actually sits behind
+# 1:1 NAT with a different public IP).
+_detect_main_iface() {
+  ip route show default 2>/dev/null | awk '/^default/ {print $5; exit}'
+}
+
 _detect_public_ipv4() {
-  local url out
-  for url in https://ipv4.icanhazip.com https://api.ipify.org https://ifconfig.me/ip; do
-    out="$(curl -fsSL --max-time 5 --ipv4 "$url" 2>/dev/null | tr -d '[:space:]' || true)"
-    if [[ "$out" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-      printf '%s' "$out"
-      return 0
-    fi
-  done
-  # Airgap fallback — first non-loopback IPv4 on the box.
+  local iface
+  iface="$(_detect_main_iface)"
+  if [[ -n "$iface" ]]; then
+    ip -4 -o addr show dev "$iface" scope global 2>/dev/null \
+      | awk '{print $4}' | cut -d/ -f1 | head -n1
+    return 0
+  fi
+  # No default route — take any global IPv4.
   ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1
 }
 
 _detect_public_ipv6() {
-  local url out
-  for url in https://ipv6.icanhazip.com https://api6.ipify.org; do
-    out="$(curl -fsSL --max-time 5 --ipv6 "$url" 2>/dev/null | tr -d '[:space:]' || true)"
-    if [[ "$out" == *:* ]]; then
-      printf '%s' "$out"
-      return 0
-    fi
-  done
-  # IPv6 is optional — blank is acceptable.
-  return 1
+  local iface
+  iface="$(_detect_main_iface)"
+  if [[ -n "$iface" ]]; then
+    # -preferred drops deprecated/tentative addresses so we never pick a
+    # stale SLAAC temp that's about to expire.
+    ip -6 -o addr show dev "$iface" scope global -preferred 2>/dev/null \
+      | awk '{print $4}' | cut -d/ -f1 | head -n1
+    return 0
+  fi
+  ip -6 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1
 }
 
 prompt_server_settings() {
@@ -136,19 +140,19 @@ prompt_server_settings() {
   local sys_hostname detected_ipv4 detected_ipv6
   sys_hostname="$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo '')"
 
-  _log "detecting public IPv4 (checking icanhazip/ipify/ifconfig.me)…"
+  _log "detecting primary interface IPv4…"
   detected_ipv4="$(_detect_public_ipv4 || true)"
   if [[ -z "$detected_ipv4" ]]; then
-    _die "could not auto-detect public IPv4. Set JABALI_PUBLIC_IPV4 and re-run."
+    _die "could not auto-detect an IPv4 address. Set JABALI_PUBLIC_IPV4 and re-run."
   fi
-  _ok "public IPv4: $detected_ipv4"
+  _ok "primary IPv4: $detected_ipv4"
 
-  _log "detecting public IPv6 (optional)…"
+  _log "detecting primary interface IPv6 (optional)…"
   detected_ipv6="$(_detect_public_ipv6 || true)"
   if [[ -n "$detected_ipv6" ]]; then
-    _ok "public IPv6: $detected_ipv6"
+    _ok "primary IPv6: $detected_ipv6"
   else
-    _log "no public IPv6 detected — skipping (zones won't get AAAA records)"
+    _log "no IPv6 detected — skipping (zones won't get AAAA records)"
   fi
 
   # `curl | bash` consumes stdin for the script itself, so `read` would

@@ -1,10 +1,7 @@
 import { useState } from "react";
 import { Button, Popconfirm, message } from "antd";
 import { LoginOutlined } from "@ant-design/icons";
-import { useInvalidate } from "@refinedev/core";
-import { useNavigate } from "react-router";
-import { apiClient, setAccessToken } from "../../../apiClient";
-import { clearIdentity } from "../../../identity";
+import { apiClient } from "../../../apiClient";
 
 interface UserImpersonateActionProps {
   recordItemId: string;
@@ -18,29 +15,18 @@ export const UserImpersonateAction = ({
   isAdmin,
 }: UserImpersonateActionProps) => {
   const [isLoading, setIsLoading] = useState(false);
-  const navigate = useNavigate();
-  const invalidate = useInvalidate();
 
   const handleImpersonate = async () => {
     setIsLoading(true);
     try {
       const resp = await apiClient.post<{
-        access_token: string;
-        expires_at: string;
+        login_url: string;
       }>(`/admin/users/${encodeURIComponent(recordItemId)}/impersonate`);
 
-      setAccessToken(resp.data.access_token);
-      clearIdentity();
-      message.success(`Impersonating ${userEmail}`);
+      message.success(`Opening login link for ${userEmail}`);
 
-      // Invalidate the me cache so downstream consumers re-fetch the new identity
-      invalidate({
-        resource: "me",
-        invalidates: ["list"],
-      });
-
-      // Navigate to user shell, Authenticated wrapper will re-fetch /me
-      navigate("/jabali-panel");
+      // Open the login URL in a new tab (one-shot session)
+      window.open(resp.data.login_url, "_blank");
     } catch (err: unknown) {
       const errMsg =
         err instanceof Error ? err.message : "Failed to impersonate user";
@@ -57,10 +43,10 @@ export const UserImpersonateAction = ({
 
   return (
     <Popconfirm
-      title="Log in as this user?"
-      description={`Log in as ${userEmail}? This admin session will be replaced.`}
+      title="Open login link for this user?"
+      description={`Open a login link for ${userEmail}? A new tab will open with a temporary login session.`}
       onConfirm={handleImpersonate}
-      okText="Confirm"
+      okText="Open in New Tab"
       cancelText="Cancel"
       okButtonProps={{ loading: isLoading }}
     >

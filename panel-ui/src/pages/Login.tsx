@@ -11,7 +11,7 @@
 import { useEffect, useState } from "react";
 import { useLogin } from "@refinedev/core";
 import { useNavigate, useSearchParams } from "react-router";
-import { Button, Card, Form, Input, Space, Typography, Alert } from "antd";
+import { Button, Card, Form, Input, Space, Typography, Alert, theme } from "antd";
 import { apiClient, setAccessToken } from "../apiClient";
 
 type LoginValues = { email: string; password: string };
@@ -31,6 +31,7 @@ export const LoginPage = () => {
   const [searchParams] = useSearchParams();
   const [cliTokenError, setCliTokenError] = useState<string | null>(null);
   const [isRedeemingCLI, setIsRedeemingCLI] = useState(false);
+  const { token } = theme.useToken();
 
   // Attempt to redeem CLI token on mount if present in query params
   useEffect(() => {
@@ -41,7 +42,9 @@ export const LoginPage = () => {
     apiClient
       .post<LoginResponse>("/auth/cli-login", { cli_token: cliToken })
       .then((response) => {
-        // Store access token and navigate to dashboard
+        // Store access token and set no_refresh flag for impersonation sessions
+        // This prevents the 401 interceptor from attempting to refresh the token
+        sessionStorage.setItem("no_refresh", "1");
         setAccessToken(response.data.access_token);
         navigate("/jabali-admin/dashboard", { replace: true });
       })
@@ -61,7 +64,7 @@ export const LoginPage = () => {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: "#f5f5f5",
+          background: token.colorBgLayout,
         }}
       >
         <Card style={{ width: 380 }}>
@@ -69,7 +72,7 @@ export const LoginPage = () => {
             <Typography.Title level={3} style={{ margin: 0 }}>
               Signing you in...
             </Typography.Title>
-            <div style={{ textAlign: "center", color: "#999" }}>
+            <div style={{ textAlign: "center", color: token.colorTextSecondary }}>
               Processing your login link
             </div>
           </Space>
@@ -85,7 +88,7 @@ export const LoginPage = () => {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#f5f5f5",
+        background: token.colorBgLayout,
       }}
     >
       <Card style={{ width: 380 }}>

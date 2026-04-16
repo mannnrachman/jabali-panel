@@ -87,6 +87,11 @@ apiClient.interceptors.response.use(
     if (url.startsWith("/auth/")) {
       return Promise.reject(normalizeError(err));
     }
+    // Don't refresh in impersonation tabs (marked by no_refresh flag in sessionStorage).
+    // This allows the impersonation session to expire cleanly without attempting token rotation.
+    if (sessionStorage.getItem("no_refresh") === "1") {
+      return Promise.reject(normalizeError(err));
+    }
     if (original._retry) {
       return Promise.reject(normalizeError(err));
     }

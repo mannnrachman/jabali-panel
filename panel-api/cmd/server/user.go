@@ -23,6 +23,7 @@ func newUserCmd() *cobra.Command {
 		newUserCreateCmd(),
 		newUserEditCmd(),
 		newUserDeleteCmd(),
+		newUserLoginCmd(),
 	)
 	return cmd
 }

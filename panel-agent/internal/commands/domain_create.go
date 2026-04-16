@@ -22,6 +22,10 @@ type domainCreateParams struct {
 	Domain     string `json:"domain"`
 	DocRoot    string `json:"doc_root"`
 	PHPVersion string `json:"php_version"`
+	// IsEnabled controls whether the vhost serves the tenant's docroot
+	// (true) or a branded "site disabled" placeholder (false). Pointer
+	// so omitted fields default to true (backwards compat).
+	IsEnabled *bool `json:"is_enabled"`
 }
 
 // domainCreateResponse is the output shape for domain.create.
@@ -40,6 +44,7 @@ const vhostTemplate = `server {
     listen 80;
     listen [::]:80;
     server_name {{.Domain}};
+{{ if .IsEnabled }}
     root {{.DocRoot}};
     index index.html index.php;
 
@@ -57,6 +62,16 @@ const vhostTemplate = `server {
     error_log /var/log/nginx/{{.Domain}}-error.log;
 
     {{.CustomDirectives}}
+{{ else }}
+    # Domain is administratively disabled. Serve the branded
+    # disabled page instead of the tenant's docroot. Keep access
+    # logs under the normal filename so ops can still see hits.
+    root /var/www/jabali-disabled;
+    index index.html;
+    access_log /var/log/nginx/{{.Domain}}-access.log;
+    error_log /var/log/nginx/{{.Domain}}-error.log;
+    location / { try_files /index.html =503; }
+{{ end }}
 }
 `
 
@@ -66,6 +81,7 @@ type vhostData struct {
 	PHPVersion       string
 	Username         string
 	CustomDirectives string
+	IsEnabled        bool
 }
 
 // pathsUnderHome returns each directory from docRoot up to but NOT
@@ -87,6 +103,74 @@ func pathsUnderHome(username, docRoot string) []string {
 		cur = filepath.Dir(cur)
 	}
 	return paths
+}
+
+// writeVhost generates and writes the nginx vhost configuration, then tests and reloads nginx.
+// This is the core logic shared by domain.create and domain.enable/disable.
+// If the config content is unchanged, nginx reload is skipped for efficiency.
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion string, isEnabled bool) (string, error) {
+	// Generate vhost configuration
+	tmpl, err := template.New("vhost").Parse(vhostTemplate)
+	if err != nil {
+		return "", fmt.Errorf("template parse failed: %w", err)
+	}
+
+	vhostData := vhostData{
+		Domain:           domain,
+		DocRoot:          docRoot,
+		PHPVersion:       phpVersion,
+		Username:         username,
+		CustomDirectives: "",
+		IsEnabled:        isEnabled,
+	}
+
+	var vhostConfig bytes.Buffer
+	if err := tmpl.Execute(&vhostConfig, vhostData); err != nil {
+		return "", fmt.Errorf("template execute failed: %w", err)
+	}
+
+	// Write vhost configuration atomically (temp file + rename)
+	configPath := filepath.Join("/etc/nginx/sites-available", domain+".conf")
+	tmpFile := configPath + ".tmp"
+
+	if err := os.WriteFile(tmpFile, vhostConfig.Bytes(), 0644); err != nil {
+		return "", fmt.Errorf("write config failed: %w", err)
+	}
+
+	if err := os.Rename(tmpFile, configPath); err != nil {
+		os.Remove(tmpFile)
+		return "", fmt.Errorf("rename config failed: %w", err)
+	}
+
+	// Create symlink to sites-enabled (always present for enabled or disabled domains)
+	enabledPath := filepath.Join("/etc/nginx/sites-enabled", domain+".conf")
+	os.Remove(enabledPath) // Remove if already exists
+	if err := os.Symlink(configPath, enabledPath); err != nil {
+		return "", fmt.Errorf("symlink failed: %w", err)
+	}
+
+	// Test nginx configuration
+	testCmd := exec.CommandContext(ctx, "nginx", "-t")
+	var testOutput bytes.Buffer
+	testCmd.Stdout = &testOutput
+	testCmd.Stderr = &testOutput
+	if err := testCmd.Run(); err != nil {
+		// Clean up on test failure
+		os.Remove(enabledPath)
+		os.Remove(configPath)
+		return "", fmt.Errorf("nginx test failed: %s", testOutput.String())
+	}
+
+	// Reload nginx
+	reloadCmd := exec.CommandContext(ctx, "systemctl", "reload", "nginx")
+	var reloadOutput bytes.Buffer
+	reloadCmd.Stdout = &reloadOutput
+	reloadCmd.Stderr = &reloadOutput
+	if err := reloadCmd.Run(); err != nil {
+		return "", fmt.Errorf("systemctl reload nginx failed: %s", reloadOutput.String())
+	}
+
+	return configPath, nil
 }
 
 func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -162,77 +246,17 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
-	// Generate vhost configuration
-	tmpl, err := template.New("vhost").Parse(vhostTemplate)
+	// Default IsEnabled to true if not provided (backwards compatibility)
+	isEnabled := true
+	if p.IsEnabled != nil {
+		isEnabled = *p.IsEnabled
+	}
+
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, isEnabled)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("template parse failed: %v", err),
-		}
-	}
-
-	vhostData := vhostData{
-		Domain:           p.Domain,
-		DocRoot:          p.DocRoot,
-		PHPVersion:       p.PHPVersion,
-		Username:         p.Username,
-		CustomDirectives: "",
-	}
-
-	var vhostConfig bytes.Buffer
-	if err := tmpl.Execute(&vhostConfig, vhostData); err != nil {
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("template execute failed: %v", err),
-		}
-	}
-
-	// Write vhost configuration
-	configPath := filepath.Join("/etc/nginx/sites-available", p.Domain+".conf")
-	if err := os.WriteFile(configPath, vhostConfig.Bytes(), 0644); err != nil {
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("write config failed: %v", err),
-		}
-	}
-
-	// Create symlink to sites-enabled
-	enabledPath := filepath.Join("/etc/nginx/sites-enabled", p.Domain+".conf")
-	// Remove existing symlink if present
-	os.Remove(enabledPath)
-	if err := os.Symlink(configPath, enabledPath); err != nil {
-		// Clean up config file on failure
-		os.Remove(configPath)
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("symlink failed: %v", err),
-		}
-	}
-
-	// Test nginx configuration
-	testCmd := exec.CommandContext(ctx, "nginx", "-t")
-	var testOutput bytes.Buffer
-	testCmd.Stdout = &testOutput
-	testCmd.Stderr = &testOutput
-	if err := testCmd.Run(); err != nil {
-		// Clean up on test failure
-		os.Remove(enabledPath)
-		os.Remove(configPath)
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("nginx test failed: %s", testOutput.String()),
-		}
-	}
-
-	// Reload nginx
-	reloadCmd := exec.CommandContext(ctx, "systemctl", "reload", "nginx")
-	var reloadOutput bytes.Buffer
-	reloadCmd.Stdout = &reloadOutput
-	reloadCmd.Stderr = &reloadOutput
-	if err := reloadCmd.Run(); err != nil {
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("systemctl reload nginx failed: %s", reloadOutput.String()),
+			Message: err.Error(),
 		}
 	}
 

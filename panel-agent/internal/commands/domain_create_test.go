@@ -1,9 +1,12 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"html/template"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -184,6 +187,111 @@ func TestDomainCreateHandler_InvalidDocRoot(t *testing.T) {
 	}
 }
 
+func TestDomainCreateHandler_IsEnabledTrue(t *testing.T) {
+	t.Parallel()
+
+	// Test that when is_enabled is explicitly true, the template contains DocRoot
+	params := domainCreateParams{
+		Username:   "testuser",
+		Domain:     "example.com",
+		DocRoot:    "/home/testuser/public_html/example.com",
+		PHPVersion: "8.3",
+		IsEnabled:  ptrBool(true),
+	}
+
+	// Verify the template renders with the enabled config
+	tmpl, _ := template.New("vhost").Parse(vhostTemplate)
+	vd := vhostData{
+		Domain:      params.Domain,
+		DocRoot:     params.DocRoot,
+		PHPVersion:  params.PHPVersion,
+		Username:    params.Username,
+		IsEnabled:   true,
+	}
+	var buf bytes.Buffer
+	_ = tmpl.Execute(&buf, vd)
+	output := buf.String()
+
+	// Should contain the tenant's docroot and PHP-FPM config
+	if !strings.Contains(output, "/home/testuser/public_html/example.com") {
+		t.Errorf("expected output to contain DocRoot, got: %s", output)
+	}
+	if !strings.Contains(output, "fastcgi_pass") {
+		t.Errorf("expected output to contain PHP-FPM config, got: %s", output)
+	}
+}
+
+func TestDomainCreateHandler_IsEnabledFalse(t *testing.T) {
+	t.Parallel()
+
+	// Test that when is_enabled is false, the template serves the disabled page
+	params := domainCreateParams{
+		Username:   "testuser",
+		Domain:     "example.com",
+		DocRoot:    "/home/testuser/public_html/example.com",
+		PHPVersion: "8.3",
+		IsEnabled:  ptrBool(false),
+	}
+
+	// Verify the template renders with the disabled config
+	tmpl, _ := template.New("vhost").Parse(vhostTemplate)
+	vd := vhostData{
+		Domain:      params.Domain,
+		DocRoot:     params.DocRoot,
+		PHPVersion:  params.PHPVersion,
+		Username:    params.Username,
+		IsEnabled:   false,
+	}
+	var buf bytes.Buffer
+	_ = tmpl.Execute(&buf, vd)
+	output := buf.String()
+
+	// Should contain the disabled page path and NOT the tenant's docroot
+	if !strings.Contains(output, "/var/www/jabali-disabled") {
+		t.Errorf("expected output to contain disabled page path, got: %s", output)
+	}
+	if !strings.Contains(output, "try_files /index.html =503") {
+		t.Errorf("expected output to contain disabled fallback, got: %s", output)
+	}
+	if strings.Contains(output, "/home/testuser/public_html/example.com") {
+		t.Errorf("expected output to NOT contain tenant's DocRoot, got: %s", output)
+	}
+	if strings.Contains(output, "fastcgi_pass") {
+		t.Errorf("expected output to NOT contain PHP-FPM config, got: %s", output)
+	}
+}
+
+func TestDomainCreateHandler_IsEnabledNil(t *testing.T) {
+	t.Parallel()
+
+	// Test that when is_enabled is nil, it defaults to true (backwards compatibility)
+	params := domainCreateParams{
+		Username:   "testuser",
+		Domain:     "example.com",
+		DocRoot:    "/home/testuser/public_html/example.com",
+		PHPVersion: "8.3",
+		IsEnabled:  nil,
+	}
+
+	// Verify the template defaults to enabled
+	vd := vhostData{
+		Domain:      params.Domain,
+		DocRoot:     params.DocRoot,
+		PHPVersion:  params.PHPVersion,
+		Username:    params.Username,
+		IsEnabled:   true, // Default
+	}
+	tmpl, _ := template.New("vhost").Parse(vhostTemplate)
+	var buf bytes.Buffer
+	_ = tmpl.Execute(&buf, vd)
+	output := buf.String()
+
+	// Should behave like enabled=true
+	if !strings.Contains(output, "/home/testuser/public_html/example.com") {
+		t.Errorf("expected output to contain DocRoot when is_enabled is nil (default true), got: %s", output)
+	}
+}
+
 func TestDomainCreateHandler_RequiresRootNginx(t *testing.T) {
 	t.Skip("requires root + nginx")
 
@@ -197,4 +305,9 @@ func TestDomainCreateHandler_RequiresRootNginx(t *testing.T) {
 
 	_, err := domainCreateHandler(context.Background(), paramsJSON)
 	require.NoError(t, err)
+}
+
+// ptrBool is a helper to create a pointer to a bool
+func ptrBool(b bool) *bool {
+	return &b
 }

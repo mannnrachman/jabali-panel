@@ -122,7 +122,39 @@ install_nginx() {
   systemctl start nginx 2>/dev/null || true
 }
 
-# ---------- step 1c: Node.js 22 LTS (for panel-ui) --------------------------
+# ---------- step 1c: disabled page -------------------------------------------
+
+install_disabled_page() {
+  _log "installing branded disabled page"
+
+  # Create the directory with proper permissions
+  install -d -m 0755 /var/www/jabali-disabled
+
+  # Write the disabled page HTML, idempotent via install(1)
+  install -m 0644 /dev/stdin /var/www/jabali-disabled/index.html <<'EOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Site Disabled</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 640px; margin: 4rem auto; padding: 0 1.25rem; color: #222; line-height: 1.5; }
+    h1 { color: #d32f2f; margin-bottom: 0.25em; }
+    .muted { color: #666; margin-top: 0; }
+  </style>
+</head>
+<body>
+  <h1>Site Disabled</h1>
+  <p class="muted">This site has been disabled by its owner. Please check back later.</p>
+</body>
+</html>
+EOF
+
+  _ok "disabled page installed at /var/www/jabali-disabled/"
+}
+
+# ---------- step 1d: Node.js 22 LTS (for panel-ui) --------------------------
 
 install_node() {
   # Idempotent: skip if a new-enough node is already installed. NodeSource
@@ -610,6 +642,7 @@ main() {
   preflight
   install_base_packages
   install_nginx
+  install_disabled_page
   install_node
   install_go
   ensure_user_and_dirs

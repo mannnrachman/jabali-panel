@@ -4,6 +4,7 @@ import { LoginOutlined } from "@ant-design/icons";
 import { useInvalidate } from "@refinedev/core";
 import { useNavigate } from "react-router";
 import { apiClient, setAccessToken } from "../../../apiClient";
+import { clearIdentity } from "../../../identity";
 
 interface UserImpersonateActionProps {
   recordItemId: string;
@@ -29,6 +30,7 @@ export const UserImpersonateAction = ({
       }>(`/admin/users/${encodeURIComponent(recordItemId)}/impersonate`);
 
       setAccessToken(resp.data.access_token);
+      clearIdentity();
       message.success(`Impersonating ${userEmail}`);
 
       // Invalidate the me cache so downstream consumers re-fetch the new identity

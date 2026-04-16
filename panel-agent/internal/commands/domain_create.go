@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 )
@@ -67,6 +68,27 @@ type vhostData struct {
 	CustomDirectives string
 }
 
+// pathsUnderHome returns each directory from docRoot up to but NOT
+// including /home/<user>, ordered from deepest to shallowest. Used to
+// chown every intermediate directory the panel creates so tenant data
+// never gets stranded under root ownership.
+//
+// Returns nil if docRoot doesn't live under the expected home dir —
+// the caller should already have validated this upstream.
+func pathsUnderHome(username, docRoot string) []string {
+	homeDir := "/home/" + username
+	if !strings.HasPrefix(docRoot, homeDir+"/") {
+		return nil
+	}
+	var paths []string
+	cur := docRoot
+	for cur != homeDir && cur != "/" && cur != "." {
+		paths = append(paths, cur)
+		cur = filepath.Dir(cur)
+	}
+	return paths
+}
+
 func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p domainCreateParams
 	if err := json.Unmarshal(params, &p); err != nil {
@@ -109,22 +131,21 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
-	// Chown docroot to <user>:www-data so nginx can read files via group
-	// perms while the user retains full ownership.
-	chownCmd := exec.CommandContext(ctx, "chown", p.Username+":www-data", p.DocRoot)
-	if err := chownCmd.Run(); err != nil {
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("chown failed: %v", err),
+	// Chown + chmod every directory we created under /home/<user>/,
+	// not just the leaf. mkdir -p would have left intermediates as
+	// root:root; fix them so tenant data stays owned by the tenant.
+	for _, dir := range pathsUnderHome(p.Username, p.DocRoot) {
+		if err := exec.CommandContext(ctx, "chown", p.Username+":www-data", dir).Run(); err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("chown %s: %v", dir, err),
+			}
 		}
-	}
-
-	// 0750: owner (user) rwx, group (www-data) rx, others nothing.
-	chmodCmd := exec.CommandContext(ctx, "chmod", "0750", p.DocRoot)
-	if err := chmodCmd.Run(); err != nil {
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("docroot chmod failed: %v", err),
+		if err := exec.CommandContext(ctx, "chmod", "0750", dir).Run(); err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("chmod %s: %v", dir, err),
+			}
 		}
 	}
 

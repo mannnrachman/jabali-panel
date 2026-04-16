@@ -116,6 +116,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Repo:            deps.Users,
 				Agent:           deps.Agent,
 				StrictRateLimit: rl.Strict(),
+				Domains:         deps.Domains,
+				Reconciler:      deps.Reconciler,
 			})
 		}
 		if deps.Packages != nil {

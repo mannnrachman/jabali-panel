@@ -18,6 +18,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -29,6 +30,8 @@ type UserHandlerConfig struct {
 	BcryptCost      int
 	Agent           agent.AgentInterface
 	StrictRateLimit gin.HandlerFunc
+	Domains         repository.DomainRepository
+	Reconciler      *reconciler.Reconciler
 }
 
 // Paging defaults/limits chosen so a misbehaving client can't issue
@@ -362,6 +365,50 @@ func (h *userHandler) delete(c *gin.Context) {
 		if n <= 1 {
 			c.JSON(http.StatusConflict, gin.H{"error": "cannot_delete_last_admin"})
 			return
+		}
+	}
+
+	// Cascade-delete all domains owned by this user. DB first, then
+	// out-of-band agent teardown via the reconciler. Best-effort: any
+	// per-domain failure is logged, never fails the user delete.
+	if h.cfg.Domains != nil {
+		// Page through to avoid loading millions of rows in one shot.
+		// Realistically a user has a handful of domains, but bound the
+		// loop anyway.
+		const batchSize = 500
+		for {
+			owned, _, err := h.cfg.Domains.ListByUserID(c.Request.Context(), id, 0, batchSize)
+			if err != nil {
+				slog.Warn("cascade delete: list user domains failed",
+					"user_id", id, "err", err)
+				break
+			}
+			if len(owned) == 0 {
+				break
+			}
+			for i := range owned {
+				d := &owned[i]
+				name := d.Name
+				if err := h.cfg.Domains.Delete(c.Request.Context(), d.ID); err != nil {
+					slog.Warn("cascade delete: domain DB delete failed",
+						"user_id", id, "domain_id", d.ID, "domain", name, "err", err)
+					continue
+				}
+				if h.cfg.Reconciler != nil {
+					// Fire-and-forget — don't block the user delete on nginx
+					// teardown. Use a fresh context because c.Request.Context
+					// ends when the handler returns.
+					name := name // capture
+					go func() {
+						ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+						defer cancel()
+						h.cfg.Reconciler.ReconcileDeleted(ctx, name)
+					}()
+				}
+			}
+			if len(owned) < batchSize {
+				break
+			}
 		}
 	}
 

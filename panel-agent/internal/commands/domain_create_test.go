@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,6 +11,43 @@ import (
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 )
+
+func TestPathsUnderHome(t *testing.T) {
+	cases := []struct {
+		user    string
+		docRoot string
+		want    []string
+	}{
+		{
+			"alice",
+			"/home/alice/domains/foo.com/public_html",
+			[]string{"/home/alice/domains/foo.com/public_html", "/home/alice/domains/foo.com", "/home/alice/domains"},
+		},
+		{
+			"alice",
+			"/home/alice/public_html",
+			[]string{"/home/alice/public_html"},
+		},
+		{
+			"alice",
+			"/etc/passwd",
+			nil,
+		},
+		{
+			"alice",
+			"/home/alice",
+			nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.user+":"+tc.docRoot, func(t *testing.T) {
+			got := pathsUnderHome(tc.user, tc.docRoot)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("user=%q docRoot=%q: got %v, want %v", tc.user, tc.docRoot, got, tc.want)
+			}
+		})
+	}
+}
 
 func TestDomainCreateHandler_InvalidDomain(t *testing.T) {
 	t.Parallel()

@@ -3,8 +3,9 @@
 // Refine's useTable handles pagination state, loading, and sorter/filter
 // sync with the URL. We bring our own columns + action column; AntD's
 // table prop wiring just works once you hand it `tableProps`.
-import { useTable, EditButton, DeleteButton, CreateButton } from "@refinedev/antd";
+import { useTable, EditButton, CreateButton } from "@refinedev/antd";
 import { Space, Table, Tag, Typography } from "antd";
+import { UserDeleteAction } from "./UserDeleteAction";
 
 type User = {
   id: string;
@@ -61,7 +62,7 @@ export const UserList = () => {
           render={(_, r) => (
             <Space>
               <EditButton hideText size="small" recordItemId={r.id} />
-              <DeleteButton hideText size="small" recordItemId={r.id} />
+              <UserDeleteAction recordItemId={r.id} userEmail={r.email} />
             </Space>
           )}
         />

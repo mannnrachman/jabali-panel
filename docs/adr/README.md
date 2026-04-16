@@ -27,6 +27,9 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0012](0012-refine-antd-tanstack.md) | Refine + Ant Design + TanStack Query frontend | Accepted |
 | [0013](0013-users-inline-best-effort.md) | Users inline best-effort (not reconciler-managed) | Accepted |
 | [0014](0014-panel-port-8443-user-443.md) | PANEL_PORT 8443, user sites on 443 | Accepted |
+| [0015](0015-admin-impersonation-jwt-claim.md) | Admin impersonation with `impersonated_by` JWT claim | Accepted |
+| [0016](0016-break-glass-cli-admin-login.md) | Break-glass admin login via CLI with `purpose=cli_login` claim | Accepted |
+| [0017](0017-ssl-try-acme-then-selfsigned-with-backoff.md) | SSL: try ACME first, fall back to self-signed, retry with backoff | Accepted |
 
 ## Decision Categories
 
@@ -44,6 +47,9 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 - [0006](0006-in-process-worker.md) — In-process worker, not separate daemon
 - [0010](0010-install-via-curl-bash.md) — Install via `curl | bash` only
 - [0014](0014-panel-port-8443-user-443.md) — PANEL_PORT 8443, user sites on 443
+- [0015](0015-admin-impersonation-jwt-claim.md) — Admin impersonation with impersonated_by JWT claim
+- [0016](0016-break-glass-cli-admin-login.md) — Break-glass admin login via CLI with purpose=cli_login claim
+- [0017](0017-ssl-try-acme-then-selfsigned-with-backoff.md) — SSL: try ACME first, fall back to self-signed, retry with backoff
 
 ### Infrastructure & Services
 - [0009](0009-nginx-file-per-vhost.md) — Nginx file-per-vhost with force-regen path

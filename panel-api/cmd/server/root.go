@@ -48,6 +48,7 @@ func newRootCmd() *cobra.Command {
 		newServeCmd(),
 		newUserCmd(),
 		newPackageCmd(),
+		newDomainCmd(),
 		newSystemCmd(),
 		newMigrateCmd(),
 		newUpdateCmd(),

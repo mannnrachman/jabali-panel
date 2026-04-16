@@ -17,7 +17,7 @@
 // so authProvider and dataProvider state is consistent regardless of
 // which shell you're in.
 import { Authenticated, Refine } from "@refinedev/core";
-import { RefineThemes, useNotificationProvider } from "@refinedev/antd";
+import { useNotificationProvider } from "@refinedev/antd";
 import routerProvider, {
   CatchAllNavigate,
   DocumentTitleHandler,
@@ -26,6 +26,7 @@ import routerProvider, {
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router";
 import { ConfigProvider } from "antd";
 
+import useMuiTheme from "./muiTheme";
 import { authProvider } from "./authProvider";
 import { dataProvider } from "./dataProvider";
 import { AdminLayout } from "./shells/AdminLayout";
@@ -43,9 +44,11 @@ import { MyProfile } from "./shells/user/MyProfile";
 import { LoginPage } from "./pages/Login";
 
 const App = () => {
+  const muiConfig = useMuiTheme();
+
   return (
     <BrowserRouter>
-      <ConfigProvider theme={RefineThemes.Blue}>
+      <ConfigProvider {...muiConfig}>
         <Refine
           authProvider={authProvider}
           dataProvider={dataProvider}

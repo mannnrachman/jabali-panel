@@ -132,21 +132,20 @@ prompt_server_settings() {
 
   if [[ -z "$input_fd" ]]; then
     _warn "no TTY available — using auto-detected defaults + env vars."
-    _warn "override via JABALI_HOSTNAME / JABALI_PUBLIC_IPV4 / JABALI_PUBLIC_IPV6 /"
-    _warn "JABALI_NS1_NAME / JABALI_NS1_IPV4 / JABALI_NS2_NAME / JABALI_NS2_IPV4"
+    _warn "override via JABALI_HOSTNAME / JABALI_PUBLIC_IPV4 / JABALI_PUBLIC_IPV6"
     inp_hostname="${JABALI_HOSTNAME:-$sys_hostname}"
     inp_ipv4="${JABALI_PUBLIC_IPV4:-$sys_ipv4}"
     inp_ipv6="${JABALI_PUBLIC_IPV6:-$sys_ipv6}"
-    inp_ns1_name="${JABALI_NS1_NAME:-ns1.${inp_hostname}}"
-    inp_ns1_ip="${JABALI_NS1_IPV4:-$inp_ipv4}"
-    inp_ns2_name="${JABALI_NS2_NAME:-}"
-    inp_ns2_ip="${JABALI_NS2_IPV4:-}"
     if [[ ! "$inp_hostname" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$ ]]; then
       _die "no TTY and no valid JABALI_HOSTNAME (detected: '$inp_hostname')"
     fi
     if [[ ! "$inp_ipv4" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
       _die "no TTY and no valid JABALI_PUBLIC_IPV4 (detected: '$inp_ipv4')"
     fi
+    inp_ns1_name="ns1.${inp_hostname}"
+    inp_ns1_ip="${inp_ipv4}"
+    inp_ns2_name="ns2.${inp_hostname}"
+    inp_ns2_ip="${inp_ipv4}"
   else
     echo "A few details about this server before we start. You can"
     echo "change any of these later from the admin panel."
@@ -169,27 +168,14 @@ prompt_server_settings() {
     read -rp "Public IPv6 (optional) [${sys_ipv6}]: " -u "$input_fd" inp_ipv6 || true
     inp_ipv6="${inp_ipv6:-$sys_ipv6}"
 
-    local default_ns1="ns1.${inp_hostname}"
-    read -rp "Primary nameserver name [${default_ns1}]: " -u "$input_fd" inp_ns1_name || true
-    inp_ns1_name="${inp_ns1_name:-$default_ns1}"
-
-    read -rp "Primary nameserver IPv4 [${inp_ipv4}]: " -u "$input_fd" inp_ns1_ip || true
-    inp_ns1_ip="${inp_ns1_ip:-$inp_ipv4}"
-
-    echo ""
-    echo "(ns2 is optional — leave blank to skip; you can add it later.)"
-    local default_ns2="ns2.${inp_hostname}"
-    read -rp "Secondary nameserver name (blank to skip) [${default_ns2}]: " -u "$input_fd" inp_ns2_name || true
-    inp_ns2_name="${inp_ns2_name:-$default_ns2}"
-    if [[ "$inp_ns2_name" == "skip" || "$inp_ns2_name" == "-" ]]; then
-      inp_ns2_name=""
-      inp_ns2_ip=""
-    else
-      read -rp "Secondary nameserver IPv4 (blank to skip): " -u "$input_fd" inp_ns2_ip || true
-      if [[ -z "$inp_ns2_ip" ]]; then
-        inp_ns2_name=""  # clearing IP clears both — keep them in sync
-      fi
-    fi
+    # NS names + IPs are auto-derived from the hostname — no prompt.
+    # Both nameservers get the same IPv4 at install time; the operator
+    # later points ns2 at a separate server via the admin Server
+    # Settings page, which triggers a zone re-push automatically.
+    inp_ns1_name="ns1.${inp_hostname}"
+    inp_ns1_ip="${inp_ipv4}"
+    inp_ns2_name="ns2.${inp_hostname}"
+    inp_ns2_ip="${inp_ipv4}"
 
     # Close the TTY FD so we don't leak it to child processes.
     [[ "$input_fd" == "3" ]] && exec 3<&-

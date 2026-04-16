@@ -151,34 +151,55 @@ func runServe(cmd *cobra.Command, args []string) error {
 			log.Info("admin bootstrap: already exists", "user_id", res.ExistingID)
 		}
 
-		// Seed server_settings from config.toml [server] block on first
-		// boot. Idempotent: if the row already exists the DB wins — later
-		// edits via the admin API shouldn't be clobbered by a config file
-		// the operator may have forgotten about.
-		{
+		// Merge-seed server_settings from config.toml [server] block on
+		// every boot. Operator edits via the admin API win — once a field
+		// has a non-empty value in the DB, config won't overwrite it. But
+		// empty DB fields get filled from config whenever config has a
+		// value. This way a partial earlier seed (e.g. from a boot where
+		// config.toml was still broken) gets repaired the next time the
+		// operator re-runs install.sh with a valid config.
+		func() {
 			seedCtx, seedCancel := context.WithTimeout(context.Background(), 10*time.Second)
-			_, getErr := serverSettingsRepo.Get(seedCtx)
+			defer seedCancel()
+
+			row, getErr := serverSettingsRepo.Get(seedCtx)
+			created := false
 			if errors.Is(getErr, repository.ErrNotFound) {
-				row := &models.ServerSettings{
-					ID:         1,
-					Hostname:   cfg.Server.Hostname,
-					PublicIPv4: cfg.Server.PublicIPv4,
-					PublicIPv6: cfg.Server.PublicIPv6,
-					NS1Name:    cfg.Server.NS1Name,
-					NS1IPv4:    cfg.Server.NS1IPv4,
-					NS2Name:    cfg.Server.NS2Name,
-					NS2IPv4:    cfg.Server.NS2IPv4,
-				}
-				if err := serverSettingsRepo.Upsert(seedCtx, row); err != nil {
-					log.Error("failed to seed server_settings from config", "err", err)
-				} else {
-					log.Info("seeded server_settings from config.toml", "hostname", row.Hostname)
-				}
+				row = &models.ServerSettings{ID: 1}
+				created = true
 			} else if getErr != nil {
 				log.Error("server_settings probe failed", "err", getErr)
+				return
 			}
-			seedCancel()
-		}
+
+			mutated := created
+			fillIfEmpty := func(target *string, source string) {
+				if *target == "" && source != "" {
+					*target = source
+					mutated = true
+				}
+			}
+			fillIfEmpty(&row.Hostname, cfg.Server.Hostname)
+			fillIfEmpty(&row.PublicIPv4, cfg.Server.PublicIPv4)
+			fillIfEmpty(&row.PublicIPv6, cfg.Server.PublicIPv6)
+			fillIfEmpty(&row.NS1Name, cfg.Server.NS1Name)
+			fillIfEmpty(&row.NS1IPv4, cfg.Server.NS1IPv4)
+			fillIfEmpty(&row.NS2Name, cfg.Server.NS2Name)
+			fillIfEmpty(&row.NS2IPv4, cfg.Server.NS2IPv4)
+
+			if !mutated {
+				return
+			}
+			if err := serverSettingsRepo.Upsert(seedCtx, row); err != nil {
+				log.Error("failed to seed server_settings from config", "err", err)
+				return
+			}
+			if created {
+				log.Info("seeded server_settings from config.toml", "hostname", row.Hostname)
+			} else {
+				log.Info("merged missing server_settings fields from config.toml", "hostname", row.Hostname)
+			}
+		}()
 	}
 
 	// ---- HTTP(S) ----

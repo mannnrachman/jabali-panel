@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -40,6 +41,13 @@ type serverSettingsHandler struct{ cfg ServerSettingsHandlerConfig }
 
 func (h *serverSettingsHandler) get(c *gin.Context) {
 	s, err := h.cfg.Repo.Get(c.Request.Context())
+	if errors.Is(err, repository.ErrNotFound) {
+		// First boot before the seed has run, or a brand-new install
+		// where config.toml had no [server] identity to seed from.
+		// Return an empty shell instead of 500 so the form loads clean.
+		c.JSON(http.StatusOK, &models.ServerSettings{ID: 1})
+		return
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
@@ -73,7 +81,11 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	current, err := h.cfg.Repo.Get(ctx)
-	if err != nil {
+	if errors.Is(err, repository.ErrNotFound) {
+		// No row yet (e.g. seed hadn't run or config was empty at boot).
+		// Treat PATCH as initial save so the first admin edit lands cleanly.
+		current = &models.ServerSettings{ID: 1}
+	} else if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}

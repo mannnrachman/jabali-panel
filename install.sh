@@ -529,9 +529,10 @@ gmysql-password=${pdns_password}
 local-address=0.0.0.0
 local-ipv6=::
 
-# Expose the stats/control socket under /run/powerdns so \`pdns_control
-# notify\` works from the agent without extra auth.
-socket-dir=/run/powerdns
+# socket-dir is intentionally not set — Debian's pdns.service has
+# RuntimeDirectory=powerdns which auto-creates /run/powerdns with the
+# right ownership. Overriding socket-dir here collides with pdns's own
+# attempt to create the directory (it fails under LXC drop-ins).
 
 # Allow the secondary nameserver to AXFR zones. In M4a we don't yet know
 # ns2's IP; operator fills it in via /etc/powerdns/pdns.d/50-axfr.conf

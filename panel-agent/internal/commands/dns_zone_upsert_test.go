@@ -109,6 +109,36 @@ func TestDNSZoneUpsertCommandRegistered(t *testing.T) {
 	}
 }
 
+func TestDNSZoneUpsertAcceptsMetadata(t *testing.T) {
+	// Test that allow_axfr_from and also_notify params are accepted
+	// without validation errors. We can't easily test the SQL round-trip
+	// without MariaDB, but we can ensure the params parse and validate.
+	params := json.RawMessage(`{
+		"zone": "example.com",
+		"records": [{"name": "example.com", "type": "A", "content": "192.0.2.1"}],
+		"allow_axfr_from": ["203.0.113.5"],
+		"also_notify": ["203.0.113.5"]
+	}`)
+
+	// pdns.Default() will be nil in test, so we expect CodeInternal (backend unavailable)
+	// rather than a validation error — confirms the metadata params parsed.
+	resp, err := dnsZoneUpsertHandler(context.Background(), params)
+
+	if err == nil {
+		t.Fatalf("expected error when pdns client unavailable")
+	}
+
+	// Check for the specific error about backend unavailability, not a JSON parse error
+	errMsg := err.Error()
+	if !contains(errMsg, "powerdns backend not available") {
+		t.Fatalf("expected backend unavailable error, got %q", errMsg)
+	}
+
+	if resp != nil {
+		t.Fatalf("expected nil response on error, got %v", resp)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (substr == "" || (len(s) > 0 && s[0:len(substr)] == substr) || (len(s) > 0 && len(substr) > 0 && findInString(s, substr)))
 }

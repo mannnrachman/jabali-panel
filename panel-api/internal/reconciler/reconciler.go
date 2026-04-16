@@ -360,11 +360,24 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 	zone.Serial = time.Now().UTC().Unix()
 	_ = r.dnsZones.Update(ctx, zone)
 
+	// Derive AXFR and NOTIFY lists from ServerSettings.
+	var allowAXFR, alsoNotify []string
+	if srv != nil && srv.NS2IPv4 != "" {
+		allowAXFR = []string{srv.NS2IPv4}
+		alsoNotify = []string{srv.NS2IPv4}
+	}
+	// ns1 is the master, so it doesn't need AXFR permission for itself.
+	// Localhost allow is only needed for manual ops troubleshooting via
+	// `dig AXFR @127.0.0.1` — add that for debugging.
+	allowAXFR = append(allowAXFR, "127.0.0.1")
+
 	pushCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if _, err := r.agent.Call(pushCtx, "dns.zone.upsert", map[string]any{
-		"zone":    zone.Name,
-		"records": compiled,
+		"zone":              zone.Name,
+		"records":           compiled,
+		"allow_axfr_from":   allowAXFR,
+		"also_notify":       alsoNotify,
 	}); err != nil {
 		r.log.Error("dns.zone.upsert failed", "zone", zone.Name, "err", err)
 	}

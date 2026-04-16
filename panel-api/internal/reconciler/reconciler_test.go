@@ -688,3 +688,120 @@ func TestReconcile_BootstrapsAndPushesZone(t *testing.T) {
 	// Bootstrap: A/@, A/www, A/mail, AAAA/@, AAAA/www, AAAA/mail, MX, SPF, DMARC = 9 records
 	require.Len(t, records, 9)
 }
+
+func TestReconcile_PassesAXFRToAgent(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+	dnsZoneRepo := &fakeDNSZoneRepo{zones: make(map[string]*models.DNSZone)}
+	dnsRecordRepo := &fakeDNSRecordRepo{records: make(map[string]*models.DNSRecord)}
+	serverSettingsRepo := &fakeServerSettingsRepo{
+		settings: &models.ServerSettings{
+			PublicIPv4: "192.0.2.1",
+			PublicIPv6: "2001:db8::1",
+			NS1Name:    "ns1.example.com",
+			NS2Name:    "ns2.example.com",
+			NS2IPv4:    "198.51.100.7", // Secondary nameserver configured
+			AdminEmail: "admin@example.com",
+		},
+	}
+
+	// Setup: one enabled domain in DB
+	now := time.Now().UTC()
+	username := "alice"
+	user := &models.User{
+		ID:       "user-1",
+		Email:    "alice@example.com",
+		Username: &username,
+	}
+	userRepo.users[user.ID] = user
+
+	domain := &models.Domain{
+		ID:        "domain-1",
+		UserID:    user.ID,
+		Name:      "example.com",
+		DocRoot:   "/home/alice/domains/example.com/public_html",
+		IsEnabled: true,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	domainRepo.domains[domain.ID] = domain
+
+	// Create reconciler with DNS repos wired
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second}).
+		WithDNSRepos(dnsZoneRepo, dnsRecordRepo, serverSettingsRepo)
+
+	// Run ReconcileOne on the domain
+	err := r.ReconcileOne(ctx, domain.ID)
+	require.NoError(t, err)
+
+	// Find the dns.zone.upsert call
+	var zoneUpsertCall *fakeCall
+	for i := range agent.calls {
+		if agent.calls[i].method == "dns.zone.upsert" {
+			zoneUpsertCall = &agent.calls[i]
+			break
+		}
+	}
+
+	require.NotNil(t, zoneUpsertCall, "dns.zone.upsert should have been called")
+
+	params, ok := zoneUpsertCall.params.(map[string]any)
+	require.True(t, ok, "params should be map[string]any, got %T", zoneUpsertCall.params)
+
+	// Verify allow_axfr_from contains ns2's IPv4 + localhost
+	allowAXFRRaw, ok := params["allow_axfr_from"]
+	require.True(t, ok, "allow_axfr_from should be present in params")
+
+	var allowAXFR []interface{}
+	switch v := allowAXFRRaw.(type) {
+	case []interface{}:
+		allowAXFR = v
+	case []string:
+		for _, s := range v {
+			allowAXFR = append(allowAXFR, s)
+		}
+	default:
+		t.Fatalf("allow_axfr_from has unexpected type: %T", allowAXFRRaw)
+	}
+	require.True(t, ok, "allow_axfr_from should be a slice")
+	require.Len(t, allowAXFR, 2, "should have 2 entries: ns2 IPv4 and localhost")
+
+	// Check for ns2's IPv4 and localhost in the allow list
+	foundNS2 := false
+	foundLocal := false
+	for _, entry := range allowAXFR {
+		if str, ok := entry.(string); ok {
+			if str == "198.51.100.7" {
+				foundNS2 = true
+			}
+			if str == "127.0.0.1" {
+				foundLocal = true
+			}
+		}
+	}
+	require.True(t, foundNS2, "allow_axfr_from should contain ns2 IPv4 (198.51.100.7)")
+	require.True(t, foundLocal, "allow_axfr_from should contain localhost (127.0.0.1)")
+
+	// Verify also_notify contains ns2's IPv4
+	alsoNotifyRaw, ok := params["also_notify"]
+	require.True(t, ok, "also_notify should be present in params")
+
+	var alsoNotify []interface{}
+	switch v := alsoNotifyRaw.(type) {
+	case []interface{}:
+		alsoNotify = v
+	case []string:
+		for _, s := range v {
+			alsoNotify = append(alsoNotify, s)
+		}
+	default:
+		t.Fatalf("also_notify has unexpected type: %T", alsoNotifyRaw)
+	}
+
+	require.Len(t, alsoNotify, 1, "should have 1 entry: ns2 IPv4")
+	require.Equal(t, "198.51.100.7", alsoNotify[0])
+}

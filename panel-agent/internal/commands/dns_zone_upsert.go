@@ -21,8 +21,10 @@ type dnsRecordParam struct {
 
 type dnsZoneUpsertParams struct {
 	// Zone is the apex name, no trailing dot. "example.com".
-	Zone    string             `json:"zone"`
-	Records []dnsRecordParam   `json:"records"`
+	Zone            string             `json:"zone"`
+	Records         []dnsRecordParam   `json:"records"`
+	AllowAXFRFrom   []string           `json:"allow_axfr_from,omitempty"`
+	AlsoNotify      []string           `json:"also_notify,omitempty"`
 }
 
 type dnsZoneUpsertResponse struct {
@@ -73,7 +75,11 @@ func dnsZoneUpsertHandler(ctx context.Context, params json.RawMessage) (any, err
 		}
 	}
 
-	zoneID, err := cl.UpsertZone(p.Zone, recs)
+	opts := pdns.UpsertZoneOptions{
+		AllowAXFRFrom: p.AllowAXFRFrom,
+		AlsoNotify:    p.AlsoNotify,
+	}
+	zoneID, err := cl.UpsertZoneWithMeta(p.Zone, recs, opts)
 	if err != nil {
 		return nil, err
 	}

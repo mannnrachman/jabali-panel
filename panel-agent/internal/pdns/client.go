@@ -97,20 +97,21 @@ type Record struct {
 	Disabled bool
 }
 
-// UpsertZone replaces the zone's entire record set in a single
-// transaction. Safer than partial updates: the operator-facing flow
-// always sends the full desired state, and we never leave PowerDNS in
-// a half-applied state mid-push.
-func (c *Client) UpsertZone(name string, records []Record) (int64, error) {
-	tx, err := c.db.Begin()
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback() //nolint:errcheck // rolled back on early return
+// UpsertZoneOptions carries per-zone metadata updated alongside the
+// record set. Zero values are meaningful: empty slice clears the
+// metadata, which is the right behavior when an operator removes ns2.
+type UpsertZoneOptions struct {
+	AllowAXFRFrom []string // IPs permitted to pull the zone (ns2_ipv4 when set)
+	AlsoNotify    []string // NOTIFY targets on zone change (usually ns2_ipv4)
+}
 
+// upsertZoneCore is the common logic shared by UpsertZone and
+// UpsertZoneWithMeta. It handles zone lookup/creation and record
+// upsert. The caller is responsible for the transaction.
+func (c *Client) upsertZoneCore(tx *sql.Tx, name string, records []Record) (int64, error) {
 	// Find or create the zone row. PowerDNS's unique key is `name`.
 	var zoneID int64
-	err = tx.QueryRow(`SELECT id FROM domains WHERE name = ?`, name).Scan(&zoneID)
+	err := tx.QueryRow(`SELECT id FROM domains WHERE name = ?`, name).Scan(&zoneID)
 	if err == sql.ErrNoRows {
 		res, err := tx.Exec(
 			`INSERT INTO domains (name, type) VALUES (?, 'NATIVE')`, name)
@@ -147,6 +148,77 @@ func (c *Client) UpsertZone(name string, records []Record) (int64, error) {
 			return 0, fmt.Errorf("insert %s %s: %w", r.Name, r.Type, err)
 		}
 	}
+	return zoneID, nil
+}
+
+// setZoneMetadata replaces the given kind's rows for the zone. Empty
+// list clears the kind entirely. Runs inside a caller-provided tx so
+// the record write and metadata write are atomic.
+func (c *Client) setZoneMetadata(tx *sql.Tx, zoneID int64, kind string, contents []string) error {
+	if _, err := tx.Exec(`DELETE FROM domainmetadata WHERE domain_id = ? AND kind = ?`, zoneID, kind); err != nil {
+		return fmt.Errorf("clear metadata %s: %w", kind, err)
+	}
+	if len(contents) == 0 {
+		return nil
+	}
+	stmt, err := tx.Prepare(`INSERT INTO domainmetadata (domain_id, kind, content) VALUES (?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, content := range contents {
+		if content == "" {
+			continue
+		}
+		if _, err := stmt.Exec(zoneID, kind, content); err != nil {
+			return fmt.Errorf("insert metadata %s: %w", kind, err)
+		}
+	}
+	return nil
+}
+
+// UpsertZone replaces the zone's entire record set in a single
+// transaction. Safer than partial updates: the operator-facing flow
+// always sends the full desired state, and we never leave PowerDNS in
+// a half-applied state mid-push.
+func (c *Client) UpsertZone(name string, records []Record) (int64, error) {
+	tx, err := c.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback() //nolint:errcheck // rolled back on early return
+
+	zoneID, err := c.upsertZoneCore(tx, name, records)
+	if err != nil {
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit: %w", err)
+	}
+	return zoneID, nil
+}
+
+// UpsertZoneWithMeta is UpsertZone + metadata, in the same txn.
+func (c *Client) UpsertZoneWithMeta(name string, records []Record, opts UpsertZoneOptions) (int64, error) {
+	tx, err := c.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback() //nolint:errcheck // rolled back on early return
+
+	zoneID, err := c.upsertZoneCore(tx, name, records)
+	if err != nil {
+		return 0, err
+	}
+
+	if err := c.setZoneMetadata(tx, zoneID, "ALLOW-AXFR-FROM", opts.AllowAXFRFrom); err != nil {
+		return 0, err
+	}
+	if err := c.setZoneMetadata(tx, zoneID, "ALSO-NOTIFY", opts.AlsoNotify); err != nil {
+		return 0, err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("commit: %w", err)
 	}

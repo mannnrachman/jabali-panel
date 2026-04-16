@@ -533,15 +533,10 @@ local-address=0.0.0.0, ::
 # right ownership. Overriding socket-dir here collides with pdns's own
 # attempt to create the directory (it fails under LXC drop-ins).
 
-# Allow the secondary nameserver to AXFR zones. In M4a we don't yet know
-# ns2's IP; operator fills it in via /etc/powerdns/pdns.d/50-axfr.conf
-# after configuring ns2. For now, leave no allow-axfr-ips entry so only
-# local transfers work.
-allow-axfr-ips=127.0.0.1
-
-# Send NOTIFY to secondaries on zone change. Safe default even when the
-# slave list is empty.
-also-notify=
+# Per-zone AXFR allow-lists and NOTIFY targets are managed via the
+# panel's domainmetadata table (ALLOW-AXFR-FROM and ALSO-NOTIFY kinds).
+# The global allow-axfr-ips is left empty — PowerDNS denies AXFR by
+# default, and per-zone metadata takes precedence.
 disable-axfr-rectify=no
 PDNSCONF
   chmod 0640 "$pdns_conf"

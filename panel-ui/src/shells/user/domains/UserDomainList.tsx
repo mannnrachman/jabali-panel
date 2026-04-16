@@ -6,6 +6,7 @@ import { useNavigate } from "react-router";
 
 import { DomainToggleButton } from "../../DomainToggleButton";
 import { DomainSettingsButton } from "../../DomainSettingsButton";
+import { DomainRedirectsButton } from "../../DomainRedirectsButton";
 
 export type Domain = {
   id: string;
@@ -14,6 +15,9 @@ export type Domain = {
   doc_root: string;
   is_enabled: boolean;
   nginx_custom_directives: string;
+  redirect_all_to?: string | null;
+  redirect_all_type?: string | null;
+  page_redirects?: { source: string; destination: string; type: "301" | "302" | "307" | "308" }[] | null;
   created_at: string;
   updated_at: string;
 };
@@ -65,6 +69,7 @@ export const UserDomainList = () => {
           dataIndex="actions"
           render={(_, r) => (
             <Space size="small">
+              <DomainRedirectsButton domain={r} />
               <DomainSettingsButton domain={r} />
               <DomainToggleButton domain={r} />
               <DeleteButton hideText size="small" recordItemId={r.id} />

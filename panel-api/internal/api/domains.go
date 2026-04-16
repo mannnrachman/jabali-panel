@@ -183,7 +183,10 @@ func (h *domainHandler) create(c *gin.Context) {
 
 	docRoot := req.DocRoot
 	if docRoot == "" {
-		docRoot = "/home/" + *user.Username + "/public_html/" + req.Name
+		// Per-domain subtree under /home/<user>/domains/<name>/ so sibling
+		// paths like logs/, ssl/, backups/ can live alongside public_html
+		// without polluting the user's home.
+		docRoot = "/home/" + *user.Username + "/domains/" + req.Name + "/public_html"
 	}
 
 	now := time.Now().UTC()

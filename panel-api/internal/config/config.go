@@ -32,13 +32,14 @@ const (
 // Config is the root configuration struct. Sections map to TOML tables and to
 // grouped env-var prefixes.
 type Config struct {
-	Server   ServerConfig   `toml:"server"`
-	Log      LogConfig      `toml:"log"`
+	Server ServerConfig   `toml:"server"`
+	Log    LogConfig      `toml:"log"`
 	Database DatabaseConfig `toml:"database"`
-	Auth     AuthConfig     `toml:"auth"`
-	Agent    AgentConfig    `toml:"agent"`
-	CORS     CORSConfig     `toml:"cors"`
-	PDNS     PDNSConfig     `toml:"pdns"`
+	Auth   AuthConfig     `toml:"auth"`
+	Agent  AgentConfig    `toml:"agent"`
+	CORS   CORSConfig     `toml:"cors"`
+	PDNS   PDNSConfig     `toml:"pdns"`
+	ACME   ACMEConfig     `toml:"acme"`
 }
 
 // ServerConfig controls HTTP listener and runtime mode.
@@ -114,6 +115,14 @@ type PDNSConfig struct {
 	// DSN is a MySQL connection string for the jabali_pdns database,
 	// e.g. "user:pass@tcp(127.0.0.1:3306)/jabali_pdns?charset=utf8mb4&parseTime=true"
 	DSN string `toml:"dsn"`
+}
+
+// ACMEConfig holds Let's Encrypt / ACME certificate configuration.
+type ACMEConfig struct {
+	// StagingOnly, when true, uses Let's Encrypt's staging environment
+	// (fake CA) for testing without hitting rate limits. Production
+	// deployments leave this false to use the live CA.
+	StagingOnly bool `toml:"staging_only"`
 }
 
 // Defaults returns a Config populated with sensible development defaults.
@@ -236,6 +245,9 @@ func applyEnv(cfg *Config) error {
 	}
 	if v := os.Getenv("CORS_ALLOWED_ORIGINS"); v != "" {
 		cfg.CORS.AllowedOrigins = splitAndTrim(v, ",")
+	}
+	if v := os.Getenv("JABALI_ACME_STAGING_ONLY"); v != "" {
+		cfg.ACME.StagingOnly = v == "true" || v == "1"
 	}
 	return nil
 }

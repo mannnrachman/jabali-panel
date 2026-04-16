@@ -163,7 +163,7 @@ export const ServerSettingsPage = () => {
                 label="Admin email"
                 name="admin_email"
                 rules={[{ type: "email", message: "Invalid email" }]}
-                extra="Used for SSL expiry notifications (when SSL ships)."
+                extra="Used as the registration email for Let's Encrypt / ACME. Required before issuing SSL certificates."
               >
                 <Input placeholder="admin@example.com" />
               </Form.Item>

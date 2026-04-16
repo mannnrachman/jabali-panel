@@ -172,6 +172,11 @@ type Domain struct {
 	// php_only/full) map to nginx `index` directives in the agent.
 	IndexPriority string `gorm:"type:varchar(32);not null;default:'html_first'" json:"index_priority"`
 
+	// SSLEnabled tracks whether ACME certificate provisioning is active for this domain.
+	// When true, the reconciler attempts to issue or renew a cert; when false,
+	// the cert (if any) is not updated but may remain installed.
+	SSLEnabled bool `gorm:"type:tinyint(1);not null;default:0" json:"ssl_enabled"`
+
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }

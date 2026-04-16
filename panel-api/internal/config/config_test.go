@@ -37,6 +37,7 @@ func clearPanelEnv(t *testing.T) {
 		"AGENT_SOCKET",
 		"AGENT_TIMEOUT",
 		"CORS_ALLOWED_ORIGINS",
+		"JABALI_ACME_STAGING_ONLY",
 	} {
 		t.Setenv(k, "")
 		_ = os.Unsetenv(k)
@@ -206,4 +207,70 @@ func TestValidate_AllowsEmptyJWTSecretInDev(t *testing.T) {
 	// JWT secret empty, DB empty, agent empty — all fine in dev (Phase 2
 	// doesn't use them yet; they become required as phases turn them on).
 	require.NoError(t, cfg.Validate())
+}
+
+func TestLoad_ACMEDefaults(t *testing.T) {
+	clearPanelEnv(t)
+
+	cfg, err := config.Load("")
+	require.NoError(t, err)
+	assert.False(t, cfg.ACME.StagingOnly, "ACME StagingOnly should default to false (production Let's Encrypt)")
+}
+
+func TestLoad_ACMEStagingOnly_EnvOverride(t *testing.T) {
+	clearPanelEnv(t)
+	withEnv(t, map[string]string{"JABALI_ACME_STAGING_ONLY": "true"})
+
+	cfg, err := config.Load("")
+	require.NoError(t, err)
+	assert.True(t, cfg.ACME.StagingOnly, "JABALI_ACME_STAGING_ONLY=true should set StagingOnly to true")
+}
+
+func TestLoad_ACMEStagingOnly_EnvFalse(t *testing.T) {
+	clearPanelEnv(t)
+	withEnv(t, map[string]string{"JABALI_ACME_STAGING_ONLY": "false"})
+
+	cfg, err := config.Load("")
+	require.NoError(t, err)
+	assert.False(t, cfg.ACME.StagingOnly, "JABALI_ACME_STAGING_ONLY=false should set StagingOnly to false")
+}
+
+func TestLoad_ACMEStagingOnly_EnvOne(t *testing.T) {
+	clearPanelEnv(t)
+	withEnv(t, map[string]string{"JABALI_ACME_STAGING_ONLY": "1"})
+
+	cfg, err := config.Load("")
+	require.NoError(t, err)
+	assert.True(t, cfg.ACME.StagingOnly, "JABALI_ACME_STAGING_ONLY=1 should set StagingOnly to true")
+}
+
+func TestLoad_ACMEStagingOnly_TOMLOverride(t *testing.T) {
+	clearPanelEnv(t)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+[acme]
+staging_only = true
+`), 0o600))
+
+	cfg, err := config.Load(path)
+	require.NoError(t, err)
+	assert.True(t, cfg.ACME.StagingOnly, "TOML [acme] staging_only = true should set StagingOnly to true")
+}
+
+func TestLoad_ACMEStagingOnly_EnvWinsOverTOML(t *testing.T) {
+	clearPanelEnv(t)
+	withEnv(t, map[string]string{"JABALI_ACME_STAGING_ONLY": "false"})
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+[acme]
+staging_only = true
+`), 0o600))
+
+	cfg, err := config.Load(path)
+	require.NoError(t, err)
+	assert.False(t, cfg.ACME.StagingOnly, "Environment variable should override TOML file")
 }

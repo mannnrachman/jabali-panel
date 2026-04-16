@@ -37,9 +37,12 @@ access_ttl  = "15m"
 refresh_ttl = "168h"  # 7 days
 
 [agent]
-# Path to the PHP agent's Unix socket. Unused in Phase 2; wired in Phase 7.
+# Path to the jabali-agent Unix socket. The panel user (jabali group) needs
+# read+write access to the socket file and traverse access to its parent dir.
 socket_path = "/run/jabali/agent.sock"
-timeout     = "5s"
+# Per-call wall-clock ceiling. Short ops (agent.version) override this with
+# their own tighter deadline; this is the default for commands that don't.
+timeout     = "30s"
 
 [cors]
 # Origins allowed to hit the API from a browser. Empty = no CORS. Add your

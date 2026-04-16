@@ -322,14 +322,15 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-Group=root
-# systemd creates /run/jabali on start with mode 0750 owned root:root; we
-# fix the group to jabali so the panel can enter it. Preserve=no → cleaned
-# up on stop (we don't want stale sockets surviving a crash loop).
+# Group=jabali makes RuntimeDirectory=jabali land as root:jabali (systemd
+# always creates the dir matching the service's User:Group). The agent
+# still runs with UID=0 so it retains full root for privileged ops — GID
+# doesn't gate root. The panel (member of the jabali group) can therefore
+# traverse /run/jabali/ and connect to the socket.
+Group=$SERVICE_USER
 RuntimeDirectory=jabali
 RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=no
-ExecStartPre=/bin/chgrp $SERVICE_USER /run/jabali
 ExecStart=$AGENT_BIN_PATH -socket $AGENT_SOCKET -gid $jabali_gid
 Restart=on-failure
 RestartSec=3

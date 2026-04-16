@@ -4,12 +4,14 @@ import "time"
 
 // SSL certificate status constants.
 const (
-	SSLStatusPending  = "pending"
-	SSLStatusIssuing  = "issuing"
-	SSLStatusIssued   = "issued"
-	SSLStatusFailed   = "failed"
-	SSLStatusRevoked  = "revoked"
-	SSLStatusRenewing = "renewing"
+	SSLStatusPending          = "pending"
+	SSLStatusIssuing          = "issuing"
+	SSLStatusIssued           = "issued"
+	SSLStatusFailed           = "failed"
+	SSLStatusRevoked          = "revoked"
+	SSLStatusRenewing         = "renewing"
+	SSLStatusSelfSigned       = "self_signed"
+	SSLStatusPendingACMERetry = "pending_acme_retry"
 )
 
 // SSLCertificate represents a managed SSL/TLS certificate for a hosted domain.
@@ -27,6 +29,8 @@ type SSLCertificate struct {
 	Staging       bool       `gorm:"type:tinyint(1);not null;default:0"           json:"staging"`
 	CertPath      *string    `gorm:"type:varchar(512)"                           json:"cert_path,omitempty"`
 	KeyPath       *string    `gorm:"type:varchar(512)"                           json:"key_path,omitempty"`
+	NextRetryAt   *time.Time `gorm:"type:datetime(6);index:ix_ssl_cert_next_retry" json:"next_retry_at,omitempty"`
+	RetryCount    int        `gorm:"type:int;not null;default:0"                 json:"retry_count"`
 	CreatedAt     time.Time  `gorm:"type:datetime(6);not null"                   json:"created_at"`
 	UpdatedAt     time.Time  `gorm:"type:datetime(6);not null"                   json:"updated_at"`
 }

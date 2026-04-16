@@ -9,7 +9,7 @@ import {
   Space,
   Tooltip,
 } from "antd";
-import { ReloadOutlined, DeleteOutlined, SyncOutlined } from "@ant-design/icons";
+import { ReloadOutlined, DeleteOutlined, SyncOutlined, WarningOutlined, RedoOutlined } from "@ant-design/icons";
 import { apiClient } from "../../apiClient";
 
 interface SSLCertificate {
@@ -18,13 +18,15 @@ interface SSLCertificate {
   domain_name: string;
   user_id: string;
   user_username: string;
-  status: "pending" | "issuing" | "issued" | "renewing" | "revoked" | "failed";
+  status: "pending" | "issuing" | "issued" | "renewing" | "revoked" | "failed" | "self_signed" | "pending_acme_retry";
   issued_at: string | null;
   expires_at: string | null;
   renewal_count: number;
   last_renewed_at: string | null;
   last_error: string | null;
   staging: boolean;
+  next_retry_at: string | null;
+  retry_count: number;
 }
 
 interface SSLManagerTableProps {
@@ -39,6 +41,8 @@ const STATUS_COLORS: Record<string, string> = {
   pending: "default",
   revoked: "default",
   failed: "red",
+  self_signed: "orange",
+  pending_acme_retry: "gold",
 };
 
 const STATUS_ICONS: Record<string, JSX.Element | null> = {
@@ -48,6 +52,8 @@ const STATUS_ICONS: Record<string, JSX.Element | null> = {
   issued: null,
   revoked: null,
   failed: null,
+  self_signed: <WarningOutlined />,
+  pending_acme_retry: <SyncOutlined spin />,
 };
 
 const formatDate = (dateStr: string | null): string => {

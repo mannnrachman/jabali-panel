@@ -43,6 +43,7 @@ import { PackageList } from "./shells/admin/packages/PackageList";
 import { DomainCreate } from "./shells/admin/domains/DomainCreate";
 import { DomainEdit } from "./shells/admin/domains/DomainEdit";
 import { DomainList } from "./shells/admin/domains/DomainList";
+import { ServerSettingsPage } from "./shells/admin/settings/ServerSettingsPage";
 import { MyProfile } from "./shells/user/MyProfile";
 import { UserDomainList } from "./shells/user/domains/UserDomainList";
 import { UserDomainCreate } from "./shells/user/domains/UserDomainCreate";
@@ -120,6 +121,7 @@ const App = () => {
                 <Route path="create" element={<DomainCreate />} />
                 <Route path="edit/:id" element={<DomainEdit />} />
               </Route>
+              <Route path="settings" element={<ServerSettingsPage />} />
             </Route>
 
             {/* ---------------- user shell ----------------- */}

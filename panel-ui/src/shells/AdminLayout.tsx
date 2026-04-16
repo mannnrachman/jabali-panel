@@ -11,6 +11,7 @@
 import { useLogout } from "@refinedev/core";
 import {
   AppstoreOutlined,
+  CloudServerOutlined,
   DashboardOutlined,
   GlobalOutlined,
   LogoutOutlined,
@@ -34,6 +35,7 @@ const MENU: { key: string; path: string; label: string; icon: JSX.Element }[] = 
   { key: "users", path: "/jabali-admin/users", label: "Users", icon: <TeamOutlined /> },
   { key: "packages", path: "/jabali-admin/packages", label: "Packages", icon: <AppstoreOutlined /> },
   { key: "domains", path: "/jabali-admin/domains", label: "Domains", icon: <GlobalOutlined /> },
+  { key: "settings", path: "/jabali-admin/settings", label: "Settings", icon: <CloudServerOutlined /> },
 ];
 
 export function AdminLayout() {

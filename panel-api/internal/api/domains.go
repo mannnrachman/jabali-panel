@@ -2,12 +2,13 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
@@ -16,7 +17,6 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-// DomainHandlerConfig holds dependencies for domain handlers.
 type DomainHandlerConfig struct {
 	Domains  repository.DomainRepository
 	Users    repository.UserRepository
@@ -24,14 +24,13 @@ type DomainHandlerConfig struct {
 	Agent    agent.AgentInterface
 }
 
-type domainHandler struct {
-	cfg DomainHandlerConfig
-}
+const (
+	defaultDomainsPageSize = 20
+	maxDomainsPageSize     = 200
+)
 
-// RegisterDomainRoutes mounts domain routes.
 func RegisterDomainRoutes(g *gin.RouterGroup, cfg DomainHandlerConfig) {
 	h := &domainHandler{cfg: cfg}
-
 	domains := g.Group("/domains")
 	domains.GET("", h.list)
 	domains.POST("", h.create)
@@ -40,39 +39,19 @@ func RegisterDomainRoutes(g *gin.RouterGroup, cfg DomainHandlerConfig) {
 	domains.DELETE("/:id", middleware.RequireAdmin(), h.delete)
 }
 
-// listRequest holds optional query parameters for listing.
-type listRequest struct {
-	Offset int `form:"offset,default=0"`
-	Limit  int `form:"limit,default=10"`
-}
+type domainHandler struct{ cfg DomainHandlerConfig }
 
-// getDomainResponse wraps a domain with metadata.
-type getDomainResponse struct {
-	Data *models.Domain `json:"data"`
-}
-
-// listDomainsResponse wraps a list of domains with pagination metadata.
-type listDomainsResponse struct {
-	Data  []models.Domain `json:"data"`
-	Total int64           `json:"total"`
-}
-
-// createDomainRequest is the request body for creating a domain.
 type createDomainRequest struct {
-	Name   string `json:"name" binding:"required"`
-	UserID string `json:"user_id"`
+	Name    string `json:"name" binding:"required"`
+	UserID  string `json:"user_id"`
 	DocRoot string `json:"doc_root"`
 }
 
-// updateDomainRequest is the request body for updating a domain.
 type updateDomainRequest struct {
 	IsEnabled             *bool   `json:"is_enabled,omitempty"`
 	NginxCustomDirectives *string `json:"nginx_custom_directives,omitempty"`
 }
 
-// list returns domains the user can access.
-// - Admins see all domains
-// - Users see only their own domains
 func (h *domainHandler) list(c *gin.Context) {
 	claims := ginctx.Claims(c)
 	if claims == nil {
@@ -80,79 +59,62 @@ func (h *domainHandler) list(c *gin.Context) {
 		return
 	}
 
-	var req listRequest
-	if err := c.BindQuery(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", strconv.Itoa(defaultDomainsPageSize)))
+	if page < 1 {
+		page = 1
 	}
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
+	if pageSize < 1 || pageSize > maxDomainsPageSize {
+		pageSize = defaultDomainsPageSize
+	}
+	offset := (page - 1) * pageSize
 
 	var domains []models.Domain
 	var total int64
 	var err error
 
 	if claims.IsAdmin {
-		domains, total, err = h.cfg.Domains.List(ctx, int(req.Offset), int(req.Limit))
+		domains, total, err = h.cfg.Domains.List(c.Request.Context(), offset, pageSize)
 	} else {
-		domains, total, err = h.cfg.Domains.ListByUserID(ctx, claims.UserID, int(req.Offset), int(req.Limit))
+		domains, total, err = h.cfg.Domains.ListByUserID(c.Request.Context(), claims.UserID, offset, pageSize)
 	}
-
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list domains"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-
 	if domains == nil {
 		domains = []models.Domain{}
 	}
-
-	c.JSON(http.StatusOK, listDomainsResponse{
-		Data:  domains,
-		Total: total,
+	c.JSON(http.StatusOK, gin.H{
+		"data":      domains,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
 	})
 }
 
-// get returns a single domain if the requester is admin or the owner.
 func (h *domainHandler) get(c *gin.Context) {
 	claims := ginctx.Claims(c)
 	if claims == nil {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
 	}
-
-	id := c.Param("id")
-	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "domain id required"})
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
-
-	domain, err := h.cfg.Domains.FindByID(ctx, id)
+	domain, err := h.cfg.Domains.FindByID(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch domain"})
+		if isNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	if domain == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "domain not found"})
-		return
-	}
-
-	// Check access: admin or owner
 	if !claims.IsAdmin && domain.UserID != claims.UserID {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
-
-	c.JSON(http.StatusOK, getDomainResponse{Data: domain})
+	c.JSON(http.StatusOK, domain)
 }
 
-// create creates a new domain.
-// Admins can specify user_id; non-admins are limited to their own user_id.
-// Quota is checked: non-unlimited packages have a MaxDomains limit.
 func (h *domainHandler) create(c *gin.Context) {
 	claims := ginctx.Claims(c)
 	if claims == nil {
@@ -161,17 +123,11 @@ func (h *domainHandler) create(c *gin.Context) {
 	}
 
 	var req createDomainRequest
-	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation_failed", "detail": err.Error()})
 		return
 	}
 
-	if req.Name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
-		return
-	}
-
-	// Determine target user_id
 	targetUserID := req.UserID
 	if !claims.IsAdmin {
 		targetUserID = claims.UserID
@@ -181,85 +137,76 @@ func (h *domainHandler) create(c *gin.Context) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
+	ctx := c.Request.Context()
 
-	// Check quota
-	count, err := h.cfg.Domains.CountByUserID(ctx, targetUserID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check quota"})
-		return
-	}
-
-	// Look up user's package to get max domains
 	user, err := h.cfg.Users.FindByID(ctx, targetUserID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch user"})
-		return
-	}
-	if user == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user not found"})
+		if isNotFound(err) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "user not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
 
+	// Quota check.
 	if user.PackageID != nil && *user.PackageID != "" {
-		pkg, err := h.cfg.Packages.FindByID(ctx, *user.PackageID)
+		count, err := h.cfg.Domains.CountByUserID(ctx, targetUserID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch package"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 			return
 		}
-		if pkg != nil && pkg.MaxDomains > 0 && count >= int64(pkg.MaxDomains) {
-			c.JSON(http.StatusConflict, gin.H{"error": "domain quota exceeded"})
+		pkg, err := h.cfg.Packages.FindByID(ctx, *user.PackageID)
+		if err == nil && pkg.MaxDomains > 0 && count >= int64(pkg.MaxDomains) {
+			c.JSON(http.StatusConflict, gin.H{"error": "domain_quota_exceeded"})
 			return
 		}
 	}
 
-	// Generate doc_root if not provided
 	docRoot := req.DocRoot
 	if docRoot == "" {
-		docRoot = "/home/" + deriveLinuxUsername(user.Email) + "/public_html/" + req.Name
+		docRoot = "/home/" + domainLinuxUser(user.Email) + "/public_html/" + req.Name
 	}
 
-	// Create domain in DB
+	now := time.Now().UTC()
 	domain := &models.Domain{
 		ID:        ids.NewULID(),
 		UserID:    targetUserID,
 		Name:      req.Name,
 		DocRoot:   docRoot,
 		IsEnabled: true,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
 	if err := h.cfg.Domains.Create(ctx, domain); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create domain"})
+		if isConflict(err) {
+			c.JSON(http.StatusConflict, gin.H{"error": "domain_already_exists"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
 
-	// Call agent to create the domain
-	agentParams := map[string]interface{}{
-		"username":     deriveLinuxUsername(user.Email),
-		"domain":       req.Name,
-		"doc_root":     docRoot,
-		"php_version":  "8.3",
-	}
-	paramsJSON, _ := json.Marshal(agentParams)
-
-	_, err = h.cfg.Agent.Call(ctx, "domain.create", json.RawMessage(paramsJSON))
-	if err != nil {
-		// Rollback the DB creation on agent error
+	// Call agent. On failure, roll back the DB row.
+	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	_, agentErr := h.cfg.Agent.Call(agentCtx, "domain.create", map[string]string{
+		"username":    domainLinuxUser(user.Email),
+		"domain":      req.Name,
+		"doc_root":    docRoot,
+		"php_version": "8.3",
+	})
+	if agentErr != nil {
 		_ = h.cfg.Domains.Delete(ctx, domain.ID)
-		status, body := translateAgentError(err)
+		status, body := translateAgentError(agentErr)
 		c.JSON(status, body)
 		return
 	}
 
-	c.JSON(http.StatusCreated, getDomainResponse{Data: domain})
+	c.JSON(http.StatusCreated, domain)
 }
 
-// update updates a domain (admin or owner only).
-// - is_enabled: calls agent domain.enable or domain.disable
-// - nginx_custom_directives: validated before save
 func (h *domainHandler) update(c *gin.Context) {
 	claims := ginctx.Claims(c)
 	if claims == nil {
@@ -267,127 +214,87 @@ func (h *domainHandler) update(c *gin.Context) {
 		return
 	}
 
-	id := c.Param("id")
-	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "domain id required"})
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
-
-	domain, err := h.cfg.Domains.FindByID(ctx, id)
+	domain, err := h.cfg.Domains.FindByID(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch domain"})
+		if isNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	if domain == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "domain not found"})
-		return
-	}
-
-	// Check access: admin or owner
 	if !claims.IsAdmin && domain.UserID != claims.UserID {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 
 	var req updateDomainRequest
-	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation_failed", "detail": err.Error()})
 		return
 	}
 
-	// Update is_enabled if provided
-	if req.IsEnabled != nil && *req.IsEnabled != domain.IsEnabled {
-		domain.IsEnabled = *req.IsEnabled
+	ctx := c.Request.Context()
 
-		// Call agent
+	if req.IsEnabled != nil && *req.IsEnabled != domain.IsEnabled {
 		cmd := "domain.enable"
 		if !*req.IsEnabled {
 			cmd = "domain.disable"
 		}
-		agentParams := map[string]interface{}{
-			"domain": domain.Name,
-		}
-		paramsJSON, _ := json.Marshal(agentParams)
-
-		_, err := h.cfg.Agent.Call(ctx, cmd, json.RawMessage(paramsJSON))
-		if err != nil {
-			status, body := translateAgentError(err)
+		_, agentErr := h.cfg.Agent.Call(ctx, cmd, map[string]string{"domain": domain.Name})
+		if agentErr != nil {
+			status, body := translateAgentError(agentErr)
 			c.JSON(status, body)
 			return
 		}
+		domain.IsEnabled = *req.IsEnabled
 	}
 
-	// Update nginx_custom_directives if provided
 	if req.NginxCustomDirectives != nil {
-		if errMsg := validateNginxDirectives(*req.NginxCustomDirectives); errMsg != "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+		if msg := validateNginxDirectives(*req.NginxCustomDirectives); msg != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": msg})
 			return
 		}
 		domain.NginxCustomDirectives = req.NginxCustomDirectives
 	}
 
-	domain.UpdatedAt = time.Now()
-
+	domain.UpdatedAt = time.Now().UTC()
 	if err := h.cfg.Domains.Update(ctx, domain); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update domain"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-
-	c.JSON(http.StatusOK, getDomainResponse{Data: domain})
+	c.JSON(http.StatusOK, domain)
 }
 
-// delete removes a domain (admin only).
-// Calls agent to remove the domain, then soft-deletes the DB row.
 func (h *domainHandler) delete(c *gin.Context) {
-	id := c.Param("id")
-	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "domain id required"})
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
-
-	domain, err := h.cfg.Domains.FindByID(ctx, id)
+	ctx := c.Request.Context()
+	domain, err := h.cfg.Domains.FindByID(ctx, c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch domain"})
-		return
-	}
-	if domain == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "domain not found"})
+		if isNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
 
-	// Call agent to remove the domain
-	agentParams := map[string]interface{}{
-		"domain": domain.Name,
-	}
-	paramsJSON, _ := json.Marshal(agentParams)
-
-	_, err = h.cfg.Agent.Call(ctx, "domain.delete", json.RawMessage(paramsJSON))
-	if err != nil {
-		status, body := translateAgentError(err)
+	_, agentErr := h.cfg.Agent.Call(ctx, "domain.delete", map[string]string{"domain": domain.Name})
+	if agentErr != nil {
+		status, body := translateAgentError(agentErr)
 		c.JSON(status, body)
 		return
 	}
 
-	// Soft-delete the DB row
-	if err := h.cfg.Domains.Delete(ctx, id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete domain"})
+	if err := h.cfg.Domains.Delete(ctx, domain.ID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-
-	c.JSON(http.StatusNoContent, nil)
+	c.Status(http.StatusNoContent)
 }
 
-// validateNginxDirectives rejects dangerous directives.
 func validateNginxDirectives(directives string) string {
 	forbidden := []string{"proxy_pass", "lua_", "load_module", "ssl_certificate"}
 	lower := strings.ToLower(directives)
-
 	for _, word := range forbidden {
 		if strings.Contains(lower, word) {
 			return "forbidden directive: " + word
@@ -396,14 +303,9 @@ func validateNginxDirectives(directives string) string {
 	return ""
 }
 
-// deriveLinuxUsername extracts a linux username from an email address.
-// For now, use the part before @ or user id.
-func deriveLinuxUsername(email string) string {
-	if email != "" {
-		parts := strings.Split(email, "@")
-		if len(parts) > 0 {
-			return parts[0]
-		}
+func domainLinuxUser(email string) string {
+	if i := strings.IndexByte(email, '@'); i > 0 {
+		return email[:i]
 	}
 	return "user"
 }

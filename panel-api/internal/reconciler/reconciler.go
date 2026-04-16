@@ -3,11 +3,14 @@ package reconciler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/dnscompile"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/nginxrules"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/redirects"
@@ -17,11 +20,14 @@ import (
 // Reconciler syncs the database state with the filesystem (nginx configs, php-fpm pools).
 // The database is the source of truth; the reconciler makes the filesystem match.
 type Reconciler struct {
-	domains  repository.DomainRepository
-	users    repository.UserRepository
-	agent    agent.AgentInterface
-	log      *slog.Logger
-	interval time.Duration
+	domains        repository.DomainRepository
+	users          repository.UserRepository
+	dnsZones       repository.DNSZoneRepository
+	dnsRecords     repository.DNSRecordRepository
+	serverSettings repository.ServerSettingsRepository
+	agent          agent.AgentInterface
+	log            *slog.Logger
+	interval       time.Duration
 	// queue holds domain IDs to reconcile out-of-band (non-blocking enqueue)
 	queue chan string
 }
@@ -48,6 +54,15 @@ func New(domains repository.DomainRepository, users repository.UserRepository, a
 		interval: cfg.Interval,
 		queue:    make(chan string, cfg.QueueLen),
 	}
+}
+
+// WithDNSRepos adds DNS repository support to the reconciler.
+// Call this before using ReconcileDNSZone.
+func (r *Reconciler) WithDNSRepos(dnsZones repository.DNSZoneRepository, dnsRecords repository.DNSRecordRepository, serverSettings repository.ServerSettingsRepository) *Reconciler {
+	r.dnsZones = dnsZones
+	r.dnsRecords = dnsRecords
+	r.serverSettings = serverSettings
+	return r
 }
 
 // Start blocks until ctx is cancelled, running ReconcileAll every interval
@@ -259,6 +274,9 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 			"domain", domain.Name,
 			"err", err)
 	}
+
+	// Reconcile DNS zone if DNS repos are wired
+	r.reconcileDNSZone(ctx, domain)
 }
 
 // ReconcileDeleted tears down an OS-level domain whose DB row has already
@@ -277,6 +295,94 @@ func (r *Reconciler) ReconcileDeleted(ctx context.Context, domainName string) {
 		r.log.Warn("domain delete failed on agent",
 			"domain", domainName,
 			"err", err)
+	}
+
+	// Reconcile DNS zone deletion if DNS repos are wired
+	r.reconcileDNSZoneDeleted(ctx, domainName)
+}
+
+// reconcileDNSZone ensures a domain's DNS zone and records are provisioned
+// on the agent. Called during domain reconciliation to push the zone state
+// to PowerDNS via the agent.
+func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain) {
+	if r.dnsZones == nil {
+		return // DNS feature not wired — skip
+	}
+
+	zone, err := r.dnsZones.FindByDomainID(ctx, domain.ID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			// Zone doesn't exist yet — create + bootstrap.
+			zone = &models.DNSZone{
+				ID:             ids.NewULID(),
+				DomainID:       domain.ID,
+				Name:           domain.Name,
+				RefreshSeconds: 3600,
+				RetrySeconds:   600,
+				ExpireSeconds:  604800,
+				MinimumTTL:     3600,
+				IsEnabled:      true,
+				CreatedAt:      time.Now().UTC(),
+				UpdatedAt:      time.Now().UTC(),
+			}
+			if err := r.dnsZones.Create(ctx, zone); err != nil {
+				r.log.Error("create zone failed", "domain", domain.Name, "err", err)
+				return
+			}
+			srv, _ := r.serverSettings.Get(ctx)
+			boots := dnscompile.BootstrapRecords(zone.ID, srv, ids.NewULID)
+			for i := range boots {
+				if err := r.dnsRecords.Create(ctx, &boots[i]); err != nil {
+					r.log.Error("bootstrap record failed", "err", err)
+					return
+				}
+			}
+			r.log.Info("bootstrapped DNS zone", "zone", zone.Name, "records", len(boots))
+		} else {
+			r.log.Error("find zone failed", "domain", domain.Name, "err", err)
+			return
+		}
+	}
+
+	if !zone.IsEnabled {
+		return
+	}
+
+	records, err := r.dnsRecords.ListByZoneID(ctx, zone.ID)
+	if err != nil {
+		r.log.Error("list records failed", "zone", zone.Name, "err", err)
+		return
+	}
+	srv, _ := r.serverSettings.Get(ctx)
+	compiled := dnscompile.Compile(zone, records, srv)
+
+	// Bump serial on push.
+	zone.Serial = time.Now().UTC().Unix()
+	_ = r.dnsZones.Update(ctx, zone)
+
+	pushCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if _, err := r.agent.Call(pushCtx, "dns.zone.upsert", map[string]any{
+		"zone":    zone.Name,
+		"records": compiled,
+	}); err != nil {
+		r.log.Error("dns.zone.upsert failed", "zone", zone.Name, "err", err)
+	}
+}
+
+// reconcileDNSZoneDeleted tears down a DNS zone on the agent after its DB row
+// has been deleted. Called by the domain deletion handler.
+func (r *Reconciler) reconcileDNSZoneDeleted(ctx context.Context, zoneName string) {
+	if r.dnsZones == nil {
+		return // DNS feature not wired — skip
+	}
+	if zoneName == "" {
+		return
+	}
+	pushCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if _, err := r.agent.Call(pushCtx, "dns.zone.delete", map[string]string{"zone": zoneName}); err != nil {
+		r.log.Warn("dns.zone.delete failed", "zone", zoneName, "err", err)
 	}
 }
 

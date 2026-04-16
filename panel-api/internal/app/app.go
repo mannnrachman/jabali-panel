@@ -12,6 +12,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // Deps bundles the collaborators NewWithDeps needs so main.go keeps its
@@ -20,6 +21,7 @@ import (
 type Deps struct {
 	Auth      api.AuthService
 	JWTIssuer *auth.JWTIssuer
+	Users     repository.UserRepository
 }
 
 // Default tier: chosen so a reasonable SPA (polling, a few concurrent
@@ -98,6 +100,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// flows through RequireAuth.
 		v1 := r.Group("/api/v1", middleware.RequireAuth(deps.JWTIssuer))
 		api.RegisterMeRoutes(v1)
+		if deps.Users != nil {
+			api.RegisterUserRoutes(v1, api.UserHandlerConfig{Repo: deps.Users})
+		}
 	}
 
 	api.RegisterNotFoundHandlers(r)

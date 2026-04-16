@@ -20,6 +20,12 @@ type UserRepository interface {
 	FindByEmail(ctx context.Context, email string) (*models.User, error)
 	List(ctx context.Context, offset, limit int) ([]models.User, int64, error)
 	Update(ctx context.Context, u *models.User) error
+	// SetAdmin flips is_admin on the row. Deliberately separate from Update
+	// so the profile-edit path can't accidentally escalate privileges.
+	SetAdmin(ctx context.Context, id string, isAdmin bool) error
+	// CountAdmins returns the number of non-deleted admin rows. Used to
+	// refuse demoting / deleting the last admin and causing a lockout.
+	CountAdmins(ctx context.Context) (int64, error)
 	Delete(ctx context.Context, id string) error
 }
 
@@ -76,6 +82,31 @@ func (r *userRepo) Update(ctx context.Context, u *models.User) error {
 		return translate(err)
 	}
 	return nil
+}
+
+func (r *userRepo) SetAdmin(ctx context.Context, id string, isAdmin bool) error {
+	res := r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Where("id = ?", id).
+		Update("is_admin", isAdmin)
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *userRepo) CountAdmins(ctx context.Context) (int64, error) {
+	var n int64
+	if err := r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Where("is_admin = ?", true).
+		Count(&n).Error; err != nil {
+		return 0, translate(err)
+	}
+	return n, nil
 }
 
 func (r *userRepo) Delete(ctx context.Context, id string) error {

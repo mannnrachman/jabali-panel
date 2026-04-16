@@ -65,8 +65,10 @@ func (f *fakeUserRepo) FindByEmail(_ context.Context, email string) (*models.Use
 func (f *fakeUserRepo) List(context.Context, int, int) ([]models.User, int64, error) {
 	return nil, 0, nil
 }
-func (f *fakeUserRepo) Update(context.Context, *models.User) error { return nil }
-func (f *fakeUserRepo) Delete(context.Context, string) error       { return nil }
+func (f *fakeUserRepo) Update(context.Context, *models.User) error   { return nil }
+func (f *fakeUserRepo) SetAdmin(context.Context, string, bool) error { return nil }
+func (f *fakeUserRepo) CountAdmins(context.Context) (int64, error)   { return 0, nil }
+func (f *fakeUserRepo) Delete(context.Context, string) error         { return nil }
 
 type fakeTokenRepo struct {
 	mu     sync.Mutex

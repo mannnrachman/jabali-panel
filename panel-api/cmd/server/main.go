@@ -126,6 +126,7 @@ func main() {
 		})
 		deps.Auth = authSvc
 		deps.JWTIssuer = jwtIss
+		deps.Users = userRepo
 
 		// Optional: one-shot admin bootstrap. Safe to leave the env vars
 		// set — after the first run the function is a no-op (and never

@@ -29,7 +29,9 @@ type domainCreateParams struct {
 	// IsEnabled controls whether the vhost serves the tenant's docroot
 	// (true) or a branded "site disabled" placeholder (false). Pointer
 	// so omitted fields default to true (backwards compat).
-	IsEnabled *bool `json:"is_enabled"`
+	IsEnabled    *bool  `json:"is_enabled"`
+	SSLCertPath  string `json:"ssl_cert_path"`
+	SSLKeyPath   string `json:"ssl_key_path"`
 }
 
 // domainCreateResponse is the output shape for domain.create.
@@ -48,6 +50,18 @@ const vhostTemplate = `server {
     listen 80;
     listen [::]:80;
     server_name {{.Domain}};
+{{ if .SSLCertPath }}
+    # Redirect HTTP to HTTPS when SSL is configured
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name {{.Domain}};
+    ssl_certificate {{.SSLCertPath}};
+    ssl_certificate_key {{.SSLKeyPath}};
+{{ end }}
 {{ if .IsEnabled }}
     root {{.DocRoot}};
     {{.IndexDirective}}
@@ -78,8 +92,7 @@ const vhostTemplate = `server {
     error_log /var/log/nginx/{{.Domain}}-error.log;
     location / { try_files /index.html =503; }
 {{ end }}
-}
-`
+}`
 
 type vhostData struct {
 	Domain             string
@@ -91,6 +104,8 @@ type vhostData struct {
 	RuleDirectives     string
 	CustomDirectives   string
 	IsEnabled          bool
+	SSLCertPath        string
+	SSLKeyPath         string
 }
 
 // indexDirectiveFor maps the panel's index_priority enum to the concrete
@@ -138,7 +153,7 @@ func pathsUnderHome(username, docRoot string) []string {
 // writeVhost generates and writes the nginx vhost configuration, then tests and reloads nginx.
 // This is the core logic shared by domain.create and domain.enable/disable.
 // If the config content is unchanged, nginx reload is skipped for efficiency.
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, indexPriority string, isEnabled bool) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, indexPriority string, isEnabled bool, sslCertPath, sslKeyPath string) (string, error) {
 	// Generate vhost configuration
 	tmpl, err := template.New("vhost").Parse(vhostTemplate)
 	if err != nil {
@@ -155,6 +170,8 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		RuleDirectives:     ruleDirectives,
 		CustomDirectives:   customDirectives,
 		IsEnabled:          isEnabled,
+		SSLCertPath:        sslCertPath,
+		SSLKeyPath:         sslKeyPath,
 	}
 
 	var vhostConfig bytes.Buffer
@@ -285,7 +302,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		isEnabled = *p.IsEnabled
 	}
 
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, p.IndexPriority, isEnabled)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, p.IndexPriority, isEnabled, p.SSLCertPath, p.SSLKeyPath)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

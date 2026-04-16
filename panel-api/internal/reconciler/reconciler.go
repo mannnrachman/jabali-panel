@@ -272,6 +272,19 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 
 	params["index_priority"] = domain.IndexPriority
 
+	// Fetch SSL certificate if available and issued
+	if r.sslCerts != nil {
+		sslCtx, sslCancel := context.WithTimeout(ctx, 10*time.Second)
+		cert, err := r.sslCerts.FindByDomainID(sslCtx, domain.ID)
+		sslCancel()
+		if err == nil && cert != nil && cert.Status == "issued" {
+			if cert.CertPath != nil && cert.KeyPath != nil {
+				params["ssl_cert_path"] = *cert.CertPath
+				params["ssl_key_path"] = *cert.KeyPath
+			}
+		}
+	}
+
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 

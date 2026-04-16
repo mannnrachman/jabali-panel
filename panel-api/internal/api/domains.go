@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -188,7 +189,11 @@ func (h *domainHandler) create(c *gin.Context) {
 		return
 	}
 
-	// Call agent. On failure, roll back the DB row.
+	// Call agent (best-effort). If OS plumbing isn't ready yet (user
+	// doesn't exist, nginx misconfigured, etc.) we keep the DB row but
+	// mark it disabled so nginx never tries to serve an un-provisioned
+	// vhost, and surface a warning so the admin knows manual action is
+	// needed.
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	_, agentErr := h.cfg.Agent.Call(agentCtx, "domain.create", map[string]string{
@@ -198,9 +203,23 @@ func (h *domainHandler) create(c *gin.Context) {
 		"php_version": "8.3",
 	})
 	if agentErr != nil {
-		_ = h.cfg.Domains.Delete(ctx, domain.ID)
-		status, body := translateAgentError(agentErr)
-		c.JSON(status, body)
+		slog.Warn("domain agent provisioning failed",
+			"domain", domain.Name,
+			"domain_id", domain.ID,
+			"err", agentErr)
+		domain.IsEnabled = false
+		_ = h.cfg.Domains.Update(ctx, domain)
+		c.JSON(http.StatusCreated, gin.H{
+			"id":                      domain.ID,
+			"user_id":                 domain.UserID,
+			"name":                    domain.Name,
+			"doc_root":                domain.DocRoot,
+			"is_enabled":              domain.IsEnabled,
+			"nginx_custom_directives": domain.NginxCustomDirectives,
+			"created_at":              domain.CreatedAt,
+			"updated_at":              domain.UpdatedAt,
+			"provision_warning":       "domain saved but agent provisioning failed: " + agentErr.Error(),
+		})
 		return
 	}
 
@@ -278,11 +297,15 @@ func (h *domainHandler) delete(c *gin.Context) {
 		return
 	}
 
+	// Best-effort agent teardown. If the nginx vhost / PHP pool is
+	// already gone (or was never created), we still want the DB row to
+	// disappear so the user isn't stuck with a zombie record.
 	_, agentErr := h.cfg.Agent.Call(ctx, "domain.delete", map[string]string{"domain": domain.Name})
 	if agentErr != nil {
-		status, body := translateAgentError(agentErr)
-		c.JSON(status, body)
-		return
+		slog.Warn("domain agent teardown failed",
+			"domain", domain.Name,
+			"domain_id", domain.ID,
+			"err", agentErr)
 	}
 
 	if err := h.cfg.Domains.Delete(ctx, domain.ID); err != nil {

@@ -54,7 +54,7 @@ func newSSLHandler(cfg SSLHandlerConfig) *sslHandler {
 func RegisterSSLRoutes(g *gin.RouterGroup, cfg SSLHandlerConfig) {
 	h := newSSLHandler(cfg)
 
-	domains := g.Group("/domains/:domainID")
+	domains := g.Group("/domains/:id")
 	{
 		domains.GET("/ssl", h.getSSL)
 		domains.POST("/ssl", h.enableSSL)
@@ -64,9 +64,9 @@ func RegisterSSLRoutes(g *gin.RouterGroup, cfg SSLHandlerConfig) {
 }
 
 // getSSL retrieves the current SSL certificate status for a domain.
-// GET /api/v1/domains/:domainID/ssl
+// GET /api/v1/domains/:id/ssl
 func (h *sslHandler) getSSL(c *gin.Context) {
-	domainID := c.Param("domainID")
+	domainID := c.Param("id")
 
 	// Load and authorize domain
 	domain := h.loadDomainOwned(c, domainID)
@@ -102,11 +102,11 @@ func (h *sslHandler) getSSL(c *gin.Context) {
 }
 
 // enableSSL enables SSL for a domain and initiates certificate issuance.
-// POST /api/v1/domains/:domainID/ssl
+// POST /api/v1/domains/:id/ssl
 // Response: 202 (Accepted) with the pending certificate row.
 // Idempotent: if an issued cert exists with >30d to expiry, return 200 with it.
 func (h *sslHandler) enableSSL(c *gin.Context) {
-	domainID := c.Param("domainID")
+	domainID := c.Param("id")
 
 	// Load and authorize domain
 	domain := h.loadDomainOwned(c, domainID)
@@ -200,10 +200,10 @@ func (h *sslHandler) enableSSL(c *gin.Context) {
 }
 
 // disableSSL disables SSL for a domain and revokes the certificate.
-// DELETE /api/v1/domains/:domainID/ssl
+// DELETE /api/v1/domains/:id/ssl
 // Response: 202 (Accepted).
 func (h *sslHandler) disableSSL(c *gin.Context) {
-	domainID := c.Param("domainID")
+	domainID := c.Param("id")
 
 	// Load and authorize domain
 	domain := h.loadDomainOwned(c, domainID)
@@ -236,10 +236,10 @@ func (h *sslHandler) disableSSL(c *gin.Context) {
 }
 
 // renewSSL triggers an immediate renewal of an SSL certificate.
-// POST /api/v1/domains/:domainID/ssl/renew
+// POST /api/v1/domains/:id/ssl/renew
 // Admin-only. Response: 202 (Accepted).
 func (h *sslHandler) renewSSL(c *gin.Context) {
-	domainID := c.Param("domainID")
+	domainID := c.Param("id")
 
 	// Load and authorize domain (admin-only)
 	claims := ginctx.Claims(c)

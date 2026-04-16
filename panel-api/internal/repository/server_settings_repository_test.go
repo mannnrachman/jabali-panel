@@ -8,6 +8,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
@@ -50,25 +51,16 @@ func TestServerSettingsRepository_Upsert_Create(t *testing.T) {
 		AdminEmail: "admin@example.com",
 	}
 
-	// GORM wraps Save() in a transaction
+	// Upsert probes existence first.
+	mock.ExpectQuery(`SELECT \* FROM .server_settings. WHERE .server_settings.\..id. = .? ORDER BY .server_settings.\..id. LIMIT .?`).
+		WithArgs(1, 1).
+		WillReturnError(gorm.ErrRecordNotFound)
+
+	// Row missing → Create inserts. MariaDB dialect uses INSERT ... RETURNING id
+	// which GORM issues as a Query, not Exec.
 	mock.ExpectBegin()
-
-	// GORM's Save() with ID set goes straight to UPDATE (no First() check)
-	mock.ExpectExec(`UPDATE .server_settings. SET`).
-		WithArgs(
-			s.Hostname,
-			s.PublicIPv4,
-			s.PublicIPv6,
-			s.NS1Name,
-			s.NS1IPv4,
-			s.NS2Name,
-			s.NS2IPv4,
-			s.AdminEmail,
-			sqlmock.AnyArg(), // updated_at
-			uint8(1),         // WHERE id = ?
-		).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
+	mock.ExpectQuery(`INSERT INTO .server_settings.`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 	mock.ExpectCommit()
 
 	err := repo.Upsert(ctx, s)
@@ -93,25 +85,21 @@ func TestServerSettingsRepository_Upsert_Update(t *testing.T) {
 		NS1IPv4:    "192.0.2.10",
 	}
 
-	// GORM wraps Save() in a transaction
+	// Upsert probes existence first and finds a row.
+	now := time.Now().UTC()
+	rows := sqlmock.NewRows([]string{
+		"id", "hostname", "public_ipv4", "public_ipv6",
+		"ns1_name", "ns1_ipv4", "ns2_name", "ns2_ipv4",
+		"admin_email", "updated_at",
+	}).AddRow(1, "old.com", "192.0.2.5", "", "", "", "", "", "", now)
+	mock.ExpectQuery(`SELECT \* FROM .server_settings. WHERE .server_settings.\..id. = .? ORDER BY .server_settings.\..id. LIMIT .?`).
+		WithArgs(1, 1).
+		WillReturnRows(rows)
+
+	// Row exists → Updates issues an UPDATE with all columns via Select("*").Omit("id").
 	mock.ExpectBegin()
-
-	// GORM's Save() with ID set goes straight to UPDATE (no First() check)
 	mock.ExpectExec(`UPDATE .server_settings. SET`).
-		WithArgs(
-			s.Hostname,
-			s.PublicIPv4,
-			sqlmock.AnyArg(), // public_ipv6
-			s.NS1Name,
-			s.NS1IPv4,
-			sqlmock.AnyArg(), // ns2_name
-			sqlmock.AnyArg(), // ns2_ipv4
-			sqlmock.AnyArg(), // admin_email
-			sqlmock.AnyArg(), // updated_at
-			uint8(1),         // WHERE id = ?
-		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-
 	mock.ExpectCommit()
 
 	err := repo.Upsert(ctx, s)

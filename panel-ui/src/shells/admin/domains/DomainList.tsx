@@ -2,6 +2,8 @@ import { useTable } from "@refinedev/antd";
 import { DeleteButton, EditButton } from "@refinedev/antd";
 import { Space, Table, Tag, Typography } from "antd";
 
+import { DomainToggleButton } from "../../DomainToggleButton";
+
 export type Domain = {
   id: string;
   user_id: string;
@@ -56,7 +58,8 @@ export const DomainList = () => {
           title="Actions"
           dataIndex="actions"
           render={(_, r) => (
-            <Space>
+            <Space size="small">
+              <DomainToggleButton domain={r} />
               <EditButton hideText size="small" recordItemId={r.id} />
               <DeleteButton hideText size="small" recordItemId={r.id} />
             </Space>

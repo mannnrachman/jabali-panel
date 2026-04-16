@@ -1,11 +1,10 @@
-import { useState } from "react";
 import { useTable } from "@refinedev/antd";
 import { DeleteButton } from "@refinedev/antd";
-import { PlusSquareOutlined, PauseCircleOutlined, PlayCircleOutlined } from "@ant-design/icons";
+import { PlusSquareOutlined } from "@ant-design/icons";
 import { Button, Space, Table, Tag, Typography } from "antd";
 import { useNavigate } from "react-router";
-import { useInvalidate, useNotification } from "@refinedev/core";
-import { apiClient } from "../../../apiClient";
+
+import { DomainToggleButton } from "../../DomainToggleButton";
 
 export type Domain = {
   id: string;
@@ -16,46 +15,6 @@ export type Domain = {
   nginx_custom_directives: string;
   created_at: string;
   updated_at: string;
-};
-
-const DomainToggleButton = ({ domain }: { domain: Domain }) => {
-  const [loading, setLoading] = useState(false);
-  const invalidate = useInvalidate();
-  const { open } = useNotification();
-
-  const handleToggle = async () => {
-    setLoading(true);
-    try {
-      await apiClient.patch(`/domains/${domain.id}`, {
-        is_enabled: !domain.is_enabled,
-      });
-      open?.({
-        type: "success",
-        message: domain.is_enabled ? "Domain disabled" : "Domain enabled",
-      });
-      invalidate({ resource: "domains", invalidates: ["list"] });
-    } catch (err) {
-      open?.({
-        type: "error",
-        message: "Failed to toggle",
-        description: (err as Error).message,
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <Button
-      type="text"
-      size="small"
-      icon={domain.is_enabled ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
-      onClick={handleToggle}
-      loading={loading}
-    >
-      {domain.is_enabled ? "Disable" : "Enable"}
-    </Button>
-  );
 };
 
 export const UserDomainList = () => {

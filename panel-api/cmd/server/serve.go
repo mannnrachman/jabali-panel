@@ -131,6 +131,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.Reconciler = rec
 		deps.DNSZones = dnsZoneRepo
 		deps.DNSRecords = dnsRecordRepo
+		deps.SSLCerts = sslCertRepo
 
 		// Admin bootstrap.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

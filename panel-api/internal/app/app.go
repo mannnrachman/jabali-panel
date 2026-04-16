@@ -34,6 +34,7 @@ type Deps struct {
 	ServerSettings      repository.ServerSettingsRepository
 	DNSZones            repository.DNSZoneRepository
 	DNSRecords          repository.DNSRecordRepository
+	SSLCerts            repository.SSLCertificateRepository
 	Log                 *slog.Logger
 }
 
@@ -143,6 +144,15 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Zones:      deps.DNSZones,
 				Records:    deps.DNSRecords,
 				Reconciler: deps.Reconciler,
+			})
+		}
+		if deps.Domains != nil && deps.SSLCerts != nil {
+			api.RegisterSSLRoutes(v1, api.SSLHandlerConfig{
+				Domains:        deps.Domains,
+				SSLCerts:       deps.SSLCerts,
+				ServerSettings: deps.ServerSettings,
+				Reconciler:     deps.Reconciler,
+				Config:         cfg,
 			})
 		}
 		if deps.ServerSettings != nil {

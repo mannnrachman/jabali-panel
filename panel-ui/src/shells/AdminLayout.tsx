@@ -35,6 +35,7 @@ const MENU: { key: string; path: string; label: string; icon: JSX.Element }[] = 
   { key: "users", path: "/jabali-admin/users", label: "Users", icon: <TeamOutlined /> },
   { key: "packages", path: "/jabali-admin/packages", label: "Packages", icon: <AppstoreOutlined /> },
   { key: "domains", path: "/jabali-admin/domains", label: "Domains", icon: <GlobalOutlined /> },
+  { key: "dns", path: "/jabali-admin/dns", label: "DNS", icon: <CloudServerOutlined /> },
   { key: "settings", path: "/jabali-admin/settings", label: "Settings", icon: <CloudServerOutlined /> },
 ];
 

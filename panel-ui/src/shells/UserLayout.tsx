@@ -23,6 +23,7 @@ const { Header, Sider, Content } = Layout;
 const MENU: { key: string; path: string; label: string; icon: JSX.Element }[] = [
   { key: "profile", path: "/jabali-panel/profile", label: "My profile", icon: <UserOutlined /> },
   { key: "domains", path: "/jabali-panel/domains", label: "Domains", icon: <GlobalOutlined /> },
+  { key: "dns", path: "/jabali-panel/dns", label: "DNS", icon: <GlobalOutlined /> },
   // future: email, dns, databases, wordpress, ssl, cron, …
 ];
 

@@ -401,10 +401,44 @@ provision_mariadb() {
 install_powerdns() {
   _log "installing PowerDNS (pdns-server + pdns-backend-mysql)"
 
+  # The config directory for our env/cred files must exist before we
+  # try to write into it. The panel's own config.toml lives here too;
+  # write_config_file would normally create it, but install_powerdns
+  # runs first.
+  mkdir -p /etc/jabali-panel
+  chmod 0755 /etc/jabali-panel
+
+  # The Debian pdns-server package runs `invoke-rc.d pdns restart`
+  # in its postinst before we've wired the MySQL backend. That would
+  # fail loudly (exit 99, no backend configured) and print a scary
+  # systemctl status dump. Pre-drop a policy-rc.d that tells the
+  # package scripts to skip the start — we'll start pdns ourselves
+  # after writing the correct config.
+  local policy_rc=/usr/sbin/policy-rc.d
+  local policy_rc_preexisted=0
+  if [[ -e "$policy_rc" ]]; then
+    policy_rc_preexisted=1
+    mv "$policy_rc" "${policy_rc}.jabali-bak"
+  fi
+  cat > "$policy_rc" <<'POLICYEOF'
+#!/bin/sh
+# Temporarily installed by jabali-panel install.sh during pdns setup.
+# Tells dpkg not to start services during package install — we start
+# pdns explicitly once its MySQL backend is configured.
+exit 101
+POLICYEOF
+  chmod 0755 "$policy_rc"
+
   # pdns-server is the daemon; pdns-backend-mysql is the SQL storage
   # backend. Stock Debian/Ubuntu package names.
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     pdns-server pdns-backend-mysql
+
+  # Undo the policy-rc.d trap regardless of exit path below.
+  rm -f "$policy_rc"
+  if [[ "$policy_rc_preexisted" == "1" ]]; then
+    mv "${policy_rc}.jabali-bak" "$policy_rc"
+  fi
 
   # The Debian package drops a default /etc/powerdns/pdns.d/*.conf that
   # wires up the bind backend. We don't want that — replace the whole

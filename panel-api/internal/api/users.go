@@ -57,6 +57,7 @@ func RegisterUserRoutes(g *gin.RouterGroup, cfg UserHandlerConfig) {
 	g.GET("/users/:id", middleware.RequireOwner("id"), h.get)
 	g.PATCH("/users/:id", middleware.RequireOwner("id"), h.update)
 	g.DELETE("/users/:id", middleware.RequireAdmin(), h.delete)
+	g.POST("/users/:id/reprovision", middleware.RequireAdmin(), h.reprovision)
 }
 
 type userHandler struct{ cfg UserHandlerConfig }
@@ -81,6 +82,10 @@ type updateUserRequest struct {
 	Password        *string `json:"password,omitempty"         binding:"omitempty,min=10"`
 	CurrentPassword *string `json:"current_password,omitempty"`
 	IsAdmin         *bool   `json:"is_admin,omitempty"`
+}
+
+type reprovisionRequest struct {
+	Password string `json:"password" binding:"required,min=10"`
 }
 
 type listUsersResponse struct {
@@ -253,6 +258,25 @@ func (h *userHandler) update(c *gin.Context) {
 		return
 	}
 
+	// Best-effort password sync to OS user. Only for non-admins
+	// (admins have full system access). Run in background so client
+	// sees DB update immediately; if agent fails, user can still log in
+	// with the new password via SSH.
+	if req.Password != nil && !claims.IsAdmin && h.cfg.Agent != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_, err := h.cfg.Agent.Call(ctx, "user.password", map[string]any{
+				"username": linuxUserFromEmail(existing.Email),
+				"password": *req.Password,
+			})
+			if err != nil {
+				slog.Warn("user password sync to OS failed",
+					"user_id", id, "email", existing.Email, "err", err)
+			}
+		}()
+	}
+
 	// Flip is_admin in its own call so the repo's privilege-safe Update
 	// doesn't have to widen. Admin-only guard was checked above.
 	if req.IsAdmin != nil {
@@ -308,15 +332,16 @@ func (h *userHandler) delete(c *gin.Context) {
 		return
 	}
 
-	// Best-effort OS teardown. remove_home=false so tenant data is
-	// preserved for manual recovery; ops can opt into cleanup later.
+	// Best-effort OS teardown. remove_home defaults to false so tenant data is
+	// preserved for manual recovery; pass ?purge=true to delete home directory.
+	purge := c.Query("purge") == "true"
 	if h.cfg.Agent != nil && username != "" {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			_, err := h.cfg.Agent.Call(ctx, "user.delete", map[string]any{
 				"username":    username,
-				"remove_home": false,
+				"remove_home": purge,
 			})
 			if err != nil {
 				slog.Warn("user agent teardown failed",
@@ -326,6 +351,85 @@ func (h *userHandler) delete(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+func (h *userHandler) reprovision(c *gin.Context) {
+	var req reprovisionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
+		return
+	}
+
+	ctx := c.Request.Context()
+	id := c.Param("id")
+
+	user, err := h.cfg.Repo.FindByID(ctx, id)
+	if err != nil {
+		h.translateErr(c, err)
+		return
+	}
+
+	// Admins are panel-only; reprovisioning them would create a stray
+	// OS account that shouldn't exist.
+	if user.IsAdmin {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "admin_has_no_os_account"})
+		return
+	}
+
+	username := linuxUserFromEmail(user.Email)
+	if username == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "cannot_derive_username"})
+		return
+	}
+
+	// This endpoint is deliberately agent-first + synchronous. Manual
+	// recovery needs to tell the admin whether the OS side actually
+	// converged — firing a goroutine and returning 200 would hide the
+	// real failure. If the agent call fails, the DB is untouched.
+	if h.cfg.Agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
+		return
+	}
+	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	_, agentErr := h.cfg.Agent.Call(agentCtx, "user.create", map[string]any{
+		"username": username,
+		"home_dir": "/home/" + username,
+		"shell":    "/bin/bash",
+		"password": req.Password,
+	})
+	if agentErr != nil {
+		// If the OS user already exists, steer the admin to the
+		// password-sync path instead — useradd would just fail.
+		if strings.Contains(agentErr.Error(), "already exists") {
+			c.JSON(http.StatusConflict, gin.H{
+				"error":  "os_user_exists",
+				"detail": "OS user already exists — use PATCH /users/:id { password } to sync the password only",
+			})
+			return
+		}
+		slog.Warn("reprovision agent call failed",
+			"user_id", id, "username", username, "err", agentErr)
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error":  "agent_error",
+			"detail": agentErr.Error(),
+		})
+		return
+	}
+
+	// Agent succeeded — update DB hash so the panel password matches.
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), h.cfg.BcryptCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	user.PasswordHash = string(hash)
+	if err := h.cfg.Repo.Update(ctx, user); err != nil {
+		h.translateErr(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, user)
 }
 
 // ---------- helpers ----------

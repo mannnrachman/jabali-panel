@@ -121,11 +121,48 @@ subcommand will let ops opt in to auto-cleanup.
   Implementation reads `/etc/nginx/sites-enabled/` directly — fine at O(1000s)
   of domains, revisit above that.
 
+## Users are a partial exception
+
+Users don't go through the reconciler loop. Why: to create a Linux user we
+need the plaintext password, which the API only holds for the duration of
+the request (the DB stores a bcrypt hash). A periodic "make DB match OS"
+loop can't recover from a missed `user.create` without asking a human to
+re-supply the password.
+
+So user convergence is explicit:
+
+- **`POST /users`** — writes the DB row, then does an inline best-effort
+  `user.create` with the plaintext. On failure, returns 201 with a
+  `provision_warning` so the caller knows they're in a half-provisioned
+  state. The DB row stays.
+- **`PATCH /users { password }`** — after the bcrypt update commits, fires
+  `user.password` in a goroutine so the OS password tracks the panel
+  password. Best-effort; non-sync is logged.
+- **`DELETE /users`** — best-effort `user.delete` in a goroutine after the
+  DB row is gone. `?purge=true` (admin-only) sets `remove_home=true` to
+  reclaim disk. Default is `remove_home=false` so tenant data survives the
+  delete for recovery.
+- **`POST /users/:id/reprovision { password }`** — manual recovery path.
+  Admin supplies the plaintext; API calls `user.create`. For bootstrap
+  admins, users created before the agent was wired, or after a host
+  rebuild. If the OS user already exists we return 409 and point the admin
+  at the PATCH password-sync path.
+
+**Admins are panel-only.** Domain creation rejects with 400 if the owner
+is an admin (admins have no `/home/<name>`). This keeps the bootstrap
+admin from accidentally being asked to host domains.
+
+**Known gap:** per-user groups + tighter `/home/<user>` permissions. Today
+the agent sets `0755` on home dirs so nginx (www-data) can traverse. That
+leaks directory listings across tenants. A later change will introduce a
+per-user group with nginx as a member, and tighten to `0750`.
+
 ## Related
 
 - Commit `40e62c9` — best-effort agent calls in CRUD (the stopgap this ADR
   replaces)
 - Commit `a904f60` — reconciler integration
+- Commit `43933cc` — best-effort OS user provisioning on create/delete
 - `panel-api/internal/reconciler/` — implementation
 - `panel-api/internal/clientapi/` — HTTP client used by CLI
 - `panel-api/cmd/server/cli_token.go` — short-lived admin JWT minting

@@ -151,6 +151,16 @@ func (h *domainHandler) create(c *gin.Context) {
 		return
 	}
 
+	// Admins are panel-only — they have no /home/<name>, so domains
+	// can't be hosted under them. Bad request, not authz failure.
+	if user.IsAdmin {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":  "admin_cannot_host",
+			"detail": "admin users are panel-only — create a regular user to host domains",
+		})
+		return
+	}
+
 	// Quota check.
 	if user.PackageID != nil && *user.PackageID != "" {
 		count, err := h.cfg.Domains.CountByUserID(ctx, targetUserID)

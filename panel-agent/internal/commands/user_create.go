@@ -91,8 +91,11 @@ func userCreateHandler(ctx context.Context, params json.RawMessage) (any, error)
 		}
 	}
 
-	// Set home directory permissions.
-	chmodCmd := exec.CommandContext(ctx, "chmod", "0750", p.HomeDir)
+	// Set home directory permissions to 0755.
+	// 0755 allows other users (including www-data/nginx) to traverse the directory
+	// and read web content from public_html, which is standard for shared hosting.
+	// A tighter per-user group isolation will be added in a follow-up.
+	chmodCmd := exec.CommandContext(ctx, "chmod", "0755", p.HomeDir)
 	if err := chmodCmd.Run(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

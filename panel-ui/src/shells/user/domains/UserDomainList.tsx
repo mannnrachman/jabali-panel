@@ -1,6 +1,8 @@
 import { useTable } from "@refinedev/antd";
 import { DeleteButton, EditButton } from "@refinedev/antd";
-import { Space, Table, Tag, Typography } from "antd";
+import { PlusSquareOutlined } from "@ant-design/icons";
+import { Button, Space, Table, Tag, Typography } from "antd";
+import { useNavigate } from "react-router";
 
 export type Domain = {
   id: string;
@@ -14,6 +16,7 @@ export type Domain = {
 };
 
 export const UserDomainList = () => {
+  const navigate = useNavigate();
   const { tableProps } = useTable<Domain>({
     resource: "domains",
     syncWithLocation: true,
@@ -31,6 +34,13 @@ export const UserDomainList = () => {
         <Typography.Title level={3} style={{ margin: 0 }}>
           My Domains
         </Typography.Title>
+        <Button
+          type="primary"
+          icon={<PlusSquareOutlined />}
+          onClick={() => navigate("/jabali-panel/domains/create")}
+        >
+          Add Domain
+        </Button>
       </Space>
 
       <Table<Domain> {...tableProps} rowKey="id" bordered>

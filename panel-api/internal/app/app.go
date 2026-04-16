@@ -3,6 +3,7 @@
 package app
 
 import (
+	"log/slog"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,13 +24,15 @@ import (
 // argument list short. Anything a handler family needs — auth service, JWT
 // issuer, repositories — plugs in here.
 type Deps struct {
-	Auth        api.AuthService
-	JWTIssuer   *auth.JWTIssuer
-	Users       repository.UserRepository
-	Packages    repository.PackageRepository
-	Domains     repository.DomainRepository
-	Agent       agent.AgentInterface
-	Reconciler  *reconciler.Reconciler
+	Auth                api.AuthService
+	JWTIssuer           *auth.JWTIssuer
+	Users               repository.UserRepository
+	Packages            repository.PackageRepository
+	Domains             repository.DomainRepository
+	Agent               agent.AgentInterface
+	Reconciler          *reconciler.Reconciler
+	ServerSettings      repository.ServerSettingsRepository
+	Log                 *slog.Logger
 }
 
 // Default tier: chosen so a reasonable SPA (polling, a few concurrent
@@ -130,6 +133,13 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Packages:   deps.Packages,
 				Agent:      deps.Agent,
 				Reconciler: deps.Reconciler,
+			})
+		}
+		if deps.ServerSettings != nil {
+			api.RegisterServerSettingsRoutes(v1, api.ServerSettingsHandlerConfig{
+				Repo:  deps.ServerSettings,
+				Agent: deps.Agent,
+				Log:   deps.Log,
 			})
 		}
 		if deps.Agent != nil {

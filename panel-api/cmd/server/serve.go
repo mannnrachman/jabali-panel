@@ -79,12 +79,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// ---- auth + deps ----
 	var deps app.Deps
 	deps.Agent = sharedAgent
+	deps.Log = log
 	if sharedDB != nil {
 		userRepo := repository.NewUserRepository(sharedDB)
 		tokenRepo := repository.NewRefreshTokenRepository(sharedDB)
 		packageRepo := repository.NewPackageRepository(sharedDB)
 		domainRepo := repository.NewDomainRepository(sharedDB)
 
+		serverSettingsRepo := repository.NewServerSettingsRepository(sharedDB)
 		jwtIss, err := auth.NewJWTIssuer(auth.JWTConfig{
 			Secret:    []byte(cfg.Auth.JWTSecret),
 			Issuer:    jwtIssuerName,
@@ -108,6 +110,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.Packages = packageRepo
 		deps.Domains = domainRepo
 
+		deps.ServerSettings = serverSettingsRepo
 		// Reconciler: database as source of truth, agent state as derived state.
 		rec := reconciler.New(
 			domainRepo,

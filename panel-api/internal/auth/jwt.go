@@ -26,9 +26,11 @@ type JWTConfig struct {
 // AccessClaims is the application-level view of an access token's payload.
 // It wraps jwt.RegisteredClaims so iss/exp/iat/jti are available too.
 type AccessClaims struct {
-	UserID  string `json:"sub"`
-	Email   string `json:"email"`
-	IsAdmin bool   `json:"admin"`
+	UserID        string `json:"sub"`
+	Email         string `json:"email"`
+	IsAdmin       bool   `json:"admin"`
+	Purpose       string `json:"purpose,omitempty"` // e.g., "cli_login" for break-glass tokens
+	ImpersonatedBy string `json:"impersonated_by,omitempty"` // set when token was issued via impersonation
 	jwt.RegisteredClaims
 }
 
@@ -63,12 +65,21 @@ func NewJWTIssuer(cfg JWTConfig) (*JWTIssuer, error) {
 // IssueAccess returns a signed access JWT with iss/exp/iat/jti populated.
 // Caller provides UserID + Email + IsAdmin; everything else is derived here.
 func (i *JWTIssuer) IssueAccess(c AccessClaims) (string, error) {
+	return i.issueAccessWithTTL(c, i.cfg.AccessTTL)
+}
+
+// IssueAccessWithTTL is like IssueAccess but allows customizing the token's TTL.
+func (i *JWTIssuer) IssueAccessWithTTL(c AccessClaims, ttl time.Duration) (string, error) {
+	return i.issueAccessWithTTL(c, ttl)
+}
+
+func (i *JWTIssuer) issueAccessWithTTL(c AccessClaims, ttl time.Duration) (string, error) {
 	now := time.Now().UTC()
 	c.RegisteredClaims = jwt.RegisteredClaims{
 		Issuer:    i.cfg.Issuer,
 		IssuedAt:  jwt.NewNumericDate(now),
 		NotBefore: jwt.NewNumericDate(now.Add(-time.Second)), // clock skew grace
-		ExpiresAt: jwt.NewNumericDate(now.Add(i.cfg.AccessTTL)),
+		ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 		ID:        ids.NewULID(),
 		Subject:   c.UserID,
 	}
@@ -103,4 +114,9 @@ func (i *JWTIssuer) Verify(s string) (*AccessClaims, error) {
 		return nil, errors.New("auth: invalid token")
 	}
 	return &out, nil
+}
+
+// ParseAccess is an alias to Verify for backwards compatibility with tests.
+func (i *JWTIssuer) ParseAccess(s string) (*AccessClaims, error) {
+	return i.Verify(s)
 }

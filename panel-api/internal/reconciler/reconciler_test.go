@@ -301,6 +301,17 @@ func (f *fakeUserRepo) CountAdmins(ctx context.Context) (int64, error) {
 	return n, nil
 }
 
+func (f *fakeUserRepo) FindAdminsByEmail(ctx context.Context) ([]*models.User, error) {
+	var admins []*models.User
+	for _, u := range f.users {
+		if u.IsAdmin {
+			u := u
+			admins = append(admins, u)
+		}
+	}
+	return admins, nil
+}
+
 func TestReconcileAll_EnabledDomainMissing(t *testing.T) {
 	ctx := context.Background()
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))

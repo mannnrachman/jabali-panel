@@ -157,6 +157,19 @@ func (m *memUserRepo) CountAdmins(_ context.Context) (int64, error) {
 	return n, nil
 }
 
+func (m *memUserRepo) FindAdminsByEmail(_ context.Context) ([]*models.User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var admins []*models.User
+	for _, u := range m.byID {
+		if u.IsAdmin {
+			u2 := *u
+			admins = append(admins, &u2)
+		}
+	}
+	return admins, nil
+}
+
 func (m *memUserRepo) Delete(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

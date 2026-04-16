@@ -102,20 +102,29 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*LoginOutput, e
 		return nil, err
 	}
 	newTok := &models.RefreshToken{
-		ID:        ids.NewULID(),
-		UserID:    u.ID,
-		DeviceID:  in.DeviceID,
-		TokenHash: newHash,
-		ExpiresAt: time.Now().UTC().Add(s.cfg.RefreshTTL),
-		CreatedAt: time.Now().UTC(),
+		ID:             ids.NewULID(),
+		UserID:         u.ID,
+		DeviceID:       in.DeviceID,
+		TokenHash:      newHash,
+		ExpiresAt:      time.Now().UTC().Add(s.cfg.RefreshTTL),
+		ImpersonatedBy: existing.ImpersonatedBy,
+		CreatedAt:      time.Now().UTC(),
 	}
 	if err := s.cfg.RefreshRepo.Rotate(ctx, oldHash, newTok); err != nil {
 		return nil, ErrInvalidToken
 	}
 
-	access, err := s.cfg.JWT.IssueAccess(AccessClaims{
-		UserID: u.ID, Email: u.Email, IsAdmin: u.IsAdmin,
-	})
+	// Preserve ImpersonatedBy if the session was impersonated
+	claims := AccessClaims{
+		UserID:   u.ID,
+		Email:    u.Email,
+		IsAdmin:  u.IsAdmin,
+	}
+	if existing.ImpersonatedBy != nil {
+		claims.ImpersonatedBy = *existing.ImpersonatedBy
+	}
+
+	access, err := s.cfg.JWT.IssueAccess(claims)
 	if err != nil {
 		return nil, err
 	}
@@ -162,4 +171,82 @@ func (s *Service) issueAccessAndRefresh(ctx context.Context, u *models.User, dev
 		return "", "", err
 	}
 	return access, raw, nil
+}
+
+
+// RedeemCLIToken validates a break-glass CLI login token and issues fresh access/refresh tokens.
+// The CLI token must:
+// - Be valid and not expired
+// - Have purpose="cli_login"
+// - Reference an existing admin user
+func (s *Service) RedeemCLIToken(ctx context.Context, cliToken string, deviceID string) (*LoginOutput, error) {
+	claims, err := s.cfg.JWT.Verify(cliToken)
+	if err != nil {
+		return nil, ErrInvalidToken
+	}
+
+	// Validate purpose claim — must be "cli_login"
+	if claims.Purpose != "cli_login" {
+		return nil, ErrInvalidToken
+	}
+
+	// Load user and verify they still exist and are admin
+	u, err := s.cfg.Users.FindByID(ctx, claims.UserID)
+	if err != nil {
+		return nil, ErrInvalidToken
+	}
+	if !u.IsAdmin {
+		return nil, ErrInvalidToken
+	}
+
+	// Issue fresh access + refresh tokens via the normal path
+	access, raw, err := s.issueAccessAndRefresh(ctx, u, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	return &LoginOutput{AccessToken: access, RawRefresh: raw, User: u}, nil
+}
+// ImpersonationOutput holds the tokens returned by IssueImpersonation.
+type ImpersonationOutput struct {
+	AccessToken string
+	RawRefresh  string
+}
+
+// IssueImpersonation creates an access token with the ImpersonatedBy claim set
+// to the adminID, along with a new refresh token. This is used when an admin
+// initiates user impersonation.
+func (s *Service) IssueImpersonation(ctx context.Context, targetUser *models.User, adminID string) (*ImpersonationOutput, error) {
+	// Generate refresh token and save it
+	raw, hash, err := GenerateRefreshToken()
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	tok := &models.RefreshToken{
+		ID:             ids.NewULID(),
+		UserID:         targetUser.ID,
+		TokenHash:      hash,
+		DeviceID:       "", // No device hint for impersonation
+		ExpiresAt:      now.Add(s.cfg.RefreshTTL),
+		ImpersonatedBy: &adminID,
+		CreatedAt:      now,
+	}
+	if err := s.cfg.RefreshRepo.Create(ctx, tok); err != nil {
+		return nil, err
+	}
+
+	// Issue access token with ImpersonatedBy claim
+	claims := AccessClaims{
+		UserID:        targetUser.ID,
+		Email:         targetUser.Email,
+		IsAdmin:       targetUser.IsAdmin,
+		ImpersonatedBy: adminID,
+	}
+	access, err := s.cfg.JWT.IssueAccess(claims)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ImpersonationOutput{AccessToken: access, RawRefresh: raw}, nil
 }

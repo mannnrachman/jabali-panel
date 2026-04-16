@@ -14,6 +14,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
@@ -33,6 +34,15 @@ type UserHandlerConfig struct {
 	Domains         repository.DomainRepository
 	Packages        repository.PackageRepository
 	Reconciler      *reconciler.Reconciler
+	// For impersonation endpoint
+	AuthService interface {
+		IssueImpersonation(ctx context.Context, targetUser *models.User, adminID string) (*auth.ImpersonationOutput, error)
+	}
+	AccessTTL  time.Duration
+	RefreshTTL time.Duration
+	CookieName string
+	CookieSecure bool
+	Log        *slog.Logger
 }
 
 // Paging defaults/limits chosen so a misbehaving client can't issue
@@ -69,6 +79,11 @@ func RegisterUserRoutes(g *gin.RouterGroup, cfg UserHandlerConfig) {
 	}
 	reprov = append(reprov, h.reprovision)
 	g.POST("/users/:id/reprovision", reprov...)
+
+	// Admin-initiated impersonation endpoint
+	impersonate := []gin.HandlerFunc{middleware.RequireAdmin()}
+	impersonate = append(impersonate, h.impersonate)
+	g.POST("/admin/users/:id/impersonate", impersonate...)
 }
 
 type userHandler struct{ cfg UserHandlerConfig }
@@ -592,6 +607,87 @@ func (h *userHandler) reprovision(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, user)
+}
+
+// impersonate handles POST /admin/users/:id/impersonate — admin-initiated
+// user impersonation. Issues fresh access + refresh tokens for the target user
+// marked with ImpersonatedBy = adminID.
+func (h *userHandler) impersonate(c *gin.Context) {
+	ctx := c.Request.Context()
+	id := c.Param("id")
+
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+
+	// Fetch target user
+	targetUser, err := h.cfg.Repo.FindByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+
+	// Validation: cannot impersonate self
+	if id == claims.UserID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot_impersonate_self"})
+		return
+	}
+
+	// Validation: cannot impersonate an admin
+	if targetUser.IsAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "cannot_impersonate_admin"})
+		return
+	}
+
+	// AuthService must be non-nil and support IssueImpersonation
+	if h.cfg.AuthService == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+
+	// Issue impersonation tokens
+	output, err := h.cfg.AuthService.IssueImpersonation(ctx, targetUser, claims.UserID)
+	if err != nil {
+		slog.Error("impersonation token issue failed",
+			"admin_id", claims.UserID,
+			"target_id", id,
+			"err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+
+	// Set refresh token cookie
+	c.SetCookie(
+		h.cfg.CookieName,
+		output.RawRefresh,
+		int(h.cfg.RefreshTTL.Seconds()),
+		"/",
+		"",
+		h.cfg.CookieSecure,
+		true, // httpOnly
+	)
+
+	// Audit log
+	if h.cfg.Log != nil {
+		h.cfg.Log.Info("audit",
+			"event", "impersonation_started",
+			"actor_id", claims.UserID,
+			"target_id", id,
+			"target_email", targetUser.Email)
+	}
+
+	// Response
+	expiresAt := time.Now().Add(h.cfg.AccessTTL)
+	c.JSON(http.StatusOK, gin.H{
+		"access_token": output.AccessToken,
+		"expires_at":   expiresAt.Format(time.RFC3339),
+	})
 }
 
 // ---------- helpers ----------

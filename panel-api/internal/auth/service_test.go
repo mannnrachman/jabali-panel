@@ -80,6 +80,18 @@ func (f *fakeUserRepo) List(context.Context, int, int) ([]models.User, int64, er
 func (f *fakeUserRepo) Update(context.Context, *models.User) error   { return nil }
 func (f *fakeUserRepo) SetAdmin(context.Context, string, bool) error { return nil }
 func (f *fakeUserRepo) CountAdmins(context.Context) (int64, error)   { return 0, nil }
+func (f *fakeUserRepo) FindAdminsByEmail(_ context.Context) ([]*models.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var admins []*models.User
+	for _, u := range f.byID {
+		if u.IsAdmin {
+			c := *u
+			admins = append(admins, &c)
+		}
+	}
+	return admins, nil
+}
 func (f *fakeUserRepo) Delete(context.Context, string) error         { return nil }
 
 type fakeTokenRepo struct {

@@ -30,10 +30,11 @@ type RefreshToken struct {
 	// fast and concurrent-rotation races are resolved by the DB.
 	TokenHash string `gorm:"type:char(64);uniqueIndex:ux_refresh_tokens_hash;not null" json:"-"`
 
-	ExpiresAt  time.Time  `gorm:"type:datetime(6);not null;index:ix_refresh_tokens_expires" json:"expires_at"`
-	RevokedAt  *time.Time `gorm:"type:datetime(6)"                                          json:"revoked_at,omitempty"`
-	LastUsedAt *time.Time `gorm:"type:datetime(6)"                                          json:"last_used_at,omitempty"`
-	CreatedAt  time.Time  `gorm:"type:datetime(6);not null"                                 json:"created_at"`
+	ExpiresAt      time.Time  `gorm:"type:datetime(6);not null;index:ix_refresh_tokens_expires" json:"expires_at"`
+	RevokedAt      *time.Time `gorm:"type:datetime(6)"                                          json:"revoked_at,omitempty"`
+	LastUsedAt     *time.Time `gorm:"type:datetime(6)"                                          json:"last_used_at,omitempty"`
+	ImpersonatedBy *string    `gorm:"type:char(26)"                                             json:"impersonated_by,omitempty"`
+	CreatedAt      time.Time  `gorm:"type:datetime(6);not null"                                 json:"created_at"`
 }
 
 // TableName keeps the explicit snake_case plural, matching golang-migrate.

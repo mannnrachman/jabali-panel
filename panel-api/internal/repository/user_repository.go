@@ -27,6 +27,8 @@ type UserRepository interface {
 	// CountAdmins returns the number of non-deleted admin rows. Used to
 	// refuse demoting / deleting the last admin and causing a lockout.
 	CountAdmins(ctx context.Context) (int64, error)
+	// FindAdminsByEmail returns all admin users. Used by CLI break-glass login.
+	FindAdminsByEmail(ctx context.Context) ([]*models.User, error)
 	Delete(ctx context.Context, id string) error
 }
 
@@ -116,6 +118,17 @@ func (r *userRepo) CountAdmins(ctx context.Context) (int64, error) {
 		return 0, translate(err)
 	}
 	return n, nil
+}
+
+func (r *userRepo) FindAdminsByEmail(ctx context.Context) ([]*models.User, error) {
+	var admins []*models.User
+	if err := r.db.WithContext(ctx).
+		Where("is_admin = ?", true).
+		Order("email ASC").
+		Find(&admins).Error; err != nil {
+		return nil, translate(err)
+	}
+	return admins, nil
 }
 
 func (r *userRepo) Delete(ctx context.Context, id string) error {

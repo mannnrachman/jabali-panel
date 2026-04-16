@@ -47,6 +47,9 @@ func newRootCmd() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&cfgPath, "config", "", "config file path (default: /etc/jabali/config.toml)")
 	cmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output as JSON")
 
+	adminCmd := newAdminCmd()
+	adminCmd.AddCommand(newAdminLoginCmd())
+
 	cmd.AddCommand(
 		newServeCmd(),
 		newUserCmd(),
@@ -56,6 +59,7 @@ func newRootCmd() *cobra.Command {
 		newMigrateCmd(),
 		newUpdateCmd(),
 		newReconcileCmd(),
+		adminCmd,
 	)
 
 	return cmd

@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 )
 
 // AuthService is the subset of auth.Service that the HTTP layer needs. An
@@ -18,6 +19,8 @@ type AuthService interface {
 	Login(ctx context.Context, in auth.LoginInput) (*auth.LoginOutput, error)
 	Refresh(ctx context.Context, in auth.RefreshInput) (*auth.LoginOutput, error)
 	Logout(ctx context.Context, raw string) error
+	RedeemCLIToken(ctx context.Context, cliToken string, deviceID string) (*auth.LoginOutput, error)
+	IssueImpersonation(ctx context.Context, targetUser *models.User, adminID string) (*auth.ImpersonationOutput, error)
 }
 
 // AuthHandlerConfig captures everything the handler needs to emit cookies
@@ -68,6 +71,7 @@ func RegisterAuthRoutes(r *gin.Engine, cfg AuthHandlerConfig) {
 	g.POST("/login", append(loginChain, h.login)...)
 	g.POST("/refresh", h.refresh)
 	g.POST("/logout", append(logoutChain, h.logout)...)
+	g.POST("/cli-login", h.cliLogin)
 }
 
 type authHandler struct{ cfg AuthHandlerConfig }

@@ -118,14 +118,20 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		v1 := r.Group("/api/v1", middleware.RequireAuth(deps.JWTIssuer))
 		api.RegisterMeRoutes(v1)
 		if deps.Users != nil {
-			api.RegisterUserRoutes(v1, api.UserHandlerConfig{
-				Repo:            deps.Users,
-				Agent:           deps.Agent,
-				StrictRateLimit: rl.Strict(),
-				Domains:         deps.Domains,
-				Reconciler:      deps.Reconciler,
-			})
-		}
+		api.RegisterUserRoutes(v1, api.UserHandlerConfig{
+			Repo:            deps.Users,
+			Agent:           deps.Agent,
+			StrictRateLimit: rl.Strict(),
+			Domains:         deps.Domains,
+			Reconciler:      deps.Reconciler,
+			AuthService:     deps.Auth,
+			AccessTTL:       cfg.Auth.AccessTTL,
+			RefreshTTL:      cfg.Auth.RefreshTTL,
+			CookieName:      api.DefaultRefreshCookieName,
+			CookieSecure:    cfg.CookieSecureResolved(),
+			Log:             deps.Log,
+		})
+	}
 		if deps.Packages != nil {
 			api.RegisterPackageRoutes(v1, api.PackageHandlerConfig{Repo: deps.Packages})
 		}

@@ -31,6 +31,13 @@ func RequireAuth(iss *auth.JWTIssuer) gin.HandlerFunc {
 			})
 			return
 		}
+		// Reject tokens with a Purpose claim — they are one-shot tokens for specific endpoints
+		if claims.Purpose != "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "invalid_token",
+			})
+			return
+		}
 		ginctx.SetClaims(c, claims)
 		c.Next()
 	}

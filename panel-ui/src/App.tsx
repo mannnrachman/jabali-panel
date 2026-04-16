@@ -1,27 +1,41 @@
 // App root — Refine + AntD + React Router.
 //
-// Routes:
-//   /          → Dashboard, behind <Authenticated>
-//   /login     → LoginPage, only shown when not authed (redirects home otherwise)
-//   everything else → 404
+// Layout:
+//   Protected routes sit under <ThemedLayoutV2>, which provides the
+//   sidebar + header. Refine reads the `resources` prop to auto-populate
+//   the sidebar with links to the register'd resources.
 //
-// Phase 9+ will register resources ("users", "domains", …) and let
-// Refine auto-wire the list/create/edit/show routes via its
-// <NavigateToResource> helper.
+// Routes:
+//   /login              → LoginPage (public)
+//   /                   → redirects to /users (first resource)
+//   /users              → UserList
+//   /users/create       → UserCreate
+//   /users/edit/:id     → UserEdit
+//   everything else     → 404 via AntD's ErrorComponent
 import { Authenticated, Refine } from "@refinedev/core";
-import { RefineThemes, useNotificationProvider } from "@refinedev/antd";
+import {
+  ErrorComponent,
+  RefineThemes,
+  ThemedLayoutV2,
+  ThemedTitleV2,
+  useNotificationProvider,
+} from "@refinedev/antd";
 import routerProvider, {
   CatchAllNavigate,
-  UnsavedChangesNotifier,
   DocumentTitleHandler,
+  NavigateToResource,
+  UnsavedChangesNotifier,
 } from "@refinedev/react-router";
 import { BrowserRouter, Outlet, Route, Routes } from "react-router";
-import { ConfigProvider, Layout } from "antd";
+import { ConfigProvider } from "antd";
+import { TeamOutlined } from "@ant-design/icons";
 
 import { authProvider } from "./authProvider";
 import { dataProvider } from "./dataProvider";
-import { DashboardPage } from "./pages/Dashboard";
 import { LoginPage } from "./pages/Login";
+import { UserCreate } from "./pages/users/UserCreate";
+import { UserEdit } from "./pages/users/UserEdit";
+import { UserList } from "./pages/users/UserList";
 
 const App = () => {
   return (
@@ -32,42 +46,61 @@ const App = () => {
           dataProvider={dataProvider}
           routerProvider={routerProvider}
           notificationProvider={useNotificationProvider}
+          resources={[
+            {
+              name: "users",
+              list: "/users",
+              create: "/users/create",
+              edit: "/users/edit/:id",
+              meta: { label: "Users", icon: <TeamOutlined /> },
+            },
+          ]}
           options={{
             warnWhenUnsavedChanges: true,
-            // Phase 8 has no resources; list is an intentional empty array
-            // so <NavigateToResource> (used later) has a predictable target.
+            // Route UX polish: reflect list filters / sorts in the URL
+            // so a back-button click brings you back to the same view.
+            syncWithLocation: true,
           }}
         >
           <Routes>
-            {/* Protected group: everything inside requires authentication.
-                CatchAllNavigate sends the unauth'd viewer to /login. */}
+            {/* Protected group: wrapped in the full admin layout. */}
             <Route
               element={
                 <Authenticated
                   key="protected"
                   fallback={<CatchAllNavigate to="/login" />}
                 >
-                  <Layout style={{ minHeight: "100vh" }}>
+                  <ThemedLayoutV2
+                    Title={({ collapsed }) => (
+                      <ThemedTitleV2 collapsed={collapsed} text="Jabali Panel" />
+                    )}
+                  >
                     <Outlet />
-                  </Layout>
+                  </ThemedLayoutV2>
                 </Authenticated>
               }
             >
-              <Route index element={<DashboardPage />} />
+              <Route index element={<NavigateToResource resource="users" />} />
+
+              <Route path="/users">
+                <Route index element={<UserList />} />
+                <Route path="create" element={<UserCreate />} />
+                <Route path="edit/:id" element={<UserEdit />} />
+              </Route>
+
+              <Route path="*" element={<ErrorComponent />} />
             </Route>
 
-            {/* Public group: login page. Already-authed users get bounced home. */}
+            {/* Public group: login only. Already-authed → redirect home. */}
             <Route
               element={
                 <Authenticated key="public" fallback={<Outlet />}>
-                  <CatchAllNavigate to="/" />
+                  <NavigateToResource resource="users" />
                 </Authenticated>
               }
             >
               <Route path="/login" element={<LoginPage />} />
             </Route>
-
-            <Route path="*" element={<div>404 — not found</div>} />
           </Routes>
 
           <UnsavedChangesNotifier />

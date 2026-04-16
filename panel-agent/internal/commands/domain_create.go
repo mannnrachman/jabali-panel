@@ -5,13 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"text/template"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 )
@@ -23,6 +23,7 @@ type domainCreateParams struct {
 	DocRoot            string `json:"doc_root"`
 	PHPVersion         string `json:"php_version"`
 	CustomDirectives   string `json:"custom_directives"`
+	RedirectDirectives string `json:"redirect_directives"`
 	// IsEnabled controls whether the vhost serves the tenant's docroot
 	// (true) or a branded "site disabled" placeholder (false). Pointer
 	// so omitted fields default to true (backwards compat).
@@ -62,6 +63,7 @@ const vhostTemplate = `server {
     access_log /var/log/nginx/{{.Domain}}-access.log;
     error_log /var/log/nginx/{{.Domain}}-error.log;
 
+    {{.RedirectDirectives}}
     {{.CustomDirectives}}
 {{ else }}
     # Domain is administratively disabled. Serve the branded
@@ -77,12 +79,13 @@ const vhostTemplate = `server {
 `
 
 type vhostData struct {
-	Domain           string
-	DocRoot          string
-	PHPVersion       string
-	Username         string
-	CustomDirectives string
-	IsEnabled        bool
+	Domain             string
+	DocRoot            string
+	PHPVersion         string
+	Username           string
+	RedirectDirectives string
+	CustomDirectives   string
+	IsEnabled          bool
 }
 
 // pathsUnderHome returns each directory from docRoot up to but NOT
@@ -109,7 +112,7 @@ func pathsUnderHome(username, docRoot string) []string {
 // writeVhost generates and writes the nginx vhost configuration, then tests and reloads nginx.
 // This is the core logic shared by domain.create and domain.enable/disable.
 // If the config content is unchanged, nginx reload is skipped for efficiency.
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, customDirectives string, isEnabled bool) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, customDirectives string, isEnabled bool) (string, error) {
 	// Generate vhost configuration
 	tmpl, err := template.New("vhost").Parse(vhostTemplate)
 	if err != nil {
@@ -117,12 +120,13 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, cust
 	}
 
 	vhostData := vhostData{
-		Domain:           domain,
-		DocRoot:          docRoot,
-		PHPVersion:       phpVersion,
-		Username:         username,
-		CustomDirectives: customDirectives,
-		IsEnabled:        isEnabled,
+		Domain:             domain,
+		DocRoot:            docRoot,
+		PHPVersion:         phpVersion,
+		Username:           username,
+		RedirectDirectives: redirectDirectives,
+		CustomDirectives:   customDirectives,
+		IsEnabled:          isEnabled,
 	}
 
 	var vhostConfig bytes.Buffer
@@ -253,7 +257,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		isEnabled = *p.IsEnabled
 	}
 
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.CustomDirectives, isEnabled)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.CustomDirectives, isEnabled)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

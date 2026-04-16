@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"html/template"
 	"reflect"
 	"strings"
 	"testing"
+	"text/template"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -361,6 +361,100 @@ func TestDomainCreateHandler_CustomDirectivesNotInDisabledBlock(t *testing.T) {
 	// Should NOT contain the custom directive in disabled mode
 	if strings.Contains(output, customDirective) {
 		t.Errorf("expected output to NOT contain custom directive in disabled mode, got: %s", output)
+	}
+	// Should contain the disabled page config
+	if !strings.Contains(output, "/var/www/jabali-disabled") {
+		t.Errorf("expected output to contain disabled page path, got: %s", output)
+	}
+}
+
+func TestDomainCreateHandler_RedirectDirectives(t *testing.T) {
+	t.Parallel()
+
+	// Test that redirect directives are interpolated correctly into the enabled vhost
+	// and appear BEFORE custom directives (higher precedence)
+	redirectDirective := `    return 301 "https://new.com";` + "\n"
+	customDirective := "add_header X-Test 1;"
+	params := domainCreateParams{
+		Username:           "testuser",
+		Domain:             "example.com",
+		DocRoot:            "/home/testuser/public_html/example.com",
+		PHPVersion:         "8.3",
+		RedirectDirectives: redirectDirective,
+		CustomDirectives:   customDirective,
+		IsEnabled:          ptrBool(true),
+	}
+
+	// Verify the template renders with redirect directives
+	tmpl, _ := template.New("vhost").Parse(vhostTemplate)
+	vd := vhostData{
+		Domain:             params.Domain,
+		DocRoot:            params.DocRoot,
+		PHPVersion:         params.PHPVersion,
+		Username:           params.Username,
+		RedirectDirectives: params.RedirectDirectives,
+		CustomDirectives:   params.CustomDirectives,
+		IsEnabled:          true,
+	}
+	var buf bytes.Buffer
+	_ = tmpl.Execute(&buf, vd)
+	output := buf.String()
+
+	// Should contain both redirect and custom directives
+	if !strings.Contains(output, redirectDirective) {
+		t.Errorf("expected output to contain redirect directive %q, got: %s", redirectDirective, output)
+	}
+	if !strings.Contains(output, customDirective) {
+		t.Errorf("expected output to contain custom directive %q, got: %s", customDirective, output)
+	}
+
+	// Verify redirect directive appears BEFORE custom directive (higher precedence)
+	redirectIdx := strings.Index(output, redirectDirective)
+	customIdx := strings.Index(output, customDirective)
+	if redirectIdx < 0 || customIdx < 0 {
+		t.Fatalf("missing directives in output")
+	}
+	if redirectIdx >= customIdx {
+		t.Errorf("expected redirect directive to appear before custom directive, but redirect at %d >= custom at %d", redirectIdx, customIdx)
+	}
+
+	// Should also contain other enabled config
+	if !strings.Contains(output, "fastcgi_pass") {
+		t.Errorf("expected output to contain PHP-FPM config, got: %s", output)
+	}
+}
+
+func TestDomainCreateHandler_RedirectsNotInDisabledBlock(t *testing.T) {
+	t.Parallel()
+
+	// Test that redirect directives are NOT included when vhost is disabled
+	redirectDirective := `    return 301 "https://new.com";` + "\n"
+	params := domainCreateParams{
+		Username:           "testuser",
+		Domain:             "example.com",
+		DocRoot:            "/home/testuser/public_html/example.com",
+		PHPVersion:         "8.3",
+		RedirectDirectives: redirectDirective,
+		IsEnabled:          ptrBool(false),
+	}
+
+	// Verify the template renders the disabled page without redirect directives
+	tmpl, _ := template.New("vhost").Parse(vhostTemplate)
+	vd := vhostData{
+		Domain:             params.Domain,
+		DocRoot:            params.DocRoot,
+		PHPVersion:         params.PHPVersion,
+		Username:           params.Username,
+		RedirectDirectives: redirectDirective,
+		IsEnabled:          false,
+	}
+	var buf bytes.Buffer
+	_ = tmpl.Execute(&buf, vd)
+	output := buf.String()
+
+	// Should NOT contain the redirect directive in disabled mode
+	if strings.Contains(output, redirectDirective) {
+		t.Errorf("expected output to NOT contain redirect directive in disabled mode, got: %s", output)
 	}
 	// Should contain the disabled page config
 	if !strings.Contains(output, "/var/www/jabali-disabled") {

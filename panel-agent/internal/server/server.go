@@ -42,6 +42,11 @@ type Config struct {
 	// (caller-supplied deadline still applies). We default to 120s in main.go.
 	PerRequestTimeout time.Duration
 
+	// AllowedUIDs lists the Unix UIDs permitted to connect. If empty, any
+	// UID is allowed (for testing). Production should set this to the
+	// panel-api user's UID + root (0).
+	AllowedUIDs []uint32
+
 	// MaxRequestBytes caps a single NDJSON request line. A misbehaving or
 	// malicious client can't drain memory. Default 8 MiB.
 	MaxRequestBytes int
@@ -166,6 +171,34 @@ func (s *Server) Close() error {
 func (s *Server) serveConn(parent context.Context, conn net.Conn) {
 	defer s.conns.Done()
 	defer func() { _ = conn.Close() }()
+
+	// Peer credential check: verify the connecting process is an allowed UID.
+	if len(s.cfg.AllowedUIDs) > 0 {
+		uid, err := peerUID(conn)
+		if err != nil {
+			s.log.Warn("agent peer check failed", "err", err)
+			s.writeError(conn, "", &agentwire.AgentError{
+				Code:    agentwire.CodePermissionDenied,
+				Message: "peer credential check failed",
+			})
+			return
+		}
+		allowed := false
+		for _, u := range s.cfg.AllowedUIDs {
+			if uid == u {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			s.log.Warn("agent rejected connection from unauthorized UID", "uid", uid)
+			s.writeError(conn, "", &agentwire.AgentError{
+				Code:    agentwire.CodePermissionDenied,
+				Message: fmt.Sprintf("UID %d is not authorized", uid),
+			})
+			return
+		}
+	}
 
 	// Outer deadline: if the caller's Request.Deadline is missing or bogus,
 	// PerRequestTimeout stops a rogue peer from wedging us.

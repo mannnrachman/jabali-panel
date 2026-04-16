@@ -110,6 +110,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		if deps.Users != nil {
 			api.RegisterUserRoutes(v1, api.UserHandlerConfig{Repo: deps.Users})
 		}
+		if deps.Agent != nil {
+			api.RegisterSystemRoutes(v1, deps.Agent)
+		}
 	}
 
 	// Static SPA: owns r.NoRoute — serves embedded panel-ui/dist for

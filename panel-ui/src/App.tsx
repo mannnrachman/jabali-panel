@@ -23,7 +23,7 @@ import routerProvider, {
   DocumentTitleHandler,
   UnsavedChangesNotifier,
 } from "@refinedev/react-router";
-import { BrowserRouter, Outlet, Route, Routes } from "react-router";
+import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router";
 import { ConfigProvider } from "antd";
 
 import { authProvider } from "./authProvider";
@@ -32,6 +32,7 @@ import { AdminLayout } from "./shells/AdminLayout";
 import { UserLayout } from "./shells/UserLayout";
 import { RoleGate } from "./shells/RoleGate";
 import { LandingRedirect } from "./shells/LandingRedirect";
+import { Dashboard } from "./shells/admin/Dashboard";
 import { UserCreate } from "./shells/admin/users/UserCreate";
 import { UserEdit } from "./shells/admin/users/UserEdit";
 import { UserList } from "./shells/admin/users/UserList";
@@ -78,8 +79,9 @@ const App = () => {
                 </Authenticated>
               }
             >
-              {/* bare /jabali-admin → users list */}
-              <Route index element={<UserList />} />
+              {/* bare /jabali-admin → dashboard as default landing */}
+              <Route index element={<Navigate to="dashboard" replace />} />
+              <Route path="dashboard" element={<Dashboard />} />
               <Route path="users">
                 <Route index element={<UserList />} />
                 <Route path="create" element={<UserCreate />} />

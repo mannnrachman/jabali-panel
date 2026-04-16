@@ -10,6 +10,7 @@
 // in?" boolean branching inside.
 import { useLogout } from "@refinedev/core";
 import {
+  DashboardOutlined,
   LogoutOutlined,
   SettingOutlined,
   TeamOutlined,
@@ -27,8 +28,8 @@ const { Header, Sider, Content } = Layout;
 // Admin nav. Keep this array the single source of truth for what shows in
 // the admin sidebar — adding a new admin page = add an item here.
 const MENU: { key: string; path: string; label: string; icon: JSX.Element }[] = [
+  { key: "dashboard", path: "/jabali-admin/dashboard", label: "Dashboard", icon: <DashboardOutlined /> },
   { key: "users", path: "/jabali-admin/users", label: "Users", icon: <TeamOutlined /> },
-  // future: domains, system-settings, etc.
 ];
 
 export function AdminLayout() {

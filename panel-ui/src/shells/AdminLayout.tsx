@@ -15,6 +15,7 @@ import {
   DashboardOutlined,
   GlobalOutlined,
   LogoutOutlined,
+  SafetyCertificateOutlined,
   SettingOutlined,
   TeamOutlined,
   UserOutlined,
@@ -36,6 +37,7 @@ const MENU: { key: string; path: string; label: string; icon: JSX.Element }[] = 
   { key: "packages", path: "/jabali-admin/packages", label: "Packages", icon: <AppstoreOutlined /> },
   { key: "domains", path: "/jabali-admin/domains", label: "Domains", icon: <GlobalOutlined /> },
   { key: "dns", path: "/jabali-admin/dns", label: "DNS", icon: <CloudServerOutlined /> },
+  { key: "ssl", path: "/jabali-admin/ssl", label: "SSL", icon: <SafetyCertificateOutlined /> },
   { key: "settings", path: "/jabali-admin/settings", label: "Settings", icon: <CloudServerOutlined /> },
 ];
 

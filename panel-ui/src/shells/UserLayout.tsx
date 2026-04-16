@@ -9,6 +9,7 @@ import {
   GlobalOutlined,
   HomeOutlined,
   LogoutOutlined,
+  SafetyCertificateOutlined,
   UserOutlined,
 } from "@ant-design/icons";
 import { Avatar, Button, Dropdown, Layout, Menu, Typography } from "antd";
@@ -24,7 +25,8 @@ const MENU: { key: string; path: string; label: string; icon: JSX.Element }[] = 
   { key: "profile", path: "/jabali-panel/profile", label: "My profile", icon: <UserOutlined /> },
   { key: "domains", path: "/jabali-panel/domains", label: "Domains", icon: <GlobalOutlined /> },
   { key: "dns", path: "/jabali-panel/dns", label: "DNS", icon: <GlobalOutlined /> },
-  // future: email, dns, databases, wordpress, ssl, cron, …
+  { key: "ssl", path: "/jabali-panel/ssl", label: "SSL", icon: <SafetyCertificateOutlined /> },
+  // future: email, databases, wordpress, cron, …
 ];
 
 export function UserLayout() {

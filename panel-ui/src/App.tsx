@@ -50,6 +50,8 @@ import { UserDomainCreate } from "./shells/user/domains/UserDomainCreate";
 import { DNSRecordsPage } from "./shells/dns/DNSRecordsPage";
 import { DNSZonesOverviewPage } from "./shells/admin/dns/DNSZonesOverviewPage";
 import { UserDNSZonesOverviewPage } from "./shells/user/dns/UserDNSZonesOverviewPage";
+import { SSLManagerPage } from "./shells/admin/ssl/SSLManagerPage";
+import { UserSSLManagerPage } from "./shells/user/ssl/UserSSLManagerPage";
 import { LoginPage } from "./pages/Login";
 
 const App = () => {
@@ -126,6 +128,7 @@ const App = () => {
                 <Route path=":id/dns" element={<DNSRecordsPage />} />
               </Route>
               <Route path="dns" element={<DNSZonesOverviewPage />} />
+              <Route path="ssl" element={<SSLManagerPage />} />
               <Route path="settings" element={<ServerSettingsPage />} />
             </Route>
 
@@ -151,6 +154,7 @@ const App = () => {
                 <Route path=":id/dns" element={<DNSRecordsPage />} />
               </Route>
               <Route path="dns" element={<UserDNSZonesOverviewPage />} />
+              <Route path="ssl" element={<UserSSLManagerPage />} />
             </Route>
 
             {/* ---------------- public ---------------- */}

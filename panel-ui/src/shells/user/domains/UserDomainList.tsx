@@ -5,6 +5,7 @@ import { Button, Space, Table, Tag, Typography } from "antd";
 import { useNavigate } from "react-router";
 
 import { DomainToggleButton } from "../../DomainToggleButton";
+import { DomainSettingsButton } from "../../DomainSettingsButton";
 
 export type Domain = {
   id: string;
@@ -64,6 +65,7 @@ export const UserDomainList = () => {
           dataIndex="actions"
           render={(_, r) => (
             <Space size="small">
+              <DomainSettingsButton domain={r} />
               <DomainToggleButton domain={r} />
               <DeleteButton hideText size="small" recordItemId={r.id} />
             </Space>

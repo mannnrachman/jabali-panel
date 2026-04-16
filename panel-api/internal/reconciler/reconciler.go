@@ -217,6 +217,12 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 		"is_enabled":  domain.IsEnabled,
 	}
 
+	if domain.NginxCustomDirectives != nil {
+		params["custom_directives"] = *domain.NginxCustomDirectives
+	} else {
+		params["custom_directives"] = ""
+	}
+
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 

@@ -3,6 +3,7 @@ import { DeleteButton, EditButton } from "@refinedev/antd";
 import { Space, Table, Tag, Typography } from "antd";
 
 import { DomainToggleButton } from "../../DomainToggleButton";
+import { DomainSettingsButton } from "../../DomainSettingsButton";
 
 export type Domain = {
   id: string;
@@ -59,6 +60,7 @@ export const DomainList = () => {
           dataIndex="actions"
           render={(_, r) => (
             <Space size="small">
+              <DomainSettingsButton domain={r} />
               <DomainToggleButton domain={r} />
               <EditButton hideText size="small" recordItemId={r.id} />
               <DeleteButton hideText size="small" recordItemId={r.id} />

@@ -337,6 +337,50 @@ func TestReconcileOne_DomainNotFound(t *testing.T) {
 	require.Len(t, agent.calls, 0)
 }
 
+func TestReconcileOne_PassesCustomDirectives(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+
+	now := time.Now().UTC()
+	username := "bob"
+	user := &models.User{
+		ID:       "user-2",
+		Email:    "bob@example.com",
+		Username: &username,
+	}
+	userRepo.users[user.ID] = user
+
+	customDirectives := "add_header X-Foo bar;"
+	domain := &models.Domain{
+		ID:                     "domain-4",
+		UserID:                 user.ID,
+		Name:                   "test2.com",
+		DocRoot:                "/home/bob/domains/test2.com/public_html",
+		IsEnabled:              true,
+		NginxCustomDirectives:  &customDirectives,
+		CreatedAt:              now,
+		UpdatedAt:              now,
+	}
+	domainRepo.domains[domain.ID] = domain
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second})
+
+	err := r.ReconcileOne(ctx, domain.ID)
+	require.NoError(t, err)
+
+	// Verify that domain.create was called
+	require.Len(t, agent.calls, 1)
+	require.Equal(t, "domain.create", agent.calls[0].method)
+
+	// Verify that custom_directives was passed in params
+	params := agent.calls[0].params.(map[string]any)
+	require.Equal(t, customDirectives, params["custom_directives"])
+}
+
 func TestSchedule_NonBlocking(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 

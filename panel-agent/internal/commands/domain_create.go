@@ -18,10 +18,11 @@ import (
 
 // domainCreateParams is the input shape for domain.create.
 type domainCreateParams struct {
-	Username   string `json:"username"`
-	Domain     string `json:"domain"`
-	DocRoot    string `json:"doc_root"`
-	PHPVersion string `json:"php_version"`
+	Username           string `json:"username"`
+	Domain             string `json:"domain"`
+	DocRoot            string `json:"doc_root"`
+	PHPVersion         string `json:"php_version"`
+	CustomDirectives   string `json:"custom_directives"`
 	// IsEnabled controls whether the vhost serves the tenant's docroot
 	// (true) or a branded "site disabled" placeholder (false). Pointer
 	// so omitted fields default to true (backwards compat).
@@ -108,7 +109,7 @@ func pathsUnderHome(username, docRoot string) []string {
 // writeVhost generates and writes the nginx vhost configuration, then tests and reloads nginx.
 // This is the core logic shared by domain.create and domain.enable/disable.
 // If the config content is unchanged, nginx reload is skipped for efficiency.
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion string, isEnabled bool) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, customDirectives string, isEnabled bool) (string, error) {
 	// Generate vhost configuration
 	tmpl, err := template.New("vhost").Parse(vhostTemplate)
 	if err != nil {
@@ -120,7 +121,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion strin
 		DocRoot:          docRoot,
 		PHPVersion:       phpVersion,
 		Username:         username,
-		CustomDirectives: "",
+		CustomDirectives: customDirectives,
 		IsEnabled:        isEnabled,
 	}
 
@@ -252,7 +253,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		isEnabled = *p.IsEnabled
 	}
 
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, isEnabled)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.CustomDirectives, isEnabled)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

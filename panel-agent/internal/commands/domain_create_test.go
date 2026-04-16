@@ -292,6 +292,82 @@ func TestDomainCreateHandler_IsEnabledNil(t *testing.T) {
 	}
 }
 
+func TestDomainCreateHandler_CustomDirectives(t *testing.T) {
+	t.Parallel()
+
+	// Test that custom nginx directives are included in the vhost template
+	customDirective := "add_header X-Test 1;"
+	params := domainCreateParams{
+		Username:         "testuser",
+		Domain:           "example.com",
+		DocRoot:          "/home/testuser/public_html/example.com",
+		PHPVersion:       "8.3",
+		CustomDirectives: customDirective,
+		IsEnabled:        ptrBool(true),
+	}
+
+	// Verify the template renders with custom directives
+	tmpl, _ := template.New("vhost").Parse(vhostTemplate)
+	vd := vhostData{
+		Domain:           params.Domain,
+		DocRoot:          params.DocRoot,
+		PHPVersion:       params.PHPVersion,
+		Username:         params.Username,
+		CustomDirectives: params.CustomDirectives,
+		IsEnabled:        true,
+	}
+	var buf bytes.Buffer
+	_ = tmpl.Execute(&buf, vd)
+	output := buf.String()
+
+	// Should contain the custom directive inside the enabled server block
+	if !strings.Contains(output, customDirective) {
+		t.Errorf("expected output to contain custom directive %q, got: %s", customDirective, output)
+	}
+	// Should also contain other enabled config
+	if !strings.Contains(output, "fastcgi_pass") {
+		t.Errorf("expected output to contain PHP-FPM config, got: %s", output)
+	}
+}
+
+func TestDomainCreateHandler_CustomDirectivesNotInDisabledBlock(t *testing.T) {
+	t.Parallel()
+
+	// Test that custom directives are NOT included when vhost is disabled
+	customDirective := "add_header X-Test 1;"
+	params := domainCreateParams{
+		Username:         "testuser",
+		Domain:           "example.com",
+		DocRoot:          "/home/testuser/public_html/example.com",
+		PHPVersion:       "8.3",
+		CustomDirectives: customDirective,
+		IsEnabled:        ptrBool(false),
+	}
+
+	// Verify the template renders the disabled page without custom directives
+	tmpl, _ := template.New("vhost").Parse(vhostTemplate)
+	vd := vhostData{
+		Domain:           params.Domain,
+		DocRoot:          params.DocRoot,
+		PHPVersion:       params.PHPVersion,
+		Username:         params.Username,
+		CustomDirectives: customDirective,
+		IsEnabled:        false,
+	}
+	var buf bytes.Buffer
+	_ = tmpl.Execute(&buf, vd)
+	output := buf.String()
+
+	// Should NOT contain the custom directive in disabled mode
+	if strings.Contains(output, customDirective) {
+		t.Errorf("expected output to NOT contain custom directive in disabled mode, got: %s", output)
+	}
+	// Should contain the disabled page config
+	if !strings.Contains(output, "/var/www/jabali-disabled") {
+		t.Errorf("expected output to contain disabled page path, got: %s", output)
+	}
+}
+
 func TestDomainCreateHandler_RequiresRootNginx(t *testing.T) {
 	t.Skip("requires root + nginx")
 

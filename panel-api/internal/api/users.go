@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -71,12 +72,13 @@ type userHandler struct{ cfg UserHandlerConfig }
 // ---------- request / response shapes ----------
 
 type createUserRequest struct {
-	Email           string `json:"email"           binding:"required,email"`
-	Password        string `json:"password"        binding:"required,min=10"`
-	NameFirst       string `json:"name_first"`
-	NameLast        string `json:"name_last"`
-	IsAdmin         bool   `json:"is_admin"`
-	SkipProvision   bool   `json:"skip_provision,omitempty"`
+	Email           string  `json:"email"                    binding:"required,email"`
+	Password        string  `json:"password"                 binding:"required,min=10"`
+	Username        *string `json:"username,omitempty"       binding:"omitempty,min=1,max=32"`
+	NameFirst       string  `json:"name_first"`
+	NameLast        string  `json:"name_last"`
+	IsAdmin         bool    `json:"is_admin"`
+	SkipProvision   bool    `json:"skip_provision,omitempty"`
 }
 
 // updateUserRequest uses pointers so the handler can distinguish "omit this
@@ -138,29 +140,55 @@ func (h *userHandler) create(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+
+	// Compute effective username: use req.Username if provided, else derive from email prefix.
+	// For admins, username stays NULL. For regular users, validate and set.
+	var effectiveUsername *string
+	if !req.IsAdmin {
+		if req.Username != nil {
+			effectiveUsername = req.Username
+		} else {
+			derived := linuxUserFromEmail(req.Email)
+			effectiveUsername = &derived
+		}
+		// Validate the username against POSIX regex.
+		if effectiveUsername != nil && !validUsername(*effectiveUsername) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":  "invalid_username",
+				"detail": "username must match regex ^[a-z_][a-z0-9_-]{0,31}$",
+			})
+			return
+		}
+	}
+
 	u := &models.User{
 		ID:           ids.NewULID(),
 		Email:        req.Email,
+		Username:     effectiveUsername,
 		NameFirst:    req.NameFirst,
 		NameLast:     req.NameLast,
 		PasswordHash: string(hash),
 		IsAdmin:      req.IsAdmin,
 	}
 	if err := h.cfg.Repo.Create(c.Request.Context(), u); err != nil {
+		// Check if the error is a username collision specifically.
+		if isConflict(err) && effectiveUsername != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "username_taken"})
+			return
+		}
 		h.translateErr(c, err)
 		return
 	}
 
 	// Best-effort OS user provisioning. Write DB first, then agent call.
 	// If agent fails, return 201 with provision_warning but keep the DB row.
-	if h.cfg.Agent != nil && !req.SkipProvision {
-		username := linuxUserFromEmail(req.Email)
+	if h.cfg.Agent != nil && !req.SkipProvision && !req.IsAdmin && effectiveUsername != nil {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 		defer cancel()
 
 		_, err := h.cfg.Agent.Call(ctx, "user.create", map[string]any{
-			"username": username,
-			"home_dir": "/home/" + username,
+			"username": *effectiveUsername,
+			"home_dir": "/home/" + *effectiveUsername,
 			"shell":    "/bin/bash",
 			"password": req.Password,
 		})
@@ -276,12 +304,12 @@ func (h *userHandler) update(c *gin.Context) {
 	// (admins have full system access). Run in background so client
 	// sees DB update immediately; if agent fails, user can still log in
 	// with the new password via SSH.
-	if req.Password != nil && !claims.IsAdmin && h.cfg.Agent != nil {
+	if req.Password != nil && !claims.IsAdmin && h.cfg.Agent != nil && existing.Username != nil {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			_, err := h.cfg.Agent.Call(ctx, "user.password", map[string]any{
-				"username": linuxUserFromEmail(existing.Email),
+				"username": *existing.Username,
 				"password": *req.Password,
 			})
 			if err != nil {
@@ -337,9 +365,12 @@ func (h *userHandler) delete(c *gin.Context) {
 		}
 	}
 
-	// Capture email BEFORE deleting so we can tear down the OS user
-	// even after the DB row is gone.
-	username := linuxUserFromEmail(target.Email)
+	// Capture username BEFORE deleting so we can tear down the OS user
+	// even after the DB row is gone. For admins, username is NULL.
+	var username string
+	if target.Username != nil {
+		username = *target.Username
+	}
 
 	if err := h.cfg.Repo.Delete(c.Request.Context(), id); err != nil {
 		h.translateErr(c, err)
@@ -398,11 +429,12 @@ func (h *userHandler) reprovision(c *gin.Context) {
 		return
 	}
 
-	username := linuxUserFromEmail(user.Email)
-	if username == "" {
+	// Username should always be set for non-admin users.
+	if user.Username == nil || *user.Username == "" {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "cannot_derive_username"})
 		return
 	}
+	username := *user.Username
 
 	// This endpoint is deliberately agent-first + synchronous. Manual
 	// recovery needs to tell the admin whether the OS side actually
@@ -495,6 +527,14 @@ func parsePagination(c *gin.Context) (page, pageSize int) {
 		pageSize = maxUsersPageSize
 	}
 	return page, pageSize
+}
+
+var usernameRe = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+
+// validUsername returns true if s matches the POSIX username regex:
+// ^[a-z_][a-z0-9_-]{0,31}$
+func validUsername(s string) bool {
+	return usernameRe.MatchString(s)
 }
 
 // linuxUserFromEmail derives a Linux username from an email. Takes the

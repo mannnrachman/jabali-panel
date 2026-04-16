@@ -132,7 +132,7 @@ func TestIntegration_UserCRUD(t *testing.T) {
 	assert.GreaterOrEqual(t, total, int64(1))
 	assert.NotEmpty(t, list)
 
-	// Delete — soft delete.
+	// Delete — hard delete.
 	require.NoError(t, repo.Delete(ctx, got.ID))
 	_, err = repo.FindByID(ctx, got.ID)
 	require.Error(t, err)

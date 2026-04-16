@@ -62,6 +62,18 @@ func (f *fakeUserRepo) FindByEmail(_ context.Context, email string) (*models.Use
 	}
 	return nil, repository.ErrNotFound
 }
+
+func (f *fakeUserRepo) FindByUsername(_ context.Context, username string) (*models.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, u := range f.byID {
+		if u.Username != nil && *u.Username == username {
+			c := *u
+			return &c, nil
+		}
+	}
+	return nil, repository.ErrNotFound
+}
 func (f *fakeUserRepo) List(context.Context, int, int) ([]models.User, int64, error) {
 	return nil, 0, nil
 }

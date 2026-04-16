@@ -60,6 +60,7 @@ func TestUserRepository_Create(t *testing.T) {
 		WithArgs(
 			u.ID,
 			u.Email,
+			nil,              // username
 			"", // name_first default
 			"", // name_last default
 			u.PasswordHash,
@@ -68,7 +69,6 @@ func TestUserRepository_Create(t *testing.T) {
 			nil,              // linux_uid
 			sqlmock.AnyArg(), // created_at
 			sqlmock.AnyArg(), // updated_at
-			nil,              // deleted_at
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
@@ -86,14 +86,14 @@ func TestUserRepository_FindByEmail_Found(t *testing.T) {
 	repo := repository.NewUserRepository(gdb)
 
 	now := time.Now().UTC()
-	mock.ExpectQuery(`SELECT \* FROM .users. WHERE email = \? AND .users.\..deleted_at. IS NULL ORDER BY .users.\..id. LIMIT \?`).
+	mock.ExpectQuery(`SELECT \* FROM .users. WHERE email = \? ORDER BY .users.\..id. LIMIT \?`).
 		WithArgs("alice@example.com", 1).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "email", "name_first", "name_last", "password_hash",
-			"is_admin", "linux_uid", "created_at", "updated_at", "deleted_at",
+			"is_admin", "linux_uid", "created_at", "updated_at",
 		}).AddRow(
 			"01HRCWR7CKMCBEDF2PYQ7G0D2J", "alice@example.com", "", "",
-			"$2a$12$hash", false, nil, now, now, nil,
+			"$2a$12$hash", false, nil, now, now,
 		))
 
 	got, err := repo.FindByEmail(context.Background(), "alice@example.com")

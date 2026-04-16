@@ -2,8 +2,6 @@ package models
 
 import (
 	"time"
-
-	"gorm.io/gorm"
 )
 
 // Domain represents a hosted domain bound to a user account. Each domain
@@ -30,9 +28,8 @@ type Domain struct {
 	// directives (proxy_pass, lua_*) are rejected.
 	NginxCustomDirectives *string `gorm:"type:text" json:"nginx_custom_directives,omitempty"`
 
-	CreatedAt time.Time      `gorm:"type:datetime(6);not null" json:"created_at"`
-	UpdatedAt time.Time      `gorm:"type:datetime(6);not null" json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"type:datetime(6);index:ix_domains_deleted_at" json:"-"`
+	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
+	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }
 
 func (Domain) TableName() string { return "domains" }

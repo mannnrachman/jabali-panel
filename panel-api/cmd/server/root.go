@@ -214,7 +214,9 @@ func newAPIClient(ctx context.Context, cfg *config.Config, log *slog.Logger) (*c
 	if host == "" || host == "0.0.0.0" || host == "::" {
 		host = "127.0.0.1"
 	}
-	baseURL := fmt.Sprintf("%s://%s:%s", scheme, host, port)
+	// The API mounts authenticated routes under /api/v1. Building that into
+	// baseURL means each client method can stay path-local (/domains, /users, ...).
+	baseURL := fmt.Sprintf("%s://%s:%s/api/v1", scheme, host, port)
 
 	return clientapi.NewClient(baseURL, token), nil
 }

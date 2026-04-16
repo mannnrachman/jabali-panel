@@ -140,6 +140,15 @@ func (f *fakeUserRepo) FindByEmail(ctx context.Context, email string) (*models.U
 	return nil, &notFoundErr{}
 }
 
+func (f *fakeUserRepo) FindByUsername(ctx context.Context, username string) (*models.User, error) {
+	for _, u := range f.users {
+		if u.Username != nil && *u.Username == username {
+			return u, nil
+		}
+	}
+	return nil, &notFoundErr{}
+}
+
 func (f *fakeUserRepo) List(ctx context.Context, offset, limit int) ([]models.User, int64, error) {
 	var result []models.User
 	for _, u := range f.users {
@@ -185,9 +194,11 @@ func TestReconcileAll_EnabledDomainMissing(t *testing.T) {
 
 	// Setup: one enabled domain in DB, but missing from agent
 	now := time.Now().UTC()
+	username := "alice"
 	user := &models.User{
-		ID:    "user-1",
-		Email: "alice@example.com",
+		ID:       "user-1",
+		Email:    "alice@example.com",
+		Username: &username,
 	}
 	userRepo.users[user.ID] = user
 
@@ -223,9 +234,11 @@ func TestReconcileAll_DisabledDomainPresent(t *testing.T) {
 
 	// Setup: one disabled domain in DB, but present on agent
 	now := time.Now().UTC()
+	username := "bob"
 	user := &models.User{
-		ID:    "user-1",
-		Email: "bob@example.com",
+		ID:       "user-1",
+		Email:    "bob@example.com",
+		Username: &username,
 	}
 	userRepo.users[user.ID] = user
 
@@ -279,9 +292,11 @@ func TestReconcileOne_DomainFound(t *testing.T) {
 	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
 
 	now := time.Now().UTC()
+	username := "charlie"
 	user := &models.User{
-		ID:    "user-1",
-		Email: "charlie@example.com",
+		ID:       "user-1",
+		Email:    "charlie@example.com",
+		Username: &username,
 	}
 	userRepo.users[user.ID] = user
 

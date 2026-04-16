@@ -27,10 +27,10 @@ func TestUserRepository_FindByID(t *testing.T) {
 		WithArgs("01HRCWR7CKMCBEDF2PYQ7G0D2J", 1).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "email", "name_first", "name_last", "password_hash",
-			"is_admin", "linux_uid", "created_at", "updated_at", "deleted_at",
+			"is_admin", "linux_uid", "created_at", "updated_at",
 		}).AddRow(
 			"01HRCWR7CKMCBEDF2PYQ7G0D2J", "alice@example.com", "A", "B",
-			"hash", false, nil, now, now, nil,
+			"hash", false, nil, now, now,
 		))
 
 	u, err := repo.FindByID(context.Background(), "01HRCWR7CKMCBEDF2PYQ7G0D2J")
@@ -49,14 +49,14 @@ func TestUserRepository_List(t *testing.T) {
 
 	mock.ExpectQuery(`SELECT count\(\*\) FROM .users.`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
-	mock.ExpectQuery(`SELECT \* FROM .users. WHERE .users.\..deleted_at. IS NULL ORDER BY created_at DESC LIMIT \?`).
+	mock.ExpectQuery(`SELECT \* FROM .users. ORDER BY created_at DESC LIMIT \?`).
 		WithArgs(10).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "email", "name_first", "name_last", "password_hash",
-			"is_admin", "linux_uid", "created_at", "updated_at", "deleted_at",
+			"is_admin", "linux_uid", "created_at", "updated_at",
 		}).
-			AddRow("01HRCWR7CKMCBEDF2PYQ7G0D2J", "a@x", "", "", "h", false, nil, now, now, nil).
-			AddRow("01HRCWR7CKMCBEDF2PYQ7G0D2K", "b@x", "", "", "h", false, nil, now, now, nil))
+			AddRow("01HRCWR7CKMCBEDF2PYQ7G0D2J", "a@x", "", "", "h", false, nil, now, now).
+			AddRow("01HRCWR7CKMCBEDF2PYQ7G0D2K", "b@x", "", "", "h", false, nil, now, now))
 
 	out, total, err := repo.List(context.Background(), 0, 10)
 	require.NoError(t, err)
@@ -93,7 +93,7 @@ func TestUserRepository_Update(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestUserRepository_Delete_SoftDeletes(t *testing.T) {
+func TestUserRepository_Delete_HardDeletes(t *testing.T) {
 	t.Parallel()
 	gdb, mock, raw := newMockDB(t)
 	defer raw.Close()
@@ -101,8 +101,8 @@ func TestUserRepository_Delete_SoftDeletes(t *testing.T) {
 	repo := repository.NewUserRepository(gdb)
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`UPDATE .users. SET .deleted_at.`).
-		WithArgs(sqlmock.AnyArg(), "01HRCWR7CKMCBEDF2PYQ7G0D2J").
+	mock.ExpectExec(`DELETE FROM .users. WHERE`).
+		WithArgs("01HRCWR7CKMCBEDF2PYQ7G0D2J").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -119,8 +119,8 @@ func TestUserRepository_Delete_NotFound(t *testing.T) {
 	repo := repository.NewUserRepository(gdb)
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`UPDATE .users. SET .deleted_at.`).
-		WithArgs(sqlmock.AnyArg(), "missing-id").
+	mock.ExpectExec(`DELETE FROM .users. WHERE`).
+		WithArgs("missing-id").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()
 

@@ -161,6 +161,12 @@ func (h *domainHandler) create(c *gin.Context) {
 		return
 	}
 
+	// Username should always be set for non-admin users.
+	if user.Username == nil || *user.Username == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+
 	// Quota check.
 	if user.PackageID != nil && *user.PackageID != "" {
 		count, err := h.cfg.Domains.CountByUserID(ctx, targetUserID)
@@ -177,7 +183,7 @@ func (h *domainHandler) create(c *gin.Context) {
 
 	docRoot := req.DocRoot
 	if docRoot == "" {
-		docRoot = "/home/" + domainLinuxUser(user.Email) + "/public_html/" + req.Name
+		docRoot = "/home/" + *user.Username + "/public_html/" + req.Name
 	}
 
 	now := time.Now().UTC()

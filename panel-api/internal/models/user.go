@@ -5,8 +5,6 @@ package models
 
 import (
 	"time"
-
-	"gorm.io/gorm"
 )
 
 // User is a panel account. Two personas share the table:
@@ -19,7 +17,13 @@ type User struct {
 	// ID is a 26-char ULID (Crockford base32). See internal/ids.
 	ID string `gorm:"type:char(26);primaryKey" json:"id"`
 
-	Email        string `gorm:"type:varchar(255);uniqueIndex:ux_users_email;not null" json:"email"`
+	Email string `gorm:"type:varchar(255);uniqueIndex:ux_users_email;not null" json:"email"`
+
+	// Username is the Linux account name for this user. NULL for admins
+	// (panel-only, no OS account). Must match POSIX regex
+	// ^[a-z_][a-z0-9_-]{0,31}$. Unique across the panel.
+	Username *string `gorm:"type:varchar(32);uniqueIndex:ux_users_username" json:"username,omitempty"`
+
 	NameFirst    string `gorm:"type:varchar(100);not null;default:''"                 json:"name_first"`
 	NameLast     string `gorm:"type:varchar(100);not null;default:''"                 json:"name_last"`
 	PasswordHash string `gorm:"type:varchar(255);not null"                            json:"-"`
@@ -35,9 +39,8 @@ type User struct {
 	// the OS user. NULL until then, or for admin-only accounts.
 	LinuxUID *uint32 `gorm:"type:int unsigned" json:"linux_uid,omitempty"`
 
-	CreatedAt time.Time      `gorm:"type:datetime(6);not null" json:"created_at"`
-	UpdatedAt time.Time      `gorm:"type:datetime(6);not null" json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"type:datetime(6);index:ix_users_deleted_at" json:"-"`
+	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
+	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }
 
 // TableName pins the plural form in case GORM ever changes its default.

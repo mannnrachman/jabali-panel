@@ -2,8 +2,6 @@ package models
 
 import (
 	"time"
-
-	"gorm.io/gorm"
 )
 
 // HostingPackage defines a quota bundle that admins assign to hosting users.
@@ -25,9 +23,8 @@ type HostingPackage struct {
 	SSHEnabled bool `gorm:"type:tinyint(1);not null;default:0" json:"ssh_enabled"`
 	CGIEnabled bool `gorm:"type:tinyint(1);not null;default:0" json:"cgi_enabled"`
 
-	CreatedAt time.Time      `gorm:"type:datetime(6);not null" json:"created_at"`
-	UpdatedAt time.Time      `gorm:"type:datetime(6);not null" json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"type:datetime(6);index:ix_packages_deleted_at" json:"-"`
+	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
+	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }
 
 func (HostingPackage) TableName() string { return "hosting_packages" }

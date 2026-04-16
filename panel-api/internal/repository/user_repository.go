@@ -18,6 +18,7 @@ type UserRepository interface {
 	Create(ctx context.Context, u *models.User) error
 	FindByID(ctx context.Context, id string) (*models.User, error)
 	FindByEmail(ctx context.Context, email string) (*models.User, error)
+	FindByUsername(ctx context.Context, username string) (*models.User, error)
 	List(ctx context.Context, offset, limit int) ([]models.User, int64, error)
 	Update(ctx context.Context, u *models.User) error
 	// SetAdmin flips is_admin on the row. Deliberately separate from Update
@@ -52,6 +53,14 @@ func (r *userRepo) FindByID(ctx context.Context, id string) (*models.User, error
 func (r *userRepo) FindByEmail(ctx context.Context, email string) (*models.User, error) {
 	var u models.User
 	if err := r.db.WithContext(ctx).First(&u, "email = ?", email).Error; err != nil {
+		return nil, translate(err)
+	}
+	return &u, nil
+}
+
+func (r *userRepo) FindByUsername(ctx context.Context, username string) (*models.User, error) {
+	var u models.User
+	if err := r.db.WithContext(ctx).First(&u, "username = ?", username).Error; err != nil {
 		return nil, translate(err)
 	}
 	return &u, nil
@@ -110,7 +119,7 @@ func (r *userRepo) CountAdmins(ctx context.Context) (int64, error) {
 }
 
 func (r *userRepo) Delete(ctx context.Context, id string) error {
-	// Soft delete (gorm.DeletedAt on the model).
+	// Hard delete.
 	res := r.db.WithContext(ctx).Delete(&models.User{}, "id = ?", id)
 	if res.Error != nil {
 		return translate(res.Error)

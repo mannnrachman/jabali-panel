@@ -76,21 +76,21 @@ apiClient.interceptors.response.use(
   async (err: AxiosError) => {
     const original = err.config as RetryConfig | undefined;
     if (!original || err.response?.status !== 401) {
-      return Promise.reject(err);
+      return Promise.reject(normalizeError(err));
     }
     // Don't try to refresh *during* auth calls; let them fail cleanly.
     const url = original.url ?? "";
     if (url.startsWith("/auth/")) {
-      return Promise.reject(err);
+      return Promise.reject(normalizeError(err));
     }
     if (original._retry) {
-      return Promise.reject(err);
+      return Promise.reject(normalizeError(err));
     }
     original._retry = true;
 
     const tok = await refreshAccessToken();
     if (!tok) {
-      return Promise.reject(err);
+      return Promise.reject(normalizeError(err));
     }
     original.headers = original.headers ?? {};
     // Headers may be an AxiosHeaders instance or a plain object; set both ways.
@@ -105,3 +105,56 @@ apiClient.interceptors.response.use(
     return apiClient(original);
   },
 );
+
+/**
+ * Normalize axios errors by extracting the backend's structured error response.
+ * Converts {"error":"domain_already_exists","detail":"..."} into a readable message.
+ * Refine's notification provider will call err.message, so we set that field.
+ */
+function normalizeError(err: AxiosError): AxiosError {
+  const status = err.response?.status;
+  const data = err.response?.data as { error?: string; detail?: string } | undefined;
+  const code = data?.error;
+  const detail = data?.detail;
+
+  // Prefer detail field if present, else humanize the error code, else fallback to original message.
+  const message =
+    detail ??
+    (code ? humanizeErrorCode(code) : undefined) ??
+    err.message ??
+    `Request failed with status ${status ?? "unknown"}`;
+
+  // Copy the error to preserve status, response, etc, but override the message.
+  const wrapped = new Error(message) as AxiosError;
+  wrapped.name = err.name;
+  wrapped.config = err.config;
+  wrapped.code = err.code;
+  wrapped.request = err.request;
+  wrapped.response = err.response;
+  wrapped.isAxiosError = err.isAxiosError;
+  wrapped.status = err.status;
+  wrapped.toJSON = err.toJSON.bind(err);
+
+  return wrapped;
+}
+
+/**
+ * Human-friendly messages for common backend error codes.
+ * Falls back to the code with underscores replaced by spaces if not found.
+ */
+function humanizeErrorCode(code: string): string {
+  const messages: Record<string, string> = {
+    domain_already_exists: "That domain is already taken",
+    domain_quota_exceeded: "Your plan doesn't allow more domains",
+    admin_cannot_host: "Admins can't host domains — create a regular user first",
+    os_user_exists: "A Linux user with that name already exists",
+    admin_has_no_os_account: "This user is an admin and has no OS account",
+    cannot_delete_self: "You can't delete your own account",
+    cannot_delete_last_admin: "Can't delete the last admin",
+    unauthenticated: "Please log in again",
+    invalid_token: "Session expired — please log in again",
+    validation_failed: "Some fields are invalid",
+    internal: "Something went wrong on the server",
+  };
+  return messages[code] ?? code.replace(/_/g, " ");
+}

@@ -147,8 +147,20 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 		}
 	}
 
+	// Well-known nginx vhosts that ship with the distro — not managed by
+	// the panel, not interesting to log.
+	knownSystemSites := map[string]bool{
+		"default":         true,
+		"default-ssl":     true,
+		"000-default":     true,
+		"000-default-ssl": true,
+	}
+
 	// 3. Orphan in agent set (no DB row) -> log warning but don't auto-delete
 	for site := range agentSites {
+		if knownSystemSites[site] {
+			continue
+		}
 		if _, found := enabledDomains[site]; !found {
 			if _, found := disabledDomains[site]; !found {
 				r.log.Warn("reconcile: orphan site found in agent, no DB row", "site", site,
@@ -197,7 +209,12 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 		return
 	}
 
-	username := linuxUserFromEmail(user.Email)
+	// Username should always be set for non-admin users hosting domains.
+	if user.Username == nil || *user.Username == "" {
+		r.log.Error("user has no username for domain", "domain_id", domain.ID, "user_id", domain.UserID)
+		return
+	}
+	username := *user.Username
 
 	params := map[string]string{
 		"username":    username,

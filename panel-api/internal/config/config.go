@@ -47,6 +47,12 @@ type ServerConfig struct {
 	// Env is "development" or "production". Affects log format defaults
 	// and strictness of Validate.
 	Env string `toml:"env"`
+
+	// TLSCert and TLSKey are paths to the certificate and private key files.
+	// When both are set, the server uses ListenAndServeTLS. When empty, it
+	// falls back to plain HTTP (dev mode or behind a TLS-terminating proxy).
+	TLSCert string `toml:"tls_cert"`
+	TLSKey  string `toml:"tls_key"`
 }
 
 // LogConfig controls slog output.
@@ -159,6 +165,12 @@ func applyEnv(cfg *Config) error {
 	}
 	if v := os.Getenv("PANEL_ENV"); v != "" {
 		cfg.Server.Env = v
+	}
+	if v := os.Getenv("TLS_CERT"); v != "" {
+		cfg.Server.TLSCert = v
+	}
+	if v := os.Getenv("TLS_KEY"); v != "" {
+		cfg.Server.TLSKey = v
 	}
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		cfg.Log.Level = v

@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -161,10 +162,13 @@ func main() {
 		}
 	}
 
-	// ---- HTTP ----
+	// ---- HTTP(S) ----
+	handler := app.NewWithDeps(cfg, deps)
+	useTLS := cfg.Server.TLSCert != "" && cfg.Server.TLSKey != ""
+
 	srv := &http.Server{
 		Addr:              cfg.Server.Addr,
-		Handler:           app.NewWithDeps(cfg, deps),
+		Handler:           handler,
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
 		WriteTimeout:      writeTimeout,
@@ -172,7 +176,17 @@ func main() {
 	}
 
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- srv.ListenAndServe() }()
+	if useTLS {
+		log.Info("TLS enabled", "cert", cfg.Server.TLSCert, "key", cfg.Server.TLSKey)
+		go func() { serveErr <- srv.ListenAndServeTLS(cfg.Server.TLSCert, cfg.Server.TLSKey) }()
+
+		// Start an HTTP→HTTPS redirect on port 80 (best effort; if port
+		// 80 is in use the redirect simply doesn't run).
+		go startHTTPRedirect(cfg.Server.Addr, log)
+	} else {
+		log.Warn("TLS not configured — serving plain HTTP (set TLS_CERT + TLS_KEY for HTTPS)")
+		go func() { serveErr <- srv.ListenAndServe() }()
+	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
@@ -193,4 +207,35 @@ func main() {
 		}
 	}
 	log.Info("jabali-panel stopped")
+}
+
+// startHTTPRedirect listens on :80 and redirects all traffic to the HTTPS
+// addr. Best-effort: if binding fails (e.g. nginx owns :80), it logs and
+// returns silently.
+func startHTTPRedirect(httpsAddr string, log *slog.Logger) {
+	_, port, _ := net.SplitHostPort(httpsAddr)
+	if port == "" {
+		port = "8443"
+	}
+
+	redirect := &http.Server{
+		Addr:              ":80",
+		ReadHeaderTimeout: 5 * time.Second,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			host := r.Host
+			// Strip :80 if present.
+			if h, _, err := net.SplitHostPort(host); err == nil {
+				host = h
+			}
+			target := "https://" + host
+			if port != "443" {
+				target += ":" + port
+			}
+			target += r.URL.RequestURI()
+			http.Redirect(w, r, target, http.StatusMovedPermanently)
+		}),
+	}
+	if err := redirect.ListenAndServe(); err != nil {
+		log.Debug("HTTP→HTTPS redirect listener failed (port 80 likely in use)", "err", err)
+	}
 }

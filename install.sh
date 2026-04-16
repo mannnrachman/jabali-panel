@@ -326,6 +326,51 @@ EOF
   chown root:"$SERVICE_USER" "$ENV_FILE"
 }
 
+# ---------- step 6a: self-signed TLS cert ------------------------------------
+
+provision_tls_cert() {
+  local cert_dir="/etc/jabali/tls"
+  local cert_file="$cert_dir/panel.crt"
+  local key_file="$cert_dir/panel.key"
+
+  if [[ -f "$cert_file" && -f "$key_file" ]]; then
+    _ok "TLS cert exists: $cert_file"
+  else
+    _log "generating self-signed TLS certificate"
+    install -d -m 0750 -o root -g "$SERVICE_USER" "$cert_dir"
+
+    # Grab the machine's hostname and first non-loopback IP for SANs.
+    local cn
+    cn="$(hostname -f 2>/dev/null || hostname)"
+    local ip
+    ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+
+    local san="DNS:${cn},DNS:localhost,IP:127.0.0.1"
+    [[ -n "$ip" ]] && san+=",IP:${ip}"
+
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+      -keyout "$key_file" -out "$cert_file" \
+      -days 3650 -nodes \
+      -subj "/CN=${cn}/O=Jabali Panel" \
+      -addext "subjectAltName=${san}" \
+      2>/dev/null
+
+    chmod 0640 "$key_file" "$cert_file"
+    chown root:"$SERVICE_USER" "$key_file" "$cert_file"
+    _ok "self-signed TLS cert created ($cert_file)"
+  fi
+
+  # Write TLS paths to env file if not already present.
+  if ! grep -q '^TLS_CERT=' "$ENV_FILE" 2>/dev/null; then
+    cat >>"$ENV_FILE" <<EOF
+
+# TLS — self-signed; replace with Certbot cert for production.
+TLS_CERT=$cert_file
+TLS_KEY=$key_file
+EOF
+  fi
+}
+
 write_config_file() {
   local dest="$(dirname "$ENV_FILE")/config.toml"
   local src="$REPO_DIR/config.example.toml"
@@ -506,9 +551,15 @@ start_and_verify() {
   local port="${PANEL_ADDR##*:}"
   [[ "$host" == "$PANEL_ADDR" || -z "$host" ]] && host="127.0.0.1"
 
+  # Use HTTPS if TLS is configured, with -k for self-signed cert.
+  local scheme="http"
+  if grep -q '^TLS_CERT=' "$ENV_FILE" 2>/dev/null; then
+    scheme="https"
+  fi
+
   local ok=0
   for i in 1 2 3 4 5 6 7 8 9 10; do
-    if curl -fsS -m 2 "http://${host}:${port}/health" >/tmp/jabali-health.json 2>/dev/null; then
+    if curl -fsSk -m 2 "${scheme}://${host}:${port}/health" >/tmp/jabali-health.json 2>/dev/null; then
       ok=1; break
     fi
     sleep 0.5
@@ -541,6 +592,7 @@ main() {
   build_frontend
   build_backend
   write_config_file
+  provision_tls_cert
   seed_admin_env
   write_agent_systemd_unit
   write_systemd_unit
@@ -561,7 +613,7 @@ main() {
     echo "║                     JABALI PANEL                           ║"
     echo "╠══════════════════════════════════════════════════════════════╣"
     echo "║                                                            ║"
-    printf "║  URL:      http://%-40s ║\n" "${panel_host}:${panel_port}"
+    printf "║  URL:      https://%-39s ║\n" "${panel_host}:${panel_port}"
     printf "║  Email:    %-48s ║\n" "$JABALI_SEED_EMAIL"
     printf "║  Password: %-48s ║\n" "$JABALI_SEED_PASS"
     echo "║                                                            ║"

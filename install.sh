@@ -583,17 +583,20 @@ start_and_verify() {
     scheme="https"
   fi
 
+  # First-run migrations can take a while on a fresh InnoDB (45s+
+  # observed). Give the service up to 120s before declaring defeat.
   local ok=0
-  for i in 1 2 3 4 5 6 7 8 9 10; do
+  local deadline=$((SECONDS + 120))
+  while (( SECONDS < deadline )); do
     if curl -fsSk -m 2 "${scheme}://${host}:${port}/health" >/tmp/jabali-health.json 2>/dev/null; then
       ok=1; break
     fi
-    sleep 0.5
+    sleep 1
   done
 
   if (( ok == 0 )); then
-    _warn "health probe failed; dumping last 20 log lines"
-    journalctl -u "$SERVICE_NAME" -n 20 --no-pager || true
+    _warn "health probe failed after 120s; dumping last 40 log lines"
+    journalctl -u "$SERVICE_NAME" -n 40 --no-pager || true
     _die "$SERVICE_NAME did not come up"
   fi
 

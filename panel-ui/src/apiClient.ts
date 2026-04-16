@@ -45,7 +45,11 @@ apiClient.interceptors.request.use((cfg: InternalAxiosRequestConfig) => {
 // Track the in-flight refresh so a burst of 401s coalesces into one refresh.
 let refreshPromise: Promise<string | null> | null = null;
 
-async function refreshAccessToken(): Promise<string | null> {
+/**
+ * Proactively refresh the access token using the HttpOnly refresh cookie.
+ * Called by authProvider.check() on app mount to avoid spurious 401s.
+ */
+export async function refreshAccessToken(): Promise<string | null> {
   if (!refreshPromise) {
     refreshPromise = (async () => {
       try {

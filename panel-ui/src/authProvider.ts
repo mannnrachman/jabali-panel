@@ -10,7 +10,7 @@
 import type { AuthProvider } from "@refinedev/core";
 import axios, { AxiosError } from "axios";
 
-import { apiClient, getAccessToken, setAccessToken } from "./apiClient";
+import { apiClient, getAccessToken, refreshAccessToken, setAccessToken } from "./apiClient";
 import { clearIdentity, getIdentity } from "./identity";
 
 type LoginPayload = { access_token: string };
@@ -67,7 +67,19 @@ export const authProvider: AuthProvider = {
   // in-memory token; otherwise we try /me, which the axios refresh
   // interceptor will silently retry with a refreshed token.
   check: async () => {
+    // Fast path: we already have an access token in memory.
     if (getAccessToken()) return { authenticated: true };
+
+    // Fresh page load — no in-memory token. Try /auth/refresh first so
+    // the subsequent /me call doesn't visibly 401 in the browser console
+    // during the silent recovery. Refresh uses the HttpOnly cookie; if
+    // the cookie is absent or invalid we route straight to /login without
+    // ever hitting /me.
+    const tok = await refreshAccessToken();
+    if (!tok) {
+      return { authenticated: false, redirectTo: "/login", logout: true };
+    }
+
     const me = await getIdentity();
     return me
       ? { authenticated: true }

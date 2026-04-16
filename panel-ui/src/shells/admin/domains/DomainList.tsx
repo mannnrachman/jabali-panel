@@ -15,6 +15,7 @@ export type Domain = {
   name: string;
   doc_root: string;
   is_enabled: boolean;
+  ssl_enabled?: boolean;
   nginx_custom_directives: string;
   redirect_all_to?: string | null;
   redirect_all_type?: string | null;
@@ -62,6 +63,13 @@ export const DomainList = () => {
             ) : (
               <Tag>disabled</Tag>
             )
+          }
+        />
+        <Table.Column<Domain>
+          dataIndex="ssl_enabled"
+          title="SSL"
+          render={(on?: boolean) =>
+            on ? <Tag color="green">on</Tag> : <Tag>off</Tag>
           }
         />
         <Table.Column<Domain>

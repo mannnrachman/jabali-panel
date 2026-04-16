@@ -1,7 +1,8 @@
 import { useForm } from "@refinedev/antd";
 import { Edit } from "@refinedev/antd";
-import { Form, Input, Switch, Typography } from "antd";
+import { Divider, Form, Input, Switch, Typography } from "antd";
 import type { Domain } from "./DomainList";
+import { DomainSSLSection } from "./DomainSSLSection";
 
 export type DomainEditInput = {
   is_enabled?: boolean;
@@ -43,6 +44,17 @@ export const DomainEdit = () => {
           <Input.TextArea rows={6} />
         </Form.Item>
       </Form>
+
+      {domain && (
+        <>
+          <Divider>SSL / HTTPS</Divider>
+          <DomainSSLSection
+            domainId={domain.id}
+            sslEnabled={!!domain.ssl_enabled}
+            onToggled={() => queryResult?.refetch()}
+          />
+        </>
+      )}
     </Edit>
   );
 };

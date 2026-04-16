@@ -92,6 +92,37 @@ preflight() {
 # config.toml already contains [server].hostname, the prompts are skipped
 # so `install.sh` is safe to re-run for updates.
 
+# Query a small set of public HTTP services that echo the caller's IP.
+# Resilient across providers — we try each in turn with a short timeout
+# so a blocked outbound doesn't hang the install forever. Falls back to
+# the first non-loopback local address if nothing external responds
+# (e.g. an air-gapped lab server), with a clear warning.
+_detect_public_ipv4() {
+  local url out
+  for url in https://ipv4.icanhazip.com https://api.ipify.org https://ifconfig.me/ip; do
+    out="$(curl -fsSL --max-time 5 --ipv4 "$url" 2>/dev/null | tr -d '[:space:]' || true)"
+    if [[ "$out" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      printf '%s' "$out"
+      return 0
+    fi
+  done
+  # Airgap fallback — first non-loopback IPv4 on the box.
+  ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1
+}
+
+_detect_public_ipv6() {
+  local url out
+  for url in https://ipv6.icanhazip.com https://api6.ipify.org; do
+    out="$(curl -fsSL --max-time 5 --ipv6 "$url" 2>/dev/null | tr -d '[:space:]' || true)"
+    if [[ "$out" == *:* ]]; then
+      printf '%s' "$out"
+      return 0
+    fi
+  done
+  # IPv6 is optional — blank is acceptable.
+  return 1
+}
+
 prompt_server_settings() {
   local config_file="/etc/jabali-panel/config.toml"
   if [[ -f "$config_file" ]] && grep -q '^[[:space:]]*hostname[[:space:]]*=' "$config_file"; then
@@ -102,16 +133,28 @@ prompt_server_settings() {
     return 0
   fi
 
-  local sys_hostname sys_ipv4 sys_ipv6
+  local sys_hostname detected_ipv4 detected_ipv6
   sys_hostname="$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo '')"
-  sys_ipv4="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1 || true)"
-  sys_ipv6="$(ip -6 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1 || true)"
+
+  _log "detecting public IPv4 (checking icanhazip/ipify/ifconfig.me)…"
+  detected_ipv4="$(_detect_public_ipv4 || true)"
+  if [[ -z "$detected_ipv4" ]]; then
+    _die "could not auto-detect public IPv4. Set JABALI_PUBLIC_IPV4 and re-run."
+  fi
+  _ok "public IPv4: $detected_ipv4"
+
+  _log "detecting public IPv6 (optional)…"
+  detected_ipv6="$(_detect_public_ipv6 || true)"
+  if [[ -n "$detected_ipv6" ]]; then
+    _ok "public IPv6: $detected_ipv6"
+  else
+    _log "no public IPv6 detected — skipping (zones won't get AAAA records)"
+  fi
 
   # `curl | bash` consumes stdin for the script itself, so `read` would
   # hit EOF instantly. Fix: read from /dev/tty (the controlling terminal)
   # if one exists. If it doesn't — CI / cloud-init / no TTY at all —
-  # fall back to auto-detected defaults and env-var overrides instead of
-  # silently exiting.
+  # fall back to env-var overrides / auto-detected defaults.
   local input_fd
   if [[ -r /dev/tty ]]; then
     exec 3</dev/tty
@@ -130,25 +173,24 @@ prompt_server_settings() {
 
   local inp_hostname inp_ipv4 inp_ipv6 inp_ns1_name inp_ns1_ip inp_ns2_name inp_ns2_ip
 
+  # IPs always come from detection / env override — never prompted.
+  inp_ipv4="${JABALI_PUBLIC_IPV4:-$detected_ipv4}"
+  inp_ipv6="${JABALI_PUBLIC_IPV6:-$detected_ipv6}"
+
   if [[ -z "$input_fd" ]]; then
     _warn "no TTY available — using auto-detected defaults + env vars."
-    _warn "override via JABALI_HOSTNAME / JABALI_PUBLIC_IPV4 / JABALI_PUBLIC_IPV6"
+    _warn "override hostname via JABALI_HOSTNAME"
     inp_hostname="${JABALI_HOSTNAME:-$sys_hostname}"
-    inp_ipv4="${JABALI_PUBLIC_IPV4:-$sys_ipv4}"
-    inp_ipv6="${JABALI_PUBLIC_IPV6:-$sys_ipv6}"
     if [[ ! "$inp_hostname" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$ ]]; then
       _die "no TTY and no valid JABALI_HOSTNAME (detected: '$inp_hostname')"
-    fi
-    if [[ ! "$inp_ipv4" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-      _die "no TTY and no valid JABALI_PUBLIC_IPV4 (detected: '$inp_ipv4')"
     fi
     inp_ns1_name="ns1.${inp_hostname}"
     inp_ns1_ip="${inp_ipv4}"
     inp_ns2_name="ns2.${inp_hostname}"
     inp_ns2_ip="${inp_ipv4}"
   else
-    echo "A few details about this server before we start. You can"
-    echo "change any of these later from the admin panel."
+    echo "Just one thing — your server's hostname. You can change it"
+    echo "later from the admin panel."
     echo ""
 
     while true; do
@@ -157,16 +199,6 @@ prompt_server_settings() {
       [[ "$inp_hostname" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$ ]] && break
       _warn "invalid hostname; use letters/digits/dots/hyphens"
     done
-
-    while true; do
-      read -rp "Public IPv4 [${sys_ipv4}]: " -u "$input_fd" inp_ipv4 || true
-      inp_ipv4="${inp_ipv4:-$sys_ipv4}"
-      [[ "$inp_ipv4" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && break
-      _warn "invalid IPv4"
-    done
-
-    read -rp "Public IPv6 (optional) [${sys_ipv6}]: " -u "$input_fd" inp_ipv6 || true
-    inp_ipv6="${inp_ipv6:-$sys_ipv6}"
 
     # NS names + IPs are auto-derived from the hostname — no prompt.
     # Both nameservers get the same IPv4 at install time; the operator

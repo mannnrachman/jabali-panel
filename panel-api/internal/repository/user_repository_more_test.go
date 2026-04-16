@@ -81,7 +81,7 @@ func TestUserRepository_Update(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(`UPDATE .users. SET`).
 		WithArgs(
-			u.Email, u.NameFirst, u.NameLast, u.PasswordHash, u.LinuxUID,
+			u.Email, u.NameFirst, u.NameLast, u.PasswordHash, u.PackageID, u.LinuxUID,
 			sqlmock.AnyArg(), // updated_at
 			u.ID,
 		).

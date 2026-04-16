@@ -31,6 +31,7 @@ type UserHandlerConfig struct {
 	Agent           agent.AgentInterface
 	StrictRateLimit gin.HandlerFunc
 	Domains         repository.DomainRepository
+	Packages        repository.PackageRepository
 	Reconciler      *reconciler.Reconciler
 }
 
@@ -81,6 +82,7 @@ type createUserRequest struct {
 	NameFirst       string  `json:"name_first"`
 	NameLast        string  `json:"name_last"`
 	IsAdmin         bool    `json:"is_admin"`
+	PackageID       *string `json:"package_id,omitempty"`
 	SkipProvision   bool    `json:"skip_provision,omitempty"`
 }
 
@@ -93,6 +95,7 @@ type updateUserRequest struct {
 	Password        *string `json:"password,omitempty"         binding:"omitempty,min=10"`
 	CurrentPassword *string `json:"current_password,omitempty"`
 	IsAdmin         *bool   `json:"is_admin,omitempty"`
+	PackageID       *string `json:"package_id,omitempty"`
 }
 
 type reprovisionRequest struct {
@@ -164,6 +167,26 @@ func (h *userHandler) create(c *gin.Context) {
 		}
 	}
 
+	// Validate package_id if provided.
+	if req.PackageID != nil && *req.PackageID != "" {
+		if h.cfg.Packages == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		_, err := h.cfg.Packages.FindByID(c.Request.Context(), *req.PackageID)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error":  "invalid_package_id",
+					"detail": "hosting package not found",
+				})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+	}
+
 	u := &models.User{
 		ID:           ids.NewULID(),
 		Email:        req.Email,
@@ -172,6 +195,7 @@ func (h *userHandler) create(c *gin.Context) {
 		NameLast:     req.NameLast,
 		PasswordHash: string(hash),
 		IsAdmin:      req.IsAdmin,
+		PackageID:    req.PackageID,
 	}
 	if err := h.cfg.Repo.Create(c.Request.Context(), u); err != nil {
 		// Check if the error is a username collision specifically.
@@ -290,6 +314,33 @@ func (h *userHandler) update(c *gin.Context) {
 		}
 		existing.PasswordHash = string(hash)
 	}
+
+	// Validate and apply package_id if provided (including clearing it with empty string).
+	if req.PackageID != nil {
+		if *req.PackageID != "" {
+			if h.cfg.Packages == nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+				return
+			}
+			_, err := h.cfg.Packages.FindByID(ctx, *req.PackageID)
+			if err != nil {
+				if errors.Is(err, repository.ErrNotFound) {
+					c.JSON(http.StatusBadRequest, gin.H{
+						"error":  "invalid_package_id",
+						"detail": "hosting package not found",
+					})
+					return
+				}
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+				return
+			}
+			existing.PackageID = req.PackageID
+		} else {
+			// Empty string means clear the package assignment
+			existing.PackageID = nil
+		}
+	}
+
 	if err := h.cfg.Repo.Update(ctx, existing); err != nil {
 		h.translateErr(c, err)
 		return

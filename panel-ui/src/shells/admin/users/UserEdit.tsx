@@ -7,8 +7,13 @@
 // which hits the same PATCH /users/:id endpoint with current_password.
 //
 // Password is optional on edit — a blank field means "keep current".
-import { Edit, useForm } from "@refinedev/antd";
-import { Form, Input, Switch } from "antd";
+import { Edit, useForm, useSelect } from "@refinedev/antd";
+import { Form, Input, Switch, Select } from "antd";
+
+type HostingPackage = {
+  id: string;
+  name: string;
+};
 
 type UserEditInput = {
   email: string;
@@ -16,6 +21,7 @@ type UserEditInput = {
   name_last?: string;
   is_admin?: boolean;
   password?: string;
+  package_id?: string;
 };
 
 export const UserEdit = () => {
@@ -59,6 +65,10 @@ export const UserEdit = () => {
           <Switch />
         </Form.Item>
 
+        <Form.Item label="Hosting package" name="package_id">
+          <PackageSelect />
+        </Form.Item>
+
         <Form.Item
           label="New password"
           name="password"
@@ -69,5 +79,25 @@ export const UserEdit = () => {
         </Form.Item>
       </Form>
     </Edit>
+  );
+};
+
+const PackageSelect = () => {
+  const { selectProps } = useSelect<HostingPackage>({
+    resource: "packages",
+    optionLabel: "name",
+    optionValue: "id",
+  });
+
+  return (
+    <Select
+      {...selectProps}
+      placeholder="Select a package (optional)"
+      allowClear
+      options={[
+        { label: "No package", value: null },
+        ...(selectProps.options ?? []),
+      ]}
+    />
   );
 };

@@ -2,8 +2,13 @@
 // so we only own the fields. Validation rules mirror the server's
 // (email format + password min=10) so the form can reject early without
 // a round-trip.
-import { Create, useForm } from "@refinedev/antd";
-import { Form, Input, Switch } from "antd";
+import { Create, useForm, useSelect } from "@refinedev/antd";
+import { Form, Input, Switch, Select } from "antd";
+
+type HostingPackage = {
+  id: string;
+  name: string;
+};
 
 type UserCreateInput = {
   email: string;
@@ -11,6 +16,7 @@ type UserCreateInput = {
   name_first?: string;
   name_last?: string;
   is_admin: boolean;
+  package_id?: string;
 };
 
 export const UserCreate = () => {
@@ -61,7 +67,31 @@ export const UserCreate = () => {
         >
           <Switch />
         </Form.Item>
+
+        <Form.Item label="Hosting package" name="package_id">
+          <PackageSelect />
+        </Form.Item>
       </Form>
     </Create>
+  );
+};
+
+const PackageSelect = () => {
+  const { selectProps } = useSelect<HostingPackage>({
+    resource: "packages",
+    optionLabel: "name",
+    optionValue: "id",
+  });
+
+  return (
+    <Select
+      {...selectProps}
+      placeholder="Select a package (optional)"
+      allowClear
+      options={[
+        { label: "No package", value: null },
+        ...(selectProps.options ?? []),
+      ]}
+    />
   );
 };

@@ -128,6 +128,7 @@ func (m *memUserRepo) Update(_ context.Context, u *models.User) error {
 	existing.NameFirst = u.NameFirst
 	existing.NameLast = u.NameLast
 	existing.PasswordHash = u.PasswordHash
+	existing.PackageID = u.PackageID
 	existing.UpdatedAt = time.Now()
 	return nil
 }
@@ -166,6 +167,101 @@ func (m *memUserRepo) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+// ---------- in-memory package repo ----------
+
+// memPackageRepo is a tiny in-memory PackageRepository for handler tests.
+type memPackageRepo struct {
+	mu   sync.Mutex
+	byID map[string]*models.HostingPackage
+}
+
+func newMemPackageRepo() *memPackageRepo {
+	return &memPackageRepo{byID: map[string]*models.HostingPackage{}}
+}
+
+func (m *memPackageRepo) seed(p *models.HostingPackage) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c := *p
+	if c.CreatedAt.IsZero() {
+		c.CreatedAt = time.Now()
+		c.UpdatedAt = c.CreatedAt
+	}
+	m.byID[c.ID] = &c
+}
+
+func (m *memPackageRepo) Create(_ context.Context, p *models.HostingPackage) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c := *p
+	c.CreatedAt = time.Now()
+	c.UpdatedAt = c.CreatedAt
+	m.byID[c.ID] = &c
+	*p = c
+	return nil
+}
+
+func (m *memPackageRepo) FindByID(_ context.Context, id string) (*models.HostingPackage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if p, ok := m.byID[id]; ok {
+		c := *p
+		return &c, nil
+	}
+	return nil, repository.ErrNotFound
+}
+
+func (m *memPackageRepo) FindByName(_ context.Context, name string) (*models.HostingPackage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, v := range m.byID {
+		if v.Name == name {
+			c := *v
+			return &c, nil
+		}
+	}
+	return nil, repository.ErrNotFound
+}
+
+func (m *memPackageRepo) List(_ context.Context, offset, limit int) ([]models.HostingPackage, int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	all := make([]models.HostingPackage, 0, len(m.byID))
+	for _, v := range m.byID {
+		all = append(all, *v)
+	}
+	total := int64(len(all))
+	if offset > len(all) {
+		return nil, total, nil
+	}
+	end := offset + limit
+	if end > len(all) {
+		end = len(all)
+	}
+	return all[offset:end], total, nil
+}
+
+func (m *memPackageRepo) Update(_ context.Context, p *models.HostingPackage) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	existing, ok := m.byID[p.ID]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	*existing = *p
+	return nil
+}
+
+func (m *memPackageRepo) Delete(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.byID[id]; !ok {
+		return repository.ErrNotFound
+	}
+	delete(m.byID, id)
+	return nil
+}
+
 // ---------- test harness ----------
 
 // buildRouter wires a minimal Gin engine with users routes mounted behind a
@@ -181,6 +277,26 @@ func buildRouter(repo repository.UserRepository, claims *auth.AccessClaims) *gin
 	})
 	api.RegisterUserRoutes(g, api.UserHandlerConfig{
 		Repo:       repo,
+		BcryptCost: bcrypt.MinCost,
+	})
+	return r
+}
+
+// buildRouterWithPackages wires a minimal Gin engine with users routes mounted behind a
+// fake-auth middleware that stamps the given claims onto the context, and includes
+// a package repository.
+func buildRouterWithPackages(repo repository.UserRepository, pkgRepo repository.PackageRepository, claims *auth.AccessClaims) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	g := r.Group("/api/v1", func(c *gin.Context) {
+		if claims != nil {
+			ginctx.SetClaims(c, claims)
+		}
+		c.Next()
+	})
+	api.RegisterUserRoutes(g, api.UserHandlerConfig{
+		Repo:       repo,
+		Packages:   pkgRepo,
 		BcryptCost: bcrypt.MinCost,
 	})
 	return r
@@ -541,4 +657,141 @@ func TestUsers_Delete_HasNoContentLength(t *testing.T) {
 	}
 	// body must be empty or whitespace — defensive
 	assert.LessOrEqual(t, len(bytes.TrimSpace(rec.Body.Bytes())), 0)
+}
+
+// ---------- PACKAGE_ID ----------
+
+func TestUsers_Create_WithValidPackageID(t *testing.T) {
+	t.Parallel()
+
+	repo := newMemUserRepo()
+	admin := makeUser(t, "admin@example.com", true, "adminpassword")
+	repo.seed(admin)
+
+	pkgRepo := newMemPackageRepo()
+	pkg := &models.HostingPackage{
+		ID:   ids.NewULID(),
+		Name: "Standard",
+	}
+	pkgRepo.seed(pkg)
+
+	r := buildRouterWithPackages(repo, pkgRepo, &auth.AccessClaims{UserID: admin.ID, IsAdmin: true})
+	rec := doJSON(t, r, http.MethodPost, "/api/v1/users", map[string]any{
+		"email":      "new@example.com",
+		"password":   "password123",
+		"package_id": pkg.ID,
+	})
+	require.Equal(t, http.StatusCreated, rec.Code)
+
+	var out models.User
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.NotNil(t, out.PackageID)
+	assert.Equal(t, pkg.ID, *out.PackageID)
+}
+
+func TestUsers_Create_WithInvalidPackageID(t *testing.T) {
+	t.Parallel()
+
+	repo := newMemUserRepo()
+	admin := makeUser(t, "admin@example.com", true, "adminpassword")
+	repo.seed(admin)
+
+	pkgRepo := newMemPackageRepo()
+
+	r := buildRouterWithPackages(repo, pkgRepo, &auth.AccessClaims{UserID: admin.ID, IsAdmin: true})
+	rec := doJSON(t, r, http.MethodPost, "/api/v1/users", map[string]any{
+		"email":      "new@example.com",
+		"password":   "password123",
+		"package_id": "nonexistent_id",
+	})
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "invalid_package_id")
+}
+
+func TestUsers_Create_WithoutPackageID(t *testing.T) {
+	t.Parallel()
+
+	repo := newMemUserRepo()
+	admin := makeUser(t, "admin@example.com", true, "adminpassword")
+	repo.seed(admin)
+
+	r := buildRouter(repo, &auth.AccessClaims{UserID: admin.ID, IsAdmin: true})
+	rec := doJSON(t, r, http.MethodPost, "/api/v1/users", map[string]any{
+		"email":    "new@example.com",
+		"password": "password123",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code)
+
+	var out models.User
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	assert.Nil(t, out.PackageID)
+}
+
+func TestUsers_Patch_SetPackageID(t *testing.T) {
+	t.Parallel()
+
+	repo := newMemUserRepo()
+	admin := makeUser(t, "admin@example.com", true, "adminpassword")
+	target := makeUser(t, "u@example.com", false, "password01")
+	repo.seed(admin)
+	repo.seed(target)
+
+	pkgRepo := newMemPackageRepo()
+	pkg := &models.HostingPackage{
+		ID:   ids.NewULID(),
+		Name: "Premium",
+	}
+	pkgRepo.seed(pkg)
+
+	r := buildRouterWithPackages(repo, pkgRepo, &auth.AccessClaims{UserID: admin.ID, IsAdmin: true})
+	rec := doJSON(t, r, http.MethodPatch, "/api/v1/users/"+target.ID, map[string]any{
+		"package_id": pkg.ID,
+	})
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var out models.User
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.NotNil(t, out.PackageID)
+	assert.Equal(t, pkg.ID, *out.PackageID)
+}
+
+func TestUsers_Patch_ClearPackageID(t *testing.T) {
+	t.Parallel()
+
+	repo := newMemUserRepo()
+	pkgID := ids.NewULID()
+	admin := makeUser(t, "admin@example.com", true, "adminpassword")
+	target := makeUser(t, "u@example.com", false, "password01")
+	target.PackageID = &pkgID // pre-assign a package
+	repo.seed(admin)
+	repo.seed(target)
+
+	r := buildRouter(repo, &auth.AccessClaims{UserID: admin.ID, IsAdmin: true})
+	rec := doJSON(t, r, http.MethodPatch, "/api/v1/users/"+target.ID, map[string]any{
+		"package_id": "", // empty string clears it
+	})
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var out models.User
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	assert.Nil(t, out.PackageID)
+}
+
+func TestUsers_Patch_WithInvalidPackageID(t *testing.T) {
+	t.Parallel()
+
+	repo := newMemUserRepo()
+	admin := makeUser(t, "admin@example.com", true, "adminpassword")
+	target := makeUser(t, "u@example.com", false, "password01")
+	repo.seed(admin)
+	repo.seed(target)
+
+	pkgRepo := newMemPackageRepo()
+
+	r := buildRouterWithPackages(repo, pkgRepo, &auth.AccessClaims{UserID: admin.ID, IsAdmin: true})
+	rec := doJSON(t, r, http.MethodPatch, "/api/v1/users/"+target.ID, map[string]any{
+		"package_id": "nonexistent_id",
+	})
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "invalid_package_id")
 }

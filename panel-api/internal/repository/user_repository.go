@@ -86,7 +86,7 @@ func (r *userRepo) Update(ctx context.Context, u *models.User) error {
 	// is_admin via Save(). The admin-only endpoint bypasses this repo method
 	// and updates is_admin directly.
 	if err := r.db.WithContext(ctx).Model(u).Select(
-		"email", "name_first", "name_last", "password_hash", "linux_uid",
+		"email", "name_first", "name_last", "password_hash", "linux_uid", "package_id",
 	).Updates(u).Error; err != nil {
 		return translate(err)
 	}

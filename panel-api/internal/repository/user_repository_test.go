@@ -2,44 +2,16 @@ package repository_test
 
 import (
 	"context"
-	"database/sql"
-	"regexp"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
-
-// newMockDB wires sqlmock to GORM so unit tests can assert on the exact
-// SQL the repository issues without needing a live MariaDB.
-func newMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock, *sql.DB) {
-	t.Helper()
-
-	raw, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
-	require.NoError(t, err)
-
-	// MariaDB version probe GORM sends on open.
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT VERSION()")).
-		WillReturnRows(sqlmock.NewRows([]string{"VERSION()"}).AddRow("10.11.6-MariaDB"))
-
-	gdb, err := gorm.Open(mysql.New(mysql.Config{
-		Conn:                      raw,
-		SkipInitializeWithVersion: false,
-	}), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	require.NoError(t, err)
-
-	return gdb, mock, raw
-}
 
 func TestUserRepository_Create(t *testing.T) {
 	t.Parallel()
@@ -61,8 +33,8 @@ func TestUserRepository_Create(t *testing.T) {
 			u.ID,
 			u.Email,
 			nil,              // username
-			"", // name_first default
-			"", // name_last default
+			"",               // name_first default
+			"",               // name_last default
 			u.PasswordHash,
 			false,            // is_admin
 			nil,              // package_id

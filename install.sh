@@ -84,6 +84,102 @@ preflight() {
   export GO_ARCH
 }
 
+# ---------- step 0.5: server identity prompts -------------------------------
+#
+# Capture hostname, public IPs, and nameserver names before any install
+# step runs. Values are exported so write_config_file can seed config.toml
+# and the app can read them on first boot. Idempotent: if the existing
+# config.toml already contains [server].hostname, the prompts are skipped
+# so `install.sh` is safe to re-run for updates.
+
+prompt_server_settings() {
+  local config_file="/etc/jabali-panel/config.toml"
+  if [[ -f "$config_file" ]] && grep -q '^[[:space:]]*hostname[[:space:]]*=' "$config_file"; then
+    _log "server settings already configured in $config_file — skipping prompt"
+    # Re-export for downstream use so write_config_file is a no-op on re-run.
+    JABALI_SERVER_CONFIGURED=1
+    export JABALI_SERVER_CONFIGURED
+    return 0
+  fi
+
+  local sys_hostname sys_ipv4 sys_ipv6
+  sys_hostname="$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo '')"
+  sys_ipv4="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1 || true)"
+  sys_ipv6="$(ip -6 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1 || true)"
+
+  echo ""
+  echo "=============================================================="
+  echo "  Jabali Panel — Server Settings"
+  echo "=============================================================="
+  echo ""
+  echo "A few details about this server before we start. You can"
+  echo "change any of these later from the admin panel."
+  echo ""
+
+  local inp_hostname inp_ipv4 inp_ipv6 inp_ns1_name inp_ns1_ip inp_ns2_name inp_ns2_ip
+  while true; do
+    read -rp "Server hostname [${sys_hostname}]: " inp_hostname
+    inp_hostname="${inp_hostname:-$sys_hostname}"
+    [[ "$inp_hostname" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$ ]] && break
+    _warn "invalid hostname; use letters/digits/dots/hyphens"
+  done
+
+  while true; do
+    read -rp "Public IPv4 [${sys_ipv4}]: " inp_ipv4
+    inp_ipv4="${inp_ipv4:-$sys_ipv4}"
+    [[ "$inp_ipv4" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && break
+    _warn "invalid IPv4"
+  done
+
+  read -rp "Public IPv6 (optional) [${sys_ipv6}]: " inp_ipv6
+  inp_ipv6="${inp_ipv6:-$sys_ipv6}"
+
+  local default_ns1="ns1.${inp_hostname}"
+  read -rp "Primary nameserver name [${default_ns1}]: " inp_ns1_name
+  inp_ns1_name="${inp_ns1_name:-$default_ns1}"
+
+  read -rp "Primary nameserver IPv4 [${inp_ipv4}]: " inp_ns1_ip
+  inp_ns1_ip="${inp_ns1_ip:-$inp_ipv4}"
+
+  echo ""
+  echo "(ns2 is optional — leave blank to skip; you can add it later.)"
+  local default_ns2="ns2.${inp_hostname}"
+  read -rp "Secondary nameserver name (blank to skip) [${default_ns2}]: " inp_ns2_name
+  inp_ns2_name="${inp_ns2_name:-$default_ns2}"
+  if [[ "$inp_ns2_name" == "skip" || "$inp_ns2_name" == "-" ]]; then
+    inp_ns2_name=""
+    inp_ns2_ip=""
+  else
+    read -rp "Secondary nameserver IPv4 (blank to skip): " inp_ns2_ip
+    if [[ -z "$inp_ns2_ip" ]]; then
+      inp_ns2_name=""  # clearing IP clears both — keep them in sync
+    fi
+  fi
+
+  # Apply hostname at the OS layer now so later steps see the right name.
+  hostnamectl set-hostname "$inp_hostname" 2>/dev/null || true
+  if ! grep -q "[[:space:]]${inp_hostname}\([[:space:]]\|$\)" /etc/hosts 2>/dev/null; then
+    printf '%s\t%s\n' "$inp_ipv4" "$inp_hostname" >> /etc/hosts
+  fi
+
+  # Export for write_config_file. Not using a file because we write to
+  # /etc/jabali-panel/config.toml later in the install flow anyway.
+  JABALI_SRV_HOSTNAME="$inp_hostname"
+  JABALI_SRV_IPV4="$inp_ipv4"
+  JABALI_SRV_IPV6="$inp_ipv6"
+  JABALI_SRV_NS1_NAME="$inp_ns1_name"
+  JABALI_SRV_NS1_IPV4="$inp_ns1_ip"
+  JABALI_SRV_NS2_NAME="$inp_ns2_name"
+  JABALI_SRV_NS2_IPV4="$inp_ns2_ip"
+  JABALI_SERVER_CONFIGURED=0
+  export JABALI_SRV_HOSTNAME JABALI_SRV_IPV4 JABALI_SRV_IPV6 \
+         JABALI_SRV_NS1_NAME JABALI_SRV_NS1_IPV4 \
+         JABALI_SRV_NS2_NAME JABALI_SRV_NS2_IPV4 \
+         JABALI_SERVER_CONFIGURED
+
+  _ok "captured server identity: ${inp_hostname} (${inp_ipv4})"
+}
+
 # ---------- step 1: base packages -------------------------------------------
 
 install_base_packages() {
@@ -442,6 +538,23 @@ write_config_file() {
   fi
   _log "seeding config file: $dest"
   install -m 0640 -o root -g "$SERVICE_USER" "$src" "$dest"
+
+  # Append the [server] block with what prompt_server_settings captured.
+  # The panel reads this on first boot to seed the server_settings DB row.
+  if [[ "${JABALI_SERVER_CONFIGURED:-1}" == "0" ]]; then
+    cat >> "$dest" <<EOF
+
+[server]
+hostname    = "${JABALI_SRV_HOSTNAME}"
+public_ipv4 = "${JABALI_SRV_IPV4}"
+public_ipv6 = "${JABALI_SRV_IPV6}"
+ns1_name    = "${JABALI_SRV_NS1_NAME}"
+ns1_ipv4    = "${JABALI_SRV_NS1_IPV4}"
+ns2_name    = "${JABALI_SRV_NS2_NAME}"
+ns2_ipv4    = "${JABALI_SRV_NS2_IPV4}"
+EOF
+    _ok "seeded [server] block in $dest"
+  fi
 }
 
 write_agent_systemd_unit() {
@@ -640,6 +753,7 @@ start_and_verify() {
 
 main() {
   preflight
+  prompt_server_settings
   install_base_packages
   install_nginx
   install_disabled_page

@@ -53,6 +53,17 @@ type ServerConfig struct {
 	// falls back to plain HTTP (dev mode or behind a TLS-terminating proxy).
 	TLSCert string `toml:"tls_cert"`
 	TLSKey  string `toml:"tls_key"`
+
+	// Server identity and DNS nameserver configuration for hosted domains.
+	// Seeded from config.toml at first boot; thereafter edited via the
+	// admin Settings API and stored in the server_settings DB table.
+	Hostname   string `toml:"hostname"`
+	PublicIPv4 string `toml:"public_ipv4"`
+	PublicIPv6 string `toml:"public_ipv6"`
+	NS1Name    string `toml:"ns1_name"`
+	NS1IPv4    string `toml:"ns1_ipv4"`
+	NS2Name    string `toml:"ns2_name"`
+	NS2IPv4    string `toml:"ns2_ipv4"`
 }
 
 // LogConfig controls slog output.

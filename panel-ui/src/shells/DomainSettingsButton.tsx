@@ -145,7 +145,7 @@ export const DomainSettingsButton = ({
         icon={<SettingOutlined />}
         onClick={handleOpenModal}
       >
-        Settings
+        Nginx Directives
       </Button>
 
       <Modal

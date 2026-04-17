@@ -12,12 +12,13 @@ type HostingPackage struct {
 	Name string `gorm:"type:varchar(100);uniqueIndex:ux_packages_name;not null" json:"name"`
 
 	// Quotas — zero means unlimited for that resource.
-	DiskQuotaMB      uint32 `gorm:"type:int unsigned;not null;default:0" json:"disk_quota_mb"`
-	BandwidthQuotaMB uint32 `gorm:"type:int unsigned;not null;default:0" json:"bandwidth_quota_mb"`
-	MaxDomains       uint32 `gorm:"type:int unsigned;not null;default:0" json:"max_domains"`
-	MaxEmailAccounts uint32 `gorm:"type:int unsigned;not null;default:0" json:"max_email_accounts"`
-	MaxDatabases     uint32 `gorm:"type:int unsigned;not null;default:0" json:"max_databases"`
-	MaxFTPAccounts   uint32 `gorm:"type:int unsigned;not null;default:0" json:"max_ftp_accounts"`
+	DiskQuotaMB       uint32 `gorm:"type:int unsigned;not null;default:0" json:"disk_quota_mb"`
+	BandwidthQuotaMB  uint32 `gorm:"type:int unsigned;not null;default:0" json:"bandwidth_quota_mb"`
+	MaxDomains        uint32 `gorm:"type:int unsigned;not null;default:0" json:"max_domains"`
+	MaxEmailAccounts  uint32 `gorm:"type:int unsigned;not null;default:0" json:"max_email_accounts"`
+	MaxDatabases      uint32 `gorm:"type:int unsigned;not null;default:0" json:"max_databases"`
+	MaxDatabaseUsers  uint32 `gorm:"type:int unsigned;not null;default:0" json:"max_database_users"`
+	MaxFTPAccounts    uint32 `gorm:"type:int unsigned;not null;default:0" json:"max_ftp_accounts"`
 
 	// Feature toggles.
 	SSHEnabled bool `gorm:"type:tinyint(1);not null;default:0" json:"ssh_enabled"`

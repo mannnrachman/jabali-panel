@@ -30,6 +30,7 @@ import {
   AppstoreOutlined,
   CloudServerOutlined,
   DashboardOutlined,
+  DatabaseOutlined,
   GlobalOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
@@ -54,10 +55,12 @@ import { PackageList } from "./shells/admin/packages/PackageList";
 import { DomainCreate } from "./shells/admin/domains/DomainCreate";
 import { DomainEdit } from "./shells/admin/domains/DomainEdit";
 import { DomainList } from "./shells/admin/domains/DomainList";
+import { DatabaseList } from "./shells/admin/databases/DatabaseList";
 import { ServerSettingsPage } from "./shells/admin/settings/ServerSettingsPage";
 import { MyProfile } from "./shells/user/MyProfile";
 import { UserDomainList } from "./shells/user/domains/UserDomainList";
 import { UserDomainCreate } from "./shells/user/domains/UserDomainCreate";
+import { UserDatabaseList } from "./shells/user/databases/UserDatabaseList";
 import { DNSRecordsPage } from "./shells/dns/DNSRecordsPage";
 import { DNSZonesOverviewPage } from "./shells/admin/dns/DNSZonesOverviewPage";
 import { UserDNSZonesOverviewPage } from "./shells/user/dns/UserDNSZonesOverviewPage";
@@ -116,6 +119,11 @@ const ThemedApp = () => {
               meta: { label: "SSL", icon: <SafetyCertificateOutlined />, shell: "admin" },
             },
             {
+              name: "databases",
+              list: "/jabali-admin/databases",
+              meta: { label: "Databases", icon: <DatabaseOutlined />, shell: "admin" },
+            },
+            {
               name: "settings",
               list: "/jabali-admin/settings",
               meta: { label: "Server Settings", icon: <SettingOutlined />, shell: "admin" },
@@ -142,6 +150,11 @@ const ThemedApp = () => {
               name: "user-ssl",
               list: "/jabali-panel/ssl",
               meta: { label: "SSL", icon: <SafetyCertificateOutlined />, shell: "user" },
+            },
+            {
+              name: "user-databases",
+              list: "/jabali-panel/databases",
+              meta: { label: "Databases", icon: <DatabaseOutlined />, shell: "user" },
             },
           ]}
           options={{
@@ -183,6 +196,9 @@ const ThemedApp = () => {
                 <Route path="edit/:id" element={<DomainEdit />} />
                 <Route path=":id/dns" element={<DNSRecordsPage />} />
               </Route>
+              <Route path="databases">
+                <Route index element={<DatabaseList />} />
+              </Route>
               <Route path="dns" element={<DNSZonesOverviewPage />} />
               <Route path="ssl" element={<SSLManagerPage />} />
               <Route path="settings" element={<ServerSettingsPage />} />
@@ -208,6 +224,9 @@ const ThemedApp = () => {
                 <Route index element={<UserDomainList />} />
                 <Route path="create" element={<UserDomainCreate />} />
                 <Route path=":id/dns" element={<DNSRecordsPage />} />
+              </Route>
+              <Route path="databases">
+                <Route index element={<UserDatabaseList />} />
               </Route>
               <Route path="dns" element={<UserDNSZonesOverviewPage />} />
               <Route path="ssl" element={<UserSSLManagerPage />} />

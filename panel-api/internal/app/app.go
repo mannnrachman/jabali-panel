@@ -29,6 +29,9 @@ type Deps struct {
 	Users               repository.UserRepository
 	Packages            repository.PackageRepository
 	Domains             repository.DomainRepository
+	Databases           repository.DatabaseRepository
+	DatabaseUsers       repository.DatabaseUserRepository
+	DatabaseUserGrants  repository.DatabaseUserGrantRepository
 	Agent               agent.AgentInterface
 	Reconciler          *reconciler.Reconciler
 	ServerSettings      repository.ServerSettingsRepository
@@ -142,6 +145,14 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Packages:   deps.Packages,
 				Agent:      deps.Agent,
 				Reconciler: deps.Reconciler,
+			})
+		}
+		if deps.Databases != nil && deps.DatabaseUsers != nil {
+			api.RegisterDatabaseRoutes(v1, api.DatabaseHandlerConfig{
+				Databases:      deps.Databases,
+				DatabaseUsers:  deps.DatabaseUsers,
+				Users:          deps.Users,
+				Packages:       deps.Packages,
 			})
 		}
 		if deps.Domains != nil && deps.DNSZones != nil && deps.DNSRecords != nil {

@@ -313,7 +313,7 @@ func TestPerUserFPMConfig(t *testing.T) {
 	}
 
 	contentStr := string(content)
-	if !strings.Contains(contentStr, "pid = /run/php/jabali-fpm-testuser.pid") {
+	if !strings.Contains(contentStr, "pid = /run/php/jabali-testuser/fpm.pid") {
 		t.Errorf("config missing pid directive")
 	}
 	if !strings.Contains(contentStr, "error_log = /var/log/php-fpm-testuser.log") {

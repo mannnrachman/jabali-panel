@@ -234,7 +234,7 @@ func writePerUserFPMConfig(username, version string) error {
 	poolConfigPath := fmt.Sprintf("/etc/php/%s/fpm/pool.d/jabali-%s.conf", version, username)
 
 	confContent := fmt.Sprintf(`[global]
-pid = /run/php/jabali-fpm-%s.pid
+pid = /run/php/jabali-%s/fpm.pid
 error_log = /var/log/php-fpm-%s.log
 daemonize = no
 

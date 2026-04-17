@@ -70,6 +70,7 @@ func userCreateHandler(ctx context.Context, params json.RawMessage) (any, error)
 	// Create user with home directory.
 	createCmd := exec.CommandContext(ctx, "useradd",
 		"--create-home",
+		"--groups", "www-data",
 		"--home-dir", p.HomeDir,
 		"--shell", p.Shell,
 		p.Username,

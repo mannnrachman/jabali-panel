@@ -95,6 +95,16 @@ func userSliceEnsureHandler(ctx context.Context, params json.RawMessage) (any, e
 		}
 	}
 
+	// Ensure the user is in www-data group so FPM can chown the socket
+	// listen.group=www-data. Idempotent: usermod -aG on a member is a no-op.
+	// Skip errors: a failure here leaves the socket chown failing loudly in FPM logs,
+	// which is more diagnosable than silently wedging the reconcile.
+	if _, _, gErr := runCmdFn(ctx, "usermod", "-aG", "www-data", p.Username); gErr != nil {
+		// Log via stderr by returning a warning-wrapped error would be overkill;
+		// socket chown will report the real problem.
+		_ = gErr
+	}
+
 	testMutex.Lock()
 	systemdRootFn := systemdRoot
 	testMutex.Unlock()

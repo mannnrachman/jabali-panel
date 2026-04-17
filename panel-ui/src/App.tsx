@@ -32,6 +32,7 @@ import {
   DashboardOutlined,
   DatabaseOutlined,
   GlobalOutlined,
+  KeyOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
   TeamOutlined,
@@ -57,12 +58,16 @@ import { DomainEdit } from "./shells/admin/domains/DomainEdit";
 import { DomainList } from "./shells/admin/domains/DomainList";
 import { DatabaseList } from "./shells/admin/databases/DatabaseList";
 import { DatabaseCreate } from "./shells/admin/databases/DatabaseCreate";
+import { DatabaseUsersList } from "./shells/admin/database-users/DatabaseUsersList";
+import { DatabaseUserCreate } from "./shells/admin/database-users/DatabaseUserCreate";
 import { ServerSettingsPage } from "./shells/admin/settings/ServerSettingsPage";
 import { MyProfile } from "./shells/user/MyProfile";
 import { UserDomainList } from "./shells/user/domains/UserDomainList";
 import { UserDomainCreate } from "./shells/user/domains/UserDomainCreate";
 import { UserDatabaseList } from "./shells/user/databases/UserDatabaseList";
 import { UserDatabaseCreate } from "./shells/user/databases/UserDatabaseCreate";
+import { UserDatabaseUsersList } from "./shells/user/database-users/UserDatabaseUsersList";
+import { UserDatabaseUserCreate } from "./shells/user/database-users/UserDatabaseUserCreate";
 import { DNSRecordsPage } from "./shells/dns/DNSRecordsPage";
 import { DNSZonesOverviewPage } from "./shells/admin/dns/DNSZonesOverviewPage";
 import { UserDNSZonesOverviewPage } from "./shells/user/dns/UserDNSZonesOverviewPage";
@@ -127,6 +132,12 @@ const ThemedApp = () => {
               meta: { label: "Databases", icon: <DatabaseOutlined />, shell: "admin" },
             },
             {
+              name: "database-users",
+              list: "/jabali-admin/database-users",
+              create: "/jabali-admin/database-users/create",
+              meta: { label: "DB Users", icon: <KeyOutlined />, shell: "admin" },
+            },
+            {
               name: "settings",
               list: "/jabali-admin/settings",
               meta: { label: "Server Settings", icon: <SettingOutlined />, shell: "admin" },
@@ -159,6 +170,12 @@ const ThemedApp = () => {
               list: "/jabali-panel/databases",
               create: "/jabali-panel/databases/create",
               meta: { label: "Databases", icon: <DatabaseOutlined />, shell: "user" },
+            },
+            {
+              name: "user-database-users",
+              list: "/jabali-panel/database-users",
+              create: "/jabali-panel/database-users/create",
+              meta: { label: "DB Users", icon: <KeyOutlined />, shell: "user" },
             },
           ]}
           options={{
@@ -204,6 +221,10 @@ const ThemedApp = () => {
                 <Route index element={<DatabaseList />} />
                 <Route path="create" element={<DatabaseCreate />} />
               </Route>
+              <Route path="database-users">
+                <Route index element={<DatabaseUsersList />} />
+                <Route path="create" element={<DatabaseUserCreate />} />
+              </Route>
               <Route path="dns" element={<DNSZonesOverviewPage />} />
               <Route path="ssl" element={<SSLManagerPage />} />
               <Route path="settings" element={<ServerSettingsPage />} />
@@ -233,6 +254,10 @@ const ThemedApp = () => {
               <Route path="databases">
                 <Route index element={<UserDatabaseList />} />
                 <Route path="create" element={<UserDatabaseCreate />} />
+              </Route>
+              <Route path="database-users">
+                <Route index element={<UserDatabaseUsersList />} />
+                <Route path="create" element={<UserDatabaseUserCreate />} />
               </Route>
               <Route path="dns" element={<UserDNSZonesOverviewPage />} />
               <Route path="ssl" element={<UserSSLManagerPage />} />

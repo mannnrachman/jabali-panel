@@ -360,12 +360,23 @@ _install_php_version() {
   local version="$1"
   if ! command -v "php${version}" >/dev/null 2>&1; then
     _log "installing PHP ${version}"
+    # Required packages: install must succeed.
+    local required=("php${version}-fpm" "php${version}-cli")
+    # Optional extensions: Sury's packaging drifts between PHP versions
+    # (e.g. 8.5 ships OPcache inside -common instead of a standalone
+    # -opcache package). Probe apt-cache and install only what's there.
+    local optional_names=(mysql mbstring zip gd curl xml intl bcmath opcache)
+    local optional=()
+    for ext in "${optional_names[@]}"; do
+      if apt-cache show "php${version}-${ext}" >/dev/null 2>&1; then
+        optional+=("php${version}-${ext}")
+      else
+        _log "php${version}-${ext} not in apt sources — skipping (bundled elsewhere or unavailable)"
+      fi
+    done
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      "php${version}-fpm" "php${version}-cli" "php${version}-mysql" \
-      "php${version}-mbstring" "php${version}-zip" "php${version}-gd" \
-      "php${version}-curl" "php${version}-xml" "php${version}-intl" \
-      "php${version}-bcmath" "php${version}-opcache"
-    _ok "PHP ${version} installed"
+      "${required[@]}" "${optional[@]}"
+    _ok "PHP ${version} installed (${#optional[@]}/${#optional_names[@]} optional extensions)"
   else
     _ok "PHP ${version} already installed"
   fi

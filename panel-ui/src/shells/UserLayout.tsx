@@ -7,7 +7,8 @@
 // <Menu> ourselves from the shell-filtered resources and hand it to
 // ThemedSiderV2's render prop — keeps the sider chrome (collapse,
 // theme integration) while giving us exact control over what shows.
-import { ThemedLayoutV2, ThemedSiderV2, ThemedHeaderV2 } from "@refinedev/antd";
+import { ThemedLayoutV2, ThemedSiderV2 } from "@refinedev/antd";
+import { JabaliHeader } from "../components/JabaliHeader";
 import { JabaliTitle } from "../components/JabaliTitle";
 import { useResource } from "@refinedev/core";
 import { Menu } from "antd";
@@ -55,7 +56,7 @@ export function UserLayout() {
       Title={({ collapsed }) => (
         <JabaliTitle collapsed={collapsed} text="Jabali Panel" />
       )}
-      Header={ThemedHeaderV2}
+      Header={JabaliHeader}
       Sider={(siderProps) => (
         <ThemedSiderV2
           {...siderProps}

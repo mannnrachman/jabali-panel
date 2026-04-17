@@ -35,6 +35,7 @@ import {
   SafetyCertificateOutlined,
   SettingOutlined,
   TeamOutlined,
+  ThunderboltOutlined,
   UserOutlined,
 } from "@ant-design/icons";
 import useMuiTheme from "./muiTheme";
@@ -67,6 +68,8 @@ import { DNSZonesOverviewPage } from "./shells/admin/dns/DNSZonesOverviewPage";
 import { UserDNSZonesOverviewPage } from "./shells/user/dns/UserDNSZonesOverviewPage";
 import { SSLManagerPage } from "./shells/admin/ssl/SSLManagerPage";
 import { UserSSLManagerPage } from "./shells/user/ssl/UserSSLManagerPage";
+import { PHPPoolsList } from "./shells/admin/php-pools/PHPPoolsList";
+import { PHPPoolEdit } from "./shells/admin/php-pools/PHPPoolEdit";
 import { LoginPage } from "./pages/Login";
 
 const ThemedApp = () => {
@@ -123,6 +126,12 @@ const ThemedApp = () => {
               name: "settings",
               list: "/jabali-admin/settings",
               meta: { label: "Server Settings", icon: <SettingOutlined />, shell: "admin" },
+            },
+            {
+              name: "admin-php-pools",
+              list: "/jabali-admin/php-pools",
+              edit: "/jabali-admin/php-pools/edit/:id",
+              meta: { label: "PHP Pools", icon: <ThunderboltOutlined />, shell: "admin" },
             },
 
             // User shell
@@ -210,6 +219,10 @@ const ThemedApp = () => {
               <Route path="dns" element={<DNSZonesOverviewPage />} />
               <Route path="ssl" element={<SSLManagerPage />} />
               <Route path="settings" element={<ServerSettingsPage />} />
+              <Route path="php-pools">
+                <Route index element={<PHPPoolsList />} />
+                <Route path="edit/:id" element={<PHPPoolEdit />} />
+              </Route>
             </Route>
 
             {/* ---------------- user shell ----------------- */}

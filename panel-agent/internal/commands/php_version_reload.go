@@ -52,19 +52,22 @@ func phpVersionReloadHandler(ctx context.Context, params json.RawMessage) (any, 
 		}
 	}
 
-	// Reload the service
+	// reload-or-restart: reload if the unit is running, start if it's
+	// stopped. Matches operator intent ("make this PHP version active
+	// and pick up config") better than plain `reload`, which fails on a
+	// stopped unit with exit 1.
 	serviceName := fmt.Sprintf("php%s-fpm.service", p.Version)
-	cmd := exec.CommandContext(ctx, "systemctl", "reload", serviceName)
-	if err := cmd.Run(); err != nil {
+	cmd := exec.CommandContext(ctx, "systemctl", "reload-or-restart", serviceName)
+	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("failed to reload %s: %v", serviceName, err),
+			Message: fmt.Sprintf("failed to reload %s: %v: %s", serviceName, err, string(out)),
 		}
 	}
 
 	return phpVersionReloadResponse{
 		Version: p.Version,
-		Message: "reload successful",
+		Message: "reload-or-restart successful",
 	}, nil
 }
 

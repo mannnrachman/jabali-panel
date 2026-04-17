@@ -104,6 +104,16 @@ func (f *fakeDomainRepo) CountByUserID(ctx context.Context, userID string) (int6
 	return int64(count), nil
 }
 
+func (f *fakeDomainRepo) CountByPHPPoolID(ctx context.Context, poolID string) (int64, error) {
+	count := 0
+	for _, d := range f.domains {
+		if d.PHPPoolID != nil && *d.PHPPoolID == poolID {
+			count++
+		}
+	}
+	return int64(count), nil
+}
+
 type notFoundErr struct{}
 
 func (e *notFoundErr) Error() string { return "not found" }

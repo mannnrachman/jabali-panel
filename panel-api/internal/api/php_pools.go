@@ -18,11 +18,12 @@ import (
 
 // PHPPoolHandlerConfig plugs the PHP pool handlers into the router.
 type PHPPoolHandlerConfig struct {
-	PHPPools       repository.PHPPoolRepository
+	PHPPools            repository.PHPPoolRepository
 	PHPPoolIniOverrides repository.PHPPoolIniOverrideRepository
-	Users          repository.UserRepository
-	Packages       repository.PackageRepository
-	Agent          agent.AgentInterface
+	Domains             repository.DomainRepository
+	Users               repository.UserRepository
+	Packages            repository.PackageRepository
+	Agent               agent.AgentInterface
 }
 
 const (
@@ -393,10 +394,34 @@ func (h *phpPoolHandler) delete(c *gin.Context) {
 		return
 	}
 
-	// Check authorization
-	if !claims.IsAdmin && pool.UserID != claims.UserID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+	// Pool deletion is admin-only per ADR-0023 decision 10. Regular users
+	// cannot delete their own pool — the reconciler ensures every user
+	// has one. To "disable PHP" for a domain, the user unbinds the pool
+	// from the domain (POST /domains/:id/php-pool DELETE), not by deleting
+	// the pool itself.
+	if !claims.IsAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "admin_required"})
 		return
+	}
+
+	// Refuse deletion while any domain still references this pool. Belt
+	// and suspenders alongside the FK's ON DELETE SET NULL — the 409
+	// keeps the admin explicit about what they're about to unbind.
+	if h.cfg.Domains != nil {
+		bound, cerr := h.cfg.Domains.CountByPHPPoolID(ctx, poolID)
+		if cerr != nil {
+			slog.ErrorContext(ctx, "failed to count domains bound to pool", "error", cerr)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		if bound > 0 {
+			c.JSON(http.StatusConflict, gin.H{
+				"error":         "pool_has_bound_domains",
+				"bound_domains": bound,
+				"message":       "unbind all domains from this pool before deleting",
+			})
+			return
+		}
 	}
 
 	// Delete all ini overrides first

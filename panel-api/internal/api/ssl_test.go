@@ -173,6 +173,11 @@ func (m *MockDomainRepository) CountByUserID(ctx context.Context, userID string)
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *MockDomainRepository) CountByPHPPoolID(ctx context.Context, poolID string) (int64, error) {
+	args := m.Called(ctx, poolID)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 func (m *MockDomainRepository) Delete(ctx context.Context, id string) error {
 	args := m.Called(ctx, id)
 	return args.Error(0)

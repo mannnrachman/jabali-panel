@@ -202,8 +202,15 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterPHPPoolRoutes(v1, api.PHPPoolHandlerConfig{
 				PHPPools:            deps.PHPPools,
 				PHPPoolIniOverrides: deps.PHPPoolIniOverrides,
+				Domains:             deps.Domains,
 				Users:               deps.Users,
 				Agent:               deps.Agent,
+			})
+		}
+		if deps.Domains != nil && deps.PHPPools != nil {
+			api.RegisterDomainPHPPoolRoutes(v1, api.DomainPHPPoolHandlerConfig{
+				Domains:  deps.Domains,
+				PHPPools: deps.PHPPools,
 			})
 		}
 

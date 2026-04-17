@@ -20,6 +20,10 @@ type DomainRepository interface {
 	Update(ctx context.Context, d *models.Domain) error
 	Delete(ctx context.Context, id string) error
 	CountByUserID(ctx context.Context, userID string) (int64, error)
+	// CountByPHPPoolID returns the number of domains currently bound to
+	// the given PHP pool. Used by the pool-delete handler to refuse with
+	// 409 when any domain still references the pool (ADR-0023 decision 10).
+	CountByPHPPoolID(ctx context.Context, poolID string) (int64, error)
 }
 
 type domainRepo struct{ db *gorm.DB }
@@ -137,6 +141,14 @@ func (r *domainRepo) Delete(ctx context.Context, id string) error {
 func (r *domainRepo) CountByUserID(ctx context.Context, userID string) (int64, error) {
 	var count int64
 	if err := r.db.WithContext(ctx).Model(&models.Domain{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func (r *domainRepo) CountByPHPPoolID(ctx context.Context, poolID string) (int64, error) {
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&models.Domain{}).Where("php_pool_id = ?", poolID).Count(&count).Error; err != nil {
 		return 0, err
 	}
 	return count, nil

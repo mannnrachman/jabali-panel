@@ -26,6 +26,16 @@ import routerProvider, {
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router";
 import { ConfigProvider } from "antd";
 
+import {
+  AppstoreOutlined,
+  CloudServerOutlined,
+  DashboardOutlined,
+  GlobalOutlined,
+  SafetyCertificateOutlined,
+  SettingOutlined,
+  TeamOutlined,
+  UserOutlined,
+} from "@ant-design/icons";
 import useMuiTheme from "./muiTheme";
 import { ThemeModeProvider, useThemeMode } from "./theme/ThemeModeContext";
 import { authProvider } from "./authProvider";
@@ -67,27 +77,71 @@ const ThemedApp = () => {
           dataProvider={dataProvider}
           routerProvider={routerProvider}
           notificationProvider={useNotificationProvider}
-          // Resource metadata is still useful for Refine's data hooks
-          // (invalidation after mutation, etc) even though the sidebars
-          // are hardcoded per shell.
           resources={[
+            // Admin shell
+            {
+              name: "dashboard",
+              list: "/jabali-admin/dashboard",
+              meta: { label: "Dashboard", icon: <DashboardOutlined />, shell: "admin" },
+            },
             {
               name: "users",
               list: "/jabali-admin/users",
               create: "/jabali-admin/users/create",
               edit: "/jabali-admin/users/edit/:id",
+              meta: { label: "Users", icon: <TeamOutlined />, shell: "admin" },
             },
             {
               name: "packages",
               list: "/jabali-admin/packages",
               create: "/jabali-admin/packages/create",
               edit: "/jabali-admin/packages/edit/:id",
+              meta: { label: "Packages", icon: <AppstoreOutlined />, shell: "admin" },
             },
             {
               name: "domains",
               list: "/jabali-admin/domains",
               create: "/jabali-admin/domains/create",
               edit: "/jabali-admin/domains/edit/:id",
+              meta: { label: "Domains", icon: <GlobalOutlined />, shell: "admin" },
+            },
+            {
+              name: "admin-dns",
+              list: "/jabali-admin/dns",
+              meta: { label: "DNS", icon: <CloudServerOutlined />, shell: "admin" },
+            },
+            {
+              name: "admin-ssl",
+              list: "/jabali-admin/ssl",
+              meta: { label: "SSL", icon: <SafetyCertificateOutlined />, shell: "admin" },
+            },
+            {
+              name: "settings",
+              list: "/jabali-admin/settings",
+              meta: { label: "Server Settings", icon: <SettingOutlined />, shell: "admin" },
+            },
+
+            // User shell
+            {
+              name: "profile",
+              list: "/jabali-panel/profile",
+              meta: { label: "My Profile", icon: <UserOutlined />, shell: "user" },
+            },
+            {
+              name: "user-domains",
+              list: "/jabali-panel/domains",
+              create: "/jabali-panel/domains/create",
+              meta: { label: "Domains", icon: <GlobalOutlined />, shell: "user" },
+            },
+            {
+              name: "user-dns",
+              list: "/jabali-panel/dns",
+              meta: { label: "DNS", icon: <CloudServerOutlined />, shell: "user" },
+            },
+            {
+              name: "user-ssl",
+              list: "/jabali-panel/ssl",
+              meta: { label: "SSL", icon: <SafetyCertificateOutlined />, shell: "user" },
             },
           ]}
           options={{

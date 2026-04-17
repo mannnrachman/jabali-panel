@@ -384,6 +384,35 @@ _install_php_version() {
   local pool_file="/etc/php/${version}/fpm/pool.d/www.conf"
   [[ -f "$pool_file" ]] && { mv "$pool_file" "${pool_file}.disabled"; _log "disabled default pool for PHP ${version}"; }
 
+  # Install a placeholder pool so php-fpm can start with no hosting
+  # users yet. Without it, an empty pool.d/ causes FPM init to fail
+  # ("No pool defined"). Inlined via heredoc because install_php runs
+  # before clone_or_update_repo — we don't yet have the repo tree to
+  # copy from. A copy also exists at install/php/_jabali-placeholder.conf
+  # for reference; the heredoc here is the source of truth the installer
+  # actually uses.
+  cat > "/etc/php/${version}/fpm/pool.d/_jabali-placeholder.conf" <<'PLACEHOLDER_EOF'
+; Placeholder pool installed by install.sh so php-fpm can start on a
+; fresh host with no hosting users yet. No-op ondemand pool listening
+; on an unused loopback socket. Safe to leave in place. Moot once
+; slices plan step 6 masks the global php<v>-fpm.service in favor of
+; per-user masters (jabali-fpm@<user>.service).
+
+[_jabali_placeholder]
+user = www-data
+group = www-data
+listen = /run/php/php-fpm-jabali-placeholder.sock
+listen.owner = www-data
+listen.group = www-data
+listen.mode = 0600
+pm = ondemand
+pm.max_children = 1
+pm.process_idle_timeout = 10s
+PLACEHOLDER_EOF
+  chmod 0644 "/etc/php/${version}/fpm/pool.d/_jabali-placeholder.conf"
+  _ok "installed placeholder pool for PHP ${version}"
+
+
   systemctl enable --quiet "php${version}-fpm.service"
   if systemctl is-active --quiet "php${version}-fpm.service"; then
     systemctl reload "php${version}-fpm.service"

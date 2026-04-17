@@ -12,6 +12,7 @@ import (
 type ReconcileService interface {
 	ReconcileAll(ctx context.Context) error
 	ReconcileAllForce(ctx context.Context) error
+	ReconcilePHPPools(ctx context.Context)
 }
 
 type ReconcileHandlerConfig struct {
@@ -36,6 +37,7 @@ type reconcileResponse struct {
 func RegisterReconcileRoutes(g *gin.RouterGroup, cfg *ReconcileHandlerConfig) {
 	h := &reconcileHandler{cfg: cfg}
 	g.POST("/reconcile", h.run)
+	g.POST("/reconcile/php-pools", h.reconcilePHPPoolsHandler)
 }
 
 func (h *reconcileHandler) run(c *gin.Context) {
@@ -72,5 +74,17 @@ func (h *reconcileHandler) run(c *gin.Context) {
 	c.JSON(http.StatusOK, reconcileResponse{
 		Status:  "success",
 		Message: "reconciliation complete",
+	})
+}
+
+func (h *reconcileHandler) reconcilePHPPoolsHandler(c *gin.Context) {
+	h.cfg.Log.Info("php pools reconciliation request",
+		"requester", c.GetString("user_id"))
+
+	h.cfg.Reconciler.ReconcilePHPPools(c.Request.Context())
+
+	c.JSON(http.StatusOK, reconcileResponse{
+		Status:  "success",
+		Message: "php pools reconciliation initiated",
 	})
 }

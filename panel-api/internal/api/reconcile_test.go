@@ -15,9 +15,10 @@ import (
 )
 
 type mockReconciler struct {
-	reconcileAllCalls      int
-	reconcileAllForceCalls int
-	returnError            bool
+	reconcileAllCalls       int
+	reconcileAllForceCalls  int
+	reconcilePHPPoolsCalls  int
+	returnError             bool
 }
 
 func (m *mockReconciler) ReconcileAll(ctx context.Context) error {
@@ -34,6 +35,10 @@ func (m *mockReconciler) ReconcileAllForce(ctx context.Context) error {
 		return &mockError{}
 	}
 	return nil
+}
+
+func (m *mockReconciler) ReconcilePHPPools(ctx context.Context) {
+	m.reconcilePHPPoolsCalls++
 }
 
 type mockError struct{}

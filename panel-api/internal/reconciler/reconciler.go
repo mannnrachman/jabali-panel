@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
@@ -34,6 +35,8 @@ type Reconciler struct {
 	interval       time.Duration
 	// queue holds domain IDs to reconcile out-of-band (non-blocking enqueue)
 	queue chan string
+	// socketReady is a function that checks if a Unix socket is ready. Mockable for testing.
+	socketReady func(ctx context.Context, socketPath string, timeout, pollInterval time.Duration) bool
 }
 
 // WithSSLCerts adds SSL certificate repository support to the reconciler.
@@ -71,7 +74,7 @@ func New(domains repository.DomainRepository, users repository.UserRepository, a
 	if cfg.QueueLen <= 0 {
 		cfg.QueueLen = 100
 	}
-	return &Reconciler{
+	r := &Reconciler{
 		domains:  domains,
 		users:    users,
 		agent:    agentClient,
@@ -79,6 +82,9 @@ func New(domains repository.DomainRepository, users repository.UserRepository, a
 		interval: cfg.Interval,
 		queue:    make(chan string, cfg.QueueLen),
 	}
+	// Initialize default socketReady function
+	r.socketReady = r.waitSocketReady
+	return r
 }
 
 // WithDNSRepos adds DNS repository support to the reconciler.
@@ -139,6 +145,9 @@ func (r *Reconciler) Schedule(domainID string) {
 // ReconcileAll diffs the DB against the agent's filesystem state and converges them.
 // Returns an error if the agent list call fails; on per-domain errors, logs and continues.
 func (r *Reconciler) ReconcileAll(ctx context.Context) error {
+	// PHP pool reconciliation first, so domain regens see latest pool state.
+	r.ReconcilePHPPools(ctx)
+
 	// Get the list of enabled sites from the agent
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -291,6 +300,170 @@ func (r *Reconciler) ReconcileAllForce(ctx context.Context) error {
 
 // createDomainOnAgent calls the agent to provision a domain.
 // Logs errors but doesn't return them so reconciliation can continue.
+// reconcilePHPPools ensures every panel user has a default PHP pool
+// and converges pending/error pools to active status via agent apply.
+// Uses injectable socket-ready check for test mocking.
+func (r *Reconciler) ReconcilePHPPools(ctx context.Context) {
+	if r.phpPools == nil {
+		return
+	}
+
+	// Batch load up to 50 users that need PHP pools.
+	// A user needs a pool if: no row exists OR existing pool status is pending/error
+	allUsers, _, err := r.users.List(ctx, repository.ListOptions{Limit: 10000})
+	if err != nil {
+		r.log.Error("failed to list users for PHP pool reconciliation", "err", err)
+		return
+	}
+
+	usersNeedingPools := make([]*models.User, 0)
+	for i := range allUsers {
+		user := &allUsers[i]
+		pool, err := r.phpPools.FindByUserID(ctx, user.ID)
+		if err != nil && err != repository.ErrNotFound {
+			r.log.Error("failed to fetch PHP pool for user", "user_id", user.ID, "err", err)
+			continue
+		}
+
+		// User needs a pool if no pool exists OR pool is pending/error
+		if pool == nil || pool.Status == "pending" || pool.Status == "error" {
+			usersNeedingPools = append(usersNeedingPools, user)
+		}
+
+		if len(usersNeedingPools) >= 50 {
+			break
+		}
+	}
+
+	// Process each user: create pool if missing, apply if pending/error
+	for _, user := range usersNeedingPools {
+		pool, err := r.phpPools.FindByUserID(ctx, user.ID)
+		if err != nil && err != repository.ErrNotFound {
+			r.log.Error("failed to fetch pool during apply", "user_id", user.ID, "err", err)
+			continue
+		}
+
+		// Create default pool if missing
+		if pool == nil {
+			pool = &models.PHPPool{
+				ID:                        ids.NewULID(),
+				UserID:                    user.ID,
+				PHPVersion:                "8.3",
+				PmMode:                    "ondemand",
+				PmMaxChildren:             20,
+				ProcessIdleTimeoutSeconds: 60,
+				Status:                    "pending",
+			}
+			if err := r.phpPools.Create(ctx, pool); err != nil {
+				r.log.Error("failed to create default PHP pool",
+					"user_id", user.ID, "pool_id", pool.ID, "err", err)
+				continue
+			}
+			r.log.Info("created default PHP pool for user", "user_id", user.ID, "pool_id", pool.ID)
+		}
+
+		// If pool is already active, skip agent call
+		if pool.Status == "active" {
+			continue
+		}
+
+		// Call agent to provision the pool
+		r.applyPHPPool(ctx, user, pool)
+	}
+}
+
+// applyPHPPool calls the agent to provision a PHP pool, waits for socket ready,
+// and triggers nginx regeneration for bound domains.
+func (r *Reconciler) applyPHPPool(ctx context.Context, user *models.User, pool *models.PHPPool) {
+	if user.Username == nil || *user.Username == "" {
+		errMsg := "user has no username"
+		r.phpPools.SetStatus(ctx, pool.ID, "error", &errMsg)
+		return
+	}
+	username := *user.Username
+
+	// Build pool socket path for later socket-ready check
+	socketPath := fmt.Sprintf("/run/php/jabali.%s.%s.sock", username, pool.ID)
+
+	// Call agent to apply the pool configuration
+	params := map[string]any{
+		"user_id":       user.ID,
+		"pool_id":       pool.ID,
+		"username":      username,
+		"php_version":   pool.PHPVersion,
+		"pm_mode":       pool.PmMode,
+		"pm_max_children": pool.PmMaxChildren,
+		"process_idle_timeout_seconds": pool.ProcessIdleTimeoutSeconds,
+	}
+
+	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	_, err := r.agent.Call(agentCtx, "php.pool.apply", params)
+	if err != nil {
+		errMsg := fmt.Sprintf("agent apply failed: %v", err)
+		r.log.Error("php.pool.apply failed", "pool_id", pool.ID, "user_id", user.ID, "err", err)
+		r.phpPools.SetStatus(ctx, pool.ID, "error", &errMsg)
+		return
+	}
+
+	// Wait for socket to be ready (2 second timeout, 100ms polls)
+	ready := r.socketReady(ctx, socketPath, 2*time.Second, 100*time.Millisecond)
+	if !ready {
+		errMsg := "socket did not become ready after agent apply"
+		r.log.Warn("php pool socket timeout", "pool_id", pool.ID, "socket", socketPath)
+		r.phpPools.SetStatus(ctx, pool.ID, "error", &errMsg)
+		return
+	}
+
+	// Mark pool as active
+	if err := r.phpPools.SetStatus(ctx, pool.ID, "active", nil); err != nil {
+		r.log.Error("failed to mark PHP pool active", "pool_id", pool.ID, "err", err)
+		return
+	}
+	r.log.Info("PHP pool applied and marked active", "pool_id", pool.ID, "user_id", user.ID)
+
+	// Trigger nginx regeneration for all domains bound to this pool
+	r.regenerateNginxForPool(ctx, pool)
+}
+
+// waitSocketReady checks if a Unix socket file exists and is ready.
+// Uses polling with timeout. Exported for test mocking.
+func (r *Reconciler) waitSocketReady(ctx context.Context, socketPath string, timeout, pollInterval time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if _, err := os.Stat(socketPath); err == nil {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		select {
+		case <-time.After(pollInterval):
+		case <-ctx.Done():
+			return false
+		}
+	}
+}
+
+// regenerateNginxForPool finds all domains using this pool and regenerates nginx.
+func (r *Reconciler) regenerateNginxForPool(ctx context.Context, pool *models.PHPPool) {
+	allDomains, _, err := r.domains.List(ctx, repository.ListOptions{Limit: 10000})
+	if err != nil {
+		r.log.Error("failed to list domains for nginx regen", "pool_id", pool.ID, "err", err)
+		return
+	}
+
+	for i := range allDomains {
+		domain := &allDomains[i]
+		if domain.PHPPoolID != nil && *domain.PHPPoolID == pool.ID {
+			r.createDomainOnAgent(ctx, domain)
+		}
+	}
+}
+
+
+
 func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Domain) {
 	user, err := r.users.FindByID(ctx, domain.UserID)
 	if err != nil {

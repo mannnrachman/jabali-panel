@@ -3,6 +3,7 @@ package reconciler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"testing"
@@ -16,7 +17,8 @@ import (
 
 // fakeAgent mocks the agent.AgentInterface for testing.
 type fakeAgent struct {
-	calls []fakeCall
+	calls      []fakeCall
+	failMethod string // if set, Call returns an error for this method
 }
 
 type fakeCall struct {
@@ -26,6 +28,10 @@ type fakeCall struct {
 
 func (f *fakeAgent) Call(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {
 	f.calls = append(f.calls, fakeCall{method, params})
+
+	if method == f.failMethod {
+		return nil, fmt.Errorf("agent call failed for method: %s", method)
+	}
 
 	switch method {
 	case "domain.list":
@@ -520,13 +526,15 @@ func TestReconcileAll_DomainWithPHPPool(t *testing.T) {
 	err := r.ReconcileAll(ctx)
 	require.NoError(t, err)
 
-	// Verify that domain.create was called
-	require.Len(t, agent.calls, 2) // domain.list + domain.create
-	require.Equal(t, "domain.list", agent.calls[0].method)
-	require.Equal(t, "domain.create", agent.calls[1].method)
+	// Verify that domain.create was called after php pool creation
+	// Expect: php.pool.apply, domain.list, domain.create
+	require.Len(t, agent.calls, 3, "should call php.pool.apply, domain.list, and domain.create")
+	require.Equal(t, "php.pool.apply", agent.calls[0].method)
+	require.Equal(t, "domain.list", agent.calls[1].method)
+	require.Equal(t, "domain.create", agent.calls[2].method)
 
 	// Verify that has_php=true and php_version="8.2" were passed
-	params := agent.calls[1].params.(map[string]any)
+	params := agent.calls[2].params.(map[string]any)
 	require.Equal(t, true, params["has_php"], "has_php should be true")
 	require.Equal(t, "8.2", params["php_version"], "php_version should be 8.2")
 }
@@ -935,4 +943,400 @@ func TestReconcile_PassesAXFRToAgent(t *testing.T) {
 
 	require.Len(t, alsoNotify, 1, "should have 1 entry: ns2 IPv4")
 	require.Equal(t, "198.51.100.7", alsoNotify[0])
+}
+
+// === PHP Pool Reconciliation Tests ===
+
+func TestReconcilePHPPools_CreateDefaultPool(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+	phpPoolRepo := &fakePHPPoolRepo{pools: make(map[string]*models.PHPPool)}
+
+	// Setup: user with no pool
+	username := "newuser"
+	user := &models.User{
+		ID:       "user-1",
+		Email:    "newuser@example.com",
+		Username: &username,
+	}
+	userRepo.users[user.ID] = user
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second}).
+		WithPHPPools(phpPoolRepo)
+
+	// Manually call reconcilePHPPools with mocked socket check
+	r.socketReady = func(ctx context.Context, socketPath string, timeout, pollInterval time.Duration) bool {
+		return true // Socket ready immediately
+	}
+
+	r.ReconcilePHPPools(ctx)
+
+	// Verify that a pool was created with default values
+	require.Len(t, phpPoolRepo.pools, 1, "should create 1 pool")
+	var pool *models.PHPPool
+	for _, p := range phpPoolRepo.pools {
+		pool = p
+	}
+	require.NotNil(t, pool)
+	require.Equal(t, user.ID, pool.UserID)
+	require.Equal(t, "8.3", pool.PHPVersion)
+	require.Equal(t, "active", pool.Status)
+	require.NoError(t, nil)
+}
+
+func TestReconcilePHPPools_SkipActivePool(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+	phpPoolRepo := &fakePHPPoolRepo{pools: make(map[string]*models.PHPPool)}
+
+	// Setup: user with active pool
+	username := "activeuser"
+	user := &models.User{
+		ID:       "user-1",
+		Email:    "activeuser@example.com",
+		Username: &username,
+	}
+	userRepo.users[user.ID] = user
+
+	activePool := &models.PHPPool{
+		ID:         "pool-1",
+		UserID:     user.ID,
+		PHPVersion: "8.3",
+		PmMode:     "ondemand",
+		Status:     "active",
+	}
+	phpPoolRepo.pools[activePool.ID] = activePool
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second}).
+		WithPHPPools(phpPoolRepo)
+
+	r.ReconcilePHPPools(ctx)
+
+	// Verify that no agent calls were made (pool already active)
+	require.Len(t, agent.calls, 0, "should not call agent for active pool")
+}
+
+func TestReconcilePHPPools_RetryPendingPool(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+	phpPoolRepo := &fakePHPPoolRepo{pools: make(map[string]*models.PHPPool)}
+
+	// Setup: user with pending pool
+	username := "pendinguser"
+	user := &models.User{
+		ID:       "user-1",
+		Email:    "pendinguser@example.com",
+		Username: &username,
+	}
+	userRepo.users[user.ID] = user
+
+	pendingPool := &models.PHPPool{
+		ID:         "pool-1",
+		UserID:     user.ID,
+		PHPVersion: "8.3",
+		PmMode:     "ondemand",
+		Status:     "pending",
+	}
+	phpPoolRepo.pools[pendingPool.ID] = pendingPool
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second}).
+		WithPHPPools(phpPoolRepo)
+
+	r.socketReady = func(ctx context.Context, socketPath string, timeout, pollInterval time.Duration) bool {
+		return true // Socket ready
+	}
+
+	r.ReconcilePHPPools(ctx)
+
+	// Verify that agent was called
+	require.Greater(t, len(agent.calls), 0, "should call agent for pending pool")
+
+	// Find php.pool.apply call
+	var applyCall *fakeCall
+	for _, call := range agent.calls {
+		if call.method == "php.pool.apply" {
+			applyCall = &call
+			break
+		}
+	}
+	require.NotNil(t, applyCall, "should call php.pool.apply")
+
+	// Verify pool status changed to active
+	pool, err := phpPoolRepo.FindByID(ctx, pendingPool.ID)
+	require.NoError(t, err)
+	require.Equal(t, "active", pool.Status)
+}
+
+func TestReconcilePHPPools_RetryErrorPool(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+	phpPoolRepo := &fakePHPPoolRepo{pools: make(map[string]*models.PHPPool)}
+
+	// Setup: user with error pool
+	username := "erruser"
+	user := &models.User{
+		ID:       "user-1",
+		Email:    "erruser@example.com",
+		Username: &username,
+	}
+	userRepo.users[user.ID] = user
+
+	errMsg := "previous error"
+	errorPool := &models.PHPPool{
+		ID:         "pool-1",
+		UserID:     user.ID,
+		PHPVersion: "8.3",
+		PmMode:     "ondemand",
+		Status:     "error",
+		LastError:  &errMsg,
+	}
+	phpPoolRepo.pools[errorPool.ID] = errorPool
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second}).
+		WithPHPPools(phpPoolRepo)
+
+	r.socketReady = func(ctx context.Context, socketPath string, timeout, pollInterval time.Duration) bool {
+		return true
+	}
+
+	r.ReconcilePHPPools(ctx)
+
+	// Verify that agent was called to retry
+	agentCallCount := 0
+	for _, call := range agent.calls {
+		if call.method == "php.pool.apply" {
+			agentCallCount++
+		}
+	}
+	require.Greater(t, agentCallCount, 0, "should retry error pool")
+
+	// Verify pool status changed to active
+	pool, err := phpPoolRepo.FindByID(ctx, errorPool.ID)
+	require.NoError(t, err)
+	require.Equal(t, "active", pool.Status)
+}
+
+func TestReconcilePHPPools_AgentFailureMarksError(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{
+		failMethod: "php.pool.apply",
+	}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+	phpPoolRepo := &fakePHPPoolRepo{pools: make(map[string]*models.PHPPool)}
+
+	// Setup: user with pending pool
+	username := "failuser"
+	user := &models.User{
+		ID:       "user-1",
+		Email:    "failuser@example.com",
+		Username: &username,
+	}
+	userRepo.users[user.ID] = user
+
+	pendingPool := &models.PHPPool{
+		ID:     "pool-1",
+		UserID: user.ID,
+		Status: "pending",
+	}
+	phpPoolRepo.pools[pendingPool.ID] = pendingPool
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second}).
+		WithPHPPools(phpPoolRepo)
+
+	r.ReconcilePHPPools(ctx)
+
+	// Verify pool marked as error
+	pool, err := phpPoolRepo.FindByID(ctx, pendingPool.ID)
+	require.NoError(t, err)
+	require.Equal(t, "error", pool.Status)
+	require.NotNil(t, pool.LastError)
+	require.Contains(t, *pool.LastError, "agent apply failed")
+}
+
+func TestReconcilePHPPools_SocketTimeoutMarksError(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+	phpPoolRepo := &fakePHPPoolRepo{pools: make(map[string]*models.PHPPool)}
+
+	// Setup: user with pending pool
+	username := "timeoutuser"
+	user := &models.User{
+		ID:       "user-1",
+		Email:    "timeoutuser@example.com",
+		Username: &username,
+	}
+	userRepo.users[user.ID] = user
+
+	pendingPool := &models.PHPPool{
+		ID:     "pool-1",
+		UserID: user.ID,
+		Status: "pending",
+	}
+	phpPoolRepo.pools[pendingPool.ID] = pendingPool
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second}).
+		WithPHPPools(phpPoolRepo)
+
+	// Socket never becomes ready
+	r.socketReady = func(ctx context.Context, socketPath string, timeout, pollInterval time.Duration) bool {
+		return false
+	}
+
+	r.ReconcilePHPPools(ctx)
+
+	// Verify pool marked as error
+	pool, err := phpPoolRepo.FindByID(ctx, pendingPool.ID)
+	require.NoError(t, err)
+	require.Equal(t, "error", pool.Status)
+	require.NotNil(t, pool.LastError)
+	require.Equal(t, "socket did not become ready after agent apply", *pool.LastError)
+}
+
+func TestReconcilePHPPools_NginxRegenForBoundDomains(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+	phpPoolRepo := &fakePHPPoolRepo{pools: make(map[string]*models.PHPPool)}
+
+	// Setup: user with pending pool and two domains bound to it
+	username := "phphost"
+	user := &models.User{
+		ID:       "user-1",
+		Email:    "phphost@example.com",
+		Username: &username,
+	}
+	userRepo.users[user.ID] = user
+
+	pendingPool := &models.PHPPool{
+		ID:     "pool-1",
+		UserID: user.ID,
+		Status: "pending",
+	}
+	phpPoolRepo.pools[pendingPool.ID] = pendingPool
+
+	// Create two domains bound to this pool
+	now := time.Now().UTC()
+	domain1 := &models.Domain{
+		ID:        "domain-1",
+		UserID:    user.ID,
+		Name:      "site1.com",
+		DocRoot:   "/home/phphost/domains/site1.com/public_html",
+		IsEnabled: true,
+		PHPPoolID: &pendingPool.ID,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	domain2 := &models.Domain{
+		ID:        "domain-2",
+		UserID:    user.ID,
+		Name:      "site2.com",
+		DocRoot:   "/home/phphost/domains/site2.com/public_html",
+		IsEnabled: true,
+		PHPPoolID: &pendingPool.ID,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	domainRepo.domains[domain1.ID] = domain1
+	domainRepo.domains[domain2.ID] = domain2
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second}).
+		WithPHPPools(phpPoolRepo)
+
+	r.socketReady = func(ctx context.Context, socketPath string, timeout, pollInterval time.Duration) bool {
+		return true
+	}
+
+	r.ReconcilePHPPools(ctx)
+
+	// Verify that domain.create was called for each bound domain
+	domainCreateCount := 0
+	for _, call := range agent.calls {
+		if call.method == "domain.create" {
+			domainCreateCount++
+		}
+	}
+	require.Equal(t, 2, domainCreateCount, "should call domain.create for each bound domain")
+}
+
+func TestReconcilePHPPools_ContinueOnUserWithoutUsername(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+	phpPoolRepo := &fakePHPPoolRepo{pools: make(map[string]*models.PHPPool)}
+
+	// Setup: first user without username (will fail), second user with username (should succeed)
+	user1 := &models.User{
+		ID:       "user-1",
+		Email:    "nouser@example.com",
+		Username: nil, // No username
+	}
+	userRepo.users[user1.ID] = user1
+
+	username2 := "gooduser"
+	user2 := &models.User{
+		ID:       "user-2",
+		Email:    "gooduser@example.com",
+		Username: &username2,
+	}
+	userRepo.users[user2.ID] = user2
+
+	// Both users have pending pools
+	pool1 := &models.PHPPool{
+		ID:     "pool-1",
+		UserID: user1.ID,
+		Status: "pending",
+	}
+	pool2 := &models.PHPPool{
+		ID:     "pool-2",
+		UserID: user2.ID,
+		Status: "pending",
+	}
+	phpPoolRepo.pools[pool1.ID] = pool1
+	phpPoolRepo.pools[pool2.ID] = pool2
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second}).
+		WithPHPPools(phpPoolRepo)
+
+	r.socketReady = func(ctx context.Context, socketPath string, timeout, pollInterval time.Duration) bool {
+		return true
+	}
+
+	r.ReconcilePHPPools(ctx)
+
+	// Verify pool1 marked as error (no username)
+	p1, _ := phpPoolRepo.FindByID(ctx, pool1.ID)
+	require.Equal(t, "error", p1.Status)
+
+	// Verify pool2 became active (username exists)
+	p2, _ := phpPoolRepo.FindByID(ctx, pool2.ID)
+	require.Equal(t, "active", p2.Status)
 }

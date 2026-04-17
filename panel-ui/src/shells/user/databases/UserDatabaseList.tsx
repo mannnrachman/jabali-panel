@@ -15,6 +15,7 @@ export type Database = {
   collation?: string;
   created_at: string;
   updated_at: string;
+  size_bytes?: number;
 };
 
 export const UserDatabaseList = () => {
@@ -28,6 +29,24 @@ export const UserDatabaseList = () => {
   const engineColorMap: Record<string, string> = {
     mariadb: "blue",
     postgres: "green",
+  };
+
+  const formatBytes = (bytes: number | undefined): string => {
+    if (bytes === undefined || bytes === 0) return "0 B";
+
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let size = bytes;
+    let unitIndex = 0;
+
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex++;
+    }
+
+    if (unitIndex === 0) {
+      return `${Math.floor(size)} B`;
+    }
+    return `${size.toFixed(1)} ${units[unitIndex]}`;
   };
 
   const renderDatabaseCell = (name: string, engine: string) => (
@@ -82,6 +101,12 @@ export const UserDatabaseList = () => {
           render={(engine: string) => (
             <Tag color={engineColorMap[engine] || "default"}>{engine}</Tag>
           )}
+        />
+        <Table.Column<Database>
+          dataIndex="size_bytes"
+          title="Size"
+          sorter={{ multiple: 3 }}
+          render={(size_bytes?: number) => formatBytes(size_bytes)}
         />
         <Table.Column<Database>
           dataIndex="charset"

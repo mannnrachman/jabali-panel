@@ -218,8 +218,9 @@ func (h *databaseUserHandler) create(c *gin.Context) {
 		finalUsername = *user.Username + "_" + req.Username
 	}
 
-	// Check for collision: (user_id, username) must be unique
-	exists, err := h.cfg.DatabaseUsers.ExistsByUserAndUsername(ctx, targetUserID, req.Username)
+	// Check for collision on the FINAL (prefixed) name — that's the
+	// value we store and what MariaDB sees, so uniqueness is meaningful.
+	exists, err := h.cfg.DatabaseUsers.ExistsByUserAndUsername(ctx, targetUserID, finalUsername)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
@@ -283,7 +284,7 @@ func (h *databaseUserHandler) create(c *gin.Context) {
 	du := &models.DatabaseUser{
 		ID:           duID,
 		UserID:       targetUserID,
-		Username:     req.Username,
+		Username:     finalUsername,
 		PasswordHash: string(hash),
 		CreatedAt:    now,
 		UpdatedAt:    now,

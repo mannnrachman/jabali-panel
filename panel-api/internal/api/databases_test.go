@@ -532,11 +532,13 @@ func TestDatabaseCreateNameCollision(t *testing.T) {
 	agent := &mockAgent{}
 	r, dbRepo := databaseRouterWithAgent("user1", false, agent)
 
-	// Existing database with same name for same user
-	existing := models.Database{ID: "id1", UserID: "user1", Name: "testdb"}
+	// Existing row already has the username prefix baked in (that's the
+	// post-create contract now), so a new request for "testdb" by the
+	// same user — which becomes "alice_testdb" after prefix — collides.
+	existing := models.Database{ID: "id1", UserID: "user1", Name: "alice_testdb"}
 	dbRepo.databases = []models.Database{existing}
 
-	req := httptest.NewRequest("POST", "/api/v1/databases", 
+	req := httptest.NewRequest("POST", "/api/v1/databases",
 		strings.NewReader(`{"name":"testdb"}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()

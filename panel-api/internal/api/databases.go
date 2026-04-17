@@ -186,8 +186,9 @@ func (h *databaseHandler) create(c *gin.Context) {
 		finalName = *user.Username + "_" + req.Name
 	}
 
-	// Check for collision
-	exists, err := h.cfg.Databases.ExistsByUserAndName(ctx, targetUserID, req.Name)
+	// Check for collision on the FINAL (prefixed) name — that's what
+	// MariaDB sees and what we store in the row, so uniqueness is meaningful.
+	exists, err := h.cfg.Databases.ExistsByUserAndName(ctx, targetUserID, finalName)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
@@ -221,7 +222,7 @@ func (h *databaseHandler) create(c *gin.Context) {
 	d := &models.Database{
 		ID:        ids.NewULID(),
 		UserID:    targetUserID,
-		Name:      req.Name,
+		Name:      finalName,
 		Engine:    "mariadb",
 		Charset:   "utf8mb4",
 		Collation: "utf8mb4_unicode_ci",
@@ -276,22 +277,10 @@ func (h *databaseHandler) delete(c *gin.Context) {
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	// Load the user to get the full prefixed name
-	user, err := h.cfg.Users.FindByID(ctx, d.UserID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-
-	var dbNameForAgent string
-	if user.Username != nil && *user.Username != "" {
-		dbNameForAgent = *user.Username + "_" + d.Name
-	} else {
-		dbNameForAgent = d.Name
-	}
-
+	// d.Name is the full MariaDB-side name (prefix already baked in at
+	// create time) so we pass it to the agent verbatim.
 	_, err = h.cfg.Agent.Call(agentCtx, "db.drop", map[string]any{
-		"db_name": dbNameForAgent,
+		"db_name": d.Name,
 	})
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})

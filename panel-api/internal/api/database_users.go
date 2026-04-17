@@ -513,7 +513,7 @@ func (h *databaseUserHandler) addGrant(c *gin.Context) {
 	_, err = h.cfg.Agent.Call(agentCtx, "db_user.grant", map[string]any{
 		"db_name":      db.Name,
 		"db_user_name": du.Username,
-		"grant_level":  req.GrantLevel,
+		"privileges":   strings.Split(canonicalPrivileges, ","),
 	})
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})

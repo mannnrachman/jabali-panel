@@ -129,9 +129,12 @@ func dbBackupHandler(ctx context.Context, params json.RawMessage) (any, error) {
 		}
 	}
 
-	// chmod 0600 the file
-	if err := os.Chmod(backupPath, 0600); err != nil {
-		// Remove file on failure
+	// chmod 0640 — 0600 would lock out panel-api (runs as jabali, while
+	// the agent runs as root), which is the process that streams the
+	// dump back to the HTTP client. The backup dir itself is 0700 and
+	// already jabali-group-owned, so group-readable files leak only to
+	// panel-api — exactly who needs them.
+	if err := os.Chmod(backupPath, 0640); err != nil {
 		_ = os.Remove(backupPath)
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

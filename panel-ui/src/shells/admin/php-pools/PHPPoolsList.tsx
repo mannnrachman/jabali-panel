@@ -135,7 +135,17 @@ export const PHPPoolsList = () => {
     );
   }
 
-  const tableData = statusData?.versions || [];
+  // Show newest-first (8.5 at top, 7.4 at bottom). Semver-aware sort:
+  // split on "." and compare numerically so 8.10 > 8.9 if that ever matters.
+  const tableData = [...(statusData?.versions || [])].sort((a, b) => {
+    const pa = a.version.split(".").map(Number);
+    const pb = b.version.split(".").map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const diff = (pb[i] ?? 0) - (pa[i] ?? 0);
+      if (diff !== 0) return diff;
+    }
+    return 0;
+  });
 
   return (
     <div style={{ padding: 24 }}>

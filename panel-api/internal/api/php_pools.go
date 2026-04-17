@@ -288,6 +288,8 @@ func (h *phpPoolHandler) create(c *gin.Context) {
 		return
 	}
 
+	slog.InfoContext(ctx, "php_pool.created", "user_id", pool.UserID, "pool_id", pool.ID, "php_version", pool.PHPVersion, "pm_mode", pool.PmMode)
+
 	// Trigger agent to reconcile the pool asynchronously (fire-and-forget)
 	go h.reconcilePoolAsync(pool)
 
@@ -332,6 +334,10 @@ func (h *phpPoolHandler) update(c *gin.Context) {
 		return
 	}
 
+	// Capture old values for audit logging
+	oldPmMode := pool.PmMode
+	oldPmMaxChildren := pool.PmMaxChildren
+
 	// Validate pm_mode
 	if req.PmMode != "" {
 		validPmModes := map[string]bool{"static": true, "ondemand": true, "dynamic": true}
@@ -363,6 +369,8 @@ func (h *phpPoolHandler) update(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+
+	slog.InfoContext(ctx, "php_pool.updated", "user_id", pool.UserID, "pool_id", pool.ID, "old_pm_mode", oldPmMode, "new_pm_mode", pool.PmMode, "old_pm_max_children", oldPmMaxChildren, "new_pm_max_children", pool.PmMaxChildren)
 
 	// Trigger agent to re-reconcile the pool asynchronously (fire-and-forget)
 	go h.reconcilePoolAsync(pool)
@@ -445,6 +453,8 @@ func (h *phpPoolHandler) delete(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+
+	slog.InfoContext(ctx, "php_pool.deleted", "user_id", pool.UserID, "pool_id", pool.ID, "php_version", pool.PHPVersion)
 
 	// Trigger agent to remove the pool asynchronously (fire-and-forget)
 	go func() {
@@ -596,6 +606,8 @@ func (h *phpPoolHandler) createIniOverride(c *gin.Context) {
 		return
 	}
 
+	slog.InfoContext(ctx, "php_pool_ini_override.created", "user_id", pool.UserID, "pool_id", pool.ID, "override_id", override.ID, "directive", override.Directive, "value", override.Value)
+
 	// Mark pool for re-reconciliation
 	pool.Status = "pending"
 	pool.UpdatedAt = time.Now().UTC()
@@ -662,6 +674,9 @@ func (h *phpPoolHandler) updateIniOverride(c *gin.Context) {
 		return
 	}
 
+	// Capture old value for audit logging
+	oldValue := override.Value
+
 	// Update the value
 	override.Value = req.Value
 	override.UpdatedAt = time.Now().UTC()
@@ -671,6 +686,8 @@ func (h *phpPoolHandler) updateIniOverride(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+
+	slog.InfoContext(ctx, "php_pool_ini_override.updated", "user_id", pool.UserID, "pool_id", pool.ID, "override_id", override.ID, "directive", override.Directive, "old_value", oldValue, "new_value", override.Value)
 
 	// Mark pool for re-reconciliation
 	pool.Status = "pending"
@@ -737,6 +754,8 @@ func (h *phpPoolHandler) deleteIniOverride(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+
+	slog.InfoContext(ctx, "php_pool_ini_override.deleted", "user_id", pool.UserID, "pool_id", pool.ID, "override_id", override.ID, "directive", override.Directive)
 
 	// Mark pool for re-reconciliation
 	pool.Status = "pending"

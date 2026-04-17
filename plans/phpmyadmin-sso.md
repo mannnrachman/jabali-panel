@@ -403,11 +403,10 @@ tarball and manage it ourselves.
 We need:
 - A pinned phpMyAdmin version (recommend 5.2.x LTS; check the latest at
   implementation time).
-- A dedicated `php-fpm` pool `jabali-pma` running as user `jabali-pma`
-  (new system user, uid in the 1200s, no shell) for isolation from the
-  panel's jabali user.
 - Nginx location `/phpmyadmin/` on the panel vhost (port 8443), upstream
-  to the `jabali-pma` fpm socket.
+  to the domain owner's own PHP-FPM pool (per M9 domain ↔ pool binding).
+  No separate jabali-pma pool needed; sso.php runs inside the domain owner's
+  PHP pool (bound via `domain.php_pool_id` per ADR-0023).
 - `sso.php` dropped inside the phpMyAdmin root (or its config dir) that
   calls the UDS validate and writes the signon session.
 - `config.inc.php` with `auth_type='signon'`, `SignonURL='/phpmyadmin/sso.php'`,
@@ -423,19 +422,16 @@ We need:
      vendored checksum in the repo (`install/phpmyadmin.sha256`).
    - Extract to `/opt/phpmyadmin/<version>/`; symlink
      `/opt/phpmyadmin/current`.
-   - Create system user `jabali-pma`.
-   - Write `/etc/php/<detected-version>/fpm/pool.d/jabali-pma.conf`
-     (listen on `/run/php/jabali-pma.sock`, owner `www-data:jabali-pma`,
-     mode 0660; `user=jabali-pma`, `group=jabali-pma`).
    - Write `config.inc.php` under `/opt/phpmyadmin/current/config.inc.php`.
    - Deploy `sso.php` from `install/phpmyadmin/sso.php` (next task) into
      `/opt/phpmyadmin/current/sso.php`.
    - Add nginx snippet: `location ^~ /phpmyadmin/ { ... }` with `fastcgi_pass`
-     to the fpm socket. **Log format must redact the query string**,
-     because `access_log` alone cannot strip query params — nginx logs the
-     raw request line before any rewrite. Use a custom log format that
-     logs only `$uri` (path) and a redacted marker when a query string
-     was present:
+     to the domain owner's PHP-FPM pool socket. The pool is determined at
+     vhost render time from the domain's `php_pool_id` (M9). **Log format must
+     redact the query string**, because `access_log` alone cannot strip query
+     params — nginx logs the raw request line before any rewrite. Use a custom
+     log format that logs only `$uri` (path) and a redacted marker when a query
+     string was present:
      ```
      map $args $jabali_pma_logargs {
          ""      "-";
@@ -451,8 +447,6 @@ We need:
      inside the phpMyAdmin location block. Verification: curl with a
      token → `grep token= /var/log/nginx/jabali-pma.access.log` must
      return nothing.
-   - Add `jabali-pma` to `www-data` supplementary group so the fpm process
-     can connect to `/run/jabali/sso.sock` (mode 0660, group `www-data`).
    - Call `install_sso_key` (from step 3).
    - Idempotency: detect existing version symlink, skip extraction.
 

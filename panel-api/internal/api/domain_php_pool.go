@@ -133,12 +133,19 @@ func (h *domainPHPPoolHandler) bind(c *gin.Context) {
 	}
 
 	poolID := pool.ID
+	oldPoolID := dom.PHPPoolID
 	dom.PHPPoolID = &poolID
 	if err := h.cfg.Domains.Update(ctx, dom); err != nil {
 		slog.ErrorContext(ctx, "bind php-pool: update domain", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+
+	oldPoolIDStr := ""
+	if oldPoolID != nil {
+		oldPoolIDStr = *oldPoolID
+	}
+	slog.InfoContext(ctx, "domain_php_pool.bound", "user_id", claims.UserID, "domain_id", dom.ID, "pool_id", poolID, "old_pool_id", oldPoolIDStr, "new_pool_id", poolID)
 
 	c.JSON(http.StatusOK, gin.H{
 		"domain_id":   dom.ID,
@@ -171,12 +178,19 @@ func (h *domainPHPPoolHandler) unbind(c *gin.Context) {
 		return
 	}
 
+	oldPoolID := dom.PHPPoolID
+	oldPoolIDStr := ""
+	if oldPoolID != nil {
+		oldPoolIDStr = *oldPoolID
+	}
 	dom.PHPPoolID = nil
 	if err := h.cfg.Domains.Update(ctx, dom); err != nil {
 		slog.ErrorContext(ctx, "unbind php-pool: update domain", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+
+	slog.InfoContext(ctx, "domain_php_pool.unbound", "user_id", claims.UserID, "domain_id", dom.ID, "old_pool_id", oldPoolIDStr, "new_pool_id", "")
 
 	c.JSON(http.StatusOK, gin.H{
 		"domain_id":   dom.ID,

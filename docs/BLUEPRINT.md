@@ -330,6 +330,39 @@ guards (checks for existing config files before overwriting).
 16. `000016_add_impersonated_by_to_refresh_tokens.sql` — impersonated_by FK (tracks admin impersonation trail)
 17. `000017_ssl_enabled_default_true.sql` — SSL enabled by default (=1) on new domains
 18. `000018_add_next_retry_at_to_ssl_certificates.sql` — next_retry_at timestamp + retry_count INT for exponential backoff retry scheduling
+19. `000028_create_php_pools.sql`, `000029_create_php_pool_ini_overrides.sql`, `000030_add_php_pool_id_to_domains.sql` — M9 PHP/FPM pool manager tables + domain FK
+
+### 4.10 PHP/FPM pools (M9)
+
+**Shipped:** Per-user PHP-FPM pools via Sury multi-version install, pool CRUD (admin), per-domain PHP version binding (user), ini overrides (allowlisted directives), reconciler ensures default pool per user + applies pending changes, nginx vhost renders PHP block from `domain.php_pool_id`.
+
+**Files:**
+- API: `panel-api/internal/api/php_pools.go`, `domain_php_pool.go`
+- Models: `panel-api/internal/models/php_pool.go`, `php_pool_ini_override.go`
+- Repository: `panel-api/internal/repository/php_pool_repository.go`, `php_pool_ini_override_repository.go`
+- Agent: `panel-agent/internal/commands/php_pool_apply.go`, `php_pool_remove.go`, `php_version_list.go`
+- Install: `install/php/jabali-php-pool.conf.tmpl`
+- UI: `panel-ui/src/shells/admin/php-pools/PHPPoolsList.tsx`, `PHPPoolEdit.tsx`; `DomainSettingsButton.tsx` (PHP section)
+
+**Migrations:** `000028_create_php_pools.sql`, `000029_create_php_pool_ini_overrides.sql`, `000030_add_php_pool_id_to_domains.sql`
+
+**Agent commands:** `php.pool.apply`, `php.pool.remove`, `php.version.list`
+
+**API endpoints:**
+- `GET /api/v1/php-pools` (admin: all; user: self)
+- `GET /api/v1/php-pools/:id`
+- `POST /api/v1/php-pools` (admin: all; user: self)
+- `PUT /api/v1/php-pools/:id` (admin: all; user: self)
+- `DELETE /api/v1/php-pools/:id` (admin only)
+- `GET /api/v1/php-pools/:id/ini-overrides`
+- `POST /api/v1/php-pools/:id/ini-overrides`
+- `PUT /api/v1/php-pools/:id/ini-overrides/:override_id`
+- `DELETE /api/v1/php-pools/:id/ini-overrides/:override_id`
+- `POST /api/v1/domains/:id/php-pool` (accepts `pool_id` or `php_version`)
+- `DELETE /api/v1/domains/:id/php-pool`
+- `GET /api/v1/php/versions`
+
+**ADR:** ADR-0023 (13 decisions: per-user pools, reconciler default, admin-only deletion, domain binding, ini allowlist, version immutability, uid collision handling, etc.)
 
 ---
 
@@ -543,21 +576,23 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Depends on:** M2 (domains/docroots exist)
 
-### M9: PHP/FPM pool manager (PLANNED)
+### M9: PHP/FPM pool manager (SHIPPED)
 
-**Goal:** Admins can create per-user PHP-FPM pools with configurable runtime settings.
+**Goal:** Admins can create per-user PHP-FPM pools with configurable runtime settings. Users bind domains to pools. Reconciler ensures one default pool per user.
 
 **Deliverables:**
-- New migration: `create_php_pools.sql` (pool name, pm mode, max_children, php_version)
-- PHP pool CRUD (per user or per domain)
-- php.ini overrides (memory_limit, max_execution_time, upload_max_filesize, etc.)
-- Agent command: `php.apply_pool` (generates /etc/php/*/fpm/pool.d/pool.conf, reloads fpm)
-- API: `/api/v1/php-pools`, `/api/v1/php-pools/{id}/ini-overrides`
-- UI: admin PHP pool list/create; user PHP override request form (admin approves)
+- Migrations: `000028_create_php_pools.sql`, `000029_create_php_pool_ini_overrides.sql`, `000030_add_php_pool_id_to_domains.sql`
+- PHP pool CRUD (per user; admin-only deletion per ADR-0023)
+- Domain ↔ pool binding (admin explicit pool selection; user version-based lookup)
+- php.ini overrides (memory_limit, max_execution_time, upload_max_filesize, etc.; allowlisted directives)
+- Agent commands: `php.pool.apply`, `php.pool.remove`, `php.version.list`
+- API: `/api/v1/php-pools[/:id]`, `/api/v1/php-pools/:id/ini-overrides*`, `/api/v1/domains/:id/php-pool`, `/api/v1/php/versions`
+- UI: admin PHP pool list/edit; domain binding via PHP section in settings
+- Reconciler: ensures every user has ≥1 pool, applies pending changes, nginx renders pool's PHP block
 
-**Status:** Planned
+**Status:** Shipped (commits `1aaa507` through final commit)
 
-**Depends on:** M1 (users exist)
+**Depends on:** M1 (users exist), Sury PHP multi-version install (install.sh)
 
 ### M10: WordPress (PLANNED)
 
@@ -812,7 +847,7 @@ Use this table to navigate the codebase when adding a new capability:
 | M6: Email (Stalwart) | Planned | — |
 | M7: Databases | Planned (Tranche E parked pending M9) | — |
 | M8: Cron | Planned | — |
-| M9: PHP/FPM pools | In flight | — |
+| M9: PHP/FPM pools | 2026-04-17 | 1aaa507 (ADR), [final-commit] (shipped) |
 | M10: WordPress | Planned | — |
 | M11: FileBrowser | Planned | — |
 | M12: Stats & monitoring | Planned | — |

@@ -223,6 +223,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Log:        deps.Log,
 			})
 		}
+		if deps.Agent != nil {
+			admin := v1.Group("/admin", middleware.RequireAdmin())
+			api.RegisterPHPVersionAdminRoutes(admin, deps.Agent)
+		}
 	}
 
 	// Static SPA: owns r.NoRoute — serves embedded panel-ui/dist for

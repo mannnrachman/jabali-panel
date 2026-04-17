@@ -13,6 +13,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 )
 
 func TestPHPVersions_HappyPath(t *testing.T) {
@@ -76,4 +77,130 @@ func TestPHPVersions_AgentError(t *testing.T) {
 	var body map[string]interface{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.NotNil(t, body["error"])
+}
+
+func TestPHPVersionAdmin_Status_HappyPath(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	v1 := r.Group("/api/v1")
+
+	// Inject admin user
+	v1.Use(func(c *gin.Context) {
+		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "test-admin", IsAdmin: true})
+		c.Next()
+	})
+
+	admin := v1.Group("/admin", middleware.RequireAdmin())
+
+	mockAgent := agent.NewMockClient().On("php.version.status", map[string]interface{}{
+		"default_version": "8.5",
+		"versions": []map[string]interface{}{
+			{"version": "8.5", "installed": true, "fpm_running": true},
+			{"version": "8.4", "installed": false, "fpm_running": false},
+		},
+	})
+
+	RegisterPHPVersionAdminRoutes(admin, mockAgent)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/php/versions/status", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "8.5", body["default_version"])
+}
+
+func TestPHPVersionAdmin_Install_HappyPath(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	v1 := r.Group("/api/v1")
+
+	v1.Use(func(c *gin.Context) {
+		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "test-admin", IsAdmin: true})
+		c.Next()
+	})
+
+	admin := v1.Group("/admin", middleware.RequireAdmin())
+
+	mockAgent := agent.NewMockClient().On("php.version.install", map[string]interface{}{
+		"version":     "8.4",
+		"installed":   true,
+		"fpm_running": true,
+	})
+
+	RegisterPHPVersionAdminRoutes(admin, mockAgent)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/php/versions/8.4/install", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "8.4", body["version"])
+	assert.True(t, body["installed"].(bool))
+}
+
+func TestPHPVersionAdmin_Install_InvalidVersion(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	v1 := r.Group("/api/v1")
+
+	v1.Use(func(c *gin.Context) {
+		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "test-admin", IsAdmin: true})
+		c.Next()
+	})
+
+	admin := v1.Group("/admin", middleware.RequireAdmin())
+	mockAgent := agent.NewMockClient()
+
+	RegisterPHPVersionAdminRoutes(admin, mockAgent)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/php/versions/5.6/install", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Contains(t, body["error"], "unsupported version")
+}
+
+func TestPHPVersionAdmin_Reload_HappyPath(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	v1 := r.Group("/api/v1")
+
+	v1.Use(func(c *gin.Context) {
+		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "test-admin", IsAdmin: true})
+		c.Next()
+	})
+
+	admin := v1.Group("/admin", middleware.RequireAdmin())
+
+	mockAgent := agent.NewMockClient().On("php.version.reload", map[string]interface{}{
+		"version": "8.5",
+		"message": "reload successful",
+	})
+
+	RegisterPHPVersionAdminRoutes(admin, mockAgent)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/php/versions/8.5/reload", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "8.5", body["version"])
 }

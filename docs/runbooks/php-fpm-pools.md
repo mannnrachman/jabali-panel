@@ -19,6 +19,20 @@ You need to support a new PHP version (e.g., 8.4) after initial install.
    ```
 
 ### Fix
+
+**Option 1: Via admin UI (recommended)**
+
+1. Log in to Jabali Panel with admin privileges.
+2. Navigate to **PHP Versions** in the admin sidebar (previously labeled "PHP Pools").
+3. Find the PHP version you want to install (e.g., 8.4) in the table.
+4. Click the **Install** button.
+5. Wait for the installation to complete (this may take 1-2 minutes).
+6. Verify the status shows "Installed" and "Running" when complete.
+
+**Option 2: Via CLI**
+
+If the UI is unavailable, use the manual approach:
+
 1. Set the env var and re-run install.sh with only PHP install step:
    ```bash
    JABALI_PHP_VERSIONS="7.4 8.2 8.5" bash install.sh

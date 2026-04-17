@@ -585,12 +585,12 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 - PHP pool CRUD (per user; admin-only deletion per ADR-0023)
 - Domain ↔ pool binding (admin explicit pool selection; user version-based lookup)
 - php.ini overrides (memory_limit, max_execution_time, upload_max_filesize, etc.; allowlisted directives)
-- Agent commands: `php.pool.apply`, `php.pool.remove`, `php.version.list`
-- API: `/api/v1/php-pools[/:id]`, `/api/v1/php-pools/:id/ini-overrides*`, `/api/v1/domains/:id/php-pool`, `/api/v1/php/versions`
-- UI: admin PHP pool list/edit; domain binding via PHP section in settings
+- Agent commands: `php.pool.apply`, `php.pool.remove`, `php.version.list`, `php.version.status`, `php.version.install`, `php.version.reload`
+- API: `/api/v1/php-pools[/:id]`, `/api/v1/php-pools/:id/ini-overrides*`, `/api/v1/domains/:id/php-pool`, `/api/v1/php/versions`, `/api/v1/admin/php/versions/{status,/:version/install,/:version/reload}` (admin-only)
+- UI: admin PHP versions management page (install/reload per version); admin PHP pool list/edit; domain binding via PHP section in settings
 - Reconciler: ensures every user has ≥1 pool, applies pending changes, nginx renders pool's PHP block
 
-**Status:** Shipped (commits `1aaa507` through final commit)
+**Status:** Shipped (commits `1aaa507` through final commit; admin versions UI shipped separately)
 
 **Depends on:** M1 (users exist), Sury PHP multi-version install (install.sh)
 

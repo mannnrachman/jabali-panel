@@ -335,12 +335,25 @@ func (r *Reconciler) ReconcilePHPPools(ctx context.Context) {
 		}
 	}
 
-	// Process each user: create pool if missing, apply if pending/error
+	// Process each user: ensure slice, create pool if missing, apply if pending/error
 	for _, user := range usersNeedingPools {
 		pool, err := r.phpPools.FindByUserID(ctx, user.ID)
 		if err != nil && err != repository.ErrNotFound {
 			r.log.Error("failed to fetch pool during apply", "user_id", user.ID, "err", err)
 			continue
+		}
+
+		// Ensure per-user slice and FPM drop-ins exist (idempotent via agent)
+		if user.Username != nil && *user.Username != "" {
+			ensureCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			_, sliceErr := r.agent.Call(ensureCtx, "user.slice.ensure", map[string]string{"username": *user.Username})
+			cancel()
+			if sliceErr != nil {
+				r.log.Warn("failed to ensure user slice", "user_id", user.ID, "username", *user.Username, "err", sliceErr)
+				// Warn but continue — slice not existing is a recoverable state; next tick retries.
+			} else {
+				r.log.Info("user slice ensured", "user_id", user.ID, "username", *user.Username)
+			}
 		}
 
 		// Create default pool if missing
@@ -536,9 +549,34 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 			"domain", domain.Name,
 			"err", err)
 	}
-}
 
-// ReconcileDeleted tears down an OS-level domain whose DB row has already
+	// Write the health-check PHP file if domain has PHP and docroot is set.
+	// This file is probed during the cutover (step 6) to verify PHP execution.
+	if hasPHP && domain.DocRoot != "" {
+		healthcheckPath := domain.DocRoot + "/jabali-healthcheck.php"
+		healthcheckParams := map[string]string{
+			"path":       healthcheckPath,
+			"user_group": username + ":www-data",
+		}
+		hcCtx, hcCancel := context.WithTimeout(ctx, 10*time.Second)
+		_, hcErr := r.agent.Call(hcCtx, "fs.write_healthcheck", healthcheckParams)
+		hcCancel()
+		if hcErr != nil {
+			// Log as warning, don't block domain provisioning.
+			// The healthcheck file is optional; cutover probe failure will handle it.
+			r.log.Warn("failed to write healthcheck file",
+				"domain_id", domain.ID,
+				"domain", domain.Name,
+				"healthcheck_path", healthcheckPath,
+				"err", hcErr)
+		} else {
+			r.log.Info("healthcheck file written",
+				"domain_id", domain.ID,
+				"domain", domain.Name,
+				"healthcheck_path", healthcheckPath)
+		}
+	}
+}
 // been removed. Called by the DELETE handler after it deletes the row,
 // because once the row is gone ReconcileOne(id) can no longer find it
 // and orphan detection in ReconcileAll is intentionally conservative

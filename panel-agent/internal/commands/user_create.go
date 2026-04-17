@@ -3,7 +3,9 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -128,6 +130,28 @@ func userCreateHandler(ctx context.Context, params json.RawMessage) (any, error)
 			Message: fmt.Sprintf("failed to parse UID: %v", err),
 		}
 	}
+
+	// Provision the per-user slice and FPM drop-ins.
+	sliceParams := json.RawMessage([]byte(`{"username":"` + p.Username + `"}`))
+	_, sliceErr := userSliceEnsureHandler(ctx, sliceParams)
+	if sliceErr != nil {
+		// Rollback the user creation to avoid leaving a user without isolation.
+		rollbackCmd := exec.CommandContext(ctx, "userdel", "--remove", p.Username)
+		if err := rollbackCmd.Run(); err != nil {
+			slog.ErrorContext(ctx, "failed to rollback useradd after slice-ensure failure",
+				"username", p.Username, "rollback_err", err)
+		}
+		var ae *agentwire.AgentError
+		if ok := errors.As(sliceErr, &ae); ok {
+			slog.InfoContext(ctx, "rolled back user creation due to slice provisioning failure",
+				"username", p.Username, "slice_error", ae.Message)
+		} else {
+			slog.InfoContext(ctx, "rolled back user creation due to slice provisioning failure",
+				"username", p.Username, "slice_error", sliceErr.Error())
+		}
+		return nil, sliceErr
+	}
+	slog.InfoContext(ctx, "user slice provisioned successfully", "username", p.Username, "uid", uid)
 
 	return userCreateResponse{
 		Username: p.Username,

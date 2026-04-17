@@ -526,17 +526,24 @@ func TestReconcileAll_DomainWithPHPPool(t *testing.T) {
 	err := r.ReconcileAll(ctx)
 	require.NoError(t, err)
 
-	// Verify that domain.create was called after php pool creation
-	// Expect: php.pool.apply, domain.list, domain.create
-	require.Len(t, agent.calls, 3, "should call php.pool.apply, domain.list, and domain.create")
-	require.Equal(t, "php.pool.apply", agent.calls[0].method)
-	require.Equal(t, "domain.list", agent.calls[1].method)
-	require.Equal(t, "domain.create", agent.calls[2].method)
+	// Verify that domain.create was called after php pool creation, and healthcheck written
+	// Expected order: user.slice.ensure, php.pool.apply, domain.list, domain.create, fs.write_healthcheck
+	require.Len(t, agent.calls, 5, "should call user.slice.ensure, php.pool.apply, domain.list, domain.create, and fs.write_healthcheck")
+	require.Equal(t, "user.slice.ensure", agent.calls[0].method)
+	require.Equal(t, "php.pool.apply", agent.calls[1].method)
+	require.Equal(t, "domain.list", agent.calls[2].method)
+	require.Equal(t, "domain.create", agent.calls[3].method)
+	require.Equal(t, "fs.write_healthcheck", agent.calls[4].method)
 
-	// Verify that has_php=true and php_version="8.2" were passed
-	params := agent.calls[2].params.(map[string]any)
+	// Verify that has_php=true and php_version="8.2" were passed to domain.create
+	params := agent.calls[3].params.(map[string]any)
 	require.Equal(t, true, params["has_php"], "has_php should be true")
 	require.Equal(t, "8.2", params["php_version"], "php_version should be 8.2")
+
+	// Verify that fs.write_healthcheck was called with correct path and user:group
+	hcParams := agent.calls[4].params.(map[string]string)
+	require.Equal(t, "/home/phpuser/domains/phpsite.com/public_html/jabali-healthcheck.php", hcParams["path"], "healthcheck path should be correct")
+	require.Equal(t, "phpuser:www-data", hcParams["user_group"], "healthcheck user_group should be correct")
 }
 
 func TestReconcileOne_DomainFound(t *testing.T) {

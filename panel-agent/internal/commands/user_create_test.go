@@ -131,3 +131,16 @@ func TestUserCreateHandler_Integration(t *testing.T) {
 	// assert.Greater(t, resp.UID, 0)
 	// assert.Equal(t, "/home/test_jabali_user", resp.HomeDir)
 }
+
+// TODO: TestUserCreateHandler_SliceEnsureInvoked
+// This test would verify that user.slice.ensure is invoked after chown succeeds.
+// It requires mocking exec.CommandContext and userSliceEnsureHandler to avoid
+// actual system modifications. The test would:
+// 1. Mock useradd, chpasswd, chown, chmod, and id commands to succeed
+// 2. Mock userSliceEnsureHandler to verify it's called with the correct username
+// 3. Assert that slice-ensure is called AFTER chown and BEFORE returning
+// 4. Test the rollback path: mock slice-ensure to fail and verify userdel is called
+// This is left as a TODO because it requires deeper integration with the exec
+// mock pattern used elsewhere in the test suite (see user_slice_ensure_test.go).
+// For now, integration tests at the system level (requires root) are the primary
+// verification mechanism.

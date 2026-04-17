@@ -124,3 +124,16 @@ func TestUserDeleteHandler_Integration(t *testing.T) {
 	// assert.Equal(t, "test_jabali_user", resp.Username)
 	// assert.True(t, resp.RemovedHome)
 }
+
+// TODO: TestUserDeleteHandler_SliceRemoveInvoked
+// This test would verify that user.slice.remove is invoked BEFORE userdel.
+// It requires mocking exec.CommandContext and userSliceRemoveHandler to avoid
+// actual system modifications and to verify call ordering. The test would:
+// 1. Mock the id command to return success (user exists)
+// 2. Mock userSliceRemoveHandler to verify it's called with the correct username
+// 3. Mock userdel to verify it's called AFTER slice-remove
+// 4. Test the failure path: mock slice-remove to fail and verify userdel is NOT called
+// This is left as a TODO because it requires deeper integration with the exec
+// mock pattern and call-ordering verification (see user_slice_remove_test.go).
+// For now, integration tests at the system level (requires root) are the primary
+// verification mechanism.

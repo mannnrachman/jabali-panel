@@ -406,3 +406,25 @@ bug, misconfiguration), and re-attempt the cutover.
 
 - `docs/runbooks/per-user-slices.md` — Operational guide (diagnosis,
   per-user resource tuning, rollback procedure).
+
+## Lifecycle wiring (step 5)
+
+Step 5 wires the user.create and user.delete commands to automatically provision
+and teardown per-user slices:
+
+- **user.create** (panel-agent): After chown succeeds, calls userSliceEnsureHandler
+  in-process. On slice-ensure failure, rolls back the entire user creation via
+  userdel --remove to avoid orphaned users without isolation.
+
+- **user.delete** (panel-agent): Calls userSliceRemoveHandler BEFORE userdel so
+  systemd can still resolve the UID while stopping user@<uid>.service. If
+  slice-remove fails, aborts the deletion and returns an error.
+
+- **Reconciler backfill** (panel-api): During ReconcilePHPPools, ensures every
+  user has a slice via agent call. Failures are logged as warnings and retried
+  next tick (recoverable state).
+
+- **Healthcheck file** (panel-api): For each domain with PHP enabled, reconciler
+  writes /<docroot>/jabali-healthcheck.php via the new fs.write_healthcheck agent
+  command. The file is owned by <user>:www-data and is probed during step 6's
+  cutover to verify PHP execution is working correctly.

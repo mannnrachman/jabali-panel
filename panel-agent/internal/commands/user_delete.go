@@ -3,7 +3,9 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os/exec"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
@@ -61,6 +63,23 @@ func userDeleteHandler(ctx context.Context, params json.RawMessage) (any, error)
 			Message: fmt.Sprintf("user %q does not exist", p.Username),
 		}
 	}
+
+	// Remove the per-user slice BEFORE userdel so systemd can still resolve the UID
+	// while stopping user@<uid>.service.
+	sliceParams := json.RawMessage([]byte(`{"username":"` + p.Username + `"}`))
+	_, sliceErr := userSliceRemoveHandler(ctx, sliceParams)
+	if sliceErr != nil {
+		var ae *agentwire.AgentError
+		if ok := errors.As(sliceErr, &ae); ok {
+			slog.InfoContext(ctx, "slice removal failed; aborting user deletion",
+				"username", p.Username, "slice_error", ae.Message)
+		} else {
+			slog.InfoContext(ctx, "slice removal failed; aborting user deletion",
+				"username", p.Username, "slice_error", sliceErr.Error())
+		}
+		return nil, sliceErr
+	}
+	slog.InfoContext(ctx, "user slice removed successfully", "username", p.Username)
 
 	// Delete user.
 	var deleteCmd *exec.Cmd

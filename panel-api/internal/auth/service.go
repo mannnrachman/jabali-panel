@@ -296,7 +296,7 @@ func (s *Service) GenerateImpersonationLoginURL(
 		ImpersonatedBy: adminID,
 		Purpose:       "cli_login",
 	}
-	token, err := s.cfg.JWT.IssueAccessWithTTL(claims, 60*time.Second)
+	token, err := s.cfg.JWT.IssueAccessWithTTL(claims, 5*time.Minute)
 	if err != nil {
 		return "", err
 	}

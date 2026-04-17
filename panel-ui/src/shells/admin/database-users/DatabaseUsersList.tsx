@@ -84,7 +84,7 @@ export const DatabaseUsersList = () => {
         <Typography.Title level={3} style={{ margin: 0 }}>
           Database Users
         </Typography.Title>
-        <CreateButton />
+        <CreateButton>Create User</CreateButton>
       </Space>
 
       <SearchableTable<DatabaseUser>

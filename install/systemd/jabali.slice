@@ -1,0 +1,8 @@
+[Unit]
+Description=Jabali Panel root slice
+Before=slices.target
+
+[Slice]
+CPUAccounting=yes
+MemoryAccounting=yes
+TasksAccounting=yes

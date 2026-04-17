@@ -409,6 +409,29 @@ install_php() {
 
 }
 
+
+# ---------- systemd slices: jabali root + user container ----------------------
+
+# Install the top-of-hierarchy slice units and the FPM template service unit.
+# Must run AFTER clone_or_update_repo because the unit files and shim scripts
+# live under $REPO_DIR. No per-user provisioning yet (that happens in step 3).
+install_jabali_slices() {
+  _log "installing jabali systemd slices and FPM template"
+
+  install -d -m 0755 /usr/local/libexec/jabali
+  install -m 0755 "$REPO_DIR/install/systemd/fpm-pre-start" /usr/local/libexec/jabali/fpm-pre-start
+  install -m 0755 "$REPO_DIR/install/systemd/fpm-exec" /usr/local/libexec/jabali/fpm-exec
+
+  install -m 0644 "$REPO_DIR/install/systemd/jabali.slice" /etc/systemd/system/jabali.slice
+  install -m 0644 "$REPO_DIR/install/systemd/jabali-user.slice" /etc/systemd/system/jabali-user.slice
+  install -m 0644 "$REPO_DIR/install/systemd/jabali-fpm@.service" /etc/systemd/system/jabali-fpm@.service
+
+  systemctl daemon-reload
+  systemctl start jabali.slice jabali-user.slice
+
+  _ok "jabali slices installed"
+}
+
 # Install the FPM pool config template. Must run AFTER
 # clone_or_update_repo because the template file lives under $REPO_DIR.
 # The agent reads this path at runtime via php.pool.apply.
@@ -1219,6 +1242,7 @@ main() {
   install_powerdns
   setup_certbot
   clone_or_update_repo
+  install_jabali_slices
   install_php_pool_template
   build_frontend
   build_backend

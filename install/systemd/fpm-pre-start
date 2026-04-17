@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# jabali FPM pre-start: validates per-user state exists before FPM starts.
+set -euo pipefail
+
+user="${1:?usage: fpm-pre-start <user>}"
+verfile="/etc/jabali-panel/user-phpver/${user}"
+
+[[ -r "$verfile" ]] || { echo "fpm-pre-start: missing version pin $verfile" >&2; exit 1; }
+ver=$(cat "$verfile")
+# Basic format guard — agent writes X.Y, but defend against a stray file.
+[[ "$ver" =~ ^[0-9]+\.[0-9]+$ ]] || { echo "fpm-pre-start: malformed version '$ver' in $verfile" >&2; exit 1; }
+
+poolfile="/etc/php/${ver}/fpm/pool.d/jabali-${user}.conf"
+[[ -r "$poolfile" ]] || { echo "fpm-pre-start: missing pool config $poolfile" >&2; exit 1; }
+
+# The unit's RuntimeDirectory-less setup means we're responsible for
+# /run/php existing with the expected perms. Sury's php-fpm package
+# creates it at package install time as root:root 0755.
+mkdir -p /run/php
+chmod 0755 /run/php

@@ -1,0 +1,14 @@
+[Unit]
+Description=Jabali hosted users container slice
+Before=slices.target
+
+[Slice]
+CPUAccounting=yes
+MemoryAccounting=yes
+TasksAccounting=yes
+# Soft cap on aggregate memory across ALL hosted users. Individual
+# per-user caps live in /etc/systemd/system/jabali-user-<user>.slice.d/
+# drop-ins (admin-tunable). 80% of host memory prevents a runaway
+# tenant from OOMing the panel + mariadb + nginx.
+MemoryHigh=80%
+TasksMax=infinity

@@ -1,0 +1,21 @@
+[Unit]
+Description=PHP-FPM master for jabali user %i
+After=network.target
+
+[Service]
+# Type=simple because php-fpm does NOT implement sd_notify (review F1).
+# FPM runs in foreground via -F flag in fpm-exec so systemd supervises
+# the process directly.
+Type=simple
+ExecStartPre=/usr/local/libexec/jabali/fpm-pre-start %i
+ExecStart=/usr/local/libexec/jabali/fpm-exec %i
+ExecReload=/bin/kill -USR2 $MAINPID
+Restart=on-failure
+RestartSec=5s
+
+# User/Group/Slice are NOT set here — per-instance drop-ins at
+# /etc/systemd/system/jabali-fpm@<user>.service.d/slice.conf (written
+# by the agent's user.slice.ensure command in step 3) provide them.
+
+[Install]
+WantedBy=multi-user.target

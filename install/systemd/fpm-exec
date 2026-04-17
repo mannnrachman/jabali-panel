@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# jabali FPM exec: loads the per-user pool, pinned to the user's PHP version.
+set -euo pipefail
+
+user="${1:?usage: fpm-exec <user>}"
+ver=$(cat "/etc/jabali-panel/user-phpver/${user}")
+
+# --nodaemonize (-F) keeps php-fpm in foreground so systemd supervises
+# it with Type=simple. --fpm-config points at Sury's main fpm config
+# so global settings (error_log, events mechanism) are honored; the
+# per-user pool is loaded via the file under pool.d/ picked up by the
+# `include=` in Sury's default php-fpm.conf.
+# NOTE: Loading a single pool only (ignoring the pool.d/ include) would
+# be cleaner but requires an FPM flag that doesn't exist. Instead we
+# rely on our pool-files naming (jabali-<user>.conf) being unique per
+# user and the pre-start probing that the right file exists.
+exec "/usr/sbin/php-fpm${ver}" --nodaemonize --fpm-config "/etc/php/${ver}/fpm/php-fpm.conf"

@@ -83,6 +83,9 @@ func RegisterUserRoutes(g *gin.RouterGroup, cfg UserHandlerConfig) {
 	impersonate := []gin.HandlerFunc{middleware.RequireAdmin()}
 	impersonate = append(impersonate, h.impersonate)
 	g.POST("/admin/users/:id/impersonate", impersonate...)
+
+	// Admin-only per-user systemd slice status (Step 8 of per-user-slices).
+	g.GET("/admin/users/:id/slice-status", middleware.RequireAdmin(), h.sliceStatus)
 }
 
 type userHandler struct{ cfg UserHandlerConfig }

@@ -11,6 +11,7 @@ import { SearchableTable } from "../../../components/SearchableTable";
 import { readQValue } from "../../../components/searchableTableUtils";
 import { UserDeleteAction } from "./UserDeleteAction";
 import { UserImpersonateAction } from "./UserImpersonateAction";
+import { UserSliceStatus } from "./UserSliceStatus";
 
 type User = {
   id: string;
@@ -75,6 +76,10 @@ export const UserList = () => {
           sorter={{ multiple: 1 }}
           defaultSortOrder="descend"
           render={(ts: string) => new Date(ts).toLocaleString()}
+        />
+        <Table.Column
+          title="Slice"
+          render={(_: unknown, r: User) => <UserSliceStatus userId={r.id} />}
         />
         <Table.Column
           title="Actions"

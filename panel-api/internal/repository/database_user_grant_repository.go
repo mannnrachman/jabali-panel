@@ -14,6 +14,7 @@ type DatabaseUserGrantRepository interface {
 	FindByID(ctx context.Context, id string) (*models.DatabaseUserGrant, error)
 	ListByDatabaseID(ctx context.Context, databaseID string) ([]models.DatabaseUserGrant, error)
 	ListByDatabaseUserID(ctx context.Context, databaseUserID string) ([]models.DatabaseUserGrant, error)
+	ListByDatabaseUserIDs(ctx context.Context, databaseUserIDs []string) ([]models.DatabaseUserGrant, error)
 	Create(ctx context.Context, grant *models.DatabaseUserGrant) error
 	Delete(ctx context.Context, id string) error
 	UpdateLevel(ctx context.Context, id string, level string) error
@@ -48,6 +49,21 @@ func (r *databaseUserGrantRepo) ListByDatabaseID(ctx context.Context, databaseID
 func (r *databaseUserGrantRepo) ListByDatabaseUserID(ctx context.Context, databaseUserID string) ([]models.DatabaseUserGrant, error) {
 	var grants []models.DatabaseUserGrant
 	if err := r.db.WithContext(ctx).Where("database_user_id = ?", databaseUserID).Find(&grants).Error; err != nil {
+		return nil, err
+	}
+	return grants, nil
+}
+
+// ListByDatabaseUserIDs batch-fetches grants for a list of user ids —
+// used by the list handler to avoid a per-row query while building the
+// grants-embedded response. An empty input returns an empty slice
+// without hitting the DB.
+func (r *databaseUserGrantRepo) ListByDatabaseUserIDs(ctx context.Context, databaseUserIDs []string) ([]models.DatabaseUserGrant, error) {
+	if len(databaseUserIDs) == 0 {
+		return []models.DatabaseUserGrant{}, nil
+	}
+	var grants []models.DatabaseUserGrant
+	if err := r.db.WithContext(ctx).Where("database_user_id IN ?", databaseUserIDs).Find(&grants).Error; err != nil {
 		return nil, err
 	}
 	return grants, nil

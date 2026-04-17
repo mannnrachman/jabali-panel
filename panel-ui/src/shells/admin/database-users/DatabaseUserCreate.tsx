@@ -1,34 +1,27 @@
-// Admin create form for a database user.
+// Create-user form — username only.
 //
-// Contract with panel-api (see database_users.go):
-//   POST /database-users  { database_id, username, grant_level }
-//     → { id, username, password, grant: {id, grant_level} }
-//
-// The password is returned ONCE and shown via the reveal-once modal.
-// Once the operator closes the modal the password is gone for good.
+// The user is provisioned as a MariaDB account with a random password
+// returned exactly once. Database access is granted in a separate step
+// from the user row's "Add Access" action (see AddGrantModal). This
+// mirrors the standard shared-hosting model: one user can hold any
+// number of grants across different databases.
 import { useState } from "react";
 import { Create } from "@refinedev/antd";
-import { Button, Form, Input, Radio, Select, Space, Typography, message } from "antd";
+import { Button, Form, Input, Space, message } from "antd";
 import { useNavigate } from "react-router";
-import { useList } from "@refinedev/core";
 
 import { apiClient } from "../../../apiClient";
 import { DatabaseUserPasswordModal } from "../../../components/DatabaseUserPasswordModal";
 
 type CreateInput = {
-  database_id: string;
   username: string;
-  grant_level: "rw" | "ro";
 };
 
 type CreateResponse = {
   id: string;
   username: string;
   password: string;
-  grant: { id: string; grant_level: string };
 };
-
-type DatabaseOption = { id: string; name: string };
 
 export const DatabaseUserCreate = () => {
   const navigate = useNavigate();
@@ -38,15 +31,6 @@ export const DatabaseUserCreate = () => {
     username: string;
     password: string;
   } | null>(null);
-
-  // Fetch up to 200 databases for the picker. The admin view is
-  // unscoped; a large deployment should get a searchable async-select
-  // here, but at this scale a flat list is clearer.
-  const { data: dbData, isLoading: dbLoading } = useList<DatabaseOption>({
-    resource: "databases",
-    pagination: { pageSize: 200 },
-  });
-  const databases = dbData?.data ?? [];
 
   const onFinish = async (values: CreateInput) => {
     setSubmitting(true);
@@ -68,11 +52,8 @@ export const DatabaseUserCreate = () => {
 
   const onPasswordDismissed = () => {
     setRevealed(null);
-    // DB Users list is stacked under /databases; navigate back there
-    // rather than the standalone /database-users path, which has no
-    // page component (resource is hidden from the sidebar).
-    // Works for both shells: from /jabali-{admin,panel}/database-users/create
-    // '../../databases' → /jabali-{admin,panel}/databases.
+    // From /jabali-{admin,panel}/database-users/create, '../../databases'
+    // lands on the combined databases page where the new row appears.
     navigate("../../databases");
   };
 
@@ -87,23 +68,8 @@ export const DatabaseUserCreate = () => {
         <Form<CreateInput>
           form={form}
           layout="vertical"
-          initialValues={{ grant_level: "rw" }}
           onFinish={onFinish}
         >
-          <Form.Item
-            label="Database"
-            name="database_id"
-            rules={[{ required: true, message: "Pick a database" }]}
-          >
-            <Select<string>
-              loading={dbLoading}
-              showSearch
-              optionFilterProp="label"
-              placeholder="Select a database"
-              options={databases.map((d) => ({ value: d.id, label: d.name }))}
-            />
-          </Form.Item>
-
           <Form.Item
             label="Username"
             name="username"
@@ -115,25 +81,10 @@ export const DatabaseUserCreate = () => {
                   "Lowercase letters, digits and underscores only; must start with a letter; max 30 chars",
               },
             ]}
-            tooltip="For non-admin users the server prepends your account's username (e.g. `alice_api`). Admins create without a prefix."
+            tooltip="The final MariaDB username will be your panel username plus an underscore plus this value (e.g. alice_api)."
+            extra="Your username will be prepended automatically."
           >
             <Input placeholder="e.g. api" autoComplete="off" />
-          </Form.Item>
-
-          <Form.Item
-            label="Grant level"
-            name="grant_level"
-            rules={[{ required: true }]}
-            extra={
-              <Typography.Text type="secondary">
-                rw: full read/write. ro: read-only (SELECT + SHOW VIEW).
-              </Typography.Text>
-            }
-          >
-            <Radio.Group>
-              <Radio.Button value="rw">Read / Write</Radio.Button>
-              <Radio.Button value="ro">Read-only</Radio.Button>
-            </Radio.Group>
           </Form.Item>
 
           <Space>

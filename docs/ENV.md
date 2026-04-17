@@ -53,13 +53,27 @@ non-secrets in TOML, secrets in `.env` (loaded via systemd
 | `JABALI_BOOTSTRAP_ADMIN_PASSWORD` | No | *(unset)* | Plaintext bootstrap password. Used once; the row is seeded and the var can be removed. |
 <!-- /AUTO-GENERATED -->
 
-## Agent
+## Agent (panel-api → agent client)
 
 <!-- AUTO-GENERATED:env-agent — regenerate via /update-docs -->
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `AGENT_SOCKET` | No | `/run/jabali/agent.sock` | Path to the panel-agent Unix socket. Panel user must have rw on the socket. See [ADR-0001](adr/0001-go-agent-over-ndjson-unix-socket.md). |
 | `AGENT_TIMEOUT` | No | `30s` | Default per-call wall-clock ceiling. Short commands (e.g. `agent.version`) set their own tighter deadline. |
+<!-- /AUTO-GENERATED -->
+
+## Agent (jabali-agent binary)
+
+These are read by the agent process itself. Prod installs set them via the
+systemd unit `install.sh` writes.
+
+<!-- AUTO-GENERATED:env-agent-binary — regenerate via /update-docs -->
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `JABALI_AGENT_SOCKET` | No | `/run/jabali/agent.sock` | Unix socket the agent listens on. Must match `AGENT_SOCKET` on the panel side. |
+| `JABALI_AGENT_GID` | No | `-1` (skip) | If ≥ 0, the agent `chown`s the socket to `root:<gid>` after bind so only that group (typically `jabali`) can connect. |
+| `JABALI_AGENT_LOG_FORMAT` | No | `json` | `json` \| `text`. Prod is JSON so journald parsing is trivial. |
+| `JABALI_AGENT_LOG_LEVEL` | No | `info` | `debug` \| `info` \| `warn` \| `error`. |
 <!-- /AUTO-GENERATED -->
 
 ## CORS + SSL
@@ -71,6 +85,18 @@ non-secrets in TOML, secrets in `.env` (loaded via systemd
 | `JABALI_ACME_STAGING_ONLY` | No | `false` | Force Let's Encrypt staging directory for all ACME requests. Use for development + ACME rate-limit recovery. See [ADR-0017](adr/0017-ssl-try-acme-then-selfsigned-with-backoff.md). |
 <!-- /AUTO-GENERATED -->
 
+## SSO (phpMyAdmin single-sign-on)
+
+M7 Tranche E foundation. Parked pending M9 (see
+[ADR-0022](adr/0022-m7-phpmyadmin-sso-shadow-account-and-uds.md)) — the
+key loader is wired, unused until SSO work resumes.
+
+<!-- AUTO-GENERATED:env-sso — regenerate via /update-docs -->
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `JABALI_SSO_KEY_PATH` | No | `/etc/jabali-panel/sso.key` | Path to the 32-byte AES-256-GCM key used to encrypt shadow MariaDB admin passwords at rest. Must be mode `0600`, owner `jabali:jabali`. `install.sh install_sso_key` writes this on first install. If missing, the SSO feature is disabled (handler returns 503); startup continues. |
+<!-- /AUTO-GENERATED -->
+
 ## Install-time (read by `install.sh` / CLI subcommands)
 
 <!-- AUTO-GENERATED:env-install — regenerate via /update-docs -->
@@ -80,6 +106,8 @@ non-secrets in TOML, secrets in `.env` (loaded via systemd
 | `JABALI_GO_ROOT` | No | `/usr/local/go` | Where the installer writes the Go toolchain. |
 | `JABALI_SERVICE_USER` | No | `jabali` | Service account the panel + agent run as. |
 | `JABALI_REPO_DIR` | No | `/opt/jabali2` | Git checkout path on the target host. |
+| `JABALI_GITEA_TOKEN` | No | *(unset)* | Personal access token for private Gitea mirror. Used by `install.sh` when the source repo requires auth. Equivalent to the first positional arg to `install.sh`. |
+| `JABALI_PHP_VERSIONS` | No | `8.2 8.3` | Space-separated list of PHP versions `install.sh install_php` fetches from the Sury repo. Additional versions: `JABALI_PHP_VERSIONS="7.4 8.0 8.1 8.2 8.3" bash install.sh`. See [ADR-0023](adr/0023-m9-php-fpm-pool-manager.md). |
 <!-- /AUTO-GENERATED -->
 
 ## Adding a new env var

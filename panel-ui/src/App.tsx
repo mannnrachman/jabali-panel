@@ -27,6 +27,7 @@ import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router";
 import { ConfigProvider } from "antd";
 
 import useMuiTheme from "./muiTheme";
+import { ThemeModeProvider, useThemeMode } from "./theme/ThemeModeContext";
 import { authProvider } from "./authProvider";
 import { dataProvider } from "./dataProvider";
 import { AdminLayout } from "./shells/AdminLayout";
@@ -54,8 +55,9 @@ import { SSLManagerPage } from "./shells/admin/ssl/SSLManagerPage";
 import { UserSSLManagerPage } from "./shells/user/ssl/UserSSLManagerPage";
 import { LoginPage } from "./pages/Login";
 
-const App = () => {
-  const muiConfig = useMuiTheme();
+const ThemedApp = () => {
+  const { mode } = useThemeMode();
+  const muiConfig = useMuiTheme(mode);
 
   return (
     <BrowserRouter>
@@ -201,5 +203,11 @@ const App = () => {
     </BrowserRouter>
   );
 };
+
+const App = () => (
+  <ThemeModeProvider>
+    <ThemedApp />
+  </ThemeModeProvider>
+);
 
 export default App;

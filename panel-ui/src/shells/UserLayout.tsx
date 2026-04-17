@@ -19,6 +19,9 @@ import type { MenuProps } from "antd";
 import { getIdentity } from "../identity";
 import { useEffect, useState } from "react";
 import { ImpersonationBanner } from "../components/ImpersonationBanner";
+import { ThemeToggle } from "../components/ThemeToggle";
+import { useThemeMode } from "../theme/ThemeModeContext";
+import { useShellTokens } from "../muiTheme";
 
 const { Header, Sider, Content } = Layout;
 
@@ -34,6 +37,11 @@ export function UserLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { mutate: logout } = useLogout();
+  const { mode } = useThemeMode();
+  const tokens = useShellTokens(mode);
+  // User shell keeps a brighter blue sider in both modes so the visual
+  // distinction vs AdminLayout survives the theme switch.
+  const userSiderBg = mode === "dark" ? "#0e2238" : "#062d4d";
   const [email, setEmail] = useState<string>("");
 
   useEffect(() => {
@@ -63,7 +71,7 @@ export function UserLayout() {
       <Sider
         breakpoint="md"
         collapsible
-        style={{ background: "#062d4d" }} // slightly brighter blue vs admin's near-black
+        style={{ background: userSiderBg }} // slightly brighter blue vs admin's near-black
       >
         <div
           style={{
@@ -87,25 +95,28 @@ export function UserLayout() {
       <Layout>
         <Header
           style={{
-            background: "#fff",
+            background: tokens.headerBg,
             padding: "0 24px",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+            borderBottom: tokens.headerBorder,
           }}
         >
           <Typography.Text type="secondary">
             <HomeOutlined /> My hosting
           </Typography.Text>
-          <Dropdown menu={{ items: userMenu }} placement="bottomRight">
-            <Button type="text" icon={<Avatar size="small" icon={<UserOutlined />} />}>
-              &nbsp;{email || "…"}
-            </Button>
-          </Dropdown>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <ThemeToggle />
+            <Dropdown menu={{ items: userMenu }} placement="bottomRight">
+              <Button type="text" icon={<Avatar size="small" icon={<UserOutlined />} />}>
+                &nbsp;{email || "…"}
+              </Button>
+            </Dropdown>
+          </div>
         </Header>
         <ImpersonationBanner />
-        <Content style={{ background: "#f5f5f5" }}>
+        <Content style={{ background: tokens.contentBg }}>
           <Outlet />
         </Content>
       </Layout>

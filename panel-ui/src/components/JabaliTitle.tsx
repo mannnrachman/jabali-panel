@@ -6,7 +6,6 @@
 // Go embed.go fallback. Keeping them as raw files (rather than bundling
 // through an SVG-as-JSX plugin) means we can swap the source without a
 // rebuild and avoid the extra loader dependency.
-import { useThemeMode } from "../theme/ThemeModeContext";
 
 interface JabaliTitleProps {
   collapsed?: boolean;
@@ -14,8 +13,9 @@ interface JabaliTitleProps {
 }
 
 export function JabaliTitle({ collapsed, text = "Jabali Panel" }: JabaliTitleProps) {
-  const { mode } = useThemeMode();
-  const src = mode === "dark" ? "/images/jabali_logo_dark.svg" : "/images/jabali_logo.svg";
+  // Sidebar chrome is always dark in both theme modes, so always use
+  // the white-fill (dark-mode) logo variant.
+  const src = "/images/jabali_logo_dark.svg";
 
   return (
     <div
@@ -32,7 +32,7 @@ export function JabaliTitle({ collapsed, text = "Jabali Panel" }: JabaliTitlePro
         style={{ height: 28, width: "auto", flexShrink: 0 }}
       />
       {!collapsed && (
-        <span style={{ fontSize: 16, fontWeight: 600, letterSpacing: 0.5 }}>
+        <span style={{ fontSize: 16, fontWeight: 600, letterSpacing: 0.5, color: "#ffffff" }}>
           {text}
         </span>
       )}

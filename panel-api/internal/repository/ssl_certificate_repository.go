@@ -25,6 +25,7 @@ type SSLCertificateWithDomain struct {
 	LastRenewedAt *time.Time `json:"last_renewed_at"`
 	LastError     *string    `json:"last_error"`
 	Staging       bool       `json:"staging"`
+	LastAttemptAt *time.Time `json:"last_attempt_at"`
 }
 
 // SSLCertificateRepository covers the ssl_certificates table.
@@ -32,6 +33,7 @@ type SSLCertificateWithDomain struct {
 type SSLCertificateRepository interface {
 	Create(ctx context.Context, cert *models.SSLCertificate) error
 	FindByDomainID(ctx context.Context, domainID string) (*models.SSLCertificate, error)
+	FindByDomainIDs(ctx context.Context, domainIDs []string) ([]models.SSLCertificate, error)
 	UpdateStatus(ctx context.Context, id string, status string, lastError *string) error
 	UpdateAfterIssuance(ctx context.Context, id string, issuedAt, expiresAt time.Time, certPath, keyPath string) error
 	UpdateAfterRenewal(ctx context.Context, id string, issuedAt, expiresAt time.Time, certPath, keyPath string) error
@@ -75,12 +77,16 @@ func (r *sslCertificateRepo) FindByDomainID(ctx context.Context, domainID string
 // UpdateStatus updates the certificate's status and optional last error.
 // Useful for transitions like pending → issuing or issuing → issued/failed.
 func (r *sslCertificateRepo) UpdateStatus(ctx context.Context, id string, status string, lastError *string) error {
+	updates := map[string]interface{}{
+		"status":     status,
+		"last_error": lastError,
+		"updated_at": time.Now(),
+	}
+	if status == models.SSLStatusFailed {
+		updates["last_attempt_at"] = time.Now()
+	}
 	return r.db.WithContext(ctx).Model(&models.SSLCertificate{}).Where("id = ?", id).
-		Updates(map[string]interface{}{
-			"status":      status,
-			"last_error":  lastError,
-			"updated_at":  time.Now(),
-		}).Error
+		Updates(updates).Error
 }
 
 // UpdateAfterIssuance updates issuance metadata: issued_at, expires_at, cert_path, key_path.
@@ -88,12 +94,13 @@ func (r *sslCertificateRepo) UpdateStatus(ctx context.Context, id string, status
 func (r *sslCertificateRepo) UpdateAfterIssuance(ctx context.Context, id string, issuedAt, expiresAt time.Time, certPath, keyPath string) error {
 	return r.db.WithContext(ctx).Model(&models.SSLCertificate{}).Where("id = ?", id).
 		Updates(map[string]interface{}{
-			"issued_at":   issuedAt,
-			"expires_at":  expiresAt,
-			"cert_path":   certPath,
-			"key_path":    keyPath,
-			"status":      models.SSLStatusIssued,
-			"updated_at":  time.Now(),
+			"issued_at":       issuedAt,
+			"expires_at":      expiresAt,
+			"cert_path":       certPath,
+			"key_path":        keyPath,
+			"status":          models.SSLStatusIssued,
+			"last_attempt_at": time.Now(),
+			"updated_at":      time.Now(),
 		}).Error
 }
 
@@ -112,6 +119,7 @@ func (r *sslCertificateRepo) UpdateAfterRenewal(ctx context.Context, id string, 
 			"last_renewed_at": now,
 			"renewal_count":   gorm.Expr("renewal_count + 1"),
 			"last_error":      nil,
+			"last_attempt_at": now,
 			"updated_at":      now,
 		}).Error
 }
@@ -162,7 +170,7 @@ func (r *sslCertificateRepo) ListAll(ctx context.Context) ([]SSLCertificateWithD
 		Select(`sc.id, sc.domain_id, d.name as domain_name,
 		        d.user_id, u.username as user_username,
 		        sc.status, sc.issued_at, sc.expires_at,
-		        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging`).
+		        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at`).
 		Table("ssl_certificates sc").
 		Joins("JOIN domains d ON sc.domain_id = d.id").
 		Joins("JOIN users u ON d.user_id = u.id").
@@ -182,7 +190,7 @@ func (r *sslCertificateRepo) ListByUserID(ctx context.Context, userID string) ([
 		Select(`sc.id, sc.domain_id, d.name as domain_name,
 		        d.user_id, u.username as user_username,
 		        sc.status, sc.issued_at, sc.expires_at,
-		        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging`).
+		        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at`).
 		Table("ssl_certificates sc").
 		Joins("JOIN domains d ON sc.domain_id = d.id").
 		Joins("JOIN users u ON d.user_id = u.id").
@@ -200,12 +208,13 @@ func (r *sslCertificateRepo) ListByUserID(ctx context.Context, userID string) ([
 func (r *sslCertificateRepo) UpdateSelfSigned(ctx context.Context, id string, certPath, keyPath string, expiresAt time.Time) error {
 	return r.db.WithContext(ctx).Model(&models.SSLCertificate{}).Where("id = ?", id).
 		Updates(map[string]interface{}{
-			"status":      models.SSLStatusSelfSigned,
-			"cert_path":   certPath,
-			"key_path":    keyPath,
-			"expires_at":  expiresAt,
-			"last_error":  nil,
-			"updated_at":  time.Now(),
+			"status":           models.SSLStatusSelfSigned,
+			"cert_path":        certPath,
+			"key_path":         keyPath,
+			"expires_at":       expiresAt,
+			"last_error":       nil,
+			"last_attempt_at":  time.Now(),
+			"updated_at":       time.Now(),
 		}).Error
 }
 
@@ -214,11 +223,12 @@ func (r *sslCertificateRepo) UpdateSelfSigned(ctx context.Context, id string, ce
 // If fallback paths are provided, also writes those (for first failure with self-signed).
 func (r *sslCertificateRepo) UpdateAfterACMEFailure(ctx context.Context, id string, lastError string, nextRetryAt time.Time, retryCount int, fallbackCertPath, fallbackKeyPath *string, fallbackExpiresAt *time.Time) error {
 	updates := map[string]interface{}{
-		"status":         models.SSLStatusPendingACMERetry,
-		"last_error":     lastError,
-		"next_retry_at":  nextRetryAt,
-		"retry_count":    retryCount,
-		"updated_at":     time.Now(),
+		"status":          models.SSLStatusPendingACMERetry,
+		"last_error":      lastError,
+		"next_retry_at":   nextRetryAt,
+		"retry_count":     retryCount,
+		"last_attempt_at": time.Now(),
+		"updated_at":      time.Now(),
 	}
 	if fallbackCertPath != nil {
 		updates["cert_path"] = *fallbackCertPath
@@ -237,10 +247,11 @@ func (r *sslCertificateRepo) UpdateAfterACMEFailure(ctx context.Context, id stri
 func (r *sslCertificateRepo) MarkFailed(ctx context.Context, id string, lastError string) error {
 	return r.db.WithContext(ctx).Model(&models.SSLCertificate{}).Where("id = ?", id).
 		Updates(map[string]interface{}{
-			"status":         models.SSLStatusFailed,
-			"last_error":     lastError,
-			"next_retry_at":  nil,
-			"updated_at":     time.Now(),
+			"status":          models.SSLStatusFailed,
+			"last_error":      lastError,
+			"next_retry_at":   nil,
+			"last_attempt_at": time.Now(),
+			"updated_at":      time.Now(),
 		}).Error
 }
 
@@ -254,6 +265,16 @@ func (r *sslCertificateRepo) ListDueForACMERetry(ctx context.Context, now time.T
 		Order("next_retry_at ASC").
 		Limit(limit).
 		Find(&certs).Error
+	if err != nil {
+		return nil, err
+	}
+	return certs, nil
+}
+
+// FindByDomainIDs fetches SSL certificates for multiple domains
+func (r *sslCertificateRepo) FindByDomainIDs(ctx context.Context, domainIDs []string) ([]models.SSLCertificate, error) {
+	var certs []models.SSLCertificate
+	err := r.db.WithContext(ctx).Where("domain_id IN ?", domainIDs).Find(&certs).Error
 	if err != nil {
 		return nil, err
 	}

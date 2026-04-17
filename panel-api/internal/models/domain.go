@@ -177,6 +177,11 @@ type Domain struct {
 	// the cert (if any) is not updated but may remain installed.
 	SSLEnabled bool `gorm:"type:tinyint(1);not null;default:1" json:"ssl_enabled"`
 
+	// SSLState is a computed field (not persisted) that represents the actual SSL
+	// certificate state. Values: "active_le" (valid LE cert), "self_signed", "pending",
+	// "failed", "off". Populated by the repository on List/ListByUserID.
+	SSLState string `gorm:"-" json:"ssl_state,omitempty"`
+
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }

@@ -36,6 +36,14 @@ func (m *MockSSLCertificateRepository) FindByDomainID(ctx context.Context, domai
 	return args.Get(0).(*models.SSLCertificate), args.Error(1)
 }
 
+func (m *MockSSLCertificateRepository) FindByDomainIDs(ctx context.Context, domainIDs []string) ([]models.SSLCertificate, error) {
+	args := m.Called(ctx, domainIDs)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]models.SSLCertificate), args.Error(1)
+}
+
 func (m *MockSSLCertificateRepository) UpdateStatus(ctx context.Context, id string, status string, lastError *string) error {
 	args := m.Called(ctx, id, status, lastError)
 	return args.Error(0)

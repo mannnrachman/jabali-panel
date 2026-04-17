@@ -48,6 +48,7 @@ func TestSSLCertificateRepository_Create(t *testing.T) {
 			nil,            // key_path
 			nil,            // next_retry_at
 			0,              // retry_count
+			nil,            // last_attempt_at
 			sqlmock.AnyArg(), // created_at
 			sqlmock.AnyArg(), // updated_at
 		).
@@ -121,7 +122,7 @@ func TestSSLCertificateRepository_FindByDomainID_NotFound(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "domain_id", "status", "issued_at", "expires_at",
 			"renewal_count", "last_renewed_at", "last_error", "staging",
-			"cert_path", "key_path", "next_retry_at", "retry_count", "created_at", "updated_at",
+			"cert_path", "key_path", "next_retry_at", "retry_count", "last_attempt_at", "created_at", "updated_at",
 		}))
 
 	cert, err := repo.FindByDomainID(ctx, domainID)
@@ -147,6 +148,7 @@ func TestSSLCertificateRepository_UpdateStatus(t *testing.T) {
 	// Use AnyArg for all value args to avoid flakiness
 	mock.ExpectExec(regexp.QuoteMeta("UPDATE `ssl_certificates` SET")).
 		WithArgs(
+			sqlmock.AnyArg(), // last_attempt_at (new field)
 			sqlmock.AnyArg(), // status or last_error
 			sqlmock.AnyArg(), // last_error or status
 			sqlmock.AnyArg(), // updated_at
@@ -182,7 +184,8 @@ func TestSSLCertificateRepository_UpdateAfterIssuance(t *testing.T) {
 			sqlmock.AnyArg(), // cert_path
 			sqlmock.AnyArg(), // expires_at
 			sqlmock.AnyArg(), // issued_at
-			sqlmock.AnyArg(), // key_path
+			sqlmock.AnyArg(), // key_path,
+			sqlmock.AnyArg(), // last_attempt_at
 			sqlmock.AnyArg(), // status
 			sqlmock.AnyArg(), // updated_at
 			certID,
@@ -237,7 +240,7 @@ func TestSSLCertificateRepository_ListDueForRenewal(t *testing.T) {
 			sqlmock.NewRows([]string{
 				"id", "domain_id", "status", "issued_at", "expires_at",
 				"renewal_count", "last_renewed_at", "last_error", "staging",
-				"cert_path", "key_path", "next_retry_at", "retry_count", "created_at", "updated_at",
+				"cert_path", "key_path", "next_retry_at", "retry_count", "last_attempt_at", "created_at", "updated_at",
 			}).AddRow(
 				"01ARWX4FRYXZ73AK7EQQ69G5NV",
 				"01ARZ3NDEKTSV4RRFFQ69G5FAV",
@@ -252,6 +255,7 @@ func TestSSLCertificateRepository_ListDueForRenewal(t *testing.T) {
 				"/etc/letsencrypt/live/example.com/privkey.pem",
 				nil,       // next_retry_at
 				0,         // retry_count
+				nil,       // last_attempt_at
 				now,
 				now,
 			),
@@ -276,11 +280,11 @@ func TestSSLCertificateRepository_ListAll(t *testing.T) {
 
 	// Expect a SELECT joining ssl_certificates, domains, and users
 	mock.ExpectQuery(
-		regexp.QuoteMeta("SELECT sc.id, sc.domain_id, d.name as domain_name,\n\t\t        d.user_id, u.username as user_username,\n\t\t        sc.status, sc.issued_at, sc.expires_at,\n\t\t        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging FROM ssl_certificates sc JOIN domains d ON sc.domain_id = d.id JOIN users u ON d.user_id = u.id ORDER BY sc.created_at DESC")).
+		regexp.QuoteMeta("SELECT sc.id, sc.domain_id, d.name as domain_name,\n\t\t        d.user_id, u.username as user_username,\n\t\t        sc.status, sc.issued_at, sc.expires_at,\n\t\t        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at FROM ssl_certificates sc JOIN domains d ON sc.domain_id = d.id JOIN users u ON d.user_id = u.id ORDER BY sc.created_at DESC")).
 		WillReturnRows(
 			sqlmock.NewRows([]string{
 				"id", "domain_id", "domain_name", "user_id", "user_username",
-				"status", "issued_at", "expires_at", "renewal_count", "last_renewed_at", "last_error", "staging",
+				"status", "issued_at", "expires_at", "renewal_count", "last_renewed_at", "last_error", "staging", "last_attempt_at",
 			}).
 				AddRow(
 					"01ARWX4FRYXZ73AK7EQQ69G5NV",
@@ -295,6 +299,7 @@ func TestSSLCertificateRepository_ListAll(t *testing.T) {
 					nil,
 					nil,
 					false,
+					nil,
 				).
 				AddRow(
 					"01ARWX4FRYXZ73AK7EQQ69G5N0",
@@ -309,6 +314,7 @@ func TestSSLCertificateRepository_ListAll(t *testing.T) {
 					nil,
 					nil,
 					true,
+					nil,
 				),
 		)
 
@@ -334,12 +340,12 @@ func TestSSLCertificateRepository_ListByUserID(t *testing.T) {
 
 	// Expect a SELECT with WHERE on user_id
 	mock.ExpectQuery(
-		regexp.QuoteMeta("SELECT sc.id, sc.domain_id, d.name as domain_name,\n\t\t        d.user_id, u.username as user_username,\n\t\t        sc.status, sc.issued_at, sc.expires_at,\n\t\t        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging FROM ssl_certificates sc JOIN domains d ON sc.domain_id = d.id JOIN users u ON d.user_id = u.id WHERE d.user_id = ? ORDER BY sc.created_at DESC")).
+		regexp.QuoteMeta("SELECT sc.id, sc.domain_id, d.name as domain_name,\n\t\t        d.user_id, u.username as user_username,\n\t\t        sc.status, sc.issued_at, sc.expires_at,\n\t\t        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at FROM ssl_certificates sc JOIN domains d ON sc.domain_id = d.id JOIN users u ON d.user_id = u.id WHERE d.user_id = ? ORDER BY sc.created_at DESC")).
 		WithArgs(userID).
 		WillReturnRows(
 			sqlmock.NewRows([]string{
 				"id", "domain_id", "domain_name", "user_id", "user_username",
-				"status", "issued_at", "expires_at", "renewal_count", "last_renewed_at", "last_error", "staging",
+				"status", "issued_at", "expires_at", "renewal_count", "last_renewed_at", "last_error", "staging", "last_attempt_at",
 			}).
 				AddRow(
 					"01ARWX4FRYXZ73AK7EQQ69G5NV",
@@ -354,6 +360,7 @@ func TestSSLCertificateRepository_ListByUserID(t *testing.T) {
 					now.Add(-7*24*time.Hour),
 					nil,
 					false,
+					nil,
 				),
 		)
 
@@ -379,11 +386,11 @@ func TestSSLCertificateRepository_ListByUserID_Empty(t *testing.T) {
 
 	// Expect an empty result set
 	mock.ExpectQuery(
-		regexp.QuoteMeta("SELECT sc.id, sc.domain_id, d.name as domain_name,\n\t\t        d.user_id, u.username as user_username,\n\t\t        sc.status, sc.issued_at, sc.expires_at,\n\t\t        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging FROM ssl_certificates sc JOIN domains d ON sc.domain_id = d.id JOIN users u ON d.user_id = u.id WHERE d.user_id = ? ORDER BY sc.created_at DESC")).
+		regexp.QuoteMeta("SELECT sc.id, sc.domain_id, d.name as domain_name,\n\t\t        d.user_id, u.username as user_username,\n\t\t        sc.status, sc.issued_at, sc.expires_at,\n\t\t        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at FROM ssl_certificates sc JOIN domains d ON sc.domain_id = d.id JOIN users u ON d.user_id = u.id WHERE d.user_id = ? ORDER BY sc.created_at DESC")).
 		WithArgs(userID).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "domain_id", "domain_name", "user_id", "user_username",
-			"status", "issued_at", "expires_at", "renewal_count", "last_renewed_at", "last_error", "staging",
+			"status", "issued_at", "expires_at", "renewal_count", "last_renewed_at", "last_error", "staging", "last_attempt_at",
 		}))
 
 	certs, err := repo.ListByUserID(ctx, userID)

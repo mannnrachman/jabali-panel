@@ -155,6 +155,16 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Packages:       deps.Packages,
 			})
 		}
+		if deps.DatabaseUsers != nil && deps.DatabaseUserGrants != nil {
+			api.RegisterDatabaseUserRoutes(v1, api.DatabaseUserHandlerConfig{
+				Databases:      deps.Databases,
+				DatabaseUsers:  deps.DatabaseUsers,
+				DatabaseGrants: deps.DatabaseUserGrants,
+				Users:          deps.Users,
+				Packages:       deps.Packages,
+				Agent:          deps.Agent,
+			})
+		}
 		if deps.Domains != nil && deps.DNSZones != nil && deps.DNSRecords != nil {
 			api.RegisterDNSRoutes(v1, api.DNSHandlerConfig{
 				Domains:    deps.Domains,

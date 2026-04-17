@@ -1,0 +1,69 @@
+package commands
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os/exec"
+	"regexp"
+
+	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
+)
+
+// dbUserDropParams is the input shape for db_user.drop.
+type dbUserDropParams struct {
+	DBUserName string `json:"db_user_name"`
+}
+
+// dbUserDropResponse is the output shape for db_user.drop.
+type dbUserDropResponse struct {
+	OK bool `json:"ok"`
+}
+
+// dbUserDropNameRegex validates MariaDB database user name format.
+var dbUserDropNameRegex = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+
+func dbUserDropHandler(ctx context.Context, params json.RawMessage) (any, error) {
+	var p dbUserDropParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: fmt.Sprintf("failed to parse params: %v", err),
+		}
+	}
+
+	// Validate db_user_name format.
+	if !dbUserDropNameRegex.MatchString(p.DBUserName) {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: "invalid database user name",
+		}
+	}
+
+	// Escape the username literal for the 'name'@'localhost' form.
+	escapedUsername, err := EscapeMariaDBLiteral(p.DBUserName)
+	if err != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: "invalid username",
+		}
+	}
+
+	// Build the DROP USER IF EXISTS command.
+	// Form: DROP USER IF EXISTS '<name>'@'localhost';
+	sql := fmt.Sprintf("DROP USER IF EXISTS %s@'localhost'", escapedUsername)
+
+	cmd := exec.CommandContext(ctx, "mysql", "--defaults-file=/root/.my.cnf", "-e", sql)
+	if err := cmd.Run(); err != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: "failed to drop user",
+		}
+	}
+
+	return dbUserDropResponse{OK: true}, nil
+}
+
+func init() {
+	Default.Register("db_user.drop", dbUserDropHandler)
+}

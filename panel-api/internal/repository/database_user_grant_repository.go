@@ -14,6 +14,10 @@ type DatabaseUserGrantRepository interface {
 	FindByID(ctx context.Context, id string) (*models.DatabaseUserGrant, error)
 	ListByDatabaseID(ctx context.Context, databaseID string) ([]models.DatabaseUserGrant, error)
 	ListByDatabaseUserID(ctx context.Context, databaseUserID string) ([]models.DatabaseUserGrant, error)
+	Create(ctx context.Context, grant *models.DatabaseUserGrant) error
+	Delete(ctx context.Context, id string) error
+	UpdateLevel(ctx context.Context, id string, level string) error
+	FindByDBAndDBUser(ctx context.Context, databaseID string, databaseUserID string) (*models.DatabaseUserGrant, error)
 }
 
 type databaseUserGrantRepo struct{ db *gorm.DB }
@@ -47,4 +51,27 @@ func (r *databaseUserGrantRepo) ListByDatabaseUserID(ctx context.Context, databa
 		return nil, err
 	}
 	return grants, nil
+}
+
+func (r *databaseUserGrantRepo) Create(ctx context.Context, grant *models.DatabaseUserGrant) error {
+	return r.db.WithContext(ctx).Create(grant).Error
+}
+
+func (r *databaseUserGrantRepo) Delete(ctx context.Context, id string) error {
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.DatabaseUserGrant{}).Error
+}
+
+func (r *databaseUserGrantRepo) UpdateLevel(ctx context.Context, id string, level string) error {
+	return r.db.WithContext(ctx).Model(&models.DatabaseUserGrant{}).Where("id = ?", id).Update("grant_level", level).Error
+}
+
+func (r *databaseUserGrantRepo) FindByDBAndDBUser(ctx context.Context, databaseID string, databaseUserID string) (*models.DatabaseUserGrant, error) {
+	var g models.DatabaseUserGrant
+	if err := r.db.WithContext(ctx).Where("database_id = ? AND database_user_id = ?", databaseID, databaseUserID).First(&g).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &g, nil
 }

@@ -123,6 +123,22 @@ func (m *mockDatabaseUserRepo) CountByUserID(ctx context.Context, userID string)
 	return 0, nil
 }
 
+func (m *mockDatabaseUserRepo) Create(ctx context.Context, du *models.DatabaseUser) error {
+	return nil
+}
+
+func (m *mockDatabaseUserRepo) Delete(ctx context.Context, id string) error {
+	return nil
+}
+
+func (m *mockDatabaseUserRepo) UpdatePasswordHash(ctx context.Context, id string, hash string) error {
+	return nil
+}
+
+func (m *mockDatabaseUserRepo) ExistsByUserAndUsername(ctx context.Context, userID string, username string) (bool, error) {
+	return false, nil
+}
+
 type mockUserRepo struct {
 	users map[string]*models.User
 }

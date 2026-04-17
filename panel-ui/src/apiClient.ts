@@ -22,12 +22,39 @@ const API_BASE = "/api/v1";
 
 let accessToken: string | null = null;
 
+// Key under which impersonation tabs persist their access token. sessionStorage
+// is per-tab, survives reload, and dies when the tab closes — exactly the
+// lifetime we want for an impersonation session. We only populate this when
+// the `no_refresh` flag is also set (i.e. this tab is an impersonation tab
+// with no refresh cookie to recover from).
+const IMP_TOKEN_KEY = "imp_access_token";
+
 export function setAccessToken(token: string | null): void {
   accessToken = token;
+  // Mirror to sessionStorage only for impersonation tabs so reload can recover
+  // without hitting /auth/refresh (which has no cookie for these tabs).
+  if (sessionStorage.getItem("no_refresh") === "1") {
+    if (token) {
+      sessionStorage.setItem(IMP_TOKEN_KEY, token);
+    } else {
+      sessionStorage.removeItem(IMP_TOKEN_KEY);
+    }
+  }
 }
 
 export function getAccessToken(): string | null {
-  return accessToken;
+  if (accessToken) return accessToken;
+  // Impersonation tabs: rehydrate the in-memory token from sessionStorage
+  // after a reload. Only trust sessionStorage when the no_refresh marker
+  // is also present.
+  if (sessionStorage.getItem("no_refresh") === "1") {
+    const stored = sessionStorage.getItem(IMP_TOKEN_KEY);
+    if (stored) {
+      accessToken = stored;
+      return stored;
+    }
+  }
+  return null;
 }
 
 export const apiClient = axios.create({

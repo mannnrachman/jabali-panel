@@ -18,7 +18,6 @@ import type { MenuProps } from "antd";
 
 import { getIdentity } from "../identity";
 import { useEffect, useState } from "react";
-import { ImpersonationBanner } from "../components/ImpersonationBanner";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { useThemeMode } from "../theme/ThemeModeContext";
 import { useShellTokens } from "../muiTheme";
@@ -115,7 +114,6 @@ export function UserLayout() {
             </Dropdown>
           </div>
         </Header>
-        <ImpersonationBanner />
         <Content style={{ background: tokens.contentBg }}>
           <Outlet />
         </Content>

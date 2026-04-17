@@ -67,8 +67,16 @@ export const authProvider: AuthProvider = {
   // in-memory token; otherwise we try /me, which the axios refresh
   // interceptor will silently retry with a refreshed token.
   check: async () => {
-    // Fast path: we already have an access token in memory.
+    // Fast path: we already have an access token in memory (or rehydrated
+    // from sessionStorage for impersonation tabs — see apiClient.getAccessToken).
     if (getAccessToken()) return { authenticated: true };
+
+    // Impersonation tabs never have a refresh cookie — calling /auth/refresh
+    // would 401 and spam the console. If there's no token and no_refresh is
+    // set, the session is genuinely over; send to /login cleanly.
+    if (sessionStorage.getItem("no_refresh") === "1") {
+      return { authenticated: false, redirectTo: "/login", logout: true };
+    }
 
     // Fresh page load — no in-memory token. Try /auth/refresh first so
     // the subsequent /me call doesn't visibly 401 in the browser console

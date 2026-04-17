@@ -42,11 +42,16 @@ export const LoginPage = () => {
     apiClient
       .post<LoginResponse>("/auth/cli-login", { cli_token: cliToken })
       .then((response) => {
-        // Store access token and set no_refresh flag for impersonation sessions
-        // This prevents the 401 interceptor from attempting to refresh the token
+        // Mark tab as impersonation-mode BEFORE setAccessToken so the setter
+        // mirrors the token to sessionStorage (survives reload; no cookie).
         sessionStorage.setItem("no_refresh", "1");
         setAccessToken(response.data.access_token);
-        navigate("/jabali-admin/dashboard", { replace: true });
+        // Route by role — admin break-glass lands on admin shell, user
+        // impersonation lands on user shell.
+        const home = response.data.user.is_admin
+          ? "/jabali-admin/dashboard"
+          : "/jabali-panel";
+        navigate(home, { replace: true });
       })
       .catch(() => {
         // Generic error message, don't leak details

@@ -24,6 +24,7 @@ interface SSLCertificate {
   renewal_count: number;
   last_renewed_at: string | null;
   last_error: string | null;
+  last_attempt_at: string | null;
   staging: boolean;
   next_retry_at: string | null;
   retry_count: number;
@@ -218,6 +219,20 @@ export const SSLManagerTable = ({
             </Tag>
           </Tooltip>
         );
+      },
+    },
+    {
+      title: "Last check",
+      dataIndex: "last_attempt_at",
+      key: "last_attempt_at",
+      render: (dateStr: string | null) => {
+        if (!dateStr) return "—";
+        try {
+          const date = new Date(dateStr);
+          return date.toLocaleString();
+        } catch {
+          return "—";
+        }
       },
     },
     {

@@ -11,6 +11,34 @@ import { DomainSettingsButton } from "../../DomainSettingsButton";
 import { DomainRedirectsButton } from "../../DomainRedirectsButton";
 import { DomainIndexButton } from "../../DomainIndexButton";
 
+const stripHomePrefix = (path: string): string => {
+  if (path.startsWith("/home/")) {
+    const match = path.match(/^\/home\/[^/]+\/(.*)/);
+    return match ? match[1] : path;
+  }
+  return path;
+};
+
+const renderDomainCell = (name: string, docRoot: string) => (
+  <div>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+      <GlobalOutlined />
+      <span style={{ fontWeight: 500 }}>{name}</span>
+    </div>
+    <div style={{ color: "#999", fontSize: "12px" }}>{stripHomePrefix(docRoot)}</div>
+  </div>
+);
+
+const getSSLTagColor = (state?: string): string => {
+  if (state === "active") return "green";
+  if (state === "error") return "red";
+  return "default";
+};
+
+const getSSLTagLabel = (state?: string): string => {
+  return state || "off";
+};
+
 export type Domain = {
   id: string;
   user_id: string;
@@ -63,8 +91,13 @@ export const UserDomainList = () => {
         searchPlaceholder="Search by domain name"
         onSearchChange={(filters) => setFilters(filters, "replace")}
       >
-        <Table.Column<Domain> dataIndex="name" title="Name" sorter={{ multiple: 1 }} defaultSortOrder="ascend" />
-        <Table.Column<Domain> dataIndex="doc_root" title="Doc Root" />
+        <Table.Column<Domain>
+          dataIndex="name"
+          title="Domain"
+          sorter={{ multiple: 1 }}
+          defaultSortOrder="ascend"
+          render={(name: string, record: Domain) => renderDomainCell(name, record.doc_root)}
+        />
         <Table.Column<Domain>
           dataIndex="is_enabled"
           title="Status"
@@ -74,6 +107,13 @@ export const UserDomainList = () => {
             ) : (
               <Tag>disabled</Tag>
             )
+          }
+        />
+        <Table.Column<Domain>
+          dataIndex="ssl_state"
+          title="SSL"
+          render={(state?: string) =>
+            <Tag color={getSSLTagColor(state)}>{getSSLTagLabel(state)}</Tag>
           }
         />
         <Table.Column<Domain>

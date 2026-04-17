@@ -1,7 +1,15 @@
 # ADR-0020: M7 phpMyAdmin SSO via server-side signon proxy
 
+> **Superseded in part by [ADR-0022](0022-m7-phpmyadmin-sso-shadow-account-and-uds.md) (2026-04-17).**
+> ADR-0022 replaces the credential model (shadow admin account, not the
+> `database_users` row), names the UDS listener explicitly, specifies the
+> phpMyAdmin install method, and defers session-key names to the pinned
+> tarball's `examples/signon-script.php`. Parts of ADR-0020 that carry
+> forward: signon-proxy approach, single-use + short-TTL tokens, UDS
+> transport, audit logging.
+
 **Date:** 2026-04-17
-**Status:** Accepted
+**Status:** Accepted (partially superseded by ADR-0022)
 **Deciders:** Shuki
 
 ## Context

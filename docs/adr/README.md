@@ -32,8 +32,9 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0017](0017-ssl-try-acme-then-selfsigned-with-backoff.md) | SSL: try ACME first, fall back to self-signed, retry with backoff | Accepted |
 | [0018](0018-m7-mariadb-first-postgres-deferred.md) | M7 Databases — MariaDB first, Postgres deferred | Accepted |
 | [0019](0019-m7-per-database-grants-only.md) | M7 Databases — Per-database grants only (rw/ro), defer per-table | Accepted |
-| [0020](0020-m7-phpmyadmin-sso-signon-proxy.md) | M7 phpMyAdmin SSO via server-side signon proxy + single-use token | Accepted |
+| [0020](0020-m7-phpmyadmin-sso-signon-proxy.md) | M7 phpMyAdmin SSO via server-side signon proxy + single-use token | Accepted (partially superseded by ADR-0022) |
 | [0021](0021-m7-database-entity-lifecycle.md) | M7 Databases — Entity lifecycle (naming, quota, cascade, password) | Accepted |
+| [0022](0022-m7-phpmyadmin-sso-shadow-account-and-uds.md) | M7 phpMyAdmin SSO — shadow admin account + UDS validate transport | Accepted (supersedes parts of ADR-0020) |
 
 ## Decision Categories
 

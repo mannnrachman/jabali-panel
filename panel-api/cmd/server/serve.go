@@ -89,6 +89,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		dnsZoneRepo := repository.NewDNSZoneRepository(sharedDB)
 		dnsRecordRepo := repository.NewDNSRecordRepository(sharedDB)
 		sslCertRepo := repository.NewSSLCertificateRepository(sharedDB)
+		databaseRepo := repository.NewDatabaseRepository(sharedDB)
+		databaseUserRepo := repository.NewDatabaseUserRepository(sharedDB)
+		databaseUserGrantRepo := repository.NewDatabaseUserGrantRepository(sharedDB)
 
 		serverSettingsRepo := repository.NewServerSettingsRepository(sharedDB)
 		jwtIss, err := auth.NewJWTIssuer(auth.JWTConfig{
@@ -133,6 +136,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.DNSZones = dnsZoneRepo
 		deps.DNSRecords = dnsRecordRepo
 		deps.SSLCerts = sslCertRepo
+		deps.Databases = databaseRepo
+		deps.DatabaseUsers = databaseUserRepo
+		deps.DatabaseUserGrants = databaseUserGrantRepo
 
 		// Admin bootstrap.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

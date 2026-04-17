@@ -32,6 +32,7 @@ type Deps struct {
 	Databases           repository.DatabaseRepository
 	DatabaseUsers       repository.DatabaseUserRepository
 	DatabaseUserGrants  repository.DatabaseUserGrantRepository
+	PhpMyAdminSSOTokens repository.PhpMyAdminSSOTokenRepository
 	Agent               agent.AgentInterface
 	Reconciler          *reconciler.Reconciler
 	ServerSettings      repository.ServerSettingsRepository

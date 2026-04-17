@@ -39,6 +39,19 @@ type User struct {
 	// the OS user. NULL until then, or for admin-only accounts.
 	LinuxUID *uint32 `gorm:"type:int unsigned" json:"linux_uid,omitempty"`
 
+	// MySQL Admin Shadow Account fields for phpMyAdmin SSO.
+	// MysqladminUsername is the shadow MariaDB user created for SSO.
+	// NULL until first SSO provision.
+	MysqladminUsername *string `gorm:"type:varchar(64)" json:"mysqladmin_username,omitempty"`
+
+	// MysqladminPasswordEnc is the AES-256-GCM encrypted password for the
+	// shadow account. Never exported in API responses. NULL until first SSO provision.
+	MysqladminPasswordEnc []byte `gorm:"type:varbinary(512)" json:"-"`
+
+	// MysqladminProvisionedAt is the timestamp of the first SSO provision.
+	// NULL until the shadow account is created.
+	MysqladminProvisionedAt *time.Time `gorm:"type:datetime(6)" json:"mysqladmin_provisioned_at,omitempty"`
+
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }

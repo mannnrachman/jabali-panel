@@ -16,7 +16,7 @@ export type PHPPool = {
 
 export const PHPPoolsList = () => {
   const { tableProps } = useTable<PHPPool>({
-    resource: "admin-php-pools",
+    resource: "php-pools",
     syncWithLocation: true,
   });
 

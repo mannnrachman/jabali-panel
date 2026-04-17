@@ -24,7 +24,7 @@ type IniOverrideInput = {
 
 export const PHPPoolEdit = () => {
   const { formProps, saveButtonProps, id } = useForm<PHPPoolInput>({
-    resource: "admin-php-pools",
+    resource: "php-pools",
     action: "edit",
   });
 
@@ -32,7 +32,7 @@ export const PHPPoolEdit = () => {
   const [overrideForm, setOverrideForm] = useState<IniOverrideInput>({ directive: "", value: "", kind: "value" });
 
   const { data: overridesData, refetch: refetchOverrides, isLoading: overridesLoading } = useList<IniOverride>({
-    resource: `admin-php-pools/${id}/ini-overrides`,
+    resource: `php-pools/${id}/ini-overrides`,
     queryOptions: {
       enabled: !!id,
     },

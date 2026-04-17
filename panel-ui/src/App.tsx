@@ -128,7 +128,7 @@ const ThemedApp = () => {
               meta: { label: "Server Settings", icon: <SettingOutlined />, shell: "admin" },
             },
             {
-              name: "admin-php-pools",
+              name: "php-pools",
               list: "/jabali-admin/php-pools",
               edit: "/jabali-admin/php-pools/edit/:id",
               meta: { label: "PHP Pools", icon: <ThunderboltOutlined />, shell: "admin" },

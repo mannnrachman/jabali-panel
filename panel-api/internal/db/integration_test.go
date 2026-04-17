@@ -127,7 +127,7 @@ func TestIntegration_UserCRUD(t *testing.T) {
 	assert.Equal(t, "Alicia", reloaded.NameFirst)
 
 	// List returns at least the one we created.
-	list, total, err := repo.List(ctx, 0, 10)
+	list, total, err := repo.List(ctx, repository.ListOptions{Offset: 0, Limit: 10})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, total, int64(1))
 	assert.NotEmpty(t, list)

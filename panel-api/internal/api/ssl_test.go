@@ -131,8 +131,8 @@ func (m *MockDomainRepository) Update(ctx context.Context, domain *models.Domain
 	return args.Error(0)
 }
 
-func (m *MockDomainRepository) ListByUserID(ctx context.Context, userID string, offset, limit int) ([]models.Domain, int64, error) {
-	args := m.Called(ctx, userID, offset, limit)
+func (m *MockDomainRepository) ListByUserID(ctx context.Context, userID string, opts repository.ListOptions) ([]models.Domain, int64, error) {
+	args := m.Called(ctx, userID, opts.Offset, opts.Limit)
 	if args.Get(0) == nil {
 		return nil, 0, args.Error(2)
 	}
@@ -152,8 +152,8 @@ func (m *MockDomainRepository) FindByName(ctx context.Context, name string) (*mo
 	return args.Get(0).(*models.Domain), args.Error(1)
 }
 
-func (m *MockDomainRepository) List(ctx context.Context, offset, limit int) ([]models.Domain, int64, error) {
-	args := m.Called(ctx, offset, limit)
+func (m *MockDomainRepository) List(ctx context.Context, opts repository.ListOptions) ([]models.Domain, int64, error) {
+	args := m.Called(ctx, opts.Offset, opts.Limit)
 	if args.Get(0) == nil {
 		return nil, 0, args.Error(2)
 	}

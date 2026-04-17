@@ -66,7 +66,7 @@ func (f *fakeDomainRepo) FindByName(ctx context.Context, name string) (*models.D
 	return nil, repository.ErrNotFound
 }
 
-func (f *fakeDomainRepo) List(ctx context.Context, offset, limit int) ([]models.Domain, int64, error) {
+func (f *fakeDomainRepo) List(ctx context.Context, opts repository.ListOptions) ([]models.Domain, int64, error) {
 	var result []models.Domain
 	for _, d := range f.domains {
 		result = append(result, *d)
@@ -74,7 +74,7 @@ func (f *fakeDomainRepo) List(ctx context.Context, offset, limit int) ([]models.
 	return result, int64(len(result)), nil
 }
 
-func (f *fakeDomainRepo) ListByUserID(ctx context.Context, userID string, offset, limit int) ([]models.Domain, int64, error) {
+func (f *fakeDomainRepo) ListByUserID(ctx context.Context, userID string, opts repository.ListOptions) ([]models.Domain, int64, error) {
 	var result []models.Domain
 	for _, d := range f.domains {
 		if d.UserID == userID {
@@ -266,7 +266,7 @@ func (f *fakeUserRepo) FindByUsername(ctx context.Context, username string) (*mo
 	return nil, repository.ErrNotFound
 }
 
-func (f *fakeUserRepo) List(ctx context.Context, offset, limit int) ([]models.User, int64, error) {
+func (f *fakeUserRepo) List(ctx context.Context, opts repository.ListOptions) ([]models.User, int64, error) {
 	var result []models.User
 	for _, u := range f.users {
 		result = append(result, *u)

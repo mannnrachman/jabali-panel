@@ -3,7 +3,6 @@ package api
 import (
 	"errors"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -67,17 +66,9 @@ type updatePackageRequest struct {
 // ---- handlers ----
 
 func (h *packageHandler) list(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", strconv.Itoa(defaultPackagesPageSize)))
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > maxPackagesPageSize {
-		pageSize = defaultPackagesPageSize
-	}
-	offset := (page - 1) * pageSize
+	page, pageSize, opts := parseListOptions(c, defaultPackagesPageSize, maxPackagesPageSize)
 
-	pkgs, total, err := h.cfg.Repo.List(c.Request.Context(), offset, pageSize)
+	pkgs, total, err := h.cfg.Repo.List(c.Request.Context(), opts)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return

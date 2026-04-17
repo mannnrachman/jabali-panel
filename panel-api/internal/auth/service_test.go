@@ -74,7 +74,7 @@ func (f *fakeUserRepo) FindByUsername(_ context.Context, username string) (*mode
 	}
 	return nil, repository.ErrNotFound
 }
-func (f *fakeUserRepo) List(context.Context, int, int) ([]models.User, int64, error) {
+func (f *fakeUserRepo) List(context.Context, repository.ListOptions) ([]models.User, int64, error) {
 	return nil, 0, nil
 }
 func (f *fakeUserRepo) Update(context.Context, *models.User) error   { return nil }

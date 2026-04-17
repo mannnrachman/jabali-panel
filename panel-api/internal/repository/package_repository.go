@@ -14,7 +14,7 @@ type PackageRepository interface {
 	Create(ctx context.Context, p *models.HostingPackage) error
 	FindByID(ctx context.Context, id string) (*models.HostingPackage, error)
 	FindByName(ctx context.Context, name string) (*models.HostingPackage, error)
-	List(ctx context.Context, offset, limit int) ([]models.HostingPackage, int64, error)
+	List(ctx context.Context, opts ListOptions) ([]models.HostingPackage, int64, error)
 	Update(ctx context.Context, p *models.HostingPackage) error
 	Delete(ctx context.Context, id string) error
 }
@@ -54,16 +54,33 @@ func (r *packageRepo) FindByName(ctx context.Context, name string) (*models.Host
 	return &p, nil
 }
 
-func (r *packageRepo) List(ctx context.Context, offset, limit int) ([]models.HostingPackage, int64, error) {
+// packageListCols — packages only have a meaningful name field for
+// search. Sort allows name/created_at. Historical default was name ASC.
+var packageListCols = ListCols{
+	Search:      []string{"name"},
+	Sort:        []string{"name", "created_at"},
+	DefaultSort: "name",
+}
+
+func (r *packageRepo) List(ctx context.Context, opts ListOptions) ([]models.HostingPackage, int64, error) {
 	var (
 		pkgs  []models.HostingPackage
 		total int64
 	)
 	base := r.db.WithContext(ctx).Model(&models.HostingPackage{})
-	if err := base.Count(&total).Error; err != nil {
+
+	countQ := applyListOptions(base.Session(&gorm.Session{}), ListOptions{Search: opts.Search}, packageListCols)
+	if err := countQ.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	if err := base.Order("name ASC").Offset(offset).Limit(limit).Find(&pkgs).Error; err != nil {
+
+	// When caller didn't ask for a sort direction, preserve the historical
+	// alphabetical-ASC default rather than applying the generic DESC.
+	if opts.Sort == "" && opts.Order == "" {
+		opts.Order = "asc"
+	}
+	q := applyListOptions(base.Session(&gorm.Session{}), opts, packageListCols)
+	if err := q.Find(&pkgs).Error; err != nil {
 		return nil, 0, err
 	}
 	return pkgs, total, nil

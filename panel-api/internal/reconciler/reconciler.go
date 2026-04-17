@@ -153,7 +153,7 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	}
 
 	// Fetch all domains from DB. Repository.List returns (domains, total, err).
-	allDomains, _, err := r.domains.List(ctx, 0, 10000)
+	allDomains, _, err := r.domains.List(ctx, repository.ListOptions{Limit: 10000})
 	if err != nil {
 		return fmt.Errorf("failed to list domains: %w", err)
 	}
@@ -256,7 +256,7 @@ func (r *Reconciler) ReconcileOne(ctx context.Context, domainID string) error {
 // regardless of their current state on the agent. Every domain gets a fresh
 // domain.create call to ensure all configurations are up-to-date.
 func (r *Reconciler) ReconcileAllForce(ctx context.Context) error {
-	allDomains, _, err := r.domains.List(ctx, 0, 10000)
+	allDomains, _, err := r.domains.List(ctx, repository.ListOptions{Limit: 10000})
 	if err != nil {
 		return fmt.Errorf("failed to list domains: %w", err)
 	}

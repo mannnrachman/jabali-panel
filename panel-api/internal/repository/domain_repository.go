@@ -14,8 +14,8 @@ type DomainRepository interface {
 	Create(ctx context.Context, d *models.Domain) error
 	FindByID(ctx context.Context, id string) (*models.Domain, error)
 	FindByName(ctx context.Context, name string) (*models.Domain, error)
-	List(ctx context.Context, offset, limit int) ([]models.Domain, int64, error)
-	ListByUserID(ctx context.Context, userID string, offset, limit int) ([]models.Domain, int64, error)
+	List(ctx context.Context, opts ListOptions) ([]models.Domain, int64, error)
+	ListByUserID(ctx context.Context, userID string, opts ListOptions) ([]models.Domain, int64, error)
 	Update(ctx context.Context, d *models.Domain) error
 	Delete(ctx context.Context, id string) error
 	CountByUserID(ctx context.Context, userID string) (int64, error)
@@ -56,31 +56,52 @@ func (r *domainRepo) FindByName(ctx context.Context, name string) (*models.Domai
 	return &d, nil
 }
 
-func (r *domainRepo) List(ctx context.Context, offset, limit int) ([]models.Domain, int64, error) {
+// domainListCols — only the domain name is free-text searchable.
+// user_id is deliberately absent from Search because it's an opaque ULID
+// and admins have a dedicated "this user's domains" path via ListByUserID.
+var domainListCols = ListCols{
+	Search:      []string{"name"},
+	Sort:        []string{"name", "created_at"},
+	DefaultSort: "name",
+}
+
+func (r *domainRepo) List(ctx context.Context, opts ListOptions) ([]models.Domain, int64, error) {
 	var (
 		domains []models.Domain
 		total   int64
 	)
 	base := r.db.WithContext(ctx).Model(&models.Domain{})
-	if err := base.Count(&total).Error; err != nil {
+
+	countQ := applyListOptions(base.Session(&gorm.Session{}), ListOptions{Search: opts.Search}, domainListCols)
+	if err := countQ.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	if err := base.Order("name ASC").Offset(offset).Limit(limit).Find(&domains).Error; err != nil {
+	if opts.Sort == "" && opts.Order == "" {
+		opts.Order = "asc"
+	}
+	q := applyListOptions(base.Session(&gorm.Session{}), opts, domainListCols)
+	if err := q.Find(&domains).Error; err != nil {
 		return nil, 0, err
 	}
 	return domains, total, nil
 }
 
-func (r *domainRepo) ListByUserID(ctx context.Context, userID string, offset, limit int) ([]models.Domain, int64, error) {
+func (r *domainRepo) ListByUserID(ctx context.Context, userID string, opts ListOptions) ([]models.Domain, int64, error) {
 	var (
 		domains []models.Domain
 		total   int64
 	)
 	base := r.db.WithContext(ctx).Model(&models.Domain{}).Where("user_id = ?", userID)
-	if err := base.Count(&total).Error; err != nil {
+
+	countQ := applyListOptions(base.Session(&gorm.Session{}), ListOptions{Search: opts.Search}, domainListCols)
+	if err := countQ.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	if err := base.Order("name ASC").Offset(offset).Limit(limit).Find(&domains).Error; err != nil {
+	if opts.Sort == "" && opts.Order == "" {
+		opts.Order = "asc"
+	}
+	q := applyListOptions(base.Session(&gorm.Session{}), opts, domainListCols)
+	if err := q.Find(&domains).Error; err != nil {
 		return nil, 0, err
 	}
 	return domains, total, nil

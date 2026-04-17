@@ -67,24 +67,16 @@ func (h *domainHandler) list(c *gin.Context) {
 		return
 	}
 
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", strconv.Itoa(defaultDomainsPageSize)))
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > maxDomainsPageSize {
-		pageSize = defaultDomainsPageSize
-	}
-	offset := (page - 1) * pageSize
+	page, pageSize, opts := parseListOptions(c, defaultDomainsPageSize, maxDomainsPageSize)
 
 	var domains []models.Domain
 	var total int64
 	var err error
 
 	if claims.IsAdmin {
-		domains, total, err = h.cfg.Domains.List(c.Request.Context(), offset, pageSize)
+		domains, total, err = h.cfg.Domains.List(c.Request.Context(), opts)
 	} else {
-		domains, total, err = h.cfg.Domains.ListByUserID(c.Request.Context(), claims.UserID, offset, pageSize)
+		domains, total, err = h.cfg.Domains.ListByUserID(c.Request.Context(), claims.UserID, opts)
 	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})

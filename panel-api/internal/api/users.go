@@ -126,8 +126,8 @@ type listUsersResponse struct {
 // ---------- handlers ----------
 
 func (h *userHandler) list(c *gin.Context) {
-	page, pageSize := parsePagination(c)
-	users, total, err := h.cfg.Repo.List(c.Request.Context(), (page-1)*pageSize, pageSize)
+	page, pageSize, opts := parseListOptions(c, defaultUsersPageSize, maxUsersPageSize)
+	users, total, err := h.cfg.Repo.List(c.Request.Context(), opts)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
@@ -442,7 +442,7 @@ func (h *userHandler) delete(c *gin.Context) {
 		// loop anyway.
 		const batchSize = 500
 		for {
-			owned, _, err := h.cfg.Domains.ListByUserID(c.Request.Context(), id, 0, batchSize)
+			owned, _, err := h.cfg.Domains.ListByUserID(c.Request.Context(), id, repository.ListOptions{Limit: batchSize})
 			if err != nil {
 				slog.Warn("cascade delete: list user domains failed",
 					"user_id", id, "err", err)

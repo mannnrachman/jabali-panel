@@ -98,7 +98,7 @@ func (m *memUserRepo) FindByUsername(_ context.Context, username string) (*model
 	return nil, repository.ErrNotFound
 }
 
-func (m *memUserRepo) List(_ context.Context, offset, limit int) ([]models.User, int64, error) {
+func (m *memUserRepo) List(_ context.Context, opts repository.ListOptions) ([]models.User, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	all := make([]models.User, 0, len(m.byID))
@@ -106,14 +106,14 @@ func (m *memUserRepo) List(_ context.Context, offset, limit int) ([]models.User,
 		all = append(all, *v)
 	}
 	total := int64(len(all))
-	if offset > len(all) {
+	if opts.Offset > len(all) {
 		return nil, total, nil
 	}
-	end := offset + limit
+	end := opts.Offset + opts.Limit
 	if end > len(all) {
 		end = len(all)
 	}
-	return all[offset:end], total, nil
+	return all[opts.Offset:end], total, nil
 }
 
 func (m *memUserRepo) Update(_ context.Context, u *models.User) error {
@@ -236,7 +236,7 @@ func (m *memPackageRepo) FindByName(_ context.Context, name string) (*models.Hos
 	return nil, repository.ErrNotFound
 }
 
-func (m *memPackageRepo) List(_ context.Context, offset, limit int) ([]models.HostingPackage, int64, error) {
+func (m *memPackageRepo) List(_ context.Context, opts repository.ListOptions) ([]models.HostingPackage, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	all := make([]models.HostingPackage, 0, len(m.byID))
@@ -244,14 +244,14 @@ func (m *memPackageRepo) List(_ context.Context, offset, limit int) ([]models.Ho
 		all = append(all, *v)
 	}
 	total := int64(len(all))
-	if offset > len(all) {
+	if opts.Offset > len(all) {
 		return nil, total, nil
 	}
-	end := offset + limit
+	end := opts.Offset + opts.Limit
 	if end > len(all) {
 		end = len(all)
 	}
-	return all[offset:end], total, nil
+	return all[opts.Offset:end], total, nil
 }
 
 func (m *memPackageRepo) Update(_ context.Context, p *models.HostingPackage) error {

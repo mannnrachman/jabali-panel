@@ -19,7 +19,7 @@ type UserRepository interface {
 	FindByID(ctx context.Context, id string) (*models.User, error)
 	FindByEmail(ctx context.Context, email string) (*models.User, error)
 	FindByUsername(ctx context.Context, username string) (*models.User, error)
-	List(ctx context.Context, offset, limit int) ([]models.User, int64, error)
+	List(ctx context.Context, opts ListOptions) ([]models.User, int64, error)
 	Update(ctx context.Context, u *models.User) error
 	// SetAdmin flips is_admin on the row. Deliberately separate from Update
 	// so the profile-edit path can't accidentally escalate privileges.
@@ -68,16 +68,32 @@ func (r *userRepo) FindByUsername(ctx context.Context, username string) (*models
 	return &u, nil
 }
 
-func (r *userRepo) List(ctx context.Context, offset, limit int) ([]models.User, int64, error) {
+// userListCols — columns the API may search and sort by. password_hash
+// is deliberately absent; email/name/username are the obvious admin-search
+// targets. Sort allows flipping between recency and alphabetical.
+var userListCols = ListCols{
+	Search:      []string{"email", "username", "name_first", "name_last"},
+	Sort:        []string{"email", "created_at", "is_admin"},
+	DefaultSort: "created_at",
+}
+
+func (r *userRepo) List(ctx context.Context, opts ListOptions) ([]models.User, int64, error) {
 	var (
 		out   []models.User
 		total int64
 	)
-	q := r.db.WithContext(ctx).Model(&models.User{})
-	if err := q.Count(&total).Error; err != nil {
+	base := r.db.WithContext(ctx).Model(&models.User{})
+
+	// Count honours the search filter (so paginated total stays correct for
+	// a filtered set) but ignores sort/offset/limit — those apply to the
+	// fetch, not the cardinality.
+	countQ := applyListOptions(base.Session(&gorm.Session{}), ListOptions{Search: opts.Search}, userListCols)
+	if err := countQ.Count(&total).Error; err != nil {
 		return nil, 0, translate(err)
 	}
-	if err := q.Offset(offset).Limit(limit).Order("created_at DESC").Find(&out).Error; err != nil {
+
+	q := applyListOptions(base.Session(&gorm.Session{}), opts, userListCols)
+	if err := q.Find(&out).Error; err != nil {
 		return nil, 0, translate(err)
 	}
 	return out, total, nil

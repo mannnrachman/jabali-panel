@@ -58,7 +58,7 @@ func TestUserRepository_List(t *testing.T) {
 			AddRow("01HRCWR7CKMCBEDF2PYQ7G0D2J", "a@x", "", "", "h", false, nil, now, now).
 			AddRow("01HRCWR7CKMCBEDF2PYQ7G0D2K", "b@x", "", "", "h", false, nil, now, now))
 
-	out, total, err := repo.List(context.Background(), 0, 10)
+	out, total, err := repo.List(context.Background(), repository.ListOptions{Offset: 0, Limit: 10})
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), total)
 	assert.Len(t, out, 2)

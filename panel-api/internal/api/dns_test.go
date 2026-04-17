@@ -61,11 +61,11 @@ func (m *mockDomainRepo) FindByName(ctx context.Context, name string) (*models.D
 	return nil, repository.ErrNotFound
 }
 
-func (m *mockDomainRepo) List(ctx context.Context, offset, limit int) ([]models.Domain, int64, error) {
+func (m *mockDomainRepo) List(ctx context.Context, opts repository.ListOptions) ([]models.Domain, int64, error) {
 	return nil, 0, nil
 }
 
-func (m *mockDomainRepo) ListByUserID(ctx context.Context, userID string, offset, limit int) ([]models.Domain, int64, error) {
+func (m *mockDomainRepo) ListByUserID(ctx context.Context, userID string, opts repository.ListOptions) ([]models.Domain, int64, error) {
 	return nil, 0, nil
 }
 

@@ -204,6 +204,7 @@ func TestDomainCreateHandler_IsEnabledTrue(t *testing.T) {
 	vd := vhostData{
 		Domain:      params.Domain,
 		DocRoot:     params.DocRoot,
+		HasPHP:      true,
 		PHPVersion:  params.PHPVersion,
 		Username:    params.Username,
 		IsEnabled:   true,
@@ -277,6 +278,7 @@ func TestDomainCreateHandler_IsEnabledNil(t *testing.T) {
 	vd := vhostData{
 		Domain:      params.Domain,
 		DocRoot:     params.DocRoot,
+		HasPHP:      true,
 		PHPVersion:  params.PHPVersion,
 		Username:    params.Username,
 		IsEnabled:   true, // Default
@@ -311,6 +313,7 @@ func TestDomainCreateHandler_CustomDirectives(t *testing.T) {
 	vd := vhostData{
 		Domain:           params.Domain,
 		DocRoot:          params.DocRoot,
+		HasPHP:           true,
 		PHPVersion:       params.PHPVersion,
 		Username:         params.Username,
 		CustomDirectives: params.CustomDirectives,
@@ -390,6 +393,7 @@ func TestDomainCreateHandler_RedirectDirectives(t *testing.T) {
 	vd := vhostData{
 		Domain:             params.Domain,
 		DocRoot:            params.DocRoot,
+		HasPHP:             true,
 		PHPVersion:         params.PHPVersion,
 		Username:           params.Username,
 		RedirectDirectives: params.RedirectDirectives,

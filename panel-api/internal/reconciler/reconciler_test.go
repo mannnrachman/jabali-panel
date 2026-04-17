@@ -322,6 +322,59 @@ func (f *fakeUserRepo) FindAdminsByEmail(ctx context.Context) ([]*models.User, e
 	return admins, nil
 }
 
+// fakePHPPoolRepo mocks the PHP pool repository.
+type fakePHPPoolRepo struct {
+	pools map[string]*models.PHPPool
+}
+
+func (f *fakePHPPoolRepo) FindByID(ctx context.Context, id string) (*models.PHPPool, error) {
+	p, ok := f.pools[id]
+	if !ok {
+		return nil, repository.ErrNotFound
+	}
+	return p, nil
+}
+
+func (f *fakePHPPoolRepo) Create(ctx context.Context, p *models.PHPPool) error {
+	f.pools[p.ID] = p
+	return nil
+}
+
+func (f *fakePHPPoolRepo) Update(ctx context.Context, p *models.PHPPool) error {
+	f.pools[p.ID] = p
+	return nil
+}
+
+func (f *fakePHPPoolRepo) Delete(ctx context.Context, id string) error {
+	delete(f.pools, id)
+	return nil
+}
+
+func (f *fakePHPPoolRepo) FindByUserID(ctx context.Context, userID string) (*models.PHPPool, error) {
+	for _, p := range f.pools {
+		if p.UserID == userID {
+			return p, nil
+		}
+	}
+	return nil, repository.ErrNotFound
+}
+
+func (f *fakePHPPoolRepo) ListAll(ctx context.Context, opts repository.ListOptions) ([]models.PHPPool, int64, error) {
+	var result []models.PHPPool
+	for _, p := range f.pools {
+		result = append(result, *p)
+	}
+	return result, int64(len(result)), nil
+}
+
+func (f *fakePHPPoolRepo) SetStatus(ctx context.Context, id string, status string, lastErr *string) error {
+	if p, ok := f.pools[id]; ok {
+		p.Status = status
+		p.LastError = lastErr
+	}
+	return nil
+}
+
 func TestReconcileAll_EnabledDomainMissing(t *testing.T) {
 	ctx := context.Background()
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -419,6 +472,63 @@ func TestReconcileAll_OrphanLogsWarning(t *testing.T) {
 	// Verify that domain.list was called but no creates/disables
 	require.Len(t, agent.calls, 1)
 	require.Equal(t, "domain.list", agent.calls[0].method)
+}
+
+func TestReconcileAll_DomainWithPHPPool(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+	phpPoolRepo := &fakePHPPoolRepo{pools: make(map[string]*models.PHPPool)}
+
+	// Setup: one user with a domain that has a PHP pool
+	now := time.Now().UTC()
+	username := "phpuser"
+	user := &models.User{
+		ID:       "user-1",
+		Email:    "phpuser@example.com",
+		Username: &username,
+	}
+	userRepo.users[user.ID] = user
+
+	// Create a PHP pool with version 8.2
+	phpPoolID := "pool-1"
+	phpPool := &models.PHPPool{
+		ID:         phpPoolID,
+		PHPVersion: "8.2",
+	}
+	phpPoolRepo.pools[phpPoolID] = phpPool
+
+	// Create a domain with a reference to the PHP pool
+	domain := &models.Domain{
+		ID:        "domain-1",
+		UserID:    user.ID,
+		Name:      "phpsite.com",
+		DocRoot:   "/home/phpuser/domains/phpsite.com/public_html",
+		IsEnabled: true,
+		PHPPoolID: &phpPoolID,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	domainRepo.domains[domain.ID] = domain
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second}).
+		WithPHPPools(phpPoolRepo)
+
+	err := r.ReconcileAll(ctx)
+	require.NoError(t, err)
+
+	// Verify that domain.create was called
+	require.Len(t, agent.calls, 2) // domain.list + domain.create
+	require.Equal(t, "domain.list", agent.calls[0].method)
+	require.Equal(t, "domain.create", agent.calls[1].method)
+
+	// Verify that has_php=true and php_version="8.2" were passed
+	params := agent.calls[1].params.(map[string]any)
+	require.Equal(t, true, params["has_php"], "has_php should be true")
+	require.Equal(t, "8.2", params["php_version"], "php_version should be 8.2")
 }
 
 func TestReconcileOne_DomainFound(t *testing.T) {

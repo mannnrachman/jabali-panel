@@ -21,6 +21,7 @@ type domainCreateParams struct {
 	Username           string `json:"username"`
 	Domain             string `json:"domain"`
 	DocRoot            string `json:"doc_root"`
+	HasPHP             bool   `json:"has_php"`
 	PHPVersion         string `json:"php_version"`
 	CustomDirectives   string `json:"custom_directives"`
 	RedirectDirectives string `json:"redirect_directives"`
@@ -67,14 +68,20 @@ server {
     {{.IndexDirective}}
 
     location / {
+{{ if .HasPHP }}
         try_files $uri $uri/ /index.php?$query_string;
+{{ else }}
+        try_files $uri $uri/ =404;
+{{ end }}
     }
 
+{{ if .HasPHP }}
     location ~ \.php$ {
         fastcgi_pass unix:/run/php/php{{.PHPVersion}}-fpm-{{.Username}}.sock;
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
         include fastcgi_params;
     }
+{{ end }}
 
     access_log /var/log/nginx/{{.Domain}}-access.log;
     error_log /var/log/nginx/{{.Domain}}-error.log;
@@ -97,6 +104,7 @@ server {
 type vhostData struct {
 	Domain             string
 	DocRoot            string
+	HasPHP             bool
 	PHPVersion         string
 	Username           string
 	IndexDirective     string
@@ -153,7 +161,7 @@ func pathsUnderHome(username, docRoot string) []string {
 // writeVhost generates and writes the nginx vhost configuration, then tests and reloads nginx.
 // This is the core logic shared by domain.create and domain.enable/disable.
 // If the config content is unchanged, nginx reload is skipped for efficiency.
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, indexPriority string, isEnabled bool, sslCertPath, sslKeyPath string) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath string) (string, error) {
 	// Generate vhost configuration
 	tmpl, err := template.New("vhost").Parse(vhostTemplate)
 	if err != nil {
@@ -163,6 +171,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 	vhostData := vhostData{
 		Domain:             domain,
 		DocRoot:            docRoot,
+		HasPHP:             hasPHP,
 		PHPVersion:         phpVersion,
 		Username:           username,
 		IndexDirective:     indexDirectiveFor(indexPriority),
@@ -302,7 +311,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		isEnabled = *p.IsEnabled
 	}
 
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, p.IndexPriority, isEnabled, p.SSLCertPath, p.SSLKeyPath)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

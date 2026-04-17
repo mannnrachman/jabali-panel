@@ -27,6 +27,7 @@ type Reconciler struct {
 	dnsRecords     repository.DNSRecordRepository
 	sslCerts       repository.SSLCertificateRepository
 	serverSettings repository.ServerSettingsRepository
+	phpPools       repository.PHPPoolRepository
 	cfg            *config.Config
 	agent          agent.AgentInterface
 	log            *slog.Logger
@@ -39,6 +40,13 @@ type Reconciler struct {
 // Call this before using SSL certificate reconciliation.
 func (r *Reconciler) WithSSLCerts(sslCerts repository.SSLCertificateRepository) *Reconciler {
 	r.sslCerts = sslCerts
+	return r
+}
+
+// WithPHPPools adds PHP pool repository support to the reconciler.
+// Call this before using PHP pool reconciliation.
+func (r *Reconciler) WithPHPPools(phpPools repository.PHPPoolRepository) *Reconciler {
+	r.phpPools = phpPools
 	return r
 }
 
@@ -297,11 +305,27 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	}
 	username := *user.Username
 
+	// Determine PHP configuration from domain's pool binding
+	hasPHP := false
+	var phpVersion string
+	if domain.PHPPoolID != nil && r.phpPools != nil {
+		phpCtx, phpCancel := context.WithTimeout(ctx, 5*time.Second)
+		pool, err := r.phpPools.FindByID(phpCtx, *domain.PHPPoolID)
+		phpCancel()
+		if err != nil {
+			r.log.Warn("failed to fetch PHP pool for domain, PHP disabled", "domain_id", domain.ID, "pool_id", *domain.PHPPoolID, "err", err)
+		} else if pool != nil {
+			hasPHP = true
+			phpVersion = pool.PHPVersion
+		}
+	}
+
 	params := map[string]any{
 		"username":    username,
 		"domain":      domain.Name,
 		"doc_root":    domain.DocRoot,
-		"php_version": "8.3", // TODO: make configurable
+		"has_php":     hasPHP,
+		"php_version": phpVersion,
 		"is_enabled":  domain.IsEnabled,
 	}
 

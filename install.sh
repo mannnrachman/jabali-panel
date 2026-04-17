@@ -1175,20 +1175,25 @@ start_and_verify() {
 install_sso_key() {
   local sso_key_path="/etc/jabali-panel/sso.key"
 
-  # If the key already exists, skip.
+  # Always enforce ownership+mode, even when the file already exists —
+  # earlier installer versions wrote it mode 0600 owned by root, which
+  # the panel service user cannot read. Fix in place on every run.
+  mkdir -p /etc/jabali-panel
+  chmod 0755 /etc/jabali-panel
+
   if [[ -f "$sso_key_path" ]]; then
-    _ok "SSO key already exists at $sso_key_path"
+    chown "$SERVICE_USER:$SERVICE_USER" "$sso_key_path"
+    chmod 0600 "$sso_key_path"
+    _ok "SSO key already exists at $sso_key_path (ownership refreshed)"
     return
   fi
 
   _log "generating SSO envelope key (32 bytes AES-256-GCM)"
 
-  # Ensure directory exists with correct permissions.
-  mkdir -p /etc/jabali-panel
-  chmod 0755 /etc/jabali-panel
-
-  # Generate 32 random bytes and write to file with restrictive permissions.
+  # Generate 32 random bytes and write to file with restrictive permissions,
+  # owned by the service user so the panel process can read it.
   dd if=/dev/urandom of="$sso_key_path" bs=1 count=32 2>/dev/null
+  chown "$SERVICE_USER:$SERVICE_USER" "$sso_key_path"
   chmod 0600 "$sso_key_path"
 
   _ok "SSO key created at $sso_key_path"

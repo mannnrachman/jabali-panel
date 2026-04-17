@@ -1,16 +1,13 @@
 // JabaliHeader — Header slot for Refine's ThemedLayoutV2.
 //
-// ThemedLayoutV2 renders this component inside the main content column,
-// to the RIGHT of the sider. The brand/logo lives in the sider's Title
-// slot (JabaliTitle); this header only holds the right-cluster chrome:
-// global search input + theme toggle + user dropdown.
-//
-// The layout pattern (logo in top-left over sider, search + right-cluster
-// in the header band beside the sider) matches Refine's own demo
-// templates like refinefoods.
+// ThemedLayoutV2 inserts this directly as a child of its inner <Layout>
+// (right of the sider). We render the <Layout.Header> ourselves, the same
+// way Refine's default ThemedHeaderV2 does, so AntD gives us the proper
+// header flex slot. The chrome inside: global search on the left, theme
+// toggle + user dropdown pushed to the right.
 import { useEffect, useRef, useState } from "react";
 import { LogoutOutlined, UserOutlined, SearchOutlined } from "@ant-design/icons";
-import { Avatar, Button, Dropdown, Input, Layout, theme } from "antd";
+import { Avatar, Button, Dropdown, Input, Layout, Space, theme } from "antd";
 import type { MenuProps } from "antd";
 import { useLogout } from "@refinedev/core";
 import { useLocation, useNavigate } from "react-router";
@@ -36,7 +33,7 @@ export function JabaliHeader() {
   // Keyboard shortcut: / focuses the search input (unless already typing).
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (searchInputRef.current && document.activeElement === searchInputRef.current) {
+      if (searchInputRef.current && document.activeElement === searchInputRef.current.input) {
         return;
       }
       const target = e.target as HTMLElement;
@@ -89,7 +86,11 @@ export function JabaliHeader() {
   return (
     <Header
       style={{
-        background: token.colorBgContainer,
+        // Match ThemedHeaderV2's exact style contract so we slot in
+        // without fighting AntD's default dark Header background.
+        backgroundColor: token.colorBgElevated,
+        height: 64,
+        lineHeight: "normal",
         padding: "0 24px",
         display: "flex",
         alignItems: "center",
@@ -100,7 +101,6 @@ export function JabaliHeader() {
         zIndex: 1,
       }}
     >
-      {/* Search input fills the available middle space. */}
       <Input
         ref={searchInputRef}
         placeholder="Search users, domains… (/)"
@@ -108,21 +108,22 @@ export function JabaliHeader() {
         value={searchQuery}
         onChange={(e) => setSearchQuery(e.target.value)}
         onPressEnter={handleSearchSubmit}
+        allowClear
         style={{
           flex: 1,
-          maxWidth: 480,
+          maxWidth: 520,
           borderRadius: token.borderRadiusLG,
         }}
       />
 
-      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 4 }}>
+      <Space style={{ marginLeft: "auto" }} size={4}>
         <ThemeToggle />
         <Dropdown menu={{ items: userMenu }} placement="bottomRight">
           <Button type="text" icon={<Avatar size="small" icon={<UserOutlined />} />}>
             &nbsp;{email || "…"}
           </Button>
         </Dropdown>
-      </div>
+      </Space>
     </Header>
   );
 }

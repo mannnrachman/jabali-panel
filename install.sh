@@ -334,6 +334,16 @@ _install_sury_source() {
 
   [[ -f /etc/apt/sources.list.d/sury-php.list ]] && { _ok "Sury PHP source already configured"; return; }
 
+  # Derive the distro codename without depending on lsb_release (not
+  # installed on minimal Debian 13). /etc/os-release is a systemd-era
+  # standard and is always present.
+  local codename
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    codename=$(. /etc/os-release && echo "${VERSION_CODENAME:-}")
+  fi
+  [[ -n "$codename" ]] || _die "cannot determine distro codename (no VERSION_CODENAME in /etc/os-release)"
+
   _log "downloading and verifying Sury GPG key"
   curl -fsSL https://packages.sury.org/php/apt.gpg -o /usr/share/keyrings/sury-php.gpg
   gpg --show-keys /usr/share/keyrings/sury-php.gpg 2>/dev/null | grep -q "$SURY_GPG_FINGERPRINT" || \
@@ -341,9 +351,9 @@ _install_sury_source() {
   _ok "Sury GPG key validated"
 
   cat > /etc/apt/sources.list.d/sury-php.list <<EOF
-deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main
+deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ ${codename} main
 EOF
-  _ok "added Sury PHP repository"
+  _ok "added Sury PHP repository for ${codename}"
 }
 
 _install_php_version() {

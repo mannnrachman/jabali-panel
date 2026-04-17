@@ -526,14 +526,20 @@ func TestReconcileAll_DomainWithPHPPool(t *testing.T) {
 	err := r.ReconcileAll(ctx)
 	require.NoError(t, err)
 
-	// Verify that domain.create was called after php pool creation, and healthcheck written
-	// Expected order: user.slice.ensure, php.pool.apply, domain.list, domain.create, fs.write_healthcheck
-	require.Len(t, agent.calls, 5, "should call user.slice.ensure, php.pool.apply, domain.list, domain.create, and fs.write_healthcheck")
+	// Verify call order. The healthcheck is written twice per reconcile pass:
+	// once during createDomainOnAgent (new-domain path) and once during the
+	// healthcheck backfill loop at the end of ReconcileAll (so existing
+	// domains without the file get it dropped on the next pass). The agent's
+	// fs.write_healthcheck handler is idempotent, so the duplicate is harmless.
+	// Expected order: user.slice.ensure, php.pool.apply, domain.list,
+	// domain.create, fs.write_healthcheck (new-domain), fs.write_healthcheck (backfill).
+	require.Len(t, agent.calls, 6, "should call user.slice.ensure, php.pool.apply, domain.list, domain.create, and fs.write_healthcheck twice (new-domain + backfill)")
 	require.Equal(t, "user.slice.ensure", agent.calls[0].method)
 	require.Equal(t, "php.pool.apply", agent.calls[1].method)
 	require.Equal(t, "domain.list", agent.calls[2].method)
 	require.Equal(t, "domain.create", agent.calls[3].method)
 	require.Equal(t, "fs.write_healthcheck", agent.calls[4].method)
+	require.Equal(t, "fs.write_healthcheck", agent.calls[5].method)
 
 	// Verify that has_php=true and php_version="8.2" were passed to domain.create
 	params := agent.calls[3].params.(map[string]any)

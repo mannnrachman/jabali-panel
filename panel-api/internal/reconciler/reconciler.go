@@ -228,6 +228,26 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 		}
 	}
 
+	// 4. Healthcheck backfill: ensure jabali-healthcheck.php exists for every
+	// enabled PHP domain. This runs on every pass (agent write is idempotent)
+	// so domains that predated the healthcheck feature get the file dropped
+	// without requiring a forced re-provision.
+	for _, domain := range enabledDomains {
+		if domain.PHPPoolID == nil || domain.DocRoot == "" {
+			continue
+		}
+		if r.phpPools == nil {
+			continue
+		}
+		userCtx, userCancel := context.WithTimeout(ctx, 5*time.Second)
+		user, err := r.users.FindByID(userCtx, domain.UserID)
+		userCancel()
+		if err != nil || user == nil || user.Username == nil || *user.Username == "" {
+			continue
+		}
+		r.writeHealthcheckForDomain(ctx, domain, *user.Username)
+	}
+
 	return nil
 }
 
@@ -565,28 +585,31 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	// Write the health-check PHP file if domain has PHP and docroot is set.
 	// This file is probed during the cutover (step 6) to verify PHP execution.
 	if hasPHP && domain.DocRoot != "" {
-		healthcheckPath := domain.DocRoot + "/jabali-healthcheck.php"
-		healthcheckParams := map[string]string{
-			"path":       healthcheckPath,
-			"user_group": username + ":www-data",
-		}
-		hcCtx, hcCancel := context.WithTimeout(ctx, 10*time.Second)
-		_, hcErr := r.agent.Call(hcCtx, "fs.write_healthcheck", healthcheckParams)
-		hcCancel()
-		if hcErr != nil {
-			// Log as warning, don't block domain provisioning.
-			// The healthcheck file is optional; cutover probe failure will handle it.
-			r.log.Warn("failed to write healthcheck file",
-				"domain_id", domain.ID,
-				"domain", domain.Name,
-				"healthcheck_path", healthcheckPath,
-				"err", hcErr)
-		} else {
-			r.log.Info("healthcheck file written",
-				"domain_id", domain.ID,
-				"domain", domain.Name,
-				"healthcheck_path", healthcheckPath)
-		}
+		r.writeHealthcheckForDomain(ctx, domain, username)
+	}
+}
+
+// writeHealthcheckForDomain pushes the jabali-healthcheck.php file to the
+// domain's docroot via the agent. Safe to call repeatedly — the agent's
+// fs.write_healthcheck handler is idempotent and does not overwrite an
+// existing file. Called from createDomainOnAgent on first provisioning
+// and from ReconcileAll to backfill existing domains whose healthcheck
+// predates this code path.
+func (r *Reconciler) writeHealthcheckForDomain(ctx context.Context, domain *models.Domain, username string) {
+	healthcheckPath := domain.DocRoot + "/jabali-healthcheck.php"
+	healthcheckParams := map[string]string{
+		"path":       healthcheckPath,
+		"user_group": username + ":www-data",
+	}
+	hcCtx, hcCancel := context.WithTimeout(ctx, 10*time.Second)
+	_, hcErr := r.agent.Call(hcCtx, "fs.write_healthcheck", healthcheckParams)
+	hcCancel()
+	if hcErr != nil {
+		r.log.Warn("failed to write healthcheck file",
+			"domain_id", domain.ID,
+			"domain", domain.Name,
+			"healthcheck_path", healthcheckPath,
+			"err", hcErr)
 	}
 }
 // been removed. Called by the DELETE handler after it deletes the row,

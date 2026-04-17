@@ -825,10 +825,13 @@ EOF
 ensure_user_and_dirs() {
   if ! id "$SERVICE_USER" >/dev/null 2>&1; then
     _log "creating system user '$SERVICE_USER'"
-    useradd --system --home-dir "$REPO_DIR" --shell /usr/sbin/nologin \
+    useradd --system --home-dir "$REPO_DIR" --shell /usr/sbin/nologin --groups www-data \
       --comment "Jabali Panel service user" "$SERVICE_USER"
   else
     _ok "user '$SERVICE_USER' exists"
+    # Ensure service user is in www-data group so it can stat
+    # per-user FPM sockets under /run/php/jabali-<user>/ (mode 0750).
+    usermod -aG www-data "$SERVICE_USER" 2>/dev/null || true
   fi
 
   install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" "$REPO_DIR"

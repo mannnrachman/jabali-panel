@@ -5,14 +5,16 @@
 // "Refine Project" title box in the top-left — both fixed here by
 // using AntD's plain Layout primitives and driving our own nav items
 // from the shell-scoped resource list.
+//
+// Styling: sider + menu colors match ThemedLayoutV2 by using AntD tokens
+// so both light and dark themes look consistent with Refine's default.
 import { useResource } from "@refinedev/core";
-import { Layout, Menu } from "antd";
+import { Layout, Menu, theme } from "antd";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router";
 
 import { JabaliHeader } from "../components/JabaliHeader";
-import { useThemeMode } from "../theme/ThemeModeContext";
 
 const { Sider, Content } = Layout;
 
@@ -27,7 +29,7 @@ export function AdminLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
-  const { mode } = useThemeMode();
+  const { token } = theme.useToken();
 
   // Filter resources to this shell; meta.shell is the only thing
   // distinguishing admin nav from user nav since both shells share
@@ -65,14 +67,20 @@ export function AdminLayout() {
           collapsible
           collapsed={collapsed}
           onCollapse={setCollapsed}
-          theme={mode === "dark" ? "dark" : "light"}
+          style={{
+            backgroundColor: token.colorBgContainer,
+            borderRight: `1px solid ${token.colorBgElevated}`,
+          }}
         >
           <Menu
-            theme={mode === "dark" ? "dark" : "light"}
             mode="inline"
             selectedKeys={selectedKey ? [selectedKey] : []}
             items={items}
-            style={{ background: "transparent", paddingTop: 8 }}
+            style={{
+              paddingTop: "8px",
+              border: "none",
+              backgroundColor: token.colorBgContainer,
+            }}
           />
         </Sider>
         <Content>

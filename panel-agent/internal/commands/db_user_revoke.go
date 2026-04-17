@@ -95,7 +95,7 @@ func dbUserRevokeHandler(ctx context.Context, params json.RawMessage) (any, erro
 	// Issue the REVOKE and FLUSH PRIVILEGES in one command.
 	sql := revokeSql + "; FLUSH PRIVILEGES"
 
-	cmd := exec.CommandContext(ctx, "mysql", "--defaults-file=/root/.my.cnf", "-e", sql)
+	cmd := exec.CommandContext(ctx, "mysql", "-e", sql)
 	if err := cmd.Run(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

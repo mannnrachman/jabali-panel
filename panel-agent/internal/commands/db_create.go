@@ -94,9 +94,10 @@ func dbCreateHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	}
 
 	// Build the CREATE DATABASE command.
-	// Using mysql --defaults-file to connect as root (MariaDB root has no password
-	// when installed by install.sh with --skip-grant-tables during bootstrap;
-	// this is revisited when M9 hardener provisions secure root creds).
+	// The agent runs as root, and on Debian MariaDB root@localhost uses
+	// unix_socket auth by default — so `mysql -e ...` works with no
+	// password file. M9 hardener may later inject /root/.my.cnf for
+	// remote-admin scenarios; current path is intentionally socket-only.
 	sql := fmt.Sprintf(
 		"CREATE DATABASE %s CHARACTER SET %s COLLATE %s",
 		escapedDBName,
@@ -104,7 +105,7 @@ func dbCreateHandler(ctx context.Context, params json.RawMessage) (any, error) {
 		escapedCollation,
 	)
 
-	cmd := exec.CommandContext(ctx, "mysql", "--defaults-file=/root/.my.cnf", "-e", sql)
+	cmd := exec.CommandContext(ctx, "mysql", "-e", sql)
 	if err := cmd.Run(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

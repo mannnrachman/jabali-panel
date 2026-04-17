@@ -67,7 +67,7 @@ func dbDropHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	// Build the DROP DATABASE IF EXISTS command.
 	sql := fmt.Sprintf("DROP DATABASE IF EXISTS %s", escapedDBName)
 
-	cmd := exec.CommandContext(ctx, "mysql", "--defaults-file=/root/.my.cnf", "-e", sql)
+	cmd := exec.CommandContext(ctx, "mysql", "-e", sql)
 	if err := cmd.Run(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

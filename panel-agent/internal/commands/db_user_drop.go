@@ -53,7 +53,7 @@ func dbUserDropHandler(ctx context.Context, params json.RawMessage) (any, error)
 	// Form: DROP USER IF EXISTS '<name>'@'localhost';
 	sql := fmt.Sprintf("DROP USER IF EXISTS %s@'localhost'", escapedUsername)
 
-	cmd := exec.CommandContext(ctx, "mysql", "--defaults-file=/root/.my.cnf", "-e", sql)
+	cmd := exec.CommandContext(ctx, "mysql", "-e", sql)
 	if err := cmd.Run(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

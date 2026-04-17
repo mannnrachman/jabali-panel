@@ -73,7 +73,7 @@ func dbUserRotatePasswordHandler(ctx context.Context, params json.RawMessage) (a
 		escapedPassword,
 	)
 
-	cmd := exec.CommandContext(ctx, "mysql", "--defaults-file=/root/.my.cnf", "-e", sql)
+	cmd := exec.CommandContext(ctx, "mysql", "-e", sql)
 	if err := cmd.Run(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

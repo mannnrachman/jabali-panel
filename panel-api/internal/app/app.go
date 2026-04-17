@@ -149,10 +149,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		}
 		if deps.Databases != nil && deps.DatabaseUsers != nil {
 			api.RegisterDatabaseRoutes(v1, api.DatabaseHandlerConfig{
-				Databases:      deps.Databases,
-				DatabaseUsers:  deps.DatabaseUsers,
-				Users:          deps.Users,
-				Packages:       deps.Packages,
+				Databases:     deps.Databases,
+				DatabaseUsers: deps.DatabaseUsers,
+				Users:         deps.Users,
+				Packages:      deps.Packages,
+				Agent:         deps.Agent,
 			})
 		}
 		if deps.DatabaseUsers != nil && deps.DatabaseUserGrants != nil {

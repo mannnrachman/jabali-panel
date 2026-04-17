@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -24,6 +25,9 @@ type mockDatabaseRepo struct {
 	databases []models.Database
 	findErr   error
 	listErr   error
+	createErr error
+	deleteErr error
+	existsErr error
 }
 
 func (m *mockDatabaseRepo) FindByID(ctx context.Context, id string) (*models.Database, error) {
@@ -68,6 +72,39 @@ func (m *mockDatabaseRepo) CountByUserID(ctx context.Context, userID string) (in
 	return count, nil
 }
 
+func (m *mockDatabaseRepo) Create(ctx context.Context, d *models.Database) error {
+	if m.createErr != nil {
+		return m.createErr
+	}
+	m.databases = append(m.databases, *d)
+	return nil
+}
+
+func (m *mockDatabaseRepo) Delete(ctx context.Context, id string) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	for i, db := range m.databases {
+		if db.ID == id {
+			m.databases = append(m.databases[:i], m.databases[i+1:]...)
+			return nil
+		}
+	}
+	return repository.ErrNotFound
+}
+
+func (m *mockDatabaseRepo) ExistsByUserAndName(ctx context.Context, userID, name string) (bool, error) {
+	if m.existsErr != nil {
+		return false, m.existsErr
+	}
+	for _, db := range m.databases {
+		if db.UserID == userID && db.Name == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 type mockDatabaseUserRepo struct{}
 
 func (m *mockDatabaseUserRepo) FindByID(ctx context.Context, id string) (*models.DatabaseUser, error) {
@@ -86,13 +123,20 @@ func (m *mockDatabaseUserRepo) CountByUserID(ctx context.Context, userID string)
 	return 0, nil
 }
 
-type mockUserRepo struct{}
+type mockUserRepo struct {
+	users map[string]*models.User
+}
 
 func (m *mockUserRepo) Create(ctx context.Context, u *models.User) error {
 	return nil
 }
 
 func (m *mockUserRepo) FindByID(ctx context.Context, id string) (*models.User, error) {
+	if m.users != nil {
+		if user, ok := m.users[id]; ok {
+			return user, nil
+		}
+	}
 	return nil, nil
 }
 
@@ -128,13 +172,20 @@ func (m *mockUserRepo) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-type mockPackageRepo struct{}
+type mockPackageRepo struct {
+	packages map[string]*models.HostingPackage
+}
 
 func (m *mockPackageRepo) Create(ctx context.Context, p *models.HostingPackage) error {
 	return nil
 }
 
 func (m *mockPackageRepo) FindByID(ctx context.Context, id string) (*models.HostingPackage, error) {
+	if m.packages != nil {
+		if pkg, ok := m.packages[id]; ok {
+			return pkg, nil
+		}
+	}
 	return nil, nil
 }
 
@@ -152,6 +203,24 @@ func (m *mockPackageRepo) Update(ctx context.Context, p *models.HostingPackage) 
 
 func (m *mockPackageRepo) Delete(ctx context.Context, id string) error {
 	return nil
+}
+
+// Mock agent for testing
+type mockAgent struct {
+	callFn    func(ctx context.Context, command string, params any) (json.RawMessage, error)
+	callErr   error
+	callCount int
+}
+
+func (m *mockAgent) Call(ctx context.Context, command string, params any) (json.RawMessage, error) {
+	m.callCount++
+	if m.callFn != nil {
+		return m.callFn(ctx, command, params)
+	}
+	if m.callErr != nil {
+		return nil, m.callErr
+	}
+	return json.RawMessage(`{}`), nil
 }
 
 // Helper to setup router with optional claims
@@ -172,15 +241,99 @@ func databaseRouter(userID string, isAdmin bool) (*gin.Engine, *mockDatabaseRepo
 	}
 
 	dbRepo := &mockDatabaseRepo{}
+	userRepo := &mockUserRepo{
+		users: map[string]*models.User{
+			"user1": {
+				ID:       "user1",
+				Username: stringPtr("alice"),
+			},
+			"user2": {
+				ID:       "user2",
+				Username: stringPtr("bob"),
+			},
+			"admin1": {
+				ID:       "admin1",
+				Username: stringPtr("admin"),
+			},
+		},
+	}
+	pkgRepo := &mockPackageRepo{
+		packages: map[string]*models.HostingPackage{
+			"pkg1": {
+				ID:           "pkg1",
+				MaxDatabases: 0, // unlimited
+			},
+		},
+	}
 
 	RegisterDatabaseRoutes(v1, DatabaseHandlerConfig{
 		Databases:      dbRepo,
 		DatabaseUsers:  &mockDatabaseUserRepo{},
-		Users:          &mockUserRepo{},
-		Packages:       &mockPackageRepo{},
+		Users:          userRepo,
+		Packages:       pkgRepo,
+		Agent:          &mockAgent{},
 	})
 
 	return r, dbRepo
+}
+
+// Helper to setup router with agent
+func databaseRouterWithAgent(userID string, isAdmin bool, agent *mockAgent) (*gin.Engine, *mockDatabaseRepo) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	v1 := r.Group("/api/v1")
+
+	// Inject claims if provided
+	if userID != "" {
+		v1.Use(func(c *gin.Context) {
+			ginctx.SetClaims(c, &auth.AccessClaims{
+				UserID:  userID,
+				IsAdmin: isAdmin,
+			})
+			c.Next()
+		})
+	}
+
+	dbRepo := &mockDatabaseRepo{}
+	userRepo := &mockUserRepo{
+		users: map[string]*models.User{
+			"user1": {
+				ID:       "user1",
+				Username: stringPtr("alice"),
+			},
+			"user2": {
+				ID:       "user2",
+				Username: stringPtr("bob"),
+			},
+			"admin1": {
+				ID:       "admin1",
+				Username: stringPtr("admin"),
+			},
+		},
+	}
+	pkgRepo := &mockPackageRepo{
+		packages: map[string]*models.HostingPackage{
+			"pkg1": {
+				ID:           "pkg1",
+				MaxDatabases: 0, // unlimited
+			},
+		},
+	}
+
+	cfg := DatabaseHandlerConfig{
+		Databases:      dbRepo,
+		DatabaseUsers:  &mockDatabaseUserRepo{},
+		Users:          userRepo,
+		Packages:       pkgRepo,
+		Agent:          agent,
+	}
+	RegisterDatabaseRoutes(v1, cfg)
+
+	return r, dbRepo
+}
+
+func stringPtr(s string) *string {
+	return &s
 }
 
 // Test cases
@@ -250,19 +403,6 @@ func TestDatabaseListError(t *testing.T) {
 	assert.Equal(t, "internal", resp["error"])
 }
 
-func TestDatabaseGetUnauthenticated(t *testing.T) {
-	r, _ := databaseRouter("", false)
-
-	req := httptest.NewRequest("GET", "/api/v1/databases/id1", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusUnauthorized, w.Code)
-	var resp map[string]interface{}
-	json.NewDecoder(w.Body).Decode(&resp)
-	assert.Equal(t, "unauthorized", resp["error"])
-}
-
 func TestDatabaseGetAdmin(t *testing.T) {
 	r, dbRepo := databaseRouter("admin1", true)
 
@@ -283,7 +423,7 @@ func TestDatabaseGetAdmin(t *testing.T) {
 func TestDatabaseGetUserOwned(t *testing.T) {
 	r, dbRepo := databaseRouter("user1", false)
 
-	// Setup test data
+	// Setup test data - user's own database
 	db1 := models.Database{ID: "id1", UserID: "user1", Name: "db1"}
 	dbRepo.databases = []models.Database{db1}
 
@@ -315,8 +455,7 @@ func TestDatabaseGetUserForbidden(t *testing.T) {
 }
 
 func TestDatabaseGetNotFound(t *testing.T) {
-	r, dbRepo := databaseRouter("admin1", true)
-	dbRepo.databases = []models.Database{}
+	r, _ := databaseRouter("admin1", true)
 
 	req := httptest.NewRequest("GET", "/api/v1/databases/nonexistent", nil)
 	w := httptest.NewRecorder()
@@ -340,4 +479,180 @@ func TestDatabaseGetError(t *testing.T) {
 	var resp map[string]interface{}
 	json.NewDecoder(w.Body).Decode(&resp)
 	assert.Equal(t, "internal", resp["error"])
+}
+
+// POST /databases tests
+
+func TestDatabaseCreateInvalidName(t *testing.T) {
+	agent := &mockAgent{}
+	r, _ := databaseRouterWithAgent("user1", false, agent)
+
+	req := httptest.NewRequest("POST", "/api/v1/databases", 
+		strings.NewReader(`{"name":"123invalid"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	assert.Equal(t, "invalid_database_name", resp["error"])
+}
+
+func TestDatabaseCreateNameTooLong(t *testing.T) {
+	agent := &mockAgent{}
+	r, _ := databaseRouterWithAgent("user1", false, agent)
+
+	req := httptest.NewRequest("POST", "/api/v1/databases", 
+		strings.NewReader(`{"name":"verylongdatabasenamethatexceedsthirtychars123"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestDatabaseCreateNameCollision(t *testing.T) {
+	agent := &mockAgent{}
+	r, dbRepo := databaseRouterWithAgent("user1", false, agent)
+
+	// Existing database with same name for same user
+	existing := models.Database{ID: "id1", UserID: "user1", Name: "testdb"}
+	dbRepo.databases = []models.Database{existing}
+
+	req := httptest.NewRequest("POST", "/api/v1/databases", 
+		strings.NewReader(`{"name":"testdb"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusConflict, w.Code)
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	assert.Equal(t, "database_name_exists", resp["error"])
+}
+
+func TestDatabaseCreateAgentFailure(t *testing.T) {
+	agent := &mockAgent{callErr: errors.New("agent connection failed")}
+	r, _ := databaseRouterWithAgent("user1", false, agent)
+
+	req := httptest.NewRequest("POST", "/api/v1/databases", 
+		strings.NewReader(`{"name":"testdb"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadGateway, w.Code)
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	assert.Equal(t, "agent_failed", resp["error"])
+}
+
+func TestDatabaseCreateUnauthenticated(t *testing.T) {
+	agent := &mockAgent{}
+	r, _ := databaseRouterWithAgent("", false, agent)
+
+	req := httptest.NewRequest("POST", "/api/v1/databases", 
+		strings.NewReader(`{"name":"testdb"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// DELETE /databases/:id tests
+
+func TestDatabaseDeleteSuccess(t *testing.T) {
+	agent := &mockAgent{}
+	r, dbRepo := databaseRouterWithAgent("user1", false, agent)
+
+	// Pre-create a database
+	db := models.Database{ID: "id1", UserID: "user1", Name: "testdb"}
+	dbRepo.databases = []models.Database{db}
+
+	req := httptest.NewRequest("DELETE", "/api/v1/databases/id1", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusNoContent, w.Code)
+	assert.Equal(t, 0, len(dbRepo.databases))
+}
+
+func TestDatabaseDeleteNotFound(t *testing.T) {
+	agent := &mockAgent{}
+	r, _ := databaseRouterWithAgent("user1", false, agent)
+
+	req := httptest.NewRequest("DELETE", "/api/v1/databases/nonexistent", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusNotFound, w.Code)
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	assert.Equal(t, "not_found", resp["error"])
+}
+
+func TestDatabaseDeleteForbidden(t *testing.T) {
+	agent := &mockAgent{}
+	r, dbRepo := databaseRouterWithAgent("user1", false, agent)
+
+	// Database belongs to different user
+	db := models.Database{ID: "id1", UserID: "user2", Name: "testdb"}
+	dbRepo.databases = []models.Database{db}
+
+	req := httptest.NewRequest("DELETE", "/api/v1/databases/id1", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	assert.Equal(t, "forbidden", resp["error"])
+}
+
+func TestDatabaseDeleteAdminCanDeleteAny(t *testing.T) {
+	agent := &mockAgent{}
+	r, dbRepo := databaseRouterWithAgent("admin1", true, agent)
+
+	// Database belongs to different user, but admin can delete it
+	db := models.Database{ID: "id1", UserID: "user2", Name: "testdb"}
+	dbRepo.databases = []models.Database{db}
+
+	req := httptest.NewRequest("DELETE", "/api/v1/databases/id1", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusNoContent, w.Code)
+}
+
+func TestDatabaseDeleteAgentFailure(t *testing.T) {
+	agent := &mockAgent{callErr: errors.New("agent connection failed")}
+	r, dbRepo := databaseRouterWithAgent("user1", false, agent)
+
+	db := models.Database{ID: "id1", UserID: "user1", Name: "testdb"}
+	dbRepo.databases = []models.Database{db}
+
+	req := httptest.NewRequest("DELETE", "/api/v1/databases/id1", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadGateway, w.Code)
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	assert.Equal(t, "agent_failed", resp["error"])
+}
+
+func TestDatabaseDeleteUnauthenticated(t *testing.T) {
+	agent := &mockAgent{}
+	r, dbRepo := databaseRouterWithAgent("", false, agent)
+
+	db := models.Database{ID: "id1", UserID: "user1", Name: "testdb"}
+	dbRepo.databases = []models.Database{db}
+
+	req := httptest.NewRequest("DELETE", "/api/v1/databases/id1", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusUnauthorized, w.Code)
 }

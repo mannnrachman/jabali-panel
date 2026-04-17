@@ -15,6 +15,9 @@ type DatabaseRepository interface {
 	List(ctx context.Context, opts ListOptions) ([]models.Database, int64, error)
 	ListByUserID(ctx context.Context, userID string, opts ListOptions) ([]models.Database, int64, error)
 	CountByUserID(ctx context.Context, userID string) (int64, error)
+	Create(ctx context.Context, d *models.Database) error
+	Delete(ctx context.Context, id string) error
+	ExistsByUserAndName(ctx context.Context, userID, name string) (bool, error)
 }
 
 type databaseRepo struct{ db *gorm.DB }
@@ -91,4 +94,31 @@ func (r *databaseRepo) CountByUserID(ctx context.Context, userID string) (int64,
 		return 0, err
 	}
 	return count, nil
+}
+
+func (r *databaseRepo) Create(ctx context.Context, d *models.Database) error {
+	if err := r.db.WithContext(ctx).Create(d).Error; err != nil {
+		return translate(err)
+	}
+	return nil
+}
+
+func (r *databaseRepo) Delete(ctx context.Context, id string) error {
+	result := r.db.WithContext(ctx).Delete(&models.Database{}, "id = ?", id)
+	if err := result.Error; err != nil {
+		return err
+	}
+	// Check if any row was actually deleted
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *databaseRepo) ExistsByUserAndName(ctx context.Context, userID, name string) (bool, error) {
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&models.Database{}).Where("user_id = ? AND name = ?", userID, name).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }

@@ -1,10 +1,13 @@
-// Users list — AntD Table driven by Refine's useTable hook.
+// Users list — AntD Table driven by Refine's useTable hook, wrapped in
+// SearchableTable for debounced server-side search + pagination polish.
 //
-// Refine's useTable handles pagination state, loading, and sorter/filter
-// sync with the URL. We bring our own columns + action column; AntD's
-// table prop wiring just works once you hand it `tableProps`.
+// Refine's useTable handles pagination state, loading, filter + sorter
+// state, and syncs them with the URL. The backend allowlist governs
+// *which* columns are searchable/sortable (see panel-api
+// userListCols), so the server silently ignores unknown sort keys.
 import { useTable, EditButton, CreateButton } from "@refinedev/antd";
 import { Space, Table, Tag, Typography } from "antd";
+import { SearchableTable } from "../../../components/SearchableTable";
 import { UserDeleteAction } from "./UserDeleteAction";
 import { UserImpersonateAction } from "./UserImpersonateAction";
 
@@ -18,7 +21,7 @@ type User = {
 };
 
 export const UserList = () => {
-  const { tableProps } = useTable<User>({
+  const { tableProps, setFilters } = useTable<User>({
     syncWithLocation: true,
   });
 
@@ -37,30 +40,43 @@ export const UserList = () => {
         <CreateButton />
       </Space>
 
-      <Table<User> {...tableProps} rowKey="id" bordered>
-        <Table.Column<User> dataIndex="email" title="Email" />
-        <Table.Column<User>
+      <SearchableTable<User>
+        {...tableProps}
+        rowKey="id"
+        bordered
+        searchPlaceholder="Search by email, username, or name"
+        onSearchChange={(filters) => setFilters(filters, "replace")}
+      >
+        <Table.Column
+          dataIndex="email"
+          title="Email"
+          sorter={{ multiple: 1 }}
+        />
+        <Table.Column
           title="Name"
-          render={(_, r) =>
+          render={(_: unknown, r: User) =>
             [r.name_first, r.name_last].filter(Boolean).join(" ") || "—"
           }
         />
-        <Table.Column<User>
+        <Table.Column
           dataIndex="is_admin"
           title="Role"
-          render={(isAdmin) =>
+          sorter={{ multiple: 1 }}
+          render={(isAdmin: boolean) =>
             isAdmin ? <Tag color="red">admin</Tag> : <Tag>user</Tag>
           }
         />
-        <Table.Column<User>
+        <Table.Column
           dataIndex="created_at"
           title="Created"
+          sorter={{ multiple: 1 }}
+          defaultSortOrder="descend"
           render={(ts: string) => new Date(ts).toLocaleString()}
         />
-        <Table.Column<User>
+        <Table.Column
           title="Actions"
           dataIndex="actions"
-          render={(_, r) => (
+          render={(_: unknown, r: User) => (
             <Space>
               <UserImpersonateAction
                 recordItemId={r.id}
@@ -72,7 +88,7 @@ export const UserList = () => {
             </Space>
           )}
         />
-      </Table>
+      </SearchableTable>
     </div>
   );
 };

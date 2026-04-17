@@ -1,6 +1,7 @@
 import { useTable } from "@refinedev/antd";
 import { Space, Table, Tag, Typography } from "antd";
 import { CreateButton, DeleteButton, EditButton } from "@refinedev/antd";
+import { SearchableTable } from "../../../components/SearchableTable";
 
 type Package = {
   id: string;
@@ -18,12 +19,12 @@ type Package = {
 };
 
 export const PackageList = () => {
-  const { tableProps } = useTable<Package>({
+  const { tableProps, setFilters } = useTable<Package>({
     resource: "packages",
     syncWithLocation: true,
   });
 
-  // Format quota as "∞" if 0, otherwise the number
+  // "∞" for 0 quotas keeps the cell readable instead of printing 0.
   const formatQuota = (value: number) => (value === 0 ? "∞" : value);
 
   return (
@@ -41,51 +42,67 @@ export const PackageList = () => {
         <CreateButton />
       </Space>
 
-      <Table<Package> {...tableProps} rowKey="id" bordered>
-        <Table.Column<Package> dataIndex="name" title="Name" />
-        <Table.Column<Package>
+      <SearchableTable<Package>
+        {...tableProps}
+        rowKey="id"
+        bordered
+        searchPlaceholder="Search by package name"
+        onSearchChange={(filters) => setFilters(filters, "replace")}
+      >
+        <Table.Column
+          dataIndex="name"
+          title="Name"
+          sorter={{ multiple: 1 }}
+          defaultSortOrder="ascend"
+        />
+        <Table.Column
           dataIndex="disk_quota_mb"
           title="Disk (MB)"
           render={(value: number) => formatQuota(value)}
         />
-        <Table.Column<Package>
+        <Table.Column
           dataIndex="bandwidth_quota_mb"
           title="Bandwidth (MB)"
           render={(value: number) => formatQuota(value)}
         />
-        <Table.Column<Package>
+        <Table.Column
           dataIndex="max_domains"
           title="Domains"
           render={(value: number) => formatQuota(value)}
         />
-        <Table.Column<Package>
+        <Table.Column
           dataIndex="max_email_accounts"
           title="Email"
           render={(value: number) => formatQuota(value)}
         />
-        <Table.Column<Package>
+        <Table.Column
           dataIndex="max_databases"
           title="DB"
           render={(value: number) => formatQuota(value)}
         />
-        <Table.Column<Package>
+        <Table.Column
           dataIndex="ssh_enabled"
           title="SSH"
           render={(enabled: boolean) =>
             enabled ? <Tag color="green">yes</Tag> : <Tag>no</Tag>
           }
         />
-        <Table.Column<Package>
+        <Table.Column
+          dataIndex="created_at"
+          title="Created"
+          sorter={{ multiple: 1 }}
+        />
+        <Table.Column
           title="Actions"
           dataIndex="actions"
-          render={(_, r) => (
+          render={(_: unknown, r: Package) => (
             <Space>
               <EditButton hideText size="small" recordItemId={r.id} />
               <DeleteButton hideText size="small" recordItemId={r.id} />
             </Space>
           )}
         />
-      </Table>
+      </SearchableTable>
     </div>
   );
 };

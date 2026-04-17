@@ -675,17 +675,26 @@ export const DomainSettingsButton = ({
     // Re-sync from prop in case the values were updated elsewhere
     setDirectivesValue(domain.nginx_custom_directives ?? "");
     setRules(domain.nginx_rules ?? []);
-    setSelectedPhpVersion(domain.php_pool_id ?? null);
+    // Reset first; if bound, we'll resolve pool_id → php_version below.
+    setSelectedPhpVersion(null);
 
     // Fetch PHP versions for the dropdown
     setIsLoadingPhpVersions(true);
     try {
-      const response = await apiClient.get("/php/versions");
-      if (response?.data?.versions && Array.isArray(response.data.versions)) {
-        setPhpVersions(response.data.versions);
+      const [versionsResp, poolResp] = await Promise.all([
+        apiClient.get("/php/versions"),
+        domain.php_pool_id
+          ? apiClient.get(`/php-pools/${domain.php_pool_id}`)
+          : Promise.resolve(null),
+      ]);
+      if (versionsResp?.data?.versions && Array.isArray(versionsResp.data.versions)) {
+        setPhpVersions(versionsResp.data.versions);
+      }
+      if (poolResp?.data?.php_version) {
+        setSelectedPhpVersion(poolResp.data.php_version);
       }
     } catch (err) {
-      console.error("Failed to fetch PHP versions:", err);
+      console.error("Failed to fetch PHP versions or current pool:", err);
     } finally {
       setIsLoadingPhpVersions(false);
     }
@@ -698,6 +707,7 @@ export const DomainSettingsButton = ({
   };
 
   const handlePhpVersionChange = async (version: string | null) => {
+    const prevVersion = selectedPhpVersion;
     setSelectedPhpVersion(version);
     try {
       if (version === null) {
@@ -729,7 +739,7 @@ export const DomainSettingsButton = ({
         description: e.response?.data?.detail ?? e.response?.data?.error ?? e.message ?? "Unknown error",
       });
       // Revert selection on error
-      setSelectedPhpVersion(domain.php_pool_id ?? null);
+      setSelectedPhpVersion(prevVersion);
     }
   };
 

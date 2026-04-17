@@ -368,6 +368,53 @@ guards (checks for existing config files before overwriting).
 
 ---
 
+### 4.11 Per-user systemd slices (M9.5)
+
+**Shipped:** Every hosting user now runs inside a nested systemd slice — PHP-FPM master, login shells, and systemd-user timers all land in the same cgroup. The distro's global `php<v>-fpm.service` is stopped, disabled, and masked after cutover.
+
+**Hierarchy:**
+```
+jabali.slice
+└─ jabali-user.slice              (MemoryHigh=80% of host RAM)
+   └─ jabali-user-<user>.slice    (per-user container)
+      ├─ jabali-fpm@<user>.service (PHP-FPM master as <user>)
+      └─ user@<uid>.service       (login manager for shells + timers)
+```
+
+**Files:**
+- Systemd units: `install/systemd/jabali.slice`, `jabali-user.slice`, `jabali-fpm@.service`
+- Shims: `install/systemd/fpm-pre-start`, `fpm-exec` (run as root via `+` prefix for setup, FPM itself as `<user>`)
+- Agent: `panel-agent/internal/commands/user_slice_ensure.go`, `user_slice_remove.go`, `user_slice_status.go`
+- Reconciler: `panel-api/internal/reconciler/reconciler.go` (writeHealthcheckForDomain backfill, user-slice provisioning)
+- Admin CLI: `panel-api/cmd/server/admin_slice_cutover.go` (`jabali-panel admin slice-cutover [--dry-run]`)
+- UI: `panel-ui/src/shells/admin/users/UserSliceStatus.tsx`
+
+**Agent commands:** `user.slice.ensure`, `user.slice.remove`, `user.slice.status`
+
+**API endpoints:**
+- `GET /api/v1/admin/users/:id/slice-status` (admin-only; returns memory/tasks/active state)
+
+**Runtime paths:**
+- Socket: `/run/php/jabali-<user>/fpm.sock` (owner=`<user>`, group=`www-data`, mode 0660)
+- PID file: `/run/php/jabali-<user>/fpm.pid`
+- Per-user FPM config: `/etc/jabali-panel/fpm/<user>.conf`
+- Version pin: `/etc/jabali-panel/user-phpver/<user>`
+- Healthcheck: `/home/<user>/<domain-docroot>/jabali-healthcheck.php` (probed by cutover)
+- Runtime dir mode: `0750 <user>:www-data` (user writes, nginx traverses)
+
+**Admin command:**
+- `jabali-panel admin slice-cutover [--dry-run]` — preflight every user has an active FPM master, mask global `php<v>-fpm.service`, probe `jabali-healthcheck.php` through nginx, auto-rollback on probe failure.
+
+**Linger:** `user.slice.ensure` calls `loginctl enable-linger <user>` so the user manager persists across logouts; without it, the `user@<uid>.service.d/jabali.conf` drop-in doesn't take effect until next login.
+
+**ADR:** [ADR-0025](adr/0025-per-user-systemd-slices.md) — amends ADR-0023's placement decision.
+
+**Runbook:** [docs/runbooks/per-user-slices.md](runbooks/per-user-slices.md) — what's captured, what's not (traditional crontabs), cron → systemd-user-timer migration recipe, troubleshooting.
+
+**Plan:** [plans/per-user-systemd-slices.md](../plans/per-user-systemd-slices.md) (9 steps, all shipped).
+
+---
+
 ## 5. What's out-of-scope
 
 These live in separate git repositories. `install.sh` may install them as optional

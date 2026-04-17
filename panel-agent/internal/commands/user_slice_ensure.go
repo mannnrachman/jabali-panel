@@ -186,6 +186,24 @@ func userSliceEnsureHandler(ctx context.Context, params json.RawMessage) (any, e
 		}
 	}
 
+	// enable-linger so the user manager persists across logouts. Without
+	// this, the user@<uid>.service.d/jabali.conf drop-in never takes
+	// effect for users who have not logged in since last boot, which
+	// means their shell sessions escape the slice hierarchy. This is the
+	// "capture processes that systemd starts on behalf of the user"
+	// piece of step 7.
+	if _, stderr, lErr := runCmdReload(ctx, "loginctl", "enable-linger", p.Username); lErr != nil {
+		// F10: treat "already enabled" stderr as success. loginctl's
+		// exact message varies by systemd version but always contains
+		// the word "already" for this condition.
+		if !strings.Contains(string(stderr), "already") {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("failed to enable-linger for %s: %v (%s)", p.Username, lErr, strings.TrimSpace(string(stderr))),
+			}
+		}
+	}
+
 	return &userSliceEnsureResponse{
 		Username:        p.Username,
 		SliceUnitPath:   sliceUnitPath,

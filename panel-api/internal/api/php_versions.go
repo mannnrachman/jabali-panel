@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"time"
 
@@ -76,8 +75,7 @@ func RegisterPHPVersionAdminRoutes(rg *gin.RouterGroup, cli agent.AgentInterface
 		ctx, cancel := context.WithTimeout(c.Request.Context(), adminActionTimeout)
 		defer cancel()
 
-		params, _ := json.Marshal(map[string]string{"version": version})
-		raw, err := cli.Call(ctx, "php.version.install", params)
+		raw, err := cli.Call(ctx, "php.version.install", map[string]string{"version": version})
 		if err != nil {
 			status, body := translateAgentError(err)
 			c.JSON(status, body)
@@ -101,8 +99,7 @@ func RegisterPHPVersionAdminRoutes(rg *gin.RouterGroup, cli agent.AgentInterface
 		ctx, cancel := context.WithTimeout(c.Request.Context(), reloadTimeout)
 		defer cancel()
 
-		params, _ := json.Marshal(map[string]string{"version": version})
-		raw, err := cli.Call(ctx, "php.version.reload", params)
+		raw, err := cli.Call(ctx, "php.version.reload", map[string]string{"version": version})
 		if err != nil {
 			status, body := translateAgentError(err)
 			c.JSON(status, body)

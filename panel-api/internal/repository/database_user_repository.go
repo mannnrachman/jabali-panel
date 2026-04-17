@@ -42,7 +42,7 @@ func (r *databaseUserRepo) FindByID(ctx context.Context, id string) (*models.Dat
 var databaseUserListCols = ListCols{
 	Search:      []string{"username"},
 	Sort:        []string{"username", "created_at"},
-	DefaultSort: "created_at DESC",
+	DefaultSort: "created_at",
 }
 
 func (r *databaseUserRepo) List(ctx context.Context, opts ListOptions) ([]models.DatabaseUser, int64, error) {

@@ -84,7 +84,11 @@ export const DatabaseUsersList = () => {
         <Typography.Title level={3} style={{ margin: 0 }}>
           Database Users
         </Typography.Title>
-        <CreateButton>Create User</CreateButton>
+        {/* Pin the resource explicitly — this list is stacked inside
+            /databases, and without the override CreateButton would
+            resolve to the surrounding route's "databases" resource and
+            route to /databases/create (the DB-create form). */}
+        <CreateButton resource="database-users">Create User</CreateButton>
       </Space>
 
       <SearchableTable<DatabaseUser>

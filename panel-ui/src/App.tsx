@@ -148,7 +148,10 @@ const ThemedApp = () => {
               meta: { label: "SSL", icon: <SafetyCertificateOutlined />, shell: "user" },
             },
             {
-              name: "user-databases",
+              // Resource name matches the API slug so useTable('databases')
+              // and any CreateButton/EditButton rendered in that table
+              // context resolve to the same entry.
+              name: "databases",
               list: "/jabali-panel/databases",
               create: "/jabali-panel/databases/create",
               meta: { label: "Databases", icon: <DatabaseOutlined />, shell: "user" },
@@ -156,9 +159,10 @@ const ThemedApp = () => {
             {
               // Hidden — rendered inline below the databases list on
               // the same page. The resource entry stays so the
-              // CreateButton inside the DB-users table can resolve the
-              // create path via Refine routing.
-              name: "user-database-users",
+              // CreateButton inside the DB-users table can resolve to
+              // /database-users/create (not /databases/create, which is
+              // what happens when the surrounding route resource wins).
+              name: "database-users",
               list: "/jabali-panel/database-users",
               create: "/jabali-panel/database-users/create",
               meta: { label: "DB Users", shell: "user", hidden: true },

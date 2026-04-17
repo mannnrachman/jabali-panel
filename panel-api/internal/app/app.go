@@ -198,6 +198,14 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		if deps.Agent != nil {
 			api.RegisterSystemRoutes(v1, deps.Agent)
 		}
+		if deps.PHPPools != nil && deps.PHPPoolIniOverrides != nil {
+			api.RegisterPHPPoolRoutes(v1, api.PHPPoolHandlerConfig{
+				PHPPools:            deps.PHPPools,
+				PHPPoolIniOverrides: deps.PHPPoolIniOverrides,
+				Users:               deps.Users,
+				Agent:               deps.Agent,
+			})
+		}
 
 		// Admin routes
 		if deps.Reconciler != nil {

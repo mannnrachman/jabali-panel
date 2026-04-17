@@ -9,7 +9,6 @@
 // theme integration) while giving us exact control over what shows.
 import { ThemedLayoutV2, ThemedSiderV2 } from "@refinedev/antd";
 import { JabaliHeader } from "../components/JabaliHeader";
-import { JabaliTitle } from "../components/JabaliTitle";
 import { useResource } from "@refinedev/core";
 import { Menu } from "antd";
 import type { ReactNode } from "react";
@@ -53,10 +52,7 @@ export function UserLayout() {
 
   return (
     <ThemedLayoutV2
-      Title={({ collapsed }) => (
-        <JabaliTitle collapsed={collapsed} text="Jabali Panel" />
-      )}
-      Header={JabaliHeader}
+      Header={() => <JabaliHeader brand="Jabali Panel" />}
       Sider={(siderProps) => (
         <ThemedSiderV2
           {...siderProps}

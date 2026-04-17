@@ -1,29 +1,28 @@
-// JabaliTitle — sidebar + header brand lockup. Swaps between the light
-// and dark SVG variants based on the current theme mode, and collapses
-// to icon-only when Refine's ThemedLayoutV2 collapses the sider.
+// JabaliTitle — brand lockup (SVG + wordmark), theme-aware.
 //
-// The SVGs live in public/images/ and are served directly by Vite / the
-// Go embed.go fallback. Keeping them as raw files (rather than bundling
-// through an SVG-as-JSX plugin) means we can swap the source without a
-// rebuild and avoid the extra loader dependency.
+// Chooses the light or dark SVG variant from the current theme mode so
+// it reads correctly against AntD's header/content backgrounds. Text
+// colour inherits from the parent so it matches the header tokens.
+import { useThemeMode } from "../theme/ThemeModeContext";
 
 interface JabaliTitleProps {
-  collapsed?: boolean;
   text?: string;
+  /** When true, hide the wordmark and render only the icon. */
+  iconOnly?: boolean;
 }
 
-export function JabaliTitle({ collapsed, text = "Jabali Panel" }: JabaliTitleProps) {
-  // Sidebar chrome is always dark in both theme modes, so always use
-  // the white-fill (dark-mode) logo variant.
-  const src = "/images/jabali_logo_dark.svg";
+export function JabaliTitle({ text = "Jabali Panel", iconOnly = false }: JabaliTitleProps) {
+  const { mode } = useThemeMode();
+  // Light theme → default-fill (dark) SVG reads on white bg.
+  // Dark theme  → white-fill SVG reads on near-black bg.
+  const src = mode === "dark" ? "/images/jabali_logo_dark.svg" : "/images/jabali_logo.svg";
 
   return (
     <div
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 8,
-        padding: "8px 4px",
+        gap: 10,
       }}
     >
       <img
@@ -31,8 +30,8 @@ export function JabaliTitle({ collapsed, text = "Jabali Panel" }: JabaliTitlePro
         alt="Jabali"
         style={{ height: 28, width: "auto", flexShrink: 0 }}
       />
-      {!collapsed && (
-        <span style={{ fontSize: 16, fontWeight: 600, letterSpacing: 0.5, color: "#ffffff" }}>
+      {!iconOnly && (
+        <span style={{ fontSize: 16, fontWeight: 600, letterSpacing: 0.5 }}>
           {text}
         </span>
       )}

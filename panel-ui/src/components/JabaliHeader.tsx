@@ -1,9 +1,9 @@
 // JabaliHeader — replacement for @refinedev/antd's ThemedHeaderV2.
 //
-// The built-in header doesn't expose a slot for extra actions, so we
-// render our own with: theme toggle, email-as-dropdown, logout. Styling
-// tracks AntD's Header tokens via useToken so the colour scheme stays
-// consistent with whichever theme mode is active.
+// The built-in header doesn't expose a slot for extra actions (or a
+// brand area), so we render our own: brand lockup on the left, theme
+// toggle + user dropdown on the right. Background tracks
+// theme.useToken() so the chrome stays in sync with light/dark mode.
 import { useEffect, useState } from "react";
 import { LogoutOutlined, UserOutlined } from "@ant-design/icons";
 import { Avatar, Button, Dropdown, Layout, theme } from "antd";
@@ -11,11 +11,17 @@ import type { MenuProps } from "antd";
 import { useLogout } from "@refinedev/core";
 
 import { getIdentity } from "../identity";
+import { JabaliTitle } from "./JabaliTitle";
 import { ThemeToggle } from "./ThemeToggle";
 
 const { Header } = Layout;
 
-export function JabaliHeader() {
+interface JabaliHeaderProps {
+  /** Wordmark shown next to the brand icon. */
+  brand?: string;
+}
+
+export function JabaliHeader({ brand = "Jabali Panel" }: JabaliHeaderProps) {
   const { mutate: logout } = useLogout();
   const { token } = theme.useToken();
   const [email, setEmail] = useState<string>("");
@@ -40,7 +46,7 @@ export function JabaliHeader() {
         padding: "0 24px",
         display: "flex",
         alignItems: "center",
-        justifyContent: "flex-end",
+        justifyContent: "space-between",
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
         // Refine's ThemedLayoutV2 uses position: sticky by default; match
         // that so the header stays pinned when the content scrolls.
@@ -49,6 +55,8 @@ export function JabaliHeader() {
         zIndex: 1,
       }}
     >
+      <JabaliTitle text={brand} />
+
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
         <ThemeToggle />
         <Dropdown menu={{ items: userMenu }} placement="bottomRight">

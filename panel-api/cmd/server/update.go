@@ -100,6 +100,25 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 					"install -m 0644 "+repoDir+"/install/systemd/jabali-fpm@.service /etc/systemd/system/jabali-fpm@.service; "+
 					"systemctl daemon-reload")
 		}},
+		{"sync static assets", func() error {
+			// Mirror the file-writing half of install_php_pool_template()
+			// and ensure_user_and_dirs() from install.sh so template or
+			// group-membership changes land on update. apt package installs
+			// and systemd service creation stay in install.sh — update is
+			// for hosts that already booted once.
+			return run("", "bash", "-c",
+				"set -e; "+
+					"install -d -m 0755 -o root -g root /etc/jabali-panel/fpm; "+
+					"install -d -m 0755 -o root -g root /etc/jabali-panel/user-phpver; "+
+					// pool template — changes here affect every future
+					// pool-apply for every user.
+					"install -m 0644 "+repoDir+"/install/php/jabali-php-pool.conf.tmpl /etc/jabali-panel/php-pool.conf.tmpl; "+
+					// jabali service user in www-data group — needed for
+					// the reconciler's per-user FPM socket stat-check.
+					// usermod is idempotent; 'groups | grep -w' avoids an
+					// unnecessary write when already a member.
+					"groups "+serviceUser+" | grep -qw www-data || usermod -aG www-data "+serviceUser)
+		}},
 		{"npm ci", func() error {
 			return asUser(repoDir+"/panel-ui", "npm", "ci", "--no-audit", "--no-fund")
 		}},

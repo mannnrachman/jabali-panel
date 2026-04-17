@@ -36,6 +36,7 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0021](0021-m7-database-entity-lifecycle.md) | M7 Databases — Entity lifecycle (naming, quota, cascade, password) | Accepted |
 | [0022](0022-m7-phpmyadmin-sso-shadow-account-and-uds.md) | M7 phpMyAdmin SSO — shadow admin account + UDS validate transport | Accepted — Parked pending M9 (2026-04-17) |
 | [0023](0023-m9-php-fpm-pool-manager.md) | M9 PHP/FPM pool manager | Accepted |
+| [0025](0025-per-user-systemd-slices.md) | Per-user systemd slices | Accepted |
 
 ## Decision Categories
 

@@ -1,9 +1,10 @@
-# ADR-0023: M9 — PHP/FPM pool manager (per-user, multi-version)
-
 **Date:** 2026-04-17
 **Status:** Accepted
 **Deciders:** Shuki
 
+**Cross-reference (2026-04-18):** Runtime placement of per-user pools refined by ADR-0025 (per-user systemd slices). The pool-per-user decision in §3 stands; ADR-0025 specifies the systemd unit + slice placement that hosts those pools.
+
+## Context
 ## Context
 
 Jabali installs nginx but has no PHP today. Hosting users cannot run WordPress,

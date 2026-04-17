@@ -336,6 +336,8 @@ guards (checks for existing config files before overwriting).
 
 **Shipped:** Per-user PHP-FPM pools via Sury multi-version install, pool CRUD (admin), per-domain PHP version binding (user), ini overrides (allowlisted directives), reconciler ensures default pool per user + applies pending changes, nginx vhost renders PHP block from `domain.php_pool_id`.
 
+**Placement:** see ADR-0025 for per-user systemd slice design (in-flight via plans/per-user-systemd-slices.md).
+
 **Files:**
 - API: `panel-api/internal/api/php_pools.go`, `domain_php_pool.go`
 - Models: `panel-api/internal/models/php_pool.go`, `php_pool_ini_override.go`

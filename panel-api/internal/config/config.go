@@ -32,14 +32,15 @@ const (
 // Config is the root configuration struct. Sections map to TOML tables and to
 // grouped env-var prefixes.
 type Config struct {
-	Server ServerConfig   `toml:"server"`
-	Log    LogConfig      `toml:"log"`
+	Server   ServerConfig   `toml:"server"`
+	Log      LogConfig      `toml:"log"`
 	Database DatabaseConfig `toml:"database"`
-	Auth   AuthConfig     `toml:"auth"`
-	Agent  AgentConfig    `toml:"agent"`
-	CORS   CORSConfig     `toml:"cors"`
-	PDNS   PDNSConfig     `toml:"pdns"`
-	ACME   ACMEConfig     `toml:"acme"`
+	Auth     AuthConfig     `toml:"auth"`
+	Agent    AgentConfig    `toml:"agent"`
+	CORS     CORSConfig     `toml:"cors"`
+	PDNS     PDNSConfig     `toml:"pdns"`
+	ACME     ACMEConfig     `toml:"acme"`
+	SSO      SSOConfig      `toml:"sso"`
 }
 
 // ServerConfig controls HTTP listener and runtime mode.
@@ -125,6 +126,13 @@ type ACMEConfig struct {
 	StagingOnly bool `toml:"staging_only"`
 }
 
+// SSOConfig holds SSO-related paths, including the envelope key for phpMyAdmin.
+type SSOConfig struct {
+	// KeyPath is the filesystem path to the AES-256-GCM envelope key (32 bytes).
+	// Missing key is not fatal; SSO features simply unavailable.
+	KeyPath string `toml:"key_path"`
+}
+
 // Defaults returns a Config populated with sensible development defaults.
 // Required-in-production fields (JWT secret, database URL, agent socket)
 // are intentionally blank; Validate() enforces them.
@@ -149,6 +157,9 @@ func Defaults() *Config {
 			// Per-call ctx.Deadline() overrides this when tighter.
 			Timeout:            30 * time.Second,
 			ReconcilerInterval: 60 * time.Second,
+		},
+		SSO: SSOConfig{
+			KeyPath: "/etc/jabali-panel/sso.key",
 		},
 	}
 }
@@ -248,6 +259,9 @@ func applyEnv(cfg *Config) error {
 	}
 	if v := os.Getenv("JABALI_ACME_STAGING_ONLY"); v != "" {
 		cfg.ACME.StagingOnly = v == "true" || v == "1"
+	}
+	if v := os.Getenv("JABALI_SSO_KEY_PATH"); v != "" {
+		cfg.SSO.KeyPath = v
 	}
 	return nil
 }

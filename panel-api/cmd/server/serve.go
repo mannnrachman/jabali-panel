@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
 const (
@@ -77,10 +79,26 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	log.Info("agent client configured", "socket", cfg.Agent.SocketPath)
 
+	// ---- SSO key ----
+	// Deps.SSOKey stays nil when the key file is absent; the SSO handler
+	// refuses requests in that state so the feature is opt-in without
+	// blocking startup on a missing file.
+	var ssoKeyPtr *ssokey.Key
+	if ssoKey, err := ssokey.Load(cfg.SSO.KeyPath); err == nil {
+		k := ssoKey
+		ssoKeyPtr = &k
+		log.Info("SSO key loaded", "path", cfg.SSO.KeyPath)
+	} else if errors.Is(err, ssokey.ErrKeyMissing) {
+		log.Warn("SSO key not found (phpMyAdmin SSO disabled)", "path", cfg.SSO.KeyPath)
+	} else {
+		return fmt.Errorf("failed to load SSO key: %w", err)
+	}
+
 	// ---- auth + deps ----
 	var deps app.Deps
 	deps.Agent = sharedAgent
 	deps.Log = log
+	deps.SSOKey = ssoKeyPtr
 	if sharedDB != nil {
 		userRepo := repository.NewUserRepository(sharedDB)
 		tokenRepo := repository.NewRefreshTokenRepository(sharedDB)
@@ -126,8 +144,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 			sharedAgent,
 			sharedLog,
 			reconciler.Config{
-				Interval:  cfg.Agent.ReconcilerInterval,
-				QueueLen:  100,
+				Interval: cfg.Agent.ReconcilerInterval,
+				QueueLen: 100,
 			},
 		)
 		rec.WithDNSRepos(dnsZoneRepo, dnsRecordRepo, serverSettingsRepo)

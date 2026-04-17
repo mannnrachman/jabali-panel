@@ -16,6 +16,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssokey"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/webui"
 	panelui "git.linux-hosting.co.il/shukivaknin/jabali2/panel-ui"
 )
@@ -39,6 +40,7 @@ type Deps struct {
 	DNSZones            repository.DNSZoneRepository
 	DNSRecords          repository.DNSRecordRepository
 	SSLCerts            repository.SSLCertificateRepository
+	SSOKey              *ssokey.Key
 	Log                 *slog.Logger
 }
 
@@ -122,20 +124,20 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		v1 := r.Group("/api/v1", middleware.RequireAuth(deps.JWTIssuer))
 		api.RegisterMeRoutes(v1)
 		if deps.Users != nil {
-		api.RegisterUserRoutes(v1, api.UserHandlerConfig{
-			Repo:            deps.Users,
-			Agent:           deps.Agent,
-			StrictRateLimit: rl.Strict(),
-			Domains:         deps.Domains,
-			Reconciler:      deps.Reconciler,
-			AuthService:     deps.Auth,
-			AccessTTL:       cfg.Auth.AccessTTL,
-			RefreshTTL:      cfg.Auth.RefreshTTL,
-			CookieName:      api.DefaultRefreshCookieName,
-			CookieSecure:    cfg.CookieSecureResolved(),
-			Log:             deps.Log,
-		})
-	}
+			api.RegisterUserRoutes(v1, api.UserHandlerConfig{
+				Repo:            deps.Users,
+				Agent:           deps.Agent,
+				StrictRateLimit: rl.Strict(),
+				Domains:         deps.Domains,
+				Reconciler:      deps.Reconciler,
+				AuthService:     deps.Auth,
+				AccessTTL:       cfg.Auth.AccessTTL,
+				RefreshTTL:      cfg.Auth.RefreshTTL,
+				CookieName:      api.DefaultRefreshCookieName,
+				CookieSecure:    cfg.CookieSecureResolved(),
+				Log:             deps.Log,
+			})
+		}
 		if deps.Packages != nil {
 			api.RegisterPackageRoutes(v1, api.PackageHandlerConfig{Repo: deps.Packages})
 		}

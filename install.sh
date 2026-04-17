@@ -1072,6 +1072,30 @@ start_and_verify() {
   rm -f /tmp/jabali-health.json
 }
 
+# ---------- step: SSO key generation ----------------------------------------
+
+install_sso_key() {
+  local sso_key_path="/etc/jabali-panel/sso.key"
+
+  # If the key already exists, skip.
+  if [[ -f "$sso_key_path" ]]; then
+    _ok "SSO key already exists at $sso_key_path"
+    return
+  fi
+
+  _log "generating SSO envelope key (32 bytes AES-256-GCM)"
+
+  # Ensure directory exists with correct permissions.
+  mkdir -p /etc/jabali-panel
+  chmod 0755 /etc/jabali-panel
+
+  # Generate 32 random bytes and write to file with restrictive permissions.
+  dd if=/dev/urandom of="$sso_key_path" bs=1 count=32 2>/dev/null
+  chmod 0600 "$sso_key_path"
+
+  _ok "SSO key created at $sso_key_path"
+}
+
 # ---------- main ------------------------------------------------------------
 
 main() {
@@ -1096,6 +1120,7 @@ main() {
   write_config_file
   provision_tls_cert
   seed_admin_env
+  install_sso_key
   write_agent_systemd_unit
   write_systemd_unit
   start_and_verify_agent

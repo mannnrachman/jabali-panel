@@ -1,5 +1,7 @@
 # ADR-0022: M7 phpMyAdmin SSO — shadow admin account + UDS validate transport
 
+> **Parked 2026-04-17** — depends on M9 (ADR-0023) for pool infrastructure. Resumes after M9 ships. Four SSO foundation commits remain.
+
 **Date:** 2026-04-17
 **Status:** Accepted — supersedes parts of ADR-0020
 **Deciders:** Shuki

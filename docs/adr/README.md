@@ -34,7 +34,8 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0019](0019-m7-per-database-grants-only.md) | M7 Databases — Per-database grants only (rw/ro), defer per-table | Accepted |
 | [0020](0020-m7-phpmyadmin-sso-signon-proxy.md) | M7 phpMyAdmin SSO via server-side signon proxy + single-use token | Accepted (partially superseded by ADR-0022) |
 | [0021](0021-m7-database-entity-lifecycle.md) | M7 Databases — Entity lifecycle (naming, quota, cascade, password) | Accepted |
-| [0022](0022-m7-phpmyadmin-sso-shadow-account-and-uds.md) | M7 phpMyAdmin SSO — shadow admin account + UDS validate transport | Accepted (supersedes parts of ADR-0020) |
+| [0022](0022-m7-phpmyadmin-sso-shadow-account-and-uds.md) | M7 phpMyAdmin SSO — shadow admin account + UDS validate transport | Accepted — Parked pending M9 (2026-04-17) |
+| [0023](0023-m9-php-fpm-pool-manager.md) | M9 PHP/FPM pool manager | Accepted |
 
 ## Decision Categories
 

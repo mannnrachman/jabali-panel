@@ -810,9 +810,9 @@ Use this table to navigate the codebase when adding a new capability:
 | M5a: Admin Impersonation | 2026-04-17 | `7bc292f`, `5b14b4c` |
 | M5b: Break-Glass CLI Login | 2026-04-17 | `c587144` |
 | M6: Email (Stalwart) | Planned | — |
-| M7: Databases | Planned | — |
+| M7: Databases | Planned (Tranche E parked pending M9) | — |
 | M8: Cron | Planned | — |
-| M9: PHP/FPM pools | Planned | — |
+| M9: PHP/FPM pools | In flight | — |
 | M10: WordPress | Planned | — |
 | M11: FileBrowser | Planned | — |
 | M12: Stats & monitoring | Planned | — |

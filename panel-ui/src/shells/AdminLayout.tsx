@@ -1,95 +1,34 @@
 // AdminLayout.tsx — chrome for the admin shell.
 //
-// Layout: full-width header across the top, sider + content below.
-// ThemedLayoutV2 was painting the header beside the sider and forcing a
-// "Refine Project" title box in the top-left — both fixed here by
-// using AntD's plain Layout primitives and driving our own nav items
-// from the shell-scoped resource list.
-//
-// Styling: sider + menu colors match ThemedLayoutV2 by using AntD tokens
-// so both light and dark themes look consistent with Refine's default.
-import { useResource } from "@refinedev/core";
-import { Layout, Menu, theme } from "antd";
-import type { ReactNode } from "react";
-import { useState } from "react";
-import { Outlet, useLocation, useNavigate } from "react-router";
+// Uses Refine's <ThemedLayoutV2> directly: the Sider column (with our
+// shell-filtered menu) on the left, Header band with search + theme
+// toggle + user dropdown to the right of the sider, and the brand
+// logo in the Sider's Title slot at the top-left. This is the same
+// outer structure as Refine's official templates (e.g. refinefoods)
+// — the only overrides are the three slot components.
+import { ThemedLayoutV2 } from "@refinedev/antd";
+import { Outlet } from "react-router";
 
 import { JabaliHeader } from "../components/JabaliHeader";
-import { useThemeMode } from "../theme/ThemeModeContext";
+import { JabaliTitle } from "../components/JabaliTitle";
+import { buildShellSider } from "./shellSider";
 
-const { Sider, Content } = Layout;
+const AdminSider = buildShellSider("admin");
 
-interface ResourceMeta {
-  label?: string;
-  icon?: ReactNode;
-  shell?: string;
+// Small wrapper so Refine's TitleProps contract (`{ collapsed }`) maps
+// to our JabaliTitle while injecting the admin-specific brand text.
+function AdminTitle({ collapsed }: { collapsed: boolean }) {
+  return <JabaliTitle collapsed={collapsed} text="Jabali Admin" />;
 }
 
 export function AdminLayout() {
-  const { resources } = useResource();
-  const navigate = useNavigate();
-  const location = useLocation();
-  const [collapsed, setCollapsed] = useState(false);
-  const { token } = theme.useToken();
-  const { mode } = useThemeMode();
-
-  // Filter resources to this shell; meta.shell is the only thing
-  // distinguishing admin nav from user nav since both shells share
-  // one <Refine> instance.
-  const shellResources = (resources || []).filter(
-    (r) => ((r.meta as ResourceMeta) ?? {}).shell === "admin",
-  );
-
-  // Longest-prefix match so nested routes
-  // (e.g. /jabali-admin/domains/create) highlight "domains".
-  const selectedKey =
-    [...shellResources]
-      .sort((a, b) => (b.list as string).length - (a.list as string).length)
-      .find((r) => location.pathname.startsWith(r.list as string))?.name ?? "";
-
-  const items = shellResources.map((r) => {
-    const meta = (r.meta as ResourceMeta) ?? {};
-    return {
-      key: r.name,
-      icon: meta.icon,
-      label: meta.label ?? r.name,
-      onClick: () => {
-        if (typeof r.list === "string") navigate(r.list);
-      },
-    };
-  });
-
   return (
-    <Layout style={{ minHeight: "100vh" }}>
-      <JabaliHeader brand="Jabali Admin" />
-      <Layout>
-        <Sider
-          width={220}
-          breakpoint="md"
-          collapsible
-          collapsed={collapsed}
-          onCollapse={setCollapsed}
-          theme={mode === "dark" ? "dark" : "light"}
-          style={{
-            backgroundColor: token.colorBgContainer,
-            borderRight: `1px solid ${token.colorBgElevated}`,
-          }}
-        >
-          <Menu
-            mode="inline"
-            selectedKeys={selectedKey ? [selectedKey] : []}
-            items={items}
-            style={{
-              paddingTop: "8px",
-              border: "none",
-              backgroundColor: token.colorBgContainer,
-            }}
-          />
-        </Sider>
-        <Content>
-          <Outlet />
-        </Content>
-      </Layout>
-    </Layout>
+    <ThemedLayoutV2
+      Title={AdminTitle}
+      Header={JabaliHeader}
+      Sider={AdminSider}
+    >
+      <Outlet />
+    </ThemedLayoutV2>
   );
 }

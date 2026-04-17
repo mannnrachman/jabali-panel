@@ -1,20 +1,22 @@
 // JabaliTitle — brand lockup (SVG + wordmark), theme-aware.
 //
+// Rendered in the Title slot of Refine's ThemedLayoutV2 (i.e. at the
+// top-left of the Sider). Refine passes `collapsed: boolean` when the
+// sider collapses; we shrink to icon-only in that state.
+//
 // Chooses the light or dark SVG variant from the current theme mode so
-// it reads correctly against AntD's header/content backgrounds. Text
-// colour inherits from the parent so it matches the header tokens.
+// it reads correctly against the sider background.
 import { useThemeMode } from "../theme/ThemeModeContext";
 
 interface JabaliTitleProps {
+  /** Refine's TitleProps contract. */
+  collapsed?: boolean;
+  /** Override text. Defaults to the product name. */
   text?: string;
-  /** When true, hide the wordmark and render only the icon. */
-  iconOnly?: boolean;
 }
 
-export function JabaliTitle({ text = "Jabali Panel", iconOnly = false }: JabaliTitleProps) {
+export function JabaliTitle({ collapsed = false, text = "Jabali Panel" }: JabaliTitleProps) {
   const { mode } = useThemeMode();
-  // Light theme → default-fill (dark) SVG reads on white bg.
-  // Dark theme  → white-fill SVG reads on near-black bg.
   const src = mode === "dark" ? "/images/jabali_logo_dark.svg" : "/images/jabali_logo.svg";
 
   return (
@@ -23,6 +25,7 @@ export function JabaliTitle({ text = "Jabali Panel", iconOnly = false }: JabaliT
         display: "flex",
         alignItems: "center",
         gap: 10,
+        padding: "0 4px",
       }}
     >
       <img
@@ -30,7 +33,7 @@ export function JabaliTitle({ text = "Jabali Panel", iconOnly = false }: JabaliT
         alt="Jabali"
         style={{ height: 28, width: "auto", flexShrink: 0 }}
       />
-      {!iconOnly && (
+      {!collapsed && (
         <span style={{ fontSize: 16, fontWeight: 600, letterSpacing: 0.5 }}>
           {text}
         </span>

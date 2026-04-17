@@ -50,3 +50,11 @@ logs/
 /jabali-agent
 /panel-api/server
 /panel-agent/jabali-agent
+
+# Playwright MCP browser cache (per-run artefacts)
+.playwright-mcp/
+
+# Design iteration screenshots (keep under docs/ instead)
+*.png
+!panel-ui/public/**/*.png
+!docs/**/*.png

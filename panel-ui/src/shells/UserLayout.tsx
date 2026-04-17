@@ -65,6 +65,7 @@ export function UserLayout() {
           collapsible
           collapsed={collapsed}
           onCollapse={setCollapsed}
+          theme={mode === "dark" ? "dark" : "light"}
         >
           <Menu
             theme={mode === "dark" ? "dark" : "light"}

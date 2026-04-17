@@ -1,6 +1,7 @@
 import { useTable } from "@refinedev/antd";
 import { DeleteButton, EditButton } from "@refinedev/antd";
 import { SearchableTable } from "../../../components/SearchableTable";
+import { readQValue } from "../../../components/searchableTableUtils";
 import { Button, Space, Table, Tag, Typography } from "antd";
 import { GlobalOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router";
@@ -28,10 +29,11 @@ export type Domain = {
 
 export const DomainList = () => {
   const navigate = useNavigate();
-  const { tableProps, setFilters } = useTable<Domain>({
+  const { tableProps, setFilters, filters } = useTable<Domain>({
     resource: "domains",
     syncWithLocation: true,
   });
+  const initialSearch = readQValue(filters);
 
   return (
     <div style={{ padding: 24 }}>
@@ -51,6 +53,7 @@ export const DomainList = () => {
         {...tableProps}
         rowKey="id"
         bordered
+        initialSearch={initialSearch}
         searchPlaceholder="Search by domain name"
         onSearchChange={(filters) => setFilters(filters, "replace")}
       >
@@ -96,7 +99,7 @@ export const DomainList = () => {
               <DomainIndexButton domain={r} />
               <DomainSettingsButton domain={r} />
               <DomainToggleButton domain={r} />
-              <EditButton hideText size="small" recordItemId={r.id} />
+              <EditButton hideText size="small" type="text" recordItemId={r.id} />
               <DeleteButton hideText size="small" type="text" resource="domains" recordItemId={r.id} />
             </Space>
           )}

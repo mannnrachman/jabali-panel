@@ -35,3 +35,27 @@ func TestPickSort_EmptyFallbackMeansNoOrder(t *testing.T) {
 	got := pickSort("unknown", []string{"email"}, "")
 	assert.Equal(t, "", got)
 }
+
+func TestLikeEscape(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"plain", `plain`},
+		{"50%", `50\%`},
+		{"foo_bar", `foo\_bar`},
+		{`back\slash`, `back\\slash`},
+		{`%_\`, `\%\_\\`},
+		{"", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.in, func(t *testing.T) {
+			assert.Equal(t, tc.want, likeEscape(tc.in))
+		})
+	}
+}
+
+func TestMaxSearchLenConstant(t *testing.T) {
+	// The cap is a security knob. If it ever changes, a test failure
+	// here forces whoever changed it to think about why.
+	assert.Equal(t, 128, maxSearchLen)
+}

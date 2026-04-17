@@ -2,6 +2,7 @@ import { useTable } from "@refinedev/antd";
 import { Space, Table, Tag, Typography } from "antd";
 import { CreateButton, DeleteButton, EditButton } from "@refinedev/antd";
 import { SearchableTable } from "../../../components/SearchableTable";
+import { readQValue } from "../../../components/searchableTableUtils";
 
 type Package = {
   id: string;
@@ -19,10 +20,11 @@ type Package = {
 };
 
 export const PackageList = () => {
-  const { tableProps, setFilters } = useTable<Package>({
+  const { tableProps, setFilters, filters } = useTable<Package>({
     resource: "packages",
     syncWithLocation: true,
   });
+  const initialSearch = readQValue(filters);
 
   // "∞" for 0 quotas keeps the cell readable instead of printing 0.
   const formatQuota = (value: number) => (value === 0 ? "∞" : value);
@@ -46,6 +48,7 @@ export const PackageList = () => {
         {...tableProps}
         rowKey="id"
         bordered
+        initialSearch={initialSearch}
         searchPlaceholder="Search by package name"
         onSearchChange={(filters) => setFilters(filters, "replace")}
       >
@@ -97,8 +100,8 @@ export const PackageList = () => {
           dataIndex="actions"
           render={(_: unknown, r: Package) => (
             <Space>
-              <EditButton hideText size="small" recordItemId={r.id} />
-              <DeleteButton hideText size="small" recordItemId={r.id} />
+              <EditButton hideText size="small" type="text" recordItemId={r.id} />
+              <DeleteButton hideText size="small" type="text" recordItemId={r.id} />
             </Space>
           )}
         />

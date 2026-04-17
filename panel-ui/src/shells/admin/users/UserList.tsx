@@ -8,6 +8,7 @@
 import { useTable, EditButton, CreateButton } from "@refinedev/antd";
 import { Space, Table, Tag, Typography } from "antd";
 import { SearchableTable } from "../../../components/SearchableTable";
+import { readQValue } from "../../../components/searchableTableUtils";
 import { UserDeleteAction } from "./UserDeleteAction";
 import { UserImpersonateAction } from "./UserImpersonateAction";
 
@@ -21,9 +22,10 @@ type User = {
 };
 
 export const UserList = () => {
-  const { tableProps, setFilters } = useTable<User>({
+  const { tableProps, setFilters, filters } = useTable<User>({
     syncWithLocation: true,
   });
+  const initialSearch = readQValue(filters);
 
   return (
     <div style={{ padding: 24 }}>
@@ -44,6 +46,7 @@ export const UserList = () => {
         {...tableProps}
         rowKey="id"
         bordered
+        initialSearch={initialSearch}
         searchPlaceholder="Search by email, username, or name"
         onSearchChange={(filters) => setFilters(filters, "replace")}
       >
@@ -83,7 +86,7 @@ export const UserList = () => {
                 userEmail={r.email}
                 isAdmin={r.is_admin}
               />
-              <EditButton hideText size="small" recordItemId={r.id} />
+              <EditButton hideText size="small" type="text" recordItemId={r.id} />
               <UserDeleteAction recordItemId={r.id} userEmail={r.email} />
             </Space>
           )}

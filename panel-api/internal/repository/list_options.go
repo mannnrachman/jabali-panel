@@ -45,16 +45,45 @@ type ListCols struct {
 //   - Sort direction defaults to DESC on the default column; explicit
 //     Sort+Order can flip it.
 //   - Empty Limit leaves the query unbounded (callers should clamp).
+// maxSearchLen is the hard cap on free-text search length. 128 chars is
+// ample for realistic email/name fragment searches and prevents a
+// caller from forcing giant LIKE scans with a megabyte-long pattern.
+const maxSearchLen = 128
+
+// likeEscape backslash-escapes the LIKE metacharacters %, _, and the
+// escape character itself, so a user search for "50% off" matches
+// literally rather than acting as a wildcard. Used together with
+// ESCAPE '\\' on the LIKE clause.
+func likeEscape(s string) string {
+	return likeReplacer.Replace(s)
+}
+
+var likeReplacer = strings.NewReplacer(
+	`\`, `\\`,
+	`%`, `\%`,
+	`_`, `\_`,
+)
+
 func applyListOptions(base *gorm.DB, opts ListOptions, cols ListCols) *gorm.DB {
 	q := base
 
 	if s := strings.TrimSpace(opts.Search); s != "" && len(cols.Search) > 0 {
-		pattern := "%" + s + "%"
-		// Build "col1 LIKE ? OR col2 LIKE ? OR …" with a single args slice.
+		// Cap the search length so a pathological caller can't make us
+		// do 256KB-string LIKE scans on every list request. 128 chars is
+		// plenty for "find user by email fragment" style searches.
+		if len(s) > maxSearchLen {
+			s = s[:maxSearchLen]
+		}
+		// Escape the LIKE wildcards (%, _) so a user searching for
+		// "50% off" doesn't accidentally match everything. `\` is the
+		// default LIKE escape character in MariaDB; we declare it
+		// explicitly with ESCAPE '\\' per clause so the behaviour is
+		// not driven by the session-level sql_mode.
+		pattern := "%" + likeEscape(s) + "%"
 		clauses := make([]string, 0, len(cols.Search))
 		args := make([]any, 0, len(cols.Search))
 		for _, c := range cols.Search {
-			clauses = append(clauses, c+" LIKE ?")
+			clauses = append(clauses, c+" LIKE ? ESCAPE '\\\\'")
 			args = append(args, pattern)
 		}
 		q = q.Where(strings.Join(clauses, " OR "), args...)

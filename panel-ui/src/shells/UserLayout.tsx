@@ -12,6 +12,7 @@ import { useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router";
 
 import { JabaliHeader } from "../components/JabaliHeader";
+import { useThemeMode } from "../theme/ThemeModeContext";
 
 const { Sider, Content } = Layout;
 
@@ -26,6 +27,7 @@ export function UserLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
+  const { mode } = useThemeMode();
 
   // Filter resources to this shell; meta.shell is the only thing
   // distinguishing admin nav from user nav since both shells share
@@ -65,7 +67,7 @@ export function UserLayout() {
           onCollapse={setCollapsed}
         >
           <Menu
-            theme="dark"
+            theme={mode === "dark" ? "dark" : "light"}
             mode="inline"
             selectedKeys={selectedKey ? [selectedKey] : []}
             items={items}

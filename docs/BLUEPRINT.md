@@ -847,7 +847,7 @@ Use this table to navigate the codebase when adding a new capability:
 | M6: Email (Stalwart) | Planned | — |
 | M7: Databases | Planned (Tranche E parked pending M9) | — |
 | M8: Cron | Planned | — |
-| M9: PHP/FPM pools | 2026-04-17 | 1aaa507 (ADR), [final-commit] (shipped) |
+| M9: PHP/FPM pools | 2026-04-17 | 1aaa507 (ADR), 5dbf471 (shipped) |
 | M10: WordPress | Planned | — |
 | M11: FileBrowser | Planned | — |
 | M12: Stats & monitoring | Planned | — |

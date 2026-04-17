@@ -1,0 +1,29 @@
+; Rendered by panel-agent's php.pool.apply command.
+; DO NOT EDIT by hand — regenerated from DB by jabali-panel reconciler.
+; Source template: install/php/jabali-php-pool.conf.tmpl
+[{{.PoolName}}]
+user = {{.User}}
+group = {{.Group}}
+listen = {{.SocketPath}}
+listen.owner = {{.User}}
+listen.group = www-data
+listen.mode = 0660
+pm = {{.PmMode}}
+pm.max_children = {{.PmMaxChildren}}
+pm.process_idle_timeout = {{.ProcessIdleTimeoutSeconds}}s
+chdir = /home/{{.User}}
+security.limit_extensions = .php
+; Jailbreak defense (ADR-0023 decision 12). open_basedir is hard-coded
+; and NOT in the user-facing ini-override allowlist; users cannot
+; loosen it. Without this, a user could symlink shell.jpg to a .php
+; file outside their docroot and bypass security.limit_extensions.
+php_admin_value[open_basedir] = /home/{{.User}}:/tmp:/var/tmp
+; Opcache SHM cap. Conservative 32MB per pool keeps total bounded on
+; shared-host boxes (20 users × 32MB = 640MB). Tune in the runbook.
+php_admin_value[opcache.memory_consumption] = 32
+{{- range .AdminValues }}
+php_admin_value[{{.Name}}] = {{.Value}}
+{{- end }}
+{{- range .AdminFlags }}
+php_admin_flag[{{.Name}}] = {{.Value}}
+{{- end }}

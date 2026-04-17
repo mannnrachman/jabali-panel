@@ -325,6 +325,70 @@ install_nginx() {
   systemctl start nginx 2>/dev/null || true
 }
 
+# ---------- step 1b2: PHP/FPM (multi-version via Sury) -------------------------
+
+_install_sury_source() {
+  # Sury GPG fingerprint validation. Source: https://packages.sury.org/php/README.txt
+  # Last verified: 2026-04-17 (DPA CA Certificate, Ondřej Surý)
+  local SURY_GPG_FINGERPRINT="15058500A0235D97F5D10063B188E2B695BD4743"
+
+  [[ -f /etc/apt/sources.list.d/sury-php.list ]] && { _ok "Sury PHP source already configured"; return; }
+
+  _log "downloading and verifying Sury GPG key"
+  curl -fsSL https://packages.sury.org/php/apt.gpg -o /usr/share/keyrings/sury-php.gpg
+  gpg --show-keys /usr/share/keyrings/sury-php.gpg 2>/dev/null | grep -q "$SURY_GPG_FINGERPRINT" || \
+    _die "Sury GPG key fingerprint mismatch. Expected: $SURY_GPG_FINGERPRINT"
+  _ok "Sury GPG key validated"
+
+  cat > /etc/apt/sources.list.d/sury-php.list <<EOF
+deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main
+EOF
+  _ok "added Sury PHP repository"
+}
+
+_install_php_version() {
+  local version="$1"
+  if ! command -v "php${version}" >/dev/null 2>&1; then
+    _log "installing PHP ${version}"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      "php${version}-fpm" "php${version}-cli" "php${version}-mysql" \
+      "php${version}-mbstring" "php${version}-zip" "php${version}-gd" \
+      "php${version}-curl" "php${version}-xml" "php${version}-intl" \
+      "php${version}-bcmath" "php${version}-opcache"
+    _ok "PHP ${version} installed"
+  else
+    _ok "PHP ${version} already installed"
+  fi
+
+  local pool_file="/etc/php/${version}/fpm/pool.d/www.conf"
+  [[ -f "$pool_file" ]] && { mv "$pool_file" "${pool_file}.disabled"; _log "disabled default pool for PHP ${version}"; }
+
+  systemctl enable --quiet "php${version}-fpm.service"
+  if systemctl is-active --quiet "php${version}-fpm.service"; then
+    systemctl reload "php${version}-fpm.service"
+  else
+    systemctl start "php${version}-fpm.service"
+  fi
+  _ok "PHP ${version} FPM ready"
+}
+
+install_php() {
+  _log "installing PHP/FPM from Sury repository"
+  _install_sury_source
+  apt-get update -qq
+
+  local php_versions="${JABALI_PHP_VERSIONS:-8.2 8.3}"
+  local version
+  for version in $php_versions; do
+    _install_php_version "$version"
+  done
+
+  mkdir -p /etc/jabali-panel
+  local template_src="$REPO_DIR/install/php/jabali-php-pool.conf.tmpl"
+  local template_dst="/etc/jabali-panel/php-pool.conf.tmpl"
+  [[ -f "$template_src" ]] && install -m 0644 "$template_src" "$template_dst" && _ok "installed pool config template"
+}
+
 # ---------- step 1c: disabled page -------------------------------------------
 
 install_disabled_page() {
@@ -1103,6 +1167,7 @@ main() {
   prompt_server_settings
   install_base_packages
   install_nginx
+  install_php
   install_disabled_page
   install_node
   install_go

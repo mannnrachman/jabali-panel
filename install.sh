@@ -377,7 +377,10 @@ install_php() {
   _install_sury_source
   apt-get update -qq
 
-  local php_versions="${JABALI_PHP_VERSIONS:-8.2 8.3}"
+  # Default install is PHP 8.5 (current stable). Sury supports 7.4–8.5;
+  # set JABALI_PHP_VERSIONS to install additional versions side-by-side,
+  # e.g. JABALI_PHP_VERSIONS="7.4 8.2 8.5" bash install.sh
+  local php_versions="${JABALI_PHP_VERSIONS:-8.5}"
   local version
   for version in $php_versions; do
     _install_php_version "$version"

@@ -348,7 +348,7 @@ func (r *Reconciler) ReconcilePHPPools(ctx context.Context) {
 			pool = &models.PHPPool{
 				ID:                        ids.NewULID(),
 				UserID:                    user.ID,
-				PHPVersion:                "8.3",
+				PHPVersion:                "8.5",
 				PmMode:                    "ondemand",
 				PmMaxChildren:             20,
 				ProcessIdleTimeoutSeconds: 60,

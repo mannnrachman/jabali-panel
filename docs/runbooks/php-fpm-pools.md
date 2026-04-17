@@ -21,13 +21,13 @@ You need to support a new PHP version (e.g., 8.4) after initial install.
 ### Fix
 1. Set the env var and re-run install.sh with only PHP install step:
    ```bash
-   JABALI_PHP_VERSIONS="8.2 8.3 8.4" bash install.sh
+   JABALI_PHP_VERSIONS="7.4 8.2 8.5" bash install.sh
    ```
    The install script reads `JABALI_PHP_VERSIONS` and installs missing versions via `apt`.
 
 2. Verify all FPM services started:
    ```bash
-   systemctl status php8.2-fpm php8.3-fpm php8.4-fpm
+   systemctl status php7.4-fpm php8.2-fpm php8.5-fpm
    ```
 
 3. Verify socket files exist:
@@ -101,29 +101,29 @@ A domain served by a PHP pool returns 502 (Bad Gateway) or 504 (Gateway Timeout)
 ### Diagnosis
 1. Check the FPM service is running:
    ```bash
-   systemctl status php8.3-fpm  # replace 8.3 with the pool's php_version
+   systemctl status php8.5-fpm  # replace 8.5 with the pool's php_version
    ```
 
 2. Check FPM logs for errors:
    ```bash
-   journalctl -u php8.3-fpm -n 100
+   journalctl -u php8.5-fpm -n 100
    ```
 
 3. Check the pool config exists and is valid:
    ```bash
-   cat /etc/php/8.3/fpm/pool.d/jabali-<username>.conf
-   php-fpm8.3 -t -y /etc/php/8.3/fpm/pool.d/jabali-<username>.conf
+   cat /etc/php/8.5/fpm/pool.d/jabali-<username>.conf
+   php-fpm8.5 -t -y /etc/php/8.5/fpm/pool.d/jabali-<username>.conf
    ```
 
 4. Verify the socket is listening:
    ```bash
-   ls -la /run/php/php8.3-fpm.sock
+   ls -la /run/php/php8.5-fpm.sock
    ```
 
 ### Fix
 **Option 1: Restart the FPM service**
 ```bash
-systemctl restart php8.3-fpm
+systemctl restart php8.5-fpm
 ```
 
 **Option 2: Trigger reconciliation via API**
@@ -138,7 +138,7 @@ The reconciler will re-write the pool config and reload FPM.
 ### Verification
 1. Check FPM is running again:
    ```bash
-   systemctl is-active php8.3-fpm
+   systemctl is-active php8.5-fpm
    ```
 
 2. Test a simple PHP file:

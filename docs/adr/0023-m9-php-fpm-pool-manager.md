@@ -12,7 +12,7 @@ contains vestigial scaffolding that assumes PHP is available:
 
 - `panel-agent/internal/commands/domain_create.go:74` has an nginx vhost
   template with `fastcgi_pass unix:/run/php/php{{.PHPVersion}}-fpm-{{.Username}}.sock;`
-- `panel-api/internal/reconciler/reconciler.go:304` hard-codes `"php_version": "8.3"`
+- `panel-api/internal/reconciler/reconciler.go` hard-codes the default `php_version` (bumped from `"8.3"` to `"8.5"` on 2026-04-17)
   with a TODO to make it configurable
 - `panel-agent` already creates `/home/<username>` owned by
   `<username>:www-data` (mode 0750), ready for a pool to run there
@@ -29,7 +29,7 @@ design decisions. Each panel user gets exactly one pool (MVP constraint);
 that pool can be bound to multiple domains, each domain can select the PHP
 version independently, and admins can customize pool settings via an
 allowlisted ini-override mechanism. The Sury package repository provides
-multiple installed PHP versions; default version is 8.3.
+multiple installed PHP versions; default version is 8.5 (supported range 7.4–8.5).
 
 ---
 
@@ -40,7 +40,7 @@ multiple installed PHP versions; default version is 8.3.
 **Decision:** `install.sh` adds `packages.sury.org/php` (Sury's third-party
 Debian/Ubuntu repository), installs multiple PHP versions via their official
 signed packages, and accepts a configuration variable `--php-versions` to
-customize which versions are installed (default: `8.2 8.3`). The panel
+customize which versions are installed (default: `8.5`). The panel
 bundles a version matrix constant that enumerates all available versions.
 
 #### Alternatives considered
@@ -64,28 +64,40 @@ bundles a version matrix constant that enumerates all available versions.
 
 ---
 
-### 2. Default version is 8.3
+### 2. Default version is 8.5 (supported range: 7.4–8.5)
 
 **Decision:** When no explicit version is specified, the system defaults to
-PHP 8.3. This matches the existing hard-coded version in
-`reconciler.go:304` and minimizes disruption to any existing domain
-configurations once the default is made configurable.
+PHP 8.5 — the current stable release. The supported range is 7.4 through 8.5
+(via Sury). `install.sh` installs 8.5 by default; admins install additional
+versions side-by-side with `JABALI_PHP_VERSIONS="7.4 8.2 8.5" bash install.sh`.
+
+**Amended 2026-04-17:** bumped from 8.3 to 8.5; supported range explicitly
+documented as 7.4–8.5. Rationale: keep the default tracking the latest
+stable; preserve ability to install legacy versions (7.4) for sites that
+haven't migrated yet.
 
 #### Alternatives considered
 
-- **Default to 8.2 (older but stable).** Sury provides 8.2 as an LTS-adjacent
-  version. However, the codebase already hard-codes 8.3; changing the default
-  would force a migration step for existing zones. Rejected.
-- **Default to latest (8.4+).** Not yet released at planning time. Once
-  released, can be bumped in a future release; MVP pins 8.3. Rejected.
+- **Default to latest (current 8.5).** Chosen. Tracks upstream stable releases;
+  means new installs get modern PHP without admin intervention.
+- **Default to an older LTS-adjacent version (8.2 or 8.3).** Conservative but
+  leaves new installs on older releases; admins who want current PHP have to
+  remember to set `JABALI_PHP_VERSIONS`. Rejected.
+- **No default — force admin to specify.** Wrong default-experience trade-off
+  for a control panel; fresh installs should be usable out of the box. Rejected.
 
 #### Consequences
 
-- Existing domains migrating from hard-coded 8.3 see no version change.
-- If a domain creator does not specify a version, they get a stable, widely-used
-  PHP release.
-- Future major PHP versions (8.4, 9.0) must be explicitly added to the version
-  list in `install.sh`; they do not auto-appear.
+- Fresh installs get PHP 8.5 with no extra configuration.
+- Upgrading an existing install via `jabali-panel update` does **not**
+  automatically change a user's pool version — existing pools keep their
+  recorded `php_version`. Admin can edit a pool to bump it.
+- Bumping the default in a future release (e.g. to 8.6) requires editing
+  two places: `install.sh` (`php_versions=` default) and
+  `reconciler.go`'s `PHPVersion:` literal in the "Create default pool if
+  missing" block. Keep these in sync.
+- Versions outside 7.4–8.5 are not tested; Sury's availability of
+  other versions is out of scope.
 
 ---
 

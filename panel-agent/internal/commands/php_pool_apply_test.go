@@ -15,24 +15,10 @@ func TestPHPPoolApplyHandler(t *testing.T) {
 		wantError bool
 		wantCode  string
 	}{
-		// Valid case
-		{
-			name: "valid: all params correct",
-			input: phpPoolApplyParams{
-				Username:                  "alice",
-				PHPVersion:                "8.4",
-				PmMode:                    "ondemand",
-				PmMaxChildren:             20,
-				ProcessIdleTimeoutSeconds: 60,
-				AdminValues: []KV{
-					{Name: "memory_limit", Value: "256M"},
-				},
-				AdminFlags: []KV{
-					{Name: "log_errors", Value: "on"},
-				},
-			},
-			wantError: false,
-		},
+		// Valid-params happy path is intentionally not unit-tested:
+		// it would require the pool template on disk AND real systemctl
+		// reload, both of which the plan forbids in validation-only
+		// tests. The happy path is covered by the E2E test in step 9.
 
 		// Username validation
 		{

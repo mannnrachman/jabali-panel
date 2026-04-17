@@ -22,7 +22,7 @@ type phpVersionListResponse struct {
 func extractVersionFromPath(path string) (string, error) {
 	parts := strings.Split(path, "/")
 	// We expect parts[0]="", [1]="etc", [2]="php", [3]="VERSION", [4]="fpm", [5]="pool.d"
-	if len(parts) >= 4 && parts[1] == "etc" && parts[2] == "php" && parts[4] == "fpm" && parts[5] == "pool.d" {
+	if len(parts) >= 6 && parts[1] == "etc" && parts[2] == "php" && parts[4] == "fpm" && parts[5] == "pool.d" {
 		return parts[3], nil
 	}
 	return "", fmt.Errorf("invalid path format: %s", path)

@@ -1,1 +1,1 @@
-DROP TABLE IF EXISTS databases;
+DROP TABLE IF EXISTS `databases`;

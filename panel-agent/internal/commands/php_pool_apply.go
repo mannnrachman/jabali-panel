@@ -124,21 +124,6 @@ func globDeletePoolFiles(username string) (map[string]bool, error) {
 	return deletedVersions, nil
 }
 
-// reloadFPMService reloads the given PHP-FPM service via systemctl.
-// Skips reload if JABALI_PHP_POOL_SKIP_RELOAD env var is set (for testing).
-func reloadFPMService(ctx context.Context, version string) error {
-	// Skip reload in test environments.
-	if os.Getenv("JABALI_PHP_POOL_SKIP_RELOAD") != "" {
-		return nil
-	}
-	serviceName := fmt.Sprintf("php%s-fpm", version)
-	cmd := exec.CommandContext(ctx, "systemctl", "reload", serviceName)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to reload %s: %w", serviceName, err)
-	}
-	return nil
-}
-
 // restartOrReloadUserFPM handles per-user FPM service restart/reload.
 // If oldVersion == newVersion (and not empty), attempts reload via USR2.
 // If the reload fails (unit not loaded/inactive), falls back to restart.
@@ -396,7 +381,7 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 	}
 
 	// Delete stale pool files and collect versions that need reload.
-	deletedVersions, err := globDeletePoolFiles(p.Username)
+	_, err = globDeletePoolFiles(p.Username)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
@@ -488,18 +473,6 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
 			Message: err.Error(),
-		}
-	}
-
-	// Also reload any previously deleted versions (global FPM service, for backward compat).
-	for version := range deletedVersions {
-		if version != p.PHPVersion {
-			if err := reloadFPMService(ctx, version); err != nil {
-				return nil, &agentwire.AgentError{
-					Code:    agentwire.CodeInternal,
-					Message: fmt.Sprintf("failed to reload previous version %s: %v", version, err),
-				}
-			}
 		}
 	}
 

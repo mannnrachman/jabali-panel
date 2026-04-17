@@ -68,10 +68,12 @@ export const DatabaseUserCreate = () => {
 
   const onPasswordDismissed = () => {
     setRevealed(null);
-    // Relative navigation keeps this component shell-agnostic:
-    // admin sits at /jabali-admin/database-users/create, user at
-    // /jabali-panel/database-users/create, both pop up one segment.
-    navigate("..");
+    // DB Users list is stacked under /databases; navigate back there
+    // rather than the standalone /database-users path, which has no
+    // page component (resource is hidden from the sidebar).
+    // Works for both shells: from /jabali-{admin,panel}/database-users/create
+    // '../../databases' → /jabali-{admin,panel}/databases.
+    navigate("../../databases");
   };
 
   return (

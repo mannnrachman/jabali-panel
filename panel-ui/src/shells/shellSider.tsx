@@ -16,6 +16,10 @@ interface ResourceMeta {
   label?: string;
   icon?: ReactNode;
   shell?: string;
+  // `hidden: true` keeps the resource registered with Refine (so routing
+  // and data-provider resolution work) while skipping it in the sidebar.
+  // Useful for sub-resources that share a page with a parent entry.
+  hidden?: boolean;
 }
 
 /**
@@ -42,9 +46,10 @@ function ShellSiderMenu({ shell }: { shell: "admin" | "user" }) {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const shellResources = (resources || []).filter(
-    (r) => ((r.meta as ResourceMeta) ?? {}).shell === shell,
-  );
+  const shellResources = (resources || []).filter((r) => {
+    const meta = (r.meta as ResourceMeta) ?? {};
+    return meta.shell === shell && !meta.hidden;
+  });
 
   // Longest-prefix match so nested routes (e.g. /jabali-admin/domains/create)
   // still highlight the parent resource.

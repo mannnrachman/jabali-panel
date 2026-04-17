@@ -32,7 +32,6 @@ import {
   DashboardOutlined,
   DatabaseOutlined,
   GlobalOutlined,
-  KeyOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
   TeamOutlined,
@@ -56,17 +55,12 @@ import { PackageList } from "./shells/admin/packages/PackageList";
 import { DomainCreate } from "./shells/admin/domains/DomainCreate";
 import { DomainEdit } from "./shells/admin/domains/DomainEdit";
 import { DomainList } from "./shells/admin/domains/DomainList";
-import { DatabaseList } from "./shells/admin/databases/DatabaseList";
-import { DatabaseCreate } from "./shells/admin/databases/DatabaseCreate";
-import { DatabaseUsersList } from "./shells/admin/database-users/DatabaseUsersList";
-import { DatabaseUserCreate } from "./shells/admin/database-users/DatabaseUserCreate";
 import { ServerSettingsPage } from "./shells/admin/settings/ServerSettingsPage";
 import { MyProfile } from "./shells/user/MyProfile";
 import { UserDomainList } from "./shells/user/domains/UserDomainList";
 import { UserDomainCreate } from "./shells/user/domains/UserDomainCreate";
-import { UserDatabaseList } from "./shells/user/databases/UserDatabaseList";
+import { UserDatabasesPage } from "./shells/user/databases/UserDatabasesPage";
 import { UserDatabaseCreate } from "./shells/user/databases/UserDatabaseCreate";
-import { UserDatabaseUsersList } from "./shells/user/database-users/UserDatabaseUsersList";
 import { UserDatabaseUserCreate } from "./shells/user/database-users/UserDatabaseUserCreate";
 import { DNSRecordsPage } from "./shells/dns/DNSRecordsPage";
 import { DNSZonesOverviewPage } from "./shells/admin/dns/DNSZonesOverviewPage";
@@ -126,18 +120,6 @@ const ThemedApp = () => {
               meta: { label: "SSL", icon: <SafetyCertificateOutlined />, shell: "admin" },
             },
             {
-              name: "databases",
-              list: "/jabali-admin/databases",
-              create: "/jabali-admin/databases/create",
-              meta: { label: "Databases", icon: <DatabaseOutlined />, shell: "admin" },
-            },
-            {
-              name: "database-users",
-              list: "/jabali-admin/database-users",
-              create: "/jabali-admin/database-users/create",
-              meta: { label: "DB Users", icon: <KeyOutlined />, shell: "admin" },
-            },
-            {
               name: "settings",
               list: "/jabali-admin/settings",
               meta: { label: "Server Settings", icon: <SettingOutlined />, shell: "admin" },
@@ -172,10 +154,14 @@ const ThemedApp = () => {
               meta: { label: "Databases", icon: <DatabaseOutlined />, shell: "user" },
             },
             {
+              // Hidden — rendered inline below the databases list on
+              // the same page. The resource entry stays so the
+              // CreateButton inside the DB-users table can resolve the
+              // create path via Refine routing.
               name: "user-database-users",
               list: "/jabali-panel/database-users",
               create: "/jabali-panel/database-users/create",
-              meta: { label: "DB Users", icon: <KeyOutlined />, shell: "user" },
+              meta: { label: "DB Users", shell: "user", hidden: true },
             },
           ]}
           options={{
@@ -217,14 +203,6 @@ const ThemedApp = () => {
                 <Route path="edit/:id" element={<DomainEdit />} />
                 <Route path=":id/dns" element={<DNSRecordsPage />} />
               </Route>
-              <Route path="databases">
-                <Route index element={<DatabaseList />} />
-                <Route path="create" element={<DatabaseCreate />} />
-              </Route>
-              <Route path="database-users">
-                <Route index element={<DatabaseUsersList />} />
-                <Route path="create" element={<DatabaseUserCreate />} />
-              </Route>
               <Route path="dns" element={<DNSZonesOverviewPage />} />
               <Route path="ssl" element={<SSLManagerPage />} />
               <Route path="settings" element={<ServerSettingsPage />} />
@@ -252,11 +230,10 @@ const ThemedApp = () => {
                 <Route path=":id/dns" element={<DNSRecordsPage />} />
               </Route>
               <Route path="databases">
-                <Route index element={<UserDatabaseList />} />
+                <Route index element={<UserDatabasesPage />} />
                 <Route path="create" element={<UserDatabaseCreate />} />
               </Route>
               <Route path="database-users">
-                <Route index element={<UserDatabaseUsersList />} />
                 <Route path="create" element={<UserDatabaseUserCreate />} />
               </Route>
               <Route path="dns" element={<UserDNSZonesOverviewPage />} />

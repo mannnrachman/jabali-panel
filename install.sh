@@ -407,10 +407,20 @@ install_php() {
     _install_php_version "$version"
   done
 
+}
+
+# Install the FPM pool config template. Must run AFTER
+# clone_or_update_repo because the template file lives under $REPO_DIR.
+# The agent reads this path at runtime via php.pool.apply.
+install_php_pool_template() {
   mkdir -p /etc/jabali-panel
   local template_src="$REPO_DIR/install/php/jabali-php-pool.conf.tmpl"
   local template_dst="/etc/jabali-panel/php-pool.conf.tmpl"
-  [[ -f "$template_src" ]] && install -m 0644 "$template_src" "$template_dst" && _ok "installed pool config template"
+  if [[ ! -f "$template_src" ]]; then
+    _die "pool template missing at $template_src (is the repo clone complete?)"
+  fi
+  install -m 0644 "$template_src" "$template_dst"
+  _ok "installed pool config template at $template_dst"
 }
 
 # ---------- step 1c: disabled page -------------------------------------------
@@ -1204,6 +1214,7 @@ main() {
   install_powerdns
   setup_certbot
   clone_or_update_repo
+  install_php_pool_template
   build_frontend
   build_backend
   write_config_file

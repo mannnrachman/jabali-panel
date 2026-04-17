@@ -1,18 +1,19 @@
 // UserLayout.tsx — chrome for the user shell.
 //
-// e9fc63c replaced the hand-rolled sider with ThemedSiderV2 + a filter
-// on items[].key, but in Refine v4 the rendered item's key isn't the
-// bare resource name, so the filter dropped every item and sidebars
-// came up empty. Rather than re-derive the key mapping, we build the
-// <Menu> ourselves from the shell-filtered resources and hand it to
-// ThemedSiderV2's render prop — keeps the sider chrome (collapse,
-// theme integration) while giving us exact control over what shows.
-import { ThemedLayoutV2, ThemedSiderV2 } from "@refinedev/antd";
-import { JabaliHeader } from "../components/JabaliHeader";
+// Layout: full-width header across the top, sider + content below.
+// ThemedLayoutV2 was painting the header beside the sider and forcing a
+// "Refine Project" title box in the top-left — both fixed here by
+// using AntD's plain Layout primitives and driving our own nav items
+// from the shell-scoped resource list.
 import { useResource } from "@refinedev/core";
-import { Menu } from "antd";
+import { Layout, Menu } from "antd";
 import type { ReactNode } from "react";
+import { useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router";
+
+import { JabaliHeader } from "../components/JabaliHeader";
+
+const { Sider, Content } = Layout;
 
 interface ResourceMeta {
   label?: string;
@@ -24,9 +25,11 @@ export function UserLayout() {
   const { resources } = useResource();
   const navigate = useNavigate();
   const location = useLocation();
+  const [collapsed, setCollapsed] = useState(false);
 
-  // The meta.shell discriminator is the only thing distinguishing admin
-  // nav from user nav since both shells share one <Refine> instance.
+  // Filter resources to this shell; meta.shell is the only thing
+  // distinguishing admin nav from user nav since both shells share
+  // one <Refine> instance.
   const shellResources = (resources || []).filter(
     (r) => ((r.meta as ResourceMeta) ?? {}).shell === "user",
   );
@@ -51,24 +54,28 @@ export function UserLayout() {
   });
 
   return (
-    <ThemedLayoutV2
-      Header={() => <JabaliHeader brand="Jabali Panel" />}
-      Sider={(siderProps) => (
-        <ThemedSiderV2
-          {...siderProps}
-          render={() => (
-            <Menu
-              theme="dark"
-              mode="inline"
-              selectedKeys={selectedKey ? [selectedKey] : []}
-              items={items}
-              style={{ background: "transparent" }}
-            />
-          )}
-        />
-      )}
-    >
-      <Outlet />
-    </ThemedLayoutV2>
+    <Layout style={{ minHeight: "100vh" }}>
+      <JabaliHeader brand="Jabali Panel" />
+      <Layout>
+        <Sider
+          width={220}
+          breakpoint="md"
+          collapsible
+          collapsed={collapsed}
+          onCollapse={setCollapsed}
+        >
+          <Menu
+            theme="dark"
+            mode="inline"
+            selectedKeys={selectedKey ? [selectedKey] : []}
+            items={items}
+            style={{ background: "transparent", paddingTop: 8 }}
+          />
+        </Sider>
+        <Content>
+          <Outlet />
+        </Content>
+      </Layout>
+    </Layout>
   );
 }

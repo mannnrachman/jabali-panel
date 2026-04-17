@@ -30,6 +30,10 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0015](0015-admin-impersonation-jwt-claim.md) | Admin impersonation with `impersonated_by` JWT claim | Accepted |
 | [0016](0016-break-glass-cli-admin-login.md) | Break-glass admin login via CLI with `purpose=cli_login` claim | Accepted |
 | [0017](0017-ssl-try-acme-then-selfsigned-with-backoff.md) | SSL: try ACME first, fall back to self-signed, retry with backoff | Accepted |
+| [0018](0018-m7-mariadb-first-postgres-deferred.md) | M7 Databases — MariaDB first, Postgres deferred | Accepted |
+| [0019](0019-m7-per-database-grants-only.md) | M7 Databases — Per-database grants only (rw/ro), defer per-table | Accepted |
+| [0020](0020-m7-phpmyadmin-sso-signon-proxy.md) | M7 phpMyAdmin SSO via server-side signon proxy + single-use token | Accepted |
+| [0021](0021-m7-database-entity-lifecycle.md) | M7 Databases — Entity lifecycle (naming, quota, cascade, password) | Accepted |
 
 ## Decision Categories
 

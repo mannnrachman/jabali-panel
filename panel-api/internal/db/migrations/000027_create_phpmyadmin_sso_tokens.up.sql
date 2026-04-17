@@ -9,5 +9,5 @@ CREATE TABLE phpmyadmin_sso_tokens (
   INDEX idx_expires_at (expires_at),
   INDEX idx_user_id (user_id),
   FOREIGN KEY fk_sso_user (user_id) REFERENCES users(id) ON DELETE CASCADE,
-  FOREIGN KEY fk_sso_db (database_id) REFERENCES databases(id) ON DELETE CASCADE
+  FOREIGN KEY fk_sso_db (database_id) REFERENCES `databases`(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

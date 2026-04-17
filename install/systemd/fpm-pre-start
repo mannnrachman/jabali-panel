@@ -21,3 +21,29 @@ poolfile="/etc/php/${ver}/fpm/pool.d/jabali-${user}.conf"
 # creates it at package install time as root:root 0755.
 mkdir -p /run/php
 chmod 0755 /run/php
+
+# Per-user FPM runtime dir. FPM (after dropping to User=<user>) cannot
+# write to /run/php itself (www-data-owned), so we give it a user-owned
+# subdirectory to create its socket in. Group=www-data + mode=0750 lets
+# nginx traverse the dir to reach the socket but keeps it unreadable to
+# other hosting users.
+userrundir="/run/php/jabali-${user}"
+mkdir -p "$userrundir"
+chown "${user}:www-data" "$userrundir"
+chmod 0750 "$userrundir"
+
+# Pre-create the FPM error log owned by the hosting user. The per-user
+# config writes error_log to /var/log/php-fpm-<user>.log but /var/log
+# is root-owned, so FPM (which drops to user=<user> after starting)
+# cannot create the file itself. This shim runs as root (via "+"
+# prefix on ExecStartPre) so it can create+chown the file once.
+logfile="/var/log/php-fpm-${user}.log"
+if [[ ! -e "$logfile" ]]; then
+  install -m 0640 -o "$user" -g "$user" /dev/null "$logfile"
+else
+  # File already exists (e.g. left over from an older root-owned run).
+  # Ensure ownership/mode so FPM can open it for append when it drops
+  # to the hosting user after startup.
+  chown "$user:$user" "$logfile"
+  chmod 0640 "$logfile"
+fi

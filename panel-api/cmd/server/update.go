@@ -86,6 +86,20 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 					"install -d -m 0755 /etc/nginx/sites-enabled; "+
 					"true")
 		}},
+		{"sync systemd + shims", func() error {
+			// install.sh copies these on first install; the update path
+			// needs to re-copy them so unit file / shim changes land.
+			// Keep in sync with install_jabali_slices() in install.sh.
+			return run("", "bash", "-c",
+				"set -e; "+
+					"install -d -m 0755 /usr/local/libexec/jabali; "+
+					"install -m 0755 "+repoDir+"/install/systemd/fpm-pre-start /usr/local/libexec/jabali/fpm-pre-start; "+
+					"install -m 0755 "+repoDir+"/install/systemd/fpm-exec /usr/local/libexec/jabali/fpm-exec; "+
+					"install -m 0644 "+repoDir+"/install/systemd/jabali.slice /etc/systemd/system/jabali.slice; "+
+					"install -m 0644 "+repoDir+"/install/systemd/jabali-user.slice /etc/systemd/system/jabali-user.slice; "+
+					"install -m 0644 "+repoDir+"/install/systemd/jabali-fpm@.service /etc/systemd/system/jabali-fpm@.service; "+
+					"systemctl daemon-reload")
+		}},
 		{"npm ci", func() error {
 			return asUser(repoDir+"/panel-ui", "npm", "ci", "--no-audit", "--no-fund")
 		}},

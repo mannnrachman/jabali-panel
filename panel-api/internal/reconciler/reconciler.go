@@ -408,7 +408,7 @@ func (r *Reconciler) applyPHPPool(ctx context.Context, user *models.User, pool *
 	username := *user.Username
 
 	// Build pool socket path for later socket-ready check
-	socketPath := fmt.Sprintf("/run/php/jabali.%s.%s.sock", username, pool.ID)
+	socketPath := fmt.Sprintf("/run/php/jabali-%s/fpm.sock", username)
 
 	// Call agent to apply the pool configuration
 	params := map[string]any{

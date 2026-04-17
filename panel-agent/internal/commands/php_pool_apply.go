@@ -411,7 +411,10 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 		poolConfigDir = fmt.Sprintf("/etc/php/%s/fpm/pool.d", p.PHPVersion)
 	}
 	poolConfigPath := fmt.Sprintf("%s/jabali-%s.conf", poolConfigDir, p.Username)
-	socketPath := fmt.Sprintf("/run/php/php%s-fpm-%s.sock", p.PHPVersion, p.Username)
+	// Socket lives in a user-owned subdir of /run/php (see fpm-pre-start).
+	// Path is version-independent so nginx configs survive PHP version
+	// switches without regeneration. One socket per user, not per pool.
+	socketPath := fmt.Sprintf("/run/php/jabali-%s/fpm.sock", p.Username)
 	poolName := fmt.Sprintf("jabali-%s", p.Username)
 
 	// Render the template.

@@ -10,8 +10,10 @@ import (
 	"regexp"
 	"strings"
 	"text/template"
+	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
+	"golang.org/x/sys/unix"
 )
 
 // phpPoolApplyParams is the input shape for php.pool.apply.
@@ -50,12 +52,12 @@ type phpPoolSpecTemplate struct {
 	AdminFlags                     []KV
 }
 
+// phpVersionRegex validates PHP version format: X.Y where X and Y are digits.
+var phpVersionRegex = regexp.MustCompile(`^\d+\.\d+$`)
+
 // phpPoolUsernameRegex validates PHP pool username format: must start with lowercase
 // letter, contain only lowercase letters, digits, underscores, max 32 chars.
 var phpPoolUsernameRegex = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
-
-// phpVersionRegex validates PHP version format: X.Y where X and Y are digits.
-var phpVersionRegex = regexp.MustCompile(`^\d+\.\d+$`)
 
 // adminValueAllowlist is the set of allowed php_admin_value directives.
 var adminValueAllowlist = map[string]bool{
@@ -135,6 +137,147 @@ func reloadFPMService(ctx context.Context, version string) error {
 		return fmt.Errorf("failed to reload %s: %w", serviceName, err)
 	}
 	return nil
+}
+
+// restartOrReloadUserFPM handles per-user FPM service restart/reload.
+// If oldVersion == newVersion (and not empty), attempts reload via USR2.
+// If the reload fails (unit not loaded/inactive), falls back to restart.
+// On version change or first-time apply, does full restart.
+// Also enables the service for auto-start on boot.
+func restartOrReloadUserFPM(ctx context.Context, username string, oldVersion, newVersion string) error {
+	// Skip systemctl operations in test environments.
+	if os.Getenv("JABALI_PHP_POOL_SKIP_RELOAD") != "" {
+		return nil
+	}
+
+	serviceName := fmt.Sprintf("jabali-fpm@%s.service", username)
+
+	// Try reload if versions match and oldVersion is not empty.
+	if oldVersion == newVersion && oldVersion != "" {
+		reloadCmd := exec.CommandContext(ctx, "systemctl", "reload", serviceName)
+		if err := reloadCmd.Run(); err != nil {
+			// Reload failed; check if unit is not loaded or inactive, then restart.
+			// Otherwise return the error.
+			isActiveCmd := exec.CommandContext(ctx, "systemctl", "is-active", serviceName)
+			if err := isActiveCmd.Run(); err != nil {
+				// Unit not loaded or inactive; fall through to restart.
+			} else {
+				// Unit is active but reload failed — this is an error.
+				return fmt.Errorf("failed to reload %s: %w", serviceName, err)
+			}
+		} else {
+			// Reload succeeded; enable and return.
+			_ = exec.CommandContext(ctx, "systemctl", "enable", "--quiet", serviceName).Run()
+			return nil
+		}
+	}
+
+	// Restart (version changed or first-time apply).
+	restartCmd := exec.CommandContext(ctx, "systemctl", "restart", serviceName)
+	if err := restartCmd.Run(); err != nil {
+		return fmt.Errorf("failed to restart %s: %w", serviceName, err)
+	}
+
+	// Enable the service for auto-start on boot.
+	enableCmd := exec.CommandContext(ctx, "systemctl", "enable", "--quiet", serviceName)
+	if err := enableCmd.Run(); err != nil {
+		return fmt.Errorf("failed to enable %s: %w", serviceName, err)
+	}
+
+	return nil
+}
+
+// readVersionPinFile reads the version pin from disk, or returns empty string if not found.
+func readVersionPinFile(username string) (string, error) {
+	verPinRoot := os.Getenv("JABALI_PHP_VER_PIN_ROOT")
+	if verPinRoot == "" {
+		verPinRoot = "/etc/jabali-panel/user-phpver"
+	}
+	verPinPath := filepath.Join(verPinRoot, username)
+	data, err := os.ReadFile(verPinPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to read version pin: %w", err)
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+// writeVersionPinFile writes the version pin to disk.
+func writeVersionPinFile(username, version string) error {
+	verPinRoot := os.Getenv("JABALI_PHP_VER_PIN_ROOT")
+	if verPinRoot == "" {
+		verPinRoot = "/etc/jabali-panel/user-phpver"
+	}
+	if err := os.MkdirAll(verPinRoot, 0755); err != nil {
+		return fmt.Errorf("failed to create version pin dir: %w", err)
+	}
+	verPinPath := filepath.Join(verPinRoot, username)
+	if err := os.WriteFile(verPinPath, []byte(version+"\n"), 0644); err != nil {
+		return fmt.Errorf("failed to write version pin: %w", err)
+	}
+	return nil
+}
+
+// writePerUserFPMConfig writes the per-user FPM config that includes only this user's pool.
+func writePerUserFPMConfig(username, version string) error {
+	fpmConfRoot := os.Getenv("JABALI_FPM_CONFIG_ROOT")
+	if fpmConfRoot == "" {
+		fpmConfRoot = "/etc/jabali-panel/fpm"
+	}
+	if err := os.MkdirAll(fpmConfRoot, 0755); err != nil {
+		return fmt.Errorf("failed to create fpm config dir: %w", err)
+	}
+
+	fpmConfPath := filepath.Join(fpmConfRoot, username+".conf")
+	poolConfigPath := fmt.Sprintf("/etc/php/%s/fpm/pool.d/jabali-%s.conf", version, username)
+
+	confContent := fmt.Sprintf(`[global]
+pid = /run/php/jabali-fpm-%s.pid
+error_log = /var/log/php-fpm-%s.log
+daemonize = no
+
+; Include only this user's pool file — prevents multi-master-loads-all-pools bug.
+include=%s
+`, username, username, poolConfigPath)
+
+	if err := os.WriteFile(fpmConfPath, []byte(confContent), 0644); err != nil {
+		return fmt.Errorf("failed to write per-user fpm config: %w", err)
+	}
+	return nil
+}
+
+// acquireLock acquires an exclusive flock on a per-user lock file with a 30-second timeout.
+func acquireLock(username string) (*os.File, error) {
+	lockDir := "/run/jabali"
+	if err := os.MkdirAll(lockDir, 0700); err != nil {
+		return nil, fmt.Errorf("failed to create lock dir: %w", err)
+	}
+
+	lockPath := filepath.Join(lockDir, fmt.Sprintf("pool-apply-%s.lock", username))
+	file, err := os.Create(lockPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create lock file: %w", err)
+	}
+
+	// Attempt to acquire exclusive lock with 30-second timeout.
+	doneCh := make(chan error, 1)
+	go func() {
+		doneCh <- unix.Flock(int(file.Fd()), unix.LOCK_EX)
+	}()
+
+	select {
+	case err := <-doneCh:
+		if err != nil {
+			file.Close()
+			return nil, fmt.Errorf("failed to acquire flock: %w", err)
+		}
+		return file, nil
+	case <-time.After(30 * time.Second):
+		file.Close()
+		return nil, fmt.Errorf("lock acquisition timeout (30s) — stuck apply?")
+	}
 }
 
 func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -233,6 +376,25 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
+	// Acquire per-user flock to serialize pool-apply operations for this user.
+	lockFile, err := acquireLock(p.Username)
+	if err != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("flock acquisition failed: %v", err),
+		}
+	}
+	defer lockFile.Close()
+
+	// Read old version before making changes.
+	oldVersion, err := readVersionPinFile(p.Username)
+	if err != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("failed to read old version: %v", err),
+		}
+	}
+
 	// Delete stale pool files and collect versions that need reload.
 	deletedVersions, err := globDeletePoolFiles(p.Username)
 	if err != nil {
@@ -302,15 +464,31 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
-	// Reload the target FPM service.
-	if err := reloadFPMService(ctx, p.PHPVersion); err != nil {
+	// Write the per-user FPM config (includes only this user's pool).
+	if err := writePerUserFPMConfig(p.Username, p.PHPVersion); err != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("failed to write per-user fpm config: %v", err),
+		}
+	}
+
+	// Write the version pin file.
+	if err := writeVersionPinFile(p.Username, p.PHPVersion); err != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("failed to write version pin: %v", err),
+		}
+	}
+
+	// Restart or reload the per-user FPM service.
+	if err := restartOrReloadUserFPM(ctx, p.Username, oldVersion, p.PHPVersion); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
 			Message: err.Error(),
 		}
 	}
 
-	// Also reload any previously deleted versions.
+	// Also reload any previously deleted versions (global FPM service, for backward compat).
 	for version := range deletedVersions {
 		if version != p.PHPVersion {
 			if err := reloadFPMService(ctx, version); err != nil {

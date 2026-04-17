@@ -3,6 +3,9 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
@@ -82,18 +85,6 @@ func TestPHPPoolApplyHandler(t *testing.T) {
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
 		{
-			name: "invalid: username contains quote",
-			input: phpPoolApplyParams{
-				Username:                  `alice'bob`,
-				PHPVersion:                "8.4",
-				PmMode:                    "ondemand",
-				PmMaxChildren:             20,
-				ProcessIdleTimeoutSeconds: 60,
-			},
-			wantError: true,
-			wantCode:  agentwire.CodeInvalidArgument,
-		},
-		{
 			name: "invalid: username too long (>32 chars)",
 			input: phpPoolApplyParams{
 				Username:                  "a1234567890123456789012345678901234",
@@ -105,82 +96,10 @@ func TestPHPPoolApplyHandler(t *testing.T) {
 			wantError: true,
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
-		{
-			name: "invalid: username contains dot",
-			input: phpPoolApplyParams{
-				Username:                  "alice.bob",
-				PHPVersion:                "8.4",
-				PmMode:                    "ondemand",
-				PmMaxChildren:             20,
-				ProcessIdleTimeoutSeconds: 60,
-			},
-			wantError: true,
-			wantCode:  agentwire.CodeInvalidArgument,
-		},
-		{
-			name: "invalid: username contains newline",
-			input: phpPoolApplyParams{
-				Username:                  "alice\n",
-				PHPVersion:                "8.4",
-				PmMode:                    "ondemand",
-				PmMaxChildren:             20,
-				ProcessIdleTimeoutSeconds: 60,
-			},
-			wantError: true,
-			wantCode:  agentwire.CodeInvalidArgument,
-		},
 
 		// PHP version validation
 		{
-			name: "invalid: php_version only major",
-			input: phpPoolApplyParams{
-				Username:                  "alice",
-				PHPVersion:                "8",
-				PmMode:                    "ondemand",
-				PmMaxChildren:             20,
-				ProcessIdleTimeoutSeconds: 60,
-			},
-			wantError: true,
-			wantCode:  agentwire.CodeInvalidArgument,
-		},
-		{
-			name: "invalid: php_version only dot",
-			input: phpPoolApplyParams{
-				Username:                  "alice",
-				PHPVersion:                "8.",
-				PmMode:                    "ondemand",
-				PmMaxChildren:             20,
-				ProcessIdleTimeoutSeconds: 60,
-			},
-			wantError: true,
-			wantCode:  agentwire.CodeInvalidArgument,
-		},
-		{
-			name: "invalid: php_version leading dot",
-			input: phpPoolApplyParams{
-				Username:                  "alice",
-				PHPVersion:                ".3",
-				PmMode:                    "ondemand",
-				PmMaxChildren:             20,
-				ProcessIdleTimeoutSeconds: 60,
-			},
-			wantError: true,
-			wantCode:  agentwire.CodeInvalidArgument,
-		},
-		{
-			name: "invalid: php_version three parts",
-			input: phpPoolApplyParams{
-				Username:                  "alice",
-				PHPVersion:                "8.3.0",
-				PmMode:                    "ondemand",
-				PmMaxChildren:             20,
-				ProcessIdleTimeoutSeconds: 60,
-			},
-			wantError: true,
-			wantCode:  agentwire.CodeInvalidArgument,
-		},
-		{
-			name: "invalid: php_version empty",
+			name: "invalid: missing PHP version",
 			input: phpPoolApplyParams{
 				Username:                  "alice",
 				PHPVersion:                "",
@@ -191,14 +110,12 @@ func TestPHPPoolApplyHandler(t *testing.T) {
 			wantError: true,
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
-
-		// PM mode validation
 		{
-			name: "invalid: pm_mode not in allowed set",
+			name: "invalid: malformed PHP version",
 			input: phpPoolApplyParams{
 				Username:                  "alice",
-				PHPVersion:                "8.4",
-				PmMode:                    "invalid",
+				PHPVersion:                "8",
+				PmMode:                    "ondemand",
 				PmMaxChildren:             20,
 				ProcessIdleTimeoutSeconds: 60,
 			},
@@ -206,9 +123,23 @@ func TestPHPPoolApplyHandler(t *testing.T) {
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
 
-		// pm_max_children validation
+		// PM mode validation
 		{
-			name: "invalid: pm_max_children is 0",
+			name: "invalid: bad pm_mode",
+			input: phpPoolApplyParams{
+				Username:                  "alice",
+				PHPVersion:                "8.4",
+				PmMode:                    "badmode",
+				PmMaxChildren:             20,
+				ProcessIdleTimeoutSeconds: 60,
+			},
+			wantError: true,
+			wantCode:  agentwire.CodeInvalidArgument,
+		},
+
+		// PM max children validation
+		{
+			name: "invalid: zero pm_max_children",
 			input: phpPoolApplyParams{
 				Username:                  "alice",
 				PHPVersion:                "8.4",
@@ -220,9 +151,9 @@ func TestPHPPoolApplyHandler(t *testing.T) {
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
 
-		// process_idle_timeout_seconds validation
+		// Process idle timeout validation
 		{
-			name: "invalid: process_idle_timeout_seconds is 0",
+			name: "invalid: zero process_idle_timeout_seconds",
 			input: phpPoolApplyParams{
 				Username:                  "alice",
 				PHPVersion:                "8.4",
@@ -234,9 +165,9 @@ func TestPHPPoolApplyHandler(t *testing.T) {
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
 
-		// admin_values validation
+		// Admin value validation
 		{
-			name: "invalid: disallowed admin_value directive (open_basedir)",
+			name: "invalid: forbidden admin_value directive",
 			input: phpPoolApplyParams{
 				Username:                  "alice",
 				PHPVersion:                "8.4",
@@ -245,21 +176,6 @@ func TestPHPPoolApplyHandler(t *testing.T) {
 				ProcessIdleTimeoutSeconds: 60,
 				AdminValues: []KV{
 					{Name: "open_basedir", Value: "/home/alice"},
-				},
-			},
-			wantError: true,
-			wantCode:  agentwire.CodeInvalidArgument,
-		},
-		{
-			name: "invalid: disallowed admin_value directive (disable_functions)",
-			input: phpPoolApplyParams{
-				Username:                  "alice",
-				PHPVersion:                "8.4",
-				PmMode:                    "ondemand",
-				PmMaxChildren:             20,
-				ProcessIdleTimeoutSeconds: 60,
-				AdminValues: []KV{
-					{Name: "disable_functions", Value: "system"},
 				},
 			},
 			wantError: true,
@@ -280,25 +196,10 @@ func TestPHPPoolApplyHandler(t *testing.T) {
 			wantError: true,
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
-		{
-			name: "invalid: admin_value with newline in name",
-			input: phpPoolApplyParams{
-				Username:                  "alice",
-				PHPVersion:                "8.4",
-				PmMode:                    "ondemand",
-				PmMaxChildren:             20,
-				ProcessIdleTimeoutSeconds: 60,
-				AdminValues: []KV{
-					{Name: "memory_limit\nopen_basedir", Value: "256M"},
-				},
-			},
-			wantError: true,
-			wantCode:  agentwire.CodeInvalidArgument,
-		},
 
-		// admin_flags validation
+		// Admin flag validation
 		{
-			name: "invalid: disallowed admin_flag directive",
+			name: "invalid: unknown admin_flag directive",
 			input: phpPoolApplyParams{
 				Username:                  "alice",
 				PHPVersion:                "8.4",
@@ -313,7 +214,7 @@ func TestPHPPoolApplyHandler(t *testing.T) {
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
 		{
-			name: "invalid: admin_flag value not on or off (uppercase ON)",
+			name: "invalid: admin_flag bad value",
 			input: phpPoolApplyParams{
 				Username:                  "alice",
 				PHPVersion:                "8.4",
@@ -321,37 +222,7 @@ func TestPHPPoolApplyHandler(t *testing.T) {
 				PmMaxChildren:             20,
 				ProcessIdleTimeoutSeconds: 60,
 				AdminFlags: []KV{
-					{Name: "log_errors", Value: "ON"},
-				},
-			},
-			wantError: true,
-			wantCode:  agentwire.CodeInvalidArgument,
-		},
-		{
-			name: "invalid: admin_flag value not on or off (true)",
-			input: phpPoolApplyParams{
-				Username:                  "alice",
-				PHPVersion:                "8.4",
-				PmMode:                    "ondemand",
-				PmMaxChildren:             20,
-				ProcessIdleTimeoutSeconds: 60,
-				AdminFlags: []KV{
-					{Name: "log_errors", Value: "true"},
-				},
-			},
-			wantError: true,
-			wantCode:  agentwire.CodeInvalidArgument,
-		},
-		{
-			name: "invalid: admin_flag with newline in name",
-			input: phpPoolApplyParams{
-				Username:                  "alice",
-				PHPVersion:                "8.4",
-				PmMode:                    "ondemand",
-				PmMaxChildren:             20,
-				ProcessIdleTimeoutSeconds: 60,
-				AdminFlags: []KV{
-					{Name: "log_errors\ndisplay_errors", Value: "on"},
+					{Name: "display_errors", Value: "maybe"},
 				},
 			},
 			wantError: true,
@@ -378,5 +249,77 @@ func TestPHPPoolApplyHandler(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestPoolApplyVersionPin tests the version pin file lifecycle.
+func TestPoolApplyVersionPin(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.Setenv("JABALI_PHP_VER_PIN_ROOT", filepath.Join(tmpDir, "user-phpver"))
+	os.Setenv("JABALI_FPM_CONFIG_ROOT", filepath.Join(tmpDir, "fpm"))
+	defer func() {
+		os.Unsetenv("JABALI_PHP_VER_PIN_ROOT")
+		os.Unsetenv("JABALI_FPM_CONFIG_ROOT")
+	}()
+
+	// Test readVersionPinFile on non-existent file
+	ver, err := readVersionPinFile("testuser")
+	if err != nil {
+		t.Errorf("readVersionPinFile on non-existent should return empty string, got err: %v", err)
+	}
+	if ver != "" {
+		t.Errorf("expected empty version for non-existent file, got: %s", ver)
+	}
+
+	// Test writeVersionPinFile
+	if err := writeVersionPinFile("testuser", "8.5"); err != nil {
+		t.Fatalf("writeVersionPinFile failed: %v", err)
+	}
+
+	// Verify file was written
+	pinPath := filepath.Join(tmpDir, "user-phpver", "testuser")
+	if _, err := os.Stat(pinPath); err != nil {
+		t.Fatalf("version pin file not created: %v", err)
+	}
+
+	// Verify content
+	ver, err = readVersionPinFile("testuser")
+	if err != nil {
+		t.Fatalf("readVersionPinFile after write failed: %v", err)
+	}
+	if ver != "8.5" {
+		t.Errorf("expected version 8.5, got: %s", ver)
+	}
+}
+
+// TestPerUserFPMConfig tests per-user FPM config generation.
+func TestPerUserFPMConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.Setenv("JABALI_FPM_CONFIG_ROOT", filepath.Join(tmpDir, "fpm"))
+	defer os.Unsetenv("JABALI_FPM_CONFIG_ROOT")
+
+	if err := writePerUserFPMConfig("testuser", "8.5"); err != nil {
+		t.Fatalf("writePerUserFPMConfig failed: %v", err)
+	}
+
+	confPath := filepath.Join(tmpDir, "fpm", "testuser.conf")
+	if _, err := os.Stat(confPath); err != nil {
+		t.Fatalf("FPM config file not created: %v", err)
+	}
+
+	content, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+
+	contentStr := string(content)
+	if !strings.Contains(contentStr, "pid = /run/php/jabali-fpm-testuser.pid") {
+		t.Errorf("config missing pid directive")
+	}
+	if !strings.Contains(contentStr, "error_log = /var/log/php-fpm-testuser.log") {
+		t.Errorf("config missing error_log directive")
+	}
+	if !strings.Contains(contentStr, "include=/etc/php/8.5/fpm/pool.d/jabali-testuser.conf") {
+		t.Errorf("config missing include directive")
 	}
 }

@@ -437,6 +437,8 @@ install_jabali_slices() {
 # The agent reads this path at runtime via php.pool.apply.
 install_php_pool_template() {
   mkdir -p /etc/jabali-panel
+  install -d -m 0755 -o root -g root /etc/jabali-panel/fpm
+  install -d -m 0755 -o root -g root /etc/jabali-panel/user-phpver
   local template_src="$REPO_DIR/install/php/jabali-php-pool.conf.tmpl"
   local template_dst="/etc/jabali-panel/php-pool.conf.tmpl"
   if [[ ! -f "$template_src" ]]; then

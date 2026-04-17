@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 )
@@ -48,16 +48,8 @@ func phpPoolRemoveHandler(ctx context.Context, params json.RawMessage) (any, err
 		}
 	}
 
-	// Collect versions that need reload, then remove files.
-	versionsToReload := make(map[string]bool)
+	// Remove pool files.
 	for _, path := range matches {
-		// Extract version from /etc/php/<version>/fpm/pool.d/...
-		parts := strings.Split(path, "/")
-		if len(parts) >= 3 && parts[1] == "etc" && parts[2] == "php" {
-			version := parts[3]
-			versionsToReload[version] = true
-		}
-
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return nil, &agentwire.AgentError{
 				Code:    agentwire.CodeInternal,
@@ -66,14 +58,37 @@ func phpPoolRemoveHandler(ctx context.Context, params json.RawMessage) (any, err
 		}
 	}
 
-	// Reload all affected FPM services.
-	for version := range versionsToReload {
-		if err := reloadFPMService(ctx, version); err != nil {
-			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeInternal,
-				Message: err.Error(),
-			}
+	// Remove per-user FPM config.
+	fpmConfRoot := os.Getenv("JABALI_FPM_CONFIG_ROOT")
+	if fpmConfRoot == "" {
+		fpmConfRoot = "/etc/jabali-panel/fpm"
+	}
+	fpmConfPath := filepath.Join(fpmConfRoot, p.Username+".conf")
+	if err := os.Remove(fpmConfPath); err != nil && !os.IsNotExist(err) {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("failed to remove per-user fpm config: %v", err),
 		}
+	}
+
+	// Remove version pin file.
+	verPinRoot := os.Getenv("JABALI_PHP_VER_PIN_ROOT")
+	if verPinRoot == "" {
+		verPinRoot = "/etc/jabali-panel/user-phpver"
+	}
+	verPinPath := filepath.Join(verPinRoot, p.Username)
+	if err := os.Remove(verPinPath); err != nil && !os.IsNotExist(err) {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("failed to remove version pin: %v", err),
+		}
+	}
+
+	// Stop the per-user FPM service (if loaded).
+	if os.Getenv("JABALI_PHP_POOL_SKIP_RELOAD") == "" {
+		serviceName := fmt.Sprintf("jabali-fpm@%s.service", p.Username)
+		stopCmd := exec.CommandContext(ctx, "systemctl", "stop", serviceName)
+		_ = stopCmd.Run() // Ignore error; unit may not be loaded.
 	}
 
 	return phpPoolRemoveResponse{

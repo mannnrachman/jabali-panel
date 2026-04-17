@@ -3,6 +3,8 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
@@ -86,5 +88,50 @@ func TestPHPPoolRemoveHandler(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestPoolRemoveCleanup tests that remove cleans up side-files.
+func TestPoolRemoveCleanup(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.Setenv("JABALI_FPM_CONFIG_ROOT", filepath.Join(tmpDir, "fpm"))
+	os.Setenv("JABALI_PHP_VER_PIN_ROOT", filepath.Join(tmpDir, "user-phpver"))
+	os.Setenv("JABALI_PHP_POOL_SKIP_RELOAD", "1")
+	defer func() {
+		os.Unsetenv("JABALI_FPM_CONFIG_ROOT")
+		os.Unsetenv("JABALI_PHP_VER_PIN_ROOT")
+		os.Unsetenv("JABALI_PHP_POOL_SKIP_RELOAD")
+	}()
+
+	// Create side-files
+	fpmConfPath := filepath.Join(tmpDir, "fpm", "alice.conf")
+	verPinPath := filepath.Join(tmpDir, "user-phpver", "alice")
+
+	os.MkdirAll(filepath.Dir(fpmConfPath), 0755)
+	os.MkdirAll(filepath.Dir(verPinPath), 0755)
+	os.WriteFile(fpmConfPath, []byte("test"), 0644)
+	os.WriteFile(verPinPath, []byte("8.5\n"), 0644)
+
+	// Verify files exist
+	if _, err := os.Stat(fpmConfPath); err != nil {
+		t.Fatalf("setup: fpm config not created: %v", err)
+	}
+	if _, err := os.Stat(verPinPath); err != nil {
+		t.Fatalf("setup: version pin not created: %v", err)
+	}
+
+	// Call remove handler
+	params, _ := json.Marshal(phpPoolRemoveParams{Username: "alice"})
+	_, err := phpPoolRemoveHandler(context.Background(), params)
+	if err != nil {
+		t.Fatalf("phpPoolRemoveHandler failed: %v", err)
+	}
+
+	// Verify side-files were cleaned up
+	if _, err := os.Stat(fpmConfPath); err == nil {
+		t.Errorf("expected fpm config to be removed")
+	}
+	if _, err := os.Stat(verPinPath); err == nil {
+		t.Errorf("expected version pin to be removed")
 	}
 }

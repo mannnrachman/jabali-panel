@@ -4,6 +4,7 @@ set -euo pipefail
 
 user="${1:?usage: fpm-pre-start <user>}"
 verfile="/etc/jabali-panel/user-phpver/${user}"
+userfpmconf="/etc/jabali-panel/fpm/${user}.conf"
 
 [[ -r "$verfile" ]] || { echo "fpm-pre-start: missing version pin $verfile" >&2; exit 1; }
 ver=$(cat "$verfile")
@@ -12,6 +13,8 @@ ver=$(cat "$verfile")
 
 poolfile="/etc/php/${ver}/fpm/pool.d/jabali-${user}.conf"
 [[ -r "$poolfile" ]] || { echo "fpm-pre-start: missing pool config $poolfile" >&2; exit 1; }
+
+[[ -r "$userfpmconf" ]] || { echo "fpm-pre-start: missing per-user config $userfpmconf" >&2; exit 1; }
 
 # The unit's RuntimeDirectory-less setup means we're responsible for
 # /run/php existing with the expected perms. Sury's php-fpm package

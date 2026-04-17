@@ -1,5 +1,5 @@
 import { useTable } from "@refinedev/antd";
-import { DeleteButton } from "@refinedev/antd";
+import { CreateButton, DeleteButton } from "@refinedev/antd";
 import { SearchableTable } from "../../../components/SearchableTable";
 import { readQValue } from "../../../components/searchableTableUtils";
 import { Space, Table, Tag, Typography } from "antd";
@@ -50,6 +50,7 @@ export const DatabaseList = () => {
         <Typography.Title level={3} style={{ margin: 0 }}>
           Databases
         </Typography.Title>
+        <CreateButton />
       </Space>
 
       <SearchableTable<Database>

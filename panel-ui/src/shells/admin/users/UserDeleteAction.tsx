@@ -62,6 +62,7 @@ export const UserDeleteAction = ({
     <>
       <Button
         danger
+        type="text"
         size="small"
         icon={<DeleteOutlined />}
         onClick={handleOpenModal}

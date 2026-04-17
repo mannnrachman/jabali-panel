@@ -51,6 +51,7 @@ export const UserImpersonateAction = ({
       okButtonProps={{ loading: isLoading }}
     >
       <Button
+        type="text"
         size="small"
         icon={<LoginOutlined />}
         onClick={(e) => e.stopPropagation()}

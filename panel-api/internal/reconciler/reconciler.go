@@ -188,13 +188,23 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	}
 
 	// Convergence:
-	// 1. Enabled DB domain NOT in agent set -> call domain.create
+	// 1. Every enabled DB domain gets a domain.create every pass. The
+	// agent's writeVhost is content-hash gated — it re-renders the vhost,
+	// compares to what's on disk, and only reloads nginx when the bytes
+	// differ. This makes rebinding a domain (e.g. switching its PHP pool)
+	// automatically propagate on the next tick without needing an
+	// explicit "force" endpoint, and the cost in the unchanged case is
+	// one agent RPC per domain per minute (no nginx reload, no SSL IO).
+	// Previously we only called this when the domain was missing from
+	// the agent set, which silently stalled binding changes for existing
+	// domains. Logged only when the domain is newly-added or disabled so
+	// the steady-state reconcile stays quiet.
 	for name, domain := range enabledDomains {
 		if !agentSites[name] {
 			r.log.Info("reconcile: creating missing domain", "domain", name)
-			r.reconcileDNSZone(ctx, domain)
-			r.createDomainOnAgent(ctx, domain)
 		}
+		r.reconcileDNSZone(ctx, domain)
+		r.createDomainOnAgent(ctx, domain)
 	}
 
 	// 2. Disabled DB domain that IS in agent set -> call domain.create with is_enabled=false
@@ -228,25 +238,11 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 		}
 	}
 
-	// 4. Healthcheck backfill: ensure jabali-healthcheck.php exists for every
-	// enabled PHP domain. This runs on every pass (agent write is idempotent)
-	// so domains that predated the healthcheck feature get the file dropped
-	// without requiring a forced re-provision.
-	for _, domain := range enabledDomains {
-		if domain.PHPPoolID == nil || domain.DocRoot == "" {
-			continue
-		}
-		if r.phpPools == nil {
-			continue
-		}
-		userCtx, userCancel := context.WithTimeout(ctx, 5*time.Second)
-		user, err := r.users.FindByID(userCtx, domain.UserID)
-		userCancel()
-		if err != nil || user == nil || user.Username == nil || *user.Username == "" {
-			continue
-		}
-		r.writeHealthcheckForDomain(ctx, domain, *user.Username)
-	}
+	// Note: no separate healthcheck backfill loop. Bucket 1 now runs
+	// createDomainOnAgent for every enabled domain on every pass, which
+	// already invokes writeHealthcheckForDomain. A separate loop would
+	// double the agent RPC cost for every PHP domain every minute with
+	// zero functional benefit.
 
 	return nil
 }

@@ -97,6 +97,34 @@ key loader is wired, unused until SSO work resumes.
 | `JABALI_SSO_KEY_PATH` | No | `/etc/jabali-panel/sso.key` | Path to the 32-byte AES-256-GCM key used to encrypt shadow MariaDB admin passwords at rest. Must be mode `0600`, owner `jabali:jabali`. `install.sh install_sso_key` writes this on first install. If missing, the SSO feature is disabled (handler returns 503); startup continues. |
 <!-- /AUTO-GENERATED -->
 
+## Path overrides (agent)
+
+Operator-visible overrides for paths the agent writes to. Defaults match
+what `install.sh` creates; only set these if you're relocating state
+(e.g. multi-tenant hosts with per-instance roots).
+
+<!-- AUTO-GENERATED:env-path-overrides — regenerate via /update-docs -->
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `JABALI_FPM_CONFIG_ROOT` | No | `/etc/jabali-panel/fpm` | Directory holding per-user FPM global configs (`<user>.conf`). Read by `php.pool.apply` and `php.pool.remove`. |
+| `JABALI_PHP_VER_PIN_ROOT` | No | `/etc/jabali-panel/user-phpver` | Directory holding version-pin side files (one per user, contents `8.5\n`). Read by the FPM pre-start shim and pool-apply. |
+| `JABALI_PDNS_ENV_FILE` | No | `/etc/jabali-panel/pdns.env` | PowerDNS MySQL connection file (`PDNS_DB_HOST=…`, etc.). Missing file = DNS feature disabled cleanly (agent boots). |
+<!-- /AUTO-GENERATED -->
+
+## Test-only overrides
+
+These are used by `*_test.go` files for isolation. Not intended for
+production use; listed here so the one-liner env audit stays honest.
+
+<!-- AUTO-GENERATED:env-test-overrides — regenerate via /update-docs -->
+| Variable | Purpose |
+|----------|---------|
+| `JABALI_SYSTEMD_ROOT` | Override `/etc/systemd/system` in `user.slice.ensure` tests. |
+| `JABALI_PHP_POOL_CONFIG_DIR` | Override `/etc/php/<v>/fpm/pool.d` in `php.pool.apply` tests. |
+| `JABALI_PHP_POOL_TEMPLATE_PATH` | Override `/etc/jabali-panel/php-pool.conf.tmpl` in `php.pool.apply` tests. |
+| `JABALI_PHP_POOL_SKIP_RELOAD` | Set to non-empty to skip `systemctl reload` in pool-apply/remove tests. |
+<!-- /AUTO-GENERATED -->
+
 ## Install-time (read by `install.sh` / CLI subcommands)
 
 <!-- AUTO-GENERATED:env-install — regenerate via /update-docs -->

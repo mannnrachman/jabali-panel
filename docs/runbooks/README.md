@@ -11,6 +11,7 @@ than ten minutes to remember how, it's runbook-worthy.
 | Runbook | When to use |
 |---------|-------------|
 | [php-fpm-pools.md](php-fpm-pools.md) | Adding/removing PHP versions, diagnosing 502/504 errors on PHP domains, verifying pool bindings. |
+| [per-user-slices.md](per-user-slices.md) | Per-user systemd slice hierarchy — what's captured (FPM, shells, user timers) vs. not (traditional crontabs), cron→systemd-user-timer migration, troubleshooting the FPM master + cutover rollback. |
 | [dns-secondary-nameserver.md](dns-secondary-nameserver.md) | Bringing up a secondary nameserver (ns2) — registrar needs two NS records with different IPs. |
 
 ## Runbook template

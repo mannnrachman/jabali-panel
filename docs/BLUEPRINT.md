@@ -232,8 +232,8 @@ registered, error propagation.
 ### 4.7 SSL / Let's Encrypt (M5a/b/c)
 
 **Shipped (Phase 2):** Per-domain SSL toggle, Let's Encrypt issuance with try-ACME-first
-strategy, fallback to self-signed certificates on ACME failure, exponential backoff retry
-scheduling (5m → 15m → 1h → 4h, capped), manual retry endpoint, SSL Manager UI pages (admin + user),
+strategy, fallback to 365-day self-signed certificates on ACME failure, exponential backoff retry
+scheduling (5m → 15m → 45m → 135m, capped at 4h), manual retry endpoint, SSL Manager UI pages (admin + user),
 and stopgap `ssl.self_sign` agent command for emergency fallback.
 
 - **Files:** `panel-api/internal/api/ssl.go`, `panel-agent/internal/commands/ssl_*.go`
@@ -247,15 +247,33 @@ and stopgap `ssl.self_sign` agent command for emergency fallback.
 
 ### 4.8 Authentication & Authorization — Phase 2 (M5a/b)
 
-**Shipped:** Admin impersonation (log in as a specific user without their password),
-break-glass CLI login (emergency admin access via `/auth/cli-login` with `purpose=cli_login` claim
-and configurable one-time token lifetime), impersonation banner in UI, graceful exit flow.
+**Shipped:** Admin impersonation (one-shot login URL model — admin generates a temporary login link that opens in a new tab with no persistent session), 
+break-glass CLI login (`jabali-panel admin login` and `jabali-panel user login` CLI subcommands that mint short-lived login URLs), 
+sessionStorage-based impersonation (survives page reload within the tab but dies when browser session closes).
 
-- **Files:** `panel-api/internal/api/auth.go`, auth middleware updates
+**M5a: Admin Impersonation (refactored)**
+- `POST /admin/users/:id/impersonate` returns `{ "login_url": "<url>" }` with 5-minute JWT (purpose=cli_login, impersonated_by set)
+- Admin's browser opens the login URL in a new tab via `window.open(login_url, '_blank')`
+- New tab auto-redeems via `POST /auth/cli-login`, sets `sessionStorage.no_refresh=1` and in-memory access token (1h TTL)
+- Impersonation tab has no refresh cookie — session dies cleanly when access token expires
+- No impersonation banner; impersonation tab looks like a normal user session
+- Exit = close the tab. No separate exit endpoint.
+- Nested impersonation not supported (cannot impersonate an admin, cannot impersonate while already impersonating)
+
+**M5b: Break-Glass CLI Login (refactored)**
+- `jabali-panel admin login [--email <e>]` mints 15-minute JWT with purpose="cli_login" (no impersonated_by)
+- `jabali-panel user login <email-or-id>` mints 5-minute JWT with purpose="cli_login" and impersonated_by="cli" (rejects admins)
+- Both print redeemable login URLs with embedded JWT as `?cli_token=...`
+- `POST /auth/cli-login` endpoint validates JWT: if impersonated_by is set, returns access-only (no refresh); otherwise returns access + refresh (full admin session)
+- Audit logging for all CLI-initiated logins
+
+- **Files:** `panel-api/internal/api/auth.go`, `panel-api/internal/api/auth_cli_login.go`, `panel-api/cmd/server/admin_login.go`, `panel-api/cmd/server/user_login.go`, `panel-api/internal/auth/service.go`
 - **Migrations:** `000016_add_impersonated_by_to_refresh_tokens.sql`
-- **API:** `/admin/users/{id}/impersonate` (POST), `/auth/cli-login` (POST with secret), (no dedicated exit endpoint — UI calls `/auth/logout` then redirects to re-login)
-- **UI:** Impersonation banner (red bar showing "Logged in as user X, impersonated by admin Y") with exit button
-- **Evidence:** Commits `7bc292f`, `c587144`, `5b14b4c`
+- **API:** `/admin/users/{id}/impersonate` (POST, returns login_url), `/auth/cli-login` (POST, takes cli_token)
+- **CLI commands:** `jabali-panel admin login [--email]`, `jabali-panel user login <email-or-id>`
+- **UI:** UserImpersonateAction button in admin users list; calls impersonate endpoint and opens login_url in new tab
+- **Frontend:** Login.tsx auto-redeems cli_token and sets sessionStorage.no_refresh flag for impersonation tabs
+- **Evidence:** Commits `5324198`, `25435a7`, `623a99f`, `5241f02`, `a1817c1`
 - **Related ADRs:** ADR-0015 (admin-impersonation-jwt-claim), ADR-0016 (break-glass-cli-admin-login)
 
 ### 4.9 Reconciler
@@ -263,11 +281,22 @@ and configurable one-time token lifetime), impersonation banner in UI, graceful 
 **Shipped:** In-process goroutine inside panel-api that listens for domain DB changes,
 issues agent commands to create/update/delete domains on agent, reconciles DNS zones
 to PowerDNS MySQL backend, reconciles SSL certificates (try-ACME-first, fallback to self-signed),
-runs every 30s by default (configurable), manual trigger endpoints for admin.
+runs every 30s by default (configurable), manual trigger endpoints for admin. 
+Separate 1-minute ticker processes SSL ACME retries (certs with next_retry_at <= now).
 
 - **Files:** `panel-api/internal/reconciler/reconciler.go`
 - **API:** `/api/v1/reconcile/all` (admin-only), `/api/v1/reconcile/{domainID}` (admin-only)
+- **Background tickers:** Main reconciler (30s), SSL retry ticker (1m)
 - **Evidence:** Commits `cb4ae39`, `0ae7213`, `3037db1`, `ba54273`
+
+### 4.9.1 Frontend UI Chrome Refactor
+
+**Shipped:** Admin and user shells now use Refine's `<ThemedLayoutV2>` + `<ThemedSiderV2>` + `<ThemedTitleV2>` 
+components out of the box (light-background default Refine theme). Per-shell sidebar filtering via 
+`meta.shell: "admin" | "user"` on resources list in `App.tsx` — sidebar items render only for matching shell context.
+
+- **Files:** `panel-ui/src/App.tsx` (resource meta), `panel-ui/src/shells/AdminLayout.tsx`, `panel-ui/src/shells/UserLayout.tsx`
+- **Evidence:** Commit `e9fc63c`
 
 ### 4.8 Install script
 
@@ -297,10 +326,10 @@ guards (checks for existing config files before overwriting).
 12. `000012_create_server_settings.sql` — server_settings table (hostname, ns1, ns2, public_ipv4, public_ipv6)
 13. `000013_create_dns_tables.sql` — dns_zones, dns_records, dns_axfr_allow_list tables
 14. `000014_add_ssl_enabled_to_domains.sql` — ssl_enabled boolean field on domains
-15. `000015_create_ssl_certificates.sql` — ssl_certificates table (cert, key, issued_at, expires_at, status, failure_reason, retry_count)
+15. `000015_create_ssl_certificates.sql` — ssl_certificates table (cert_path, key_path, issued_at, expires_at, status, last_error, renewal_count, staging, created_at, updated_at)
 16. `000016_add_impersonated_by_to_refresh_tokens.sql` — impersonated_by FK (tracks admin impersonation trail)
 17. `000017_ssl_enabled_default_true.sql` — SSL enabled by default (=1) on new domains
-18. `000018_add_next_retry_at_to_ssl_certificates.sql` — next_retry_at timestamp for exponential backoff retry scheduling
+18. `000018_add_next_retry_at_to_ssl_certificates.sql` — next_retry_at timestamp + retry_count INT for exponential backoff retry scheduling
 
 ---
 
@@ -412,8 +441,8 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Phase 2 (M5b): Resilient ACME + Fallback (Shipped)**
 - Try-ACME-first strategy with 60s timeout
-- Fallback to self-signed if ACME fails (generates 30-day self-signed cert)
-- Exponential backoff retry scheduling (5m → 15m → 1h → 4h, capped at 4h)
+- Fallback to 365-day self-signed if ACME fails
+- Exponential backoff retry scheduling: retry_count 1→5m, 2→15m, 3→1h, 4+→4h (capped)
 - next_retry_at timestamp + retry_count tracking in ssl_certificates table
 - Max 20 retries; mark cert as permanently failed if exceeded
 - Manual retry endpoint: `/api/v1/domains/:id/ssl/retry` (admin-only)
@@ -426,31 +455,34 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 ### M5a: Admin Impersonation (SHIPPED)
 
-**Goal:** Admins can log in as a specific user to debug or support without knowing their password.
+**Goal:** Admins can generate temporary login links to access a user's panel without knowing their password.
 
 **Deliverables:**
-- `/admin/users/{id}/impersonate` endpoint (POST, returns new JWT with `impersonated_by` claim)
-- `impersonated_by` FK column on refresh_tokens (tracks which admin is impersonating)
-- Impersonation banner in UI (red bar: "Logged in as user X, impersonated by admin Y")
-- Exit flow reuses `/auth/logout` — no separate endpoint. UI clears in-memory token + redirects to login
-- Support for nested impersonation: admin X impersonates user Y's session (audit trail via impersonated_by chain)
+- `POST /admin/users/{id}/impersonate` endpoint — returns `{ "login_url": "<url>" }` with 5-minute JWT (purpose=cli_login, impersonated_by set)
+- Admin's browser opens the login URL in new tab via `window.open(login_url, '_blank')` — original tab untouched
+- Impersonation tab auto-redeems JWT via `POST /auth/cli-login`, sets `sessionStorage.no_refresh=1` for reload resilience
+- Impersonation session is 1h access-token-only (no refresh cookie) — dies cleanly on expiry
+- No UI banner; impersonation tab looks identical to a normal user session
+- Exit = close the tab (no separate exit endpoint)
+- Single impersonation per link; cannot nest further
 
-**Status:** Shipped (commit `7bc292f`)
+**Status:** Shipped (commits `5324198`, `25435a7`, `5241f02`, `a1817c1`)
 
 **Depends on:** M1 (auth infrastructure)
 
 ### M5b: Break-Glass CLI Login (SHIPPED)
 
-**Goal:** Provide emergency admin access when primary auth (GUI) is unavailable or compromised.
+**Goal:** Provide emergency admin access and secure user impersonation from the command line.
 
 **Deliverables:**
-- `/auth/cli-login` endpoint (POST, requires `secret` query param matching `CLI_LOGIN_SECRET` env var)
-- Returns JWT with `purpose=cli_login` claim (identifies as emergency login, not normal auth)
-- CLI login token lifetime configurable via `CLI_LOGIN_SECRET_TTL` env var (default 1 hour)
-- Audit logging (records all CLI logins in application logs with timestamp + IP)
-- No UI exposure: CLI login endpoint for tooling / shell scripts only
+- `jabali-panel admin login [--email <e>]` CLI subcommand — mints 15-minute JWT (purpose=cli_login, no impersonated_by), prints login URL
+- `jabali-panel user login <email-or-id>` CLI subcommand — accepts email or ULID, rejects admins, mints 5-minute JWT (purpose=cli_login, impersonated_by=cli), prints login URL
+- `POST /auth/cli-login` endpoint — validates JWT, branches on impersonated_by: if set → access-token-only (1h, no refresh); if empty → full session (access + refresh cookie)
+- `Purpose` claim validation: middleware rejects any token with Purpose field set when used as normal Bearer token (prevents cli_login tokens from accessing protected routes directly)
+- Audit logging for all CLI-initiated logins
+- No environment variables (CLI_LOGIN_SECRET removed)
 
-**Status:** Shipped (commit `c587144`)
+**Status:** Shipped (commits `c587144`, `25435a7`, `623a99f`, `5241f02`)
 
 **Depends on:** M1 (auth infrastructure)
 

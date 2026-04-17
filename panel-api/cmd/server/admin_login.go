@@ -90,7 +90,7 @@ func runAdminLogin(ctx context.Context, cfg *config.Config, db *gorm.DB, log *sl
 	issuer, err := auth.NewJWTIssuer(auth.JWTConfig{
 		Secret:    []byte(cfg.Auth.JWTSecret),
 		Issuer:    "jabali-panel",
-		KeyID:     "default",
+		KeyID:     jwtKeyID,
 		AccessTTL: 15 * time.Minute,
 	})
 	if err != nil {

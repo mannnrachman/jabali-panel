@@ -68,7 +68,7 @@ func runUserLogin(ctx context.Context, cfg *config.Config, db *gorm.DB, log *slo
 	issuer, err := auth.NewJWTIssuer(auth.JWTConfig{
 		Secret:    []byte(cfg.Auth.JWTSecret),
 		Issuer:    "jabali-panel",
-		KeyID:     "default",
+		KeyID:     jwtKeyID,
 		AccessTTL: 5 * time.Minute,
 	})
 	if err != nil {

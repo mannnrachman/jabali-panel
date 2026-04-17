@@ -73,10 +73,13 @@ func (h *databaseHandler) list(c *gin.Context) {
 		return
 	}
 
+	if dbs == nil {
+		dbs = []models.Database{}
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"items":      dbs,
-		"total":      total,
-		"page":       page,
+		"data":      dbs,
+		"total":     total,
+		"page":      page,
 		"page_size": pageSize,
 	})
 }

@@ -383,7 +383,7 @@ func TestDatabaseListAdmin(t *testing.T) {
 	var resp map[string]interface{}
 	json.NewDecoder(w.Body).Decode(&resp)
 	assert.Equal(t, float64(2), resp["total"])
-	assert.NotNil(t, resp["items"])
+	assert.NotNil(t, resp["data"])
 }
 
 func TestDatabaseListUser(t *testing.T) {

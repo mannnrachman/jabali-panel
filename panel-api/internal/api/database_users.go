@@ -109,10 +109,13 @@ func (h *databaseUserHandler) list(c *gin.Context) {
 		return
 	}
 
+	if users == nil {
+		users = []models.DatabaseUser{}
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"items":      users,
-		"total":      total,
-		"page":       page,
+		"data":      users,
+		"total":     total,
+		"page":      page,
 		"page_size": pageSize,
 	})
 }

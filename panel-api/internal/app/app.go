@@ -40,6 +40,8 @@ type Deps struct {
 	DNSZones            repository.DNSZoneRepository
 	DNSRecords          repository.DNSRecordRepository
 	SSLCerts            repository.SSLCertificateRepository
+	PHPPools            repository.PHPPoolRepository
+	PHPPoolIniOverrides repository.PHPPoolIniOverrideRepository
 	SSOKey              *ssokey.Key
 	Log                 *slog.Logger
 }

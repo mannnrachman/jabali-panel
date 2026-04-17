@@ -182,6 +182,10 @@ type Domain struct {
 	// "failed", "off". Populated by the repository on List/ListByUserID.
 	SSLState string `gorm:"-" json:"ssl_state,omitempty"`
 
+	// PHPPoolID optionally binds this domain to a PHP-FPM pool. When set, the
+	// domain can execute PHP. When NULL, the domain is static (no PHP block in vhost).
+	PHPPoolID *string `gorm:"type:char(26)" json:"php_pool_id,omitempty"`
+
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }

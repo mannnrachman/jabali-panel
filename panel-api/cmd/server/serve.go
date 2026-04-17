@@ -111,6 +111,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		databaseUserRepo := repository.NewDatabaseUserRepository(sharedDB)
 		databaseUserGrantRepo := repository.NewDatabaseUserGrantRepository(sharedDB)
 		phpMyAdminSSOTokenRepo := repository.NewPhpMyAdminSSOTokenRepository(sharedDB)
+		phpPoolRepo := repository.NewPHPPoolRepository(sharedDB)
+		phpPoolIniOverrideRepo := repository.NewPHPPoolIniOverrideRepository(sharedDB)
 
 		serverSettingsRepo := repository.NewServerSettingsRepository(sharedDB)
 		jwtIss, err := auth.NewJWTIssuer(auth.JWTConfig{
@@ -159,6 +161,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.DatabaseUsers = databaseUserRepo
 		deps.DatabaseUserGrants = databaseUserGrantRepo
 		deps.PhpMyAdminSSOTokens = phpMyAdminSSOTokenRepo
+		deps.PHPPools = phpPoolRepo
+		deps.PHPPoolIniOverrides = phpPoolIniOverrideRepo
 
 		// Admin bootstrap.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

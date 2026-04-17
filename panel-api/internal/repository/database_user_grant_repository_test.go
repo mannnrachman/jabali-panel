@@ -120,6 +120,7 @@ func TestDatabaseUserGrantRepository_Create(t *testing.T) {
 			grant.DatabaseID,
 			grant.DatabaseUserID,
 			grant.GrantLevel,
+			sqlmock.AnyArg(), // privileges (defaults to 'ALL' via GORM)
 			sqlmock.AnyArg(), // created_at
 			sqlmock.AnyArg(), // updated_at
 		).

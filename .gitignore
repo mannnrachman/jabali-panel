@@ -58,3 +58,4 @@ logs/
 *.png
 !panel-ui/public/**/*.png
 !docs/**/*.png
+.claude/worktrees/

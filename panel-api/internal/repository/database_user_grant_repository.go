@@ -18,6 +18,7 @@ type DatabaseUserGrantRepository interface {
 	Create(ctx context.Context, grant *models.DatabaseUserGrant) error
 	Delete(ctx context.Context, id string) error
 	UpdateLevel(ctx context.Context, id string, level string) error
+	UpdatePrivileges(ctx context.Context, id string, privileges string) error
 	FindByDBAndDBUser(ctx context.Context, databaseID string, databaseUserID string) (*models.DatabaseUserGrant, error)
 }
 
@@ -79,6 +80,13 @@ func (r *databaseUserGrantRepo) Delete(ctx context.Context, id string) error {
 
 func (r *databaseUserGrantRepo) UpdateLevel(ctx context.Context, id string, level string) error {
 	return r.db.WithContext(ctx).Model(&models.DatabaseUserGrant{}).Where("id = ?", id).Update("grant_level", level).Error
+}
+
+func (r *databaseUserGrantRepo) UpdatePrivileges(ctx context.Context, id string, privileges string) error {
+	return r.db.WithContext(ctx).Model(&models.DatabaseUserGrant{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"privileges":   privileges,
+		"grant_level":  "custom", // Mark as custom when using privilege granularity
+	}).Error
 }
 
 func (r *databaseUserGrantRepo) FindByDBAndDBUser(ctx context.Context, databaseID string, databaseUserID string) (*models.DatabaseUserGrant, error) {

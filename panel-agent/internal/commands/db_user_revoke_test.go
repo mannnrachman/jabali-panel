@@ -76,11 +76,21 @@ func TestDBUserRevokeHandler(t *testing.T) {
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
 		{
-			name: "invalid: grant level not rw or ro",
+			name: "invalid: grant level not rw or ro and no privileges",
 			input: dbUserRevokeParams{
 				DBName:     "testdb",
 				DBUserName: "testuser",
 				GrantLevel: "invalid",
+			},
+			wantError: true,
+			wantCode:  agentwire.CodeInvalidArgument,
+		},
+		{
+			name: "invalid: privileges with invalid token",
+			input: dbUserRevokeParams{
+				DBName:     "testdb",
+				DBUserName: "testuser",
+				Privileges: []string{"INVALID"},
 			},
 			wantError: true,
 			wantCode:  agentwire.CodeInvalidArgument,

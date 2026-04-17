@@ -8,6 +8,7 @@ type DatabaseUserGrant struct {
 	DatabaseID     string `gorm:"type:char(26);not null" json:"database_id"`
 	DatabaseUserID string `gorm:"type:char(26);not null" json:"database_user_id"`
 	GrantLevel     string `gorm:"type:enum('rw','ro');not null" json:"grant_level"`
+	Privileges     string `gorm:"type:varchar(255);not null;default:'ALL'" json:"privileges"`
 	CreatedAt      time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt      time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }

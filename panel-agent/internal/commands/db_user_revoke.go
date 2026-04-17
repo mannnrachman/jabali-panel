@@ -12,9 +12,10 @@ import (
 
 // dbUserRevokeParams is the input shape for db_user.revoke.
 type dbUserRevokeParams struct {
-	DBName     string `json:"db_name"`
-	DBUserName string `json:"db_user_name"`
-	GrantLevel string `json:"grant_level"` // "rw" or "ro"
+	DBName     string   `json:"db_name"`
+	DBUserName string   `json:"db_user_name"`
+	GrantLevel string   `json:"grant_level"` // "rw" or "ro" (legacy, fallback)
+	Privileges []string `json:"privileges"` // ["SELECT", "INSERT", ...] or ["ALL"]
 }
 
 // dbUserRevokeResponse is the output shape for db_user.revoke.
@@ -49,11 +50,29 @@ func dbUserRevokeHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
-	// Validate grant_level.
-	if p.GrantLevel != "rw" && p.GrantLevel != "ro" {
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInvalidArgument,
-			Message: "invalid grant_level; must be 'rw' or 'ro'",
+	// Determine which privilege list to use: privileges (new) or fallback to grant_level (legacy).
+	var privStr string
+	if len(p.Privileges) > 0 {
+		// Use privileges array.
+		normalized, err := validateAndNormalizePrivileges(p.Privileges)
+		if err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInvalidArgument,
+				Message: fmt.Sprintf("invalid privileges: %v", err),
+			}
+		}
+		privStr = normalized
+	} else {
+		// Fallback to grant_level for backward compatibility.
+		if p.GrantLevel == "rw" {
+			privStr = "ALL"
+		} else if p.GrantLevel == "ro" {
+			privStr = "SELECT"
+		} else {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInvalidArgument,
+				Message: "either privileges or valid grant_level must be provided",
+			}
 		}
 	}
 
@@ -75,18 +94,18 @@ func dbUserRevokeHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
-	// Build the REVOKE command based on grant_level.
+	// Build the REVOKE command.
 	var revokeSql string
-	if p.GrantLevel == "rw" {
+	if privStr == "ALL" {
 		revokeSql = fmt.Sprintf(
 			"REVOKE ALL PRIVILEGES ON %s.* FROM %s@'localhost'",
 			escapedDBName,
 			escapedUsername,
 		)
 	} else {
-		// "ro"
 		revokeSql = fmt.Sprintf(
-			"REVOKE SELECT ON %s.* FROM %s@'localhost'",
+			"REVOKE %s ON %s.* FROM %s@'localhost'",
+			privStr,
 			escapedDBName,
 			escapedUsername,
 		)

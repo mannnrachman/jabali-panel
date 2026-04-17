@@ -20,7 +20,8 @@ export type Grant = {
   id: string;
   database_id: string;
   database_name: string;
-  grant_level: "rw" | "ro";
+  grant_level: "rw" | "ro" | "custom";
+  privileges?: string;
 };
 
 export type DatabaseUser = {
@@ -45,8 +46,21 @@ function placeholderForRotateBody(): string {
   return out;
 }
 
-function grantLabel(level: Grant["grant_level"]): string {
-  return level === "rw" ? "Full Access" : "Read only";
+function grantLabel(grant: Grant): string {
+  switch (grant.grant_level) {
+    case "rw":
+      return "Full Access";
+    case "ro":
+      return "Read only";
+    case "custom":
+      if (grant.privileges) {
+        const privs = grant.privileges.split(",").map((p) => p.trim());
+        return privs.length > 2 ? `${privs.slice(0, 2).join(", ")}…` : privs.join(", ");
+      }
+      return "Custom";
+    default:
+      return "Unknown";
+  }
 }
 
 export const DatabaseUsersList = () => {
@@ -96,7 +110,7 @@ export const DatabaseUsersList = () => {
     setRevokingId(grant.id);
     try {
       await apiClient.delete(`/database-user-grants/${grant.id}`);
-      message.success(`Revoked ${grantLabel(grant.grant_level).toLowerCase()} on ${grant.database_name}`);
+      message.success(`Revoked ${grantLabel(grant).toLowerCase()} on ${grant.database_name}`);
       refresh();
     } catch (err) {
       const msg =
@@ -156,7 +170,7 @@ export const DatabaseUsersList = () => {
                 {grants.map((g) => (
                   <Tag
                     key={g.id}
-                    color={g.grant_level === "rw" ? "green" : "blue"}
+                    color={g.grant_level === "rw" ? "green" : g.grant_level === "ro" ? "blue" : "orange"}
                     closable
                     onClose={(e) => {
                       e.preventDefault();
@@ -167,7 +181,7 @@ export const DatabaseUsersList = () => {
                       pointerEvents: revokingId === g.id ? "none" : undefined,
                     }}
                   >
-                    {g.database_name} ({grantLabel(g.grant_level)})
+                    {g.database_name} ({grantLabel(g)})
                   </Tag>
                 ))}
               </Space>

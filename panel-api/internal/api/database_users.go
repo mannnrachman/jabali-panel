@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -63,6 +65,80 @@ func RegisterDatabaseUserRoutes(g *gin.RouterGroup, cfg DatabaseUserHandlerConfi
 
 type databaseUserHandler struct{ cfg DatabaseUserHandlerConfig }
 
+// parsePrivilegesFromString splits a comma-separated privilege string into a slice.
+// Returns nil for empty string.
+func parsePrivilegesFromString(s string) []string {
+	if s == "" {
+		return nil
+	}
+	if s == "ALL" {
+		return []string{"ALL"}
+	}
+	var result []string
+	// Split by comma and trim whitespace.
+	parts := strings.Split(s, ",")
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
+// privilegesToCanonicalString converts a privileges slice to the canonical form:
+// ["SELECT","INSERT","UPDATE","DELETE","CREATE","DROP","ALTER","INDEX"] → "SELECT,INSERT,UPDATE,DELETE,CREATE,DROP,ALTER,INDEX"
+// ["ALL"] → "ALL"
+// Returns empty string if the slice is empty or contains only whitespace.
+func privilegesToCanonicalString(privs []string) (string, error) {
+	if len(privs) == 0 {
+		return "", nil
+	}
+
+	// Check if "ALL" is present.
+	for _, p := range privs {
+		if p == "ALL" {
+			return "ALL", nil
+		}
+	}
+
+	// Canonical order and valid tokens.
+	canonicalOrder := []string{"SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "INDEX"}
+	validTokens := map[string]bool{
+		"SELECT": true,
+		"INSERT": true,
+		"UPDATE": true,
+		"DELETE": true,
+		"CREATE": true,
+		"DROP":   true,
+		"ALTER":  true,
+		"INDEX":  true,
+	}
+
+	// Validate and collect seen privileges.
+	seen := make(map[string]bool)
+	for _, p := range privs {
+		if !validTokens[p] {
+			return "", fmt.Errorf("invalid privilege: %s", p)
+		}
+		seen[p] = true
+	}
+
+	// Build canonical string in order.
+	var result []string
+	for _, canonical := range canonicalOrder {
+		if seen[canonical] {
+			result = append(result, canonical)
+		}
+	}
+
+	if len(result) == 0 {
+		return "", nil
+	}
+
+	return strings.Join(result, ","), nil
+}
+
 // ---- Request/Response types ----
 
 type createDatabaseUserRequest struct {
@@ -79,17 +155,19 @@ type createDatabaseUserResponse struct {
 
 // addGrantRequest is the body for POST /database-users/:id/grants.
 type addGrantRequest struct {
-	DatabaseID string `json:"database_id" binding:"required"`
-	GrantLevel string `json:"grant_level" binding:"required"`
+	DatabaseID string   `json:"database_id" binding:"required"`
+	GrantLevel string   `json:"grant_level"`
+	Privileges []string `json:"privileges"`
 }
 
 // grantResponse is the shape of a single grant — used inline in the
 // user-list response and as the return body of the add/update endpoints.
 type grantResponse struct {
-	ID           string `json:"id"`
-	DatabaseID   string `json:"database_id"`
-	DatabaseName string `json:"database_name"`
-	GrantLevel   string `json:"grant_level"`
+	ID           string   `json:"id"`
+	DatabaseID   string   `json:"database_id"`
+	DatabaseName string   `json:"database_name"`
+	GrantLevel   string   `json:"grant_level"`
+	Privileges   []string `json:"privileges"`
 }
 
 type rotateDatabaseUserPasswordRequest struct {
@@ -101,7 +179,8 @@ type rotateDatabaseUserPasswordResponse struct {
 }
 
 type updateDatabaseUserGrantRequest struct {
-	GrantLevel string `json:"grant_level" binding:"required"`
+	GrantLevel string   `json:"grant_level"`
+	Privileges []string `json:"privileges"`
 }
 
 // ---- Handlers ----
@@ -165,6 +244,7 @@ func (h *databaseUserHandler) list(c *gin.Context) {
 			DatabaseID:   g.DatabaseID,
 			DatabaseName: dbNameByID[g.DatabaseID],
 			GrantLevel:   g.GrantLevel,
+			Privileges:   parsePrivilegesFromString(g.Privileges),
 		})
 	}
 
@@ -354,9 +434,38 @@ func (h *databaseUserHandler) addGrant(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
 		return
 	}
-	if req.GrantLevel != "rw" && req.GrantLevel != "ro" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant_level", "detail": "grant_level must be 'rw' or 'ro'"})
+
+	// Determine privileges to use: either from privileges array or fallback to grant_level.
+	var canonicalPrivileges string
+	if len(req.Privileges) > 0 {
+		// Validate and normalize privileges.
+		var err error
+		canonicalPrivileges, err = privilegesToCanonicalString(req.Privileges)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_privileges", "detail": err.Error()})
+			return
+		}
+	} else if req.GrantLevel != "" {
+		// Legacy path: translate grant_level to privileges.
+		if req.GrantLevel == "rw" {
+			canonicalPrivileges = "ALL"
+		} else if req.GrantLevel == "ro" {
+			canonicalPrivileges = "SELECT"
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant_level", "detail": "grant_level must be 'rw' or 'ro'"})
+			return
+		}
+	} else {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_privileges", "detail": "either privileges or grant_level must be provided"})
 		return
+	}
+
+	// Compute grant_level from canonical privileges for backward compat.
+	computedGrantLevel := "custom"
+	if canonicalPrivileges == "ALL" {
+		computedGrantLevel = "rw"
+	} else if canonicalPrivileges == "SELECT" {
+		computedGrantLevel = "ro"
 	}
 
 	du, err := h.cfg.DatabaseUsers.FindByID(ctx, c.Param("id"))
@@ -416,7 +525,8 @@ func (h *databaseUserHandler) addGrant(c *gin.Context) {
 		ID:             ids.NewULID(),
 		DatabaseID:     db.ID,
 		DatabaseUserID: du.ID,
-		GrantLevel:     req.GrantLevel,
+		GrantLevel:     computedGrantLevel,
+		Privileges:     canonicalPrivileges,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
@@ -427,6 +537,7 @@ func (h *databaseUserHandler) addGrant(c *gin.Context) {
 		_, _ = h.cfg.Agent.Call(revokeCtx, "db_user.revoke", map[string]any{
 			"db_name":      db.Name,
 			"db_user_name": du.Username,
+			"privileges":   strings.Split(canonicalPrivileges, ","),
 		})
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
@@ -437,6 +548,7 @@ func (h *databaseUserHandler) addGrant(c *gin.Context) {
 		DatabaseID:   db.ID,
 		DatabaseName: db.Name,
 		GrantLevel:   g.GrantLevel,
+		Privileges:   parsePrivilegesFromString(g.Privileges),
 	})
 }
 
@@ -486,7 +598,7 @@ func (h *databaseUserHandler) deleteGrant(c *gin.Context) {
 	_, err = h.cfg.Agent.Call(agentCtx, "db_user.revoke", map[string]any{
 		"db_name":      db.Name,
 		"db_user_name": du.Username,
-		"grant_level":  g.GrantLevel,
+		"privileges":   strings.Split(g.Privileges, ","),
 	})
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
@@ -554,7 +666,7 @@ func (h *databaseUserHandler) delete(c *gin.Context) {
 		_, err = h.cfg.Agent.Call(agentCtx, "db_user.revoke", map[string]any{
 			"db_name":      db.Name,
 			"db_user_name": du.Username,
-			"grant_level":  grant.GrantLevel,
+			"privileges":   strings.Split(grant.Privileges, ","),
 		})
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
@@ -674,14 +786,31 @@ func (h *databaseUserHandler) updateGrant(c *gin.Context) {
 		return
 	}
 
-	// Validate grant level
-	if req.GrantLevel != "rw" && req.GrantLevel != "ro" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":  "invalid_grant_level",
-			"detail": "grant_level must be either 'rw' or 'ro'",
-		})
+	// Determine privileges to use: either from privileges array or fallback to grant_level.
+	var canonicalPrivileges string
+	if len(req.Privileges) > 0 {
+		// Validate and normalize privileges.
+		var err error
+		canonicalPrivileges, err = privilegesToCanonicalString(req.Privileges)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_privileges", "detail": err.Error()})
+			return
+		}
+	} else if req.GrantLevel != "" {
+		// Legacy path: translate grant_level to privileges.
+		if req.GrantLevel == "rw" {
+			canonicalPrivileges = "ALL"
+		} else if req.GrantLevel == "ro" {
+			canonicalPrivileges = "SELECT"
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant_level", "detail": "grant_level must be 'rw' or 'ro'"})
+			return
+		}
+	} else {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_privileges", "detail": "either privileges or grant_level must be provided"})
 		return
 	}
+
 
 	// Load grant
 	grant, err := h.cfg.DatabaseGrants.FindByID(ctx, c.Param("id"))
@@ -707,9 +836,15 @@ func (h *databaseUserHandler) updateGrant(c *gin.Context) {
 		return
 	}
 
-	// No-op: same grant level
-	if grant.GrantLevel == req.GrantLevel {
-		c.JSON(http.StatusOK, grant)
+	// No-op: same privileges
+	if grant.Privileges == canonicalPrivileges {
+		c.JSON(http.StatusOK, grantResponse{
+			ID:           grant.ID,
+			DatabaseID:   grant.DatabaseID,
+			DatabaseName: "", // Will be fetched below
+			GrantLevel:   grant.GrantLevel,
+			Privileges:   parsePrivilegesFromString(grant.Privileges),
+		})
 		return
 	}
 
@@ -755,14 +890,14 @@ func (h *databaseUserHandler) updateGrant(c *gin.Context) {
 		h.cfg.Agent.Call(agentCtx, "db_user.grant", map[string]any{
 			"db_name":      db.Name,
 			"db_user_name": du.Username,
-			"grant_level":  grant.GrantLevel,
+			"privileges":   strings.Split(grant.Privileges, ","),
 		})
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
 		return
 	}
 
-	// Update grant level in database
-	if err := h.cfg.DatabaseGrants.UpdateLevel(ctx, grant.ID, req.GrantLevel); err != nil {
+	// Update privileges in database
+	if err := h.cfg.DatabaseGrants.UpdatePrivileges(ctx, grant.ID, canonicalPrivileges); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
@@ -774,7 +909,13 @@ func (h *databaseUserHandler) updateGrant(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, updatedGrant)
+	c.JSON(http.StatusOK, grantResponse{
+		ID:           updatedGrant.ID,
+		DatabaseID:   updatedGrant.DatabaseID,
+		DatabaseName: db.Name,
+		GrantLevel:   updatedGrant.GrantLevel,
+		Privileges:   parsePrivilegesFromString(updatedGrant.Privileges),
+	})
 }
 
 // ---- Validation helpers ----

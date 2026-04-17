@@ -1,12 +1,11 @@
 // AddGrantModal — per-user grant creation.
 //
 // Given a database user (by id + display username), lets the operator
-// pick a database and a grant level (rw → "Full Access", ro → "Read
-// only") and posts to /database-users/:id/grants. The current tranche
-// supports only the two coarse levels; a future tranche replaces this
-// with the granular privilege checkbox set (SELECT/INSERT/UPDATE/…).
+// pick a database and either use a preset grant level (rw → "Full Access",
+// ro → "Read only") or custom privileges. Supports granular privilege
+// checkbox set (SELECT/INSERT/UPDATE/DELETE/CREATE/DROP/ALTER/INDEX).
 import { useEffect, useState } from "react";
-import { Alert, Form, Modal, Radio, Select, message } from "antd";
+import { Alert, Form, Modal, Radio, Select, Checkbox, Space, Button, message } from "antd";
 import { useList } from "@refinedev/core";
 
 import { apiClient } from "../apiClient";
@@ -24,9 +23,13 @@ interface AddGrantModalProps {
 
 type DatabaseOption = { id: string; name: string };
 
+const AVAILABLE_PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "INDEX"];
+
 type AddGrantInput = {
   database_id: string;
-  grant_level: "rw" | "ro";
+  grantType: "preset" | "custom";
+  grant_level?: "rw" | "ro";
+  privileges?: string[];
 };
 
 export function AddGrantModal({
@@ -39,6 +42,7 @@ export function AddGrantModal({
 }: AddGrantModalProps) {
   const [form] = Form.useForm<AddGrantInput>();
   const [submitting, setSubmitting] = useState(false);
+  const grantType = Form.useWatch("grantType", form);
 
   // Fresh list of databases each open — 200 is plenty for a
   // single-tenant panel; large installs can move to an async select.
@@ -54,7 +58,7 @@ export function AddGrantModal({
   useEffect(() => {
     if (open) {
       form.resetFields();
-      form.setFieldsValue({ grant_level: "rw" });
+      form.setFieldsValue({ grantType: "preset", grant_level: "rw", privileges: [] });
     }
   }, [open, form]);
 
@@ -62,7 +66,18 @@ export function AddGrantModal({
     if (!userId) return;
     setSubmitting(true);
     try {
-      await apiClient.post(`/database-users/${userId}/grants`, values);
+      // Build the request: send privileges array if custom, otherwise send grant_level
+      const payload: Record<string, any> = {
+        database_id: values.database_id,
+      };
+
+      if (values.grantType === "custom" && values.privileges && values.privileges.length > 0) {
+        payload.privileges = values.privileges;
+      } else {
+        payload.grant_level = values.grant_level || "rw";
+      }
+
+      await apiClient.post(`/database-users/${userId}/grants`, payload);
       message.success("Access granted");
       onSuccess();
       onClose();
@@ -95,7 +110,7 @@ export function AddGrantModal({
       <Form<AddGrantInput>
         form={form}
         layout="vertical"
-        initialValues={{ grant_level: "rw" }}
+        initialValues={{ grantType: "preset", grant_level: "rw", privileges: [] }}
         onFinish={onFinish}
       >
         <Form.Item
@@ -117,12 +132,33 @@ export function AddGrantModal({
           />
         </Form.Item>
 
-        <Form.Item label="Privilege Type" name="grant_level" rules={[{ required: true }]}>
+        <Form.Item label="Grant Type" name="grantType" rules={[{ required: true }]}>
           <Radio.Group>
-            <Radio value="rw">Full Access</Radio>
-            <Radio value="ro">Read only</Radio>
+            <Space direction="vertical" style={{ width: "100%" }}>
+              <Radio value="preset">Preset Privileges</Radio>
+              <Radio value="custom">Custom Privileges</Radio>
+            </Space>
           </Radio.Group>
         </Form.Item>
+
+        {grantType === "preset" && (
+          <Form.Item label="Privilege Level" name="grant_level" rules={[{ required: true }]}>
+            <Radio.Group>
+              <Space direction="vertical">
+                <Radio value="rw">Full Access (all privileges)</Radio>
+                <Radio value="ro">Read Only (SELECT only)</Radio>
+              </Space>
+            </Radio.Group>
+          </Form.Item>
+        )}
+
+        {grantType === "custom" && (
+          <Form.Item label="Custom Privileges" name="privileges">
+            <Checkbox.Group
+              options={AVAILABLE_PRIVILEGES.map((p) => ({ label: p, value: p }))}
+            />
+          </Form.Item>
+        )}
       </Form>
     </Modal>
   );

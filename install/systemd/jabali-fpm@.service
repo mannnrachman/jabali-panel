@@ -7,7 +7,10 @@ After=network.target
 # FPM runs in foreground via -F flag in fpm-exec so systemd supervises
 # the process directly.
 Type=simple
-ExecStartPre=/usr/local/libexec/jabali/fpm-pre-start %i
+# "+" prefix runs this ExecStartPre as root regardless of User= in
+# per-instance drop-ins, so the shim can mkdir /run/php and validate
+# system paths. Main ExecStart drops to User=<user> as set in drop-in.
+ExecStartPre=+/usr/local/libexec/jabali/fpm-pre-start %i
 ExecStart=/usr/local/libexec/jabali/fpm-exec %i
 ExecReload=/bin/kill -USR2 $MAINPID
 Restart=on-failure

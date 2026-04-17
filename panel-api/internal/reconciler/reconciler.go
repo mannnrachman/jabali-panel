@@ -343,6 +343,18 @@ func (r *Reconciler) ReconcilePHPPools(ctx context.Context) {
 			continue
 		}
 
+		// Users without a Linux account (admin with username=NULL) get
+		// no pool, slice, or apply. If a pool row exists (likely from
+		// an earlier buggy reconcile), mark it error so it stays visible
+		// instead of stuck pending forever.
+		if user.Username == nil || *user.Username == "" {
+			if pool != nil && pool.Status != "error" {
+				msg := "user has no Linux username; skipping pool provision"
+				_ = r.phpPools.SetStatus(ctx, pool.ID, "error", &msg)
+			}
+			continue
+		}
+
 		// Ensure per-user slice and FPM drop-ins exist (idempotent via agent)
 		if user.Username != nil && *user.Username != "" {
 			ensureCtx, cancel := context.WithTimeout(ctx, 10*time.Second)

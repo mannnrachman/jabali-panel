@@ -49,6 +49,7 @@ func newRootCmd() *cobra.Command {
 
 	adminCmd := newAdminCmd()
 	adminCmd.AddCommand(newAdminLoginCmd())
+	adminCmd.AddCommand(newAdminSliceCutoverCmd())
 
 	cmd.AddCommand(
 		newServeCmd(),

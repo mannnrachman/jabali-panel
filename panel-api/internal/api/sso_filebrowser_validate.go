@@ -69,7 +69,7 @@ func (h *ssoFileBrowserValidateHandler) validate(c *gin.Context) {
 	}
 
 	// Validate and consume token
-	username, err := h.cfg.SSO.ValidateAndConsumeFileBrowserToken(ctx, req.Token)
+	username, err := h.cfg.SSO.ValidateFileBrowserToken(ctx, req.Token)
 	if err != nil {
 		// Map all errors to 401 Unauthorized (expired, used, not found, etc.)
 		h.cfg.Log.DebugContext(ctx, "sso_filebrowser_validate",

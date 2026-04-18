@@ -204,7 +204,10 @@ func (s *Service) MintFileBrowserToken(ctx context.Context, userID string) (stri
 	hashStr := fmt.Sprintf("%x", hash[:])
 
 	// Create token row with 60-second TTL
-	expiresAt := time.Now().Add(60 * time.Second)
+	// 2-hour TTL: session-lived per plans/m11-filebrowser-session-fix.md Option B.
+	// Tokens are re-validated on every request; shorter TTL means more frequent
+	// re-logins, longer means more drift between panel and filebrowser sessions.
+	expiresAt := time.Now().Add(2 * time.Hour)
 	token := &models.FileBrowserSSOToken{
 		ID:        ids.NewULID(),
 		UserID:    userID,
@@ -223,10 +226,16 @@ func (s *Service) MintFileBrowserToken(ctx context.Context, userID string) (stri
 	return plaintextToken, expiresAt, nil
 }
 
-// ValidateAndConsumeFileBrowserToken validates a filebrowser SSO token and marks it as used.
-// Returns the Linux username for the user. Errors: ErrNotFound for unknown/expired/used tokens,
-// or if the user has no Linux username (e.g., admin-only account).
-func (s *Service) ValidateAndConsumeFileBrowserToken(ctx context.Context, token string) (string, error) {
+// ValidateFileBrowserToken validates a filebrowser SSO token WITHOUT consuming
+// it — the token is session-lived (see plans/m11-filebrowser-session-fix.md
+// Option B) and must survive re-validation on every request for the duration
+// of the session. Revocation is via the filebrowser_sso_tokens.used_at column:
+// if used_at is set, the token is treated as revoked. Expiry is enforced by
+// the repository's FindByHash filter.
+//
+// Returns the Linux username. Errors: ErrNotFound for unknown/expired/revoked
+// tokens, or if the user has no Linux username (e.g., admin-only account).
+func (s *Service) ValidateFileBrowserToken(ctx context.Context, token string) (string, error) {
 	// Decode base64url token to raw bytes
 	tokenBytes, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
@@ -255,13 +264,7 @@ func (s *Service) ValidateAndConsumeFileBrowserToken(ctx context.Context, token 
 		return "", fmt.Errorf("user has no Linux username")
 	}
 
-	// Mark token as used (one-time use)
-	if err := s.fileBrowserTokens.MarkUsed(ctx, tokenRecord.ID); err != nil {
-		s.log.ErrorContext(ctx, "mark token used failed", "token_id", tokenRecord.ID, "err", err)
-		return "", fmt.Errorf("mark token used: %w", err)
-	}
-
-	s.log.DebugContext(ctx, "validated and consumed filebrowser SSO token", "user_id", tokenRecord.UserID, "username", *user.Username)
+	s.log.DebugContext(ctx, "validated filebrowser SSO token", "user_id", tokenRecord.UserID, "username", *user.Username)
 
 	return *user.Username, nil
 }

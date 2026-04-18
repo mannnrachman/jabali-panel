@@ -297,7 +297,7 @@ install_base_packages() {
     git curl ca-certificates build-essential tar openssl gnupg \
     mariadb-server mariadb-client \
     php-cli php-mysqli php-curl php-xml php-mbstring \
-    rsync
+    rsync acl
   _ok "base packages ready"
 }
 

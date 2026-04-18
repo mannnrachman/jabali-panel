@@ -1256,12 +1256,18 @@ install_filebrowser_nginx() {
   _log "installing filebrowser nginx reverse-proxy config"
 
   local nginx_conf_dir="/etc/nginx/conf.d"
+  local nginx_includes_dir="/etc/nginx/sites-available/includes"
 
-  # Install the filebrowser nginx location block
-  # This file contains the /files/ location block with auth_request
-  # validation and X-Forwarded-User injection from the SSO validator.
+  # http-context helpers (map directive) go under conf.d/.
   if ! install -m 0644 "${REPO_DIR}/install/nginx/jabali-files.conf" "${nginx_conf_dir}/jabali-files.conf"; then
-    _die "failed to install filebrowser nginx config"
+    _die "failed to install filebrowser nginx map"
+  fi
+
+  # server-context /files/ location blocks are included from the default
+  # :443 vhost (see install_nginx_default_vhost).
+  install -d -m 0755 "${nginx_includes_dir}"
+  if ! install -m 0644 "${REPO_DIR}/install/nginx/includes/jabali-files.conf" "${nginx_includes_dir}/jabali-files.conf"; then
+    _die "failed to install filebrowser nginx include"
   fi
 
   # Enable the filebrowser systemd service (if the service unit exists)
@@ -1340,6 +1346,7 @@ server {
     index index.html index.htm;
 
     include /etc/nginx/sites-available/includes/phpmyadmin.conf;
+    include /etc/nginx/sites-available/includes/jabali-files.conf;
 
     location / {
         try_files \$uri \$uri/ =404;

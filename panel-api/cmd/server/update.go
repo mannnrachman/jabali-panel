@@ -147,11 +147,17 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 					"  install -m 0644 "+repoDir+"/install/systemd/jabali-filebrowser.service /etc/systemd/system/jabali-filebrowser.service; "+
 					"  systemctl daemon-reload; "+
 					"fi; "+
-					// nginx reverse-proxy config for filebrowser — ensure the
-					// latest version lands on update. The file contains the /files/
-					// location block with auth_request validation and X-Forwarded-User
-					// injection from the SSO validator.
+					// nginx reverse-proxy config for filebrowser. Split in two:
+					// conf.d/ gets only the http-context `map` directive; the
+					// server-context `location /files/` blocks live under
+					// sites-available/includes/ and are `include`d from the
+					// default :443 vhost.
+					"install -d -m 0755 /etc/nginx/sites-available/includes; "+
 					"install -m 0644 "+repoDir+"/install/nginx/jabali-files.conf /etc/nginx/conf.d/jabali-files.conf; "+
+					"install -m 0644 "+repoDir+"/install/nginx/includes/jabali-files.conf /etc/nginx/sites-available/includes/jabali-files.conf; "+
+					// Ensure the default vhost includes the filebrowser snippet.
+					// Idempotent: only edit if the line is missing.
+					"grep -q 'includes/jabali-files.conf' /etc/nginx/sites-available/jabali-default.conf 2>/dev/null || sed -i '/includes\\/phpmyadmin.conf/a \\    include /etc/nginx/sites-available/includes/jabali-files.conf;' /etc/nginx/sites-available/jabali-default.conf; "+
 					// Validate and reload nginx
 					"nginx -t && systemctl reload nginx; "+
 					// SFTP sshd drop-in — update ships new versions of the Match block.

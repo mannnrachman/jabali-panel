@@ -1278,14 +1278,18 @@ VHOSTEOF
 
   _ok "default vhost config written"
 
-  # Remove old /etc/nginx/sites-enabled/default symlink if it exists
-  if [[ -L "${nginx_enabled_dir}/default" ]]; then
-    _log "removing old ${nginx_enabled_dir}/default symlink"
+  # Debian's default nginx.conf includes both `sites-enabled/*` and (since
+  # our install_nginx step) `sites-enabled/*.conf`, so we must ensure the
+  # stock `default` symlink is removed — otherwise both the stock default
+  # vhost and our new jabali-default.conf bind `listen 80 default_server`
+  # and nginx -t fails with "duplicate default server".
+  if [[ -L "${nginx_enabled_dir}/default" || -e "${nginx_enabled_dir}/default" ]]; then
+    _log "removing stock ${nginx_enabled_dir}/default symlink"
     rm -f "${nginx_enabled_dir}/default"
   fi
 
-  # Create symlink to new default vhost
-  _log "creating symlink ${nginx_enabled_dir}/default -> ${default_vhost_file}"
+  # Create symlink (.conf extension so it's picked up by either include pattern).
+  _log "creating symlink ${nginx_enabled_dir}/default.conf -> ${default_vhost_file}"
   ln -sf "${default_vhost_file}" "${nginx_enabled_dir}/default.conf"
 
   # Test nginx configuration
@@ -1566,20 +1570,15 @@ CONFIGEOF
   mkdir -p "$nginx_inc_dir"
   chmod 0755 "$nginx_inc_dir"
 
-  # Write the phpMyAdmin nginx location block (reusable include for the panel vhost)
-  _log "writing phpMyAdmin nginx location block"
-  cat > "${nginx_inc_dir}/phpmyadmin.conf" <<'NGINXEOF'
-# phpMyAdmin location block for nginx
-# Include this in the panel vhost (port 8443) upstream to the domain owner's PHP-FPM pool
-#
-# Usage in the panel vhost:
-#   server {
-#       listen 127.0.0.1:8443 ssl;
-#       ...
-#       include /etc/nginx/sites-available/includes/phpmyadmin.conf;
-#   }
-
-# Log format that redacts query strings (protects SSO tokens from logs)
+  # Write the http-scope map + log_format to /etc/nginx/conf.d/. Debian's
+  # nginx.conf already includes conf.d/*.conf at http{} scope, so this is
+  # the right place for directives that can't live inside server{}.
+  _log "writing jabali-pma http-scope log format"
+  mkdir -p /etc/nginx/conf.d
+  cat > /etc/nginx/conf.d/jabali-pma-logformat.conf <<'LOGFMTEOF'
+# jabali phpMyAdmin log format — redacts query strings so SSO tokens
+# don't leak into access logs. Referenced by the /phpmyadmin/ location
+# block at /etc/nginx/sites-available/includes/phpmyadmin.conf.
 map $args $jabali_pma_logargs {
     ""      "-";
     default "[REDACTED]";
@@ -1589,6 +1588,17 @@ log_format jabali_pma '$remote_addr - $remote_user [$time_local] '
                       '$status $body_bytes_sent '
                       'args=$jabali_pma_logargs "$http_referer" '
                       '"$http_user_agent"';
+LOGFMTEOF
+  chmod 0644 /etc/nginx/conf.d/jabali-pma-logformat.conf
+  _ok "jabali-pma log format written"
+
+  # Write the phpMyAdmin nginx location block (reusable include for the panel vhost)
+  _log "writing phpMyAdmin nginx location block"
+  cat > "${nginx_inc_dir}/phpmyadmin.conf" <<'NGINXEOF'
+# phpMyAdmin location block for nginx.
+# Designed to be included inside a server{} block (port 80 default vhost
+# or the panel vhost). The jabali_pma log_format used below is defined
+# at http{} scope in /etc/nginx/conf.d/jabali-pma-logformat.conf.
 
 # phpMyAdmin location (matches /phpmyadmin/* requests)
 location ^~ /phpmyadmin/ {

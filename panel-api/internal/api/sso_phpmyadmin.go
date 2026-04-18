@@ -132,19 +132,18 @@ func (h *ssoPhpMyAdminHandler) getPhpMyAdminBaseURL(c *gin.Context) string {
 		return strings.TrimSuffix(baseURL, "/")
 	}
 
-	// Derive from request Host header: strip port and build http://<host>
+	// Derive from request Host header: strip port, use http:// scheme.
+	// The installer's default vhost (/etc/nginx/sites-available/jabali-default.conf)
+	// serves phpMyAdmin on port 80 plaintext. Even though the panel itself is
+	// behind TLS on :8443, we must not emit https:// here — there's no nginx
+	// vhost listening on :443 for phpMyAdmin. Operators wanting HTTPS-fronted
+	// phpMyAdmin must set sso.phpmyadmin_base_url explicitly and stand up
+	// their own TLS-terminating vhost.
 	host := c.Request.Host
-	// Remove :port if present
 	if idx := strings.LastIndex(host, ":"); idx != -1 {
 		host = host[:idx]
 	}
-
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-
-	return scheme + "://" + host
+	return "http://" + host
 }
 
 // auditLog emits a structured slog line for SSO operations.

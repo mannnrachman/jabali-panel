@@ -20,6 +20,7 @@ import {
   message,
   Alert,
   Tooltip,
+  Switch,
 } from "antd";
 import { CopyOutlined, CheckCircleTwoTone } from "@ant-design/icons";
 import { useInvalidate } from "@refinedev/core";
@@ -75,6 +76,12 @@ const LOCALES: { value: string; label: string }[] = [
   { value: "zh_CN", label: "简体中文" },
 ];
 
+// Subdirectory validation: must start with lowercase letter or digit,
+// 1-64 chars total, only lowercase letters, digits, underscore, dash.
+// Matches server-side regex: ^[a-z0-9][a-z0-9_-]{0,63}$
+const SUBDIRECTORY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const RESERVED_SUBDIRS = new Set(["wp-admin", "wp-includes", "wp-content"]);
+
 export const InstallWordPressModal = ({
   open,
   onClose,
@@ -84,6 +91,8 @@ export const InstallWordPressModal = ({
 }: Props) => {
   const [form] = Form.useForm<{
     domain_id: string;
+    use_www: boolean;
+    subdirectory: string;
     site_title: string;
     admin_username: string;
     admin_email: string;
@@ -95,6 +104,10 @@ export const InstallWordPressModal = ({
   const [loadingDomains, setLoadingDomains] = useState(false);
   const [result, setResult] = useState<CreatedResult | null>(null);
   const invalidate = useInvalidate();
+
+  // Watch domain_id to show/hide Step 2 fields
+  const selectedDomainId = Form.useWatch("domain_id", form);
+  const domainSelected = !!selectedDomainId;
 
   // The DB + user cache also gets a new row (install creates both),
   // so invalidate those lists too — matches Quick Setup's behavior.
@@ -158,6 +171,8 @@ export const InstallWordPressModal = ({
         admin_password: string;
       }>("/wordpress-installs", {
         domain_id: vals.domain_id,
+        use_www: vals.use_www || false,
+        subdirectory: vals.subdirectory || undefined,
         site_title: vals.site_title,
         admin_username: vals.admin_username,
         admin_email: vals.admin_email,
@@ -175,7 +190,16 @@ export const InstallWordPressModal = ({
       });
       refreshLists();
     } catch (err) {
-      message.error(extractError(err, "Failed to install WordPress"));
+      // Check for invalid_subdirectory error from backend
+      const e = err as ApiError;
+      if (e.response?.data?.error === "invalid_subdirectory") {
+        const detail = e.response.data.detail ?? "Invalid subdirectory";
+        form.setFields([
+          { name: "subdirectory", errors: [detail] },
+        ]);
+      } else {
+        message.error(extractError(err, "Failed to install WordPress"));
+      }
     } finally {
       setSubmitting(false);
     }
@@ -188,6 +212,24 @@ export const InstallWordPressModal = ({
     } catch {
       message.error(`Could not copy ${label.toLowerCase()}`);
     }
+  };
+
+  const validateSubdirectory = (_: any, value: string) => {
+    if (!value) {
+      // subdirectory is optional
+      return Promise.resolve();
+    }
+    if (!SUBDIRECTORY_PATTERN.test(value)) {
+      return Promise.reject(
+        new Error("Must start with letter/digit; 1–64 chars, letters, digits, underscore, dash")
+      );
+    }
+    if (RESERVED_SUBDIRS.has(value.toLowerCase())) {
+      return Promise.reject(
+        new Error(`"${value}" is reserved; use a different subdirectory`)
+      );
+    }
+    return Promise.resolve();
   };
 
   const availableDomains = domains.filter(
@@ -248,11 +290,14 @@ export const InstallWordPressModal = ({
             layout="vertical"
             disabled={submitting}
             initialValues={{
+              use_www: false,
+              subdirectory: "",
               admin_username: "admin",
               admin_email: defaultAdminEmail,
               locale: "en_US",
             }}
           >
+            {/* Step 1: Domain selector only */}
             <Form.Item
               label="Domain"
               name="domain_id"
@@ -269,47 +314,88 @@ export const InstallWordPressModal = ({
                 optionFilterProp="label"
               />
             </Form.Item>
-            <Form.Item
-              label="Site title"
-              name="site_title"
-              rules={[{ required: true, message: "Site title is required" }]}
-            >
-              <Input placeholder="My WordPress site" autoComplete="off" />
-            </Form.Item>
-            <Form.Item
-              label="Admin username"
-              name="admin_username"
-              rules={[
-                { required: true, message: "Admin username is required" },
-                {
-                  pattern: /^[a-zA-Z0-9_.-]{3,60}$/,
-                  message:
-                    "3–60 chars; letters, digits, underscore, dot, dash",
-                },
-              ]}
-            >
-              <Input autoComplete="off" />
-            </Form.Item>
-            <Form.Item
-              label="Admin email"
-              name="admin_email"
-              rules={[
-                { required: true, message: "Admin email is required" },
-                { type: "email", message: "Must be a valid email" },
-              ]}
-            >
-              <Input autoComplete="off" />
-            </Form.Item>
-            <Form.Item
-              label="Admin password"
-              name="admin_password"
-              extra="Leave blank to have us generate a strong random password."
-            >
-              <Input.Password autoComplete="new-password" placeholder="(auto-generated)" />
-            </Form.Item>
-            <Form.Item label="Locale" name="locale">
-              <Select options={LOCALES} showSearch optionFilterProp="label" />
-            </Form.Item>
+
+            {/* Step 2: Remaining fields (revealed after domain selection) */}
+            {domainSelected && (
+              <>
+                <Form.Item
+                  label="Use www prefix"
+                  name="use_www"
+                  valuePropName="checked"
+                >
+                  <Switch />
+                </Form.Item>
+                <Form.Item
+                  style={{ marginBottom: 16 }}
+                  extra='Install at domain.com/blog instead of domain.com'
+                >
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    Install on www.domain.com instead of domain.com
+                  </Typography.Text>
+                </Form.Item>
+
+                <Form.Item
+                  label="Directory (optional)"
+                  name="subdirectory"
+                  rules={[{ validator: validateSubdirectory }]}
+                >
+                  <Input
+                    placeholder="Leave empty to install in root"
+                    autoComplete="off"
+                  />
+                </Form.Item>
+                <Form.Item
+                  style={{ marginBottom: 24 }}
+                  extra='e.g., "blog" to install at domain.com/blog'
+                >
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    e.g., "blog" to install at domain.com/blog
+                  </Typography.Text>
+                </Form.Item>
+
+                <Form.Item
+                  label="Site title"
+                  name="site_title"
+                  rules={[{ required: true, message: "Site title is required" }]}
+                >
+                  <Input placeholder="My WordPress site" autoComplete="off" />
+                </Form.Item>
+                <Form.Item
+                  label="Admin username"
+                  name="admin_username"
+                  rules={[
+                    { required: true, message: "Admin username is required" },
+                    {
+                      pattern: /^[a-zA-Z0-9_.-]{3,60}$/,
+                      message:
+                        "3–60 chars; letters, digits, underscore, dot, dash",
+                    },
+                  ]}
+                >
+                  <Input autoComplete="off" />
+                </Form.Item>
+                <Form.Item
+                  label="Admin email"
+                  name="admin_email"
+                  rules={[
+                    { required: true, message: "Admin email is required" },
+                    { type: "email", message: "Must be a valid email" },
+                  ]}
+                >
+                  <Input autoComplete="off" />
+                </Form.Item>
+                <Form.Item
+                  label="Admin password"
+                  name="admin_password"
+                  extra="Leave blank to have us generate a strong random password."
+                >
+                  <Input.Password autoComplete="new-password" placeholder="(auto-generated)" />
+                </Form.Item>
+                <Form.Item label="Locale" name="locale">
+                  <Select options={LOCALES} showSearch optionFilterProp="label" />
+                </Form.Item>
+              </>
+            )}
           </Form>
         </>
       )}

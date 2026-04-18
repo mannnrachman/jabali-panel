@@ -40,6 +40,7 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0026](0026-m10-wordpress-installs.md) | M10 WordPress installs — schema + lifecycle | Accepted |
 | [0027](0027-m11-filebrowser-integration.md) | M11 File manager via filebrowser + proxy auth | Accepted |
 | [0028](0028-m12-sftp-integration.md) | M12 SFTP via openssh group-based Match (no chroot) | Accepted |
+| [0029](0029-m8-cron-systemd-user-timers.md) | M8 Cron via systemd-user timers with closed-set allowlist | Accepted |
 
 ## Decision Categories
 

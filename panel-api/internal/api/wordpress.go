@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -49,12 +50,14 @@ type wordPressHandler struct{ cfg WordPressHandlerConfig }
 // ---- Request/Response types ----
 
 type createWordPressRequest struct {
-	DomainID       string `json:"domain_id" binding:"required"`
-	SiteTitle      string `json:"site_title" binding:"required"`
-	AdminUsername  string `json:"admin_username" binding:"required"`
-	AdminEmail     string `json:"admin_email" binding:"required"`
-	AdminPassword  string `json:"admin_password"`
-	Locale         string `json:"locale"`
+	DomainID      string `json:"domain_id" binding:"required"`
+	SiteTitle     string `json:"site_title" binding:"required"`
+	AdminUsername string `json:"admin_username" binding:"required"`
+	AdminEmail    string `json:"admin_email" binding:"required"`
+	AdminPassword string `json:"admin_password"`
+	Locale        string `json:"locale"`
+	UseWWW        bool   `json:"use_www"`
+	Subdirectory  string `json:"subdirectory"`
 }
 
 type cloneWordPressRequest struct {
@@ -68,6 +71,8 @@ type createWordPressResponse struct {
 	AdminUsername string    `json:"admin_username"`
 	AdminPassword string    `json:"admin_password"`
 	AdminEmail    string    `json:"admin_email"`
+	UseWWW        bool      `json:"use_www"`
+	Subdirectory  string    `json:"subdirectory"`
 	Status        string    `json:"status"`
 	Version       *string   `json:"version"`
 	CreatedAt     time.Time `json:"created_at"`
@@ -82,6 +87,8 @@ type wordPressListResponse struct {
 	AdminUsername string    `json:"admin_username"`
 	AdminEmail    string    `json:"admin_email"`
 	Locale        string    `json:"locale"`
+	UseWWW        bool      `json:"use_www"`
+	Subdirectory  string    `json:"subdirectory"`
 	Status        string    `json:"status"`
 	Version       *string   `json:"version"`
 	LastError     string    `json:"last_error"`
@@ -93,6 +100,36 @@ type healthResponse struct {
 	WPInstalled bool   `json:"wp_installed"`
 	WPVersion   string `json:"wp_version"`
 	HTTPStatus  int    `json:"http_status"`
+}
+
+
+// subdirectoryRegex accepts a single path segment: starts with
+// lowercase alnum, may contain lowercase alnum plus _ or -, max 64
+// chars. No slashes, no dots, no uppercase — prevents traversal and
+// keeps the docroot layout sane.
+var subdirectoryRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+
+// Reserved subdirectory names would shadow WordPress core directories
+// and make the install immediately broken.
+var reservedSubdirectories = map[string]struct{}{
+	"wp-admin":    {},
+	"wp-includes": {},
+	"wp-content":  {},
+}
+
+// validateSubdirectory returns nil for empty (subdirectory is optional).
+// Non-empty input must match subdirectoryRegex and not be reserved.
+func validateSubdirectory(s string) error {
+	if s == "" {
+		return nil
+	}
+	if !subdirectoryRegex.MatchString(s) {
+		return fmt.Errorf("subdirectory must match ^[a-z0-9][a-z0-9_-]{0,63}$")
+	}
+	if _, reserved := reservedSubdirectories[strings.ToLower(s)]; reserved {
+		return fmt.Errorf("subdirectory is reserved by WordPress core")
+	}
+	return nil
 }
 
 // ---- Handlers ----
@@ -113,6 +150,12 @@ func (h *wordPressHandler) create(c *gin.Context) {
 	// Validate email
 	if !isValidEmail(req.AdminEmail) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_email"})
+		return
+	}
+
+	// Validate optional subdirectory
+	if err := validateSubdirectory(req.Subdirectory); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_subdirectory", "detail": err.Error()})
 		return
 	}
 
@@ -234,6 +277,8 @@ func (h *wordPressHandler) create(c *gin.Context) {
 		AdminUsername: req.AdminUsername,
 		AdminEmail:    req.AdminEmail,
 		Locale:        req.Locale,
+		UseWWW:        req.UseWWW,
+		Subdirectory:  req.Subdirectory,
 		Status:        "pending",
 		CreatedAt:     now,
 		UpdatedAt:     now,
@@ -249,7 +294,7 @@ func (h *wordPressHandler) create(c *gin.Context) {
 	}
 
 	// Spawn async goroutine to install WordPress
-	go createInstallAndKickAgent(ctx, installID, req.DomainID, adminPassword, req.SiteTitle, req.AdminUsername, req.AdminEmail, req.Locale, h.cfg)
+	go createInstallAndKickAgent(ctx, installID, req.DomainID, adminPassword, req.SiteTitle, req.AdminUsername, req.AdminEmail, req.Locale, req.Subdirectory, req.UseWWW, h.cfg)
 
 	// Return 202 Accepted with plaintext password
 	resp := createWordPressResponse{
@@ -259,6 +304,8 @@ func (h *wordPressHandler) create(c *gin.Context) {
 		AdminUsername: req.AdminUsername,
 		AdminEmail:    req.AdminEmail,
 		AdminPassword: adminPassword,
+		UseWWW:        req.UseWWW,
+		Subdirectory:  req.Subdirectory,
 		Status:        "pending",
 		CreatedAt:     now,
 		UpdatedAt:     now,
@@ -319,6 +366,8 @@ func (h *wordPressHandler) list(c *gin.Context) {
 			AdminUsername: inst.AdminUsername,
 			AdminEmail:    inst.AdminEmail,
 			Locale:        inst.Locale,
+			UseWWW:        inst.UseWWW,
+			Subdirectory:  inst.Subdirectory,
 			Status:        inst.Status,
 			Version:       inst.Version,
 			LastError:     inst.LastError,
@@ -379,6 +428,8 @@ func (h *wordPressHandler) get(c *gin.Context) {
 		AdminUsername: install.AdminUsername,
 		AdminEmail:    install.AdminEmail,
 		Locale:        install.Locale,
+		UseWWW:        install.UseWWW,
+		Subdirectory:  install.Subdirectory,
 		Status:        install.Status,
 		Version:       install.Version,
 		LastError:     install.LastError,
@@ -564,6 +615,8 @@ func (h *wordPressHandler) clone(c *gin.Context) {
 		AdminUsername: sourceInstall.AdminUsername,
 		AdminEmail:    sourceInstall.AdminEmail,
 		Locale:        sourceInstall.Locale,
+		UseWWW:        sourceInstall.UseWWW,
+		Subdirectory:  sourceInstall.Subdirectory,
 		Status:        "cloning",
 		CreatedAt:     now,
 		UpdatedAt:     now,
@@ -577,7 +630,7 @@ func (h *wordPressHandler) clone(c *gin.Context) {
 	}
 
 	// Spawn async goroutine to clone
-	go createCloneAndKickAgent(ctx, cloneInstallID, sourceInstall.DomainID, req.DestDomainID, destDBID, h.cfg)
+	go createCloneAndKickAgent(ctx, cloneInstallID, sourceInstall.DomainID, req.DestDomainID, destDBID, sourceInstall.Subdirectory, sourceInstall.UseWWW, h.cfg)
 
 	resp := createWordPressResponse{
 		ID:            cloneInstallID,
@@ -585,6 +638,8 @@ func (h *wordPressHandler) clone(c *gin.Context) {
 		DBID:          destDBID,
 		AdminUsername: sourceInstall.AdminUsername,
 		AdminEmail:    sourceInstall.AdminEmail,
+		UseWWW:        sourceInstall.UseWWW,
+		Subdirectory:  sourceInstall.Subdirectory,
 		Status:        "cloning",
 		CreatedAt:     now,
 		UpdatedAt:     now,
@@ -637,7 +692,7 @@ func (h *wordPressHandler) health(c *gin.Context) {
 // even if the original request context is cancelled.
 // If panel crashes while installing, the row stays in 'installing' state
 // until the reconciler timeout (typically 1 hour) sweeps it as failed.
-func createInstallAndKickAgent(parentCtx context.Context, installID, domainID, adminPassword, siteTitle, adminUsername, adminEmail, locale string, cfg WordPressHandlerConfig) {
+func createInstallAndKickAgent(parentCtx context.Context, installID, domainID, adminPassword, siteTitle, adminUsername, adminEmail, locale, subdirectory string, useWWW bool, cfg WordPressHandlerConfig) {
 	// Use independent context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -662,6 +717,8 @@ func createInstallAndKickAgent(parentCtx context.Context, installID, domainID, a
 		"admin_email":    adminEmail,
 		"admin_password": adminPassword,
 		"locale":         locale,
+		"subdirectory":   subdirectory,
+		"use_www":        useWWW,
 	})
 	if err != nil {
 		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)
@@ -712,7 +769,7 @@ func createDeleteAndKickAgent(parentCtx context.Context, installID, databaseID s
 }
 
 // createCloneAndKickAgent clones WordPress asynchronously.
-func createCloneAndKickAgent(parentCtx context.Context, cloneInstallID, sourceDomainID, destDomainID, destDatabaseID string, cfg WordPressHandlerConfig) {
+func createCloneAndKickAgent(parentCtx context.Context, cloneInstallID, sourceDomainID, destDomainID, destDatabaseID, dstSubdirectory string, useWWW bool, cfg WordPressHandlerConfig) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -724,8 +781,10 @@ func createCloneAndKickAgent(parentCtx context.Context, cloneInstallID, sourceDo
 
 	// Call agent to clone WordPress
 	agentResp, err := cfg.Agent.Call(ctx, "wordpress.clone", map[string]any{
-		"source_domain_id": sourceDomainID,
-		"dest_domain_id":   destDomainID,
+		"source_domain_id":  sourceDomainID,
+		"dest_domain_id":    destDomainID,
+		"use_www":           useWWW,
+		"dst_subdirectory":  dstSubdirectory,
 	})
 	if err != nil {
 		errMsg := truncateError(fmt.Sprintf("agent clone failed: %v", err), 1024)

@@ -1,0 +1,3 @@
+ALTER TABLE wordpress_installs
+  ADD COLUMN use_www TINYINT(1) NOT NULL DEFAULT 0,
+  ADD COLUMN subdirectory VARCHAR(64) NOT NULL DEFAULT '';

@@ -58,7 +58,7 @@ var domainRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9](
 const vhostTemplate = `server {
     listen 80;
     listen [::]:80;
-    server_name {{.Domain}};
+    server_name {{.Domain}} www.{{.Domain}};
 {{ if .SSLCertPath }}
     # Redirect HTTP to HTTPS when SSL is configured
     return 301 https://$host$request_uri;
@@ -67,7 +67,7 @@ const vhostTemplate = `server {
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
-    server_name {{.Domain}};
+    server_name {{.Domain}} www.{{.Domain}};
     ssl_certificate {{.SSLCertPath}};
     ssl_certificate_key {{.SSLKeyPath}};
 {{ end }}

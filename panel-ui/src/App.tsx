@@ -32,6 +32,7 @@ import {
   DashboardOutlined,
   DatabaseOutlined,
   GlobalOutlined,
+  ReadOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
   TeamOutlined,
@@ -69,6 +70,7 @@ import { UserDNSZonesOverviewPage } from "./shells/user/dns/UserDNSZonesOverview
 import { SSLManagerPage } from "./shells/admin/ssl/SSLManagerPage";
 import { UserSSLManagerPage } from "./shells/user/ssl/UserSSLManagerPage";
 import { UserPHPSettingsPage } from "./shells/user/php-settings/UserPHPSettingsPage";
+import { UserWordPressList } from "./shells/user/wordpress/UserWordPressList";
 import { PHPPoolsList } from "./shells/admin/php-pools/PHPPoolsList";
 import { PHPPoolEdit } from "./shells/admin/php-pools/PHPPoolEdit";
 import { LoginPage } from "./pages/Login";
@@ -182,6 +184,14 @@ const ThemedApp = () => {
               create: "/jabali-panel/database-users/create",
               meta: { label: "DB Users", shell: "user", hidden: true },
             },
+            {
+              // Resource name matches the API slug (/wordpress-installs)
+              // so useTable("wordpress-installs") and useInvalidate all
+              // resolve to the same entry.
+              name: "wordpress-installs",
+              list: "/jabali-panel/wordpress",
+              meta: { label: "WordPress", icon: <ReadOutlined />, shell: "user" },
+            },
           ]}
           options={{
             warnWhenUnsavedChanges: true,
@@ -262,6 +272,7 @@ const ThemedApp = () => {
               <Route path="dns" element={<UserDNSZonesOverviewPage />} />
               <Route path="ssl" element={<UserSSLManagerPage />} />
               <Route path="php-settings" element={<UserPHPSettingsPage />} />
+              <Route path="wordpress" element={<UserWordPressList />} />
             </Route>
 
             {/* ---------------- public ---------------- */}

@@ -43,6 +43,7 @@ type Deps struct {
 	SSLCerts            repository.SSLCertificateRepository
 	PHPPools            repository.PHPPoolRepository
 	PHPPoolIniOverrides repository.PHPPoolIniOverrideRepository
+	WordPressInstalls   repository.WordPressInstallRepository
 	SSO                 *sso.Service
 	SSOKey              *ssokey.Key
 	Log                 *slog.Logger
@@ -227,6 +228,19 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterDomainPHPSettingsRoutes(v1, api.DomainPHPSettingsHandlerConfig{
 				Domains:  deps.Domains,
 				PHPPools: deps.PHPPools,
+			})
+		}
+		if deps.WordPressInstalls != nil && deps.Databases != nil && deps.DatabaseUsers != nil &&
+			deps.DatabaseUserGrants != nil && deps.Domains != nil && deps.Users != nil && deps.Agent != nil {
+			api.RegisterWordPressRoutes(v1, api.WordPressHandlerConfig{
+				WordPressInstalls: deps.WordPressInstalls,
+				Databases:         deps.Databases,
+				DatabaseUsers:     deps.DatabaseUsers,
+				DatabaseGrants:    deps.DatabaseUserGrants,
+				Domains:           deps.Domains,
+				Users:             deps.Users,
+				Packages:          deps.Packages,
+				Agent:             deps.Agent,
 			})
 		}
 

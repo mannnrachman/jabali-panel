@@ -74,12 +74,18 @@ type createWordPressResponse struct {
 }
 
 type wordPressListResponse struct {
-	ID        string    `json:"id"`
-	DomainID  string    `json:"domain_id"`
-	Status    string    `json:"status"`
-	Version   *string   `json:"version"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID            string    `json:"id"`
+	DomainID      string    `json:"domain_id"`
+	DomainName    string    `json:"domain_name"`
+	DBID          string    `json:"db_id"`
+	AdminUsername string    `json:"admin_username"`
+	AdminEmail    string    `json:"admin_email"`
+	Locale        string    `json:"locale"`
+	Status        string    `json:"status"`
+	Version       *string   `json:"version"`
+	LastError     string    `json:"last_error"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type healthResponse struct {
@@ -282,15 +288,34 @@ func (h *wordPressHandler) list(c *gin.Context) {
 		installs = []models.WordPressInstall{}
 	}
 
+	// Batch-lookup domain names so the UI can render them without an
+	// N+1 follow-up per row. A user rarely has many installs, and
+	// admin "list all" is bounded by pageSize.
+	domainNames := make(map[string]string, len(installs))
+	for _, inst := range installs {
+		if _, ok := domainNames[inst.DomainID]; ok {
+			continue
+		}
+		if d, err := h.cfg.Domains.FindByID(ctx, inst.DomainID); err == nil && d != nil {
+			domainNames[inst.DomainID] = d.Name
+		}
+	}
+
 	out := make([]wordPressListResponse, len(installs))
 	for i, inst := range installs {
 		out[i] = wordPressListResponse{
-			ID:        inst.ID,
-			DomainID:  inst.DomainID,
-			Status:    inst.Status,
-			Version:   inst.Version,
-			CreatedAt: inst.CreatedAt,
-			UpdatedAt: inst.UpdatedAt,
+			ID:            inst.ID,
+			DomainID:      inst.DomainID,
+			DomainName:    domainNames[inst.DomainID],
+			DBID:          inst.DBID,
+			AdminUsername: inst.AdminUsername,
+			AdminEmail:    inst.AdminEmail,
+			Locale:        inst.Locale,
+			Status:        inst.Status,
+			Version:       inst.Version,
+			LastError:     inst.LastError,
+			CreatedAt:     inst.CreatedAt,
+			UpdatedAt:     inst.UpdatedAt,
 		}
 	}
 
@@ -331,13 +356,26 @@ func (h *wordPressHandler) get(c *gin.Context) {
 		return
 	}
 
+	// Look up the domain name for consistency with the list response;
+	// the UI uses the same row shape for both list and detail.
+	var domainName string
+	if d, err := h.cfg.Domains.FindByID(ctx, install.DomainID); err == nil && d != nil {
+		domainName = d.Name
+	}
+
 	resp := wordPressListResponse{
-		ID:        install.ID,
-		DomainID:  install.DomainID,
-		Status:    install.Status,
-		Version:   install.Version,
-		CreatedAt: install.CreatedAt,
-		UpdatedAt: install.UpdatedAt,
+		ID:            install.ID,
+		DomainID:      install.DomainID,
+		DomainName:    domainName,
+		DBID:          install.DBID,
+		AdminUsername: install.AdminUsername,
+		AdminEmail:    install.AdminEmail,
+		Locale:        install.Locale,
+		Status:        install.Status,
+		Version:       install.Version,
+		LastError:     install.LastError,
+		CreatedAt:     install.CreatedAt,
+		UpdatedAt:     install.UpdatedAt,
 	}
 	c.JSON(http.StatusOK, resp)
 }

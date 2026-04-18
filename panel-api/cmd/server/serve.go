@@ -107,6 +107,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		phpMyAdminSSOTokenRepo := repository.NewPhpMyAdminSSOTokenRepository(sharedDB)
 		phpPoolRepo := repository.NewPHPPoolRepository(sharedDB)
 		phpPoolIniOverrideRepo := repository.NewPHPPoolIniOverrideRepository(sharedDB)
+		wordpressInstallRepo := repository.NewWordPressInstallRepository(sharedDB)
 
 		serverSettingsRepo := repository.NewServerSettingsRepository(sharedDB)
 		jwtIss, err := auth.NewJWTIssuer(auth.JWTConfig{
@@ -170,6 +171,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.PhpMyAdminSSOTokens = phpMyAdminSSOTokenRepo
 		deps.PHPPools = phpPoolRepo
 		deps.PHPPoolIniOverrides = phpPoolIniOverrideRepo
+		deps.WordPressInstalls = wordpressInstallRepo
 
 		// Admin bootstrap.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

@@ -45,9 +45,17 @@ func (h *ssoFileBrowserValidateHandler) validate(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	var req ssoValidateFileBrowserRequest
-	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, ssoErrorResponse{Error: "invalid_request"})
-		return
+	// Body is primary, but nginx auth_request subrequests can't carry a
+	// JSON body reliably across versions (proxy_set_body + auth_request is
+	// fragile). Accept ?token=… query fallback so the nginx config can
+	// just pass the token in the URL when body forwarding fails.
+	if err := c.ShouldBindJSON(&req); err != nil || req.Token == "" {
+		if qt := c.Query("token"); qt != "" {
+			req.Token = qt
+		} else {
+			c.JSON(http.StatusBadRequest, ssoErrorResponse{Error: "invalid_request"})
+			return
+		}
 	}
 
 	// Decode base64url token to raw bytes to verify encoding is valid

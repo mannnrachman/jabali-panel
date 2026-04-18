@@ -46,6 +46,8 @@ type Reconciler struct {
 	ssoTokens repository.PhpMyAdminSSOTokenRepository
 	// wordPressInstalls holds reference to the WordPress installs repository
 	wordPressInstalls repository.WordPressInstallRepository
+	// sshKeys holds reference to the SSH keys repository
+	sshKeys repository.SSHKeyRepository
 }
 
 // WithSSLCerts adds SSL certificate repository support to the reconciler.
@@ -122,6 +124,13 @@ func (r *Reconciler) WithSSOTokens(ssoTokens repository.PhpMyAdminSSOTokenReposi
 // Call this before using WordPress installs reconciliation.
 func (r *Reconciler) WithWordPressInstalls(wp repository.WordPressInstallRepository) *Reconciler {
 	r.wordPressInstalls = wp
+	return r
+}
+
+// WithSSHKeys adds SSH key repository support to the reconciler.
+// Call this before using SSH key reconciliation.
+func (r *Reconciler) WithSSHKeys(sshKeys repository.SSHKeyRepository) *Reconciler {
+	r.sshKeys = sshKeys
 	return r
 }
 
@@ -331,6 +340,9 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 
 	r.reconcileWordPressInstalls(ctx)
 	// Reconcile WordPress installs (sweep stuck rows, probe drift).
+
+	r.reconcileSSHKeysForAllUsers(ctx)
+	// Reconcile SSH keys: sync authorized_keys files for all users.
 
 	return nil
 }

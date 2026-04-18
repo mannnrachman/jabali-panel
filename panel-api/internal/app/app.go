@@ -252,6 +252,15 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			})
 		}
 
+		// SSH keys routes
+		if deps.SSHKeys != nil && deps.Reconciler != nil {
+			api.RegisterSSHKeysRoutes(v1, api.SSHKeysHandlerConfig{
+				SSHKeys:    deps.SSHKeys,
+				Reconciler: deps.Reconciler,
+				Logger:     deps.Log,
+			})
+		}
+
 		// Admin routes
 		if deps.Reconciler != nil {
 			admin := v1.Group("/admin", middleware.RequireAdmin())

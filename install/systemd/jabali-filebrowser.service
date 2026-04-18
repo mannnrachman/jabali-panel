@@ -1,0 +1,39 @@
+[Unit]
+Description=Jabali filebrowser service — reverse-proxy target for file management
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/filebrowser -c /etc/jabali-panel/filebrowser/config.json
+Restart=on-failure
+RestartSec=5s
+
+# TODO(M11-Step3): narrow to dedicated user once provisioning spike decides scope model
+User=root
+
+# Use RuntimeDirectory to auto-create /run/jabali-filebrowser with mode 0755
+RuntimeDirectory=jabali-filebrowser
+
+# Use StateDirectory to auto-create /var/lib/jabali-filebrowser for the filebrowser DB
+StateDirectory=jabali-filebrowser
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/jabali-filebrowser /home
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallFilter=~@clock @debug @module @mount @obsolete @privileged @raw-io @reboot @swap
+
+# Note: filebrowser accesses /home for user files, and /run/jabali-filebrowser
+# for the UDS socket. It does NOT listen on TCP; nginx (Step 5) is the reverse proxy.
+
+[Install]
+# NOTE: Do NOT enable this service yet. Step 4/5 will wire up the SSO handoff
+# and nginx reverse-proxy before we enable it. For now, just make the unit
+# available; the service will be started later via systemctl enable/start.
+WantedBy=multi-user.target

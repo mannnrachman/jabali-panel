@@ -135,6 +135,18 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 					"    sed -i \"/\\$cfg\\['Servers'\\]\\[1\\]\\['control\\(user\\|pass\\|host\\|port\\)'\\]/d\" /opt/phpmyadmin/current/config.inc.php; "+
 					"  fi; "+
 					"fi; "+
+					// filebrowser config and systemd unit — install.sh extracts the
+					// binary to /opt/filebrowser/current/, but updates to
+					// config.json and systemd unit shipped in the repo need to
+					// land on the host via update.go.
+					"if [ -d /opt/filebrowser/current ]; then "+
+					"  install -d -m 0755 -o root -g root /etc/jabali-panel/filebrowser; "+
+					"  if [ ! -f /etc/jabali-panel/filebrowser/config.json ]; then "+
+					"    install -m 0644 -o root -g root "+repoDir+"/install/filebrowser/config.json.tmpl /etc/jabali-panel/filebrowser/config.json; "+
+					"  fi; "+
+					"  install -m 0644 "+repoDir+"/install/systemd/jabali-filebrowser.service /etc/systemd/system/jabali-filebrowser.service; "+
+					"  systemctl daemon-reload; "+
+					"fi; "+
 					// jabali service user in www-data group — needed for
 					// the reconciler's per-user FPM socket stat-check.
 					// usermod is idempotent; 'groups | grep -w' avoids an

@@ -1762,6 +1762,91 @@ NGINXEOF
   _ok "phpMyAdmin installed and configured"
 }
 
+install_filebrowser() {
+  _log "installing filebrowser"
+
+  # Version pin — must match the checksum file below.
+  # Update both when upgrading filebrowser.
+  local fb_version="2.38.0"
+  local fb_root="/opt/filebrowser"
+  local fb_archive="/tmp/linux-amd64-filebrowser.tar.gz"
+  local fb_extract="${fb_root}/${fb_version}"
+  local fb_link="${fb_root}/current"
+
+  # Idempotency: if already extracted, skip the download + extract.
+  if [[ -d "$fb_extract" && -L "$fb_link" ]]; then
+    _ok "filebrowser $fb_version already installed at $fb_root"
+  else
+    # Ensure the root directory exists
+    mkdir -p "$fb_root"
+    chmod 0755 "$fb_root"
+
+    # Download the tarball
+    _log "downloading filebrowser $fb_version"
+    if ! curl -fsSL -o "$fb_archive" \
+      "https://github.com/filebrowser/filebrowser/releases/download/v${fb_version}/linux-amd64-filebrowser.tar.gz"; then
+      _die "failed to download filebrowser $fb_version tarball"
+    fi
+
+    # Verify checksum
+    _log "verifying filebrowser checksum"
+    local expected_sum
+    expected_sum="$(grep -v '^#' "${REPO_DIR}/install/filebrowser/filebrowser-linux-amd64.sha256" | head -1 | awk '{print $1}')"
+    local actual_sum
+    actual_sum="$(sha256sum "$fb_archive" | awk '{print $1}')"
+    if [[ "$expected_sum" != "$actual_sum" ]]; then
+      rm -f "$fb_archive"
+      _die "filebrowser checksum mismatch: expected $expected_sum, got $actual_sum"
+    fi
+    _ok "checksum verified"
+
+    # Create the version-specific directory
+    mkdir -p "$fb_extract"
+    chmod 0755 "$fb_extract"
+
+    # Extract binary directly into the version directory
+    _log "extracting filebrowser to $fb_extract"
+    tar -C "$fb_extract" -xzf "$fb_archive"
+    rm -f "$fb_archive"
+
+    # Make the binary executable
+    chmod 0755 "$fb_extract/filebrowser"
+
+    # Create symlink for easy access
+    rm -f "$fb_link"
+    ln -s "$fb_extract" "$fb_link"
+    _ok "filebrowser extracted and symlinked"
+
+    # Install the binary into /usr/local/bin
+    _log "installing filebrowser binary to /usr/local/bin"
+    rm -f /usr/local/bin/filebrowser
+    ln -s "$fb_link/filebrowser" /usr/local/bin/filebrowser
+    _ok "filebrowser binary symlinked to /usr/local/bin/filebrowser"
+  fi
+
+  # Create the state and runtime directories (idempotent)
+  _log "creating filebrowser directories"
+  mkdir -p /var/lib/jabali-filebrowser
+  chmod 0750 /var/lib/jabali-filebrowser
+  chown root:root /var/lib/jabali-filebrowser
+
+  # Create /run/jabali-filebrowser directory via tmpfiles.d so systemd creates
+  # it on boot with the right permissions
+  _log "installing tmpfiles.d drop-in for /run/jabali-filebrowser"
+  mkdir -p /etc/tmpfiles.d
+  cat > /etc/tmpfiles.d/jabali-filebrowser.conf <<'TMPFILESEOF'
+# tmpfiles.d drop-in for jabali-filebrowser
+# Creates /run/jabali-filebrowser on boot with correct ownership and permissions
+d /run/jabali-filebrowser 0755 root root -
+TMPFILESEOF
+  chmod 0644 /etc/tmpfiles.d/jabali-filebrowser.conf
+
+  # Apply tmpfiles.d rules immediately
+  systemd-tmpfiles --create /etc/tmpfiles.d/jabali-filebrowser.conf
+
+  _ok "filebrowser directories and tmpfiles.d drop-in configured"
+}
+
 install_sso_key() {
   local sso_key_path="/etc/jabali-panel/sso.key"
 
@@ -1824,6 +1909,7 @@ main() {
   install_phpmyadmin
   install_phpmyadmin_fpm_pool
   install_wp_cli
+  install_filebrowser
   install_nginx_default_vhost
   write_agent_systemd_unit
   write_systemd_unit

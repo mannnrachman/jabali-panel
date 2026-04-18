@@ -102,7 +102,7 @@ func TestPHPVersionAdmin_Status_HappyPath(t *testing.T) {
 		},
 	})
 
-	RegisterPHPVersionAdminRoutes(admin, mockAgent)
+	RegisterPHPVersionAdminRoutes(admin, mockAgent, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/php/versions/status", nil)
 	rec := httptest.NewRecorder()
@@ -134,7 +134,7 @@ func TestPHPVersionAdmin_Install_HappyPath(t *testing.T) {
 		"fpm_running": true,
 	})
 
-	RegisterPHPVersionAdminRoutes(admin, mockAgent)
+	RegisterPHPVersionAdminRoutes(admin, mockAgent, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/php/versions/8.4/install", nil)
 	rec := httptest.NewRecorder()
@@ -162,7 +162,7 @@ func TestPHPVersionAdmin_Install_InvalidVersion(t *testing.T) {
 	admin := v1.Group("/admin", middleware.RequireAdmin())
 	mockAgent := agent.NewMockClient()
 
-	RegisterPHPVersionAdminRoutes(admin, mockAgent)
+	RegisterPHPVersionAdminRoutes(admin, mockAgent, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/php/versions/5.6/install", nil)
 	rec := httptest.NewRecorder()
@@ -193,7 +193,7 @@ func TestPHPVersionAdmin_Reload_HappyPath(t *testing.T) {
 		"message": "reload successful",
 	})
 
-	RegisterPHPVersionAdminRoutes(admin, mockAgent)
+	RegisterPHPVersionAdminRoutes(admin, mockAgent, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/php/versions/8.5/reload", nil)
 	rec := httptest.NewRecorder()

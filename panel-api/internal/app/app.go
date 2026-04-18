@@ -225,7 +225,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		}
 		if deps.Agent != nil {
 			admin := v1.Group("/admin", middleware.RequireAdmin())
-			api.RegisterPHPVersionAdminRoutes(admin, deps.Agent)
+			api.RegisterPHPVersionAdminRoutes(admin, deps.Agent, deps.ServerSettings)
 		}
 	}
 

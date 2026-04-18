@@ -15,6 +15,11 @@ type ServerSettings struct {
 	NS2Name     string    `gorm:"type:varchar(253);not null;default:''" json:"ns2_name"`
 	NS2IPv4     string    `gorm:"type:varchar(45);not null;default:''"  json:"ns2_ipv4"`
 	AdminEmail  string    `gorm:"type:varchar(320);not null;default:''" json:"admin_email"`
+	// DefaultPHPVersion is the PHP version new user pools are seeded with
+	// (reconciler default-pool path) and the version the admin UI pre-selects.
+	// Admin changes it via POST /admin/php/versions/:version/default; agent
+	// php.version.status reports it in default_version. Schema default '8.5'.
+	DefaultPHPVersion string `gorm:"type:varchar(8);not null;default:'8.5'" json:"default_php_version"`
 	UpdatedAt   time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 

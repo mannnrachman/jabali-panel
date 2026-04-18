@@ -43,6 +43,7 @@ export const PHPPoolsList = () => {
     null
   );
   const [reloadingVersion, setReloadingVersion] = useState<string | null>(null);
+  const [settingDefaultVersion, setSettingDefaultVersion] = useState<string | null>(null);
   const [dismissedWarning, setDismissedWarning] = useState(false);
 
   useEffect(() => {
@@ -124,6 +125,30 @@ export const PHPPoolsList = () => {
       });
     } finally {
       setReloadingVersion(null);
+    }
+  };
+
+  const handleSetDefault = async (version: string) => {
+    setSettingDefaultVersion(version);
+    try {
+      await apiClient.post(`/admin/php/versions/${version}/default`);
+      notification.success({
+        message: `PHP ${version} is now the default`,
+        duration: 3,
+      });
+      setStatusData((prev) =>
+        prev ? { ...prev, default_version: version } : prev,
+      );
+    } catch (error) {
+      const errorMsg =
+        error instanceof Error ? error.message : "Request failed";
+      notification.error({
+        message: `Could not set PHP ${version} as default`,
+        description: errorMsg,
+        duration: 5,
+      });
+    } finally {
+      setSettingDefaultVersion(null);
     }
   };
 
@@ -210,14 +235,30 @@ export const PHPPoolsList = () => {
         />
         <Table.Column<PHPVersionStatus>
           title="Default"
-          width={100}
-          render={(_: any, record: PHPVersionStatus) =>
-            record.version === statusData?.default_version && record.installed ? (
-              <CheckCircleOutlined style={{ color: "#1890ff", fontSize: 16 }} />
-            ) : (
-              "—"
-            )
-          }
+          width={140}
+          render={(_: any, record: PHPVersionStatus) => {
+            if (record.version === statusData?.default_version && record.installed) {
+              return (
+                <CheckCircleOutlined style={{ color: "#1890ff", fontSize: 16 }} />
+              );
+            }
+            // Button only shows for installed + FPM-running versions — the
+            // API rejects setting a default that isn't both. Avoid the
+            // failed-request UX entirely by hiding the button.
+            if (record.installed && record.fpm_running) {
+              return (
+                <Button
+                  type="link"
+                  size="small"
+                  loading={settingDefaultVersion === record.version}
+                  onClick={() => handleSetDefault(record.version)}
+                >
+                  Set default
+                </Button>
+              );
+            }
+            return "—";
+          }}
         />
         <Table.Column<PHPVersionStatus>
           dataIndex="fpm_running"

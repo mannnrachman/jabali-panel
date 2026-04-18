@@ -2,12 +2,15 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // systemCallTimeout bounds agent calls for system endpoints. Generous
@@ -42,11 +45,18 @@ func RegisterPHPVersionRoutes(rg *gin.RouterGroup, cli agent.AgentInterface) {
 }
 
 // RegisterPHPVersionAdminRoutes mounts admin-only PHP version management routes.
-// The group is expected to carry RequireAuth and RequireAdmin middleware.
-func RegisterPHPVersionAdminRoutes(rg *gin.RouterGroup, cli agent.AgentInterface) {
+// The group is expected to carry RequireAuth and RequireAdmin middleware. The
+// settings repo is used for the DB-backed default PHP version — the agent
+// reports one it computes locally, but the authoritative default lives in
+// server_settings.default_php_version and is overridden into the response.
+// settingsRepo may be nil during tests that only mock the agent; in that
+// case the agent's value is surfaced unmodified.
+func RegisterPHPVersionAdminRoutes(rg *gin.RouterGroup, cli agent.AgentInterface, settingsRepo repository.ServerSettingsRepository) {
 	php := rg.Group("/php")
 
-	// GET /php/versions/status — return full version matrix
+	// GET /php/versions/status — return full version matrix. Server-owned
+	// default_php_version (from server_settings) wins over whatever the
+	// agent reports so admins see the same default the reconciler uses.
 	php.GET("/versions/status", func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), phpVersionCallTimeout)
 		defer cancel()
@@ -57,7 +67,87 @@ func RegisterPHPVersionAdminRoutes(rg *gin.RouterGroup, cli agent.AgentInterface
 			c.JSON(status, body)
 			return
 		}
-		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
+
+		if settingsRepo == nil {
+			c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
+			return
+		}
+		settings, sErr := settingsRepo.Get(ctx)
+		if sErr != nil || settings == nil || settings.DefaultPHPVersion == "" {
+			// Soft-fail: fall back to the agent's report. Surfacing a
+			// 500 here would break the PHP admin page over a non-critical
+			// discrepancy.
+			c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
+			return
+		}
+		var parsed map[string]any
+		if jErr := json.Unmarshal(raw, &parsed); jErr != nil {
+			c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
+			return
+		}
+		parsed["default_version"] = settings.DefaultPHPVersion
+		c.JSON(http.StatusOK, parsed)
+	})
+
+	// POST /php/versions/:version/default — set the server-wide default.
+	// Only accepts versions that are currently installed AND FPM-running
+	// so we don't leave new users pointing at a broken version.
+	php.POST("/versions/:version/default", func(c *gin.Context) {
+		version := c.Param("version")
+		if !isVersionSupported(version) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported version: " + version})
+			return
+		}
+		if settingsRepo == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "settings repository not configured"})
+			return
+		}
+
+		statusCtx, statusCancel := context.WithTimeout(c.Request.Context(), phpVersionCallTimeout)
+		defer statusCancel()
+		statusRaw, sErr := cli.Call(statusCtx, "php.version.status", nil)
+		if sErr != nil {
+			status, body := translateAgentError(sErr)
+			c.JSON(status, body)
+			return
+		}
+		var statusResp struct {
+			Versions []struct {
+				Version    string `json:"version"`
+				Installed  bool   `json:"installed"`
+				FPMRunning bool   `json:"fpm_running"`
+			} `json:"versions"`
+		}
+		if err := json.Unmarshal(statusRaw, &statusResp); err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "could not parse agent response"})
+			return
+		}
+		var ok bool
+		for _, v := range statusResp.Versions {
+			if v.Version == version && v.Installed && v.FPMRunning {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			c.JSON(http.StatusConflict, gin.H{"error": "version " + version + " is not installed and running"})
+			return
+		}
+
+		settings, gErr := settingsRepo.Get(c.Request.Context())
+		if gErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "load settings: " + gErr.Error()})
+			return
+		}
+		if settings == nil {
+			settings = &models.ServerSettings{ID: 1}
+		}
+		settings.DefaultPHPVersion = version
+		if uErr := settingsRepo.Upsert(c.Request.Context(), settings); uErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "save settings: " + uErr.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"default_version": version})
 	})
 
 	// POST /php/versions/:version/install — install a PHP version

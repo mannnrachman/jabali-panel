@@ -643,23 +643,26 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Depends on:** M1 (users exist), Sury PHP multi-version install (install.sh)
 
-### M10: WordPress (PLANNED)
+### M10: WordPress (SHIPPED)
 
 **Goal:** Admins and users can install, delete, and clone WordPress instances.
 
 **Deliverables:**
-- New migration: `create_wordpress_installs.sql` (domain_id, db_id, status, version)
+- New migration: `000033_create_wordpress_installs.sql` (domain_id, db_id, status, version, admin_username, admin_email, locale, last_error)
 - WordPress CRUD (install, delete, clone from existing)
-- Automated install script (WordPress core + wp-cli, database setup, admin user, theme+plugin config)
-- Clone operation (copy docroot, backup/restore database, new domain binding)
-- Health check (HTTP 200 on domain, wp-cli site health)
-- Agent command: `wordpress.install`, `wordpress.delete`, `wordpress.clone`
-- API: `/api/v1/wordpress`, `/api/v1/wordpress/{id}/clone`
-- UI: user WordPress install/delete/clone buttons; admin WordPress list across users
+- Automated install script (WordPress core + wp-cli, database setup, admin user)
+- Clone operation (copy docroot via rsync, backup/restore database, new domain binding, preserve admin credentials)
+- Health check endpoint (`POST /wordpress/:id/health`) for status monitoring
+- Agent commands: `wordpress.install`, `wordpress.delete`, `wordpress.clone` (with credential-handling invariant and placeholder rewrite for DB password)
+- API: `/api/v1/wordpress` (list, create), `/api/v1/wordpress/:id` (get, delete), `/api/v1/wordpress/:id/clone` (POST)
+- UI: user WordPress install/delete/clone buttons with live status polling; admin WordPress cross-user list; clone modal with destination domain selection
+- Reconciler: WordPress install sweeper (drift detection for rows stuck in `installing`/`cloning`/`deleting` beyond 10min threshold)
+- Playwright E2E test (install → clone → verify independent DB → login test → delete)
+- Runbook for troubleshooting (stuck installs, failed clones, orphaned DBs, drift recovery)
 
-**Status:** Planned
+**Status:** Shipped (commits `85ed8b4` through `main HEAD`)
 
-**Depends on:** M2 (domains), M7 (databases)
+**Depends on:** M2 (domains), M7 (databases), M9 (PHP-FPM pools for clone version compatibility)
 
 ### M11: FileBrowser (PLANNED)
 
@@ -897,7 +900,7 @@ Use this table to navigate the codebase when adding a new capability:
 | M7: Databases | Planned (Tranche E parked pending M9) | — |
 | M8: Cron | Planned | — |
 | M9: PHP/FPM pools | 2026-04-17 | 1aaa507 (ADR), 5dbf471 (shipped) |
-| M10: WordPress | Planned | — |
+| M10: WordPress | 2026-04-18 | `85ed8b4` through `main HEAD` |
 | M11: FileBrowser | Planned | — |
 | M12: Stats & monitoring | Planned | — |
 | M13: Notifications | Planned | — |

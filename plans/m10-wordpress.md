@@ -1,6 +1,6 @@
 # Plan: M10 — WordPress 1-click install, delete, clone
 
-**Status:** Reviewed (opus adversarial pass, 3 CRITICAL + 4 HIGH + 5 MED folded in). Ready for Wave A dispatch.
+**Status:** Shipped (commits 85ed8b4…main HEAD). Final SHA pointer: this commit.
 **Owner:** shuki
 **Scope:** M10 per `docs/BLUEPRINT.md`
 **Depends on:** M2 ✅ (domains), M7 ✅ (databases + users + grants), M9 ✅ (per-user PHP-FPM pools), ADR-0025 ✅ (per-user slices)

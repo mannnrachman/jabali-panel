@@ -32,15 +32,16 @@ const (
 // Config is the root configuration struct. Sections map to TOML tables and to
 // grouped env-var prefixes.
 type Config struct {
-	Server   ServerConfig   `toml:"server"`
-	Log      LogConfig      `toml:"log"`
-	Database DatabaseConfig `toml:"database"`
-	Auth     AuthConfig     `toml:"auth"`
-	Agent    AgentConfig    `toml:"agent"`
-	CORS     CORSConfig     `toml:"cors"`
-	PDNS     PDNSConfig     `toml:"pdns"`
-	ACME     ACMEConfig     `toml:"acme"`
-	SSO      SSOConfig      `toml:"sso"`
+	Server    ServerConfig    `toml:"server"`
+	Log       LogConfig       `toml:"log"`
+	Database  DatabaseConfig  `toml:"database"`
+	Auth      AuthConfig      `toml:"auth"`
+	Agent     AgentConfig     `toml:"agent"`
+	CORS      CORSConfig      `toml:"cors"`
+	PDNS      PDNSConfig      `toml:"pdns"`
+	ACME      ACMEConfig      `toml:"acme"`
+	SSO       SSOConfig       `toml:"sso"`
+	WordPress WordPressConfig `toml:"wordpress"`
 }
 
 // ServerConfig controls HTTP listener and runtime mode.
@@ -142,6 +143,24 @@ type SSOConfig struct {
 	PhpMyAdminBaseURL string `toml:"phpmyadmin_base_url"`
 }
 
+type WordPressConfig struct {
+	// InstallTimeout is the maximum age for a WordPress install in "installing" state.
+	// Default: 10 minutes
+	InstallTimeout time.Duration `toml:"install_timeout"`
+
+	// CloneTimeout is the maximum age for a WordPress install in "cloning" state.
+	// Default: 30 minutes
+	CloneTimeout time.Duration `toml:"clone_timeout"`
+
+	// DeleteTimeout is the maximum age for a WordPress install in "deleting" state.
+	// Default: 5 minutes
+	DeleteTimeout time.Duration `toml:"delete_timeout"`
+
+	// ProbeBatch is the maximum number of ready WordPress installs to probe per reconciler tick.
+	// Default: 100
+	ProbeBatch int `toml:"probe_batch"`
+}
+
 // Defaults returns a Config populated with sensible development defaults.
 // Required-in-production fields (JWT secret, database URL, agent socket)
 // are intentionally blank; Validate() enforces them.
@@ -170,6 +189,12 @@ func Defaults() *Config {
 		SSO: SSOConfig{
 			KeyPath:    "/etc/jabali-panel/sso.key",
 			SocketPath: "/run/jabali-panel/sso.sock",
+		},
+		WordPress: WordPressConfig{
+			InstallTimeout: 10 * time.Minute,
+			CloneTimeout:   30 * time.Minute,
+			DeleteTimeout:  5 * time.Minute,
+			ProbeBatch:     100,
 		},
 	}
 }
@@ -275,6 +300,34 @@ func applyEnv(cfg *Config) error {
 	}
 	if v := os.Getenv("JABALI_SSO_SOCKET_PATH"); v != "" {
 		cfg.SSO.SocketPath = v
+	}
+	if v := os.Getenv("WORDPRESS_INSTALL_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("WORDPRESS_INSTALL_TIMEOUT: %w", err)
+		}
+		cfg.WordPress.InstallTimeout = d
+	}
+	if v := os.Getenv("WORDPRESS_CLONE_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("WORDPRESS_CLONE_TIMEOUT: %w", err)
+		}
+		cfg.WordPress.CloneTimeout = d
+	}
+	if v := os.Getenv("WORDPRESS_DELETE_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("WORDPRESS_DELETE_TIMEOUT: %w", err)
+		}
+		cfg.WordPress.DeleteTimeout = d
+	}
+	if v := os.Getenv("WORDPRESS_PROBE_BATCH"); v != "" {
+		var batch int
+		if _, err := fmt.Sscanf(v, "%d", &batch); err != nil {
+			return fmt.Errorf("WORDPRESS_PROBE_BATCH: %w", err)
+		}
+		cfg.WordPress.ProbeBatch = batch
 	}
 	return nil
 }

@@ -44,6 +44,8 @@ type Reconciler struct {
 	paused atomic.Bool
 	// ssoTokens holds reference to the SSO token repository for nightly prune
 	ssoTokens repository.PhpMyAdminSSOTokenRepository
+	// wordPressInstalls holds reference to the WordPress installs repository
+	wordPressInstalls repository.WordPressInstallRepository
 }
 
 // WithSSLCerts adds SSL certificate repository support to the reconciler.
@@ -113,6 +115,13 @@ func (r *Reconciler) WithDNSRepos(dnsZones repository.DNSZoneRepository, dnsReco
 // WithSSOTokens injects the SSO token repository for nightly prune.
 func (r *Reconciler) WithSSOTokens(ssoTokens repository.PhpMyAdminSSOTokenRepository) *Reconciler {
 	r.ssoTokens = ssoTokens
+	return r
+}
+
+// WithWordPressInstalls adds WordPress installs repository support to the reconciler.
+// Call this before using WordPress installs reconciliation.
+func (r *Reconciler) WithWordPressInstalls(wp repository.WordPressInstallRepository) *Reconciler {
+	r.wordPressInstalls = wp
 	return r
 }
 
@@ -308,6 +317,9 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// already invokes writeHealthcheckForDomain. A separate loop would
 	// double the agent RPC cost for every PHP domain every minute with
 	// zero functional benefit.
+
+	r.reconcileWordPressInstalls(ctx)
+	// Reconcile WordPress installs (sweep stuck rows, probe drift).
 
 	return nil
 }

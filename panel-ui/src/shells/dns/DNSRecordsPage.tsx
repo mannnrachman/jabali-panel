@@ -23,7 +23,7 @@ import {
   Spin,
   Empty,
 } from "antd";
-import { useNavigate, useParams } from "react-router";
+import { useLocation, useNavigate, useParams } from "react-router";
 import { useNotification } from "@refinedev/core";
 
 import { apiClient } from "../../apiClient";
@@ -108,7 +108,14 @@ interface EditingRecord extends DNSRecord {
 export const DNSRecordsPage = () => {
   const { id: domainId } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { open } = useNotification();
+
+  // Back-link target: DNS list in the same shell we're currently in.
+  // Admin path prefix is /jabali-admin; user path prefix is /jabali-panel.
+  const dnsListPath = location.pathname.startsWith("/jabali-admin")
+    ? "/jabali-admin/dns"
+    : "/jabali-panel/dns";
 
   // State
   const [domain, setDomain] = useState<Domain | null>(null);
@@ -416,10 +423,10 @@ export const DNSRecordsPage = () => {
         <Button
           type="text"
           icon={<ArrowLeftOutlined />}
-          onClick={() => navigate("/jabali-panel/domains")}
+          onClick={() => navigate(dnsListPath)}
           style={{ marginBottom: 16 }}
         >
-          Back to Domains
+          Back to DNS
         </Button>
 
         <Card
@@ -450,10 +457,10 @@ export const DNSRecordsPage = () => {
       <Button
         type="text"
         icon={<ArrowLeftOutlined />}
-        onClick={() => navigate("/jabali-panel/domains")}
+        onClick={() => navigate(dnsListPath)}
         style={{ marginBottom: 16 }}
       >
-        Back to Domains
+        Back to DNS
       </Button>
 
       <Space style={{ marginBottom: 16, width: "100%" }}>

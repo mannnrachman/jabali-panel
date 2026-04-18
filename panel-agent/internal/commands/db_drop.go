@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -68,10 +69,12 @@ func dbDropHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	sql := fmt.Sprintf("DROP DATABASE IF EXISTS %s", escapedDBName)
 
 	cmd := exec.CommandContext(ctx, "mysql", "-e", sql)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
-			Message: "failed to drop database",
+			Message: fmt.Sprintf("failed to drop database: %v; stderr=%q", err, truncateStr(stderr.String(), 300)),
 		}
 	}
 

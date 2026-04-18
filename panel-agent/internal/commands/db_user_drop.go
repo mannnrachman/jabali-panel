@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -54,10 +55,12 @@ func dbUserDropHandler(ctx context.Context, params json.RawMessage) (any, error)
 	sql := fmt.Sprintf("DROP USER IF EXISTS %s@'localhost'", escapedUsername)
 
 	cmd := exec.CommandContext(ctx, "mysql", "-e", sql)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
-			Message: "failed to drop user",
+			Message: fmt.Sprintf("failed to drop user: %v; stderr=%q", err, truncateStr(stderr.String(), 300)),
 		}
 	}
 

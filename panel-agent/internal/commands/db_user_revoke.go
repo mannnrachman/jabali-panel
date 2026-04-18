@@ -1,11 +1,13 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
 	"regexp"
+	"strings"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 )
@@ -115,10 +117,18 @@ func dbUserRevokeHandler(ctx context.Context, params json.RawMessage) (any, erro
 	sql := revokeSql + "; FLUSH PRIVILEGES"
 
 	cmd := exec.CommandContext(ctx, "mysql", "-e", sql)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		// Treat "no such grant" as idempotent success — the caller wants
+		// privileges gone, and they already are.
+		se := strings.ToLower(stderr.String())
+		if strings.Contains(se, "there is no such grant") || strings.Contains(se, "nonexistent grant") {
+			return dbUserRevokeResponse{OK: true}, nil
+		}
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
-			Message: "failed to revoke privileges",
+			Message: fmt.Sprintf("failed to revoke privileges: %v; stderr=%q", err, truncateStr(stderr.String(), 300)),
 		}
 	}
 

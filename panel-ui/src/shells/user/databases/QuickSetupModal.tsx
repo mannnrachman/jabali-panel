@@ -24,6 +24,7 @@ import {
   Tooltip,
 } from "antd";
 import { CopyOutlined, CheckCircleTwoTone } from "@ant-design/icons";
+import { useInvalidate } from "@refinedev/core";
 import { apiClient } from "../../../apiClient";
 
 type Props = {
@@ -57,6 +58,16 @@ export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
   const [form] = Form.useForm<{ name: string }>();
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<CreatedResult | null>(null);
+  const invalidate = useInvalidate();
+  // The DB + user tables are rendered by sibling Refine components with
+  // their own query caches; bumping onSuccess() alone only refetched the
+  // databases table. Invalidate the database-users cache too so the
+  // newly-created user appears without a manual reload.
+  const refreshLists = () => {
+    invalidate({ resource: "databases", invalidates: ["list"] });
+    invalidate({ resource: "database-users", invalidates: ["list"] });
+    onSuccess();
+  };
 
   const reset = () => {
     form.resetFields();
@@ -100,7 +111,7 @@ export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
         message.error(
           `Database "${dbName}" was created, but user creation failed: ${extractError(err, "unknown")}. You can delete the database from the list.`,
         );
-        onSuccess();
+        refreshLists();
         return;
       }
 
@@ -114,12 +125,12 @@ export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
           `Database "${dbName}" and user "${username}" were created, but the grant failed: ${extractError(err, "unknown")}. You can add the grant manually.`,
         );
         setResult({ databaseName: dbName, username, password });
-        onSuccess();
+        refreshLists();
         return;
       }
 
       setResult({ databaseName: dbName, username, password });
-      onSuccess();
+      refreshLists();
     } catch (err) {
       message.error(extractError(err, "Failed to create database"));
     } finally {

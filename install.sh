@@ -1594,6 +1594,12 @@ $cfg['CookieHttpOnly'] = true;
 
 ?>
 CONFIGEOF
+  # `cat >` inherits the invoking shell's umask, which under systemd or
+  # sudo is often 0077/0027, leaving the file as 0600 root:root. phpMyAdmin
+  # (running in the jabali-pma pool as www-data) then greets the user with
+  # "Existing configuration file ... is not readable." Force readable perms.
+  chown root:www-data "${pma_link}/config.inc.php"
+  chmod 0640 "${pma_link}/config.inc.php"
   _ok "config.inc.php written"
 
   # Deploy sso.php from the install directory
@@ -1602,7 +1608,8 @@ CONFIGEOF
     _die "sso.php not found at ${REPO_DIR}/install/phpmyadmin/sso.php"
   fi
   cp "${REPO_DIR}/install/phpmyadmin/sso.php" "${pma_link}/sso.php"
-  chmod 0644 "${pma_link}/sso.php"
+  chown root:www-data "${pma_link}/sso.php"
+  chmod 0640 "${pma_link}/sso.php"
   _ok "sso.php deployed"
 
   # Ensure the nginx config directory exists

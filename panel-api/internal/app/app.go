@@ -223,6 +223,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				PHPPools: deps.PHPPools,
 			})
 		}
+		if deps.Domains != nil {
+			api.RegisterDomainPHPSettingsRoutes(v1, api.DomainPHPSettingsHandlerConfig{
+				Domains: deps.Domains,
+			})
+		}
 
 		// Admin routes
 		if deps.Reconciler != nil {

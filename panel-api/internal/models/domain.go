@@ -186,6 +186,16 @@ type Domain struct {
 	// domain can execute PHP. When NULL, the domain is static (no PHP block in vhost).
 	PHPPoolID *string `gorm:"type:char(26)" json:"php_pool_id,omitempty"`
 
+	// PHP INI overrides: per-domain settings that override the pool default.
+	// NULL means use the pool's default; empty string is invalid (disallowed by API validation).
+	// These are rendered as fastcgi_param PHP_VALUE at the nginx layer.
+	PHPMemoryLimit       *string `gorm:"type:varchar(16)" json:"php_memory_limit,omitempty"`
+	PHPUploadMaxFilesize *string `gorm:"type:varchar(16)" json:"php_upload_max_filesize,omitempty"`
+	PHPPostMaxSize       *string `gorm:"type:varchar(16)" json:"php_post_max_size,omitempty"`
+	PHPMaxInputVars      *int    `gorm:"type:int unsigned" json:"php_max_input_vars,omitempty"`
+	PHPMaxExecutionTime  *int    `gorm:"type:int unsigned" json:"php_max_execution_time,omitempty"`
+	PHPMaxInputTime      *int    `gorm:"type:int unsigned" json:"php_max_input_time,omitempty"`
+
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }

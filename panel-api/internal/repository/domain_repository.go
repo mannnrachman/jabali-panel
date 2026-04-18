@@ -30,6 +30,21 @@ type DomainRepository interface {
 	// mutations must only come from the dedicated bind/unbind handlers,
 	// not from generic domain PATCH.
 	SetPHPPoolID(ctx context.Context, id string, poolID *string) error
+	// UpdatePHPSettings atomically updates the six per-domain PHP INI override
+	// columns. NULL values explicitly clear the override. This is a dedicated
+	// method because the columns are not in Update()'s allowlist.
+	UpdatePHPSettings(ctx context.Context, id string, settings DomainPHPSettings) error
+}
+
+// DomainPHPSettings holds per-domain PHP INI overrides.
+// NULL means "use pool default — do not emit a fastcgi_param".
+type DomainPHPSettings struct {
+	MemoryLimit       *string `json:"php_memory_limit,omitempty"`
+	UploadMaxFilesize *string `json:"php_upload_max_filesize,omitempty"`
+	PostMaxSize       *string `json:"php_post_max_size,omitempty"`
+	MaxInputVars      *int    `json:"php_max_input_vars,omitempty"`
+	MaxExecutionTime  *int    `json:"php_max_execution_time,omitempty"`
+	MaxInputTime      *int    `json:"php_max_input_time,omitempty"`
 }
 
 type domainRepo struct{ db *gorm.DB }
@@ -171,6 +186,26 @@ func (r *domainRepo) CountByPHPPoolID(ctx context.Context, poolID string) (int64
 		return 0, err
 	}
 	return count, nil
+}
+
+func (r *domainRepo) UpdatePHPSettings(ctx context.Context, id string, settings DomainPHPSettings) error {
+	res := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"php_memory_limit":        settings.MemoryLimit,
+			"php_upload_max_filesize": settings.UploadMaxFilesize,
+			"php_post_max_size":       settings.PostMaxSize,
+			"php_max_input_vars":      settings.MaxInputVars,
+			"php_max_execution_time":  settings.MaxExecutionTime,
+			"php_max_input_time":      settings.MaxInputTime,
+		})
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // populateSSLStates enriches domains with their SSL certificate states

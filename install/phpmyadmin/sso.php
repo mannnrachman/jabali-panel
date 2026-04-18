@@ -113,9 +113,17 @@ if (!is_string($resp['user']) || !is_string($resp['password']) ||
     jabali_sso_fail('validator payload type mismatch');
 }
 
-// Set secure session cookie parameters before session_start
+// Set secure session cookie parameters BEFORE session_start. The `path`
+// must match $cfg['CookiePath'] in /opt/phpmyadmin/current/config.inc.php
+// (currently '/phpmyadmin/'). If they differ, the browser stores two
+// separate SignonSession cookies — one at "/" written by this script,
+// one at "/phpmyadmin/" written by phpMyAdmin's index.php — and
+// phpMyAdmin reads the narrower-scope one, misses the signon payload
+// we set, and 302-bounces back here. That was the "immediately session
+// expired after clicking Open in phpMyAdmin" bug.
 session_set_cookie_params([
-    'secure' => true,
+    'path'     => '/phpmyadmin/',
+    'secure'   => true,
     'httponly' => true,
     'samesite' => 'Lax',
 ]);

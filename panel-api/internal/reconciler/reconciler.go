@@ -48,6 +48,8 @@ type Reconciler struct {
 	wordPressInstalls repository.WordPressInstallRepository
 	// sshKeys holds reference to the SSH keys repository
 	sshKeys repository.SSHKeyRepository
+	// cronJobs holds reference to the cron jobs repository
+	cronJobs repository.CronJobRepository
 }
 
 // WithSSLCerts adds SSL certificate repository support to the reconciler.
@@ -131,6 +133,13 @@ func (r *Reconciler) WithWordPressInstalls(wp repository.WordPressInstallReposit
 // Call this before using SSH key reconciliation.
 func (r *Reconciler) WithSSHKeys(sshKeys repository.SSHKeyRepository) *Reconciler {
 	r.sshKeys = sshKeys
+	return r
+}
+
+// WithCronJobs adds cron jobs repository support to the reconciler.
+// Call this before using cron jobs reconciliation.
+func (r *Reconciler) WithCronJobs(cronJobs repository.CronJobRepository) *Reconciler {
+	r.cronJobs = cronJobs
 	return r
 }
 
@@ -340,6 +349,9 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 
 	r.reconcileWordPressInstalls(ctx)
 	// Reconcile WordPress installs (sweep stuck rows, probe drift).
+
+	r.reconcileCronJobs(ctx)
+	// Reconcile cron jobs: apply enabled jobs, remove disabled jobs, cleanup orphans.
 
 	r.reconcileSSHKeysForAllUsers(ctx)
 	// Reconcile SSH keys: sync authorized_keys files for all users.

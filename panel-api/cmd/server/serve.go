@@ -110,6 +110,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		phpPoolRepo := repository.NewPHPPoolRepository(sharedDB)
 		phpPoolIniOverrideRepo := repository.NewPHPPoolIniOverrideRepository(sharedDB)
 		wordpressInstallRepo := repository.NewWordPressInstallRepository(sharedDB)
+		cronJobsRepo := repository.NewCronJobRepository(sharedDB)
 
 		serverSettingsRepo := repository.NewServerSettingsRepository(sharedDB)
 		jwtIss, err := auth.NewJWTIssuer(auth.JWTConfig{
@@ -168,6 +169,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		rec.WithConfig(cfg)
 		rec.WithSSO(ssoService)
 		rec.WithSSHKeys(sshKeyRepo)
+		rec.WithCronJobs(cronJobsRepo)
 		deps.Reconciler = rec
 		deps.DNSZones = dnsZoneRepo
 		deps.DNSRecords = dnsRecordRepo
@@ -180,6 +182,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.PHPPools = phpPoolRepo
 		deps.PHPPoolIniOverrides = phpPoolIniOverrideRepo
 		deps.WordPressInstalls = wordpressInstallRepo
+		deps.CronJobs = cronJobsRepo
 
 		// Admin bootstrap.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -264,6 +267,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Start reconciler background loop if it's configured.
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel() // Ensure cancel is called on all exit paths
 	if deps.Reconciler != nil {
 		go deps.Reconciler.Start(ctx)
 	}
@@ -300,7 +304,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	for {
 		select {
 		case err := <-serveErr:
-			cancel() // Stop reconciler on any serve error
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
 				return err
 			}
@@ -319,7 +322,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 			}
 			// SIGINT or SIGTERM — shutdown
 			log.Info("shutdown signal", "signal", sig.String())
-			cancel() // Stop reconciler
 			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 			defer shutdownCancel()
 			if ssoUDSShutdown != nil {

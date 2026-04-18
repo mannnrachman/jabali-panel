@@ -45,6 +45,7 @@ type Deps struct {
 	PHPPools               repository.PHPPoolRepository
 	PHPPoolIniOverrides    repository.PHPPoolIniOverrideRepository
 	WordPressInstalls      repository.WordPressInstallRepository
+	CronJobs               repository.CronJobRepository
 	SSHKeys                repository.SSHKeyRepository
 	SSO                    *sso.Service
 	SSOKey                 *ssokey.Key
@@ -251,6 +252,17 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Users:             deps.Users,
 				Packages:          deps.Packages,
 				Agent:             deps.Agent,
+			})
+		}
+
+		// Cron jobs routes (M8)
+		if deps.CronJobs != nil && deps.Users != nil && deps.Domains != nil && deps.Agent != nil {
+			api.RegisterCronRoutes(v1, api.CronHandlerConfig{
+				CronJobs: deps.CronJobs,
+				Users:    deps.Users,
+				Domains:  deps.Domains,
+				Agent:    deps.Agent,
+				Log:      deps.Log,
 			})
 		}
 

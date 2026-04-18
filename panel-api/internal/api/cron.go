@@ -1,0 +1,489 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/gin-gonic/gin"
+
+	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/cronvalidate"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+)
+
+// CronHandlerConfig bundles the dependencies of /api/v1/cron handlers.
+type CronHandlerConfig struct {
+	CronJobs repository.CronJobRepository
+	Users    repository.UserRepository
+	Domains  repository.DomainRepository
+	Agent    agent.AgentInterface
+	Log      *slog.Logger
+}
+
+// RegisterCronRoutes mounts /cron CRUD + run-now + log under the given group
+// (expected to be /api/v1). All routes require an authenticated caller.
+func RegisterCronRoutes(g *gin.RouterGroup, cfg CronHandlerConfig) {
+	h := &cronHandler{cfg: cfg}
+	grp := g.Group("/cron")
+	grp.GET("", h.list)
+	grp.POST("", h.create)
+	grp.GET("/:id", h.get)
+	grp.PATCH("/:id", h.update)
+	grp.DELETE("/:id", h.delete)
+	grp.POST("/:id/run-now", h.runNow)
+	grp.GET("/:id/log", h.readLog)
+}
+
+type cronHandler struct{ cfg CronHandlerConfig }
+
+// ---- request/response shapes ----
+
+type createCronRequest struct {
+	Name     string `json:"name" binding:"required"`
+	Command  string `json:"command" binding:"required"`
+	Schedule string `json:"schedule" binding:"required"`
+	Enabled  *bool  `json:"enabled"`
+}
+
+type updateCronRequest struct {
+	Name     *string `json:"name"`
+	Command  *string `json:"command"`
+	Schedule *string `json:"schedule"`
+	Enabled  *bool   `json:"enabled"`
+}
+
+type cronJobResponse struct {
+	ID           string     `json:"id"`
+	UserID       string     `json:"user_id"`
+	Name         string     `json:"name"`
+	Command      string     `json:"command"`
+	Schedule     string     `json:"schedule"`
+	Enabled      bool       `json:"enabled"`
+	LastRunAt    *time.Time `json:"last_run_at"`
+	LastExitCode *int       `json:"last_exit_code"`
+	LastError    *string    `json:"last_error"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
+type runNowResponse struct {
+	ExitCode int    `json:"exit_code"`
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+}
+
+type cronLogResponse struct {
+	Log   string `json:"log"`
+	Lines int    `json:"lines"`
+}
+
+// cronApplyAgentParams is the panel-agent cron.apply payload shape. Mirrors
+// panel-agent/internal/commands/cron_apply.go cronApplyParams exactly — any
+// JSON-tag drift across this boundary is silent until prod. See wire-shape
+// test (cron_wire_test.go) which marshals this and asserts the JSON keys.
+type cronApplyAgentParams struct {
+	UserID        string   `json:"user_id"`
+	Username      string   `json:"username"`
+	JobID         string   `json:"job_id"`
+	Name          string   `json:"name"`
+	Command       string   `json:"command"`
+	Schedule      string   `json:"schedule"`
+	OwnedDocroots []string `json:"owned_docroots"`
+}
+
+type cronRemoveAgentParams struct {
+	UserID   string `json:"user_id"`
+	Username string `json:"username"`
+	JobID    string `json:"job_id"`
+}
+
+type cronRunNowAgentParams struct {
+	UserID   string `json:"user_id"`
+	Username string `json:"username"`
+	JobID    string `json:"job_id"`
+}
+
+type cronTailLogAgentParams struct {
+	UserID   string `json:"user_id"`
+	Username string `json:"username"`
+	JobID    string `json:"job_id"`
+	Lines    int    `json:"lines,omitempty"`
+}
+
+// ---- helpers ----
+
+func toCronResponse(j *models.CronJob) cronJobResponse {
+	return cronJobResponse{
+		ID:           j.ID,
+		UserID:       j.UserID,
+		Name:         j.Name,
+		Command:      j.Command,
+		Schedule:     j.Schedule,
+		Enabled:      j.Enabled,
+		LastRunAt:    j.LastRunAt,
+		LastExitCode: j.LastExitCode,
+		LastError:    j.LastError,
+		CreatedAt:    j.CreatedAt,
+		UpdatedAt:    j.UpdatedAt,
+	}
+}
+
+func (h *cronHandler) ownedDocroots(ctx context.Context, userID string) ([]string, error) {
+	domains, _, err := h.cfg.Domains.ListByUserID(ctx, userID, repository.ListOptions{Limit: 1000})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(domains))
+	for _, d := range domains {
+		if d.DocRoot != "" {
+			out = append(out, d.DocRoot)
+		}
+	}
+	return out, nil
+}
+
+func (h *cronHandler) linuxUsername(ctx context.Context, userID string) (string, error) {
+	u, err := h.cfg.Users.FindByID(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	if u == nil || u.Username == nil || *u.Username == "" {
+		return "", errors.New("user has no linux account")
+	}
+	return *u.Username, nil
+}
+
+func (h *cronHandler) fetchAndAuthorize(ctx context.Context, c *gin.Context, id string) (*models.CronJob, bool) {
+	job, err := h.cfg.CronJobs.FindByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return nil, false
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
+		return nil, false
+	}
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return nil, false
+	}
+	if !claims.IsAdmin && job.UserID != claims.UserID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+		return nil, false
+	}
+	return job, true
+}
+
+// respondValidationErr translates a cronvalidate error into a 400 response,
+// preserving the structured Code so the UI can surface per-field messages.
+func respondValidationErr(c *gin.Context, field string, err error) {
+	var ve *cronvalidate.ValidationError
+	if errors.As(err, &ve) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":  "validation_failed",
+			"field":  field,
+			"code":   ve.Code,
+			"detail": ve.Detail,
+		})
+		return
+	}
+	c.JSON(http.StatusBadRequest, gin.H{
+		"error":  "validation_failed",
+		"field":  field,
+		"detail": err.Error(),
+	})
+}
+
+// ---- handlers ----
+
+func (h *cronHandler) list(c *gin.Context) {
+	ctx := c.Request.Context()
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	jobs, err := h.cfg.CronJobs.ListByUserID(ctx, claims.UserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
+		return
+	}
+	out := make([]cronJobResponse, 0, len(jobs))
+	for _, j := range jobs {
+		out = append(out, toCronResponse(j))
+	}
+	c.JSON(http.StatusOK, gin.H{"items": out})
+}
+
+func (h *cronHandler) create(c *gin.Context) {
+	ctx := c.Request.Context()
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	var req createCronRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
+		return
+	}
+	if len(req.Name) > 100 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "validation_failed", "field": "name", "code": "too_long",
+		})
+		return
+	}
+
+	docroots, err := h.ownedDocroots(ctx, claims.UserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
+		return
+	}
+	username, err := h.linuxUsername(ctx, claims.UserID)
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "user_has_no_linux_account"})
+		return
+	}
+
+	if vErr := cronvalidate.ValidateSchedule(req.Schedule); vErr != nil {
+		respondValidationErr(c, "schedule", vErr)
+		return
+	}
+	if _, vErr := cronvalidate.ValidateCommand(req.Command, docroots); vErr != nil {
+		respondValidationErr(c, "command", vErr)
+		return
+	}
+
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	job := &models.CronJob{
+		ID:       ids.NewULID(),
+		UserID:   claims.UserID,
+		Name:     req.Name,
+		Command:  req.Command,
+		Schedule: req.Schedule,
+		Enabled:  enabled,
+	}
+	if err := h.cfg.CronJobs.Create(ctx, job); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
+		return
+	}
+
+	if enabled {
+		if err := h.agentApply(ctx, job, username, docroots); err != nil {
+			_ = h.cfg.CronJobs.Delete(ctx, job.ID)
+			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_apply_failed", "detail": err.Error()})
+			return
+		}
+	}
+
+	c.JSON(http.StatusCreated, toCronResponse(job))
+}
+
+func (h *cronHandler) get(c *gin.Context) {
+	job, ok := h.fetchAndAuthorize(c.Request.Context(), c, c.Param("id"))
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, toCronResponse(job))
+}
+
+func (h *cronHandler) update(c *gin.Context) {
+	ctx := c.Request.Context()
+	job, ok := h.fetchAndAuthorize(ctx, c, c.Param("id"))
+	if !ok {
+		return
+	}
+
+	var req updateCronRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
+		return
+	}
+	if req.Name != nil && len(*req.Name) > 100 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "validation_failed", "field": "name", "code": "too_long",
+		})
+		return
+	}
+
+	docroots, err := h.ownedDocroots(ctx, job.UserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
+		return
+	}
+	username, err := h.linuxUsername(ctx, job.UserID)
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "user_has_no_linux_account"})
+		return
+	}
+
+	if req.Name != nil {
+		job.Name = *req.Name
+	}
+	if req.Command != nil {
+		if _, vErr := cronvalidate.ValidateCommand(*req.Command, docroots); vErr != nil {
+			respondValidationErr(c, "command", vErr)
+			return
+		}
+		job.Command = *req.Command
+	}
+	if req.Schedule != nil {
+		if vErr := cronvalidate.ValidateSchedule(*req.Schedule); vErr != nil {
+			respondValidationErr(c, "schedule", vErr)
+			return
+		}
+		job.Schedule = *req.Schedule
+	}
+	if req.Enabled != nil {
+		job.Enabled = *req.Enabled
+	}
+
+	if err := h.cfg.CronJobs.Update(ctx, job); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
+		return
+	}
+
+	// Agent is idempotent: apply whenever enabled, remove when disabled.
+	if job.Enabled {
+		if err := h.agentApply(ctx, job, username, docroots); err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_apply_failed", "detail": err.Error()})
+			return
+		}
+	} else {
+		if err := h.agentRemove(ctx, job.UserID, username, job.ID); err != nil {
+			// Non-fatal: reconciler will retry. Row is already disabled.
+			h.cfg.Log.Warn("cron update: agent remove failed, reconciler will retry", "job_id", job.ID, "err", err)
+		}
+	}
+
+	c.JSON(http.StatusOK, toCronResponse(job))
+}
+
+func (h *cronHandler) delete(c *gin.Context) {
+	ctx := c.Request.Context()
+	job, ok := h.fetchAndAuthorize(ctx, c, c.Param("id"))
+	if !ok {
+		return
+	}
+	username, err := h.linuxUsername(ctx, job.UserID)
+	if err != nil {
+		// Still proceed — user might have been deleted. Just skip agent call.
+		h.cfg.Log.Warn("cron delete: no linux username, skipping agent call", "user_id", job.UserID, "err", err)
+	} else {
+		if err := h.agentRemove(ctx, job.UserID, username, job.ID); err != nil {
+			// Per plan §6: on user_manager_unreachable still delete the row, reconciler will clean up.
+			h.cfg.Log.Warn("cron delete: agent remove failed, reconciler will clean up", "job_id", job.ID, "err", err)
+		}
+	}
+	if err := h.cfg.CronJobs.Delete(ctx, job.ID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *cronHandler) runNow(c *gin.Context) {
+	ctx := c.Request.Context()
+	job, ok := h.fetchAndAuthorize(ctx, c, c.Param("id"))
+	if !ok {
+		return
+	}
+	if !job.Enabled {
+		c.JSON(http.StatusConflict, gin.H{"error": "job_disabled"})
+		return
+	}
+	username, err := h.linuxUsername(ctx, job.UserID)
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "user_has_no_linux_account"})
+		return
+	}
+
+	result, err := h.cfg.Agent.Call(ctx, "cron.run_now", cronRunNowAgentParams{
+		UserID: job.UserID, Username: username, JobID: job.ID,
+	})
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_run_now_failed", "detail": err.Error()})
+		return
+	}
+	var resp runNowResponse
+	if err := json.Unmarshal(result, &resp); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_response_invalid"})
+		return
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+func (h *cronHandler) readLog(c *gin.Context) {
+	ctx := c.Request.Context()
+	job, ok := h.fetchAndAuthorize(ctx, c, c.Param("id"))
+	if !ok {
+		return
+	}
+	username, err := h.linuxUsername(ctx, job.UserID)
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "user_has_no_linux_account"})
+		return
+	}
+
+	lines := 50
+	if q := c.Query("lines"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n > 0 {
+			lines = n
+			if lines > 500 {
+				lines = 500
+			}
+		}
+	}
+
+	result, err := h.cfg.Agent.Call(ctx, "cron.tail_log", cronTailLogAgentParams{
+		UserID: job.UserID, Username: username, JobID: job.ID, Lines: lines,
+	})
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_tail_log_failed", "detail": err.Error()})
+		return
+	}
+	var resp cronLogResponse
+	if err := json.Unmarshal(result, &resp); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_response_invalid"})
+		return
+	}
+	if resp.Lines == 0 {
+		resp.Lines = lines
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// ---- agent dispatch helpers ----
+
+func (h *cronHandler) agentApply(ctx context.Context, job *models.CronJob, username string, docroots []string) error {
+	_, err := h.cfg.Agent.Call(ctx, "cron.apply", cronApplyAgentParams{
+		UserID:        job.UserID,
+		Username:      username,
+		JobID:         job.ID,
+		Name:          job.Name,
+		Command:       job.Command,
+		Schedule:      job.Schedule,
+		OwnedDocroots: docroots,
+	})
+	return err
+}
+
+func (h *cronHandler) agentRemove(ctx context.Context, userID, username, jobID string) error {
+	_, err := h.cfg.Agent.Call(ctx, "cron.remove", cronRemoveAgentParams{
+		UserID: userID, Username: username, JobID: jobID,
+	})
+	return err
+}

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -125,6 +126,7 @@ func (h *wordPressHandler) create(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "domain_not_found"})
 			return
 		}
+		slog.ErrorContext(ctx, "wordpress create: domain lookup failed", "err", err, "domain_id", req.DomainID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
@@ -145,6 +147,7 @@ func (h *wordPressHandler) create(c *gin.Context) {
 		return
 	}
 	if err != nil && !isNotFound(err) {
+		slog.ErrorContext(ctx, "wordpress create: existing install lookup failed", "err", err, "domain_id", req.DomainID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
@@ -171,6 +174,7 @@ func (h *wordPressHandler) create(c *gin.Context) {
 		UpdatedAt: now,
 	}
 	if err := h.cfg.Databases.Create(ctx, database); err != nil {
+		slog.ErrorContext(ctx, "wordpress create: database row create failed", "err", err, "db_id", dbID, "db_name", dbName)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
@@ -180,6 +184,7 @@ func (h *wordPressHandler) create(c *gin.Context) {
 	dbUsername := "wp_" + dbUserID[:6]
 	hash, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
 	if err != nil {
+		slog.ErrorContext(ctx, "wordpress create: bcrypt failed", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
@@ -194,6 +199,7 @@ func (h *wordPressHandler) create(c *gin.Context) {
 	if err := h.cfg.DatabaseUsers.Create(ctx, databaseUser); err != nil {
 		// Rollback database
 		h.cfg.Databases.Delete(ctx, dbID)
+		slog.ErrorContext(ctx, "wordpress create: database user create failed", "err", err, "db_user_id", dbUserID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
@@ -213,6 +219,7 @@ func (h *wordPressHandler) create(c *gin.Context) {
 		// Rollback database and user
 		h.cfg.DatabaseUsers.Delete(ctx, dbUserID)
 		h.cfg.Databases.Delete(ctx, dbID)
+		slog.ErrorContext(ctx, "wordpress create: grant create failed", "err", err, "grant_id", grantID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
@@ -236,6 +243,7 @@ func (h *wordPressHandler) create(c *gin.Context) {
 		h.cfg.DatabaseGrants.Delete(ctx, grantID)
 		h.cfg.DatabaseUsers.Delete(ctx, dbUserID)
 		h.cfg.Databases.Delete(ctx, dbID)
+		slog.ErrorContext(ctx, "wordpress create: install row create failed", "err", err, "install_id", installID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}

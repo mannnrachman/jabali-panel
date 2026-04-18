@@ -26,7 +26,7 @@ type dbCreateResponse struct {
 // dbNameRegex validates MariaDB database name format.
 // Must start with letter, contain only letters, digits, underscores, hyphens.
 // Max 64 chars (MariaDB limit for unquoted identifiers).
-var dbNameRegex = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
+var dbNameRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`)
 
 func dbCreateHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p dbCreateParams

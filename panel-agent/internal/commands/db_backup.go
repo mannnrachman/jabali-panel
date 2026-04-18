@@ -27,7 +27,7 @@ type dbBackupResponse struct {
 }
 
 // dbBackupNameRegex validates MariaDB database name format.
-var dbBackupNameRegex = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
+var dbBackupNameRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`)
 
 func dbBackupHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p dbBackupParams

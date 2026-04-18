@@ -34,15 +34,6 @@ func TestDBUserRotatePasswordHandler(t *testing.T) {
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
 		{
-			name: "invalid: username contains uppercase",
-			input: dbUserRotatePasswordParams{
-				DBUserName:  "TestUser",
-				NewPassword: "NewSecurePassword123!",
-			},
-			wantError: true,
-			wantCode:  agentwire.CodeInvalidArgument,
-		},
-		{
 			name: "invalid: username contains dash",
 			input: dbUserRotatePasswordParams{
 				DBUserName:  "test-user",

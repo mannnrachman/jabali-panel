@@ -24,7 +24,7 @@ type dbRestoreResponse struct {
 }
 
 // dbRestoreNameRegex validates MariaDB database name format.
-var dbRestoreNameRegex = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
+var dbRestoreNameRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`)
 
 func dbRestoreHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p dbRestoreParams

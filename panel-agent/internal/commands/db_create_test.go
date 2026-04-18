@@ -32,9 +32,9 @@ func TestDBCreateHandler(t *testing.T) {
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
 		{
-			name: "invalid: uppercase",
+			name: "invalid: starts with dash",
 			input: dbCreateParams{
-				DBName: "Alice",
+				DBName: "-bad",
 			},
 			wantError: true,
 			wantCode:  agentwire.CodeInvalidArgument,

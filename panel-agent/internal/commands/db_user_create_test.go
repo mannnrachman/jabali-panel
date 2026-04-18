@@ -34,9 +34,9 @@ func TestDBUserCreateHandler(t *testing.T) {
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
 		{
-			name: "invalid: contains uppercase",
+			name: "invalid: contains dash",
 			input: dbUserCreateParams{
-				DBUserName: "TestUser",
+				DBUserName: "bad-user",
 				Password:   "SecurePassword123!",
 			},
 			wantError: true,

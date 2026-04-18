@@ -22,7 +22,7 @@ type dbDropResponse struct {
 }
 
 // dbNameRegex is shared with db.create.
-var dbDropNameRegex = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
+var dbDropNameRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`)
 
 func dbDropHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p dbDropParams

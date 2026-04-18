@@ -34,9 +34,9 @@ func TestDBBackupHandler(t *testing.T) {
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
 		{
-			name: "invalid: uppercase",
+			name: "invalid: starts with dash",
 			input: dbBackupParams{
-				DBName: "Alice",
+				DBName: "-bad",
 				Path:   "",
 			},
 			wantError: true,

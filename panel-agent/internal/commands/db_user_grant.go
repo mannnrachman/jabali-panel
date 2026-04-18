@@ -23,7 +23,7 @@ type dbUserGrantResponse struct {
 	OK bool `json:"ok"`
 }
 
-var dbUserGrantNameRegex = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+var dbUserGrantNameRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,63}$`)
 
 // Whitelist of valid privilege tokens.
 const privilegeWhitelist = "SELECT,INSERT,UPDATE,DELETE,CREATE,DROP,ALTER,INDEX,ALL"

@@ -23,7 +23,7 @@ type dbUserRevokeResponse struct {
 	OK bool `json:"ok"`
 }
 
-var dbUserRevokeNameRegex = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+var dbUserRevokeNameRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,63}$`)
 
 func dbUserRevokeHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p dbUserRevokeParams

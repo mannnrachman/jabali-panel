@@ -34,9 +34,9 @@ func TestDBRestoreHandler(t *testing.T) {
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
 		{
-			name: "invalid: uppercase",
+			name: "invalid: starts with dash",
 			input: dbRestoreParams{
-				DBName: "Alice",
+				DBName: "-bad",
 				Path:   "/var/lib/jabali/restore/backup.sql",
 			},
 			wantError: true,

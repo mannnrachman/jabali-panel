@@ -40,14 +40,6 @@ func TestDBUserDropHandler(t *testing.T) {
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
 		{
-			name: "invalid: contains uppercase",
-			input: dbUserDropParams{
-				DBUserName: "TestUser",
-			},
-			wantError: true,
-			wantCode:  agentwire.CodeInvalidArgument,
-		},
-		{
 			name: "invalid: too long",
 			input: dbUserDropParams{
 				DBUserName: "a1234567890123456789012345678901234567890123456789012345678901234",

@@ -278,6 +278,13 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 			r.log.Info("reconcile: creating missing domain", "domain", name)
 		}
 		r.reconcileDNSZone(ctx, domain)
+		// Auto-bind unbound domains to their owner's pool BEFORE the
+		// agent RPC. Without this, a newly-created domain renders an
+		// nginx vhost with no "location ~ \\.php$" block and the browser
+		// downloads info.php instead of executing it. ReconcilePHPPools
+		// already ran at the top of ReconcileAll so every user has a
+		// pool; this associates it with pre-existing unbound domains.
+		r.ensureDomainPHPBinding(ctx, domain)
 		r.createDomainOnAgent(ctx, domain)
 	}
 
@@ -352,6 +359,15 @@ func (r *Reconciler) ReconcileOne(ctx context.Context, domainID string) error {
 	sslCtx, sslCancel := context.WithTimeout(ctx, 2*time.Minute)
 	r.reconcileSSLForDomain(sslCtx, domain)
 	sslCancel()
+
+	// Auto-bind unbound domains to their owner's pool before the agent
+	// RPC. Same rationale as the enabledDomains loop in ReconcileAll:
+	// without this, a newly-created domain's first vhost render has
+	// hasPHP=false and the browser downloads .php files. This is the
+	// on-demand (Schedule'd) path so we still depend on the user having
+	// a pool already; the periodic ReconcileAll tick backfills any
+	// domain whose user's pool was created after its Schedule call.
+	r.ensureDomainPHPBinding(ctx, domain)
 
 	// Always call domain.create with is_enabled to converge to desired state.
 	// The agent handles both enabled and disabled via the is_enabled parameter.

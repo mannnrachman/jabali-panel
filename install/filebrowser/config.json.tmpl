@@ -1,6 +1,6 @@
 {
-  "port": 0,
-  "address": "unix:///run/jabali-filebrowser/fb.sock",
+  "socket": "/run/jabali-filebrowser/fb.sock",
+  "socket-perm": 438,
   "database": "/var/lib/jabali-filebrowser/filebrowser.db",
   "log": "stdout",
   "root": "/home",
@@ -13,7 +13,10 @@
     "locale": "en",
     "viewMode": "list",
     "singleClick": false,
-    "sorting": {"by": "name", "asc": true},
+    "sorting": {
+      "by": "name",
+      "asc": true
+    },
     "perm": {
       "admin": false,
       "execute": false,

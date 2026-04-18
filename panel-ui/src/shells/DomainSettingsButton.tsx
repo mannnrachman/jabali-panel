@@ -673,6 +673,7 @@ export const DomainSettingsButton = ({
     // Re-sync from prop in case the values were updated elsewhere
     setDirectivesValue(domain.nginx_custom_directives ?? "");
     setRules(domain.nginx_rules ?? []);
+    setIsModalOpen(true);
   };
 
 

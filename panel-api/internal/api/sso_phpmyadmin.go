@@ -77,7 +77,7 @@ func (h *ssoPhpMyAdminHandler) issueSSOToken(c *gin.Context) {
 	}
 
 	// Ensure shadow account and get credentials
-	if _, _, err := h.cfg.SSO.EnsureShadow(ctx, claims.UserID); err != nil {
+	if err := h.cfg.SSO.EnsureShadow(ctx, claims.UserID); err != nil {
 		h.cfg.Log.ErrorContext(ctx, "ensure shadow account failed", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return

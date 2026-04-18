@@ -52,23 +52,30 @@ func NewService(
 	}
 }
 
+// SSOInterface defines the methods needed by the reconciler for SSO operations.
+type SSOInterface interface {
+	// EnsureShadow ensures a user has a shadow MySQL account.
+	// If the account already exists, returns nil. If it doesn't, the agent
+	// is called to create it and the credentials are encrypted and persisted.
+	EnsureShadow(ctx context.Context, userID string) error
+}
+
 // EnsureShadow ensures a user has a shadow MySQL account. If the account
 // already exists, the plaintext password is returned unchanged. If it doesn't,
 // the agent is called to create it and the password is encrypted and persisted.
 // The whole operation happens in a FOR UPDATE transaction to avoid TOCTOU races.
-func (s *Service) EnsureShadow(ctx context.Context, userID string) (username, plaintextPassword string, err error) {
+func (s *Service) EnsureShadow(ctx context.Context, userID string) error {
 	// Fetch user to get panel username (outside transaction, just for username)
 	user, err := s.users.FindByID(ctx, userID)
 	if err != nil {
-		return "", "", fmt.Errorf("find user: %w", err)
+		return fmt.Errorf("find user: %w", err)
 	}
 
 	if user.Username == nil || *user.Username == "" {
-		return "", "", errors.New("user has no username")
+		return errors.New("user has no username")
 	}
 
 	// Begin transaction with FOR UPDATE lock
-	var finalUsername, finalPassword string
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Load current shadow account state with FOR UPDATE lock
 		var currentUser models.User
@@ -78,17 +85,11 @@ func (s *Service) EnsureShadow(ctx context.Context, userID string) (username, pl
 			return fmt.Errorf("select for update: %w", err)
 		}
 
-		// If shadow account exists, return the decrypted password
+		// If shadow account exists, just return nil
 		if currentUser.MysqladminUsername != nil {
 			if currentUser.MysqladminPasswordEnc == nil {
 				return errors.New("shadow account exists but password is null")
 			}
-			plaintextBytes, err := s.ssoKey.Open(currentUser.MysqladminPasswordEnc)
-			if err != nil {
-				return fmt.Errorf("decrypt existing password: %w", err)
-			}
-			finalUsername = *currentUser.MysqladminUsername
-			finalPassword = string(plaintextBytes)
 			return nil
 		}
 
@@ -142,16 +143,10 @@ func (s *Service) EnsureShadow(ctx context.Context, userID string) (username, pl
 			return fmt.Errorf("update user shadow account: %w", err)
 		}
 
-		finalUsername = mysqlUsername
-		finalPassword = mysqlPassword
 		return nil
 	})
 
-	if err != nil {
-		return "", "", err
-	}
-
-	return finalUsername, finalPassword, nil
+	return err
 }
 
 // MintToken generates a new SSO token, hashes it, and stores it in the DB.

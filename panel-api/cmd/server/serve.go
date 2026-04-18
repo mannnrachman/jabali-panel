@@ -166,6 +166,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		rec.WithSSLCerts(sslCertRepo)
 		rec.WithPHPPools(phpPoolRepo)
 		rec.WithConfig(cfg)
+		rec.WithSSO(ssoService)
 		deps.Reconciler = rec
 		deps.DNSZones = dnsZoneRepo
 		deps.DNSRecords = dnsRecordRepo

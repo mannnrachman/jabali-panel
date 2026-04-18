@@ -3,6 +3,7 @@ package reconciler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -281,15 +282,18 @@ func (f *fakeUserRepo) FindByUsername(ctx context.Context, username string) (*mo
 	}
 	return nil, repository.ErrNotFound
 }
-
 func (f *fakeUserRepo) List(ctx context.Context, opts repository.ListOptions) ([]models.User, int64, error) {
 	var result []models.User
 	for _, u := range f.users {
 		result = append(result, *u)
 	}
-	return result, int64(len(result)), nil
+	total := int64(len(result))
+	// Respect the limit option
+	if opts.Limit > 0 && len(result) > opts.Limit {
+		result = result[:opts.Limit]
+	}
+	return result, total, nil
 }
-
 func (f *fakeUserRepo) Update(ctx context.Context, u *models.User) error {
 	f.users[u.ID] = u
 	return nil
@@ -1350,4 +1354,183 @@ func TestReconcilePHPPools_ContinueOnUserWithoutUsername(t *testing.T) {
 	// Verify pool2 became active (username exists)
 	p2, _ := phpPoolRepo.FindByID(ctx, pool2.ID)
 	require.Equal(t, "active", p2.Status)
+}
+
+// fakeSSO provides a mock SSO service for testing.
+type fakeSSO struct {
+	ensureShadowCalls []string // Track userID calls
+	ensureShadowError error    // Error to return
+}
+
+func (f *fakeSSO) EnsureShadow(ctx context.Context, userID string) error {
+	f.ensureShadowCalls = append(f.ensureShadowCalls, userID)
+	return f.ensureShadowError
+}
+
+func TestReconcileMysqlAdminShadow_SkipsIfNoSSO(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second})
+	// No WithSSO call; sso field is nil
+
+	// Should not panic and should just return
+	r.reconcileMysqlAdminShadow(ctx)
+}
+
+func TestReconcileMysqlAdminShadow_SkipsUsersWithoutUsername(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+	sso := &fakeSSO{}
+
+	// Create a user without username (should be skipped)
+	user1 := &models.User{
+		ID:       "user-1",
+		Email:    "nousername@example.com",
+		Username: nil,
+	}
+	userRepo.users[user1.ID] = user1
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second}).
+		WithSSO(sso)
+
+	r.reconcileMysqlAdminShadow(ctx)
+
+	// SSO should never be called for user without username
+	require.Equal(t, 0, len(sso.ensureShadowCalls))
+}
+
+func TestReconcileMysqlAdminShadow_SkipsUsersWithExistingShadow(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+	sso := &fakeSSO{}
+
+	// Create a user with username and existing shadow account
+	username := "testuser"
+	mysqladminUsername := "admin_testuser"
+	user := &models.User{
+		ID:                 "user-1",
+		Email:              "test@example.com",
+		Username:           &username,
+		MysqladminUsername: &mysqladminUsername, // Already has shadow
+	}
+	userRepo.users[user.ID] = user
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second}).
+		WithSSO(sso)
+
+	r.reconcileMysqlAdminShadow(ctx)
+
+	// SSO should not be called since shadow already exists
+	require.Equal(t, 0, len(sso.ensureShadowCalls))
+}
+
+func TestReconcileMysqlAdminShadow_EnsuresForUsersNeedingShadow(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+	sso := &fakeSSO{}
+
+	// Create users: one needs shadow, one doesn't
+	username1 := "user1"
+	user1 := &models.User{
+		ID:       "user-1",
+		Email:    "user1@example.com",
+		Username: &username1,
+		// No shadow yet
+	}
+	userRepo.users[user1.ID] = user1
+
+	username2 := "user2"
+	mysqladminUsername2 := "admin_user2"
+	user2 := &models.User{
+		ID:                 "user-2",
+		Email:              "user2@example.com",
+		Username:           &username2,
+		MysqladminUsername: &mysqladminUsername2, // Already has shadow
+	}
+	userRepo.users[user2.ID] = user2
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second}).
+		WithSSO(sso)
+
+	r.reconcileMysqlAdminShadow(ctx)
+
+	// SSO should be called only for user1
+	require.Equal(t, 1, len(sso.ensureShadowCalls))
+	require.Equal(t, "user-1", sso.ensureShadowCalls[0])
+}
+
+func TestReconcileMysqlAdminShadow_ContinuesOnPerUserError(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+	sso := &fakeSSO{ensureShadowError: errors.New("test error")}
+
+	// Create multiple users needing shadow
+	for i := 0; i < 3; i++ {
+		username := fmt.Sprintf("user%d", i)
+		user := &models.User{
+			ID:       fmt.Sprintf("user-%d", i),
+			Email:    fmt.Sprintf("user%d@example.com", i),
+			Username: &username,
+		}
+		userRepo.users[user.ID] = user
+	}
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second}).
+		WithSSO(sso)
+
+	// Should not panic even though SSO fails for all users
+	r.reconcileMysqlAdminShadow(ctx)
+
+	// All three should have been attempted (resilience)
+	require.Equal(t, 3, len(sso.ensureShadowCalls))
+}
+
+func TestReconcileMysqlAdminShadow_BatchLimitOf50(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+	sso := &fakeSSO{}
+
+	// Create 75 users (exceeds batch limit of 50)
+	for i := 0; i < 75; i++ {
+		username := fmt.Sprintf("user%d", i)
+		user := &models.User{
+			ID:       fmt.Sprintf("user-%d", i),
+			Email:    fmt.Sprintf("user%d@example.com", i),
+			Username: &username,
+		}
+		userRepo.users[user.ID] = user
+	}
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second}).
+		WithSSO(sso)
+
+	r.reconcileMysqlAdminShadow(ctx)
+
+	// Should only process first 50 users in this pass (batch limit)
+	require.Equal(t, 50, len(sso.ensureShadowCalls))
 }

@@ -17,6 +17,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/nginxrules"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/redirects"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/sso"
 )
 
 // Reconciler syncs the database state with the filesystem (nginx configs, php-fpm pools).
@@ -29,6 +30,7 @@ type Reconciler struct {
 	sslCerts       repository.SSLCertificateRepository
 	serverSettings repository.ServerSettingsRepository
 	phpPools       repository.PHPPoolRepository
+	sso            sso.SSOInterface
 	cfg            *config.Config
 	agent          agent.AgentInterface
 	log            *slog.Logger
@@ -50,6 +52,13 @@ func (r *Reconciler) WithSSLCerts(sslCerts repository.SSLCertificateRepository) 
 // Call this before using PHP pool reconciliation.
 func (r *Reconciler) WithPHPPools(phpPools repository.PHPPoolRepository) *Reconciler {
 	r.phpPools = phpPools
+	return r
+}
+
+// WithSSO injects the SSO service for mysqladmin shadow account backfill.
+// Call this before using mysqladmin reconciliation.
+func (r *Reconciler) WithSSO(sso sso.SSOInterface) *Reconciler {
+	r.sso = sso
 	return r
 }
 
@@ -147,6 +156,10 @@ func (r *Reconciler) Schedule(domainID string) {
 func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// PHP pool reconciliation first, so domain regens see latest pool state.
 	r.ReconcilePHPPools(ctx)
+
+	// Backfill mysqladmin shadow accounts for users that don't have one yet.
+	// This is a separate pass that doesn't block domain reconciliation.
+	r.reconcileMysqlAdminShadow(ctx)
 
 	// Get the list of enabled sites from the agent
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -423,6 +436,61 @@ func (r *Reconciler) ReconcilePHPPools(ctx context.Context) {
 
 		// Call agent to provision the pool
 		r.applyPHPPool(ctx, user, pool)
+	}
+}
+
+// reconcileMysqlAdminShadow ensures all active users have mysqladmin shadow accounts.
+// This is a safety net so the first SSO click is fast; the API handler also calls
+// EnsureShadow lazily. Called every reconcile tick as a separate pass
+// (does not block domain reconciliation).
+func (r *Reconciler) reconcileMysqlAdminShadow(ctx context.Context) {
+	if r.sso == nil {
+		// SSO service not configured; skip this pass.
+		return
+	}
+
+	// Query users who have a Linux username but no mysqladmin shadow yet.
+	// Limit to 50 per pass to avoid overwhelming the system with agent calls.
+	users, _, err := r.users.List(ctx, repository.ListOptions{Limit: 50})
+	if err != nil {
+		r.log.Error("reconcile: failed to list users for mysqladmin shadow backfill", "err", err)
+		return
+	}
+
+	// Filter to users with a Linux username and no mysqladmin_username yet
+	for _, user := range users {
+		// Skip users with no Linux username (admins with empty username)
+		if user.Username == nil || *user.Username == "" {
+			continue
+		}
+
+		// Skip if mysqladmin shadow already provisioned
+		if user.MysqladminUsername != nil && *user.MysqladminUsername != "" {
+			continue
+		}
+
+		// Ensure shadow account via the SSO service.
+		// This call will:
+		// - Query the agent to provision the MariaDB user (if not exists)
+		// - Rotate the password (on recovery path) if user already exists
+		// - Encrypt and store the credentials in the user row
+		// All within a transaction with FOR UPDATE locking.
+		ensureCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err := r.sso.EnsureShadow(ensureCtx, user.ID)
+		cancel()
+
+		if err != nil {
+			// Log the error but continue with next user (resilient loop)
+			r.log.Warn("reconcile: failed to ensure mysqladmin shadow for user",
+				"user_id", user.ID,
+				"username", user.Username,
+				"err", err)
+			continue
+		}
+
+		r.log.Info("reconcile: mysqladmin shadow ensured for user",
+			"user_id", user.ID,
+			"username", user.Username)
 	}
 }
 

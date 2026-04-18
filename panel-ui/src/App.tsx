@@ -71,6 +71,7 @@ import { SSLManagerPage } from "./shells/admin/ssl/SSLManagerPage";
 import { UserSSLManagerPage } from "./shells/user/ssl/UserSSLManagerPage";
 import { UserPHPSettingsPage } from "./shells/user/php-settings/UserPHPSettingsPage";
 import { UserWordPressList } from "./shells/user/wordpress/UserWordPressList";
+import { AdminWordPressList } from "./shells/admin/wordpress/AdminWordPressList";
 import { PHPPoolsList } from "./shells/admin/php-pools/PHPPoolsList";
 import { PHPPoolEdit } from "./shells/admin/php-pools/PHPPoolEdit";
 import { LoginPage } from "./pages/Login";
@@ -135,6 +136,11 @@ const ThemedApp = () => {
               list: "/jabali-admin/php-pools",
               edit: "/jabali-admin/php-pools/edit/:id",
               meta: { label: "PHP Versions", icon: <ThunderboltOutlined />, shell: "admin" },
+            },
+            {
+              name: "admin-wordpress-installs",
+              list: "/jabali-admin/wordpress",
+              meta: { label: "WordPress", icon: <ReadOutlined />, shell: "admin" },
             },
 
             // User shell
@@ -239,6 +245,7 @@ const ThemedApp = () => {
                 <Route index element={<PHPPoolsList />} />
                 <Route path="edit/:id" element={<PHPPoolEdit />} />
               </Route>
+              <Route path="wordpress" element={<AdminWordPressList />} />
             </Route>
 
             {/* ---------------- user shell ----------------- */}

@@ -290,12 +290,14 @@ prompt_server_settings() {
 # ---------- step 1: base packages -------------------------------------------
 
 install_base_packages() {
-  _log "installing base packages (git, curl, ca-certificates, build-essential, mariadb)"
+  _log "installing base packages (git, curl, ca-certificates, build-essential, mariadb, PHP, rsync)"
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y -qq --no-install-recommends \
     git curl ca-certificates build-essential tar openssl gnupg \
-    mariadb-server mariadb-client
+    mariadb-server mariadb-client \
+    php-cli php-mysqli php-curl php-xml php-mbstring \
+    rsync
   _ok "base packages ready"
 }
 
@@ -1453,6 +1455,64 @@ DROPINEOF
   _ok "phpMyAdmin FPM pool (jabali-pma) installed and running"
 }
 
+# ---------- step 6.5: wp-cli provisioning ------------------------------------
+
+install_wp_cli() {
+  _log "installing wp-cli"
+
+  # Version pin — must match the checksum file below.
+  # Update both when upgrading wp-cli.
+  local wp_version="2.12.0"
+  local wp_root="/opt/wp-cli"
+  local wp_phar="${wp_root}/wp-cli-${wp_version}.phar"
+  local wp_link="${wp_root}/current"
+  local wp_archive="/tmp/wp-cli-${wp_version}.phar"
+
+  # Idempotency: if already installed, skip download + verify.
+  if [[ -f "$wp_phar" && -L "$wp_link" ]]; then
+    _ok "wp-cli $wp_version already installed at $wp_root"
+    return
+  fi
+
+  # Ensure the root directory exists
+  mkdir -p "$wp_root"
+  chmod 0755 "$wp_root"
+
+  # Download the phar
+  _log "downloading wp-cli $wp_version"
+  if ! curl -fsSL -o "$wp_archive" \
+    "https://github.com/wp-cli/builds/releases/download/v${wp_version}/wp-cli-${wp_version}.phar"; then
+    _die "failed to download wp-cli $wp_version phar"
+  fi
+
+  # Verify checksum
+  _log "verifying wp-cli checksum"
+  local expected_sum
+  expected_sum="$(grep -v '^#' "${REPO_DIR}/install/wp-cli.sha256" | awk '{print $1}')"
+  local actual_sum
+  actual_sum="$(sha256sum "$wp_archive" | awk '{print $1}')"
+  if [[ "$expected_sum" != "$actual_sum" ]]; then
+    rm -f "$wp_archive"
+    _die "wp-cli checksum mismatch: expected $expected_sum, got $actual_sum"
+  fi
+  _ok "checksum verified"
+
+  # Move to permanent location
+  _log "installing wp-cli to $wp_root"
+  mv "$wp_archive" "$wp_phar"
+  chmod 0755 "$wp_phar"
+
+  # Create symlink for easy access
+  rm -f "$wp_link"
+  ln -s "$wp_phar" "$wp_link"
+
+  # Create symlink in /usr/local/bin
+  rm -f /usr/local/bin/wp
+  ln -s "$wp_link" /usr/local/bin/wp
+
+  _ok "wp-cli extracted and symlinked"
+}
+
 # ---------- step 7: phpMyAdmin + SSO support --------------------------------
 
 install_phpmyadmin() {
@@ -1760,6 +1820,7 @@ main() {
   # causes FPM to fail with "chdir path does not exist".
   install_phpmyadmin
   install_phpmyadmin_fpm_pool
+  install_wp_cli
   install_nginx_default_vhost
   write_agent_systemd_unit
   write_systemd_unit

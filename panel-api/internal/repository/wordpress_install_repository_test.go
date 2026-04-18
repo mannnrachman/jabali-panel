@@ -1,0 +1,344 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"testing"
+	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/stretchr/testify/require"
+
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+)
+
+func TestWordPressInstallCreate_Success(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewWordPressInstallRepository(db)
+	now := time.Now()
+
+	install := &models.WordPressInstall{
+		ID:            "inst_abc123",
+		UserID:        "user1",
+		DomainID:      "domain1",
+		DBID:          "db1",
+		AdminUsername: "admin",
+		AdminEmail:    "admin@example.com",
+		Locale:        "en_US",
+		Status:        "pending",
+		LastError:     "",
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO `wordpress_installs`").
+		WithArgs(
+			install.ID, install.UserID, install.DomainID, install.DBID,
+			install.Version, install.AdminUsername, install.AdminEmail,
+			install.Locale, install.Status, install.LastError,
+			sqlmock.AnyArg(), sqlmock.AnyArg(),
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	err := repo.Create(context.Background(), install)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWordPressInstallCreate_UniqueDomainIDConstraint(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewWordPressInstallRepository(db)
+	now := time.Now()
+
+	install := &models.WordPressInstall{
+		ID:            "inst_abc123",
+		UserID:        "user1",
+		DomainID:      "domain1",
+		DBID:          "db1",
+		AdminUsername: "admin",
+		AdminEmail:    "admin@example.com",
+		Locale:        "en_US",
+		Status:        "pending",
+		LastError:     "",
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO `wordpress_installs`").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnError(sql.ErrNoRows) // Simulates UNIQUE constraint violation
+	mock.ExpectRollback()
+
+	err := repo.Create(context.Background(), install)
+	require.Error(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWordPressInstallFindByID_Found(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewWordPressInstallRepository(db)
+	now := time.Now()
+
+	mock.ExpectQuery("SELECT .* FROM `wordpress_installs` WHERE id = \\?.*LIMIT").
+		WithArgs("inst_abc123", 1).
+		WillReturnRows(sqlmock.NewRows(
+			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "status", "last_error", "created_at", "updated_at"},
+		).AddRow(
+			"inst_abc123", "user1", "domain1", "db1",
+			"6.5.3", "admin", "admin@example.com", "en_US", "ready", "", now, now,
+		))
+
+	install, err := repo.FindByID(context.Background(), "inst_abc123")
+	require.NoError(t, err)
+	require.NotNil(t, install)
+	require.Equal(t, "inst_abc123", install.ID)
+	require.Equal(t, "user1", install.UserID)
+	require.Equal(t, "domain1", install.DomainID)
+	require.Equal(t, "ready", install.Status)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWordPressInstallFindByID_NotFound(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewWordPressInstallRepository(db)
+
+	mock.ExpectQuery("SELECT .* FROM `wordpress_installs` WHERE id = \\?.*LIMIT").
+		WithArgs("inst_nonexistent", 1).
+		WillReturnRows(sqlmock.NewRows(
+			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "status", "last_error", "created_at", "updated_at"},
+		))
+
+	install, err := repo.FindByID(context.Background(), "inst_nonexistent")
+	require.Error(t, err)
+	require.Nil(t, install)
+	require.Equal(t, ErrNotFound, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWordPressInstallFindByIDAndUserID_Found(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewWordPressInstallRepository(db)
+	now := time.Now()
+
+	mock.ExpectQuery("SELECT .* FROM `wordpress_installs` WHERE id = \\? AND user_id = \\?.*LIMIT").
+		WithArgs("inst_abc123", "user1", 1).
+		WillReturnRows(sqlmock.NewRows(
+			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "status", "last_error", "created_at", "updated_at"},
+		).AddRow(
+			"inst_abc123", "user1", "domain1", "db1",
+			"6.5.3", "admin", "admin@example.com", "en_US", "ready", "", now, now,
+		))
+
+	install, err := repo.FindByIDAndUserID(context.Background(), "inst_abc123", "user1")
+	require.NoError(t, err)
+	require.NotNil(t, install)
+	require.Equal(t, "inst_abc123", install.ID)
+	require.Equal(t, "user1", install.UserID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWordPressInstallFindByIDAndUserID_DifferentUser(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewWordPressInstallRepository(db)
+
+	// Install exists but belongs to a different user; should return ErrNotFound
+	mock.ExpectQuery("SELECT .* FROM `wordpress_installs` WHERE id = \\? AND user_id = \\?.*LIMIT").
+		WithArgs("inst_abc123", "user2", 1).
+		WillReturnRows(sqlmock.NewRows(
+			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "status", "last_error", "created_at", "updated_at"},
+		))
+
+	install, err := repo.FindByIDAndUserID(context.Background(), "inst_abc123", "user2")
+	require.Error(t, err)
+	require.Nil(t, install)
+	require.Equal(t, ErrNotFound, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWordPressInstallFindByDomainID_Found(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewWordPressInstallRepository(db)
+	now := time.Now()
+
+	mock.ExpectQuery("SELECT .* FROM `wordpress_installs` WHERE domain_id = \\?.*LIMIT").
+		WithArgs("domain1", 1).
+		WillReturnRows(sqlmock.NewRows(
+			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "status", "last_error", "created_at", "updated_at"},
+		).AddRow(
+			"inst_abc123", "user1", "domain1", "db1",
+			"6.5.3", "admin", "admin@example.com", "en_US", "ready", "", now, now,
+		))
+
+	install, err := repo.FindByDomainID(context.Background(), "domain1")
+	require.NoError(t, err)
+	require.NotNil(t, install)
+	require.Equal(t, "domain1", install.DomainID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWordPressInstallFindByDomainID_NotFound(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewWordPressInstallRepository(db)
+
+	mock.ExpectQuery("SELECT .* FROM `wordpress_installs` WHERE domain_id = \\?.*LIMIT").
+		WithArgs("domain_nonexistent", 1).
+		WillReturnRows(sqlmock.NewRows(
+			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "status", "last_error", "created_at", "updated_at"},
+		))
+
+	install, err := repo.FindByDomainID(context.Background(), "domain_nonexistent")
+	require.Error(t, err)
+	require.Nil(t, install)
+	require.Equal(t, ErrNotFound, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWordPressInstallListByUserID(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewWordPressInstallRepository(db)
+	now := time.Now()
+
+	// Expect COUNT query
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `wordpress_installs` WHERE user_id = \\?").
+		WithArgs("user1").
+		WillReturnRows(sqlmock.NewRows([]string{"count(*)"}).AddRow(2))
+
+	// Expect SELECT query with ORDER BY and LIMIT
+	mock.ExpectQuery("SELECT .* FROM `wordpress_installs` WHERE user_id = \\?.*LIMIT").
+		WithArgs("user1", 20).
+		WillReturnRows(sqlmock.NewRows(
+			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "status", "last_error", "created_at", "updated_at"},
+		).
+			AddRow("inst_abc123", "user1", "domain1", "db1", "6.5.3", "admin", "admin@example.com", "en_US", "ready", "", now, now).
+			AddRow("inst_xyz789", "user1", "domain2", "db2", nil, "admin2", "admin2@example.com", "en_US", "installing", "", now, now))
+
+	installs, total, err := repo.ListByUserID(context.Background(), "user1", ListOptions{Limit: 20})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, installs, 2)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWordPressInstallList(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewWordPressInstallRepository(db)
+	now := time.Now()
+
+	// Expect COUNT query
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `wordpress_installs`").
+		WillReturnRows(sqlmock.NewRows([]string{"count(*)"}).AddRow(3))
+
+	// Expect SELECT query with ORDER BY and LIMIT
+	mock.ExpectQuery("SELECT .* FROM `wordpress_installs`.*LIMIT").
+		WithArgs(20).
+		WillReturnRows(sqlmock.NewRows(
+			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "status", "last_error", "created_at", "updated_at"},
+		).
+			AddRow("inst_abc123", "user1", "domain1", "db1", "6.5.3", "admin", "admin@example.com", "en_US", "ready", "", now, now).
+			AddRow("inst_def456", "user2", "domain2", "db2", "6.5.3", "admin", "admin@example.com", "en_US", "ready", "", now, now).
+			AddRow("inst_xyz789", "user1", "domain3", "db3", nil, "admin2", "admin2@example.com", "en_US", "installing", "", now, now))
+
+	installs, total, err := repo.List(context.Background(), ListOptions{Limit: 20})
+	require.NoError(t, err)
+	require.Equal(t, int64(3), total)
+	require.Len(t, installs, 3)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWordPressInstallUpdateStatus(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewWordPressInstallRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `wordpress_installs` SET .* WHERE id = \\?").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err := repo.UpdateStatus(context.Background(), "inst_abc123", "ready", nil, nil)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWordPressInstallUpdateStatus_WithErrorAndVersion(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewWordPressInstallRepository(db)
+
+	errMsg := "installation failed"
+	version := "6.5.3"
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `wordpress_installs` SET .* WHERE id = \\?").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err := repo.UpdateStatus(context.Background(), "inst_abc123", "failed", &errMsg, &version)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWordPressInstallDelete_Success(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewWordPressInstallRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM `wordpress_installs` WHERE id = \\?").
+		WithArgs("inst_abc123").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err := repo.Delete(context.Background(), "inst_abc123")
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWordPressInstallDelete_NotFound(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewWordPressInstallRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM `wordpress_installs` WHERE id = \\?").
+		WithArgs("inst_nonexistent").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+
+	err := repo.Delete(context.Background(), "inst_nonexistent")
+	require.Error(t, err)
+	require.Equal(t, ErrNotFound, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

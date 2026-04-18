@@ -72,7 +72,7 @@ func TestSSO_IssueToken_FirstClick(t *testing.T) {
 
 	mockTokens := &mockSSOTokenRepo{}
 
-	ssoService := sso.NewService(nil, mockUsers, mockTokens, mockAgent, &key, slog.Default())
+	ssoService := sso.NewService(nil, mockUsers, mockTokens, nil, mockAgent, &key, slog.Default())
 
 	cfg := SSOPhpMyAdminHandlerConfig{
 		Databases: mockDBs,
@@ -147,7 +147,7 @@ func TestSSO_IssueToken_SecondClick(t *testing.T) {
 
 	mockTokens := &mockSSOTokenRepo{}
 
-	ssoService := sso.NewService(nil, mockUsers, mockTokens, mockAgent, &key, slog.Default())
+	ssoService := sso.NewService(nil, mockUsers, mockTokens, nil, mockAgent, &key, slog.Default())
 
 	cfg := SSOPhpMyAdminHandlerConfig{
 		Databases: mockDBs,
@@ -203,7 +203,7 @@ func TestSSO_IssueToken_NotAuthorized(t *testing.T) {
 	mockAgent := &mockAgent{}
 	mockTokens := &mockSSOTokenRepo{}
 
-	ssoService := sso.NewService(nil, mockUsers, mockTokens, mockAgent, &key, slog.Default())
+	ssoService := sso.NewService(nil, mockUsers, mockTokens, nil, mockAgent, &key, slog.Default())
 
 	cfg := SSOPhpMyAdminHandlerConfig{
 		Databases: mockDBs,
@@ -250,7 +250,7 @@ func TestSSO_IssueToken_CrossOrigin(t *testing.T) {
 	mockAgent := &mockAgent{}
 	mockTokens := &mockSSOTokenRepo{}
 
-	ssoService := sso.NewService(nil, mockUsers, mockTokens, mockAgent, &key, slog.Default())
+	ssoService := sso.NewService(nil, mockUsers, mockTokens, nil, mockAgent, &key, slog.Default())
 
 	cfg := SSOPhpMyAdminHandlerConfig{
 		Databases: mockDBs,
@@ -286,7 +286,7 @@ func TestSSO_IssueToken_NoAuth(t *testing.T) {
 	mockAgent := &mockAgent{}
 	mockTokens := &mockSSOTokenRepo{}
 
-	ssoService := sso.NewService(nil, mockUsers, mockTokens, mockAgent, &key, slog.Default())
+	ssoService := sso.NewService(nil, mockUsers, mockTokens, nil, mockAgent, &key, slog.Default())
 
 	cfg := SSOPhpMyAdminHandlerConfig{
 		Databases: mockDBs,
@@ -381,7 +381,7 @@ func TestSSO_AuditLog_NoTokenOrPassword(t *testing.T) {
 	jsonHandler := slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})
 	testLogger := slog.New(jsonHandler)
 
-	ssoService := sso.NewService(nil, mockUsers, mockTokens, mockAgent, &key, testLogger)
+	ssoService := sso.NewService(nil, mockUsers, mockTokens, nil, mockAgent, &key, testLogger)
 
 	cfg := SSOPhpMyAdminHandlerConfig{
 		Databases: mockDBs,
@@ -429,7 +429,7 @@ func TestPhpMyAdminBaseURL_ExplicitConfig(t *testing.T) {
 	mockAgent := &mockAgent{}
 	mockTokens := &mockSSOTokenRepo{}
 
-	ssoService := sso.NewService(nil, mockUsers, mockTokens, mockAgent, &key, slog.Default())
+	ssoService := sso.NewService(nil, mockUsers, mockTokens, nil, mockAgent, &key, slog.Default())
 
 	cfg := SSOPhpMyAdminHandlerConfig{
 		Databases: mockDBs,
@@ -458,7 +458,7 @@ func TestPhpMyAdminBaseURL_ExplicitConfigWithTrailingSlash(t *testing.T) {
 	mockAgent := &mockAgent{}
 	mockTokens := &mockSSOTokenRepo{}
 
-	ssoService := sso.NewService(nil, mockUsers, mockTokens, mockAgent, &key, slog.Default())
+	ssoService := sso.NewService(nil, mockUsers, mockTokens, nil, mockAgent, &key, slog.Default())
 
 	cfg := SSOPhpMyAdminHandlerConfig{
 		Databases: mockDBs,
@@ -487,7 +487,7 @@ func TestPhpMyAdminBaseURL_DerivedFromHost(t *testing.T) {
 	mockAgent := &mockAgent{}
 	mockTokens := &mockSSOTokenRepo{}
 
-	ssoService := sso.NewService(nil, mockUsers, mockTokens, mockAgent, &key, slog.Default())
+	ssoService := sso.NewService(nil, mockUsers, mockTokens, nil, mockAgent, &key, slog.Default())
 
 	cfg := SSOPhpMyAdminHandlerConfig{
 		Databases: mockDBs,
@@ -517,7 +517,7 @@ func TestPhpMyAdminBaseURL_DerivedFromHostWithoutPort(t *testing.T) {
 	mockAgent := &mockAgent{}
 	mockTokens := &mockSSOTokenRepo{}
 
-	ssoService := sso.NewService(nil, mockUsers, mockTokens, mockAgent, &key, slog.Default())
+	ssoService := sso.NewService(nil, mockUsers, mockTokens, nil, mockAgent, &key, slog.Default())
 
 	cfg := SSOPhpMyAdminHandlerConfig{
 		Databases: mockDBs,

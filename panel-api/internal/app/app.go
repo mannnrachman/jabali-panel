@@ -26,27 +26,28 @@ import (
 // argument list short. Anything a handler family needs — auth service, JWT
 // issuer, repositories — plugs in here.
 type Deps struct {
-	Auth                api.AuthService
-	JWTIssuer           *auth.JWTIssuer
-	Users               repository.UserRepository
-	Packages            repository.PackageRepository
-	Domains             repository.DomainRepository
-	Databases           repository.DatabaseRepository
-	DatabaseUsers       repository.DatabaseUserRepository
-	DatabaseUserGrants  repository.DatabaseUserGrantRepository
-	PhpMyAdminSSOTokens repository.PhpMyAdminSSOTokenRepository
-	Agent               agent.AgentInterface
-	Reconciler          *reconciler.Reconciler
-	ServerSettings      repository.ServerSettingsRepository
-	DNSZones            repository.DNSZoneRepository
-	DNSRecords          repository.DNSRecordRepository
-	SSLCerts            repository.SSLCertificateRepository
-	PHPPools            repository.PHPPoolRepository
-	PHPPoolIniOverrides repository.PHPPoolIniOverrideRepository
-	WordPressInstalls   repository.WordPressInstallRepository
-	SSO                 *sso.Service
-	SSOKey              *ssokey.Key
-	Log                 *slog.Logger
+	Auth                   api.AuthService
+	JWTIssuer              *auth.JWTIssuer
+	Users                  repository.UserRepository
+	Packages               repository.PackageRepository
+	Domains                repository.DomainRepository
+	Databases              repository.DatabaseRepository
+	DatabaseUsers          repository.DatabaseUserRepository
+	DatabaseUserGrants     repository.DatabaseUserGrantRepository
+	PhpMyAdminSSOTokens    repository.PhpMyAdminSSOTokenRepository
+	FileBrowserSSOTokens   repository.FileBrowserSSOTokenRepository
+	Agent                  agent.AgentInterface
+	Reconciler             *reconciler.Reconciler
+	ServerSettings         repository.ServerSettingsRepository
+	DNSZones               repository.DNSZoneRepository
+	DNSRecords             repository.DNSRecordRepository
+	SSLCerts               repository.SSLCertificateRepository
+	PHPPools               repository.PHPPoolRepository
+	PHPPoolIniOverrides    repository.PHPPoolIniOverrideRepository
+	WordPressInstalls      repository.WordPressInstallRepository
+	SSO                    *sso.Service
+	SSOKey                 *ssokey.Key
+	Log                    *slog.Logger
 }
 
 // Default tier: chosen so a reasonable SPA (polling, a few concurrent
@@ -207,6 +208,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Databases: deps.Databases,
 				SSO:       deps.SSO,
 				Log:       deps.Log,
+			})
+		}
+		if deps.SSO != nil && deps.FileBrowserSSOTokens != nil {
+			api.RegisterSSOFileBrowserRoutes(v1, api.SSOFileBrowserHandlerConfig{
+				SSO: deps.SSO,
+				Log: deps.Log,
 			})
 		}
 		if deps.PHPPools != nil && deps.PHPPoolIniOverrides != nil {

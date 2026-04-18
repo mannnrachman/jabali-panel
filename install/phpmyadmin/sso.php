@@ -128,6 +128,14 @@ session_set_cookie_params([
     'samesite' => 'Lax',
 ]);
 
+// Match phpMyAdmin's $cfg['SessionSavePath'] = '/tmp' in config.inc.php.
+// If we don't, this script writes session files to PHP's default path
+// (/var/lib/php/sessions) while phpMyAdmin reads from /tmp — same cookie
+// ID but two different on-disk files, so phpMyAdmin sees an empty
+// session and bounces back to SignonURL. Both halves must agree on
+// cookie path AND save path.
+session_save_path('/tmp');
+
 // Start the session using the SignonSession name
 session_name('SignonSession');
 session_start();

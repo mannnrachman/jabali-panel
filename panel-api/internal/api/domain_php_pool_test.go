@@ -125,7 +125,10 @@ func TestBindDomainPHPPool_ByPHPVersion_Match(t *testing.T) {
 	}
 }
 
-func TestBindDomainPHPPool_ByPHPVersion_Mismatch(t *testing.T) {
+func TestBindDomainPHPPool_ByPHPVersion_Mismatch_UpdatesPool(t *testing.T) {
+	// ADR-0023 constrains each user to exactly one pool, so a user-driven
+	// version switch mutates that single pool in place rather than
+	// rejecting the request. Bind succeeds and the pool's version flips.
 	r, domains, pools := setupBindRouter(t, auth.AccessClaims{UserID: "u1"})
 	domains.Create(context.Background(), &models.Domain{ID: "d1", UserID: "u1", Name: "example.com"})
 	pools.Create(context.Background(), &models.PHPPool{ID: "p1", UserID: "u1", PHPVersion: "8.3"})
@@ -136,11 +139,14 @@ func TestBindDomainPHPPool_ByPHPVersion_Mismatch(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusConflict {
-		t.Fatalf("want 409, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if domains.domains["d1"].PHPPoolID != nil {
-		t.Fatalf("domain should NOT be bound on version mismatch: %+v", *domains.domains["d1"].PHPPoolID)
+	if got := domains.domains["d1"].PHPPoolID; got == nil || *got != "p1" {
+		t.Fatalf("domain not bound to existing pool: %+v", got)
+	}
+	if got := pools.pools["p1"].PHPVersion; got != "8.1" {
+		t.Fatalf("pool php_version should be updated to 8.1, got %q", got)
 	}
 }
 

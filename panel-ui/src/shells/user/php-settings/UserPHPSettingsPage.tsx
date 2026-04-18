@@ -280,7 +280,13 @@ export function UserPHPSettingsPage() {
             <Spin spinning={loading}>
               {selectedDomain && phpSettings && (
                 <>
-                  <Form.Item label="PHP Version">
+                  <Form.Item
+                    label={
+                      phpSettings.php_version
+                        ? `PHP Version (${phpSettings.php_version})`
+                        : "PHP Version"
+                    }
+                  >
                     <Select
                       value={phpSettings.php_version ?? null}
                       loading={versionSaving}

@@ -225,7 +225,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		}
 		if deps.Domains != nil {
 			api.RegisterDomainPHPSettingsRoutes(v1, api.DomainPHPSettingsHandlerConfig{
-				Domains: deps.Domains,
+				Domains:  deps.Domains,
+				PHPPools: deps.PHPPools,
 			})
 		}
 

@@ -14,7 +14,8 @@ import (
 
 // DomainPHPSettingsHandlerConfig wires the domain PHP settings routes.
 type DomainPHPSettingsHandlerConfig struct {
-	Domains repository.DomainRepository
+	Domains  repository.DomainRepository
+	PHPPools repository.PHPPoolRepository
 }
 
 // RegisterDomainPHPSettingsRoutes adds the PHP settings endpoints:
@@ -120,9 +121,19 @@ func (h *domainPHPSettingsHandler) get(c *gin.Context) {
 		PHPMaxInputTime:      dom.PHPMaxInputTime,
 	}
 
-	// If domain is bound to a pool, include its PHP version.
-	// For now, return nil (no pool info in response); the UI fetches separately.
-	// In a real implementation, we'd fetch the pool and include its version.
+	// Resolve the effective PHP version. If the domain is bound to a
+	// user pool, return that pool's version. If unbound, fall back to the
+	// user's own pool (ADR-0023: one pool per user). If neither exists,
+	// leave nil and the UI renders "Server default".
+	if dom.PHPPoolID != nil && *dom.PHPPoolID != "" {
+		if pool, perr := h.cfg.PHPPools.FindByID(ctx, *dom.PHPPoolID); perr == nil && pool != nil {
+			v := pool.PHPVersion
+			resp.PHPVersion = &v
+		}
+	} else if pool, perr := h.cfg.PHPPools.FindByUserID(ctx, dom.UserID); perr == nil && pool != nil {
+		v := pool.PHPVersion
+		resp.PHPVersion = &v
+	}
 
 	c.JSON(http.StatusOK, resp)
 }

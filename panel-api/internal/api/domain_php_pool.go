@@ -121,14 +121,19 @@ func (h *domainPHPPoolHandler) bind(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 			return
 		}
+		// ADR-0023 constrains each user to exactly one pool, so the only way
+		// for a user to run a different PHP version for their domain is to
+		// change the version of that single pool. This endpoint owns that
+		// switch: update the pool in-place; the reconciler picks up the
+		// version change and moves the pool to the new FPM service.
 		if pool.PHPVersion != req.PHPVersion {
-			c.JSON(http.StatusConflict, gin.H{
-				"error":           "php_version_mismatch",
-				"current_version": pool.PHPVersion,
-				"requested":       req.PHPVersion,
-				"detail":          "pool version cannot be changed from this endpoint; contact admin",
-			})
-			return
+			pool.PHPVersion = req.PHPVersion
+			if err := h.cfg.PHPPools.Update(ctx, pool); err != nil {
+				slog.ErrorContext(ctx, "bind php-pool: update pool version", "error", err, "pool_id", pool.ID, "new_version", req.PHPVersion)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+				return
+			}
+			slog.InfoContext(ctx, "php_pool.version_changed", "user_id", claims.UserID, "pool_id", pool.ID, "php_version", req.PHPVersion)
 		}
 	}
 

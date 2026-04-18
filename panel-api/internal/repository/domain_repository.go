@@ -24,6 +24,12 @@ type DomainRepository interface {
 	// the given PHP pool. Used by the pool-delete handler to refuse with
 	// 409 when any domain still references the pool (ADR-0023 decision 10).
 	CountByPHPPoolID(ctx context.Context, poolID string) (int64, error)
+	// SetPHPPoolID binds (or, when poolID is nil, unbinds) a domain's
+	// php_pool_id column in isolation. Update()'s column allowlist does
+	// NOT include php_pool_id on purpose — it's the one column whose
+	// mutations must only come from the dedicated bind/unbind handlers,
+	// not from generic domain PATCH.
+	SetPHPPoolID(ctx context.Context, id string, poolID *string) error
 }
 
 type domainRepo struct{ db *gorm.DB }
@@ -144,6 +150,19 @@ func (r *domainRepo) CountByUserID(ctx context.Context, userID string) (int64, e
 		return 0, err
 	}
 	return count, nil
+}
+
+func (r *domainRepo) SetPHPPoolID(ctx context.Context, id string, poolID *string) error {
+	res := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Where("id = ?", id).
+		Update("php_pool_id", poolID)
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (r *domainRepo) CountByPHPPoolID(ctx context.Context, poolID string) (int64, error) {

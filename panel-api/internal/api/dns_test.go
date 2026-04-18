@@ -73,6 +73,10 @@ func (m *mockDomainRepo) CountByUserID(ctx context.Context, userID string) (int6
 	return 0, nil
 }
 
+func (m *mockDomainRepo) SetPHPPoolID(ctx context.Context, id string, poolID *string) error {
+	return nil
+}
+
 func (m *mockDomainRepo) CountByPHPPoolID(ctx context.Context, poolID string) (int64, error) {
 	return 0, nil
 }

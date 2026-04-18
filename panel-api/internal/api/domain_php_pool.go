@@ -134,12 +134,15 @@ func (h *domainPHPPoolHandler) bind(c *gin.Context) {
 
 	poolID := pool.ID
 	oldPoolID := dom.PHPPoolID
-	dom.PHPPoolID = &poolID
-	if err := h.cfg.Domains.Update(ctx, dom); err != nil {
+	// SetPHPPoolID is the dedicated bind path. Domain.Update's column
+	// allowlist intentionally excludes php_pool_id so generic PATCH
+	// cannot mutate the binding — bind/unbind go through this method.
+	if err := h.cfg.Domains.SetPHPPoolID(ctx, dom.ID, &poolID); err != nil {
 		slog.ErrorContext(ctx, "bind php-pool: update domain", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+	dom.PHPPoolID = &poolID
 
 	oldPoolIDStr := ""
 	if oldPoolID != nil {
@@ -183,12 +186,13 @@ func (h *domainPHPPoolHandler) unbind(c *gin.Context) {
 	if oldPoolID != nil {
 		oldPoolIDStr = *oldPoolID
 	}
-	dom.PHPPoolID = nil
-	if err := h.cfg.Domains.Update(ctx, dom); err != nil {
+	// Use the dedicated method for the same reason as bind — see above.
+	if err := h.cfg.Domains.SetPHPPoolID(ctx, dom.ID, nil); err != nil {
 		slog.ErrorContext(ctx, "unbind php-pool: update domain", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+	dom.PHPPoolID = nil
 
 	slog.InfoContext(ctx, "domain_php_pool.unbound", "user_id", claims.UserID, "domain_id", dom.ID, "old_pool_id", oldPoolIDStr, "new_pool_id", "")
 

@@ -111,6 +111,10 @@ func (f *fakeDomainRepo) CountByUserID(ctx context.Context, userID string) (int6
 	return int64(count), nil
 }
 
+func (f *fakeDomainRepo) SetPHPPoolID(ctx context.Context, id string, poolID *string) error {
+	return nil
+}
+
 func (f *fakeDomainRepo) CountByPHPPoolID(ctx context.Context, poolID string) (int64, error) {
 	count := 0
 	for _, d := range f.domains {

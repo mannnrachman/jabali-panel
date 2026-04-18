@@ -33,6 +33,7 @@ import {
   DatabaseOutlined,
   FolderOutlined,
   GlobalOutlined,
+  KeyOutlined,
   ReadOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
@@ -73,6 +74,7 @@ import { SSLManagerPage } from "./shells/admin/ssl/SSLManagerPage";
 import { UserSSLManagerPage } from "./shells/user/ssl/UserSSLManagerPage";
 import { UserPHPSettingsPage } from "./shells/user/php-settings/UserPHPSettingsPage";
 import { UserWordPressList } from "./shells/user/wordpress/UserWordPressList";
+import { UserSSHKeysPage } from "./shells/user/ssh-keys/UserSSHKeysPage";
 import { AdminWordPressList } from "./shells/admin/wordpress/AdminWordPressList";
 import { PHPPoolsList } from "./shells/admin/php-pools/PHPPoolsList";
 import { PHPPoolEdit } from "./shells/admin/php-pools/PHPPoolEdit";
@@ -205,6 +207,11 @@ const ThemedApp = () => {
               list: "/jabali-panel/wordpress",
               meta: { label: "WordPress", icon: <ReadOutlined />, shell: "user" },
             },
+            {
+              name: "ssh-keys",
+              list: "/jabali-panel/ssh-keys",
+              meta: { label: "SSH Keys", icon: <KeyOutlined />, shell: "user" },
+            },
           ]}
           options={{
             warnWhenUnsavedChanges: true,
@@ -288,6 +295,7 @@ const ThemedApp = () => {
               <Route path="php-settings" element={<UserPHPSettingsPage />} />
               <Route path="files" element={<UserFilesLauncher />} />
               <Route path="wordpress" element={<UserWordPressList />} />
+              <Route path="ssh-keys" element={<UserSSHKeysPage />} />
             </Route>
 
             {/* ---------------- public ---------------- */}

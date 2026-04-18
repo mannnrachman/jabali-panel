@@ -260,3 +260,42 @@ export async function updateDomainPHPSettings(
 ): Promise<void> {
   await apiClient.patch(`/domains/${domainId}/php-settings`, settings);
 }
+
+// === SSH Keys API ===
+
+export interface SSHKey {
+  id: string;
+  name: string;
+  fingerprint: string;
+  created_at: string;
+}
+
+export interface SSHKeyListResponse {
+  items: SSHKey[];
+}
+
+/**
+ * List the user's SSH keys
+ */
+export async function listSSHKeys(): Promise<SSHKeyListResponse> {
+  const resp = await apiClient.get<SSHKeyListResponse>("/ssh-keys");
+  return resp.data;
+}
+
+/**
+ * Create a new SSH key for the user
+ */
+export async function createSSHKey(body: {
+  name: string;
+  public_key: string;
+}): Promise<SSHKey> {
+  const resp = await apiClient.post<SSHKey>("/ssh-keys", body);
+  return resp.data;
+}
+
+/**
+ * Delete an SSH key by ID
+ */
+export async function deleteSSHKey(id: string): Promise<void> {
+  await apiClient.delete(`/ssh-keys/${id}`);
+}

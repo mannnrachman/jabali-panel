@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/user"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -59,12 +61,26 @@ func StartSSOUDSListener(
 		return nil, nil, fmt.Errorf("listen on unix socket: %w", err)
 	}
 
-	// Set socket file permissions: 0660, owner jabali:www-data
-	// Note: In production, this should be adjusted based on actual user/group IDs.
-	// For now, we set mode 0660 and trust the deployment to set ownership via systemd or manual chown.
+	// Socket perms: mode 0660, group www-data. phpMyAdmin's sso.php runs
+	// inside the jabali-pma FPM pool as www-data and needs to stream_socket_client()
+	// into this UDS. The panel process runs as jabali (owner by default),
+	// so setting group=www-data with 0660 lets both sides open the socket
+	// while blocking other hosting users. If the www-data group does not
+	// exist (uncommon minimal images), fall back to 0660 with default group
+	// and log a warning — SSO will fail closed until the operator fixes it.
 	if err := os.Chmod(socketPath, 0660); err != nil {
 		listener.Close()
 		return nil, nil, fmt.Errorf("chmod socket: %w", err)
+	}
+	if grp, gErr := user.LookupGroup("www-data"); gErr == nil {
+		gid, convErr := strconv.Atoi(grp.Gid)
+		if convErr == nil {
+			if err := os.Chown(socketPath, -1, gid); err != nil {
+				log.Warn("SSO UDS chown to www-data failed; phpMyAdmin will see Permission denied", "socket", socketPath, "err", err)
+			}
+		}
+	} else {
+		log.Warn("www-data group not found; phpMyAdmin SSO will fail until group is created", "socket", socketPath)
 	}
 
 	// Create HTTP server

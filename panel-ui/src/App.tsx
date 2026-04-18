@@ -68,6 +68,7 @@ import { DNSZonesOverviewPage } from "./shells/admin/dns/DNSZonesOverviewPage";
 import { UserDNSZonesOverviewPage } from "./shells/user/dns/UserDNSZonesOverviewPage";
 import { SSLManagerPage } from "./shells/admin/ssl/SSLManagerPage";
 import { UserSSLManagerPage } from "./shells/user/ssl/UserSSLManagerPage";
+import { UserPHPSettingsPage } from "./shells/user/php-settings/UserPHPSettingsPage";
 import { PHPPoolsList } from "./shells/admin/php-pools/PHPPoolsList";
 import { PHPPoolEdit } from "./shells/admin/php-pools/PHPPoolEdit";
 import { LoginPage } from "./pages/Login";
@@ -155,6 +156,11 @@ const ThemedApp = () => {
               name: "user-ssl",
               list: "/jabali-panel/ssl",
               meta: { label: "SSL", icon: <SafetyCertificateOutlined />, shell: "user" },
+            },
+            {
+              name: "user-php-settings",
+              list: "/jabali-panel/php-settings",
+              meta: { label: "PHP Settings", icon: <ThunderboltOutlined />, shell: "user" },
             },
             {
               // Resource name matches the API slug so useTable('databases')
@@ -255,6 +261,7 @@ const ThemedApp = () => {
               </Route>
               <Route path="dns" element={<UserDNSZonesOverviewPage />} />
               <Route path="ssl" element={<UserSSLManagerPage />} />
+              <Route path="php-settings" element={<UserPHPSettingsPage />} />
             </Route>
 
             {/* ---------------- public ---------------- */}

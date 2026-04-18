@@ -209,3 +209,47 @@ export async function ssoPhpMyAdmin(
   );
   return resp.data;
 }
+
+// === PHP Settings API ===
+
+export interface DomainPHPSettings {
+  php_pool_id?: string | null;
+  php_version?: string | null;
+  php_memory_limit?: string | null;
+  php_upload_max_filesize?: string | null;
+  php_post_max_size?: string | null;
+  php_max_input_vars?: number | null;
+  php_max_execution_time?: number | null;
+  php_max_input_time?: number | null;
+}
+
+export interface UpdateDomainPHPSettingsRequest {
+  php_memory_limit?: string | null;
+  php_upload_max_filesize?: string | null;
+  php_post_max_size?: string | null;
+  php_max_input_vars?: number | null;
+  php_max_execution_time?: number | null;
+  php_max_input_time?: number | null;
+}
+
+/**
+ * Fetch PHP settings for a specific domain
+ */
+export async function getDomainPHPSettings(
+  domainId: string,
+): Promise<DomainPHPSettings> {
+  const resp = await apiClient.get<DomainPHPSettings>(
+    `/domains/${domainId}/php-settings`,
+  );
+  return resp.data;
+}
+
+/**
+ * Update PHP settings for a specific domain
+ */
+export async function updateDomainPHPSettings(
+  domainId: string,
+  settings: UpdateDomainPHPSettingsRequest,
+): Promise<void> {
+  await apiClient.patch(`/domains/${domainId}/php-settings`, settings);
+}

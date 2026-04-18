@@ -665,9 +665,6 @@ export const DomainSettingsButton = ({
   );
   const [rules, setRules] = useState<NginxRule[]>(domain.nginx_rules ?? []);
   const [isSaving, setIsSaving] = useState(false);
-  const [phpVersions, setPhpVersions] = useState<string[]>([]);
-  const [selectedPhpVersion, setSelectedPhpVersion] = useState<string | null>(null);
-  const [isLoadingPhpVersions, setIsLoadingPhpVersions] = useState(false);
   const invalidate = useInvalidate();
   const { open } = useNotification();
 
@@ -675,73 +672,8 @@ export const DomainSettingsButton = ({
     // Re-sync from prop in case the values were updated elsewhere
     setDirectivesValue(domain.nginx_custom_directives ?? "");
     setRules(domain.nginx_rules ?? []);
-    // Reset first; if bound, we'll resolve pool_id → php_version below.
-    setSelectedPhpVersion(null);
-
-    // Fetch PHP versions for the dropdown
-    setIsLoadingPhpVersions(true);
-    try {
-      const [versionsResp, poolResp] = await Promise.all([
-        apiClient.get("/php/versions"),
-        domain.php_pool_id
-          ? apiClient.get(`/php-pools/${domain.php_pool_id}`)
-          : Promise.resolve(null),
-      ]);
-      if (versionsResp?.data?.versions && Array.isArray(versionsResp.data.versions)) {
-        setPhpVersions(versionsResp.data.versions);
-      }
-      if (poolResp?.data?.php_version) {
-        setSelectedPhpVersion(poolResp.data.php_version);
-      }
-    } catch (err) {
-      console.error("Failed to fetch PHP versions or current pool:", err);
-    } finally {
-      setIsLoadingPhpVersions(false);
-    }
-
-    setIsModalOpen(true);
   };
 
-  const handleCloseModal = () => {
-    setIsModalOpen(false);
-  };
-
-  const handlePhpVersionChange = async (version: string | null) => {
-    const prevVersion = selectedPhpVersion;
-    setSelectedPhpVersion(version);
-    try {
-      if (version === null) {
-        // Delete the PHP pool binding
-        await apiClient.delete(`/domains/${domain.id}/php-pool`);
-        open?.({
-          type: "success",
-          message: "PHP pool unbound",
-        });
-      } else {
-        // Bind a new PHP pool by version
-        await apiClient.post(`/domains/${domain.id}/php-pool`, {
-          php_version: version,
-        });
-        open?.({
-          type: "success",
-          message: `PHP pool updated to ${version}`,
-        });
-      }
-      invalidate({ resource: "domains", invalidates: ["list"] });
-    } catch (err) {
-      const e = err as {
-        response?: { data?: { detail?: string; error?: string } };
-        message?: string;
-      };
-      open?.({
-        type: "error",
-        message: "Failed to update PHP pool",
-        description: e.response?.data?.detail ?? e.response?.data?.error ?? e.message ?? "Unknown error",
-      });
-      // Revert selection on error
-      setSelectedPhpVersion(prevVersion);
-    }
-  };
 
   const handleApply = async () => {
     setIsSaving(true);
@@ -835,31 +767,6 @@ export const DomainSettingsButton = ({
                   value={directivesValue}
                   onChange={setDirectivesValue}
                 />
-              ),
-            },
-            {
-              key: "php",
-              label: (
-                <span>
-                  <ToolOutlined /> PHP
-                </span>
-              ),
-              children: (
-                <div style={{ paddingTop: 16 }}>
-                  <Typography.Title level={5}>PHP Version</Typography.Title>
-                  <Select
-                    placeholder="Select PHP version or leave empty for static only"
-                    value={selectedPhpVersion}
-                    onChange={handlePhpVersionChange}
-                    loading={isLoadingPhpVersions}
-                    allowClear
-                    style={{ width: "100%" }}
-                    options={[
-                      { label: "None (static only)", value: null },
-                      ...phpVersions.map((v) => ({ label: `PHP ${v}`, value: v })),
-                    ]}
-                  />
-                </div>
               ),
             },
           ]}

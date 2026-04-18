@@ -31,6 +31,7 @@ import {
   CloudServerOutlined,
   DashboardOutlined,
   DatabaseOutlined,
+  FolderOutlined,
   GlobalOutlined,
   ReadOutlined,
   SafetyCertificateOutlined,
@@ -59,6 +60,7 @@ import { DomainEdit } from "./shells/admin/domains/DomainEdit";
 import { DomainList } from "./shells/admin/domains/DomainList";
 import { ServerSettingsPage } from "./shells/admin/settings/ServerSettingsPage";
 import { MyProfile } from "./shells/user/MyProfile";
+import { UserFilesLauncher } from "./shells/user/files/UserFilesLauncher";
 import { UserDomainList } from "./shells/user/domains/UserDomainList";
 import { UserDomainCreate } from "./shells/user/domains/UserDomainCreate";
 import { UserDatabasesPage } from "./shells/user/databases/UserDatabasesPage";
@@ -191,6 +193,11 @@ const ThemedApp = () => {
               meta: { label: "DB Users", shell: "user", hidden: true },
             },
             {
+              name: "files",
+              list: "/jabali-panel/files",
+              meta: { label: "Files", icon: <FolderOutlined />, shell: "user" },
+            },
+            {
               // Resource name matches the API slug (/wordpress-installs)
               // so useTable("wordpress-installs") and useInvalidate all
               // resolve to the same entry.
@@ -279,6 +286,7 @@ const ThemedApp = () => {
               <Route path="dns" element={<UserDNSZonesOverviewPage />} />
               <Route path="ssl" element={<UserSSLManagerPage />} />
               <Route path="php-settings" element={<UserPHPSettingsPage />} />
+              <Route path="files" element={<UserFilesLauncher />} />
               <Route path="wordpress" element={<UserWordPressList />} />
             </Route>
 

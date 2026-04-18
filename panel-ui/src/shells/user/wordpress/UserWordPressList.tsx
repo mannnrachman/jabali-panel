@@ -27,6 +27,7 @@ import {
   CheckCircleOutlined,
   ExclamationCircleOutlined,
   DeleteOutlined,
+  CopyOutlined,
 } from "@ant-design/icons";
 import { useTable } from "@refinedev/antd";
 import { useInvalidate, useGetIdentity } from "@refinedev/core";
@@ -34,6 +35,7 @@ import { SearchableTable } from "../../../components/SearchableTable";
 import { readQValue } from "../../../components/searchableTableUtils";
 import { apiClient } from "../../../apiClient";
 import { InstallWordPressModal } from "./InstallWordPressModal";
+import { CloneWordPressModal } from "./CloneWordPressModal";
 
 type WordPressInstall = {
   id: string;
@@ -95,6 +97,8 @@ export const UserWordPressList = () => {
   });
   const initialSearch = readQValue(filters);
   const [installOpen, setInstallOpen] = useState(false);
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const [cloningId, setCloningId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const invalidate = useInvalidate();
   const { data: identity } = useGetIdentity<Identity>();
@@ -160,6 +164,17 @@ export const UserWordPressList = () => {
         onSuccess={() => tableQuery?.refetch?.()}
         alreadyHostedDomainIds={alreadyHostedDomainIds}
         defaultAdminEmail={identity?.email}
+      />
+
+      <CloneWordPressModal
+        open={cloneOpen}
+        onClose={() => {
+          setCloneOpen(false);
+          setCloningId(null);
+        }}
+        onSuccess={() => tableQuery?.refetch?.()}
+        installId={cloningId ?? ""}
+        alreadyHostedDomainIds={alreadyHostedDomainIds}
       />
 
       <SearchableTable<WordPressInstall>
@@ -231,26 +246,45 @@ export const UserWordPressList = () => {
           render={(_, r) => {
             const isDeleting =
               deletingId === r.id || r.status === "deleting";
+            const canClone = r.status === "ready";
             return (
-              <Popconfirm
-                title="Delete this WordPress install?"
-                description="The database and files will be removed. This cannot be undone."
-                okText="Delete"
-                okButtonProps={{ danger: true }}
-                cancelText="Cancel"
-                onConfirm={() => handleDelete(r)}
-                disabled={isDeleting}
-              >
-                <Button
-                  size="small"
-                  type="text"
-                  danger
-                  icon={<DeleteOutlined />}
-                  loading={isDeleting}
+              <Space size="small">
+                <Tooltip
+                  title={canClone ? "" : "Clone is only available for healthy installs"}
                 >
-                  Delete
-                </Button>
-              </Popconfirm>
+                  <Button
+                    size="small"
+                    type="text"
+                    icon={<CopyOutlined />}
+                    disabled={!canClone}
+                    onClick={() => {
+                      setCloningId(r.id);
+                      setCloneOpen(true);
+                    }}
+                  >
+                    Clone
+                  </Button>
+                </Tooltip>
+                <Popconfirm
+                  title="Delete this WordPress install?"
+                  description="The database and files will be removed. This cannot be undone."
+                  okText="Delete"
+                  okButtonProps={{ danger: true }}
+                  cancelText="Cancel"
+                  onConfirm={() => handleDelete(r)}
+                  disabled={isDeleting}
+                >
+                  <Button
+                    size="small"
+                    type="text"
+                    danger
+                    icon={<DeleteOutlined />}
+                    loading={isDeleting}
+                  >
+                    Delete
+                  </Button>
+                </Popconfirm>
+              </Space>
             );
           }}
         />

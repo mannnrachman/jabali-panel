@@ -74,6 +74,17 @@ func (m *mockWordPressInstallRepo) FindByDomainID(ctx context.Context, domainID 
 	return nil, repository.ErrNotFound
 }
 
+func (m *mockWordPressInstallRepo) FindByDBID(ctx context.Context, dbID string) (*models.WordPressInstall, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, inst := range m.installs {
+		if inst.DBID == dbID {
+			return inst, nil
+		}
+	}
+	return nil, repository.ErrNotFound
+}
+
 func (m *mockWordPressInstallRepo) List(ctx context.Context, opts repository.ListOptions) ([]models.WordPressInstall, int64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

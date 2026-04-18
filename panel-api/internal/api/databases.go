@@ -23,11 +23,13 @@ import (
 
 // DatabaseHandlerConfig plugs the database handlers into the router.
 type DatabaseHandlerConfig struct {
-	Databases      repository.DatabaseRepository
-	DatabaseUsers  repository.DatabaseUserRepository
-	Users          repository.UserRepository
-	Packages       repository.PackageRepository
-	Agent          agent.AgentInterface
+	Databases         repository.DatabaseRepository
+	DatabaseUsers     repository.DatabaseUserRepository
+	DatabaseGrants    repository.DatabaseUserGrantRepository
+	WordPressInstalls repository.WordPressInstallRepository
+	Users             repository.UserRepository
+	Packages          repository.PackageRepository
+	Agent             agent.AgentInterface
 }
 
 const (
@@ -380,13 +382,13 @@ func (h *databaseHandler) create(c *gin.Context) {
 func (h *databaseHandler) delete(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	// Load the database first
 	d, err := h.cfg.Databases.FindByID(ctx, c.Param("id"))
 	if err != nil {
 		if isNotFound(err) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 			return
 		}
+		slog.ErrorContext(ctx, "databases.delete: FindByID failed", "err", err, "db_id", c.Param("id"))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
@@ -396,14 +398,26 @@ func (h *databaseHandler) delete(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
-
-	// Check authorization: admins can delete any; users only their own
 	if !claims.IsAdmin && d.UserID != claims.UserID {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 
-	// Call agent to drop the database
+	// Guard: wordpress_installs.db_id is RESTRICT. Surface a 409 with
+	// the install id so the caller knows what to tear down first.
+	if h.cfg.WordPressInstalls != nil {
+		wp, wErr := h.cfg.WordPressInstalls.FindByDBID(ctx, d.ID)
+		if wErr != nil && !isNotFound(wErr) {
+			slog.ErrorContext(ctx, "databases.delete: wp in-use probe failed", "err", wErr, "db_id", d.ID)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		if wp != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "in_use_by_wordpress", "wordpress_id": wp.ID})
+			return
+		}
+	}
+
 	if h.cfg.Agent == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
@@ -412,18 +426,48 @@ func (h *databaseHandler) delete(c *gin.Context) {
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	// d.Name is the full MariaDB-side name (prefix already baked in at
-	// create time) so we pass it to the agent verbatim.
-	_, err = h.cfg.Agent.Call(agentCtx, "db.drop", map[string]any{
-		"db_name": d.Name,
-	})
-	if err != nil {
+	// Cascade grants: database_user_grants.database_id is RESTRICT, so the
+	// final row delete would 500 if any grant is left behind. Revoke on the
+	// MariaDB side first (idempotent since b723fe1), then drop the panel row.
+	if h.cfg.DatabaseGrants != nil {
+		grants, gErr := h.cfg.DatabaseGrants.ListByDatabaseID(ctx, d.ID)
+		if gErr != nil {
+			slog.ErrorContext(ctx, "databases.delete: list grants failed", "err", gErr, "db_id", d.ID)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		for _, g := range grants {
+			var username string
+			if h.cfg.DatabaseUsers != nil {
+				if u, uErr := h.cfg.DatabaseUsers.FindByID(ctx, g.DatabaseUserID); uErr == nil && u != nil {
+					username = u.Username
+				}
+			}
+			if username != "" {
+				if _, rErr := h.cfg.Agent.Call(agentCtx, "db_user.revoke", map[string]any{
+					"db_name":      d.Name,
+					"db_user_name": username,
+				}); rErr != nil {
+					slog.WarnContext(ctx, "databases.delete: revoke failed (best-effort)", "err", rErr, "db", d.Name, "user", username)
+				}
+			}
+			if dErr := h.cfg.DatabaseGrants.Delete(ctx, g.ID); dErr != nil {
+				slog.ErrorContext(ctx, "databases.delete: grant row delete failed", "err", dErr, "grant_id", g.ID)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+				return
+			}
+		}
+	}
+
+	// Drop the database on MariaDB. d.Name is the full prefixed name.
+	if _, err := h.cfg.Agent.Call(agentCtx, "db.drop", map[string]any{"db_name": d.Name}); err != nil {
+		slog.ErrorContext(ctx, "databases.delete: agent db.drop failed", "err", err, "db_name", d.Name)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
 		return
 	}
 
-	// Delete from database
 	if err := h.cfg.Databases.Delete(ctx, d.ID); err != nil {
+		slog.ErrorContext(ctx, "databases.delete: row delete failed", "err", err, "db_id", d.ID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}

@@ -43,6 +43,10 @@ func (m *mockWordPressInstallRepo) FindByDomainID(ctx context.Context, domainID 
 	return nil, repository.ErrNotFound
 }
 
+func (m *mockWordPressInstallRepo) FindByDBID(ctx context.Context, dbID string) (*models.WordPressInstall, error) {
+	return nil, repository.ErrNotFound
+}
+
 func (m *mockWordPressInstallRepo) ListByUserID(ctx context.Context, userID string, opts repository.ListOptions) ([]models.WordPressInstall, int64, error) {
 	return nil, 0, nil
 }

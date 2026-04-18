@@ -15,6 +15,7 @@ type WordPressInstallRepository interface {
 	FindByID(ctx context.Context, id string) (*models.WordPressInstall, error)
 	FindByIDAndUserID(ctx context.Context, id, userID string) (*models.WordPressInstall, error)
 	FindByDomainID(ctx context.Context, domainID string) (*models.WordPressInstall, error)
+	FindByDBID(ctx context.Context, dbID string) (*models.WordPressInstall, error)
 	ListByUserID(ctx context.Context, userID string, opts ListOptions) ([]models.WordPressInstall, int64, error)
 	List(ctx context.Context, opts ListOptions) ([]models.WordPressInstall, int64, error)
 	UpdateStatus(ctx context.Context, id, status string, lastError *string, version *string) error
@@ -59,6 +60,17 @@ func (r *wordpressInstallRepo) FindByIDAndUserID(ctx context.Context, id, userID
 func (r *wordpressInstallRepo) FindByDomainID(ctx context.Context, domainID string) (*models.WordPressInstall, error) {
 	var install models.WordPressInstall
 	if err := r.db.WithContext(ctx).Where("domain_id = ?", domainID).First(&install).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &install, nil
+}
+
+func (r *wordpressInstallRepo) FindByDBID(ctx context.Context, dbID string) (*models.WordPressInstall, error) {
+	var install models.WordPressInstall
+	if err := r.db.WithContext(ctx).Where("db_id = ?", dbID).First(&install).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
 		}

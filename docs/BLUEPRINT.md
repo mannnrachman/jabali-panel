@@ -591,21 +591,22 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Depends on:** M4 (DNS MX records)
 
-### M7: Databases (MariaDB + optional Postgres) (PLANNED)
+### M7: Databases (MariaDB) (SHIPPED)
 
 **Goal:** Users can create and manage databases + database users with grant tables.
 
 **Deliverables:**
-- New migrations: `create_databases.sql`, `create_database_users.sql`, `create_database_user_grants.sql`
-- Database CRUD (name, engine: mariadb|postgres)
-- Database user CRUD (username, password)
-- Grant management (SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, etc.)
-- phpMyAdmin SSO link (per-user session token for admin panel access)
-- Agent commands: `db.create`, `db.drop`, `db_user.create`, `db_user.drop`, `db_user.grant`, `db_user.revoke`
+- Migrations: `000020_create_databases.sql`, `000021_create_database_users.sql`, `000022_create_database_user_grants.sql`, `000024_add_privileges_to_grants.sql`, `000025_widen_grant_level_enum.sql`, `000027_create_phpmyadmin_sso_tokens.sql`
+- Database CRUD (name, engine: mariadb; Postgres deferred per ADR-0018)
+- Database user CRUD (username, bcrypt + reveal-once password per ADR-0021)
+- Grant management: per-database rw/ro levels (ADR-0019); custom privileges enum via migration 000024/000025
+- phpMyAdmin SSO: signon proxy + per-user shadow account over UDS (ADR-0020, ADR-0022)
+- Agent commands: `db.create`, `db.drop`, `db_user.create`, `db_user.drop`, `db_user.grant`, `db_user.revoke`, `db_user.rotate_password`, `db.backup`, `db.restore`, `db.size`
 - API: `/api/v1/databases`, `/api/v1/database-users`, `/api/v1/sso/phpmyadmin`
-- UI: user database list/create, user list/create, grant table UI; admin view
+- UI: user database list/create, user list/create, grant table UI; admin view with prefix-filtered non-admin list
+- Cascade delete: `DELETE /databases/:id` cascades grants (revoke on agent, idempotent) and blocks on active `wordpress_installs` with 409
 
-**Status:** Planned
+**Status:** Shipped (ADRs 0018-0022; recent fixes in `b723fe1`, `9ebaad8`, `762c7fe`)
 
 **Depends on:** M1 (users exist)
 
@@ -917,7 +918,7 @@ Use this table to navigate the codebase when adding a new capability:
 | M5a: Admin Impersonation | 2026-04-17 | `7bc292f`, `5b14b4c` |
 | M5b: Break-Glass CLI Login | 2026-04-17 | `c587144` |
 | M6: Email (Stalwart) | Planned | — |
-| M7: Databases | Planned (Tranche E parked pending M9) | — |
+| M7: Databases (MariaDB) | 2026-04-17 | ADRs 0018-0022 |
 | M8: Cron | Planned | — |
 | M9: PHP/FPM pools | 2026-04-17 | 1aaa507 (ADR), 5dbf471 (shipped) |
 | M10: WordPress | 2026-04-18 | `85ed8b4` through `main HEAD` |

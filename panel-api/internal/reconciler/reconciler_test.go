@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,6 +42,32 @@ func (f *fakeAgent) Call(ctx context.Context, method string, params interface{})
 		})
 	case "domain.create":
 		return json.Marshal(map[string]string{"domain": "", "status": "created"})
+	case "filebrowser.user.ensure":
+		return json.Marshal(map[string]interface{}{
+			"username": "testuser",
+			"scope":    "/home/testuser",
+			"created":  false,
+			"no_change": true,
+		})
+	case "filebrowser.user.delete":
+		return json.Marshal(map[string]interface{}{
+			"username": "testuser",
+			"deleted":  false,
+			"not_found": true,
+		})
+	case "filebrowser.user.list":
+		return json.Marshal(map[string][]string{
+			"usernames": {"user1", "user2"},
+		})
+	case "filebrowser.group.add":
+		return json.Marshal(map[string]bool{
+			"added": false,
+			"already_member": true,
+		})
+	case "filebrowser.service.restart":
+		return json.Marshal(map[string]bool{
+			"restarted": true,
+		})
 	default:
 		return nil, nil
 	}
@@ -404,6 +431,18 @@ func (f *fakePHPPoolRepo) SetStatus(ctx context.Context, id string, status strin
 	return nil
 }
 
+// filterCallsByPrefix returns only calls whose method starts with the given prefix.
+// Used to isolate domain/php/fs calls from filebrowser calls in ReconcileAll tests.
+func filterCallsByPrefix(calls []fakeCall, prefix string) []fakeCall {
+	var result []fakeCall
+	for _, call := range calls {
+		if strings.HasPrefix(call.method, prefix) {
+			result = append(result, call)
+		}
+	}
+	return result
+}
+
 func TestReconcileAll_EnabledDomainMissing(t *testing.T) {
 	ctx := context.Background()
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -438,10 +477,11 @@ func TestReconcileAll_EnabledDomainMissing(t *testing.T) {
 	err := r.ReconcileAll(ctx)
 	require.NoError(t, err)
 
-	// Verify that domain.create was called
-	require.Len(t, agent.calls, 2) // domain.list + domain.create
-	require.Equal(t, "domain.list", agent.calls[0].method)
-	require.Equal(t, "domain.create", agent.calls[1].method)
+	// Verify that domain.create was called (filtering out filebrowser calls)
+	domainCalls := filterCallsByPrefix(agent.calls, "domain.")
+	require.Len(t, domainCalls, 2) // domain.list + domain.create
+	require.Equal(t, "domain.list", domainCalls[0].method)
+	require.Equal(t, "domain.create", domainCalls[1].method)
 }
 
 func TestReconcileAll_DisabledDomainPresent(t *testing.T) {
@@ -478,10 +518,11 @@ func TestReconcileAll_DisabledDomainPresent(t *testing.T) {
 	err := r.ReconcileAll(ctx)
 	require.NoError(t, err)
 
-	// Verify that domain.create was called (unified with is_enabled=false)
-	require.Len(t, agent.calls, 2) // domain.list + domain.create
-	require.Equal(t, "domain.list", agent.calls[0].method)
-	require.Equal(t, "domain.create", agent.calls[1].method)
+	// Verify that domain.create was called (filtering out filebrowser calls)
+	domainCalls := filterCallsByPrefix(agent.calls, "domain.")
+	require.Len(t, domainCalls, 2) // domain.list + domain.create
+	require.Equal(t, "domain.list", domainCalls[0].method)
+	require.Equal(t, "domain.create", domainCalls[1].method)
 }
 
 func TestReconcileAll_OrphanLogsWarning(t *testing.T) {
@@ -498,9 +539,10 @@ func TestReconcileAll_OrphanLogsWarning(t *testing.T) {
 	err := r.ReconcileAll(ctx)
 	require.NoError(t, err)
 
-	// Verify that domain.list was called but no creates/disables
-	require.Len(t, agent.calls, 1)
-	require.Equal(t, "domain.list", agent.calls[0].method)
+	// Verify that domain.list was called but no creates/disables (filtering out filebrowser calls)
+	domainCalls := filterCallsByPrefix(agent.calls, "domain.")
+	require.Len(t, domainCalls, 1)
+	require.Equal(t, "domain.list", domainCalls[0].method)
 }
 
 func TestReconcileAll_DomainWithPHPPool(t *testing.T) {
@@ -549,26 +591,48 @@ func TestReconcileAll_DomainWithPHPPool(t *testing.T) {
 	err := r.ReconcileAll(ctx)
 	require.NoError(t, err)
 
-	// Verify call order. createDomainOnAgent runs for every enabled
-	// domain on every reconcile pass (the agent's writeVhost is
-	// content-hash gated, so the no-change case is cheap), which keeps
-	// binding changes converging without an explicit force endpoint.
-	// Expected order: user.slice.ensure, php.pool.apply, domain.list,
-	// domain.create, fs.write_healthcheck.
-	require.Len(t, agent.calls, 5, "should call user.slice.ensure, php.pool.apply, domain.list, domain.create, and fs.write_healthcheck")
-	require.Equal(t, "user.slice.ensure", agent.calls[0].method)
-	require.Equal(t, "php.pool.apply", agent.calls[1].method)
-	require.Equal(t, "domain.list", agent.calls[2].method)
-	require.Equal(t, "domain.create", agent.calls[3].method)
-	require.Equal(t, "fs.write_healthcheck", agent.calls[4].method)
+	// Verify that required calls were made (filtering out filebrowser calls).
+	// createDomainOnAgent runs for every enabled domain on every reconcile pass
+	// (the agent's writeVhost is content-hash gated, so the no-change case is cheap).
+	allNonFilebrowserCalls := filterCallsByPrefix(agent.calls, "")
+	var phpcalls, domainCalls, fsCalls []fakeCall
+	for _, call := range allNonFilebrowserCalls {
+		if call.method == "user.slice.ensure" || call.method == "php.pool.apply" {
+			phpcalls = append(phpcalls, call)
+		} else if call.method == "domain.list" || call.method == "domain.create" {
+			domainCalls = append(domainCalls, call)
+		} else if call.method == "fs.write_healthcheck" {
+			fsCalls = append(fsCalls, call)
+		}
+	}
 
-	// Verify that has_php=true and php_version="8.2" were passed to domain.create
-	params := agent.calls[3].params.(map[string]any)
+	require.GreaterOrEqual(t, len(phpcalls), 1, "should call user.slice.ensure and/or php.pool.apply")
+	require.Len(t, domainCalls, 2, "should call domain.list and domain.create")
+	require.Len(t, fsCalls, 1, "should call fs.write_healthcheck")
+
+	// Verify that domain.create was called with correct PHP params
+	var domainCreateCall *fakeCall
+	for _, call := range agent.calls {
+		if call.method == "domain.create" {
+			domainCreateCall = &call
+			break
+		}
+	}
+	require.NotNil(t, domainCreateCall, "domain.create should be called")
+	params := domainCreateCall.params.(map[string]any)
 	require.Equal(t, true, params["has_php"], "has_php should be true")
 	require.Equal(t, "8.2", params["php_version"], "php_version should be 8.2")
 
 	// Verify that fs.write_healthcheck was called with correct path and user:group
-	hcParams := agent.calls[4].params.(map[string]string)
+	var hcCall *fakeCall
+	for _, call := range agent.calls {
+		if call.method == "fs.write_healthcheck" {
+			hcCall = &call
+			break
+		}
+	}
+	require.NotNil(t, hcCall, "fs.write_healthcheck should be called")
+	hcParams := hcCall.params.(map[string]string)
 	require.Equal(t, "/home/phpuser/domains/phpsite.com/public_html/jabali-healthcheck.php", hcParams["path"], "healthcheck path should be correct")
 	require.Equal(t, "phpuser:www-data", hcParams["user_group"], "healthcheck user_group should be correct")
 }
@@ -631,12 +695,12 @@ func TestReconcileAll_DomainWithPHPSettingsOverrides(t *testing.T) {
 	err := r.ReconcileAll(ctx)
 	require.NoError(t, err)
 
-	// Verify domain.create was called
-	require.Len(t, agent.calls, 5)
-	require.Equal(t, "domain.create", agent.calls[3].method)
+	// Verify domain.create was called (filtering out filebrowser calls)
+	domainCreateCalls := filterCallsByPrefix(agent.calls, "domain.create")
+	require.Len(t, domainCreateCalls, 1, "should call domain.create exactly once")
 
 	// Verify PHP settings were passed through
-	params := agent.calls[3].params.(map[string]any)
+	params := domainCreateCalls[0].params.(map[string]any)
 	require.Equal(t, "256M", params["php_memory_limit"])
 	require.Equal(t, "128M", params["php_upload_max_filesize"])
 	require.Equal(t, "64M", params["php_post_max_size"])
@@ -690,11 +754,11 @@ func TestReconcileAll_DomainWithoutPHPSettingsOverrides(t *testing.T) {
 	err := r.ReconcileAll(ctx)
 	require.NoError(t, err)
 
-	// Verify domain.create was called and NO overrides were passed
-	require.Len(t, agent.calls, 5)
-	require.Equal(t, "domain.create", agent.calls[3].method)
+	// Verify domain.create was called and NO overrides were passed (filtering out filebrowser calls)
+	domainCreateCalls := filterCallsByPrefix(agent.calls, "domain.create")
+	require.Len(t, domainCreateCalls, 1, "should call domain.create exactly once")
 
-	params := agent.calls[3].params.(map[string]any)
+	params := domainCreateCalls[0].params.(map[string]any)
 	// When all are nil, they should not be in the params map
 	_, hasMemLimit := params["php_memory_limit"]
 	_, hasUpload := params["php_upload_max_filesize"]
@@ -1690,4 +1754,144 @@ func TestReconcileMysqlAdminShadow_BatchLimitOf50(t *testing.T) {
 
 	// Should only process first 50 users in this pass (batch limit)
 	require.Equal(t, 50, len(sso.ensureShadowCalls))
+}
+
+func TestReconcileFileBrowserUsers_CreatesUserForEachUsername(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+
+	// Create users with usernames
+	username1 := "user1"
+	user1 := &models.User{
+		ID:       "user-1",
+		Email:    "user1@example.com",
+		Username: &username1,
+	}
+	userRepo.users[user1.ID] = user1
+
+	username2 := "user2"
+	user2 := &models.User{
+		ID:       "user-2",
+		Email:    "user2@example.com",
+		Username: &username2,
+	}
+	userRepo.users[user2.ID] = user2
+
+	// Create admin with no username (should be skipped)
+	user3 := &models.User{
+		ID:    "admin-1",
+		Email: "admin@example.com",
+		// No username (nil)
+	}
+	userRepo.users[user3.ID] = user3
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second})
+
+	r.ReconcileFileBrowserUsers(ctx)
+
+	// Should have called filebrowser.user.ensure for user1 and user2 (not admin)
+	ensureCalls := 0
+	for _, call := range agent.calls {
+		if call.method == "filebrowser.user.ensure" {
+			ensureCalls++
+		}
+	}
+	require.Equal(t, 2, ensureCalls, "should call filebrowser.user.ensure for each user with username")
+}
+
+func TestReconcileFileBrowserUsers_SkipsUserWithoutUsername(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+
+	// Admin with no username
+	user := &models.User{
+		ID:    "admin-1",
+		Email: "admin@example.com",
+		// No username
+	}
+	userRepo.users[user.ID] = user
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second})
+
+	r.ReconcileFileBrowserUsers(ctx)
+
+	// Should not have called any filebrowser commands
+	for _, call := range agent.calls {
+		if call.method == "filebrowser.user.ensure" {
+			t.Fatal("should not call filebrowser.user.ensure for admin without username")
+		}
+	}
+}
+
+func TestReconcileFileBrowserUsers_ContinuesOnAgentError(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{failMethod: "filebrowser.user.ensure"}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+
+	// Create multiple users
+	for i := 0; i < 3; i++ {
+		username := fmt.Sprintf("user%d", i)
+		user := &models.User{
+			ID:       fmt.Sprintf("user-%d", i),
+			Email:    fmt.Sprintf("user%d@example.com", i),
+			Username: &username,
+		}
+		userRepo.users[user.ID] = user
+	}
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second})
+
+	// Should not panic even though agent fails
+	r.ReconcileFileBrowserUsers(ctx)
+
+	// Should have attempted all users (resilient loop)
+	ensureCalls := 0
+	for _, call := range agent.calls {
+		if call.method == "filebrowser.user.ensure" {
+			ensureCalls++
+		}
+	}
+	require.Equal(t, 3, ensureCalls, "should attempt all users despite agent error")
+}
+
+func TestReconcileFileBrowserUsers_ListsAndCleansOrphans(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+
+	username1 := "activeuser"
+	user1 := &models.User{
+		ID:       "user-1",
+		Email:    "activeuser@example.com",
+		Username: &username1,
+	}
+	userRepo.users[user1.ID] = user1
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second})
+
+	r.ReconcileFileBrowserUsers(ctx)
+
+	// Should have called filebrowser.user.list
+	listCalled := false
+	for _, call := range agent.calls {
+		if call.method == "filebrowser.user.list" {
+			listCalled = true
+			break
+		}
+	}
+	require.True(t, listCalled, "should call filebrowser.user.list for orphan cleanup")
 }

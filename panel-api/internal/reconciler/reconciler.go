@@ -222,6 +222,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// This is a separate pass that doesn't block domain reconciliation.
 	r.reconcileMysqlAdminShadow(ctx)
 
+	// Filebrowser user provisioning: ensure every jabali user with a Linux username
+	// has a corresponding filebrowser user with scope=/home/<username>.
+	r.ReconcileFileBrowserUsers(ctx)
+
 	// Get the list of enabled sites from the agent
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -571,6 +575,144 @@ func (r *Reconciler) reconcileMysqlAdminShadow(ctx context.Context) {
 		r.log.Info("reconcile: mysqladmin shadow ensured for user",
 			"user_id", user.ID,
 			"username", user.Username)
+	}
+}
+
+// ReconcileFileBrowserUsers ensures every jabali user with a Linux username has
+// a corresponding filebrowser user with scope=/home/<username>. This runs
+// alongside ReconcilePHPPools and handles group membership + service restart
+// idempotently. Orphan filebrowser users (those without a jabali user) are deleted.
+// Called every reconcile tick as a separate pass.
+func (r *Reconciler) ReconcileFileBrowserUsers(ctx context.Context) {
+	if r.agent == nil {
+		return
+	}
+
+	// Batch load up to 50 users for filebrowser provisioning.
+	allUsers, _, err := r.users.List(ctx, repository.ListOptions{Limit: 10000})
+	if err != nil {
+		r.log.Error("reconcile: failed to list users for filebrowser", "err", err)
+		return
+	}
+
+	usersNeedingFilebrowser := make([]*models.User, 0)
+	for i := range allUsers {
+		user := &allUsers[i]
+		// Only users with a Linux username get filebrowser access
+		if user.Username != nil && *user.Username != "" {
+			usersNeedingFilebrowser = append(usersNeedingFilebrowser, user)
+		}
+	}
+
+	// Track whether any group membership changes were made
+	groupChangedAny := false
+
+	// Ensure filebrowser user for each jabali user with a username
+	for _, user := range usersNeedingFilebrowser {
+		username := *user.Username
+		scope := fmt.Sprintf("/home/%s", username)
+
+		// Step 1: Ensure filebrowser user exists with scope=/home/<username>
+		ensureCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		_, err := r.agent.Call(ensureCtx, "filebrowser.user.ensure", map[string]string{
+			"username": username,
+			"scope":    scope,
+		})
+		cancel()
+
+		if err != nil {
+			r.log.Warn("reconcile: failed to ensure filebrowser user",
+				"user_id", user.ID,
+				"username", username,
+				"err", err)
+			continue
+		}
+
+		r.log.Info("reconcile: filebrowser user ensured",
+			"user_id", user.ID,
+			"username", username)
+
+		// Step 2: Ensure filebrowser system user is in the per-user group
+		// via usermod -aG <username> filebrowser (idempotent)
+		groupCtx, groupCancel := context.WithTimeout(ctx, 5*time.Second)
+		result, err := r.agent.Call(groupCtx, "filebrowser.group.add", map[string]string{
+			"username": username,
+		})
+		groupCancel()
+
+		if err != nil {
+			r.log.Warn("reconcile: failed to add filebrowser to user group",
+				"user_id", user.ID,
+				"username", username,
+				"err", err)
+			continue
+		}
+
+		// Parse response to check if group membership was actually added
+		var groupResp struct {
+			Added bool `json:"added"`
+		}
+		if err := json.Unmarshal(result, &groupResp); err == nil && groupResp.Added {
+			groupChangedAny = true
+		}
+	}
+
+	// Step 3: If any group membership changed, restart filebrowser service once
+	// (batch the restart, not per-user). Log a warning about interrupted sessions.
+	if groupChangedAny {
+		restartCtx, restartCancel := context.WithTimeout(ctx, 10*time.Second)
+		_, err := r.agent.Call(restartCtx, "filebrowser.service.restart", nil)
+		restartCancel()
+
+		if err != nil {
+			r.log.Error("reconcile: failed to restart filebrowser service",
+				"err", err)
+		} else {
+			r.log.Warn("reconcile: filebrowser service restarted due to group membership changes; active sessions may be interrupted")
+		}
+	}
+
+	// Step 4: Orphan cleanup — list filebrowser users; for any that don't
+	// match an active jabali user, delete them.
+	listCtx, listCancel := context.WithTimeout(ctx, 10*time.Second)
+	result, err := r.agent.Call(listCtx, "filebrowser.user.list", nil)
+	listCancel()
+
+	if err != nil {
+		r.log.Warn("reconcile: failed to list filebrowser users for orphan cleanup",
+			"err", err)
+		// Don't fail the entire reconcile; just skip orphan cleanup
+	} else {
+		var listResp struct {
+			Usernames []string `json:"usernames"`
+		}
+		if err := json.Unmarshal(result, &listResp); err == nil {
+			// Build a set of active jabali usernames
+			activeUsernames := make(map[string]bool)
+			for _, user := range usersNeedingFilebrowser {
+				activeUsernames[*user.Username] = true
+			}
+
+			// Delete any filebrowser user not in the active set
+			for _, fbUsername := range listResp.Usernames {
+				if !activeUsernames[fbUsername] {
+					deleteCtx, deleteCancel := context.WithTimeout(ctx, 5*time.Second)
+					_, delErr := r.agent.Call(deleteCtx, "filebrowser.user.delete", map[string]string{
+						"username": fbUsername,
+					})
+					deleteCancel()
+
+					if delErr != nil {
+						r.log.Warn("reconcile: failed to delete orphan filebrowser user",
+							"username", fbUsername,
+							"err", delErr)
+					} else {
+						r.log.Info("reconcile: deleted orphan filebrowser user",
+							"username", fbUsername)
+					}
+				}
+			}
+		}
 	}
 }
 

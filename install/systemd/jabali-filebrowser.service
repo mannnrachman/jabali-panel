@@ -5,7 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/filebrowser -c /etc/jabali-panel/filebrowser/config.json
+# -b /files is pinned on the command line because filebrowser persists
+# the baseurl into its SQLite DB on first run and thereafter ignores
+# config.json changes. CLI flags override the DB-saved value, so this
+# is the only reliable way to keep nginx's /files prefix stable.
+ExecStart=/usr/local/bin/filebrowser -c /etc/jabali-panel/filebrowser/config.json -b /files
 Restart=on-failure
 RestartSec=5s
 

@@ -194,3 +194,18 @@ function humanizeErrorCode(code: string): string {
   };
   return messages[code] ?? code.replace(/_/g, " ");
 }
+
+/**
+ * Initiate phpMyAdmin SSO by issuing a redirect token for the given database.
+ * Returns the URL to navigate to in the same tab.
+ * The URL contains a live credential token and must not be logged.
+ */
+export async function ssoPhpMyAdmin(
+  databaseId: string,
+): Promise<{ redirect_url: string }> {
+  const resp = await apiClient.post<{ redirect_url: string }>(
+    "/sso/phpmyadmin",
+    { database_id: databaseId },
+  );
+  return resp.data;
+}

@@ -2,9 +2,11 @@ import { useTable } from "@refinedev/antd";
 import { DeleteButton } from "@refinedev/antd";
 import { SearchableTable } from "../../../components/SearchableTable";
 import { readQValue } from "../../../components/searchableTableUtils";
-import { Button, Space, Table, Tag, Typography } from "antd";
-import { DatabaseOutlined, PlusSquareOutlined } from "@ant-design/icons";
+import { Button, Space, Table, Tag, Typography, message, Tooltip } from "antd";
+import { DatabaseOutlined, PlusSquareOutlined, LinkOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router";
+import { ssoPhpMyAdmin } from "../../../apiClient";
+import { useState } from "react";
 
 export type Database = {
   id: string;
@@ -25,6 +27,7 @@ export const UserDatabaseList = () => {
     syncWithLocation: true,
   });
   const initialSearch = readQValue(filters);
+  const [loadingPhpMyAdminId, setLoadingPhpMyAdminId] = useState<string | null>(null);
 
   const engineColorMap: Record<string, string> = {
     mariadb: "blue",
@@ -58,6 +61,20 @@ export const UserDatabaseList = () => {
       <div style={{ color: "#999", fontSize: "12px" }}>{engine}</div>
     </div>
   );
+
+  const handleOpenPhpMyAdmin = async (row: Database) => {
+    try {
+      setLoadingPhpMyAdminId(row.id);
+      const response = await ssoPhpMyAdmin(row.id);
+      window.location.assign(response.redirect_url);
+    } catch (error) {
+      const errorMsg =
+        error instanceof Error ? error.message : "Could not open phpMyAdmin";
+      message.error(`Could not open phpMyAdmin: ${errorMsg}`);
+    } finally {
+      setLoadingPhpMyAdminId(null);
+    }
+  };
 
   return (
     <div style={{ padding: 24 }}>
@@ -122,11 +139,28 @@ export const UserDatabaseList = () => {
         <Table.Column<Database>
           title="Actions"
           dataIndex="actions"
-          render={(_, r) => (
-            <Space size="small">
-              <DeleteButton hideText size="small" type="text" resource="databases" recordItemId={r.id} />
-            </Space>
-          )}
+          render={(_, r) => {
+            const isPostgres = r.engine === "postgres";
+            const isLoading = loadingPhpMyAdminId === r.id;
+
+            return (
+              <Space size="small">
+                <Tooltip title={isPostgres ? "phpMyAdmin supports MySQL/MariaDB only" : ""}>
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<LinkOutlined />}
+                    onClick={() => handleOpenPhpMyAdmin(r)}
+                    disabled={isPostgres || isLoading}
+                    loading={isLoading}
+                  >
+                    Open in phpMyAdmin
+                  </Button>
+                </Tooltip>
+                <DeleteButton hideText size="small" type="text" resource="databases" recordItemId={r.id} />
+              </Space>
+            );
+          }}
         />
       </SearchableTable>
     </div>

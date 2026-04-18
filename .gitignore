@@ -62,3 +62,6 @@ logs/
 
 # Claude Code MCP server config (local only)
 .mcp.json
+# direnv project-scoped env (DB creds etc.)
+.envrc
+.direnv/

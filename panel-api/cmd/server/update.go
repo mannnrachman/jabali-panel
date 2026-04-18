@@ -101,11 +101,12 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 					"systemctl daemon-reload")
 		}},
 		{"sync static assets", func() error {
-			// Mirror the file-writing half of install_php_pool_template()
-			// and ensure_user_and_dirs() from install.sh so template or
-			// group-membership changes land on update. apt package installs
-			// and systemd service creation stay in install.sh — update is
-			// for hosts that already booted once.
+			// Mirror the file-writing half of install_php_pool_template(),
+			// ensure_user_and_dirs(), and install_phpmyadmin() from
+			// install.sh so template, group-membership, and phpMyAdmin
+			// handler changes land on update. apt package installs and
+			// systemd service creation stay in install.sh — update is for
+			// hosts that already booted once.
 			return run("", "bash", "-c",
 				"set -e; "+
 					"install -d -m 0755 -o root -g root /etc/jabali-panel/fpm; "+
@@ -113,6 +114,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 					// pool template — changes here affect every future
 					// pool-apply for every user.
 					"install -m 0644 "+repoDir+"/install/php/jabali-php-pool.conf.tmpl /etc/jabali-panel/php-pool.conf.tmpl; "+
+					// phpMyAdmin SSO handler — install.sh extracts the
+					// tarball to /opt/phpmyadmin/current/, but updates to
+					// sso.php/config.inc.php shipped in the repo never
+					// reach the host unless install.sh is re-run. Copy
+					// them now so update.go is the single-source refresh.
+					"if [ -d /opt/phpmyadmin/current ]; then "+
+					"  install -m 0640 -o root -g www-data "+repoDir+"/install/phpmyadmin/sso.php /opt/phpmyadmin/current/sso.php; "+
+					"fi; "+
 					// jabali service user in www-data group — needed for
 					// the reconciler's per-user FPM socket stat-check.
 					// usermod is idempotent; 'groups | grep -w' avoids an

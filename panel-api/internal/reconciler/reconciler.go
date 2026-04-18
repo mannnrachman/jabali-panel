@@ -638,6 +638,56 @@ func (r *Reconciler) regenerateNginxForPool(ctx context.Context, pool *models.PH
 
 
 
+// ensureDomainPHPBinding auto-binds the domain to its owner's default PHP pool
+// if it has no binding yet. This is a no-op if the domain already has a PHPPoolID
+// or if the user has no pools.
+func (r *Reconciler) ensureDomainPHPBinding(ctx context.Context, domain *models.Domain) {
+	// If domain already has a pool binding, nothing to do.
+	if domain.PHPPoolID != nil {
+		return
+	}
+
+	// If phpPools repo is not available, skip.
+	if r.phpPools == nil {
+		return
+	}
+
+	// Find the user's (single) PHP pool.
+	poolCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	pool, err := r.phpPools.FindByUserID(poolCtx, domain.UserID)
+	cancel()
+
+	if err != nil {
+		if err != repository.ErrNotFound {
+			r.log.Warn("ensure domain PHP binding: failed to find pool",
+				"domain_id", domain.ID, "domain", domain.Name, "user_id", domain.UserID, "err", err)
+		}
+		return
+	}
+
+	if pool == nil {
+		// User has no pool yet — skip binding. ReconcilePHPPools guarantees every
+		// user has at least one pool, but it may not have converged yet on first boot.
+		return
+	}
+
+	// Bind domain to the user's pool.
+	domain.PHPPoolID = &pool.ID
+
+	// Persist the binding.
+	updateCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	if err := r.domains.Update(updateCtx, domain); err != nil {
+		cancel()
+		r.log.Error("ensure domain PHP binding: failed to update domain",
+			"domain_id", domain.ID, "domain", domain.Name, "pool_id", pool.ID, "err", err)
+		return
+	}
+	cancel()
+
+	r.log.Info("ensure domain PHP binding: auto-bound domain to pool",
+		"domain_id", domain.ID, "domain", domain.Name, "pool_id", pool.ID)
+}
+
 func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Domain) {
 	user, err := r.users.FindByID(ctx, domain.UserID)
 	if err != nil {

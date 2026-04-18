@@ -131,6 +131,10 @@ type SSOConfig struct {
 	// KeyPath is the filesystem path to the AES-256-GCM envelope key (32 bytes).
 	// Missing key is not fatal; SSO features simply unavailable.
 	KeyPath string `toml:"key_path"`
+
+	// SocketPath is the filesystem path to the Unix domain socket for SSO validation.
+	// Default: /run/jabali/sso.sock
+	SocketPath string `toml:"socket_path"`
 }
 
 // Defaults returns a Config populated with sensible development defaults.
@@ -159,7 +163,8 @@ func Defaults() *Config {
 			ReconcilerInterval: 60 * time.Second,
 		},
 		SSO: SSOConfig{
-			KeyPath: "/etc/jabali-panel/sso.key",
+			KeyPath:    "/etc/jabali-panel/sso.key",
+			SocketPath: "/run/jabali/sso.sock",
 		},
 	}
 }
@@ -262,6 +267,9 @@ func applyEnv(cfg *Config) error {
 	}
 	if v := os.Getenv("JABALI_SSO_KEY_PATH"); v != "" {
 		cfg.SSO.KeyPath = v
+	}
+	if v := os.Getenv("JABALI_SSO_SOCKET_PATH"); v != "" {
+		cfg.SSO.SocketPath = v
 	}
 	return nil
 }

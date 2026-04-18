@@ -16,6 +16,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/sso"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssokey"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/webui"
 	panelui "git.linux-hosting.co.il/shukivaknin/jabali2/panel-ui"
@@ -42,6 +43,7 @@ type Deps struct {
 	SSLCerts            repository.SSLCertificateRepository
 	PHPPools            repository.PHPPoolRepository
 	PHPPoolIniOverrides repository.PHPPoolIniOverrideRepository
+	SSO                 *sso.Service
 	SSOKey              *ssokey.Key
 	Log                 *slog.Logger
 }
@@ -198,6 +200,13 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		if deps.Agent != nil {
 			api.RegisterSystemRoutes(v1, deps.Agent)
 			api.RegisterPHPVersionRoutes(v1, deps.Agent)
+		}
+		if deps.SSO != nil && deps.Databases != nil && deps.PhpMyAdminSSOTokens != nil {
+			api.RegisterSSOPhpMyAdminRoutes(v1, api.SSOPhpMyAdminHandlerConfig{
+				Databases: deps.Databases,
+				SSO:       deps.SSO,
+				Log:       deps.Log,
+			})
 		}
 		if deps.PHPPools != nil && deps.PHPPoolIniOverrides != nil {
 			api.RegisterPHPPoolRoutes(v1, api.PHPPoolHandlerConfig{

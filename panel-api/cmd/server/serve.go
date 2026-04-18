@@ -21,6 +21,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssokey"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/sso"
 )
 
 const (
@@ -133,10 +134,21 @@ func runServe(cmd *cobra.Command, args []string) error {
 			RefreshTTL:  cfg.Auth.RefreshTTL,
 		})
 		deps.Auth = authSvc
+
+		// SSO service for phpMyAdmin
+		ssoService := sso.NewService(
+			sharedDB,
+			userRepo,
+			phpMyAdminSSOTokenRepo,
+			sharedAgent,
+			ssoKeyPtr,
+			log,
+		)
 		deps.JWTIssuer = jwtIss
 		deps.Users = userRepo
 		deps.Packages = packageRepo
 		deps.Domains = domainRepo
+		deps.SSO = ssoService
 
 		deps.ServerSettings = serverSettingsRepo
 		// Reconciler: database as source of truth, agent state as derived state.
@@ -252,6 +264,22 @@ func runServe(cmd *cobra.Command, args []string) error {
 		go deps.Reconciler.Start(ctx)
 	}
 
+
+	var ssoUDSShutdown func(context.Context) error
+	if ssoKeyPtr != nil && cfg.SSO.SocketPath != "" {
+		var err error
+		_, ssoUDSShutdown, err = app.StartSSOUDSListener(
+			cfg.SSO.SocketPath,
+			deps.Databases,
+			deps.Users,
+			deps.PhpMyAdminSSOTokens,
+			ssoKeyPtr,
+			log,
+		)
+		if err != nil {
+			return fmt.Errorf("start SSO UDS listener: %w", err)
+		}
+	}
 	serveErr := make(chan error, 1)
 	if useTLS {
 		log.Info("TLS enabled", "cert", cfg.Server.TLSCert, "key", cfg.Server.TLSKey)
@@ -276,6 +304,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		cancel() // Stop reconciler
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer shutdownCancel()
+		if ssoUDSShutdown != nil {
+			if err := ssoUDSShutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Error("UDS server shutdown error", "err", err)
+			}
+		}
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			return err
 		}

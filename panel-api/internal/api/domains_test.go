@@ -1,7 +1,19 @@
 package api
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 func TestValidateNginxDirectives(t *testing.T) {
@@ -395,4 +407,280 @@ func TestExtractDirective(t *testing.T) {
 			}
 		})
 	}
+}
+
+// mockDomainRepository is a mock implementation of repository.DomainRepository
+type mockDomainRepository struct {
+	mock.Mock
+}
+
+func (m *mockDomainRepository) List(ctx context.Context, opts repository.ListOptions) ([]models.Domain, int64, error) {
+	args := m.Called(ctx, opts)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]models.Domain), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *mockDomainRepository) ListByUserID(ctx context.Context, userID string, opts repository.ListOptions) ([]models.Domain, int64, error) {
+	args := m.Called(ctx, userID, opts)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]models.Domain), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *mockDomainRepository) FindByID(ctx context.Context, id string) (*models.Domain, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Domain), args.Error(1)
+}
+
+func (m *mockDomainRepository) Create(ctx context.Context, domain *models.Domain) error {
+	return m.Called(ctx, domain).Error(0)
+}
+
+func (m *mockDomainRepository) Update(ctx context.Context, domain *models.Domain) error {
+	return m.Called(ctx, domain).Error(0)
+}
+
+func (m *mockDomainRepository) Delete(ctx context.Context, id string) error {
+	return m.Called(ctx, id).Error(0)
+}
+
+func (m *mockDomainRepository) CountByUserID(ctx context.Context, userID string) (int64, error) {
+	args := m.Called(ctx, userID)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *mockDomainRepository) ExistsByUserIDAndName(ctx context.Context, userID string, name string) (bool, error) {
+	args := m.Called(ctx, userID, name)
+	return args.Get(0).(bool), args.Error(1)
+}
+
+// mockSSLCertificateRepository is a mock implementation of repository.SSLCertificateRepository
+type mockSSLCertificateRepository struct {
+	mock.Mock
+}
+
+func (m *mockSSLCertificateRepository) FindByDomainID(ctx context.Context, domainID string) (*models.SSLCertificate, error) {
+	args := m.Called(ctx, domainID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.SSLCertificate), args.Error(1)
+}
+
+func (m *mockSSLCertificateRepository) FindByDomainIDs(ctx context.Context, domainIDs []string) ([]models.SSLCertificate, error) {
+	args := m.Called(ctx, domainIDs)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]models.SSLCertificate), args.Error(1)
+}
+
+func (m *mockSSLCertificateRepository) Create(ctx context.Context, cert *models.SSLCertificate) error {
+	return m.Called(ctx, cert).Error(0)
+}
+
+func (m *mockSSLCertificateRepository) Update(ctx context.Context, cert *models.SSLCertificate) error {
+	return m.Called(ctx, cert).Error(0)
+}
+
+func (m *mockSSLCertificateRepository) Delete(ctx context.Context, id string) error {
+	return m.Called(ctx, id).Error(0)
+}
+
+// TestDomainList_WithLetsEncryptCertificate tests domain list with issued Let's Encrypt certificate
+func TestDomainList_WithLetsEncryptCertificate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	now := time.Now().UTC()
+	domainID := "domain-1"
+	domain := models.Domain{
+		ID:         domainID,
+		UserID:     "user-1",
+		Name:       "example.com",
+		DocRoot:    "/home/user/domains/example.com/public_html",
+		IsEnabled:  true,
+		SSLEnabled: true,
+	}
+
+	cert := models.SSLCertificate{
+		ID:        "cert-1",
+		DomainID:  domainID,
+		Status:    models.SSLStatusIssued,
+		IssuedAt:  &now,
+		ExpiresAt: &now.AddDate(0, 0, 90),
+	}
+
+	mockDomains := new(mockDomainRepository)
+	mockSSL := new(mockSSLCertificateRepository)
+
+	mockDomains.On("List", mock.Anything, mock.Anything).Return([]models.Domain{domain}, int64(1), nil)
+	mockSSL.On("FindByDomainIDs", mock.Anything, []string{domainID}).Return([]models.SSLCertificate{cert}, nil)
+
+	handler := &domainHandler{
+		cfg: DomainHandlerConfig{
+			Domains:  mockDomains,
+			SSLCerts: mockSSL,
+		},
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/domains?page=1&page_size=20", nil)
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ginctx.ClaimsKey, &ginctx.Claims{
+		UserID:  "user-1",
+		IsAdmin: true,
+	}))
+
+	handler.list(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	mockDomains.AssertCalled(t, "List", mock.Anything, mock.Anything)
+	mockSSL.AssertCalled(t, "FindByDomainIDs", mock.Anything, []string{domainID})
+}
+
+// TestDomainList_WithSelfSignedCertificate tests domain list with self-signed certificate
+func TestDomainList_WithSelfSignedCertificate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	now := time.Now().UTC()
+	domainID := "domain-2"
+	domain := models.Domain{
+		ID:         domainID,
+		UserID:     "user-1",
+		Name:       "test.local",
+		DocRoot:    "/home/user/domains/test.local/public_html",
+		IsEnabled:  true,
+		SSLEnabled: true,
+	}
+
+	cert := models.SSLCertificate{
+		ID:        "cert-2",
+		DomainID:  domainID,
+		Status:    models.SSLStatusSelfSigned,
+		IssuedAt:  &now,
+		ExpiresAt: &now.AddDate(1, 0, 0),
+	}
+
+	mockDomains := new(mockDomainRepository)
+	mockSSL := new(mockSSLCertificateRepository)
+
+	mockDomains.On("List", mock.Anything, mock.Anything).Return([]models.Domain{domain}, int64(1), nil)
+	mockSSL.On("FindByDomainIDs", mock.Anything, []string{domainID}).Return([]models.SSLCertificate{cert}, nil)
+
+	handler := &domainHandler{
+		cfg: DomainHandlerConfig{
+			Domains:  mockDomains,
+			SSLCerts: mockSSL,
+		},
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/domains?page=1&page_size=20", nil)
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ginctx.ClaimsKey, &ginctx.Claims{
+		UserID:  "user-1",
+		IsAdmin: true,
+	}))
+
+	handler.list(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	mockDomains.AssertCalled(t, "List", mock.Anything, mock.Anything)
+	mockSSL.AssertCalled(t, "FindByDomainIDs", mock.Anything, []string{domainID})
+}
+
+// TestDomainList_WithPendingCertificate tests domain list with pending certificate
+func TestDomainList_WithPendingCertificate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	domainID := "domain-3"
+	domain := models.Domain{
+		ID:         domainID,
+		UserID:     "user-1",
+		Name:       "pending.example.com",
+		DocRoot:    "/home/user/domains/pending.example.com/public_html",
+		IsEnabled:  true,
+		SSLEnabled: true,
+	}
+
+	cert := models.SSLCertificate{
+		ID:       "cert-3",
+		DomainID: domainID,
+		Status:   models.SSLStatusPending,
+	}
+
+	mockDomains := new(mockDomainRepository)
+	mockSSL := new(mockSSLCertificateRepository)
+
+	mockDomains.On("List", mock.Anything, mock.Anything).Return([]models.Domain{domain}, int64(1), nil)
+	mockSSL.On("FindByDomainIDs", mock.Anything, []string{domainID}).Return([]models.SSLCertificate{cert}, nil)
+
+	handler := &domainHandler{
+		cfg: DomainHandlerConfig{
+			Domains:  mockDomains,
+			SSLCerts: mockSSL,
+		},
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/domains?page=1&page_size=20", nil)
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ginctx.ClaimsKey, &ginctx.Claims{
+		UserID:  "user-1",
+		IsAdmin: true,
+	}))
+
+	handler.list(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	mockDomains.AssertCalled(t, "List", mock.Anything, mock.Anything)
+	mockSSL.AssertCalled(t, "FindByDomainIDs", mock.Anything, []string{domainID})
+}
+
+// TestDomainList_NoCertificate tests domain list with no SSL certificate
+func TestDomainList_NoCertificate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	domainID := "domain-4"
+	domain := models.Domain{
+		ID:         domainID,
+		UserID:     "user-1",
+		Name:       "nocert.example.com",
+		DocRoot:    "/home/user/domains/nocert.example.com/public_html",
+		IsEnabled:  true,
+		SSLEnabled: false,
+	}
+
+	mockDomains := new(mockDomainRepository)
+	mockSSL := new(mockSSLCertificateRepository)
+
+	mockDomains.On("List", mock.Anything, mock.Anything).Return([]models.Domain{domain}, int64(1), nil)
+	mockSSL.On("FindByDomainIDs", mock.Anything, []string{domainID}).Return([]models.SSLCertificate{}, nil)
+
+	handler := &domainHandler{
+		cfg: DomainHandlerConfig{
+			Domains:  mockDomains,
+			SSLCerts: mockSSL,
+		},
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/domains?page=1&page_size=20", nil)
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ginctx.ClaimsKey, &ginctx.Claims{
+		UserID:  "user-1",
+		IsAdmin: true,
+	}))
+
+	handler.list(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	mockDomains.AssertCalled(t, "List", mock.Anything, mock.Anything)
+	mockSSL.AssertCalled(t, "FindByDomainIDs", mock.Anything, []string{domainID})
 }

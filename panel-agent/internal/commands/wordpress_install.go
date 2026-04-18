@@ -286,11 +286,19 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 	// Pass admin password via stdin
 	installCmd.Stdin = strings.NewReader(req.AdminPass + "\n")
 
+	var installStdout, installStderr bytes.Buffer
+	installCmd.Stdout = &installStdout
+	installCmd.Stderr = &installStderr
+
 	if err := installCmd.Run(); err != nil {
 		_ = cleanupWordPressFiles(ctx, installPath)
 		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("wp core install failed: %v", err),
+			Code: agentwire.CodeInternal,
+			Message: fmt.Sprintf("wp core install failed: %v; stderr=%q; stdout=%q",
+				err,
+				truncateStr(installStderr.String(), 400),
+				truncateStr(installStdout.String(), 200),
+			),
 		}
 	}
 
@@ -322,4 +330,14 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 
 func init() {
 	Default.Register("wordpress.install", wordpressInstallHandler)
+}
+
+// truncateStr trims s to at most n runes, appending "…" when truncated.
+// Used to keep error messages small enough to fit in panel_api log
+// fields and DB columns.
+func truncateStr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }

@@ -16,12 +16,14 @@ import (
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/sso"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
-// StartSSOUDSListener starts a Unix domain socket HTTP server for phpMyAdmin SSO validation.
-// The listener binds to socketPath with mode 0660 and owner jabali:www-data.
-// It handles POST /sso/phpmyadmin/validate requests without JWT auth; the socket ACL is the boundary.
+// StartSSOUDSListener starts a Unix domain socket HTTP server for phpMyAdmin and
+// filebrowser SSO validation. The listener binds to socketPath with mode 0660 and
+// owner jabali:www-data. It handles POST /sso/phpmyadmin/validate and
+// POST /sso/filebrowser/validate without JWT auth; the socket ACL is the boundary.
 // The server runs in the background; callers must call the returned cancel func to gracefully shutdown.
 // Stale socket files are removed before binding.
 func StartSSOUDSListener(
@@ -29,6 +31,7 @@ func StartSSOUDSListener(
 	databases repository.DatabaseRepository,
 	users repository.UserRepository,
 	tokens repository.PhpMyAdminSSOTokenRepository,
+	ssoSvc *sso.Service,
 	ssoKey *ssokey.Key,
 	log *slog.Logger,
 ) (*http.Server, func(context.Context) error, error) {
@@ -54,6 +57,13 @@ func StartSSOUDSListener(
 	}
 	g := r.Group("")
 	api.RegisterSSOPhpMyAdminValidateRoutes(g, cfg)
+
+	if ssoSvc != nil {
+		api.RegisterSSOFileBrowserValidateRoutes(g, api.SSOFileBrowserValidateHandlerConfig{
+			SSO: ssoSvc,
+			Log: log,
+		})
+	}
 
 	// Create Unix domain socket listener
 	listener, err := net.Listen("unix", socketPath)

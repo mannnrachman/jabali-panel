@@ -281,6 +281,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			deps.Databases,
 			deps.Users,
 			deps.PhpMyAdminSSOTokens,
+			deps.SSO,
 			ssoKeyPtr,
 			log,
 		)

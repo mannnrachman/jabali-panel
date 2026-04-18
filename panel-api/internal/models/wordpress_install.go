@@ -12,6 +12,8 @@ type WordPressInstall struct {
 	AdminUsername string `gorm:"type:varchar(60);not null" json:"admin_username"`
 	AdminEmail    string `gorm:"type:varchar(320);not null" json:"admin_email"`
 	Locale        string `gorm:"type:varchar(16);not null;default:'en_US'" json:"locale"`
+	UseWWW        bool   `gorm:"type:boolean;not null;default:false" json:"use_www"`
+	Subdirectory  string `gorm:"type:varchar(64);not null;default:''" json:"subdirectory"`
 	Status        string `gorm:"type:varchar(16);not null;default:'pending'" json:"status"`
 	LastError     string `gorm:"type:varchar(1024);not null;default:''" json:"last_error"`
 	CreatedAt     time.Time `gorm:"type:datetime(6);not null" json:"created_at"`

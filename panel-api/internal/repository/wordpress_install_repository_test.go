@@ -27,6 +27,8 @@ func TestWordPressInstallCreate_Success(t *testing.T) {
 		AdminUsername: "admin",
 		AdminEmail:    "admin@example.com",
 		Locale:        "en_US",
+		UseWWW:        false,
+		Subdirectory:  "",
 		Status:        "pending",
 		LastError:     "",
 		CreatedAt:     now,
@@ -38,7 +40,7 @@ func TestWordPressInstallCreate_Success(t *testing.T) {
 		WithArgs(
 			install.ID, install.UserID, install.DomainID, install.DBID,
 			install.Version, install.AdminUsername, install.AdminEmail,
-			install.Locale, install.Status, install.LastError,
+			install.Locale, install.UseWWW, install.Subdirectory, install.Status, install.LastError,
 			sqlmock.AnyArg(), sqlmock.AnyArg(),
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -64,6 +66,8 @@ func TestWordPressInstallCreate_UniqueDomainIDConstraint(t *testing.T) {
 		AdminUsername: "admin",
 		AdminEmail:    "admin@example.com",
 		Locale:        "en_US",
+		UseWWW:        false,
+		Subdirectory:  "",
 		Status:        "pending",
 		LastError:     "",
 		CreatedAt:     now,
@@ -75,7 +79,8 @@ func TestWordPressInstallCreate_UniqueDomainIDConstraint(t *testing.T) {
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
-			sqlmock.AnyArg(), sqlmock.AnyArg()).
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg()).
 		WillReturnError(sql.ErrNoRows) // Simulates UNIQUE constraint violation
 	mock.ExpectRollback()
 
@@ -94,10 +99,10 @@ func TestWordPressInstallFindByID_Found(t *testing.T) {
 	mock.ExpectQuery("SELECT .* FROM `wordpress_installs` WHERE id = \\?.*LIMIT").
 		WithArgs("inst_abc123", 1).
 		WillReturnRows(sqlmock.NewRows(
-			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "status", "last_error", "created_at", "updated_at"},
+			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "use_www", "subdirectory", "status", "last_error", "created_at", "updated_at"},
 		).AddRow(
 			"inst_abc123", "user1", "domain1", "db1",
-			"6.5.3", "admin", "admin@example.com", "en_US", "ready", "", now, now,
+			"6.5.3", "admin", "admin@example.com", "en_US", false, "", "ready", "", now, now,
 		))
 
 	install, err := repo.FindByID(context.Background(), "inst_abc123")
@@ -119,7 +124,7 @@ func TestWordPressInstallFindByID_NotFound(t *testing.T) {
 	mock.ExpectQuery("SELECT .* FROM `wordpress_installs` WHERE id = \\?.*LIMIT").
 		WithArgs("inst_nonexistent", 1).
 		WillReturnRows(sqlmock.NewRows(
-			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "status", "last_error", "created_at", "updated_at"},
+			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "use_www", "subdirectory", "status", "last_error", "created_at", "updated_at"},
 		))
 
 	install, err := repo.FindByID(context.Background(), "inst_nonexistent")
@@ -139,10 +144,10 @@ func TestWordPressInstallFindByIDAndUserID_Found(t *testing.T) {
 	mock.ExpectQuery("SELECT .* FROM `wordpress_installs` WHERE id = \\? AND user_id = \\?.*LIMIT").
 		WithArgs("inst_abc123", "user1", 1).
 		WillReturnRows(sqlmock.NewRows(
-			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "status", "last_error", "created_at", "updated_at"},
+			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "use_www", "subdirectory", "status", "last_error", "created_at", "updated_at"},
 		).AddRow(
 			"inst_abc123", "user1", "domain1", "db1",
-			"6.5.3", "admin", "admin@example.com", "en_US", "ready", "", now, now,
+			"6.5.3", "admin", "admin@example.com", "en_US", false, "", "ready", "", now, now,
 		))
 
 	install, err := repo.FindByIDAndUserID(context.Background(), "inst_abc123", "user1")
@@ -163,7 +168,7 @@ func TestWordPressInstallFindByIDAndUserID_DifferentUser(t *testing.T) {
 	mock.ExpectQuery("SELECT .* FROM `wordpress_installs` WHERE id = \\? AND user_id = \\?.*LIMIT").
 		WithArgs("inst_abc123", "user2", 1).
 		WillReturnRows(sqlmock.NewRows(
-			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "status", "last_error", "created_at", "updated_at"},
+			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "use_www", "subdirectory", "status", "last_error", "created_at", "updated_at"},
 		))
 
 	install, err := repo.FindByIDAndUserID(context.Background(), "inst_abc123", "user2")
@@ -183,10 +188,10 @@ func TestWordPressInstallFindByDomainID_Found(t *testing.T) {
 	mock.ExpectQuery("SELECT .* FROM `wordpress_installs` WHERE domain_id = \\?.*LIMIT").
 		WithArgs("domain1", 1).
 		WillReturnRows(sqlmock.NewRows(
-			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "status", "last_error", "created_at", "updated_at"},
+			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "use_www", "subdirectory", "status", "last_error", "created_at", "updated_at"},
 		).AddRow(
 			"inst_abc123", "user1", "domain1", "db1",
-			"6.5.3", "admin", "admin@example.com", "en_US", "ready", "", now, now,
+			"6.5.3", "admin", "admin@example.com", "en_US", false, "", "ready", "", now, now,
 		))
 
 	install, err := repo.FindByDomainID(context.Background(), "domain1")
@@ -205,7 +210,7 @@ func TestWordPressInstallFindByDomainID_NotFound(t *testing.T) {
 	mock.ExpectQuery("SELECT .* FROM `wordpress_installs` WHERE domain_id = \\?.*LIMIT").
 		WithArgs("domain_nonexistent", 1).
 		WillReturnRows(sqlmock.NewRows(
-			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "status", "last_error", "created_at", "updated_at"},
+			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "use_www", "subdirectory", "status", "last_error", "created_at", "updated_at"},
 		))
 
 	install, err := repo.FindByDomainID(context.Background(), "domain_nonexistent")
@@ -231,10 +236,10 @@ func TestWordPressInstallListByUserID(t *testing.T) {
 	mock.ExpectQuery("SELECT .* FROM `wordpress_installs` WHERE user_id = \\?.*LIMIT").
 		WithArgs("user1", 20).
 		WillReturnRows(sqlmock.NewRows(
-			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "status", "last_error", "created_at", "updated_at"},
+			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "use_www", "subdirectory", "status", "last_error", "created_at", "updated_at"},
 		).
-			AddRow("inst_abc123", "user1", "domain1", "db1", "6.5.3", "admin", "admin@example.com", "en_US", "ready", "", now, now).
-			AddRow("inst_xyz789", "user1", "domain2", "db2", nil, "admin2", "admin2@example.com", "en_US", "installing", "", now, now))
+			AddRow("inst_abc123", "user1", "domain1", "db1", "6.5.3", "admin", "admin@example.com", "en_US", false, "", "ready", "", now, now).
+			AddRow("inst_xyz789", "user1", "domain2", "db2", nil, "admin2", "admin2@example.com", "en_US", false, "", "installing", "", now, now))
 
 	installs, total, err := repo.ListByUserID(context.Background(), "user1", ListOptions{Limit: 20})
 	require.NoError(t, err)
@@ -258,11 +263,11 @@ func TestWordPressInstallList(t *testing.T) {
 	mock.ExpectQuery("SELECT .* FROM `wordpress_installs`.*LIMIT").
 		WithArgs(20).
 		WillReturnRows(sqlmock.NewRows(
-			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "status", "last_error", "created_at", "updated_at"},
+			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "use_www", "subdirectory", "status", "last_error", "created_at", "updated_at"},
 		).
-			AddRow("inst_abc123", "user1", "domain1", "db1", "6.5.3", "admin", "admin@example.com", "en_US", "ready", "", now, now).
-			AddRow("inst_def456", "user2", "domain2", "db2", "6.5.3", "admin", "admin@example.com", "en_US", "ready", "", now, now).
-			AddRow("inst_xyz789", "user1", "domain3", "db3", nil, "admin2", "admin2@example.com", "en_US", "installing", "", now, now))
+			AddRow("inst_abc123", "user1", "domain1", "db1", "6.5.3", "admin", "admin@example.com", "en_US", false, "", "ready", "", now, now).
+			AddRow("inst_def456", "user2", "domain2", "db2", "6.5.3", "admin", "admin@example.com", "en_US", false, "", "ready", "", now, now).
+			AddRow("inst_xyz789", "user1", "domain3", "db3", nil, "admin2", "admin2@example.com", "en_US", false, "", "installing", "", now, now))
 
 	installs, total, err := repo.List(context.Background(), ListOptions{Limit: 20})
 	require.NoError(t, err)

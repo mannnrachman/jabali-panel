@@ -25,6 +25,8 @@ type wordpressCloneReq struct {
 	DstDBHost      string `json:"dst_db_host"`       // destination database host
 	SrcSiteURL     string `json:"src_site_url"`      // source site URL (e.g., https://example.com)
 	DstSiteURL     string `json:"dst_site_url"`      // destination site URL
+	UseWWW         bool   `json:"use_www"`           // prepend www. to domain in siteurl
+	DstSubdirectory string `json:"dst_subdirectory"` // destination subdirectory (optional)
 }
 
 // wordpressCloneResp is the output shape for wordpress.clone.
@@ -124,10 +126,27 @@ func wordpressCloneHandler(ctx context.Context, params json.RawMessage) (any, er
 		}
 	}
 
-	// Step 1: rsync -a --delete <src_docroot>/ <dst_docroot>/
+
+	// Compute dstInstallPath: dst_docroot + optional subdirectory
+	dstInstallPath := req.DstDocroot
+	if req.DstSubdirectory != "" {
+		dstInstallPath = filepath.Join(dstInstallPath, req.DstSubdirectory)
+		// Create the subdirectory if it doesn't exist
+		mkdirCmd := buildSystemdRunCmd(ctx,
+			req.OSUser,
+			"mkdir", "-p", dstInstallPath,
+		)
+		if err := mkdirCmd.Run(); err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("failed to create subdirectory: %v", err),
+			}
+		}
+	}
+
 	// Note: trailing slash on both src and dst
 	rsyncSrc := req.SrcDocroot + "/"
-	rsyncDst := req.DstDocroot + "/"
+	rsyncDst := dstInstallPath + "/"
 
 	rsyncCmd := buildSystemdRunCmd(ctx,
 		req.OSUser,
@@ -207,14 +226,14 @@ func wordpressCloneHandler(ctx context.Context, params json.RawMessage) (any, er
 	// Apply the same credential-handling invariant: no plaintext DB password in argv.
 	// Instead, we'll use the __JABALI_PLACEHOLDER__ pattern and rewrite in-process.
 
-	configPath := filepath.Join(req.DstDocroot, "wp-config.php")
+	configPath := filepath.Join(dstInstallPath, "wp-config.php")
 
 	// First, run wp config set for DB_NAME, DB_USER, DB_HOST (don't set password via argv)
 	configSetCmd := buildSystemdRunCmd(ctx,
 		req.OSUser,
 		"wp", "config", "set",
 		"DB_NAME", req.DstDBName,
-		"--path="+req.DstDocroot,
+		"--path="+dstInstallPath,
 		"--type=constant",
 	)
 	if err := configSetCmd.Run(); err != nil {
@@ -228,7 +247,7 @@ func wordpressCloneHandler(ctx context.Context, params json.RawMessage) (any, er
 		req.OSUser,
 		"wp", "config", "set",
 		"DB_USER", req.DstDBUser,
-		"--path="+req.DstDocroot,
+		"--path="+dstInstallPath,
 		"--type=constant",
 	)
 	if err := configSetCmd.Run(); err != nil {
@@ -242,7 +261,7 @@ func wordpressCloneHandler(ctx context.Context, params json.RawMessage) (any, er
 		req.OSUser,
 		"wp", "config", "set",
 		"DB_HOST", req.DstDBHost,
-		"--path="+req.DstDocroot,
+		"--path="+dstInstallPath,
 		"--type=constant",
 	)
 	if err := configSetCmd.Run(); err != nil {
@@ -289,7 +308,7 @@ func wordpressCloneHandler(ctx context.Context, params json.RawMessage) (any, er
 		req.OSUser,
 		"wp", "search-replace",
 		req.SrcSiteURL, req.DstSiteURL,
-		"--path="+req.DstDocroot,
+		"--path="+dstInstallPath,
 		"--all-tables",
 	)
 	if err := searchReplaceCmd.Run(); err != nil {
@@ -303,7 +322,7 @@ func wordpressCloneHandler(ctx context.Context, params json.RawMessage) (any, er
 	versionCmd := buildSystemdRunCmd(ctx,
 		req.OSUser,
 		"wp", "core", "version",
-		"--path="+req.DstDocroot,
+		"--path="+dstInstallPath,
 	)
 
 	var versionOutput bytes.Buffer

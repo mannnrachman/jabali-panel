@@ -16,18 +16,20 @@ import (
 
 // wordpressInstallReq is the input shape for wordpress.install.
 type wordpressInstallReq struct {
-	OSUser      string `json:"os_user"`       // domain owner (e.g. "shuki")
-	Docroot     string `json:"docroot"`       // /home/shuki/domains/example.com/public_html
-	DBName      string `json:"db_name"`       // already-provisioned
-	DBUser      string `json:"db_user"`       // already-provisioned
-	DBPassword  string `json:"db_password"`   // plaintext, single-use
-	DBHost      string `json:"db_host"`       // "localhost" (unix socket) or "127.0.0.1"
-	SiteURL     string `json:"site_url"`      // https://example.com
-	SiteTitle   string `json:"site_title"`
-	AdminUser   string `json:"admin_user"`
-	AdminPass   string `json:"admin_pass"`
-	AdminEmail  string `json:"admin_email"`
-	Locale      string `json:"locale"`
+	OSUser       string `json:"os_user"`       // domain owner (e.g. "shuki")
+	Docroot      string `json:"docroot"`       // /home/shuki/domains/example.com/public_html
+	DBName       string `json:"db_name"`       // already-provisioned
+	DBUser       string `json:"db_user"`       // already-provisioned
+	DBPassword   string `json:"db_password"`   // plaintext, single-use
+	DBHost       string `json:"db_host"`       // "localhost" (unix socket) or "127.0.0.1"
+	SiteURL      string `json:"site_url"`      // https://example.com
+	SiteTitle    string `json:"site_title"`
+	AdminUser    string `json:"admin_user"`
+	AdminPass    string `json:"admin_pass"`
+	AdminEmail   string `json:"admin_email"`
+	Locale       string `json:"locale"`
+	UseWWW       bool   `json:"use_www"`       // prepend www. to domain in siteurl
+	Subdirectory string `json:"subdirectory"`  // install in subdirectory (optional)
 }
 
 // wordpressInstallResp is the output shape for wordpress.install.
@@ -179,11 +181,28 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 		}
 	}
 
+	// Compute installPath: docroot + optional subdirectory
+	installPath := req.Docroot
+	if req.Subdirectory != "" {
+		installPath = filepath.Join(req.Docroot, req.Subdirectory)
+		// Create the subdirectory if it doesn't exist
+		mkdirCmd := buildSystemdRunCmd(ctx,
+			req.OSUser,
+			"mkdir", "-p", installPath,
+		)
+		if err := mkdirCmd.Run(); err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("failed to create subdirectory: %v", err),
+			}
+		}
+	}
+
 	// Step 1: wp core download
 	downloadCmd := buildSystemdRunCmd(ctx,
 		req.OSUser,
 		"wp", "core", "download",
-		"--path="+req.Docroot,
+		"--path="+installPath,
 		"--locale="+req.Locale,
 		"--version=latest",
 	)
@@ -198,7 +217,7 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 	configCmd := buildSystemdRunCmd(ctx,
 		req.OSUser,
 		"wp", "config", "create",
-		"--path="+req.Docroot,
+		"--path="+installPath,
 		"--dbname="+req.DBName,
 		"--dbuser="+req.DBUser,
 		"--dbhost="+req.DBHost,
@@ -208,7 +227,7 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 		"--skip-check",
 	)
 	if err := configCmd.Run(); err != nil {
-		_ = cleanupWordPressFiles(ctx, req.Docroot)
+		_ = cleanupWordPressFiles(ctx, installPath)
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
 			Message: fmt.Sprintf("wp config create failed: %v", err),
@@ -216,10 +235,10 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 	}
 
 	// Read wp-config.php and replace placeholder with real password
-	configPath := filepath.Join(req.Docroot, "wp-config.php")
+	configPath := filepath.Join(installPath, "wp-config.php")
 	configContent, err := os.ReadFile(configPath)
 	if err != nil {
-		_ = cleanupWordPressFiles(ctx, req.Docroot)
+		_ = cleanupWordPressFiles(ctx, installPath)
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
 			Message: fmt.Sprintf("failed to read wp-config.php: %v", err),
@@ -235,7 +254,7 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 
 	// Write back with restricted permissions (0640)
 	if err := os.WriteFile(configPath, configContent, 0640); err != nil {
-		_ = cleanupWordPressFiles(ctx, req.Docroot)
+		_ = cleanupWordPressFiles(ctx, installPath)
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
 			Message: fmt.Sprintf("failed to write wp-config.php: %v", err),
@@ -245,7 +264,7 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 	// Chown the config file to the OS user
 	chownCmd := exec.CommandContext(ctx, "chown", req.OSUser+":"+req.OSUser, configPath)
 	if err := chownCmd.Run(); err != nil {
-		_ = cleanupWordPressFiles(ctx, req.Docroot)
+		_ = cleanupWordPressFiles(ctx, installPath)
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
 			Message: fmt.Sprintf("chown wp-config.php failed: %v", err),
@@ -256,7 +275,7 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 	installCmd := buildSystemdRunCmd(ctx,
 		req.OSUser,
 		"wp", "core", "install",
-		"--path="+req.Docroot,
+		"--path="+installPath,
 		"--url="+req.SiteURL,
 		"--title="+req.SiteTitle,
 		"--admin_user="+req.AdminUser,
@@ -268,7 +287,7 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 	installCmd.Stdin = strings.NewReader(req.AdminPass + "\n")
 
 	if err := installCmd.Run(); err != nil {
-		_ = cleanupWordPressFiles(ctx, req.Docroot)
+		_ = cleanupWordPressFiles(ctx, installPath)
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
 			Message: fmt.Sprintf("wp core install failed: %v", err),
@@ -279,7 +298,7 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 	versionCmd := buildSystemdRunCmd(ctx,
 		req.OSUser,
 		"wp", "core", "version",
-		"--path="+req.Docroot,
+		"--path="+installPath,
 	)
 
 	var versionOutput bytes.Buffer
@@ -287,7 +306,7 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 	versionCmd.Stderr = io.Discard
 
 	if err := versionCmd.Run(); err != nil {
-		_ = cleanupWordPressFiles(ctx, req.Docroot)
+		_ = cleanupWordPressFiles(ctx, installPath)
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
 			Message: fmt.Sprintf("wp core version failed: %v", err),

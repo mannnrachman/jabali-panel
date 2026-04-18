@@ -2,7 +2,7 @@
 /**
  * SSO handler for phpMyAdmin.
  *
- * Validates an SSO token via the panel's UDS socket (/run/jabali/sso.sock)
+ * Validates an SSO token via the panel's UDS socket (/run/jabali-panel/sso.sock)
  * and populates the SignonSession to enable phpMyAdmin access without
  * interactive login.
  *
@@ -29,7 +29,7 @@ if (!isset($_GET['token']) || !preg_match('/^[A-Za-z0-9_-]{32,128}$/', $_GET['to
 }
 
 $token = $_GET['token'];
-$socket_path = 'unix:///run/jabali/sso.sock';
+$socket_path = 'unix:///run/jabali-panel/sso.sock';
 
 // Connect to the UDS validator socket
 $socket = stream_socket_client($socket_path, $errno, $errstr, 5);

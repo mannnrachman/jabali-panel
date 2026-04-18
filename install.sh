@@ -1107,6 +1107,13 @@ Requires=${AGENT_SERVICE_NAME}.service
 Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_USER
+# /run/jabali-panel — systemd creates owned $SERVICE_USER:$SERVICE_USER 0755
+# on service start and tears down on stop. The SSO UDS listener binds
+# \${runtime}/sso.sock here; unlike /run/jabali (owned by root, used by
+# the privileged agent), /run/jabali-panel is safe for the unprivileged
+# panel to write to.
+RuntimeDirectory=jabali-panel
+RuntimeDirectoryMode=0755
 EnvironmentFile=$ENV_FILE
 ExecStart=$BIN_PATH serve
 Restart=on-failure

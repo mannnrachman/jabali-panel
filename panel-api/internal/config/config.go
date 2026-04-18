@@ -133,7 +133,7 @@ type SSOConfig struct {
 	KeyPath string `toml:"key_path"`
 
 	// SocketPath is the filesystem path to the Unix domain socket for SSO validation.
-	// Default: /run/jabali/sso.sock
+	// Default: /run/jabali-panel/sso.sock
 	SocketPath string `toml:"socket_path"`
 }
 
@@ -164,7 +164,7 @@ func Defaults() *Config {
 		},
 		SSO: SSOConfig{
 			KeyPath:    "/etc/jabali-panel/sso.key",
-			SocketPath: "/run/jabali/sso.sock",
+			SocketPath: "/run/jabali-panel/sso.sock",
 		},
 	}
 }

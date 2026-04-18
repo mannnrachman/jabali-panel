@@ -148,6 +148,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.SSO = ssoService
 
 		deps.ServerSettings = serverSettingsRepo
+		sshKeyRepo := repository.NewSSHKeyRepository(sharedDB)
+		deps.SSHKeys = sshKeyRepo
+
 		// Reconciler: database as source of truth, agent state as derived state.
 		rec := reconciler.New(
 			domainRepo,
@@ -177,9 +180,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.PHPPools = phpPoolRepo
 		deps.PHPPoolIniOverrides = phpPoolIniOverrideRepo
 		deps.WordPressInstalls = wordpressInstallRepo
-
-		sshKeyRepo := repository.NewSSHKeyRepository(sharedDB)
-		deps.SSHKeys = sshKeyRepo
 
 		// Admin bootstrap.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

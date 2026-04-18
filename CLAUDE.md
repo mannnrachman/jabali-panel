@@ -41,3 +41,38 @@ This project is indexed by GitNexus as **jabali2** (10073 symbols, 21244 relatio
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+<!-- ⚠️ The block above may use simplified tool names. The ACTUAL MCP tool
+     identifiers are prefixed `mcp__gitnexus__`. Use the names in this
+     section when calling tools. -->
+
+## Actual tool names (use these — the `gitnexus_*` above are shorthand)
+
+| Shorthand in docs | Real MCP tool name |
+|---|---|
+| `gitnexus_impact` | `mcp__gitnexus__impact` |
+| `gitnexus_context` | `mcp__gitnexus__context` |
+| `gitnexus_query` | `mcp__gitnexus__query` |
+| `gitnexus_detect_changes` | `mcp__gitnexus__detect_changes` |
+| `gitnexus_rename` | `mcp__gitnexus__rename` |
+| Graph-augmented search | `mcp__gitnexus__cypher` (raw Cypher), `mcp__gitnexus__route_map`, `mcp__gitnexus__tool_map` |
+| Multi-repo / groups | `mcp__gitnexus__group_*`, `mcp__gitnexus__list_repos` |
+
+Tool schemas are deferred. If you need one, load it first:
+`ToolSearch("select:mcp__gitnexus__impact,mcp__gitnexus__context,mcp__gitnexus__query,mcp__gitnexus__detect_changes")`.
+
+## Sub-agent mandate (applies to every agent spawned in this project)
+
+Any agent launched via the `Agent` tool in the jabali2 worktree MUST:
+
+1. **Before first edit** to any `.go`, `.tsx`, `.ts` or migration file — call `mcp__gitnexus__impact` on the target symbol (function/struct/handler) and include the returned blast radius in its reasoning. If `impact` reports HIGH or CRITICAL risk, stop and report to the dispatcher BEFORE editing.
+
+2. **Before committing** — call `mcp__gitnexus__detect_changes` and verify affected symbols match the intended scope. If the change set includes unexpected symbols, pause and report.
+
+3. **For unfamiliar code exploration** (any "how does X work?" type question) — prefer `mcp__gitnexus__query` or `mcp__gitnexus__context` over `Grep`/`Read`. Text search is the fallback, not the default.
+
+4. **For renames** — use `mcp__gitnexus__rename`, never find-and-replace across files.
+
+This applies to planner, coder, backend-dev, security-architect, Explore, and every other sub-agent type. When a wave brief asks you to modify a symbol, the dispatcher assumes you've run impact analysis first. Acknowledge it in your summary output.
+
+If the gitnexus index is missing or stale, run `npx gitnexus analyze` once in the repo root and retry. Never skip the step silently.

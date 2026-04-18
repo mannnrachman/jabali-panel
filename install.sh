@@ -1697,9 +1697,13 @@ main() {
   provision_tls_cert
   seed_admin_env
   install_sso_key
+  # Order matters: install_phpmyadmin extracts the tarball to
+  # /opt/phpmyadmin/current, which the pma pool config references as
+  # chdir=. Starting the FPM service before the tarball is extracted
+  # causes FPM to fail with "chdir path does not exist".
+  install_phpmyadmin
   install_phpmyadmin_fpm_pool
   install_nginx_default_vhost
-  install_phpmyadmin
   write_agent_systemd_unit
   write_systemd_unit
   start_and_verify_agent

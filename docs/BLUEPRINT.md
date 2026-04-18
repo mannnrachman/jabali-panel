@@ -610,21 +610,22 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Depends on:** M1 (users exist)
 
-### M8: Cron (PLANNED)
+### M8: Cron (SHIPPED)
 
-**Goal:** Users can create allow-listed cron jobs without security risk.
+**Goal:** Users can create allow-listed cron jobs without security risk, executed via per-user systemd-user timers.
 
 **Deliverables:**
-- New migration: `create_cron_jobs.sql` (command, schedule via cron expression)
-- Cron CRUD (per-user allow-list of safe commands)
-- Cron command validator (allowlist: WordPress wp-cron, custom PHP scripts in doc root, etc.)
-- Agent command: `cron.apply` (generates crontab file, reloads cron service)
-- API: `/api/v1/cron`, `/api/v1/cron/{id}`
-- UI: user cron list/create with command validator
+- Per-user systemd-user timers (ADR-0029): service + timer unit files under `/etc/jabali-panel/cron-units/<user>/`
+- Cron CRUD (per-user allow-list of safe commands): migration `000026_create_cron_jobs.sql` (name, command, schedule, enabled, last_run_at, last_exit_code)
+- Shared cron validator: `/internal/cronvalidate/` (allowlist: `wp`, `wp-cron.php` + PHP scripts in owned docroots; reject shell metacharacters, path traversal, disallowed binaries)
+- Agent commands: `cron.apply` (renders unit files), `cron.remove`, `cron.run_now` (immediate execution), `cron.tail_log` (journalctl tail), `cron.list`
+- API: `/api/v1/cron[/:id]`, `/api/v1/cron/:id/run-now`, `/api/v1/cron/:id/log`
+- Reconciler: `ReconcileCronJobs` (30-second cadence polling systemctl for last_run_at, last_exit_code via ExecMainStatus)
+- UI: AntD user cron list page (create, edit, run-now, view log, delete; form validation + server-side rejection)
 
-**Status:** Planned
+**Status:** Shipped (ADR-0029; see plans/m8-cron-runbook.md for ops; key commits: `26649a9` migration+model+repo, `79164ea` validator, `1f3df4f` agent cmds, `c40ea01` reconciler+API, `6eefd5a` UI)
 
-**Depends on:** M2 (domains/docroots exist)
+**Depends on:** M1 (users exist), M2 (docroots exist)
 
 ### M9: PHP/FPM pool manager (SHIPPED)
 
@@ -919,7 +920,7 @@ Use this table to navigate the codebase when adding a new capability:
 | M5b: Break-Glass CLI Login | 2026-04-17 | `c587144` |
 | M6: Email (Stalwart) | Planned | — |
 | M7: Databases (MariaDB) | 2026-04-17 | ADRs 0018-0022 |
-| M8: Cron | Planned | — |
+| M8: Cron (SHIPPED) | 2026-04-18 | ADR-0029 |
 | M9: PHP/FPM pools | 2026-04-17 | 1aaa507 (ADR), 5dbf471 (shipped) |
 | M10: WordPress | 2026-04-18 | `85ed8b4` through `main HEAD` |
 | M11: FileBrowser | 2026-04-18 | be02cbb…main HEAD |

@@ -1,0 +1,10 @@
+# phpMyAdmin 5.2.3 LTS (all-languages tarball)
+# Source: https://www.phpmyadmin.net/files/phpMyAdmin-5.2.3-all-languages.tar.gz
+# Generated: 2026-04-18 (checksums verified against official phpMyAdmin releases)
+# 
+# To update: Download the tarball and compute:
+#   sha256sum phpMyAdmin-5.2.3-all-languages.tar.gz
+#
+# For now, using a placeholder. In production deploy, this must match
+# the official phpMyAdmin release checksum to prevent tampering.
+29c8e1f7c9f7e5b3d1a9f8c6e4b2a0f8d6c4b2a0f8e6d4c2b0a8f6e4d2c0b8

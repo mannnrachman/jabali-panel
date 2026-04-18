@@ -53,29 +53,29 @@ func filebrowserGroupAddHandler(ctx context.Context, params json.RawMessage) (an
 		}
 	}
 
-	// Check if p.Username appears in the groups output
+	// Check current membership. If filebrowser is already in the group
+	// we skip usermod (a no-op anyway, but this path also skips
+	// signaling the reconciler to restart filebrowser). The ACL step
+	// below still runs — it's the real access grant and must be
+	// idempotent against existing installs.
 	idOutput := idOut.String()
-	if strings.Contains(idOutput, fmt.Sprintf("(%s)", p.Username)) {
-		// Already a member
-		return &filebrowserGroupAddResponse{
-			GroupName:     p.Username,
-			AlreadyMember: true,
-		}, nil
-	}
+	alreadyMember := strings.Contains(idOutput, fmt.Sprintf("(%s)", p.Username))
 
-	// Step 1: add filebrowser to the per-user Unix group. This was the
-	// original M11 access path, but the user's home dir is chowned
-	// <user>:www-data (for nginx/PHP-FPM), so group membership alone
-	// does NOT grant filebrowser read access. We keep this step for
-	// defense-in-depth and so tooling that checks /etc/group doesn't
-	// see a skew between expected and actual members.
-	usermodCmd := exec.CommandContext(ctx, "usermod", "-aG", p.Username, "filebrowser")
-	var usermodErr bytes.Buffer
-	usermodCmd.Stderr = &usermodErr
-	if err := usermodCmd.Run(); err != nil {
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("failed to add filebrowser to group %s: %v (stderr: %s)", p.Username, err, usermodErr.String()),
+	if !alreadyMember {
+		// Step 1: add filebrowser to the per-user Unix group. This was
+		// the original M11 access path, but the user's home dir is
+		// chowned <user>:www-data (for nginx/PHP-FPM), so group
+		// membership alone does NOT grant filebrowser read access. We
+		// keep this step for defense-in-depth and so tooling that
+		// checks /etc/group doesn't see a skew.
+		usermodCmd := exec.CommandContext(ctx, "usermod", "-aG", p.Username, "filebrowser")
+		var usermodErr bytes.Buffer
+		usermodCmd.Stderr = &usermodErr
+		if err := usermodCmd.Run(); err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("failed to add filebrowser to group %s: %v (stderr: %s)", p.Username, err, usermodErr.String()),
+			}
 		}
 	}
 
@@ -107,8 +107,9 @@ func filebrowserGroupAddHandler(ctx context.Context, params json.RawMessage) (an
 	}
 
 	return &filebrowserGroupAddResponse{
-		GroupName: p.Username,
-		Added:     true,
+		GroupName:     p.Username,
+		Added:         !alreadyMember,
+		AlreadyMember: alreadyMember,
 	}, nil
 }
 

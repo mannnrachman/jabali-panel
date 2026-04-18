@@ -16,34 +16,45 @@ poolfile="/etc/php/${ver}/fpm/pool.d/jabali-${user}.conf"
 
 [[ -r "$userfpmconf" ]] || { echo "fpm-pre-start: missing per-user config $userfpmconf" >&2; exit 1; }
 
+# Derive the effective OS user/group from the pool config. For hosting
+# users the instance name equals the OS user, but system pools like
+# jabali-pma run as www-data while keeping a distinct instance name
+# (so paths remain /run/php/jabali-pma/...). Parse "user = X" and
+# "group = X" from the pool conf; fall back to the instance name.
+os_user=$(awk -F= '/^[[:space:]]*user[[:space:]]*=/ {gsub(/[[:space:]]/,"",$2); print $2; exit}' "$poolfile")
+os_group=$(awk -F= '/^[[:space:]]*group[[:space:]]*=/ {gsub(/[[:space:]]/,"",$2); print $2; exit}' "$poolfile")
+: "${os_user:=$user}"
+: "${os_group:=$os_user}"
+id -u "$os_user" >/dev/null 2>&1 || { echo "fpm-pre-start: OS user '$os_user' (from $poolfile) does not exist" >&2; exit 1; }
+
 # The unit's RuntimeDirectory-less setup means we're responsible for
 # /run/php existing with the expected perms. Sury's php-fpm package
 # creates it at package install time as root:root 0755.
 mkdir -p /run/php
 chmod 0755 /run/php
 
-# Per-user FPM runtime dir. FPM (after dropping to User=<user>) cannot
+# Per-user FPM runtime dir. FPM (after dropping to User=<os_user>) cannot
 # write to /run/php itself (www-data-owned), so we give it a user-owned
 # subdirectory to create its socket in. Group=www-data + mode=0750 lets
 # nginx traverse the dir to reach the socket but keeps it unreadable to
 # other hosting users.
 userrundir="/run/php/jabali-${user}"
 mkdir -p "$userrundir"
-chown "${user}:www-data" "$userrundir"
+chown "${os_user}:www-data" "$userrundir"
 chmod 0750 "$userrundir"
 
-# Pre-create the FPM error log owned by the hosting user. The per-user
-# config writes error_log to /var/log/php-fpm-<user>.log but /var/log
-# is root-owned, so FPM (which drops to user=<user> after starting)
-# cannot create the file itself. This shim runs as root (via "+"
-# prefix on ExecStartPre) so it can create+chown the file once.
+# Pre-create the FPM error log owned by the effective OS user. The
+# per-user config writes error_log to /var/log/php-fpm-<user>.log but
+# /var/log is root-owned, so FPM (which drops to User=<os_user> after
+# starting) cannot create the file itself. This shim runs as root (via
+# "+" prefix on ExecStartPre) so it can create+chown the file once.
 logfile="/var/log/php-fpm-${user}.log"
 if [[ ! -e "$logfile" ]]; then
-  install -m 0640 -o "$user" -g "$user" /dev/null "$logfile"
+  install -m 0640 -o "$os_user" -g "$os_group" /dev/null "$logfile"
 else
   # File already exists (e.g. left over from an older root-owned run).
   # Ensure ownership/mode so FPM can open it for append when it drops
   # to the hosting user after startup.
-  chown "$user:$user" "$logfile"
+  chown "$os_user:$os_group" "$logfile"
   chmod 0640 "$logfile"
 fi

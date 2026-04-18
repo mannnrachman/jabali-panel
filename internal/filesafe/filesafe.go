@@ -92,6 +92,18 @@ func NewScope(userID, username string, ownedDocroots []string) (*Scope, error) {
 	}, nil
 }
 
+// NewScopeForTest creates a Scope for testing with a temporary docroot.
+// Useful for testing symlink escape detection and other filesafe behavior
+// without requiring real user accounts.
+func NewScopeForTest(userID, username, docroot string) *Scope {
+	return &Scope{
+		UserID:        userID,
+		Username:      username,
+		OwnedDocroots: []string{docroot},
+		resolveCache:  make(map[string]string),
+	}
+}
+
 // Clean validates and cleans a path, returning the canonical form.
 // The path must be absolute and resolve within the owned docroots.
 // This is a pre-access gate; use before any filesystem operation.

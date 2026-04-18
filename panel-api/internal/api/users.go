@@ -662,12 +662,17 @@ func (h *userHandler) impersonate(c *gin.Context) {
 			scheme = "http"
 		}
 	}
-	hostname := c.Request.Host
-	if idx := strings.Index(hostname, ":"); idx != -1 {
-		// Host includes port, extract just the hostname
-		hostname = hostname[:idx]
+	// Extract hostname + port from the Host header. c.Request.URL.Port()
+	// is always empty on incoming requests (URL carries only the path);
+	// the port lives in Host. Without this, impersonation URLs default to
+	// :443 but the panel listens on :8443 → 404 from nginx's main vhost.
+	hostAndPort := c.Request.Host
+	hostname := hostAndPort
+	port := ""
+	if idx := strings.LastIndex(hostAndPort, ":"); idx != -1 {
+		hostname = hostAndPort[:idx]
+		port = hostAndPort[idx+1:]
 	}
-	port := c.Request.URL.Port()
 	if port == "" {
 		if scheme == "https" {
 			port = "443"

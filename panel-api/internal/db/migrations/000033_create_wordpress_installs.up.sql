@@ -1,0 +1,20 @@
+CREATE TABLE `wordpress_installs` (
+  `id` CHAR(26) NOT NULL PRIMARY KEY,
+  `user_id` CHAR(26) NOT NULL,
+  `domain_id` CHAR(26) NOT NULL UNIQUE,
+  `db_id` CHAR(26) NOT NULL,
+  `version` VARCHAR(32) NULL,
+  `admin_username` VARCHAR(60) NOT NULL,
+  `admin_email` VARCHAR(320) NOT NULL,
+  `locale` VARCHAR(16) NOT NULL DEFAULT 'en_US',
+  `status` VARCHAR(16) NOT NULL DEFAULT 'pending',
+  `last_error` VARCHAR(1024) NOT NULL DEFAULT '',
+  `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  CHECK (`status` IN ('pending','installing','ready','failed','deleting','cloning')),
+  FOREIGN KEY `fk_wpinstalls_user` (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
+  FOREIGN KEY `fk_wpinstalls_domain` (`domain_id`) REFERENCES `domains`(`id`) ON DELETE CASCADE,
+  FOREIGN KEY `fk_wpinstalls_db` (`db_id`) REFERENCES `databases`(`id`) ON DELETE RESTRICT,
+  KEY `idx_wpinstalls_user_id` (`user_id`),
+  KEY `idx_wpinstalls_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

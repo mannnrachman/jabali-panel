@@ -683,7 +683,26 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Depends on:** M1 (users), M7 (SSO pattern), M9 (per-user slices)
 
-### M12: Stats & monitoring (PLANNED)
+### M12: SFTP access via openssh (SHIPPED)
+
+**Goal:** Users upload SSH public keys in the panel and SFTP into their homedir. Key-only auth, no shell, no chroot.
+
+**Deliverables:**
+- SSH key management UI: "SSH Keys" page in user shell (add/delete keys with fingerprint display)
+- `ssh_keys` table: id, user_id, name, public_key, fingerprint, created_at
+- API CRUD handlers: `POST /api/v1/ssh-keys`, `GET /api/v1/ssh-keys`, `DELETE /api/v1/ssh-keys/{id}`
+- Agent commands: `ssh.authorized_keys.write`, `ssh.authorized_keys.delete`, `ssh.user.join_sftp_group`
+- Reconciler: ensures all jabali users in `jabali-sftp` group; syncs authorized_keys from DB
+- Systemd group: `jabali-sftp` (Match Group in sshd_config)
+- Sshd drop-in: `/etc/ssh/sshd_config.d/jabali-sftp.conf` (ForceCommand internal-sftp, no TCP forwarding, no passwords)
+- Playright E2E test: `tests/e2e/sftp.spec.ts` (add key → list with fingerprint → duplicate error → invalid error → delete)
+- Runbook: `plans/m12-sftp-runbook.md` (manual SFTP verification, troubleshooting auth, group membership, key sync)
+
+**Status:** Shipped (commits aaa0c82…0256773)
+
+**Depends on:** M1 (users), M9 (per-user slices)
+
+### M13: Stats & monitoring (PLANNED)
 
 **Goal:** Admins can view server resource usage (CPU, memory, disk, bandwidth) and per-domain
   traffic stats in real-time.
@@ -701,7 +720,7 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Depends on:** M2 (nginx vhosts)
 
-### M13: Notifications (PLANNED)
+### M14: Notifications (PLANNED)
 
 **Goal:** Admins can configure and receive alerts via email, Slack, Discord, webhook.
 
@@ -719,7 +738,7 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Depends on:** M6 (email channel requires Stalwart)
 
-### M14: Migration importers (PLANNED)
+### M15: Migration importers (PLANNED)
 
 **Goal:** Admins can import domains, users, and DNS from cPanel, DirectAdmin, HestiaCP, WHM.
 
@@ -739,7 +758,7 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Depends on:** M2 (domains), M7 (databases), M10 (WordPress)
 
-### M15: Automation API (PLANNED)
+### M16: Automation API (PLANNED)
 
 **Goal:** External tools (e.g., Terraform, Ansible) can provision resources via scoped HMAC
   tokens without sharing the admin password.
@@ -758,7 +777,7 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Depends on:** M2
 
-### M16: Diagnostic reports (PLANNED)
+### M17: Diagnostic reports (PLANNED)
 
 **Goal:** Admins can export server state as an RSA-encrypted tarball for support.
 
@@ -903,12 +922,13 @@ Use this table to navigate the codebase when adding a new capability:
 | M9: PHP/FPM pools | 2026-04-17 | 1aaa507 (ADR), 5dbf471 (shipped) |
 | M10: WordPress | 2026-04-18 | `85ed8b4` through `main HEAD` |
 | M11: FileBrowser | 2026-04-18 | be02cbb…main HEAD |
-| M12: Stats & monitoring | Planned | — |
-| M13: Notifications | Planned | — |
-| M14: Migration importers | Planned | — |
-| M15: Automation API | Planned | — |
-| M16: Diagnostic reports | Planned | — |
+| M12: SFTP via openssh | 2026-04-18 | `aaa0c82` through `0256773` |
+| M13: Stats & monitoring | Planned | — |
+| M14: Notifications | Planned | — |
+| M15: Migration importers | Planned | — |
+| M16: Automation API | Planned | — |
+| M17: Diagnostic reports | Planned | — |
 
 ---
 
-**Last updated:** 2026-04-17
+**Last updated:** 2026-04-18

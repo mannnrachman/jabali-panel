@@ -38,6 +38,7 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0023](0023-m9-php-fpm-pool-manager.md) | M9 PHP/FPM pool manager | Accepted |
 | [0025](0025-per-user-systemd-slices.md) | Per-user systemd slices | Accepted |
 | [0026](0026-m10-wordpress-installs.md) | M10 WordPress installs — schema + lifecycle | Accepted |
+| [0027](0027-m11-filebrowser-integration.md) | M11 File manager via filebrowser + proxy auth | Accepted |
 
 ## Decision Categories
 

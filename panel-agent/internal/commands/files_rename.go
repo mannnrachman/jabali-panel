@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/filesafe"
@@ -78,6 +79,24 @@ func filesRenameHandler(ctx context.Context, params json.RawMessage) (any, error
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
 			Message: fmt.Sprintf("new_path validation failed: %v", err),
+		}
+	}
+
+	// Validate that both paths share the same parent directory
+	oldParent := filepath.Dir(oldPath)
+	newParent := filepath.Dir(newPath)
+	if oldParent != newParent {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: "rename across directories not allowed",
+		}
+	}
+
+	// Prevent overwriting existing target
+	if _, err := os.Lstat(newPath); err == nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: "target path already exists",
 		}
 	}
 

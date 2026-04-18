@@ -2,9 +2,13 @@ package commands
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/user"
+	"strconv"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/filesafe"
@@ -48,6 +52,15 @@ func filesWriteHandler(ctx context.Context, params json.RawMessage) (any, error)
 		}
 	}
 
+	// Enforce content size cap at 100MB
+	const maxContentSize int64 = 100 * 1024 * 1024
+	if int64(len(p.Content)) > maxContentSize {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: fmt.Sprintf("content exceeds 100MB limit (%d bytes)", len(p.Content)),
+		}
+	}
+
 	// Create filesafe scope with user's home directory
 	homeDir := fmt.Sprintf("/home/%s", p.Username)
 	scope, err := filesafe.NewScope(p.UserID, p.Username, []string{homeDir})
@@ -67,16 +80,96 @@ func filesWriteHandler(ctx context.Context, params json.RawMessage) (any, error)
 		}
 	}
 
-	// Determine file open flags
-	var flags int
-	if p.Mode == "append" {
-		flags = os.O_WRONLY | os.O_APPEND | os.O_CREATE
-	} else {
-		flags = os.O_WRONLY | os.O_TRUNC | os.O_CREATE
+	// For overwrite mode (or if file doesn't exist), use temp-file-then-rename pattern
+	if p.Mode != "append" {
+		// Lookup user to get uid/gid
+		u, err := user.Lookup(p.Username)
+		if err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInvalidArgument,
+				Message: fmt.Sprintf("failed to lookup user %q: %v", p.Username, err),
+			}
+		}
+		uid, _ := strconv.Atoi(u.Uid)
+		gid, _ := strconv.Atoi(u.Gid)
+
+		// Generate temp filename with random suffix
+		randBytes := make([]byte, 8)
+		if _, err := rand.Read(randBytes); err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("failed to generate random suffix: %v", err),
+			}
+		}
+		tmpName := fmt.Sprintf("%s.tmp.%s", resolvedPath, hex.EncodeToString(randBytes))
+
+		// Create temp file with 0600 perms (read/write for owner only)
+		tmpFile, err := os.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("failed to create temp file: %v", err),
+			}
+		}
+
+		// Write content
+		n, err := tmpFile.WriteString(p.Content)
+		if err != nil {
+			tmpFile.Close()
+			os.Remove(tmpName)
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("failed to write to temp file: %v", err),
+			}
+		}
+
+		// Fsync to ensure data is written
+		if err := tmpFile.Sync(); err != nil {
+			tmpFile.Close()
+			os.Remove(tmpName)
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("failed to sync temp file: %v", err),
+			}
+		}
+
+		tmpFile.Close()
+
+		// Chown temp file to user:www-data
+		if err := os.Chown(tmpName, uid, gid); err != nil {
+			os.Remove(tmpName)
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("failed to chown temp file: %v", err),
+			}
+		}
+
+		// Chmod to 0664 (rw-rw-r--)
+		if err := os.Chmod(tmpName, 0664); err != nil {
+			os.Remove(tmpName)
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("failed to chmod temp file: %v", err),
+			}
+		}
+
+		// Atomic rename
+		if err := os.Rename(tmpName, resolvedPath); err != nil {
+			os.Remove(tmpName)
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("failed to rename temp file: %v", err),
+			}
+		}
+
+		return &filesWriteResponse{
+			Path:         resolvedPath,
+			BytesWritten: int64(n),
+		}, nil
 	}
 
-	// Open file safely
-	file, err := scope.Open(resolvedPath, flags, 0644)
+	// Append mode: open existing file or create new one
+	file, err := scope.Open(resolvedPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0664)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

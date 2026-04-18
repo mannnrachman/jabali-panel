@@ -65,3 +65,4 @@ logs/
 # direnv project-scoped env (DB creds etc.)
 .envrc
 .direnv/
+.gitnexus

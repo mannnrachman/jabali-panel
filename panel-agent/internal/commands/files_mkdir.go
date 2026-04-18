@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/user"
+	"strconv"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/filesafe"
@@ -66,12 +68,12 @@ func filesMkdirHandler(ctx context.Context, params json.RawMessage) (any, error)
 		}
 	}
 
-	// Create directory
+	// Create directory with temp permissions (0700), then set final perms + chown
 	var mkdirErr error
 	if p.Mode == "parents" {
-		mkdirErr = os.MkdirAll(resolvedPath, 0755)
+		mkdirErr = os.MkdirAll(resolvedPath, 0700)
 	} else {
-		mkdirErr = os.Mkdir(resolvedPath, 0755)
+		mkdirErr = os.Mkdir(resolvedPath, 0700)
 	}
 
 	if mkdirErr != nil {
@@ -80,6 +82,40 @@ func filesMkdirHandler(ctx context.Context, params json.RawMessage) (any, error)
 			return nil, &agentwire.AgentError{
 				Code:    agentwire.CodeInternal,
 				Message: fmt.Sprintf("failed to create directory: %v", mkdirErr),
+			}
+		}
+		// Directory already exists; adjust ownership if needed
+	} else {
+		// New directory created; set ownership and permissions
+		u, err := user.Lookup(p.Username)
+		if err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInvalidArgument,
+				Message: fmt.Sprintf("failed to lookup user %q: %v", p.Username, err),
+			}
+		}
+		uid, _ := strconv.Atoi(u.Uid)
+		gid, _ := strconv.Atoi(u.Gid)
+
+		// Chown to user:www-data
+		wwwDataGroup, err := user.LookupGroup("www-data")
+		wwwDataGid := gid
+		if err == nil {
+			wwwDataGid, _ = strconv.Atoi(wwwDataGroup.Gid)
+		}
+
+		if err := os.Chown(resolvedPath, uid, wwwDataGid); err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("failed to chown directory: %v", err),
+			}
+		}
+
+		// Chmod to 02775 (drwxrwsr-x with setgid bit)
+		if err := os.Chmod(resolvedPath, 02775); err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("failed to chmod directory: %v", err),
 			}
 		}
 	}

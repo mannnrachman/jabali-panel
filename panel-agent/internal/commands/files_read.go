@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"os"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/filesafe"
@@ -20,9 +22,10 @@ type filesReadParams struct {
 
 // filesReadResponse is the output shape for files.read.
 type filesReadResponse struct {
-	Path     string `json:"path"`
-	Content  string `json:"content"`
-	Truncated bool  `json:"truncated,omitempty"`
+	Path      string `json:"path"`
+	Content   string `json:"content"`
+	Truncated bool   `json:"truncated,omitempty"`
+	MimeType  string `json:"mime_type,omitempty"`
 }
 
 func filesReadHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -53,6 +56,12 @@ func filesReadHandler(ctx context.Context, params json.RawMessage) (any, error) 
 		p.Limit = 1 << 20 // 1MB
 	}
 
+	// Hard cap at 100MB regardless of Limit param
+	const hardCap int64 = 100 * 1024 * 1024
+	if p.Limit > hardCap {
+		p.Limit = hardCap
+	}
+
 	// Create filesafe scope with user's home directory
 	homeDir := fmt.Sprintf("/home/%s", p.Username)
 	scope, err := filesafe.NewScope(p.UserID, p.Username, []string{homeDir})
@@ -72,8 +81,8 @@ func filesReadHandler(ctx context.Context, params json.RawMessage) (any, error) 
 		}
 	}
 
-	// Open file safely
-	file, err := scope.Open(resolvedPath, 0, 0)
+	// Open file safely (O_RDONLY)
+	file, err := scope.Open(resolvedPath, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
@@ -97,10 +106,14 @@ func filesReadHandler(ctx context.Context, params json.RawMessage) (any, error) 
 		content = content[:p.Limit]
 	}
 
+	// MIME-sniff first 512 bytes
+	mimeType := http.DetectContentType(content)
+
 	return &filesReadResponse{
 		Path:      resolvedPath,
 		Content:   string(content),
 		Truncated: truncated,
+		MimeType:  mimeType,
 	}, nil
 }
 

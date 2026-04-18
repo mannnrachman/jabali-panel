@@ -19,11 +19,12 @@ type filesStatParams struct {
 
 // filesStatResponse is the output shape for files.stat.
 type filesStatResponse struct {
-	Path    string `json:"path"`
-	Size    int64  `json:"size"`
-	Mode    string `json:"mode"`
-	IsDir   bool   `json:"is_dir"`
-	ModTime string `json:"mod_time"`
+	Path      string `json:"path"`
+	Size      int64  `json:"size"`
+	Mode      string `json:"mode"`
+	IsDir     bool   `json:"is_dir"`
+	ModTime   string `json:"mod_time"`
+	IsSymlink bool   `json:"is_symlink"`
 }
 
 func filesStatHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -68,8 +69,8 @@ func filesStatHandler(ctx context.Context, params json.RawMessage) (any, error) 
 		}
 	}
 
-	// Stat file
-	info, err := os.Stat(resolvedPath)
+	// Lstat file (don't follow symlinks)
+	info, err := os.Lstat(resolvedPath)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
@@ -78,11 +79,12 @@ func filesStatHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	}
 
 	return &filesStatResponse{
-		Path:    resolvedPath,
-		Size:    info.Size(),
-		Mode:    info.Mode().String(),
-		IsDir:   info.IsDir(),
-		ModTime: info.ModTime().String(),
+		Path:      resolvedPath,
+		Size:      info.Size(),
+		Mode:      info.Mode().String(),
+		IsDir:     info.IsDir(),
+		ModTime:   info.ModTime().String(),
+		IsSymlink: (info.Mode() & os.ModeSymlink) != 0,
 	}, nil
 }
 

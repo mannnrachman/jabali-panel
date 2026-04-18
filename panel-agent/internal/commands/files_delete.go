@@ -66,6 +66,16 @@ func filesDeleteHandler(ctx context.Context, params json.RawMessage) (any, error
 		}
 	}
 
+	// Prevent deletion of docroot roots themselves
+	for _, docroot := range scope.OwnedDocroots {
+		if resolvedPath == docroot {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInvalidArgument,
+				Message: "cannot delete docroot directory",
+			}
+		}
+	}
+
 	// Delete file or directory
 	var deleteErr error
 	if p.Recursive {

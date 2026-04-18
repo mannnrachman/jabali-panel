@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/filesafe"
@@ -19,10 +20,12 @@ type filesListParams struct {
 
 // filesListEntry represents a single file/directory entry.
 type filesListEntry struct {
-	Name  string `json:"name"`
-	IsDir bool   `json:"is_dir"`
-	Size  int64  `json:"size"`
-	Mode  string `json:"mode"`
+	Name      string `json:"name"`
+	IsDir     bool   `json:"is_dir"`
+	Size      int64  `json:"size"`
+	Mode      string `json:"mode"`
+	ModTime   string `json:"mod_time"`
+	IsSymlink bool   `json:"is_symlink"`
 }
 
 // filesListResponse is the output shape for files.list.
@@ -82,20 +85,24 @@ func filesListHandler(ctx context.Context, params json.RawMessage) (any, error) 
 		}
 	}
 
-	// Convert entries
-	result := make([]filesListEntry, len(entries))
-	for i, entry := range entries {
-		info, err := entry.Info()
+	// Convert entries (use Lstat to avoid symlink traversal)
+	result := []filesListEntry{}
+	for _, entry := range entries {
+		// Use Lstat to avoid following symlinks
+		entryPath := filepath.Join(resolvedPath, entry.Name())
+		info, err := os.Lstat(entryPath)
 		if err != nil {
 			// Skip entries we can't stat
 			continue
 		}
-		result[i] = filesListEntry{
-			Name:  entry.Name(),
-			IsDir: entry.IsDir(),
-			Size:  info.Size(),
-			Mode:  info.Mode().String(),
-		}
+		result = append(result, filesListEntry{
+			Name:      entry.Name(),
+			IsDir:     info.IsDir(),
+			Size:      info.Size(),
+			Mode:      info.Mode().String(),
+			ModTime:   info.ModTime().String(),
+			IsSymlink: (info.Mode() & os.ModeSymlink) != 0,
+		})
 	}
 
 	return &filesListResponse{

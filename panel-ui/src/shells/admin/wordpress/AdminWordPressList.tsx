@@ -61,10 +61,10 @@ export const AdminWordPressList = () => {
     resource: "wordpress-installs",
     syncWithLocation: true,
     queryOptions: {
-      refetchInterval: (query) => {
-        if (!query) return false;
-        const data = query.state.data as { data?: WordPressInstall[] } | undefined;
-        const rows = data?.data ?? [];
+      // react-query v4: (data, query) => number | false. data is
+      // Refine's list envelope, not the Query object.
+      refetchInterval: (data) => {
+        const rows = (data as { data?: WordPressInstall[] } | undefined)?.data ?? [];
         const hasTransitional = rows.some(
           (r) =>
             r.status === "pending" ||

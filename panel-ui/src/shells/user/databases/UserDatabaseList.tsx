@@ -65,11 +65,24 @@ export const UserDatabaseList = () => {
   );
 
   const handleOpenPhpMyAdmin = async (row: Database) => {
+    // Open a blank tab synchronously so it counts as a user-initiated
+    // popup; most browsers block window.open() that fires after an
+    // await. We navigate the tab once the SSO redirect URL resolves.
+    // The tab is opened with `noopener,noreferrer` so phpMyAdmin can't
+    // reach back through window.opener.
+    const tab = window.open("", "_blank", "noopener,noreferrer");
     try {
       setLoadingPhpMyAdminId(row.id);
       const response = await ssoPhpMyAdmin(row.id);
-      window.location.assign(response.redirect_url);
+      if (tab) {
+        tab.location.href = response.redirect_url;
+      } else {
+        // Pop-up blocker closed the tab before we got the URL; fall
+        // back to same-tab navigation so the user isn't stranded.
+        window.location.assign(response.redirect_url);
+      }
     } catch (error) {
+      if (tab) tab.close();
       const errorMsg =
         error instanceof Error ? error.message : "Could not open phpMyAdmin";
       message.error(`Could not open phpMyAdmin: ${errorMsg}`);

@@ -80,10 +80,11 @@ export const UserWordPressList = () => {
     // installing→ready without manual refresh. Refine's useTable lets
     // us pass refetchInterval through to react-query.
     queryOptions: {
-      refetchInterval: (query) => {
-        if (!query) return false;
-        const data = query.state.data as { data?: WordPressInstall[] } | undefined;
-        const rows = data?.data ?? [];
+      // react-query v4 signature: (data, query) => number | false.
+      // data is Refine's list envelope { data: WordPressInstall[], total, ... }
+      // — NOT the raw react-query Query object (that's v5).
+      refetchInterval: (data) => {
+        const rows = (data as { data?: WordPressInstall[] } | undefined)?.data ?? [];
         const hasTransitional = rows.some(
           (r) =>
             r.status === "pending" ||

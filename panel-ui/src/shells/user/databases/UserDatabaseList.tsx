@@ -3,10 +3,11 @@ import { DeleteButton } from "@refinedev/antd";
 import { SearchableTable } from "../../../components/SearchableTable";
 import { readQValue } from "../../../components/searchableTableUtils";
 import { Button, Space, Table, Tag, Typography, message, Tooltip } from "antd";
-import { DatabaseOutlined, PlusSquareOutlined, LinkOutlined } from "@ant-design/icons";
+import { DatabaseOutlined, PlusSquareOutlined, LinkOutlined, ThunderboltOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router";
 import { ssoPhpMyAdmin } from "../../../apiClient";
 import { useState } from "react";
+import { QuickSetupModal } from "./QuickSetupModal";
 
 export type Database = {
   id: string;
@@ -22,12 +23,13 @@ export type Database = {
 
 export const UserDatabaseList = () => {
   const navigate = useNavigate();
-  const { tableProps, setFilters, filters } = useTable<Database>({
+  const { tableProps, tableQuery, setFilters, filters } = useTable<Database>({
     resource: "databases",
     syncWithLocation: true,
   });
   const initialSearch = readQValue(filters);
   const [loadingPhpMyAdminId, setLoadingPhpMyAdminId] = useState<string | null>(null);
+  const [quickSetupOpen, setQuickSetupOpen] = useState(false);
 
   const engineColorMap: Record<string, string> = {
     mariadb: "blue",
@@ -88,14 +90,28 @@ export const UserDatabaseList = () => {
         <Typography.Title level={3} style={{ margin: 0 }}>
           My Databases
         </Typography.Title>
-        <Button
-          type="primary"
-          icon={<PlusSquareOutlined />}
-          onClick={() => navigate("/jabali-panel/databases/create")}
-        >
-          Create Database
-        </Button>
+        <Space>
+          <Button
+            icon={<ThunderboltOutlined />}
+            onClick={() => setQuickSetupOpen(true)}
+          >
+            Quick Setup
+          </Button>
+          <Button
+            type="primary"
+            icon={<PlusSquareOutlined />}
+            onClick={() => navigate("/jabali-panel/databases/create")}
+          >
+            Create Database
+          </Button>
+        </Space>
       </Space>
+
+      <QuickSetupModal
+        open={quickSetupOpen}
+        onClose={() => setQuickSetupOpen(false)}
+        onSuccess={() => tableQuery?.refetch?.()}
+      />
 
       <SearchableTable<Database>
         {...tableProps}

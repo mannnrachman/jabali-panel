@@ -106,11 +106,13 @@ export function UserPHPSettingsPage() {
   const [domains, setDomains] = useState<Domain[]>([]);
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
   const [phpSettings, setPhpSettings] = useState<DomainPHPSettings | null>(null);
+  const [availableVersions, setAvailableVersions] = useState<string[]>([]);
+  const [versionSaving, setVersionSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm<PHPSettingsFormData>();
 
-  // Load identity and domains on mount
+  // Load identity, domains, and installed PHP versions on mount
   useEffect(() => {
     (async () => {
       const identity = await getIdentity();
@@ -124,8 +126,50 @@ export function UserPHPSettingsPage() {
       } catch (err) {
         message.error("Failed to load domains");
       }
+
+      try {
+        const resp = await apiClient.get<{ versions: string[] }>(
+          "/php/versions",
+        );
+        setAvailableVersions(resp.data?.versions ?? []);
+      } catch (err) {
+        // Non-fatal: PHP version selector falls back to "Default only".
+      }
     })();
   }, []);
+
+  const onChangePHPVersion = async (version: string | null) => {
+    if (!selectedDomain) return;
+    setVersionSaving(true);
+    try {
+      if (version === null) {
+        await apiClient.delete(`/domains/${selectedDomain}/php-pool`);
+      } else {
+        await apiClient.post(`/domains/${selectedDomain}/php-pool`, {
+          php_version: version,
+        });
+      }
+      message.success(
+        version
+          ? `Switched to PHP ${version}`
+          : "Reverted to server default PHP version",
+      );
+      const resp = await apiClient.get<DomainPHPSettings>(
+        `/domains/${selectedDomain}/php-settings`,
+      );
+      setPhpSettings(resp.data);
+    } catch (err) {
+      const e = err as {
+        response?: { data?: { error?: string } };
+        message?: string;
+      };
+      message.error(
+        e.response?.data?.error ?? e.message ?? "Failed to change PHP version",
+      );
+    } finally {
+      setVersionSaving(false);
+    }
+  };
 
   // Load PHP settings when domain is selected
   useEffect(() => {
@@ -236,9 +280,21 @@ export function UserPHPSettingsPage() {
             <Spin spinning={loading}>
               {selectedDomain && phpSettings && (
                 <>
-                  <Typography.Title level={4}>
-                    PHP Version: {phpSettings.php_version || "Default"}
-                  </Typography.Title>
+                  <Form.Item label="PHP Version">
+                    <Select
+                      value={phpSettings.php_version ?? null}
+                      loading={versionSaving}
+                      disabled={versionSaving}
+                      onChange={(v) => onChangePHPVersion(v)}
+                      options={[
+                        { label: "Server default", value: null },
+                        ...availableVersions.map((v) => ({
+                          label: `PHP ${v}`,
+                          value: v,
+                        })),
+                      ]}
+                    />
+                  </Form.Item>
 
                   <Typography.Title level={5}>Resource Limits</Typography.Title>
                   <Row gutter={[16, 16]}>

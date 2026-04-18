@@ -1481,7 +1481,7 @@ install_wp_cli() {
   # Download the phar
   _log "downloading wp-cli $wp_version"
   if ! curl -fsSL -o "$wp_archive" \
-    "https://github.com/wp-cli/builds/releases/download/v${wp_version}/wp-cli-${wp_version}.phar"; then
+    "https://github.com/wp-cli/wp-cli/releases/download/v${wp_version}/wp-cli-${wp_version}.phar"; then
     _die "failed to download wp-cli $wp_version phar"
   fi
 

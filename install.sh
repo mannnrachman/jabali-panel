@@ -1237,6 +1237,178 @@ start_and_verify() {
 # ---------- step: SSO key generation ----------------------------------------
 
 
+# ---------- step 6.4: nginx default vhost for phpMyAdmin SSO -----
+
+install_nginx_default_vhost() {
+  _log "creating default nginx vhost on port 80 with phpMyAdmin SSO support"
+
+  local nginx_sites_dir="/etc/nginx/sites-available"
+  local nginx_enabled_dir="/etc/nginx/sites-enabled"
+  local default_vhost_file="${nginx_sites_dir}/jabali-default.conf"
+
+  # Create the default vhost config that listens on port 80 and includes phpmyadmin.conf
+  _log "writing ${default_vhost_file}"
+  cat > "${default_vhost_file}" << 'VHOSTEOF'
+# Default vhost on port 80
+# Serves as entry point for phpMyAdmin SSO and static content
+
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    
+    server_name _;
+    
+    # Log files
+    access_log /var/log/nginx/default.access.log;
+    error_log /var/log/nginx/default.error.log;
+    
+    # Root document root (can serve static content)
+    root /var/www/html;
+    index index.html index.htm;
+    
+    # Include phpMyAdmin location block
+    include /etc/nginx/sites-available/includes/phpmyadmin.conf;
+    
+    # Fallback for any other requests
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
+VHOSTEOF
+
+  _ok "default vhost config written"
+
+  # Remove old /etc/nginx/sites-enabled/default symlink if it exists
+  if [[ -L "${nginx_enabled_dir}/default" ]]; then
+    _log "removing old ${nginx_enabled_dir}/default symlink"
+    rm -f "${nginx_enabled_dir}/default"
+  fi
+
+  # Create symlink to new default vhost
+  _log "creating symlink ${nginx_enabled_dir}/default -> ${default_vhost_file}"
+  ln -sf "${default_vhost_file}" "${nginx_enabled_dir}/default.conf"
+
+  # Test nginx configuration
+  _log "testing nginx configuration"
+  if ! nginx -t 2>&1 | grep -q "successful"; then
+    _error "nginx configuration test failed"
+    return 1
+  fi
+
+  # Reload nginx
+  _log "reloading nginx"
+  systemctl reload nginx || {
+    _warn "nginx reload failed; trying restart"
+    systemctl restart nginx
+  }
+
+  _ok "default nginx vhost installed and activated"
+}
+
+
+# ---------- step 6.5: phpMyAdmin dedicated FPM pool -----
+
+install_phpmyadmin_fpm_pool() {
+  _log "installing dedicated FPM pool for phpMyAdmin"
+
+  local pma_user="www-data"
+  local pma_pool="pma"
+  local pma_phpver="8.5"
+  local pma_root="/opt/phpmyadmin/current"
+
+  # Create version pin for pma pool
+  _log "pinning PHP version for pma pool"
+  mkdir -p /etc/jabali-panel/user-phpver
+  echo "$pma_phpver" > /etc/jabali-panel/user-phpver/pma
+  chmod 0644 /etc/jabali-panel/user-phpver/pma
+  _ok "PHP version pinned: $pma_phpver"
+
+  # Create pool directory for FPM config
+  mkdir -p /etc/php/${pma_phpver}/fpm/pool.d
+  chmod 0755 /etc/php/${pma_phpver}/fpm/pool.d
+
+  # Write pool config: jabali-pma.conf
+  _log "writing pool config for jabali-pma"
+  cat > /etc/php/${pma_phpver}/fpm/pool.d/jabali-pma.conf <<'POOLEOF'
+[jabali-pma]
+user = www-data
+group = www-data
+listen = /run/php/jabali-pma/fpm.sock
+listen.owner = www-data
+listen.group = www-data
+listen.mode = 0660
+pm = ondemand
+pm.max_children = 10
+pm.process_idle_timeout = 60s
+chdir = /opt/phpmyadmin/current
+security.limit_extensions = .php
+
+; phpMyAdmin needs access to its own code, /tmp for sessions, and
+; /etc/jabali-panel/sso.key is out of scope — phpMyAdmin only reads
+; creds from the UDS SSO validator, never the key itself.
+php_admin_value[open_basedir] = /opt/phpmyadmin:/tmp:/var/tmp
+POOLEOF
+  chmod 0644 /etc/php/${pma_phpver}/fpm/pool.d/jabali-pma.conf
+  _ok "pool config written"
+
+  # Write per-pool FPM master config: /etc/jabali-panel/fpm/pma.conf
+  _log "writing per-pool FPM master config"
+  mkdir -p /etc/jabali-panel/fpm
+  cat > /etc/jabali-panel/fpm/pma.conf <<'FPMEOF'
+[global]
+pid = /run/php/jabali-pma/fpm.pid
+error_log = /var/log/php-fpm-pma.log
+daemonize = no
+include=/etc/php/8.5/fpm/pool.d/jabali-pma.conf
+FPMEOF
+  chmod 0644 /etc/jabali-panel/fpm/pma.conf
+  _ok "per-pool FPM master config written"
+
+  # Pre-create the FPM error log file with www-data ownership
+  _log "pre-creating FPM error log"
+  if [[ ! -e "/var/log/php-fpm-pma.log" ]]; then
+    install -m 0640 -o www-data -g www-data /dev/null /var/log/php-fpm-pma.log
+  else
+    chown www-data:www-data /var/log/php-fpm-pma.log
+    chmod 0640 /var/log/php-fpm-pma.log
+  fi
+  _ok "FPM error log pre-created"
+
+  # Create systemd drop-in for the FPM service (sets Slice)
+  _log "creating systemd drop-in for jabali-fpm@pma.service"
+  mkdir -p /etc/systemd/system/jabali-fpm@pma.service.d
+  cat > /etc/systemd/system/jabali-fpm@pma.service.d/slice.conf <<'DROPINEOF'
+[Service]
+User=www-data
+Group=www-data
+ExecStart=
+ExecStart=/usr/sbin/php-fpm8.5 --nodaemonize --fpm-config=/etc/jabali-panel/fpm/pma.conf
+SyslogIdentifier=php-fpm-pma
+Slice=jabali.slice
+DROPINEOF
+  chmod 0644 /etc/systemd/system/jabali-fpm@pma.service.d/slice.conf
+  _ok "systemd drop-in created"
+
+  # Reload systemd and start the service
+  _log "reloading systemd daemon"
+  systemctl daemon-reload
+
+  _log "starting and verifying jabali-fpm@pma service"
+  systemctl enable jabali-fpm@pma.service
+  systemctl start jabali-fpm@pma.service
+
+  # Wait a moment for the socket to appear
+  sleep 1
+
+  # Verify the socket exists and is readable by www-data
+  if [[ ! -S "/run/php/jabali-pma/fpm.sock" ]]; then
+    _error "FPM socket /run/php/jabali-pma/fpm.sock was not created"
+    return 1
+  fi
+
+  _ok "phpMyAdmin FPM pool (jabali-pma) installed and running"
+}
+
 # ---------- step 7: phpMyAdmin + SSO support --------------------------------
 
 install_phpmyadmin() {
@@ -1453,6 +1625,11 @@ location ^~ /phpmyadmin/ {
     }
 }
 NGINXEOF
+
+  # Substitute {PHP_POOL_SOCKET} placeholder with actual pma socket
+  _log "substituting PHP_POOL_SOCKET in phpmyadmin.conf"
+  sed -i "s|{PHP_POOL_SOCKET}|/run/php/jabali-pma/fpm.sock|g" "${nginx_inc_dir}/phpmyadmin.conf"
+  _ok "phpMyAdmin nginx config ready"
   _ok "nginx location block written"
 
   # Create log directory for phpMyAdmin nginx logs
@@ -1520,6 +1697,8 @@ main() {
   provision_tls_cert
   seed_admin_env
   install_sso_key
+  install_phpmyadmin_fpm_pool
+  install_nginx_default_vhost
   install_phpmyadmin
   write_agent_systemd_unit
   write_systemd_unit

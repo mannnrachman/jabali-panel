@@ -1259,8 +1259,7 @@ install_nginx_default_vhost() {
 
   # Sanity: the cert must exist (provision_tls_cert runs earlier in main()).
   if [[ ! -f "$tls_cert" || ! -f "$tls_key" ]]; then
-    _error "TLS cert missing: $tls_cert — provision_tls_cert must run first"
-    return 1
+    _die "TLS cert missing: $tls_cert — provision_tls_cert must run first"
   fi
 
   # Default vhost:
@@ -1326,8 +1325,8 @@ VHOSTEOF
   # Test nginx configuration
   _log "testing nginx configuration"
   if ! nginx -t 2>&1 | grep -q "successful"; then
-    _error "nginx configuration test failed"
-    return 1
+    nginx -t 2>&1 >&2 || true
+    _die "nginx configuration test failed"
   fi
 
   # Reload nginx
@@ -1429,16 +1428,26 @@ DROPINEOF
   systemctl daemon-reload
 
   _log "starting and verifying jabali-fpm@pma service"
+  systemctl reset-failed jabali-fpm@pma.service 2>/dev/null || true
   systemctl enable jabali-fpm@pma.service
-  systemctl start jabali-fpm@pma.service
+  systemctl restart jabali-fpm@pma.service
 
-  # Wait a moment for the socket to appear
-  sleep 1
-
-  # Verify the socket exists and is readable by www-data
-  if [[ ! -S "/run/php/jabali-pma/fpm.sock" ]]; then
-    _error "FPM socket /run/php/jabali-pma/fpm.sock was not created"
-    return 1
+  # Poll for the FPM socket. ondemand mode still creates the listening
+  # socket at master start, but there's a race between systemctl returning
+  # and the child pre-start shim completing the mkdir/chown, so give it
+  # a few seconds before giving up.
+  local sock="/run/php/jabali-pma/fpm.sock"
+  local tries=0
+  while (( tries < 20 )); do
+    [[ -S "$sock" ]] && break
+    sleep 0.25
+    tries=$((tries + 1))
+  done
+  if [[ ! -S "$sock" ]]; then
+    _warn "FPM socket $sock was not created — dumping status for diagnosis:"
+    systemctl status jabali-fpm@pma.service --no-pager -l | sed 's/^/  /' >&2 || true
+    journalctl -u jabali-fpm@pma.service -n 30 --no-pager | sed 's/^/  /' >&2 || true
+    _die "jabali-fpm@pma failed to create socket $sock"
   fi
 
   _ok "phpMyAdmin FPM pool (jabali-pma) installed and running"

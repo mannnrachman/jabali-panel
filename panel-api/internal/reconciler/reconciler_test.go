@@ -125,6 +125,21 @@ func (f *fakeDomainRepo) CountByPHPPoolID(ctx context.Context, poolID string) (i
 	return int64(count), nil
 }
 
+func (f *fakeDomainRepo) UpdatePHPSettings(ctx context.Context, id string, settings repository.DomainPHPSettings) error {
+	for i, d := range f.domains {
+		if d.ID == id {
+			f.domains[i].PHPMemoryLimit = settings.MemoryLimit
+			f.domains[i].PHPUploadMaxFilesize = settings.UploadMaxFilesize
+			f.domains[i].PHPPostMaxSize = settings.PostMaxSize
+			f.domains[i].PHPMaxInputVars = settings.MaxInputVars
+			f.domains[i].PHPMaxExecutionTime = settings.MaxExecutionTime
+			f.domains[i].PHPMaxInputTime = settings.MaxInputTime
+			return nil
+		}
+	}
+	return &notFoundErr{}
+}
+
 type notFoundErr struct{}
 
 func (e *notFoundErr) Error() string { return "not found" }
@@ -556,6 +571,144 @@ func TestReconcileAll_DomainWithPHPPool(t *testing.T) {
 	hcParams := agent.calls[4].params.(map[string]string)
 	require.Equal(t, "/home/phpuser/domains/phpsite.com/public_html/jabali-healthcheck.php", hcParams["path"], "healthcheck path should be correct")
 	require.Equal(t, "phpuser:www-data", hcParams["user_group"], "healthcheck user_group should be correct")
+}
+
+func TestReconcileAll_DomainWithPHPSettingsOverrides(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+	phpPoolRepo := &fakePHPPoolRepo{pools: make(map[string]*models.PHPPool)}
+
+	// Setup: domain with PHP pool and per-domain INI overrides
+	now := time.Now().UTC()
+	username := "phpuser"
+	user := &models.User{
+		ID:       "user-1",
+		Email:    "phpuser@example.com",
+		Username: &username,
+	}
+	userRepo.users[user.ID] = user
+
+	phpPoolID := "pool-1"
+	phpPool := &models.PHPPool{
+		ID:         phpPoolID,
+		PHPVersion: "8.5",
+	}
+	phpPoolRepo.pools[phpPoolID] = phpPool
+
+	// Domain with overrides
+	mem := "256M"
+	upload := "128M"
+	post := "64M"
+	inputVars := 10000
+	execTime := 300
+	inputTime := 60
+
+	domain := &models.Domain{
+		ID:                   "domain-1",
+		UserID:               user.ID,
+		Name:                 "phpsite.com",
+		DocRoot:              "/home/phpuser/domains/phpsite.com/public_html",
+		IsEnabled:            true,
+		PHPPoolID:            &phpPoolID,
+		PHPMemoryLimit:       &mem,
+		PHPUploadMaxFilesize: &upload,
+		PHPPostMaxSize:       &post,
+		PHPMaxInputVars:      &inputVars,
+		PHPMaxExecutionTime:  &execTime,
+		PHPMaxInputTime:      &inputTime,
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+	domainRepo.domains[domain.ID] = domain
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second}).
+		WithPHPPools(phpPoolRepo)
+
+	err := r.ReconcileAll(ctx)
+	require.NoError(t, err)
+
+	// Verify domain.create was called
+	require.Len(t, agent.calls, 5)
+	require.Equal(t, "domain.create", agent.calls[3].method)
+
+	// Verify PHP settings were passed through
+	params := agent.calls[3].params.(map[string]any)
+	require.Equal(t, "256M", params["php_memory_limit"])
+	require.Equal(t, "128M", params["php_upload_max_filesize"])
+	require.Equal(t, "64M", params["php_post_max_size"])
+	require.Equal(t, 10000, params["php_max_input_vars"])
+	require.Equal(t, 300, params["php_max_execution_time"])
+	require.Equal(t, 60, params["php_max_input_time"])
+}
+
+func TestReconcileAll_DomainWithoutPHPSettingsOverrides(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+	phpPoolRepo := &fakePHPPoolRepo{pools: make(map[string]*models.PHPPool)}
+
+	// Setup: domain with PHP pool but NO per-domain overrides
+	now := time.Now().UTC()
+	username := "phpuser"
+	user := &models.User{
+		ID:       "user-1",
+		Email:    "phpuser@example.com",
+		Username: &username,
+	}
+	userRepo.users[user.ID] = user
+
+	phpPoolID := "pool-1"
+	phpPool := &models.PHPPool{
+		ID:         phpPoolID,
+		PHPVersion: "8.5",
+	}
+	phpPoolRepo.pools[phpPoolID] = phpPool
+
+	// Domain without overrides (all nil)
+	domain := &models.Domain{
+		ID:        "domain-1",
+		UserID:    user.ID,
+		Name:      "phpsite.com",
+		DocRoot:   "/home/phpuser/domains/phpsite.com/public_html",
+		IsEnabled: true,
+		PHPPoolID: &phpPoolID,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	domainRepo.domains[domain.ID] = domain
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second}).
+		WithPHPPools(phpPoolRepo)
+
+	err := r.ReconcileAll(ctx)
+	require.NoError(t, err)
+
+	// Verify domain.create was called and NO overrides were passed
+	require.Len(t, agent.calls, 5)
+	require.Equal(t, "domain.create", agent.calls[3].method)
+
+	params := agent.calls[3].params.(map[string]any)
+	// When all are nil, they should not be in the params map
+	_, hasMemLimit := params["php_memory_limit"]
+	_, hasUpload := params["php_upload_max_filesize"]
+	_, hasPost := params["php_post_max_size"]
+	_, hasVars := params["php_max_input_vars"]
+	_, hasExecTime := params["php_max_execution_time"]
+	_, hasInputTime := params["php_max_input_time"]
+
+	require.False(t, hasMemLimit, "php_memory_limit should not be present when nil")
+	require.False(t, hasUpload, "php_upload_max_filesize should not be present when nil")
+	require.False(t, hasPost, "php_post_max_size should not be present when nil")
+	require.False(t, hasVars, "php_max_input_vars should not be present when nil")
+	require.False(t, hasExecTime, "php_max_execution_time should not be present when nil")
+	require.False(t, hasInputTime, "php_max_input_time should not be present when nil")
 }
 
 func TestReconcileOne_DomainFound(t *testing.T) {

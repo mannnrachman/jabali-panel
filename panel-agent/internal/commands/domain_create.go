@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -33,6 +34,13 @@ type domainCreateParams struct {
 	IsEnabled    *bool  `json:"is_enabled"`
 	SSLCertPath  string `json:"ssl_cert_path"`
 	SSLKeyPath   string `json:"ssl_key_path"`
+	// PHP INI overrides: omitted if not set on the domain.
+	PHPMemoryLimit       string `json:"php_memory_limit,omitempty"`
+	PHPUploadMaxFilesize string `json:"php_upload_max_filesize,omitempty"`
+	PHPPostMaxSize       string `json:"php_post_max_size,omitempty"`
+	PHPMaxInputVars      int    `json:"php_max_input_vars,omitempty"`
+	PHPMaxExecutionTime  int    `json:"php_max_execution_time,omitempty"`
+	PHPMaxInputTime      int    `json:"php_max_input_time,omitempty"`
 }
 
 // domainCreateResponse is the output shape for domain.create.
@@ -80,6 +88,9 @@ server {
         fastcgi_pass unix:/run/php/jabali-{{.Username}}/fpm.sock;
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
         include fastcgi_params;
+{{ if .PHPValueParam }}
+        fastcgi_param PHP_VALUE "{{.PHPValueParam}}";
+{{ end }}
     }
 {{ end }}
 
@@ -102,18 +113,25 @@ server {
 }`
 
 type vhostData struct {
-	Domain             string
-	DocRoot            string
-	HasPHP             bool
-	PHPVersion         string
-	Username           string
-	IndexDirective     string
-	RedirectDirectives string
-	RuleDirectives     string
-	CustomDirectives   string
-	IsEnabled          bool
-	SSLCertPath        string
-	SSLKeyPath         string
+	Domain               string
+	DocRoot              string
+	HasPHP               bool
+	PHPVersion           string
+	Username             string
+	IndexDirective       string
+	RedirectDirectives   string
+	RuleDirectives       string
+	CustomDirectives     string
+	IsEnabled            bool
+	SSLCertPath          string
+	SSLKeyPath           string
+	PHPMemoryLimit       string
+	PHPUploadMaxFilesize string
+	PHPPostMaxSize       string
+	PHPMaxInputVars      int
+	PHPMaxExecutionTime  int
+	PHPMaxInputTime      int
+	PHPValueParam        string // fastcgi_param PHP_VALUE directive content
 }
 
 // indexDirectiveFor maps the panel's index_priority enum to the concrete
@@ -158,10 +176,38 @@ func pathsUnderHome(username, docRoot string) []string {
 	return paths
 }
 
+// buildPHPValueParam assembles a fastcgi_param PHP_VALUE directive from per-domain INI overrides.
+// Returns empty string if all overrides are empty/zero. Format: key1=val1\nkey2=val2\n
+func buildPHPValueParam(memLimit, uploadMax, postMax string, maxInputVars, maxExecTime, maxInputTime int) string {
+	var parts []string
+	if memLimit != "" {
+		parts = append(parts, "memory_limit="+memLimit)
+	}
+	if uploadMax != "" {
+		parts = append(parts, "upload_max_filesize="+uploadMax)
+	}
+	if postMax != "" {
+		parts = append(parts, "post_max_size="+postMax)
+	}
+	if maxInputVars > 0 {
+		parts = append(parts, "max_input_vars="+strconv.Itoa(maxInputVars))
+	}
+	if maxExecTime > 0 {
+		parts = append(parts, "max_execution_time="+strconv.Itoa(maxExecTime))
+	}
+	if maxInputTime > 0 {
+		parts = append(parts, "max_input_time="+strconv.Itoa(maxInputTime))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, "\n")
+}
+
 // writeVhost generates and writes the nginx vhost configuration, then tests and reloads nginx.
 // This is the core logic shared by domain.create and domain.enable/disable.
 // If the config content is unchanged, nginx reload is skipped for efficiency.
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath string) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int) (string, error) {
 	// Generate vhost configuration
 	tmpl, err := template.New("vhost").Parse(vhostTemplate)
 	if err != nil {
@@ -181,6 +227,13 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		IsEnabled:          isEnabled,
 		SSLCertPath:        sslCertPath,
 		SSLKeyPath:         sslKeyPath,
+		PHPMemoryLimit:     phpMemLimit,
+		PHPUploadMaxFilesize: phpUploadMax,
+		PHPPostMaxSize:     phpPostMax,
+		PHPMaxInputVars:    phpMaxInputVars,
+		PHPMaxExecutionTime: phpMaxExecTime,
+		PHPMaxInputTime:    phpMaxInputTime,
+		PHPValueParam:      buildPHPValueParam(phpMemLimit, phpUploadMax, phpPostMax, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime),
 	}
 
 	var vhostConfig bytes.Buffer
@@ -311,7 +364,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		isEnabled = *p.IsEnabled
 	}
 
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

@@ -676,6 +676,26 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 		"is_enabled":  domain.IsEnabled,
 	}
 
+	// Add PHP INI overrides (only if not NULL).
+	if domain.PHPMemoryLimit != nil {
+		params["php_memory_limit"] = *domain.PHPMemoryLimit
+	}
+	if domain.PHPUploadMaxFilesize != nil {
+		params["php_upload_max_filesize"] = *domain.PHPUploadMaxFilesize
+	}
+	if domain.PHPPostMaxSize != nil {
+		params["php_post_max_size"] = *domain.PHPPostMaxSize
+	}
+	if domain.PHPMaxInputVars != nil {
+		params["php_max_input_vars"] = *domain.PHPMaxInputVars
+	}
+	if domain.PHPMaxExecutionTime != nil {
+		params["php_max_execution_time"] = *domain.PHPMaxExecutionTime
+	}
+	if domain.PHPMaxInputTime != nil {
+		params["php_max_input_time"] = *domain.PHPMaxInputTime
+	}
+
 	if domain.NginxCustomDirectives != nil {
 		params["custom_directives"] = *domain.NginxCustomDirectives
 	} else {

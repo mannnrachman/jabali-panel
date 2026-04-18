@@ -182,6 +182,11 @@ func (m *MockDomainRepository) CountByPHPPoolID(ctx context.Context, poolID stri
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *MockDomainRepository) UpdatePHPSettings(ctx context.Context, id string, settings repository.DomainPHPSettings) error {
+	args := m.Called(ctx, id, settings)
+	return args.Error(0)
+}
+
 func (m *MockDomainRepository) Delete(ctx context.Context, id string) error {
 	args := m.Called(ctx, id)
 	return args.Error(0)

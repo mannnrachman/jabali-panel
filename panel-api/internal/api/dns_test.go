@@ -81,6 +81,10 @@ func (m *mockDomainRepo) CountByPHPPoolID(ctx context.Context, poolID string) (i
 	return 0, nil
 }
 
+func (m *mockDomainRepo) UpdatePHPSettings(ctx context.Context, id string, settings repository.DomainPHPSettings) error {
+	return nil
+}
+
 type mockDNSZoneRepo struct {
 	zones map[string]*models.DNSZone
 }

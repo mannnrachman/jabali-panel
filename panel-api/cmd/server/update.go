@@ -154,6 +154,15 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 					"install -m 0644 "+repoDir+"/install/nginx/jabali-files.conf /etc/nginx/conf.d/jabali-files.conf; "+
 					// Validate and reload nginx
 					"nginx -t && systemctl reload nginx; "+
+					// SFTP sshd drop-in — update ships new versions of the Match block.
+					// Idempotent: install -m 0644 is a no-op if target matches source.
+					"install -m 0644 -o root -g root "+repoDir+"/install/ssh/jabali-sftp.conf /etc/ssh/sshd_config.d/jabali-sftp.conf; "+
+					// Validate before reload so a broken config doesn't take down SSH.
+					// If sshd -t fails here, the step returns non-zero and the update
+					// halts before the reload. Operator sees the error and fixes the
+					// source file.
+					"sshd -t; "+
+					"systemctl reload sshd; "+
 					// jabali service user in www-data group — needed for
 					// the reconciler's per-user FPM socket stat-check.
 					// usermod is idempotent; 'groups | grep -w' avoids an

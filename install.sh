@@ -1801,6 +1801,39 @@ NGINXEOF
   _ok "phpMyAdmin installed and configured"
 }
 
+install_sftp_group() {
+  _log "creating jabali-sftp system group"
+
+  # Check if group exists using getent.
+  if getent group jabali-sftp >/dev/null; then
+    _ok "jabali-sftp group already exists"
+  else
+    # Create the group as a system group.
+    groupadd --system jabali-sftp 2>/dev/null || true
+    _ok "jabali-sftp system group created"
+  fi
+}
+
+install_sftp_sshd_config() {
+  _log "installing SFTP sshd drop-in configuration"
+
+  # Install the sshd drop-in configuration file with correct permissions.
+  install -m 0644 -o root -g root ./install/ssh/jabali-sftp.conf /etc/ssh/sshd_config.d/jabali-sftp.conf
+  _ok "SFTP sshd drop-in installed"
+
+  # Validate sshd configuration before reloading.
+  _log "validating sshd configuration"
+  if ! sshd -t; then
+    _die "sshd configuration validation failed. Check /etc/ssh/sshd_config.d/jabali-sftp.conf for errors."
+  fi
+  _ok "sshd configuration is valid"
+
+  # Reload sshd to apply the new configuration.
+  _log "reloading sshd"
+  systemctl reload sshd
+  _ok "sshd reloaded"
+}
+
 install_filebrowser_user() {
   _log "creating filebrowser system user"
 
@@ -1964,6 +1997,8 @@ main() {
   install_phpmyadmin
   install_phpmyadmin_fpm_pool
   install_wp_cli
+  install_sftp_group
+  install_sftp_sshd_config
   install_filebrowser_user
   install_filebrowser
   install_filebrowser_nginx

@@ -1944,6 +1944,57 @@ TMPFILESEOF
   _ok "filebrowser directories and tmpfiles.d drop-in configured"
 }
 
+# Pin filebrowser's persisted settings into its SQLite DB. Filebrowser reads
+# config.json only on the very first launch; thereafter it uses DB-saved
+# values. CLI flags (or `filebrowser config set`) are the only way to force
+# updated settings onto an existing install. We run this before the service
+# is enabled on a fresh install and every time during update, so the config
+# stays in sync with the shipped template + ADR-0027 proxy-auth design.
+install_filebrowser_config() {
+  _log "pinning filebrowser proxy-auth + baseurl into DB"
+
+  local db_path="/var/lib/jabali-filebrowser/filebrowser.db"
+
+  # Install the config.json from the template if absent (idempotent for
+  # fresh installs; the operator-owned file is left alone on update).
+  install -d -m 0755 -o root -g root /etc/jabali-panel/filebrowser
+  if [[ ! -f /etc/jabali-panel/filebrowser/config.json ]]; then
+    install -m 0644 -o root -g root \
+      "$REPO_DIR/install/filebrowser/config.json.tmpl" \
+      /etc/jabali-panel/filebrowser/config.json
+    _ok "filebrowser config.json installed from template"
+  fi
+
+  # Stop the daemon if running (SQLite lock contention otherwise).
+  local was_active=0
+  if systemctl is-active --quiet jabali-filebrowser.service 2>/dev/null; then
+    was_active=1
+    systemctl stop jabali-filebrowser.service || _warn "failed to stop jabali-filebrowser"
+  fi
+
+  # If the DB does not exist yet, create it from the template so filebrowser
+  # does not generate its own defaults on first launch.
+  if [[ ! -f "$db_path" ]]; then
+    sudo -u filebrowser /usr/local/bin/filebrowser config init \
+      -d "$db_path" >/dev/null 2>&1 || true
+  fi
+
+  # Apply the auth-method + baseurl regardless of prior state. Idempotent.
+  if ! sudo -u filebrowser /usr/local/bin/filebrowser config set \
+      --auth.method=proxy \
+      --auth.header=X-Forwarded-User \
+      -b /files \
+      -d "$db_path" >/dev/null; then
+    _warn "filebrowser config set returned non-zero (may be harmless on re-run)"
+  fi
+
+  if [[ $was_active -eq 1 ]]; then
+    systemctl start jabali-filebrowser.service || _warn "failed to restart jabali-filebrowser"
+  fi
+
+  _ok "filebrowser DB config pinned (auth.method=proxy, baseurl=/files)"
+}
+
 install_sso_key() {
   local sso_key_path="/etc/jabali-panel/sso.key"
 
@@ -2010,6 +2061,7 @@ main() {
   install_sftp_sshd_config
   install_filebrowser_user
   install_filebrowser
+  install_filebrowser_config
   install_filebrowser_nginx
   install_nginx_default_vhost
   write_agent_systemd_unit

@@ -146,6 +146,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 					"  fi; "+
 					"  install -m 0644 "+repoDir+"/install/systemd/jabali-filebrowser.service /etc/systemd/system/jabali-filebrowser.service; "+
 					"  systemctl daemon-reload; "+
+					// Pin filebrowser's persisted DB settings. auth.method=proxy and
+					// baseurl=/files must be applied via CLI because filebrowser
+					// reads config.json only on first launch and ignores edits
+					// thereafter (settings live in SQLite). CLI flags require the
+					// daemon stopped (SQLite lock); restart after.
+					"  systemctl stop jabali-filebrowser.service 2>/dev/null || true; "+
+					"  sudo -u filebrowser /usr/local/bin/filebrowser config set --auth.method=proxy --auth.header=X-Forwarded-User -b /files -d /var/lib/jabali-filebrowser/filebrowser.db >/dev/null 2>&1 || echo '[update] warn: filebrowser config set failed'; "+
+					"  systemctl start jabali-filebrowser.service || echo '[update] warn: filebrowser restart failed'; "+
 					"fi; "+
 					// nginx reverse-proxy config for filebrowser. Split in two:
 					// conf.d/ gets only the http-context `map` directive; the

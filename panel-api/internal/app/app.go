@@ -45,6 +45,7 @@ type Deps struct {
 	PHPPools               repository.PHPPoolRepository
 	PHPPoolIniOverrides    repository.PHPPoolIniOverrideRepository
 	WordPressInstalls      repository.WordPressInstallRepository
+	SSHKeys                repository.SSHKeyRepository
 	SSO                    *sso.Service
 	SSOKey                 *ssokey.Key
 	Log                    *slog.Logger

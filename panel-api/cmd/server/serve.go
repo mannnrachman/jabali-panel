@@ -177,6 +177,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.PHPPoolIniOverrides = phpPoolIniOverrideRepo
 		deps.WordPressInstalls = wordpressInstallRepo
 
+		sshKeyRepo := repository.NewSSHKeyRepository(sharedDB)
+		deps.SSHKeys = sshKeyRepo
+
 		// Admin bootstrap.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		res, err := auth.BootstrapAdmin(ctx, userRepo, auth.BootstrapOptions{

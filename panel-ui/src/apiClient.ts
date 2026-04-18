@@ -299,3 +299,106 @@ export async function createSSHKey(body: {
 export async function deleteSSHKey(id: string): Promise<void> {
   await apiClient.delete(`/ssh-keys/${id}`);
 }
+
+// === Cron Jobs API ===
+
+export interface CronJob {
+  id: string;
+  user_id: string;
+  name: string;
+  command: string;
+  schedule: string;
+  enabled: boolean;
+  last_run_at: string | null;
+  last_exit_code: number | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CronJobListResponse {
+  items: CronJob[];
+}
+
+export interface CronRunNowResponse {
+  exit_code: number;
+  stdout: string;
+  stderr: string;
+}
+
+export interface CronLogResponse {
+  log: string;
+  lines: number;
+}
+
+/**
+ * List the user's cron jobs
+ */
+export async function listCronJobs(): Promise<CronJobListResponse> {
+  const resp = await apiClient.get<CronJobListResponse>("/cron");
+  return resp.data;
+}
+
+/**
+ * Create a new cron job
+ */
+export async function createCronJob(body: {
+  name: string;
+  command: string;
+  schedule: string;
+  enabled?: boolean;
+}): Promise<CronJob> {
+  const resp = await apiClient.post<CronJob>("/cron", body);
+  return resp.data;
+}
+
+/**
+ * Get a single cron job
+ */
+export async function getCronJob(id: string): Promise<CronJob> {
+  const resp = await apiClient.get<CronJob>(`/cron/${id}`);
+  return resp.data;
+}
+
+/**
+ * Update a cron job
+ */
+export async function updateCronJob(
+  id: string,
+  body: {
+    name?: string;
+    command?: string;
+    schedule?: string;
+    enabled?: boolean;
+  },
+): Promise<CronJob> {
+  const resp = await apiClient.patch<CronJob>(`/cron/${id}`, body);
+  return resp.data;
+}
+
+/**
+ * Delete a cron job
+ */
+export async function deleteCronJob(id: string): Promise<void> {
+  await apiClient.delete(`/cron/${id}`);
+}
+
+/**
+ * Run a cron job immediately
+ */
+export async function runCronJobNow(id: string): Promise<CronRunNowResponse> {
+  const resp = await apiClient.post<CronRunNowResponse>(`/cron/${id}/run-now`);
+  return resp.data;
+}
+
+/**
+ * Get the log for a cron job
+ */
+export async function getCronJobLog(
+  id: string,
+  lines?: number,
+): Promise<CronLogResponse> {
+  const url = lines ? `/cron/${id}/log?lines=${lines}` : `/cron/${id}/log`;
+  const resp = await apiClient.get<CronLogResponse>(url);
+  return resp.data;
+}

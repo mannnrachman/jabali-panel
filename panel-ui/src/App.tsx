@@ -29,6 +29,7 @@ import { ConfigProvider } from "antd";
 import {
   AppstoreOutlined,
   CloudServerOutlined,
+  ClockCircleOutlined,
   DashboardOutlined,
   DatabaseOutlined,
   FolderOutlined,
@@ -75,6 +76,7 @@ import { UserSSLManagerPage } from "./shells/user/ssl/UserSSLManagerPage";
 import { UserPHPSettingsPage } from "./shells/user/php-settings/UserPHPSettingsPage";
 import { UserWordPressList } from "./shells/user/wordpress/UserWordPressList";
 import { UserSSHKeysPage } from "./shells/user/ssh-keys/UserSSHKeysPage";
+import { UserCronList } from "./shells/user/cron/UserCronList";
 import { AdminWordPressList } from "./shells/admin/wordpress/AdminWordPressList";
 import { PHPPoolsList } from "./shells/admin/php-pools/PHPPoolsList";
 import { PHPPoolEdit } from "./shells/admin/php-pools/PHPPoolEdit";
@@ -212,6 +214,11 @@ const ThemedApp = () => {
               list: "/jabali-panel/ssh-keys",
               meta: { label: "SSH Keys", icon: <KeyOutlined />, shell: "user" },
             },
+            {
+              name: "cron",
+              list: "/jabali-panel/cron",
+              meta: { label: "Cron", icon: <ClockCircleOutlined />, shell: "user" },
+            },
           ]}
           options={{
             warnWhenUnsavedChanges: true,
@@ -296,6 +303,7 @@ const ThemedApp = () => {
               <Route path="files" element={<UserFilesLauncher />} />
               <Route path="wordpress" element={<UserWordPressList />} />
               <Route path="ssh-keys" element={<UserSSHKeysPage />} />
+              <Route path="cron" element={<UserCronList />} />
             </Route>
 
             {/* ---------------- public ---------------- */}

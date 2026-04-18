@@ -19,8 +19,8 @@ type dbMysqladminEnsureParams struct {
 // dbMysqladminEnsureResponse is the output shape for db.mysqladmin.ensure.
 // The password is plaintext and MUST be encrypted by panel-api immediately.
 type dbMysqladminEnsureResponse struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username string `json:"mysqladmin_username"`
+	Password string `json:"mysqladmin_password"`
 }
 
 // panelUsernameRegex validates panel username format. Must start with a

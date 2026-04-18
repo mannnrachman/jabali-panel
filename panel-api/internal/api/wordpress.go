@@ -195,6 +195,19 @@ func (h *wordPressHandler) create(c *gin.Context) {
 		return
 	}
 
+	// Resolve the domain owner's linux username. Required because the DB
+	// name and DB user name are prefixed with it (panel-wide convention,
+	// see databases.go), and the agent needs it for systemd-run targeting.
+	var osUser string
+	if u, uErr := h.cfg.Users.FindByID(ctx, targetUserID); uErr == nil && u != nil && u.Username != nil {
+		osUser = *u.Username
+	}
+	if osUser == "" {
+		slog.ErrorContext(ctx, "wordpress create: user has no linux username", "user_id", targetUserID)
+		c.JSON(http.StatusConflict, gin.H{"error": "user_not_provisioned"})
+		return
+	}
+
 	// Generate admin password if not provided
 	adminPassword := req.AdminPassword
 	if adminPassword == "" {
@@ -205,7 +218,7 @@ func (h *wordPressHandler) create(c *gin.Context) {
 
 	// Provision database (database name = wp_<6-char ULID prefix>)
 	dbID := ids.NewULID()
-	dbName := "wp_" + dbID[:6]
+	dbName := osUser + "_wp_" + dbID[:4]
 	database := &models.Database{
 		ID:        dbID,
 		UserID:    targetUserID,
@@ -224,7 +237,7 @@ func (h *wordPressHandler) create(c *gin.Context) {
 
 	// Provision database user
 	dbUserID := ids.NewULID()
-	dbUsername := "wp_" + dbUserID[:6]
+	dbUsername := osUser + "_wp_" + dbUserID[:4]
 	hash, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
 	if err != nil {
 		slog.ErrorContext(ctx, "wordpress create: bcrypt failed", "err", err)
@@ -293,8 +306,27 @@ func (h *wordPressHandler) create(c *gin.Context) {
 		return
 	}
 
-	// Spawn async goroutine to install WordPress
-	go createInstallAndKickAgent(ctx, installID, req.DomainID, adminPassword, req.SiteTitle, req.AdminUsername, req.AdminEmail, req.Locale, req.Subdirectory, req.UseWWW, h.cfg)
+	// Compute site URL from (domain, use_www, subdirectory).
+	siteURL := buildSiteURL(domain.Name, req.UseWWW, req.Subdirectory)
+
+	// Spawn async goroutine to install WordPress.
+	kickArgs := installKickArgs{
+		InstallID:     installID,
+		OSUser:        osUser,
+		DocRoot:       domain.DocRoot,
+		DBName:        dbName,
+		DBUser:        dbUsername,
+		DBPassword:    adminPassword,
+		SiteURL:       siteURL,
+		SiteTitle:     req.SiteTitle,
+		AdminUsername: req.AdminUsername,
+		AdminPassword: adminPassword,
+		AdminEmail:    req.AdminEmail,
+		Locale:        req.Locale,
+		Subdirectory:  req.Subdirectory,
+		UseWWW:        req.UseWWW,
+	}
+	go createInstallAndKickAgent(ctx, kickArgs, h.cfg)
 
 	// Return 202 Accepted with plaintext password
 	resp := createWordPressResponse{
@@ -474,8 +506,33 @@ func (h *wordPressHandler) delete(c *gin.Context) {
 		return
 	}
 
+	// Resolve os_user + docroot so the agent knows what to clean up.
+	domain, err := h.cfg.Domains.FindByID(ctx, install.DomainID)
+	if err != nil {
+		slog.ErrorContext(ctx, "wordpress delete: domain lookup", "err", err, "domain_id", install.DomainID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	var osUser string
+	if u, uErr := h.cfg.Users.FindByID(ctx, install.UserID); uErr == nil && u != nil && u.Username != nil {
+		osUser = *u.Username
+	}
+	if osUser == "" {
+		slog.ErrorContext(ctx, "wordpress delete: user has no linux username", "user_id", install.UserID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	dbUserID := ""
+	var dbUserUsername string
+	if grants, gerr := h.cfg.DatabaseGrants.ListByDatabaseID(ctx, install.DBID); gerr == nil && len(grants) > 0 {
+		dbUserID = grants[0].DatabaseUserID
+		if dbu, duErr := h.cfg.DatabaseUsers.FindByID(ctx, dbUserID); duErr == nil && dbu != nil {
+			dbUserUsername = dbu.Username
+		}
+	}
+
 	// Spawn async goroutine to delete
-	go createDeleteAndKickAgent(ctx, installID, install.DBID, h.cfg)
+	go createDeleteAndKickAgent(ctx, installID, install.DBID, dbUserID, osUser, domain.DocRoot, dbUserUsername, h.cfg)
 
 	c.JSON(http.StatusAccepted, gin.H{"status": "deleting"})
 }
@@ -692,13 +749,48 @@ func (h *wordPressHandler) health(c *gin.Context) {
 // even if the original request context is cancelled.
 // If panel crashes while installing, the row stays in 'installing' state
 // until the reconciler timeout (typically 1 hour) sweeps it as failed.
-func createInstallAndKickAgent(parentCtx context.Context, installID, domainID, adminPassword, siteTitle, adminUsername, adminEmail, locale, subdirectory string, useWWW bool, cfg WordPressHandlerConfig) {
+// installKickArgs bundles everything createInstallAndKickAgent needs.
+// It exists because the agent contract has many required fields and we
+// do not want a 14-arg function signature.
+type installKickArgs struct {
+	InstallID     string
+	OSUser        string
+	DocRoot       string
+	DBName        string
+	DBUser        string
+	DBPassword    string
+	SiteURL       string
+	SiteTitle     string
+	AdminUsername string
+	AdminPassword string
+	AdminEmail    string
+	Locale        string
+	Subdirectory  string
+	UseWWW        bool
+}
+
+// buildSiteURL composes the canonical WordPress siteurl/home value.
+// Matches the rule used by the agent when use_www is true / subdirectory
+// is set.
+func buildSiteURL(domain string, useWWW bool, subdirectory string) string {
+	host := domain
+	if useWWW {
+		host = "www." + domain
+	}
+	u := "https://" + host
+	if subdirectory != "" {
+		u += "/" + subdirectory
+	}
+	return u
+}
+
+func createInstallAndKickAgent(parentCtx context.Context, args installKickArgs, cfg WordPressHandlerConfig) {
 	// Use independent context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	// Update status to 'installing'
-	if err := cfg.WordPressInstalls.UpdateStatus(ctx, installID, "installing", nil, nil); err != nil {
+	if err := cfg.WordPressInstalls.UpdateStatus(ctx, args.InstallID, "installing", nil, nil); err != nil {
 		// Log but don't fail — status was already 'pending'
 		return
 	}
@@ -706,23 +798,29 @@ func createInstallAndKickAgent(parentCtx context.Context, installID, domainID, a
 	// Call agent to install WordPress
 	if cfg.Agent == nil {
 		errMsg := "agent not configured"
-		cfg.WordPressInstalls.UpdateStatus(ctx, installID, "failed", &errMsg, nil)
+		cfg.WordPressInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
 		return
 	}
 
 	agentResp, err := cfg.Agent.Call(ctx, "wordpress.install", map[string]any{
-		"domain_id":      domainID,
-		"site_title":     siteTitle,
-		"admin_username": adminUsername,
-		"admin_email":    adminEmail,
-		"admin_password": adminPassword,
-		"locale":         locale,
-		"subdirectory":   subdirectory,
-		"use_www":        useWWW,
+		"os_user":       args.OSUser,
+		"docroot":       args.DocRoot,
+		"db_name":       args.DBName,
+		"db_user":       args.DBUser,
+		"db_password":   args.DBPassword,
+		"db_host":       "localhost",
+		"site_url":      args.SiteURL,
+		"site_title":    args.SiteTitle,
+		"admin_user":    args.AdminUsername,
+		"admin_pass":    args.AdminPassword,
+		"admin_email":   args.AdminEmail,
+		"locale":        args.Locale,
+		"subdirectory":  args.Subdirectory,
+		"use_www":       args.UseWWW,
 	})
 	if err != nil {
 		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)
-		cfg.WordPressInstalls.UpdateStatus(ctx, installID, "failed", &errMsg, nil)
+		cfg.WordPressInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
 		return
 	}
 
@@ -730,7 +828,7 @@ func createInstallAndKickAgent(parentCtx context.Context, installID, domainID, a
 	var respMap map[string]any
 	if err := json.Unmarshal(agentResp, &respMap); err != nil {
 		errMsg := truncateError(fmt.Sprintf("failed to parse agent response: %v", err), 1024)
-		cfg.WordPressInstalls.UpdateStatus(ctx, installID, "failed", &errMsg, nil)
+		cfg.WordPressInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
 		return
 	}
 
@@ -740,11 +838,15 @@ func createInstallAndKickAgent(parentCtx context.Context, installID, domainID, a
 	}
 
 	// Update status to 'ready' with version
-	cfg.WordPressInstalls.UpdateStatus(ctx, installID, "ready", nil, &version)
+	cfg.WordPressInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
 }
 
-// createDeleteAndKickAgent deletes WordPress asynchronously.
-func createDeleteAndKickAgent(parentCtx context.Context, installID, databaseID string, cfg WordPressHandlerConfig) {
+// createDeleteAndKickAgent removes the on-disk WordPress files via the
+// agent and cleans up every DB row tied to the install (database,
+// database user, grants, install record). If the agent file-removal
+// fails we flip status to failed but still allow a future retry.
+// Non-empty osUser+docroot are required; the handler pre-fills them.
+func createDeleteAndKickAgent(parentCtx context.Context, installID, databaseID, dbUserID, osUser, docroot, dbUserUsername string, cfg WordPressHandlerConfig) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -754,9 +856,11 @@ func createDeleteAndKickAgent(parentCtx context.Context, installID, databaseID s
 		return
 	}
 
-	// Call agent to delete WordPress
+	// Agent removes WordPress core files from the docroot. It does NOT
+	// touch the MySQL side — panel handles that below.
 	_, err := cfg.Agent.Call(ctx, "wordpress.delete", map[string]any{
-		"database_id": databaseID,
+		"os_user": osUser,
+		"docroot": docroot,
 	})
 	if err != nil {
 		errMsg := truncateError(fmt.Sprintf("agent delete failed: %v", err), 1024)
@@ -764,7 +868,29 @@ func createDeleteAndKickAgent(parentCtx context.Context, installID, databaseID s
 		return
 	}
 
-	// Delete the install, database, user, and grants
+	// Best-effort DB-side cleanup. Drop the MySQL database + user on the
+	// host via the agent (if mysql admin command exists) and remove the
+	// panel-side rows so the slot is freed up. Order matters: grants →
+	// users → databases → install row.
+	if dbUserID != "" {
+		if grants, gErr := cfg.DatabaseGrants.ListByDatabaseUserID(ctx, dbUserID); gErr == nil {
+			for _, g := range grants {
+				cfg.DatabaseGrants.Delete(ctx, g.ID)
+			}
+		}
+		// Drop the mysql user on the host. Best-effort; the panel row
+		// delete below is the source of truth.
+		if dbUserUsername != "" {
+			cfg.Agent.Call(ctx, "mysql.user.delete", map[string]any{"username": dbUserUsername})
+		}
+		cfg.DatabaseUsers.Delete(ctx, dbUserID)
+	}
+	if databaseID != "" {
+		if db, dbErr := cfg.Databases.FindByID(ctx, databaseID); dbErr == nil && db != nil {
+			cfg.Agent.Call(ctx, "mysql.database.delete", map[string]any{"name": db.Name})
+		}
+		cfg.Databases.Delete(ctx, databaseID)
+	}
 	cfg.WordPressInstalls.Delete(ctx, installID)
 }
 

@@ -18,6 +18,9 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
+func strPtr(s string) *string { return &s }
+
+
 // WordPress-specific mock repositories
 
 type mockWordPressInstallRepo struct {
@@ -231,7 +234,7 @@ func TestWordPressCreateHappyPath(t *testing.T) {
 	dbRepo := &mockDatabaseRepo{}
 	userRepo := &mockUserRepo{
 		users: map[string]*models.User{
-			"user1": {ID: "user1"},
+			"user1": {ID: "user1", Username: strPtr("testuser")},
 		},
 	}
 	pkgRepo := &mockPackageRepo{}
@@ -391,11 +394,11 @@ func TestWordPressDeleteSuccess(t *testing.T) {
 	}
 	domainRepo := &mockDomainRepo{
 		domains: map[string]*models.Domain{
-			"domain1": {ID: "domain1", UserID: "user1"},
+			"domain1": {ID: "domain1", UserID: "user1", DocRoot: "/home/testuser/domains/example.com/public_html"},
 		},
 	}
 	dbRepo := &mockDatabaseRepo{}
-	userRepo := &mockUserRepo{}
+	userRepo := &mockUserRepo{users: map[string]*models.User{"user1": {ID: "user1", Username: strPtr("testuser")}}}
 	pkgRepo := &mockPackageRepo{}
 	ag := &mockAgent{}
 

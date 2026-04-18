@@ -215,6 +215,25 @@ func (h *databaseUserHandler) list(c *gin.Context) {
 		users = []models.DatabaseUser{}
 	}
 
+	// For non-admins, enforce the panel-wide naming convention: users
+	// only see rows whose username has their linux-username prefix.
+	// Mirrors the filter in GET /databases.
+	if !claims.IsAdmin {
+		if u, uErr := h.cfg.Users.FindByID(c.Request.Context(), claims.UserID); uErr == nil && u != nil && u.Username != nil && *u.Username != "" {
+			prefix := *u.Username + "_"
+			filtered := users[:0]
+			for _, du := range users {
+				if strings.HasPrefix(du.Username, prefix) {
+					filtered = append(filtered, du)
+				}
+			}
+			if len(filtered) != len(users) {
+				total -= int64(len(users) - len(filtered))
+			}
+			users = filtered
+		}
+	}
+
 	// Batch-fetch all grants for the returned users, then resolve
 	// database names in one more pass — two queries regardless of
 	// page size.

@@ -389,9 +389,10 @@ func TestDatabaseListAdmin(t *testing.T) {
 func TestDatabaseListUser(t *testing.T) {
 	r, dbRepo := databaseRouter("user1", false)
 
-	// Setup test data
-	db1 := models.Database{ID: "id1", UserID: "user1", Name: "db1"}
-	db2 := models.Database{ID: "id2", UserID: "user2", Name: "db2"}
+	// Setup test data (names include the linux-username prefix to pass
+	// the prefix filter applied to non-admin list responses).
+	db1 := models.Database{ID: "id1", UserID: "user1", Name: "alice_db1"}
+	db2 := models.Database{ID: "id2", UserID: "user2", Name: "bob_db2"}
 	dbRepo.databases = []models.Database{db1, db2}
 
 	req := httptest.NewRequest("GET", "/api/v1/databases", nil)

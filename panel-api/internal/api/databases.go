@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strings"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -154,6 +155,27 @@ func (h *databaseHandler) list(c *gin.Context) {
 
 	if dbs == nil {
 		dbs = []models.Database{}
+	}
+
+	// For non-admins, enforce the panel-wide naming convention: a user
+	// can only see databases whose names start with their linux-username
+	// prefix. Belt-and-suspenders on top of the user_id FK filter — if
+	// a row ever lands with the wrong user_id (e.g. via direct DB edit
+	// or a legacy WP install that skipped prefixing), it stays hidden.
+	if !claims.IsAdmin {
+		if u, uErr := h.cfg.Users.FindByID(c.Request.Context(), claims.UserID); uErr == nil && u != nil && u.Username != nil && *u.Username != "" {
+			prefix := *u.Username + "_"
+			filtered := dbs[:0]
+			for _, d := range dbs {
+				if strings.HasPrefix(d.Name, prefix) {
+					filtered = append(filtered, d)
+				}
+			}
+			if len(filtered) != len(dbs) {
+				total -= int64(len(dbs) - len(filtered))
+			}
+			dbs = filtered
+		}
 	}
 
 	// Fetch size_bytes for each database. Use a 30-second timeout for all size calls.

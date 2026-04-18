@@ -1,10 +1,15 @@
-# phpMyAdmin 5.2.3 LTS (all-languages tarball)
-# Source: https://www.phpmyadmin.net/files/phpMyAdmin-5.2.3-all-languages.tar.gz
-# Generated: 2026-04-18 (checksums verified against official phpMyAdmin releases)
-# 
-# To update: Download the tarball and compute:
-#   sha256sum phpMyAdmin-5.2.3-all-languages.tar.gz
+# phpMyAdmin 5.2.3 (all-languages tarball)
+# Source:   https://files.phpmyadmin.net/phpMyAdmin/5.2.3/phpMyAdmin-5.2.3-all-languages.tar.gz
+# Sidecar:  https://files.phpmyadmin.net/phpMyAdmin/5.2.3/phpMyAdmin-5.2.3-all-languages.tar.gz.sha256
 #
-# For now, using a placeholder. In production deploy, this must match
-# the official phpMyAdmin release checksum to prevent tampering.
-29c8e1f7c9f7e5b3d1a9f8c6e4b2a0f8d6c4b2a0f8e6d4c2b0a8f6e4d2c0b8
+# Verified: 2026-04-18 — pulled directly from the upstream sidecar
+# above, matches the tarball served by the same host on the same day.
+# Tech debt: the upstream also publishes a detached GPG signature
+# (.asc); install.sh does not verify that today. A full chain-of-trust
+# upgrade is tracked separately.
+#
+# To update this file when bumping phpMyAdmin:
+#   curl -sSL "https://files.phpmyadmin.net/phpMyAdmin/${VER}/phpMyAdmin-${VER}-all-languages.tar.gz.sha256"
+# and paste the hex hash on the line below (lines starting with '#'
+# are stripped by install.sh).
+12ba1c425fa4071abbd4e7668c9ebdeac0b0755a467a6d6d5026122bb47c102b

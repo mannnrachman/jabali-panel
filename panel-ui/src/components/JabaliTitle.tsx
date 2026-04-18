@@ -34,7 +34,14 @@ export function JabaliTitle({ collapsed = false, text = "Jabali Panel" }: Jabali
         style={{ height: 28, width: "auto", flexShrink: 0 }}
       />
       {!collapsed && (
-        <span style={{ fontSize: 16, fontWeight: 600, letterSpacing: 0.5 }}>
+        <span
+          style={{
+            fontSize: 16,
+            fontWeight: 600,
+            letterSpacing: 0.5,
+            color: mode === "dark" ? "#f5f5f5" : "#1f1f1f",
+          }}
+        >
           {text}
         </span>
       )}

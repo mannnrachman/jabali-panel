@@ -41,9 +41,12 @@ type getDomainPHPSettingsResponse struct {
 	PHPMaxInputTime      *int    `json:"php_max_input_time,omitempty"`
 }
 
-// updateDomainPHPSettingsRequest mirrors the six overridable fields.
-// NULL values clear the override.
+// updateDomainPHPSettingsRequest mirrors the six overridable fields
+// plus an optional PHPVersion change. NULL values clear the override.
+// PHPVersion, if set, updates the DOMAIN OWNER's pool (one pool per
+// user, per ADR-0023) — it applies to every domain that user owns.
 type updateDomainPHPSettingsRequest struct {
+	PHPVersion           *string `json:"php_version"`
 	PHPMemoryLimit       *string `json:"php_memory_limit"`
 	PHPUploadMaxFilesize *string `json:"php_upload_max_filesize"`
 	PHPPostMaxSize       *string `json:"php_post_max_size"`
@@ -188,6 +191,12 @@ func (h *domainPHPSettingsHandler) patch(c *gin.Context) {
 			return
 		}
 	}
+	if req.PHPVersion != nil {
+		if !isVersionSupported(*req.PHPVersion) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported_php_version"})
+			return
+		}
+	}
 
 	ctx := c.Request.Context()
 	domainID := c.Param("id")
@@ -227,6 +236,28 @@ func (h *domainPHPSettingsHandler) patch(c *gin.Context) {
 		slog.ErrorContext(ctx, "patch php-settings: update", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
+	}
+
+	// PHPVersion change: update the DOMAIN OWNER's pool (one pool per
+	// user) and mark it pending so the reconciler re-applies the FPM
+	// config with the new version. This affects every domain the user
+	// owns, not just this one — see the type-level comment.
+	if req.PHPVersion != nil && h.cfg.PHPPools != nil {
+		pool, perr := h.cfg.PHPPools.FindByUserID(ctx, dom.UserID)
+		if perr != nil && !errors.Is(perr, repository.ErrNotFound) {
+			slog.ErrorContext(ctx, "patch php-settings: load user pool", "error", perr, "user_id", dom.UserID)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		if pool != nil && pool.PHPVersion != *req.PHPVersion {
+			pool.PHPVersion = *req.PHPVersion
+			pool.Status = "pending"
+			if uerr := h.cfg.PHPPools.Update(ctx, pool); uerr != nil {
+				slog.ErrorContext(ctx, "patch php-settings: update pool", "error", uerr, "pool_id", pool.ID)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+				return
+			}
+		}
 	}
 
 	// Trigger reconciler to re-provision this domain

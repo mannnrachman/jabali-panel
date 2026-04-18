@@ -39,6 +39,7 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0025](0025-per-user-systemd-slices.md) | Per-user systemd slices | Accepted |
 | [0026](0026-m10-wordpress-installs.md) | M10 WordPress installs — schema + lifecycle | Accepted |
 | [0027](0027-m11-filebrowser-integration.md) | M11 File manager via filebrowser + proxy auth | Accepted |
+| [0028](0028-m12-sftp-integration.md) | M12 SFTP via openssh group-based Match (no chroot) | Accepted |
 
 ## Decision Categories
 

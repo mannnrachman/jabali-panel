@@ -1825,7 +1825,9 @@ install_sftp_sshd_config() {
   _log "installing SFTP sshd drop-in configuration"
 
   # Install the sshd drop-in configuration file with correct permissions.
-  install -m 0644 -o root -g root ./install/ssh/jabali-sftp.conf /etc/ssh/sshd_config.d/jabali-sftp.conf
+  # Path is resolved against $REPO_DIR (clone target) so this works under
+  # `curl | bash` where CWD has no ./install/ tree.
+  install -m 0644 -o root -g root "$REPO_DIR/install/ssh/jabali-sftp.conf" /etc/ssh/sshd_config.d/jabali-sftp.conf
   _ok "SFTP sshd drop-in installed"
 
   # Validate sshd configuration before reloading.

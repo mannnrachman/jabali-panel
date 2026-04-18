@@ -293,35 +293,19 @@ Option (b) mirrors Jabali's existing M9 per-user FPM security model: a dedicated
 
 ---
 
-**[OPEN] #2: Binary provisioning.**
+**[RESOLVED] #2: Binary provisioning.**
 
-Two approaches:
-- **Pin GitHub release SHA-256.** Download precompiled filebrowser binary from
-  GitHub releases, validate SHA-256 (mirrors the wp-cli pattern from M10
-  `install.sh`). Fast, reproducible, no build dependencies.
-- **Build from source in update.go.** Fetch Go source, compile, embed in the
-  agent. Slower but ensures we're always building from source. Risks: build
-  time, Go version mismatch, compilation failures.
+**Decision: Pin GitHub release SHA-256** in `install.sh` for consistency with wp-cli pattern.
 
-**Default proposal:** Pin GitHub release SHA-256 in `install.sh` for consistency
-with wp-cli. **Final answer deferred to Step 3 spike.**
+**Resolved Wave A:** filebrowser v2.38.0 pinned with SHA-256 `b2f70a68a03ae4d9a6b5396d3ac0d57a2294fb556e1cabd2d1c7e83e8bcabef9`. Pin file stored at `install/filebrowser/filebrowser-linux-amd64.sha256`. Download from official GitHub releases, validate, and install as part of `install.sh` Step 2. Matches wp-cli provisioning pattern (M10). No build dependencies required.
 
 ---
 
-**[OPEN] #3: User deletion cleanup.**
+**[RESOLVED] #3: User deletion cleanup.**
 
-When a jabali user is deleted, their filebrowser user must also be deleted.
+**Decision: Reconciler-owned asynchronous deletion** (Step 6).
 
-**Question:** Should this happen synchronously in the API delete handler, or
-asynchronously in the reconciler?
-
-**Default proposal:** Reconciler owns deletion (Step 6). Rationale: matches the
-pattern for databases and other entities; API returns 202 immediately, reconciler
-drives the teardown.
-
-**Details to finalize:** What if `filebrowser users delete` fails? Does the
-reconciler retry, or does the user row get stuck in a "deleting" state?
-**Final answer deferred to Step 6 implementation.**
+**Resolved Wave C Step 6:** `ReconcileFileBrowserUsers` includes an orphan sweep — any filebrowser user without a matching jabali Linux username (i.e., `SELECT username FROM jabali.users WHERE deleted_at IS NULL`) is removed via `filebrowser users rm <username>`. Reconciler retries on next tick if deletion fails. Orphaned entries are logged with severity WARN; repeated orphan rows (>3 ticks) trigger an alert. This pattern matches the reconciliation model for databases and other managed resources.
 
 ---
 

@@ -1,6 +1,6 @@
 # M11 — File Manager via filebrowser (integration plan)
 
-**Status:** Dispatched (Wave A in flight).
+**Status:** Shipped 2026-04-18 (commits be02cbb…main HEAD).
 **Goal:** Users get a web file manager scoped to their homedir, launched from the panel via SSO, with no local file-browser code to maintain.
 
 ## 0. Decision recap

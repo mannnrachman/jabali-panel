@@ -664,23 +664,24 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Depends on:** M2 (domains), M7 (databases), M9 (PHP-FPM pools for clone version compatibility)
 
-### M11: FileBrowser (PLANNED)
+### M11: FileBrowser (SHIPPED)
 
-**Goal:** Users can browse and manage files via a web UI (upload, delete, rename, edit text).
+**Goal:** Users can browse and manage files via a web UI scoped to their homedir, via filebrowser + SSO proxy auth.
 
 **Deliverables:**
-- New migration: `create_file_operations_log.sql` (user, file, action, timestamp)
-- FileBrowser adapter pattern (SFTP, local filesystem, S3, etc.)
-- Path sanitizer (prevent directory traversal)
-- Soft-delete for trash (recover within 30 days)
-- Agent command: `fs.list`, `fs.upload`, `fs.delete`, `fs.rename`, `fs.read`, `fs.write`, `fs.trash.list`, `fs.trash.restore`
-- WebSocket log stream (tail -f for file uploads/downloads)
-- API: `/api/v1/files`, `/api/v1/files/{id}/content`, `/api/v1/trash`
-- UI: user file browser with drag-drop upload, context menu (delete/rename/edit)
+- Filebrowser v2.38.0 binary (pinned SHA-256) installed as shared system service
+- Systemd unit: `jabali-filebrowser.service` (listens on UNIX socket)
+- Panel SSO endpoint: `POST /api/v1/sso/filebrowser` (mints short-lived token)
+- UDS validator for nginx auth_request subrequest
+- Nginx reverse-proxy config: `/etc/nginx/conf.d/jabali-files.conf` (proxy auth, header injection)
+- Reconciler: `ReconcileFileBrowserUsers` (ensures per-user filebrowser entries, group membership, orphan cleanup)
+- UI: "Files" sidebar button (launches filebrowser in new tab via SSO)
+- Playwright E2E test: `tests/e2e/filebrowser.spec.ts` (login → open files → create/rename/delete file)
+- Runbook: `plans/m11-filebrowser-runbook.md` (troubleshooting auth, permissions, service health)
 
-**Status:** Planned
+**Status:** Shipped (commits be02cbb…main HEAD)
 
-**Depends on:** M1 (users)
+**Depends on:** M1 (users), M7 (SSO pattern), M9 (per-user slices)
 
 ### M12: Stats & monitoring (PLANNED)
 
@@ -901,7 +902,7 @@ Use this table to navigate the codebase when adding a new capability:
 | M8: Cron | Planned | — |
 | M9: PHP/FPM pools | 2026-04-17 | 1aaa507 (ADR), 5dbf471 (shipped) |
 | M10: WordPress | 2026-04-18 | `85ed8b4` through `main HEAD` |
-| M11: FileBrowser | Planned | — |
+| M11: FileBrowser | 2026-04-18 | be02cbb…main HEAD |
 | M12: Stats & monitoring | Planned | — |
 | M13: Notifications | Planned | — |
 | M14: Migration importers | Planned | — |

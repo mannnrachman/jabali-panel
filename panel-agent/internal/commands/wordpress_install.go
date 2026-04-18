@@ -198,6 +198,12 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 		}
 	}
 
+	// Clean any WordPress leftovers from a previous failed attempt.
+	// wp-cli refuses to download into a directory it thinks already
+	// hosts WordPress, so retries would permanently fail unless we
+	// clear stale wp-* files first. Idempotent: no-op on empty dir.
+	_ = cleanupWordPressFiles(ctx, installPath)
+
 	// Step 1: wp core download
 	downloadCmd := buildSystemdRunCmd(ctx,
 		req.OSUser,

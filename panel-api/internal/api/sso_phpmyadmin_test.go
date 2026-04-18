@@ -505,7 +505,7 @@ func TestPhpMyAdminBaseURL_DerivedFromHost(t *testing.T) {
 	c.Request.TLS = nil // No TLS
 
 	baseURL := h.getPhpMyAdminBaseURL(c)
-	assert.Equal(t, "http://panel.example.com", baseURL, "port should be stripped from Host")
+	assert.Equal(t, "https://panel.example.com", baseURL, "port should be stripped from Host; panel is https-only")
 }
 
 // TestPhpMyAdminBaseURL_DerivedFromHostWithoutPort tests Host without port.
@@ -535,5 +535,5 @@ func TestPhpMyAdminBaseURL_DerivedFromHostWithoutPort(t *testing.T) {
 	c.Request.TLS = nil
 
 	baseURL := h.getPhpMyAdminBaseURL(c)
-	assert.Equal(t, "http://localhost", baseURL)
+	assert.Equal(t, "https://localhost", baseURL)
 }

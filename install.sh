@@ -947,7 +947,8 @@ provision_tls_cert() {
     _ok "TLS cert exists: $cert_file"
   else
     _log "generating self-signed TLS certificate"
-    install -d -m 0750 -o root -g "$SERVICE_USER" "$cert_dir"
+    # Dir traversable by www-data so nginx can open the key file below.
+    install -d -m 0755 -o root -g root "$cert_dir"
 
     # Grab the machine's hostname and first non-loopback IP for SANs.
     local cn
@@ -965,10 +966,18 @@ provision_tls_cert() {
       -addext "subjectAltName=${san}" \
       2>/dev/null
 
-    chmod 0640 "$key_file" "$cert_file"
-    chown root:"$SERVICE_USER" "$key_file" "$cert_file"
     _ok "self-signed TLS cert created ($cert_file)"
   fi
+
+  # Always enforce ownership+mode (even on existing certs, in case an
+  # older installer run left them root:jabali 0640, which nginx can't
+  # read). Cert is public → 0644 root:root; key is shared between the
+  # panel (jabali, supplementary group www-data) and nginx (www-data)
+  # via group read.
+  chown root:root "$cert_file"
+  chmod 0644 "$cert_file"
+  chown root:www-data "$key_file"
+  chmod 0640 "$key_file"
 
   # Write TLS paths to env file if not already present.
   if ! grep -q '^TLS_CERT=' "$ENV_FILE" 2>/dev/null; then
@@ -1240,38 +1249,60 @@ start_and_verify() {
 # ---------- step 6.4: nginx default vhost for phpMyAdmin SSO -----
 
 install_nginx_default_vhost() {
-  _log "creating default nginx vhost on port 80 with phpMyAdmin SSO support"
+  _log "creating default nginx vhost (80 -> 443 redirect, 443 with panel TLS cert)"
 
   local nginx_sites_dir="/etc/nginx/sites-available"
   local nginx_enabled_dir="/etc/nginx/sites-enabled"
   local default_vhost_file="${nginx_sites_dir}/jabali-default.conf"
+  local tls_cert="/etc/jabali/tls/panel.crt"
+  local tls_key="/etc/jabali/tls/panel.key"
 
-  # Create the default vhost config that listens on port 80 and includes phpmyadmin.conf
+  # Sanity: the cert must exist (provision_tls_cert runs earlier in main()).
+  if [[ ! -f "$tls_cert" || ! -f "$tls_key" ]]; then
+    _error "TLS cert missing: $tls_cert — provision_tls_cert must run first"
+    return 1
+  fi
+
+  # Default vhost:
+  #   - :80 force-redirects everything to https:// (panel is https-only)
+  #   - :443 terminates TLS with the panel's self-signed cert and serves
+  #     phpMyAdmin at /phpmyadmin/ (panel itself is on :8443, separate).
   _log "writing ${default_vhost_file}"
-  cat > "${default_vhost_file}" << 'VHOSTEOF'
-# Default vhost on port 80
-# Serves as entry point for phpMyAdmin SSO and static content
+  cat > "${default_vhost_file}" << VHOSTEOF
+# Jabali default vhost. The panel is https-only — port 80 exists purely
+# to redirect any stray http request to https. phpMyAdmin is served on
+# :443 alongside the panel (panel runs on :8443 directly, phpMyAdmin is
+# fronted by nginx here on :443 using the same self-signed cert).
 
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
-    
     server_name _;
-    
-    # Log files
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    http2 on;
+    server_name _;
+
+    ssl_certificate     ${tls_cert};
+    ssl_certificate_key ${tls_key};
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
     access_log /var/log/nginx/default.access.log;
-    error_log /var/log/nginx/default.error.log;
-    
-    # Root document root (can serve static content)
+    error_log  /var/log/nginx/default.error.log;
+
     root /var/www/html;
     index index.html index.htm;
-    
-    # Include phpMyAdmin location block
+
     include /etc/nginx/sites-available/includes/phpmyadmin.conf;
-    
-    # Fallback for any other requests
+
     location / {
-        try_files $uri $uri/ =404;
+        try_files \$uri \$uri/ =404;
     }
 }
 VHOSTEOF

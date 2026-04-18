@@ -1,0 +1,593 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"sync"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+)
+
+// WordPress-specific mock repositories
+
+type mockWordPressInstallRepo struct {
+	mu       sync.RWMutex
+	installs map[string]*models.WordPressInstall
+	byDomain map[string]*models.WordPressInstall
+}
+
+func (m *mockWordPressInstallRepo) Create(ctx context.Context, inst *models.WordPressInstall) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.installs == nil {
+		m.installs = make(map[string]*models.WordPressInstall)
+	}
+	if m.byDomain == nil {
+		m.byDomain = make(map[string]*models.WordPressInstall)
+	}
+	m.installs[inst.ID] = inst
+	m.byDomain[inst.DomainID] = inst
+	return nil
+}
+
+func (m *mockWordPressInstallRepo) FindByID(ctx context.Context, id string) (*models.WordPressInstall, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if inst, ok := m.installs[id]; ok {
+		return inst, nil
+	}
+	return nil, repository.ErrNotFound
+}
+
+func (m *mockWordPressInstallRepo) FindByIDAndUserID(ctx context.Context, id, userID string) (*models.WordPressInstall, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	inst, ok := m.installs[id]
+	if !ok {
+		return nil, repository.ErrNotFound
+	}
+	if inst.UserID != userID {
+		return nil, repository.ErrNotFound
+	}
+	return inst, nil
+}
+
+func (m *mockWordPressInstallRepo) FindByDomainID(ctx context.Context, domainID string) (*models.WordPressInstall, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if inst, ok := m.byDomain[domainID]; ok {
+		return inst, nil
+	}
+	return nil, repository.ErrNotFound
+}
+
+func (m *mockWordPressInstallRepo) List(ctx context.Context, opts repository.ListOptions) ([]models.WordPressInstall, int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var result []models.WordPressInstall
+	for _, inst := range m.installs {
+		result = append(result, *inst)
+	}
+	return result, int64(len(result)), nil
+}
+
+func (m *mockWordPressInstallRepo) ListByUserID(ctx context.Context, userID string, opts repository.ListOptions) ([]models.WordPressInstall, int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var result []models.WordPressInstall
+	for _, inst := range m.installs {
+		if inst.UserID == userID {
+			result = append(result, *inst)
+		}
+	}
+	return result, int64(len(result)), nil
+}
+
+func (m *mockWordPressInstallRepo) UpdateStatus(ctx context.Context, id, status string, lastError *string, version *string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if inst, ok := m.installs[id]; ok {
+		inst.Status = status
+		if lastError != nil {
+			inst.LastError = *lastError
+		}
+		inst.Version = version
+		inst.UpdatedAt = time.Now()
+		return nil
+	}
+	return repository.ErrNotFound
+}
+
+func (m *mockWordPressInstallRepo) Delete(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if inst, ok := m.installs[id]; ok {
+		delete(m.byDomain, inst.DomainID)
+		delete(m.installs, id)
+		return nil
+	}
+	return repository.ErrNotFound
+}
+
+// GetByIDUnsafe returns the install without locking (for tests that need quick reads)
+// This is only safe if called immediately after an operation or if the caller ensures no concurrent access
+func (m *mockWordPressInstallRepo) GetByIDUnsafe(id string) *models.WordPressInstall {
+	if inst, ok := m.installs[id]; ok {
+		return inst
+	}
+	return nil
+}
+
+// Test helper
+
+func wordPressRouter(userID string, isAdmin bool, wpRepo *mockWordPressInstallRepo, domainRepo *mockDomainRepo, dbRepo *mockDatabaseRepo, userRepo *mockUserRepo, pkgRepo *mockPackageRepo, ag *mockAgent) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	v1 := r.Group("/api/v1")
+
+	if userID != "" {
+		v1.Use(func(c *gin.Context) {
+			ginctx.SetClaims(c, &auth.AccessClaims{
+				UserID:  userID,
+				IsAdmin: isAdmin,
+			})
+			c.Next()
+		})
+	}
+
+	cfg := WordPressHandlerConfig{
+		WordPressInstalls: wpRepo,
+		Databases:         dbRepo,
+		DatabaseUsers:     &mockDatabaseUserRepo{},
+		DatabaseGrants:    &mockDatabaseGrantRepo{},
+		Domains:           domainRepo,
+		Users:             userRepo,
+		Packages:          pkgRepo,
+		Agent:             ag,
+	}
+	RegisterWordPressRoutes(v1, cfg)
+
+	return r
+}
+
+// Database grant mock for WordPress tests
+
+type mockDatabaseGrantRepo struct {
+	grants map[string]*models.DatabaseUserGrant
+}
+
+func (m *mockDatabaseGrantRepo) Create(ctx context.Context, g *models.DatabaseUserGrant) error {
+	if m.grants == nil {
+		m.grants = make(map[string]*models.DatabaseUserGrant)
+	}
+	m.grants[g.ID] = g
+	return nil
+}
+
+func (m *mockDatabaseGrantRepo) Delete(ctx context.Context, id string) error {
+	if _, ok := m.grants[id]; ok {
+		delete(m.grants, id)
+		return nil
+	}
+	return repository.ErrNotFound
+}
+
+func (m *mockDatabaseGrantRepo) FindByID(ctx context.Context, id string) (*models.DatabaseUserGrant, error) {
+	if g, ok := m.grants[id]; ok {
+		return g, nil
+	}
+	return nil, repository.ErrNotFound
+}
+
+func (m *mockDatabaseGrantRepo) ListByDatabaseID(ctx context.Context, databaseID string) ([]models.DatabaseUserGrant, error) {
+	return nil, nil
+}
+
+func (m *mockDatabaseGrantRepo) ListByDatabaseUserID(ctx context.Context, databaseUserID string) ([]models.DatabaseUserGrant, error) {
+	return nil, nil
+}
+
+func (m *mockDatabaseGrantRepo) ListByDatabaseUserIDs(ctx context.Context, databaseUserIDs []string) ([]models.DatabaseUserGrant, error) {
+	return nil, nil
+}
+
+func (m *mockDatabaseGrantRepo) UpdateLevel(ctx context.Context, id string, level string) error {
+	return nil
+}
+
+func (m *mockDatabaseGrantRepo) UpdatePrivileges(ctx context.Context, id string, privileges string) error {
+	return nil
+}
+
+func (m *mockDatabaseGrantRepo) FindByDBAndDBUser(ctx context.Context, databaseID string, databaseUserID string) (*models.DatabaseUserGrant, error) {
+	return nil, repository.ErrNotFound
+}
+
+// Tests
+
+func TestWordPressCreateHappyPath(t *testing.T) {
+	wpRepo := &mockWordPressInstallRepo{}
+	domainRepo := &mockDomainRepo{
+		domains: map[string]*models.Domain{
+			"domain1": {
+				ID:        "domain1",
+				UserID:    "user1",
+				Name:      "example.com",
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			},
+		},
+	}
+	dbRepo := &mockDatabaseRepo{}
+	userRepo := &mockUserRepo{
+		users: map[string]*models.User{
+			"user1": {ID: "user1"},
+		},
+	}
+	pkgRepo := &mockPackageRepo{}
+	ag := &mockAgent{}
+
+	r := wordPressRouter("user1", false, wpRepo, domainRepo, dbRepo, userRepo, pkgRepo, ag)
+
+	body := createWordPressRequest{
+		DomainID:      "domain1",
+		SiteTitle:     "My Site",
+		AdminUsername: "admin",
+		AdminEmail:    "admin@example.com",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/v1/wordpress-installs", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected %d, got %d", http.StatusAccepted, w.Code)
+	}
+
+	var resp createWordPressResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.Status != "pending" {
+		t.Fatalf("expected pending, got %s", resp.Status)
+	}
+	if resp.AdminPassword == "" {
+		t.Fatal("expected admin_password in response")
+	}
+}
+
+func TestWordPressCreateDuplicateDomainConflict(t *testing.T) {
+	wpRepo := &mockWordPressInstallRepo{
+		installs: map[string]*models.WordPressInstall{
+			"inst1": {
+				ID:       "inst1",
+				UserID:   "user1",
+				DomainID: "domain1",
+				Status:   "ready",
+			},
+		},
+		byDomain: map[string]*models.WordPressInstall{
+			"domain1": {
+				ID:       "inst1",
+				UserID:   "user1",
+				DomainID: "domain1",
+				Status:   "ready",
+			},
+		},
+	}
+	domainRepo := &mockDomainRepo{
+		domains: map[string]*models.Domain{
+			"domain1": {
+				ID:     "domain1",
+				UserID: "user1",
+				Name:   "example.com",
+			},
+		},
+	}
+	dbRepo := &mockDatabaseRepo{}
+	userRepo := &mockUserRepo{users: map[string]*models.User{"user1": {ID: "user1"}}}
+	pkgRepo := &mockPackageRepo{}
+	ag := &mockAgent{}
+
+	r := wordPressRouter("user1", false, wpRepo, domainRepo, dbRepo, userRepo, pkgRepo, ag)
+
+	body := createWordPressRequest{
+		DomainID:      "domain1",
+		SiteTitle:     "My Site",
+		AdminUsername: "admin",
+		AdminEmail:    "admin@example.com",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/v1/wordpress-installs", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected %d, got %d", http.StatusConflict, w.Code)
+	}
+}
+
+func TestWordPressListAdminSeesAll(t *testing.T) {
+	wpRepo := &mockWordPressInstallRepo{
+		installs: map[string]*models.WordPressInstall{
+			"inst1": {ID: "inst1", UserID: "user1", DomainID: "domain1", Status: "ready"},
+			"inst2": {ID: "inst2", UserID: "user2", DomainID: "domain2", Status: "ready"},
+		},
+	}
+	domainRepo := &mockDomainRepo{}
+	dbRepo := &mockDatabaseRepo{}
+	userRepo := &mockUserRepo{}
+	pkgRepo := &mockPackageRepo{}
+	ag := &mockAgent{}
+
+	r := wordPressRouter("admin1", true, wpRepo, domainRepo, dbRepo, userRepo, pkgRepo, ag)
+
+	req := httptest.NewRequest("GET", "/api/v1/wordpress-installs", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, w.Code)
+	}
+
+	var resp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["total"] != float64(2) {
+		t.Fatalf("expected total=2, got %v", resp["total"])
+	}
+}
+
+func TestWordPressGetOwnershipCheck404(t *testing.T) {
+	wpRepo := &mockWordPressInstallRepo{
+		installs: map[string]*models.WordPressInstall{
+			"inst1": {ID: "inst1", UserID: "user1", DomainID: "domain1", Status: "ready"},
+		},
+	}
+	domainRepo := &mockDomainRepo{
+		domains: map[string]*models.Domain{
+			"domain1": {ID: "domain1", UserID: "user1"},
+		},
+	}
+	dbRepo := &mockDatabaseRepo{}
+	userRepo := &mockUserRepo{}
+	pkgRepo := &mockPackageRepo{}
+	ag := &mockAgent{}
+
+	r := wordPressRouter("user2", false, wpRepo, domainRepo, dbRepo, userRepo, pkgRepo, ag)
+
+	// user2 trying to access user1's install
+	req := httptest.NewRequest("GET", "/api/v1/wordpress-installs/inst1", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	// Should be 404, not 403
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected %d (404), got %d", http.StatusNotFound, w.Code)
+	}
+}
+
+func TestWordPressDeleteSuccess(t *testing.T) {
+	wpRepo := &mockWordPressInstallRepo{
+		installs: map[string]*models.WordPressInstall{
+			"inst1": {ID: "inst1", UserID: "user1", DomainID: "domain1", DBID: "db1", Status: "ready"},
+		},
+	}
+	domainRepo := &mockDomainRepo{
+		domains: map[string]*models.Domain{
+			"domain1": {ID: "domain1", UserID: "user1"},
+		},
+	}
+	dbRepo := &mockDatabaseRepo{}
+	userRepo := &mockUserRepo{}
+	pkgRepo := &mockPackageRepo{}
+	ag := &mockAgent{}
+
+	r := wordPressRouter("user1", false, wpRepo, domainRepo, dbRepo, userRepo, pkgRepo, ag)
+
+	req := httptest.NewRequest("DELETE", "/api/v1/wordpress-installs/inst1", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected %d, got %d", http.StatusAccepted, w.Code)
+	}
+
+	// Check status was updated to 'deleting'
+	// Note: we read immediately after the handler returns, before async goroutine completes
+	wpRepo.mu.RLock()
+	inst := wpRepo.installs["inst1"]
+	wpRepo.mu.RUnlock()
+	
+	if inst == nil {
+		t.Fatal("install was deleted before test could verify status")
+	}
+	if inst.Status != "deleting" {
+		t.Fatalf("expected status=deleting, got %s", inst.Status)
+	}
+}
+
+func TestWordPressCloneCrossDomainOwnershipCheck(t *testing.T) {
+	wpRepo := &mockWordPressInstallRepo{
+		installs: map[string]*models.WordPressInstall{
+			"inst1": {ID: "inst1", UserID: "user1", DomainID: "domain1", Status: "ready"},
+		},
+	}
+	domainRepo := &mockDomainRepo{
+		domains: map[string]*models.Domain{
+			"domain1": {ID: "domain1", UserID: "user1"},
+			"domain2": {ID: "domain2", UserID: "user2"}, // Different owner
+		},
+	}
+	dbRepo := &mockDatabaseRepo{}
+	userRepo := &mockUserRepo{}
+	pkgRepo := &mockPackageRepo{}
+	ag := &mockAgent{}
+
+	r := wordPressRouter("user1", false, wpRepo, domainRepo, dbRepo, userRepo, pkgRepo, ag)
+
+	body := cloneWordPressRequest{
+		DestDomainID: "domain2", // user2's domain
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/v1/wordpress-installs/inst1/clone", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected %d (403), got %d", http.StatusForbidden, w.Code)
+	}
+}
+
+func TestWordPressCloneDestinationConflict(t *testing.T) {
+	wpRepo := &mockWordPressInstallRepo{
+		installs: map[string]*models.WordPressInstall{
+			"inst1": {ID: "inst1", UserID: "user1", DomainID: "domain1", Status: "ready"},
+			"inst2": {ID: "inst2", UserID: "user1", DomainID: "domain2", Status: "ready"},
+		},
+		byDomain: map[string]*models.WordPressInstall{
+			"domain1": {ID: "inst1", UserID: "user1", DomainID: "domain1"},
+			"domain2": {ID: "inst2", UserID: "user1", DomainID: "domain2"},
+		},
+	}
+	domainRepo := &mockDomainRepo{
+		domains: map[string]*models.Domain{
+			"domain1": {ID: "domain1", UserID: "user1"},
+			"domain2": {ID: "domain2", UserID: "user1"},
+		},
+	}
+	dbRepo := &mockDatabaseRepo{}
+	userRepo := &mockUserRepo{}
+	pkgRepo := &mockPackageRepo{}
+	ag := &mockAgent{}
+
+	r := wordPressRouter("user1", false, wpRepo, domainRepo, dbRepo, userRepo, pkgRepo, ag)
+
+	body := cloneWordPressRequest{
+		DestDomainID: "domain2", // Already has install
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/v1/wordpress-installs/inst1/clone", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected %d, got %d", http.StatusConflict, w.Code)
+	}
+}
+
+func TestWordPressHealthStub(t *testing.T) {
+	wpRepo := &mockWordPressInstallRepo{
+		installs: map[string]*models.WordPressInstall{
+			"inst1": {ID: "inst1", UserID: "user1", DomainID: "domain1", Status: "ready"},
+		},
+	}
+	domainRepo := &mockDomainRepo{
+		domains: map[string]*models.Domain{
+			"domain1": {ID: "domain1", UserID: "user1"},
+		},
+	}
+	dbRepo := &mockDatabaseRepo{}
+	userRepo := &mockUserRepo{}
+	pkgRepo := &mockPackageRepo{}
+	ag := &mockAgent{}
+
+	r := wordPressRouter("user1", false, wpRepo, domainRepo, dbRepo, userRepo, pkgRepo, ag)
+
+	req := httptest.NewRequest("POST", "/api/v1/wordpress-installs/inst1/health", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, w.Code)
+	}
+
+	var resp healthResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.WPInstalled != false {
+		t.Fatal("expected wp_installed=false in stub")
+	}
+}
+
+func TestWordPressCreateUnauthenticated(t *testing.T) {
+	wpRepo := &mockWordPressInstallRepo{}
+	domainRepo := &mockDomainRepo{}
+	dbRepo := &mockDatabaseRepo{}
+	userRepo := &mockUserRepo{}
+	pkgRepo := &mockPackageRepo{}
+	ag := &mockAgent{}
+
+	// No auth middleware configured — claims will be nil
+	r := wordPressRouter("", false, wpRepo, domainRepo, dbRepo, userRepo, pkgRepo, ag)
+
+	body := createWordPressRequest{
+		DomainID:      "domain1",
+		SiteTitle:     "My Site",
+		AdminUsername: "admin",
+		AdminEmail:    "admin@example.com",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/v1/wordpress-installs", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected %d, got %d", http.StatusUnauthorized, w.Code)
+	}
+}
+
+func TestWordPressCreateInvalidEmail(t *testing.T) {
+	wpRepo := &mockWordPressInstallRepo{}
+	domainRepo := &mockDomainRepo{
+		domains: map[string]*models.Domain{
+			"domain1": {ID: "domain1", UserID: "user1"},
+		},
+	}
+	dbRepo := &mockDatabaseRepo{}
+	userRepo := &mockUserRepo{users: map[string]*models.User{"user1": {ID: "user1"}}}
+	pkgRepo := &mockPackageRepo{}
+	ag := &mockAgent{}
+
+	r := wordPressRouter("user1", false, wpRepo, domainRepo, dbRepo, userRepo, pkgRepo, ag)
+
+	body := createWordPressRequest{
+		DomainID:      "domain1",
+		SiteTitle:     "My Site",
+		AdminUsername: "admin",
+		AdminEmail:    "not-an-email",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/v1/wordpress-installs", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}

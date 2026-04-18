@@ -144,8 +144,9 @@ func filesWriteHandler(ctx context.Context, params json.RawMessage) (any, error)
 			}
 		}
 
-		// Chmod to 0664 (rw-rw-r--)
-		if err := os.Chmod(tmpName, 0664); err != nil {
+		// Chmod to 0640: owner rw, www-data group r (nginx static read),
+		// other none. Matches per-user FPM isolation; blocks cross-user shell reads.
+		if err := os.Chmod(tmpName, 0640); err != nil {
 			os.Remove(tmpName)
 			return nil, &agentwire.AgentError{
 				Code:    agentwire.CodeInternal,
@@ -169,7 +170,7 @@ func filesWriteHandler(ctx context.Context, params json.RawMessage) (any, error)
 	}
 
 	// Append mode: open existing file or create new one
-	file, err := scope.Open(resolvedPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0664)
+	file, err := scope.Open(resolvedPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0640)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

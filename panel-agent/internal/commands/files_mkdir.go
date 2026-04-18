@@ -111,8 +111,9 @@ func filesMkdirHandler(ctx context.Context, params json.RawMessage) (any, error)
 			}
 		}
 
-		// Chmod to 02775 (drwxrwsr-x with setgid bit)
-		if err := os.Chmod(resolvedPath, 02775); err != nil {
+		// Chmod to 0750: owner rwx, www-data group r-x (nginx reads static + traverses),
+		// other none. Matches deployed docroot perms; blocks cross-user shell reads.
+		if err := os.Chmod(resolvedPath, 0750); err != nil {
 			return nil, &agentwire.AgentError{
 				Code:    agentwire.CodeInternal,
 				Message: fmt.Sprintf("failed to chmod directory: %v", err),

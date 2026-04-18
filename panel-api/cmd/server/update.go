@@ -147,6 +147,13 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 					"  install -m 0644 "+repoDir+"/install/systemd/jabali-filebrowser.service /etc/systemd/system/jabali-filebrowser.service; "+
 					"  systemctl daemon-reload; "+
 					"fi; "+
+					// nginx reverse-proxy config for filebrowser — ensure the
+					// latest version lands on update. The file contains the /files/
+					// location block with auth_request validation and X-Forwarded-User
+					// injection from the SSO validator.
+					"install -m 0644 "+repoDir+"/install/nginx/jabali-files.conf /etc/nginx/conf.d/jabali-files.conf; "+
+					// Validate and reload nginx
+					"nginx -t && systemctl reload nginx; "+
 					// jabali service user in www-data group — needed for
 					// the reconciler's per-user FPM socket stat-check.
 					// usermod is idempotent; 'groups | grep -w' avoids an

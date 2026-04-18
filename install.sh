@@ -1250,6 +1250,45 @@ start_and_verify() {
 
 # ---------- step 6.4: nginx default vhost for phpMyAdmin SSO -----
 
+# ---------- step 6.3: nginx filebrowser reverse-proxy -----
+
+install_filebrowser_nginx() {
+  _log "installing filebrowser nginx reverse-proxy config"
+
+  local nginx_conf_dir="/etc/nginx/conf.d"
+
+  # Install the filebrowser nginx location block
+  # This file contains the /files/ location block with auth_request
+  # validation and X-Forwarded-User injection from the SSO validator.
+  if ! install -m 0644 "${REPO_DIR}/install/nginx/jabali-files.conf" "${nginx_conf_dir}/jabali-files.conf"; then
+    _die "failed to install filebrowser nginx config"
+  fi
+
+  # Enable the filebrowser systemd service (if the service unit exists)
+  # The service is created by install_filebrowser, but disabled by default.
+  # Step 5 enables it here so that systemd starts it on boot.
+  if [[ -f /etc/systemd/system/jabali-filebrowser.service ]]; then
+    _log "enabling jabali-filebrowser systemd service"
+    systemctl enable --quiet jabali-filebrowser.service || _die "failed to enable jabali-filebrowser.service"
+    _ok "jabali-filebrowser.service enabled"
+  else
+    _log "jabali-filebrowser.service not found; skipping enable (may be created later)"
+  fi
+
+  # Validate the nginx configuration
+  if ! nginx -t 2>&1 | grep -q "successful"; then
+    _die "nginx configuration syntax error after installing jabali-files.conf"
+  fi
+
+  # Reload nginx to pick up the new config
+  if ! systemctl reload nginx; then
+    _die "failed to reload nginx"
+  fi
+
+  _ok "filebrowser nginx reverse-proxy config installed and nginx reloaded"
+}
+
+
 install_nginx_default_vhost() {
   _log "creating default nginx vhost (80 -> 443 redirect, 443 with panel TLS cert)"
 
@@ -1927,6 +1966,7 @@ main() {
   install_wp_cli
   install_filebrowser_user
   install_filebrowser
+  install_filebrowser_nginx
   install_nginx_default_vhost
   write_agent_systemd_unit
   write_systemd_unit

@@ -286,6 +286,59 @@ func (h *wordPressHandler) create(c *gin.Context) {
 		return
 	}
 
+	// Provision the MariaDB side via the agent: CREATE DATABASE, CREATE
+	// USER, GRANT. Mirrors what the /databases and /database-users API
+	// paths do — previously the WP install kicked wordpress.install
+	// without ever creating the real DB/user, so wp core install hit
+	// "Error establishing a database connection".
+	if h.cfg.Agent != nil {
+		agentCtx, agentCancel := context.WithTimeout(ctx, 30*time.Second)
+		defer agentCancel()
+
+		rollbackPanelRows := func() {
+			h.cfg.DatabaseGrants.Delete(ctx, grantID)
+			h.cfg.DatabaseUsers.Delete(ctx, dbUserID)
+			h.cfg.Databases.Delete(ctx, dbID)
+		}
+
+		if _, acErr := h.cfg.Agent.Call(agentCtx, "db.create", map[string]any{
+			"db_name":   dbName,
+			"charset":   "utf8mb4",
+			"collation": "utf8mb4_unicode_ci",
+		}); acErr != nil {
+			rollbackPanelRows()
+			slog.ErrorContext(ctx, "wordpress create: agent db.create", "err", acErr, "db_name", dbName)
+			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": acErr.Error()})
+			return
+		}
+
+		if _, acErr := h.cfg.Agent.Call(agentCtx, "db_user.create", map[string]any{
+			"db_user_name": dbUsername,
+			"password":     adminPassword,
+		}); acErr != nil {
+			// Roll back the MariaDB db we just created.
+			h.cfg.Agent.Call(ctx, "db.drop", map[string]any{"db_name": dbName})
+			rollbackPanelRows()
+			slog.ErrorContext(ctx, "wordpress create: agent db_user.create", "err", acErr, "db_user", dbUsername)
+			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": acErr.Error()})
+			return
+		}
+
+		if _, acErr := h.cfg.Agent.Call(agentCtx, "db_user.grant", map[string]any{
+			"db_name":      dbName,
+			"db_user_name": dbUsername,
+			"grant_level":  "rw",
+			"privileges":   []string{"ALL"},
+		}); acErr != nil {
+			h.cfg.Agent.Call(ctx, "db_user.drop", map[string]any{"db_user_name": dbUsername})
+			h.cfg.Agent.Call(ctx, "db.drop", map[string]any{"db_name": dbName})
+			rollbackPanelRows()
+			slog.ErrorContext(ctx, "wordpress create: agent db_user.grant", "err", acErr)
+			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": acErr.Error()})
+			return
+		}
+	}
+
 	// Create WordPress install record with status='pending'
 	installID := ids.NewULID()
 	install := &models.WordPressInstall{

@@ -218,7 +218,9 @@ func (h *wordPressHandler) create(c *gin.Context) {
 
 	// Provision database (database name = wp_<6-char ULID prefix>)
 	dbID := ids.NewULID()
-	dbName := osUser + "_wp_" + dbID[:4]
+	// ULID first chars are timestamp; use the trailing random segment
+	// so back-to-back installs do not collide.
+	dbName := osUser + "_wp_" + dbID[len(dbID)-6:]
 	database := &models.Database{
 		ID:        dbID,
 		UserID:    targetUserID,
@@ -237,7 +239,7 @@ func (h *wordPressHandler) create(c *gin.Context) {
 
 	// Provision database user
 	dbUserID := ids.NewULID()
-	dbUsername := osUser + "_wp_" + dbUserID[:4]
+	dbUsername := osUser + "_wp_" + dbUserID[len(dbUserID)-6:]
 	hash, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
 	if err != nil {
 		slog.ErrorContext(ctx, "wordpress create: bcrypt failed", "err", err)

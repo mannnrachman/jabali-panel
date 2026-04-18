@@ -645,19 +645,31 @@ func (r *Reconciler) ReconcileFileBrowserUsers(ctx context.Context) {
 		cancel()
 
 		if err != nil {
-			r.log.Warn("reconcile: failed to ensure filebrowser user",
+			// user.ensure often fails on existing installs because the
+			// filebrowser CLI (how this command is implemented today)
+			// needs exclusive access to the SQLite DB, which the running
+			// daemon already holds. Log and continue to step 2 — the
+			// host-side Unix group + ACL work is independent of the
+			// filebrowser-internal user list, and filebrowser with
+			// auth.method=proxy auto-creates users on first request from
+			// the X-Forwarded-User header anyway.
+			//
+			// Follow-up: rewire filebrowser.user.ensure / .list / .delete
+			// to filebrowser's HTTP admin API so they no longer contend
+			// on the SQLite lock. Tracked in plans/m11-filebrowser-session-fix.md.
+			r.log.Warn("reconcile: filebrowser.user.ensure failed (continuing to group/ACL step)",
 				"user_id", user.ID,
 				"username", username,
 				"err", err)
-			continue
+		} else {
+			r.log.Info("reconcile: filebrowser user ensured",
+				"user_id", user.ID,
+				"username", username)
 		}
 
-		r.log.Info("reconcile: filebrowser user ensured",
-			"user_id", user.ID,
-			"username", username)
-
 		// Step 2: Ensure filebrowser system user is in the per-user group
-		// via usermod -aG <username> filebrowser (idempotent)
+		// AND has POSIX ACL read access on /home/<username>. Independent
+		// of step 1 (see comment above).
 		groupCtx, groupCancel := context.WithTimeout(ctx, 5*time.Second)
 		result, err := r.agent.Call(groupCtx, "filebrowser.group.add", map[string]string{
 			"username": username,

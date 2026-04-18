@@ -102,7 +102,7 @@ const MAX_INPUT_TIME_OPTIONS = [
 ];
 
 export function UserPHPSettingsPage() {
-  const [me, setMe] = useState<Identity | null>(null);
+  const [, setMe] = useState<Identity | null>(null);
   const [domains, setDomains] = useState<Domain[]>([]);
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
   const [phpSettings, setPhpSettings] = useState<DomainPHPSettings | null>(null);

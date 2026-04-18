@@ -660,6 +660,7 @@ export const DomainSettingsButton = ({
   domain: DomainSettingsTarget;
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const handleCloseModal = () => setIsModalOpen(false);
   const [directivesValue, setDirectivesValue] = useState(
     domain.nginx_custom_directives ?? ""
   );

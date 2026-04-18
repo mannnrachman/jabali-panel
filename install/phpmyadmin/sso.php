@@ -132,35 +132,25 @@ session_set_cookie_params([
 session_name('SignonSession');
 session_start();
 
-// Populate the phpMyAdmin signon session structure.
-// This mirrors the structure expected by phpMyAdmin 5.2.x per the
-// examples/signon-script.php in the phpMyAdmin tarball.
-// See: https://docs.phpmyadmin.net/en/latest/setup.html#authentication-modes
-$_SESSION['PMA_SQL_HISTORY'] = [];
-$_SESSION['PMA_SYSTEMINFO'] = '';
-
-// The main auth structure: array of connections to offer.
-// Each key (e.g., 'server_0') is an entry in the servers config.
-// For simplicity, we authenticate to the one server (index 1 in phpMyAdmin cfg).
-$_SESSION['cfg'] = [];
-$_SESSION['cfg']['Server'] = [];
-$_SESSION['cfg']['Server'][1] = [
-    'user' => $resp['user'],
-    'password' => $resp['password'],
-    'host' => $resp['host'],
-    'port' => $resp['port'],
+// Populate the phpMyAdmin signon session using the keys that
+// phpMyAdmin's AuthenticationSignon plugin actually reads.
+// Reference: libraries/classes/Plugins/Auth/AuthenticationSignon.php in
+// the phpMyAdmin 5.2.x source — readCredentials() bails (returns false)
+// when $_SESSION['PMA_single_signon_user'] is unset, which makes
+// index.php 302-bounce back to SignonURL. The previous implementation
+// wrote $_SESSION['cfg']['Server'][1] and PMA_Auth_provider instead,
+// keys the plugin ignores — so every click landed on the session-expired
+// page immediately after a successful token handoff.
+$_SESSION['PMA_single_signon_user']     = $resp['user'];
+$_SESSION['PMA_single_signon_password'] = $resp['password'];
+$_SESSION['PMA_single_signon_host']     = $resp['host'];
+$_SESSION['PMA_single_signon_port']     = (string) $resp['port'];
+// cfgupdate lets signon override per-request cfg values; we scope the
+// visible database list to the one the user is SSOing into so the user
+// cannot browse sibling databases they do not own.
+$_SESSION['PMA_single_signon_cfgupdate'] = [
+    'only_db' => $resp['only_db'],
 ];
-
-// Allow phpMyAdmin to apply 'only_db' restriction.
-// This prevents the authenticated user from seeing or accessing databases
-// outside the allowed scope.
-$_SESSION['cfg']['Server'][1]['only_db'] = $resp['only_db'];
-
-// Store the default database so the redirect lands on it
-$_SESSION['cfg']['Server'][1]['db'] = $resp['db'];
-
-// Signal that this session has been authenticated via signon
-$_SESSION['PMA_Auth_provider'] = 'signon';
 
 // Redirect to phpMyAdmin with the database pre-selected.
 // urlencode ensures the DB name is safe in the Location header.

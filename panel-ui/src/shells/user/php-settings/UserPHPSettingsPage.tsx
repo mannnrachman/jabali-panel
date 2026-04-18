@@ -117,8 +117,10 @@ export function UserPHPSettingsPage() {
       setMe(identity);
 
       try {
-        const resp = await apiClient.get<Domain[]>("/domains");
-        setDomains(resp.data || []);
+        const resp = await apiClient.get<{ data: Domain[]; total: number }>(
+          "/domains",
+        );
+        setDomains(resp.data?.data ?? []);
       } catch (err) {
         message.error("Failed to load domains");
       }

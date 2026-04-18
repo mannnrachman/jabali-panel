@@ -8,9 +8,11 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/sso"
@@ -21,6 +23,7 @@ type SSOPhpMyAdminHandlerConfig struct {
 	Databases repository.DatabaseRepository
 	SSO       *sso.Service
 	Log       *slog.Logger
+	SSOConfig config.SSOConfig
 }
 
 // RegisterSSOPhpMyAdminRoutes mounts the POST /api/v1/sso/phpmyadmin endpoint.
@@ -41,7 +44,7 @@ type ssoPhpMyAdminResponse struct {
 
 // issueSSOToken handles POST /api/v1/sso/phpmyadmin.
 // Auth: JWT. CSRF: same-origin check. Body: {"database_id":"<ulid>"}.
-// Returns: {"redirect_url":"/phpmyadmin/sso.php?token=<base64url>&db=<name>"}.
+// Returns: {"redirect_url":"<absolute-url>/phpmyadmin/sso.php?token=<base64url>&db=<name>"}.
 func (h *ssoPhpMyAdminHandler) issueSSOToken(c *gin.Context) {
 	ctx := c.Request.Context()
 	claims := ginctx.Claims(c)
@@ -107,13 +110,41 @@ func (h *ssoPhpMyAdminHandler) issueSSOToken(c *gin.Context) {
 	hashPrefix := hex.EncodeToString(tokenHash[:8])
 	h.auditLog(ctx, claims.UserID, req.DatabaseID, hashPrefix, "issued")
 
-	// Build redirect URL
+	// Build redirect URL with absolute base
+	baseURL := h.getPhpMyAdminBaseURL(c)
 	query := url.Values{}
 	query.Set("token", token)
 	query.Set("db", db.Name)
-	redirectURL := "/phpmyadmin/sso.php?" + query.Encode()
+	redirectURL := baseURL + "/phpmyadmin/sso.php?" + query.Encode()
 
 	c.JSON(http.StatusOK, ssoPhpMyAdminResponse{RedirectURL: redirectURL})
+}
+
+// getPhpMyAdminBaseURL derives the base URL for phpMyAdmin redirects.
+// Priority:
+//  1. Explicit JABALI_PHPMYADMIN_BASE_URL config (use as-is)
+//  2. Derived from request Host header (strip port, use http:// as scheme)
+func (h *ssoPhpMyAdminHandler) getPhpMyAdminBaseURL(c *gin.Context) string {
+	// If config specifies explicit base URL, use it (even with trailing slash)
+	if h.cfg.SSOConfig.PhpMyAdminBaseURL != "" {
+		baseURL := h.cfg.SSOConfig.PhpMyAdminBaseURL
+		// Ensure no trailing slash to avoid double-slashes when appending /phpmyadmin
+		return strings.TrimSuffix(baseURL, "/")
+	}
+
+	// Derive from request Host header: strip port and build http://<host>
+	host := c.Request.Host
+	// Remove :port if present
+	if idx := strings.LastIndex(host, ":"); idx != -1 {
+		host = host[:idx]
+	}
+
+	scheme := "http"
+	if c.Request.TLS != nil {
+		scheme = "https"
+	}
+
+	return scheme + "://" + host
 }
 
 // auditLog emits a structured slog line for SSO operations.

@@ -135,6 +135,11 @@ type SSOConfig struct {
 	// SocketPath is the filesystem path to the Unix domain socket for SSO validation.
 	// Default: /run/jabali-panel/sso.sock
 	SocketPath string `toml:"socket_path"`
+
+	// PhpMyAdminBaseURL is the full base URL for phpMyAdmin redirects.
+	// Examples: "http://localhost", "https://pma.example.com"
+	// When empty, defaults to http://<Host> with port stripped.
+	PhpMyAdminBaseURL string `toml:"phpmyadmin_base_url"`
 }
 
 // Defaults returns a Config populated with sensible development defaults.

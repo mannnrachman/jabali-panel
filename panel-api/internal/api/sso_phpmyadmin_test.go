@@ -17,6 +17,7 @@ import (
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/sso"
@@ -417,4 +418,122 @@ func TestSSO_AuditLog_NoTokenOrPassword(t *testing.T) {
 	// but we can verify that the audit record contains "issued" outcome
 	require.Contains(t, logs, "issued", "audit log should record 'issued' outcome")
 	require.Contains(t, logs, "sso_phpmyadmin", "audit log should reference sso_phpmyadmin operation")
+}
+
+// TestPhpMyAdminBaseURL_ExplicitConfig tests that explicit config URL is used as-is.
+func TestPhpMyAdminBaseURL_ExplicitConfig(t *testing.T) {
+	key := generateTestKeySSOPhpMyAdmin(t)
+
+	mockDBs := &mockDatabaseRepo{}
+	mockUsers := &mockUserRepo{}
+	mockAgent := &mockAgent{}
+	mockTokens := &mockSSOTokenRepo{}
+
+	ssoService := sso.NewService(nil, mockUsers, mockTokens, mockAgent, &key, slog.Default())
+
+	cfg := SSOPhpMyAdminHandlerConfig{
+		Databases: mockDBs,
+		SSO:       ssoService,
+		Log:       slog.Default(),
+		SSOConfig: config.SSOConfig{PhpMyAdminBaseURL: "https://pma.example.com"},
+	}
+
+	h := &ssoPhpMyAdminHandler{cfg: cfg}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/", nil)
+	c.Request.Host = "panel.example.com:8443"
+
+	baseURL := h.getPhpMyAdminBaseURL(c)
+	assert.Equal(t, "https://pma.example.com", baseURL)
+}
+
+// TestPhpMyAdminBaseURL_ExplicitConfigWithTrailingSlash tests that trailing slashes are stripped.
+func TestPhpMyAdminBaseURL_ExplicitConfigWithTrailingSlash(t *testing.T) {
+	key := generateTestKeySSOPhpMyAdmin(t)
+
+	mockDBs := &mockDatabaseRepo{}
+	mockUsers := &mockUserRepo{}
+	mockAgent := &mockAgent{}
+	mockTokens := &mockSSOTokenRepo{}
+
+	ssoService := sso.NewService(nil, mockUsers, mockTokens, mockAgent, &key, slog.Default())
+
+	cfg := SSOPhpMyAdminHandlerConfig{
+		Databases: mockDBs,
+		SSO:       ssoService,
+		Log:       slog.Default(),
+		SSOConfig: config.SSOConfig{PhpMyAdminBaseURL: "https://pma.example.com/"},
+	}
+
+	h := &ssoPhpMyAdminHandler{cfg: cfg}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/", nil)
+	c.Request.Host = "panel.example.com:8443"
+
+	baseURL := h.getPhpMyAdminBaseURL(c)
+	assert.Equal(t, "https://pma.example.com", baseURL, "trailing slash should be stripped")
+}
+
+// TestPhpMyAdminBaseURL_DerivedFromHost tests that Host is parsed correctly.
+func TestPhpMyAdminBaseURL_DerivedFromHost(t *testing.T) {
+	key := generateTestKeySSOPhpMyAdmin(t)
+
+	mockDBs := &mockDatabaseRepo{}
+	mockUsers := &mockUserRepo{}
+	mockAgent := &mockAgent{}
+	mockTokens := &mockSSOTokenRepo{}
+
+	ssoService := sso.NewService(nil, mockUsers, mockTokens, mockAgent, &key, slog.Default())
+
+	cfg := SSOPhpMyAdminHandlerConfig{
+		Databases: mockDBs,
+		SSO:       ssoService,
+		Log:       slog.Default(),
+		SSOConfig: config.SSOConfig{}, // No explicit config
+	}
+
+	h := &ssoPhpMyAdminHandler{cfg: cfg}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/", nil)
+	c.Request.Host = "panel.example.com:8443"
+	c.Request.TLS = nil // No TLS
+
+	baseURL := h.getPhpMyAdminBaseURL(c)
+	assert.Equal(t, "http://panel.example.com", baseURL, "port should be stripped from Host")
+}
+
+// TestPhpMyAdminBaseURL_DerivedFromHostWithoutPort tests Host without port.
+func TestPhpMyAdminBaseURL_DerivedFromHostWithoutPort(t *testing.T) {
+	key := generateTestKeySSOPhpMyAdmin(t)
+
+	mockDBs := &mockDatabaseRepo{}
+	mockUsers := &mockUserRepo{}
+	mockAgent := &mockAgent{}
+	mockTokens := &mockSSOTokenRepo{}
+
+	ssoService := sso.NewService(nil, mockUsers, mockTokens, mockAgent, &key, slog.Default())
+
+	cfg := SSOPhpMyAdminHandlerConfig{
+		Databases: mockDBs,
+		SSO:       ssoService,
+		Log:       slog.Default(),
+		SSOConfig: config.SSOConfig{},
+	}
+
+	h := &ssoPhpMyAdminHandler{cfg: cfg}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/", nil)
+	c.Request.Host = "localhost"
+	c.Request.TLS = nil
+
+	baseURL := h.getPhpMyAdminBaseURL(c)
+	assert.Equal(t, "http://localhost", baseURL)
 }

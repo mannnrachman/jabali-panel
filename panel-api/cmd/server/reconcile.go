@@ -109,3 +109,139 @@ func runReconcile(ctx context.Context, cfg *config.Config, token string, force b
 
 	return nil
 }
+
+func newReconcilerPauseCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "pause",
+		Short: "Pause the reconciler (for SSO key rotation)",
+		Long:  "Pause the reconciler to prevent it from running during SSO key rotation.",
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			return initConfig()
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), sharedCfg.Agent.Timeout)
+			defer cancel()
+
+			token, err := mintCLIToken(ctx)
+			if err != nil {
+				return fmt.Errorf("mint token: %w", err)
+			}
+
+			return runReconcilerPause(ctx, sharedCfg, token)
+		},
+	}
+}
+
+func newReconcilerResumeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "resume",
+		Short: "Resume the reconciler",
+		Long:  "Resume the reconciler after a pause.",
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			return initConfig()
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), sharedCfg.Agent.Timeout)
+			defer cancel()
+
+			token, err := mintCLIToken(ctx)
+			if err != nil {
+				return fmt.Errorf("mint token: %w", err)
+			}
+
+			return runReconcilerResume(ctx, sharedCfg, token)
+		},
+	}
+}
+
+func runReconcilerPause(ctx context.Context, cfg *config.Config, token string) error {
+	payload := map[string]interface{}{
+		"action": "pause",
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+
+	scheme := "http"
+	if cfg.Server.TLSCert != "" && cfg.Server.TLSKey != "" {
+		scheme = "https"
+	}
+	host, port, err := net.SplitHostPort(cfg.Server.Addr)
+	if err != nil {
+		return fmt.Errorf("parse server addr: %w", err)
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	url := fmt.Sprintf("%s://%s:%s/api/v1/admin/reconciler/pause", scheme, host, port)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("pause failed (HTTP %d): %s", resp.StatusCode, string(body))
+	}
+
+	fmt.Println("Reconciler paused")
+	return nil
+}
+
+func runReconcilerResume(ctx context.Context, cfg *config.Config, token string) error {
+	payload := map[string]interface{}{
+		"action": "resume",
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+
+	scheme := "http"
+	if cfg.Server.TLSCert != "" && cfg.Server.TLSKey != "" {
+		scheme = "https"
+	}
+	host, port, err := net.SplitHostPort(cfg.Server.Addr)
+	if err != nil {
+		return fmt.Errorf("parse server addr: %w", err)
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	url := fmt.Sprintf("%s://%s:%s/api/v1/admin/reconciler/resume", scheme, host, port)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("resume failed (HTTP %d): %s", resp.StatusCode, string(body))
+	}
+
+	fmt.Println("Reconciler resumed")
+	return nil
+}

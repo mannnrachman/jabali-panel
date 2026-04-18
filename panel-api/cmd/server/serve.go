@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -84,16 +85,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Deps.SSOKey stays nil when the key file is absent; the SSO handler
 	// refuses requests in that state so the feature is opt-in without
 	// blocking startup on a missing file.
-	var ssoKeyPtr *ssokey.Key
-	if ssoKey, err := ssokey.Load(cfg.SSO.KeyPath); err == nil {
-		k := ssoKey
-		ssoKeyPtr = &k
-		log.Info("SSO key loaded", "path", cfg.SSO.KeyPath)
-	} else if errors.Is(err, ssokey.ErrKeyMissing) {
-		log.Warn("SSO key not found (phpMyAdmin SSO disabled)", "path", cfg.SSO.KeyPath)
-	} else {
-		return fmt.Errorf("failed to load SSO key: %w", err)
-	}
+	// Use a pointer to allow hot-reloading on SIGHUP.
+	ssoKeyPtr := loadSSOKey(cfg.SSO.KeyPath, log)
 
 	// ---- auth + deps ----
 	var deps app.Deps
@@ -292,29 +285,63 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
-	select {
-	case err := <-serveErr:
-		cancel() // Stop reconciler on any serve error
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
-	case sig := <-stop:
-		log.Info("shutdown signal", "signal", sig.String())
-		cancel() // Stop reconciler
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer shutdownCancel()
-		if ssoUDSShutdown != nil {
-			if err := ssoUDSShutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				log.Error("UDS server shutdown error", "err", err)
+	for {
+		select {
+		case err := <-serveErr:
+			cancel() // Stop reconciler on any serve error
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return err
 			}
-		}
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			return err
+			return nil
+		case sig := <-stop:
+			if sig == syscall.SIGHUP {
+				// Hot-reload SSO key without restarting
+				log.Info("SIGHUP received, reloading SSO key")
+				newKey := loadSSOKey(cfg.SSO.KeyPath, log)
+				if newKey != nil {
+					*ssoKeyPtr = *newKey
+					log.Info("SSO key reloaded successfully")
+					deps.SSOKey = ssoKeyPtr
+				}
+				continue // Continue serving
+			}
+			// SIGINT or SIGTERM — shutdown
+			log.Info("shutdown signal", "signal", sig.String())
+			cancel() // Stop reconciler
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+			defer shutdownCancel()
+			if ssoUDSShutdown != nil {
+				if err := ssoUDSShutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+					log.Error("UDS server shutdown error", "err", err)
+				}
+			}
+			if err := srv.Shutdown(shutdownCtx); err != nil {
+				return err
+			}
+			log.Info("jabali-panel stopped")
+			return nil
 		}
 	}
-	log.Info("jabali-panel stopped")
+}
+
+// loadSSOKey attempts to load the SSO encryption key from disk.
+// Returns nil if the key file is missing or an error occurs.
+func loadSSOKey(keyPath string, log *slog.Logger) *ssokey.Key {
+	if keyPath == "" {
+		return nil
+	}
+	ssoKey, err := ssokey.Load(keyPath)
+	if err == nil {
+		log.Info("SSO key loaded", "path", keyPath)
+		return &ssoKey
+	}
+	if errors.Is(err, ssokey.ErrKeyMissing) {
+		log.Warn("SSO key not found (phpMyAdmin SSO disabled)", "path", keyPath)
+		return nil
+	}
+	log.Error("failed to load SSO key", "path", keyPath, "err", err)
 	return nil
 }
 

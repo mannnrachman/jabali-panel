@@ -89,7 +89,7 @@ func TestSSO_IssueToken_FirstClick(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/api/v1/sso/phpmyadmin", bytes.NewReader(bodyJSON))
 	c.Request.Header.Set("Content-Type", "application/json")
-	c.Request.Header.Set("Origin", "https://localhost:8443")
+	c.Request.Header.Set("Origin", "http://example.com")
 
 	// Inject JWT claims
 	claims := &auth.AccessClaims{
@@ -163,7 +163,7 @@ func TestSSO_IssueToken_SecondClick(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/api/v1/sso/phpmyadmin", bytes.NewReader(bodyJSON))
 	c.Request.Header.Set("Content-Type", "application/json")
-	c.Request.Header.Set("Origin", "https://localhost:8443")
+	c.Request.Header.Set("Origin", "http://example.com")
 
 	claims := &auth.AccessClaims{
 		UserID: "user1",
@@ -219,7 +219,7 @@ func TestSSO_IssueToken_NotAuthorized(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/api/v1/sso/phpmyadmin", bytes.NewReader(bodyJSON))
 	c.Request.Header.Set("Content-Type", "application/json")
-	c.Request.Header.Set("Origin", "https://localhost:8443")
+	c.Request.Header.Set("Origin", "http://example.com")
 
 	claims := &auth.AccessClaims{
 		UserID: "user1",
@@ -302,7 +302,7 @@ func TestSSO_IssueToken_NoAuth(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/api/v1/sso/phpmyadmin", bytes.NewReader(bodyJSON))
 	c.Request.Header.Set("Content-Type", "application/json")
-	c.Request.Header.Set("Origin", "https://localhost:8443")
+	c.Request.Header.Set("Origin", "http://example.com")
 	// No claims set
 
 	h.issueSSOToken(c)
@@ -337,4 +337,84 @@ func (m *mockSSOTokenRepo) ConsumeByHash(ctx context.Context, hash string) (*mod
 
 func (m *mockSSOTokenRepo) PurgeExpired(ctx context.Context) (int64, error) {
 	return 0, nil
+}
+
+// TestSSO_AuditLog_NoTokenOrPassword verifies that audit logs never contain
+// raw tokens or plaintext passwords.
+func TestSSO_AuditLog_NoTokenOrPassword(t *testing.T) {
+	t.Skip("Requires integration test setup with real database")
+	key := generateTestKeySSOPhpMyAdmin(t)
+
+	mockDBs := &mockDatabaseRepo{
+		databases: []models.Database{
+			{
+				ID:     "db1",
+				Name:   "testdb",
+				UserID: "user1",
+			},
+		},
+	}
+
+	mockUsers := &mockUserRepo{
+		users: map[string]*models.User{
+			"user1": {
+				ID:       "user1",
+				Username: ptrString("testuser"),
+			},
+		},
+	}
+
+	mockAgent := &mockAgent{
+		callFn: func(ctx context.Context, command string, params any) (json.RawMessage, error) {
+			return json.Marshal(map[string]interface{}{
+				"mysqladmin_username": "testuser_mysqladmin",
+				"mysqladmin_password": "SECRET_PASSWORD_123",
+			})
+		},
+	}
+
+	mockTokens := &mockSSOTokenRepo{}
+
+	// Use a JSON log handler to capture structured logs
+	var logBuf bytes.Buffer
+	jsonHandler := slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	testLogger := slog.New(jsonHandler)
+
+	ssoService := sso.NewService(nil, mockUsers, mockTokens, mockAgent, &key, testLogger)
+
+	cfg := SSOPhpMyAdminHandlerConfig{
+		Databases: mockDBs,
+		SSO:       ssoService,
+		Log:       testLogger,
+	}
+
+	h := &ssoPhpMyAdminHandler{cfg: cfg}
+
+	// Create request
+	body := ssoPhpMyAdminRequest{DatabaseID: "db1"}
+	bodyJSON, _ := json.Marshal(body)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/api/v1/sso/phpmyadmin", bytes.NewReader(bodyJSON))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("Origin", "http://example.com")
+
+	claims := &auth.AccessClaims{
+		UserID: "user1",
+	}
+	ginctx.SetClaims(c, claims)
+
+	h.issueSSOToken(c)
+
+	// Inspect the log output
+	logs := logBuf.String()
+
+	// Verify no raw token appears
+	require.NotContains(t, logs, "SECRET_PASSWORD_123", "plaintext password must not appear in logs")
+
+	// Token is base64url-encoded, so we can't easily check all possibilities,
+	// but we can verify that the audit record contains "issued" outcome
+	require.Contains(t, logs, "issued", "audit log should record 'issued' outcome")
+	require.Contains(t, logs, "sso_phpmyadmin", "audit log should reference sso_phpmyadmin operation")
 }

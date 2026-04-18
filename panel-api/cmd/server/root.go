@@ -61,6 +61,7 @@ func newRootCmd() *cobra.Command {
 		newUpdateCmd(),
 		newReconcileCmd(),
 		adminCmd,
+		newSSOCmd(),
 	)
 
 	return cmd

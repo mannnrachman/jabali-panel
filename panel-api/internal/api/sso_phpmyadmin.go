@@ -1,6 +1,9 @@
 package api
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -43,18 +46,21 @@ func (h *ssoPhpMyAdminHandler) issueSSOToken(c *gin.Context) {
 	ctx := c.Request.Context()
 	claims := ginctx.Claims(c)
 	if claims == nil {
+		h.auditLog(ctx, "", "", "", "unauthorized")
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 
 	// CSRF: same-origin check via Origin/Referer headers
 	if !h.validateSameOrigin(c) {
+		h.auditLog(ctx, claims.UserID, "", "", "unauthorized")
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 
 	var req ssoPhpMyAdminRequest
 	if err := c.BindJSON(&req); err != nil {
+		h.auditLog(ctx, claims.UserID, "", "", "unauthorized")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
 		return
 	}
@@ -63,15 +69,18 @@ func (h *ssoPhpMyAdminHandler) issueSSOToken(c *gin.Context) {
 	db, err := h.cfg.Databases.FindByID(ctx, req.DatabaseID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
+			h.auditLog(ctx, claims.UserID, req.DatabaseID, "", "unauthorized")
 			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 			return
 		}
 		h.cfg.Log.ErrorContext(ctx, "database lookup failed", "err", err)
+		h.auditLog(ctx, claims.UserID, req.DatabaseID, "", "unauthorized")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
 
 	if db.UserID != claims.UserID {
+		h.auditLog(ctx, claims.UserID, req.DatabaseID, "", "unauthorized")
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
@@ -79,6 +88,7 @@ func (h *ssoPhpMyAdminHandler) issueSSOToken(c *gin.Context) {
 	// Ensure shadow account and get credentials
 	if err := h.cfg.SSO.EnsureShadow(ctx, claims.UserID); err != nil {
 		h.cfg.Log.ErrorContext(ctx, "ensure shadow account failed", "err", err)
+		h.auditLog(ctx, claims.UserID, req.DatabaseID, "", "unauthorized")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
@@ -87,9 +97,15 @@ func (h *ssoPhpMyAdminHandler) issueSSOToken(c *gin.Context) {
 	token, err := h.cfg.SSO.MintToken(ctx, claims.UserID, req.DatabaseID, db.Name)
 	if err != nil {
 		h.cfg.Log.ErrorContext(ctx, "mint token failed", "err", err)
+		h.auditLog(ctx, claims.UserID, req.DatabaseID, "", "unauthorized")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+
+	// Log successful issue with token hash prefix
+	tokenHash := sha256.Sum256([]byte(token))
+	hashPrefix := hex.EncodeToString(tokenHash[:8])
+	h.auditLog(ctx, claims.UserID, req.DatabaseID, hashPrefix, "issued")
 
 	// Build redirect URL
 	query := url.Values{}
@@ -98,6 +114,16 @@ func (h *ssoPhpMyAdminHandler) issueSSOToken(c *gin.Context) {
 	redirectURL := "/phpmyadmin/sso.php?" + query.Encode()
 
 	c.JSON(http.StatusOK, ssoPhpMyAdminResponse{RedirectURL: redirectURL})
+}
+
+// auditLog emits a structured slog line for SSO operations.
+func (h *ssoPhpMyAdminHandler) auditLog(ctx context.Context, userID, databaseID, tokenHashPrefix, outcome string) {
+	h.cfg.Log.DebugContext(ctx, "sso_phpmyadmin",
+		"user_id", userID,
+		"database_id", databaseID,
+		"token_hash_prefix", tokenHashPrefix,
+		"outcome", outcome,
+	)
 }
 
 // validateSameOrigin checks that Origin or Referer header matches the request host.

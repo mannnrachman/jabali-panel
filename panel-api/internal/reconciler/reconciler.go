@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
@@ -39,6 +40,10 @@ type Reconciler struct {
 	queue chan string
 	// socketReady is a function that checks if a Unix socket is ready. Mockable for testing.
 	socketReady func(ctx context.Context, socketPath string, timeout, pollInterval time.Duration) bool
+	// paused is an atomic flag to pause reconciliation (for SSO key rotation)
+	paused atomic.Bool
+	// ssoTokens holds reference to the SSO token repository for nightly prune
+	ssoTokens repository.PhpMyAdminSSOTokenRepository
 }
 
 // WithSSLCerts adds SSL certificate repository support to the reconciler.
@@ -105,6 +110,29 @@ func (r *Reconciler) WithDNSRepos(dnsZones repository.DNSZoneRepository, dnsReco
 	return r
 }
 
+// WithSSOTokens injects the SSO token repository for nightly prune.
+func (r *Reconciler) WithSSOTokens(ssoTokens repository.PhpMyAdminSSOTokenRepository) *Reconciler {
+	r.ssoTokens = ssoTokens
+	return r
+}
+
+// Pause stops the reconciler from running its main loop. Used for SSO key rotation.
+func (r *Reconciler) Pause() {
+	r.paused.Store(true)
+	r.log.Info("reconciler paused")
+}
+
+// Resume resumes the reconciler after a pause.
+func (r *Reconciler) Resume() {
+	r.paused.Store(false)
+	r.log.Info("reconciler resumed")
+}
+
+// IsPaused returns true if the reconciler is paused.
+func (r *Reconciler) IsPaused() bool {
+	return r.paused.Load()
+}
+
 // Start blocks until ctx is cancelled, running ReconcileAll every interval
 // and draining the out-of-band queue. Must be called once per process.
 func (r *Reconciler) Start(ctx context.Context) {
@@ -122,21 +150,45 @@ func (r *Reconciler) Start(ctx context.Context) {
 	sslRetryTicker := time.NewTicker(1 * time.Minute)
 	defer sslRetryTicker.Stop()
 
+	// SSO token prune ticker: clean up expired tokens every 5 minutes
+	pruneTicker := time.NewTicker(5 * time.Minute)
+	defer pruneTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			r.log.Info("reconciler stopping")
 			return
 		case domainID := <-r.queue:
+			if r.IsPaused() {
+				r.log.Debug("reconcile one skipped (paused)", "domain_id", domainID)
+				continue
+			}
 			if err := r.ReconcileOne(ctx, domainID); err != nil {
 				r.log.Error("reconcile one failed", "domain_id", domainID, "err", err)
 			}
 		case <-ticker.C:
+			if r.IsPaused() {
+				r.log.Debug("periodic reconcile skipped (paused)")
+				continue
+			}
 			if err := r.ReconcileAll(ctx); err != nil {
 				r.log.Error("periodic reconcile failed", "err", err)
 			}
 		case <-sslRetryTicker.C:
+			if r.IsPaused() {
+				r.log.Debug("ssl retry skipped (paused)")
+				continue
+			}
 			r.RetrySSLDueForACME(ctx)
+		case <-pruneTicker.C:
+			if r.ssoTokens != nil {
+				if count, err := r.ssoTokens.PurgeExpired(ctx); err != nil {
+					r.log.Error("sso token prune failed", "err", err)
+				} else {
+					r.log.Debug("sso tokens purged", "count", count)
+				}
+			}
 		}
 	}
 }

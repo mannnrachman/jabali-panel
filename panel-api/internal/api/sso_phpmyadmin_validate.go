@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -39,12 +41,12 @@ type ssoValidateRequest struct {
 }
 
 type ssoValidateResponse struct {
-	User   string `json:"user,omitempty"`
+	User     string `json:"user,omitempty"`
 	Password string `json:"password,omitempty"`
-	Host   string `json:"host,omitempty"`
-	Port   int    `json:"port,omitempty"`
-	OnlyDB string `json:"only_db,omitempty"`
-	DB     string `json:"db,omitempty"`
+	Host     string `json:"host,omitempty"`
+	Port     int    `json:"port,omitempty"`
+	OnlyDB   string `json:"only_db,omitempty"`
+	DB       string `json:"db,omitempty"`
 }
 
 type ssoErrorResponse struct {
@@ -74,15 +76,20 @@ func (h *ssoPhpMyAdminValidateHandler) validate(c *gin.Context) {
 	// Compute SHA-256 hash
 	hash := sha256.Sum256(tokenBytes)
 	hashStr := fmt.Sprintf("%x", hash[:])
+	hashPrefix := hex.EncodeToString(hash[:4])
 
 	// Consume token (atomic delete-and-return)
 	token, err := h.cfg.Tokens.ConsumeByHash(ctx, hashStr)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
+			// Could be expired, already consumed (replay), or never existed
+			outcome := "expired"
+			h.auditLog(ctx, "", "", hashPrefix, outcome)
 			c.JSON(http.StatusNotFound, ssoErrorResponse{Error: "not_found"})
 			return
 		}
 		h.cfg.Log.ErrorContext(ctx, "consume token failed", "err", err)
+		h.auditLog(ctx, "", "", hashPrefix, "unauthorized")
 		c.JSON(http.StatusInternalServerError, ssoErrorResponse{Error: "internal"})
 		return
 	}
@@ -91,16 +98,19 @@ func (h *ssoPhpMyAdminValidateHandler) validate(c *gin.Context) {
 	user, err := h.cfg.Users.FindByID(ctx, token.UserID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
+			h.auditLog(ctx, token.UserID, token.DatabaseID, hashPrefix, "unauthorized")
 			c.JSON(http.StatusNotFound, ssoErrorResponse{Error: "user_not_found"})
 			return
 		}
 		h.cfg.Log.ErrorContext(ctx, "find user failed", "err", err)
+		h.auditLog(ctx, token.UserID, token.DatabaseID, hashPrefix, "unauthorized")
 		c.JSON(http.StatusInternalServerError, ssoErrorResponse{Error: "internal"})
 		return
 	}
 
 	if user.MysqladminUsername == nil || user.MysqladminPasswordEnc == nil {
 		h.cfg.Log.WarnContext(ctx, "user missing shadow credentials")
+		h.auditLog(ctx, token.UserID, token.DatabaseID, hashPrefix, "unauthorized")
 		c.JSON(http.StatusInternalServerError, ssoErrorResponse{Error: "internal"})
 		return
 	}
@@ -109,6 +119,7 @@ func (h *ssoPhpMyAdminValidateHandler) validate(c *gin.Context) {
 	plaintextBytes, err := h.cfg.SSOKey.Open(user.MysqladminPasswordEnc)
 	if err != nil {
 		h.cfg.Log.ErrorContext(ctx, "decrypt password failed", "err", err)
+		h.auditLog(ctx, token.UserID, token.DatabaseID, hashPrefix, "unauthorized")
 		c.JSON(http.StatusInternalServerError, ssoErrorResponse{Error: "internal"})
 		return
 	}
@@ -117,13 +128,18 @@ func (h *ssoPhpMyAdminValidateHandler) validate(c *gin.Context) {
 	db, err := h.cfg.Databases.FindByID(ctx, token.DatabaseID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
+			h.auditLog(ctx, token.UserID, token.DatabaseID, hashPrefix, "unauthorized")
 			c.JSON(http.StatusNotFound, ssoErrorResponse{Error: "database_not_found"})
 			return
 		}
 		h.cfg.Log.ErrorContext(ctx, "find database failed", "err", err)
+		h.auditLog(ctx, token.UserID, token.DatabaseID, hashPrefix, "unauthorized")
 		c.JSON(http.StatusInternalServerError, ssoErrorResponse{Error: "internal"})
 		return
 	}
+
+	// Log successful validation
+	h.auditLog(ctx, token.UserID, token.DatabaseID, hashPrefix, "validated")
 
 	resp := ssoValidateResponse{
 		User:     *user.MysqladminUsername,
@@ -135,4 +151,14 @@ func (h *ssoPhpMyAdminValidateHandler) validate(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+// auditLog emits a structured slog line for SSO validation operations.
+func (h *ssoPhpMyAdminValidateHandler) auditLog(ctx context.Context, userID, databaseID, tokenHashPrefix, outcome string) {
+	h.cfg.Log.DebugContext(ctx, "sso_phpmyadmin_validate",
+		"user_id", userID,
+		"database_id", databaseID,
+		"token_hash_prefix", tokenHashPrefix,
+		"outcome", outcome,
+	)
 }

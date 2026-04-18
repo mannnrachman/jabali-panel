@@ -121,6 +121,18 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 					// them now so update.go is the single-source refresh.
 					"if [ -d /opt/phpmyadmin/current ]; then "+
 					"  install -m 0640 -o root -g www-data "+repoDir+"/install/phpmyadmin/sso.php /opt/phpmyadmin/current/sso.php; "+
+					// Strip controluser/controlpass/controlhost/controlport
+					// from an existing config.inc.php. Earlier installs
+					// seeded controluser='root', which makes phpMyAdmin
+					// open a second connection as root@localhost on every
+					// page load and surface two "Access denied" banners
+					// even though SSO succeeded. pmadb is already false,
+					// so no control connection is needed — stripping the
+					// keys makes PMA skip it. Idempotent: sed -i only
+					// rewrites if lines match, so re-running is a no-op
+					// once they're gone.
+					"if [ -f /opt/phpmyadmin/current/config.inc.php ]; then "+
+					"  sed -i \"/\\$cfg\\['Servers'\\]\\[1\\]\\['control\\(user\\|pass\\|host\\|port\\)'\\]/d\" /opt/phpmyadmin/current/config.inc.php; "+
 					"fi; "+
 					// jabali service user in www-data group — needed for
 					// the reconciler's per-user FPM socket stat-check.

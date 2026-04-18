@@ -1598,11 +1598,14 @@ $cfg['Servers'][1]['port'] = 3306;
 $cfg['Servers'][1]['connect_type'] = 'tcp';
 $cfg['Servers'][1]['compress'] = false;
 
-// Logging and display
-$cfg['Servers'][1]['controlhost'] = 'localhost';
-$cfg['Servers'][1]['controlport'] = '';
-$cfg['Servers'][1]['controluser'] = 'root';
-$cfg['Servers'][1]['controlpass'] = '';
+// No control connection. phpMyAdmin uses the "controluser" for its
+// optional pmadb features (bookmarks, history, designer, etc.) — we
+// disable pmadb below, so no second connection is needed. Leaving
+// controluser = 'root' here would make phpMyAdmin try to authenticate
+// as root@localhost on every page load and surface "Access denied for
+// user 'root'@'localhost'" + "Connection for controluser failed"
+// banners, even on SSO sessions that work fine for the data
+// connection. Omitting these keys entirely makes PMA skip it.
 
 // Allow no password (some test/dev servers may have unprotected root)
 $cfg['Servers'][1]['AllowNoPassword'] = false;

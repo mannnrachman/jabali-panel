@@ -605,3 +605,215 @@ func TestWordPressCreateInvalidEmail(t *testing.T) {
 		t.Fatalf("expected %d, got %d", http.StatusBadRequest, w.Code)
 	}
 }
+
+// ----------------------------------------------------------------------------
+// Regression tests for WordPress install/clone fixes landed 2026-04-18.
+// Each block has a **Why** comment pointing at the commit that introduced it
+// so a future rewrite doesn't silently regress any of these four fires.
+// ----------------------------------------------------------------------------
+
+// Why ef5ab63: grant_level was briefly "all" but the DB enum is only 'rw'/'ro'.
+// This locked us into a 500 on every WP install. Enforce that the install path
+// writes "rw" so the column accepts it.
+func TestWordPressCreateWritesRWGrantLevel(t *testing.T) {
+	wpRepo := &mockWordPressInstallRepo{}
+	domainRepo := &mockDomainRepo{domains: map[string]*models.Domain{
+		"domain1": {ID: "domain1", UserID: "user1", Name: "example.com", DocRoot: "/home/testuser/example.com/public_html"},
+	}}
+	dbRepo := &mockDatabaseRepo{}
+	userRepo := &mockUserRepo{users: map[string]*models.User{"user1": {ID: "user1", Username: strPtr("testuser")}}}
+	grantRepo := &mockDatabaseGrantRepo{}
+	cfg := WordPressHandlerConfig{
+		WordPressInstalls: wpRepo, Databases: dbRepo,
+		DatabaseUsers: &mockDatabaseUserRepo{}, DatabaseGrants: grantRepo,
+		Domains: domainRepo, Users: userRepo, Packages: &mockPackageRepo{}, Agent: &mockAgent{},
+	}
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "user1", IsAdmin: false})
+		c.Next()
+	})
+	RegisterWordPressRoutes(r.Group("/api/v1"), cfg)
+
+	body, _ := json.Marshal(createWordPressRequest{
+		DomainID: "domain1", SiteTitle: "x", AdminUsername: "admin", AdminEmail: "a@b.com",
+	})
+	req := httptest.NewRequest("POST", "/api/v1/wordpress-installs", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", w.Code, w.Body.String())
+	}
+	if len(grantRepo.grants) != 1 {
+		t.Fatalf("expected 1 grant created, got %d", len(grantRepo.grants))
+	}
+	for _, g := range grantRepo.grants {
+		if g.GrantLevel != "rw" {
+			t.Fatalf("grant_level must be 'rw' (enum constraint), got %q", g.GrantLevel)
+		}
+	}
+}
+
+// Why ba17cd7: the install row was being written without ever calling agent
+// db.create + db_user.create + db_user.grant, so wp core install bombed with
+// "Error establishing a database connection". These three calls MUST happen
+// synchronously before the install goroutine is spawned.
+func TestWordPressCreateProvisionsMariaDBViaAgentInOrder(t *testing.T) {
+	var mu sync.Mutex
+	var calls []string
+	ag := &mockAgent{callFn: func(ctx context.Context, cmd string, params any) (json.RawMessage, error) {
+		mu.Lock(); defer mu.Unlock()
+		calls = append(calls, cmd)
+		return json.RawMessage(`{}`), nil
+	}}
+	wpRepo := &mockWordPressInstallRepo{}
+	domainRepo := &mockDomainRepo{domains: map[string]*models.Domain{
+		"domain1": {ID: "domain1", UserID: "user1", Name: "example.com", DocRoot: "/home/testuser/example.com/public_html"},
+	}}
+	userRepo := &mockUserRepo{users: map[string]*models.User{"user1": {ID: "user1", Username: strPtr("testuser")}}}
+	cfg := WordPressHandlerConfig{
+		WordPressInstalls: wpRepo, Databases: &mockDatabaseRepo{},
+		DatabaseUsers: &mockDatabaseUserRepo{}, DatabaseGrants: &mockDatabaseGrantRepo{},
+		Domains: domainRepo, Users: userRepo, Packages: &mockPackageRepo{}, Agent: ag,
+	}
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "user1", IsAdmin: false})
+		c.Next()
+	})
+	RegisterWordPressRoutes(r.Group("/api/v1"), cfg)
+
+	body, _ := json.Marshal(createWordPressRequest{
+		DomainID: "domain1", SiteTitle: "x", AdminUsername: "admin", AdminEmail: "a@b.com",
+	})
+	req := httptest.NewRequest("POST", "/api/v1/wordpress-installs", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+	// Agent.Call may race with the background install goroutine. Take the
+	// first three calls (provisioning is synchronous + before goroutine)
+	// and assert exact order.
+	mu.Lock(); defer mu.Unlock()
+	if len(calls) < 3 {
+		t.Fatalf("expected at least 3 agent calls (db.create, db_user.create, db_user.grant), got %d: %v", len(calls), calls)
+	}
+	want := []string{"db.create", "db_user.create", "db_user.grant"}
+	for i, w := range want {
+		if calls[i] != w {
+			t.Fatalf("agent call[%d] = %q, want %q; full=%v", i, calls[i], w, calls)
+		}
+	}
+}
+
+// Why d367187 + 762c7fe: the original DB name used ULID head (timestamp head
+// of Crockford base32, deterministic per-minute) AND uppercase — so back-to-
+// back installs collided and the agent's lowercase-only regex rejected both.
+// Fix: take the random tail + lowercase it.
+func TestWordPressCreateDBNameIsLowerCasePrefixedRandom(t *testing.T) {
+	dbRepo := &mockDatabaseRepo{}
+	wpRepo := &mockWordPressInstallRepo{}
+	domainRepo := &mockDomainRepo{domains: map[string]*models.Domain{
+		"domain1": {ID: "domain1", UserID: "user1", Name: "example.com", DocRoot: "/home/testuser/example.com/public_html"},
+	}}
+	userRepo := &mockUserRepo{users: map[string]*models.User{"user1": {ID: "user1", Username: strPtr("testuser")}}}
+	cfg := WordPressHandlerConfig{
+		WordPressInstalls: wpRepo, Databases: dbRepo,
+		DatabaseUsers: &mockDatabaseUserRepo{}, DatabaseGrants: &mockDatabaseGrantRepo{},
+		Domains: domainRepo, Users: userRepo, Packages: &mockPackageRepo{}, Agent: &mockAgent{},
+	}
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "user1", IsAdmin: false})
+		c.Next()
+	})
+	RegisterWordPressRoutes(r.Group("/api/v1"), cfg)
+
+	body, _ := json.Marshal(createWordPressRequest{
+		DomainID: "domain1", SiteTitle: "x", AdminUsername: "admin", AdminEmail: "a@b.com",
+	})
+	req := httptest.NewRequest("POST", "/api/v1/wordpress-installs", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(dbRepo.databases) != 1 {
+		t.Fatalf("expected 1 database row, got %d", len(dbRepo.databases))
+	}
+	var name string
+	for _, d := range dbRepo.databases { name = d.Name }
+	// Must be prefixed by the linux username.
+	if !startsWith(name, "testuser_wp_") {
+		t.Fatalf("db name must start with linux user prefix, got %q", name)
+	}
+	// Must be all lowercase (agent regex before 762c7fe was lowercase-only;
+	// tests must pin lowercase so we don't regress into the old bug where
+	// Crockford uppercase chars leaked through).
+	for _, ch := range name {
+		if ch >= 'A' && ch <= 'Z' {
+			t.Fatalf("db name must be all-lowercase, got %q (uppercase %c)", name, ch)
+		}
+	}
+}
+
+// Why this PR: the clone path was missing the exact agent provisioning block
+// that install got in ba17cd7. A clone today would fail the same way install
+// did this morning. Mirror the same ordered-calls assertion on the clone path.
+func TestWordPressCloneProvisionsMariaDBViaAgentInOrder(t *testing.T) {
+	var mu sync.Mutex
+	var calls []string
+	ag := &mockAgent{callFn: func(ctx context.Context, cmd string, params any) (json.RawMessage, error) {
+		mu.Lock(); defer mu.Unlock()
+		calls = append(calls, cmd)
+		return json.RawMessage(`{}`), nil
+	}}
+	sourceInstall := &models.WordPressInstall{
+		ID: "srcInstall", UserID: "user1", DomainID: "sourceDomain", DBID: "srcDB",
+		AdminUsername: "admin", AdminEmail: "a@b.com", Locale: "en_US", Status: "ready",
+	}
+	wpRepo := &mockWordPressInstallRepo{installs: map[string]*models.WordPressInstall{"srcInstall": sourceInstall}}
+	domainRepo := &mockDomainRepo{domains: map[string]*models.Domain{
+		"sourceDomain": {ID: "sourceDomain", UserID: "user1", Name: "src.com", DocRoot: "/home/testuser/src/public_html"},
+		"destDomain":   {ID: "destDomain",   UserID: "user1", Name: "dst.com", DocRoot: "/home/testuser/dst/public_html"},
+	}}
+	userRepo := &mockUserRepo{users: map[string]*models.User{"user1": {ID: "user1", Username: strPtr("testuser")}}}
+	cfg := WordPressHandlerConfig{
+		WordPressInstalls: wpRepo, Databases: &mockDatabaseRepo{},
+		DatabaseUsers: &mockDatabaseUserRepo{}, DatabaseGrants: &mockDatabaseGrantRepo{},
+		Domains: domainRepo, Users: userRepo, Packages: &mockPackageRepo{}, Agent: ag,
+	}
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "user1", IsAdmin: false})
+		c.Next()
+	})
+	RegisterWordPressRoutes(r.Group("/api/v1"), cfg)
+
+	body, _ := json.Marshal(cloneWordPressRequest{DestDomainID: "destDomain"})
+	req := httptest.NewRequest("POST", "/api/v1/wordpress-installs/srcInstall/clone", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+	mu.Lock(); defer mu.Unlock()
+	if len(calls) < 3 {
+		t.Fatalf("clone must call db.create/db_user.create/db_user.grant before kicking wordpress.clone; got %d calls: %v", len(calls), calls)
+	}
+	want := []string{"db.create", "db_user.create", "db_user.grant"}
+	for i, w := range want {
+		if calls[i] != w {
+			t.Fatalf("clone agent call[%d] = %q, want %q; full=%v", i, calls[i], w, calls)
+		}
+	}
+}
+
+func startsWith(s, prefix string) bool {
+	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+}

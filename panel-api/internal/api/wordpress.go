@@ -661,9 +661,23 @@ func (h *wordPressHandler) clone(c *gin.Context) {
 
 	now := time.Now().UTC()
 
+	// Resolve the domain owner's linux username — same prefix convention
+	// as the install path uses. Required for DB naming and future systemd-run
+	// targeting.
+	var osUser string
+	if u, uErr := h.cfg.Users.FindByID(ctx, targetUserID); uErr == nil && u != nil && u.Username != nil {
+		osUser = *u.Username
+	}
+	if osUser == "" {
+		slog.ErrorContext(ctx, "wordpress clone: user has no linux username", "user_id", targetUserID)
+		c.JSON(http.StatusConflict, gin.H{"error": "user_not_provisioned"})
+		return
+	}
+
 	// Provision destination database
 	destDBID := ids.NewULID()
-	destDBName := "wp_" + destDBID[:6]
+	destDBSuffix := strings.ToLower(destDBID[len(destDBID)-6:])
+	destDBName := osUser + "_wp_" + destDBSuffix
 	destDatabase := &models.Database{
 		ID:        destDBID,
 		UserID:    targetUserID,
@@ -681,7 +695,8 @@ func (h *wordPressHandler) clone(c *gin.Context) {
 
 	// Provision destination database user
 	destDBUserID := ids.NewULID()
-	destDBUsername := "wp_" + destDBUserID[:6]
+	destDBUserSuffix := strings.ToLower(destDBUserID[len(destDBUserID)-6:])
+	destDBUsername := osUser + "_wp_" + destDBUserSuffix
 	plainPassword := ids.NewULID()
 	hash, err := bcrypt.GenerateFromPassword([]byte(plainPassword), bcrypt.DefaultCost)
 	if err != nil {
@@ -719,6 +734,58 @@ func (h *wordPressHandler) clone(c *gin.Context) {
 		h.cfg.Databases.Delete(ctx, destDBID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
+	}
+
+	// Provision the MariaDB side via the agent: CREATE DATABASE, CREATE
+	// USER, GRANT — same pattern as the install handler (ba17cd7). Without
+	// this, the clone lands a panel row that points at a non-existent
+	// MariaDB database and wp core install/clone bombs with
+	// "Error establishing a database connection".
+	if h.cfg.Agent != nil {
+		agentCtx, agentCancel := context.WithTimeout(ctx, 30*time.Second)
+		defer agentCancel()
+
+		rollbackPanelRows := func() {
+			h.cfg.DatabaseGrants.Delete(ctx, destGrantID)
+			h.cfg.DatabaseUsers.Delete(ctx, destDBUserID)
+			h.cfg.Databases.Delete(ctx, destDBID)
+		}
+
+		if _, acErr := h.cfg.Agent.Call(agentCtx, "db.create", map[string]any{
+			"db_name":   destDBName,
+			"charset":   "utf8mb4",
+			"collation": "utf8mb4_unicode_ci",
+		}); acErr != nil {
+			rollbackPanelRows()
+			slog.ErrorContext(ctx, "wordpress clone: agent db.create", "err", acErr, "db_name", destDBName)
+			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": acErr.Error()})
+			return
+		}
+
+		if _, acErr := h.cfg.Agent.Call(agentCtx, "db_user.create", map[string]any{
+			"db_user_name": destDBUsername,
+			"password":     plainPassword,
+		}); acErr != nil {
+			h.cfg.Agent.Call(ctx, "db.drop", map[string]any{"db_name": destDBName})
+			rollbackPanelRows()
+			slog.ErrorContext(ctx, "wordpress clone: agent db_user.create", "err", acErr, "db_user", destDBUsername)
+			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": acErr.Error()})
+			return
+		}
+
+		if _, acErr := h.cfg.Agent.Call(agentCtx, "db_user.grant", map[string]any{
+			"db_name":      destDBName,
+			"db_user_name": destDBUsername,
+			"grant_level":  "rw",
+			"privileges":   []string{"ALL"},
+		}); acErr != nil {
+			h.cfg.Agent.Call(ctx, "db_user.drop", map[string]any{"db_user_name": destDBUsername})
+			h.cfg.Agent.Call(ctx, "db.drop", map[string]any{"db_name": destDBName})
+			rollbackPanelRows()
+			slog.ErrorContext(ctx, "wordpress clone: agent db_user.grant", "err", acErr)
+			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": acErr.Error()})
+			return
+		}
 	}
 
 	// Create clone install record

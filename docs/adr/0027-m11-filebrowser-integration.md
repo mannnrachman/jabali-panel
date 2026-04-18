@@ -276,22 +276,20 @@ Filebrowser maintains its own user database (embedded). Fields include:
 
 ---
 
-## Open Questions [OPEN]
+## Open Questions [RESOLVED]
 
-**[OPEN] #1: Who does filebrowser run as?**
+**[RESOLVED] #1: Who does filebrowser run as?**
 
-Three options:
-- **(a) Run as root.** Simple deployment but violates the principle of minimal
-  privilege. If filebrowser has a bug, attackers get root access.
-- **(b) Dedicated filebrowser user in every per-user group (e.g., jabali-fpm as
-  user, www-data group).** Matches the M9.5 per-user-slice pattern; requires
-  filebrowser to be deployed with group membership.
-- **(c) One process per user.** Full isolation but scales poorly.
+**Decision: Option (b) — Dedicated `filebrowser` system user with per-user group membership.**
 
-**Default proposal:** Option (b) — filebrowser runs as a dedicated system user
-(e.g., `_filebrowser`) with supplementary group membership in user groups to
-read/write files. This matches the pattern used for PHP-FPM processes.
-**Final answer deferred to Step 3 spike.**
+**Rationale:**
+Option (b) mirrors Jabali's existing M9 per-user FPM security model: a dedicated application user (`filebrowser`) with supplementary group membership added by the reconciler when per-user slices are created. Per-user homes are mode 0750 (user rwx, group rx), so filebrowser needs group membership to read files. Option (a) violates least-privilege — a single filebrowser bug would compromise all users' files and run with root privileges. Option (c) scales poorly (N processes = N BoltDB instances = N nginx upstreams), unacceptable for 100+ users on a single host. Option (b) is proven (matches the FPM pattern), enforces minimal privilege, and scales well.
+
+**Implementation notes:**
+- `install.sh` creates the `filebrowser` system user at install time (Step 3).
+- Reconciler (Step 6) adds each jabali user's group to the filebrowser user via `usermod -aG <user> filebrowser`.
+- Filebrowser process is restarted after group membership changes (Step 6 systemctl restart).
+- `/home/<user>` homes remain mode 0750; filebrowser reads via group membership (no write needed for scope enforcement).
 
 ---
 

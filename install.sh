@@ -1762,6 +1762,22 @@ NGINXEOF
   _ok "phpMyAdmin installed and configured"
 }
 
+install_filebrowser_user() {
+  _log "creating filebrowser system user"
+
+  local fb_user="filebrowser"
+
+  # Create the filebrowser system user if it does not exist.
+  if id -u "$fb_user" >/dev/null 2>&1; then
+    _ok "filebrowser user already exists"
+  else
+    # Create as a system user with nologin shell and no home directory.
+    useradd --system --no-create-home --shell /usr/sbin/nologin \
+      --comment "Jabali filebrowser service user" "$fb_user" 2>/dev/null || true
+    _ok "filebrowser system user created"
+  fi
+}
+
 install_filebrowser() {
   _log "installing filebrowser"
 
@@ -1909,6 +1925,7 @@ main() {
   install_phpmyadmin
   install_phpmyadmin_fpm_pool
   install_wp_cli
+  install_filebrowser_user
   install_filebrowser
   install_nginx_default_vhost
   write_agent_systemd_unit

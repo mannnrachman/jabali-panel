@@ -9,8 +9,12 @@ ExecStart=/usr/local/bin/filebrowser -c /etc/jabali-panel/filebrowser/config.jso
 Restart=on-failure
 RestartSec=5s
 
-# TODO(M11-Step3): narrow to dedicated user once provisioning spike decides scope model
-User=root
+# Runs as dedicated filebrowser system user.
+# Reconciler adds each jabali user's group via usermod -aG <user> filebrowser,
+# allowing filebrowser to read/write per-user home directories (mode 0750).
+# See ADR-0027 §7 (Open Question #1 — resolved to option b).
+User=filebrowser
+Group=filebrowser
 
 # Use RuntimeDirectory to auto-create /run/jabali-filebrowser with mode 0755
 RuntimeDirectory=jabali-filebrowser
@@ -18,19 +22,18 @@ RuntimeDirectory=jabali-filebrowser
 # Use StateDirectory to auto-create /var/lib/jabali-filebrowser for the filebrowser DB
 StateDirectory=jabali-filebrowser
 
-# Security hardening
+# Security hardening: filebrowser accesses /home for user files (via group membership)
+# and /run/jabali-filebrowser for the UDS socket. Does NOT listen on TCP.
+# Nginx (Step 5) is the reverse proxy.
 NoNewPrivileges=true
-PrivateTmp=true
+PrivateTmp=yes
+ProtectHome=false
 ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/var/lib/jabali-filebrowser /home
+ReadWritePaths=/var/lib/jabali-filebrowser /home /run/jabali-filebrowser
 ProtectKernelLogs=true
 ProtectControlGroups=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallFilter=~@clock @debug @module @mount @obsolete @privileged @raw-io @reboot @swap
-
-# Note: filebrowser accesses /home for user files, and /run/jabali-filebrowser
-# for the UDS socket. It does NOT listen on TCP; nginx (Step 5) is the reverse proxy.
 
 [Install]
 # NOTE: Do NOT enable this service yet. Step 4/5 will wire up the SSO handoff

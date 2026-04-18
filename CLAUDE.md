@@ -73,6 +73,13 @@ Any agent launched via the `Agent` tool in the jabali2 worktree MUST:
 
 4. **For renames** — use `mcp__gitnexus__rename`, never find-and-replace across files.
 
-This applies to planner, coder, backend-dev, security-architect, Explore, and every other sub-agent type. When a wave brief asks you to modify a symbol, the dispatcher assumes you've run impact analysis first. Acknowledge it in your summary output.
+5. **Agents commit to branches, never to `main`. Agents never `git push`.**
+   - Before your first commit, create a feature branch: `git checkout -b <wave-or-task-slug>` (e.g. `wave-c-http-handlers`, `fix-ssl-badge`, `fix-impersonate-port`, `chore-update-deps`). Use a short, descriptive slug — no ticket numbers required.
+   - If you arrive on `main` and need to commit, switch to a new branch first. Committing directly to `main` is a dispatch failure; the dispatcher will revert your work.
+   - Never run `git push`, `git push origin`, `git push --force`, or anything that publishes to remote. The dispatcher is the ONLY entity that pushes, after independent verification and a deliberate merge to `main`.
+   - Never run destructive git (`reset --hard`, `checkout --`, `clean -fd`, `branch -D`) outside your own feature branch — you can corrupt a concurrent agent's working tree.
+   - Your final report MUST include: the branch name, the commit SHAs on that branch, and a `git log main..<your-branch>` summary so the dispatcher can review before merge.
+
+This applies to planner, coder, backend-dev, security-architect, Explore, and every other sub-agent type. When a wave brief asks you to modify a symbol, the dispatcher assumes you've run impact analysis first AND your work lives on a feature branch. Acknowledge both in your summary output.
 
 If the gitnexus index is missing or stale, run `npx gitnexus analyze` once in the repo root and retry. Never skip the step silently.

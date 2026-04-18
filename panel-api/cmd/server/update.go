@@ -160,6 +160,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 					"grep -q 'includes/jabali-files.conf' /etc/nginx/sites-available/jabali-default.conf 2>/dev/null || sed -i '/includes\\/phpmyadmin.conf/a \\    include /etc/nginx/sites-available/includes/jabali-files.conf;' /etc/nginx/sites-available/jabali-default.conf; "+
 					// Validate and reload nginx
 					"nginx -t && systemctl reload nginx; "+
+					// SFTP jabali-sftp group — required by the sshd Match block and by
+					// the reconciler's join_sftp_group agent call. Idempotent.
+					"getent group jabali-sftp >/dev/null || groupadd --system jabali-sftp; "+
 					// SFTP sshd drop-in — update ships new versions of the Match block.
 					// Idempotent: install -m 0644 is a no-op if target matches source.
 					"install -m 0644 -o root -g root "+repoDir+"/install/ssh/jabali-sftp.conf /etc/ssh/sshd_config.d/jabali-sftp.conf; "+

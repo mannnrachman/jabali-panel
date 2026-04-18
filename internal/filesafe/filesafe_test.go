@@ -538,3 +538,53 @@ func TestMultipleDocroots(t *testing.T) {
 		})
 	}
 }
+
+// TestNewScopeForTest verifies the test-only constructor produces a Scope
+// whose fields match inputs, with a usable resolveCache, and that resolution
+// works against the supplied docroot without touching /etc/passwd
+// (the production NewScope path). Added in Wave B.2 follow-up.
+func TestNewScopeForTest(t *testing.T) {
+	tmpDir := t.TempDir()
+	docroot := filepath.Join(tmpDir, "docroot")
+	if err := os.Mkdir(docroot, 0755); err != nil {
+		t.Fatalf("mkdir docroot: %v", err)
+	}
+	regularFile := filepath.Join(docroot, "regular.txt")
+	if err := os.WriteFile(regularFile, []byte("content"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	scope := NewScopeForTest("u999", "test-user-not-on-box", docroot)
+
+	if scope == nil {
+		t.Fatal("NewScopeForTest returned nil")
+	}
+	if scope.UserID != "u999" {
+		t.Errorf("UserID = %q, want %q", scope.UserID, "u999")
+	}
+	if scope.Username != "test-user-not-on-box" {
+		t.Errorf("Username = %q, want %q", scope.Username, "test-user-not-on-box")
+	}
+	if len(scope.OwnedDocroots) != 1 || scope.OwnedDocroots[0] != docroot {
+		t.Errorf("OwnedDocroots = %v, want [%q]", scope.OwnedDocroots, docroot)
+	}
+	if scope.resolveCache == nil {
+		t.Error("resolveCache is nil; Resolve() would panic")
+	}
+
+	// Scope works for in-scope paths without needing a real /etc/passwd entry.
+	if _, err := scope.Resolve(regularFile); err != nil {
+		t.Errorf("Resolve in-scope regular file: unexpected error: %v", err)
+	}
+
+	// Out-of-scope paths still rejected.
+	if _, err := scope.Resolve("/etc/passwd"); err == nil {
+		t.Error("Resolve /etc/passwd: expected error, got nil")
+	}
+
+	// Two separate scopes have independent resolveCache maps.
+	other := NewScopeForTest("u1000", "other", docroot)
+	if &scope.resolveCache == &other.resolveCache {
+		t.Error("resolveCache shared between instances")
+	}
+}

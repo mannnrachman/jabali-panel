@@ -206,10 +206,17 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 		"--locale="+req.Locale,
 		"--version=latest",
 	)
+	var dlStdout, dlStderr bytes.Buffer
+	downloadCmd.Stdout = &dlStdout
+	downloadCmd.Stderr = &dlStderr
 	if err := downloadCmd.Run(); err != nil {
 		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("wp core download failed: %v", err),
+			Code: agentwire.CodeInternal,
+			Message: fmt.Sprintf("wp core download failed: %v; stderr=%q; stdout=%q",
+				err,
+				truncateStr(dlStderr.String(), 400),
+				truncateStr(dlStdout.String(), 200),
+			),
 		}
 	}
 
@@ -226,11 +233,18 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 		"--dbcollate=utf8mb4_unicode_ci",
 		"--skip-check",
 	)
+	var ccStdout, ccStderr bytes.Buffer
+	configCmd.Stdout = &ccStdout
+	configCmd.Stderr = &ccStderr
 	if err := configCmd.Run(); err != nil {
 		_ = cleanupWordPressFiles(ctx, installPath)
 		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("wp config create failed: %v", err),
+			Code: agentwire.CodeInternal,
+			Message: fmt.Sprintf("wp config create failed: %v; stderr=%q; stdout=%q",
+				err,
+				truncateStr(ccStderr.String(), 400),
+				truncateStr(ccStdout.String(), 200),
+			),
 		}
 	}
 

@@ -211,7 +211,22 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// in via the Kratos flow. Passing nil keeps legacy behavior.
 		var bootstrapKratos auth.KratosIdentityWriter
 		if cfg.Auth.Provider == "kratos" && cfg.Auth.Kratos.PublicURL != "" {
-			bootstrapKratos = kratosclient.NewClient(cfg.Auth.Kratos.PublicURL, cfg.Auth.Kratos.AdminURL)
+			// Race-protection: install.sh starts jabali-kratos immediately
+			// before jabali-panel, so the panel can beat Kratos to binding
+			// :4434 on a slow boot and crash its first BootstrapAdmin call
+			// with "connection refused". Wait up to 60s for Kratos to
+			// answer /health/ready before continuing. If it never does,
+			// log + continue bootstrap WITHOUT a Kratos client — the
+			// admin gets created in the panel DB only, and the operator
+			// has to run `jabali kratos-migrate` after fixing Kratos.
+			// Better than crashing the panel.
+			if waitForKratosReady(cfg.Auth.Kratos.AdminURL, 60*time.Second, log) {
+				bootstrapKratos = kratosclient.NewClient(cfg.Auth.Kratos.PublicURL, cfg.Auth.Kratos.AdminURL)
+			} else {
+				log.Warn("Kratos not ready after 60s — bootstrapping admin in panel DB only",
+					"admin_url", cfg.Auth.Kratos.AdminURL,
+					"action", "run 'jabali kratos-migrate' after Kratos is healthy")
+			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		res, err := auth.BootstrapAdmin(ctx, userRepo, auth.BootstrapOptions{

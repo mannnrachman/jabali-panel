@@ -1,0 +1,46 @@
+{
+  "$id": "https://jabali.local/identity.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Jabali Panel Identity",
+  "description": "JSON Schema for Kratos identity traits in Jabali Panel",
+  "type": "object",
+  "properties": {
+    "email": {
+      "type": "string",
+      "title": "Email",
+      "description": "The identity's email address (required, unique)",
+      "format": "email",
+      "ory.sh/kratos": {
+        "credentials": {
+          "password": {
+            "identifier": true
+          }
+        },
+        "recovery": {
+          "via": "email"
+        },
+        "verification": {
+          "via": "email"
+        }
+      }
+    },
+    "username": {
+      "type": "string",
+      "title": "Linux Username",
+      "description": "Optional Linux shell username. Admins may not have an OS account.",
+      "minLength": 1,
+      "maxLength": 32,
+      "pattern": "^[a-z_][a-z0-9_-]*$"
+    },
+    "is_admin": {
+      "type": "boolean",
+      "title": "Administrator",
+      "description": "Whether this identity has admin privileges. Settable only via Admin API.",
+      "default": false
+    }
+  },
+  "required": [
+    "email"
+  ],
+  "additionalProperties": false
+}

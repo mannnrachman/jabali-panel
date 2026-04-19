@@ -415,13 +415,22 @@ PLACEHOLDER_EOF
   _ok "installed placeholder pool for PHP ${version}"
 
 
-  systemctl enable --quiet "php${version}-fpm.service"
-  if systemctl is-active --quiet "php${version}-fpm.service"; then
-    systemctl reload "php${version}-fpm.service"
-  else
-    systemctl start "php${version}-fpm.service"
-  fi
-  _ok "PHP ${version} FPM ready"
+  # Mask the distro's global php<v>-fpm.service — per ADR-0025 we run
+  # one FPM master per hosting user (jabali-fpm@<user>.service) inside
+  # the per-user systemd slice, and a dedicated jabali-fpm@pma.service
+  # for phpMyAdmin. The global unit must never run: it reads every
+  # .conf in /etc/php/<v>/fpm/pool.d/ (including jabali-pma.conf and
+  # jabali-<user>.conf), so on any apt transaction its postinst would
+  # restart it and race the per-user masters for their UDS sockets,
+  # leaving dpkg in a permanently half-configured state.
+  #
+  # apt's postinst unconditionally enables + starts the service, so
+  # mask AFTER the package install has run and reset-failed any
+  # residual failed state from a prior half-configured boot.
+  systemctl reset-failed "php${version}-fpm.service" 2>/dev/null || true
+  systemctl disable --now --quiet "php${version}-fpm.service" 2>/dev/null || true
+  systemctl mask --quiet "php${version}-fpm.service"
+  _ok "PHP ${version} installed; global php${version}-fpm.service masked (per-user jabali-fpm@<user>.service takes over)"
 }
 
 install_php() {

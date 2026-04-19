@@ -36,6 +36,7 @@ import type { UploadProps } from "antd";
 import type { DataNode } from "antd/es/tree";
 import {
   DownloadOutlined,
+  DownOutlined,
   EditOutlined,
   EyeOutlined,
   FileOutlined,
@@ -689,8 +690,6 @@ export const FileManagerPage = () => {
           style={{
             width: 280,
             flexShrink: 0,
-            border: "1px solid #f0f0f0",
-            borderRadius: 4,
             padding: 8,
             maxHeight: "calc(100vh - 200px)",
             overflow: "auto",
@@ -702,6 +701,12 @@ export const FileManagerPage = () => {
             onExpand={(keys) => setExpandedKeys(keys as string[])}
             selectedKeys={[currentPath]}
             loadData={(node) => loadTreeChildren(node as TreeNode)}
+            // Chevron switcher + dotted connector lines between siblings —
+            // matches the AntD showLine pattern from the docs. The chevron
+            // rotates based on expansion state automatically, so a single
+            // DownOutlined serves both open and closed.
+            showLine
+            switcherIcon={<DownOutlined />}
             onSelect={(keys) => {
               if (keys.length > 0) setCurrentPath(keys[0] as string);
             }}
@@ -926,6 +931,8 @@ export const FileManagerPage = () => {
             onExpand={(keys) => setExpandedKeys(keys as string[])}
             selectedKeys={bulkMoveDest ? [bulkMoveDest] : []}
             loadData={(node) => loadTreeChildren(node as TreeNode)}
+            showLine
+            switcherIcon={<DownOutlined />}
             onSelect={(keys) => {
               if (keys.length > 0) setBulkMoveDest(keys[0] as string);
             }}

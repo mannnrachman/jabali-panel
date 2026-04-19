@@ -349,8 +349,17 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 	// page instead of nginx's 403 on empty directory. Idempotent: if
 	// the file already exists (e.g. the user uploaded real content, or
 	// the reconciler re-ran domain.create), leave it alone.
+	//
+	// Also skip when index.php exists — that's the unambiguous "real
+	// content present" signal (WordPress install, hand-uploaded app).
+	// Without this check, the reconciler periodically re-creates the
+	// placeholder ~30s after a WP install, and nginx (with `index
+	// index.html index.php`) serves the placeholder instead of WP.
 	indexPath := filepath.Join(p.DocRoot, "index.html")
-	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
+	indexPHPPath := filepath.Join(p.DocRoot, "index.php")
+	_, htmlErr := os.Stat(indexPath)
+	_, phpErr := os.Stat(indexPHPPath)
+	if os.IsNotExist(htmlErr) && os.IsNotExist(phpErr) {
 		if werr := writeDefaultIndex(ctx, indexPath, p.Username, p.Domain, p.DocRoot); werr != nil {
 			// non-fatal — the vhost still works, it'll just 403 until
 			// the user uploads content.

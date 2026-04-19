@@ -23,14 +23,13 @@ import (
 
 // Service is the phpMyAdmin SSO service.
 type Service struct {
-	db               *gorm.DB
-	users            repository.UserRepository
-	tokens           repository.PhpMyAdminSSOTokenRepository
-	fileBrowserTokens repository.FileBrowserSSOTokenRepository
-	agent            agent.AgentInterface
-	ssoKey           *ssokey.Key
-	log              *slog.Logger
-	tokenTTL         time.Duration
+	db       *gorm.DB
+	users    repository.UserRepository
+	tokens   repository.PhpMyAdminSSOTokenRepository
+	agent    agent.AgentInterface
+	ssoKey   *ssokey.Key
+	log      *slog.Logger
+	tokenTTL time.Duration
 }
 
 // NewService creates a new SSO service.
@@ -38,20 +37,18 @@ func NewService(
 	db *gorm.DB,
 	users repository.UserRepository,
 	tokens repository.PhpMyAdminSSOTokenRepository,
-	fileBrowserTokens repository.FileBrowserSSOTokenRepository,
 	agent agent.AgentInterface,
 	ssoKey *ssokey.Key,
 	log *slog.Logger,
 ) *Service {
 	return &Service{
-		db:                db,
-		users:             users,
-		tokens:            tokens,
-		fileBrowserTokens: fileBrowserTokens,
-		agent:             agent,
-		ssoKey:            ssoKey,
-		log:               log,
-		tokenTTL:          5 * time.Minute,
+		db:       db,
+		users:    users,
+		tokens:   tokens,
+		agent:    agent,
+		ssoKey:   ssoKey,
+		log:      log,
+		tokenTTL: 5 * time.Minute,
 	}
 }
 
@@ -187,84 +184,3 @@ func (s *Service) MintToken(ctx context.Context, userID, databaseID string, dbNa
 	return plaintextToken, nil
 }
 
-// MintFileBrowserToken generates a short-lived SSO token for filebrowser access.
-// Returns the plaintext token (base64url-encoded) and expiry time.
-func (s *Service) MintFileBrowserToken(ctx context.Context, userID string) (string, time.Time, error) {
-	// Generate 32 random bytes
-	tokenBytes := make([]byte, 32)
-	if _, err := rand.Read(tokenBytes); err != nil {
-		return "", time.Time{}, fmt.Errorf("generate random token: %w", err)
-	}
-
-	// Base64url-encode the raw bytes
-	plaintextToken := base64.RawURLEncoding.EncodeToString(tokenBytes)
-
-	// SHA-256 hash
-	hash := sha256.Sum256(tokenBytes)
-	hashStr := fmt.Sprintf("%x", hash[:])
-
-	// Create token row with 60-second TTL
-	// 2-hour TTL: session-lived per plans/m11-filebrowser-session-fix.md Option B.
-	// Tokens are re-validated on every request; shorter TTL means more frequent
-	// re-logins, longer means more drift between panel and filebrowser sessions.
-	expiresAt := time.Now().Add(2 * time.Hour)
-	token := &models.FileBrowserSSOToken{
-		ID:        ids.NewULID(),
-		UserID:    userID,
-		TokenHash: hashStr,
-		ExpiresAt: expiresAt,
-		CreatedAt: time.Now(),
-		UsedAt:    nil,
-	}
-
-	if err := s.fileBrowserTokens.Create(ctx, token); err != nil {
-		return "", time.Time{}, fmt.Errorf("insert filebrowser sso token: %w", err)
-	}
-
-	s.log.DebugContext(ctx, "minted filebrowser SSO token", "user_id", userID)
-
-	return plaintextToken, expiresAt, nil
-}
-
-// ValidateFileBrowserToken validates a filebrowser SSO token WITHOUT consuming
-// it — the token is session-lived (see plans/m11-filebrowser-session-fix.md
-// Option B) and must survive re-validation on every request for the duration
-// of the session. Revocation is via the filebrowser_sso_tokens.used_at column:
-// if used_at is set, the token is treated as revoked. Expiry is enforced by
-// the repository's FindByHash filter.
-//
-// Returns the Linux username. Errors: ErrNotFound for unknown/expired/revoked
-// tokens, or if the user has no Linux username (e.g., admin-only account).
-func (s *Service) ValidateFileBrowserToken(ctx context.Context, token string) (string, error) {
-	// Decode base64url token to raw bytes
-	tokenBytes, err := base64.RawURLEncoding.DecodeString(token)
-	if err != nil {
-		return "", fmt.Errorf("invalid token encoding: %w", err)
-	}
-
-	// Compute SHA-256 hash
-	hash := sha256.Sum256(tokenBytes)
-	hashStr := fmt.Sprintf("%x", hash[:])
-
-	// Find token (must be unexpired and unused)
-	tokenRecord, err := s.fileBrowserTokens.FindByHash(ctx, hashStr)
-	if err != nil {
-		return "", err // ErrNotFound or other error
-	}
-
-	// Load user
-	user, err := s.users.FindByID(ctx, tokenRecord.UserID)
-	if err != nil {
-		s.log.ErrorContext(ctx, "find user failed", "user_id", tokenRecord.UserID, "err", err)
-		return "", fmt.Errorf("find user: %w", err)
-	}
-
-	// Check that user has a Linux username (not admin-only)
-	if user.Username == nil {
-		return "", fmt.Errorf("user has no Linux username")
-	}
-
-	s.log.DebugContext(ctx, "validated filebrowser SSO token", "user_id", tokenRecord.UserID, "username", *user.Username)
-
-	return *user.Username, nil
-}

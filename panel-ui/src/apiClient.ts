@@ -210,13 +210,6 @@ export async function ssoPhpMyAdmin(
   return resp.data;
 }
 
-export async function ssoFileBrowser(): Promise<{ redirect_url: string }> {
-  const resp = await apiClient.post<{ redirect_url: string }>(
-    "/sso/filebrowser",
-    {},
-  );
-  return resp.data;
-}
 // === PHP Settings API ===
 
 export interface DomainPHPSettings {

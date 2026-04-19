@@ -106,7 +106,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 		databaseUserGrantRepo := repository.NewDatabaseUserGrantRepository(sharedDB)
 
 		phpMyAdminSSOTokenRepo := repository.NewPhpMyAdminSSOTokenRepository(sharedDB)
-		fileBrowserSSOTokenRepo := repository.NewFileBrowserSSOTokenRepository(sharedDB)
 		phpPoolRepo := repository.NewPHPPoolRepository(sharedDB)
 		phpPoolIniOverrideRepo := repository.NewPHPPoolIniOverrideRepository(sharedDB)
 		wordpressInstallRepo := repository.NewWordPressInstallRepository(sharedDB)
@@ -132,12 +131,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		})
 		deps.Auth = authSvc
 
-		// SSO service for phpMyAdmin and filebrowser
+		// SSO service for phpMyAdmin
 		ssoService := sso.NewService(
 			sharedDB,
 			userRepo,
 			phpMyAdminSSOTokenRepo,
-			fileBrowserSSOTokenRepo,
 			sharedAgent,
 			ssoKeyPtr,
 			log,
@@ -178,7 +176,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.DatabaseUsers = databaseUserRepo
 		deps.DatabaseUserGrants = databaseUserGrantRepo
 		deps.PhpMyAdminSSOTokens = phpMyAdminSSOTokenRepo
-		deps.FileBrowserSSOTokens = fileBrowserSSOTokenRepo
 		deps.PHPPools = phpPoolRepo
 		deps.PHPPoolIniOverrides = phpPoolIniOverrideRepo
 		deps.WordPressInstalls = wordpressInstallRepo
@@ -281,7 +278,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 			deps.Databases,
 			deps.Users,
 			deps.PhpMyAdminSSOTokens,
-			deps.SSO,
 			ssoKeyPtr,
 			log,
 		)

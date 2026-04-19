@@ -35,7 +35,6 @@ type Deps struct {
 	DatabaseUsers          repository.DatabaseUserRepository
 	DatabaseUserGrants     repository.DatabaseUserGrantRepository
 	PhpMyAdminSSOTokens    repository.PhpMyAdminSSOTokenRepository
-	FileBrowserSSOTokens   repository.FileBrowserSSOTokenRepository
 	Agent                  agent.AgentInterface
 	Reconciler             *reconciler.Reconciler
 	ServerSettings         repository.ServerSettingsRepository
@@ -212,12 +211,6 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Databases: deps.Databases,
 				SSO:       deps.SSO,
 				Log:       deps.Log,
-			})
-		}
-		if deps.SSO != nil && deps.FileBrowserSSOTokens != nil {
-			api.RegisterSSOFileBrowserRoutes(v1, api.SSOFileBrowserHandlerConfig{
-				SSO: deps.SSO,
-				Log: deps.Log,
 			})
 		}
 		if deps.PHPPools != nil && deps.PHPPoolIniOverrides != nil {

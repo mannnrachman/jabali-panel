@@ -36,7 +36,7 @@ func TestMintToken_GeneratesToken(t *testing.T) {
 	mockAgent := &mockAgentForSSO{}
 	mockTokens := &mockTokensForSSO{}
 
-	svc := NewService(nil, mockUsers, mockTokens, nil, mockAgent, &key, slog.Default())
+	svc := NewService(nil, mockUsers, mockTokens, mockAgent, &key, slog.Default())
 
 	token, err := svc.MintToken(context.Background(), "user1", "db1", "testdb")
 
@@ -61,7 +61,7 @@ func TestPasswordRedaction(t *testing.T) {
 	mockTokens := &mockTokensForSSO{}
 	mockAgent := &mockAgentForSSO{}
 
-	svc := NewService(nil, mockUsers, mockTokens, nil, mockAgent, &key, logger)
+	svc := NewService(nil, mockUsers, mockTokens, mockAgent, &key, logger)
 
 	// Only test MintToken, which doesn't require a database
 	_, err := svc.MintToken(context.Background(), "user1", "db1", "testdb")

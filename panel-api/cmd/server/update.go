@@ -135,38 +135,15 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 					"    sed -i \"/\\$cfg\\['Servers'\\]\\[1\\]\\['control\\(user\\|pass\\|host\\|port\\)'\\]/d\" /opt/phpmyadmin/current/config.inc.php; "+
 					"  fi; "+
 					"fi; "+
-					// filebrowser config and systemd unit — install.sh extracts the
-					// binary to /opt/filebrowser/current/, but updates to
-					// config.json and systemd unit shipped in the repo need to
-					// land on the host via update.go.
-					"if [ -d /opt/filebrowser/current ]; then "+
-					"  install -d -m 0755 -o root -g root /etc/jabali-panel/filebrowser; "+
-					"  if [ ! -f /etc/jabali-panel/filebrowser/config.json ]; then "+
-					"    install -m 0644 -o root -g root "+repoDir+"/install/filebrowser/config.json.tmpl /etc/jabali-panel/filebrowser/config.json; "+
-					"  fi; "+
-					"  install -m 0644 "+repoDir+"/install/systemd/jabali-filebrowser.service /etc/systemd/system/jabali-filebrowser.service; "+
-					"  systemctl daemon-reload; "+
-					// Pin filebrowser's persisted DB settings. auth.method=proxy and
-					// baseurl=/files must be applied via CLI because filebrowser
-					// reads config.json only on first launch and ignores edits
-					// thereafter (settings live in SQLite). CLI flags require the
-					// daemon stopped (SQLite lock); restart after.
-					"  systemctl stop jabali-filebrowser.service 2>/dev/null || true; "+
-					"  sudo -u filebrowser /usr/local/bin/filebrowser config set --auth.method=proxy --auth.header=X-Forwarded-User -b /files -d /var/lib/jabali-filebrowser/filebrowser.db >/dev/null 2>&1 || echo '[update] warn: filebrowser config set failed'; "+
-					"  systemctl start jabali-filebrowser.service || echo '[update] warn: filebrowser restart failed'; "+
-					"fi; "+
-					// nginx reverse-proxy config for filebrowser. Split in two:
-					// conf.d/ gets only the http-context `map` directive; the
-					// server-context `location /files/` blocks live under
-					// sites-available/includes/ and are `include`d from the
-					// default :443 vhost.
-					"install -d -m 0755 /etc/nginx/sites-available/includes; "+
-					"install -m 0644 "+repoDir+"/install/nginx/jabali-files.conf /etc/nginx/conf.d/jabali-files.conf; "+
-					"install -m 0644 "+repoDir+"/install/nginx/includes/jabali-files.conf /etc/nginx/sites-available/includes/jabali-files.conf; "+
-					// Ensure the default vhost includes the filebrowser snippet.
-					// Idempotent: only edit if the line is missing.
-					"grep -q 'includes/jabali-files.conf' /etc/nginx/sites-available/jabali-default.conf 2>/dev/null || sed -i '/includes\\/phpmyadmin.conf/a \\    include /etc/nginx/sites-available/includes/jabali-files.conf;' /etc/nginx/sites-available/jabali-default.conf; "+
-					// Validate and reload nginx
+					// M11 filebrowser decommission (ADR-0030): stop/disable the
+					// legacy service + strip its nginx include so updates don't
+					// resurrect dead bits. Idempotent: || true swallows
+					// "not-found" on hosts that never had it.
+					"systemctl stop jabali-filebrowser.service 2>/dev/null || true; "+
+					"systemctl disable jabali-filebrowser.service 2>/dev/null || true; "+
+					"rm -f /etc/systemd/system/jabali-filebrowser.service /etc/nginx/conf.d/jabali-files.conf /etc/nginx/sites-available/includes/jabali-files.conf; "+
+					"sed -i '/includes\\/jabali-files.conf/d' /etc/nginx/sites-available/jabali-default.conf 2>/dev/null || true; "+
+					"systemctl daemon-reload; "+
 					"nginx -t && systemctl reload nginx; "+
 					// SFTP jabali-sftp group — required by the sshd Match block and by
 					// the reconciler's join_sftp_group agent call. Idempotent.

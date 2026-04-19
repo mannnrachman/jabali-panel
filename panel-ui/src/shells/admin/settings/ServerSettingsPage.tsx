@@ -3,6 +3,8 @@ import {
   SaveOutlined,
   WarningOutlined,
   CloudServerOutlined,
+  ClockOutlined,
+  LockOutlined,
 } from "@ant-design/icons";
 import {
   Alert,
@@ -12,8 +14,12 @@ import {
   Divider,
   Form,
   Input,
+  InputNumber,
+  Modal,
   Row,
+  Select,
   Space,
+  Switch,
   Typography,
 } from "antd";
 import { useNotification } from "@refinedev/core";
@@ -30,6 +36,9 @@ type ServerSettings = {
   ns2_name: string;
   ns2_ipv4: string;
   admin_email: string;
+  timezone: string;
+  ssh_port: number;
+  ssh_password_auth: boolean;
   updated_at: string;
 };
 
@@ -38,6 +47,8 @@ export const ServerSettingsPage = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [originalHostname, setOriginalHostname] = useState("");
+  const [originalSSHPort, setOriginalSSHPort] = useState(22);
+  const [originalSSHPasswordAuth, setOriginalSSHPasswordAuth] = useState(false);
   const { open: notify } = useNotification();
 
   useEffect(() => {
@@ -48,6 +59,8 @@ export const ServerSettingsPage = () => {
         if (cancelled) return;
         form.setFieldsValue(resp.data);
         setOriginalHostname(resp.data.hostname);
+        setOriginalSSHPort(resp.data.ssh_port || 22);
+        setOriginalSSHPasswordAuth(resp.data.ssh_password_auth || false);
       } catch (err) {
         const e = err as { response?: { data?: { detail?: string } }; message?: string };
         notify?.({
@@ -77,10 +90,15 @@ export const ServerSettingsPage = () => {
         ns2_name: values.ns2_name || "",
         ns2_ipv4: values.ns2_ipv4 || "",
         admin_email: values.admin_email || "",
+        timezone: values.timezone || "",
+        ssh_port: values.ssh_port || 22,
+        ssh_password_auth: values.ssh_password_auth || false,
       });
       notify?.({ type: "success", message: "Settings saved" });
       form.setFieldsValue(resp.data);
       setOriginalHostname(resp.data.hostname);
+      setOriginalSSHPort(resp.data.ssh_port || 22);
+      setOriginalSSHPasswordAuth(resp.data.ssh_password_auth || false);
     } catch (err) {
       const e = err as { response?: { data?: { detail?: string } }; message?: string };
       notify?.({
@@ -243,12 +261,139 @@ export const ServerSettingsPage = () => {
           </Row>
         </Card>
 
+        <Card
+          title={
+            <>
+              <ClockOutlined style={{ marginRight: 8 }} />
+              Server Time
+            </>
+          }
+          size="small"
+          style={{ marginBottom: 16 }}
+        >
+          <Form.Item
+            label="Timezone"
+            name="timezone"
+            rules={[{ required: false }]}
+            extra="Select your server's timezone. Changes take effect immediately."
+          >
+            <Select
+              placeholder="Select timezone"
+              allowClear
+              showSearch
+              optionFilterProp="children"
+              filterOption={(input, option) =>
+                (option?.label ?? "").toLowerCase().includes(input.toLowerCase())
+              }
+              options={Array.from(
+                Intl.supportedValuesOf("timeZone")
+              ).map((tz) => ({
+                label: tz,
+                value: tz,
+              }))}
+            />
+          </Form.Item>
+        </Card>
+
+        <Card
+          title={
+            <>
+              <LockOutlined style={{ marginRight: 8 }} />
+              SSH Access
+            </>
+          }
+          size="small"
+          style={{ marginBottom: 16 }}
+        >
+          <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+            Configure SSH port and authentication method. Changes are applied
+            immediately and are reversible.
+          </Typography.Paragraph>
+
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                label="SSH Port"
+                name="ssh_port"
+                rules={[
+                  { required: true, message: "SSH port required" },
+                  {
+                    type: "number",
+                    min: 1,
+                    max: 65535,
+                    message: "Port must be between 1 and 65535",
+                  },
+                ]}
+                extra="Standard SSH port is 22. Change to reduce automated attack attempts."
+              >
+                <InputNumber min={1} max={65535} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                label="Password Authentication"
+                name="ssh_password_auth"
+                valuePropName="checked"
+                rules={[{ required: false }]}
+                extra="Enable SSH login with passwords. Key-based authentication is always available."
+              >
+                <Switch />
+              </Form.Item>
+            </Col>
+          </Row>
+        </Card>
+
         <Space>
           <Button
             type="primary"
             icon={<SaveOutlined />}
             loading={saving}
             htmlType="submit"
+            onClick={() => {
+              const currentSSHPort = form.getFieldValue("ssh_port") || 22;
+              const currentSSHPasswordAuth =
+                form.getFieldValue("ssh_password_auth") || false;
+
+              const sshPortChanged = currentSSHPort !== originalSSHPort;
+              const sshAuthChanged =
+                currentSSHPasswordAuth !== originalSSHPasswordAuth;
+
+              if (sshPortChanged || sshAuthChanged) {
+                Modal.confirm({
+                  title: "Confirm SSH Configuration Change",
+                  content: (
+                    <>
+                      <Alert
+                        type="warning"
+                        showIcon
+                        message="Potential Lockout Risk"
+                        description={
+                          <>
+                            Changing SSH settings may affect your ability to
+                            connect remotely. <b>Make sure you have:</b>
+                            <ul>
+                              <li>Verified the new SSH port or authentication method works</li>
+                              <li>An alternative way to access the server if the changes break connectivity</li>
+                              <li>The ability to roll back quickly if needed</li>
+                            </ul>
+                          </>
+                        }
+                        style={{ marginBottom: 12 }}
+                      />
+                    </>
+                  ),
+                  okText: "Apply Changes",
+                  okType: "primary",
+                  cancelText: "Cancel",
+                  icon: <WarningOutlined />,
+                  onOk() {
+                    form.submit();
+                  },
+                });
+              } else {
+                form.submit();
+              }
+            }}
           >
             Save Settings
           </Button>

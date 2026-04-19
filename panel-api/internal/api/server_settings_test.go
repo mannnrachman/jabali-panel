@@ -119,15 +119,17 @@ func TestServerSettingsGet_OK(t *testing.T) {
 	t.Parallel()
 
 	expected := &models.ServerSettings{
-		ID:         1,
-		Hostname:   "example.com",
-		PublicIPv4: "192.0.2.1",
-		PublicIPv6: "2001:db8::1",
-		NS1Name:    "ns1.example.com",
-		NS1IPv4:    "192.0.2.1",
-		NS2Name:    "ns2.example.com",
-		NS2IPv4:    "192.0.2.2",
-		AdminEmail: "admin@example.com",
+		ID:                 1,
+		Hostname:           "example.com",
+		PublicIPv4:         "192.0.2.1",
+		PublicIPv6:         "2001:db8::1",
+		NS1Name:            "ns1.example.com",
+		NS1IPv4:            "192.0.2.1",
+		NS2Name:            "ns2.example.com",
+		NS2IPv4:            "192.0.2.2",
+		AdminEmail:         "admin@example.com",
+		SSHPort:            22,
+		SSHPasswordAuth:    false,
 	}
 
 	mockRepo := &mockServerSettingsRepo{}
@@ -209,15 +211,17 @@ func TestServerSettingsPatch_PartialUpdate(t *testing.T) {
 	t.Parallel()
 
 	existing := &models.ServerSettings{
-		ID:         1,
-		Hostname:   "old.example.com",
-		PublicIPv4: "192.0.2.1",
-		PublicIPv6: "2001:db8::1",
-		NS1Name:    "ns1.example.com",
-		NS1IPv4:    "192.0.2.1",
-		NS2Name:    "ns2.example.com",
-		NS2IPv4:    "192.0.2.2",
-		AdminEmail: "admin@example.com",
+		ID:                 1,
+		Hostname:           "old.example.com",
+		PublicIPv4:         "192.0.2.1",
+		PublicIPv6:         "2001:db8::1",
+		NS1Name:            "ns1.example.com",
+		NS1IPv4:            "192.0.2.1",
+		NS2Name:            "ns2.example.com",
+		NS2IPv4:            "192.0.2.2",
+		AdminEmail:         "admin@example.com",
+		SSHPort:            22,
+		SSHPasswordAuth:    false,
 	}
 
 	mockRepo := &mockServerSettingsRepo{}
@@ -251,9 +255,11 @@ func TestServerSettingsPatch_InvalidHostname(t *testing.T) {
 	t.Parallel()
 
 	existing := &models.ServerSettings{
-		ID:         1,
-		Hostname:   "good.example.com",
-		PublicIPv4: "192.0.2.1",
+		ID:                1,
+		Hostname:          "good.example.com",
+		PublicIPv4:        "192.0.2.1",
+		SSHPort:           22,
+		SSHPasswordAuth:   false,
 	}
 
 	mockRepo := &mockServerSettingsRepo{}
@@ -282,9 +288,11 @@ func TestServerSettingsPatch_InvalidIPv4(t *testing.T) {
 	t.Parallel()
 
 	existing := &models.ServerSettings{
-		ID:         1,
-		Hostname:   "example.com",
-		PublicIPv4: "192.0.2.1",
+		ID:                1,
+		Hostname:          "example.com",
+		PublicIPv4:        "192.0.2.1",
+		SSHPort:           22,
+		SSHPasswordAuth:   false,
 	}
 
 	mockRepo := &mockServerSettingsRepo{}
@@ -312,9 +320,11 @@ func TestServerSettingsPatch_InvalidIPv6(t *testing.T) {
 	t.Parallel()
 
 	existing := &models.ServerSettings{
-		ID:         1,
-		Hostname:   "example.com",
-		PublicIPv6: "2001:db8::1",
+		ID:                1,
+		Hostname:          "example.com",
+		PublicIPv6:        "2001:db8::1",
+		SSHPort:           22,
+		SSHPasswordAuth:   false,
 	}
 
 	mockRepo := &mockServerSettingsRepo{}
@@ -343,9 +353,11 @@ func TestServerSettingsPatch_InvalidEmail(t *testing.T) {
 	t.Parallel()
 
 	existing := &models.ServerSettings{
-		ID:         1,
-		Hostname:   "example.com",
-		AdminEmail: "admin@example.com",
+		ID:                1,
+		Hostname:          "example.com",
+		AdminEmail:        "admin@example.com",
+		SSHPort:           22,
+		SSHPasswordAuth:   false,
 	}
 
 	mockRepo := &mockServerSettingsRepo{}
@@ -373,8 +385,10 @@ func TestServerSettingsPatch_HostnameChangeTriggersAgent(t *testing.T) {
 	t.Parallel()
 
 	existing := &models.ServerSettings{
-		ID:       1,
-		Hostname: "old.example.com",
+		ID:                1,
+		Hostname:          "old.example.com",
+		SSHPort:           22,
+		SSHPasswordAuth:   false,
 	}
 
 	mockRepo := &mockServerSettingsRepo{}
@@ -405,8 +419,10 @@ func TestServerSettingsPatch_NoHostnameChangeNoAgent(t *testing.T) {
 
 	hostname := "example.com"
 	existing := &models.ServerSettings{
-		ID:       1,
-		Hostname: hostname,
+		ID:                1,
+		Hostname:          hostname,
+		SSHPort:           22,
+		SSHPasswordAuth:   false,
 	}
 
 	mockRepo := &mockServerSettingsRepo{}
@@ -435,8 +451,10 @@ func TestServerSettingsPatch_EmptyHostnameToSomethingTriggersAgent(t *testing.T)
 	t.Parallel()
 
 	existing := &models.ServerSettings{
-		ID:       1,
-		Hostname: "",
+		ID:                1,
+		Hostname:          "",
+		SSHPort:           22,
+		SSHPasswordAuth:   false,
 	}
 
 	mockRepo := &mockServerSettingsRepo{}
@@ -467,15 +485,17 @@ func TestServerSettingsPatch_AllFieldsUpdate(t *testing.T) {
 	t.Parallel()
 
 	existing := &models.ServerSettings{
-		ID:         1,
-		Hostname:   "old.com",
-		PublicIPv4: "192.0.2.1",
-		PublicIPv6: "2001:db8::1",
-		NS1Name:    "ns1.old.com",
-		NS1IPv4:    "192.0.2.10",
-		NS2Name:    "ns2.old.com",
-		NS2IPv4:    "192.0.2.11",
-		AdminEmail: "old@example.com",
+		ID:                1,
+		Hostname:          "old.com",
+		PublicIPv4:        "192.0.2.1",
+		PublicIPv6:        "2001:db8::1",
+		NS1Name:           "ns1.old.com",
+		NS1IPv4:           "192.0.2.10",
+		NS2Name:           "ns2.old.com",
+		NS2IPv4:           "192.0.2.11",
+		AdminEmail:        "old@example.com",
+		SSHPort:           22,
+		SSHPasswordAuth:   false,
 	}
 
 	mockRepo := &mockServerSettingsRepo{}
@@ -521,8 +541,10 @@ func TestServerSettingsPatch_DatabaseError(t *testing.T) {
 	t.Parallel()
 
 	existing := &models.ServerSettings{
-		ID:       1,
-		Hostname: "example.com",
+		ID:                1,
+		Hostname:          "example.com",
+		SSHPort:           22,
+		SSHPasswordAuth:   false,
 	}
 
 	mockRepo := &mockServerSettingsRepo{}

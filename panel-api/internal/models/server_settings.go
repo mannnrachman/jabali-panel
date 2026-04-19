@@ -20,7 +20,10 @@ type ServerSettings struct {
 	// Admin changes it via POST /admin/php/versions/:version/default; agent
 	// php.version.status reports it in default_version. Schema default '8.5'.
 	DefaultPHPVersion string `gorm:"type:varchar(8);not null;default:'8.5'" json:"default_php_version"`
-	UpdatedAt   time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
+	Timezone           string `gorm:"type:varchar(64);not null;default:''"   json:"timezone"`
+	SSHPort            uint16 `gorm:"type:int unsigned;not null;default:22"  json:"ssh_port"`
+	SSHPasswordAuth    bool   `gorm:"type:tinyint(1);not null;default:0"     json:"ssh_password_auth"`
+	UpdatedAt          time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 
 func (ServerSettings) TableName() string { return "server_settings" }

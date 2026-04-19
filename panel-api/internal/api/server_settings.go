@@ -56,14 +56,17 @@ func (h *serverSettingsHandler) get(c *gin.Context) {
 }
 
 type updateServerSettingsRequest struct {
-	Hostname   *string `json:"hostname,omitempty"`
-	PublicIPv4 *string `json:"public_ipv4,omitempty"`
-	PublicIPv6 *string `json:"public_ipv6,omitempty"`
-	NS1Name    *string `json:"ns1_name,omitempty"`
-	NS1IPv4    *string `json:"ns1_ipv4,omitempty"`
-	NS2Name    *string `json:"ns2_name,omitempty"`
-	NS2IPv4    *string `json:"ns2_ipv4,omitempty"`
-	AdminEmail *string `json:"admin_email,omitempty"`
+	Hostname        *string `json:"hostname,omitempty"`
+	PublicIPv4      *string `json:"public_ipv4,omitempty"`
+	PublicIPv6      *string `json:"public_ipv6,omitempty"`
+	NS1Name         *string `json:"ns1_name,omitempty"`
+	NS1IPv4         *string `json:"ns1_ipv4,omitempty"`
+	NS2Name         *string `json:"ns2_name,omitempty"`
+	NS2IPv4         *string `json:"ns2_ipv4,omitempty"`
+	AdminEmail      *string `json:"admin_email,omitempty"`
+	Timezone        *string `json:"timezone,omitempty"`
+	SSHPort         *uint16 `json:"ssh_port,omitempty"`
+	SSHPasswordAuth *bool   `json:"ssh_password_auth,omitempty"`
 }
 
 func (h *serverSettingsHandler) update(c *gin.Context) {
@@ -91,6 +94,10 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 
 	prevHostname := current.Hostname
+	prevTimezone := current.Timezone
+	prevSSHPort := current.SSHPort
+	prevSSHPasswordAuth := current.SSHPasswordAuth
+
 	if req.Hostname != nil {
 		current.Hostname = strings.TrimSpace(*req.Hostname)
 	}
@@ -115,6 +122,15 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	if req.AdminEmail != nil {
 		current.AdminEmail = strings.TrimSpace(*req.AdminEmail)
 	}
+	if req.Timezone != nil {
+		current.Timezone = strings.TrimSpace(*req.Timezone)
+	}
+	if req.SSHPort != nil {
+		current.SSHPort = *req.SSHPort
+	}
+	if req.SSHPasswordAuth != nil {
+		current.SSHPasswordAuth = *req.SSHPasswordAuth
+	}
 
 	// Validate — reject obviously bad input so we don't persist garbage.
 	if err := validateServerSettings(current); err != nil {
@@ -138,6 +154,33 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 				"hostname": current.Hostname,
 			}); err != nil {
 				h.cfg.Log.Error("agent set_hostname failed", "err", err)
+			}
+		}()
+	}
+
+	// Apply timezone to the OS via agent if changed and not empty.
+	if current.Timezone != prevTimezone && current.Timezone != "" && h.cfg.Agent != nil {
+		go func() {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if _, err := h.cfg.Agent.Call(bgCtx, "system.set_timezone", map[string]any{
+				"timezone": current.Timezone,
+			}); err != nil {
+				h.cfg.Log.Error("agent set_timezone failed", "err", err)
+			}
+		}()
+	}
+
+	// Apply SSH config to the OS via agent if either port or password_auth changed.
+	if (current.SSHPort != prevSSHPort || current.SSHPasswordAuth != prevSSHPasswordAuth) && h.cfg.Agent != nil {
+		go func() {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if _, err := h.cfg.Agent.Call(bgCtx, "system.set_ssh_config", map[string]any{
+				"port":             current.SSHPort,
+				"password_auth":    current.SSHPasswordAuth,
+			}); err != nil {
+				h.cfg.Log.Error("agent set_ssh_config failed", "err", err)
 			}
 		}()
 	}
@@ -182,14 +225,38 @@ func validateServerSettings(s *models.ServerSettings) error {
 			return fmt.Errorf("admin_email: invalid")
 		}
 	}
+	// Timezone (optional, empty means "use OS default")
+	if s.Timezone != "" && !isValidTimezone(s.Timezone) {
+		return fmt.Errorf("timezone: invalid format")
+	}
+	// SSH port
+	if s.SSHPort < 1 || s.SSHPort > 65535 {
+		return fmt.Errorf("ssh_port: must be between 1 and 65535")
+	}
 	return nil
 }
 
-var hostnameRE = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$`)
+var (
+	hostnameRE  = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$`)
+	timezoneRE  = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$`)
+)
 
 func isValidHostname(s string) bool {
 	if len(s) > 253 {
 		return false
 	}
 	return hostnameRE.MatchString(s)
+}
+
+func isValidTimezone(s string) bool {
+	if len(s) > 64 {
+		return false
+	}
+	if strings.Contains(s, "..") {
+		return false
+	}
+	if strings.HasPrefix(s, "/") {
+		return false
+	}
+	return timezoneRE.MatchString(s)
 }

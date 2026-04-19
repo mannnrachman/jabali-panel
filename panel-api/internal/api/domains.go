@@ -25,7 +25,6 @@ type DomainHandlerConfig struct {
 	Packages   repository.PackageRepository
 	Agent      agent.AgentInterface
 	Reconciler *reconciler.Reconciler
-	SSLCerts   repository.SSLCertificateRepository
 }
 
 const (
@@ -61,20 +60,6 @@ type updateDomainRequest struct {
 	IndexPriority         *string               `json:"index_priority,omitempty"`
 }
 
-// sslBadge represents the SSL certificate status for a domain.
-type sslBadge struct {
-	Status    string     `json:"status"`
-	Issuer    *string    `json:"issuer,omitempty"`
-	IssuedAt  *time.Time `json:"issued_at,omitempty"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-}
-
-// domainListRow enriches models.Domain with SSL badge info for list responses.
-type domainListRow struct {
-	models.Domain
-	SSL *sslBadge `json:"ssl,omitempty"`
-}
-
 func (h *domainHandler) list(c *gin.Context) {
 	claims := ginctx.Claims(c)
 	if claims == nil {
@@ -100,50 +85,8 @@ func (h *domainHandler) list(c *gin.Context) {
 	if domains == nil {
 		domains = []models.Domain{}
 	}
-
-	// Extract domain IDs and batch-fetch SSL certificates
-	domainIDs := make([]string, len(domains))
-	for i, d := range domains {
-		domainIDs[i] = d.ID
-	}
-
-	certMap := make(map[string]*models.SSLCertificate)
-	if len(domainIDs) > 0 {
-		certs, err := h.cfg.SSLCerts.FindByDomainIDs(c.Request.Context(), domainIDs)
-		if err != nil {
-			// Log error but don't fail the entire request
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-			return
-		}
-		for i := range certs {
-			certMap[certs[i].DomainID] = &certs[i]
-		}
-	}
-
-	// Enrich domains with SSL certificate information
-	rows := make([]domainListRow, len(domains))
-	for i, d := range domains {
-		row := domainListRow{Domain: d}
-		if cert, ok := certMap[d.ID]; ok && cert != nil {
-			row.SSL = &sslBadge{
-				Status:    cert.Status,
-				IssuedAt:  cert.IssuedAt,
-				ExpiresAt: cert.ExpiresAt,
-			}
-			// Set issuer based on status
-			if cert.Status == models.SSLStatusSelfSigned {
-				issuer := "Self-signed"
-				row.SSL.Issuer = &issuer
-			} else if cert.Status == models.SSLStatusIssued || cert.Status == models.SSLStatusRenewing {
-				issuer := "Let's Encrypt"
-				row.SSL.Issuer = &issuer
-			}
-		}
-		rows[i] = row
-	}
-
 	c.JSON(http.StatusOK, gin.H{
-		"data":      rows,
+		"data":      domains,
 		"total":     total,
 		"page":      page,
 		"page_size": pageSize,
@@ -246,14 +189,14 @@ func (h *domainHandler) create(c *gin.Context) {
 
 	now := time.Now().UTC()
 	domain := &models.Domain{
-		ID:         ids.NewULID(),
-		UserID:     targetUserID,
-		Name:       req.Name,
-		DocRoot:    docRoot,
-		IsEnabled:  true,
+		ID:        ids.NewULID(),
+		UserID:    targetUserID,
+		Name:      req.Name,
+		DocRoot:   docRoot,
+		IsEnabled: true,
 		SSLEnabled: true,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
 	if err := h.cfg.Domains.Create(ctx, domain); err != nil {
@@ -684,6 +627,7 @@ func validatePageRedirects(prs models.PageRedirects) error {
 	return nil
 }
 
+
 func isValidNginxRuleType(s string) bool {
 	switch s {
 	case "custom_header", "rewrite", "proxy_pass", "ip_access", "php_setting", "max_upload_size":
@@ -713,9 +657,9 @@ func validateNginxRules(rules models.NginxRules) error {
 				return fmt.Errorf("rule %d: header name required", i)
 			}
 			if r.Value == "" {
-				return fmt.Errorf("rule %d: header value required", i)
-			}
-			if strings.ContainsAny(r.Name, " \t\n\r:;") {
+			return fmt.Errorf("rule %d: header value required", i)
+		}
+		if strings.ContainsAny(r.Name, " \t\n\r:;") {
 				return fmt.Errorf("rule %d: invalid chars in header name", i)
 			}
 		case "rewrite":

@@ -1,39 +1,52 @@
 #!/usr/bin/env bash
-# Block `git commit` / `git push` on main when running inside a sub-agent.
-# Main session (dispatcher) is unaffected: only fires when CLAUDE_AGENT_NAME is set.
+# Block `git commit` on main (any session) and `git push` from sub-agents.
+#
+# Flow this enforces:
+#   - Everyone works on a feature branch: `git checkout -b <slug>`
+#   - Sub-agents commit there; the dispatcher merges to main and pushes.
+#   - Direct commits to main are disabled to prevent two parallel sessions
+#     (or an agent + dispatcher) from stomping each other.
 set -eu
-
-# If CLAUDE_AGENT_NAME is not set, we're the main session → allow.
-if [ -z "${CLAUDE_AGENT_NAME:-}" ]; then
-    exit 0
-fi
 
 input=$(cat)
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null || echo "")
+repo_root="${CLAUDE_PROJECT_DIR:-/home/shuki/projects/jabali2}"
+branch=$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+agent="${CLAUDE_AGENT_NAME:-}"
 
 case "$cmd" in
-    *"git commit"*|*"git push"*)
-        repo_root="${CLAUDE_PROJECT_DIR:-/home/shuki/projects/jabali2}"
-        branch=$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+    *"git commit"*)
         if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
-            cat >&2 <<EOF
-BLOCKED: sub-agent "${CLAUDE_AGENT_NAME}" attempted \`$cmd\` on branch "$branch".
+            if [ -n "$agent" ]; then
+                cat >&2 <<EOF
+BLOCKED: sub-agent "$agent" attempted \`$cmd\` on branch "$branch".
 Per CLAUDE.md rule 5, sub-agents must work on a feature branch:
   git checkout -b <wave-or-task-slug>
 The dispatcher reviews the branch before merging to main.
 EOF
+            else
+                cat >&2 <<EOF
+BLOCKED: commits to "$branch" are disabled to prevent parallel-session stomping.
+Workflow:
+  git checkout -b <slug>
+  # make changes, commit
+  git checkout main && git merge <slug>
+  git push
+(This hook lives at .claude/hooks/block-agent-commit-main.sh — edit or disable
+via /hooks if the guard is in your way.)
+EOF
+            fi
             exit 2
         fi
-        # push from a feature branch is still banned — dispatcher pushes only
-        case "$cmd" in
-            *"git push"*)
-                cat >&2 <<EOF
-BLOCKED: sub-agent "${CLAUDE_AGENT_NAME}" attempted \`git push\`.
+        ;;
+    *"git push"*)
+        if [ -n "$agent" ]; then
+            cat >&2 <<EOF
+BLOCKED: sub-agent "$agent" attempted \`$cmd\`.
 Per CLAUDE.md rule 5, only the dispatcher pushes. Commit to the feature branch and report the SHAs back.
 EOF
-                exit 2
-                ;;
-        esac
+            exit 2
+        fi
         ;;
 esac
 exit 0

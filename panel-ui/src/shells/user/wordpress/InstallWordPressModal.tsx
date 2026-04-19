@@ -337,10 +337,7 @@ export const InstallWordPressModal = ({
                 >
                   <Switch />
                 </Form.Item>
-                <Form.Item
-                  style={{ marginBottom: 16 }}
-                  extra='Install at domain.com/blog instead of domain.com'
-                >
+                <Form.Item style={{ marginBottom: 16 }}>
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                     Install on www.domain.com instead of domain.com
                   </Typography.Text>
@@ -355,14 +352,6 @@ export const InstallWordPressModal = ({
                     placeholder="Leave empty to install in root"
                     autoComplete="off"
                   />
-                </Form.Item>
-                <Form.Item
-                  style={{ marginBottom: 24 }}
-                  extra='e.g., "blog" to install at domain.com/blog'
-                >
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    e.g., "blog" to install at domain.com/blog
-                  </Typography.Text>
                 </Form.Item>
 
                 <Form.Item

@@ -9,7 +9,8 @@
 // total stays correct per tab.
 import { useState } from "react";
 import { useTable, EditButton, CreateButton } from "@refinedev/antd";
-import { Card, Space, Table, Typography } from "antd";
+import { useList } from "@refinedev/core";
+import { Badge, Card, Space, Table, Typography } from "antd";
 import { TeamOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
 import { SearchableTable } from "../../../components/SearchableTable";
 import { readQValue } from "../../../components/searchableTableUtils";
@@ -126,6 +127,23 @@ const AdministratorsTable = () => {
 export const UserList = () => {
   const [activeTab, setActiveTab] = useState<"users" | "admins">("users");
 
+  // Tab-label badges need totals for BOTH roles regardless of which tab
+  // is active. Tabs unmount inactive content, so the per-tab useTable
+  // can't tell us the inactive count — fetch each total here with a
+  // pageSize=1 list so the payload is just the count + one row.
+  const { data: usersData } = useList<User>({
+    resource: "users",
+    pagination: { pageSize: 1 },
+    meta: { params: { is_admin: "false" } },
+  });
+  const { data: adminsData } = useList<User>({
+    resource: "users",
+    pagination: { pageSize: 1 },
+    meta: { params: { is_admin: "true" } },
+  });
+  const usersCount = usersData?.total ?? 0;
+  const adminsCount = adminsData?.total ?? 0;
+
   return (
     <div style={{ padding: 24 }}>
       <Space
@@ -149,17 +167,39 @@ export const UserList = () => {
           {
             key: "users",
             tab: (
-              <span>
-                <TeamOutlined /> Users
-              </span>
+              <Space size={8}>
+                <TeamOutlined />
+                Users
+                <Badge
+                  count={usersCount}
+                  showZero
+                  color={activeTab === "users" ? "blue" : undefined}
+                  style={
+                    activeTab === "users"
+                      ? undefined
+                      : { backgroundColor: "#d9d9d9", color: "#000" }
+                  }
+                />
+              </Space>
             ),
           },
           {
             key: "admins",
             tab: (
-              <span>
-                <SafetyCertificateOutlined /> Administrators
-              </span>
+              <Space size={8}>
+                <SafetyCertificateOutlined />
+                Administrators
+                <Badge
+                  count={adminsCount}
+                  showZero
+                  color={activeTab === "admins" ? "blue" : undefined}
+                  style={
+                    activeTab === "admins"
+                      ? undefined
+                      : { backgroundColor: "#d9d9d9", color: "#000" }
+                  }
+                />
+              </Space>
             ),
           },
         ]}

@@ -71,6 +71,13 @@ type filesMoveAgentParams struct {
 	NewPath  string `json:"new_path"`
 }
 
+type filesChmodAgentParams struct {
+	UserID   string `json:"user_id"`
+	Username string `json:"username"`
+	Path     string `json:"path"`
+	Mode     string `json:"mode"`
+}
+
 type filesStatAgentParams struct {
 	UserID   string `json:"user_id"`
 	Username string `json:"username"`
@@ -105,6 +112,7 @@ func RegisterFilesRoutes(g *gin.RouterGroup, cfg FilesHandlerConfig) {
 	grp.POST("/mkdir", h.mkdir)
 	grp.POST("/rename", h.rename)
 	grp.POST("/move", h.move)
+	grp.POST("/chmod", h.chmod)
 }
 
 type filesHandler struct{ cfg FilesHandlerConfig }
@@ -126,6 +134,15 @@ type renameRequest struct {
 type moveRequest struct {
 	Path    string `json:"path"     binding:"required"`
 	DestDir string `json:"dest_dir" binding:"required"`
+}
+
+// chmodRequest powers the bulk-permissions modal. Mode is an octal
+// string like "0644"; the agent validates the format and masks it to
+// the low 12 bits, so we don't replicate the parse here — sending a
+// bogus mode just gets a 400 back from the agent.
+type chmodRequest struct {
+	Path string `json:"path" binding:"required"`
+	Mode string `json:"mode" binding:"required"`
 }
 
 type filesListEntry struct {
@@ -490,6 +507,31 @@ func (h *filesHandler) move(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"old_path": req.Path, "new_path": newPath})
+}
+
+// chmod handles POST /files/chmod: set permission bits on a single file
+// or directory. Bulk chmod from the UI loops this endpoint per entry —
+// keeps the backend contract small (one path per call) and lets the
+// frontend surface per-item failures without an all-or-nothing atomic
+// guarantee we can't actually deliver on a real filesystem.
+func (h *filesHandler) chmod(c *gin.Context) {
+	userID, username, ok := h.requireClaimsAndUsername(c)
+	if !ok {
+		return
+	}
+	var req chmodRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
+		return
+	}
+	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.chmod", filesChmodAgentParams{
+		UserID: userID, Username: username, Path: req.Path, Mode: req.Mode,
+	})
+	if err != nil {
+		respondAgentError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"path": req.Path, "mode": req.Mode})
 }
 
 func (h *filesHandler) delete(c *gin.Context) {

@@ -132,6 +132,16 @@ func TestFilesAgentParamsWireShape(t *testing.T) {
 			want: []string{"new_path", "old_path", "user_id", "username"},
 		},
 		{
+			name: "files.chmod",
+			payload: filesChmodAgentParams{
+				UserID:   "u",
+				Username: "shuki",
+				Path:     "/home/shuki/file.txt",
+				Mode:     "0644",
+			},
+			want: []string{"mode", "path", "user_id", "username"},
+		},
+		{
 			name: "files.stat",
 			payload: filesStatAgentParams{
 				UserID:   "u",

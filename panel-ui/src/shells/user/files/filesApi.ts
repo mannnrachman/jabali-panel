@@ -71,6 +71,14 @@ export async function filesMove(path: string, destDir: string): Promise<void> {
   await apiClient.post("/files/move", { path, dest_dir: destDir });
 }
 
+// filesChmod sets Unix permission bits on a single file or directory.
+// `mode` is a 3- or 4-digit octal string ("755", "0644", "1777"); the
+// agent parses + masks to the low 12 bits. Bulk chmod from the UI
+// loops this per entry so per-item failures surface individually.
+export async function filesChmod(path: string, mode: string): Promise<void> {
+  await apiClient.post("/files/chmod", { path, mode });
+}
+
 export async function filesDelete(path: string, recursive = false): Promise<void> {
   await apiClient.delete("/files", {
     params: { path, ...(recursive ? { recursive: "true" } : {}) },

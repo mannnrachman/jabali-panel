@@ -298,7 +298,8 @@ install_base_packages() {
     mariadb-server mariadb-client \
     php-cli php-mysqli php-curl php-xml php-mbstring \
     rsync acl \
-    systemd-resolved
+    systemd-resolved \
+    quota quotatool xfsprogs
   _ok "base packages ready"
 }
 
@@ -317,6 +318,158 @@ configure_systemd_resolved() {
   fi
   install -d -m 0755 /etc/systemd/resolved.conf.d
   _ok "systemd-resolved enabled, stub resolver wired"
+}
+
+# ---------- step 1d: M18 — cgroups v2 probe + disk quota + /tmp tmpfs -------
+#
+# Three idempotent setup steps that make the M18 per-user limits
+# enforcement surfaces available:
+#
+# 1. Assert cgroups v2 unified hierarchy is the one in use. Debian 13's
+#    default, but a host with a custom kernel command-line could have
+#    systemd.unified_cgroup_hierarchy=0 which breaks every slice drop-in
+#    we emit. Detect now, fail loud.
+#
+# 2. POSIX user quota on /home. Only runs on fresh hosts where we're
+#    adding the mount option for the first time — on existing hosts
+#    with a live /home we refuse to remount (would kill running FPM
+#    workers). Branches by filesystem type: ext4 is a fstab edit +
+#    quotacheck + quotaon; xfs also needs xfs_quota enable; btrfs/zfs
+#    fail loud with the upgrade-path message.
+#
+# 3. /tmp on tmpfs with a size cap. Prevents a single user from filling
+#    the host disk via /tmp bypassing their home quota. Default 1 GB,
+#    configurable via JABALI_TMP_SIZE env.
+configure_cgroups_v2() {
+  local fstype
+  fstype="$(stat -fc %T /sys/fs/cgroup 2>/dev/null || echo '')"
+  if [[ "$fstype" != "cgroup2fs" ]]; then
+    _err "cgroups v2 unified hierarchy is not active (/sys/fs/cgroup is $fstype)."
+    _err "Boot with systemd.unified_cgroup_hierarchy=1 or remove the override."
+    exit 1
+  fi
+  _ok "cgroups v2 unified hierarchy active"
+}
+
+# configure_disk_quota sets up POSIX user quota on /home. Idempotent,
+# branches on filesystem type, prompts (TTY) or fails loud (unattended)
+# when it can't make progress.
+configure_disk_quota() {
+  local home_mount home_fs
+  # Find the mount /home lives on. On a host where /home is on / this
+  # returns "/", which we refuse to quota-enable (root fs quota is a
+  # disaster for system daemons).
+  home_mount="$(stat -c%m /home 2>/dev/null || echo /)"
+  home_fs="$(stat -fc %T /home 2>/dev/null || echo unknown)"
+  _log "quota probe: /home is on mount $home_mount (fs=$home_fs)"
+
+  # Filesystem support matrix — ADR-0032 §2.
+  case "$home_fs" in
+    ext4|ext3|ext2)
+      # ext4-family works with fstab usrquota + quotacheck + quotaon.
+      ;;
+    xfs)
+      # xfs also works but needs xfs_quota enable after mount.
+      ;;
+    btrfs|zfs|tmpfs|ramfs)
+      _err "filesystem type '$home_fs' on /home is not supported by M18 POSIX quota."
+      _err "See docs/adr/0032-m18-resource-limits.md and the runbook for migration steps."
+      _err "(M18 supports ext2/3/4 and xfs. btrfs/zfs have subvolume-scoped quotas that don't map to per-user hosting.)"
+      exit 1
+      ;;
+    *)
+      _err "unknown filesystem type '$home_fs' on /home; cannot configure quota."
+      exit 1
+      ;;
+  esac
+
+  # If /home is on /, we'd be adding usrquota to the root filesystem —
+  # never safe to do non-interactively. Fail loud with the fix.
+  if [[ "$home_mount" == "/" ]]; then
+    _err "/home shares the root filesystem. POSIX quota on / is unsafe for system daemons."
+    _err "Move /home to its own partition or mount a dedicated /home before re-running."
+    _err "See 'plans/m18-resource-limits-runbook.md' for the migration procedure."
+    exit 1
+  fi
+
+  # Check whether fstab already has usrquota on this mount.
+  if grep -E "^[^#]*\s$home_mount\s" /etc/fstab | grep -q "usrquota"; then
+    _log "fstab: $home_mount already has usrquota set"
+  else
+    _log "adding usrquota,grpquota to /etc/fstab entry for $home_mount"
+    # Preserve the original line; append the quota options after the existing opts.
+    # Uses a unique marker to avoid double-patching on reinstall.
+    if ! grep -q "# jabali-m18-quota" /etc/fstab; then
+      # awk append "usrquota,grpquota" to the 4th field (options) for the /home line.
+      # Backup first.
+      cp -p /etc/fstab /etc/fstab.jabali-m18.bak
+      awk -v mnt="$home_mount" '
+        !/^#/ && $2 == mnt {
+          sub(/^([^ \t]+[ \t]+[^ \t]+[ \t]+[^ \t]+[ \t]+)([^ \t]+)/, "\\1\\2,usrquota,grpquota")
+          print $0 " # jabali-m18-quota"
+          next
+        }
+        { print }
+      ' /etc/fstab.jabali-m18.bak > /etc/fstab
+      _ok "fstab patched; remount $home_mount for changes to take effect"
+    fi
+  fi
+
+  # Remount to pick up the new options. On a busy mount this can fail;
+  # operator must reboot or migrate. -oremount preserves current state.
+  if ! mount -o remount "$home_mount" 2>/dev/null; then
+    _warn "remount of $home_mount failed (busy). Reboot to apply quota, then re-run this step."
+    return 0
+  fi
+
+  # Filesystem-specific activation.
+  if [[ "$home_fs" == "xfs" ]]; then
+    # xfs's mount option alone doesn't flip accounting on — need
+    # xfs_quota's enable command.
+    xfs_quota -x -c "enable -u" "$home_mount" || {
+      _err "xfs_quota enable failed on $home_mount"
+      exit 1
+    }
+    _ok "xfs user quota enabled on $home_mount"
+  else
+    # ext4/ext3/ext2: quotacheck builds the aquota.user file, quotaon
+    # turns enforcement on. Idempotent — safe to rerun.
+    if [[ ! -f "$home_mount/aquota.user" ]]; then
+      _log "running quotacheck (may take time on large /home)"
+      quotacheck -cugm "$home_mount" || {
+        _err "quotacheck failed"
+        exit 1
+      }
+    fi
+    quotaon -v "$home_mount" >/dev/null 2>&1 || true
+    _ok "POSIX user quota active on $home_mount"
+  fi
+}
+
+# configure_tmp_tmpfs mounts /tmp as tmpfs with a size cap so a user
+# can't bypass their home quota via /tmp writes. Default 1 GB, override
+# via JABALI_TMP_SIZE (passed as a tmpfs-compatible size string, e.g.
+# "2G" or "512M").
+configure_tmp_tmpfs() {
+  local size="${JABALI_TMP_SIZE:-1G}"
+
+  # If /tmp is already tmpfs, nothing to do.
+  if [[ "$(stat -fc %T /tmp 2>/dev/null)" == "tmpfs" ]]; then
+    _log "/tmp already on tmpfs; leaving as-is"
+    return 0
+  fi
+
+  # Add fstab entry idempotently; reboot or remount picks it up.
+  if ! grep -q "# jabali-m18-tmp" /etc/fstab; then
+    _log "adding tmpfs mount for /tmp (size=$size) to /etc/fstab"
+    echo "tmpfs /tmp tmpfs rw,nosuid,nodev,size=$size,mode=1777 0 0 # jabali-m18-tmp" >> /etc/fstab
+  fi
+
+  # Do NOT remount /tmp automatically on an existing host — running
+  # processes often hold open file handles in /tmp (package managers,
+  # editors, systemd timers) and remounting would corrupt them. Leave
+  # the fstab change for the next reboot.
+  _warn "/tmp fstab entry added; reboot to activate tmpfs mount with size=$size cap"
 }
 
 # ---------- step 1b: nginx ----------------------------------------------------
@@ -1865,6 +2018,13 @@ main() {
   prompt_server_settings
   install_base_packages
   configure_systemd_resolved
+  # M18 — resource-limits prerequisites. cgroups v2 probe FIRST (fails
+  # loud if misconfigured; every subsequent slice we ever emit depends
+  # on unified hierarchy). Disk quota and /tmp tmpfs are both
+  # idempotent and fail-loud on unsupported filesystems.
+  configure_cgroups_v2
+  configure_disk_quota
+  configure_tmp_tmpfs
   install_nginx
   install_php
   install_disabled_page

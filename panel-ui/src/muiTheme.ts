@@ -116,6 +116,15 @@ const darkTokens = {
   marginLG: 24,
 };
 
+// Table-specific font overrides: the app-wide base is 16 (user preference
+// for body text legibility) but tables at 16 make rows and headers feel
+// heavier than AntD's stock look. Pin Table components back to AntD's
+// native 14 so list pages feel compact and familiar.
+const tableTokens = {
+  fontSize: 14,
+  cellPaddingBlock: 8,
+};
+
 const lightComponents = {
   Alert: { borderRadiusLG: 4 },
   Modal: { borderRadiusLG: 4 },
@@ -133,6 +142,7 @@ const lightComponents = {
     railSize: 4,
   },
   ColorPicker: { borderRadius: 4 },
+  Table: tableTokens,
 };
 
 const darkComponents = {
@@ -146,6 +156,7 @@ const darkComponents = {
     railSize: 4,
   },
   ColorPicker: { borderRadius: 4 },
+  Table: tableTokens,
 };
 
 // Layout surface tokens (sider, header, content) per mode.  Shells pull

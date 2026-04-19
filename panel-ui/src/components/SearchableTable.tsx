@@ -1,6 +1,8 @@
 // SearchableTable — a thin wrapper around AntD's Table that adds a
-// debounced search input above it and standard pagination controls
-// (showSizeChanger, showTotal, pageSizeOptions).
+// debounced search input above it. Pagination behaviour matches AntD's
+// stock Table (just page number buttons); callers that want a page-size
+// chooser or total row count can pass `pagination={{ showSizeChanger:
+// true, showTotal: … }}` explicitly.
 //
 // Meant to be dropped in wherever a list page currently renders
 // <Table {...tableProps} />. The caller wires it up by:
@@ -16,7 +18,7 @@
 // data provider. 300ms is the usual sweet spot — responsive enough that
 // it feels live, slow enough that typing "example.com" doesn't hit the
 // server 11 times.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Input, Space, Table } from "antd";
 import type { TableProps } from "antd";
 import type { CrudFilters } from "@refinedev/core";
@@ -40,7 +42,6 @@ export function SearchableTable<T extends object>({
   searchPlaceholder = "Search…",
   initialSearch = "",
   debounceMs = 300,
-  pagination,
   ...tableProps
 }: SearchableTableProps<T>) {
   const [query, setQuery] = useState(initialSearch);
@@ -67,19 +68,9 @@ export function SearchableTable<T extends object>({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, debounceMs]);
 
-  // Merge caller's pagination config (if any) with our standard defaults.
-  // `pagination === false` means "caller wants no pagination"; respect it.
-  const mergedPagination = useMemo(() => {
-    if (pagination === false) return false as const;
-    return {
-      showSizeChanger: true,
-      pageSizeOptions: ["10", "20", "50", "100"],
-      showTotal: (total: number, range: [number, number]) =>
-        `${range[0]}–${range[1]} of ${total}`,
-      ...(pagination ?? {}),
-    };
-  }, [pagination]);
-
+  // Pagination passes through untouched — stock AntD defaults (simple
+  // page-number buttons, no size chooser, no total-row summary). Callers
+  // that need those knobs can opt in explicitly.
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <Input.Search
@@ -100,7 +91,7 @@ export function SearchableTable<T extends object>({
         }}
         style={{ maxWidth: 360 }}
       />
-      <Table<T> {...tableProps} pagination={mergedPagination}>
+      <Table<T> {...tableProps}>
         {tableProps.children}
       </Table>
     </Space>

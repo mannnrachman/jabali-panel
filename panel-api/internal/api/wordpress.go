@@ -997,30 +997,44 @@ func createDeleteAndKickAgent(parentCtx context.Context, installID, databaseID, 
 		return
 	}
 
-	// Best-effort DB-side cleanup. Drop the MySQL database + user on the
-	// host via the agent (if mysql admin command exists) and remove the
-	// panel-side rows so the slot is freed up. Order matters: grants →
-	// users → databases → install row.
+	// Best-effort DB-side cleanup. Drop the mariadb database + user on the
+	// host via the agent and remove the panel-side rows so the slot is
+	// freed up. Order matters:
+	//   grants → users → wp install row → database
+	// because fk_wpinstalls_db is RESTRICT — deleting the databases row
+	// before the wordpress_installs row that references it fails (silently,
+	// since the error is swallowed) and leaves an orphan databases row.
 	if dbUserID != "" {
 		if grants, gErr := cfg.DatabaseGrants.ListByDatabaseUserID(ctx, dbUserID); gErr == nil {
 			for _, g := range grants {
 				cfg.DatabaseGrants.Delete(ctx, g.ID)
 			}
 		}
-		// Drop the mysql user on the host. Best-effort; the panel row
-		// delete below is the source of truth.
+		// Drop the mariadb user on the host. The agent command is
+		// `db_user.drop` with `db_user_name` — NOT `mysql.user.delete`
+		// (which doesn't exist; the prior call silently no-op'd and the
+		// account survived every WP delete).
 		if dbUserUsername != "" {
-			cfg.Agent.Call(ctx, "mysql.user.delete", map[string]any{"username": dbUserUsername})
+			if _, agentErr := cfg.Agent.Call(ctx, "db_user.drop", map[string]any{"db_user_name": dbUserUsername}); agentErr != nil {
+				slog.WarnContext(ctx, "wordpress delete: db_user.drop failed", "err", agentErr, "db_user", dbUserUsername)
+			}
 		}
 		cfg.DatabaseUsers.Delete(ctx, dbUserID)
 	}
+	// Delete the WP install row BEFORE the database panel row so the
+	// fk_wpinstalls_db RESTRICT constraint releases.
+	cfg.WordPressInstalls.Delete(ctx, installID)
 	if databaseID != "" {
 		if db, dbErr := cfg.Databases.FindByID(ctx, databaseID); dbErr == nil && db != nil {
-			cfg.Agent.Call(ctx, "mysql.database.delete", map[string]any{"name": db.Name})
+			// Agent command is `db.drop` with `db_name` — NOT
+			// `mysql.database.delete` (same silent-no-op bug as above,
+			// the schema survived every delete).
+			if _, agentErr := cfg.Agent.Call(ctx, "db.drop", map[string]any{"db_name": db.Name}); agentErr != nil {
+				slog.WarnContext(ctx, "wordpress delete: db.drop failed", "err", agentErr, "db_name", db.Name)
+			}
 		}
 		cfg.Databases.Delete(ctx, databaseID)
 	}
-	cfg.WordPressInstalls.Delete(ctx, installID)
 }
 
 // createCloneAndKickAgent clones WordPress asynchronously.

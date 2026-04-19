@@ -330,6 +330,28 @@ func TestRegisterDefaults_RegistersGrav(t *testing.T) {
 	}
 }
 
+func TestRegisterDefaults_RegistersFreshRSS(t *testing.T) {
+	r := New()
+	if err := RegisterDefaults(r); err != nil {
+		t.Fatalf("RegisterDefaults: %v", err)
+	}
+	f, ok := r.Get("freshrss")
+	if !ok {
+		t.Fatal("freshrss not registered after RegisterDefaults")
+	}
+	if !f.RequiresDB {
+		t.Error("freshrss should declare RequiresDB=true (it needs MariaDB)")
+	}
+	if f.AgentInstallCmd != "app.install" || f.AgentDeleteCmd != "app.delete" {
+		t.Errorf("freshrss dispatcher commands = (%q, %q)", f.AgentInstallCmd, f.AgentDeleteCmd)
+	}
+	for _, want := range []string{"admin_email", "admin_password", "language"} {
+		if _, ok := f.InstallParamSchema[want]; !ok {
+			t.Errorf("freshrss schema missing %q", want)
+		}
+	}
+}
+
 func TestRegister_ConcurrentSafe(t *testing.T) {
 	// Race detector trips here if Register's mutex disappears.
 	r := New()

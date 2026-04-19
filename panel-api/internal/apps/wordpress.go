@@ -82,5 +82,8 @@ func RegisterDefaults(r *Registry) error {
 	if err := r.Register(Grav); err != nil {
 		return err
 	}
+	if err := r.Register(FreshRSS); err != nil {
+		return err
+	}
 	return nil
 }

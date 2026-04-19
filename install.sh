@@ -2037,6 +2037,164 @@ install_sso_key() {
   _ok "SSO key created at $sso_key_path"
 }
 
+# ---------- step 8: Kratos identity provider (M20) ---------------------------
+
+install_kratos() {
+  _log "installing Ory Kratos identity provider (v1.3.1)"
+
+  # Kratos binary: vendored SHA-256 verification pattern matching wp-cli + phpmyadmin.
+  local kratos_version="1.3.1"
+  local kratos_binary="/usr/local/bin/kratos"
+  local kratos_tar="/tmp/kratos_${kratos_version}_linux_64bit.tar.gz"
+  local kratos_sha_file="${REPO_DIR}/install/kratos.sha256"
+  local kratos_url="https://github.com/ory/kratos/releases/download/v${kratos_version}/kratos_${kratos_version}_linux_64bit.tar.gz"
+
+  # Check if already installed at correct version.
+  if [[ -f "$kratos_binary" ]]; then
+    local installed_version
+    installed_version=$("$kratos_binary" version 2>&1 | grep -oP 'Version:\s+\K[^[:space:]]+' || echo "unknown")
+    if [[ "$installed_version" == "v${kratos_version}" ]]; then
+      _ok "Kratos $kratos_version already installed"
+      return
+    fi
+  fi
+
+  # Download + verify SHA-256.
+  _log "downloading Kratos $kratos_version from GitHub"
+  if ! curl -fsSL "$kratos_url" -o "$kratos_tar"; then
+    _die "failed to download Kratos from $kratos_url"
+  fi
+
+  if [[ ! -f "$kratos_sha_file" ]]; then
+    _die "Kratos SHA-256 checksum file not found at $kratos_sha_file"
+  fi
+
+  local expected_sha
+  expected_sha="$(cat "$kratos_sha_file" | awk '{print $1}')"
+  local actual_sha
+  actual_sha="$(sha256sum "$kratos_tar" | awk '{print $1}')"
+  if [[ "$expected_sha" != "$actual_sha" ]]; then
+    _die "Kratos SHA-256 mismatch. Expected: $expected_sha, got: $actual_sha"
+  fi
+
+  # Extract + install binary.
+  tar -xzf "$kratos_tar" -C /tmp/
+  install -m 0755 -o root -g root /tmp/kratos "$kratos_binary"
+  rm -f "$kratos_tar" /tmp/kratos
+
+  _ok "Kratos binary installed at $kratos_binary"
+
+  # Provision MariaDB database + user for Kratos.
+  local kratos_db_name="jabali_kratos"
+  local kratos_db_user="jabali_kratos"
+  local kratos_pw_file="/etc/jabali-panel/kratos-db-password"
+
+  if [[ ! -f "$kratos_pw_file" ]]; then
+    _log "generating Kratos DB password → $kratos_pw_file"
+    umask 077
+    openssl rand -hex 32 >"$kratos_pw_file"
+    chmod 0600 "$kratos_pw_file"
+    chown root:root "$kratos_pw_file"
+  fi
+
+  local kratos_db_pass
+  kratos_db_pass="$(cat "$kratos_pw_file")"
+
+  # Create database + user. Idempotent: CREATE IF NOT EXISTS.
+  mariadb -e "
+    CREATE DATABASE IF NOT EXISTS \`${kratos_db_name}\`
+      CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    CREATE USER IF NOT EXISTS '${kratos_db_user}'@'localhost' IDENTIFIED BY '${kratos_db_pass}';
+    ALTER USER '${kratos_db_user}'@'localhost' IDENTIFIED BY '${kratos_db_pass}';
+    GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER,
+          REFERENCES, LOCK TABLES, CREATE TEMPORARY TABLES
+      ON \`${kratos_db_name}\`.* TO '${kratos_db_user}'@'localhost';
+    FLUSH PRIVILEGES;
+  "
+
+  _ok "Kratos database provisioned: DB=${kratos_db_name}, user=${kratos_db_user}"
+
+  # Render kratos.yml config from template + write credentials.
+  local kratos_config="/etc/jabali-panel/kratos.yml"
+  local kratos_env_file="/etc/jabali-panel/kratos.env"
+
+  # Build the DSN. NOTE: Critical constraint from spike (K-2):
+  # sql_mode=NO_ENGINE_SUBSTITUTION required for MariaDB strict mode.
+  local kratos_dsn="mysql://${kratos_db_user}:${kratos_db_pass}@127.0.0.1:3306/${kratos_db_name}?parseTime=true&charset=utf8mb4&loc=UTC&sql_mode=NO_ENGINE_SUBSTITUTION"
+
+  # Write kratos.env with the DSN so render_template can substitute it.
+  install -m 0600 -o root -g root /dev/null "$kratos_env_file"
+  cat > "$kratos_env_file" <<KRATOSENV
+DATABASE_URL=${kratos_dsn}
+SECRETS_CIPHER_ALGORITHM=aes
+SECRETS_CIPHER_TEXT=$(openssl rand -hex 32)
+SECRETS_DEFAULT=$(openssl rand -hex 32)
+KRATOSENV
+
+  # Render kratos.yml template from install/kratos.yml.tmpl.
+  # The template is populated with environment variables.
+  if [[ ! -f "${REPO_DIR}/install/kratos.yml.tmpl" ]]; then
+    _die "Kratos template not found at ${REPO_DIR}/install/kratos.yml.tmpl"
+  fi
+
+  # Export variables for envsubst to use.
+  export KRATOS_DATABASE_URL="$kratos_dsn"
+  envsubst < "${REPO_DIR}/install/kratos.yml.tmpl" > "$kratos_config"
+  chmod 0640 "$kratos_config"
+  chown root:"$SERVICE_USER" "$kratos_config"
+
+  _ok "Kratos config written to $kratos_config"
+
+  # Copy identity schema file.
+  if [[ ! -f "${REPO_DIR}/install/kratos-identity-schema.json" ]]; then
+    _die "Kratos identity schema not found at ${REPO_DIR}/install/kratos-identity-schema.json"
+  fi
+  install -m 0644 -o root -g root "${REPO_DIR}/install/kratos-identity-schema.json" \
+    /etc/jabali-panel/kratos-identity-schema.json
+
+  _ok "Kratos identity schema installed"
+
+  # Run database migrations.
+  _log "running Kratos database migrations"
+  if ! "$kratos_binary" migrate sql -e -c "$kratos_config" --yes; then
+    _die "Kratos database migrations failed"
+  fi
+
+  _ok "Kratos migrations completed"
+
+  # Install systemd unit file.
+  if [[ ! -f "${REPO_DIR}/install/systemd/jabali-kratos.service" ]]; then
+    _die "Kratos systemd unit template not found at ${REPO_DIR}/install/systemd/jabali-kratos.service"
+  fi
+  install -m 0644 -o root -g root "${REPO_DIR}/install/systemd/jabali-kratos.service" \
+    /etc/systemd/system/jabali-kratos.service
+
+  systemctl daemon-reload
+
+  # Enable and start the service.
+  systemctl enable --quiet jabali-kratos
+  systemctl restart --quiet jabali-kratos
+
+  # Poll for readiness. Kratos exposes /health/ready on the admin port (4434).
+  # We check via loopback port 4433 (public) for the self-service endpoints.
+  _log "waiting for Kratos to be ready (max 30s)"
+  local waited=0
+  while [[ $waited -lt 30 ]]; do
+    if curl -sf http://127.0.0.1:4433/health/ready >/dev/null 2>&1; then
+      _ok "Kratos is ready"
+      break
+    fi
+    sleep 1
+    ((waited++))
+  done
+
+  if [[ $waited -eq 30 ]]; then
+    _warn "Kratos did not become ready within 30s. Check: systemctl status jabali-kratos"
+  fi
+
+  _ok "Kratos identity provider installed and running"
+}
+
 # ---------- main ------------------------------------------------------------
 
 main() {
@@ -2068,6 +2226,7 @@ main() {
   setup_certbot
   clone_or_update_repo
   install_jabali_slices
+  install_kratos
   install_php_pool_template
   build_frontend
   build_backend

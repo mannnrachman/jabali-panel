@@ -1301,7 +1301,6 @@ server {
     index index.html index.htm;
 
     include /etc/nginx/sites-available/includes/phpmyadmin.conf;
-    include /etc/nginx/sites-available/includes/jabali-files.conf;
 
     location / {
         try_files \$uri \$uri/ =404;

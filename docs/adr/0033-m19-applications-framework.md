@@ -40,9 +40,20 @@ data, not code.
 
 **Decision:** Rename `wordpress_installs` → `application_installs`
 (migration 000046) and add an `app_type VARCHAR(32) NOT NULL DEFAULT
-'wordpress'` column. Composite uniqueness flips from `(domain_id,
-subdirectory)` to `(domain_id, subdirectory, app_type)` so two
-different apps can share the same docroot slot.
+'wordpress'` column. The DB-level composite UNIQUE widens from
+`(domain_id, subdirectory)` to `(domain_id, subdirectory, app_type)`,
+but the **API enforces the stricter rule**: at most one application
+per `(domain_id, subdirectory)` slot regardless of `app_type`.
+
+**Update 2026-04-19 (per operator):** the API check uses
+`FindByDomainAndSubdirectory` (any app_type) and returns 409
+`install_exists` if the slot is taken. The reason: in practice you
+can't run two apps at the same docroot path — they'd serve overlapping
+URLs and fight over `index.php`/`index.html` ordering. The wider DB
+UNIQUE is kept for forward compatibility (e.g. a future migration
+that prefixes app_type into a sub-path, or a true multi-app slot if
+nginx routing learns to discriminate by URL prefix), but the product
+behaviour today is one-app-per-slot.
 
 **Rationale:**
 - One status machine, one reconciler, one set of cross-cutting

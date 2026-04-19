@@ -118,7 +118,6 @@ func TestApplications_CreateWordPress_HappyPath(t *testing.T) {
 		"domain_id":    "domain1",
 		"subdirectory": "blog",
 		"params": map[string]any{
-			"admin_username": "admin",
 			"admin_email":    "admin@example.com",
 			"admin_password": "s3cret-pw",
 			"site_title":     "Hello",
@@ -150,6 +149,9 @@ func TestApplications_CreateWordPress_HappyPath(t *testing.T) {
 	if resp.AdminPassword != "s3cret-pw" {
 		t.Errorf("AdminPassword should echo the supplied value, got %q", resp.AdminPassword)
 	}
+	if resp.AdminUsername == "" {
+		t.Error("AdminUsername should be auto-generated server-side, got empty")
+	}
 	// We can't read ag.callCount here without racing the install kicker
 	// goroutine — DBID being non-empty already proves the synchronous
 	// db.create / db_user.create / db_user.grant chain ran. The kicker
@@ -168,7 +170,6 @@ func TestApplications_CreateRequiresDBFalse_SkipsDBChain(t *testing.T) {
 			DisplayName: "Flatfile",
 			RequiresDB:  false,
 			InstallParamSchema: map[string]apps.ParamSpec{
-				"admin_username": {Type: "string", Required: true},
 				"admin_email":    {Type: "email", Required: true},
 				"admin_password": {Type: "password", Required: true},
 			},
@@ -179,7 +180,6 @@ func TestApplications_CreateRequiresDBFalse_SkipsDBChain(t *testing.T) {
 		"app_type":  "flatfile",
 		"domain_id": "domain1",
 		"params": map[string]any{
-			"admin_username": "admin",
 			"admin_email":    "admin@example.com",
 			"admin_password": "s3cret-pw",
 		},
@@ -239,10 +239,12 @@ func TestApplications_Create_MissingRequiredParam_400(t *testing.T) {
 		"app_type":  "wordpress",
 		"domain_id": "domain1",
 		"params": map[string]any{
-			// admin_username missing — required by descriptor
+			// site_title missing — required by descriptor.
+			// admin_username is no longer in the schema — it's auto-
+			// generated server-side, so we exercise a different
+			// required field here.
 			"admin_email":    "admin@example.com",
 			"admin_password": "p",
-			"site_title":     "t",
 		},
 	}
 	bodyBytes, _ := json.Marshal(body)
@@ -267,7 +269,6 @@ func TestApplications_Create_BadEmailParam_400(t *testing.T) {
 		"app_type":  "wordpress",
 		"domain_id": "domain1",
 		"params": map[string]any{
-			"admin_username": "admin",
 			"admin_email":    "not-an-email",
 			"admin_password": "p",
 			"site_title":     "t",
@@ -295,7 +296,6 @@ func TestApplications_Create_UnknownParam_400(t *testing.T) {
 		"app_type":  "wordpress",
 		"domain_id": "domain1",
 		"params": map[string]any{
-			"admin_username": "admin",
 			"admin_email":    "admin@example.com",
 			"admin_password": "p",
 			"site_title":     "t",
@@ -325,7 +325,6 @@ func TestApplications_Create_DuplicateAppTypeAtSameSlot_409(t *testing.T) {
 		"domain_id":    "domain1",
 		"subdirectory": "blog",
 		"params": map[string]any{
-			"admin_username": "admin",
 			"admin_email":    "admin@example.com",
 			"admin_password": "p",
 			"site_title":     "t",
@@ -345,10 +344,13 @@ func TestApplications_Create_DuplicateAppTypeAtSameSlot_409(t *testing.T) {
 	}
 }
 
-func TestApplications_Create_DifferentAppTypeSameSlot_AllowedByDesign(t *testing.T) {
-	// Two different apps may share the same (domain, subdir) — that's
-	// the whole point of the (domain, subdir, app_type) composite
-	// uniqueness from migration 000046.
+func TestApplications_Create_DifferentAppTypeSameSlot_Conflict(t *testing.T) {
+	// Per the operator's directive (2026-04-19): a (domain, subdir) slot
+	// hosts AT MOST ONE application — even if the second install is a
+	// different app_type. This is stricter than the DB-level UNIQUE in
+	// migration 000046 (which still allows distinct app_types in the
+	// same slot for forward compat); the API check enforces the
+	// product rule. ADR-0033 was updated to reflect this.
 	wpRepo, domainRepo, userRepo := wpUserAndDomain()
 	wpRepo.installs = map[string]*models.WordPressInstall{
 		"inst1": {ID: "inst1", UserID: "user1", DomainID: "domain1", Subdirectory: "wiki", AppType: "wordpress"},
@@ -359,7 +361,6 @@ func TestApplications_Create_DifferentAppTypeSameSlot_AllowedByDesign(t *testing
 			DisplayName: "Flatfile",
 			RequiresDB:  false,
 			InstallParamSchema: map[string]apps.ParamSpec{
-				"admin_username": {Type: "string", Required: true},
 				"admin_email":    {Type: "email", Required: true},
 				"admin_password": {Type: "password", Required: true},
 			},
@@ -371,7 +372,6 @@ func TestApplications_Create_DifferentAppTypeSameSlot_AllowedByDesign(t *testing
 		"domain_id":    "domain1",
 		"subdirectory": "wiki",
 		"params": map[string]any{
-			"admin_username": "admin",
 			"admin_email":    "admin@example.com",
 			"admin_password": "p",
 		},
@@ -382,8 +382,11 @@ func TestApplications_Create_DifferentAppTypeSameSlot_AllowedByDesign(t *testing
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("expected 202 (different app_type at same slot): %d body: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409 (slot already taken regardless of app_type): %d body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "install_exists") {
+		t.Errorf("body missing install_exists: %s", w.Body.String())
 	}
 }
 
@@ -400,7 +403,6 @@ func TestApplications_Create_DomainNotOwned_404(t *testing.T) {
 		"app_type":  "wordpress",
 		"domain_id": "domainX",
 		"params": map[string]any{
-			"admin_username": "admin",
 			"admin_email":    "admin@example.com",
 			"admin_password": "p",
 			"site_title":     "t",
@@ -426,7 +428,6 @@ func TestApplications_Create_BadSubdirectory_400(t *testing.T) {
 		"domain_id":    "domain1",
 		"subdirectory": "../escape",
 		"params": map[string]any{
-			"admin_username": "admin",
 			"admin_email":    "admin@example.com",
 			"admin_password": "p",
 			"site_title":     "t",

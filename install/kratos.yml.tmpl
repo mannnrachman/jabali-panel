@@ -1,7 +1,8 @@
 # Ory Kratos 1.3.1 Configuration Template
 # Generated from: install/kratos.yml.tmpl
 # Rendered by: install.sh install_kratos()
-# All {{.Placeholder}} values are substituted by Go text/template during install
+# Mustache slots below are substituted by sed during install — the post-render
+# check in install_kratos() fails the install if any unexpanded slot remains.
 
 dsn: "mysql://{{.KratosDatabaseUser}}:{{.KratosDatabasePassword}}@tcp(127.0.0.1:3306)/{{.KratosDatabaseName}}?parseTime=true&sql_mode=NO_ENGINE_SUBSTITUTION"
 

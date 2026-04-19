@@ -314,13 +314,56 @@ install_base_packages() {
 # For that to be the resolver the OS actually uses, /etc/resolv.conf must
 # point at the stub (127.0.0.53). Debian 13 installs systemd-resolved but
 # doesn't always flip the symlink on upgrade paths — do it idempotently.
+#
+# CRITICAL: we must seed a default upstream BEFORE flipping the symlink.
+# systemd-resolved's stub with no upstream is a black hole, and the rest
+# of the installer (apt, rsync, certbot) needs name resolution to work.
+# The panel's own drop-in (jabali.conf) overrides this default once an
+# admin saves custom resolvers; the -default.conf stays as a safety net.
 configure_systemd_resolved() {
+  install -d -m 0755 /etc/systemd/resolved.conf.d
+
+  # Seed Cloudflare + Google as fallbacks. A separate file from jabali.conf
+  # so the admin's custom resolvers (written by panel to jabali.conf) take
+  # priority via lexical drop-in ordering (jabali.conf > jabali-default.conf
+  # is not how systemd layers them — it concatenates — but DNS= later wins
+  # for the last entry parsed, and Domains= is overridden wholesale).
+  local default_dropin=/etc/systemd/resolved.conf.d/jabali-default.conf
+  if [[ ! -f "${default_dropin}" ]]; then
+    _log "seeding fallback upstream resolvers (Cloudflare + Google)"
+    cat > "${default_dropin}" <<'EOF'
+# Installer-seeded fallback upstreams. Overridden when the admin saves
+# custom resolvers via the panel (writes jabali.conf in the same dir).
+# Safe to remove once jabali.conf exists; kept as a safety net so the
+# host keeps resolving even if the panel-owned drop-in is deleted.
+[Resolve]
+DNS=1.1.1.1 8.8.8.8 2606:4700:4700::1111 2001:4860:4860::8888
+EOF
+  fi
+
   systemctl enable --now systemd-resolved.service >/dev/null 2>&1 || true
+  # Give the daemon a moment to pick up the drop-in before we cut over
+  # resolv.conf — otherwise the next apt call races the reload.
+  systemctl reload-or-restart systemd-resolved.service >/dev/null 2>&1 || true
+
   if [[ ! -L /etc/resolv.conf ]] || [[ "$(readlink /etc/resolv.conf)" != "../run/systemd/resolve/stub-resolv.conf" ]]; then
     _log "symlinking /etc/resolv.conf → stub-resolv.conf (systemd-resolved stub)"
     ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
   fi
-  install -d -m 0755 /etc/systemd/resolved.conf.d
+
+  # Sanity check: resolve one well-known name via the stub. If this fails,
+  # fall back to the previous /etc/resolv.conf content so the rest of the
+  # installer doesn't brick on a black-hole resolver.
+  if ! getent hosts deb.debian.org >/dev/null 2>&1; then
+    _log "stub resolver failed to resolve — reverting /etc/resolv.conf"
+    cat > /etc/resolv.conf <<'EOF'
+# Fallback: stub resolver not reachable during install. Replace via the
+# panel once installation completes.
+nameserver 1.1.1.1
+nameserver 8.8.8.8
+EOF
+  fi
+
   _ok "systemd-resolved enabled, stub resolver wired"
 }
 

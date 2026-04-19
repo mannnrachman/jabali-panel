@@ -16,7 +16,7 @@
 // Scope: still no multi-select, no chmod, no image preview, no editor —
 // those remain Phase 2.
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Breadcrumb,
   Button,
@@ -70,7 +70,11 @@ import {
   filesUploadChunked,
   filesWrite,
 } from "./filesApi";
-import Editor from "@monaco-editor/react";
+// Monaco is ~500KB gzipped of the bundle; lazy-load it so the initial
+// files page doesn't pay that cost. The editor only mounts when the
+// user actually clicks Edit on a file. Suspense fallback below keeps
+// the modal from flashing an empty pane while the chunk is fetched.
+const Editor = lazy(() => import("@monaco-editor/react"));
 
 const { Text } = Typography;
 
@@ -490,6 +494,24 @@ export const FileManagerPage = () => {
       setEditOriginal("");
       try {
         const resp = await filesPreview(path);
+        // Refuse to open binaries. Two signals, either one is enough:
+        //   1. Server-sniffed mime_type says non-text (image, octet-stream, ...)
+        //   2. Content contains NUL bytes (classic binary smell; text never has
+        //      them, and JSON preserves \u0000 literally so we actually see it)
+        const mime = (resp.mime_type || "").toLowerCase();
+        const mimeIsText =
+          mime.startsWith("text/") ||
+          mime.startsWith("application/json") ||
+          mime.startsWith("application/xml") ||
+          mime.startsWith("application/x-sh") ||
+          mime.startsWith("application/javascript") ||
+          mime === "";
+        const hasNul = resp.content.includes("\u0000");
+        if (!mimeIsText || hasNul) {
+          message.error("Cannot edit: file looks binary");
+          setEditTarget(null);
+          return;
+        }
         setEditContent(resp.content);
         setEditOriginal(resp.content);
       } catch (err) {
@@ -504,6 +526,13 @@ export const FileManagerPage = () => {
 
   const submitEdit = useCallback(async () => {
     if (!editTarget || editSaving) return;
+    // Guard: the editor is text-only. If somehow a NUL slipped in (paste
+    // from a hex dump? browser extension?) refuse rather than silently
+    // corrupting what's on disk.
+    if (editContent.includes("\u0000")) {
+      message.error("Refusing to save: content contains NUL bytes");
+      return;
+    }
     setEditSaving(true);
     try {
       await filesWrite(editTarget, editContent);
@@ -1333,24 +1362,39 @@ export const FileManagerPage = () => {
               overflow: "hidden",
             }}
           >
-            <Editor
-              height="100%"
-              value={editContent}
-              onChange={(v) => setEditContent(v ?? "")}
-              language={editTarget ? languageFor(editTarget) : "plaintext"}
-              theme={
-                // Pick vs-dark when the app is in dark mode, vs when light.
-                // AntD's token exposes colorBgBase; a dark bg implies dark.
-                token.colorBgBase && token.colorBgBase.startsWith("#0")
-                  ? "vs-dark"
-                  : "vs"
+            <Suspense
+              fallback={
+                <div
+                  style={{
+                    height: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Spin tip="Loading editor…" />
+                </div>
               }
-              options={{
-                minimap: { enabled: false },
-                scrollBeyondLastLine: false,
-                fontSize: 13,
-              }}
-            />
+            >
+              <Editor
+                height="100%"
+                value={editContent}
+                onChange={(v) => setEditContent(v ?? "")}
+                language={editTarget ? languageFor(editTarget) : "plaintext"}
+                theme={
+                  // Pick vs-dark when the app is in dark mode, vs when light.
+                  // AntD's token exposes colorBgBase; a dark bg implies dark.
+                  token.colorBgBase && token.colorBgBase.startsWith("#0")
+                    ? "vs-dark"
+                    : "vs"
+                }
+                options={{
+                  minimap: { enabled: false },
+                  scrollBeyondLastLine: false,
+                  fontSize: 13,
+                }}
+              />
+            </Suspense>
           </div>
         </Spin>
       </Modal>

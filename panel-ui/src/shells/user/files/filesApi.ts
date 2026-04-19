@@ -23,6 +23,10 @@ export type FilePreviewResponse = {
   path: string;
   size: number;
   content: string;
+  // Server-sniffed content type (Go's http.DetectContentType on first 512 B).
+  // Used by the editor to refuse binary files before they land in Monaco —
+  // loading a 1 MiB JPEG into a text editor is a mess the user shouldn't see.
+  mime_type?: string;
 };
 
 export async function filesHome(): Promise<{ path: string }> {
@@ -63,18 +67,50 @@ export async function filesUpload(dirPath: string, file: File): Promise<void> {
 // file as N sequential POSTs of `chunkSize` bytes each, the last one
 // flagged `final=1` so the backend finalises (moves /tmp into scope).
 // `onProgress` is called with a 0..1 fraction after each chunk.
+//
+// Resumable: if a previous upload for the same file (keyed by dir + name
+// + size + lastModified) was interrupted, we reuse that upload_id and
+// ask the server how many bytes landed, then skip ahead to the next
+// chunk boundary. The key lives in localStorage under `jabali:upload:`
+// and is cleaned on successful ingest.
 export async function filesUploadChunked(
   dirPath: string,
   file: File,
   chunkSize = 10 * 1024 * 1024,
   onProgress?: (frac: number) => void,
 ): Promise<void> {
-  const uploadId =
-    typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const totalChunks = Math.max(1, Math.ceil(file.size / chunkSize));
-  for (let i = 0; i < totalChunks; i++) {
+  const resumeKey = `jabali:upload:${dirPath}|${file.name}|${file.size}|${file.lastModified}`;
+  let uploadId = readResumeId(resumeKey);
+  let startChunk = 0;
+  if (uploadId) {
+    // See how much the server has already. If 404, the /tmp file is
+    // gone (panel restart, cleanup job) and we start fresh.
+    try {
+      const r = await apiClient.get<{ written: number }>(
+        `/files/upload-chunk-status`,
+        { params: { upload_id: uploadId } },
+      );
+      const written = r.data.written || 0;
+      // Resume at the start of the first not-yet-complete chunk. Round
+      // DOWN so a partial chunk is re-uploaded in full — the server
+      // seeks to the offset before writing, so re-sending is safe.
+      startChunk = Math.floor(written / chunkSize);
+    } catch {
+      // Stale or missing — drop the key and regenerate.
+      uploadId = null;
+      clearResumeId(resumeKey);
+    }
+  }
+  if (!uploadId) {
+    uploadId =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    writeResumeId(resumeKey, uploadId);
+  }
+  if (onProgress) onProgress(startChunk / totalChunks);
+  for (let i = startChunk; i < totalChunks; i++) {
     const start = i * chunkSize;
     const end = Math.min(start + chunkSize, file.size);
     const blob = file.slice(start, end);
@@ -89,6 +125,35 @@ export async function filesUploadChunked(
       headers: { "Content-Type": "application/octet-stream" },
     });
     if (onProgress) onProgress((i + 1) / totalChunks);
+  }
+  // Success — forget the resume key.
+  clearResumeId(resumeKey);
+}
+
+// Small localStorage helpers. Wrapped in try/catch because the SPA can
+// be loaded in a privacy-mode browser where setItem throws — we still
+// want the upload to work, just without resume.
+function readResumeId(key: string): string | null {
+  try {
+    return typeof localStorage !== "undefined" ? localStorage.getItem(key) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeResumeId(key: string, id: string): void {
+  try {
+    if (typeof localStorage !== "undefined") localStorage.setItem(key, id);
+  } catch {
+    // Best-effort; we tolerate losing resume state.
+  }
+}
+
+function clearResumeId(key: string): void {
+  try {
+    if (typeof localStorage !== "undefined") localStorage.removeItem(key);
+  } catch {
+    // Best-effort.
   }
 }
 

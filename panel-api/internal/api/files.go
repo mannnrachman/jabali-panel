@@ -144,6 +144,10 @@ func RegisterFilesRoutes(g *gin.RouterGroup, cfg FilesHandlerConfig) {
 	grp.POST("/copy", h.copy)
 	grp.POST("/write", h.write)
 	grp.POST("/upload-chunk", h.uploadChunk)
+	// Resume support — the client HEADs this before starting to see how
+	// many bytes of /tmp/jabali-upload-<id> already exist, so a reload
+	// mid-upload doesn't restart from zero.
+	grp.GET("/upload-chunk-status", h.uploadChunkStatus)
 }
 
 type filesHandler struct{ cfg FilesHandlerConfig }
@@ -215,9 +219,11 @@ type filesListAgentResult struct {
 }
 
 type filesReadAgentResult struct {
-	Path    string `json:"path"`
-	Content string `json:"content"`
-	Size    int64  `json:"size"`
+	Path      string `json:"path"`
+	Content   string `json:"content"`
+	Size      int64  `json:"size"`
+	Truncated bool   `json:"truncated"`
+	MimeType  string `json:"mime_type"`
 }
 
 // ---- helpers ----
@@ -415,9 +421,10 @@ func (h *filesHandler) preview(c *gin.Context) {
 	c.Header("X-Content-Type-Options", "nosniff")
 	c.Header("Content-Disposition", "inline")
 	c.JSON(http.StatusOK, gin.H{
-		"path":    result.Path,
-		"size":    result.Size,
-		"content": result.Content,
+		"path":      result.Path,
+		"size":      result.Size,
+		"content":   result.Content,
+		"mime_type": result.MimeType,
 	})
 }
 
@@ -781,6 +788,34 @@ func (h *filesHandler) uploadChunk(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"path": destPath})
+}
+
+// uploadChunkStatus returns the current byte count of a pending upload
+// so the client can resume from the right offset after a reload or a
+// network blip. Only reports /tmp/jabali-upload-<id> files — there's
+// no cross-user isolation on the scratch path, but since upload_ids
+// are 128-bit random UUIDs the risk is limited to the client leaking
+// its own id, which would already be in their localStorage anyway.
+func (h *filesHandler) uploadChunkStatus(c *gin.Context) {
+	if _, _, ok := h.requireClaimsAndUsername(c); !ok {
+		return
+	}
+	uploadID := c.Query("upload_id")
+	if uploadID == "" || strings.ContainsAny(uploadID, "/\\.") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_upload_id"})
+		return
+	}
+	tmpPath := fmt.Sprintf("/tmp/jabali-upload-%s", uploadID)
+	info, err := os.Stat(tmpPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"upload_id": uploadID, "written": info.Size()})
 }
 
 func (h *filesHandler) delete(c *gin.Context) {

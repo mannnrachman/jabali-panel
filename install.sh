@@ -2070,10 +2070,16 @@ install_kratos() {
     _die "Kratos SHA-256 checksum file not found at $kratos_sha_file"
   fi
 
+  # Skip comment + blank lines so the checksum file can carry provenance
+  # metadata (`# Source: ...`, `# Verified: YYYY-MM-DD`) without tripping
+  # the comparison — matches the sha256sum(1) convention.
   local expected_sha
-  expected_sha="$(cat "$kratos_sha_file" | awk '{print $1}')"
+  expected_sha="$(awk '/^[[:space:]]*#/ || NF==0 { next } { print $1; exit }' "$kratos_sha_file")"
   local actual_sha
   actual_sha="$(sha256sum "$kratos_tar" | awk '{print $1}')"
+  if [[ -z "$expected_sha" ]]; then
+    _die "no checksum line found in $kratos_sha_file (comments only?)"
+  fi
   if [[ "$expected_sha" != "$actual_sha" ]]; then
     _die "Kratos SHA-256 mismatch. Expected: $expected_sha, got: $actual_sha"
   fi

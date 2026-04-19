@@ -98,6 +98,23 @@ _warn() { printf '\033[1;33m[jabali-install]\033[0m %s\n' "$*" >&2; }
 _err()  { printf '\033[1;31m[jabali-install]\033[0m %s\n' "$*" >&2; }
 _die()  { printf '\033[1;31m[jabali-install]\033[0m %s\n' "$*" >&2; exit 1; }
 
+# ---------- banner ----------------------------------------------------------
+# Prints the jabali ASCII art at install start. Uses ANSI colour (yellow)
+# for visibility without being garish. Unicode block characters require
+# a UTF-8 terminal — every modern ssh/console has this by default.
+print_banner() {
+  printf '\033[1;33m'
+  cat <<'BANNER'
+  ▀██▀         ▀██              ▀██   ██
+    ██   ▄▄▄▄    ██ ▄▄▄   ▄▄▄▄    ██  ▄▄▄
+    ██  ▀▀ ▄██   ██▀  ██ ▀▀ ▄██   ██   ██
+    ██  ▄█▀ ██   ██    █ ▄█▀ ██   ██   ██
+██ ▄█▀  ▀█▄▄▀█▀  ▀█▄▄▄▀  ▀█▄▄▀█▀ ▄██▄ ▄██▄
+ ▀▀▀
+BANNER
+  printf '\033[0m\n'
+}
+
 # ---------- preflight -------------------------------------------------------
 
 preflight() {
@@ -2020,6 +2037,7 @@ install_sso_key() {
 # ---------- main ------------------------------------------------------------
 
 main() {
+  print_banner
   preflight
   prompt_server_settings
   install_base_packages

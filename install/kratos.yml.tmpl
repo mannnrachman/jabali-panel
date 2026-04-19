@@ -24,9 +24,9 @@ serve:
         - Authorization
         - Content-Type
         - X-CSRF-Token
-      expose_headers:
+      exposed_headers:
         - X-CSRF-Token
-      credentials: true
+      allow_credentials: true
       max_age: 120
 
   admin:
@@ -53,7 +53,7 @@ selfservice:
     totp:
       enabled: true
       config:
-        issuer_name: "Jabali Panel"
+        issuer: "Jabali Panel"
 
   flows:
     login:
@@ -94,26 +94,20 @@ identity:
     - id: default
       url: "file:///etc/jabali-panel/kratos-identity-schema.json"
 
+# Password hashing — bcrypt is the default algorithm; cost 12 matches
+# panel-api's BcryptCost so bootstrap-migrated hashes verify identically.
 hashers:
+  algorithm: bcrypt
   bcrypt:
-    enabled: true
     cost: 12
-  argon2:
-    enabled: false
 
 session:
   lifespan: 730h  # 30 days
   cookie:
     name: ory_kratos_session
-    domain: ""
     path: /
     persistent: true
-    http_only: true
     same_site: Lax
-    secure: true
-
-  upstream:
-    check_session_url: http://127.0.0.1:4434/sessions/check
 
 log:
   level: info
@@ -124,10 +118,3 @@ secrets:
     - "{{.KratosSecretDefault}}"
   cookie:
     - "{{.KratosCookieSecret}}"
-
-oauth2:
-  client_id: "{{.KratosClientID}}"
-  client_secret: "{{.KratosClientSecret}}"
-  provider: null
-
-profiling: disable

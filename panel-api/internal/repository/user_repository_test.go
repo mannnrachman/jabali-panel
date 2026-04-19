@@ -45,6 +45,7 @@ func TestUserRepository_Create(t *testing.T) {
 			sqlmock.AnyArg(), // totp_secret_encrypted — GORM emits []byte{} for nil slice
 			false,            // totp_enabled
 			nil,              // totp_enabled_at
+			nil,              // kratos_identity_id (M20)
 			sqlmock.AnyArg(), // created_at
 			sqlmock.AnyArg(), // updated_at
 		).

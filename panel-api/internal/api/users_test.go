@@ -21,6 +21,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -837,4 +838,151 @@ func TestUsers_Patch_WithInvalidPackageID(t *testing.T) {
 	})
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Contains(t, rec.Body.String(), "invalid_package_id")
+}
+
+// ---------- M20: Kratos inline-hook on POST /users ----------
+//
+// The create handler must:
+//   - skip Kratos entirely when provider = "legacy" (no upstream call),
+//   - create a Kratos identity atomically when provider = "kratos",
+//   - roll back the panel row if Kratos rejects the create,
+//   - unwind both sides if the post-create Update fails.
+
+// buildRouterWithKratos wires a router whose UserHandlerConfig points at the
+// given fake Kratos admin server.
+func buildRouterWithKratos(
+	repo repository.UserRepository,
+	kratosURL string,
+	provider string,
+	claims *auth.AccessClaims,
+) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	g := r.Group("/api/v1", func(c *gin.Context) {
+		if claims != nil {
+			ginctx.SetClaims(c, claims)
+		}
+		c.Next()
+	})
+	cfg := api.UserHandlerConfig{
+		Repo:         repo,
+		BcryptCost:   bcrypt.MinCost,
+		AuthProvider: provider,
+	}
+	if kratosURL != "" {
+		cfg.KratosClient = kratosclient.NewClient(kratosURL, kratosURL)
+	}
+	api.RegisterUserRoutes(g, cfg)
+	return r
+}
+
+func TestUsers_Create_KratosLegacyProvider_NoKratosCall(t *testing.T) {
+	t.Parallel()
+
+	hit := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	repo := newMemUserRepo()
+	admin := makeUser(t, "admin@example.com", true, "adminpassword")
+	repo.seed(admin)
+
+	// provider="legacy" → Kratos must never be called even though the
+	// (intentionally-broken) server would respond 500.
+	r := buildRouterWithKratos(repo, srv.URL, "legacy", &auth.AccessClaims{UserID: admin.ID, IsAdmin: true})
+	rec := doJSON(t, r, http.MethodPost, "/api/v1/users", map[string]any{
+		"email":    "legacy-user@example.com",
+		"password": "password123",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code)
+	assert.Equal(t, 0, hit, "Kratos must not be called in legacy mode")
+}
+
+func TestUsers_Create_KratosProvider_HappyPath_IDPersisted(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/admin/identities" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"kratos-id-new","traits":{"email":"k@example.com","is_admin":false}}`))
+			return
+		}
+		http.Error(w, "unexpected", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	repo := newMemUserRepo()
+	admin := makeUser(t, "admin@example.com", true, "adminpassword")
+	repo.seed(admin)
+
+	r := buildRouterWithKratos(repo, srv.URL, "kratos", &auth.AccessClaims{UserID: admin.ID, IsAdmin: true})
+	rec := doJSON(t, r, http.MethodPost, "/api/v1/users", map[string]any{
+		"email":    "k@example.com",
+		"password": "password123",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code)
+
+	var out models.User
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.NotNil(t, out.KratosIdentityID, "kratos_identity_id must be persisted after Kratos create")
+	assert.Equal(t, "kratos-id-new", *out.KratosIdentityID)
+}
+
+func TestUsers_Create_KratosRejects_PanelRolledBack(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Kratos returns 409 conflict (identity with that email already exists
+		// upstream). Our handler should undo the panel row and surface 502.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"conflict"}`))
+	}))
+	defer srv.Close()
+
+	repo := newMemUserRepo()
+	admin := makeUser(t, "admin@example.com", true, "adminpassword")
+	repo.seed(admin)
+
+	r := buildRouterWithKratos(repo, srv.URL, "kratos", &auth.AccessClaims{UserID: admin.ID, IsAdmin: true})
+	rec := doJSON(t, r, http.MethodPost, "/api/v1/users", map[string]any{
+		"email":    "dup@example.com",
+		"password": "password123",
+	})
+	require.Equal(t, http.StatusBadGateway, rec.Code, "kratos rejection must be 502 to the caller")
+	assert.Contains(t, rec.Body.String(), "identity_provider_failed")
+
+	// Critical invariant: no panel row survives a failed Kratos create.
+	// Only the seeded admin should remain.
+	all, _, err := repo.List(context.Background(), repository.ListOptions{Limit: 100})
+	require.NoError(t, err)
+	require.Len(t, all, 1, "panel row must be rolled back after Kratos failure")
+	assert.Equal(t, admin.ID, all[0].ID)
+}
+
+func TestUsers_Create_KratosUnreachable_PanelRolledBack(t *testing.T) {
+	t.Parallel()
+
+	// Dead server — connection refused.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	srv.Close()
+
+	repo := newMemUserRepo()
+	admin := makeUser(t, "admin@example.com", true, "adminpassword")
+	repo.seed(admin)
+
+	r := buildRouterWithKratos(repo, srv.URL, "kratos", &auth.AccessClaims{UserID: admin.ID, IsAdmin: true})
+	rec := doJSON(t, r, http.MethodPost, "/api/v1/users", map[string]any{
+		"email":    "noroute@example.com",
+		"password": "password123",
+	})
+	assert.Equal(t, http.StatusBadGateway, rec.Code)
+
+	all, _, err := repo.List(context.Background(), repository.ListOptions{Limit: 100})
+	require.NoError(t, err)
+	require.Len(t, all, 1, "panel row must be rolled back even when Kratos is unreachable")
 }

@@ -64,6 +64,7 @@ func newRootCmd() *cobra.Command {
 		newLimitsCmd(),
 		adminCmd,
 		newSSOCmd(),
+		newKratosMigrateCmd(),
 	)
 
 	return cmd

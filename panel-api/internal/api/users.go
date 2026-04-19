@@ -16,6 +16,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
@@ -42,6 +43,20 @@ type UserHandlerConfig struct {
 	CookieName string
 	CookieSecure bool
 	Log        *slog.Logger
+
+	// M20: Kratos hook. When AuthProvider == "kratos" AND KratosClient is
+	// non-nil, POST /users atomically creates both a panel user row and a
+	// Kratos identity. When "legacy" or KratosClient is nil, the Kratos call
+	// is skipped — existing flow is preserved so the flag can flip cleanly.
+	KratosClient *kratosclient.Client
+	AuthProvider string
+}
+
+// kratosEnabled reports whether the current config selects the Kratos provider
+// AND the client is wired. Both checks are required because the config may be
+// set to "kratos" before the client is constructed (e.g. in tests).
+func (c UserHandlerConfig) kratosEnabled() bool {
+	return c.AuthProvider == "kratos" && c.KratosClient != nil
 }
 
 // Paging defaults/limits chosen so a misbehaving client can't issue
@@ -232,6 +247,49 @@ func (h *userHandler) create(c *gin.Context) {
 		}
 		h.translateErr(c, err)
 		return
+	}
+
+	// M20: atomic Kratos identity creation.
+	// Runs only when the feature flag selects Kratos. On failure we undo the
+	// panel DB row (compensating delete) so the two systems can't drift. The
+	// failure surface is explicitly 5xx — callers retry. We never return 201
+	// for a half-created user.
+	if h.cfg.kratosEnabled() {
+		traits := kratosclient.AdminTraits{
+			Email:   u.Email,
+			IsAdmin: u.IsAdmin,
+		}
+		if u.Username != nil {
+			traits.Username = *u.Username
+		}
+
+		identityID, err := h.cfg.KratosClient.CreateIdentityWithPassword(c.Request.Context(), traits, u.PasswordHash)
+		if err != nil {
+			// Roll back the panel row so retries don't hit a username/email conflict.
+			if delErr := h.cfg.Repo.Delete(c.Request.Context(), u.ID); delErr != nil {
+				slog.Error("kratos create failed and panel rollback also failed — orphan row",
+					"user_id", u.ID, "email", u.Email, "kratos_err", err, "rollback_err", delErr)
+			}
+			c.JSON(http.StatusBadGateway, gin.H{"error": "identity_provider_failed", "detail": err.Error()})
+			return
+		}
+
+		u.KratosIdentityID = &identityID
+		if err := h.cfg.Repo.Update(c.Request.Context(), u); err != nil {
+			// Undo both sides: delete the Kratos identity so re-create is safe,
+			// then delete the panel row. Best-effort — if either unwind call
+			// fails, log it so the operator sees the orphan.
+			if delErr := h.cfg.KratosClient.DeleteIdentity(c.Request.Context(), identityID); delErr != nil {
+				slog.Error("panel update failed and kratos rollback also failed — orphan identity",
+					"user_id", u.ID, "identity_id", identityID, "update_err", err, "rollback_err", delErr)
+			}
+			if delErr := h.cfg.Repo.Delete(c.Request.Context(), u.ID); delErr != nil {
+				slog.Error("panel update failed and panel rollback also failed — orphan row",
+					"user_id", u.ID, "update_err", err, "rollback_err", delErr)
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
 	}
 
 	// Best-effort OS user provisioning. Write DB first, then agent call.

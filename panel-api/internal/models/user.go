@@ -66,6 +66,11 @@ type User struct {
 	// audit/observability; not load-bearing for auth.
 	TOTPEnabledAt *time.Time `gorm:"column:totp_enabled_at;type:datetime(6)" json:"totp_enabled_at,omitempty"`
 
+	// KratosIdentityID is the UUID of the corresponding Kratos identity
+	// when auth.provider == "kratos". NULL for legacy auth mode or unmigrated users.
+	// Set atomically during user creation (inline hook) or during kratos-migrate batch.
+	KratosIdentityID *string `gorm:"type:varchar(64);uniqueIndex:ux_users_kratos_identity_id" json:"kratos_identity_id,omitempty"`
+
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }

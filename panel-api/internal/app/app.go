@@ -205,6 +205,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				CookieName:      api.DefaultRefreshCookieName,
 				CookieSecure:    cfg.CookieSecureResolved(),
 				Log:             deps.Log,
+				// M20: atomic Kratos identity creation on POST /users.
+				// Both are zero-value unless the flag is "kratos" AND the
+				// client is wired, which cfg.kratosEnabled() enforces.
+				KratosClient: deps.KratosClient,
+				AuthProvider: cfg.Auth.Provider,
 			})
 		}
 		if deps.Packages != nil {

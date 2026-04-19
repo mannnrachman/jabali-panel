@@ -31,6 +31,7 @@ import {
   Typography,
   Upload,
   message,
+  theme,
 } from "antd";
 import type { UploadProps } from "antd";
 import type { DataNode } from "antd/es/tree";
@@ -141,6 +142,12 @@ function makeTreeNode(path: string, name: string): TreeNode {
 }
 
 export const FileManagerPage = () => {
+  // Pull live theme tokens so the bulk-action bar (and any other
+  // tinted surface here) tracks the global light/dark palette — we had
+  // hard-coded #f0f5ff / #adc6ff / dim text before and those only
+  // read correctly on the light theme.
+  const { token } = theme.useToken();
+
   const [rootPath, setRootPath] = useState<string | null>(null);
   const [currentPath, setCurrentPath] = useState<string | null>(null);
   const [entries, setEntries] = useState<FileEntry[]>([]);
@@ -654,9 +661,13 @@ export const FileManagerPage = () => {
             gap: 12,
             marginBottom: 12,
             padding: "8px 12px",
-            background: "#f0f5ff",
-            border: "1px solid #adc6ff",
-            borderRadius: 4,
+            // Theme-tokenised surface so dark mode reads correctly. The
+            // Primary-Bg/Border tokens give us a tinted-but-subtle bar
+            // in both palettes (light: pale blue; dark: deep slate).
+            background: token.colorPrimaryBg,
+            border: `1px solid ${token.colorPrimaryBorder}`,
+            borderRadius: token.borderRadius,
+            color: token.colorText,
             // Sticky so bulk actions stay reachable even when scrolled
             // deep into a long folder. top: 0 pins to the viewport top;
             // zIndex keeps it above table rows that may have the row
@@ -912,8 +923,8 @@ export const FileManagerPage = () => {
           style={{
             maxHeight: 360,
             overflow: "auto",
-            border: "1px solid #f0f0f0",
-            borderRadius: 4,
+            border: `1px solid ${token.colorBorderSecondary}`,
+            borderRadius: token.borderRadius,
             padding: 8,
           }}
         >
@@ -941,7 +952,7 @@ export const FileManagerPage = () => {
         <div
           style={{
             marginTop: 8,
-            color: bulkMoveDest ? undefined : "#999",
+            color: bulkMoveDest ? token.colorText : token.colorTextTertiary,
             fontFamily: "monospace",
             fontSize: 12,
           }}

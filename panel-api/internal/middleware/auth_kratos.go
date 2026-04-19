@@ -40,9 +40,13 @@ func RequireKratosSession(kratosClient *kratosclient.Client) gin.HandlerFunc {
 					"message": "Kratos session validation failed",
 				})
 			} else {
-				c.JSON(http.StatusUnauthorized, gin.H{
-					"error":   "session_error",
-					"message": err.Error(),
+				// Infrastructure failure (network, 5xx, timeout). Returning 401 here
+				// would force a user-visible re-login on every Kratos blip; instead
+				// report 503 so the SPA can show a transient-error toast and retry.
+				// Error details are logged server-side but never leaked to clients.
+				c.JSON(http.StatusServiceUnavailable, gin.H{
+					"error":   "identity_service_unavailable",
+					"message": "identity service temporarily unavailable",
 				})
 			}
 			c.Abort()

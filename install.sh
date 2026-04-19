@@ -2045,9 +2045,9 @@ install_kratos() {
   # Kratos binary: vendored SHA-256 verification pattern matching wp-cli + phpmyadmin.
   local kratos_version="1.3.1"
   local kratos_binary="/usr/local/bin/kratos"
-  local kratos_tar="/tmp/kratos_${kratos_version}_linux_64bit.tar.gz"
+  local kratos_tar="/tmp/kratos_${kratos_version}-linux_64bit.tar.gz"
   local kratos_sha_file="${REPO_DIR}/install/kratos.sha256"
-  local kratos_url="https://github.com/ory/kratos/releases/download/v${kratos_version}/kratos_${kratos_version}_linux_64bit.tar.gz"
+  local kratos_url="https://github.com/ory/kratos/releases/download/v${kratos_version}/kratos_${kratos_version}-linux_64bit.tar.gz"
 
   # Check if already installed at correct version.
   if [[ -f "$kratos_binary" ]]; then

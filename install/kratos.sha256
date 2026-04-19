@@ -1,11 +1,4 @@
-# Ory Kratos v1.3.1 SHA-256 checksum for linux_64bit.tar.gz
-# Source: https://github.com/ory/kratos/releases/tag/v1.3.1
-#
-# To verify this checksum:
-# 1. Download the release: https://github.com/ory/kratos/releases/download/v1.3.1/kratos_1.3.1_linux_64bit.tar.gz
-# 2. Run: sha256sum kratos_1.3.1_linux_64bit.tar.gz
-# 3. Compare against the checksum.txt file from the release
-# 4. Update this file with the verified SHA-256
-#
-# Placeholder — MUST be verified before production deployment:
-2cf5c1e3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f  kratos_1.3.1_linux_64bit.tar.gz
+# Ory Kratos v1.3.1 SHA-256 checksum for kratos_1.3.1-linux_64bit.tar.gz
+# Source: https://github.com/ory/kratos/releases/download/v1.3.1/checksums.txt
+# Verified: 2026-04-19
+3124e4366656eb3dfb5b0155a5b13da3b3d1769367dc2f7674825ecc54f1af46  kratos_1.3.1-linux_64bit.tar.gz

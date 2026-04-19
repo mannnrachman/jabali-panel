@@ -449,6 +449,27 @@ func (h *applicationsHandler) create(c *gin.Context) {
 			UseWWW:       install.UseWWW,
 		}, h.cfg)
 		adminPassword = matomoPass
+	case "glpi":
+		glpiPass := paramOr(req.Params, "admin_password", "")
+		if glpiPass == "" {
+			glpiPass = ids.NewULID()
+		}
+		go createGLPIInstallAndKickAgent(ctx, glpiKickArgs{
+			InstallID:    installID,
+			OSUser:       osUser,
+			DocRoot:      domain.DocRoot,
+			Subdirectory: install.Subdirectory,
+			SiteURL:      siteURL,
+			DBName:       chain.DBName,
+			DBUser:       chain.DBUsername,
+			DBPassword:   adminPassword,
+			AdminUser:    install.AdminUsername,
+			AdminPass:    glpiPass,
+			AdminEmail:   install.AdminEmail,
+			Language:     paramOr(req.Params, "language", "en_GB"),
+			UseWWW:       install.UseWWW,
+		}, h.cfg)
+		adminPassword = glpiPass
 	case "moodle":
 		// Moodle is the first consumer of the M19 managed-data-dir
 		// framework — install_id is plumbed through to the agent so it
@@ -1857,6 +1878,70 @@ func createMoodleInstallAndKickAgent(parentCtx context.Context, args moodleKickA
 		"admin_email":     args.AdminEmail,
 		"language":        args.Language,
 		"use_www":         args.UseWWW,
+	})
+	if err != nil {
+		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+	var respMap map[string]any
+	if err := json.Unmarshal(agentResp, &respMap); err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to parse agent response: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+	version := ""
+	if v, ok := respMap["version"].(string); ok {
+		version = v
+	}
+	cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
+}
+
+// glpiKickArgs and createGLPIInstallAndKickAgent — IT asset management.
+type glpiKickArgs struct {
+	InstallID    string
+	OSUser       string
+	DocRoot      string
+	Subdirectory string
+	SiteURL      string
+	DBName       string
+	DBUser       string
+	DBPassword   string
+	AdminUser    string
+	AdminPass    string
+	AdminEmail   string
+	Language     string
+	UseWWW       bool
+}
+
+func createGLPIInstallAndKickAgent(parentCtx context.Context, args glpiKickArgs, cfg ApplicationHandlerConfig) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
+	if err := cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "installing", nil, nil); err != nil {
+		return
+	}
+	if cfg.Agent == nil {
+		errMsg := "agent not configured"
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	agentResp, err := cfg.Agent.Call(ctx, "app.install", map[string]any{
+		"app_type":     "glpi",
+		"os_user":      args.OSUser,
+		"docroot":      args.DocRoot,
+		"subdirectory": args.Subdirectory,
+		"site_url":     args.SiteURL,
+		"db_name":      args.DBName,
+		"db_user":      args.DBUser,
+		"db_password":  args.DBPassword,
+		"db_host":      "localhost",
+		"admin_user":   args.AdminUser,
+		"admin_pass":   args.AdminPass,
+		"admin_email":  args.AdminEmail,
+		"language":     args.Language,
+		"use_www":      args.UseWWW,
 	})
 	if err != nil {
 		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)

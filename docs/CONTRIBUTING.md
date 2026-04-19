@@ -115,6 +115,13 @@ Before adding a feature, check whether it conflicts with any of the
   are thin HTTP clients, not peers to the API.
 - [0001](adr/0001-go-agent-over-ndjson-unix-socket.md) — **no PHP agent ever**.
   Privileged ops go through the Go agent over the Unix socket.
+- [0033](adr/0033-m19-applications-framework.md) — **one row per app
+  install via the Applications registry**, not a new table per CMS.
+  Adding a new installable app means: register a descriptor in
+  `panel-api/internal/apps/`, write the matching agent installer in
+  `panel-agent/internal/commands/`, opt into the `app.*` dispatch
+  table from its `init()`. Walkthrough in
+  [`docs/runbooks/applications.md`](runbooks/applications.md).
 
 If your change violates an accepted ADR, open a new ADR first.
 

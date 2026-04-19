@@ -694,9 +694,11 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Depends on:** M1 (users exist), Sury PHP multi-version install (install.sh)
 
-### M10: WordPress (SHIPPED)
+### M10: WordPress (SHIPPED — generalised by M19 Applications Framework)
 
 **Goal:** Admins and users can install, delete, and clone WordPress instances.
+
+**Note:** Superseded as a single-app surface by **M19** (2026-04-19). The WordPress install flow now lives behind the generic `/applications` API and the per-app registry under `panel-api/internal/apps`. The M10 routes (`/wordpress-installs`) and agent commands (`wordpress.install`/`wordpress.delete`/`wordpress.clone`) remain registered through the M19 release window for one-release backwards compatibility; M19.1 deletes them. See ADR-0033.
 
 **Deliverables:**
 - New migration: `000033_create_wordpress_installs.sql` (domain_id, db_id, status, version, admin_username, admin_email, locale, last_error)
@@ -866,6 +868,27 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Depends on:** M9.5 (per-user slices from ADR-0025)
 
+### M19: Applications Framework (SHIPPED — partial)
+
+**Goal:** Generalise the M10 WordPress-specific surface into a Softaculous-style applications framework so DokuWiki, MediaWiki, Joomla, Drupal, phpBB, PrestaShop, Moodle, Nextcloud, Matomo (etc.) can be installed alongside WordPress on a domain or subdirectory using the same plumbing — one model, one repository, one reconciler, one set of API + agent commands keyed by an `app_type` discriminator.
+
+**Deliverables (steps 1–5 + 8 shipped on the `m19/*` branch stack 2026-04-19):**
+- Migration `000046_rename_wordpress_installs_to_application_installs.up.sql` — RENAME TABLE + add `app_type VARCHAR(32) NOT NULL DEFAULT 'wordpress'` + flip composite UNIQUE from `(domain_id, subdirectory)` to `(domain_id, subdirectory, app_type)`. Down migration uses `SIGNAL SQLSTATE '45000'` to refuse rollback once any non-WordPress row exists.
+- `panel-api/internal/apps/` package: `App` descriptor + `Registry` + `ParamSpec` (typed `string`/`email`/`password`/`enum`/`bool`); WordPress descriptor opting into the catalog; registry validated at registration time + race-clean.
+- `panel-api/internal/api/applications.go` — generic `POST/GET /applications`, `GET/DELETE /applications/:id`, `POST /applications/:id/clone`, plus `GET /applications/registry` for the install picker. Validates per-app `params` against the descriptor's `InstallParamSchema`. `RequiresDB=false` short-circuit skips the entire panel-row + agent `db.create / db_user.create / db_user.grant` chain. The legacy `/wordpress-installs` routes stay mounted in parallel (one-release back-compat).
+- `panel-agent/internal/commands/app_dispatch.go` — `app.install` / `app.delete` / `app.clone` dispatcher reads `app_type` off the body and forwards to the per-app handler registered via `RegisterAppInstaller(name, handler)`. Each app's handler file owns the registration in its `init()`. Legacy `wordpress.*` agent commands stay registered alongside through M19.1.
+- Six cross-boundary contract fixtures + round-trip tests under `panel-api/internal/agent/testdata/app_*.json` per the `feedback_cross_boundary_contracts` lesson.
+- UI rename: `panel-ui/src/shells/{user,admin}/wordpress/` → `applications/`, Refine resource `wordpress-installs` → `applications`, sidebar label "WordPress" → "Applications" (`AppstoreAddOutlined`), routes `/jabali-panel/wordpress` → `/jabali-panel/applications` (and same for `/jabali-admin`). Install modal pulls `GET /applications/registry` and renders an "App" Select defaulted to WordPress; lists add an "App" column at column 1.
+- ADR-0033 + runbook at `docs/runbooks/applications.md` documenting the registry pattern, common failure modes, and "how to add a new app" walkthrough.
+
+**Deferred (steps 6 + 7 — gated on Step 5 deploy + a UI follow-up that renders form fields from the descriptor's `InstallParamSchema`):**
+- Step 6 — DokuWiki descriptor + agent installer (validates `RequiresDB=false` end-to-end; exercises the `enum` `ParamSpec` for the license dropdown).
+- Step 7 — MediaWiki descriptor + agent installer (validates the per-app CLI installer pattern via `php maintenance/install.php`; exercises a heavier agent flow than WordPress's wp-cli).
+
+**Status:** API, agent, panel and UI shipped end-to-end for the only registered app (WordPress); the generic surface now carries every WordPress install on the `m19/*` branch stack. The catalog grows to DokuWiki + MediaWiki once the stack lands on `main` and the install modal's per-app field renderer ships.
+
+**Depends on:** M10 (WordPress install plumbing — generalised here), M9 (PHP-FPM pools — required so non-WordPress PHP apps land on the right pool), M7 (databases — required for `RequiresDB=true` apps).
+
 ---
 
 ## 7. Configuration
@@ -1003,6 +1026,7 @@ Use this table to navigate the codebase when adding a new capability:
 | M16: Automation API | Planned | — |
 | M17: Diagnostic reports | Planned | — |
 | M18: Per-user resource limits | 2026-04-19 | Waves A-G on `main` (`caebe7b` → `aaa6bd0`); ADR-0032; runbook at `plans/m18-resource-limits-runbook.md`; host-level validation pending on test VM |
+| M19: Applications Framework (steps 1–5 + 8) | 2026-04-19 | `m19/*` branch stack `733d6b8` → docs commit; ADR-0033; runbook at `docs/runbooks/applications.md`; steps 6 (DokuWiki) + 7 (MediaWiki) deferred behind UI dynamic-field-renderer + deploy gate |
 
 ---
 

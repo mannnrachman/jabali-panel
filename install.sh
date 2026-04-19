@@ -368,8 +368,11 @@ configure_disk_quota() {
   _log "quota probe: /home is on mount $home_mount (fs=$home_fs)"
 
   # Filesystem support matrix — ADR-0032 §2.
+  # NB: `stat -fc %T` on Debian 13 reports "ext2/ext3" (composite label)
+  # for ext3/ext4 filesystems — the kernel's statfs f_type values for
+  # ext2/3/4 are merged for historical reasons. Match that label too.
   case "$home_fs" in
-    ext4|ext3|ext2)
+    ext4|ext3|ext2|"ext2/ext3")
       # ext4-family works with fstab usrquota + quotacheck + quotaon.
       ;;
     xfs)
@@ -433,7 +436,10 @@ configure_disk_quota() {
     return 0
   fi
 
-  # Filesystem-specific activation.
+  # Filesystem-specific activation. "xfs" is the only branch that
+  # needs the extra xfs_quota enable; the ext* family (including the
+  # composite "ext2/ext3" label) falls through to the standard
+  # quotacheck + quotaon sequence below.
   if [[ "$home_fs" == "xfs" ]]; then
     # xfs's mount option alone doesn't flip accounting on — need
     # xfs_quota's enable command.

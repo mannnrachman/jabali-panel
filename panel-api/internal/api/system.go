@@ -68,6 +68,33 @@ func RegisterSystemRoutes(rg *gin.RouterGroup, cli agent.AgentInterface) {
 		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
 	})
 
+	// POST /system/services/:name/restart — the agent enforces the
+	// same allow-list as /services. We just forward; path param naming
+	// mirrors the GET payload so the UI can round-trip without
+	// remapping.
+	sys.POST("/services/:name/restart", func(c *gin.Context) {
+		name := strings.TrimSpace(c.Param("name"))
+		if name == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  "missing_name",
+				"detail": "service name required",
+			})
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(c.Request.Context(), systemCallTimeout)
+		defer cancel()
+
+		raw, err := cli.Call(ctx, "service.restart", map[string]any{"name": name})
+		if err != nil {
+			status, body := translateAgentError(err)
+			c.JSON(status, body)
+			return
+		}
+		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
+	})
+
 	// DNS resolvers — truth lives on disk (systemd-resolved drop-in) so we
 	// round-trip to the agent for both read and write; no DB involvement.
 	sys.GET("/resolvers", func(c *gin.Context) {

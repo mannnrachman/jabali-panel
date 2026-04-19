@@ -143,6 +143,57 @@ func TestSystemServices_ForbiddenForNonAdmin(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 }
 
+func TestSystemServicesRestart_OK(t *testing.T) {
+	t.Parallel()
+
+	m := agent.NewMockClient().On("service.restart", map[string]any{
+		"name":       "nginx",
+		"active":     "active",
+		"load_state": "loaded",
+	})
+
+	r := adminRouter(m)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/services/nginx/restart", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Len(t, m.Calls(), 1)
+	assert.Equal(t, "service.restart", m.Calls()[0].Command)
+}
+
+// TestSystemServicesRestart_Masked — the agent returns
+// CodeFailedPrecondition for masked units; the API should map that to
+// 409 so the UI can render a "service is masked" message.
+func TestSystemServicesRestart_Masked(t *testing.T) {
+	t.Parallel()
+
+	m := agent.NewMockClient().OnError("service.restart", &agent.AgentError{
+		Code:    agent.CodeFailedPrecondition,
+		Message: "php8.5-fpm is masked; unmask via systemctl before restarting",
+	})
+
+	r := adminRouter(m)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/services/php8.5-fpm/restart", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusConflict, rec.Code)
+}
+
+func TestSystemServicesRestart_ForbiddenForNonAdmin(t *testing.T) {
+	t.Parallel()
+
+	m := agent.NewMockClient()
+	r := userRouter(m)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/services/nginx/restart", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Empty(t, m.Calls(), "non-admin must not reach agent")
+}
+
 func TestSystemResolversGet_OK(t *testing.T) {
 	t.Parallel()
 

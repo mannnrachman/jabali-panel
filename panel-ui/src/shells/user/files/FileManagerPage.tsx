@@ -7,8 +7,14 @@
 // Primary ops per row: download, preview (text, ≤1 MiB), rename, delete.
 // Toolbar: upload file, new folder, refresh.
 //
-// Scope: Phase 1 only. No drag-drop, no multi-select, no chmod, no image
-// preview, no editor. Those are Phase 2.
+// Drag-and-drop (added post-Phase-1):
+//   - Drop OS files on the table to upload to currentPath (AntD Dragger).
+//   - Drag a row onto a folder row (or onto a tree node) to move the file
+//     there. Cross-directory move goes through /files/move, which is
+//     distinct from rename (same-parent only).
+//
+// Scope: still no multi-select, no chmod, no image preview, no editor —
+// those remain Phase 2.
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -48,6 +54,7 @@ import {
   filesHome,
   filesList,
   filesMkdir,
+  filesMove,
   filesPreview,
   filesRename,
   filesTree,
@@ -55,6 +62,11 @@ import {
 } from "./filesApi";
 
 const { Text } = Typography;
+
+// Custom DataTransfer MIME for row drags, so the parent OS-file drop
+// handler can distinguish a "dragging a row around inside the table"
+// event from a "dragging a file in from Finder" event.
+const dragPathMime = "application/x-jabali-file-path";
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "—";
@@ -307,14 +319,18 @@ export const FileManagerPage = () => {
   };
 
   // --- upload via AntD Upload ---
+  // Shared by the toolbar button AND the table-wide drop zone: both paths
+  // call the same `filesUpload` with a 100 MB cap and a reload on success.
+  // `multiple: true` lets the drop zone handle multi-file drops naturally;
+  // AntD invokes beforeUpload once per file.
   const uploadProps: UploadProps = useMemo(
     () => ({
-      multiple: false,
+      multiple: true,
       showUploadList: false,
       beforeUpload: (file) => {
         if (!currentPath) return false;
         if (file.size > 100 * 1024 * 1024) {
-          message.error("File exceeds 100 MB limit");
+          message.error(`${file.name}: exceeds 100 MB limit`);
           return false;
         }
         (async () => {
@@ -323,12 +339,37 @@ export const FileManagerPage = () => {
             message.success(`Uploaded ${file.name}`);
             void reloadList(currentPath);
           } catch (err) {
-            message.error(`Upload failed: ${errMessage(err)}`);
+            message.error(`Upload failed (${file.name}): ${errMessage(err)}`);
           }
         })();
         return false; // prevent AntD's default XHR; we already uploaded.
       },
     }),
+    [currentPath, reloadList],
+  );
+
+  // --- drag-to-move state ---
+  // draggedPath is set on dragstart from a table row; consumed on drop
+  // onto a folder row (or tree node) and cleared on dragend.
+  const [draggedPath, setDraggedPath] = useState<string | null>(null);
+
+  const handleMove = useCallback(
+    async (srcPath: string, destDir: string) => {
+      // Refuse a no-op upfront — destDir === dirname(srcPath) means the
+      // user dropped onto the same folder the row already lives in. The
+      // backend would refuse with "source and destination are the same",
+      // but failing silently here keeps the UI calm.
+      const lastSlash = srcPath.lastIndexOf("/");
+      const srcParent = lastSlash > 0 ? srcPath.slice(0, lastSlash) : "/";
+      if (srcParent === destDir) return;
+      try {
+        await filesMove(srcPath, destDir);
+        message.success("Moved");
+        if (currentPath) void reloadList(currentPath);
+      } catch (err) {
+        message.error(`Move failed: ${errMessage(err)}`);
+      }
+    },
     [currentPath, reloadList],
   );
 
@@ -492,10 +533,66 @@ export const FileManagerPage = () => {
             onSelect={(keys) => {
               if (keys.length > 0) setCurrentPath(keys[0] as string);
             }}
+            // Tree nodes accept drops of table rows (move into this folder).
+            // Hits the same handleMove path as the table row-on-row drop.
+            // We attach handlers via `titleRender` so every node in the tree
+            // becomes a drop target without opting-in AntD's own tree DnD
+            // (which is for reordering nodes — not what we want).
+            titleRender={(node) => {
+              const treeNode = node as TreeNode;
+              return (
+                <span
+                  onDragOver={(e) => {
+                    if (!e.dataTransfer.types.includes(dragPathMime)) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                  }}
+                  onDrop={(e) => {
+                    const src = e.dataTransfer.getData(dragPathMime);
+                    if (!src) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    void handleMove(src, treeNode.path);
+                  }}
+                >
+                  {treeNode.title as ReactNode}
+                </span>
+              );
+            }}
           />
         </div>
 
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{ flex: 1, minWidth: 0 }}
+          // OS-file drop zone: dragging files in from the desktop/Finder
+          // uploads them to the current folder. Custom DataTransfer types
+          // (from row drags) are filtered out so we only preventDefault on
+          // real OS-file drags — otherwise AntD Table's internal row drag
+          // would be swallowed by this parent handler.
+          onDragOver={(e) => {
+            if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+          }}
+          onDrop={(e) => {
+            if (!e.dataTransfer.types.includes("Files")) return;
+            e.preventDefault();
+            if (!currentPath) return;
+            for (const f of Array.from(e.dataTransfer.files)) {
+              if (f.size > 100 * 1024 * 1024) {
+                message.error(`${f.name}: exceeds 100 MB limit`);
+                continue;
+              }
+              (async () => {
+                try {
+                  await filesUpload(currentPath, f);
+                  message.success(`Uploaded ${f.name}`);
+                  void reloadList(currentPath);
+                } catch (err) {
+                  message.error(`Upload failed (${f.name}): ${errMessage(err)}`);
+                }
+              })();
+            }
+          }}
+        >
           <Spin spinning={listLoading}>
             <Table<FileEntry>
               rowKey="name"
@@ -504,6 +601,38 @@ export const FileManagerPage = () => {
               pagination={false}
               size="small"
               locale={{ emptyText: <Empty description="Empty directory" /> }}
+              // Row drag-to-move: any row is draggable; folders are drop
+              // targets. `dragPathMime` is the custom type we set on the
+              // DataTransfer so the parent OS-file drop handler can tell
+              // the two apart.
+              onRow={(entry) => ({
+                draggable: true,
+                onDragStart: (e) => {
+                  if (!currentPath) return;
+                  const p = joinPath(currentPath, entry.name);
+                  setDraggedPath(p);
+                  e.dataTransfer.setData(dragPathMime, p);
+                  e.dataTransfer.effectAllowed = "move";
+                },
+                onDragOver: (e) => {
+                  if (!entry.is_dir) return;
+                  if (!e.dataTransfer.types.includes(dragPathMime)) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                },
+                onDrop: (e) => {
+                  if (!entry.is_dir || !currentPath) return;
+                  const src = e.dataTransfer.getData(dragPathMime);
+                  if (!src) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void handleMove(src, joinPath(currentPath, entry.name));
+                },
+                onDragEnd: () => setDraggedPath(null),
+                style: draggedPath && draggedPath === joinPath(currentPath || "", entry.name)
+                  ? { opacity: 0.4 }
+                  : undefined,
+              })}
             />
           </Spin>
         </div>

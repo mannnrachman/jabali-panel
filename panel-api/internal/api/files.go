@@ -64,6 +64,13 @@ type filesRenameAgentParams struct {
 	NewPath  string `json:"new_path"`
 }
 
+type filesMoveAgentParams struct {
+	UserID   string `json:"user_id"`
+	Username string `json:"username"`
+	OldPath  string `json:"old_path"`
+	NewPath  string `json:"new_path"`
+}
+
 type filesStatAgentParams struct {
 	UserID   string `json:"user_id"`
 	Username string `json:"username"`
@@ -97,6 +104,7 @@ func RegisterFilesRoutes(g *gin.RouterGroup, cfg FilesHandlerConfig) {
 	grp.POST("/upload", filesUploadSizeLimit(maxUploadBytes), h.upload)
 	grp.POST("/mkdir", h.mkdir)
 	grp.POST("/rename", h.rename)
+	grp.POST("/move", h.move)
 }
 
 type filesHandler struct{ cfg FilesHandlerConfig }
@@ -108,6 +116,16 @@ type mkdirRequest struct {
 type renameRequest struct {
 	Path    string `json:"path" binding:"required"`
 	NewName string `json:"new_name" binding:"required"`
+}
+
+// moveRequest is used by the drag-and-drop flow: dragging a row onto a
+// folder sends the original path and the new *parent directory*; the
+// handler combines them to form the destination path, preserving the
+// basename. This mirrors desktop drag-to-move semantics and avoids
+// letting the client smuggle an arbitrary destination name.
+type moveRequest struct {
+	Path    string `json:"path"     binding:"required"`
+	DestDir string `json:"dest_dir" binding:"required"`
 }
 
 type filesListEntry struct {
@@ -433,6 +451,38 @@ func (h *filesHandler) rename(c *gin.Context) {
 	}
 	newPath := filepath.Join(filepath.Dir(req.Path), req.NewName)
 	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.rename", filesRenameAgentParams{
+		UserID: userID, Username: username, OldPath: req.Path, NewPath: newPath,
+	})
+	if err != nil {
+		respondAgentError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"old_path": req.Path, "new_path": newPath})
+}
+
+// move handles POST /files/move: relocate a file or directory into a
+// different parent directory. Semantically distinct from rename, which
+// is same-parent only. Used by the drag-and-drop flow.
+func (h *filesHandler) move(c *gin.Context) {
+	userID, username, ok := h.requireClaimsAndUsername(c)
+	if !ok {
+		return
+	}
+	var req moveRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
+		return
+	}
+	// Dest must look like an absolute path (validated inside the agent
+	// against the user's scope), never bare "..". Client should not be
+	// able to coerce us into moving into the docroot's parent by sending
+	// just "..".
+	if strings.Contains(req.DestDir, "..") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_dest_dir"})
+		return
+	}
+	newPath := filepath.Join(req.DestDir, filepath.Base(req.Path))
+	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.move", filesMoveAgentParams{
 		UserID: userID, Username: username, OldPath: req.Path, NewPath: newPath,
 	})
 	if err != nil {

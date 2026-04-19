@@ -63,6 +63,14 @@ export async function filesRename(path: string, newName: string): Promise<void> 
   await apiClient.post("/files/rename", { path, new_name: newName });
 }
 
+// filesMove relocates a file or directory into a different parent
+// directory. Distinct from rename (same-parent only). Powers the
+// drag-and-drop flow — dragging a row onto a folder row moves the
+// source into that folder, preserving the basename.
+export async function filesMove(path: string, destDir: string): Promise<void> {
+  await apiClient.post("/files/move", { path, dest_dir: destDir });
+}
+
 export async function filesDelete(path: string, recursive = false): Promise<void> {
   await apiClient.delete("/files", {
     params: { path, ...(recursive ? { recursive: "true" } : {}) },

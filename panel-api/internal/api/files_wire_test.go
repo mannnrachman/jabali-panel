@@ -122,6 +122,16 @@ func TestFilesAgentParamsWireShape(t *testing.T) {
 			want: []string{"new_path", "old_path", "user_id", "username"},
 		},
 		{
+			name: "files.move",
+			payload: filesMoveAgentParams{
+				UserID:   "u",
+				Username: "shuki",
+				OldPath:  "/home/shuki/dir-a/thing.txt",
+				NewPath:  "/home/shuki/dir-b/thing.txt",
+			},
+			want: []string{"new_path", "old_path", "user_id", "username"},
+		},
+		{
 			name: "files.stat",
 			payload: filesStatAgentParams{
 				UserID:   "u",

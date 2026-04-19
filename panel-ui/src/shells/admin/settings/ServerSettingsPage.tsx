@@ -3,7 +3,7 @@ import {
   SaveOutlined,
   WarningOutlined,
   CloudServerOutlined,
-  ClockOutlined,
+  ClockCircleOutlined,
   LockOutlined,
 } from "@ant-design/icons";
 import {
@@ -264,7 +264,7 @@ export const ServerSettingsPage = () => {
         <Card
           title={
             <>
-              <ClockOutlined style={{ marginRight: 8 }} />
+              <ClockCircleOutlined style={{ marginRight: 8 }} />
               Server Time
             </>
           }

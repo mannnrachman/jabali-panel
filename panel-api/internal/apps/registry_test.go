@@ -283,6 +283,31 @@ func TestRegisterDefaults_RegistersJoomla(t *testing.T) {
 	}
 }
 
+func TestRegisterDefaults_RegistersPhpBB(t *testing.T) {
+	r := New()
+	if err := RegisterDefaults(r); err != nil {
+		t.Fatalf("RegisterDefaults: %v", err)
+	}
+	p, ok := r.Get("phpbb")
+	if !ok {
+		t.Fatal("phpbb not registered after RegisterDefaults")
+	}
+	if !p.RequiresDB {
+		t.Error("phpbb should declare RequiresDB=true (it needs MariaDB)")
+	}
+	if p.AgentInstallCmd != "app.install" || p.AgentDeleteCmd != "app.delete" {
+		t.Errorf("phpbb dispatcher commands = (%q, %q)", p.AgentInstallCmd, p.AgentDeleteCmd)
+	}
+	for _, want := range []string{"site_title", "admin_email", "admin_password", "language"} {
+		if _, ok := p.InstallParamSchema[want]; !ok {
+			t.Errorf("phpbb schema missing %q", want)
+		}
+	}
+	if p.DefaultSubdirectory != "forum" {
+		t.Errorf("phpbb default subdirectory = %q, want %q", p.DefaultSubdirectory, "forum")
+	}
+}
+
 func TestRegister_ConcurrentSafe(t *testing.T) {
 	// Race detector trips here if Register's mutex disappears.
 	r := New()

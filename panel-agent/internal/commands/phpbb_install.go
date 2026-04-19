@@ -1,0 +1,383 @@
+package commands
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+
+	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
+)
+
+// phpbbInstallReq is the input shape for the phpBB installer.
+type phpbbInstallReq struct {
+	AppType          string `json:"app_type"`
+	OSUser           string `json:"os_user"`
+	Docroot          string `json:"docroot"`
+	Subdirectory     string `json:"subdirectory"`
+	SiteURL          string `json:"site_url"`
+	UseWWW           bool   `json:"use_www"`
+	DBName           string `json:"db_name"`
+	DBUser           string `json:"db_user"`
+	DBPassword       string `json:"db_password"`
+	DBHost           string `json:"db_host"`
+	SiteTitle        string `json:"site_title"`
+	BoardDescription string `json:"board_description"`
+	AdminUser        string `json:"admin_user"`
+	AdminPass        string `json:"admin_pass"`
+	AdminEmail       string `json:"admin_email"`
+	Language         string `json:"language"`
+}
+
+type phpbbInstallResp struct {
+	Version string `json:"version"`
+}
+
+// phpbbVersion is the upstream phpBB release this build targets. Pinned
+// to a 3.3.x because 3.3 is the current stable line; 4.x is in alpha
+// as of late 2025.
+//
+// Released tarballs live at:
+// https://download.phpbb.com/pub/release/3.3/<version>/phpBB-<version>.tar.bz2
+//
+// phpBB ships .tar.bz2 (no .tar.gz alternative), so the extract step
+// uses --bzip2 instead of --gzip.
+const phpbbVersion = "3.3.13"
+
+var phpbbTarballURL = fmt.Sprintf(
+	"https://download.phpbb.com/pub/release/3.3/%s/phpBB-%s.tar.bz2",
+	phpbbVersion, phpbbVersion,
+)
+
+// phpbbTarballSHA256 is the SHA-256 of the tarball at phpbbTarballURL
+// as of the install-time pin. Empty value disables the integrity
+// check (DEV ONLY — production builds MUST set this).
+//
+//	curl -sSL -A 'jabali-panel-agent/1.0 (+https://jabali.local)' \
+//	  https://download.phpbb.com/pub/release/3.3/3.3.13/phpBB-3.3.13.tar.bz2 \
+//	  | sha256sum
+const phpbbTarballSHA256 = ""
+
+// phpbbAdminUserPattern: phpBB usernames are 3-20 chars by default
+// (configurable post-install). Allow alnum + dot/dash/underscore;
+// stricter than phpBB's own validator which accepts spaces.
+var phpbbAdminUserPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{3,20}$`)
+
+// phpbbLanguagePattern matches the lang-pack directory names phpBB
+// uses (en, en-us, de, fr, …).
+var phpbbLanguagePattern = regexp.MustCompile(`^[a-z]{2,3}(-[a-z0-9]{1,8})?$`)
+
+func computePhpbbInstallPath(docroot, subdirectory string) string {
+	if subdirectory == "" {
+		return docroot
+	}
+	return filepath.Join(docroot, subdirectory)
+}
+
+func downloadPhpbbTarball(ctx context.Context, dest string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, phpbbTarballURL, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("User-Agent", userAgent)
+	client := &http.Client{Timeout: 10 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("download %s: %w", phpbbTarballURL, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download %s: HTTP %d", phpbbTarballURL, resp.StatusCode)
+	}
+	out, err := os.Create(dest)
+	if err != nil {
+		return fmt.Errorf("create %s: %w", dest, err)
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, resp.Body); err != nil {
+		return fmt.Errorf("write %s: %w", dest, err)
+	}
+	return nil
+}
+
+func verifyPhpbbSHA256(path string) error {
+	if phpbbTarballSHA256 == "" {
+		return nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", path, err)
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("hash %s: %w", path, err)
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	if !strings.EqualFold(got, phpbbTarballSHA256) {
+		return fmt.Errorf("phpbb tarball sha256 mismatch: got %s want %s", got, phpbbTarballSHA256)
+	}
+	return nil
+}
+
+// extractPhpbbTarball untars phpBB-X.Y.Z.tar.bz2 into installPath. The
+// upstream tarball wraps content under a top-level "phpBB3" directory;
+// --strip-components=1 flattens that out.
+func extractPhpbbTarball(ctx context.Context, osUser, tarballPath, installPath string) error {
+	cmd := buildSystemdRunCmd(ctx, osUser,
+		"tar",
+		"--extract",
+		"--bzip2",
+		"--strip-components=1",
+		"--file", tarballPath,
+		"--directory", installPath,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tar extract: %w (output: %s)", err, truncateStr(string(out), 512))
+	}
+	return nil
+}
+
+// yamlSingleQuoted escapes a string for use as a single-quoted YAML
+// scalar. The only escape rule for single-quoted YAML is doubling
+// embedded single quotes, so the encoder is trivial — and trivial
+// keeps the trust boundary tight (no parser surprises around 1.1 vs
+// 1.2 spec edge cases like Yes/No/On/Off being booleans).
+func yamlSingleQuoted(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+// writePhpbbInstallerYAML renders the YAML config phpBB's CLI
+// installer reads. We use single-quoted scalars throughout so user-
+// supplied strings (titles, descriptions, passwords) can't break the
+// YAML structure or accidentally be interpreted as booleans.
+func writePhpbbInstallerYAML(req phpbbInstallReq, dest, scriptPath string, port int, secure bool) error {
+	dbHost := req.DBHost
+	if dbHost == "" {
+		dbHost = "localhost"
+	}
+	lang := req.Language
+	if lang == "" {
+		lang = "en"
+	}
+	proto := "http://"
+	if secure {
+		proto = "https://"
+	}
+
+	serverHost := ""
+	if u, err := url.Parse(req.SiteURL); err == nil && u.Host != "" {
+		serverHost = u.Hostname()
+	}
+
+	cookieSecure := "false"
+	if secure {
+		cookieSecure = "true"
+	}
+
+	yaml := "installer:\n" +
+		"  admin:\n" +
+		"    name: " + yamlSingleQuoted(req.AdminUser) + "\n" +
+		"    password: " + yamlSingleQuoted(req.AdminPass) + "\n" +
+		"    email: " + yamlSingleQuoted(req.AdminEmail) + "\n" +
+		"  board:\n" +
+		"    lang: " + yamlSingleQuoted(lang) + "\n" +
+		"    name: " + yamlSingleQuoted(req.SiteTitle) + "\n" +
+		"    description: " + yamlSingleQuoted(req.BoardDescription) + "\n" +
+		"  database:\n" +
+		"    dbms: 'mysqli'\n" +
+		"    dbhost: " + yamlSingleQuoted(dbHost) + "\n" +
+		"    dbport: ''\n" +
+		"    dbuser: " + yamlSingleQuoted(req.DBUser) + "\n" +
+		"    dbpasswd: " + yamlSingleQuoted(req.DBPassword) + "\n" +
+		"    dbname: " + yamlSingleQuoted(req.DBName) + "\n" +
+		"    table_prefix: 'phpbb_'\n" +
+		"  email:\n" +
+		"    enabled: false\n" +
+		"    smtp_delivery: false\n" +
+		"    smtp_host: ''\n" +
+		"    smtp_auth: ''\n" +
+		"    smtp_user: ''\n" +
+		"    smtp_pass: ''\n" +
+		"  server:\n" +
+		"    cookie_secure: " + cookieSecure + "\n" +
+		"    server_protocol: " + yamlSingleQuoted(proto) + "\n" +
+		"    force_server_vars: false\n" +
+		"    server_name: " + yamlSingleQuoted(serverHost) + "\n" +
+		"    server_port: " + fmt.Sprintf("%d", port) + "\n" +
+		"    script_path: " + yamlSingleQuoted(scriptPath) + "\n"
+
+	return os.WriteFile(dest, []byte(yaml), 0o600)
+}
+
+// runPhpbbCLIInstaller drives `php install/app.php install <config>`.
+// phpBB's installer reads the YAML, persists data to MariaDB, and
+// writes config.php in the install root with the runtime DB
+// credentials.
+func runPhpbbCLIInstaller(ctx context.Context, osUser, installPath, configPath string) error {
+	args := []string{
+		"php",
+		filepath.Join(installPath, "install", "app.php"),
+		"install",
+		configPath,
+	}
+	cmd := buildSystemdRunCmd(ctx, osUser, args...)
+	cmd.Dir = installPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("php install/app.php install: %w (output: %s)", err, truncateStr(string(out), 1024))
+	}
+	return nil
+}
+
+// removePhpbbInstallDir deletes the install/ folder after a successful
+// install. phpBB serves a "you must delete the install dir" warning
+// otherwise; the upstream docs say it's mandatory.
+func removePhpbbInstallDir(ctx context.Context, osUser, installPath string) error {
+	cmd := buildSystemdRunCmd(ctx, osUser, "rm", "-rf", filepath.Join(installPath, "install"))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("rm install/: %w (output: %s)", err, truncateStr(string(out), 256))
+	}
+	return nil
+}
+
+func phpbbInstallHandler(ctx context.Context, params json.RawMessage) (any, error) {
+	var req phpbbInstallReq
+	if err := json.Unmarshal(params, &req); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("failed to parse params: %v", err)}
+	}
+	if req.OSUser == "" {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "os_user is required"}
+	}
+	if req.Docroot == "" {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "docroot is required"}
+	}
+	if req.DBName == "" || req.DBUser == "" || req.DBPassword == "" {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "db_name, db_user, db_password are required"}
+	}
+	if req.SiteTitle == "" {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "site_title is required"}
+	}
+	if req.AdminUser == "" || !phpbbAdminUserPattern.MatchString(req.AdminUser) {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: "admin_user must be 3-20 chars of letters, digits, dot, dash, or underscore",
+		}
+	}
+	if len(req.AdminPass) < 6 {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: "admin_pass must be at least 6 characters (phpBB minimum)",
+		}
+	}
+	if req.AdminEmail == "" {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "admin_email is required"}
+	}
+	if req.Language != "" && !phpbbLanguagePattern.MatchString(req.Language) {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: fmt.Sprintf("language %q does not match expected ISO-639 form", req.Language),
+		}
+	}
+	if err := validateDocrootPath(req.OSUser, req.Docroot); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
+	}
+
+	installPath := computePhpbbInstallPath(req.Docroot, req.Subdirectory)
+
+	if req.Subdirectory != "" {
+		mkdirCmd := buildSystemdRunCmd(ctx, req.OSUser, "mkdir", "-p", installPath)
+		if out, err := mkdirCmd.CombinedOutput(); err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("mkdir %s: %v (output: %s)", installPath, err, truncateStr(string(out), 256)),
+			}
+		}
+	}
+
+	removePlaceholderIndex(ctx, installPath)
+
+	tmpDir, err := os.MkdirTemp("", "phpbb-")
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mktemp: %v", err)}
+	}
+	defer os.RemoveAll(tmpDir)
+	if err := os.Chmod(tmpDir, 0o755); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("chmod tmpdir: %v", err)}
+	}
+	tarballPath := filepath.Join(tmpDir, "phpbb.tar.bz2")
+
+	dlCtx, dlCancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer dlCancel()
+	if err := downloadPhpbbTarball(dlCtx, tarballPath); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
+	}
+	if err := verifyPhpbbSHA256(tarballPath); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
+	}
+	if err := os.Chmod(tarballPath, 0o644); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("chmod tarball: %v", err)}
+	}
+	if err := extractPhpbbTarball(ctx, req.OSUser, tarballPath, installPath); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
+	}
+
+	// Render the YAML config in the temp dir, then chmod 0644 + chown
+	// to the install user so the systemd-run-as-user installer can
+	// open it.
+	scriptPath := "/"
+	if req.Subdirectory != "" {
+		scriptPath = "/" + strings.Trim(req.Subdirectory, "/") + "/"
+	}
+	port := 443
+	secure := true
+	if u, err := url.Parse(req.SiteURL); err == nil {
+		if u.Scheme == "http" {
+			port = 80
+			secure = false
+		}
+		if u.Port() != "" {
+			fmt.Sscanf(u.Port(), "%d", &port)
+		}
+	}
+
+	configPath := filepath.Join(tmpDir, "install-config.yml")
+	if err := writePhpbbInstallerYAML(req, configPath, scriptPath, port, secure); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("write installer yaml: %v", err)}
+	}
+	if err := os.Chmod(configPath, 0o644); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("chmod installer yaml: %v", err)}
+	}
+
+	if err := runPhpbbCLIInstaller(ctx, req.OSUser, installPath, configPath); err != nil {
+		// Best-effort cleanup of partial config.php so re-install works.
+		_ = exec.CommandContext(ctx, "rm", "-f", filepath.Join(installPath, "config.php")).Run()
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
+	}
+
+	if err := removePhpbbInstallDir(ctx, req.OSUser, installPath); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
+	}
+
+	if err := normalizePermsToWwwData(ctx, installPath, req.OSUser); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
+	}
+
+	return phpbbInstallResp{Version: phpbbVersion}, nil
+}
+
+func init() {
+	RegisterAppInstaller("phpbb", phpbbInstallHandler)
+}

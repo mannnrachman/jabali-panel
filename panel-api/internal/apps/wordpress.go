@@ -76,5 +76,8 @@ func RegisterDefaults(r *Registry) error {
 	if err := r.Register(Joomla); err != nil {
 		return err
 	}
+	if err := r.Register(PhpBB); err != nil {
+		return err
+	}
 	return nil
 }

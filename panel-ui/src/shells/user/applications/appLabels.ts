@@ -8,4 +8,5 @@ export const APP_TYPE_LABELS: Record<string, string> = {
   mediawiki: "MediaWiki",
   drupal: "Drupal",
   joomla: "Joomla",
+  phpbb: "phpBB",
 };

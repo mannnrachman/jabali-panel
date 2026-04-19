@@ -315,7 +315,7 @@ install_base_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y -qq --no-install-recommends \
-    git curl ca-certificates build-essential tar openssl gnupg \
+    git curl ca-certificates build-essential tar bzip2 openssl gnupg \
     mariadb-server mariadb-client \
     php-cli php-mysqli php-curl php-xml php-mbstring php-gd php-zip \
     composer \

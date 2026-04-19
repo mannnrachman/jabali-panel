@@ -383,6 +383,30 @@ func (h *applicationsHandler) create(c *gin.Context) {
 			UseWWW:        install.UseWWW,
 		}, h.cfg)
 		adminPassword = joomlaPass
+	case "phpbb":
+		// phpBB mirrors Drupal/Joomla/MediaWiki shape.
+		phpbbPass := paramOr(req.Params, "admin_password", "")
+		if phpbbPass == "" {
+			phpbbPass = ids.NewULID()
+		}
+		go createPhpBBInstallAndKickAgent(ctx, phpbbKickArgs{
+			InstallID:        installID,
+			OSUser:           osUser,
+			DocRoot:          domain.DocRoot,
+			Subdirectory:     install.Subdirectory,
+			SiteURL:          siteURL,
+			DBName:           chain.DBName,
+			DBUser:           chain.DBUsername,
+			DBPassword:       adminPassword,
+			SiteTitle:        paramOr(req.Params, "site_title", "My Forum"),
+			BoardDescription: paramOr(req.Params, "board_description", "A discussion forum"),
+			AdminUser:        install.AdminUsername,
+			AdminPass:        phpbbPass,
+			AdminEmail:       install.AdminEmail,
+			Language:         paramOr(req.Params, "language", "en"),
+			UseWWW:           install.UseWWW,
+		}, h.cfg)
+		adminPassword = phpbbPass
 	case "mediawiki":
 		// MediaWiki requires a database (RequiresDB=true → adminPassword
 		// already populated by provisionDBChain via the DB-user path).
@@ -962,6 +986,79 @@ func createJoomlaInstallAndKickAgent(parentCtx context.Context, args joomlaKickA
 		"admin_email":      args.AdminEmail,
 		"admin_full_name":  args.AdminFullName,
 		"use_www":          args.UseWWW,
+	})
+	if err != nil {
+		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	var respMap map[string]any
+	if err := json.Unmarshal(agentResp, &respMap); err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to parse agent response: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+	version := ""
+	if v, ok := respMap["version"].(string); ok {
+		version = v
+	}
+	cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
+}
+
+// phpbbKickArgs is what the install-row kicker passes through to the
+// agent's phpbb installer (via the app.install dispatcher).
+type phpbbKickArgs struct {
+	InstallID        string
+	OSUser           string
+	DocRoot          string
+	Subdirectory     string
+	SiteURL          string
+	DBName           string
+	DBUser           string
+	DBPassword       string
+	SiteTitle        string
+	BoardDescription string
+	AdminUser        string
+	AdminPass        string
+	AdminEmail       string
+	Language         string
+	UseWWW           bool
+}
+
+// createPhpBBInstallAndKickAgent flips the install row to "installing",
+// dispatches app.install with app_type="phpbb" and updates the row
+// to "ready" or "failed" based on the result.
+func createPhpBBInstallAndKickAgent(parentCtx context.Context, args phpbbKickArgs, cfg ApplicationHandlerConfig) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	if err := cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "installing", nil, nil); err != nil {
+		return
+	}
+	if cfg.Agent == nil {
+		errMsg := "agent not configured"
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	agentResp, err := cfg.Agent.Call(ctx, "app.install", map[string]any{
+		"app_type":          "phpbb",
+		"os_user":           args.OSUser,
+		"docroot":           args.DocRoot,
+		"subdirectory":      args.Subdirectory,
+		"site_url":          args.SiteURL,
+		"db_name":           args.DBName,
+		"db_user":           args.DBUser,
+		"db_password":       args.DBPassword,
+		"db_host":           "localhost",
+		"site_title":        args.SiteTitle,
+		"board_description": args.BoardDescription,
+		"admin_user":        args.AdminUser,
+		"admin_pass":        args.AdminPass,
+		"admin_email":       args.AdminEmail,
+		"language":          args.Language,
+		"use_www":           args.UseWWW,
 	})
 	if err != nil {
 		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)

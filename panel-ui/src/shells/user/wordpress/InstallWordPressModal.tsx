@@ -281,13 +281,21 @@ export const InstallWordPressModal = ({
     >
       {!result && (
         <>
-          <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-            We&rsquo;ll create a database, download WordPress, run the
-            installer, and show the admin password once. The install runs
-            in the background — you&rsquo;ll see the row flip from
-            &ldquo;installing&rdquo; to &ldquo;ready&rdquo; when it&rsquo;s done
-            (usually ~1 minute).
-          </Typography.Paragraph>
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="What happens next"
+            description={
+              <>
+                We&rsquo;ll create a database, download WordPress, run the
+                installer, and show the admin password once. The install
+                runs in the background — you&rsquo;ll see the row flip
+                from &ldquo;installing&rdquo; to &ldquo;ready&rdquo; when
+                it&rsquo;s done (usually ~1 minute).
+              </>
+            }
+          />
           {availableDomains.length === 0 && !loadingDomains && (
             <Alert
               type="info"

@@ -39,10 +39,13 @@ func TestApply_InstallCurl(t *testing.T) {
 
 func TestApply_InstallMysqlSinglePackage(t *testing.T) {
 	var aptCalls [][]string
+	// Post-install verdict: php8.5-mysql pkg present; mysqli ini symlinked in
+	// both cli and fpm (phpenmod writes both). Fixture represents the END
+	// state because the fake subprocesses don't mutate files.
 	installTestFixtures(t, phpExtTestFixtures{
 		installed: []string{"8.5"},
 		dpkgOut:   []byte("php8.5-common\tinstall ok installed\nphp8.5-mysql\tinstall ok installed\n"),
-		confDOut:  nil,
+		confDOut:  []string{"/etc/php/8.5/conf.d/20-mysqli.ini"},
 		aptCalls:  &aptCalls,
 	})
 	_, err := phpExtApplyHandler(context.Background(),
@@ -77,9 +80,12 @@ func TestApply_EnableMysql_Ambiguous(t *testing.T) {
 func TestApply_RemoveCurl(t *testing.T) {
 	var aptCalls [][]string
 	var dismodCalls [][2]string
+	// Post-remove verdict: php8.5-curl is gone from dpkg. The real subprocess
+	// would have caused this mutation; the fake doesn't, so we set the END
+	// state directly on the fixture.
 	installTestFixtures(t, phpExtTestFixtures{
 		installed:   []string{"8.5"},
-		dpkgOut:     []byte("php8.5-common\tinstall ok installed\nphp8.5-curl\tinstall ok installed\n"),
+		dpkgOut:     []byte("php8.5-common\tinstall ok installed\n"),
 		confDOut:    nil,
 		aptCalls:    &aptCalls,
 		dismodCalls: &dismodCalls,
@@ -208,6 +214,81 @@ func TestApply_AptFailureTruncated(t *testing.T) {
 	// truncateErrorOutput caps at 512 + a trailing …
 	if len(ae.Message) > 600 {
 		t.Fatalf("stderr not truncated: len=%d", len(ae.Message))
+	}
+}
+
+// TestApply_AptFalseNegative_StateMatchesReturnsSuccess covers the main
+// motivation for the verdict-readback refactor: apt can exit non-zero on
+// benign trigger warnings while the package is actually installed. Without
+// the readback, the user sees a spurious red toast; with it, we return
+// success because the filesystem is the verdict.
+func TestApply_AptFalseNegative_StateMatchesReturnsSuccess(t *testing.T) {
+	installTestFixtures(t, phpExtTestFixtures{
+		installed: []string{"8.5"},
+		aptOut:    []byte("Reading package lists... Done\nSetting up php8.5-apcu ... done\nProcessing triggers for libc-bin ..."),
+		aptErr:    errors.New("exit 100"),
+		// End state after a successful install, even though apt exited non-zero.
+		dpkgOut:  []byte("php8.5-common\tinstall ok installed\nphp8.5-apcu\tinstall ok installed\n"),
+		confDOut: []string{"/etc/php/8.5/conf.d/20-apcu.ini"},
+	})
+	raw, err := phpExtApplyHandler(context.Background(),
+		mustJSON(t, phpExtApplyParams{Version: "8.5", Ext: "apcu", Action: "install"}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	resp := raw.(phpExtApplyResponse)
+	if !resp.Installed || !resp.Enabled {
+		t.Fatalf("state should match intent: %+v", resp)
+	}
+	if resp.LastError != "" {
+		t.Fatalf("benign non-zero shouldn't populate last_error, got %q", resp.LastError)
+	}
+}
+
+// TestApply_HardAptError_StateMatchesFlagsLastError: the broken-packages
+// variant. apt output contains an `E: ...` line AND the package ended up
+// installed anyway (rare but possible if `E:` is about an unrelated dep).
+// Verdict passes, but LastError carries the signal so the operator sees it.
+func TestApply_HardAptError_StateMatchesFlagsLastError(t *testing.T) {
+	installTestFixtures(t, phpExtTestFixtures{
+		installed: []string{"8.5"},
+		aptOut:    []byte("Reading package lists... Done\nE: Unable to correct problems, you have held broken packages.\n"),
+		aptErr:    errors.New("exit 100"),
+		dpkgOut:   []byte("php8.5-common\tinstall ok installed\nphp8.5-apcu\tinstall ok installed\n"),
+		confDOut:  []string{"/etc/php/8.5/conf.d/20-apcu.ini"},
+	})
+	raw, err := phpExtApplyHandler(context.Background(),
+		mustJSON(t, phpExtApplyParams{Version: "8.5", Ext: "apcu", Action: "install"}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	resp := raw.(phpExtApplyResponse)
+	if !resp.Installed || !resp.Enabled {
+		t.Fatalf("state should match intent: %+v", resp)
+	}
+	if resp.LastError == "" || !strings.Contains(resp.LastError, "E: Unable to correct") {
+		t.Fatalf("hard apt error must appear in last_error, got %q", resp.LastError)
+	}
+}
+
+// TestApply_EnableDrift_OnlyFpm is the "missing one SAPI" bug: phpenmod for
+// some reason only enabled FPM, CLI symlink is missing. The list-side read
+// should report enabled=false (conservative); the verdict on an enable
+// action should fail even though runPhpenmod returned nil.
+func TestApply_EnableDrift_OnlyFpm(t *testing.T) {
+	installTestFixtures(t, phpExtTestFixtures{
+		installed:   []string{"8.5"},
+		dpkgOut:     []byte("php8.5-common\tinstall ok installed\nphp8.5-curl\tinstall ok installed\n"),
+		confDFpmOut: []string{"/etc/php/8.5/fpm/conf.d/20-curl.ini"},
+		confDCliOut: nil, // CLI missing the symlink
+	})
+	_, err := phpExtApplyHandler(context.Background(),
+		mustJSON(t, phpExtApplyParams{Version: "8.5", Ext: "curl", Action: "enable"}))
+	if err == nil {
+		t.Fatal("expected FailedPrecondition when CLI symlink is missing")
+	}
+	if ae := asAgentErr(t, err); ae.Code != agentwire.CodeFailedPrecondition {
+		t.Fatalf("got %+v", ae)
 	}
 }
 

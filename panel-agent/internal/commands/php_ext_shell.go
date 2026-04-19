@@ -116,21 +116,37 @@ func defaultRunDpkgQuery(ctx context.Context, pattern string) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// defaultGlobConfD lists enabled module ini symlinks for (version). Each
+// defaultGlobConfD lists enabled module ini symlinks for (version, sapi). Each
 // entry ends with `<module>.ini`. Returns the matched paths.
-func defaultGlobConfD(version string) ([]string, error) {
-	return filepath.Glob(fmt.Sprintf("/etc/php/%s/fpm/conf.d/*.ini", version))
+func defaultGlobConfD(version, sapi string) ([]string, error) {
+	return filepath.Glob(fmt.Sprintf("/etc/php/%s/%s/conf.d/*.ini", version, sapi))
 }
 
 // truncateErrorOutput clips subprocess output to at most 512 bytes so a verbose
-// apt failure doesn't overflow the wire response.
+// apt failure doesn't overflow the wire response. Truncation keeps the TAIL —
+// apt/dpkg errors appear at the end of output (post-download, during unpack or
+// trigger processing), so the head is success noise and the tail is the verdict.
 func truncateErrorOutput(b []byte) string {
 	const max = 512
 	s := strings.TrimSpace(string(b))
 	if len(s) <= max {
 		return s
 	}
-	return s[:max] + "…"
+	return "…" + s[len(s)-max:]
+}
+
+// hasHardAptError returns true if output contains a line starting with "E: " —
+// apt's convention for fatal errors (e.g. "E: Unable to correct problems, you
+// have held broken packages"). Trigger warnings and debconf notes don't match.
+// Used to flag operator-visible problems in the last_error response field even
+// when the verdict readback otherwise matches intent.
+func hasHardAptError(output []byte) bool {
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.HasPrefix(line, "E: ") {
+			return true
+		}
+	}
+	return false
 }
 
 // reloadFPMs asks systemd to reload php<v>-fpm.service (if present) plus every

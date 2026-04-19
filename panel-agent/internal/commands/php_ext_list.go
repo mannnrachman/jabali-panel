@@ -108,12 +108,36 @@ func readInstalledPackages(ctx context.Context, version string) (map[string]bool
 	return set, nil
 }
 
-// readEnabledModules scans /etc/php/<v>/fpm/conf.d/*.ini — filenames are
+// readEnabledModules returns the set of module names enabled in BOTH the CLI
+// and FPM SAPIs. phpenmod (run by dpkg postinst or our explicit call) writes
+// both symlinks in lockstep; a module present in only one SAPI indicates
+// operator-surface drift (manual phpdismod -s fpm, broken symlink, partial
+// package removal). Requiring both is the conservative read — list callers
+// and the apply verdict see identical truth.
+func readEnabledModules(version string) (map[string]bool, error) {
+	fpm, err := readSAPIEnabled(version, "fpm")
+	if err != nil {
+		return nil, err
+	}
+	cli, err := readSAPIEnabled(version, "cli")
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for mod := range fpm {
+		if cli[mod] {
+			out[mod] = true
+		}
+	}
+	return out, nil
+}
+
+// readSAPIEnabled scans /etc/php/<v>/<sapi>/conf.d/*.ini — filenames are
 // typically `NN-<module>.ini` (symlinks to mods-available). Returns a set
 // keyed by module base name (everything after the leading digits-dash prefix,
 // minus the .ini suffix).
-func readEnabledModules(version string) (map[string]bool, error) {
-	matches, err := globConfD(version)
+func readSAPIEnabled(version, sapi string) (map[string]bool, error) {
+	matches, err := globConfD(version, sapi)
 	if err != nil {
 		return nil, err
 	}

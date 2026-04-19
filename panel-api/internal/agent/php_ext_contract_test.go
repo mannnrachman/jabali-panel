@@ -60,6 +60,10 @@ type PHPExtApplyResponse struct {
 	Ext       string `json:"ext"`
 	Installed bool   `json:"installed"`
 	Enabled   bool   `json:"enabled"`
+	// LastError is populated when the filesystem verdict matches intent but
+	// apt surfaced a hard error (`E: …` line) worth flagging to the operator.
+	// Omitted on clean success — existing fixtures round-trip unchanged.
+	LastError string `json:"last_error,omitempty"`
 }
 
 // roundTrip proves the fixture and the typed struct are semantically equal:

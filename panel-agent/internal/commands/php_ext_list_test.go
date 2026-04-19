@@ -18,7 +18,9 @@ type phpExtTestFixtures struct {
 	installedErr error
 	dpkgOut      []byte
 	dpkgErr      error
-	confDOut     []string
+	confDOut     []string // mirrored to both cli and fpm unless overridden
+	confDFpmOut  []string // overrides confDOut for fpm only
+	confDCliOut  []string // overrides confDOut for cli only
 	confDErr     error
 	aptCalls     *[][]string
 	aptOut       []byte
@@ -47,7 +49,27 @@ func installTestFixtures(t *testing.T, f phpExtTestFixtures) {
 	})
 	listInstalledPHPVersionsFunc = func() ([]string, error) { return f.installed, f.installedErr }
 	runDpkgQuery = func(ctx context.Context, pattern string) ([]byte, error) { return f.dpkgOut, f.dpkgErr }
-	globConfD = func(version string) ([]string, error) { return f.confDOut, f.confDErr }
+	// Dual-SAPI conf.d: fake returns the same set for both cli and fpm so
+	// "enabled" (both-sapis-symlinked) matches the single slice fixtures
+	// supply. Drift tests use confDFpmOut / confDCliOut explicitly.
+	globConfD = func(version, sapi string) ([]string, error) {
+		if f.confDErr != nil {
+			return nil, f.confDErr
+		}
+		switch sapi {
+		case "fpm":
+			if f.confDFpmOut != nil {
+				return f.confDFpmOut, nil
+			}
+			return f.confDOut, nil
+		case "cli":
+			if f.confDCliOut != nil {
+				return f.confDCliOut, nil
+			}
+			return f.confDOut, nil
+		}
+		return nil, nil
+	}
 	runAptGet = func(ctx context.Context, action string, pkgs ...string) ([]byte, error) {
 		if f.aptCalls != nil {
 			*f.aptCalls = append(*f.aptCalls, append([]string{action}, pkgs...))

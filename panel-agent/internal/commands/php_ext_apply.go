@@ -1,9 +1,12 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/phpext"
@@ -20,7 +23,17 @@ type phpExtApplyResponse struct {
 	Ext       string `json:"ext"`
 	Installed bool   `json:"installed"`
 	Enabled   bool   `json:"enabled"`
+	// LastError is set when the filesystem verdict matches intent but the
+	// subprocess path surfaced a problem worth flagging — typically an
+	// `E: …` line from apt that didn't block install but signals a broken
+	// dep graph elsewhere. Empty on clean success.
+	LastError string `json:"last_error,omitempty"`
 }
+
+// verdictRetryDelay covers the tiny window where dpkg's DB write lags the
+// apt exit on slow I/O. One retry after this delay; no retry on the clean
+// path (exit 0 already serialized the write).
+const verdictRetryDelay = 100 * time.Millisecond
 
 const (
 	actionInstall = "install"
@@ -64,71 +77,165 @@ func phpExtApplyHandler(ctx context.Context, params json.RawMessage) (any, error
 		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: fmt.Sprintf("PHP %s is not installed", p.Version)}
 	}
 
+	// Pre-action guards that must reject without mutating state.
 	switch p.Action {
-	case actionInstall:
-		if err := doAptAction(ctx, p.Version, spec, actionInstall); err != nil {
-			return nil, err
-		}
-		if out, err := runPhpenmod(ctx, p.Version, spec.EnableName); err != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: fmt.Sprintf("phpenmod: %s", truncateErrorOutput(out))}
-		}
 	case actionRemove:
 		if err := guardRemoveSharedPackage(ctx, p.Version, spec); err != nil {
-			return nil, err
-		}
-		if err := doAptAction(ctx, p.Version, spec, actionRemove); err != nil {
 			return nil, err
 		}
 	case actionEnable:
 		if err := requireInstalledBeforeEnable(ctx, p.Version, spec); err != nil {
 			return nil, err
 		}
-		if out, err := runPhpenmod(ctx, p.Version, spec.EnableName); err != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: fmt.Sprintf("phpenmod: %s", truncateErrorOutput(out))}
+	}
+
+	// Run the subprocess chain for the chosen action. We capture BOTH output
+	// and any exit error, but never short-circuit on the error — the apt exit
+	// code is advisory; the dpkg DB + conf.d symlinks are the verdict. Below,
+	// we read fresh state and decide success vs failure on that, flagging any
+	// hard apt errors via LastError so the operator still sees the signal.
+	var subprocOut bytes.Buffer
+	var subprocErr error
+	switch p.Action {
+	case actionInstall:
+		out, err := doAptActionRaw(ctx, p.Version, spec, actionInstall)
+		subprocOut.Write(out)
+		if err != nil {
+			subprocErr = fmt.Errorf("apt-get install: %w", err)
+		} else {
+			pout, perr := runPhpenmod(ctx, p.Version, spec.EnableName)
+			subprocOut.WriteByte('\n')
+			subprocOut.Write(pout)
+			if perr != nil {
+				subprocErr = fmt.Errorf("phpenmod: %w", perr)
+			}
+		}
+	case actionRemove:
+		out, err := doAptActionRaw(ctx, p.Version, spec, actionRemove)
+		subprocOut.Write(out)
+		if err != nil {
+			subprocErr = fmt.Errorf("apt-get remove: %w", err)
+		}
+	case actionEnable:
+		out, err := runPhpenmod(ctx, p.Version, spec.EnableName)
+		subprocOut.Write(out)
+		if err != nil {
+			subprocErr = fmt.Errorf("phpenmod: %w", err)
 		}
 	case actionDisable:
-		if out, err := runPhpdismod(ctx, p.Version, spec.EnableName); err != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: fmt.Sprintf("phpdismod: %s", truncateErrorOutput(out))}
+		out, err := runPhpdismod(ctx, p.Version, spec.EnableName)
+		subprocOut.Write(out)
+		if err != nil {
+			subprocErr = fmt.Errorf("phpdismod: %w", err)
 		}
 	}
 
 	reloadFPMs(ctx, p.Version)
 
-	// Fresh state read-back so the caller sees reality, not intent.
-	pkgs, err := readInstalledPackages(ctx, p.Version)
+	// Verdict: read fresh filesystem state. Retry once after 100ms if the first
+	// read disagrees with intent AND a subprocess errored — covers the window
+	// where dpkg's DB write lags the apt exit on slow I/O.
+	state, err := readVerdictState(ctx, p.Version, spec)
 	if err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("dpkg-query: %v", err)}
+		return nil, err
 	}
-	mods, err := readEnabledModules(p.Version)
-	if err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("conf.d glob: %v", err)}
+	if !verdictMatches(state, p.Action) && subprocErr != nil {
+		time.Sleep(verdictRetryDelay)
+		state, err = readVerdictState(ctx, p.Version, spec)
+		if err != nil {
+			return nil, err
+		}
 	}
-	commonInstalled := pkgs[fmt.Sprintf("php%s-common", p.Version)]
+
+	if !verdictMatches(state, p.Action) {
+		tail := truncateErrorOutput(subprocOut.Bytes())
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeFailedPrecondition,
+			Message: fmt.Sprintf("%s %s did not reach intended state: %s", p.Action, p.Ext, tail),
+		}
+	}
+
+	// Verdict matches intent — operation effectively succeeded. Flag any
+	// `E: …` line from apt so the operator still sees the signal even though
+	// the filesystem ended up correct.
+	var lastError string
+	if hasHardAptError(subprocOut.Bytes()) {
+		lastError = truncateErrorOutput(subprocOut.Bytes())
+		slog.WarnContext(ctx, "php.ext.apply: filesystem verdict matches intent but apt emitted a hard error",
+			"version", p.Version, "ext", p.Ext, "action", p.Action, "tail", lastError)
+	} else if subprocErr != nil {
+		// Benign non-zero — usually a trigger warning. Log INFO for audit, don't surface.
+		slog.InfoContext(ctx, "php.ext.apply: subprocess non-zero but verdict matches intent",
+			"version", p.Version, "ext", p.Ext, "action", p.Action, "err", subprocErr.Error())
+	}
+
 	return phpExtApplyResponse{
 		Version:   p.Version,
 		Ext:       p.Ext,
-		Installed: isExtensionInstalled(spec, p.Version, pkgs, commonInstalled),
-		Enabled:   mods[spec.EnableName],
+		Installed: state.installed,
+		Enabled:   state.enabled,
+		LastError: lastError,
 	}, nil
 }
 
-// doAptAction resolves packages + runs apt under aptMu.
-func doAptAction(ctx context.Context, version string, spec phpext.Spec, action string) error {
+// verdictState captures what the filesystem says about an extension after an
+// apply. Callers compare it against the caller's intent to decide pass/fail.
+type verdictState struct {
+	installed bool
+	enabled   bool
+}
+
+// readVerdictState reads the authoritative state for (version, ext): dpkg
+// package presence + module enabled in BOTH cli and fpm SAPIs. Returns an
+// error (wrapping an AgentError with CodeInternal on I/O failure) so callers
+// can safely return it through the error interface without triggering the
+// typed-nil-in-interface trap.
+func readVerdictState(ctx context.Context, version string, spec phpext.Spec) (verdictState, error) {
+	pkgs, err := readInstalledPackages(ctx, version)
+	if err != nil {
+		return verdictState{}, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("dpkg-query: %v", err)}
+	}
+	mods, err := readEnabledModules(version)
+	if err != nil {
+		return verdictState{}, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("conf.d glob: %v", err)}
+	}
+	commonInstalled := pkgs[fmt.Sprintf("php%s-common", version)]
+	return verdictState{
+		installed: isExtensionInstalled(spec, version, pkgs, commonInstalled),
+		enabled:   mods[spec.EnableName],
+	}, nil
+}
+
+// verdictMatches reports whether the observed state matches the caller's intent.
+func verdictMatches(s verdictState, action string) bool {
+	switch action {
+	case actionInstall:
+		return s.installed && s.enabled
+	case actionRemove:
+		return !s.installed
+	case actionEnable:
+		return s.enabled
+	case actionDisable:
+		return !s.enabled
+	}
+	return false
+}
+
+// doAptActionRaw resolves packages + runs apt under aptMu, returning the
+// combined output and the raw subprocess error. Callers inspect the error
+// in concert with the filesystem verdict — the exit code alone is advisory.
+func doAptActionRaw(ctx context.Context, version string, spec phpext.Spec, action string) ([]byte, error) {
 	pkgs, err := phpext.ResolvePackages(version, spec.Name)
 	if err != nil {
-		return &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
+		return nil, err
 	}
 	if len(pkgs) == 0 {
 		// Built-in — shouldn't reach here thanks to earlier guard.
-		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "no packages to operate on"}
+		return nil, fmt.Errorf("no packages to operate on")
 	}
 	aptMu.Lock()
 	defer aptMu.Unlock()
-	out, err := runAptGet(ctx, action, pkgs...)
-	if err != nil {
-		return &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: fmt.Sprintf("apt-get %s: %s", action, truncateErrorOutput(out))}
-	}
-	return nil
+	return runAptGet(ctx, action, pkgs...)
 }
 
 // guardRemoveSharedPackage rejects the remove if any OTHER non-removed allowlist

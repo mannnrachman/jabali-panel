@@ -599,6 +599,26 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Related ADR:** ADR-0016 (break-glass-cli-admin-login.md)
 
+### M5c: Two-factor authentication (TOTP + backup codes) (SHIPPED)
+
+**Goal:** Password + TOTP (RFC 6238) for every login, 10 single-use bcrypt-hashed backup codes per user, admin-only break-glass CLI escape hatch.
+
+**Deliverables:**
+- Migration `000041_add_2fa_totp`: `users.totp_{secret_encrypted,enabled,enabled_at}` + `totp_backup_codes` table
+- `internal/twofa` service: enrolment via `github.com/pquerna/otp/totp`, 10×8-digit backup codes, bcrypt (cost 12), constant-time compare helper
+- Secret at rest: AES-256-GCM via existing `internal/ssokey` (no new key material, same rotation surface)
+- Login flow: when `totp_enabled=true`, `/auth/login` returns `{twofa_pending: true, twofa_pending_token}` with a 5-min JWT (`purpose="2fa_pending"`) instead of access+refresh; client exchanges it at `/auth/2fa/challenge` with a 6-digit TOTP or 8-digit backup code
+- API: `POST /api/v1/auth/2fa/{enroll,verify,disable,regen-backup}` under RequireAuth; challenge rides the strict rate limiter
+- UI: MyProfile 2FA card (enable/regen/disable modals, AntD `<QRCode>`, backup-codes-shown-once + save-confirmation gate); Login page two-stage state machine (password → challenge, swap to 8-digit backup-code input via "Use backup code" link)
+- CLI escape hatch: `jabali admin disable-2fa --email <target>` — shell-access only, no API equivalent; wipes backup codes first, then `DisableTOTP` so a mid-failure still leaves the user unlocked
+- Tests: 6 service unit tests, 4 handler tests, 4 login-flow integration tests (real `auth.Service` + real `JWTIssuer`, fakes only storage), 4 UI state tests + 3 Login stage-transition tests, 3 CLI unit tests
+
+**Status:** Shipped (7 commits on `feat-2fa-totp`: `0b68048`, `afc3839`, `009ccf5`, `e2c1f62`, `65536ce`, `27059b1`, `7b1ac16`)
+
+**Depends on:** M1 (auth), M5a (impersonation pattern reused for 2fa_pending JWT Purpose), M5b (CLI admin harness reused for disable-2fa command)
+
+**Out-of-scope (phase 2):** WebAuthn, SMS, push-based 2FA. Impersonation and `jabali admin login` intentionally bypass 2FA — they are the escape valves.
+
 ### M6: Email (Stalwart integration) (PLANNED)
 
 **Goal:** Admins and users can create mailboxes, configure forwarders, and set per-domain
@@ -948,6 +968,7 @@ Use this table to navigate the codebase when adding a new capability:
 | M5: SSL / Let's Encrypt (core + resilient ACME) | 2026-04-17 | `ba54273`, `66ae6d2`, `34379db`, `786079a`, `fc8ff7d` |
 | M5a: Admin Impersonation | 2026-04-17 | `7bc292f`, `5b14b4c` |
 | M5b: Break-Glass CLI Login | 2026-04-17 | `c587144` |
+| M5c: Two-factor authentication (TOTP + backup codes) | 2026-04-19 | `0b68048` through `7b1ac16` on `feat-2fa-totp` |
 | M6: Email (Stalwart) | Planned | — |
 | M7: Databases (MariaDB) | 2026-04-17 | ADRs 0018-0022 |
 | M8: Cron (SHIPPED) | 2026-04-18 | ADR-0029 |

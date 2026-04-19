@@ -231,16 +231,19 @@ export function UserPHPSettingsPage() {
     }
   };
 
-  const hasChanges =
-    selectedDomain &&
-    form.isFieldsTouched([
-      "php_memory_limit",
-      "php_upload_max_filesize",
-      "php_post_max_size",
-      "php_max_input_vars",
-      "php_max_execution_time",
-      "php_max_input_time",
-    ]);
+  // Fields the Save button cares about. AntD's form state changes don't
+  // trigger parent re-renders, so we can't compute `hasChanges` inline —
+  // we have to evaluate it inside a Form.Item shouldUpdate wrapper so it
+  // re-runs on every form mutation. Typed literal-tuple so
+  // form.isFieldsTouched's keyof-narrowed overload accepts it.
+  const dirtyFields: (keyof PHPSettingsFormData)[] = [
+    "php_memory_limit",
+    "php_upload_max_filesize",
+    "php_post_max_size",
+    "php_max_input_vars",
+    "php_max_execution_time",
+    "php_max_input_time",
+  ];
 
   return (
     <div style={{ padding: 24, maxWidth: 800, margin: "0 auto" }}>
@@ -382,15 +385,31 @@ export function UserPHPSettingsPage() {
                     </Col>
                   </Row>
 
-                  <Form.Item style={{ marginBottom: 0, marginTop: 24 }}>
-                    <Button
-                      type="primary"
-                      htmlType="submit"
-                      loading={submitting}
-                      disabled={!hasChanges}
-                    >
-                      Save Changes
-                    </Button>
+                  <Form.Item
+                    noStyle
+                    shouldUpdate={(prev, cur) =>
+                      dirtyFields.some((f) => prev[f] !== cur[f])
+                    }
+                  >
+                    {() => {
+                      const hasChanges =
+                        !!selectedDomain &&
+                        form.isFieldsTouched(dirtyFields);
+                      return (
+                        <Form.Item
+                          style={{ marginBottom: 0, marginTop: 24 }}
+                        >
+                          <Button
+                            type="primary"
+                            htmlType="submit"
+                            loading={submitting}
+                            disabled={!hasChanges}
+                          >
+                            Save Changes
+                          </Button>
+                        </Form.Item>
+                      );
+                    }}
                   </Form.Item>
                 </>
               )}

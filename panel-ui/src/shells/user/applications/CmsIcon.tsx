@@ -1,4 +1,4 @@
-import { SiWordpress, SiWikipedia, SiDrupal, SiJoomla, SiPhpbb, SiGrav, SiFreshrss, SiMatomo } from "react-icons/si";
+import { SiWordpress, SiWikipedia, SiDrupal, SiJoomla, SiPhpbb, SiGrav, SiFreshrss, SiMatomo, SiPrestashop } from "react-icons/si";
 import { FaOpencart } from "react-icons/fa6";
 import { BookOutlined, AppstoreOutlined } from "@ant-design/icons";
 import type { CSSProperties } from "react";
@@ -24,6 +24,10 @@ const BRAND_COLOR: Record<string, string> = {
   concrete: "#34669B",
   opencart: "#2AC2EF",
   abantecart: "#1B8AC4",
+  prestashop: "#DF0067",
+  // Backdrop CMS uses Drupal's blue palette in branding; pick a slightly
+  // lighter shade to avoid colliding with our existing Drupal entry.
+  backdrop: "#0288D1",
 };
 
 // CmsIcon renders the brand logo for an app_type. WordPress and
@@ -74,6 +78,14 @@ export function CmsIcon({ appType, size = 18 }: CmsIconProps) {
     // OpenCart cart glyph (same e-commerce visual cue) in AbanteCart's
     // brand blue so the colour disambiguates the two in the catalog.
     return <FaOpencart style={style} />;
+  }
+  if (key === "prestashop") {
+    return <SiPrestashop style={style} />;
+  }
+  if (key === "backdrop") {
+    // Simple Icons doesn't ship a Backdrop entry. Fall back to the
+    // generic appstore glyph in the brand blue.
+    return <AppstoreOutlined style={style} />;
   }
   if (key === "concrete") {
     // Simple Icons doesn't ship a Concrete CMS entry; fall back to a

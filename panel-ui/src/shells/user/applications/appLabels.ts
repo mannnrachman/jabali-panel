@@ -15,4 +15,6 @@ export const APP_TYPE_LABELS: Record<string, string> = {
   concrete: "Concrete CMS",
   opencart: "OpenCart",
   abantecart: "AbanteCart",
+  prestashop: "PrestaShop",
+  backdrop: "Backdrop CMS",
 };

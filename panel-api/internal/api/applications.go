@@ -449,6 +449,52 @@ func (h *applicationsHandler) create(c *gin.Context) {
 			UseWWW:       install.UseWWW,
 		}, h.cfg)
 		adminPassword = matomoPass
+	case "prestashop":
+		prestaPass := paramOr(req.Params, "admin_password", "")
+		if prestaPass == "" {
+			prestaPass = ids.NewULID()
+		}
+		go createPrestaShopInstallAndKickAgent(ctx, prestashopKickArgs{
+			InstallID:      installID,
+			OSUser:         osUser,
+			DocRoot:        domain.DocRoot,
+			Subdirectory:   install.Subdirectory,
+			SiteURL:        siteURL,
+			DBName:         chain.DBName,
+			DBUser:         chain.DBUsername,
+			DBPassword:     adminPassword,
+			SiteTitle:      paramOr(req.Params, "site_title", "My Shop"),
+			AdminEmail:     install.AdminEmail,
+			AdminPass:      prestaPass,
+			AdminFirstName: paramOr(req.Params, "admin_first_name", "Site"),
+			AdminLastName:  paramOr(req.Params, "admin_last_name", "Owner"),
+			Country:        paramOr(req.Params, "country", "us"),
+			Language:       paramOr(req.Params, "language", "en"),
+			UseWWW:         install.UseWWW,
+		}, h.cfg)
+		adminPassword = prestaPass
+	case "backdrop":
+		backdropPass := paramOr(req.Params, "admin_password", "")
+		if backdropPass == "" {
+			backdropPass = ids.NewULID()
+		}
+		go createBackdropInstallAndKickAgent(ctx, backdropKickArgs{
+			InstallID:    installID,
+			OSUser:       osUser,
+			DocRoot:      domain.DocRoot,
+			Subdirectory: install.Subdirectory,
+			SiteURL:      siteURL,
+			DBName:       chain.DBName,
+			DBUser:       chain.DBUsername,
+			DBPassword:   adminPassword,
+			SiteTitle:    paramOr(req.Params, "site_title", "My Backdrop Site"),
+			AdminUser:    install.AdminUsername,
+			AdminPass:    backdropPass,
+			AdminEmail:   install.AdminEmail,
+			Profile:      paramOr(req.Params, "profile", "standard"),
+			UseWWW:       install.UseWWW,
+		}, h.cfg)
+		adminPassword = backdropPass
 	case "abantecart":
 		abantePass := paramOr(req.Params, "admin_password", "")
 		if abantePass == "" {
@@ -1571,6 +1617,144 @@ func createAbanteCartInstallAndKickAgent(parentCtx context.Context, args abantec
 		"admin_user":   args.AdminUser,
 		"admin_pass":   args.AdminPass,
 		"admin_email":  args.AdminEmail,
+		"use_www":      args.UseWWW,
+	})
+	if err != nil {
+		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+	var respMap map[string]any
+	if err := json.Unmarshal(agentResp, &respMap); err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to parse agent response: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+	version := ""
+	if v, ok := respMap["version"].(string); ok {
+		version = v
+	}
+	cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
+}
+
+// prestashopKickArgs and createPrestaShopInstallAndKickAgent — e-commerce.
+type prestashopKickArgs struct {
+	InstallID      string
+	OSUser         string
+	DocRoot        string
+	Subdirectory   string
+	SiteURL        string
+	DBName         string
+	DBUser         string
+	DBPassword     string
+	SiteTitle      string
+	AdminEmail     string
+	AdminPass      string
+	AdminFirstName string
+	AdminLastName  string
+	Country        string
+	Language       string
+	UseWWW         bool
+}
+
+func createPrestaShopInstallAndKickAgent(parentCtx context.Context, args prestashopKickArgs, cfg ApplicationHandlerConfig) {
+	// 20 min — PrestaShop's schema + sample-catalog import is the long
+	// pole; on slower hosts the install can run 8-12 minutes.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+
+	if err := cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "installing", nil, nil); err != nil {
+		return
+	}
+	if cfg.Agent == nil {
+		errMsg := "agent not configured"
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	agentResp, err := cfg.Agent.Call(ctx, "app.install", map[string]any{
+		"app_type":         "prestashop",
+		"os_user":          args.OSUser,
+		"docroot":          args.DocRoot,
+		"subdirectory":     args.Subdirectory,
+		"site_url":         args.SiteURL,
+		"db_name":          args.DBName,
+		"db_user":          args.DBUser,
+		"db_password":      args.DBPassword,
+		"db_host":          "localhost",
+		"site_title":       args.SiteTitle,
+		"admin_email":      args.AdminEmail,
+		"admin_pass":       args.AdminPass,
+		"admin_first_name": args.AdminFirstName,
+		"admin_last_name":  args.AdminLastName,
+		"country":          args.Country,
+		"language":         args.Language,
+		"use_www":          args.UseWWW,
+	})
+	if err != nil {
+		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+	var respMap map[string]any
+	if err := json.Unmarshal(agentResp, &respMap); err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to parse agent response: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+	version := ""
+	if v, ok := respMap["version"].(string); ok {
+		version = v
+	}
+	cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
+}
+
+// backdropKickArgs and createBackdropInstallAndKickAgent — Drupal 7 fork.
+type backdropKickArgs struct {
+	InstallID    string
+	OSUser       string
+	DocRoot      string
+	Subdirectory string
+	SiteURL      string
+	DBName       string
+	DBUser       string
+	DBPassword   string
+	SiteTitle    string
+	AdminUser    string
+	AdminPass    string
+	AdminEmail   string
+	Profile      string
+	UseWWW       bool
+}
+
+func createBackdropInstallAndKickAgent(parentCtx context.Context, args backdropKickArgs, cfg ApplicationHandlerConfig) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	if err := cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "installing", nil, nil); err != nil {
+		return
+	}
+	if cfg.Agent == nil {
+		errMsg := "agent not configured"
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	agentResp, err := cfg.Agent.Call(ctx, "app.install", map[string]any{
+		"app_type":     "backdrop",
+		"os_user":      args.OSUser,
+		"docroot":      args.DocRoot,
+		"subdirectory": args.Subdirectory,
+		"site_url":     args.SiteURL,
+		"db_name":      args.DBName,
+		"db_user":      args.DBUser,
+		"db_password":  args.DBPassword,
+		"db_host":      "localhost",
+		"site_title":   args.SiteTitle,
+		"admin_user":   args.AdminUser,
+		"admin_pass":   args.AdminPass,
+		"admin_email":  args.AdminEmail,
+		"profile":      args.Profile,
 		"use_www":      args.UseWWW,
 	})
 	if err != nil {

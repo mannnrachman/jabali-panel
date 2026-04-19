@@ -436,6 +436,51 @@ func TestRegisterDefaults_RegistersAbanteCart(t *testing.T) {
 	}
 }
 
+func TestRegisterDefaults_RegistersPrestaShop(t *testing.T) {
+	r := New()
+	if err := RegisterDefaults(r); err != nil {
+		t.Fatalf("RegisterDefaults: %v", err)
+	}
+	p, ok := r.Get("prestashop")
+	if !ok {
+		t.Fatal("prestashop not registered after RegisterDefaults")
+	}
+	if !p.RequiresDB {
+		t.Error("prestashop should declare RequiresDB=true")
+	}
+	for _, want := range []string{"site_title", "admin_email", "admin_password", "country", "language"} {
+		if _, ok := p.InstallParamSchema[want]; !ok {
+			t.Errorf("prestashop schema missing %q", want)
+		}
+	}
+}
+
+func TestRegisterDefaults_RegistersBackdrop(t *testing.T) {
+	r := New()
+	if err := RegisterDefaults(r); err != nil {
+		t.Fatalf("RegisterDefaults: %v", err)
+	}
+	b, ok := r.Get("backdrop")
+	if !ok {
+		t.Fatal("backdrop not registered after RegisterDefaults")
+	}
+	if !b.RequiresDB {
+		t.Error("backdrop should declare RequiresDB=true")
+	}
+	for _, want := range []string{"site_title", "admin_email", "admin_password", "profile"} {
+		if _, ok := b.InstallParamSchema[want]; !ok {
+			t.Errorf("backdrop schema missing %q", want)
+		}
+	}
+	profile, ok := b.InstallParamSchema["profile"]
+	if !ok {
+		t.Fatal("backdrop profile field missing")
+	}
+	if profile.Type != "enum" || len(profile.Values) == 0 {
+		t.Errorf("backdrop profile should be enum with values")
+	}
+}
+
 func TestRegister_ConcurrentSafe(t *testing.T) {
 	// Race detector trips here if Register's mutex disappears.
 	r := New()

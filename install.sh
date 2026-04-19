@@ -2201,9 +2201,20 @@ install_kratos() {
 
   # Run database migrations.
   _log "running Kratos database migrations"
-  if ! "$kratos_binary" migrate sql -e -c "$kratos_config" --yes; then
+  # Kratos emits ~2 JSON-log lines per migration (one per file, bidirectional).
+  # On a fresh install that's hundreds of lines — silence the chatter and
+  # surface the full log only on failure.
+  local kratos_migrate_log="/tmp/jabali-kratos-migrate.$$.log"
+  if ! "$kratos_binary" migrate sql -e -c "$kratos_config" --yes >"$kratos_migrate_log" 2>&1; then
+    _err "Kratos database migrations failed — full output:"
+    cat "$kratos_migrate_log" >&2
+    rm -f "$kratos_migrate_log"
     _die "Kratos database migrations failed"
   fi
+  local migrate_count
+  migrate_count="$(grep -c 'applied successfully' "$kratos_migrate_log" 2>/dev/null || echo 0)"
+  rm -f "$kratos_migrate_log"
+  _ok "Kratos database migrations completed (${migrate_count} applied)"
 
   _ok "Kratos migrations completed"
 

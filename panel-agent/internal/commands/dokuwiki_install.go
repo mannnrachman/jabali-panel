@@ -328,6 +328,13 @@ func dokuwikiInstallHandler(ctx context.Context, params json.RawMessage) (any, e
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mktemp: %v", err)}
 	}
 	defer os.RemoveAll(tmpDir)
+	// MkdirTemp creates the dir 0700 root:root. The systemd-run-as-user
+	// `tar` below can't traverse it to reach the tarball inside. Widen
+	// to 0755 so the per-domain user can chdir/open the file (the file
+	// itself is chmod'd 0644 below). Tarball contains no secrets.
+	if err := os.Chmod(tmpDir, 0o755); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("chmod tmpdir: %v", err)}
+	}
 	tarballPath := filepath.Join(tmpDir, "dokuwiki-stable.tgz")
 
 	dlCtx, dlCancel := context.WithTimeout(ctx, 5*time.Minute)

@@ -26,18 +26,14 @@ var DokuWiki = App{
 	AgentInstallCmd:      "app.install",
 	AgentDeleteCmd:       "app.delete",
 	AgentCloneCmd:        "",
+	// admin_username intentionally NOT in this schema — see WordPress
+	// descriptor for the rationale.
 	InstallParamSchema: map[string]ParamSpec{
 		"site_title": {
 			Type:        "string",
 			Required:    true,
 			Default:     "My DokuWiki",
 			Description: "Public wiki title shown in the page header.",
-		},
-		"admin_username": {
-			Type:        "string",
-			Required:    true,
-			Default:     "admin",
-			Description: "Initial wiki administrator login.",
 		},
 		"admin_email": {
 			Type:        "email",

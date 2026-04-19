@@ -25,12 +25,13 @@ var WordPress = App{
 	AgentInstallCmd:      "app.install",
 	AgentDeleteCmd:       "app.delete",
 	AgentCloneCmd:        "app.clone",
+	// admin_username intentionally NOT in this schema — the API
+	// generates a random 6-letter username server-side (per the
+	// operator's directive: "admin username is a bad idea, should be
+	// 6 letters auto generated"). The generator runs at install time
+	// in api.applications.go's create handler; the response surfaces
+	// the generated value in the reveal-once panel.
 	InstallParamSchema: map[string]ParamSpec{
-		"admin_username": {
-			Type:        "string",
-			Required:    true,
-			Description: "WordPress administrator login.",
-		},
 		"admin_email": {
 			Type:        "email",
 			Required:    true,
@@ -38,8 +39,8 @@ var WordPress = App{
 		},
 		"admin_password": {
 			Type:        "password",
-			Required:    true,
-			Description: "Initial administrator password. Stored only in WP's user table.",
+			Required:    false,
+			Description: "Initial administrator password. Leave blank to have one generated; we surface it once on install.",
 		},
 		"site_title": {
 			Type:        "string",

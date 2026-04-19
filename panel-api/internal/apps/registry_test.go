@@ -205,10 +205,15 @@ func TestRegisterDefaults_RegistersMediaWiki(t *testing.T) {
 	if mw.AgentInstallCmd != "app.install" || mw.AgentDeleteCmd != "app.delete" {
 		t.Errorf("mediawiki dispatcher commands = (%q, %q)", mw.AgentInstallCmd, mw.AgentDeleteCmd)
 	}
-	for _, want := range []string{"site_title", "admin_username", "admin_email", "admin_password", "language"} {
+	// admin_username deliberately NOT in the schema — auto-generated
+	// server-side per the operator's directive.
+	for _, want := range []string{"site_title", "admin_email", "admin_password", "language"} {
 		if _, ok := mw.InstallParamSchema[want]; !ok {
 			t.Errorf("mediawiki schema missing %q", want)
 		}
+	}
+	if _, present := mw.InstallParamSchema["admin_username"]; present {
+		t.Error("mediawiki schema should NOT include admin_username — it's auto-generated server-side")
 	}
 }
 

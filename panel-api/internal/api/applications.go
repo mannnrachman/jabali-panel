@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"regexp"
 	"strings"
@@ -18,6 +20,38 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 )
+
+// adminUsernameAlphabet is the lowercase Latin alphabet — same set
+// the operator's directive specified ("6 letters auto generated").
+// Avoiding digits and uppercase keeps the generated username trivial
+// to communicate verbally and matches MediaWiki/WordPress's broad
+// username-rules without needing per-app sanitisation.
+const adminUsernameAlphabet = "abcdefghijklmnopqrstuvwxyz"
+
+// generateAdminUsername returns n random lowercase letters from
+// crypto/rand. Used for every app's admin account so the UI never has
+// to ask for a username — see the descriptor schemas which deliberately
+// omit admin_username. Falls back to "admin" + ULID-suffix if rand
+// fails so the install doesn't 500 on a transient entropy hiccup.
+func generateAdminUsername(n int) string {
+	if n <= 0 {
+		n = 6
+	}
+	out := make([]byte, n)
+	max := big.NewInt(int64(len(adminUsernameAlphabet)))
+	for i := 0; i < n; i++ {
+		idx, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			fallback := "admin" + strings.ToLower(ids.NewULID()[:6])
+			if len(fallback) > n+5 {
+				return fallback[:n+5]
+			}
+			return fallback
+		}
+		out[i] = adminUsernameAlphabet[idx.Int64()]
+	}
+	return string(out)
+}
 
 // RegisterApplicationRoutes mounts the M19 generic /applications
 // surface. The legacy /wordpress-installs routes registered by
@@ -159,11 +193,13 @@ func (h *applicationsHandler) create(c *gin.Context) {
 		return
 	}
 
-	// (domain, subdirectory, app_type) precheck. The composite UNIQUE
-	// added in migration 000046 will also catch this at INSERT, but
-	// the explicit lookup gives the UI a clean 409 instead of a
-	// generic 500 from the DB constraint.
-	existing, lookupErr := h.cfg.ApplicationInstalls.FindByDomainAndSubdirectoryAndAppType(ctx, req.DomainID, req.Subdirectory, descriptor.Name)
+	// (domain, subdirectory) precheck — regardless of app_type. Per
+	// the operator's directive, a (domain, subdir) slot may host AT
+	// MOST ONE application; you can't install MediaWiki at / when a
+	// WordPress already lives there. The DB-level UNIQUE in migration
+	// 000046 still includes app_type for forward compat, so this API
+	// check is what enforces the stricter product rule.
+	existing, lookupErr := h.cfg.ApplicationInstalls.FindByDomainAndSubdirectory(ctx, req.DomainID, req.Subdirectory)
 	if lookupErr == nil && existing != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "install_exists"})
 		return
@@ -207,6 +243,16 @@ func (h *applicationsHandler) create(c *gin.Context) {
 		}
 	}
 
+	// Always generate the admin username server-side. The descriptor
+	// schema deliberately omits admin_username so the UI never asks
+	// (per operator's "admin username is a bad idea, 6 letters auto
+	// generated"). For MediaWiki we uppercase the first letter to
+	// satisfy its "username must start with capital" rule.
+	adminUsername := generateAdminUsername(6)
+	if descriptor.Name == "mediawiki" && len(adminUsername) > 0 {
+		adminUsername = strings.ToUpper(adminUsername[:1]) + adminUsername[1:]
+	}
+
 	installID := ids.NewULID()
 	install := &models.ApplicationInstall{
 		ID:            installID,
@@ -214,7 +260,7 @@ func (h *applicationsHandler) create(c *gin.Context) {
 		DomainID:      req.DomainID,
 		DBID:          chain.DBID,
 		AppType:       descriptor.Name,
-		AdminUsername: paramOr(req.Params, "admin_username", ""),
+		AdminUsername: adminUsername,
 		AdminEmail:    paramOr(req.Params, "admin_email", ""),
 		Locale:        paramOr(req.Params, "locale", "en_US"),
 		UseWWW:        req.UseWWW,

@@ -90,6 +90,7 @@ func RegisterFilesRoutes(g *gin.RouterGroup, cfg FilesHandlerConfig) {
 	grp := g.Group("/files")
 	grp.GET("", h.list)
 	grp.DELETE("", h.delete)
+	grp.GET("/home", h.home)
 	grp.GET("/tree", h.tree)
 	grp.GET("/download", h.download)
 	grp.GET("/preview", h.preview)
@@ -201,6 +202,17 @@ func respondAgentError(c *gin.Context, err error) {
 }
 
 // ---- handlers ----
+
+// home returns the authenticated user's starting directory. The UI calls
+// this on mount to avoid needing client-side knowledge of unix username
+// mapping.
+func (h *filesHandler) home(c *gin.Context) {
+	_, username, ok := h.requireClaimsAndUsername(c)
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"path": "/home/" + username})
+}
 
 func (h *filesHandler) list(c *gin.Context) {
 	userID, username, ok := h.requireClaimsAndUsername(c)

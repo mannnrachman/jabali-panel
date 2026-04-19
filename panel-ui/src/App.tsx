@@ -62,7 +62,7 @@ import { DomainEdit } from "./shells/admin/domains/DomainEdit";
 import { DomainList } from "./shells/admin/domains/DomainList";
 import { ServerSettingsPage } from "./shells/admin/settings/ServerSettingsPage";
 import { MyProfile } from "./shells/user/MyProfile";
-import { UserFilesLauncher } from "./shells/user/files/UserFilesLauncher";
+import { FileManagerPage } from "./shells/user/files/FileManagerPage";
 import { UserDomainList } from "./shells/user/domains/UserDomainList";
 import { UserDomainCreate } from "./shells/user/domains/UserDomainCreate";
 import { UserDatabasesPage } from "./shells/user/databases/UserDatabasesPage";
@@ -300,7 +300,7 @@ const ThemedApp = () => {
               <Route path="dns" element={<UserDNSZonesOverviewPage />} />
               <Route path="ssl" element={<UserSSLManagerPage />} />
               <Route path="php-settings" element={<UserPHPSettingsPage />} />
-              <Route path="files" element={<UserFilesLauncher />} />
+              <Route path="files" element={<FileManagerPage />} />
               <Route path="wordpress" element={<UserWordPressList />} />
               <Route path="ssh-keys" element={<UserSSHKeysPage />} />
               <Route path="cron" element={<UserCronList />} />

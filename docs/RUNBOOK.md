@@ -275,6 +275,85 @@ To roll out a new release tarball:
 
 ---
 
+## 8. DNS resolvers (panel-managed `systemd-resolved` drop-in)
+
+The panel's **Server Settings → DNS → DNS Resolvers** card writes a
+drop-in at `/etc/systemd/resolved.conf.d/jabali.conf` and restarts
+`systemd-resolved`. The installer deliberately does **not** touch DNS;
+the host keeps whatever resolver was in place until an admin opts in.
+
+### Where the state lives
+
+- **Panel-managed:** `/etc/systemd/resolved.conf.d/jabali.conf` —
+  written atomically (`*.tmp` + rename) by the `system.resolver.set`
+  agent command. Contains `[Resolve]` + `DNS=` + optional `Domains=`.
+- **Source of truth:** on-disk file. The DB does not store resolvers.
+- **GET handler** reports `source: "drop-in"` when the file exists,
+  `"none"` otherwise (the UI then shows the form empty).
+- **SET handler** is a single transaction: validate → write drop-in →
+  `systemctl restart systemd-resolved.service` → poll up to 5s for
+  `is-active=active`. On restart failure, the previous drop-in
+  content (or absence) is restored and a second restart attempts
+  recovery; the API returns 409 `failed_precondition`.
+
+### Revert to unmanaged (remove panel-owned drop-in)
+
+```bash
+rm -f /etc/systemd/resolved.conf.d/jabali.conf
+systemctl restart systemd-resolved.service
+resolvectl status | head -20   # confirm upstream DNS
+```
+
+The panel UI will then show `Source: none` and the form will be empty
+until the admin saves something new.
+
+### Sanity checks
+
+```bash
+# Is the service running?
+systemctl is-active systemd-resolved.service
+
+# What's /etc/resolv.conf pointing at? (stub = panel-managed takes effect)
+readlink -f /etc/resolv.conf
+
+# What resolved sees right now (upstream + per-link)
+resolvectl status
+
+# Our drop-in content
+cat /etc/systemd/resolved.conf.d/jabali.conf 2>/dev/null || echo "no drop-in"
+```
+
+### Troubleshooting
+
+**"Save Resolvers" returns 409 with `"systemd-resolved restart failed …"`**
+- The drop-in was rejected or the service is wedged. Check
+  `journalctl -u systemd-resolved.service -n 50`. Common causes:
+  syntax error from a manually-edited sibling drop-in, missing
+  package (rare — `install.sh` installs it), or a locked DNSSEC
+  trust anchor.
+- Rollback has already happened; the previous config is back in
+  place. Investigate, then retry from the UI.
+
+**Admin saved resolvers but host still resolves via the old server**
+- Check `/etc/resolv.conf`: if it's a plain file (not a symlink to
+  `stub-resolv.conf`), the OS ignores `systemd-resolved` entirely.
+  The installer leaves this untouched by policy. To cut over:
+  ```bash
+  ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+  ```
+
+**`resolvectl status` shows `DNS=` from a different drop-in**
+- Package-installed drop-ins (NetworkManager, cloud-init, etc.) can
+  coexist. `systemd-resolved` concatenates all `*.conf` under
+  `resolved.conf.d/`. List them:
+  ```bash
+  ls -la /etc/systemd/resolved.conf.d/ /run/systemd/resolve/resolv.conf.d/ 2>/dev/null
+  ```
+  If an operator drop-in is fighting `jabali.conf`, either move it
+  aside or widen the panel's `DNS=` line to include its entries.
+
+---
+
 ## Appendix: CLI command reference
 
 ### Admin commands

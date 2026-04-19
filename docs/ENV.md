@@ -95,6 +95,20 @@ key loader is wired, unused until SSO work resumes.
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `JABALI_SSO_KEY_PATH` | No | `/etc/jabali-panel/sso.key` | Path to the 32-byte AES-256-GCM key used to encrypt shadow MariaDB admin passwords at rest. Must be mode `0600`, owner `jabali:jabali`. `install.sh install_sso_key` writes this on first install. If missing, the SSO feature is disabled (handler returns 503); startup continues. |
+| `JABALI_SSO_SOCKET_PATH` | No | `/run/jabali-panel/sso.sock` | Unix socket used by the phpMyAdmin SSO validation round-trip. Read by the SSO service; paired with the sign-on handoff PHP. |
+<!-- /AUTO-GENERATED -->
+
+## WordPress reconciler
+
+These tune the WordPress install/clone/delete timeout windows and the per-tick probe batch. Zero values disable the corresponding stale-row sweep.
+
+<!-- AUTO-GENERATED:env-wordpress — regenerate via /update-docs -->
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `WORDPRESS_INSTALL_TIMEOUT` | No | `10m` | Max age for a WordPress install stuck in `installing` state before the reconciler marks it failed. Accepts any `time.ParseDuration` string (`30s`, `5m`, `1h`). |
+| `WORDPRESS_CLONE_TIMEOUT` | No | `30m` | Max age for a WordPress install stuck in `cloning` state. Larger than install because cloning copies a full docroot + DB. |
+| `WORDPRESS_DELETE_TIMEOUT` | No | `5m` | Max age for a WordPress install stuck in `deleting` state. Short: delete is fast; anything longer is a stuck agent call. |
+| `WORDPRESS_PROBE_BATCH` | No | `100` | Max number of ready WordPress installs the reconciler liveness-probes per tick. Lower to cap CPU/DB load on large hosts. |
 <!-- /AUTO-GENERATED -->
 
 ## Path overrides (agent)
@@ -123,6 +137,10 @@ production use; listed here so the one-liner env audit stays honest.
 | `JABALI_PHP_POOL_CONFIG_DIR` | Override `/etc/php/<v>/fpm/pool.d` in `php.pool.apply` tests. |
 | `JABALI_PHP_POOL_TEMPLATE_PATH` | Override `/etc/jabali-panel/php-pool.conf.tmpl` in `php.pool.apply` tests. |
 | `JABALI_PHP_POOL_SKIP_RELOAD` | Set to non-empty to skip `systemctl reload` in pool-apply/remove tests. |
+| `JABALI_SSHD_DROPIN_PATH` | Override `/etc/ssh/sshd_config.d/jabali-sshd.conf` in `system.set_ssh_config` tests. |
+| `JABALI_SSHD_SFTP_DROPIN_PATH` | Override `/etc/ssh/sshd_config.d/jabali-sftp.conf` (M12 Match Group drop-in) in tests. |
+| `JABALI_SSHD_TEST_SKIP_VALIDATE` | Set to non-empty to skip the `sshd -t` config validation exec in tests. |
+| `JABALI_SSHD_TEST_SKIP_RELOAD` | Set to non-empty to skip the `systemctl reload sshd` exec in tests. |
 <!-- /AUTO-GENERATED -->
 
 ## Install-time (read by `install.sh` / CLI subcommands)

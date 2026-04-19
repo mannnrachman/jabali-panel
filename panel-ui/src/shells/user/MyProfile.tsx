@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { apiClient } from "../../apiClient";
 import { getIdentity, type Identity } from "../../identity";
 import { MyProfile2FACard } from "./MyProfile2FACard";
+import { MyProfileUsageCard } from "./MyProfileUsageCard";
 
 type ChangePasswordForm = {
   current_password: string;
@@ -66,6 +67,8 @@ export function MyProfile() {
         </Card>
 
         {me && <MyProfile2FACard userId={me.id} />}
+
+        {me && <MyProfileUsageCard userId={me.id} />}
 
         <Card title="Change password">
           <Form<ChangePasswordForm>

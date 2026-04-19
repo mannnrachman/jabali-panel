@@ -1,10 +1,16 @@
 import { useForm } from "@refinedev/antd";
 import { Edit } from "@refinedev/antd";
-import { Form, Input, InputNumber, Switch } from "antd";
+import { Divider, Form, Input, InputNumber, Switch, Typography } from "antd";
 
 type PackageEditInput = {
   name: string;
   disk_quota_mb: number;
+  // M18 — per-user resource limits. 0 means unlimited on every field.
+  cpu_quota_percent: number;
+  memory_limit_mb: number;
+  io_read_mbps: number;
+  io_write_mbps: number;
+  max_tasks: number;
   bandwidth_quota_mb: number;
   max_domains: number;
   max_email_accounts: number;
@@ -31,14 +37,62 @@ export const PackageEdit = () => {
           <Input placeholder="e.g., Basic, Professional, Enterprise" />
         </Form.Item>
 
+        <Divider orientation="left">Resource limits</Divider>
+        <Typography.Paragraph type="secondary" style={{ marginTop: -8 }}>
+          Enforced per-user via POSIX quota (disk) and cgroups v2 (cpu/memory/io/tasks).
+          Zero on any field means unlimited.
+        </Typography.Paragraph>
+
         <Form.Item
           label="Disk Quota (MB)"
           name="disk_quota_mb"
           rules={[{ required: true, message: "Disk quota is required" }]}
-          tooltip="0 = unlimited"
+          tooltip="Hard limit enforced via setquota(8). 0 = unlimited."
         >
           <InputNumber min={0} />
         </Form.Item>
+
+        <Form.Item
+          label="CPU Quota (%)"
+          name="cpu_quota_percent"
+          tooltip="systemd CPUQuota — 100% = 1 core, 200% = 2 cores. 0 = unlimited."
+        >
+          <InputNumber min={0} max={10000} />
+        </Form.Item>
+
+        <Form.Item
+          label="Memory Limit (MB)"
+          name="memory_limit_mb"
+          tooltip="systemd MemoryMax; MemoryHigh is fixed at 90% of this. 0 = unlimited."
+        >
+          <InputNumber min={0} max={1048576} />
+        </Form.Item>
+
+        <Form.Item
+          label="IO Read Bandwidth (MB/s)"
+          name="io_read_mbps"
+          tooltip="systemd IOReadBandwidthMax on /. 0 = unlimited."
+        >
+          <InputNumber min={0} max={10000} />
+        </Form.Item>
+
+        <Form.Item
+          label="IO Write Bandwidth (MB/s)"
+          name="io_write_mbps"
+          tooltip="systemd IOWriteBandwidthMax on /. 0 = unlimited."
+        >
+          <InputNumber min={0} max={10000} />
+        </Form.Item>
+
+        <Form.Item
+          label="Max Tasks"
+          name="max_tasks"
+          tooltip="systemd TasksMax — upper bound on concurrent processes. 0 = unlimited."
+        >
+          <InputNumber min={0} max={100000} />
+        </Form.Item>
+
+        <Divider orientation="left">Feature quotas</Divider>
 
         <Form.Item
           label="Bandwidth Quota (MB)"
@@ -84,6 +138,8 @@ export const PackageEdit = () => {
         >
           <InputNumber min={0} />
         </Form.Item>
+
+        <Divider orientation="left">Features</Divider>
 
         <Form.Item
           label="SSH Enabled"

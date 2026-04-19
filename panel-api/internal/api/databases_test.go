@@ -158,7 +158,12 @@ func (m *mockUserRepo) FindByID(ctx context.Context, id string) (*models.User, e
 }
 
 func (m *mockUserRepo) FindByEmail(ctx context.Context, email string) (*models.User, error) {
-	return nil, nil
+	for _, u := range m.users {
+		if u.Email == email {
+			return u, nil
+		}
+	}
+	return nil, repository.ErrNotFound
 }
 
 func (m *mockUserRepo) FindByUsername(ctx context.Context, username string) (*models.User, error) {

@@ -262,3 +262,66 @@ Upstream recommendation is Postgres. Rejected: we already run MariaDB (ADR-0018)
 - **Kratos docs:** https://www.ory.sh/kratos/docs
 - **Spike findings log:** Plan §7 documents K-1 through K-4 (MariaDB, SQL mode, schema_id, recovery methods)
 - **Adversarial review:** Plan §5 documents CRITICAL + HIGH findings and resolutions folded into this ADR
+
+## Implementation notes (2026-04-20, cutover)
+
+All 9 steps shipped with two intentional deviations from the original plan.
+
+### Plan deviations
+
+| Plan claim | Reality | Decision |
+|---|---|---|
+| Step 8: "Kratos accepts raw TOTP seeds and hashed backup codes" | Kratos 1.3.x admin API rejects TOTP/lookup_secret imports (the Kratos CLI itself documents this); Kratos stores backup codes as plaintext and our hashes can't be reversed | `--totp-only` became a read-only CSV reporter; users re-enroll post-cutover via Security → Authenticator. Runbook documents the operator notification flow. |
+| Step 6: "Drop M5a admin impersonation audit rows" | Audit rows carry compliance value; truncating them is irreversible | Kept historic rows read-only; deleted only the live feature surface (route + button + JWT claim plumbing). |
+
+### BootstrapAdmin extension (Step 9 addendum)
+
+The plan's Step 9 "flip default to kratos" required `BootstrapAdmin`
+(panel-api/internal/auth/bootstrap.go) to be Kratos-aware — otherwise a
+fresh install creates an admin in the panel DB with no matching Kratos
+identity, and first-boot login 401s. Extension landed as part of Step 9
+with compensating-transaction semantics matching the existing
+`POST /api/v1/admin/users` hook:
+
+1. panel DB INSERT
+2. Kratos `POST /admin/identities` with bcrypt passthrough
+3. panel UPDATE with `kratos_identity_id`
+
+Any failure rolls back the prior step(s). Passing `Kratos = nil` keeps
+the legacy behavior, so the two code paths share one invariant — ADR-0003
+("one write path") extends to bootstrap.
+
+### Default flip
+
+- `config.example.toml`: `provider = "kratos"` (was `"legacy"`)
+- `panel-api/internal/config/config.go`: Go default `"kratos"` (was `"legacy"`)
+- 30-second rollback: `sed -i 's/^provider = "kratos"/provider = "legacy"/' /etc/jabali/config.toml && systemctl restart jabali-panel`
+- Feature flag stays for 30 days per plan §1 step 9. Removal scheduled for a
+  follow-up PR after stable operation on production.
+
+### Deliverables (reality)
+
+| Wave | Step | Files |
+|---|---|---|
+| A | 1 — ADR + kratos.yml + identity schema | This ADR; `install/kratos.yml.tmpl`; `install/kratos-identity-schema.json` |
+| A | 2 — install_kratos + systemd + DB + nginx | `install.sh` `install_kratos()`; `install/kratos.sha256`; nginx `/.ory/` proxy block |
+| B | 3 — kratosclient + middleware + feature flag | `panel-api/internal/kratosclient/*`; `panel-api/internal/middleware/auth_kratos.go` |
+| B | 4 — migration tool + user-create hook + 000046 migration | `panel-api/cmd/server/kratos_migrate_cmd.go`; `panel-api/internal/api/users.go` inline hook; `panel-api/internal/db/migrations/000046_*` |
+| C | 5 — authProvider + Login.tsx + kratos.ts | `panel-ui/src/authProvider.ts`; `panel-ui/src/pages/Login.tsx`; `panel-ui/src/kratos.ts`; `panel-ui/src/apiClient.ts` |
+| C | 6 — M5a removal | Deletions in `panel-api/internal/api/impersonate.go` + SPA impersonation surface |
+| D | 7 — M5b removal + middleware panel-ULID fix | Deletions of `admin_login.go` + `auth_cli_login.go` + `RedeemCLIToken`; added `UserRepository.FindByKratosIdentityID` + middleware lookup |
+| D | 8 — TOTP report (plan deviation) | `panel-api/cmd/server/kratos_migrate_totp.go`; runbook "TOTP re-enrollment" |
+| E | 9 — cutover + E2E + runbook + BLUEPRINT + this ADR append | Default flip; `BootstrapAdmin` Kratos extension; `panel-ui/tests/e2e/kratos-login.spec.ts`; runbook day-2 + rollback sections; BLUEPRINT M20 section |
+
+### Deliberate non-goals (confirmed at cutover)
+
+- **Legacy JWT code removal** — stays behind the feature flag for the 30-day
+  rollback window. Follow-up PR removes it in full.
+- **Kratos trait normalization** — traits carry `is_admin` but the panel
+  DB stays authoritative on role (middleware reads `users.is_admin`, not
+  `identity.traits.is_admin`). Prevents a rogue Kratos patch from
+  granting admin.
+- **Kratos password-migration webhook** — not used. All current users
+  have bcrypt hashes, passthrough covers them.
+
+### Status: SHIPPED 2026-04-20

@@ -198,7 +198,7 @@ func Defaults() *Config {
 		Auth: AuthConfig{
 			AccessTTL:  15 * time.Minute,
 			RefreshTTL: 7 * 24 * time.Hour,
-			Provider:   "legacy", // Default to JWT; can be overridden to "kratos"
+			Provider:   "kratos", // M20 cutover 2026-04-20; legacy still selectable via AUTH_PROVIDER=legacy
 		},
 		Agent: AgentConfig{
 			SocketPath: "/run/jabali/agent.sock",

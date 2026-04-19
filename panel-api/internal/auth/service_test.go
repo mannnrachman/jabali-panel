@@ -24,6 +24,7 @@ type fakeUserRepo struct {
 	byEmail  map[string]*models.User
 	byID     map[string]*models.User
 	createCB func(*models.User)
+	updateCB func(*models.User)
 }
 
 func newFakeUserRepo() *fakeUserRepo {
@@ -81,7 +82,20 @@ func (f *fakeUserRepo) FindByUsername(_ context.Context, username string) (*mode
 func (f *fakeUserRepo) List(context.Context, repository.ListOptions) ([]models.User, int64, error) {
 	return nil, 0, nil
 }
-func (f *fakeUserRepo) Update(context.Context, *models.User) error   { return nil }
+func (f *fakeUserRepo) Update(_ context.Context, u *models.User) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.byID[u.ID]; !ok {
+		return repository.ErrNotFound
+	}
+	c := *u
+	f.byID[u.ID] = &c
+	f.byEmail[u.Email] = &c
+	if f.updateCB != nil {
+		f.updateCB(&c)
+	}
+	return nil
+}
 func (f *fakeUserRepo) SetAdmin(context.Context, string, bool) error { return nil }
 func (f *fakeUserRepo) CountAdmins(context.Context) (int64, error)   { return 0, nil }
 func (f *fakeUserRepo) FindAdminsByEmail(_ context.Context) ([]*models.User, error) {
@@ -96,7 +110,17 @@ func (f *fakeUserRepo) FindAdminsByEmail(_ context.Context) ([]*models.User, err
 	}
 	return admins, nil
 }
-func (f *fakeUserRepo) Delete(context.Context, string) error         { return nil }
+func (f *fakeUserRepo) Delete(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.byID[id]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	delete(f.byID, id)
+	delete(f.byEmail, u.Email)
+	return nil
+}
 
 func (f *fakeUserRepo) SetTOTPSecret(context.Context, string, []byte) error { return nil }
 func (f *fakeUserRepo) EnableTOTP(context.Context, string, time.Time) error { return nil }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -10,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/clientapi"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 func newUserCmd() *cobra.Command {
@@ -21,9 +22,7 @@ func newUserCmd() *cobra.Command {
 	cmd.AddCommand(
 		newUserListCmd(),
 		newUserCreateCmd(),
-		newUserEditCmd(),
 		newUserDeleteCmd(),
-		newUserLoginCmd(),
 	)
 	return cmd
 }
@@ -32,43 +31,45 @@ func newUserCmd() *cobra.Command {
 
 func newUserListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:     "list",
-		Short:   "List all users",
-		PreRunE: requireConfig,
+		Use:   "list",
+		Short: "List all users (direct DB — M20-safe)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
-			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
+			users, err := listUsersDirect(ctx)
 			if err != nil {
-				return fmt.Errorf("create api client: %w", err)
-			}
-
-			resp, err := client.ListUsers(ctx, 1, 1000)
-			if err != nil {
-				return fmt.Errorf("list users: %w", err)
+				return err
 			}
 
 			if jsonOutput {
 				return printJSON(map[string]interface{}{
-					"users": resp.Data,
-					"total": resp.Total,
+					"users": users,
+					"total": len(users),
 				})
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tEMAIL\tNAME\tROLE\tCREATED")
-			for _, u := range resp.Data {
+			fmt.Fprintln(w, "ID\tEMAIL\tUSERNAME\tNAME\tROLE\tKRATOS\tCREATED")
+			for _, u := range users {
 				role := "user"
 				if u.IsAdmin {
 					role = "admin"
+				}
+				username := "—"
+				if u.Username != nil && *u.Username != "" {
+					username = *u.Username
 				}
 				name := strings.TrimSpace(u.NameFirst + " " + u.NameLast)
 				if name == "" {
 					name = "—"
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-					u.ID, u.Email, name, role, u.CreatedAt.Format(time.DateOnly))
+				kratos := "—"
+				if u.KratosIdentityID != nil && *u.KratosIdentityID != "" {
+					kratos = "✓"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+					u.ID, u.Email, username, name, role, kratos, u.CreatedAt.Format(time.DateOnly))
 			}
 			return w.Flush()
 		},
@@ -134,116 +135,51 @@ func newUserCreateCmd() *cobra.Command {
 	return cmd
 }
 
-// ---- edit ----
+// ---- delete ----
+//
+// user edit + user login are intentionally absent. edit is rare + easier
+// from the web UI; login was M5b-era (JWT cli_token flow, removed). For
+// recovery, use `curl -X POST http://127.0.0.1:4434/admin/recovery/code` —
+// runbook documents the full flow.
 
-func newUserEditCmd() *cobra.Command {
+func newUserDeleteCmd() *cobra.Command {
 	var (
-		email     string
-		password  string
-		nameFirst string
-		nameLast  string
-		setAdmin  string // "true" / "false" / "" (unchanged)
+		force bool
+		purge bool
 	)
 
 	cmd := &cobra.Command{
-		Use:     "edit <user-id>",
-		Short:   "Edit an existing user",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: requireConfig,
+		Use:   "delete <user-id>",
+		Short: "Delete a user (direct DB + cascade domains + Kratos identity + OS teardown — M20-safe)",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			userID := args[0]
 
-			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
 			defer cancel()
 
-			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
+			if err := initConfig(); err != nil {
+				return err
+			}
+			if err := initDB(); err != nil {
+				return err
+			}
+			target, err := userRepo().FindByID(ctx, userID)
 			if err != nil {
-				return fmt.Errorf("create api client: %w", err)
+				if errors.Is(err, repository.ErrNotFound) {
+					return fmt.Errorf("user %q not found", userID)
+				}
+				return fmt.Errorf("lookup user: %w", err)
 			}
 
-			req := &clientapi.UpdateUserRequest{}
-			changed := false
-
-			if email != "" {
-				req.Email = &email
-				changed = true
-			}
-			if cmd.Flags().Changed("name-first") {
-				req.NameFirst = &nameFirst
-				changed = true
-			}
-			if cmd.Flags().Changed("name-last") {
-				req.NameLast = &nameLast
-				changed = true
-			}
-			if password != "" {
-				req.Password = &password
-				changed = true
-			}
-			if setAdmin == "true" {
-				req.IsAdmin = boolPtr(true)
-				changed = true
-			} else if setAdmin == "false" {
-				req.IsAdmin = boolPtr(false)
-				changed = true
-			}
-
-			if !changed {
-				return fmt.Errorf("no changes specified")
-			}
-
-			user, err := client.UpdateUser(ctx, userID, req)
-			if err != nil {
-				return fmt.Errorf("update user: %w", err)
-			}
-
-			if jsonOutput {
-				return printJSON(user)
-			}
-			fmt.Printf("Updated user %s (%s)\n", user.ID, user.Email)
-			return nil
-		},
-	}
-
-	cmd.Flags().StringVar(&email, "email", "", "new email")
-	cmd.Flags().StringVar(&password, "password", "", "new password (min 10 chars)")
-	cmd.Flags().StringVar(&nameFirst, "name-first", "", "first name")
-	cmd.Flags().StringVar(&nameLast, "name-last", "", "last name")
-	cmd.Flags().StringVar(&setAdmin, "admin", "", "set admin role (true/false)")
-
-	return cmd
-}
-
-// ---- delete ----
-
-func newUserDeleteCmd() *cobra.Command {
-	var force bool
-
-	cmd := &cobra.Command{
-		Use:     "delete <user-id>",
-		Short:   "Delete a user",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: requireConfig,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			userID := args[0]
-
-			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
-			defer cancel()
-
-			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
-			if err != nil {
-				return fmt.Errorf("create api client: %w", err)
-			}
-
-			// Fetch user to get email for confirmation
-			user, err := client.GetUser(ctx, userID)
-			if err != nil {
-				return fmt.Errorf("fetch user: %w", err)
-			}
-
-			// Confirm deletion unless --force is set
 			if !force {
-				fmt.Printf("Delete user %s (%s)? [y/N]: ", user.ID, user.Email)
+				msg := fmt.Sprintf("Delete user %s (%s)?", target.ID, target.Email)
+				if purge {
+					msg += " This will also delete /home/" + strOr(target.Username, "<no-home>") + " and all its data."
+				} else {
+					msg += " (home directory WILL be preserved; pass --purge to remove it)"
+				}
+				fmt.Print(msg + " [y/N]: ")
 				var confirm string
 				fmt.Scanln(&confirm)
 				if confirm != "y" && confirm != "Y" {
@@ -252,19 +188,33 @@ func newUserDeleteCmd() *cobra.Command {
 				}
 			}
 
-			if err := client.DeleteUser(ctx, userID); err != nil {
-				return fmt.Errorf("delete user: %w", err)
+			if err := deleteUserDirect(ctx, userID, purge); err != nil {
+				return err
 			}
 
 			if jsonOutput {
 				return printJSON(map[string]string{"deleted": userID})
 			}
-			fmt.Printf("Deleted user %s (%s)\n", user.ID, user.Email)
+			fmt.Printf("Deleted user %s (%s)\n", target.ID, target.Email)
+			if purge {
+				fmt.Println("/home directory removed.")
+			}
 			return nil
 		},
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation prompt")
+	cmd.Flags().BoolVar(&purge, "purge", false, "also remove the user's /home directory (default: preserve tenant data)")
 
 	return cmd
+}
+
+// strOr returns *s when non-nil + non-empty, else fallback. Tiny helper so
+// the confirmation prompt doesn't render "<nil>" for admins without a
+// username.
+func strOr(s *string, fallback string) string {
+	if s == nil || *s == "" {
+		return fallback
+	}
+	return *s
 }

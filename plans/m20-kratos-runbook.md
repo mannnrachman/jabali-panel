@@ -296,36 +296,30 @@ path forward:
    cutover (see "TOTP re-enrollment" above). There is no way to recover
    TOTP secrets from a lost Kratos DB.
 
-### CLI after M20 — which subcommands still work
+### CLI after M20
 
-The CLI's HTTP-client helper (`newAPIClient` in `cmd/server/root.go`) mints
-a short-lived JWT via `mintCLIToken` and sends it as `Authorization:
-Bearer`. Under `auth.provider = "kratos"` the panel middleware only
-validates the `ory_kratos_session` cookie; any Bearer token is ignored and
-the call 401s. Commands that backend on the HTTP API are therefore
-broken post-cutover. Commands that go straight to DB + Kratos + agent
-keep working.
+Every operator CLI command is direct-DB now. The old HTTP-client helper
+(`newAPIClient` / `mintCLIToken` / `internal/clientapi/`) has been deleted
+together with its only remaining caller, `jabali reconcile` — the
+reconciler already ticks every `agent.reconciler_interval` (default 60s)
+so a manual trigger is unnecessary.
 
 | Subcommand | Status | Notes |
 |---|---|---|
-| `jabali user create` | ✅ Works | Direct DB + Kratos + agent. Same compensating-transaction path as the HTTP handler. |
-| `jabali domain create` | ✅ Works | Direct DB. Reconciler materialises nginx vhost within `agent.reconciler_interval`. |
-| `jabali user list / edit / delete` | ❌ 401 | HTTP-backed. Use the web UI. |
-| `jabali domain list / enable / disable / delete` | ❌ 401 | HTTP-backed. Use the web UI. |
-| `jabali package *` | ❌ 401 | HTTP-backed. Use the web UI. |
-| `jabali reconcile` | ❌ 401 | HTTP-backed. Runs automatically every `agent.reconciler_interval`. |
+| `jabali user list / create / delete` | ✅ Works | Direct DB + Kratos + agent. `create` uses the same compensating transaction as the HTTP handler. `delete` cascades to domains + Kratos identity + OS user. |
+| `jabali domain list / create / enable / disable / delete` | ✅ Works | Direct DB. `create` / `delete` / enable+disable flip the row; reconciler materialises/tears down nginx within `agent.reconciler_interval`. |
+| `jabali package list / create / edit / delete` | ✅ Works | Direct DB, no agent side-effects. |
 | `jabali admin slice-cutover` | ✅ Works | Direct DB + agent. |
 | `jabali admin disable-2fa` | ✅ Works | Direct DB. |
 | `jabali kratos-migrate` | ✅ Works | Direct DB + Kratos admin API. |
 | `jabali limits *` | ✅ Works | Direct DB + agent. |
-| `jabali system *` | Mixed | Pure-local parts (version, config dump) work. HTTP-backed parts 401. |
+| `jabali system *` | ✅ Works | Local-only. |
 | `jabali migrate` | ✅ Works | Direct DB. |
 | `jabali update` | ✅ Works | Local git + systemctl. |
-| `jabali admin admin-login` (M5b) | ❌ Removed | Use recovery codes: `curl -X POST http://127.0.0.1:4434/admin/recovery/code -d '{"identity_id":"<uuid>"}'` |
-
-Converting the remaining HTTP-backed commands to direct DB is a follow-up
-PR. Track under issue "CLI: convert HTTP-backed commands to direct DB
-(M20 residual)".
+| `jabali reconcile` | ❌ Removed | Background reconciler ticks every `agent.reconciler_interval`. Force a fresh tick via `systemctl restart jabali-panel`. |
+| `jabali user edit` | ❌ Removed | Use the web UI — edits are rare + easier to review visually. |
+| `jabali user login` | ❌ Removed | M5b-era JWT cli-token flow. For recovery, use Kratos: `curl -X POST http://127.0.0.1:4434/admin/recovery/code -d '{"identity_id":"<uuid>"}'` |
+| `jabali admin admin-login` (M5b) | ❌ Removed | Same as above. |
 
 ### Self-signed TLS bootstrap for split-host Kratos
 

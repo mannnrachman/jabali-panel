@@ -14,8 +14,3 @@ func printJSON(v any) error {
 	fmt.Println(string(b))
 	return nil
 }
-
-// boolPtr returns a pointer to a bool value.
-func boolPtr(b bool) *bool {
-	return &b
-}

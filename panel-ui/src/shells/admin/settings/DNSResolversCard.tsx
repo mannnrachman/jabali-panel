@@ -209,29 +209,32 @@ export const DNSResolversCard = () => {
       style={{ marginBottom: 16 }}
     >
       <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-        Set the upstream DNS servers this server uses to resolve hostnames.
-        Writes a drop-in at <code>/etc/systemd/resolved.conf.d/jabali.conf</code>
-        {" "}and restarts <code>systemd-resolved</code>. Falls back gracefully
-        if the restart fails.
+        The installer leaves DNS untouched. Fields below show whatever the
+        host is currently resolving against. Saving writes a drop-in at{" "}
+        <code>/etc/systemd/resolved.conf.d/jabali.conf</code> and restarts{" "}
+        <code>systemd-resolved</code>; changes roll back automatically if
+        the service fails to come back up.
       </Typography.Paragraph>
 
       <Space size="small" wrap style={{ marginBottom: 12 }}>
-        <Typography.Text type="secondary">Status:</Typography.Text>
+        <Typography.Text type="secondary">Source:</Typography.Text>
+        {source === "drop-in" && <Tag color="blue">Panel-managed</Tag>}
+        {source === "system" && <Tag>Current system (/etc/resolv.conf)</Tag>}
+        {source === "none" && <Tag>Not configured</Tag>}
         {active ? (
           <Tag color="green">systemd-resolved active</Tag>
         ) : (
           <Tag color="orange">systemd-resolved inactive</Tag>
         )}
-        <Tag>Source: {source}</Tag>
       </Space>
 
-      {!active && (
+      {source === "drop-in" && !active && (
         <Alert
           type="warning"
           showIcon
           style={{ marginBottom: 12 }}
           message="systemd-resolved is not active"
-          description="The drop-in will still be written, but changes won't take effect until the service is running."
+          description="The drop-in exists but the service isn't running, so your saved resolvers aren't in effect. Start it with: systemctl enable --now systemd-resolved"
         />
       )}
 

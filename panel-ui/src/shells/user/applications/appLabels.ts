@@ -10,4 +10,5 @@ export const APP_TYPE_LABELS: Record<string, string> = {
   joomla: "Joomla",
   phpbb: "phpBB",
   grav: "Grav",
+  freshrss: "FreshRSS",
 };

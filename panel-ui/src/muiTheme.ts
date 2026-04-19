@@ -66,9 +66,16 @@ const showInsetEffect: WaveConfig["showEffect"] = (node, { event, component }) =
   });
 };
 
+// Base font size applied to both light and dark tokens. AntD's default is
+// 14; 16 matches iOS/macOS body type and lifts heading/form/tag sizes via
+// the algorithm's seed-derivation. Bump here, not per-token, to keep the
+// two palettes in lockstep.
+const baseFontSize = 16;
+
 // Light palette — MUI-flavoured tokens kept verbatim so light mode stays
 // pixel-identical to the pre-dark-mode design.
 const lightTokens = {
+  fontSize: baseFontSize,
   colorPrimary: "#1976d2",
   colorSuccess: "#2e7d32",
   colorWarning: "#ed6c02",
@@ -153,6 +160,7 @@ const lightTokens = {
 // fills in surface/text/border so we don't have to hand-maintain 50+
 // tokens twice.
 const darkTokens = {
+  fontSize: baseFontSize,
   colorPrimary: "#1976d2",
   colorSuccess: "#2e7d32",
   colorWarning: "#ed6c02",

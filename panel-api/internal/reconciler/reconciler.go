@@ -1010,20 +1010,13 @@ type sslSelfSignResult struct {
 	ExpiresAt string `json:"expires_at"`
 }
 
-// computeBackoff returns the exponential backoff duration for a given retry count.
-// Backoff: retry_count 1→5m, 2→15m, 3→1h, 4→4h, 5+→4h (capped).
-func computeBackoff(retryCount int) time.Duration {
-	switch retryCount {
-	case 1:
-		return 5 * time.Minute
-	case 2:
-		return 15 * time.Minute
-	case 3:
-		return 1 * time.Hour
-	default:
-		return 4 * time.Hour
-	}
-}
+// acmeRetryInterval is how long to wait between ACME (Let's Encrypt) attempts
+// after a failure. Flat 3 hours per the panel's "always-recovering SSL" policy:
+// every domain gets a self-signed cert immediately on first ACME failure (so
+// HTTPS keeps working) and the panel keeps trying ACME forever, every 3 hours,
+// until it succeeds. No exponential backoff and no max-retry cap — the
+// background ticker is cheap and a stuck cert should never become permanent.
+const acmeRetryInterval = 3 * time.Hour
 
 // reconcileSSLForDomain converges the ssl_certificates row for a domain to
 // reflect the state the DB has declared. State machine:
@@ -1102,10 +1095,12 @@ func (r *Reconciler) tryACMEOrFallback(ctx context.Context, domain *models.Domai
 		}
 	}
 
+	// admin_email is required by Let's Encrypt's ACME flow but NOT by
+	// self-sign. Skip the ACME attempt without admin_email — but still
+	// generate a self-signed cert so HTTPS works, then schedule a retry
+	// for 3h later (when the operator may have set the email).
 	if srv.AdminEmail == "" {
-		msg := "server_settings.admin_email not set"
-		_ = r.sslCerts.UpdateStatus(ctx, cert.ID, models.SSLStatusFailed, &msg)
-		r.log.Warn("ssl: cannot issue without admin email", "domain", domain.Name)
+		r.fallbackToSelfSignAndRetry(ctx, domain, cert, "server_settings.admin_email not set")
 		return
 	}
 
@@ -1144,56 +1139,56 @@ func (r *Reconciler) tryACMEOrFallback(ctx context.Context, domain *models.Domai
 		return
 	}
 
-	// ACME failed: increment retry count and decide whether to fallback
-	newRetryCount := cert.RetryCount + 1
-	lastError := firstLine(err.Error())
+	// ACME failed — fall through to self-sign + scheduled retry.
+	r.fallbackToSelfSignAndRetry(ctx, domain, cert, firstLine(err.Error()))
+}
 
-	// If this is the first failure (retry_count == 0 → 1) and we don't have a cert file yet,
-	// try to generate a self-signed fallback
+// fallbackToSelfSignAndRetry is the "ACME unavailable" path used by both
+// the missing-admin-email branch and an actual ACME failure. It:
+//
+//  1. Generates a self-signed cert (only on the first failure when no cert
+//     exists yet) so HTTPS keeps working while ACME is being retried.
+//  2. Bumps retry_count, records lastError, and schedules the next ACME
+//     attempt for 3 hours from now (flat — no exponential backoff, no cap).
+//
+// The cert row stays in 'pending_acme_retry' status forever until ACME
+// succeeds; the SSL ticker will pick it up at next_retry_at.
+func (r *Reconciler) fallbackToSelfSignAndRetry(ctx context.Context, domain *models.Domain, cert *models.SSLCertificate, lastError string) {
 	var fallbackCertPath *string
 	var fallbackKeyPath *string
 	var fallbackExpiresAt *time.Time
 
-	if cert.RetryCount == 0 && cert.CertPath == nil {
-		// No cert file yet; generate self-signed fallback
+	if cert.CertPath == nil {
+		// No cert file yet; generate self-signed fallback so HTTPS works
+		// while we keep retrying ACME.
 		selfSignCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 
-		raw, err := r.agent.Call(selfSignCtx, "ssl.self_sign", map[string]any{
+		raw, sErr := r.agent.Call(selfSignCtx, "ssl.self_sign", map[string]any{
 			"domain": domain.Name,
 			"days":   365,
 		})
-		if err != nil {
-			r.log.Warn("ssl: self_sign fallback failed", "domain", domain.Name, "err", err)
+		if sErr != nil {
+			r.log.Warn("ssl: self_sign fallback failed", "domain", domain.Name, "err", sErr)
 		} else {
 			var res sslSelfSignResult
-			if err := json.Unmarshal(raw, &res); err != nil {
-				r.log.Warn("ssl: parse self_sign result failed", "domain", domain.Name, "err", err)
+			if pErr := json.Unmarshal(raw, &res); pErr != nil {
+				r.log.Warn("ssl: parse self_sign result failed", "domain", domain.Name, "err", pErr)
+			} else if expiresAt, tErr := time.Parse(time.RFC3339, res.ExpiresAt); tErr != nil {
+				r.log.Warn("ssl: parse self_sign expires_at failed", "domain", domain.Name, "err", tErr)
 			} else {
-				expiresAt, err := time.Parse(time.RFC3339, res.ExpiresAt)
-				if err != nil {
-					r.log.Warn("ssl: parse self_sign expires_at failed", "domain", domain.Name, "err", err)
-				} else {
-					fallbackCertPath = &res.CertPath
-					fallbackKeyPath = &res.KeyPath
-					fallbackExpiresAt = &expiresAt
-					r.log.Info("ssl: self-signed fallback generated", "domain", domain.Name, "expires_at", expiresAt.Format(time.RFC3339))
-				}
+				fallbackCertPath = &res.CertPath
+				fallbackKeyPath = &res.KeyPath
+				fallbackExpiresAt = &expiresAt
+				r.log.Info("ssl: self-signed fallback generated", "domain", domain.Name, "expires_at", expiresAt.Format(time.RFC3339))
 			}
 		}
 	}
 
-	// Check if we've exceeded max retries
-	if newRetryCount >= 20 {
-		_ = r.sslCerts.MarkFailed(ctx, cert.ID, lastError)
-		r.log.Error("ssl: max retry count exceeded, marking failed", "domain", domain.Name, "retry_count", newRetryCount, "err", lastError)
-		return
-	}
-
-	// Schedule next retry with exponential backoff
-	nextRetry := time.Now().UTC().Add(computeBackoff(newRetryCount))
+	newRetryCount := cert.RetryCount + 1
+	nextRetry := time.Now().UTC().Add(acmeRetryInterval)
 	_ = r.sslCerts.UpdateAfterACMEFailure(ctx, cert.ID, lastError, nextRetry, newRetryCount, fallbackCertPath, fallbackKeyPath, fallbackExpiresAt)
-	r.log.Warn("ssl: acme failed, scheduling retry", "domain", domain.Name, "retry_count", newRetryCount, "next_retry_at", nextRetry.Format(time.RFC3339), "err", lastError)
+	r.log.Warn("ssl: acme unavailable, retrying in 3h", "domain", domain.Name, "retry_count", newRetryCount, "next_retry_at", nextRetry.Format(time.RFC3339), "err", lastError)
 }
 
 // sslRenewForDomain runs an ACME renewal and updates the cert row on success.

@@ -407,6 +407,28 @@ func (h *applicationsHandler) create(c *gin.Context) {
 			UseWWW:           install.UseWWW,
 		}, h.cfg)
 		adminPassword = phpbbPass
+	case "grav":
+		// Grav is RequiresDB=false (flat-file, like DokuWiki), so no
+		// chain.* values are populated. admin_password from params is
+		// the only secret to surface.
+		gravPass := paramOr(req.Params, "admin_password", "")
+		if gravPass == "" {
+			gravPass = ids.NewULID()
+		}
+		adminPassword = gravPass
+		go createGravInstallAndKickAgent(ctx, gravKickArgs{
+			InstallID:     installID,
+			OSUser:        osUser,
+			DocRoot:       domain.DocRoot,
+			Subdirectory:  install.Subdirectory,
+			SiteURL:       siteURL,
+			SiteTitle:     paramOr(req.Params, "site_title", "My Grav Site"),
+			AdminUser:     install.AdminUsername,
+			AdminPass:     gravPass,
+			AdminEmail:    install.AdminEmail,
+			AdminFullName: paramOr(req.Params, "admin_full_name", "Site Administrator"),
+			UseWWW:        install.UseWWW,
+		}, h.cfg)
 	case "mediawiki":
 		// MediaWiki requires a database (RequiresDB=true → adminPassword
 		// already populated by provisionDBChain via the DB-user path).
@@ -1059,6 +1081,67 @@ func createPhpBBInstallAndKickAgent(parentCtx context.Context, args phpbbKickArg
 		"admin_email":       args.AdminEmail,
 		"language":          args.Language,
 		"use_www":           args.UseWWW,
+	})
+	if err != nil {
+		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	var respMap map[string]any
+	if err := json.Unmarshal(agentResp, &respMap); err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to parse agent response: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+	version := ""
+	if v, ok := respMap["version"].(string); ok {
+		version = v
+	}
+	cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
+}
+
+// gravKickArgs is what the install-row kicker passes through to the
+// agent's grav installer (RequiresDB=false, like DokuWiki — no DB fields).
+type gravKickArgs struct {
+	InstallID     string
+	OSUser        string
+	DocRoot       string
+	Subdirectory  string
+	SiteURL       string
+	SiteTitle     string
+	AdminUser     string
+	AdminPass     string
+	AdminEmail    string
+	AdminFullName string
+	UseWWW        bool
+}
+
+func createGravInstallAndKickAgent(parentCtx context.Context, args gravKickArgs, cfg ApplicationHandlerConfig) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	if err := cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "installing", nil, nil); err != nil {
+		return
+	}
+	if cfg.Agent == nil {
+		errMsg := "agent not configured"
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	agentResp, err := cfg.Agent.Call(ctx, "app.install", map[string]any{
+		"app_type":         "grav",
+		"os_user":          args.OSUser,
+		"docroot":          args.DocRoot,
+		"subdirectory":     args.Subdirectory,
+		"site_url":         args.SiteURL,
+		"site_title":       args.SiteTitle,
+		"admin_user":       args.AdminUser,
+		"admin_pass":       args.AdminPass,
+		"admin_email":      args.AdminEmail,
+		"admin_full_name":  args.AdminFullName,
+		"use_www":          args.UseWWW,
 	})
 	if err != nil {
 		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)

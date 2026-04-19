@@ -9,4 +9,5 @@ export const APP_TYPE_LABELS: Record<string, string> = {
   drupal: "Drupal",
   joomla: "Joomla",
   phpbb: "phpBB",
+  grav: "Grav",
 };

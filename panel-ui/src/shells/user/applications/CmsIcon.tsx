@@ -1,4 +1,4 @@
-import { SiWordpress, SiWikipedia, SiDrupal, SiJoomla, SiPhpbb } from "react-icons/si";
+import { SiWordpress, SiWikipedia, SiDrupal, SiJoomla, SiPhpbb, SiGrav } from "react-icons/si";
 import { BookOutlined } from "@ant-design/icons";
 import type { CSSProperties } from "react";
 
@@ -17,6 +17,7 @@ const BRAND_COLOR: Record<string, string> = {
   drupal: "#0678BE",
   joomla: "#F44321",
   phpbb: "#26477F",
+  grav: "#221E1F",
 };
 
 // CmsIcon renders the brand logo for an app_type. WordPress and
@@ -49,6 +50,9 @@ export function CmsIcon({ appType, size = 18 }: CmsIconProps) {
   }
   if (key === "phpbb") {
     return <SiPhpbb style={style} />;
+  }
+  if (key === "grav") {
+    return <SiGrav style={style} />;
   }
   if (key === "dokuwiki") {
     return <BookOutlined style={style} />;

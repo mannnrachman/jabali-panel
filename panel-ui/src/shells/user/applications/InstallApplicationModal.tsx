@@ -6,8 +6,13 @@
 // dispatches the agent install via app.install with the matching
 // app_type. Returns 202 with the admin password delivered exactly
 // once — we show it in a reveal-once panel.
+//
+// The per-app form fields beneath Domain/Subdirectory are rendered
+// dynamically from descriptor.install_param_schema so adding a new
+// app type (e.g. DokuWiki with a "license" enum) requires zero UI
+// code — the descriptor on the API side is the only source of truth.
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Modal,
   Form,
@@ -27,16 +32,29 @@ import { apiClient } from "../../../apiClient";
 
 type Domain = { id: string; name: string };
 
+// ParamSpec mirrors panel-api/internal/apps.ParamSpec. The closed Type
+// set keeps the renderer finite — adding a sixth type means updating
+// both this file and the server validator.
+type ParamSpec = {
+  type: "string" | "email" | "password" | "enum" | "bool";
+  required?: boolean;
+  pattern?: string;
+  values?: string[];
+  default?: string | boolean | number | null;
+  description?: string;
+};
+
 // AppDescriptor mirrors the JSON the server's GET /applications/registry
-// returns. We carry only the fields the UI renders today; new fields can
-// be added without breaking older bundles because Select reads keys it
-// knows.
+// returns. We carry only the fields the UI renders today; new fields
+// can be added without breaking older bundles because Select reads
+// keys it knows.
 type AppDescriptor = {
   name: string;
   display_name: string;
   description?: string;
   default_subdirectory: string;
   requires_db: boolean;
+  install_param_schema?: Record<string, ParamSpec>;
 };
 
 type Props = {
@@ -91,23 +109,212 @@ const LOCALES: { value: string; label: string }[] = [
 const SUBDIRECTORY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const RESERVED_SUBDIRS = new Set(["wp-admin", "wp-includes", "wp-content"]);
 
+// snake_case → "Title case" with a few hand-tweaks for the common
+// fields. The fallback transform produces readable labels for any
+// field a future descriptor introduces.
+function humanizeFieldName(name: string): string {
+  const overrides: Record<string, string> = {
+    site_title: "Site title",
+    admin_username: "Admin username",
+    admin_email: "Admin email",
+    admin_password: "Admin password",
+    locale: "Locale",
+    license: "License",
+    site_name: "Site name",
+    admin_user: "Admin user",
+    language: "Language",
+  };
+  if (overrides[name]) return overrides[name];
+  return name
+    .split(/[_\s]+/)
+    .map((p, i) => (i === 0 ? p[0].toUpperCase() + p.slice(1) : p))
+    .join(" ");
+}
+
+// Field ordering — site title first, admin block next, then anything
+// else alphabetically. Avoids needing an explicit Order field on
+// ParamSpec while still giving every app a sensible top-down flow.
+const FIELD_ORDER: Record<string, number> = {
+  site_title: 1,
+  site_name: 2,
+  admin_username: 10,
+  admin_user: 11,
+  admin_email: 12,
+  admin_password: 13,
+  locale: 50,
+  language: 51,
+  license: 60,
+};
+function orderedFields(schema: Record<string, ParamSpec>): string[] {
+  return Object.keys(schema).sort((a, b) => {
+    const pa = FIELD_ORDER[a] ?? 100;
+    const pb = FIELD_ORDER[b] ?? 100;
+    if (pa !== pb) return pa - pb;
+    return a.localeCompare(b);
+  });
+}
+
+// renderParamField produces an AntD <Form.Item> for one descriptor
+// param. Unknown types render as plain Input so a future server can
+// add a type without breaking older bundles, with a console hint so
+// we notice the mismatch in dev.
+function renderParamField(
+  name: string,
+  spec: ParamSpec,
+  defaultValue: string | undefined,
+): React.ReactNode {
+  const label = humanizeFieldName(name);
+  const required = !!spec.required;
+  const baseRules: Record<string, unknown>[] = [];
+  if (required) {
+    baseRules.push({ required: true, message: `${label} is required` });
+  }
+
+  const initialValue =
+    defaultValue !== undefined
+      ? defaultValue
+      : spec.default !== undefined && spec.default !== null
+      ? spec.default
+      : undefined;
+
+  // Locale gets the curated dropdown rather than a plain text input —
+  // the descriptor declares Type:"string" but a fixed-list Select is
+  // a meaningful UX win. Same idea would apply to a future "language"
+  // field on MediaWiki.
+  if (name === "locale" || name === "language") {
+    return (
+      <Form.Item
+        key={name}
+        label={label}
+        name={name}
+        initialValue={initialValue ?? "en_US"}
+        rules={baseRules}
+        extra={spec.description}
+      >
+        <Select options={LOCALES} showSearch optionFilterProp="label" />
+      </Form.Item>
+    );
+  }
+
+  switch (spec.type) {
+    case "string":
+      if (spec.pattern) {
+        baseRules.push({
+          pattern: new RegExp(spec.pattern),
+          message: "Does not match expected format",
+        });
+      }
+      return (
+        <Form.Item
+          key={name}
+          label={label}
+          name={name}
+          initialValue={initialValue}
+          rules={baseRules}
+          extra={spec.description}
+        >
+          <Input autoComplete="off" />
+        </Form.Item>
+      );
+    case "email":
+      baseRules.push({ type: "email", message: "Must be a valid email" });
+      return (
+        <Form.Item
+          key={name}
+          label={label}
+          name={name}
+          initialValue={initialValue}
+          rules={baseRules}
+          extra={spec.description}
+        >
+          <Input autoComplete="off" />
+        </Form.Item>
+      );
+    case "password":
+      return (
+        <Form.Item
+          key={name}
+          label={label}
+          name={name}
+          rules={baseRules}
+          extra={
+            spec.description ??
+            (required
+              ? undefined
+              : "Leave blank to have us generate a strong random password.")
+          }
+        >
+          <Input.Password
+            autoComplete="new-password"
+            placeholder={required ? undefined : "(auto-generated)"}
+          />
+        </Form.Item>
+      );
+    case "enum":
+      return (
+        <Form.Item
+          key={name}
+          label={label}
+          name={name}
+          initialValue={initialValue}
+          rules={baseRules}
+          extra={spec.description}
+        >
+          <Select
+            options={(spec.values ?? []).map((v) => ({ value: v, label: v }))}
+            showSearch
+            optionFilterProp="label"
+          />
+        </Form.Item>
+      );
+    case "bool":
+      return (
+        <Form.Item
+          key={name}
+          label={label}
+          name={name}
+          valuePropName="checked"
+          initialValue={
+            typeof initialValue === "boolean" ? initialValue : false
+          }
+          extra={spec.description}
+        >
+          <Switch />
+        </Form.Item>
+      );
+    default:
+      return (
+        <Form.Item
+          key={name}
+          label={label}
+          name={name}
+          initialValue={initialValue}
+          extra={spec.description ?? `Unknown param type: ${spec.type}`}
+        >
+          <Input autoComplete="off" />
+        </Form.Item>
+      );
+  }
+}
+
+// Fallback schema used when the API didn't return /applications/registry
+// or the selected app has no install_param_schema. Mirrors the legacy
+// WordPress modal so users on a stale bundle still get a working form.
+const FALLBACK_WP_SCHEMA: Record<string, ParamSpec> = {
+  site_title: { type: "string", required: true, default: "My WordPress site" },
+  admin_username: { type: "string", required: true, default: "admin", pattern: "^[a-zA-Z0-9_.-]{3,60}$" },
+  admin_email: { type: "email", required: true },
+  admin_password: { type: "password", required: false },
+  locale: { type: "string", required: false, default: "en_US" },
+};
+
 export const InstallApplicationModal = ({
   open,
   onClose,
   onSuccess,
   defaultAdminEmail,
 }: Props) => {
-  const [form] = Form.useForm<{
-    app_type: string;
-    domain_id: string;
-    use_www: boolean;
-    subdirectory: string;
-    site_title: string;
-    admin_username: string;
-    admin_email: string;
-    admin_password: string;
-    locale: string;
-  }>();
+  const [form] = Form.useForm<Record<string, unknown>>();
   const [submitting, setSubmitting] = useState(false);
   const [domains, setDomains] = useState<Domain[]>([]);
   const [loadingDomains, setLoadingDomains] = useState(false);
@@ -116,10 +323,23 @@ export const InstallApplicationModal = ({
   const [result, setResult] = useState<CreatedResult | null>(null);
   const invalidate = useInvalidate();
 
-  const selectedAppType = Form.useWatch("app_type", form);
+  const selectedAppType = Form.useWatch("app_type", form) as string | undefined;
   const selectedDomainId = Form.useWatch("domain_id", form);
   const domainSelected = !!selectedDomainId;
   const selectedApp = apps.find((a) => a.name === selectedAppType);
+
+  // The schema we render. Falls back to the legacy WP shape when:
+  // (a) no app is selected yet (typical first-paint), or
+  // (b) the descriptor predates install_param_schema in the API
+  //     (older API build, newer UI).
+  const activeSchema: Record<string, ParamSpec> = useMemo(() => {
+    if (selectedApp?.install_param_schema && Object.keys(selectedApp.install_param_schema).length > 0) {
+      return selectedApp.install_param_schema;
+    }
+    return FALLBACK_WP_SCHEMA;
+  }, [selectedApp]);
+
+  const fieldOrder = useMemo(() => orderedFields(activeSchema), [activeSchema]);
 
   const refreshLists = () => {
     invalidate({ resource: "applications", invalidates: ["list"] });
@@ -128,9 +348,7 @@ export const InstallApplicationModal = ({
     onSuccess();
   };
 
-  // Load registry + domains when the modal opens. The picker defaults
-  // to "wordpress" so the form looks identical to today; later steps
-  // light up DokuWiki / MediaWiki via additional registry entries.
+  // Load registry + domains when the modal opens.
   useEffect(() => {
     if (!open) return;
     let alive = true;
@@ -155,8 +373,6 @@ export const InstallApplicationModal = ({
         if (!alive) return;
         const list = resp.data?.data ?? [];
         setApps(list);
-        // Default to WordPress when present so the form doesn't change
-        // shape between releases that add new app types at the front.
         const wp = list.find((a) => a.name === "wordpress");
         const defaultName = wp?.name ?? list[0]?.name ?? "wordpress";
         form.setFieldsValue({ app_type: defaultName });
@@ -164,14 +380,13 @@ export const InstallApplicationModal = ({
       .catch((err) => {
         if (!alive) return;
         message.error(extractError(err, "Failed to load app catalog"));
-        // Fallback: surface a WordPress-only catalog so the form still
-        // renders if the server hasn't redeployed with /applications/registry.
         setApps([
           {
             name: "wordpress",
             display_name: "WordPress",
             default_subdirectory: "",
             requires_db: true,
+            install_param_schema: FALLBACK_WP_SCHEMA,
           },
         ]);
         form.setFieldsValue({ app_type: "wordpress" });
@@ -183,6 +398,33 @@ export const InstallApplicationModal = ({
       alive = false;
     };
   }, [open, form]);
+
+  // When the user switches App, clear every per-app field and apply
+  // the new descriptor's defaults. Without this, a "site_title" left
+  // over from WordPress would persist into the DokuWiki form and the
+  // user would submit stale data.
+  useEffect(() => {
+    if (!open) return;
+    if (!selectedApp) return;
+    const fieldsToClear: Record<string, undefined> = {};
+    Object.keys(activeSchema).forEach((k) => {
+      fieldsToClear[k] = undefined;
+    });
+    form.setFieldsValue(fieldsToClear);
+    // Apply per-field defaults — admin_email opts to the logged-in
+    // user's email when the descriptor doesn't override it.
+    const defaults: Record<string, string | number | boolean> = {};
+    Object.entries(activeSchema).forEach(([name, spec]) => {
+      if (name === "admin_email" && defaultAdminEmail) {
+        defaults[name] = defaultAdminEmail;
+        return;
+      }
+      if (spec.default !== undefined && spec.default !== null) {
+        defaults[name] = spec.default;
+      }
+    });
+    form.setFieldsValue(defaults);
+  }, [selectedApp?.name, activeSchema, defaultAdminEmail, form, open]);
 
   const reset = () => {
     form.resetFields();
@@ -203,20 +445,19 @@ export const InstallApplicationModal = ({
     const vals = form.getFieldsValue();
     setSubmitting(true);
     try {
-      // M19 generic create. The per-app fields (site_title, admin_*)
-      // live under `params`; the descriptor's InstallParamSchema on the
-      // server validates them. Only WordPress is in the picker today,
-      // so the body shape matches what the legacy /wordpress-installs
-      // route accepted just rewrapped.
-      const params: Record<string, unknown> = {
-        admin_username: vals.admin_username,
-        admin_email: vals.admin_email,
-        site_title: vals.site_title,
-        locale: vals.locale || "en_US",
-      };
-      if (vals.admin_password) {
-        params.admin_password = vals.admin_password;
-      }
+      // Build `params` from ONLY the descriptor's declared fields so a
+      // form with leftover keys (e.g. after the user switched apps mid-
+      // edit) doesn't send unknown keys the server would 400 on.
+      const params: Record<string, unknown> = {};
+      Object.keys(activeSchema).forEach((name) => {
+        const v = vals[name];
+        // Drop optional empty strings — the server treats absent and
+        // empty as "use default", but rejects empty when Required.
+        if (v === "" && !activeSchema[name].required) return;
+        if (v === undefined) return;
+        params[name] = v;
+      });
+
       const resp = await apiClient.post<{
         id: string;
         app_type: string;
@@ -233,7 +474,7 @@ export const InstallApplicationModal = ({
         params,
       });
       const domainName =
-        domains.find((d) => d.id === vals.domain_id)?.name ?? vals.domain_id;
+        domains.find((d) => d.id === vals.domain_id)?.name ?? String(vals.domain_id);
       setResult({
         appType: resp.data.app_type,
         domainName,
@@ -359,9 +600,6 @@ export const InstallApplicationModal = ({
               app_type: "wordpress",
               use_www: false,
               subdirectory: "",
-              admin_username: "admin",
-              admin_email: defaultAdminEmail,
-              locale: "en_US",
             }}
           >
             <Form.Item
@@ -428,52 +666,18 @@ export const InstallApplicationModal = ({
                   rules={[{ validator: validateSubdirectory }]}
                 >
                   <Input
-                    placeholder="Leave empty to install in root"
+                    placeholder={
+                      selectedApp?.default_subdirectory
+                        ? `Suggested: ${selectedApp.default_subdirectory}`
+                        : "Leave empty to install in root"
+                    }
                     autoComplete="off"
                   />
                 </Form.Item>
 
-                <Form.Item
-                  label="Site title"
-                  name="site_title"
-                  rules={[{ required: true, message: "Site title is required" }]}
-                >
-                  <Input placeholder="My site" autoComplete="off" />
-                </Form.Item>
-                <Form.Item
-                  label="Admin username"
-                  name="admin_username"
-                  rules={[
-                    { required: true, message: "Admin username is required" },
-                    {
-                      pattern: /^[a-zA-Z0-9_.-]{3,60}$/,
-                      message:
-                        "3–60 chars; letters, digits, underscore, dot, dash",
-                    },
-                  ]}
-                >
-                  <Input autoComplete="off" />
-                </Form.Item>
-                <Form.Item
-                  label="Admin email"
-                  name="admin_email"
-                  rules={[
-                    { required: true, message: "Admin email is required" },
-                    { type: "email", message: "Must be a valid email" },
-                  ]}
-                >
-                  <Input autoComplete="off" />
-                </Form.Item>
-                <Form.Item
-                  label="Admin password"
-                  name="admin_password"
-                  extra="Leave blank to have us generate a strong random password."
-                >
-                  <Input.Password autoComplete="new-password" placeholder="(auto-generated)" />
-                </Form.Item>
-                <Form.Item label="Locale" name="locale">
-                  <Select options={LOCALES} showSearch optionFilterProp="label" />
-                </Form.Item>
+                {fieldOrder.map((name) =>
+                  renderParamField(name, activeSchema[name], undefined),
+                )}
               </>
             )}
           </Form>

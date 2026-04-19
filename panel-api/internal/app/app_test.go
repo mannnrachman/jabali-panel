@@ -88,3 +88,98 @@ func TestNewWithDeps_ProtectedRouteRequiresAuth(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
+
+func TestNewWithDeps_LegacyAuthProviderUsesJWT(t *testing.T) {
+	t.Parallel()
+
+	// When provider="legacy" (the default), /api/v1/* must use RequireAuth (JWT).
+	iss, err := auth.NewJWTIssuer(auth.JWTConfig{
+		Secret:    []byte("integration-test-secret-xxxxxxxxxx"),
+		Issuer:    "jabali-panel-test",
+		KeyID:     "v1",
+		AccessTTL: time.Minute,
+	})
+	require.NoError(t, err)
+
+	cfg := config.Defaults()
+	cfg.Auth.Provider = "legacy"
+
+	r := app.NewWithDeps(cfg, app.Deps{JWTIssuer: iss})
+
+	// Missing Authorization header should return 401 (from RequireAuth).
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestNewWithDeps_KratosAuthProviderInstantiatesClient(t *testing.T) {
+	t.Parallel()
+
+	// When provider="kratos" and Kratos URLs are set, kratosclient.Client
+	// must be instantiated and bound to the Deps. The middleware should be
+	// RequireKratosSession, which validates session cookies via the Kratos
+	// /sessions/whoami endpoint.
+	cfg := config.Defaults()
+	cfg.Auth.Provider = "kratos"
+	cfg.Auth.Kratos.PublicURL = "http://localhost:4433"
+	cfg.Auth.Kratos.AdminURL = "http://localhost:4434"
+
+	r := app.NewWithDeps(cfg, app.Deps{})
+
+	// Missing or invalid session cookie should return 401 (from RequireKratosSession).
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestNewWithDeps_KratosProviderWithoutURLsFallsBack(t *testing.T) {
+	t.Parallel()
+
+	// If provider="kratos" but PublicURL is empty, the client should not be
+	// instantiated. Routes should not mount (no JWTIssuer, no KratosClient).
+	cfg := config.Defaults()
+	cfg.Auth.Provider = "kratos"
+	cfg.Auth.Kratos.PublicURL = ""
+	cfg.Auth.Kratos.AdminURL = ""
+
+	r := app.NewWithDeps(cfg, app.Deps{})
+
+	// /api/v1/* should not exist; request should hit 404 (no route registered).
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestNewWithDeps_LegacyProviderIgnoresKratosConfig(t *testing.T) {
+	t.Parallel()
+
+	// If provider="legacy" (or default), Kratos config should be ignored even
+	// if PublicURL and AdminURL are set. JWTIssuer should be the only auth mechanism.
+	iss, err := auth.NewJWTIssuer(auth.JWTConfig{
+		Secret:    []byte("integration-test-secret-xxxxxxxxxx"),
+		Issuer:    "jabali-panel-test",
+		KeyID:     "v1",
+		AccessTTL: time.Minute,
+	})
+	require.NoError(t, err)
+
+	cfg := config.Defaults()
+	cfg.Auth.Provider = "legacy"
+	cfg.Auth.Kratos.PublicURL = "http://localhost:4433"
+	cfg.Auth.Kratos.AdminURL = "http://localhost:4434"
+
+	r := app.NewWithDeps(cfg, app.Deps{JWTIssuer: iss})
+
+	// Should require JWT auth (RequireAuth), not Kratos.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}

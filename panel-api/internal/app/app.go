@@ -14,6 +14,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/apps"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
@@ -29,6 +30,7 @@ import (
 type Deps struct {
 	Auth                api.AuthService
 	JWTIssuer           *auth.JWTIssuer
+	KratosClient        *kratosclient.Client
 	Users               repository.UserRepository
 	Packages            repository.PackageRepository
 	Domains             repository.DomainRepository
@@ -159,10 +161,23 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		})
 	}
 
-	if deps.JWTIssuer != nil {
+	// Instantiate Kratos client if provider is "kratos".
+	// This happens before middleware registration so the client is available
+	// for RequireKratosSession binding.
+	if cfg.Auth.Provider == "kratos" && cfg.Auth.Kratos.PublicURL != "" {
+		deps.KratosClient = kratosclient.NewClient(cfg.Auth.Kratos.PublicURL, cfg.Auth.Kratos.AdminURL)
+	}
+
+	if deps.JWTIssuer != nil || deps.KratosClient != nil {
 		// Protected API group — everything under /api/v1/* except /auth
-		// flows through RequireAuth.
-		v1 := r.Group("/api/v1", middleware.RequireAuth(deps.JWTIssuer))
+		// flows through RequireAuth (JWT) or RequireKratosSession (Kratos).
+		var authMiddleware gin.HandlerFunc
+		if cfg.Auth.Provider == "kratos" && deps.KratosClient != nil {
+			authMiddleware = middleware.RequireKratosSession(deps.KratosClient)
+		} else {
+			authMiddleware = middleware.RequireAuth(deps.JWTIssuer)
+		}
+		v1 := r.Group("/api/v1", authMiddleware)
 		api.RegisterMeRoutes(v1)
 
 		// 2FA management endpoints (TOTP enrol/verify/disable/regen-backup).

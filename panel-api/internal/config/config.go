@@ -85,7 +85,7 @@ type DatabaseConfig struct {
 	URL string `toml:"url"`
 }
 
-// AuthConfig holds JWT + refresh token settings.
+// AuthConfig holds JWT + refresh token settings, plus provider selection.
 type AuthConfig struct {
 	JWTSecret  string        `toml:"jwt_secret"`
 	AccessTTL  time.Duration `toml:"access_ttl"`
@@ -96,6 +96,27 @@ type AuthConfig struct {
 	// without a TLS-terminating proxy in front; browsers + curl silently
 	// drop Secure cookies received over http://.
 	CookieSecure *bool `toml:"cookie_secure"`
+
+	// Provider selects the authentication provider: "legacy" for JWT or "kratos"
+	// for Ory Kratos integration (M20+). Defaults to "legacy".
+	// Environment: AUTH_PROVIDER
+	Provider string `toml:"provider"`
+
+	// Kratos holds Ory Kratos identity provider configuration (M20+).
+	// Only used when Provider == "kratos".
+	Kratos KratosConfig `toml:"kratos"`
+}
+
+// KratosConfig holds Ory Kratos URLs for identity validation.
+type KratosConfig struct {
+	// PublicURL is the public-facing base URL of the Kratos identity provider,
+	// e.g. https://auth.example.com or http://localhost:4433 for loopback.
+	// Used by the whoami client to validate session cookies.
+	PublicURL string `toml:"public_url"`
+
+	// AdminURL is the admin-facing base URL of Kratos, e.g. https://auth-admin.example.com
+	// or http://localhost:4434 for loopback. Reserved for future admin operations.
+	AdminURL string `toml:"admin_url"`
 }
 
 // AgentConfig holds the Unix-socket path and per-call timeout for the
@@ -177,6 +198,7 @@ func Defaults() *Config {
 		Auth: AuthConfig{
 			AccessTTL:  15 * time.Minute,
 			RefreshTTL: 7 * 24 * time.Hour,
+			Provider:   "legacy", // Default to JWT; can be overridden to "kratos"
 		},
 		Agent: AgentConfig{
 			SocketPath: "/run/jabali/agent.sock",
@@ -279,6 +301,15 @@ func applyEnv(cfg *Config) error {
 		b := v == "true" || v == "1"
 		cfg.Auth.CookieSecure = &b
 	}
+	if v := os.Getenv("AUTH_PROVIDER"); v != "" {
+		cfg.Auth.Provider = v
+	}
+	if v := os.Getenv("KRATOS_PUBLIC_URL"); v != "" {
+		cfg.Auth.Kratos.PublicURL = v
+	}
+	if v := os.Getenv("KRATOS_ADMIN_URL"); v != "" {
+		cfg.Auth.Kratos.AdminURL = v
+	}
 	if v := os.Getenv("AGENT_SOCKET"); v != "" {
 		cfg.Agent.SocketPath = v
 	}
@@ -356,6 +387,21 @@ func (c *Config) Validate() error {
 	case "text", "json":
 	default:
 		return fmt.Errorf("log.format %q: must be text|json", c.Log.Format)
+	}
+
+	// Validate auth provider
+	switch c.Auth.Provider {
+	case "legacy", "kratos":
+	default:
+		return fmt.Errorf("auth.provider %q: must be legacy|kratos", c.Auth.Provider)
+	}
+
+	// When provider is "kratos", PublicURL is required (AdminURL is optional for now)
+	if c.Auth.Provider == "kratos" && c.Auth.Kratos.PublicURL == "" {
+		if c.Server.Env == "production" {
+			return errors.New("auth.kratos.public_url: required when provider=kratos in production")
+		}
+		// In development, missing URLs just means Kratos auth is unavailable; not fatal
 	}
 
 	// Production hardening: anything a live panel cannot boot without

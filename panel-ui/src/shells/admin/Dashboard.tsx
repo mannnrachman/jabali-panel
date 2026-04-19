@@ -9,6 +9,7 @@ import {
   Card,
   Col,
   Descriptions,
+  notification,
   Progress,
   Row,
   Space,
@@ -18,7 +19,7 @@ import {
   Typography,
   Button,
 } from "antd";
-import { ReloadOutlined } from "@ant-design/icons";
+import { ReloadOutlined, RedoOutlined } from "@ant-design/icons";
 
 import { apiClient } from "../../apiClient";
 
@@ -43,6 +44,7 @@ type SystemInfo = {
 type ServiceStatus = {
   name: string;
   active: string;
+  load_state: string; // "loaded" | "masked" | "not-found" | "error"
 };
 
 type ServicesResponse = {
@@ -86,6 +88,7 @@ export function Dashboard() {
   const [services, setServices] = useState<ServiceStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [restartingName, setRestartingName] = useState<string | null>(null);
 
   const fetchData = async () => {
     setLoading(true);
@@ -104,6 +107,35 @@ export function Dashboard() {
       setError(detail);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // restartService hits POST /system/services/:name/restart and patches
+  // the single row in place so the full table doesn't re-render. Errors
+  // surface as a toast; the user can click Refresh for a full re-fetch.
+  const restartService = async (name: string) => {
+    setRestartingName(name);
+    try {
+      const resp = await apiClient.post<ServiceStatus>(
+        `/system/services/${encodeURIComponent(name)}/restart`,
+      );
+      setServices((prev) =>
+        prev.map((s) => (s.name === name ? { ...s, ...resp.data } : s)),
+      );
+      notification.success({
+        message: `Restarted ${name}`,
+        description: `Status is now ${resp.data.active}.`,
+      });
+    } catch (err) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } }).response?.data
+          ?.detail ?? "Restart failed";
+      notification.error({
+        message: `Failed to restart ${name}`,
+        description: detail,
+      });
+    } finally {
+      setRestartingName(null);
     }
   };
 
@@ -229,18 +261,46 @@ export function Dashboard() {
       )}
 
       <Card title="Services" size="small" style={{ marginTop: 16 }}>
-        <Table
+        <Table<ServiceStatus>
           dataSource={services}
           rowKey="name"
           size="small"
           pagination={false}
         >
-          <Table.Column dataIndex="name" title="Service" />
-          <Table.Column
+          <Table.Column<ServiceStatus> dataIndex="name" title="Service" />
+          <Table.Column<ServiceStatus>
             dataIndex="active"
             title="Status"
-            render={(active: string) => (
-              <Tag color={serviceTagColor(active)}>{active}</Tag>
+            render={(active: string, row: ServiceStatus) => (
+              <Space size="small">
+                <Tag color={serviceTagColor(active)}>{active}</Tag>
+                {row.load_state === "masked" && <Tag>masked</Tag>}
+              </Space>
+            )}
+          />
+          <Table.Column<ServiceStatus>
+            title="Actions"
+            width={130}
+            render={(_, row) => (
+              <Button
+                size="small"
+                icon={<RedoOutlined />}
+                loading={restartingName === row.name}
+                // Masked units can't be restarted via systemctl —
+                // disable the button so we don't round-trip just to
+                // show a 409. Hover text explains why.
+                disabled={
+                  row.load_state === "masked" || restartingName !== null
+                }
+                title={
+                  row.load_state === "masked"
+                    ? "Service is masked — cannot restart"
+                    : "Restart service"
+                }
+                onClick={() => restartService(row.name)}
+              >
+                Restart
+              </Button>
             )}
           />
         </Table>

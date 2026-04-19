@@ -846,22 +846,23 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Depends on:** M1 (admin access)
 
-### M18: Per-user resource limits (PLANNED)
+### M18: Per-user resource limits (SHIPPED — pending host validation)
 
 **Goal:** Hosting packages become *enforceable* bundles. Admins set disk, CPU, memory, I/O, task, and per-domain request/connection limits on a package; the reconciler converges the system so every hosting user is capped by kernel + filesystem + nginx. Per-user override rows allow one-off tuning without forking packages.
 
-**Deliverables:**
-- Migrations: new columns on `hosting_packages` (cpu/memory/io/tasks), new columns on `domains` (rate_limit_rps, connection_limit), new `user_limit_overrides` table
-- POSIX user quota enforcement (ext4/xfs; btrfs/zfs fail loud)
-- cgroups v2 drop-ins at `jabali-user-<u>.slice.d/limits.conf` (CPUQuota, MemoryMax, MemoryHigh=90%, TasksMax, IOReadBandwidthMax, IOWriteBandwidthMax)
-- nginx `limit_req_zone` + `limit_conn_zone` fragment per domain
-- Agent commands: `user.limits.apply|report|clear`
-- CLI: `jabali limits check|apply|status`
-- Admin UI: package editor + per-user override page + usage widgets (both shells)
-- install.sh: `usrquota` configuration + tmpfs `/tmp` + cgroups v2 probe
-- ADR-0032
+**Deliverables (all landed):**
+- Migrations 000042-000044: new columns on `hosting_packages` (cpu/memory/io/tasks), new columns on `domains` (rate_limit_rps, connection_limit), new `user_limit_overrides` table
+- POSIX user quota enforcement (ext4/xfs; btrfs/zfs fail loud in install.sh)
+- cgroups v2 drop-ins at `/etc/systemd/system/jabali-user-<u>.slice.d/limits.conf` (CPUQuota, MemoryMax, MemoryHigh=90%, TasksMax, IOReadBandwidthMax, IOWriteBandwidthMax)
+- nginx `00-jabali-ratelimits.conf` fragment generator + per-vhost `limit_req` / `limit_conn` directives
+- Agent commands: `user.limits.apply|report|clear` + `nginx.ratelimits.apply`
+- CLI: `jabali limits check|apply|status|package apply [--dry-run]`
+- Admin UI: package editor extended with 5 new fields under "Resource limits" divider
+- User shell: MyProfileUsageCard with 10s polling, disk/memory Progress bars, effective limits Descriptions
+- install.sh: `usrquota` configuration + tmpfs `/tmp` + cgroups v2 probe (idempotent, fail-loud on unsupported FS)
+- ADR-0032 + runbook at `plans/m18-resource-limits-runbook.md`
 
-**Status:** Planned (blueprint at `plans/m18-resource-limits.md`, reviewed + revised 2026-04-19)
+**Status:** Code complete; 7 waves shipped (A-G) 2026-04-19. **Host validation** — the OS-level tests (setquota EDQUOT, OOM-kill, nginx 503 on burst) cannot run from the dev host and are documented in runbook §3 for post-deploy execution on the test VM.
 
 **Depends on:** M9.5 (per-user slices from ADR-0025)
 
@@ -1001,7 +1002,7 @@ Use this table to navigate the codebase when adding a new capability:
 | M15: Migration importers | Planned | — |
 | M16: Automation API | Planned | — |
 | M17: Diagnostic reports | Planned | — |
-| M18: Per-user resource limits | Planned | Blueprint at `plans/m18-resource-limits.md` |
+| M18: Per-user resource limits | 2026-04-19 | Waves A-G on `main` (`caebe7b` → `aaa6bd0`); ADR-0032; runbook at `plans/m18-resource-limits-runbook.md`; host-level validation pending on test VM |
 
 ---
 

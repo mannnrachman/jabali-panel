@@ -34,9 +34,13 @@ var corsAllowedMethods = []string{
 //   - We never emit "Access-Control-Allow-Origin: *" because it's incompatible
 //     with Allow-Credentials=true. If the operator misconfigures allowed
 //     origins to just "*", we treat it as "no allowed origins".
-//   - Browsers send Origin on cross-origin fetches; same-origin fetches skip
-//     it. When Origin is absent we add no CORS headers at all — there's
-//     nothing to opt into.
+//   - Same-origin requests are auto-allowed: when the Origin's host:port
+//     matches the request's Host header, we reflect the Origin back without
+//     requiring the operator to add it to the whitelist. Firefox sends an
+//     Origin header even on same-origin fetch/XHR, and without the reflected
+//     headers the browser blocks the response (OpaqueResponseBlocking),
+//     which manifested as a blank /login page after token expiry.
+//   - Cross-origin requests still require an explicit whitelist entry.
 //   - Vary: Origin is always appended on requests that carry Origin, so
 //     intermediate caches don't poison responses across origins.
 func CORS(allowedOrigins []string) gin.HandlerFunc {
@@ -61,10 +65,10 @@ func CORS(allowedOrigins []string) gin.HandlerFunc {
 		}
 		c.Writer.Header().Add("Vary", "Origin")
 
-		if !slices.Contains(normalised, origin) {
-			// Not whitelisted — serve the request (CORS is a browser
-			// check) but emit no Allow-* headers. The browser will
-			// refuse to surface the response to the page.
+		if !slices.Contains(normalised, origin) && !isSameOrigin(origin, c.Request.Host) {
+			// Not whitelisted and not same-origin — serve the request
+			// (CORS is a browser check) but emit no Allow-* headers.
+			// The browser will refuse to surface the response to the page.
 			c.Next()
 			return
 		}
@@ -83,4 +87,25 @@ func CORS(allowedOrigins []string) gin.HandlerFunc {
 		c.Header("Access-Control-Expose-Headers", "X-Request-ID")
 		c.Next()
 	}
+}
+
+// isSameOrigin returns true when the Origin header's host:port authority
+// matches the request's Host header — i.e. the browser is doing a same-origin
+// fetch and just happens to include Origin. In that case the request has the
+// same trust boundary as the serving page, so CORS is not protecting anything
+// real; we reflect the Origin back so the browser surfaces the response.
+//
+// Only the authority (host:port) is compared. Scheme differences between
+// page and API would be a mixed-content issue already blocked by the browser
+// before this code sees the request.
+func isSameOrigin(origin, host string) bool {
+	if origin == "" || host == "" {
+		return false
+	}
+	// Origin is "<scheme>://<host>[:<port>]"; strip the scheme.
+	i := strings.Index(origin, "://")
+	if i < 0 {
+		return false
+	}
+	return origin[i+3:] == host
 }

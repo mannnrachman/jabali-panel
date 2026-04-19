@@ -80,6 +80,40 @@ func TestCORS_PreflightReturns204(t *testing.T) {
 	assert.NotEmpty(t, rec.Header().Get("Access-Control-Max-Age"))
 }
 
+func TestCORS_SameOriginWithHeaderIsAutoAllowed(t *testing.T) {
+	t.Parallel()
+	// Firefox sends Origin even on same-origin fetch/XHR. Without reflecting
+	// it back, the browser blocks the response (OpaqueResponseBlocking), which
+	// manifests as a blank /login page after token expiry. Auto-allowed when
+	// Origin's host:port == Request.Host.
+	r := newCORSRouter(nil) // empty whitelist, like a default deploy
+
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Host = "jabali-panel.local:8443"
+	req.Header.Set("Origin", "https://jabali-panel.local:8443")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, 200, rec.Code)
+	assert.Equal(t, "https://jabali-panel.local:8443", rec.Header().Get("Access-Control-Allow-Origin"))
+	assert.Equal(t, "true", rec.Header().Get("Access-Control-Allow-Credentials"))
+}
+
+func TestCORS_DifferentPortIsCrossOrigin(t *testing.T) {
+	t.Parallel()
+	// Different port = different origin. Must NOT auto-allow.
+	r := newCORSRouter(nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Host = "jabali-panel.local:8443"
+	req.Header.Set("Origin", "https://jabali-panel.local:9000")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Empty(t, rec.Header().Get("Access-Control-Allow-Origin"),
+		"different port must not be treated as same-origin")
+}
+
 func TestCORS_WildcardWithCredentialsRefused(t *testing.T) {
 	t.Parallel()
 	// We refuse to honour "*" because the refresh cookie requires credentials.

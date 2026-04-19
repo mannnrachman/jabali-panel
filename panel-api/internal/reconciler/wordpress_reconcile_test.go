@@ -43,6 +43,13 @@ func (m *mockWordPressInstallRepo) FindByDomainID(ctx context.Context, domainID 
 	return nil, repository.ErrNotFound
 }
 
+// FindByDomainAndSubdirectory — added for multi-install-per-domain
+// (migration 000045). Reconciler tests don't exercise subdir lookups;
+// return the same not-found signal as the other Find stubs.
+func (m *mockWordPressInstallRepo) FindByDomainAndSubdirectory(ctx context.Context, domainID, subdirectory string) (*models.WordPressInstall, error) {
+	return nil, repository.ErrNotFound
+}
+
 func (m *mockWordPressInstallRepo) FindByDBID(ctx context.Context, dbID string) (*models.WordPressInstall, error) {
 	return nil, repository.ErrNotFound
 }

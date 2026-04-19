@@ -51,29 +51,47 @@ func wordpressDeleteHandler(ctx context.Context, params json.RawMessage) (any, e
 		}
 	}
 
-	// List of WordPress files and directories to remove (from Step 2 task 6)
-	wpFiles := []string{
-		"wp-*.php",
+	// Targets to remove from the docroot. wp-*.php is glob-expanded
+	// Go-side because systemd-run invokes rm with argv (no shell) — a
+	// literal "wp-*.php" silently no-ops, leaving wp-config.php (with
+	// the DB password) on disk after a "delete". Standard wp directories
+	// + non-wp WordPress files are listed explicitly.
+	wpDirs := []string{
 		"wp-admin",
 		"wp-content",
 		"wp-includes",
 		"readme.html",
 		"license.txt",
 		"index.php",
+		// xmlrpc.php ships with WP but doesn't start with "wp-" so the
+		// wp-*.php glob below skips it. Listed explicitly.
+		"xmlrpc.php",
 	}
 
-	// Build and run the delete command under systemd-run as the OS user
-	for _, pattern := range wpFiles {
-		fullPath := filepath.Join(req.Docroot, pattern)
+	targets := make([]string, 0, len(wpDirs)+16)
+	for _, name := range wpDirs {
+		targets = append(targets, filepath.Join(req.Docroot, name))
+	}
+	if matches, err := filepath.Glob(filepath.Join(req.Docroot, "wp-*.php")); err == nil {
+		// Defense-in-depth: every match must be inside the validated
+		// docroot. Glob doesn't follow symlinks but a malicious entry
+		// could still be a path outside the tree on a buggy FS.
+		for _, m := range matches {
+			if filepath.Dir(m) == req.Docroot {
+				targets = append(targets, m)
+			}
+		}
+	}
+
+	// Build and run the delete command under systemd-run as the OS user.
+	// Best-effort: a missing file is not an error (rm -f), and one failed
+	// delete shouldn't block the rest.
+	for _, fullPath := range targets {
 		cmd := buildSystemdRunCmd(ctx,
 			req.OSUser,
 			"rm", "-rf", fullPath,
 		)
-		if err := cmd.Run(); err != nil {
-			// Best-effort deletion; continue even if one file fails
-			// Log the error but don't stop the whole operation
-			_ = err
-		}
+		_ = cmd.Run()
 	}
 
 	return wordpressDeleteResp{

@@ -1,9 +1,24 @@
-// Identity cache smoke test. Stubs apiClient so we can exercise the
-// memoization + clearIdentity paths without a live backend.
+// Identity cache smoke test. Stubs the kratos whoami call so we can exercise
+// the memoization + clearIdentity paths without a live Kratos instance.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { apiClient } from "./apiClient";
 import { clearIdentity, getIdentity } from "./identity";
+import * as kratos from "./kratos";
+
+function session(
+  id: string,
+  email: string,
+  isAdmin: boolean,
+): kratos.KratosSession {
+  return {
+    id: "session-" + id,
+    active: true,
+    identity: {
+      id,
+      traits: { email, is_admin: isAdmin },
+    },
+  };
+}
 
 describe("identity", () => {
   beforeEach(() => {
@@ -14,48 +29,78 @@ describe("identity", () => {
     vi.restoreAllMocks();
   });
 
-  it("caches the /me response across calls", async () => {
-    const get = vi.spyOn(apiClient, "get").mockResolvedValue({
-      data: { id: "01K...", email: "a@b.c", is_admin: true },
-    } as never);
+  it("caches the whoami response across calls", async () => {
+    const spy = vi
+      .spyOn(kratos, "whoami")
+      .mockResolvedValue(session("01K...", "a@b.c", true));
 
     const a = await getIdentity();
     const b = await getIdentity();
 
-    expect(a).toEqual({ id: "01K...", email: "a@b.c", isAdmin: true, impersonatedBy: null });
+    expect(a).toEqual({
+      id: "01K...",
+      email: "a@b.c",
+      isAdmin: true,
+      impersonatedBy: null,
+    });
     expect(b).toBe(a);
-    expect(get).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it("coalesces concurrent callers into one request", async () => {
-    const get = vi.spyOn(apiClient, "get").mockImplementation(async () => ({
-      data: { id: "x", email: "e", is_admin: false },
-    } as never));
+  it("coalesces concurrent callers into one whoami call", async () => {
+    const spy = vi
+      .spyOn(kratos, "whoami")
+      .mockImplementation(async () => session("x", "e", false));
 
-    const [a, b, c] = await Promise.all([getIdentity(), getIdentity(), getIdentity()]);
-    expect(a).toEqual({ id: "x", email: "e", isAdmin: false, impersonatedBy: null });
+    const [a, b, c] = await Promise.all([
+      getIdentity(),
+      getIdentity(),
+      getIdentity(),
+    ]);
+    expect(a).toEqual({
+      id: "x",
+      email: "e",
+      isAdmin: false,
+      impersonatedBy: null,
+    });
     expect(a).toBe(b);
     expect(b).toBe(c);
-    expect(get).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it("returns null when /me fails (e.g. not logged in)", async () => {
-    vi.spyOn(apiClient, "get").mockRejectedValue(new Error("401"));
+  it("returns null when whoami resolves to no session (not logged in)", async () => {
+    vi.spyOn(kratos, "whoami").mockResolvedValue(null);
     const me = await getIdentity();
     expect(me).toBeNull();
   });
 
+  it("returns null (not throws) when whoami fails transiently — Kratos blip shouldn't force logout", async () => {
+    vi.spyOn(kratos, "whoami").mockRejectedValue(new Error("5xx"));
+    const me = await getIdentity();
+    expect(me).toBeNull();
+  });
+
+  it("defaults is_admin to false when the trait is missing or non-boolean", async () => {
+    vi.spyOn(kratos, "whoami").mockResolvedValue({
+      id: "s",
+      active: true,
+      identity: { id: "x", traits: { email: "e@x" } },
+    });
+    const me = await getIdentity();
+    expect(me?.isAdmin).toBe(false);
+  });
+
   it("refetches after clearIdentity()", async () => {
-    const get = vi
-      .spyOn(apiClient, "get")
-      .mockResolvedValueOnce({ data: { id: "1", email: "a", is_admin: false } } as never)
-      .mockResolvedValueOnce({ data: { id: "2", email: "b", is_admin: true } } as never);
+    const spy = vi
+      .spyOn(kratos, "whoami")
+      .mockResolvedValueOnce(session("1", "a", false))
+      .mockResolvedValueOnce(session("2", "b", true));
 
     const first = await getIdentity();
     expect(first?.id).toBe("1");
     clearIdentity();
     const second = await getIdentity();
     expect(second?.id).toBe("2");
-    expect(get).toHaveBeenCalledTimes(2);
+    expect(spy).toHaveBeenCalledTimes(2);
   });
 });

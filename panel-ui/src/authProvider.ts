@@ -1,104 +1,49 @@
-// Refine auth provider bound to our /api/v1/auth/* + /api/v1/me endpoints.
+// authProvider.ts — Refine auth provider bound to Ory Kratos browser flows.
 //
-// The refresh token is a HttpOnly cookie set by the panel on successful
-// /auth/login; we never touch it from JS. The access token lives only in
-// memory (see apiClient.ts) so an XSS on the SPA can't steal it.
+// M20: all authentication state is the `ory_kratos_session` cookie, which the
+// browser attaches automatically to same-origin requests. There is no access
+// token in JS, no refresh dance, no in-memory session copy. The SPA simply
+// asks Kratos "am I logged in?" via /sessions/whoami and routes accordingly.
 //
-// Role-based routing: after login we fetch the identity and redirect to
-// the appropriate shell — admins go to /jabali-admin, everyone else to
+// Role-based routing: after login we fetch the identity and redirect to the
+// appropriate shell — admins go to /jabali-admin, everyone else to
 // /jabali-panel. Same logic on check() when we land on a bare / URL.
 import type { AuthProvider } from "@refinedev/core";
-import axios, { AxiosError } from "axios";
+import axios from "axios";
 
-import { apiClient, getAccessToken, refreshAccessToken, setAccessToken } from "./apiClient";
 import { clearIdentity, getIdentity } from "./identity";
-
-type LoginPayload = { access_token: string };
+import { logoutBrowser } from "./kratos";
 
 const ADMIN_HOME = "/jabali-admin";
 const USER_HOME = "/jabali-panel";
 
 export const authProvider: AuthProvider = {
-  login: async ({ email, password }) => {
-    try {
-      const resp = await apiClient.post<LoginPayload>("/auth/login", {
-        email,
-        password,
-      });
-      setAccessToken(resp.data.access_token);
-      // Freshly signed in — any stale cached identity is wrong.
-      clearIdentity();
-      const me = await getIdentity();
-      return {
-        success: true,
-        redirectTo: me?.isAdmin ? ADMIN_HOME : USER_HOME,
-        successNotification: { message: "Welcome back" },
-      };
-    } catch (err) {
-      const ax = err as AxiosError<{ error?: string }>;
-      const code = ax.response?.data?.error ?? "login_failed";
-      return {
-        success: false,
-        error: {
-          name: "Login failed",
-          message:
-            code === "invalid_credentials"
-              ? "Incorrect email or password."
-              : code === "rate_limited"
-                ? "Too many attempts — try again in a minute."
-                : "Could not sign in. Please try again.",
-        },
-      };
-    }
-  },
+  // login is handled in-component by pages/Login.tsx (which drives the
+  // Kratos self-service flow directly) — the Login page navigates by role
+  // after success. Refine still calls authProvider.login() in some code
+  // paths, so we expose a stub that asks the user to use the /login page.
+  login: async () => ({
+    success: false,
+    redirectTo: "/login",
+  }),
 
   logout: async () => {
     try {
-      await apiClient.post("/auth/logout");
+      await logoutBrowser();
     } catch {
-      // best-effort; cookie/token may already be stale
+      // best-effort: cookie may already be stale or Kratos may be down,
+      // neither of which should block the client-side cleanup.
     }
-    setAccessToken(null);
     clearIdentity();
-    // Wipe any impersonation-session markers so a future tab load
-    // doesn't see a stale no_refresh=1 and skip the refresh path,
-    // or read a dead imp_access_token back into memory. Belt and
-    // braces — setAccessToken(null) already clears imp_access_token,
-    // but only when no_refresh is set; we want both regardless.
-    sessionStorage.removeItem("no_refresh");
-    sessionStorage.removeItem("imp_access_token");
     return { success: true, redirectTo: "/login" };
   },
 
-  // check: called by Refine on route transitions. Fast-path uses the
-  // in-memory token; otherwise we try /me, which the axios refresh
-  // interceptor will silently retry with a refreshed token.
+  // check: called by Refine on route transitions. Asks Kratos whoami;
+  // the cookie is sent automatically. No refresh step needed.
   check: async () => {
-    // Fast path: we already have an access token in memory (or rehydrated
-    // from sessionStorage for impersonation tabs — see apiClient.getAccessToken).
-    if (getAccessToken()) return { authenticated: true };
-
-    // Impersonation tabs never have a refresh cookie — calling /auth/refresh
-    // would 401 and spam the console. If there's no token and no_refresh is
-    // set, the session is genuinely over; send to /login cleanly.
-    if (sessionStorage.getItem("no_refresh") === "1") {
-      return { authenticated: false, redirectTo: "/login", logout: true };
-    }
-
-    // Fresh page load — no in-memory token. Try /auth/refresh first so
-    // the subsequent /me call doesn't visibly 401 in the browser console
-    // during the silent recovery. Refresh uses the HttpOnly cookie; if
-    // the cookie is absent or invalid we route straight to /login without
-    // ever hitting /me.
-    const tok = await refreshAccessToken();
-    if (!tok) {
-      return { authenticated: false, redirectTo: "/login", logout: true };
-    }
-
     const me = await getIdentity();
-    return me
-      ? { authenticated: true }
-      : { authenticated: false, redirectTo: "/login", logout: true };
+    if (me) return { authenticated: true };
+    return { authenticated: false, redirectTo: "/login", logout: true };
   },
 
   // getIdentity: read-through the shared cache so Refine components
@@ -122,3 +67,10 @@ export const authProvider: AuthProvider = {
     return { error };
   },
 };
+
+// Exported so pages/Login.tsx can land the user on the right shell after
+// a successful Kratos submission — keeps the role-routing constants in one
+// place.
+export function homeForRole(isAdmin: boolean): string {
+  return isAdmin ? ADMIN_HOME : USER_HOME;
+}

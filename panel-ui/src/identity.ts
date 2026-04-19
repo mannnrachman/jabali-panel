@@ -2,9 +2,12 @@
 // authProvider, RoleGate, and any page component that needs to know the
 // caller's role.
 //
-// We memoize GET /me so a page change doesn't cost a round-trip. Logout
-// clears the cache so the next sign-in starts clean.
-import { apiClient } from "./apiClient";
+// M20: identity comes from Kratos's /sessions/whoami (via /.ory/). The
+// is_admin trait is authoritative; a missing trait defaults to false so
+// compromising a user token can't accidentally elevate. impersonatedBy
+// is always null post-M20 (M5a impersonation was dropped by step 6), but
+// the field stays on the shape for one cycle so callers don't break.
+import { whoami } from "./kratos";
 
 export type Identity = {
   id: string;
@@ -19,10 +22,10 @@ let inflight: Promise<Identity | null> | null = null;
 /**
  * Fetch the current user's identity, memoized across the session.
  *
- * Returns null if we're not logged in (the /me call bubbles a 401, which
- * apiClient's refresh interceptor handles; if that also fails we land
- * here with a thrown error, which we catch and coerce to null so the
- * caller can branch on "logged out" cleanly).
+ * Returns null when we're not logged in. Re-throws on transient upstream
+ * errors (Kratos 5xx) so the caller can tell the difference between "no
+ * session" and "identity service blip" — only the former should trigger
+ * a /login redirect.
  */
 export async function getIdentity(): Promise<Identity | null> {
   if (cached) return cached;
@@ -30,20 +33,22 @@ export async function getIdentity(): Promise<Identity | null> {
 
   inflight = (async () => {
     try {
-      const resp = await apiClient.get<{
-        id: string;
-        email: string;
-        is_admin: boolean;
-        impersonated_by?: string | null;
-      }>("/me");
+      const session = await whoami();
+      if (!session?.identity) {
+        return null;
+      }
+      const traits = session.identity.traits ?? { email: "" };
       cached = {
-        id: resp.data.id,
-        email: resp.data.email,
-        isAdmin: resp.data.is_admin,
-        impersonatedBy: resp.data.impersonated_by ?? null,
+        id: session.identity.id,
+        email: traits.email ?? "",
+        isAdmin: traits.is_admin === true,
+        impersonatedBy: null,
       };
       return cached;
     } catch {
+      // Network / 5xx — treat as "unknown" rather than "logged out". The
+      // caller can retry or surface a toast; we don't want a Kratos blip
+      // to force everyone to re-login.
       return null;
     } finally {
       inflight = null;
@@ -53,7 +58,7 @@ export async function getIdentity(): Promise<Identity | null> {
   return inflight;
 }
 
-/** Drop the cache. Call on logout or on any 401 that bubbles past refresh. */
+/** Drop the cache. Call on logout or on any 401 that bubbles from whoami. */
 export function clearIdentity(): void {
   cached = null;
   inflight = null;

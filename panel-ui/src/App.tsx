@@ -78,7 +78,7 @@ import { UserWordPressList } from "./shells/user/wordpress/UserWordPressList";
 import { UserSSHKeysPage } from "./shells/user/ssh-keys/UserSSHKeysPage";
 import { UserCronList } from "./shells/user/cron/UserCronList";
 import { AdminWordPressList } from "./shells/admin/wordpress/AdminWordPressList";
-import { PHPPoolsList } from "./shells/admin/php-pools/PHPPoolsList";
+import { PHPVersionsPage } from "./shells/admin/php/PHPVersionsPage";
 import { PHPPoolEdit } from "./shells/admin/php-pools/PHPPoolEdit";
 import { LoginPage } from "./pages/Login";
 
@@ -263,7 +263,7 @@ const ThemedApp = () => {
               <Route path="ssl" element={<SSLManagerPage />} />
               <Route path="settings" element={<ServerSettingsPage />} />
               <Route path="php-pools">
-                <Route index element={<PHPPoolsList />} />
+                <Route index element={<PHPVersionsPage />} />
                 <Route path="edit/:id" element={<PHPPoolEdit />} />
               </Route>
               <Route path="wordpress" element={<AdminWordPressList />} />

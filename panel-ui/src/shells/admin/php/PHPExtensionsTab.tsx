@@ -1,0 +1,321 @@
+import { useEffect, useMemo, useState } from "react";
+import {
+  Alert,
+  Button,
+  Card,
+  Input,
+  notification,
+  Select,
+  Space,
+  Spin,
+  Table,
+  Tag,
+  Typography,
+} from "antd";
+import {
+  ApiOutlined,
+  CheckCircleTwoTone,
+  CloseCircleOutlined,
+  DownloadOutlined,
+} from "@ant-design/icons";
+import { apiClient } from "../../../apiClient";
+
+// Shape mirrors the contract locked in panel-api/internal/agent/php_ext_contract_test.go.
+interface ExtensionState {
+  name: string;
+  installed: boolean;
+  enabled: boolean;
+  built_in: boolean;
+}
+interface ExtListResponse {
+  version: string;
+  extensions: ExtensionState[];
+}
+interface VersionStatus {
+  version: string;
+  installed: boolean;
+  fpm_running: boolean;
+}
+interface VersionStatusResponse {
+  default_version: string;
+  versions: VersionStatus[];
+}
+
+type ApplyAction = "install" | "remove" | "enable" | "disable";
+
+export const PHPExtensionsTab = () => {
+  const [versions, setVersions] = useState<string[]>([]);
+  const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
+  const [extensions, setExtensions] = useState<ExtensionState[]>([]);
+  const [loadingVersions, setLoadingVersions] = useState(true);
+  const [loadingExtensions, setLoadingExtensions] = useState(false);
+  const [busyExt, setBusyExt] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+
+  // Fetch installed versions once. Only installed versions populate the dropdown.
+  useEffect(() => {
+    const run = async () => {
+      try {
+        const { data } = await apiClient.get<VersionStatusResponse>(
+          "/admin/php/versions/status"
+        );
+        const installed = data.versions.filter((v) => v.installed).map((v) => v.version);
+        installed.sort((a, b) => {
+          const pa = a.split(".").map(Number);
+          const pb = b.split(".").map(Number);
+          for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+            const diff = (pb[i] ?? 0) - (pa[i] ?? 0);
+            if (diff !== 0) return diff;
+          }
+          return 0;
+        });
+        setVersions(installed);
+        const def = installed.includes(data.default_version)
+          ? data.default_version
+          : installed[0] ?? null;
+        setSelectedVersion(def);
+      } catch (err) {
+        notification.error({
+          message: "Failed to fetch PHP versions",
+          description: err instanceof Error ? err.message : "Unknown error",
+        });
+      } finally {
+        setLoadingVersions(false);
+      }
+    };
+    run();
+  }, []);
+
+  // Refetch extensions whenever selected version changes.
+  useEffect(() => {
+    if (!selectedVersion) return;
+    loadExtensions(selectedVersion);
+    // loadExtensions closes over setState only, safe to omit from deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedVersion]);
+
+  const loadExtensions = async (version: string) => {
+    setLoadingExtensions(true);
+    try {
+      const { data } = await apiClient.get<ExtListResponse>(
+        `/admin/php/versions/${version}/extensions`
+      );
+      setExtensions(data.extensions);
+    } catch (err) {
+      notification.error({
+        message: `Failed to fetch extensions for PHP ${version}`,
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+      setExtensions([]);
+    } finally {
+      setLoadingExtensions(false);
+    }
+  };
+
+  const handleApply = async (ext: string, action: ApplyAction) => {
+    if (!selectedVersion) return;
+    setBusyExt(ext);
+    try {
+      await apiClient.post(
+        `/admin/php/versions/${selectedVersion}/extensions/${ext}/apply`,
+        { action }
+      );
+      notification.success({
+        message: `${ext}: ${action} applied for PHP ${selectedVersion}`,
+        duration: 2,
+      });
+      // Server is source of truth; refetch instead of optimistic update.
+      await loadExtensions(selectedVersion);
+    } catch (err) {
+      notification.error({
+        message: `${action} ${ext} failed`,
+        description: err instanceof Error ? err.message : "Unknown error",
+        duration: 5,
+      });
+    } finally {
+      setBusyExt(null);
+    }
+  };
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return extensions;
+    return extensions.filter((e) => e.name.toLowerCase().includes(q));
+  }, [extensions, search]);
+
+  if (loadingVersions) {
+    return (
+      <div style={{ padding: 24, textAlign: "center" }}>
+        <Spin size="large" />
+      </div>
+    );
+  }
+
+  if (versions.length === 0) {
+    return (
+      <div style={{ padding: 24 }}>
+        <Alert
+          type="info"
+          showIcon
+          message="No PHP versions installed"
+          description="Install a PHP version first under the PHP Versions tab. Extension management requires at least one installed version."
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: 24 }}>
+      <Space
+        direction="vertical"
+        size="middle"
+        style={{ width: "100%", marginBottom: 16 }}
+      >
+        <div>
+          <Typography.Title level={3} style={{ margin: "0 0 8px 0" }}>
+            <ApiOutlined style={{ marginRight: 8 }} />
+            PHP Extensions
+          </Typography.Title>
+          <Typography.Paragraph style={{ margin: 0 }}>
+            Manage installed extensions per PHP version
+          </Typography.Paragraph>
+        </div>
+        <div>
+          <Typography.Text strong>PHP Version</Typography.Text>
+          <Select
+            style={{ display: "block", marginTop: 4, maxWidth: 320 }}
+            value={selectedVersion ?? undefined}
+            onChange={(v) => setSelectedVersion(v)}
+            options={versions.map((v) => ({ value: v, label: `PHP ${v}` }))}
+            aria-label="PHP version"
+          />
+        </div>
+      </Space>
+
+      <Card
+        title={selectedVersion ? `PHP ${selectedVersion} Extensions` : "Extensions"}
+        extra={
+          <Input.Search
+            placeholder="Search"
+            aria-label="Search extensions"
+            allowClear
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ maxWidth: 280 }}
+          />
+        }
+      >
+        <Table<ExtensionState>
+          dataSource={filtered}
+          rowKey="name"
+          loading={loadingExtensions}
+          pagination={false}
+          size="middle"
+        >
+          <Table.Column<ExtensionState>
+            dataIndex="name"
+            title="Extension"
+            render={(name: string, record) => (
+              <Space>
+                <ApiOutlined />
+                <span style={{ fontFamily: "monospace" }}>{name}</span>
+                {record.built_in && <Tag>built-in</Tag>}
+              </Space>
+            )}
+          />
+          <Table.Column<ExtensionState>
+            dataIndex="enabled"
+            title="Status"
+            width={120}
+            render={(enabled: boolean) =>
+              enabled ? (
+                <CheckCircleTwoTone twoToneColor="#52c41a" style={{ fontSize: 18 }} />
+              ) : (
+                <CloseCircleOutlined style={{ color: "#bfbfbf", fontSize: 18 }} />
+              )
+            }
+          />
+          <Table.Column<ExtensionState>
+            dataIndex="installed"
+            title="Installed"
+            width={120}
+            render={(installed: boolean) =>
+              installed ? <Tag color="green">Yes</Tag> : <Tag>No</Tag>
+            }
+          />
+          <Table.Column<ExtensionState>
+            title="Action"
+            width={260}
+            render={(_: unknown, record) => (
+              <ExtensionActions
+                record={record}
+                busy={busyExt === record.name}
+                onApply={(a) => handleApply(record.name, a)}
+              />
+            )}
+          />
+        </Table>
+      </Card>
+    </div>
+  );
+};
+
+interface ExtensionActionsProps {
+  record: ExtensionState;
+  busy: boolean;
+  onApply: (action: ApplyAction) => void;
+}
+
+// ExtensionActions decides which buttons to show based on the record state.
+// mysql is special: it's a meta-install (installs mysqli + pdo_mysql as a group)
+// but enable/disable are rejected by the agent as ambiguous. So the row offers
+// only Install / Remove for mysql, never Enable / Disable.
+const ExtensionActions = ({ record, busy, onApply }: ExtensionActionsProps) => {
+  const isMysqlMeta = record.name === "mysql";
+
+  // Built-ins: apt install/remove rejected; only enable/disable.
+  if (record.built_in) {
+    return record.enabled ? (
+      <Button type="link" danger loading={busy} onClick={() => onApply("disable")}>
+        Disable
+      </Button>
+    ) : (
+      <Button type="link" loading={busy} onClick={() => onApply("enable")}>
+        Enable
+      </Button>
+    );
+  }
+
+  // Not installed: only Install.
+  if (!record.installed) {
+    return (
+      <Button
+        type="link"
+        icon={<DownloadOutlined />}
+        loading={busy}
+        onClick={() => onApply("install")}
+      >
+        Install
+      </Button>
+    );
+  }
+
+  // Installed: show Remove plus Enable/Disable (except mysql meta).
+  return (
+    <Space>
+      {!isMysqlMeta &&
+        (record.enabled ? (
+          <Button type="link" danger loading={busy} onClick={() => onApply("disable")}>
+            Disable
+          </Button>
+        ) : (
+          <Button type="link" loading={busy} onClick={() => onApply("enable")}>
+            Enable
+          </Button>
+        ))}
+      <Button type="link" danger loading={busy} onClick={() => onApply("remove")}>
+        Remove
+      </Button>
+    </Space>
+  );
+};

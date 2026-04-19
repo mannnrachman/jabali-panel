@@ -34,7 +34,7 @@ interface PHPVersionAction {
   fpm_running: boolean;
 }
 
-export const PHPPoolsList = () => {
+export const VersionsTab = () => {
   const [statusData, setStatusData] = useState<PHPVersionStatusResponse | null>(
     null
   );

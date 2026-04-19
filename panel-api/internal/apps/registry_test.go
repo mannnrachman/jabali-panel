@@ -419,6 +419,23 @@ func TestRegisterDefaults_RegistersOpenCart(t *testing.T) {
 	}
 }
 
+func TestRegisterDefaults_RegistersAbanteCart(t *testing.T) {
+	r := New()
+	if err := RegisterDefaults(r); err != nil {
+		t.Fatalf("RegisterDefaults: %v", err)
+	}
+	a, ok := r.Get("abantecart")
+	if !ok {
+		t.Fatal("abantecart not registered after RegisterDefaults")
+	}
+	if !a.RequiresDB {
+		t.Error("abantecart should declare RequiresDB=true")
+	}
+	if a.DefaultSubdirectory != "shop" {
+		t.Errorf("abantecart default subdirectory = %q, want %q", a.DefaultSubdirectory, "shop")
+	}
+}
+
 func TestRegister_ConcurrentSafe(t *testing.T) {
 	// Race detector trips here if Register's mutex disappears.
 	r := New()

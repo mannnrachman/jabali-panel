@@ -79,6 +79,16 @@ function joinPath(dir: string, name: string): string {
   return dir.endsWith("/") ? dir + name : dir + "/" + name;
 }
 
+// Folders-first, then alphabetical (case-insensitive, locale-aware).
+// Matches every desktop file manager's default — GNOME Files, Finder, Explorer —
+// and keeps dotfiles/dotdirs naturally sorted within their group.
+function sortEntries(entries: FileEntry[]): FileEntry[] {
+  return [...entries].sort((a, b) => {
+    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  });
+}
+
 function errMessage(err: unknown): string {
   if (err instanceof AxiosError) {
     const data = err.response?.data as { detail?: string; error?: string } | undefined;
@@ -141,7 +151,7 @@ export const FileManagerPage = () => {
     setListLoading(true);
     try {
       const resp = await filesList(path);
-      setEntries(resp.entries);
+      setEntries(sortEntries(resp.entries));
     } catch (err) {
       message.error(`List failed: ${errMessage(err)}`);
       setEntries([]);
@@ -182,7 +192,17 @@ export const FileManagerPage = () => {
     if (entry.is_dir) {
       const next = joinPath(currentPath, entry.name);
       setCurrentPath(next);
-      if (!expandedKeys.includes(next)) setExpandedKeys([...expandedKeys, next]);
+      // Expand the parent (currentPath) and lazy-load its children so the
+      // new child appears in the tree on the left. Without this, drilling
+      // down via the table leaves the tree stuck at the last node the user
+      // expanded manually via the chevron.
+      setExpandedKeys((prev) => {
+        const s = new Set(prev);
+        s.add(currentPath);
+        s.add(next);
+        return Array.from(s);
+      });
+      void loadTreeChildren({ key: currentPath, title: currentPath, path: currentPath });
     }
   };
 

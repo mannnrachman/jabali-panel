@@ -94,5 +94,8 @@ func RegisterDefaults(r *Registry) error {
 	if err := r.Register(OpenCart); err != nil {
 		return err
 	}
+	if err := r.Register(AbanteCart); err != nil {
+		return err
+	}
 	return nil
 }

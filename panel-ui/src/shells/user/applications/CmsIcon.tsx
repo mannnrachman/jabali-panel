@@ -23,6 +23,7 @@ const BRAND_COLOR: Record<string, string> = {
   matomo: "#3152A0",
   concrete: "#34669B",
   opencart: "#2AC2EF",
+  abantecart: "#1B8AC4",
 };
 
 // CmsIcon renders the brand logo for an app_type. WordPress and
@@ -66,6 +67,12 @@ export function CmsIcon({ appType, size = 18 }: CmsIconProps) {
     return <SiMatomo style={style} />;
   }
   if (key === "opencart") {
+    return <FaOpencart style={style} />;
+  }
+  if (key === "abantecart") {
+    // Simple Icons doesn't ship an AbanteCart entry; fall back to the
+    // OpenCart cart glyph (same e-commerce visual cue) in AbanteCart's
+    // brand blue so the colour disambiguates the two in the catalog.
     return <FaOpencart style={style} />;
   }
   if (key === "concrete") {

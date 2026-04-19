@@ -141,7 +141,7 @@ const ThemedApp = () => {
               name: "php-pools",
               list: "/jabali-admin/php-pools",
               edit: "/jabali-admin/php-pools/edit/:id",
-              meta: { label: "PHP Versions", icon: <ThunderboltOutlined />, shell: "admin" },
+              meta: { label: "PHP Manager", icon: <ThunderboltOutlined />, shell: "admin" },
             },
             {
               name: "admin-wordpress-installs",

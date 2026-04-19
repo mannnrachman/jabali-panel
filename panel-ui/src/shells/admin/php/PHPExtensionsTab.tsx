@@ -12,12 +12,7 @@ import {
   Tag,
   Typography,
 } from "antd";
-import {
-  ApiOutlined,
-  CheckCircleTwoTone,
-  CloseCircleOutlined,
-  DownloadOutlined,
-} from "@ant-design/icons";
+import { ApiOutlined, DownloadOutlined } from "@ant-design/icons";
 import { apiClient } from "../../../apiClient";
 
 // Shape mirrors the contract locked in panel-api/internal/agent/php_ext_contract_test.go.
@@ -228,11 +223,7 @@ export const PHPExtensionsTab = () => {
             title="Status"
             width={120}
             render={(enabled: boolean) =>
-              enabled ? (
-                <CheckCircleTwoTone twoToneColor="#52c41a" style={{ fontSize: 18 }} />
-              ) : (
-                <CloseCircleOutlined style={{ color: "#bfbfbf", fontSize: 18 }} />
-              )
+              enabled ? <Tag color="green">Enabled</Tag> : <Tag>Disabled</Tag>
             }
           />
           <Table.Column<ExtensionState>

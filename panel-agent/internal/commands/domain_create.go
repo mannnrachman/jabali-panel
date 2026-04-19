@@ -41,6 +41,14 @@ type domainCreateParams struct {
 	PHPMaxInputVars      int    `json:"php_max_input_vars,omitempty"`
 	PHPMaxExecutionTime  int    `json:"php_max_execution_time,omitempty"`
 	PHPMaxInputTime      int    `json:"php_max_input_time,omitempty"`
+	// M18 per-domain HTTP limits. DomainID is required when either
+	// RateLimitRPS or ConnectionLimit is set so the zone-name tag
+	// matches the declaration in 00-jabali-ratelimits.conf. All three
+	// default to zero/empty which produces no directives (backwards
+	// compatible with existing domain.create callers).
+	DomainID        string `json:"domain_id,omitempty"`
+	RateLimitRPS    uint32 `json:"rate_limit_rps,omitempty"`
+	ConnectionLimit uint32 `json:"connection_limit,omitempty"`
 }
 
 // domainCreateResponse is the output shape for domain.create.
@@ -101,6 +109,7 @@ server {
     {{.RedirectDirectives}}
     {{.RuleDirectives}}
     {{.CustomDirectives}}
+    {{.RateLimitDirectives}}
 {{ else }}
     # Domain is administratively disabled. Serve the branded
     # disabled page instead of the tenant's docroot. Keep access
@@ -133,6 +142,12 @@ type vhostData struct {
 	PHPMaxExecutionTime  int
 	PHPMaxInputTime      int
 	PHPValueParam        string // fastcgi_param PHP_VALUE directive content
+	// RateLimitDirectives is the fully-rendered per-vhost rate/conn
+	// limit block (may span 0–2 lines). Computed by the caller via
+	// BuildRateLimitDirectives; interpolated verbatim. Never contains
+	// user-controllable data — both the rps value and the zone name
+	// (which embeds the ULID) are panel-controlled.
+	RateLimitDirectives  string
 }
 
 // indexDirectiveFor maps the panel's index_priority enum to the concrete
@@ -208,7 +223,7 @@ func buildPHPValueParam(memLimit, uploadMax, postMax string, maxInputVars, maxEx
 // writeVhost generates and writes the nginx vhost configuration, then tests and reloads nginx.
 // This is the core logic shared by domain.create and domain.enable/disable.
 // If the config content is unchanged, nginx reload is skipped for efficiency.
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int) (string, error) {
 	// Generate vhost configuration
 	tmpl, err := template.New("vhost").Parse(vhostTemplate)
 	if err != nil {
@@ -225,6 +240,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		RedirectDirectives: redirectDirectives,
 		RuleDirectives:     ruleDirectives,
 		CustomDirectives:   customDirectives,
+		RateLimitDirectives: rateLimitDirectives,
 		IsEnabled:          isEnabled,
 		SSLCertPath:        sslCertPath,
 		SSLKeyPath:         sslKeyPath,
@@ -374,7 +390,8 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		isEnabled = *p.IsEnabled
 	}
 
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime)
+	rateLimitDirectives := BuildRateLimitDirectives(p.DomainID, p.RateLimitRPS, p.ConnectionLimit)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

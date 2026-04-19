@@ -61,6 +61,7 @@ func newRootCmd() *cobra.Command {
 		newMigrateCmd(),
 		newUpdateCmd(),
 		newReconcileCmd(),
+		newLimitsCmd(),
 		adminCmd,
 		newSSOCmd(),
 	)

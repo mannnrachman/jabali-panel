@@ -817,6 +817,14 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	params["redirect_directives"] = redirects.Compile(domain)
 	params["rule_directives"] = nginxrules.Compile(domain)
 
+	// M18 per-domain HTTP limits. The agent renders them verbatim via
+	// BuildRateLimitDirectives, which is a no-op when both are zero.
+	// Sending domain_id regardless keeps the wire payload stable across
+	// reconciles even when an operator flips a rate limit off.
+	params["domain_id"] = domain.ID
+	params["rate_limit_rps"] = domain.RateLimitRPS
+	params["connection_limit"] = domain.ConnectionLimit
+
 	params["index_priority"] = domain.IndexPriority
 
 	// Fetch SSL certificate paths for the vhost. We serve any cert whose

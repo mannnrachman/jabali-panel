@@ -397,6 +397,28 @@ func TestRegisterDefaults_RegistersConcrete(t *testing.T) {
 	}
 }
 
+func TestRegisterDefaults_RegistersOpenCart(t *testing.T) {
+	r := New()
+	if err := RegisterDefaults(r); err != nil {
+		t.Fatalf("RegisterDefaults: %v", err)
+	}
+	o, ok := r.Get("opencart")
+	if !ok {
+		t.Fatal("opencart not registered after RegisterDefaults")
+	}
+	if !o.RequiresDB {
+		t.Error("opencart should declare RequiresDB=true")
+	}
+	if o.DefaultSubdirectory != "shop" {
+		t.Errorf("opencart default subdirectory = %q, want %q", o.DefaultSubdirectory, "shop")
+	}
+	for _, want := range []string{"admin_email", "admin_password"} {
+		if _, ok := o.InstallParamSchema[want]; !ok {
+			t.Errorf("opencart schema missing %q", want)
+		}
+	}
+}
+
 func TestRegister_ConcurrentSafe(t *testing.T) {
 	// Race detector trips here if Register's mutex disappears.
 	r := New()

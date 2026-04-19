@@ -13,4 +13,5 @@ export const APP_TYPE_LABELS: Record<string, string> = {
   freshrss: "FreshRSS",
   matomo: "Matomo",
   concrete: "Concrete CMS",
+  opencart: "OpenCart",
 };

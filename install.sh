@@ -92,6 +92,10 @@ GITEA_TOKEN="${_cli_token:-${JABALI_GITEA_TOKEN:-${_positional[0]:-}}}"
 _log()  { printf '\033[1;34m[jabali-install]\033[0m %s\n' "$*"; }
 _ok()   { printf '\033[1;32m[jabali-install]\033[0m %s\n' "$*"; }
 _warn() { printf '\033[1;33m[jabali-install]\033[0m %s\n' "$*" >&2; }
+# _err prints in red on stderr — callers still control exit behavior.
+# M18's configure_disk_quota relied on this silently; define it once
+# so any future caller has a matching pair to _warn.
+_err()  { printf '\033[1;31m[jabali-install]\033[0m %s\n' "$*" >&2; }
 _die()  { printf '\033[1;31m[jabali-install]\033[0m %s\n' "$*" >&2; exit 1; }
 
 # ---------- preflight -------------------------------------------------------
@@ -372,24 +376,31 @@ configure_disk_quota() {
       # xfs also works but needs xfs_quota enable after mount.
       ;;
     btrfs|zfs|tmpfs|ramfs)
-      _err "filesystem type '$home_fs' on /home is not supported by M18 POSIX quota."
-      _err "See docs/adr/0032-m18-resource-limits.md and the runbook for migration steps."
-      _err "(M18 supports ext2/3/4 and xfs. btrfs/zfs have subvolume-scoped quotas that don't map to per-user hosting.)"
-      exit 1
+      # Unsupported filesystems: warn and skip quota setup. cgroups v2
+      # enforcement still works (cpu / memory / io / tasks) — we just
+      # don't block the whole install on a disk-quota issue. The panel's
+      # reconciler will log `quota_applied=false` on each apply; operator
+      # reads the runbook to migrate /home when convenient.
+      _warn "filesystem '$home_fs' on /home does not support POSIX quota; skipping disk-quota setup."
+      _warn "cgroups limits (cpu/memory/io/tasks) will still apply. See plans/m18-resource-limits-runbook.md §4 to migrate."
+      return 0
       ;;
     *)
-      _err "unknown filesystem type '$home_fs' on /home; cannot configure quota."
-      exit 1
+      _warn "unknown filesystem '$home_fs' on /home; skipping disk-quota setup (cgroups still active)."
+      return 0
       ;;
   esac
 
-  # If /home is on /, we'd be adding usrquota to the root filesystem —
-  # never safe to do non-interactively. Fail loud with the fix.
+  # If /home is on /, adding usrquota to the root filesystem is unsafe.
+  # Warn + skip rather than block the install. The M18 cgroups drop-in
+  # still gets applied per user; only disk-quota enforcement is absent.
+  # Operator's path forward: migrate /home to its own mount (runbook §4),
+  # then re-run install.sh to pick up quota.
   if [[ "$home_mount" == "/" ]]; then
-    _err "/home shares the root filesystem. POSIX quota on / is unsafe for system daemons."
-    _err "Move /home to its own partition or mount a dedicated /home before re-running."
-    _err "See 'plans/m18-resource-limits-runbook.md' for the migration procedure."
-    exit 1
+    _warn "/home shares the root filesystem — skipping POSIX quota setup (would be unsafe on /)."
+    _warn "cgroups limits (cpu/memory/io/tasks) still active."
+    _warn "To enable disk quota: move /home to its own partition (see plans/m18-resource-limits-runbook.md §4) and re-run install.sh."
+    return 0
   fi
 
   # Check whether fstab already has usrquota on this mount.

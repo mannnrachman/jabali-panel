@@ -58,11 +58,16 @@ const dokuwikiTarballURL = "https://download.dokuwiki.org/src/dokuwiki/dokuwiki-
 //
 // To compute on a host with the URL accessible:
 //
-//	curl -sSL https://download.dokuwiki.org/src/dokuwiki/dokuwiki-stable.tgz \
+//	curl -sSL -A 'jabali-panel-agent/1.0 (+https://jabali.local)' \
+//	  https://download.dokuwiki.org/src/dokuwiki/dokuwiki-stable.tgz \
 //	  | sha256sum
 //
 // Bump alongside the version pin when DokuWiki ships a new stable.
-const dokuwikiTarballSHA256 = ""
+// Captured 2026-04-19 from upstream "stable" — DokuWiki publishes
+// "stable" as a moving target, so this needs re-capturing whenever
+// the upstream rolls a new release. The integrity check fails-loud
+// rather than silently downloading a different tarball.
+const dokuwikiTarballSHA256 = "1d10e8dc8ad769b1c56a53a8703db9345070663e8386ee6bded77d4881d090f3"
 
 // dokuwikiLicenseURLs maps the descriptor's license enum to the
 // canonical license URL DokuWiki writes into conf/local.php. A blank
@@ -97,6 +102,10 @@ func downloadDokuWikiTarball(ctx context.Context, dest string) error {
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
+	// Identify ourselves to upstreams — Wikimedia rejects the Go
+	// default UA; DokuWiki accepts it but being polite is cheap.
+	// userAgent is defined in mediawiki_install.go.
+	req.Header.Set("User-Agent", userAgent)
 	client := &http.Client{Timeout: 5 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {

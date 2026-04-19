@@ -99,7 +99,14 @@ type createWordPressResponse struct {
 }
 
 type wordPressListResponse struct {
-	ID            string    `json:"id"`
+	ID string `json:"id"`
+	// AppType is the M19 discriminator used by the UI's App column to
+	// render the right icon + label. Pre-M19 rows in
+	// application_installs default to "wordpress" via the column
+	// default; the UI also falls back to "wordpress" when the field is
+	// missing, so an older API build serving this struct without
+	// AppType still renders sanely (just always as WordPress).
+	AppType       string    `json:"app_type"`
 	DomainID      string    `json:"domain_id"`
 	DomainName    string    `json:"domain_name"`
 	DBID          string    `json:"db_id"`
@@ -471,8 +478,13 @@ func (h *wordPressHandler) list(c *gin.Context) {
 
 	out := make([]wordPressListResponse, len(installs))
 	for i, inst := range installs {
+		appType := inst.AppType
+		if appType == "" {
+			appType = "wordpress" // pre-M19 row safety net
+		}
 		out[i] = wordPressListResponse{
 			ID:            inst.ID,
+			AppType:       appType,
 			DomainID:      inst.DomainID,
 			DomainName:    domainNames[inst.DomainID],
 			DBID:          inst.DBID,
@@ -533,8 +545,13 @@ func (h *wordPressHandler) get(c *gin.Context) {
 		domainName = d.Name
 	}
 
+	getAppType := install.AppType
+	if getAppType == "" {
+		getAppType = "wordpress"
+	}
 	resp := wordPressListResponse{
 		ID:            install.ID,
+		AppType:       getAppType,
 		DomainID:      install.DomainID,
 		DomainName:    domainName,
 		DBID:          install.DBID,

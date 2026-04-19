@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -9,8 +10,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/clientapi"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
+
+// Hosting packages are pure DB rows — no agent side-effect, no Kratos hook.
+// Under M20 the CLI goes direct-DB so these commands stay usable even after
+// the legacy JWT middleware is gone.
 
 func newPackageCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -28,40 +35,38 @@ func newPackageCmd() *cobra.Command {
 
 func newPackageListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:     "list",
-		Short:   "List all hosting packages",
-		PreRunE: requireConfig,
+		Use:   "list",
+		Short: "List hosting packages (direct DB — M20-safe)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
-
-			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
-			if err != nil {
-				return fmt.Errorf("create api client: %w", err)
+			if err := initConfig(); err != nil {
+				return err
 			}
-
-			resp, err := client.ListPackages(ctx, 1, 1000)
+			if err := initDB(); err != nil {
+				return err
+			}
+			pkgs, _, err := packageRepoFromDB().List(ctx, repository.ListOptions{Limit: 1000})
 			if err != nil {
 				return fmt.Errorf("list packages: %w", err)
 			}
-
 			if jsonOutput {
 				return printJSON(map[string]interface{}{
-					"packages": resp.Data,
-					"total":    resp.Total,
+					"packages": pkgs,
+					"total":    len(pkgs),
 				})
 			}
-
+			if len(pkgs) == 0 {
+				fmt.Println("No packages found")
+				return nil
+			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tNAME\tDISK MB\tBW MB\tDOMAINS\tEMAIL\tDB\tSSH")
-			for _, p := range resp.Data {
-				ssh := "no"
-				if p.SSHEnabled {
-					ssh = "yes"
-				}
-				fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%s\n",
+			fmt.Fprintln(w, "ID\tNAME\tDISK_MB\tBW_MB\tDOMAINS\tDBS\tSSH\tCGI")
+			for _, p := range pkgs {
+				fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\t%s\t%s\n",
 					p.ID, p.Name, p.DiskQuotaMB, p.BandwidthQuotaMB,
-					p.MaxDomains, p.MaxEmailAccounts, p.MaxDatabases, ssh)
+					p.MaxDomains, p.MaxDatabases,
+					boolYN(p.SSHEnabled), boolYN(p.CGIEnabled))
 			}
 			return w.Flush()
 		},
@@ -70,35 +75,35 @@ func newPackageListCmd() *cobra.Command {
 
 func newPackageCreateCmd() *cobra.Command {
 	var (
-		name        string
-		diskMB      uint32
-		bwMB        uint32
-		domains     uint32
-		emails      uint32
-		databases   uint32
-		ftp         uint32
-		sshEnabled  bool
-		cgiEnabled  bool
+		name       string
+		diskMB     uint32
+		bwMB       uint32
+		domains    uint32
+		emails     uint32
+		databases  uint32
+		ftp        uint32
+		sshEnabled bool
+		cgiEnabled bool
 	)
 
 	cmd := &cobra.Command{
-		Use:     "create",
-		Short:   "Create a hosting package",
-		PreRunE: requireConfig,
+		Use:   "create",
+		Short: "Create a hosting package (direct DB — M20-safe)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if name == "" {
 				return fmt.Errorf("--name is required")
 			}
-
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
-
-			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
-			if err != nil {
-				return fmt.Errorf("create api client: %w", err)
+			if err := initConfig(); err != nil {
+				return err
 			}
-
-			req := &clientapi.CreatePackageRequest{
+			if err := initDB(); err != nil {
+				return err
+			}
+			now := time.Now().UTC()
+			p := &models.HostingPackage{
+				ID:               ids.NewULID(),
 				Name:             name,
 				DiskQuotaMB:      diskMB,
 				BandwidthQuotaMB: bwMB,
@@ -108,17 +113,19 @@ func newPackageCreateCmd() *cobra.Command {
 				MaxFTPAccounts:   ftp,
 				SSHEnabled:       sshEnabled,
 				CGIEnabled:       cgiEnabled,
+				CreatedAt:        now,
+				UpdatedAt:        now,
 			}
-
-			pkg, err := client.CreatePackage(ctx, req)
-			if err != nil {
+			if err := packageRepoFromDB().Create(ctx, p); err != nil {
+				if errors.Is(err, repository.ErrConflict) {
+					return fmt.Errorf("package name %q already exists", name)
+				}
 				return fmt.Errorf("create package: %w", err)
 			}
-
 			if jsonOutput {
-				return printJSON(pkg)
+				return printJSON(p)
 			}
-			fmt.Printf("Created package %s (%s)\n", pkg.ID, pkg.Name)
+			fmt.Printf("Created package %s (%s)\n", p.ID, p.Name)
 			return nil
 		},
 	}
@@ -132,7 +139,6 @@ func newPackageCreateCmd() *cobra.Command {
 	cmd.Flags().Uint32Var(&ftp, "ftp", 0, "max FTP accounts (0=unlimited)")
 	cmd.Flags().BoolVar(&sshEnabled, "ssh", false, "enable SSH access")
 	cmd.Flags().BoolVar(&cgiEnabled, "cgi", false, "enable CGI")
-
 	return cmd
 }
 
@@ -150,80 +156,82 @@ func newPackageEditCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:     "edit <package-id>",
-		Short:   "Edit a hosting package",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: requireConfig,
+		Use:   "edit <package-id>",
+		Short: "Edit a hosting package (direct DB — M20-safe)",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			packageID := args[0]
-
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
-
-			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
-			if err != nil {
-				return fmt.Errorf("create api client: %w", err)
+			if err := initConfig(); err != nil {
+				return err
+			}
+			if err := initDB(); err != nil {
+				return err
 			}
 
-			req := &clientapi.UpdatePackageRequest{}
-			changed := false
+			repo := packageRepoFromDB()
+			p, err := repo.FindByID(ctx, args[0])
+			if err != nil {
+				if errors.Is(err, repository.ErrNotFound) {
+					return fmt.Errorf("package %q not found", args[0])
+				}
+				return fmt.Errorf("lookup package: %w", err)
+			}
 
+			changed := false
 			if cmd.Flags().Changed("name") {
-				req.Name = &name
+				p.Name = name
 				changed = true
 			}
 			if cmd.Flags().Changed("disk-mb") {
-				req.DiskQuotaMB = &diskMB
+				p.DiskQuotaMB = diskMB
 				changed = true
 			}
 			if cmd.Flags().Changed("bw-mb") {
-				req.BandwidthQuotaMB = &bwMB
+				p.BandwidthQuotaMB = bwMB
 				changed = true
 			}
 			if cmd.Flags().Changed("domains") {
-				req.MaxDomains = &domains
+				p.MaxDomains = domains
 				changed = true
 			}
 			if cmd.Flags().Changed("emails") {
-				req.MaxEmailAccounts = &emails
+				p.MaxEmailAccounts = emails
 				changed = true
 			}
 			if cmd.Flags().Changed("databases") {
-				req.MaxDatabases = &databases
+				p.MaxDatabases = databases
 				changed = true
 			}
 			if cmd.Flags().Changed("ftp") {
-				req.MaxFTPAccounts = &ftp
+				p.MaxFTPAccounts = ftp
 				changed = true
 			}
 			if sshEnabled == "true" {
-				req.SSHEnabled = boolPtr(true)
+				p.SSHEnabled = true
 				changed = true
 			} else if sshEnabled == "false" {
-				req.SSHEnabled = boolPtr(false)
+				p.SSHEnabled = false
 				changed = true
 			}
 			if cgiEnabled == "true" {
-				req.CGIEnabled = boolPtr(true)
+				p.CGIEnabled = true
 				changed = true
 			} else if cgiEnabled == "false" {
-				req.CGIEnabled = boolPtr(false)
+				p.CGIEnabled = false
 				changed = true
 			}
-
 			if !changed {
 				return fmt.Errorf("no changes specified")
 			}
-
-			pkg, err := client.UpdatePackage(ctx, packageID, req)
-			if err != nil {
+			p.UpdatedAt = time.Now().UTC()
+			if err := repo.Update(ctx, p); err != nil {
 				return fmt.Errorf("update package: %w", err)
 			}
-
 			if jsonOutput {
-				return printJSON(pkg)
+				return printJSON(p)
 			}
-			fmt.Printf("Updated package %s (%s)\n", pkg.ID, pkg.Name)
+			fmt.Printf("Updated package %s (%s)\n", p.ID, p.Name)
 			return nil
 		},
 	}
@@ -237,37 +245,34 @@ func newPackageEditCmd() *cobra.Command {
 	cmd.Flags().Uint32Var(&ftp, "ftp", 0, "max FTP")
 	cmd.Flags().StringVar(&sshEnabled, "ssh", "", "SSH access (true/false)")
 	cmd.Flags().StringVar(&cgiEnabled, "cgi", "", "CGI access (true/false)")
-
 	return cmd
 }
 
 func newPackageDeleteCmd() *cobra.Command {
 	var force bool
-
 	cmd := &cobra.Command{
-		Use:     "delete <package-id>",
-		Short:   "Delete a hosting package",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: requireConfig,
+		Use:   "delete <package-id>",
+		Short: "Delete a hosting package (direct DB — M20-safe)",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			packageID := args[0]
-
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
-
-			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
-			if err != nil {
-				return fmt.Errorf("create api client: %w", err)
+			if err := initConfig(); err != nil {
+				return err
 			}
-
-			// Fetch package to get name for confirmation
-			pkg, err := client.GetPackage(ctx, packageID)
-			if err != nil {
-				return fmt.Errorf("fetch package: %w", err)
+			if err := initDB(); err != nil {
+				return err
 			}
-
+			repo := packageRepoFromDB()
+			p, err := repo.FindByID(ctx, args[0])
+			if err != nil {
+				if errors.Is(err, repository.ErrNotFound) {
+					return fmt.Errorf("package %q not found", args[0])
+				}
+				return fmt.Errorf("lookup package: %w", err)
+			}
 			if !force {
-				fmt.Printf("Delete package %s (%s)? [y/N]: ", pkg.ID, pkg.Name)
+				fmt.Printf("Delete package %s (%s)? [y/N]: ", p.ID, p.Name)
 				var confirm string
 				fmt.Scanln(&confirm)
 				if confirm != "y" && confirm != "Y" {
@@ -275,19 +280,23 @@ func newPackageDeleteCmd() *cobra.Command {
 					return nil
 				}
 			}
-
-			if err := client.DeletePackage(ctx, packageID); err != nil {
+			if err := repo.Delete(ctx, args[0]); err != nil {
 				return fmt.Errorf("delete package: %w", err)
 			}
-
 			if jsonOutput {
-				return printJSON(map[string]string{"deleted": packageID})
+				return printJSON(map[string]string{"deleted": args[0]})
 			}
-			fmt.Printf("Deleted package %s (%s)\n", pkg.ID, pkg.Name)
+			fmt.Printf("Deleted package %s (%s)\n", p.ID, p.Name)
 			return nil
 		},
 	}
-
 	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation")
 	return cmd
+}
+
+func boolYN(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
 }

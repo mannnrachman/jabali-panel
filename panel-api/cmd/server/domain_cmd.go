@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/clientapi"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 )
 
 func newDomainCmd() *cobra.Command {
@@ -28,43 +26,36 @@ func newDomainCmd() *cobra.Command {
 	return cmd
 }
 
-// newDomainListCmd lists all or filtered domains.
-func newDomainListCmd() *cobra.Command {
-	var userID string
+// ---- list ----
 
-	cmd := &cobra.Command{
-		Use:     "list",
-		Short:   "List domains",
-		PreRunE: requireConfig,
+func newDomainListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List domains (direct DB — M20-safe)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
-			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
+			domains, err := listDomainsDirect(ctx)
 			if err != nil {
-				return fmt.Errorf("create api client: %w", err)
-			}
-
-			resp, err := client.ListDomains(ctx, 1, 1000)
-			if err != nil {
-				return fmt.Errorf("list domains: %w", err)
+				return err
 			}
 
 			if jsonOutput {
 				return printJSON(map[string]interface{}{
-					"domains": resp.Data,
-					"total":   resp.Total,
+					"domains": domains,
+					"total":   len(domains),
 				})
 			}
 
-			if len(resp.Data) == 0 {
+			if len(domains) == 0 {
 				fmt.Println("No domains found")
 				return nil
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "ID\tNAME\tUSER_ID\tENABLED\tDOC_ROOT")
-			for _, d := range resp.Data {
+			for _, d := range domains {
 				enabled := "no"
 				if d.IsEnabled {
 					enabled = "yes"
@@ -75,11 +66,10 @@ func newDomainListCmd() *cobra.Command {
 			return w.Flush()
 		},
 	}
-	cmd.Flags().StringVar(&userID, "user-id", "", "Filter by user ID (currently ignored, use API filtering)")
-	return cmd
 }
 
-// newDomainCreateCmd creates a new domain.
+// ---- create ----
+
 func newDomainCreateCmd() *cobra.Command {
 	var name, userID, docRoot string
 
@@ -114,134 +104,89 @@ func newDomainCreateCmd() *cobra.Command {
 	return cmd
 }
 
-// newDomainEnableCmd enables a domain.
+// ---- enable ----
+
 func newDomainEnableCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:     "enable <domain-id>",
-		Short:   "Enable a domain",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: requireConfig,
+		Use:   "enable <domain-id>",
+		Short: "Enable a domain (direct DB — M20-safe)",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id := args[0]
-
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
-
-			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
+			d, err := setDomainEnabledDirect(ctx, args[0], true)
 			if err != nil {
-				return fmt.Errorf("create api client: %w", err)
+				return err
 			}
-
-			req := &clientapi.UpdateDomainRequest{
-				IsEnabled: boolPtr(true),
-			}
-
-			domain, err := client.UpdateDomain(ctx, id, req)
-			if err != nil {
-				return fmt.Errorf("enable domain: %w", err)
-			}
-
-			fmt.Printf("Domain %s enabled\n", domain.Name)
+			fmt.Printf("Domain %s enabled\n", d.Name)
 			return nil
 		},
 	}
 }
 
-// newDomainDisableCmd disables a domain.
+// ---- disable ----
+
 func newDomainDisableCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:     "disable <domain-id>",
-		Short:   "Disable a domain",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: requireConfig,
+		Use:   "disable <domain-id>",
+		Short: "Disable a domain (direct DB — M20-safe)",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id := args[0]
-
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
-
-			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
+			d, err := setDomainEnabledDirect(ctx, args[0], false)
 			if err != nil {
-				return fmt.Errorf("create api client: %w", err)
+				return err
 			}
-
-			req := &clientapi.UpdateDomainRequest{
-				IsEnabled: boolPtr(false),
-			}
-
-			domain, err := client.UpdateDomain(ctx, id, req)
-			if err != nil {
-				return fmt.Errorf("disable domain: %w", err)
-			}
-
-			fmt.Printf("Domain %s disabled\n", domain.Name)
+			fmt.Printf("Domain %s disabled\n", d.Name)
 			return nil
 		},
 	}
 }
 
-// newDomainDeleteCmd deletes a domain (admin only).
+// ---- delete ----
+
 func newDomainDeleteCmd() *cobra.Command {
 	var force bool
-
 	cmd := &cobra.Command{
-		Use:     "delete <domain-id>",
-		Short:   "Delete a domain",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: requireConfig,
+		Use:   "delete <domain-id>",
+		Short: "Delete a domain (direct DB; reconciler tears down nginx — M20-safe)",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id := args[0]
-
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
-			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
-			if err != nil {
-				return fmt.Errorf("create api client: %w", err)
+			// Fetch first so the confirmation shows the name + we can print
+			// it after the row is gone.
+			if err := initConfig(); err != nil {
+				return err
 			}
-
-			// Fetch domain to get the name for confirmation
-			domain, err := client.GetDomain(ctx, id)
+			if err := initDB(); err != nil {
+				return err
+			}
+			d, err := domainRepoFromDB().FindByID(ctx, args[0])
 			if err != nil {
 				return fmt.Errorf("fetch domain: %w", err)
 			}
 
-			// Confirm deletion unless --force is set
 			if !force {
-				fmt.Printf("Delete domain %s? (type 'yes' to confirm): ", domain.Name)
+				fmt.Printf("Delete domain %s? (type 'yes' to confirm): ", d.Name)
 				var confirm string
 				fmt.Scanln(&confirm)
-				if confirm != "yes" {
+				if !strings.EqualFold(confirm, "yes") {
 					fmt.Println("Cancelled")
 					return nil
 				}
 			}
 
-			if err := client.DeleteDomain(ctx, id); err != nil {
-				return fmt.Errorf("delete domain: %w", err)
+			if _, err := deleteDomainDirect(ctx, args[0]); err != nil {
+				return err
 			}
-
-			fmt.Printf("Domain %s deleted\n", domain.Name)
+			fmt.Printf("Domain %s deleted (reconciler will tear down nginx vhost within %s)\n",
+				d.Name, sharedCfg.Agent.ReconcilerInterval)
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompt")
 	return cmd
-}
-
-// newDomainID generates a new ULID for domain creation.
-func newDomainID() string {
-	return ids.NewULID()
-}
-
-// deriveLinuxUsername extracts a linux username from an email address.
-// For now, use the part before @ or user id.
-func deriveLinuxUsername(email string) string {
-	if email != "" {
-		parts := strings.Split(email, "@")
-		if len(parts) > 0 {
-			return parts[0]
-		}
-	}
-	return "user"
 }

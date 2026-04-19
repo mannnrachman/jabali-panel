@@ -2,10 +2,8 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"strings"
 
@@ -13,7 +11,6 @@ import (
 	"gorm.io/gorm"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/clientapi"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/db"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/logger"
@@ -66,12 +63,17 @@ func newRootCmd() *cobra.Command {
 		newSystemCmd(),
 		newMigrateCmd(),
 		newUpdateCmd(),
-		newReconcileCmd(),
 		newLimitsCmd(),
 		adminCmd,
 		newSSOCmd(),
 		newKratosMigrateCmd(),
 	)
+	// `jabali reconcile` was removed by M20 — the reconciler already ticks
+	// every cfg.Agent.ReconcilerInterval (default 60s), and the CLI's
+	// manual-trigger path relied on legacy JWT that the Kratos-era
+	// middleware ignores. Operators who need an immediate tick can restart
+	// jabali-panel (`systemctl restart jabali-panel`) which re-runs every
+	// reconcile loop on boot.
 
 	return cmd
 }
@@ -198,43 +200,9 @@ func domainRepoFromDB() repository.DomainRepository {
 }
 
 // requireConfig initializes config only (no DB or agent).
-// Used by CLI commands that interact via HTTP API instead of direct DB access.
+// Used by CLI commands that only need to read config.
 func requireConfig(cmd *cobra.Command, args []string) error {
 	return initConfig()
-}
-
-// newAPIClient creates an HTTP API client with CLI authentication.
-// Requires config to be loaded first via requireConfig.
-func newAPIClient(ctx context.Context, cfg *config.Config, log *slog.Logger) (*clientapi.Client, error) {
-	if cfg == nil {
-		return nil, fmt.Errorf("newAPIClient: config not loaded")
-	}
-
-	// Mint a short-lived JWT token for CLI authentication
-	token, err := mintCLIToken(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("mint cli token: %w", err)
-	}
-
-	// cfg.Server.Addr is typically ":8443" (bound to all interfaces). For
-	// a client URL we need an explicit host — substitute 127.0.0.1 when
-	// the host portion is empty or wildcard so the URL is valid.
-	scheme := "http"
-	if cfg.Server.TLSCert != "" && cfg.Server.TLSKey != "" {
-		scheme = "https"
-	}
-	host, port, err := net.SplitHostPort(cfg.Server.Addr)
-	if err != nil {
-		return nil, fmt.Errorf("parse server addr %q: %w", cfg.Server.Addr, err)
-	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
-	}
-	// The API mounts authenticated routes under /api/v1. Building that into
-	// baseURL means each client method can stay path-local (/domains, /users, ...).
-	baseURL := fmt.Sprintf("%s://%s:%s/api/v1", scheme, host, port)
-
-	return clientapi.NewClient(baseURL, token), nil
 }
 
 func requireDBAndAgent(cmd *cobra.Command, args []string) error {

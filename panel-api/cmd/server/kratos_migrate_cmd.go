@@ -26,10 +26,11 @@ import (
 //     is safe (idempotent) and will retry only the still-NULL rows.
 func newKratosMigrateCmd() *cobra.Command {
 	var (
-		dryRun      bool
-		batchSize   int
-		skipCanary  bool
-		totpOnly    bool
+		dryRun     bool
+		batchSize  int
+		skipCanary bool
+		totpOnly   bool
+		totpOutput string
 	)
 
 	cmd := &cobra.Command{
@@ -51,9 +52,13 @@ Flags:
   --dry-run          Plan only. Canary runs, but no identities are written.
   --batch-size       Users processed per log-progress batch (default 50).
   --skip-canary      Dangerous: skip the bcrypt passthrough check.
-  --totp-only        Reserved for step 8 (TOTP migration). Currently returns
-                     "not yet implemented" so operators don't think their
-                     password-only run succeeded when TOTP is still expected.`,
+  --totp-only        Emit a CSV report of every TOTP-enabled panel user so
+                     the operator can notify them before cutover. Kratos does
+                     not accept TOTP/backup-code imports via its admin API
+                     (see ADR-0034 + runbook), so 2FA users must re-enroll
+                     via Kratos Security settings after cutover. This flag is
+                     read-only — nothing is written to panel or Kratos.
+  --totp-output      Path to write the --totp-only CSV ("-" or empty = stdout).`,
 		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runKratosMigrate(cmd.Context(), kratosMigrateOptions{
@@ -61,6 +66,7 @@ Flags:
 				BatchSize:  batchSize,
 				SkipCanary: skipCanary,
 				TOTPOnly:   totpOnly,
+				TOTPOutput: totpOutput,
 			})
 		},
 	}
@@ -68,7 +74,8 @@ Flags:
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview migration decisions without writing to Kratos")
 	cmd.Flags().IntVar(&batchSize, "batch-size", 50, "users per logged-progress batch")
 	cmd.Flags().BoolVar(&skipCanary, "skip-canary", false, "skip bcrypt passthrough check (dangerous)")
-	cmd.Flags().BoolVar(&totpOnly, "totp-only", false, "migrate only TOTP credentials (reserved for M20 step 8)")
+	cmd.Flags().BoolVar(&totpOnly, "totp-only", false, "emit CSV of TOTP-enabled users for cutover re-enrollment (read-only)")
+	cmd.Flags().StringVar(&totpOutput, "totp-output", "", "output path for --totp-only CSV (empty or \"-\" = stdout)")
 	return cmd
 }
 
@@ -77,6 +84,7 @@ type kratosMigrateOptions struct {
 	BatchSize  int
 	SkipCanary bool
 	TOTPOnly   bool
+	TOTPOutput string
 }
 
 type kratosMigrateSummary struct {
@@ -94,7 +102,7 @@ func runKratosMigrate(ctx context.Context, opts kratosMigrateOptions) error {
 	}
 
 	if opts.TOTPOnly {
-		return fmt.Errorf("--totp-only is reserved for M20 step 8 and not yet implemented; do not rely on this run to migrate TOTP")
+		return runKratosMigrateTOTPReport(ctx, opts)
 	}
 
 	if sharedCfg.Auth.Provider != "kratos" {

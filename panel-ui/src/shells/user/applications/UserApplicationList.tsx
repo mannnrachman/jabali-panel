@@ -22,7 +22,6 @@ import {
   ExclamationCircleOutlined,
   DeleteOutlined,
   CopyOutlined,
-  AppstoreOutlined,
 } from "@ant-design/icons";
 import { useTable } from "@refinedev/antd";
 import { useInvalidate, useGetIdentity } from "@refinedev/core";
@@ -32,6 +31,7 @@ import { apiClient } from "../../../apiClient";
 import { InstallApplicationModal } from "./InstallApplicationModal";
 import { CloneApplicationModal } from "./CloneApplicationModal";
 import { APP_TYPE_LABELS } from "./appLabels";
+import { CmsIcon } from "./CmsIcon";
 
 type ApplicationInstall = {
   id: string;
@@ -176,7 +176,7 @@ export const UserApplicationList = () => {
             const label = APP_TYPE_LABELS[key] ?? key;
             return (
               <Space size={6}>
-                <AppstoreOutlined />
+                <CmsIcon appType={key} />
                 <Typography.Text>{label}</Typography.Text>
               </Space>
             );

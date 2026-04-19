@@ -146,12 +146,13 @@ type chmodRequest struct {
 }
 
 type filesListEntry struct {
-	Name      string `json:"name"`
-	IsDir     bool   `json:"is_dir"`
-	Size      int64  `json:"size"`
-	Mode      string `json:"mode"`
-	ModTime   string `json:"mod_time"`
-	IsSymlink bool   `json:"is_symlink"`
+	Name       string `json:"name"`
+	IsDir      bool   `json:"is_dir"`
+	Size       int64  `json:"size"`
+	Mode       string `json:"mode"`
+	ModTime    string `json:"mod_time"`
+	IsSymlink  bool   `json:"is_symlink"`
+	HasSubdirs bool   `json:"has_subdirs,omitempty"`
 }
 
 type filesListAgentResult struct {

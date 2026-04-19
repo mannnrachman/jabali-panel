@@ -20,6 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Breadcrumb,
   Button,
+  Card,
   Dropdown,
   Empty,
   Input,
@@ -27,6 +28,7 @@ import {
   Space,
   Spin,
   Table,
+  Tag,
   Tree,
   Typography,
   Upload,
@@ -42,6 +44,7 @@ import {
   EyeOutlined,
   FileOutlined,
   FolderOutlined,
+  LockOutlined,
   MoreOutlined,
   PlusOutlined,
   ReloadOutlined,
@@ -109,6 +112,28 @@ function formatModTime(raw: string): string {
 
 function joinPath(dir: string, name: string): string {
   return dir.endsWith("/") ? dir + name : dir + "/" + name;
+}
+
+// symbolicModeToOctal converts Go's Mode().String() (e.g. "-rw-r--r--",
+// "drwxr-xr-x") back to a 3-digit octal ("644", "755"). Returns "" if
+// the input isn't recognisable so the caller can fall back to a default.
+// setuid/setgid/sticky ("s"/"S"/"t"/"T") are collapsed into their
+// x-only equivalents for display; the chmod editor + text input still
+// accept the full 4-digit form if the user needs to write those bits.
+function symbolicModeToOctal(s: string): string {
+  if (s.length < 10) return "";
+  const rwx = s.slice(s.length - 9); // last 9 chars
+  let out = "";
+  for (let g = 0; g < 3; g++) {
+    const seg = rwx.slice(g * 3, g * 3 + 3);
+    let d = 0;
+    if (seg[0] === "r") d |= 4;
+    if (seg[1] === "w") d |= 2;
+    // x, s (setuid/setgid with x), t (sticky with x) all count as exec
+    if (seg[2] === "x" || seg[2] === "s" || seg[2] === "t") d |= 1;
+    out += d.toString();
+  }
+  return out;
 }
 
 // Folders-first, then alphabetical (case-insensitive, locale-aware).
@@ -181,6 +206,14 @@ export const FileManagerPage = () => {
   const [bulkChmodOpen, setBulkChmodOpen] = useState(false);
   const [bulkChmodMode, setBulkChmodMode] = useState("0644");
 
+  // Single-entry chmod. Separate from the bulk path so the per-row
+  // "Permissions" menu item doesn't require checking the row first.
+  // Mode seeded to 0755/0644 by entry type since the list wire shape
+  // carries the symbolic "-rw-r--r--" form, not an octal — parsing
+  // that back to octal is doable but wasn't worth the code for v1.
+  const [chmodTarget, setChmodTarget] = useState<FileEntry | null>(null);
+  const [chmodTargetMode, setChmodTargetMode] = useState("0644");
+
   // --- initial load: fetch user's home then list it ---
   useEffect(() => {
     (async () => {
@@ -230,11 +263,14 @@ export const FileManagerPage = () => {
   const loadTreeChildren = useCallback(async (node: TreeNode): Promise<void> => {
     try {
       const resp = await filesTree(node.path);
+      // Backend sets has_subdirs per entry; fold it into isLeaf so the
+      // tree hides the chevron on leaf folders — no "expand to discover
+      // it's empty" round trip.
       const children: TreeNode[] = resp.entries.map((e) => ({
         key: joinPath(node.path, e.name),
         title: e.name,
         path: joinPath(node.path, e.name),
-        isLeaf: false,
+        isLeaf: !e.has_subdirs,
       }));
       setTreeData((prev) => updateTreeNode(prev, node.path, children));
     } catch (err) {
@@ -320,6 +356,32 @@ export const FileManagerPage = () => {
     setRenameTarget(entry);
     setRenameNewName(entry.name);
     setRenameOpen(true);
+  };
+
+  // Seed the single-entry chmod modal from the row's actual mode when
+  // we can parse it; fall back to 0755 for dirs / 0644 for files.
+  const openSingleChmod = (entry: FileEntry) => {
+    const oct = symbolicModeToOctal(entry.mode);
+    setChmodTargetMode(oct ? `0${oct}` : entry.is_dir ? "0755" : "0644");
+    setChmodTarget(entry);
+  };
+
+  const submitSingleChmod = async () => {
+    if (!chmodTarget || !currentPath) return;
+    const mode = chmodTargetMode.trim();
+    if (!/^[0-7]{3,4}$/.test(mode)) {
+      message.error("Mode must be an octal string like 644 or 0755");
+      return;
+    }
+    const path = joinPath(currentPath, chmodTarget.name);
+    try {
+      await filesChmod(path, mode);
+      message.success(`Permissions updated`);
+      setChmodTarget(null);
+      void reloadList(currentPath);
+    } catch (err) {
+      message.error(`Chmod failed: ${errMessage(err)}`);
+    }
   };
 
   const submitRename = async () => {
@@ -551,6 +613,27 @@ export const FileManagerPage = () => {
       render: (_: number, entry: FileEntry) => (entry.is_dir ? "—" : formatBytes(entry.size)),
     },
     {
+      title: "Perms",
+      dataIndex: "mode",
+      key: "mode",
+      width: 80,
+      render: (v: string) => {
+        const oct = symbolicModeToOctal(v);
+        if (!oct) return "—";
+        return (
+          <Tag
+            style={{
+              fontFamily: "monospace",
+              cursor: "default",
+              marginInlineEnd: 0,
+            }}
+          >
+            {oct}
+          </Tag>
+        );
+      },
+    },
+    {
       title: "Modified",
       dataIndex: "mod_time",
       key: "mod_time",
@@ -584,6 +667,12 @@ export const FileManagerPage = () => {
             icon: <EditOutlined />,
             label: "Rename",
             onClick: () => openRename(entry),
+          },
+          {
+            key: "permissions",
+            icon: <LockOutlined />,
+            label: "Permissions",
+            onClick: () => openSingleChmod(entry),
           },
           {
             key: "delete",
@@ -697,13 +786,18 @@ export const FileManagerPage = () => {
       )}
 
       <div style={{ display: "flex", gap: 16, alignItems: "stretch" }}>
-        <div
-          style={{
-            width: 280,
-            flexShrink: 0,
-            padding: 8,
-            maxHeight: "calc(100vh - 200px)",
-            overflow: "auto",
+        <Card
+          size="small"
+          title="Folders"
+          style={{ width: 280, flexShrink: 0 }}
+          // body takes the scrollable region; the header is fixed so the
+          // "Folders" title stays visible even when a deep tree scrolls.
+          styles={{
+            body: {
+              maxHeight: "calc(100vh - 240px)",
+              overflow: "auto",
+              padding: 8,
+            },
           }}
         >
           <Tree
@@ -753,7 +847,7 @@ export const FileManagerPage = () => {
               );
             }}
           />
-        </div>
+        </Card>
 
         <div
           style={{ flex: 1, minWidth: 0 }}
@@ -969,6 +1063,16 @@ export const FileManagerPage = () => {
         okText="Apply"
       >
         <ChmodEditor value={bulkChmodMode} onChange={setBulkChmodMode} />
+      </Modal>
+
+      <Modal
+        title={chmodTarget ? `Permissions — ${chmodTarget.name}` : "Permissions"}
+        open={!!chmodTarget}
+        onOk={() => void submitSingleChmod()}
+        onCancel={() => setChmodTarget(null)}
+        okText="Apply"
+      >
+        <ChmodEditor value={chmodTargetMode} onChange={setChmodTargetMode} />
       </Modal>
     </div>
   );

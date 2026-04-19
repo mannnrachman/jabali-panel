@@ -8,6 +8,10 @@ export type FileEntry = {
   mode: string;
   mod_time: string;
   is_symlink: boolean;
+  // Only meaningful for is_dir entries; absent/false for files. Drives
+  // the tree's chevron visibility — a folder with no subfolders is
+  // rendered as a leaf (no expand arrow).
+  has_subdirs?: boolean;
 };
 
 export type FileListResponse = {

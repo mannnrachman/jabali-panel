@@ -19,13 +19,17 @@ type filesListParams struct {
 }
 
 // filesListEntry represents a single file/directory entry.
+// HasSubdirs is set for dir entries only; it lets the tree UI hide
+// the expand chevron on folders with no subfolders. Computed via one
+// ReadDir per directory — OS dcache keeps the cost negligible.
 type filesListEntry struct {
-	Name      string `json:"name"`
-	IsDir     bool   `json:"is_dir"`
-	Size      int64  `json:"size"`
-	Mode      string `json:"mode"`
-	ModTime   string `json:"mod_time"`
-	IsSymlink bool   `json:"is_symlink"`
+	Name        string `json:"name"`
+	IsDir       bool   `json:"is_dir"`
+	Size        int64  `json:"size"`
+	Mode        string `json:"mode"`
+	ModTime     string `json:"mod_time"`
+	IsSymlink   bool   `json:"is_symlink"`
+	HasSubdirs  bool   `json:"has_subdirs,omitempty"`
 }
 
 // filesListResponse is the output shape for files.list.
@@ -95,13 +99,25 @@ func filesListHandler(ctx context.Context, params json.RawMessage) (any, error) 
 			// Skip entries we can't stat
 			continue
 		}
+		isDir := info.IsDir()
+		isLink := (info.Mode() & os.ModeSymlink) != 0
+		// Peek into each real directory for at least one subdir so the
+		// tree UI can hide the expand chevron on leaves. Errors (perm
+		// denied, raced unlink, etc.) default to false — if the user
+		// can't see inside, a chevron they can't use is worse than a
+		// missing one they don't need.
+		hasSubdirs := false
+		if isDir && !isLink {
+			hasSubdirs = dirHasSubdir(entryPath)
+		}
 		result = append(result, filesListEntry{
-			Name:      entry.Name(),
-			IsDir:     info.IsDir(),
-			Size:      info.Size(),
-			Mode:      info.Mode().String(),
-			ModTime:   info.ModTime().String(),
-			IsSymlink: (info.Mode() & os.ModeSymlink) != 0,
+			Name:       entry.Name(),
+			IsDir:      isDir,
+			Size:       info.Size(),
+			Mode:       info.Mode().String(),
+			ModTime:    info.ModTime().String(),
+			IsSymlink:  isLink,
+			HasSubdirs: hasSubdirs,
 		})
 	}
 
@@ -109,6 +125,26 @@ func filesListHandler(ctx context.Context, params json.RawMessage) (any, error) 
 		Path:    resolvedPath,
 		Entries: result,
 	}, nil
+}
+
+// dirHasSubdir returns true if dir contains at least one subdirectory
+// (excluding symlinks). Scans via ReadDir and short-circuits on the
+// first hit — we don't care about the count, just existence.
+func dirHasSubdir(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		info, err := os.Lstat(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		if info.IsDir() && (info.Mode()&os.ModeSymlink) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func init() {

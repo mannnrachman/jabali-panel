@@ -18,12 +18,12 @@ import {
   LoadingOutlined,
   CheckCircleOutlined,
   ExclamationCircleOutlined,
-  AppstoreOutlined,
 } from "@ant-design/icons";
 import { useTable } from "@refinedev/antd";
 import { SearchableTable } from "../../../components/SearchableTable";
 import { readQValue } from "../../../components/searchableTableUtils";
 import { APP_TYPE_LABELS } from "../../user/applications/appLabels";
+import { CmsIcon } from "../../user/applications/CmsIcon";
 
 type ApplicationInstall = {
   id: string;
@@ -112,7 +112,7 @@ export const AdminApplicationList = () => {
             const label = APP_TYPE_LABELS[key] ?? key;
             return (
               <Space size={6}>
-                <AppstoreOutlined />
+                <CmsIcon appType={key} />
                 <Typography.Text>{label}</Typography.Text>
               </Space>
             );

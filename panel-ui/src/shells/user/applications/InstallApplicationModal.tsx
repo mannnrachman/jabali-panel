@@ -1,14 +1,11 @@
-// Install modal — provisions a WordPress site on a domain. POSTs to
-// /wordpress-installs; backend creates the DB + DB-user + grant, spawns
-// an async agent job, and returns 202 with the admin password delivered
-// exactly once. We show it in a reveal-once panel using the same pattern
-// as Quick Setup.
-//
-// Multi-install per domain: a domain can host multiple WordPress installs
-// as long as each lives at a distinct subdirectory ("" = docroot install).
-// The dropdown therefore lists every domain the user owns; the backend
-// returns 409 install_exists only if (domain, subdirectory) is already
-// taken — surfaced as a field error on the subdirectory input.
+// Install modal — provisions an application (WordPress today; future
+// apps land via the M19 registry). POSTs the generic shape to
+// /applications: {app_type, domain_id, subdirectory, use_www, params}.
+// The backend looks up the descriptor, validates `params` against its
+// InstallParamSchema, provisions a DB if descriptor.RequiresDB, and
+// dispatches the agent install via app.install with the matching
+// app_type. Returns 202 with the admin password delivered exactly
+// once — we show it in a reveal-once panel.
 
 import { useState, useEffect } from "react";
 import {
@@ -24,11 +21,23 @@ import {
   Tooltip,
   Switch,
 } from "antd";
-import { CopyOutlined, CheckCircleTwoTone } from "@ant-design/icons";
+import { CopyOutlined, CheckCircleTwoTone, AppstoreOutlined } from "@ant-design/icons";
 import { useInvalidate } from "@refinedev/core";
 import { apiClient } from "../../../apiClient";
 
 type Domain = { id: string; name: string };
+
+// AppDescriptor mirrors the JSON the server's GET /applications/registry
+// returns. We carry only the fields the UI renders today; new fields can
+// be added without breaking older bundles because Select reads keys it
+// knows.
+type AppDescriptor = {
+  name: string;
+  display_name: string;
+  description?: string;
+  default_subdirectory: string;
+  requires_db: boolean;
+};
 
 type Props = {
   open: boolean;
@@ -38,6 +47,7 @@ type Props = {
 };
 
 type CreatedResult = {
+  appType: string;
   domainName: string;
   adminUsername: string;
   adminEmail: string;
@@ -60,8 +70,6 @@ function extractError(err: unknown, fallback: string): string {
   );
 }
 
-// Common WordPress locales. en_US is the default; a tooltip explains
-// users can request others via support if they need one not listed.
 const LOCALES: { value: string; label: string }[] = [
   { value: "en_US", label: "English (US)" },
   { value: "en_GB", label: "English (UK)" },
@@ -83,13 +91,14 @@ const LOCALES: { value: string; label: string }[] = [
 const SUBDIRECTORY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const RESERVED_SUBDIRS = new Set(["wp-admin", "wp-includes", "wp-content"]);
 
-export const InstallWordPressModal = ({
+export const InstallApplicationModal = ({
   open,
   onClose,
   onSuccess,
   defaultAdminEmail,
 }: Props) => {
   const [form] = Form.useForm<{
+    app_type: string;
     domain_id: string;
     use_www: boolean;
     subdirectory: string;
@@ -102,29 +111,31 @@ export const InstallWordPressModal = ({
   const [submitting, setSubmitting] = useState(false);
   const [domains, setDomains] = useState<Domain[]>([]);
   const [loadingDomains, setLoadingDomains] = useState(false);
+  const [apps, setApps] = useState<AppDescriptor[]>([]);
+  const [loadingApps, setLoadingApps] = useState(false);
   const [result, setResult] = useState<CreatedResult | null>(null);
   const invalidate = useInvalidate();
 
-  // Watch domain_id to show/hide Step 2 fields
+  const selectedAppType = Form.useWatch("app_type", form);
   const selectedDomainId = Form.useWatch("domain_id", form);
   const domainSelected = !!selectedDomainId;
+  const selectedApp = apps.find((a) => a.name === selectedAppType);
 
-  // The DB + user cache also gets a new row (install creates both),
-  // so invalidate those lists too — matches Quick Setup's behavior.
   const refreshLists = () => {
-    invalidate({ resource: "wordpress-installs", invalidates: ["list"] });
+    invalidate({ resource: "applications", invalidates: ["list"] });
     invalidate({ resource: "databases", invalidates: ["list"] });
     invalidate({ resource: "database-users", invalidates: ["list"] });
     onSuccess();
   };
 
-  // Load domains when modal opens. Unwraps paginated envelope —
-  // /domains returns {data, total, page, page_size} and a prior
-  // regression had us feeding the envelope directly into .map().
+  // Load registry + domains when the modal opens. The picker defaults
+  // to "wordpress" so the form looks identical to today; later steps
+  // light up DokuWiki / MediaWiki via additional registry entries.
   useEffect(() => {
     if (!open) return;
     let alive = true;
     setLoadingDomains(true);
+    setLoadingApps(true);
     apiClient
       .get<{ data: Domain[] }>("/domains", { params: { page: 1, page_size: 100 } })
       .then((resp) => {
@@ -138,10 +149,40 @@ export const InstallWordPressModal = ({
       .finally(() => {
         if (alive) setLoadingDomains(false);
       });
+    apiClient
+      .get<{ data: AppDescriptor[] }>("/applications/registry")
+      .then((resp) => {
+        if (!alive) return;
+        const list = resp.data?.data ?? [];
+        setApps(list);
+        // Default to WordPress when present so the form doesn't change
+        // shape between releases that add new app types at the front.
+        const wp = list.find((a) => a.name === "wordpress");
+        const defaultName = wp?.name ?? list[0]?.name ?? "wordpress";
+        form.setFieldsValue({ app_type: defaultName });
+      })
+      .catch((err) => {
+        if (!alive) return;
+        message.error(extractError(err, "Failed to load app catalog"));
+        // Fallback: surface a WordPress-only catalog so the form still
+        // renders if the server hasn't redeployed with /applications/registry.
+        setApps([
+          {
+            name: "wordpress",
+            display_name: "WordPress",
+            default_subdirectory: "",
+            requires_db: true,
+          },
+        ]);
+        form.setFieldsValue({ app_type: "wordpress" });
+      })
+      .finally(() => {
+        if (alive) setLoadingApps(false);
+      });
     return () => {
       alive = false;
     };
-  }, [open]);
+  }, [open, form]);
 
   const reset = () => {
     form.resetFields();
@@ -162,26 +203,39 @@ export const InstallWordPressModal = ({
     const vals = form.getFieldsValue();
     setSubmitting(true);
     try {
+      // M19 generic create. The per-app fields (site_title, admin_*)
+      // live under `params`; the descriptor's InstallParamSchema on the
+      // server validates them. Only WordPress is in the picker today,
+      // so the body shape matches what the legacy /wordpress-installs
+      // route accepted just rewrapped.
+      const params: Record<string, unknown> = {
+        admin_username: vals.admin_username,
+        admin_email: vals.admin_email,
+        site_title: vals.site_title,
+        locale: vals.locale || "en_US",
+      };
+      if (vals.admin_password) {
+        params.admin_password = vals.admin_password;
+      }
       const resp = await apiClient.post<{
         id: string;
+        app_type: string;
         domain_id: string;
         db_id: string;
         admin_username: string;
         admin_email: string;
         admin_password: string;
-      }>("/wordpress-installs", {
+      }>("/applications", {
+        app_type: vals.app_type,
         domain_id: vals.domain_id,
         use_www: vals.use_www || false,
-        subdirectory: vals.subdirectory || undefined,
-        site_title: vals.site_title,
-        admin_username: vals.admin_username,
-        admin_email: vals.admin_email,
-        admin_password: vals.admin_password || undefined,
-        locale: vals.locale || "en_US",
+        subdirectory: vals.subdirectory || "",
+        params,
       });
       const domainName =
         domains.find((d) => d.id === vals.domain_id)?.name ?? vals.domain_id;
       setResult({
+        appType: resp.data.app_type,
         domainName,
         adminUsername: resp.data.admin_username,
         adminEmail: resp.data.admin_email,
@@ -195,19 +249,16 @@ export const InstallWordPressModal = ({
         const detail = e.response.data.detail ?? "Invalid subdirectory";
         form.setFields([{ name: "subdirectory", errors: [detail] }]);
       } else if (e.response?.data?.error === "install_exists") {
-        // Server rejected because (domain, subdirectory) is already taken.
-        // Surface as a subdirectory field error so the user can pick a
-        // different subdir without losing the rest of the form.
         form.setFields([
           {
             name: "subdirectory",
             errors: [
-              "This domain already hosts a WordPress install at that location — pick a different subdirectory",
+              "This domain already hosts the same application at that location — pick a different subdirectory",
             ],
           },
         ]);
       } else {
-        message.error(extractError(err, "Failed to install WordPress"));
+        message.error(extractError(err, "Failed to install application"));
       }
     } finally {
       setSubmitting(false);
@@ -223,9 +274,8 @@ export const InstallWordPressModal = ({
     }
   };
 
-  const validateSubdirectory = (_: any, value: string) => {
+  const validateSubdirectory = (_: unknown, value: string) => {
     if (!value) {
-      // subdirectory is optional
       return Promise.resolve();
     }
     if (!SUBDIRECTORY_PATTERN.test(value)) {
@@ -241,16 +291,11 @@ export const InstallWordPressModal = ({
     return Promise.resolve();
   };
 
-  // Show every domain. The backend enforces uniqueness at
-  // (domain, subdirectory) granularity, not per-domain — so a domain that
-  // already hosts /blog can still receive a docroot install or a /shop
-  // install. install_exists is surfaced as a subdirectory field error in
-  // handleSubmit when the (domain, subdir) slot is genuinely taken.
   const availableDomains = domains;
 
   return (
     <Modal
-      title="Install WordPress"
+      title="Install application"
       open={open}
       onCancel={handleClose}
       maskClosable={!submitting && !result}
@@ -271,9 +316,9 @@ export const InstallWordPressModal = ({
                 type="primary"
                 loading={submitting}
                 onClick={handleSubmit}
-                disabled={availableDomains.length === 0}
+                disabled={availableDomains.length === 0 || apps.length === 0}
               >
-                Install WordPress
+                Install {selectedApp?.display_name ?? "application"}
               </Button>,
             ]
       }
@@ -288,10 +333,11 @@ export const InstallWordPressModal = ({
             message="What happens next"
             description={
               <>
-                We&rsquo;ll create a database, download WordPress, run the
-                installer, and show the admin password once. The install
-                runs in the background — you&rsquo;ll see the row flip
-                from &ldquo;installing&rdquo; to &ldquo;ready&rdquo; when
+                We&rsquo;ll provision the application&rsquo;s database (if
+                it needs one), download the app, run its installer, and
+                show the admin password once. The install runs in the
+                background — the row flips from
+                &ldquo;installing&rdquo; to &ldquo;ready&rdquo; when
                 it&rsquo;s done (usually ~1 minute).
               </>
             }
@@ -310,6 +356,7 @@ export const InstallWordPressModal = ({
             layout="vertical"
             disabled={submitting}
             initialValues={{
+              app_type: "wordpress",
               use_www: false,
               subdirectory: "",
               admin_username: "admin",
@@ -317,7 +364,32 @@ export const InstallWordPressModal = ({
               locale: "en_US",
             }}
           >
-            {/* Step 1: Domain selector only */}
+            <Form.Item
+              label="Application"
+              name="app_type"
+              rules={[{ required: true, message: "Pick an application" }]}
+            >
+              <Select
+                placeholder="Select an application"
+                loading={loadingApps}
+                suffixIcon={<AppstoreOutlined />}
+                options={apps.map((a) => ({
+                  value: a.name,
+                  label: a.display_name,
+                }))}
+                showSearch
+                optionFilterProp="label"
+              />
+            </Form.Item>
+
+            {selectedApp?.description && (
+              <Form.Item style={{ marginTop: -8, marginBottom: 16 }}>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {selectedApp.description}
+                </Typography.Text>
+              </Form.Item>
+            )}
+
             <Form.Item
               label="Domain"
               name="domain_id"
@@ -335,7 +407,6 @@ export const InstallWordPressModal = ({
               />
             </Form.Item>
 
-            {/* Step 2: Remaining fields (revealed after domain selection) */}
             {domainSelected && (
               <>
                 <Form.Item
@@ -367,7 +438,7 @@ export const InstallWordPressModal = ({
                   name="site_title"
                   rules={[{ required: true, message: "Site title is required" }]}
                 >
-                  <Input placeholder="My WordPress site" autoComplete="off" />
+                  <Input placeholder="My site" autoComplete="off" />
                 </Form.Item>
                 <Form.Item
                   label="Admin username"
@@ -415,7 +486,7 @@ export const InstallWordPressModal = ({
             type="success"
             showIcon
             icon={<CheckCircleTwoTone twoToneColor="#52c41a" />}
-            message="WordPress install queued"
+            message="Install queued"
             description="The install runs in the background. Copy the password now — it is shown only once. We store only a bcrypt hash."
           />
           <div>

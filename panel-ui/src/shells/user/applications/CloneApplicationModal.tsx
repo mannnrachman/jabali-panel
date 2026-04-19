@@ -1,7 +1,8 @@
-// Clone WordPress install modal — presents a destination domain dropdown,
+// Clone application modal — presents a destination domain dropdown,
 // submits the clone request, and invalidates related caches on success.
-// Pattern mirrors InstallWordPressModal: domain dropdown (excluding already-
-// hosted domains), form validation, error extraction, and useInvalidate.
+// Today only WordPress is clonable (descriptor.AgentCloneCmd is set on
+// the WordPress descriptor only); future clonable apps reuse the same
+// modal and POST /applications/:id/clone path.
 
 import { useEffect, useState } from "react";
 import {
@@ -46,7 +47,7 @@ const extractError = (err: ApiError, fallback: string): string => {
   );
 };
 
-export const CloneWordPressModal = ({
+export const CloneApplicationModal = ({
   open,
   onClose,
   onSuccess,
@@ -60,7 +61,7 @@ export const CloneWordPressModal = ({
 
   // Clone also creates a new DB + DB user, so invalidate those lists too.
   const refreshLists = () => {
-    invalidate({ resource: "wordpress-installs", invalidates: ["list"] });
+    invalidate({ resource: "applications", invalidates: ["list"] });
     invalidate({ resource: "databases", invalidates: ["list"] });
     invalidate({ resource: "database-users", invalidates: ["list"] });
     onSuccess();
@@ -107,14 +108,14 @@ export const CloneWordPressModal = ({
     const vals = form.getFieldsValue();
     setSubmitting(true);
     try {
-      await apiClient.post(`/wordpress-installs/${installId}/clone`, {
+      await apiClient.post(`/applications/${installId}/clone`, {
         dest_domain_id: vals.dest_domain_id,
       });
       message.success("Cloning started…");
       refreshLists();
       handleClose();
     } catch (err) {
-      message.error(extractError(err as ApiError, "Failed to clone WordPress install"));
+      message.error(extractError(err as ApiError, "Failed to clone application"));
     } finally {
       setSubmitting(false);
     }
@@ -127,7 +128,7 @@ export const CloneWordPressModal = ({
 
   return (
     <Modal
-      title="Clone WordPress install"
+      title="Clone application"
       open={open}
       onCancel={handleClose}
       maskClosable={!submitting}

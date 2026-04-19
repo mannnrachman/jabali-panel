@@ -1,13 +1,7 @@
-// User-shell WordPress page — list of the caller's installs with
-// install + delete actions. Matches the Databases page pattern:
-// SearchableTable, useTable against the resource's API slug, and
-// a modal for the create/install flow.
-//
-// Status → badge color mapping covers every value wordPressInstallRepo
-// can emit (see models.WordPressInstall.Status). Transitional states
-// (pending, installing, cloning, deleting) show a spinner so the user
-// knows the background agent is still working; terminal states (ready,
-// failed) show green/red.
+// User-shell Applications page — lists every install (WordPress today,
+// DokuWiki/MediaWiki/etc. as M19 lands them). Same SearchableTable
+// pattern as databases. Status → badge mapping covers every value the
+// reconciler can emit (see models.ApplicationInstall.Status).
 
 import { useState } from "react";
 import {
@@ -28,17 +22,23 @@ import {
   ExclamationCircleOutlined,
   DeleteOutlined,
   CopyOutlined,
+  AppstoreOutlined,
 } from "@ant-design/icons";
 import { useTable } from "@refinedev/antd";
 import { useInvalidate, useGetIdentity } from "@refinedev/core";
 import { SearchableTable } from "../../../components/SearchableTable";
 import { readQValue } from "../../../components/searchableTableUtils";
 import { apiClient } from "../../../apiClient";
-import { InstallWordPressModal } from "./InstallWordPressModal";
-import { CloneWordPressModal } from "./CloneWordPressModal";
+import { InstallApplicationModal } from "./InstallApplicationModal";
+import { CloneApplicationModal } from "./CloneApplicationModal";
+import { APP_TYPE_LABELS } from "./appLabels";
 
-type WordPressInstall = {
+type ApplicationInstall = {
   id: string;
+  // Pre-M19 rows have no app_type column and the model defaults to
+  // "wordpress" — we mirror that default here so a stale read still
+  // renders a useful label.
+  app_type?: string;
   domain_id: string;
   domain_name: string;
   db_id: string;
@@ -64,7 +64,7 @@ type WordPressInstall = {
 type Identity = { email?: string };
 
 const STATUS_META: Record<
-  WordPressInstall["status"],
+  ApplicationInstall["status"],
   { color: string; icon: React.ReactNode; label: string; spinning: boolean }
 > = {
   pending:    { color: "default",    icon: <LoadingOutlined spin />,           label: "Pending",    spinning: true  },
@@ -75,19 +75,14 @@ const STATUS_META: Record<
   failed:     { color: "error",      icon: <ExclamationCircleOutlined />,      label: "Failed",     spinning: false },
 };
 
-export const UserWordPressList = () => {
-  const { tableProps, tableQuery, setFilters, filters } = useTable<WordPressInstall>({
-    resource: "wordpress-installs",
+export const UserApplicationList = () => {
+  const { tableProps, tableQuery, setFilters, filters } = useTable<ApplicationInstall>({
+    resource: "applications",
     syncWithLocation: true,
-    // Poll while any row is in a transitional state, so the user sees
-    // installing→ready without manual refresh. Refine's useTable lets
-    // us pass refetchInterval through to react-query.
     queryOptions: {
       // react-query v4 signature: (data, query) => number | false.
-      // data is Refine's list envelope { data: WordPressInstall[], total, ... }
-      // — NOT the raw react-query Query object (that's v5).
       refetchInterval: (data) => {
-        const rows = (data as { data?: WordPressInstall[] } | undefined)?.data ?? [];
+        const rows = (data as { data?: ApplicationInstall[] } | undefined)?.data ?? [];
         const hasTransitional = rows.some(
           (r) =>
             r.status === "pending" ||
@@ -107,12 +102,12 @@ export const UserWordPressList = () => {
   const invalidate = useInvalidate();
   const { data: identity } = useGetIdentity<Identity>();
 
-  const handleDelete = async (row: WordPressInstall) => {
+  const handleDelete = async (row: ApplicationInstall) => {
     setDeletingId(row.id);
     try {
-      await apiClient.delete(`/wordpress-installs/${row.id}`);
+      await apiClient.delete(`/applications/${row.id}`);
       message.success(`Deleting ${row.domain_name || row.domain_id}…`);
-      invalidate({ resource: "wordpress-installs", invalidates: ["list"] });
+      invalidate({ resource: "applications", invalidates: ["list"] });
       invalidate({ resource: "databases", invalidates: ["list"] });
     } catch (err) {
       const msg =
@@ -137,25 +132,25 @@ export const UserWordPressList = () => {
         }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
-          My WordPress Sites
+          My Applications
         </Typography.Title>
         <Button
           type="primary"
           icon={<PlusSquareOutlined />}
           onClick={() => setInstallOpen(true)}
         >
-          New WordPress install
+          Install application
         </Button>
       </Space>
 
-      <InstallWordPressModal
+      <InstallApplicationModal
         open={installOpen}
         onClose={() => setInstallOpen(false)}
         onSuccess={() => tableQuery?.refetch?.()}
         defaultAdminEmail={identity?.email}
       />
 
-      <CloneWordPressModal
+      <CloneApplicationModal
         open={cloneOpen}
         onClose={() => {
           setCloneOpen(false);
@@ -165,7 +160,7 @@ export const UserWordPressList = () => {
         installId={cloningId ?? ""}
       />
 
-      <SearchableTable<WordPressInstall>
+      <SearchableTable<ApplicationInstall>
         {...tableProps}
         rowKey="id"
         bordered
@@ -173,7 +168,21 @@ export const UserWordPressList = () => {
         searchPlaceholder="Search by domain"
         onSearchChange={(filters) => setFilters(filters, "replace")}
       >
-        <Table.Column<WordPressInstall>
+        <Table.Column<ApplicationInstall>
+          dataIndex="app_type"
+          title="App"
+          render={(appType: string | undefined) => {
+            const key = appType || "wordpress";
+            const label = APP_TYPE_LABELS[key] ?? key;
+            return (
+              <Space size={6}>
+                <AppstoreOutlined />
+                <Typography.Text>{label}</Typography.Text>
+              </Space>
+            );
+          }}
+        />
+        <Table.Column<ApplicationInstall>
           dataIndex="domain_name"
           title="Domain"
           sorter={{ multiple: 1 }}
@@ -181,9 +190,6 @@ export const UserWordPressList = () => {
           render={(domainName: string, record) => {
             const label = domainName || record.domain_id;
             const isLink = record.status === "ready" && !!domainName;
-            // Subdirectory installs live at /<subdir>/, not /. Without
-            // the trailing slash WP often 301s anyway, but include it
-            // so the open-link goes straight to the install.
             const path = record.subdirectory ? `/${record.subdirectory}/` : "/";
             return (
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -204,7 +210,7 @@ export const UserWordPressList = () => {
             );
           }}
         />
-        <Table.Column<WordPressInstall>
+        <Table.Column<ApplicationInstall>
           dataIndex="subdirectory"
           title="Folder"
           render={(subdirectory: string) =>
@@ -215,15 +221,15 @@ export const UserWordPressList = () => {
             )
           }
         />
-        <Table.Column<WordPressInstall>
+        <Table.Column<ApplicationInstall>
           dataIndex="version"
           title="Version"
           render={(version: string | null) => version || "-"}
         />
-        <Table.Column<WordPressInstall>
+        <Table.Column<ApplicationInstall>
           dataIndex="status"
           title="Status"
-          render={(status: WordPressInstall["status"], record) => {
+          render={(status: ApplicationInstall["status"], record) => {
             const meta = STATUS_META[status] ?? STATUS_META.pending;
             const tag = (
               <Tag color={meta.color} icon={meta.icon}>
@@ -236,27 +242,27 @@ export const UserWordPressList = () => {
             return tag;
           }}
         />
-        <Table.Column<WordPressInstall>
+        <Table.Column<ApplicationInstall>
           dataIndex="admin_email"
           title="Admin email"
         />
-        <Table.Column<WordPressInstall>
+        <Table.Column<ApplicationInstall>
           dataIndex="created_at"
           title="Created"
           sorter={{ multiple: 2 }}
           render={(date: string) => new Date(date).toLocaleDateString()}
         />
-        <Table.Column<WordPressInstall>
+        <Table.Column<ApplicationInstall>
           title="Actions"
           dataIndex="actions"
           render={(_, r) => {
             const isDeleting =
               deletingId === r.id || r.status === "deleting";
-            const canClone = r.status === "ready";
+            const canClone = r.status === "ready" && (r.app_type ?? "wordpress") === "wordpress";
             return (
               <Space size="small">
                 <Tooltip
-                  title={canClone ? "" : "Clone is only available for healthy installs"}
+                  title={canClone ? "" : "Clone is only available for healthy WordPress installs"}
                 >
                   <Button
                     size="small"
@@ -272,7 +278,7 @@ export const UserWordPressList = () => {
                   </Button>
                 </Tooltip>
                 <Popconfirm
-                  title="Delete this WordPress install?"
+                  title="Delete this application?"
                   description="The database and files will be removed. This cannot be undone."
                   okText="Delete"
                   okButtonProps={{ danger: true }}

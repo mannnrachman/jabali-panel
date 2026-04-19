@@ -1,8 +1,8 @@
-// Admin-shell cross-user WordPress installs list — read-only view of all
-// WordPress sites across all users. Admins act via impersonation if they
-// need to modify any install.
+// Admin-shell cross-user applications list — read-only view of every
+// installed application (WordPress today, more as M19 lands them).
+// Admins act via impersonation if they need to modify any install.
 //
-// Status badge styling is inlined from UserWordPressList to keep
+// Status badge styling is inlined from UserApplicationList to keep
 // coupling low and avoid tight dependency on that component.
 
 import {
@@ -17,20 +17,22 @@ import {
   LoadingOutlined,
   CheckCircleOutlined,
   ExclamationCircleOutlined,
+  AppstoreOutlined,
 } from "@ant-design/icons";
 import { useTable } from "@refinedev/antd";
 import { SearchableTable } from "../../../components/SearchableTable";
 import { readQValue } from "../../../components/searchableTableUtils";
+import { APP_TYPE_LABELS } from "../../user/applications/appLabels";
 
-type WordPressInstall = {
+type ApplicationInstall = {
   id: string;
+  app_type?: string;
   domain_id: string;
   domain_name: string;
   db_id: string;
   admin_username: string;
   admin_email: string;
   locale: string;
-  // "" = docroot install, otherwise install lives at /<subdirectory>/.
   subdirectory: string;
   status:
     | "pending"
@@ -47,7 +49,7 @@ type WordPressInstall = {
 
 
 const STATUS_META: Record<
-  WordPressInstall["status"],
+  ApplicationInstall["status"],
   { color: string; icon: React.ReactNode; label: string; spinning: boolean }
 > = {
   pending:    { color: "default",    icon: <LoadingOutlined spin />,           label: "Pending",    spinning: true  },
@@ -58,15 +60,13 @@ const STATUS_META: Record<
   failed:     { color: "error",      icon: <ExclamationCircleOutlined />,      label: "Failed",     spinning: false },
 };
 
-export const AdminWordPressList = () => {
-  const { tableProps, setFilters, filters } = useTable<WordPressInstall>({
-    resource: "wordpress-installs",
+export const AdminApplicationList = () => {
+  const { tableProps, setFilters, filters } = useTable<ApplicationInstall>({
+    resource: "applications",
     syncWithLocation: true,
     queryOptions: {
-      // react-query v4: (data, query) => number | false. data is
-      // Refine's list envelope, not the Query object.
       refetchInterval: (data) => {
-        const rows = (data as { data?: WordPressInstall[] } | undefined)?.data ?? [];
+        const rows = (data as { data?: ApplicationInstall[] } | undefined)?.data ?? [];
         const hasTransitional = rows.some(
           (r) =>
             r.status === "pending" ||
@@ -91,11 +91,11 @@ export const AdminWordPressList = () => {
         }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
-          WordPress Installs (All Users)
+          Applications (All Users)
         </Typography.Title>
       </Space>
 
-      <SearchableTable<WordPressInstall>
+      <SearchableTable<ApplicationInstall>
         {...tableProps}
         rowKey="id"
         bordered
@@ -103,7 +103,21 @@ export const AdminWordPressList = () => {
         searchPlaceholder="Search by domain or user"
         onSearchChange={(filters) => setFilters(filters, "replace")}
       >
-        <Table.Column<WordPressInstall>
+        <Table.Column<ApplicationInstall>
+          dataIndex="app_type"
+          title="App"
+          render={(appType: string | undefined) => {
+            const key = appType || "wordpress";
+            const label = APP_TYPE_LABELS[key] ?? key;
+            return (
+              <Space size={6}>
+                <AppstoreOutlined />
+                <Typography.Text>{label}</Typography.Text>
+              </Space>
+            );
+          }}
+        />
+        <Table.Column<ApplicationInstall>
           dataIndex="domain_name"
           title="Domain"
           sorter={{ multiple: 1 }}
@@ -131,7 +145,7 @@ export const AdminWordPressList = () => {
             );
           }}
         />
-        <Table.Column<WordPressInstall>
+        <Table.Column<ApplicationInstall>
           dataIndex="subdirectory"
           title="Folder"
           render={(subdirectory: string) =>
@@ -142,22 +156,22 @@ export const AdminWordPressList = () => {
             )
           }
         />
-        <Table.Column<WordPressInstall>
+        <Table.Column<ApplicationInstall>
           dataIndex="admin_email"
           title="User"
           render={(email: string) => {
             return <span>{email}</span>;
           }}
         />
-        <Table.Column<WordPressInstall>
+        <Table.Column<ApplicationInstall>
           dataIndex="version"
           title="Version"
           render={(version: string | null) => version || "-"}
         />
-        <Table.Column<WordPressInstall>
+        <Table.Column<ApplicationInstall>
           dataIndex="status"
           title="Status"
-          render={(status: WordPressInstall["status"], record) => {
+          render={(status: ApplicationInstall["status"], record) => {
             const meta = STATUS_META[status] ?? STATUS_META.pending;
             const tag = (
               <Tag color={meta.color} icon={meta.icon}>
@@ -170,7 +184,7 @@ export const AdminWordPressList = () => {
             return tag;
           }}
         />
-        <Table.Column<WordPressInstall>
+        <Table.Column<ApplicationInstall>
           dataIndex="created_at"
           title="Created"
           sorter={{ multiple: 2 }}

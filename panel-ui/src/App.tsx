@@ -28,6 +28,7 @@ import { ConfigProvider } from "antd";
 
 import {
   AppstoreOutlined,
+  AppstoreAddOutlined,
   CloudServerOutlined,
   ClockCircleOutlined,
   DashboardOutlined,
@@ -35,7 +36,6 @@ import {
   FolderOutlined,
   GlobalOutlined,
   KeyOutlined,
-  ReadOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
   TeamOutlined,
@@ -74,10 +74,10 @@ import { UserDNSZonesOverviewPage } from "./shells/user/dns/UserDNSZonesOverview
 import { SSLManagerPage } from "./shells/admin/ssl/SSLManagerPage";
 import { UserSSLManagerPage } from "./shells/user/ssl/UserSSLManagerPage";
 import { UserPHPSettingsPage } from "./shells/user/php-settings/UserPHPSettingsPage";
-import { UserWordPressList } from "./shells/user/wordpress/UserWordPressList";
+import { UserApplicationList } from "./shells/user/applications/UserApplicationList";
 import { UserSSHKeysPage } from "./shells/user/ssh-keys/UserSSHKeysPage";
 import { UserCronList } from "./shells/user/cron/UserCronList";
-import { AdminWordPressList } from "./shells/admin/wordpress/AdminWordPressList";
+import { AdminApplicationList } from "./shells/admin/applications/AdminApplicationList";
 import { PHPVersionsPage } from "./shells/admin/php/PHPVersionsPage";
 import { PHPPoolEdit } from "./shells/admin/php-pools/PHPPoolEdit";
 import { LoginPage } from "./pages/Login";
@@ -144,9 +144,9 @@ const ThemedApp = () => {
               meta: { label: "PHP Manager", icon: <ThunderboltOutlined />, shell: "admin" },
             },
             {
-              name: "admin-wordpress-installs",
-              list: "/jabali-admin/wordpress",
-              meta: { label: "WordPress", icon: <ReadOutlined />, shell: "admin" },
+              name: "admin-applications",
+              list: "/jabali-admin/applications",
+              meta: { label: "Applications", icon: <AppstoreAddOutlined />, shell: "admin" },
             },
 
             // User shell
@@ -202,12 +202,14 @@ const ThemedApp = () => {
               meta: { label: "Files", icon: <FolderOutlined />, shell: "user" },
             },
             {
-              // Resource name matches the API slug (/wordpress-installs)
-              // so useTable("wordpress-installs") and useInvalidate all
-              // resolve to the same entry.
-              name: "wordpress-installs",
-              list: "/jabali-panel/wordpress",
-              meta: { label: "WordPress", icon: <ReadOutlined />, shell: "user" },
+              // Resource name matches the API slug (/applications) so
+              // useTable("applications") and useInvalidate all resolve
+              // to the same entry. Legacy /wordpress-installs is still
+              // mounted on the API for one release in case a stale UI
+              // is still in users' caches; new traffic goes here.
+              name: "applications",
+              list: "/jabali-panel/applications",
+              meta: { label: "Applications", icon: <AppstoreAddOutlined />, shell: "user" },
             },
             {
               name: "ssh-keys",
@@ -266,7 +268,7 @@ const ThemedApp = () => {
                 <Route index element={<PHPVersionsPage />} />
                 <Route path="edit/:id" element={<PHPPoolEdit />} />
               </Route>
-              <Route path="wordpress" element={<AdminWordPressList />} />
+              <Route path="applications" element={<AdminApplicationList />} />
             </Route>
 
             {/* ---------------- user shell ----------------- */}
@@ -301,7 +303,7 @@ const ThemedApp = () => {
               <Route path="ssl" element={<UserSSLManagerPage />} />
               <Route path="php-settings" element={<UserPHPSettingsPage />} />
               <Route path="files" element={<FileManagerPage />} />
-              <Route path="wordpress" element={<UserWordPressList />} />
+              <Route path="applications" element={<UserApplicationList />} />
               <Route path="ssh-keys" element={<UserSSHKeysPage />} />
               <Route path="cron" element={<UserCronList />} />
             </Route>

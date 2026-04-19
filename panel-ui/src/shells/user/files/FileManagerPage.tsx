@@ -54,7 +54,9 @@ import { AxiosError } from "axios";
 
 import type { FileEntry } from "./filesApi";
 import {
+  filesArchive,
   filesChmod,
+  filesCopy,
   filesDelete,
   filesDownloadURL,
   filesHome,
@@ -65,7 +67,10 @@ import {
   filesRename,
   filesTree,
   filesUpload,
+  filesUploadChunked,
+  filesWrite,
 } from "./filesApi";
+import Editor from "@monaco-editor/react";
 
 const { Text } = Typography;
 
@@ -112,6 +117,96 @@ function formatModTime(raw: string): string {
 
 function joinPath(dir: string, name: string): string {
   return dir.endsWith("/") ? dir + name : dir + "/" + name;
+}
+
+// isImagePath returns true for extensions the browser can render inline
+// via an <img> tag. Used to switch the preview modal from the text
+// view to an image view without forcing an intermediate API call.
+const imageExtensions = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".svg",
+  ".bmp",
+  ".ico",
+  ".avif",
+]);
+
+function isImagePath(name: string): boolean {
+  const i = name.lastIndexOf(".");
+  if (i < 0) return false;
+  return imageExtensions.has(name.slice(i).toLowerCase());
+}
+
+// Common text-editable extensions. Shown above — drives the per-row
+// "Edit" menu item so it only appears on reasonable candidates; we
+// don't want to open a 400 MB binary in Monaco.
+const textExtensions = new Set([
+  ".txt", ".md", ".markdown",
+  ".html", ".htm", ".css", ".scss", ".less",
+  ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+  ".json", ".xml", ".yaml", ".yml", ".toml", ".ini", ".env",
+  ".php", ".py", ".rb", ".go", ".rs", ".java", ".kt",
+  ".sh", ".bash", ".zsh", ".fish",
+  ".sql", ".conf", ".config",
+  ".gitignore", ".dockerignore",
+]);
+
+function isTextEditable(entry: FileEntry): boolean {
+  if (entry.is_dir || entry.is_symlink) return false;
+  const i = entry.name.lastIndexOf(".");
+  if (i < 0) {
+    // Extensionless files: allow if reasonably small (<1 MiB matches
+    // the filesPreview cap on the backend).
+    return entry.size > 0 && entry.size < 1024 * 1024;
+  }
+  return textExtensions.has(entry.name.slice(i).toLowerCase());
+}
+
+// Monaco language key by extension. Only common ones are mapped; other
+// files still open in plain text mode.
+const languageByExt: Record<string, string> = {
+  ".js": "javascript",
+  ".jsx": "javascript",
+  ".mjs": "javascript",
+  ".cjs": "javascript",
+  ".ts": "typescript",
+  ".tsx": "typescript",
+  ".json": "json",
+  ".html": "html",
+  ".htm": "html",
+  ".css": "css",
+  ".scss": "scss",
+  ".less": "less",
+  ".md": "markdown",
+  ".markdown": "markdown",
+  ".php": "php",
+  ".py": "python",
+  ".rb": "ruby",
+  ".go": "go",
+  ".rs": "rust",
+  ".java": "java",
+  ".kt": "kotlin",
+  ".sh": "shell",
+  ".bash": "shell",
+  ".zsh": "shell",
+  ".fish": "shell",
+  ".sql": "sql",
+  ".xml": "xml",
+  ".yaml": "yaml",
+  ".yml": "yaml",
+  ".toml": "ini",
+  ".ini": "ini",
+  ".env": "ini",
+  ".conf": "ini",
+};
+
+function languageFor(name: string): string {
+  const i = name.lastIndexOf(".");
+  if (i < 0) return "plaintext";
+  return languageByExt[name.slice(i).toLowerCase()] || "plaintext";
 }
 
 // symbolicModeToOctal converts Go's Mode().String() (e.g. "-rw-r--r--",
@@ -208,11 +303,24 @@ export const FileManagerPage = () => {
 
   // Single-entry chmod. Separate from the bulk path so the per-row
   // "Permissions" menu item doesn't require checking the row first.
-  // Mode seeded to 0755/0644 by entry type since the list wire shape
-  // carries the symbolic "-rw-r--r--" form, not an octal — parsing
-  // that back to octal is doable but wasn't worth the code for v1.
+  // Mode seeded from the row's parsed octal when opening.
   const [chmodTarget, setChmodTarget] = useState<FileEntry | null>(null);
   const [chmodTargetMode, setChmodTargetMode] = useState("0644");
+
+  // Clipboard for Copy/Paste. Stores the absolute paths captured at
+  // Copy time — Paste resolves them against the current folder. Cut
+  // semantics (move-on-paste) is out of scope for v1 since the Copy
+  // button is enough for the most common case, and move is already
+  // one drag away.
+  const [clipboard, setClipboard] = useState<string[]>([]);
+
+  // Editor — Monaco-based. editTarget holds the path of the file
+  // being edited; null means the modal is closed.
+  const [editTarget, setEditTarget] = useState<string | null>(null);
+  const [editOriginal, setEditOriginal] = useState("");
+  const [editContent, setEditContent] = useState("");
+  const [editLoading, setEditLoading] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
 
   // --- initial load: fetch user's home then list it ---
   useEffect(() => {
@@ -310,6 +418,12 @@ export const FileManagerPage = () => {
     setPreviewPath(path);
     setPreviewContent("");
     setPreviewOpen(true);
+    // Image branch: skip the text-preview round-trip, the browser fetches
+    // the bytes directly via the download URL and renders them inline.
+    if (isImagePath(entry.name)) {
+      setPreviewLoading(false);
+      return;
+    }
     setPreviewLoading(true);
     try {
       const resp = await filesPreview(path);
@@ -365,6 +479,43 @@ export const FileManagerPage = () => {
     setChmodTargetMode(oct ? `0${oct}` : entry.is_dir ? "0755" : "0644");
     setChmodTarget(entry);
   };
+
+  const openEditor = useCallback(
+    async (entry: FileEntry) => {
+      if (!currentPath) return;
+      const path = joinPath(currentPath, entry.name);
+      setEditTarget(path);
+      setEditLoading(true);
+      setEditContent("");
+      setEditOriginal("");
+      try {
+        const resp = await filesPreview(path);
+        setEditContent(resp.content);
+        setEditOriginal(resp.content);
+      } catch (err) {
+        message.error(`Load failed: ${errMessage(err)}`);
+        setEditTarget(null);
+      } finally {
+        setEditLoading(false);
+      }
+    },
+    [currentPath],
+  );
+
+  const submitEdit = useCallback(async () => {
+    if (!editTarget || editSaving) return;
+    setEditSaving(true);
+    try {
+      await filesWrite(editTarget, editContent);
+      message.success("Saved");
+      setEditTarget(null);
+      if (currentPath) void reloadList(currentPath);
+    } catch (err) {
+      message.error(`Save failed: ${errMessage(err)}`);
+    } finally {
+      setEditSaving(false);
+    }
+  }, [editTarget, editContent, editSaving, currentPath, reloadList]);
 
   const submitSingleChmod = async () => {
     if (!chmodTarget || !currentPath) return;
@@ -431,33 +582,57 @@ export const FileManagerPage = () => {
   };
 
   // --- upload via AntD Upload ---
-  // Shared by the toolbar button AND the table-wide drop zone: both paths
-  // call the same `filesUpload` with a 100 MB cap and a reload on success.
-  // `multiple: true` lets the drop zone handle multi-file drops naturally;
-  // AntD invokes beforeUpload once per file.
+  // Two paths depending on size:
+  //  - ≤ 100 MB: single multipart POST (existing /files/upload).
+  //  - > 100 MB: chunked (/files/upload-chunk), 10 MB chunks, the
+  //    final chunk triggers agent-side ingest of the /tmp scratch
+  //    file into the user's scope.
+  // Hard ceiling at 1 GB to match the backend cap; above that the
+  // client stops before sending anything.
+  const handleUploadOne = useCallback(
+    async (file: File) => {
+      if (!currentPath) return;
+      if (file.size > 1024 * 1024 * 1024) {
+        message.error(`${file.name}: exceeds 1 GB limit`);
+        return;
+      }
+      try {
+        if (file.size <= 100 * 1024 * 1024) {
+          await filesUpload(currentPath, file);
+        } else {
+          const key = `upload-${file.name}`;
+          message.loading({ content: `Uploading ${file.name}…`, key, duration: 0 });
+          try {
+            await filesUploadChunked(currentPath, file, 10 * 1024 * 1024, (frac) => {
+              message.loading({
+                content: `Uploading ${file.name} — ${Math.round(frac * 100)}%`,
+                key,
+                duration: 0,
+              });
+            });
+          } finally {
+            message.destroy(key);
+          }
+        }
+        message.success(`Uploaded ${file.name}`);
+        void reloadList(currentPath);
+      } catch (err) {
+        message.error(`Upload failed (${file.name}): ${errMessage(err)}`);
+      }
+    },
+    [currentPath, reloadList],
+  );
+
   const uploadProps: UploadProps = useMemo(
     () => ({
       multiple: true,
       showUploadList: false,
       beforeUpload: (file) => {
-        if (!currentPath) return false;
-        if (file.size > 100 * 1024 * 1024) {
-          message.error(`${file.name}: exceeds 100 MB limit`);
-          return false;
-        }
-        (async () => {
-          try {
-            await filesUpload(currentPath, file);
-            message.success(`Uploaded ${file.name}`);
-            void reloadList(currentPath);
-          } catch (err) {
-            message.error(`Upload failed (${file.name}): ${errMessage(err)}`);
-          }
-        })();
+        void handleUploadOne(file);
         return false; // prevent AntD's default XHR; we already uploaded.
       },
     }),
-    [currentPath, reloadList],
+    [handleUploadOne],
   );
 
   // --- drag-to-move state ---
@@ -549,6 +724,43 @@ export const FileManagerPage = () => {
     setBulkChmodOpen(false);
     await runBulk("Chmod", selectedPaths, (p) => filesChmod(p, mode));
   }, [bulkChmodMode, runBulk, selectedPaths]);
+
+  // Download selection as archive.tar.gz. Single HTTP request, the
+  // backend builds the tarball server-side and streams back — no
+  // in-memory concatenation on the client, so very large selections
+  // work as long as the backend cap (500 MB total) is respected.
+  const handleBulkDownloadZip = useCallback(async () => {
+    if (selectedPaths.length === 0) return;
+    try {
+      const blob = await filesArchive(selectedPaths);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "archive.tar.gz";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      message.success(`Archived ${selectedPaths.length} items`);
+    } catch (err) {
+      message.error(`Archive failed: ${errMessage(err)}`);
+    }
+  }, [selectedPaths]);
+
+  const handleCopyToClipboard = useCallback(() => {
+    if (selectedPaths.length === 0) return;
+    setClipboard(selectedPaths);
+    message.success(
+      `Copied ${selectedPaths.length} item${selectedPaths.length === 1 ? "" : "s"} — switch folders and Paste`,
+    );
+    setSelectedNames([]);
+  }, [selectedPaths]);
+
+  const handlePaste = useCallback(async () => {
+    if (!currentPath || clipboard.length === 0) return;
+    await runBulk("Pasted", clipboard, (p) => filesCopy(p, currentPath));
+    setClipboard([]);
+  }, [clipboard, currentPath, runBulk]);
 
   const handleMove = useCallback(
     async (srcPath: string, destDir: string) => {
@@ -662,6 +874,16 @@ export const FileManagerPage = () => {
                 },
               ]
             : []),
+          ...(isTextEditable(entry)
+            ? [
+                {
+                  key: "edit",
+                  icon: <EditOutlined />,
+                  label: "Edit",
+                  onClick: () => void openEditor(entry),
+                },
+              ]
+            : []),
           {
             key: "rename",
             icon: <EditOutlined />,
@@ -726,6 +948,15 @@ export const FileManagerPage = () => {
           }))}
         />
         <Space>
+          {clipboard.length > 0 && (
+            <Button
+              type="primary"
+              ghost
+              onClick={() => void handlePaste()}
+            >
+              Paste ({clipboard.length})
+            </Button>
+          )}
           <Upload {...uploadProps}>
             <Button icon={<UploadOutlined />}>Upload</Button>
           </Upload>
@@ -770,14 +1001,24 @@ export const FileManagerPage = () => {
           <Text strong>
             {selectedNames.length} selected
           </Text>
-          <Button danger size="small" onClick={handleBulkDelete}>
-            Delete
+          <Button
+            size="small"
+            icon={<DownloadOutlined />}
+            onClick={() => void handleBulkDownloadZip()}
+          >
+            Download
+          </Button>
+          <Button size="small" onClick={handleCopyToClipboard}>
+            Copy
           </Button>
           <Button size="small" onClick={() => setBulkMoveOpen(true)}>
             Move to…
           </Button>
           <Button size="small" onClick={() => setBulkChmodOpen(true)}>
             Permissions
+          </Button>
+          <Button danger size="small" onClick={handleBulkDelete}>
+            Delete
           </Button>
           <Button size="small" type="text" onClick={() => setSelectedNames([])}>
             Clear
@@ -864,19 +1105,7 @@ export const FileManagerPage = () => {
             e.preventDefault();
             if (!currentPath) return;
             for (const f of Array.from(e.dataTransfer.files)) {
-              if (f.size > 100 * 1024 * 1024) {
-                message.error(`${f.name}: exceeds 100 MB limit`);
-                continue;
-              }
-              (async () => {
-                try {
-                  await filesUpload(currentPath, f);
-                  message.success(`Uploaded ${f.name}`);
-                  void reloadList(currentPath);
-                } catch (err) {
-                  message.error(`Upload failed (${f.name}): ${errMessage(err)}`);
-                }
-              })();
+              void handleUploadOne(f);
             }
           }}
         >
@@ -984,20 +1213,31 @@ export const FileManagerPage = () => {
         footer={null}
       >
         <Spin spinning={previewLoading}>
-          <pre
-            style={{
-              maxHeight: "60vh",
-              overflow: "auto",
-              background: "#fafafa",
-              padding: 12,
-              borderRadius: 4,
-              fontSize: 12,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-all",
-            }}
-          >
-            {previewContent}
-          </pre>
+          {previewPath && isImagePath(previewPath) ? (
+            <div style={{ textAlign: "center", maxHeight: "70vh", overflow: "auto" }}>
+              <img
+                src={filesDownloadURL(previewPath)}
+                alt={previewPath}
+                style={{ maxWidth: "100%", maxHeight: "65vh" }}
+              />
+            </div>
+          ) : (
+            <pre
+              style={{
+                maxHeight: "60vh",
+                overflow: "auto",
+                background: token.colorFillQuaternary,
+                color: token.colorText,
+                padding: 12,
+                borderRadius: token.borderRadius,
+                fontSize: 12,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-all",
+              }}
+            >
+              {previewContent}
+            </pre>
+          )}
         </Spin>
       </Modal>
 
@@ -1073,6 +1313,46 @@ export const FileManagerPage = () => {
         okText="Apply"
       >
         <ChmodEditor value={chmodTargetMode} onChange={setChmodTargetMode} />
+      </Modal>
+
+      <Modal
+        title={editTarget ? `Edit — ${editTarget.split("/").pop()}` : "Edit"}
+        open={!!editTarget}
+        onOk={() => void submitEdit()}
+        onCancel={() => setEditTarget(null)}
+        okText="Save"
+        okButtonProps={{ loading: editSaving, disabled: editContent === editOriginal }}
+        width="min(1100px, 95vw)"
+      >
+        <Spin spinning={editLoading}>
+          <div
+            style={{
+              height: "65vh",
+              border: `1px solid ${token.colorBorderSecondary}`,
+              borderRadius: token.borderRadius,
+              overflow: "hidden",
+            }}
+          >
+            <Editor
+              height="100%"
+              value={editContent}
+              onChange={(v) => setEditContent(v ?? "")}
+              language={editTarget ? languageFor(editTarget) : "plaintext"}
+              theme={
+                // Pick vs-dark when the app is in dark mode, vs when light.
+                // AntD's token exposes colorBgBase; a dark bg implies dark.
+                token.colorBgBase && token.colorBgBase.startsWith("#0")
+                  ? "vs-dark"
+                  : "vs"
+              }
+              options={{
+                minimap: { enabled: false },
+                scrollBeyondLastLine: false,
+                fontSize: 13,
+              }}
+            />
+          </div>
+        </Spin>
       </Modal>
     </div>
   );

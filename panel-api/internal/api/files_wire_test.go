@@ -142,6 +142,25 @@ func TestFilesAgentParamsWireShape(t *testing.T) {
 			want: []string{"mode", "path", "user_id", "username"},
 		},
 		{
+			name: "files.archive",
+			payload: filesArchiveAgentParams{
+				UserID:   "u",
+				Username: "shuki",
+				Paths:    []string{"/home/shuki/a.txt", "/home/shuki/b"},
+			},
+			want: []string{"paths", "user_id", "username"},
+		},
+		{
+			name: "files.copy",
+			payload: filesCopyAgentParams{
+				UserID:   "u",
+				Username: "shuki",
+				SrcPath:  "/home/shuki/a.txt",
+				DstPath:  "/home/shuki/dir/a.txt",
+			},
+			want: []string{"dst_path", "src_path", "user_id", "username"},
+		},
+		{
 			name: "files.stat",
 			payload: filesStatAgentParams{
 				UserID:   "u",

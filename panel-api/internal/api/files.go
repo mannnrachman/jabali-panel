@@ -7,9 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -78,6 +80,31 @@ type filesChmodAgentParams struct {
 	Mode     string `json:"mode"`
 }
 
+type filesArchiveAgentParams struct {
+	UserID   string   `json:"user_id"`
+	Username string   `json:"username"`
+	Paths    []string `json:"paths"`
+}
+
+type filesArchiveAgentResult struct {
+	ArchivePath string `json:"archive_path"`
+	Size        int64  `json:"size"`
+}
+
+type filesCopyAgentParams struct {
+	UserID   string `json:"user_id"`
+	Username string `json:"username"`
+	SrcPath  string `json:"src_path"`
+	DstPath  string `json:"dst_path"`
+}
+
+type filesIngestAgentParams struct {
+	UserID   string `json:"user_id"`
+	Username string `json:"username"`
+	TmpPath  string `json:"tmp_path"`
+	DestPath string `json:"dest_path"`
+}
+
 type filesStatAgentParams struct {
 	UserID   string `json:"user_id"`
 	Username string `json:"username"`
@@ -113,6 +140,10 @@ func RegisterFilesRoutes(g *gin.RouterGroup, cfg FilesHandlerConfig) {
 	grp.POST("/rename", h.rename)
 	grp.POST("/move", h.move)
 	grp.POST("/chmod", h.chmod)
+	grp.POST("/archive", h.archive)
+	grp.POST("/copy", h.copy)
+	grp.POST("/write", h.write)
+	grp.POST("/upload-chunk", h.uploadChunk)
 }
 
 type filesHandler struct{ cfg FilesHandlerConfig }
@@ -143,6 +174,29 @@ type moveRequest struct {
 type chmodRequest struct {
 	Path string `json:"path" binding:"required"`
 	Mode string `json:"mode" binding:"required"`
+}
+
+// archiveRequest powers the "Download .tar.gz of N selected items"
+// flow. Paths are absolute, scoped inside the user's homedir — the
+// agent re-validates every entry before building anything.
+type archiveRequest struct {
+	Paths []string `json:"paths" binding:"required"`
+}
+
+// copyRequest powers the Copy/Paste flow. `dest_dir` is the parent
+// directory to land into; the basename is preserved from src so the
+// client can't name a destination collision it wouldn't have picked
+// interactively.
+type copyRequest struct {
+	Path    string `json:"path"     binding:"required"`
+	DestDir string `json:"dest_dir" binding:"required"`
+}
+
+// writeRequest powers the Monaco editor's Save action. Content is
+// UTF-8; binary-safe writes (base64) are deferred to Phase-3.
+type writeRequest struct {
+	Path    string `json:"path"    binding:"required"`
+	Content string `json:"content"`
 }
 
 type filesListEntry struct {
@@ -533,6 +587,200 @@ func (h *filesHandler) chmod(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"path": req.Path, "mode": req.Mode})
+}
+
+// archive handles POST /files/archive: the agent builds a tar.gz of
+// every requested path into a tmp file owned by the panel process, we
+// stream that file back to the client with the right headers, then
+// unlink. One HTTP request per download — no cleanup token dance.
+func (h *filesHandler) archive(c *gin.Context) {
+	userID, username, ok := h.requireClaimsAndUsername(c)
+	if !ok {
+		return
+	}
+	var req archiveRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
+		return
+	}
+	if len(req.Paths) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "paths_required"})
+		return
+	}
+	raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.archive", filesArchiveAgentParams{
+		UserID: userID, Username: username, Paths: req.Paths,
+	})
+	if err != nil {
+		respondAgentError(c, err)
+		return
+	}
+	var result filesArchiveAgentResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": "bad agent response"})
+		return
+	}
+	// Always remove the scratch file after we're done streaming —
+	// success, client disconnect, or stat failure. A leftover /tmp
+	// file would accumulate per-download otherwise.
+	defer func() { _ = os.Remove(result.ArchivePath) }()
+
+	f, err := os.Open(result.ArchivePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
+		return
+	}
+	defer f.Close()
+
+	c.Header("Content-Type", "application/gzip")
+	c.Header("Content-Disposition", `attachment; filename="archive.tar.gz"`)
+	c.Header("Content-Length", fmt.Sprintf("%d", result.Size))
+	if _, err := io.Copy(c.Writer, f); err != nil {
+		// Response already started — nothing useful to do, just log
+		// via the request logger.
+		if h.cfg.Log != nil {
+			h.cfg.Log.Warn("archive stream failed", "err", err, "path", result.ArchivePath)
+		}
+	}
+}
+
+// copy handles POST /files/copy: recursively copies a scoped path
+// into a different parent directory. Distinct from move (which
+// relinks) and rename (same-parent-only).
+func (h *filesHandler) copy(c *gin.Context) {
+	userID, username, ok := h.requireClaimsAndUsername(c)
+	if !ok {
+		return
+	}
+	var req copyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
+		return
+	}
+	if strings.Contains(req.DestDir, "..") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_dest_dir"})
+		return
+	}
+	dst := filepath.Join(req.DestDir, filepath.Base(req.Path))
+	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.copy", filesCopyAgentParams{
+		UserID: userID, Username: username, SrcPath: req.Path, DstPath: dst,
+	})
+	if err != nil {
+		respondAgentError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"src_path": req.Path, "dst_path": dst})
+}
+
+// write handles POST /files/write: overwrites / creates a file with
+// the given UTF-8 content. Used by the Monaco editor's Save action.
+func (h *filesHandler) write(c *gin.Context) {
+	userID, username, ok := h.requireClaimsAndUsername(c)
+	if !ok {
+		return
+	}
+	var req writeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
+		return
+	}
+	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.write", filesWriteAgentParams{
+		UserID: userID, Username: username, Path: req.Path, Content: req.Content,
+	})
+	if err != nil {
+		respondAgentError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"path": req.Path, "size": len(req.Content)})
+}
+
+// uploadChunk handles POST /files/upload-chunk: streams a binary chunk
+// to /tmp/jabali-upload-<id>, appending at `offset`. When `final=1` is
+// set on the last chunk, the accumulated /tmp file is moved into the
+// user's scope at `path/name` via the agent's files.ingest command.
+//
+// No auth other than the usual user check — upload_ids are random UUIDs
+// kept only in the client's memory, so there's no cross-user collision
+// surface unless two separate clients both guess the same 128-bit id.
+func (h *filesHandler) uploadChunk(c *gin.Context) {
+	userID, username, ok := h.requireClaimsAndUsername(c)
+	if !ok {
+		return
+	}
+	uploadID := c.Query("upload_id")
+	offsetStr := c.Query("offset")
+	destDir := c.Query("path")
+	filename := c.Query("name")
+	isFinal := c.Query("final") == "1"
+	if uploadID == "" || offsetStr == "" || destDir == "" || filename == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_upload_params"})
+		return
+	}
+	// Keep uploadID safe as a filesystem basename — no path separators,
+	// no ".." — since we string-interpolate it into /tmp/<id>.
+	if strings.ContainsAny(uploadID, "/\\.") || uploadID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_upload_id"})
+		return
+	}
+	if strings.ContainsAny(filename, "/\\") || filename == "." || filename == ".." {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_filename"})
+		return
+	}
+	var offset int64
+	if _, err := fmt.Sscanf(offsetStr, "%d", &offset); err != nil || offset < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_offset"})
+		return
+	}
+	tmpPath := fmt.Sprintf("/tmp/jabali-upload-%s", uploadID)
+
+	// Open for read-write-create; APPEND is wrong here because the
+	// client may re-send a chunk after a network blip — we want to
+	// position by offset, not seek-to-end.
+	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE, 0o600)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
+		return
+	}
+	if _, err := f.Seek(offset, 0); err != nil {
+		f.Close()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
+		return
+	}
+	// Cap at 1 GB total — huge uploads are fine but runaway sizes
+	// would fill /tmp. Check via stat AFTER the write to keep the
+	// per-chunk hot path simple.
+	const maxUploadSize = int64(1024 * 1024 * 1024)
+	written, copyErr := io.Copy(f, io.LimitReader(c.Request.Body, maxUploadSize-offset+1))
+	if cerr := f.Close(); copyErr == nil {
+		copyErr = cerr
+	}
+	if copyErr != nil {
+		_ = os.Remove(tmpPath)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": copyErr.Error()})
+		return
+	}
+	if offset+written > maxUploadSize {
+		_ = os.Remove(tmpPath)
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "file_too_large"})
+		return
+	}
+
+	if !isFinal {
+		c.JSON(http.StatusOK, gin.H{"upload_id": uploadID, "written": written})
+		return
+	}
+
+	// Final chunk: hand off to the agent to ingest the /tmp file into
+	// the user's homedir scope at the requested path/name.
+	destPath := filepath.Join(destDir, filename)
+	_, err = h.cfg.Agent.Call(c.Request.Context(), "files.ingest", filesIngestAgentParams{
+		UserID: userID, Username: username, TmpPath: tmpPath, DestPath: destPath,
+	})
+	if err != nil {
+		_ = os.Remove(tmpPath)
+		respondAgentError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"path": destPath})
 }
 
 func (h *filesHandler) delete(c *gin.Context) {

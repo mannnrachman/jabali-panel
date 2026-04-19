@@ -5,21 +5,32 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 )
 
-func TestSystemSetSSHConfig_ValidPort(t *testing.T) {
-	// Set up test environment with temp config file
+// setupSSHTestPaths points the agent at temp files for both drop-ins and
+// disables the sshd -t / systemctl reload exec calls so unit tests don't
+// require root or sshd on the box.
+func setupSSHTestPaths(t *testing.T) (globalPath, sftpPath string) {
+	t.Helper()
 	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "sshd_config")
-	t.Setenv("JABALI_SSHD_DROPIN_PATH", configPath)
+	globalPath = filepath.Join(tmpDir, "jabali-sshd.conf")
+	sftpPath = filepath.Join(tmpDir, "jabali-sftp.conf")
+	t.Setenv("JABALI_SSHD_DROPIN_PATH", globalPath)
+	t.Setenv("JABALI_SSHD_SFTP_DROPIN_PATH", sftpPath)
 	t.Setenv("JABALI_SSHD_TEST_SKIP_VALIDATE", "1")
 	t.Setenv("JABALI_SSHD_TEST_SKIP_RELOAD", "1")
+	return globalPath, sftpPath
+}
+
+func TestSystemSetSSHConfig_ValidPort(t *testing.T) {
+	globalPath, sftpPath := setupSSHTestPaths(t)
 
 	ctx := context.Background()
-	params := json.RawMessage(`{"port":2222,"password_auth":false}`)
+	params := json.RawMessage(`{"port":2222,"password_auth":false,"user_password_auth":false}`)
 	resp, err := systemSetSSHConfigHandler(ctx, params)
 	if err != nil {
 		t.Fatalf("systemSetSSHConfigHandler failed: %v", err)
@@ -29,35 +40,42 @@ func TestSystemSetSSHConfig_ValidPort(t *testing.T) {
 	if !ok {
 		t.Fatalf("unexpected response type: %T", resp)
 	}
-
 	if result.Port != 2222 {
 		t.Fatalf("expected Port=2222, got %d", result.Port)
 	}
 	if result.PasswordAuth != false {
 		t.Fatalf("expected PasswordAuth=false, got %v", result.PasswordAuth)
 	}
-
-	// Verify file was written
-	content, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("failed to read config file: %v", err)
+	if result.UserPasswordAuth != false {
+		t.Fatalf("expected UserPasswordAuth=false, got %v", result.UserPasswordAuth)
 	}
 
+	gotGlobal, err := os.ReadFile(globalPath)
+	if err != nil {
+		t.Fatalf("failed to read global config: %v", err)
+	}
 	expected := "Port 2222\nPasswordAuthentication no\n"
-	if string(content) != expected {
-		t.Fatalf("config mismatch:\nexpected:\n%s\ngot:\n%s", expected, string(content))
+	if string(gotGlobal) != expected {
+		t.Fatalf("global config mismatch:\nexpected:\n%s\ngot:\n%s", expected, gotGlobal)
+	}
+
+	gotSftp, err := os.ReadFile(sftpPath)
+	if err != nil {
+		t.Fatalf("failed to read sftp config: %v", err)
+	}
+	if !strings.Contains(string(gotSftp), "PasswordAuthentication no") {
+		t.Fatalf("sftp config should pin PasswordAuthentication no when user_password_auth=false; got:\n%s", gotSftp)
+	}
+	if !strings.Contains(string(gotSftp), "ForceCommand internal-sftp") {
+		t.Fatalf("sftp config should preserve ForceCommand internal-sftp; got:\n%s", gotSftp)
 	}
 }
 
 func TestSystemSetSSHConfig_PasswordAuthEnabled(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "sshd_config")
-	t.Setenv("JABALI_SSHD_DROPIN_PATH", configPath)
-	t.Setenv("JABALI_SSHD_TEST_SKIP_VALIDATE", "1")
-	t.Setenv("JABALI_SSHD_TEST_SKIP_RELOAD", "1")
+	globalPath, _ := setupSSHTestPaths(t)
 
 	ctx := context.Background()
-	params := json.RawMessage(`{"port":22,"password_auth":true}`)
+	params := json.RawMessage(`{"port":22,"password_auth":true,"user_password_auth":false}`)
 	resp, err := systemSetSSHConfigHandler(ctx, params)
 	if err != nil {
 		t.Fatalf("systemSetSSHConfigHandler failed: %v", err)
@@ -67,34 +85,66 @@ func TestSystemSetSSHConfig_PasswordAuthEnabled(t *testing.T) {
 	if !ok {
 		t.Fatalf("unexpected response type: %T", resp)
 	}
-
 	if result.PasswordAuth != true {
 		t.Fatalf("expected PasswordAuth=true, got %v", result.PasswordAuth)
 	}
 
-	content, err := os.ReadFile(configPath)
+	got, err := os.ReadFile(globalPath)
 	if err != nil {
-		t.Fatalf("failed to read config file: %v", err)
+		t.Fatalf("failed to read global config: %v", err)
+	}
+	expected := "Port 22\nPasswordAuthentication yes\n"
+	if string(got) != expected {
+		t.Fatalf("global config mismatch:\nexpected:\n%s\ngot:\n%s", expected, got)
+	}
+}
+
+// TestSystemSetSSHConfig_UserPasswordAuthEnabled — the M12 jabali-sftp Match
+// block must drop the explicit `PasswordAuthentication no` so the global
+// `yes` (or sshd's default) takes effect for hosting users. ForceCommand
+// stays — hosting users land in SFTP, not a shell.
+func TestSystemSetSSHConfig_UserPasswordAuthEnabled(t *testing.T) {
+	_, sftpPath := setupSSHTestPaths(t)
+
+	ctx := context.Background()
+	params := json.RawMessage(`{"port":22,"password_auth":true,"user_password_auth":true}`)
+	resp, err := systemSetSSHConfigHandler(ctx, params)
+	if err != nil {
+		t.Fatalf("systemSetSSHConfigHandler failed: %v", err)
+	}
+	result := resp.(systemSetSSHConfigResponse)
+	if !result.UserPasswordAuth {
+		t.Fatalf("expected UserPasswordAuth=true, got %v", result.UserPasswordAuth)
 	}
 
-	expected := "Port 22\nPasswordAuthentication yes\n"
-	if string(content) != expected {
-		t.Fatalf("config mismatch:\nexpected:\n%s\ngot:\n%s", expected, string(content))
+	got, err := os.ReadFile(sftpPath)
+	if err != nil {
+		t.Fatalf("failed to read sftp config: %v", err)
+	}
+	gotStr := string(got)
+	if !strings.Contains(gotStr, "PasswordAuthentication yes") {
+		t.Fatalf("sftp config should set PasswordAuthentication yes; got:\n%s", gotStr)
+	}
+	if !strings.Contains(gotStr, "KbdInteractiveAuthentication yes") {
+		t.Fatalf("sftp config should set KbdInteractiveAuthentication yes; got:\n%s", gotStr)
+	}
+	if !strings.Contains(gotStr, "ForceCommand internal-sftp") {
+		t.Fatalf("sftp config must still pin ForceCommand internal-sftp (no-shell guarantee); got:\n%s", gotStr)
+	}
+	if !strings.Contains(gotStr, "Match Group jabali-sftp") {
+		t.Fatalf("sftp config must keep the Match Group jabali-sftp directive; got:\n%s", gotStr)
 	}
 }
 
 func TestSystemSetSSHConfig_PortTooLow(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "sshd_config")
-	t.Setenv("JABALI_SSHD_DROPIN_PATH", configPath)
+	setupSSHTestPaths(t)
 
 	ctx := context.Background()
-	params := json.RawMessage(`{"port":0,"password_auth":false}`)
+	params := json.RawMessage(`{"port":0,"password_auth":false,"user_password_auth":false}`)
 	_, err := systemSetSSHConfigHandler(ctx, params)
 	if err == nil {
 		t.Fatal("expected error for port 0")
 	}
-
 	agentErr, ok := err.(*agentwire.AgentError)
 	if !ok {
 		t.Fatalf("expected AgentError, got %T", err)
@@ -105,17 +155,14 @@ func TestSystemSetSSHConfig_PortTooLow(t *testing.T) {
 }
 
 func TestSystemSetSSHConfig_PortTooHigh(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "sshd_config")
-	t.Setenv("JABALI_SSHD_DROPIN_PATH", configPath)
+	setupSSHTestPaths(t)
 
 	ctx := context.Background()
-	params := json.RawMessage(`{"port":65536,"password_auth":false}`)
+	params := json.RawMessage(`{"port":65536,"password_auth":false,"user_password_auth":false}`)
 	_, err := systemSetSSHConfigHandler(ctx, params)
 	if err == nil {
 		t.Fatal("expected error for port 65536")
 	}
-
 	agentErr, ok := err.(*agentwire.AgentError)
 	if !ok {
 		t.Fatalf("expected AgentError, got %T", err)
@@ -126,9 +173,7 @@ func TestSystemSetSSHConfig_PortTooHigh(t *testing.T) {
 }
 
 func TestSystemSetSSHConfig_InvalidJSON(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "sshd_config")
-	t.Setenv("JABALI_SSHD_DROPIN_PATH", configPath)
+	setupSSHTestPaths(t)
 
 	ctx := context.Background()
 	params := json.RawMessage(`{not valid json}`)
@@ -136,7 +181,6 @@ func TestSystemSetSSHConfig_InvalidJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
-
 	agentErr, ok := err.(*agentwire.AgentError)
 	if !ok {
 		t.Fatalf("expected AgentError, got %T", err)
@@ -147,117 +191,70 @@ func TestSystemSetSSHConfig_InvalidJSON(t *testing.T) {
 }
 
 func TestSystemSetSSHConfig_AtomicWrite(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "sshd_config")
-	t.Setenv("JABALI_SSHD_DROPIN_PATH", configPath)
-	t.Setenv("JABALI_SSHD_TEST_SKIP_VALIDATE", "1")
-	t.Setenv("JABALI_SSHD_TEST_SKIP_RELOAD", "1")
+	globalPath, sftpPath := setupSSHTestPaths(t)
 
-	// Write initial content
-	initialContent := "Port 22\nPasswordAuthentication no\n"
-	if err := os.WriteFile(configPath, []byte(initialContent), 0600); err != nil {
-		t.Fatalf("failed to write initial config: %v", err)
+	// Pre-populate both targets so we can confirm the atomic rename swapped them.
+	for _, p := range []string{globalPath, sftpPath} {
+		if err := os.WriteFile(p, []byte("# old\n"), 0600); err != nil {
+			t.Fatalf("failed to write initial %s: %v", p, err)
+		}
 	}
 
 	ctx := context.Background()
-	params := json.RawMessage(`{"port":2222,"password_auth":true}`)
-	_, err := systemSetSSHConfigHandler(ctx, params)
-	if err != nil {
+	params := json.RawMessage(`{"port":2222,"password_auth":true,"user_password_auth":false}`)
+	if _, err := systemSetSSHConfigHandler(ctx, params); err != nil {
 		t.Fatalf("systemSetSSHConfigHandler failed: %v", err)
 	}
 
-	// Verify .new file doesn't exist (atomic rename completed)
-	_, err = os.Stat(configPath + ".new")
-	if err == nil {
-		t.Fatal("expected .new file to be removed after rename")
+	for _, p := range []string{globalPath, sftpPath} {
+		if _, err := os.Stat(p + ".new"); !os.IsNotExist(err) {
+			t.Fatalf("expected %s.new to be removed after rename, stat err=%v", p, err)
+		}
 	}
-	if !os.IsNotExist(err) {
-		t.Fatalf("unexpected stat error: %v", err)
-	}
-
-	// Verify new content
-	content, err := os.ReadFile(configPath)
+	got, err := os.ReadFile(globalPath)
 	if err != nil {
-		t.Fatalf("failed to read config file: %v", err)
+		t.Fatalf("failed to read global config: %v", err)
 	}
-
 	expected := "Port 2222\nPasswordAuthentication yes\n"
-	if string(content) != expected {
-		t.Fatalf("config mismatch:\nexpected:\n%s\ngot:\n%s", expected, string(content))
+	if string(got) != expected {
+		t.Fatalf("global config mismatch:\nexpected:\n%s\ngot:\n%s", expected, got)
 	}
 }
 
-func TestSystemSetSSHConfig_RestorePreviousOnValidationFailure(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "sshd_config")
-	t.Setenv("JABALI_SSHD_DROPIN_PATH", configPath)
-	// Force validation to fail by NOT skipping it and using invalid syntax
-	// We'll simulate a validation failure by using an impossible command path
-	t.Setenv("JABALI_SSHD_TEST_SKIP_VALIDATE", "0") // Enable validation
-	t.Setenv("JABALI_SSHD_TEST_SKIP_RELOAD", "1")
+// TestSystemSetSSHConfig_RestoresBothOnValidationFailure — when sshd -t
+// rejects the new config, BOTH drop-ins must be restored to their previous
+// contents so we don't leave the box with one updated and one stale file.
+func TestSystemSetSSHConfig_RestoresBothOnValidationFailure(t *testing.T) {
+	globalPath, sftpPath := setupSSHTestPaths(t)
+	t.Setenv("JABALI_SSHD_TEST_SKIP_VALIDATE", "") // re-enable the exec
+	t.Setenv("PATH", t.TempDir())                  // sshd not on PATH → exec fails
 
-	// Write initial content
-	initialContent := "Port 22\nPasswordAuthentication no\n"
-	if err := os.WriteFile(configPath, []byte(initialContent), 0600); err != nil {
-		t.Fatalf("failed to write initial config: %v", err)
+	prevGlobal := []byte("# previous global\n")
+	prevSftp := []byte("# previous sftp\n")
+	if err := os.WriteFile(globalPath, prevGlobal, 0600); err != nil {
+		t.Fatalf("write prev global: %v", err)
+	}
+	if err := os.WriteFile(sftpPath, prevSftp, 0600); err != nil {
+		t.Fatalf("write prev sftp: %v", err)
 	}
 
 	ctx := context.Background()
-	// Use valid JSON syntax but send to sshd -t which will validate the config
-	// Since we're in /tmp with a fake config, sshd -t will fail
-	params := json.RawMessage(`{"port":22,"password_auth":false}`)
-	_, err := systemSetSSHConfigHandler(ctx, params)
-	// The handler will fail because sshd -t will reject our fake config
-	if err == nil {
-		t.Log("validation did not fail (expected in test environment)")
-		// In a real environment, sshd -t would reject the fake config
-		// For this test, we'll check restoration manually
+	params := json.RawMessage(`{"port":22,"password_auth":true,"user_password_auth":true}`)
+	if _, err := systemSetSSHConfigHandler(ctx, params); err == nil {
+		t.Fatal("expected validation to fail when sshd not on PATH")
 	}
 
-	// Even if handler error, check if previous content was restored
-	// (Only applicable if validation failed and config was reverted)
-	currentContent, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("failed to read config file: %v", err)
+	gotGlobal, _ := os.ReadFile(globalPath)
+	if string(gotGlobal) != string(prevGlobal) {
+		t.Fatalf("global drop-in not restored; got:\n%s", gotGlobal)
 	}
-
-	// Either old content remains or new content is there (depending on validation)
-	if string(currentContent) == "" {
-		t.Fatal("config file is empty after operation")
+	gotSftp, _ := os.ReadFile(sftpPath)
+	if string(gotSftp) != string(prevSftp) {
+		t.Fatalf("sftp drop-in not restored; got:\n%s", gotSftp)
 	}
-}
-
-func TestSystemSetSSHConfig_RestorePreviousEmpty(t *testing.T) {
-	// Test case where no previous config existed and validation fails
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "sshd_config")
-	t.Setenv("JABALI_SSHD_DROPIN_PATH", configPath)
-	t.Setenv("JABALI_SSHD_TEST_SKIP_VALIDATE", "0") // Enable validation
-	t.Setenv("JABALI_SSHD_TEST_SKIP_RELOAD", "1")
-
-	// Don't create the config file initially
-
-	ctx := context.Background()
-	params := json.RawMessage(`{"port":22,"password_auth":false}`)
-	_, err := systemSetSSHConfigHandler(ctx, params)
-
-	// Handler will likely fail at sshd -t, but we're testing the restoration path
-	// In a real scenario, if validation fails on an initially-empty config,
-	// the file should be removed
-	if err != nil {
-		// Expected in test environment with fake config
-		t.Logf("handler failed as expected: %v", err)
-	}
-
-	// Check if file was removed if it was created then validation failed
-	_, err = os.Stat(configPath)
-	// Either file doesn't exist (was removed) or exists (validation passed)
-	// Both are acceptable in test environment
-	_ = err // OK to be nil or not
 }
 
 func TestSystemSetSSHConfig_Registration(t *testing.T) {
-	// Verify the handler is registered
 	commands := Default.Commands()
 	found := false
 	for _, cmd := range commands {
@@ -272,11 +269,7 @@ func TestSystemSetSSHConfig_Registration(t *testing.T) {
 }
 
 func TestSystemSetSSHConfig_PortBoundary(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "sshd_config")
-	t.Setenv("JABALI_SSHD_DROPIN_PATH", configPath)
-	t.Setenv("JABALI_SSHD_TEST_SKIP_VALIDATE", "1")
-	t.Setenv("JABALI_SSHD_TEST_SKIP_RELOAD", "1")
+	setupSSHTestPaths(t)
 
 	tests := []struct {
 		port  uint16
@@ -291,14 +284,12 @@ func TestSystemSetSSHConfig_PortBoundary(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(string(rune(tt.port)), func(t *testing.T) {
 			ctx := context.Background()
-
-			// Use proper JSON encoding for port
 			type paramStruct struct {
-				Port         uint16 `json:"port"`
-				PasswordAuth bool   `json:"password_auth"`
+				Port             uint16 `json:"port"`
+				PasswordAuth     bool   `json:"password_auth"`
+				UserPasswordAuth bool   `json:"user_password_auth"`
 			}
-			paramJSON, _ := json.Marshal(paramStruct{Port: tt.port, PasswordAuth: false})
-
+			paramJSON, _ := json.Marshal(paramStruct{Port: tt.port})
 			resp, err := systemSetSSHConfigHandler(ctx, json.RawMessage(paramJSON))
 			if !tt.valid && err == nil {
 				t.Fatalf("expected error for port %d", tt.port)

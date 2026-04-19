@@ -56,17 +56,18 @@ func (h *serverSettingsHandler) get(c *gin.Context) {
 }
 
 type updateServerSettingsRequest struct {
-	Hostname        *string `json:"hostname,omitempty"`
-	PublicIPv4      *string `json:"public_ipv4,omitempty"`
-	PublicIPv6      *string `json:"public_ipv6,omitempty"`
-	NS1Name         *string `json:"ns1_name,omitempty"`
-	NS1IPv4         *string `json:"ns1_ipv4,omitempty"`
-	NS2Name         *string `json:"ns2_name,omitempty"`
-	NS2IPv4         *string `json:"ns2_ipv4,omitempty"`
-	AdminEmail      *string `json:"admin_email,omitempty"`
-	Timezone        *string `json:"timezone,omitempty"`
-	SSHPort         *uint16 `json:"ssh_port,omitempty"`
-	SSHPasswordAuth *bool   `json:"ssh_password_auth,omitempty"`
+	Hostname            *string `json:"hostname,omitempty"`
+	PublicIPv4          *string `json:"public_ipv4,omitempty"`
+	PublicIPv6          *string `json:"public_ipv6,omitempty"`
+	NS1Name             *string `json:"ns1_name,omitempty"`
+	NS1IPv4             *string `json:"ns1_ipv4,omitempty"`
+	NS2Name             *string `json:"ns2_name,omitempty"`
+	NS2IPv4             *string `json:"ns2_ipv4,omitempty"`
+	AdminEmail          *string `json:"admin_email,omitempty"`
+	Timezone            *string `json:"timezone,omitempty"`
+	SSHPort             *uint16 `json:"ssh_port,omitempty"`
+	SSHPasswordAuth     *bool   `json:"ssh_password_auth,omitempty"`
+	SSHUserPasswordAuth *bool   `json:"ssh_user_password_auth,omitempty"`
 }
 
 func (h *serverSettingsHandler) update(c *gin.Context) {
@@ -97,6 +98,7 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	prevTimezone := current.Timezone
 	prevSSHPort := current.SSHPort
 	prevSSHPasswordAuth := current.SSHPasswordAuth
+	prevSSHUserPasswordAuth := current.SSHUserPasswordAuth
 
 	if req.Hostname != nil {
 		current.Hostname = strings.TrimSpace(*req.Hostname)
@@ -130,6 +132,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.SSHPasswordAuth != nil {
 		current.SSHPasswordAuth = *req.SSHPasswordAuth
+	}
+	if req.SSHUserPasswordAuth != nil {
+		current.SSHUserPasswordAuth = *req.SSHUserPasswordAuth
 	}
 
 	// Validate — reject obviously bad input so we don't persist garbage.
@@ -171,14 +176,21 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 		}()
 	}
 
-	// Apply SSH config to the OS via agent if either port or password_auth changed.
-	if (current.SSHPort != prevSSHPort || current.SSHPasswordAuth != prevSSHPasswordAuth) && h.cfg.Agent != nil {
+	// Apply SSH config to the OS via agent if any SSH-affecting field changed.
+	// The agent rewrites both /etc/ssh/sshd_config.d/jabali-sshd.conf (global,
+	// affects root/admin) and /etc/ssh/sshd_config.d/jabali-sftp.conf (M12
+	// Match Group block, affects hosting users), validates with sshd -t,
+	// and reloads sshd. See ADR-0028 for the M12 jabali-sftp design.
+	if (current.SSHPort != prevSSHPort ||
+		current.SSHPasswordAuth != prevSSHPasswordAuth ||
+		current.SSHUserPasswordAuth != prevSSHUserPasswordAuth) && h.cfg.Agent != nil {
 		go func() {
 			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			if _, err := h.cfg.Agent.Call(bgCtx, "system.set_ssh_config", map[string]any{
-				"port":             current.SSHPort,
-				"password_auth":    current.SSHPasswordAuth,
+				"port":               current.SSHPort,
+				"password_auth":      current.SSHPasswordAuth,
+				"user_password_auth": current.SSHUserPasswordAuth,
 			}); err != nil {
 				h.cfg.Log.Error("agent set_ssh_config failed", "err", err)
 			}

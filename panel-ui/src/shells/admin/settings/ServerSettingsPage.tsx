@@ -39,6 +39,7 @@ type ServerSettings = {
   timezone: string;
   ssh_port: number;
   ssh_password_auth: boolean;
+  ssh_user_password_auth: boolean;
   updated_at: string;
 };
 
@@ -49,6 +50,7 @@ export const ServerSettingsPage = () => {
   const [originalHostname, setOriginalHostname] = useState("");
   const [originalSSHPort, setOriginalSSHPort] = useState(22);
   const [originalSSHPasswordAuth, setOriginalSSHPasswordAuth] = useState(false);
+  const [originalSSHUserPasswordAuth, setOriginalSSHUserPasswordAuth] = useState(false);
   const { open: notify } = useNotification();
 
   useEffect(() => {
@@ -61,6 +63,7 @@ export const ServerSettingsPage = () => {
         setOriginalHostname(resp.data.hostname);
         setOriginalSSHPort(resp.data.ssh_port || 22);
         setOriginalSSHPasswordAuth(resp.data.ssh_password_auth || false);
+        setOriginalSSHUserPasswordAuth(resp.data.ssh_user_password_auth || false);
       } catch (err) {
         const e = err as { response?: { data?: { detail?: string } }; message?: string };
         notify?.({
@@ -93,12 +96,14 @@ export const ServerSettingsPage = () => {
         timezone: values.timezone || "",
         ssh_port: values.ssh_port || 22,
         ssh_password_auth: values.ssh_password_auth || false,
+        ssh_user_password_auth: values.ssh_user_password_auth || false,
       });
       notify?.({ type: "success", message: "Settings saved" });
       form.setFieldsValue(resp.data);
       setOriginalHostname(resp.data.hostname);
       setOriginalSSHPort(resp.data.ssh_port || 22);
       setOriginalSSHPasswordAuth(resp.data.ssh_password_auth || false);
+      setOriginalSSHUserPasswordAuth(resp.data.ssh_user_password_auth || false);
     } catch (err) {
       const e = err as { response?: { data?: { detail?: string } }; message?: string };
       notify?.({
@@ -311,7 +316,7 @@ export const ServerSettingsPage = () => {
           </Typography.Paragraph>
 
           <Row gutter={16}>
-            <Col span={12}>
+            <Col span={24}>
               <Form.Item
                 label="SSH Port"
                 name="ssh_port"
@@ -326,16 +331,29 @@ export const ServerSettingsPage = () => {
                 ]}
                 extra="Standard SSH port is 22. Change to reduce automated attack attempts."
               >
-                <InputNumber min={1} max={65535} />
+                <InputNumber min={1} max={65535} style={{ width: 200 }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                label="Root Password Authentication"
+                name="ssh_password_auth"
+                valuePropName="checked"
+                rules={[{ required: false }]}
+                extra="Allow root and other non-hosting users to log in with a password. Key-based authentication is always available."
+              >
+                <Switch />
               </Form.Item>
             </Col>
             <Col span={12}>
               <Form.Item
-                label="Password Authentication"
-                name="ssh_password_auth"
+                label="User Password Authentication"
+                name="ssh_user_password_auth"
                 valuePropName="checked"
                 rules={[{ required: false }]}
-                extra="Enable SSH login with passwords. Key-based authentication is always available."
+                extra="Allow hosting users (jabali-sftp group) to authenticate with a password. They are still SFTP-only — no shell."
               >
                 <Switch />
               </Form.Item>
@@ -353,12 +371,16 @@ export const ServerSettingsPage = () => {
               const currentSSHPort = form.getFieldValue("ssh_port") || 22;
               const currentSSHPasswordAuth =
                 form.getFieldValue("ssh_password_auth") || false;
+              const currentSSHUserPasswordAuth =
+                form.getFieldValue("ssh_user_password_auth") || false;
 
               const sshPortChanged = currentSSHPort !== originalSSHPort;
               const sshAuthChanged =
                 currentSSHPasswordAuth !== originalSSHPasswordAuth;
+              const sshUserAuthChanged =
+                currentSSHUserPasswordAuth !== originalSSHUserPasswordAuth;
 
-              if (sshPortChanged || sshAuthChanged) {
+              if (sshPortChanged || sshAuthChanged || sshUserAuthChanged) {
                 Modal.confirm({
                   title: "Confirm SSH Configuration Change",
                   content: (

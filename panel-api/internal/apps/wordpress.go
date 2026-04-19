@@ -73,5 +73,8 @@ func RegisterDefaults(r *Registry) error {
 	if err := r.Register(Drupal); err != nil {
 		return err
 	}
+	if err := r.Register(Joomla); err != nil {
+		return err
+	}
 	return nil
 }

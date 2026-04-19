@@ -7,4 +7,5 @@ export const APP_TYPE_LABELS: Record<string, string> = {
   dokuwiki: "DokuWiki",
   mediawiki: "MediaWiki",
   drupal: "Drupal",
+  joomla: "Joomla",
 };

@@ -20,6 +20,39 @@ mysqldump -u root -p jabali_panel > /var/backups/jabali_panel_$(date +%Y%m%d_%H%
 mysql -u root -p jabali_panel < /var/backups/jabali_panel_20260418_120000.sql
 ```
 
+### Migration recovery (`schema_migrations` dirty)
+
+`jabali-panel` runs `golang-migrate` on every boot. If a migration fails
+mid-way, the binary refuses to start with:
+
+```
+Error: migrate up: Dirty database version <N>. Fix and force version.
+```
+
+The cause is in `journalctl -u jabali-panel` a few lines above the
+"Dirty" line (usually a SQL error: errno 1553 — FK-referenced index drop —
+is the most common surprise). Recover:
+
+1. **Identify the partially-applied SQL** in the binary's embedded
+   migrations: `panel-api/internal/db/migrations/<N>_*.up.sql`.
+2. **Apply the remainder by hand** (or roll back the partial change) until
+   the schema matches what the migration *would have* produced on success.
+3. **Mark the version clean:**
+   ```sql
+   -- If the migration finished by hand:
+   UPDATE schema_migrations SET version = <N>, dirty = 0;
+   -- If you rolled back to before <N>:
+   UPDATE schema_migrations SET version = <N-1>, dirty = 0;
+   ```
+4. **Restart the panel:** `systemctl restart jabali-panel`. It re-runs
+   from the recorded version forward; if you set version=N-1, migration
+   N runs again.
+
+> **FK-referenced indexes:** MariaDB refuses to drop the only index
+> supporting an FK (errno 1553). Pattern: add the replacement index
+> first, then drop the old one. See migration 000045 for the canonical
+> example.
+
 ---
 
 ## 2. Service restart & logs
@@ -27,8 +60,8 @@ mysql -u root -p jabali_panel < /var/backups/jabali_panel_20260418_120000.sql
 ### Restart panel-api
 
 ```bash
-systemctl restart jabali-panel-api
-journalctl -u jabali-panel-api -f  # tail logs
+systemctl restart jabali-panel
+journalctl -u jabali-panel -f  # tail logs
 ```
 
 ### Restart panel-agent
@@ -41,7 +74,7 @@ journalctl -u jabali-agent -f
 ### Check all services
 
 ```bash
-systemctl status jabali-panel-api jabali-agent mariadb nginx
+systemctl status jabali-panel jabali-agent mariadb nginx
 ```
 
 ---
@@ -51,7 +84,7 @@ systemctl status jabali-panel-api jabali-agent mariadb nginx
 **Purpose:** Rotate the AES-256-GCM key used to encrypt database-user passwords stored in shadow MySQL accounts. This is a sensitive operation and requires careful sequencing.
 
 **Prerequisites:**
-- Panel is running normally (`systemctl status jabali-panel-api`)
+- Panel is running normally (`systemctl status jabali-panel`)
 - Reconciler is healthy
 - Generate new key: `openssl rand 32 | base64 > /tmp/new_key.txt`
 
@@ -93,7 +126,7 @@ systemctl status jabali-panel-api jabali-agent mariadb nginx
 
 6. **Reload key without dropping connections** (SIGHUP)
    ```bash
-   systemctl kill -s SIGHUP jabali-panel-api
+   systemctl kill -s SIGHUP jabali-panel
    ```
    The panel-api process reloads the key from disk without restarting, preserving existing HTTP/WebSocket connections.
 
@@ -138,7 +171,7 @@ jabali-panel admin reconciler resume --token YOUR_ADMIN_JWT
 **Check pause status:**
 ```bash
 # Look at logs; paused state is reported in reconciliation attempts:
-journalctl -u jabali-panel-api | grep "reconciler paused"
+journalctl -u jabali-panel | grep "reconciler paused"
 ```
 
 ---
@@ -164,68 +197,65 @@ Next time that user requests SSO access, the panel will attempt to re-create the
 
 ---
 
-## 6. Tarball upgrade (panel-api, panel-agent, panel-ui)
+## 6. Upgrades
 
-To roll out a new release tarball:
+### Standard upgrade (`jabali update`)
 
-1. **Download and verify tarball:**
-   ```bash
-   curl -O https://releases.example.com/jabali-panel-2026-04-18.tar.gz
-   tar -tzf jabali-panel-2026-04-18.tar.gz | head  # inspect contents
-   ```
+The release path is the in-tree `jabali update` CLI subcommand. It runs as
+root, pulls `origin/main` in `/opt/jabali2`, rebuilds the Go binaries +
+the React bundle (as the `jabali` user), syncs assets, runs DB migrations,
+and restarts services. Idempotent — safe to re-run if a step fails.
 
-2. **Stop services:**
-   ```bash
-   systemctl stop jabali-panel-api jabali-agent
-   ```
+```bash
+ssh root@<host>
+jabali update
+```
 
-3. **Backup current installation:**
-   ```bash
-   tar -czf /var/backups/jabali-panel-$(date +%Y%m%d_%H%M%S).tar.gz \
-     /opt/jabali-panel /etc/jabali
-   ```
+Expected output ends with `✓ Update complete.` and exits 0. Service
+state after:
 
-4. **Extract tarball:**
-   ```bash
-   cd /tmp
-   tar -xzf jabali-panel-2026-04-18.tar.gz
-   cd jabali-panel-2026-04-18
-   ```
+```bash
+systemctl is-active jabali-panel jabali-agent   # both → "active"
+curl -k https://localhost/health                # {"status":"ok"}
+```
 
-5. **Run pre-flight checks:**
-   ```bash
-   # Validate binaries
-   ./bin/panel-api --version
-   ./bin/panel-agent --version
-   
-   # Run migrations (in dry-run mode if supported)
-   DATABASE_URL="mysql://root:password@127.0.0.1:3306/jabali_panel" \
-     ./bin/panel-api --dry-run-migrations
-   ```
+If it fails, the most common causes:
 
-6. **Install new binaries and assets:**
-   ```bash
-   cp ./bin/panel-api /opt/jabali-panel/bin/
-   cp ./bin/panel-agent /opt/jabali-agent/bin/
-   cp -r ./public/* /opt/jabali-panel/public/
-   ```
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `EACCES: permission denied, unlink '/opt/jabali-panel/panel-ui/dist/.gitkeep'` | A previous out-of-band rsync wrote `dist/` as root; vite running as `jabali` can't clear it | `chown -R jabali:jabali /opt/jabali-panel/panel-ui/dist` |
+| `Dirty database version N` | Prior migration crashed mid-way | See §1 → Migration recovery |
+| `golangci-lint` / `tsc` errors after pull | Upstream regression on `main` | Roll back: `git -C /opt/jabali2 reset --hard <previous-sha>` then `jabali update` |
 
-7. **Apply database migrations (if any):**
-   ```bash
-   DATABASE_URL="mysql://root:password@127.0.0.1:3306/jabali_panel" \
-     /opt/jabali-panel/bin/panel-api --apply-migrations
-   ```
+### Hot binary patch (between releases)
 
-8. **Restart services:**
-   ```bash
-   systemctl start jabali-panel-api jabali-agent
-   ```
+For a quick fix that hasn't hit `main` yet — common during incident
+response. Build off-host, scp in, atomic-swap, restart:
 
-9. **Verify:**
-   ```bash
-   systemctl status jabali-panel-api jabali-agent
-   curl https://panel.example.com/health  # should return 200
-   ```
+```bash
+# On dev machine
+make build
+scp bin/jabali     root@<host>:/usr/local/bin/jabali-panel.new
+scp bin/jabali-agent root@<host>:/usr/local/bin/jabali-agent.new
+
+# On the host
+mv /usr/local/bin/jabali-panel.new /usr/local/bin/jabali-panel
+mv /usr/local/bin/jabali-agent.new /usr/local/bin/jabali-agent
+chmod 0755 /usr/local/bin/jabali-panel /usr/local/bin/jabali-agent
+systemctl restart jabali-panel jabali-agent
+```
+
+UI bundle:
+
+```bash
+cd panel-ui && npm run build
+rsync -avz --delete --chown=jabali:jabali --rsync-path='sudo rsync' \
+    panel-ui/dist/ root@<host>:/opt/jabali-panel/panel-ui/dist/
+```
+
+> **Important:** any hot-patched binary is overwritten by the next
+> `jabali update` (which rebuilds from `origin/main`). Land the fix on
+> `main` before the next planned upgrade or it'll silently regress.
 
 ---
 
@@ -233,9 +263,9 @@ To roll out a new release tarball:
 
 ### Panel-api is crashing (error loop)
 
-1. Check logs: `journalctl -u jabali-panel-api -n 100`
+1. Check logs: `journalctl -u jabali-panel -n 100`
 2. Common causes:
-   - Invalid `DATABASE_URL` — verify in `systemctl show -p Environment jabali-panel-api`
+   - Invalid `DATABASE_URL` — verify in `systemctl show -p Environment jabali-panel`
    - Corrupted database — restore backup
    - Disk full — `df -h /var/log /var/lib/mysql`
 3. If unrecoverable, roll back to previous release (see tarball upgrade, step 3 restore).
@@ -271,7 +301,64 @@ To roll out a new release tarball:
    ```bash
    jabali-panel sso prune-tokens  # if available
    ```
-4. Check logs: `journalctl -u jabali-panel-api | grep sso_phpmyadmin`
+4. Check logs: `journalctl -u jabali-panel | grep sso_phpmyadmin`
+
+---
+
+## 8. SSL certificate lifecycle
+
+Every domain with `ssl_enabled=1` (the default on creation) gets a
+certificate, always. The reconciler enforces:
+
+1. **On domain create** — try Let's Encrypt (ACME) once, inline.
+2. **On any ACME failure** (LE outage, DNS not pointing at the box yet,
+   `server_settings.admin_email` not yet set) — generate a self-signed
+   cert in `/etc/ssl/jabali-selfsigned/<domain>/` so HTTPS keeps
+   working. The vhost serves whichever cert exists on disk.
+3. **Retry ACME every 3 hours** flat — no exponential backoff, no
+   max-retry cap. The cert row sits at status `pending_acme_retry`
+   with `next_retry_at` set; the SSL ticker (1 min) picks it up at the
+   scheduled time.
+4. **On ACME success** — status flips to `issued`, the LE cert
+   replaces the self-signed in the vhost on the next reconciler tick.
+
+Reference: [ADR-0017](adr/0017-ssl-try-acme-then-selfsigned-with-backoff.md).
+
+### Inspecting cert state
+
+```sql
+SELECT d.name, d.ssl_enabled, c.status, c.retry_count,
+       c.cert_path IS NOT NULL AS has_cert,
+       c.last_error, c.next_retry_at
+FROM   domains d LEFT JOIN ssl_certificates c ON c.domain_id = d.id
+WHERE  d.name = '<domain>'\G
+```
+
+| `c.status` | What it means |
+|------------|---------------|
+| `pending` | Row created, ticker hasn't picked it up yet (≤1 min). |
+| `pending_acme_retry` | One or more ACME attempts have failed; self-signed cert is on disk and serving; will retry at `next_retry_at`. |
+| `issued` | Let's Encrypt succeeded; renewal handled by the renewal ticker. |
+| `failed` | Operator-only state (set via SQL); no further automatic retries. Reset to `pending` to re-engage the loop. |
+| `revoked` | `ssl_enabled` was flipped off; cert files cleared, vhost will drop the 443 server block on next reconciler tick. |
+
+### Force a retry now (don't wait 3h)
+
+```sql
+UPDATE ssl_certificates
+SET    status = 'pending', retry_count = 0,
+       next_retry_at = NULL, last_error = NULL
+WHERE  domain_id = '<ULID>';
+```
+
+Next SSL ticker tick (≤60s) will attempt ACME.
+
+### "HTTPS is 403 but `/jabali-healthcheck.php` works"
+
+Symptom: a domain serves fine on `http://`, but `https://<domain>/`
+returns the panel's default 403. Means the vhost has no 443 server block
+because no cert exists. Either the cert row is `pending` (ticker hasn't
+fired yet) or `failed` (manual recovery needed — see above).
 
 ---
 

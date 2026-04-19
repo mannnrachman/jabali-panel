@@ -406,7 +406,8 @@ func (f *fakePHPPoolRepo) SetStatus(ctx context.Context, id string, status strin
 }
 
 // filterCallsByPrefix returns only calls whose method starts with the given prefix.
-// Used to isolate domain/php/fs calls from filebrowser calls in ReconcileAll tests.
+// Useful when a reconcile tick dispatches to multiple subsystems and a test
+// only cares about one of them.
 func filterCallsByPrefix(calls []fakeCall, prefix string) []fakeCall {
 	var result []fakeCall
 	for _, call := range calls {
@@ -451,7 +452,7 @@ func TestReconcileAll_EnabledDomainMissing(t *testing.T) {
 	err := r.ReconcileAll(ctx)
 	require.NoError(t, err)
 
-	// Verify that domain.create was called (filtering out filebrowser calls)
+	// Verify that domain.create was called
 	domainCalls := filterCallsByPrefix(agent.calls, "domain.")
 	require.Len(t, domainCalls, 2) // domain.list + domain.create
 	require.Equal(t, "domain.list", domainCalls[0].method)
@@ -492,7 +493,7 @@ func TestReconcileAll_DisabledDomainPresent(t *testing.T) {
 	err := r.ReconcileAll(ctx)
 	require.NoError(t, err)
 
-	// Verify that domain.create was called (filtering out filebrowser calls)
+	// Verify that domain.create was called
 	domainCalls := filterCallsByPrefix(agent.calls, "domain.")
 	require.Len(t, domainCalls, 2) // domain.list + domain.create
 	require.Equal(t, "domain.list", domainCalls[0].method)
@@ -513,7 +514,7 @@ func TestReconcileAll_OrphanLogsWarning(t *testing.T) {
 	err := r.ReconcileAll(ctx)
 	require.NoError(t, err)
 
-	// Verify that domain.list was called but no creates/disables (filtering out filebrowser calls)
+	// Verify that domain.list was called but no creates/disables
 	domainCalls := filterCallsByPrefix(agent.calls, "domain.")
 	require.Len(t, domainCalls, 1)
 	require.Equal(t, "domain.list", domainCalls[0].method)
@@ -565,12 +566,12 @@ func TestReconcileAll_DomainWithPHPPool(t *testing.T) {
 	err := r.ReconcileAll(ctx)
 	require.NoError(t, err)
 
-	// Verify that required calls were made (filtering out filebrowser calls).
+	// Verify that required calls were made.
 	// createDomainOnAgent runs for every enabled domain on every reconcile pass
 	// (the agent's writeVhost is content-hash gated, so the no-change case is cheap).
-	allNonFilebrowserCalls := filterCallsByPrefix(agent.calls, "")
+	allCalls := filterCallsByPrefix(agent.calls, "")
 	var phpcalls, domainCalls, fsCalls []fakeCall
-	for _, call := range allNonFilebrowserCalls {
+	for _, call := range allCalls {
 		if call.method == "user.slice.ensure" || call.method == "php.pool.apply" {
 			phpcalls = append(phpcalls, call)
 		} else if call.method == "domain.list" || call.method == "domain.create" {
@@ -669,7 +670,7 @@ func TestReconcileAll_DomainWithPHPSettingsOverrides(t *testing.T) {
 	err := r.ReconcileAll(ctx)
 	require.NoError(t, err)
 
-	// Verify domain.create was called (filtering out filebrowser calls)
+	// Verify domain.create was called
 	domainCreateCalls := filterCallsByPrefix(agent.calls, "domain.create")
 	require.Len(t, domainCreateCalls, 1, "should call domain.create exactly once")
 
@@ -728,7 +729,7 @@ func TestReconcileAll_DomainWithoutPHPSettingsOverrides(t *testing.T) {
 	err := r.ReconcileAll(ctx)
 	require.NoError(t, err)
 
-	// Verify domain.create was called and NO overrides were passed (filtering out filebrowser calls)
+	// Verify domain.create was called and NO overrides were passed
 	domainCreateCalls := filterCallsByPrefix(agent.calls, "domain.create")
 	require.Len(t, domainCreateCalls, 1, "should call domain.create exactly once")
 

@@ -46,6 +46,14 @@ type Deps struct {
 	WordPressInstalls   repository.WordPressInstallRepository
 	CronJobs            repository.CronJobRepository
 	SSHKeys             repository.SSHKeyRepository
+	LimitOverrides      repository.UserLimitOverrideRepository
+	// QuotaMount is the filesystem mount path /home lives on — passed
+	// on every M18 user.limits.{apply,clear,report} agent call so the
+	// agent can resolve `setquota -u <user> ... <mount>` without ever
+	// defaulting to the disruptive `-a` flag. Resolved at startup via
+	// internal/limits.QuotaMountFor("/home"); empty string disables
+	// the disk-quota half of the limits pipeline (dev boxes).
+	QuotaMount          string
 	SSO                 *sso.Service
 	SSOKey              *ssokey.Key
 	TOTPBackupCodes     repository.TOTPBackupCodeRepository
@@ -167,6 +175,18 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		}
 		if deps.Packages != nil {
 			api.RegisterPackageRoutes(v1, api.PackageHandlerConfig{Repo: deps.Packages})
+		}
+		// M18 user-limits endpoints. Mount only when all deps are
+		// present — a pre-M18 deployment with no LimitOverrides repo
+		// simply won't expose the endpoints.
+		if deps.Users != nil && deps.Packages != nil && deps.LimitOverrides != nil {
+			api.RegisterUserLimitsRoutes(v1, api.UserLimitsHandlerConfig{
+				Users:          deps.Users,
+				Packages:       deps.Packages,
+				LimitOverrides: deps.LimitOverrides,
+				Agent:          deps.Agent,
+				QuotaMount:     deps.QuotaMount,
+			})
 		}
 		if deps.Domains != nil {
 			api.RegisterDomainRoutes(v1, api.DomainHandlerConfig{

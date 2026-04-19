@@ -1,0 +1,224 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+
+	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/limits"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+)
+
+// UserLimitsHandlerConfig wires the M18 per-user limit endpoints. Both
+// repos are required; Agent + QuotaMount are required for the usage
+// endpoint (which calls user.limits.report on the agent) but endpoints
+// degrade gracefully if the agent isn't reachable — returns the
+// effective-limits section only, with `current` set to null.
+type UserLimitsHandlerConfig struct {
+	Users          repository.UserRepository
+	Packages       repository.PackageRepository
+	LimitOverrides repository.UserLimitOverrideRepository
+	Agent          agent.AgentInterface
+	// QuotaMount is the filesystem mount path /home lives on — resolved
+	// at serve startup via limits.QuotaMountFor("/home") and passed
+	// through to the agent on every user.limits.{apply,clear,report}
+	// call. Empty string disables the disk half of the report (CI,
+	// dev box without quota).
+	QuotaMount string
+}
+
+// RegisterUserLimitsRoutes mounts /users/:id/usage and /limit-overrides
+// under g. Must be called AFTER RegisterUserRoutes so the owner-check
+// middleware is already set up consistently.
+func RegisterUserLimitsRoutes(g *gin.RouterGroup, cfg UserLimitsHandlerConfig) {
+	h := &userLimitsHandler{cfg: cfg}
+	// Usage is a read-only view so owner or admin is fine.
+	g.GET("/users/:id/usage", middleware.RequireOwner("id"), h.usage)
+	// Override writes are admin-only — changing a user's resource limits
+	// outside their package is operator territory, not self-service.
+	g.PUT("/users/:id/limit-overrides", middleware.RequireAdmin(), h.upsertOverride)
+	g.DELETE("/users/:id/limit-overrides", middleware.RequireAdmin(), h.clearOverride)
+}
+
+type userLimitsHandler struct{ cfg UserLimitsHandlerConfig }
+
+// usageResponse is the shape returned by GET /users/:id/usage. `effective`
+// is the resolved limits (never null). `current` may be nil if the agent
+// is unavailable or the slice has no live processes yet.
+type usageResponse struct {
+	UserID    string                 `json:"user_id"`
+	Effective limits.EffectiveLimits `json:"effective"`
+	Current   json.RawMessage        `json:"current,omitempty"`
+}
+
+func (h *userLimitsHandler) usage(c *gin.Context) {
+	userID := c.Param("id")
+	user, err := h.cfg.Users.FindByID(c.Request.Context(), userID)
+	if err != nil {
+		if isNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if user.Username == nil || *user.Username == "" {
+		c.JSON(http.StatusConflict, gin.H{"error": "no_linux_account", "detail": "user has no linux account"})
+		return
+	}
+
+	effective, _ := h.resolveEffective(c.Request.Context(), user)
+
+	resp := usageResponse{
+		UserID:    userID,
+		Effective: effective,
+	}
+
+	// Call the agent for live usage. Failure is non-fatal — we want
+	// the admin UI to still render the effective-limits section even
+	// if the agent socket is temporarily down. The current section
+	// is just omitted.
+	if h.cfg.Agent != nil {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+		defer cancel()
+		raw, err := h.cfg.Agent.Call(ctx, "user.limits.report", map[string]any{
+			"username":    *user.Username,
+			"quota_mount": h.cfg.QuotaMount,
+		})
+		if err == nil {
+			resp.Current = raw
+		}
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// resolveEffective hydrates the user's package + any override row and
+// passes both through the pure resolver. Returns the zero-value
+// EffectiveLimits on lookup errors — the caller falls back to
+// "unlimited everywhere" which is the safe default.
+func (h *userLimitsHandler) resolveEffective(ctx context.Context, user *models.User) (limits.EffectiveLimits, error) {
+	var pkgL *limits.PackageLimits
+	if user.PackageID != nil && *user.PackageID != "" {
+		pkg, err := h.cfg.Packages.FindByID(ctx, *user.PackageID)
+		if err == nil {
+			pkgL = &limits.PackageLimits{
+				DiskQuotaMB:     pkg.DiskQuotaMB,
+				CPUQuotaPercent: pkg.CPUQuotaPercent,
+				MemoryLimitMB:   pkg.MemoryLimitMB,
+				IOReadMbps:      pkg.IOReadMbps,
+				IOWriteMbps:     pkg.IOWriteMbps,
+				MaxTasks:        pkg.MaxTasks,
+			}
+		}
+	}
+
+	var ovL *limits.OverrideLimits
+	if ov, err := h.cfg.LimitOverrides.FindByUserID(ctx, user.ID); err == nil {
+		ovL = &limits.OverrideLimits{
+			DiskQuotaMB:     ov.DiskQuotaMB,
+			CPUQuotaPercent: ov.CPUQuotaPercent,
+			MemoryLimitMB:   ov.MemoryLimitMB,
+			IOReadMbps:      ov.IOReadMbps,
+			IOWriteMbps:     ov.IOWriteMbps,
+			MaxTasks:        ov.MaxTasks,
+		}
+	}
+	return limits.Resolve(pkgL, ovL), nil
+}
+
+type overrideRequest struct {
+	DiskQuotaMB     *uint32 `json:"disk_quota_mb"`
+	CPUQuotaPercent *uint32 `json:"cpu_quota_percent"`
+	MemoryLimitMB   *uint32 `json:"memory_limit_mb"`
+	IOReadMbps      *uint32 `json:"io_read_mbps"`
+	IOWriteMbps     *uint32 `json:"io_write_mbps"`
+	MaxTasks        *uint32 `json:"max_tasks"`
+}
+
+func (h *userLimitsHandler) upsertOverride(c *gin.Context) {
+	userID := c.Param("id")
+	// Confirm the user exists — don't want orphan override rows.
+	if _, err := h.cfg.Users.FindByID(c.Request.Context(), userID); err != nil {
+		if isNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+
+	var req overrideRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation_failed", "detail": err.Error()})
+		return
+	}
+
+	// Validate bounds: a non-nil override value must fit within the
+	// limits pkg's bounds. Zero and nil both pass.
+	if err := validateOverrideBounds(req); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation_failed", "detail": err.Error()})
+		return
+	}
+
+	o := &models.UserLimitOverride{
+		UserID:          userID,
+		DiskQuotaMB:     req.DiskQuotaMB,
+		CPUQuotaPercent: req.CPUQuotaPercent,
+		MemoryLimitMB:   req.MemoryLimitMB,
+		IOReadMbps:      req.IOReadMbps,
+		IOWriteMbps:     req.IOWriteMbps,
+		MaxTasks:        req.MaxTasks,
+		UpdatedAt:       time.Now().UTC(),
+	}
+	if err := h.cfg.LimitOverrides.Upsert(c.Request.Context(), o); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	c.JSON(http.StatusOK, o)
+}
+
+// validateOverrideBounds runs each present override value through the
+// same bounds check the package fields use. Field-by-field rather than
+// the bundle-style Validate() on EffectiveLimits because an override
+// can have any combination of NULL values.
+func validateOverrideBounds(req overrideRequest) error {
+	// Treat each present value as an EffectiveLimits field-of-one and
+	// let the central validator decide.
+	e := limits.EffectiveLimits{}
+	if req.CPUQuotaPercent != nil {
+		e.CPUQuotaPercent = *req.CPUQuotaPercent
+	}
+	if req.MemoryLimitMB != nil {
+		e.MemoryLimitMB = *req.MemoryLimitMB
+	}
+	if req.IOReadMbps != nil {
+		e.IOReadMbps = *req.IOReadMbps
+	}
+	if req.IOWriteMbps != nil {
+		e.IOWriteMbps = *req.IOWriteMbps
+	}
+	if req.MaxTasks != nil {
+		e.MaxTasks = *req.MaxTasks
+	}
+	return e.Validate()
+}
+
+func (h *userLimitsHandler) clearOverride(c *gin.Context) {
+	userID := c.Param("id")
+	if err := h.cfg.LimitOverrides.Delete(c.Request.Context(), userID); err != nil {
+		if isNotFound(err) {
+			// Idempotent: no override = 204, same as successful delete.
+			c.Status(http.StatusNoContent)
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}

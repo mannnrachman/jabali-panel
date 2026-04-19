@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/limits"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
@@ -42,6 +43,12 @@ type packageHandler struct{ cfg PackageHandlerConfig }
 type createPackageRequest struct {
 	Name             string `json:"name"               binding:"required"`
 	DiskQuotaMB      uint32 `json:"disk_quota_mb"`
+	// M18 resource limits. Zero = unlimited on every field.
+	CPUQuotaPercent  uint32 `json:"cpu_quota_percent"`
+	MemoryLimitMB    uint32 `json:"memory_limit_mb"`
+	IOReadMbps       uint32 `json:"io_read_mbps"`
+	IOWriteMbps      uint32 `json:"io_write_mbps"`
+	MaxTasks         uint32 `json:"max_tasks"`
 	BandwidthQuotaMB uint32 `json:"bandwidth_quota_mb"`
 	MaxDomains       uint32 `json:"max_domains"`
 	MaxEmailAccounts uint32 `json:"max_email_accounts"`
@@ -54,6 +61,11 @@ type createPackageRequest struct {
 type updatePackageRequest struct {
 	Name             *string `json:"name"`
 	DiskQuotaMB      *uint32 `json:"disk_quota_mb"`
+	CPUQuotaPercent  *uint32 `json:"cpu_quota_percent"`
+	MemoryLimitMB    *uint32 `json:"memory_limit_mb"`
+	IOReadMbps       *uint32 `json:"io_read_mbps"`
+	IOWriteMbps      *uint32 `json:"io_write_mbps"`
+	MaxTasks         *uint32 `json:"max_tasks"`
 	BandwidthQuotaMB *uint32 `json:"bandwidth_quota_mb"`
 	MaxDomains       *uint32 `json:"max_domains"`
 	MaxEmailAccounts *uint32 `json:"max_email_accounts"`
@@ -93,6 +105,11 @@ func (h *packageHandler) create(c *gin.Context) {
 		ID:               ids.NewULID(),
 		Name:             req.Name,
 		DiskQuotaMB:      req.DiskQuotaMB,
+		CPUQuotaPercent:  req.CPUQuotaPercent,
+		MemoryLimitMB:    req.MemoryLimitMB,
+		IOReadMbps:       req.IOReadMbps,
+		IOWriteMbps:      req.IOWriteMbps,
+		MaxTasks:         req.MaxTasks,
 		BandwidthQuotaMB: req.BandwidthQuotaMB,
 		MaxDomains:       req.MaxDomains,
 		MaxEmailAccounts: req.MaxEmailAccounts,
@@ -104,6 +121,11 @@ func (h *packageHandler) create(c *gin.Context) {
 		UpdatedAt:        now,
 	}
 
+	if err := validatePackageLimits(pkg); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation_failed", "detail": err.Error()})
+		return
+	}
+
 	if err := h.cfg.Repo.Create(c.Request.Context(), pkg); err != nil {
 		if isConflict(err) {
 			c.JSON(http.StatusConflict, gin.H{"error": "already_exists", "detail": "package name taken"})
@@ -113,6 +135,22 @@ func (h *packageHandler) create(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, pkg)
+}
+
+// validatePackageLimits enforces the bounds from internal/limits on the
+// M18 resource-limit fields before write. Runs at both create and
+// update — the agent validates again as defense-in-depth, but returning
+// a clean 422 here is much better UX than a 502-agent-error later.
+func validatePackageLimits(pkg *models.HostingPackage) error {
+	e := limits.EffectiveLimits{
+		DiskQuotaMB:     pkg.DiskQuotaMB,
+		CPUQuotaPercent: pkg.CPUQuotaPercent,
+		MemoryLimitMB:   pkg.MemoryLimitMB,
+		IOReadMbps:      pkg.IOReadMbps,
+		IOWriteMbps:     pkg.IOWriteMbps,
+		MaxTasks:        pkg.MaxTasks,
+	}
+	return e.Validate()
 }
 
 func (h *packageHandler) get(c *gin.Context) {
@@ -151,6 +189,21 @@ func (h *packageHandler) update(c *gin.Context) {
 	if req.DiskQuotaMB != nil {
 		pkg.DiskQuotaMB = *req.DiskQuotaMB
 	}
+	if req.CPUQuotaPercent != nil {
+		pkg.CPUQuotaPercent = *req.CPUQuotaPercent
+	}
+	if req.MemoryLimitMB != nil {
+		pkg.MemoryLimitMB = *req.MemoryLimitMB
+	}
+	if req.IOReadMbps != nil {
+		pkg.IOReadMbps = *req.IOReadMbps
+	}
+	if req.IOWriteMbps != nil {
+		pkg.IOWriteMbps = *req.IOWriteMbps
+	}
+	if req.MaxTasks != nil {
+		pkg.MaxTasks = *req.MaxTasks
+	}
 	if req.BandwidthQuotaMB != nil {
 		pkg.BandwidthQuotaMB = *req.BandwidthQuotaMB
 	}
@@ -173,6 +226,11 @@ func (h *packageHandler) update(c *gin.Context) {
 		pkg.CGIEnabled = *req.CGIEnabled
 	}
 	pkg.UpdatedAt = time.Now().UTC()
+
+	if err := validatePackageLimits(pkg); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation_failed", "detail": err.Error()})
+		return
+	}
 
 	if err := h.cfg.Repo.Update(c.Request.Context(), pkg); err != nil {
 		if isConflict(err) {

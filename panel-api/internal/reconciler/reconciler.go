@@ -50,6 +50,10 @@ type Reconciler struct {
 	sshKeys repository.SSHKeyRepository
 	// cronJobs holds reference to the cron jobs repository
 	cronJobs repository.CronJobRepository
+	// M18 — hosting packages + per-user overrides + /home mount path.
+	packages       repository.PackageRepository
+	limitOverrides repository.UserLimitOverrideRepository
+	quotaMount     string
 }
 
 // WithSSLCerts adds SSL certificate repository support to the reconciler.
@@ -351,6 +355,12 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 
 	r.reconcileSSHKeysForAllUsers(ctx)
 	// Reconcile SSH keys: sync authorized_keys files for all users.
+
+	// M18: per-user resource limits + per-domain nginx rate limits.
+	// Both are safe to run last — they do their own drift detection
+	// and are idempotent when nothing has changed.
+	r.ReconcileUserLimits(ctx)
+	r.ReconcileNginxRateLimits(ctx)
 
 	return nil
 }

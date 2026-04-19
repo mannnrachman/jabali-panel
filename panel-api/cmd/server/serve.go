@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
 
+	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/limits"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/app"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/db"
@@ -111,6 +112,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		wordpressInstallRepo := repository.NewWordPressInstallRepository(sharedDB)
 		cronJobsRepo := repository.NewCronJobRepository(sharedDB)
 		totpBackupCodeRepo := repository.NewTOTPBackupCodeRepository(sharedDB)
+		limitOverridesRepo := repository.NewUserLimitOverrideRepository(sharedDB)
 
 		serverSettingsRepo := repository.NewServerSettingsRepository(sharedDB)
 		jwtIss, err := auth.NewJWTIssuer(auth.JWTConfig{
@@ -171,6 +173,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		rec.WithSSO(ssoService)
 		rec.WithSSHKeys(sshKeyRepo)
 		rec.WithCronJobs(cronJobsRepo)
+		// M18 wiring — packages + overrides + /home mount path so
+		// ReconcileUserLimits and ReconcileNginxRateLimits have every
+		// dep they need. Mount path resolved below after deps are set.
+		rec.WithPackages(packageRepo)
+		rec.WithLimitOverrides(limitOverridesRepo)
 		deps.Reconciler = rec
 		deps.DNSZones = dnsZoneRepo
 		deps.DNSRecords = dnsRecordRepo
@@ -184,6 +191,18 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.WordPressInstalls = wordpressInstallRepo
 		deps.CronJobs = cronJobsRepo
 		deps.TOTPBackupCodes = totpBackupCodeRepo
+		deps.LimitOverrides = limitOverridesRepo
+		// M18: resolve the /home mount once at startup. Passed to every
+		// user.limits.{apply,clear,report} call so the agent runs
+		// setquota against the explicit mount path, never -a. Failure
+		// degrades gracefully — QuotaMount=="" disables the disk half
+		// of the pipeline while cgroups enforcement still works.
+		if m, err := limits.QuotaMountFor("/home"); err == nil {
+			deps.QuotaMount = m
+			rec.WithQuotaMount(m)
+		} else if log != nil {
+			log.Warn("m18: could not resolve /home mount; disk-quota plumbing disabled", "err", err)
+		}
 
 		// Admin bootstrap.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

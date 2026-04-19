@@ -23,6 +23,12 @@ type ListOptions struct {
 	Search string // free-text, matched via ILIKE across the repo's search columns
 	Sort   string // column name (will be whitelist-validated per repo)
 	Order  string // "asc" | "desc" — anything else coerces to "desc"
+	// IsAdmin is a user-repo-only filter — when non-nil, restricts the
+	// result set to users matching the flag. Other repos ignore it. Lives
+	// on the shared struct only because every list flow already plumbs
+	// ListOptions end-to-end and adding a parallel filter struct for one
+	// repo isn't worth the duplication.
+	IsAdmin *bool
 }
 
 // ListCols tells applyListOptions which columns are searchable (free-text

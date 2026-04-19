@@ -83,10 +83,14 @@ func (r *userRepo) List(ctx context.Context, opts ListOptions) ([]models.User, i
 		total int64
 	)
 	base := r.db.WithContext(ctx).Model(&models.User{})
+	if opts.IsAdmin != nil {
+		base = base.Where("is_admin = ?", *opts.IsAdmin)
+	}
 
 	// Count honours the search filter (so paginated total stays correct for
 	// a filtered set) but ignores sort/offset/limit — those apply to the
-	// fetch, not the cardinality.
+	// fetch, not the cardinality. The is_admin filter is already baked into
+	// `base` above so both count + fetch see it.
 	countQ := applyListOptions(base.Session(&gorm.Session{}), ListOptions{Search: opts.Search}, userListCols)
 	if err := countQ.Count(&total).Error; err != nil {
 		return nil, 0, translate(err)

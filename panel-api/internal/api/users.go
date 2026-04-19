@@ -130,6 +130,16 @@ type listUsersResponse struct {
 
 func (h *userHandler) list(c *gin.Context) {
 	page, pageSize, opts := parseListOptions(c, defaultUsersPageSize, maxUsersPageSize)
+	// Optional ?is_admin=true|false scopes the result. Anything else is
+	// silently ignored so the legacy "list all" behaviour stays intact.
+	switch c.Query("is_admin") {
+	case "true":
+		t := true
+		opts.IsAdmin = &t
+	case "false":
+		f := false
+		opts.IsAdmin = &f
+	}
 	users, total, err := h.cfg.Repo.List(c.Request.Context(), opts)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})

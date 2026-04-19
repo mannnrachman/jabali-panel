@@ -66,11 +66,17 @@ function pickSort(sorters?: CrudSorting): { sort?: string; order?: string } {
 export const dataProvider: DataProvider = {
   getApiUrl: () => API_URL,
 
-  getList: async ({ resource, pagination, filters, sorters }) => {
+  getList: async ({ resource, pagination, filters, sorters, meta }) => {
     const page = pagination?.current ?? 1;
     const pageSize = pagination?.pageSize ?? 20;
     const q = pickSearch(filters);
     const { sort, order } = pickSort(sorters);
+    // meta.params is an opt-in passthrough for resource-specific query
+    // params (e.g. /users supports ?is_admin=true|false). Callers spread
+    // any extra primitives in here and the server's allowlist decides
+    // what to honour — anything unknown is silently ignored, matching
+    // the q/sort/order convention above.
+    const extraParams = (meta as { params?: Record<string, string | number | boolean> } | undefined)?.params ?? {};
 
     const resp = await apiClient.get<ListEnvelope<unknown>>(`/${resource}`, {
       params: {
@@ -81,6 +87,7 @@ export const dataProvider: DataProvider = {
         ...(q ? { q } : {}),
         ...(sort ? { sort } : {}),
         ...(order ? { order } : {}),
+        ...extraParams,
       },
     });
     return {

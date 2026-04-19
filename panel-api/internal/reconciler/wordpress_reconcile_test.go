@@ -50,6 +50,13 @@ func (m *mockWordPressInstallRepo) FindByDomainAndSubdirectory(ctx context.Conte
 	return nil, repository.ErrNotFound
 }
 
+// FindByDomainAndSubdirectoryAndAppType — added for the M19 generalisation
+// (migration 000046). Reconciler tests don't exercise per-app lookups
+// either; same not-found stub.
+func (m *mockWordPressInstallRepo) FindByDomainAndSubdirectoryAndAppType(ctx context.Context, domainID, subdirectory, appType string) (*models.WordPressInstall, error) {
+	return nil, repository.ErrNotFound
+}
+
 func (m *mockWordPressInstallRepo) FindByDBID(ctx context.Context, dbID string) (*models.WordPressInstall, error) {
 	return nil, repository.ErrNotFound
 }

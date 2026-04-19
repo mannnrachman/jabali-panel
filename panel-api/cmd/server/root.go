@@ -47,8 +47,14 @@ func newRootCmd() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&cfgPath, "config", "", "config file path (default: /etc/jabali/config.toml)")
 	cmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output as JSON")
 
-	adminCmd := newAdminCmd()
-	adminCmd.AddCommand(newAdminLoginCmd())
+	// `jabali admin` is a grouping command for operator-only subcommands.
+	// The M5b `admin-login` was removed by M20 step 7; what's left is
+	// slice-cutover (per-user systemd slice migration) and disable-2fa
+	// (recovery helper when a user loses their authenticator).
+	adminCmd := &cobra.Command{
+		Use:   "admin",
+		Short: "Operator-only administrative subcommands",
+	}
 	adminCmd.AddCommand(newAdminSliceCutoverCmd())
 	adminCmd.AddCommand(newAdminDisable2FACmd())
 

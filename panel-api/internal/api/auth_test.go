@@ -15,7 +15,6 @@ import (
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 )
 
 // fakeAuthService implements the small interface api.AuthHandler depends on.
@@ -41,16 +40,6 @@ func (f *fakeAuthService) Refresh(_ context.Context, in auth.RefreshInput) (*aut
 func (f *fakeAuthService) Logout(_ context.Context, raw string) error {
 	f.lastRefresh = raw
 	return f.logoutErr
-}
-
-func (f *fakeAuthService) RedeemCLIToken(_ context.Context, cliToken, deviceID string) (*auth.LoginOutput, error) {
-	f.lastRefresh = cliToken
-	f.lastDevice = deviceID
-	return f.refreshOut, f.refreshErr
-}
-
-func (f *fakeAuthService) GenerateImpersonationLoginURL(_ context.Context, _ *models.User, _ string, scheme string, hostname string, port string) (string, error) {
-	return scheme + "://" + hostname + ":" + port + "/login?cli_token=test-token", nil
 }
 
 func (f *fakeAuthService) ChallengeTOTP(_ context.Context, _ auth.ChallengeTOTPInput) (*auth.LoginOutput, error) {

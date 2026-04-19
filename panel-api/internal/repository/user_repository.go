@@ -20,6 +20,12 @@ type UserRepository interface {
 	FindByID(ctx context.Context, id string) (*models.User, error)
 	FindByEmail(ctx context.Context, email string) (*models.User, error)
 	FindByUsername(ctx context.Context, username string) (*models.User, error)
+	// FindByKratosIdentityID looks up a panel user by their Kratos identity
+	// UUID. Used by the Kratos middleware to resolve the session's identity
+	// to the panel's own user.id (ULID), which is what ownership checks key
+	// off throughout the API. Returns ErrNotFound for identities not yet
+	// migrated — middleware treats that as unauthenticated.
+	FindByKratosIdentityID(ctx context.Context, kratosID string) (*models.User, error)
 	List(ctx context.Context, opts ListOptions) ([]models.User, int64, error)
 	Update(ctx context.Context, u *models.User) error
 	// SetAdmin flips is_admin on the row. Deliberately separate from Update
@@ -78,6 +84,23 @@ func (r *userRepo) FindByUsername(ctx context.Context, username string) (*models
 	}
 	return &u, nil
 }
+
+func (r *userRepo) FindByKratosIdentityID(ctx context.Context, kratosID string) (*models.User, error) {
+	if kratosID == "" {
+		return nil, repoErrNotFound()
+	}
+	var u models.User
+	if err := r.db.WithContext(ctx).First(&u, "kratos_identity_id = ?", kratosID).Error; err != nil {
+		return nil, translate(err)
+	}
+	return &u, nil
+}
+
+// repoErrNotFound returns ErrNotFound as a sentinel for empty-key short-circuits.
+// Kept as a function (not a constant ref) because translate() drives the normal
+// path; this preserves the same "err is ErrNotFound" contract without round-
+// tripping through GORM for an obviously empty lookup.
+func repoErrNotFound() error { return ErrNotFound }
 
 // userListCols — columns the API may search and sort by. password_hash
 // is deliberately absent; email/name/username are the obvious admin-search

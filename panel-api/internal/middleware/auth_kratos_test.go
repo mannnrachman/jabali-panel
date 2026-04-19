@@ -1,10 +1,12 @@
 package middleware_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -13,15 +15,74 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
+// fakeUsersRepo is a minimal stand-in for repository.UserRepository that
+// only answers FindByKratosIdentityID — the single method the Kratos
+// middleware calls. Other methods panic so a mistaken call surfaces as a
+// loud test failure rather than a silent default.
+type fakeUsersRepo struct {
+	byKratosID map[string]*models.User
+}
+
+func (f *fakeUsersRepo) FindByKratosIdentityID(_ context.Context, kratosID string) (*models.User, error) {
+	u, ok := f.byKratosID[kratosID]
+	if !ok {
+		return nil, repository.ErrNotFound
+	}
+	return u, nil
+}
+
+// The other repository methods are intentionally unimplemented — middleware
+// must never reach them, and a panic advertises a regression loudly.
+func (f *fakeUsersRepo) Create(context.Context, *models.User) error {
+	panic("Create not expected from middleware")
+}
+func (f *fakeUsersRepo) FindByID(context.Context, string) (*models.User, error) {
+	panic("FindByID not expected from middleware")
+}
+func (f *fakeUsersRepo) FindByEmail(context.Context, string) (*models.User, error) {
+	panic("FindByEmail not expected from middleware")
+}
+func (f *fakeUsersRepo) FindByUsername(context.Context, string) (*models.User, error) {
+	panic("FindByUsername not expected from middleware")
+}
+func (f *fakeUsersRepo) List(context.Context, repository.ListOptions) ([]models.User, int64, error) {
+	panic("List not expected from middleware")
+}
+func (f *fakeUsersRepo) Update(context.Context, *models.User) error {
+	panic("Update not expected from middleware")
+}
+func (f *fakeUsersRepo) SetAdmin(context.Context, string, bool) error {
+	panic("SetAdmin not expected from middleware")
+}
+func (f *fakeUsersRepo) CountAdmins(context.Context) (int64, error) {
+	panic("CountAdmins not expected from middleware")
+}
+func (f *fakeUsersRepo) FindAdminsByEmail(context.Context) ([]*models.User, error) {
+	panic("FindAdminsByEmail not expected from middleware")
+}
+func (f *fakeUsersRepo) Delete(context.Context, string) error {
+	panic("Delete not expected from middleware")
+}
+func (f *fakeUsersRepo) SetTOTPSecret(context.Context, string, []byte) error {
+	panic("SetTOTPSecret not expected from middleware")
+}
+func (f *fakeUsersRepo) EnableTOTP(context.Context, string, time.Time) error {
+	panic("EnableTOTP not expected from middleware")
+}
+func (f *fakeUsersRepo) DisableTOTP(context.Context, string) error {
+	panic("DisableTOTP not expected from middleware")
+}
+
 // kratosProbe mounts RequireKratosSession with a probe handler that echoes
-// the authenticated user's email + is_admin flag, so tests can assert the
-// middleware populated the context correctly.
-func kratosProbe(client *kratosclient.Client) *gin.Engine {
+// the authenticated user's panel id, email, and is_admin flag.
+func kratosProbe(client *kratosclient.Client, users repository.UserRepository) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.GET("/me", middleware.RequireKratosSession(client), func(c *gin.Context) {
+	r.GET("/me", middleware.RequireKratosSession(client, users), func(c *gin.Context) {
 		cl := ginctx.Claims(c)
 		if cl == nil {
 			c.String(http.StatusInternalServerError, "no claims")
@@ -36,9 +97,8 @@ func kratosProbe(client *kratosclient.Client) *gin.Engine {
 	return r
 }
 
-// fakeKratos stands in for the Kratos public server in tests.
-// status controls the HTTP code /sessions/whoami returns. body is the
-// response JSON (for 200 cases).
+// fakeKratos stands in for the Kratos public server in tests. status controls
+// the HTTP code /sessions/whoami returns. body is the response JSON.
 func fakeKratos(t *testing.T, status int, body string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -54,27 +114,97 @@ func fakeKratos(t *testing.T, status int, body string) *httptest.Server {
 	}))
 }
 
-func TestRequireKratosSession_ValidCookie(t *testing.T) {
+// seededRepo returns a fakeUsersRepo pre-seeded with users indexed by their
+// Kratos identity ID.
+func seededRepo(users ...*models.User) repository.UserRepository {
+	f := &fakeUsersRepo{byKratosID: map[string]*models.User{}}
+	for _, u := range users {
+		if u.KratosIdentityID != nil {
+			f.byKratosID[*u.KratosIdentityID] = u
+		}
+	}
+	return f
+}
+
+func ptrString(s string) *string { return &s }
+
+func TestRequireKratosSession_ValidCookie_ResolvesToPanelUser(t *testing.T) {
 	t.Parallel()
 	identityJSON := `{
-		"id": "01KRATOS-ID",
+		"id": "kratos-uuid-01",
 		"traits": {"email": "user@example.com", "username": "alice", "is_admin": true}
 	}`
 	srv := fakeKratos(t, http.StatusOK, identityJSON)
 	defer srv.Close()
 
 	client := kratosclient.NewClient(srv.URL, srv.URL)
+	repo := seededRepo(&models.User{
+		ID:               "01PANEL-ULID-ABC",
+		Email:            "user@example.com",
+		IsAdmin:          true,
+		KratosIdentityID: ptrString("kratos-uuid-01"),
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/me", nil)
-	req.AddCookie(&http.Cookie{Name: "ory_kratos_session", Value: "valid-session-token"})
+	req.AddCookie(&http.Cookie{Name: "ory_kratos_session", Value: "valid"})
 	rec := httptest.NewRecorder()
 
-	kratosProbe(client).ServeHTTP(rec, req)
+	kratosProbe(client, repo).ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Contains(t, rec.Body.String(), `"user_id":"01KRATOS-ID"`)
-	assert.Contains(t, rec.Body.String(), `"email":"user@example.com"`)
-	assert.Contains(t, rec.Body.String(), `"is_admin":true`)
+	// Critical invariant: claims.UserID is the PANEL ULID, not the Kratos UUID.
+	// If this regresses, every ownership check in the API silently 403s.
+	assert.Contains(t, rec.Body.String(), `"user_id":"01PANEL-ULID-ABC"`)
+	assert.NotContains(t, rec.Body.String(), "kratos-uuid-01")
+}
+
+func TestRequireKratosSession_PanelIsAdminOverridesKratosTrait(t *testing.T) {
+	t.Parallel()
+	// Kratos trait says is_admin=true but the panel row says false — the panel
+	// row wins so an admin demotion takes effect on next request even if the
+	// Kratos identity trait hasn't been updated yet.
+	identityJSON := `{
+		"id": "kratos-uuid-02",
+		"traits": {"email": "alice@x", "is_admin": true}
+	}`
+	srv := fakeKratos(t, http.StatusOK, identityJSON)
+	defer srv.Close()
+
+	client := kratosclient.NewClient(srv.URL, srv.URL)
+	repo := seededRepo(&models.User{
+		ID:               "01PANEL-ULID-DEMOTED",
+		Email:            "alice@x",
+		IsAdmin:          false,
+		KratosIdentityID: ptrString("kratos-uuid-02"),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/me", nil)
+	req.AddCookie(&http.Cookie{Name: "ory_kratos_session", Value: "valid"})
+	rec := httptest.NewRecorder()
+
+	kratosProbe(client, repo).ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"is_admin":false`)
+}
+
+func TestRequireKratosSession_IdentityNotLinked_ReturnsUnauthorized(t *testing.T) {
+	t.Parallel()
+	srv := fakeKratos(t, http.StatusOK, `{"id":"kratos-orphan","traits":{"email":"e@x"}}`)
+	defer srv.Close()
+
+	client := kratosclient.NewClient(srv.URL, srv.URL)
+	// Empty repo — identity exists in Kratos but has no panel user.
+	repo := seededRepo()
+
+	req := httptest.NewRequest(http.MethodGet, "/me", nil)
+	req.AddCookie(&http.Cookie{Name: "ory_kratos_session", Value: "valid"})
+	rec := httptest.NewRecorder()
+
+	kratosProbe(client, repo).ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Contains(t, rec.Body.String(), "identity_not_linked")
 }
 
 func TestRequireKratosSession_MissingCookie_ReturnsUnauthorized(t *testing.T) {
@@ -83,12 +213,12 @@ func TestRequireKratosSession_MissingCookie_ReturnsUnauthorized(t *testing.T) {
 	defer srv.Close()
 
 	client := kratosclient.NewClient(srv.URL, srv.URL)
+	repo := seededRepo()
 
 	req := httptest.NewRequest(http.MethodGet, "/me", nil)
-	// No cookie, no auth header either.
 	rec := httptest.NewRecorder()
 
-	kratosProbe(client).ServeHTTP(rec, req)
+	kratosProbe(client, repo).ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	assert.Contains(t, rec.Body.String(), "missing_session")
@@ -104,13 +234,14 @@ func TestRequireKratosSession_IgnoresBearerHeader(t *testing.T) {
 	defer srv.Close()
 
 	client := kratosclient.NewClient(srv.URL, srv.URL)
+	repo := seededRepo()
 
 	req := httptest.NewRequest(http.MethodGet, "/me", nil)
 	// No Kratos cookie, but a Bearer header is present — should be ignored.
 	req.Header.Set("Authorization", "Bearer some.jwt.token")
 	rec := httptest.NewRecorder()
 
-	kratosProbe(client).ServeHTTP(rec, req)
+	kratosProbe(client, repo).ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	assert.Contains(t, rec.Body.String(), "missing_session")
@@ -122,12 +253,13 @@ func TestRequireKratosSession_KratosReturns401_ReturnsUnauthorized(t *testing.T)
 	defer srv.Close()
 
 	client := kratosclient.NewClient(srv.URL, srv.URL)
+	repo := seededRepo()
 
 	req := httptest.NewRequest(http.MethodGet, "/me", nil)
 	req.AddCookie(&http.Cookie{Name: "ory_kratos_session", Value: "stale-token"})
 	rec := httptest.NewRecorder()
 
-	kratosProbe(client).ServeHTTP(rec, req)
+	kratosProbe(client, repo).ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	assert.Contains(t, rec.Body.String(), "invalid_session")
@@ -142,12 +274,13 @@ func TestRequireKratosSession_Kratos5xx_Returns503(t *testing.T) {
 	defer srv.Close()
 
 	client := kratosclient.NewClient(srv.URL, srv.URL)
+	repo := seededRepo()
 
 	req := httptest.NewRequest(http.MethodGet, "/me", nil)
 	req.AddCookie(&http.Cookie{Name: "ory_kratos_session", Value: "valid-looking-token"})
 	rec := httptest.NewRecorder()
 
-	kratosProbe(client).ServeHTTP(rec, req)
+	kratosProbe(client, repo).ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	assert.Contains(t, rec.Body.String(), "identity_service_unavailable")
@@ -163,12 +296,13 @@ func TestRequireKratosSession_KratosUnreachable_Returns503(t *testing.T) {
 	srv.Close() // close immediately — subsequent requests will fail
 
 	client := kratosclient.NewClient(srv.URL, srv.URL)
+	repo := seededRepo()
 
 	req := httptest.NewRequest(http.MethodGet, "/me", nil)
 	req.AddCookie(&http.Cookie{Name: "ory_kratos_session", Value: "valid-token"})
 	rec := httptest.NewRecorder()
 
-	kratosProbe(client).ServeHTTP(rec, req)
+	kratosProbe(client, repo).ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	assert.Contains(t, rec.Body.String(), "identity_service_unavailable")

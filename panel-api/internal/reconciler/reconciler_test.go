@@ -294,6 +294,10 @@ func (f *fakeUserRepo) FindByEmail(ctx context.Context, email string) (*models.U
 	return nil, repository.ErrNotFound
 }
 
+func (f *fakeUserRepo) FindByKratosIdentityID(_ context.Context, _ string) (*models.User, error) {
+	return nil, repository.ErrNotFound
+}
+
 func (f *fakeUserRepo) FindByUsername(ctx context.Context, username string) (*models.User, error) {
 	for _, u := range f.users {
 		if u.Username != nil && *u.Username == username {

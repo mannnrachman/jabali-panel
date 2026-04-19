@@ -173,7 +173,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// flows through RequireAuth (JWT) or RequireKratosSession (Kratos).
 		var authMiddleware gin.HandlerFunc
 		if cfg.Auth.Provider == "kratos" && deps.KratosClient != nil {
-			authMiddleware = middleware.RequireKratosSession(deps.KratosClient)
+			// deps.Users is required: the middleware resolves Kratos identity
+			// UUIDs → panel user rows so claims.UserID carries the ULID every
+			// ownership check in the API expects.
+			authMiddleware = middleware.RequireKratosSession(deps.KratosClient, deps.Users)
 		} else {
 			authMiddleware = middleware.RequireAuth(deps.JWTIssuer)
 		}

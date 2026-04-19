@@ -37,6 +37,9 @@ func (f *fake2FAUserRepo) FindByEmail(_ context.Context, email string) (*models.
 func (f *fake2FAUserRepo) FindByUsername(context.Context, string) (*models.User, error) {
 	return nil, repository.ErrNotFound
 }
+func (f *fake2FAUserRepo) FindByKratosIdentityID(context.Context, string) (*models.User, error) {
+	return nil, repository.ErrNotFound
+}
 func (f *fake2FAUserRepo) List(context.Context, repository.ListOptions) ([]models.User, int64, error) {
 	return nil, 0, nil
 }

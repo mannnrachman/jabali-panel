@@ -87,6 +87,21 @@ func (m *memUserRepo) FindByEmail(_ context.Context, email string) (*models.User
 	return nil, repository.ErrNotFound
 }
 
+func (m *memUserRepo) FindByKratosIdentityID(_ context.Context, kratosID string) (*models.User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if kratosID == "" {
+		return nil, repository.ErrNotFound
+	}
+	for _, v := range m.byID {
+		if v.KratosIdentityID != nil && *v.KratosIdentityID == kratosID {
+			c := *v
+			return &c, nil
+		}
+	}
+	return nil, repository.ErrNotFound
+}
+
 func (m *memUserRepo) FindByUsername(_ context.Context, username string) (*models.User, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -9,29 +9,45 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-// RequireKratosSession is Gin middleware that validates a Kratos session cookie
-// and attaches the authenticated AccessClaims to the request context.
-// The middleware extracts the ory_kratos_session cookie, calls Kratos /sessions/whoami,
-// and on success, builds AccessClaims from the identity traits.
+// RequireKratosSession validates a Kratos browser session cookie and populates
+// the request-scoped AccessClaims with the authenticated PANEL user's fields.
 //
-// On auth failure, it returns 401 with error reason (e.g., "missing_session").
-// The Authorization header is ignored in Kratos mode (feature flag isolates one auth source).
-func RequireKratosSession(kratosClient *kratosclient.Client) gin.HandlerFunc {
+// The middleware runs two lookups on every cache-miss:
+//
+//  1. GET {kratos}/sessions/whoami — validates the cookie and returns the
+//     Kratos identity (UUID + traits).
+//  2. users WHERE kratos_identity_id = <UUID> — maps that Kratos identity
+//     back to the panel user row created by the M20 step 4 migration tool
+//     (or the POST /api/v1/users hook for new users).
+//
+// The panel's existing authz uses users.id (ULID) as the owner key on every
+// resource (domains, databases, applications, …). If we left claims.UserID as
+// the Kratos UUID, every ownership check would return 403 post-cutover. So
+// the claims.UserID we stash is the PANEL id, with Kratos's traits confirmed
+// against the panel row (is_admin in particular must match the DB, not the
+// trait cached server-side in Kratos).
+//
+// On auth failure we return 401 with a specific reason ("missing_session" |
+// "invalid_session" | "identity_not_linked"). On Kratos infrastructure
+// failures (network / 5xx / timeout) we return 503 so a transient upstream
+// blip doesn't force every user to re-login. Authorization headers are
+// ignored in Kratos mode — the cookie is the only credential source,
+// closing adversarial-review finding #1 from plans/m20-kratos-identity.md.
+func RequireKratosSession(kratosClient *kratosclient.Client, users repository.UserRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Extract the session cookie.
 		cookie, err := c.Cookie("ory_kratos_session")
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "missing_session",
+				"error":   "missing_session",
 				"message": "Kratos session cookie not found",
 			})
 			c.Abort()
 			return
 		}
 
-		// Validate the session via Kratos whoami.
 		identity, err := kratosClient.Whoami(c.Request.Context(), cookie)
 		if err != nil {
 			if errors.Is(err, kratosclient.ErrUnauthenticated) {
@@ -53,16 +69,40 @@ func RequireKratosSession(kratosClient *kratosclient.Client) gin.HandlerFunc {
 			return
 		}
 
-		// Extract claims from the identity traits.
-		claims := &auth.AccessClaims{
-			UserID:   identity.ID,
-			Email:    identity.GetTraitEmail(),
-			IsAdmin:  identity.GetTraitIsAdmin(),
+		// Resolve Kratos identity → panel user row. An identity the migration
+		// tool hasn't processed yet (no panel row with kratos_identity_id =
+		// identity.ID) is treated as unauthenticated: the session is real but
+		// there's no panel account for it to map to, so every resource check
+		// would fail anyway. 401 tells the SPA to re-login — which, for the
+		// common case of a mid-migration race, completes fine on retry.
+		panelUser, err := users.FindByKratosIdentityID(c.Request.Context(), identity.ID)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"error":   "identity_not_linked",
+					"message": "Kratos identity has no corresponding panel user — contact an administrator",
+				})
+			} else {
+				c.JSON(http.StatusServiceUnavailable, gin.H{
+					"error":   "identity_lookup_failed",
+					"message": "could not resolve identity to panel user",
+				})
+			}
+			c.Abort()
+			return
 		}
 
-		// Attach to context for handler access.
-		ginctx.SetClaims(c, claims)
+		// Prefer the panel row's fields as the source of truth: is_admin must
+		// match what our own DB says, not the trait Kratos happened to have
+		// cached, so an admin demotion takes effect on the next request
+		// regardless of Kratos-side propagation.
+		claims := &auth.AccessClaims{
+			UserID:  panelUser.ID,
+			Email:   panelUser.Email,
+			IsAdmin: panelUser.IsAdmin,
+		}
 
+		ginctx.SetClaims(c, claims)
 		c.Next()
 	}
 }

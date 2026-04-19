@@ -591,7 +591,7 @@ func (h *wordPressHandler) delete(c *gin.Context) {
 	}
 
 	// Spawn async goroutine to delete
-	go createDeleteAndKickAgent(ctx, installID, install.DBID, dbUserID, osUser, domain.DocRoot, dbUserUsername, h.cfg)
+	go createDeleteAndKickAgent(ctx, installID, install.DBID, dbUserID, osUser, domain.DocRoot, domain.Name, dbUserUsername, h.cfg)
 
 	c.JSON(http.StatusAccepted, gin.H{"status": "deleting"})
 }
@@ -972,7 +972,7 @@ func createInstallAndKickAgent(parentCtx context.Context, args installKickArgs, 
 // database user, grants, install record). If the agent file-removal
 // fails we flip status to failed but still allow a future retry.
 // Non-empty osUser+docroot are required; the handler pre-fills them.
-func createDeleteAndKickAgent(parentCtx context.Context, installID, databaseID, dbUserID, osUser, docroot, dbUserUsername string, cfg WordPressHandlerConfig) {
+func createDeleteAndKickAgent(parentCtx context.Context, installID, databaseID, dbUserID, osUser, docroot, domainName, dbUserUsername string, cfg WordPressHandlerConfig) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -982,11 +982,14 @@ func createDeleteAndKickAgent(parentCtx context.Context, installID, databaseID, 
 		return
 	}
 
-	// Agent removes WordPress core files from the docroot. It does NOT
-	// touch the MySQL side — panel handles that below.
+	// Agent removes WordPress core files from the docroot AND restores
+	// the domain.create placeholder index.html (when domain is non-empty)
+	// so the docroot doesn't 403 after delete. Does NOT touch the MySQL
+	// side — panel handles that below.
 	_, err := cfg.Agent.Call(ctx, "wordpress.delete", map[string]any{
 		"os_user": osUser,
 		"docroot": docroot,
+		"domain":  domainName,
 	})
 	if err != nil {
 		errMsg := truncateError(fmt.Sprintf("agent delete failed: %v", err), 1024)

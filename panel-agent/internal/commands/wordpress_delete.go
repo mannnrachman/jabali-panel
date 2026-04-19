@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
@@ -13,6 +14,11 @@ import (
 type wordpressDeleteReq struct {
 	OSUser  string `json:"os_user"`  // domain owner (e.g. "shuki")
 	Docroot string `json:"docroot"`  // /home/shuki/domains/example.com/public_html
+	// Domain is used to render the placeholder index.html after the
+	// WP files are removed (matches what domain.create writes on a
+	// fresh domain). Optional — if empty, the placeholder restore is
+	// skipped and the docroot is left empty (nginx will 403).
+	Domain string `json:"domain,omitempty"`
 }
 
 // wordpressDeleteResp is the output shape for wordpress.delete.
@@ -92,6 +98,19 @@ func wordpressDeleteHandler(ctx context.Context, params json.RawMessage) (any, e
 			"rm", "-rf", fullPath,
 		)
 		_ = cmd.Run()
+	}
+
+	// Restore the domain.create placeholder index.html so the docroot
+	// doesn't 403 after delete. Only if no index.html exists — don't
+	// clobber a user-uploaded one. Domain is optional in the request;
+	// without it the template can't be rendered, so we skip.
+	if req.Domain != "" {
+		indexPath := filepath.Join(req.Docroot, "index.html")
+		if _, err := os.Stat(indexPath); os.IsNotExist(err) {
+			// Best-effort: a failed restore leaves the docroot empty
+			// (visible 403) — annoying but not data-destroying.
+			_ = writeDefaultIndex(ctx, indexPath, req.OSUser, req.Domain, req.Docroot)
+		}
 	}
 
 	return wordpressDeleteResp{

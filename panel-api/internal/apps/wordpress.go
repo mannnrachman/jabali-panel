@@ -79,5 +79,8 @@ func RegisterDefaults(r *Registry) error {
 	if err := r.Register(PhpBB); err != nil {
 		return err
 	}
+	if err := r.Register(Grav); err != nil {
+		return err
+	}
 	return nil
 }

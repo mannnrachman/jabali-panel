@@ -308,6 +308,28 @@ func TestRegisterDefaults_RegistersPhpBB(t *testing.T) {
 	}
 }
 
+func TestRegisterDefaults_RegistersGrav(t *testing.T) {
+	r := New()
+	if err := RegisterDefaults(r); err != nil {
+		t.Fatalf("RegisterDefaults: %v", err)
+	}
+	g, ok := r.Get("grav")
+	if !ok {
+		t.Fatal("grav not registered after RegisterDefaults")
+	}
+	if g.RequiresDB {
+		t.Error("grav is flat-file — should declare RequiresDB=false")
+	}
+	if g.AgentInstallCmd != "app.install" || g.AgentDeleteCmd != "app.delete" {
+		t.Errorf("grav dispatcher commands = (%q, %q)", g.AgentInstallCmd, g.AgentDeleteCmd)
+	}
+	for _, want := range []string{"site_title", "admin_email", "admin_password", "admin_full_name"} {
+		if _, ok := g.InstallParamSchema[want]; !ok {
+			t.Errorf("grav schema missing %q", want)
+		}
+	}
+}
+
 func TestRegister_ConcurrentSafe(t *testing.T) {
 	// Race detector trips here if Register's mutex disappears.
 	r := New()

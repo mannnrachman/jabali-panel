@@ -1,70 +1,8 @@
 import { useMemo } from "react";
-import raf from "@rc-component/util/lib/raf";
 import { theme } from "antd";
-import type { ConfigProviderProps, GetProp } from "antd";
+import type { ConfigProviderProps } from "antd";
 
 import type { ThemeMode } from "./theme/ThemeModeContext";
-
-type WaveConfig = GetProp<ConfigProviderProps, "wave">;
-
-const createHolder = (node: HTMLElement) => {
-  const { borderWidth } = getComputedStyle(node);
-  const borderWidthNum = Number.parseInt(borderWidth, 10);
-
-  const div = document.createElement("div");
-  div.style.position = "absolute";
-  div.style.inset = `-${borderWidthNum}px`;
-  div.style.borderRadius = "inherit";
-  div.style.background = "transparent";
-  div.style.zIndex = "999";
-  div.style.pointerEvents = "none";
-  div.style.overflow = "hidden";
-  node.appendChild(div);
-
-  return div;
-};
-
-const createDot = (
-  holder: HTMLElement,
-  color: string,
-  left: number,
-  top: number,
-  size = 0,
-) => {
-  const dot = document.createElement("div");
-  dot.style.position = "absolute";
-  dot.style.left = `${left}px`;
-  dot.style.top = `${top}px`;
-  dot.style.width = `${size}px`;
-  dot.style.height = `${size}px`;
-  dot.style.borderRadius = "50%";
-  dot.style.background = color;
-  dot.style.transform = "translate3d(-50%, -50%, 0)";
-  dot.style.transition = "all 1s ease-out";
-  holder.appendChild(dot);
-  return dot;
-};
-
-const showInsetEffect: WaveConfig["showEffect"] = (node, { event, component }) => {
-  if (component !== "Button") {
-    return;
-  }
-
-  const holder = createHolder(node);
-  const rect = holder.getBoundingClientRect();
-  const left = event.clientX - rect.left;
-  const top = event.clientY - rect.top;
-  const dot = createDot(holder, "rgba(255, 255, 255, 0.65)", left, top);
-
-  raf(() => {
-    dot.ontransitionend = () => {
-      holder.remove();
-    };
-    dot.style.width = "200px";
-    dot.style.height = "200px";
-    dot.style.opacity = "0";
-  });
-};
 
 // Base font size applied to both light and dark tokens. AntD's default is
 // 14; 16 matches iOS/macOS body type and lifts heading/form/tag sizes via
@@ -179,24 +117,6 @@ const darkTokens = {
 };
 
 const lightComponents = {
-  Button: {
-    primaryShadow:
-      "0px 3px 1px -2px rgba(0,0,0,0.2), 0px 2px 2px 0px rgba(0,0,0,0.14), 0px 1px 5px 0px rgba(0,0,0,0.12)",
-    defaultShadow:
-      "0px 3px 1px -2px rgba(0,0,0,0.2), 0px 2px 2px 0px rgba(0,0,0,0.14), 0px 1px 5px 0px rgba(0,0,0,0.12)",
-    dangerShadow:
-      "0px 3px 1px -2px rgba(0,0,0,0.2), 0px 2px 2px 0px rgba(0,0,0,0.14), 0px 1px 5px 0px rgba(0,0,0,0.12)",
-    fontWeight: 500,
-    defaultBorderColor: "rgba(0, 0, 0, 0.23)",
-    defaultColor: "rgba(0, 0, 0, 0.87)",
-    defaultBg: "#ffffff",
-    defaultHoverBg: "rgba(25, 118, 210, 0.04)",
-    defaultHoverBorderColor: "rgba(0, 0, 0, 0.23)",
-    paddingInline: 16,
-    paddingBlock: 6,
-    contentFontSize: 14,
-    borderRadius: 4,
-  },
   Alert: { borderRadiusLG: 4 },
   Modal: { borderRadiusLG: 4 },
   Progress: {
@@ -216,13 +136,6 @@ const lightComponents = {
 };
 
 const darkComponents = {
-  Button: {
-    fontWeight: 500,
-    paddingInline: 16,
-    paddingBlock: 6,
-    contentFontSize: 14,
-    borderRadius: 4,
-  },
   Alert: { borderRadiusLG: 4 },
   Modal: { borderRadiusLG: 4 },
   Steps: { iconSize: 24 },
@@ -270,9 +183,6 @@ const useMuiTheme = (mode: ThemeMode) => {
           mode === "dark" ? theme.darkAlgorithm : theme.defaultAlgorithm,
         token: mode === "dark" ? darkTokens : lightTokens,
         components: mode === "dark" ? darkComponents : lightComponents,
-      },
-      wave: {
-        showEffect: showInsetEffect,
       },
     }),
     [mode],

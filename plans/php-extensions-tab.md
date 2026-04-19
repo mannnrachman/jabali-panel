@@ -36,7 +36,7 @@ xdebug xml xmlreader xmlwriter xsl yaml zip
 ## 1. Design decisions (locked)
 
 1. **State is live, not persisted.** No migration. `php.ext.list` shells out to `dpkg-query -W` + scans `/etc/php/<v>/fpm/conf.d/*.ini` (symlinks to `mods-available`). Cheap; one subprocess per call; no drift risk.
-2. **Allowlist is a Go source-of-truth** at `internal/phpext/` importable by both `panel-api` and `panel-agent`. **Module layout:** this repo is a single Go module (`git.linux-hosting.co.il/shukivaknin/jabali2`); `panel-api/` and `panel-agent/` are subdirectories, not separate modules — no `go.work`, no replace directives. The import path is `git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/phpext`, usable from both binaries directly. The panel validates requests against the allowlist before calling the agent; the agent re-validates (defence in depth) because the socket is a trust boundary. Map shape: `ext name → Spec{Packages []string, EnableName string, BuiltIn bool}`.
+2. **Allowlist is a Go source-of-truth** at `internal/phpext/` (repo root, NOT under `panel-api/internal/`) importable by both `panel-api` and `panel-agent`. **Module layout:** this repo is a single Go module (`git.linux-hosting.co.il/shukivaknin/jabali2`); `panel-api/` and `panel-agent/` are subdirectories, not separate modules — no `go.work`, no replace directives. Package MUST live at repo root `internal/` because Go's internal rule restricts `panel-api/internal/*` to `panel-api/...` callers only, which excludes `panel-agent/`. The import path is `git.linux-hosting.co.il/shukivaknin/jabali2/internal/phpext`, usable from both binaries directly. The panel validates requests against the allowlist before calling the agent; the agent re-validates (defence in depth) because the socket is a trust boundary. Map shape: `ext name → Spec{Packages []string, EnableName string, BuiltIn bool}`.
 3. **Aliases & bundled packages.** Some "extensions" in the list don't map 1:1 to an apt package:
    - `mysql` → meta-package label. `ResolvePackages("<v>","mysql")` returns `["php<v>-mysql"]` (a single Sury/Debian package that bundles both the `mysqli` and `pdo_mysql` modules). `EnableName="mysqli"`. **Allowed actions on `mysql` are install/remove only**; enable/disable return `CodeInvalidArgument` with message `"ambiguous target; enable/disable mysqli or pdo_mysql directly"`. The UI row for `mysql` hides enable/disable buttons.
    - `mysqlnd`, `posix`, `tokenizer`, `ctype`, `phar`, `calendar`, `exif`, `ftp`, `sockets`, `sysvmsg`, `sysvsem`, `sysvshm`, `fileinfo`, `iconv`, `opcache`, `pdo` → `BuiltIn: true`. Always installed when `php<v>-common` or `php<v>-cli` is present; Action column shows only Enable/Disable, never Install/Remove.
@@ -109,20 +109,20 @@ These apply to every step. Do not repeat in step bodies.
 **Model:** default
 **Depends on:** nothing
 **Parallel with:** nothing (head)
-**Rollback:** `trash panel-api/internal/phpext/ && git restore --staged . && git checkout -- .` (global rule: `trash`, never `rm -rf`).
+**Rollback:** `trash internal/phpext/ && git restore --staged . && git checkout -- .` (global rule: `trash`, never `rm -rf`).
 
 **Context brief.** We need a Go package that both `panel-api` and `panel-agent` import to validate and resolve extension names. It holds the canonical 63-entry list, the ext→packages map, and helpers. No external callers yet — this step ships the package + tests only.
 
 **Files to create.**
-- `panel-api/internal/phpext/phpext.go` — types + data + resolver.
-- `panel-api/internal/phpext/phpext_test.go` — table-driven tests.
+- `internal/phpext/phpext.go` — types + data + resolver.
+- `internal/phpext/phpext_test.go` — table-driven tests.
 
-**Module-path sanity check (do before coding).** `grep -r '^module' go.mod` → confirms single module `git.linux-hosting.co.il/shukivaknin/jabali2`. The package import path from `panel-agent` is `git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/phpext`. If this ever changes (repo split into multi-module workspace), update Step 2 imports accordingly.
+**Module-path sanity check (do before coding).** `grep -r '^module' go.mod` → confirms single module `git.linux-hosting.co.il/shukivaknin/jabali2`. The package import path from `panel-agent` is `git.linux-hosting.co.il/shukivaknin/jabali2/internal/phpext`. If this ever changes (repo split into multi-module workspace), update Step 2 imports accordingly.
 
 **Data model (write this exactly).**
 
 ```go
-// panel-api/internal/phpext/phpext.go
+// internal/phpext/phpext.go
 package phpext
 
 // Spec describes one logical extension offered by the admin UI.
@@ -244,8 +244,8 @@ Note: the `Packages` column shows the bare suffix; `ResolvePackages` prefixes `p
 
 **Exit criteria.**
 - `make fmt vet lint test` clean.
-- `go test -cover ./panel-api/internal/phpext/...` ≥ 95% (pure data + pure functions; no excuse to miss).
-- `gitnexus_detect_changes` shows only files under `panel-api/internal/phpext/`.
+- `go test -cover ./internal/phpext/...` ≥ 95% (pure data + pure functions; no excuse to miss).
+- `gitnexus_detect_changes` shows only files under `internal/phpext/`.
 
 ---
 
@@ -591,7 +591,7 @@ Context: How do admins manage PHP extensions on the server.
 Decision:
   1. Server-wide per PHP version (not per-user / per-pool).
   2. State read live from dpkg + /etc/php/<v>/fpm/conf.d (no DB persistence).
-  3. Allowlist of 63 extensions, Go source-of-truth at panel-api/internal/phpext.
+  3. Allowlist of 63 extensions, Go source-of-truth at internal/phpext.
   4. phpenmod / phpdismod for enable/disable; apt for install/remove.
   5. Synchronous reload of php<v>-fpm + all matching jabali-fpm@<user>.
   6. Admin-only API; agent re-validates at the trust boundary.
@@ -627,7 +627,7 @@ Before dispatcher merges the last branch to `main`:
 2. `make coverage-check` ≥ 80%.
 3. Manual browser smoke: log in as admin → `/admin/php` → both tabs function; install a cheap ext (`bcmath`) on the default version, confirm `php -v -m | grep bcmath` on the box shows it loaded.
 4. Confirm a non-admin user cannot see either API route (403 from both).
-5. `gitnexus_detect_changes` on the merged branch returns only files inside `panel-api/internal/phpext/`, `panel-api/internal/api/php_*`, `panel-agent/internal/commands/php_ext_*`, `panel-ui/src/shells/admin/php*/`, `panel-ui/tests/e2e/php-extensions.spec.ts`, `docs/adr/0031-*.md`, `docs/BLUEPRINT.md`, `docs/runbooks/php-extensions.md`.
+5. `gitnexus_detect_changes` on the merged branch returns only files inside `internal/phpext/`, `panel-api/internal/api/php_*`, `panel-agent/internal/commands/php_ext_*`, `panel-ui/src/shells/admin/php*/`, `panel-ui/tests/e2e/php-extensions.spec.ts`, `docs/adr/0031-*.md`, `docs/BLUEPRINT.md`, `docs/runbooks/php-extensions.md`.
 6. ADR-0031 linked from BLUEPRINT.
 7. No CLAUDE.md / MEMORY.md churn.
 

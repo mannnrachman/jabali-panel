@@ -352,6 +352,12 @@ func (f *fakeUserRepo) FindAdminsByEmail(ctx context.Context) ([]*models.User, e
 	return admins, nil
 }
 
+func (f *fakeUserRepo) SetTOTPSecret(ctx context.Context, id string, encrypted []byte) error {
+	return nil
+}
+func (f *fakeUserRepo) EnableTOTP(ctx context.Context, id string, now time.Time) error { return nil }
+func (f *fakeUserRepo) DisableTOTP(ctx context.Context, id string) error               { return nil }
+
 // fakePHPPoolRepo mocks the PHP pool repository.
 type fakePHPPoolRepo struct {
 	pools map[string]*models.PHPPool

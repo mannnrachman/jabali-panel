@@ -42,6 +42,9 @@ func TestUserRepository_Create(t *testing.T) {
 			nil,              // mysqladmin_username (SSO shadow, ADR-0022)
 			sqlmock.AnyArg(), // mysqladmin_password_enc — GORM emits []byte{} for nil slice
 			nil,              // mysqladmin_provisioned_at
+			sqlmock.AnyArg(), // totp_secret_encrypted — GORM emits []byte{} for nil slice
+			false,            // totp_enabled
+			nil,              // totp_enabled_at
 			sqlmock.AnyArg(), // created_at
 			sqlmock.AnyArg(), // updated_at
 		).

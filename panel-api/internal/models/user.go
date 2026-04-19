@@ -52,6 +52,20 @@ type User struct {
 	// NULL until the shadow account is created.
 	MysqladminProvisionedAt *time.Time `gorm:"type:datetime(6)" json:"mysqladmin_provisioned_at,omitempty"`
 
+	// TOTPSecretEncrypted holds the AES-256-GCM-sealed TOTP shared secret
+	// (via internal/ssokey). NULL when the user has never started enrolment.
+	// Present but TOTPEnabled=false during the enrol-but-not-verified window.
+	TOTPSecretEncrypted []byte `gorm:"column:totp_secret_encrypted;type:varbinary(256)" json:"-"`
+
+	// TOTPEnabled becomes true only after the user verifies the first code,
+	// which also generates the 10 backup codes. Login flow consults this
+	// to decide whether to short-circuit with a 2fa_pending token.
+	TOTPEnabled bool `gorm:"column:totp_enabled;type:tinyint(1);not null;default:0" json:"totp_enabled"`
+
+	// TOTPEnabledAt records when 2FA was successfully turned on. Useful for
+	// audit/observability; not load-bearing for auth.
+	TOTPEnabledAt *time.Time `gorm:"column:totp_enabled_at;type:datetime(6)" json:"totp_enabled_at,omitempty"`
+
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }

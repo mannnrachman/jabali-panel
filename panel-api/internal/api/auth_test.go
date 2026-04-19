@@ -53,6 +53,10 @@ func (f *fakeAuthService) GenerateImpersonationLoginURL(_ context.Context, _ *mo
 	return scheme + "://" + hostname + ":" + port + "/login?cli_token=test-token", nil
 }
 
+func (f *fakeAuthService) ChallengeTOTP(_ context.Context, _ auth.ChallengeTOTPInput) (*auth.LoginOutput, error) {
+	return f.loginOut, f.loginErr
+}
+
 
 
 

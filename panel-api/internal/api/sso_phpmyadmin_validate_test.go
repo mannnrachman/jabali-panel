@@ -308,6 +308,14 @@ func (m *mockUserRepoValidate) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+func (m *mockUserRepoValidate) SetTOTPSecret(ctx context.Context, id string, encrypted []byte) error {
+	return nil
+}
+func (m *mockUserRepoValidate) EnableTOTP(ctx context.Context, id string, now time.Time) error {
+	return nil
+}
+func (m *mockUserRepoValidate) DisableTOTP(ctx context.Context, id string) error { return nil }
+
 type mockSSOTokenRepoValidate struct {
 	tokens       map[string]*models.PhpMyAdminSSOToken
 	consumeError error

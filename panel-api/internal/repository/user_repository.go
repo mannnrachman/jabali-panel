@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
@@ -30,6 +31,16 @@ type UserRepository interface {
 	// FindAdminsByEmail returns all admin users. Used by CLI break-glass login.
 	FindAdminsByEmail(ctx context.Context) ([]*models.User, error)
 	Delete(ctx context.Context, id string) error
+
+	// SetTOTPSecret stores the encrypted TOTP shared secret without flipping
+	// totp_enabled — enrolment lands here, then EnableTOTP commits it once
+	// the first code verifies.
+	SetTOTPSecret(ctx context.Context, id string, encrypted []byte) error
+	// EnableTOTP flips totp_enabled=true and records the timestamp.
+	EnableTOTP(ctx context.Context, id string, now time.Time) error
+	// DisableTOTP wipes the encrypted secret and the enabled bit. Caller also
+	// clears totp_backup_codes via TOTPBackupCodeRepository.
+	DisableTOTP(ctx context.Context, id string) error
 }
 
 type userRepo struct{ db *gorm.DB }
@@ -111,6 +122,66 @@ func (r *userRepo) Update(ctx context.Context, u *models.User) error {
 		"email", "name_first", "name_last", "password_hash", "linux_uid", "package_id",
 	).Updates(u).Error; err != nil {
 		return translate(err)
+	}
+	return nil
+}
+
+// SetTOTPSecret writes the encrypted secret without flipping totp_enabled.
+// Used during enrol (secret stored, awaiting first code verification).
+func (r *userRepo) SetTOTPSecret(ctx context.Context, id string, encrypted []byte) error {
+	res := r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"totp_secret_encrypted": encrypted,
+			"totp_enabled":          false,
+			"totp_enabled_at":       nil,
+		})
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// EnableTOTP flips totp_enabled=true with the enrolment timestamp. Called
+// after the first code verifies successfully.
+func (r *userRepo) EnableTOTP(ctx context.Context, id string, now time.Time) error {
+	res := r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"totp_enabled":    true,
+			"totp_enabled_at": now,
+		})
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DisableTOTP wipes both the secret and the enabled bit atomically. Caller
+// is responsible for also clearing totp_backup_codes (TOTPBackupCodeRepository
+// .DeleteAllByUserID) in the same logical transaction.
+func (r *userRepo) DisableTOTP(ctx context.Context, id string) error {
+	res := r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"totp_secret_encrypted": nil,
+			"totp_enabled":          false,
+			"totp_enabled_at":       nil,
+		})
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
 	}
 	return nil
 }

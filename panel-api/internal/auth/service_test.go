@@ -94,6 +94,10 @@ func (f *fakeUserRepo) FindAdminsByEmail(_ context.Context) ([]*models.User, err
 }
 func (f *fakeUserRepo) Delete(context.Context, string) error         { return nil }
 
+func (f *fakeUserRepo) SetTOTPSecret(context.Context, string, []byte) error { return nil }
+func (f *fakeUserRepo) EnableTOTP(context.Context, string, time.Time) error { return nil }
+func (f *fakeUserRepo) DisableTOTP(context.Context, string) error           { return nil }
+
 type fakeTokenRepo struct {
 	mu     sync.Mutex
 	byHash map[string]*models.RefreshToken

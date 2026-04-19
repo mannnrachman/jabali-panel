@@ -110,6 +110,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		phpPoolIniOverrideRepo := repository.NewPHPPoolIniOverrideRepository(sharedDB)
 		wordpressInstallRepo := repository.NewWordPressInstallRepository(sharedDB)
 		cronJobsRepo := repository.NewCronJobRepository(sharedDB)
+		totpBackupCodeRepo := repository.NewTOTPBackupCodeRepository(sharedDB)
 
 		serverSettingsRepo := repository.NewServerSettingsRepository(sharedDB)
 		jwtIss, err := auth.NewJWTIssuer(auth.JWTConfig{
@@ -123,11 +124,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 
 		authSvc := auth.NewService(auth.ServiceConfig{
-			Users:       userRepo,
-			RefreshRepo: tokenRepo,
-			JWT:         jwtIss,
-			BcryptCost:  bcrypt.DefaultCost,
-			RefreshTTL:  cfg.Auth.RefreshTTL,
+			Users:           userRepo,
+			RefreshRepo:     tokenRepo,
+			JWT:             jwtIss,
+			BcryptCost:      bcrypt.DefaultCost,
+			RefreshTTL:      cfg.Auth.RefreshTTL,
+			TOTPBackupCodes: totpBackupCodeRepo,
+			SSOKey:          ssoKeyPtr,
 		})
 		deps.Auth = authSvc
 
@@ -180,6 +183,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.PHPPoolIniOverrides = phpPoolIniOverrideRepo
 		deps.WordPressInstalls = wordpressInstallRepo
 		deps.CronJobs = cronJobsRepo
+		deps.TOTPBackupCodes = totpBackupCodeRepo
 
 		// Admin bootstrap.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

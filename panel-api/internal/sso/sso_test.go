@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -126,6 +127,14 @@ func (m *mockUsersForSSO) FindAdminsByEmail(ctx context.Context) ([]*models.User
 func (m *mockUsersForSSO) Delete(ctx context.Context, id string) error {
 	return nil
 }
+
+func (m *mockUsersForSSO) SetTOTPSecret(ctx context.Context, id string, encrypted []byte) error {
+	return nil
+}
+func (m *mockUsersForSSO) EnableTOTP(ctx context.Context, id string, now time.Time) error {
+	return nil
+}
+func (m *mockUsersForSSO) DisableTOTP(ctx context.Context, id string) error { return nil }
 
 type mockAgentForSSO struct {
 	response  map[string]interface{}

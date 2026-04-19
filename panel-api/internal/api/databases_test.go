@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -187,6 +188,14 @@ func (m *mockUserRepo) FindAdminsByEmail(ctx context.Context) ([]*models.User, e
 func (m *mockUserRepo) Delete(ctx context.Context, id string) error {
 	return nil
 }
+
+func (m *mockUserRepo) SetTOTPSecret(ctx context.Context, id string, encrypted []byte) error {
+	return nil
+}
+func (m *mockUserRepo) EnableTOTP(ctx context.Context, id string, now time.Time) error {
+	return nil
+}
+func (m *mockUserRepo) DisableTOTP(ctx context.Context, id string) error { return nil }
 
 type mockPackageRepo struct {
 	packages map[string]*models.HostingPackage

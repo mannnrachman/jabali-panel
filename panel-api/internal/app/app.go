@@ -48,6 +48,7 @@ type Deps struct {
 	SSHKeys             repository.SSHKeyRepository
 	SSO                 *sso.Service
 	SSOKey              *ssokey.Key
+	TOTPBackupCodes     repository.TOTPBackupCodeRepository
 	Log                 *slog.Logger
 }
 
@@ -130,6 +131,19 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// flows through RequireAuth.
 		v1 := r.Group("/api/v1", middleware.RequireAuth(deps.JWTIssuer))
 		api.RegisterMeRoutes(v1)
+
+		// 2FA management endpoints (TOTP enrol/verify/disable/regen-backup).
+		// Gated by the v1 RequireAuth middleware — caller must already be
+		// logged in with a real access token. The /auth/2fa/challenge leg,
+		// which accepts a 2fa_pending token instead, is registered inside
+		// RegisterAuthRoutes below.
+		if deps.Users != nil && deps.TOTPBackupCodes != nil && deps.SSOKey != nil {
+			api.RegisterTOTPRoutes(v1, api.TOTPHandlerConfig{
+				Users:       deps.Users,
+				BackupCodes: deps.TOTPBackupCodes,
+				SSOKey:      deps.SSOKey,
+			})
+		}
 		if deps.Users != nil {
 			api.RegisterUserRoutes(v1, api.UserHandlerConfig{
 				Repo:            deps.Users,

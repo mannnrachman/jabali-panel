@@ -180,6 +180,36 @@ func (m *memUserRepo) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+func (m *memUserRepo) SetTOTPSecret(_ context.Context, id string, encrypted []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if u, ok := m.byID[id]; ok {
+		u.TOTPSecretEncrypted = encrypted
+	}
+	return nil
+}
+
+func (m *memUserRepo) EnableTOTP(_ context.Context, id string, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if u, ok := m.byID[id]; ok {
+		u.TOTPEnabled = true
+		u.TOTPEnabledAt = &now
+	}
+	return nil
+}
+
+func (m *memUserRepo) DisableTOTP(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if u, ok := m.byID[id]; ok {
+		u.TOTPEnabled = false
+		u.TOTPEnabledAt = nil
+		u.TOTPSecretEncrypted = nil
+	}
+	return nil
+}
+
 // ---------- in-memory package repo ----------
 
 // memPackageRepo is a tiny in-memory PackageRepository for handler tests.

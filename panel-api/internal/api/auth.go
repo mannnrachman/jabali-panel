@@ -21,6 +21,7 @@ type AuthService interface {
 	Logout(ctx context.Context, raw string) error
 	RedeemCLIToken(ctx context.Context, cliToken string, deviceID string) (*auth.LoginOutput, error)
 	GenerateImpersonationLoginURL(ctx context.Context, targetUser *models.User, adminID string, scheme string, hostname string, port string) (string, error)
+	ChallengeTOTP(ctx context.Context, in auth.ChallengeTOTPInput) (*auth.LoginOutput, error)
 }
 
 // AuthHandlerConfig captures everything the handler needs to emit cookies
@@ -72,6 +73,10 @@ func RegisterAuthRoutes(r *gin.Engine, cfg AuthHandlerConfig) {
 	g.POST("/refresh", h.refresh)
 	g.POST("/logout", append(logoutChain, h.logout)...)
 	g.POST("/cli-login", h.cliLogin)
+	// 2FA challenge rides the strict rate limit because it's a credential
+	// endpoint — unbounded brute-force would burn through the TOTP 30-sec
+	// window or the 10 backup codes.
+	g.POST("/2fa/challenge", append(loginChain, h.twofaChallenge)...)
 }
 
 type authHandler struct{ cfg AuthHandlerConfig }
@@ -83,11 +88,15 @@ type loginRequest struct {
 }
 
 // loginResponse never includes the refresh token — that lives in the cookie.
+// When 2FA is pending, AccessToken / ExpiresIn are zero-value and the client
+// reads TwoFAPending + PendingToken to continue via /auth/2fa/challenge.
 type loginResponse struct {
-	AccessToken string        `json:"access_token"`
-	TokenType   string        `json:"token_type"`
-	ExpiresIn   int64         `json:"expires_in"`
-	User        *userResponse `json:"user,omitempty"`
+	AccessToken  string        `json:"access_token,omitempty"`
+	TokenType    string        `json:"token_type,omitempty"`
+	ExpiresIn    int64         `json:"expires_in,omitempty"`
+	User         *userResponse `json:"user,omitempty"`
+	TwoFAPending bool          `json:"twofa_pending,omitempty"`
+	PendingToken string        `json:"twofa_pending_token,omitempty"`
 }
 
 // userResponse is a minimal safe view of models.User for auth payloads.
@@ -112,6 +121,53 @@ func (h *authHandler) login(c *gin.Context) {
 
 	out, err := h.cfg.Service.Login(c.Request.Context(), auth.LoginInput{
 		Email: req.Email, Password: req.Password, DeviceID: deviceID,
+	})
+	if err != nil {
+		h.handleAuthErr(c, err)
+		return
+	}
+	// 2FA-pending: DO NOT set refresh cookie — the second leg (/auth/2fa/challenge)
+	// will mint the full pair after the code verifies.
+	if out.TwoFAPending {
+		c.JSON(http.StatusOK, h.buildLoginResponse(out))
+		return
+	}
+	h.setRefreshCookie(c, out.RawRefresh)
+	c.JSON(http.StatusOK, h.buildLoginResponse(out))
+}
+
+// twofaChallengeRequest is the body for POST /auth/2fa/challenge. Client
+// sends exactly one of `code` (6 digits from authenticator app) or
+// `backup_code` (8-digit one-time recovery code).
+type twofaChallengeRequest struct {
+	PendingToken string `json:"twofa_pending_token" binding:"required"`
+	Code         string `json:"code,omitempty"`
+	BackupCode   string `json:"backup_code,omitempty"`
+}
+
+func (h *authHandler) twofaChallenge(c *gin.Context) {
+	var req twofaChallengeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
+		return
+	}
+	code := req.Code
+	if code == "" {
+		code = req.BackupCode
+	}
+	if code == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "code_required"})
+		return
+	}
+	deviceID := auth.DeriveDeviceID(
+		c.GetHeader("X-Device-Id"),
+		c.Request.UserAgent(),
+		c.ClientIP(),
+	)
+	out, err := h.cfg.Service.ChallengeTOTP(c.Request.Context(), auth.ChallengeTOTPInput{
+		PendingToken: req.PendingToken,
+		Code:         code,
+		DeviceID:     deviceID,
 	})
 	if err != nil {
 		h.handleAuthErr(c, err)
@@ -160,6 +216,11 @@ func (h *authHandler) handleAuthErr(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_credentials"})
+	case errors.Is(err, auth.ErrInvalid2FACode):
+		// Deliberately indistinguishable from invalid_token below — the
+		// client already knows it was in the 2FA leg, and we don't want
+		// to leak whether the token or the code was wrong.
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_2fa"})
 	case errors.Is(err, auth.ErrInvalidToken):
 		h.clearRefreshCookie(c)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_token"})
@@ -169,16 +230,20 @@ func (h *authHandler) handleAuthErr(c *gin.Context, err error) {
 }
 
 func (h *authHandler) buildLoginResponse(out *auth.LoginOutput) loginResponse {
-	resp := loginResponse{
-		AccessToken: out.AccessToken,
-		TokenType:   "Bearer",
-		ExpiresIn:   int64(h.cfg.AccessTTL.Seconds()),
-	}
+	resp := loginResponse{}
 	if out.User != nil {
 		resp.User = &userResponse{
 			ID: out.User.ID, Email: out.User.Email, IsAdmin: out.User.IsAdmin,
 		}
 	}
+	if out.TwoFAPending {
+		resp.TwoFAPending = true
+		resp.PendingToken = out.PendingToken
+		return resp
+	}
+	resp.AccessToken = out.AccessToken
+	resp.TokenType = "Bearer"
+	resp.ExpiresIn = int64(h.cfg.AccessTTL.Seconds())
 	return resp
 }
 

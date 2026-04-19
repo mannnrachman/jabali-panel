@@ -97,5 +97,11 @@ func RegisterDefaults(r *Registry) error {
 	if err := r.Register(AbanteCart); err != nil {
 		return err
 	}
+	if err := r.Register(PrestaShop); err != nil {
+		return err
+	}
+	if err := r.Register(Backdrop); err != nil {
+		return err
+	}
 	return nil
 }

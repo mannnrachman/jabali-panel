@@ -8,6 +8,11 @@
 -- valid subdirectory value (means "install at docroot") and is treated as a
 -- distinct value by the unique index — so you still can't have two installs
 -- both at the docroot of the same domain.
-ALTER TABLE `wordpress_installs` DROP INDEX `domain_id`;
+-- Add the composite unique FIRST: fk_wpinstalls_domain references
+-- `domain_id`, and MariaDB refuses to drop the only index supporting an
+-- FK (errno 1553). The composite index has `domain_id` as its leading
+-- column, so once it exists the FK has another index to use and the
+-- original single-column unique can be dropped.
 ALTER TABLE `wordpress_installs`
   ADD UNIQUE KEY `uniq_wpinstalls_domain_subdir` (`domain_id`, `subdirectory`);
+ALTER TABLE `wordpress_installs` DROP INDEX `domain_id`;

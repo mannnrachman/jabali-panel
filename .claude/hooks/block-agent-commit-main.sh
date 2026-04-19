@@ -10,8 +10,14 @@ set -eu
 
 input=$(cat)
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null || echo "")
-repo_root="${CLAUDE_PROJECT_DIR:-/home/shuki/projects/jabali2}"
-branch=$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+# Check the current working directory first (for worktrees), fall back to CLAUDE_PROJECT_DIR
+cwd=$(pwd)
+if git -C "$cwd" rev-parse --git-dir &>/dev/null; then
+  repo_dir="$cwd"
+else
+  repo_dir="${CLAUDE_PROJECT_DIR:-/home/shuki/projects/jabali2}"
+fi
+branch=$(git -C "$repo_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 agent="${CLAUDE_AGENT_NAME:-}"
 
 case "$cmd" in

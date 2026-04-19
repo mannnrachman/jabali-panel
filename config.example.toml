@@ -38,6 +38,10 @@ format = "text"
 url = ""
 
 [auth]
+# Auth provider: "legacy" (JWT-only) or "kratos" (Ory Kratos identity platform).
+# Default: "legacy". Set via env AUTH_PROVIDER.
+provider = "legacy"
+
 # 32+ random bytes (e.g. `openssl rand -hex 32`). Required in production.
 # Never commit a real secret — set via env JWT_SECRET or a secrets manager.
 jwt_secret = ""
@@ -45,6 +49,19 @@ jwt_secret = ""
 # Short-lived access token lifetime.
 access_ttl  = "15m"
 refresh_ttl = "168h"  # 7 days
+
+# Kratos (M20+) identity provider configuration.
+# Only used when provider = "kratos".
+[auth.kratos]
+# Public URL of Kratos instance (reachable from browser + panel-api).
+# Example: "https://auth.example.com" or "http://localhost:4433"
+# Set via env KRATOS_PUBLIC_URL.
+public_url = ""
+
+# Admin URL of Kratos instance (reachable from panel-api only).
+# Example: "https://auth.example.com" or "http://localhost:4434"
+# Set via env KRATOS_ADMIN_URL.
+admin_url = ""
 
 [agent]
 # Path to the jabali-agent Unix socket. The panel user (jabali group) needs

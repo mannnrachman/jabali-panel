@@ -809,16 +809,22 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 
 	params["index_priority"] = domain.IndexPriority
 
-	// Fetch SSL certificate if available and issued
+	// Fetch SSL certificate paths for the vhost. We serve any cert whose
+	// files exist on disk regardless of issuance status — that includes
+	// 'issued' (Let's Encrypt success), 'self_signed' (operator-set), and
+	// 'pending_acme_retry' (the self-signed fallback we generate on every
+	// ACME failure so HTTPS keeps working until LE comes through). The
+	// only state we deliberately skip is 'revoked' — those rows have their
+	// cert_path cleared by sslRevokeForDomain so the check is belt-and-
+	// braces.
 	if r.sslCerts != nil {
 		sslCtx, sslCancel := context.WithTimeout(ctx, 10*time.Second)
 		cert, err := r.sslCerts.FindByDomainID(sslCtx, domain.ID)
 		sslCancel()
-		if err == nil && cert != nil && cert.Status == "issued" {
-			if cert.CertPath != nil && cert.KeyPath != nil {
-				params["ssl_cert_path"] = *cert.CertPath
-				params["ssl_key_path"] = *cert.KeyPath
-			}
+		if err == nil && cert != nil && cert.Status != models.SSLStatusRevoked &&
+			cert.CertPath != nil && cert.KeyPath != nil {
+			params["ssl_cert_path"] = *cert.CertPath
+			params["ssl_key_path"] = *cert.KeyPath
 		}
 	}
 

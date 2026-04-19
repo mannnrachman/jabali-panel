@@ -7,15 +7,26 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	ginctx "git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // DomainPHPPoolHandlerConfig wires the domain↔pool binding routes.
+//
+// Agent / Users / PHPPoolIniOverrides are required so the user-driven
+// version switch can fire php.pool.apply immediately, mirroring the admin
+// PUT /php-pools/:id flow. Without them, a version change only updates
+// the DB and waits for the next reconciler tick — and only converges if
+// pool.Status was flipped to "pending" first, which the reconciler uses
+// as its work filter.
 type DomainPHPPoolHandlerConfig struct {
-	Domains  repository.DomainRepository
-	PHPPools repository.PHPPoolRepository
+	Domains             repository.DomainRepository
+	PHPPools            repository.PHPPoolRepository
+	PHPPoolIniOverrides repository.PHPPoolIniOverrideRepository
+	Users               repository.UserRepository
+	Agent               agent.AgentInterface
 }
 
 // RegisterDomainPHPPoolRoutes adds two routes under the existing /domains
@@ -124,16 +135,29 @@ func (h *domainPHPPoolHandler) bind(c *gin.Context) {
 		// ADR-0023 constrains each user to exactly one pool, so the only way
 		// for a user to run a different PHP version for their domain is to
 		// change the version of that single pool. This endpoint owns that
-		// switch: update the pool in-place; the reconciler picks up the
-		// version change and moves the pool to the new FPM service.
+		// switch: update the pool in-place AND fire php.pool.apply so the
+		// per-user FPM master swaps to the new php-fpm<version> binary
+		// before the user reloads info.php. Status flips to "pending" so
+		// the reconciler also re-tries on the next tick if the agent call
+		// here fails or times out.
 		if pool.PHPVersion != req.PHPVersion {
 			pool.PHPVersion = req.PHPVersion
+			pool.Status = "pending"
+			pool.LastError = nil
 			if err := h.cfg.PHPPools.Update(ctx, pool); err != nil {
 				slog.ErrorContext(ctx, "bind php-pool: update pool version", "error", err, "pool_id", pool.ID, "new_version", req.PHPVersion)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 				return
 			}
 			slog.InfoContext(ctx, "php_pool.version_changed", "user_id", claims.UserID, "pool_id", pool.ID, "php_version", req.PHPVersion)
+
+			// Fire the agent apply asynchronously so the request returns
+			// quickly. Skipped when the helper deps are not wired (older
+			// app boot path or tests that intentionally leave Agent nil)
+			// — in that case the reconciler tick converges instead.
+			if h.cfg.Agent != nil && h.cfg.Users != nil && h.cfg.PHPPoolIniOverrides != nil {
+				go reconcilePHPPoolViaAgent(h.cfg.Agent, h.cfg.Users, h.cfg.PHPPoolIniOverrides, h.cfg.PHPPools, pool)
+			}
 		}
 	}
 

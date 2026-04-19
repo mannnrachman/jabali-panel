@@ -128,10 +128,12 @@ func TestBindDomainPHPPool_ByPHPVersion_Match(t *testing.T) {
 func TestBindDomainPHPPool_ByPHPVersion_Mismatch_UpdatesPool(t *testing.T) {
 	// ADR-0023 constrains each user to exactly one pool, so a user-driven
 	// version switch mutates that single pool in place rather than
-	// rejecting the request. Bind succeeds and the pool's version flips.
+	// rejecting the request. Bind succeeds, the pool's version flips, and
+	// status is reset to "pending" so the reconciler will (re)apply if the
+	// async agent call here fails or this test build leaves Agent nil.
 	r, domains, pools := setupBindRouter(t, auth.AccessClaims{UserID: "u1"})
 	domains.Create(context.Background(), &models.Domain{ID: "d1", UserID: "u1", Name: "example.com"})
-	pools.Create(context.Background(), &models.PHPPool{ID: "p1", UserID: "u1", PHPVersion: "8.3"})
+	pools.Create(context.Background(), &models.PHPPool{ID: "p1", UserID: "u1", PHPVersion: "8.3", Status: "active"})
 
 	body, _ := json.Marshal(map[string]string{"php_version": "8.1"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/domains/d1/php-pool", bytes.NewReader(body))
@@ -147,6 +149,9 @@ func TestBindDomainPHPPool_ByPHPVersion_Mismatch_UpdatesPool(t *testing.T) {
 	}
 	if got := pools.pools["p1"].PHPVersion; got != "8.1" {
 		t.Fatalf("pool php_version should be updated to 8.1, got %q", got)
+	}
+	if got := pools.pools["p1"].Status; got != "pending" {
+		t.Fatalf("pool status should be reset to pending so reconciler re-applies, got %q", got)
 	}
 }
 

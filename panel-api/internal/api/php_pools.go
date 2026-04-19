@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -771,67 +770,8 @@ func (h *phpPoolHandler) deleteIniOverride(c *gin.Context) {
 // ---- Helpers ----
 
 // reconcilePoolAsync triggers a pool reconciliation in the background.
+// Implementation lives in php_pool_reconcile.go so the user-driven
+// /domains/:id/php-pool path can share it without depending on phpPoolHandler.
 func (h *phpPoolHandler) reconcilePoolAsync(pool *models.PHPPool) {
-	agentCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Load user details
-	user, err := h.cfg.Users.FindByID(agentCtx, pool.UserID)
-	if err != nil {
-		slog.ErrorContext(agentCtx, "failed to find user for reconciliation", "error", err)
-		return
-	}
-
-	// Fetch all ini overrides for this pool
-	overrides, err := h.cfg.PHPPoolIniOverrides.ListByPool(agentCtx, pool.ID)
-	if err != nil {
-		slog.ErrorContext(agentCtx, "failed to fetch ini overrides", "error", err)
-		return
-	}
-
-	// Convert overrides to agent format
-	var adminValues []map[string]string
-	var adminFlags []map[string]string
-
-	for _, override := range overrides {
-		kv := map[string]string{
-			"name":  override.Directive,
-			"value": override.Value,
-		}
-		if override.Kind == "flag" {
-			adminFlags = append(adminFlags, kv)
-		} else {
-			adminValues = append(adminValues, kv)
-		}
-	}
-
-	if adminValues == nil {
-		adminValues = []map[string]string{}
-	}
-	if adminFlags == nil {
-		adminFlags = []map[string]string{}
-	}
-
-	// Call agent to apply the pool
-	_, err = h.cfg.Agent.Call(agentCtx, "php.pool.apply", map[string]any{
-		"username":                      user.Username,
-		"php_version":                   pool.PHPVersion,
-		"pm_mode":                       pool.PmMode,
-		"pm_max_children":               pool.PmMaxChildren,
-		"process_idle_timeout_seconds":  pool.ProcessIdleTimeoutSeconds,
-		"admin_values":                  adminValues,
-		"admin_flags":                   adminFlags,
-	})
-	if err != nil {
-		// Update pool status to "error"
-		pool.Status = "error"
-		errMsg := fmt.Sprintf("agent failed: %v", err)
-		pool.LastError = &errMsg
-		_ = h.cfg.PHPPools.Update(agentCtx, pool)
-	} else {
-		// Update pool status to "ready"
-		pool.Status = "ready"
-		pool.LastError = nil
-		_ = h.cfg.PHPPools.Update(agentCtx, pool)
-	}
+	reconcilePHPPoolViaAgent(h.cfg.Agent, h.cfg.Users, h.cfg.PHPPoolIniOverrides, h.cfg.PHPPools, pool)
 }

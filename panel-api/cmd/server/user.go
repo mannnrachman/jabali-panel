@@ -87,39 +87,40 @@ func newUserCreateCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:     "create",
-		Short:   "Create a new user",
-		PreRunE: requireConfig,
+		Use:   "create",
+		Short: "Create a new user (direct DB + Kratos; bypasses HTTP auth — M20-safe)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if email == "" || password == "" {
-				return fmt.Errorf("--email and --password are required")
-			}
-
-			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			// 30s timeout covers the worst-case path: Kratos create (loopback,
+			// sub-100ms) + agent user.create (adduser + home-dir perms, low
+			// seconds). Generous so a cold Kratos doesn't spuriously fail.
+			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 			defer cancel()
 
-			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
-			if err != nil {
-				return fmt.Errorf("create api client: %w", err)
-			}
-
-			req := &clientapi.CreateUserRequest{
+			u, warn, err := createUserDirect(ctx, cliUserInput{
 				Email:     email,
 				Password:  password,
 				NameFirst: nameFirst,
 				NameLast:  nameLast,
 				IsAdmin:   isAdmin,
-			}
-
-			user, err := client.CreateUser(ctx, req)
+			})
 			if err != nil {
-				return fmt.Errorf("create user: %w", err)
+				return err
 			}
 
 			if jsonOutput {
-				return printJSON(user)
+				out := map[string]interface{}{"user": u}
+				if warn != "" {
+					out["warning"] = warn
+				}
+				return printJSON(out)
 			}
-			fmt.Printf("Created user %s (%s)\n", user.ID, user.Email)
+			fmt.Printf("Created user %s (%s)\n", u.ID, u.Email)
+			if u.KratosIdentityID != nil {
+				fmt.Printf("Kratos identity: %s\n", *u.KratosIdentityID)
+			}
+			if warn != "" {
+				fmt.Fprintf(os.Stderr, "warning: %s\n", warn)
+			}
 			return nil
 		},
 	}

@@ -84,44 +84,27 @@ func newDomainCreateCmd() *cobra.Command {
 	var name, userID, docRoot string
 
 	cmd := &cobra.Command{
-		Use:     "create",
-		Short:   "Create a new domain",
-		PreRunE: requireConfig,
+		Use:   "create",
+		Short: "Create a new domain (direct DB; bypasses HTTP auth — M20-safe)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if name == "" {
-				return fmt.Errorf("--name is required")
-			}
-			if userID == "" {
-				return fmt.Errorf("--user-id is required")
-			}
-
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
-			client, err := newAPIClient(ctx, sharedCfg, sharedLog)
-			if err != nil {
-				return fmt.Errorf("create api client: %w", err)
-			}
-
-			req := &clientapi.CreateDomainRequest{
+			d, err := createDomainDirect(ctx, cliDomainInput{
 				Name:    name,
 				UserID:  userID,
 				DocRoot: docRoot,
-			}
-
-			domain, err := client.CreateDomain(ctx, req)
+			})
 			if err != nil {
-				return fmt.Errorf("create domain: %w", err)
+				return err
 			}
 
 			if jsonOutput {
-				return printJSON(domain)
+				return printJSON(d)
 			}
-
-			fmt.Printf("Domain created: %s (ID: %s)\n", domain.Name, domain.ID)
-			if domain.ProvisionWarning != "" {
-				fmt.Printf("Warning: %s\n", domain.ProvisionWarning)
-			}
+			fmt.Printf("Domain created: %s (ID: %s)\n", d.Name, d.ID)
+			fmt.Printf("Note: reconciler will materialise the nginx vhost within %s.\n",
+				sharedCfg.Agent.ReconcilerInterval)
 			return nil
 		},
 	}

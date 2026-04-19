@@ -34,15 +34,11 @@ type UserHandlerConfig struct {
 	Domains         repository.DomainRepository
 	Packages        repository.PackageRepository
 	Reconciler      *reconciler.Reconciler
-	// For impersonation endpoint
-	AuthService interface {
-		GenerateImpersonationLoginURL(ctx context.Context, targetUser *models.User, adminID string, scheme string, hostname string, port string) (string, error)
-	}
-	AccessTTL  time.Duration
-	RefreshTTL time.Duration
-	CookieName string
-	CookieSecure bool
-	Log        *slog.Logger
+	AccessTTL       time.Duration
+	RefreshTTL      time.Duration
+	CookieName      string
+	CookieSecure    bool
+	Log             *slog.Logger
 
 	// M20: Kratos hook. When AuthProvider == "kratos" AND KratosClient is
 	// non-nil, POST /users atomically creates both a panel user row and a
@@ -93,11 +89,6 @@ func RegisterUserRoutes(g *gin.RouterGroup, cfg UserHandlerConfig) {
 	}
 	reprov = append(reprov, h.reprovision)
 	g.POST("/users/:id/reprovision", reprov...)
-
-	// Admin-initiated impersonation endpoint
-	impersonate := []gin.HandlerFunc{middleware.RequireAdmin()}
-	impersonate = append(impersonate, h.impersonate)
-	g.POST("/admin/users/:id/impersonate", impersonate...)
 
 	// Admin-only per-user systemd slice status (Step 8 of per-user-slices).
 	g.GET("/admin/users/:id/slice-status", middleware.RequireAdmin(), h.sliceStatus)
@@ -677,102 +668,6 @@ func (h *userHandler) reprovision(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, user)
-}
-
-// impersonate handles POST /admin/users/:id/impersonate — admin-initiated
-// user impersonation. Issues fresh access + refresh tokens for the target user
-// marked with ImpersonatedBy = adminID.
-func (h *userHandler) impersonate(c *gin.Context) {
-	ctx := c.Request.Context()
-	id := c.Param("id")
-
-	claims := ginctx.Claims(c)
-	if claims == nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
-		return
-	}
-
-	// Fetch target user
-	targetUser, err := h.cfg.Repo.FindByID(ctx, id)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-
-	// Validation: cannot impersonate self
-	if id == claims.UserID {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot_impersonate_self"})
-		return
-	}
-
-	// Validation: cannot impersonate an admin
-	if targetUser.IsAdmin {
-		c.JSON(http.StatusForbidden, gin.H{"error": "cannot_impersonate_admin"})
-		return
-	}
-
-	// AuthService must be non-nil and support GenerateImpersonationLoginURL
-	if h.cfg.AuthService == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-
-	// Extract scheme, hostname, and port from request
-	scheme := c.Request.URL.Scheme
-	if scheme == "" {
-		if c.Request.TLS != nil {
-			scheme = "https"
-		} else {
-			scheme = "http"
-		}
-	}
-	// Extract hostname + port from the Host header. c.Request.URL.Port()
-	// is always empty on incoming requests (URL carries only the path);
-	// the port lives in Host. Without this, impersonation URLs default to
-	// :443 but the panel listens on :8443 → 404 from nginx's main vhost.
-	hostAndPort := c.Request.Host
-	hostname := hostAndPort
-	port := ""
-	if idx := strings.LastIndex(hostAndPort, ":"); idx != -1 {
-		hostname = hostAndPort[:idx]
-		port = hostAndPort[idx+1:]
-	}
-	if port == "" {
-		if scheme == "https" {
-			port = "443"
-		} else {
-			port = "80"
-		}
-	}
-
-	// Generate impersonation login URL
-	loginURL, err := h.cfg.AuthService.GenerateImpersonationLoginURL(ctx, targetUser, claims.UserID, scheme, hostname, port)
-	if err != nil {
-		slog.Error("impersonation login URL generation failed",
-			"admin_id", claims.UserID,
-			"target_id", id,
-			"err", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-
-	// Audit log
-	if h.cfg.Log != nil {
-		h.cfg.Log.Info("audit",
-			"event", "impersonation_link_generated",
-			"actor_id", claims.UserID,
-			"target_id", id,
-			"target_email", targetUser.Email)
-	}
-
-	// Response
-	c.JSON(http.StatusOK, gin.H{
-		"login_url": loginURL,
-	})
 }
 
 // ---------- helpers ----------

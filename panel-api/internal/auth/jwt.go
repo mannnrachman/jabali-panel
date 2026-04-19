@@ -26,11 +26,10 @@ type JWTConfig struct {
 // AccessClaims is the application-level view of an access token's payload.
 // It wraps jwt.RegisteredClaims so iss/exp/iat/jti are available too.
 type AccessClaims struct {
-	UserID        string `json:"sub"`
-	Email         string `json:"email"`
-	IsAdmin       bool   `json:"admin"`
-	Purpose       string `json:"purpose,omitempty"` // e.g., "cli_login" for break-glass tokens
-	ImpersonatedBy string `json:"impersonated_by,omitempty"` // set when token was issued via impersonation
+	UserID  string `json:"sub"`
+	Email   string `json:"email"`
+	IsAdmin bool   `json:"admin"`
+	Purpose string `json:"purpose,omitempty"` // e.g., "cli_login" for break-glass tokens (M5b — removed by step 7)
 	jwt.RegisteredClaims
 }
 

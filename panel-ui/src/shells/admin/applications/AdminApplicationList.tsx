@@ -1,6 +1,7 @@
 // Admin-shell cross-user applications list — read-only view of every
 // installed application (WordPress today, more as M19 lands them).
-// Admins act via impersonation if they need to modify any install.
+// Admins modify installs by opening the relevant user's panel directly
+// in their own browser tab — no in-panel impersonation after M20.
 //
 // Status badge styling is inlined from UserApplicationList to keep
 // coupling low and avoid tight dependency on that component.

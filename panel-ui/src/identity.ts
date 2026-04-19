@@ -4,16 +4,13 @@
 //
 // M20: identity comes from Kratos's /sessions/whoami (via /.ory/). The
 // is_admin trait is authoritative; a missing trait defaults to false so
-// compromising a user token can't accidentally elevate. impersonatedBy
-// is always null post-M20 (M5a impersonation was dropped by step 6), but
-// the field stays on the shape for one cycle so callers don't break.
+// a compromised identity can't accidentally elevate.
 import { whoami } from "./kratos";
 
 export type Identity = {
   id: string;
   email: string;
   isAdmin: boolean;
-  impersonatedBy: string | null;
 };
 
 let cached: Identity | null = null;
@@ -42,7 +39,6 @@ export async function getIdentity(): Promise<Identity | null> {
         id: session.identity.id,
         email: traits.email ?? "",
         isAdmin: traits.is_admin === true,
-        impersonatedBy: null,
       };
       return cached;
     } catch {

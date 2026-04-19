@@ -199,7 +199,6 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				StrictRateLimit: rl.Strict(),
 				Domains:         deps.Domains,
 				Reconciler:      deps.Reconciler,
-				AuthService:     deps.Auth,
 				AccessTTL:       cfg.Auth.AccessTTL,
 				RefreshTTL:      cfg.Auth.RefreshTTL,
 				CookieName:      api.DefaultRefreshCookieName,

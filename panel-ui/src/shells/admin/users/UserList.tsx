@@ -15,7 +15,6 @@ import { TeamOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
 import { SearchableTable } from "../../../components/SearchableTable";
 import { readQValue } from "../../../components/searchableTableUtils";
 import { UserDeleteAction } from "./UserDeleteAction";
-import { UserImpersonateAction } from "./UserImpersonateAction";
 import { UserSliceStatus } from "./UserSliceStatus";
 
 type User = {
@@ -33,7 +32,7 @@ const renderName = (_: unknown, r: User) =>
 const renderCreated = (ts: string) => new Date(ts).toLocaleString();
 
 // UsersTable — non-admins only. Keeps the Slice column (only meaningful
-// for users with a Linux account) and the Impersonate action.
+// for users with a Linux account).
 const UsersTable = () => {
   const { tableProps, setFilters, filters } = useTable<User>({
     syncWithLocation: true,
@@ -68,11 +67,6 @@ const UsersTable = () => {
         dataIndex="actions"
         render={(_: unknown, r: User) => (
           <Space>
-            <UserImpersonateAction
-              recordItemId={r.id}
-              userEmail={r.email}
-              isAdmin={r.is_admin}
-            />
             <EditButton hideText size="small" type="text" recordItemId={r.id} />
             <UserDeleteAction recordItemId={r.id} userEmail={r.email} />
           </Space>
@@ -83,8 +77,7 @@ const UsersTable = () => {
 };
 
 // AdministratorsTable — admins only. No Slice column (admins don't get
-// a Linux account / per-user FPM slice) and no Impersonate action
-// (ADR-0015 — admins cannot be impersonated).
+// a Linux account / per-user FPM slice).
 const AdministratorsTable = () => {
   const { tableProps, setFilters, filters } = useTable<User>({
     syncWithLocation: true,

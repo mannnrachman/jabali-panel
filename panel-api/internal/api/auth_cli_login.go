@@ -32,8 +32,10 @@ func (h *authHandler) cliLogin(c *gin.Context) {
 		return
 	}
 
-	// Only set refresh cookie if RawRefresh is not empty (non-impersonation sessions).
-	// Impersonation tokens return empty RawRefresh to signal a one-shot tab.
+	// M5a impersonation emitted empty RawRefresh as a one-shot marker —
+	// impersonation is gone (M20 step 6), so RedeemCLIToken always returns
+	// a refresh token for the break-glass admin-login path. The empty guard
+	// stays as belt-and-braces in case any future token type is added.
 	if out.RawRefresh != "" {
 		h.setRefreshCookie(c, out.RawRefresh)
 	}

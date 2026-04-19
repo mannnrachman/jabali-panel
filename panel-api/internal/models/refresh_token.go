@@ -30,11 +30,16 @@ type RefreshToken struct {
 	// fast and concurrent-rotation races are resolved by the DB.
 	TokenHash string `gorm:"type:char(64);uniqueIndex:ux_refresh_tokens_hash;not null" json:"-"`
 
-	ExpiresAt      time.Time  `gorm:"type:datetime(6);not null;index:ix_refresh_tokens_expires" json:"expires_at"`
-	RevokedAt      *time.Time `gorm:"type:datetime(6)"                                          json:"revoked_at,omitempty"`
-	LastUsedAt     *time.Time `gorm:"type:datetime(6)"                                          json:"last_used_at,omitempty"`
-	ImpersonatedBy *string    `gorm:"type:char(26)"                                             json:"impersonated_by,omitempty"`
-	CreatedAt      time.Time  `gorm:"type:datetime(6);not null"                                 json:"created_at"`
+	ExpiresAt  time.Time  `gorm:"type:datetime(6);not null;index:ix_refresh_tokens_expires" json:"expires_at"`
+	RevokedAt  *time.Time `gorm:"type:datetime(6)"                                          json:"revoked_at,omitempty"`
+	LastUsedAt *time.Time `gorm:"type:datetime(6)"                                          json:"last_used_at,omitempty"`
+	CreatedAt  time.Time  `gorm:"type:datetime(6);not null"                                 json:"created_at"`
+
+	// Note: the historical `impersonated_by` column (migration 000016) is
+	// still present in the DB for audit history but is never read or written
+	// after M20 step 6 removed M5a. The entire refresh_tokens table is
+	// scheduled for removal once cutover (step 9) ages out — until then
+	// new rows simply leave the column NULL.
 }
 
 // TableName keeps the explicit snake_case plural, matching golang-migrate.

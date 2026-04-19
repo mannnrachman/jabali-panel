@@ -64,7 +64,7 @@ func runUserLogin(ctx context.Context, cfg *config.Config, db *gorm.DB, log *slo
 		return fmt.Errorf("user %q is an admin; use 'jabali-panel admin login' instead", identifier)
 	}
 
-	// Issue JWT with purpose="cli_login", impersonated_by="cli", and 60-second TTL
+	// Issue JWT with purpose="cli_login" and 60-second TTL
 	issuer, err := auth.NewJWTIssuer(auth.JWTConfig{
 		Secret:    []byte(cfg.Auth.JWTSecret),
 		Issuer:    "jabali-panel",
@@ -76,11 +76,10 @@ func runUserLogin(ctx context.Context, cfg *config.Config, db *gorm.DB, log *slo
 	}
 
 	token, err := issuer.IssueAccessWithTTL(auth.AccessClaims{
-		UserID:         targetUser.ID,
-		Email:          targetUser.Email,
-		IsAdmin:        targetUser.IsAdmin,
-		ImpersonatedBy: "cli",
-		Purpose:        "cli_login",
+		UserID:  targetUser.ID,
+		Email:   targetUser.Email,
+		IsAdmin: targetUser.IsAdmin,
+		Purpose: "cli_login",
 	}, 5*time.Minute)
 	if err != nil {
 		return fmt.Errorf("issue token: %w", err)

@@ -9,7 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 )
 
 // AuthService is the subset of auth.Service that the HTTP layer needs. An
@@ -20,7 +19,6 @@ type AuthService interface {
 	Refresh(ctx context.Context, in auth.RefreshInput) (*auth.LoginOutput, error)
 	Logout(ctx context.Context, raw string) error
 	RedeemCLIToken(ctx context.Context, cliToken string, deviceID string) (*auth.LoginOutput, error)
-	GenerateImpersonationLoginURL(ctx context.Context, targetUser *models.User, adminID string, scheme string, hostname string, port string) (string, error)
 	ChallengeTOTP(ctx context.Context, in auth.ChallengeTOTPInput) (*auth.LoginOutput, error)
 }
 

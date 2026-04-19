@@ -24,13 +24,9 @@ func meHandler(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
 	}
-	resp := gin.H{
+	c.JSON(http.StatusOK, gin.H{
 		"id":       claims.UserID,
 		"email":    claims.Email,
 		"is_admin": claims.IsAdmin,
-	}
-	if claims.ImpersonatedBy != "" {
-		resp["impersonated_by"] = claims.ImpersonatedBy
-	}
-	c.JSON(http.StatusOK, resp)
+	})
 }

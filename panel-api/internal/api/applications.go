@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -231,14 +232,13 @@ func (h *applicationsHandler) create(c *gin.Context) {
 		return
 	}
 
-	// Step 3 only ships the WordPress descriptor in the registry, so
-	// the install kicker is the existing wordpress.install path. Step 4
-	// generalises this into an app.install dispatcher that branches on
-	// descriptor.AgentInstallCmd — until then, non-WP apps would land
-	// here with no installer, which is why nothing but WordPress is
-	// registered yet.
-	if descriptor.Name == "wordpress" {
-		siteURL := buildSiteURL(domain.Name, req.UseWWW, req.Subdirectory)
+	// Per-app install kicker. The agent dispatcher (step 4) routes
+	// app.install by app_type, so the panel just needs to assemble the
+	// per-app param shape and fire the kick. Adding an app means adding
+	// a case here + the descriptor + the agent installer.
+	siteURL := buildSiteURL(domain.Name, req.UseWWW, req.Subdirectory)
+	switch descriptor.Name {
+	case "wordpress":
 		go createInstallAndKickAgent(ctx, installKickArgs{
 			InstallID:     installID,
 			OSUser:        osUser,
@@ -254,6 +254,33 @@ func (h *applicationsHandler) create(c *gin.Context) {
 			Locale:        install.Locale,
 			Subdirectory:  install.Subdirectory,
 			UseWWW:        install.UseWWW,
+		}, h.cfg)
+	case "dokuwiki":
+		// adminPassword is empty here when the descriptor's
+		// admin_password param is optional and the user left it blank;
+		// the kicker generates one and surfaces it via the install row's
+		// reveal-once panel like WordPress does.
+		dokuPass := paramOr(req.Params, "admin_password", "")
+		if dokuPass == "" {
+			dokuPass = ids.NewULID()
+		}
+		// Echo the chosen password back through the response so the
+		// caller's reveal-once panel shows it; the upper-level
+		// adminPassword variable is empty for RequiresDB=false apps
+		// because we never went through provisionDBChain.
+		adminPassword = dokuPass
+		go createDokuWikiInstallAndKickAgent(ctx, dokuWikiKickArgs{
+			InstallID:    installID,
+			OSUser:       osUser,
+			DocRoot:      domain.DocRoot,
+			Subdirectory: install.Subdirectory,
+			SiteURL:      siteURL,
+			SiteTitle:    paramOr(req.Params, "site_title", "My DokuWiki"),
+			AdminUser:    install.AdminUsername,
+			AdminPass:    dokuPass,
+			AdminEmail:   install.AdminEmail,
+			License:      paramOr(req.Params, "license", "cc-by-sa"),
+			UseWWW:       install.UseWWW,
 		}, h.cfg)
 	}
 
@@ -515,4 +542,72 @@ func rollbackDBChain(ctx context.Context, cfg ApplicationHandlerConfig, chain pr
 	cfg.DatabaseGrants.Delete(ctx, chain.GrantID)
 	cfg.DatabaseUsers.Delete(ctx, chain.DBUserID)
 	cfg.Databases.Delete(ctx, chain.DBID)
+}
+
+// dokuWikiKickArgs is what the install-row kicker passes through to
+// the agent's dokuwiki installer (via the app.install dispatcher).
+// Mirrors installKickArgs except for DB fields, which DokuWiki doesn't
+// use, and adds License.
+type dokuWikiKickArgs struct {
+	InstallID    string
+	OSUser       string
+	DocRoot      string
+	Subdirectory string
+	SiteURL      string
+	SiteTitle    string
+	AdminUser    string
+	AdminPass    string
+	AdminEmail   string
+	License      string
+	UseWWW       bool
+}
+
+// createDokuWikiInstallAndKickAgent flips the install row to
+// "installing", dispatches app.install with app_type="dokuwiki" via
+// the agent dispatcher (step 4), and updates the row to "ready" or
+// "failed" based on the result. Mirrors createInstallAndKickAgent but
+// for the flat-file DokuWiki shape.
+func createDokuWikiInstallAndKickAgent(parentCtx context.Context, args dokuWikiKickArgs, cfg ApplicationHandlerConfig) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	if err := cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "installing", nil, nil); err != nil {
+		return
+	}
+	if cfg.Agent == nil {
+		errMsg := "agent not configured"
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	agentResp, err := cfg.Agent.Call(ctx, "app.install", map[string]any{
+		"app_type":     "dokuwiki",
+		"os_user":      args.OSUser,
+		"docroot":      args.DocRoot,
+		"subdirectory": args.Subdirectory,
+		"site_url":     args.SiteURL,
+		"site_title":   args.SiteTitle,
+		"admin_user":   args.AdminUser,
+		"admin_pass":   args.AdminPass,
+		"admin_email":  args.AdminEmail,
+		"license":      args.License,
+		"use_www":      args.UseWWW,
+	})
+	if err != nil {
+		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	var respMap map[string]any
+	if err := json.Unmarshal(agentResp, &respMap); err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to parse agent response: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+	version := ""
+	if v, ok := respMap["version"].(string); ok {
+		version = v
+	}
+	cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
 }

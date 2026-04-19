@@ -4,4 +4,5 @@
 // readable instead of blank.
 export const APP_TYPE_LABELS: Record<string, string> = {
   wordpress: "WordPress",
+  dokuwiki: "DokuWiki",
 };

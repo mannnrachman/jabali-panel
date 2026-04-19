@@ -157,6 +157,36 @@ func TestRegisterDefaults_RegistersWordPress(t *testing.T) {
 	}
 }
 
+func TestRegisterDefaults_RegistersDokuWiki(t *testing.T) {
+	r := New()
+	if err := RegisterDefaults(r); err != nil {
+		t.Fatalf("RegisterDefaults: %v", err)
+	}
+	dw, ok := r.Get("dokuwiki")
+	if !ok {
+		t.Fatal("dokuwiki not registered after RegisterDefaults")
+	}
+	if dw.RequiresDB {
+		t.Error("dokuwiki should declare RequiresDB=false (validates the M19 short-circuit)")
+	}
+	if dw.AgentCloneCmd != "" {
+		t.Errorf("dokuwiki should NOT declare a clone command; got %q", dw.AgentCloneCmd)
+	}
+	if dw.AgentInstallCmd != "app.install" || dw.AgentDeleteCmd != "app.delete" {
+		t.Errorf("dokuwiki dispatcher commands = (%q, %q)", dw.AgentInstallCmd, dw.AgentDeleteCmd)
+	}
+	licenseSpec, ok := dw.InstallParamSchema["license"]
+	if !ok {
+		t.Fatal("dokuwiki install schema missing license")
+	}
+	if licenseSpec.Type != "enum" {
+		t.Errorf("license should be enum, got %q", licenseSpec.Type)
+	}
+	if len(licenseSpec.Values) == 0 {
+		t.Error("license enum should have values")
+	}
+}
+
 func TestRegister_ConcurrentSafe(t *testing.T) {
 	// Race detector trips here if Register's mutex disappears.
 	r := New()

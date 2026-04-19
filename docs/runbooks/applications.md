@@ -126,6 +126,30 @@ agent installer or wait for the dynamic renderer.
 
 ---
 
+## DokuWiki: capturing the tarball SHA-256
+
+The DokuWiki installer at
+`panel-agent/internal/commands/dokuwiki_install.go` ships with an
+empty `dokuwikiTarballSHA256` constant — empty means "skip the
+integrity check", which is fine for a dev box but unacceptable for
+production. Capture the pin on first deploy (or whenever bumping to
+a new upstream stable):
+
+```bash
+curl -sSL https://download.dokuwiki.org/src/dokuwiki/dokuwiki-stable.tgz | sha256sum
+```
+
+Edit `dokuwikiTarballSHA256` in the file above to the captured hash,
+rebuild the agent, redeploy. The installer will refuse to extract a
+tarball whose checksum doesn't match the pin — a tampered or
+truncated download will surface as `dokuwiki tarball sha256
+mismatch: got X want Y` in the install row's `last_error`.
+
+DokuWiki publishes "stable" as a moving target, so the pin needs
+bumping per upstream release. There is no automated reminder; bump
+when an operator notices the install fails with a new SHA on a
+fresh server, or proactively check the DokuWiki release page.
+
 ## Common failure modes
 
 ### `400 invalid_app_type`

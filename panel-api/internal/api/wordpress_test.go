@@ -454,18 +454,15 @@ func TestWordPressDeleteSuccess(t *testing.T) {
 		t.Fatalf("expected %d, got %d", http.StatusAccepted, w.Code)
 	}
 
-	// Check status was updated to 'deleting'
-	// Note: we read immediately after the handler returns, before async goroutine completes
-	wpRepo.mu.RLock()
-	inst := wpRepo.installs["inst1"]
-	wpRepo.mu.RUnlock()
-	
-	if inst == nil {
-		t.Fatal("install was deleted before test could verify status")
-	}
-	if inst.Status != "deleting" {
-		t.Fatalf("expected status=deleting, got %s", inst.Status)
-	}
+	// Pre-M19 this test asserted `inst.Status == "deleting"` immediately
+	// after the handler returned — racy by design, since the async kicker
+	// can flip the row past "deleting" → "ready"/missing before the test
+	// reads. With the M19 dispatcher rewire making the agent call slightly
+	// faster the race tipped over and the assertion started failing under
+	// -race. The 202 above already proves the handler accepted the
+	// delete; the status flip is exercised by the dispatcher tests in
+	// app_dispatch_test.go without the timing dependency.
+	_ = wpRepo
 }
 
 func TestWordPressCloneCrossDomainOwnershipCheck(t *testing.T) {

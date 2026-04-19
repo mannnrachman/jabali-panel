@@ -881,11 +881,14 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 - UI rename: `panel-ui/src/shells/{user,admin}/wordpress/` → `applications/`, Refine resource `wordpress-installs` → `applications`, sidebar label "WordPress" → "Applications" (`AppstoreAddOutlined`), routes `/jabali-panel/wordpress` → `/jabali-panel/applications` (and same for `/jabali-admin`). Install modal pulls `GET /applications/registry` and renders an "App" Select defaulted to WordPress; lists add an "App" column at column 1.
 - ADR-0033 + runbook at `docs/runbooks/applications.md` documenting the registry pattern, common failure modes, and "how to add a new app" walkthrough.
 
-**Deferred (steps 6 + 7 — gated on Step 5 deploy + a UI follow-up that renders form fields from the descriptor's `InstallParamSchema`):**
-- Step 6 — DokuWiki descriptor + agent installer (validates `RequiresDB=false` end-to-end; exercises the `enum` `ParamSpec` for the license dropdown).
+**Step 5a (UI dynamic field renderer, shipped 2026-04-19):** The install modal now switches its per-app field block based on the picked descriptor's `InstallParamSchema` — `string`/`email`/`password`/`enum`/`bool` types render as the matching AntD control, with `locale`/`language` getting the curated dropdown. Adding an app type with new params (e.g. DokuWiki's `license` enum) requires zero UI code.
+
+**Step 6 (DokuWiki, shipped 2026-04-19):** Second app in the catalog — flat-file PHP wiki, no database. Validates the framework's `RequiresDB=false` short-circuit end-to-end + the `enum` `ParamSpec` (license dropdown). Descriptor at `panel-api/internal/apps/dokuwiki.go`; agent installer + deleter at `panel-agent/internal/commands/dokuwiki_{install,delete}.go`. The installer downloads the upstream stable tarball, verifies SHA-256 against a hard-coded pin (currently empty pending first-deploy capture), extracts under `systemd-run --uid=<user>`, writes `conf/local.php` + `conf/users.auth.php` (bcrypt admin via `php password_hash`) + `conf/acl.auth.php`, drops `install.lock`, and normalises perms. The `m19/06-app-dokuwiki` branch ships the panel + agent code; **the SHA-256 pin must be captured on first deploy** (`curl -sSL https://download.dokuwiki.org/src/dokuwiki/dokuwiki-stable.tgz | sha256sum`) and bumped in `dokuwikiTarballSHA256` for production builds.
+
+**Deferred (step 7 — gated on DokuWiki host validation):**
 - Step 7 — MediaWiki descriptor + agent installer (validates the per-app CLI installer pattern via `php maintenance/install.php`; exercises a heavier agent flow than WordPress's wp-cli).
 
-**Status:** API, agent, panel and UI shipped end-to-end for the only registered app (WordPress); the generic surface now carries every WordPress install on the `m19/*` branch stack. The catalog grows to DokuWiki + MediaWiki once the stack lands on `main` and the install modal's per-app field renderer ships.
+**Status:** API, agent, panel, UI, and a second app (DokuWiki) shipped end-to-end on the `m19/*` branch stack. The catalog grows to MediaWiki once the DokuWiki install is host-validated and any framework gaps surfaced are folded back.
 
 **Depends on:** M10 (WordPress install plumbing — generalised here), M9 (PHP-FPM pools — required so non-WordPress PHP apps land on the right pool), M7 (databases — required for `RequiresDB=true` apps).
 
@@ -1026,7 +1029,7 @@ Use this table to navigate the codebase when adding a new capability:
 | M16: Automation API | Planned | — |
 | M17: Diagnostic reports | Planned | — |
 | M18: Per-user resource limits | 2026-04-19 | Waves A-G on `main` (`caebe7b` → `aaa6bd0`); ADR-0032; runbook at `plans/m18-resource-limits-runbook.md`; host-level validation pending on test VM |
-| M19: Applications Framework (steps 1–5 + 8) | 2026-04-19 | `m19/*` branch stack `733d6b8` → docs commit; ADR-0033; runbook at `docs/runbooks/applications.md`; steps 6 (DokuWiki) + 7 (MediaWiki) deferred behind UI dynamic-field-renderer + deploy gate |
+| M19: Applications Framework (steps 1–6 + 8) | 2026-04-19 | `m19/*` branch stack `733d6b8` → DokuWiki commit; ADR-0033; runbook at `docs/runbooks/applications.md`; SHA-256 tarball pin pending first-deploy capture; step 7 (MediaWiki) deferred behind DokuWiki host validation |
 
 ---
 

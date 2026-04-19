@@ -59,6 +59,8 @@ func translateAgentError(err error) (int, gin.H) {
 			status = http.StatusNotFound
 		case agent.CodeInvalidArgument, agent.CodeMalformedEnvelope:
 			status = http.StatusBadRequest
+		case agent.CodeFailedPrecondition:
+			status = http.StatusConflict
 		}
 		return status, gin.H{
 			"status": "error",

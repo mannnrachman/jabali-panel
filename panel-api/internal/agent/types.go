@@ -21,15 +21,16 @@ type (
 
 // Error codes re-exported from agentwire for convenience.
 const (
-	CodeInvalidArgument   = agentwire.CodeInvalidArgument
-	CodeNotFound          = agentwire.CodeNotFound
-	CodeAlreadyExists     = agentwire.CodeAlreadyExists
-	CodePermissionDenied  = agentwire.CodePermissionDenied
-	CodeUnavailable       = agentwire.CodeUnavailable
-	CodeDeadlineExceeded  = agentwire.CodeDeadlineExceeded
-	CodeInternal          = agentwire.CodeInternal
-	CodeUnknownCommand    = agentwire.CodeUnknownCommand
-	CodeMalformedEnvelope = agentwire.CodeMalformedEnvelope
+	CodeInvalidArgument    = agentwire.CodeInvalidArgument
+	CodeNotFound           = agentwire.CodeNotFound
+	CodeAlreadyExists      = agentwire.CodeAlreadyExists
+	CodePermissionDenied   = agentwire.CodePermissionDenied
+	CodeUnavailable        = agentwire.CodeUnavailable
+	CodeDeadlineExceeded   = agentwire.CodeDeadlineExceeded
+	CodeInternal           = agentwire.CodeInternal
+	CodeUnknownCommand     = agentwire.CodeUnknownCommand
+	CodeMalformedEnvelope  = agentwire.CodeMalformedEnvelope
+	CodeFailedPrecondition = agentwire.CodeFailedPrecondition
 )
 
 // ErrMalformedResponse, ErrResponseIDMismatch also re-exported.

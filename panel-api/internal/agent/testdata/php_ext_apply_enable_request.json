@@ -1,0 +1,5 @@
+{
+  "version": "8.5",
+  "ext": "opcache",
+  "action": "enable"
+}

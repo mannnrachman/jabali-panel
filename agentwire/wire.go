@@ -60,15 +60,16 @@ func (e *AgentError) Error() string {
 
 // Well-known error codes. Additive growth is OK; renames are not.
 const (
-	CodeInvalidArgument   = "invalid_argument"
-	CodeNotFound          = "not_found"
-	CodeAlreadyExists     = "already_exists"
-	CodePermissionDenied  = "permission_denied"
-	CodeUnavailable       = "unavailable"
-	CodeDeadlineExceeded  = "deadline_exceeded"
-	CodeInternal          = "internal"
-	CodeUnknownCommand    = "unknown_command"
-	CodeMalformedEnvelope = "malformed_envelope"
+	CodeInvalidArgument    = "invalid_argument"
+	CodeNotFound           = "not_found"
+	CodeAlreadyExists      = "already_exists"
+	CodePermissionDenied   = "permission_denied"
+	CodeUnavailable        = "unavailable"
+	CodeDeadlineExceeded   = "deadline_exceeded"
+	CodeInternal           = "internal"
+	CodeUnknownCommand     = "unknown_command"
+	CodeMalformedEnvelope  = "malformed_envelope"
+	CodeFailedPrecondition = "failed_precondition"
 )
 
 // ErrMalformedResponse is raised by the client when response bytes don't

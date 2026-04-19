@@ -31,6 +31,19 @@ import { apiClient } from "../../apiClient";
 // Type definitions
 type DNSRecordType = "A" | "AAAA" | "CNAME" | "MX" | "TXT" | "NS";
 
+// recordTypeColor maps each DNS record type to an AntD Tag colour so
+// the table scans visually — A/AAAA share the blue family (IPv4/IPv6
+// address records), MX is orange (mail), TXT is green (metadata/SPF/
+// DMARC), CNAME is purple (aliases), NS is magenta (delegation).
+const recordTypeColor: Record<DNSRecordType, string> = {
+  A: "blue",
+  AAAA: "geekblue",
+  CNAME: "purple",
+  MX: "orange",
+  TXT: "green",
+  NS: "magenta",
+};
+
 interface DNSZone {
   id: string;
   domain_id: string;
@@ -687,7 +700,9 @@ export const DNSRecordsPage = () => {
                   key: "type",
                   width: "10%",
                   render: (_: unknown, record: DNSRecord) => (
-                    <Tag color="blue">{record.type}</Tag>
+                    <Tag color={recordTypeColor[record.type] ?? "default"}>
+                      {record.type}
+                    </Tag>
                   ),
                 },
                 {

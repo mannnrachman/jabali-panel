@@ -429,6 +429,49 @@ func (h *applicationsHandler) create(c *gin.Context) {
 			AdminFullName: paramOr(req.Params, "admin_full_name", "Site Administrator"),
 			UseWWW:        install.UseWWW,
 		}, h.cfg)
+	case "matomo":
+		matomoPass := paramOr(req.Params, "admin_password", "")
+		if matomoPass == "" {
+			matomoPass = ids.NewULID()
+		}
+		go createMatomoInstallAndKickAgent(ctx, matomoKickArgs{
+			InstallID:    installID,
+			OSUser:       osUser,
+			DocRoot:      domain.DocRoot,
+			Subdirectory: install.Subdirectory,
+			SiteURL:      siteURL,
+			DBName:       chain.DBName,
+			DBUser:       chain.DBUsername,
+			DBPassword:   adminPassword,
+			AdminUser:    install.AdminUsername,
+			AdminPass:    matomoPass,
+			AdminEmail:   install.AdminEmail,
+			UseWWW:       install.UseWWW,
+		}, h.cfg)
+		adminPassword = matomoPass
+	case "concrete":
+		concretePass := paramOr(req.Params, "admin_password", "")
+		if concretePass == "" {
+			concretePass = ids.NewULID()
+		}
+		go createConcreteInstallAndKickAgent(ctx, concreteKickArgs{
+			InstallID:     installID,
+			OSUser:        osUser,
+			DocRoot:       domain.DocRoot,
+			Subdirectory:  install.Subdirectory,
+			SiteURL:       siteURL,
+			DBName:        chain.DBName,
+			DBUser:        chain.DBUsername,
+			DBPassword:    adminPassword,
+			SiteTitle:     paramOr(req.Params, "site_title", "My Concrete Site"),
+			AdminUser:     install.AdminUsername,
+			AdminPass:     concretePass,
+			AdminEmail:    install.AdminEmail,
+			StartingPoint: paramOr(req.Params, "starting_point", "elemental_full"),
+			Locale:        paramOr(req.Params, "locale", "en_US"),
+			UseWWW:        install.UseWWW,
+		}, h.cfg)
+		adminPassword = concretePass
 	case "freshrss":
 		// FreshRSS mirrors the generic RequiresDB=true shape; password
 		// from params or generated, separate from the DB password.
@@ -1238,6 +1281,139 @@ func createFreshRSSInstallAndKickAgent(parentCtx context.Context, args freshrssK
 		return
 	}
 
+	var respMap map[string]any
+	if err := json.Unmarshal(agentResp, &respMap); err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to parse agent response: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+	version := ""
+	if v, ok := respMap["version"].(string); ok {
+		version = v
+	}
+	cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
+}
+
+// matomoKickArgs and createMatomoInstallAndKickAgent — analytics tool.
+type matomoKickArgs struct {
+	InstallID    string
+	OSUser       string
+	DocRoot      string
+	Subdirectory string
+	SiteURL      string
+	DBName       string
+	DBUser       string
+	DBPassword   string
+	AdminUser    string
+	AdminPass    string
+	AdminEmail   string
+	UseWWW       bool
+}
+
+func createMatomoInstallAndKickAgent(parentCtx context.Context, args matomoKickArgs, cfg ApplicationHandlerConfig) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	if err := cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "installing", nil, nil); err != nil {
+		return
+	}
+	if cfg.Agent == nil {
+		errMsg := "agent not configured"
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	agentResp, err := cfg.Agent.Call(ctx, "app.install", map[string]any{
+		"app_type":     "matomo",
+		"os_user":      args.OSUser,
+		"docroot":      args.DocRoot,
+		"subdirectory": args.Subdirectory,
+		"site_url":     args.SiteURL,
+		"db_name":      args.DBName,
+		"db_user":      args.DBUser,
+		"db_password":  args.DBPassword,
+		"db_host":      "localhost",
+		"admin_user":   args.AdminUser,
+		"admin_pass":   args.AdminPass,
+		"admin_email":  args.AdminEmail,
+		"use_www":      args.UseWWW,
+	})
+	if err != nil {
+		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+	var respMap map[string]any
+	if err := json.Unmarshal(agentResp, &respMap); err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to parse agent response: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+	version := ""
+	if v, ok := respMap["version"].(string); ok {
+		version = v
+	}
+	cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
+}
+
+// concreteKickArgs and createConcreteInstallAndKickAgent — Concrete CMS.
+type concreteKickArgs struct {
+	InstallID     string
+	OSUser        string
+	DocRoot       string
+	Subdirectory  string
+	SiteURL       string
+	DBName        string
+	DBUser        string
+	DBPassword    string
+	SiteTitle     string
+	AdminUser     string
+	AdminPass     string
+	AdminEmail    string
+	StartingPoint string
+	Locale        string
+	UseWWW        bool
+}
+
+func createConcreteInstallAndKickAgent(parentCtx context.Context, args concreteKickArgs, cfg ApplicationHandlerConfig) {
+	// Concrete's c5:install pulls in starting-point content (sample
+	// pages, blocks, themes) which can take 2-3 minutes on slower hosts.
+	// 15-min budget keeps headroom.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
+	if err := cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "installing", nil, nil); err != nil {
+		return
+	}
+	if cfg.Agent == nil {
+		errMsg := "agent not configured"
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	agentResp, err := cfg.Agent.Call(ctx, "app.install", map[string]any{
+		"app_type":       "concrete",
+		"os_user":        args.OSUser,
+		"docroot":        args.DocRoot,
+		"subdirectory":   args.Subdirectory,
+		"site_url":       args.SiteURL,
+		"db_name":        args.DBName,
+		"db_user":        args.DBUser,
+		"db_password":    args.DBPassword,
+		"db_host":        "localhost",
+		"site_title":     args.SiteTitle,
+		"admin_user":     args.AdminUser,
+		"admin_pass":     args.AdminPass,
+		"admin_email":    args.AdminEmail,
+		"starting_point": args.StartingPoint,
+		"locale":         args.Locale,
+		"use_www":        args.UseWWW,
+	})
+	if err != nil {
+		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
 	var respMap map[string]any
 	if err := json.Unmarshal(agentResp, &respMap); err != nil {
 		errMsg := truncateError(fmt.Sprintf("failed to parse agent response: %v", err), 1024)

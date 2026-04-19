@@ -352,6 +352,51 @@ func TestRegisterDefaults_RegistersFreshRSS(t *testing.T) {
 	}
 }
 
+func TestRegisterDefaults_RegistersMatomo(t *testing.T) {
+	r := New()
+	if err := RegisterDefaults(r); err != nil {
+		t.Fatalf("RegisterDefaults: %v", err)
+	}
+	m, ok := r.Get("matomo")
+	if !ok {
+		t.Fatal("matomo not registered after RegisterDefaults")
+	}
+	if !m.RequiresDB {
+		t.Error("matomo should declare RequiresDB=true")
+	}
+	for _, want := range []string{"admin_email", "admin_password"} {
+		if _, ok := m.InstallParamSchema[want]; !ok {
+			t.Errorf("matomo schema missing %q", want)
+		}
+	}
+}
+
+func TestRegisterDefaults_RegistersConcrete(t *testing.T) {
+	r := New()
+	if err := RegisterDefaults(r); err != nil {
+		t.Fatalf("RegisterDefaults: %v", err)
+	}
+	c, ok := r.Get("concrete")
+	if !ok {
+		t.Fatal("concrete not registered after RegisterDefaults")
+	}
+	if !c.RequiresDB {
+		t.Error("concrete should declare RequiresDB=true")
+	}
+	for _, want := range []string{"site_title", "admin_email", "admin_password", "starting_point", "locale"} {
+		if _, ok := c.InstallParamSchema[want]; !ok {
+			t.Errorf("concrete schema missing %q", want)
+		}
+	}
+	sp, ok := c.InstallParamSchema["starting_point"]
+	if !ok {
+		t.Fatal("starting_point missing")
+	}
+	if sp.Type != "enum" || len(sp.Values) == 0 {
+		t.Errorf("concrete starting_point should be enum with values")
+	}
+}
+
 func TestRegister_ConcurrentSafe(t *testing.T) {
 	// Race detector trips here if Register's mutex disappears.
 	r := New()

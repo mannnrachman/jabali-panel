@@ -65,7 +65,8 @@ Exit code:
 | `--dry-run` | off | Plan only. Canary still runs. |
 | `--batch-size` | 50 | Rows per logged-progress tick. |
 | `--skip-canary` | off | Dangerous — skip bcrypt-passthrough verification. Only use when the canary has already been manually reproduced against the target Kratos. |
-| `--totp-only` | off | Reserved for M20 step 8. Currently errors out so password-only runs don't silently skip TOTP. |
+| `--totp-only` | off | Emit a CSV report of TOTP-enabled users for pre-cutover notification. Read-only. See "TOTP re-enrollment" below. |
+| `--totp-output` | `""` | Path to write the `--totp-only` CSV. Empty or `-` writes to stdout. |
 
 ### Common failures
 
@@ -79,10 +80,84 @@ Exit code:
 - **Never overwrites a non-NULL `kratos_identity_id`** — the `UPDATE … WHERE kratos_identity_id IS NULL` guard is by design. If you need to re-link a user to a different identity, do it manually via `kratos identities delete <id>` + column `UPDATE users SET kratos_identity_id = NULL`.
 - **Never deletes a Kratos identity that wasn't just-created by this run** — cleanup paths only call `DeleteIdentity` on IDs the tool itself minted seconds earlier.
 
-## Day-2 operations (stub — filled in by M20 Wave D/E)
+## TOTP re-enrollment (Wave D, Step 8)
+
+**Plan deviation — Kratos cannot import TOTP credentials.**
+
+The original blueprint §1 step 8 assumed we could `PATCH
+/admin/identities/{id}/credentials` with our TOTP secrets and backup codes.
+That premise is broken on Kratos 1.3.1:
+
+1. The Kratos CLI explicitly documents that "credential import is not yet
+   supported" for anything beyond `password` and `oidc`
+   (kratos-identities-import docs). TOTP and `lookup_secret` have no import
+   path in the admin API.
+2. Kratos's `lookup_secret` credential stores `recovery_codes[].code` in
+   plaintext. Our `totp_backup_codes.code_hash` is bcrypt — one-way, no way
+   to recover the plaintext that Kratos needs.
+
+So at cutover, every 2FA user must re-enroll via Kratos's self-service
+Security → Authenticator flow. The new `jabali kratos-migrate --totp-only`
+produces an operator notification list instead of touching Kratos.
+
+### Generate the notification list (run this pre-cutover)
+
+```sh
+sudo -u jabali /opt/jabali-panel/jabali kratos-migrate \
+    --totp-only --totp-output /tmp/totp-reenroll.csv
+```
+
+The CSV columns:
+
+| Column | Meaning |
+|---|---|
+| `email` | Affected user's login email |
+| `username` | Panel username (may be empty for old accounts) |
+| `panel_user_id` | ULID of the row in the panel `users` table |
+| `kratos_identity_id` | UUID of the matching Kratos identity — empty if password-migration hasn't run yet |
+| `totp_enabled_at` | RFC3339 timestamp of original 2FA enrollment |
+| `unused_backup_codes` | Count of unredeemed backup codes at report time |
+| `needs_reenrollment` | Always `yes` — this column exists so the CSV is grep-ready for future variations |
+
+If `kratos_identity_id` is empty for any row, run the password migration
+first (`jabali kratos-migrate` without `--totp-only`). The report still
+works in isolation — the unlinked rows will fall under the warn-level log
+line the tool emits.
+
+### What to tell users
+
+Before flipping `auth.provider = "kratos"` (Wave E, Step 9), send every
+user in the CSV a message like:
+
+> After the auth upgrade on \<date\>, your two-factor authentication will
+> reset. Log in with your existing email + password, then visit
+> **Security → Authenticator** to re-enroll your TOTP app and generate a
+> new set of backup codes. Your existing authenticator app entry and
+> backup codes will no longer work.
+
+Backup codes generated on the new system are stored in Kratos, not in the
+panel's `totp_backup_codes` table — the panel table becomes append-only
+legacy once the feature flag flips.
+
+### Day-of-cutover checks
+
+After step 9 flips the flag:
+
+```sh
+# Which identities have a TOTP credential registered in Kratos?
+kratos identities list --format json \
+  | jq -r '.[] | select(.credentials.totp) | .traits.email'
+```
+
+Compare the output to the `email` column of the CSV; the delta is the
+"hasn't re-enrolled yet" set. Follow up personally or via a second mail.
+
+## Day-2 operations (stub — filled in by M20 Wave E)
 
 - `kratos identities list|get|update|delete`
 - `kratos sessions revoke <id>`
 - `mysqldump jabali_kratos` / restore
-- MFA reset (after Wave D step 8)
-- Recovery-code generation (replaces M5a/M5b)
+- MFA reset — `kratos identities patch <id> --set-totp=null` (operator-driven
+  reset; the user then re-enrolls via Security → Authenticator)
+- Recovery-code generation (replaces M5a/M5b) — see Wave E step 9 runbook
+  section

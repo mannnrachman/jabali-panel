@@ -30,6 +30,8 @@ type WordPressInstall = {
   admin_username: string;
   admin_email: string;
   locale: string;
+  // "" = docroot install, otherwise install lives at /<subdirectory>/.
+  subdirectory: string;
   status:
     | "pending"
     | "installing"
@@ -109,12 +111,13 @@ export const AdminWordPressList = () => {
           render={(domainName: string, record) => {
             const label = domainName || record.domain_id;
             const isLink = record.status === "ready" && !!domainName;
+            const path = record.subdirectory ? `/${record.subdirectory}/` : "/";
             return (
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <GlobalOutlined />
                 {isLink ? (
                   <a
-                    href={`https://${domainName}/`}
+                    href={`https://${domainName}${path}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{ fontWeight: 500 }}
@@ -127,6 +130,17 @@ export const AdminWordPressList = () => {
               </div>
             );
           }}
+        />
+        <Table.Column<WordPressInstall>
+          dataIndex="subdirectory"
+          title="Folder"
+          render={(subdirectory: string) =>
+            subdirectory ? (
+              <Typography.Text code>/{subdirectory}/</Typography.Text>
+            ) : (
+              <Typography.Text type="secondary">/</Typography.Text>
+            )
+          }
         />
         <Table.Column<WordPressInstall>
           dataIndex="admin_email"

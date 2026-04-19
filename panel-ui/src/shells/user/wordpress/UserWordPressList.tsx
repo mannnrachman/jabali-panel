@@ -45,6 +45,9 @@ type WordPressInstall = {
   admin_username: string;
   admin_email: string;
   locale: string;
+  // Empty string = install at docroot. Non-empty = install at
+  // domain.com/<subdirectory>/.
+  subdirectory: string;
   status:
     | "pending"
     | "installing"
@@ -178,12 +181,16 @@ export const UserWordPressList = () => {
           render={(domainName: string, record) => {
             const label = domainName || record.domain_id;
             const isLink = record.status === "ready" && !!domainName;
+            // Subdirectory installs live at /<subdir>/, not /. Without
+            // the trailing slash WP often 301s anyway, but include it
+            // so the open-link goes straight to the install.
+            const path = record.subdirectory ? `/${record.subdirectory}/` : "/";
             return (
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <GlobalOutlined />
                 {isLink ? (
                   <a
-                    href={`https://${domainName}/`}
+                    href={`https://${domainName}${path}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{ fontWeight: 500 }}
@@ -196,6 +203,17 @@ export const UserWordPressList = () => {
               </div>
             );
           }}
+        />
+        <Table.Column<WordPressInstall>
+          dataIndex="subdirectory"
+          title="Folder"
+          render={(subdirectory: string) =>
+            subdirectory ? (
+              <Typography.Text code>/{subdirectory}/</Typography.Text>
+            ) : (
+              <Typography.Text type="secondary">/</Typography.Text>
+            )
+          }
         />
         <Table.Column<WordPressInstall>
           dataIndex="version"

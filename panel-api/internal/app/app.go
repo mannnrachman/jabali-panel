@@ -11,6 +11,7 @@ import (
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/apps"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
@@ -44,6 +45,13 @@ type Deps struct {
 	PHPPools            repository.PHPPoolRepository
 	PHPPoolIniOverrides repository.PHPPoolIniOverrideRepository
 	WordPressInstalls   repository.WordPressInstallRepository
+	// Apps is the M19 application registry — descriptors for every
+	// installable app (WordPress, future DokuWiki, etc.). Step 3 will
+	// hand this to the generic /applications handlers. NewWithDeps
+	// builds a default-populated registry when this is nil so the
+	// existing test wiring (`Deps{}`) keeps working without each
+	// caller knowing about the registry.
+	Apps                *apps.Registry
 	CronJobs            repository.CronJobRepository
 	SSHKeys             repository.SSHKeyRepository
 	LimitOverrides      repository.UserLimitOverrideRepository
@@ -93,6 +101,17 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		gin.SetMode(gin.ReleaseMode)
 	} else {
 		gin.SetMode(gin.DebugMode)
+	}
+
+	// Apps registry. Built once per server. RegisterDefaults panics on
+	// programmer error (duplicate name, bad ParamSpec) — those are
+	// startup conditions we want surfaced loudly, not eaten by a
+	// silent boot.
+	if deps.Apps == nil {
+		deps.Apps = apps.New()
+		if err := apps.RegisterDefaults(deps.Apps); err != nil {
+			panic("apps.RegisterDefaults: " + err.Error())
+		}
 	}
 
 	r := gin.New()

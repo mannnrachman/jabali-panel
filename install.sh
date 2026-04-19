@@ -2226,6 +2226,9 @@ install_kratos() {
 
   # Poll for readiness. Kratos exposes /health/ready on the admin port (4434).
   # We check via loopback port 4433 (public) for the self-service endpoints.
+  # Use `waited=$((waited+1))` rather than `((waited++))` — the post-increment
+  # form evaluates to the OLD value (0 on first iter), which `set -e` treats
+  # as a failed command and silently kills the installer.
   _log "waiting for Kratos to be ready (max 30s)"
   local waited=0
   while [[ $waited -lt 30 ]]; do
@@ -2234,7 +2237,7 @@ install_kratos() {
       break
     fi
     sleep 1
-    ((waited++))
+    waited=$((waited + 1))
   done
 
   if [[ $waited -eq 30 ]]; then

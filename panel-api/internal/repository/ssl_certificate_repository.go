@@ -255,14 +255,26 @@ func (r *sslCertificateRepo) MarkFailed(ctx context.Context, id string, lastErro
 		}).Error
 }
 
-// ListDueForACMERetry returns pending_acme_retry certificates with
-// next_retry_at <= now, ordered by next_retry_at ascending, limited to limit.
+// ListDueForACMERetry returns certificates the SSL retry ticker should attempt
+// to (re-)issue right now. Two cases qualify:
+//
+//  1. status='pending' — the row was just created (or operator-reset) and has
+//     never had ACME run against it. There is no next_retry_at yet, so the
+//     ticker is the first thing to pick it up after the API hands it off.
+//
+//  2. status='pending_acme_retry' AND next_retry_at <= now — the row has had
+//     at least one failed ACME attempt and is now due for the next try.
+//
+// 'issued' / 'self_signed' / 'failed' / 'renewing' are deliberately excluded:
+// 'issued' is steady state (renewals go through the renewal ticker), 'failed'
+// is operator-only (manual reset to 'pending'), and 'renewing' is in-flight.
 func (r *sslCertificateRepo) ListDueForACMERetry(ctx context.Context, now time.Time, limit int) ([]models.SSLCertificate, error) {
 	var certs []models.SSLCertificate
 	err := r.db.WithContext(ctx).
-		Where("status = ? AND next_retry_at IS NOT NULL AND next_retry_at <= ?",
+		Where("status = ? OR (status = ? AND next_retry_at IS NOT NULL AND next_retry_at <= ?)",
+			models.SSLStatusPending,
 			models.SSLStatusPendingACMERetry, now).
-		Order("next_retry_at ASC").
+		Order("created_at ASC").
 		Limit(limit).
 		Find(&certs).Error
 	if err != nil {

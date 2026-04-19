@@ -1,9 +1,9 @@
 # ADR-0030: AntD-native file manager replaces filebrowser
 
-**Date**: 2026-04-18
-**Status**: proposed
+**Date**: 2026-04-18 (accepted 2026-04-19 after Waves A–E shipped)
+**Status**: accepted
 **Deciders**: shuki + Claude
-**Supersedes**: the implicit M11 decision to adopt filebrowser (documented nowhere as an ADR — this ADR records that decision retroactively and supersedes it in one stroke)
+**Supersedes**: ADR-0027 (M11 filebrowser integration) — retroactively documented and superseded by this ADR.
 
 ## Context
 

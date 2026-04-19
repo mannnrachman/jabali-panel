@@ -666,24 +666,25 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Depends on:** M2 (domains), M7 (databases), M9 (PHP-FPM pools for clone version compatibility)
 
-### M11: FileBrowser (SHIPPED)
+### M11: File Manager (SHIPPED — superseded-and-rebuilt 2026-04-19)
 
-**Goal:** Users can browse and manage files via a web UI scoped to their homedir, via filebrowser + SSO proxy auth.
+**Goal:** Users can browse and manage files via a web UI scoped to their homedir.
 
-**Deliverables:**
-- Filebrowser v2.38.0 binary (pinned SHA-256) installed as shared system service
-- Systemd unit: `jabali-filebrowser.service` (listens on UNIX socket)
-- Panel SSO endpoint: `POST /api/v1/sso/filebrowser` (mints short-lived token)
-- UDS validator for nginx auth_request subrequest
-- Nginx reverse-proxy config: `/etc/nginx/conf.d/jabali-files.conf` (proxy auth, header injection)
-- Reconciler: `ReconcileFileBrowserUsers` (ensures per-user filebrowser entries, group membership, orphan cleanup)
-- UI: "Files" sidebar button (launches filebrowser in new tab via SSO)
-- Playwright E2E test: `tests/e2e/filebrowser.spec.ts` (login → open files → create/rename/delete file)
-- Runbook: `plans/m11-filebrowser-runbook.md` (troubleshooting auth, permissions, service health)
+**History:** First attempt integrated the third-party `filebrowser` project behind an SSO proxy. It burned ~a week on architectural mismatches (stateless proxy-auth, in-process user cache, CLI↔DB drift, POSIX ACL choreography). Decommissioned in Wave E. See ADR-0027 for the failed attempt and ADR-0030 for the replacement decision.
 
-**Status:** Shipped (commits be02cbb…main HEAD)
+**Deliverables (current, AntD-native):**
+- Shared `internal/filesafe/` path-safety validator consumed by both panel-api and panel-agent (same cross-boundary pattern as M8 cron's `/internal/cronvalidate/`)
+- 7 agent commands: `files.list`, `files.read`, `files.write`, `files.delete`, `files.mkdir`, `files.rename`, `files.stat` — all scoped via filesafe
+- 8 REST endpoints under `/api/v1/files`: `GET /`, `GET /tree`, `GET /home`, `GET /download`, `GET /preview`, `POST /upload`, `POST /mkdir`, `POST /rename`, `DELETE /`
+- Wire-shape drift guard: `panel-api/internal/api/files_wire_test.go` asserts JSON tags match the agent
+- UI: `FileManagerPage.tsx` at `/jabali-panel/files` — Breadcrumb + toolbar top, Tree left, Table right; Upload/NewFolder/Rename/Delete/Preview/Download
+- Ownership model: operations run as root in the agent, results `chown`ed to `<user>:www-data` with mode 0640 (files) / 0750 (dirs) — matches deployed per-user FPM model verified on 10.0.3.13
 
-**Depends on:** M1 (users), M7 (SSO pattern), M9 (per-user slices)
+**Phase-2 backlog (out of scope for v1):** drag-and-drop upload, multi-select, image preview, chmod UI, editor (Monaco), zip/unzip, binary-safe read/write (current content is UTF-8 string over JSON), domain-docroot scope (`/var/www/*` alongside `$HOME`), chunked upload above 100 MB.
+
+**Status:** Shipped — Wave A–E committed between 2026-04-18 and 2026-04-19.
+
+**Depends on:** M1 (users), M9.5 (per-user slices for FPM ownership model).
 
 ### M12: SFTP access via openssh (SHIPPED)
 
@@ -923,7 +924,7 @@ Use this table to navigate the codebase when adding a new capability:
 | M8: Cron (SHIPPED) | 2026-04-18 | ADR-0029 |
 | M9: PHP/FPM pools | 2026-04-17 | 1aaa507 (ADR), 5dbf471 (shipped) |
 | M10: WordPress | 2026-04-18 | `85ed8b4` through `main HEAD` |
-| M11: FileBrowser | 2026-04-18 | be02cbb…main HEAD |
+| M11: File Manager (AntD-native, superseded filebrowser) | 2026-04-19 | ADR-0030, Waves A–E in `main` |
 | M12: SFTP via openssh | 2026-04-18 | `aaa0c82` through `0256773` |
 | M13: Stats & monitoring | Planned | — |
 | M14: Notifications | Planned | — |

@@ -1,7 +1,7 @@
 # ADR-0027: M11 File Manager via filebrowser + proxy auth
 
 **Date:** 2026-04-18
-**Status:** Accepted
+**Status:** Superseded by ADR-0030 (2026-04-19)
 **Deciders:** Shuki
 
 ## Context

@@ -15,6 +15,13 @@ type WordPressInstallRepository interface {
 	FindByID(ctx context.Context, id string) (*models.WordPressInstall, error)
 	FindByIDAndUserID(ctx context.Context, id, userID string) (*models.WordPressInstall, error)
 	FindByDomainID(ctx context.Context, domainID string) (*models.WordPressInstall, error)
+	// FindByDomainAndSubdirectory enforces install uniqueness at the
+	// (domain, subdirectory) granularity that matches the on-disk install
+	// path. Empty subdirectory = docroot install. Use this for the
+	// duplicate-install precheck on create + clone, NOT FindByDomainID
+	// (which returns the first install on the domain regardless of subdir
+	// and would block all sibling installs).
+	FindByDomainAndSubdirectory(ctx context.Context, domainID, subdirectory string) (*models.WordPressInstall, error)
 	FindByDBID(ctx context.Context, dbID string) (*models.WordPressInstall, error)
 	ListByUserID(ctx context.Context, userID string, opts ListOptions) ([]models.WordPressInstall, int64, error)
 	List(ctx context.Context, opts ListOptions) ([]models.WordPressInstall, int64, error)
@@ -60,6 +67,19 @@ func (r *wordpressInstallRepo) FindByIDAndUserID(ctx context.Context, id, userID
 func (r *wordpressInstallRepo) FindByDomainID(ctx context.Context, domainID string) (*models.WordPressInstall, error) {
 	var install models.WordPressInstall
 	if err := r.db.WithContext(ctx).Where("domain_id = ?", domainID).First(&install).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &install, nil
+}
+
+func (r *wordpressInstallRepo) FindByDomainAndSubdirectory(ctx context.Context, domainID, subdirectory string) (*models.WordPressInstall, error) {
+	var install models.WordPressInstall
+	if err := r.db.WithContext(ctx).
+		Where("domain_id = ? AND subdirectory = ?", domainID, subdirectory).
+		First(&install).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
 		}

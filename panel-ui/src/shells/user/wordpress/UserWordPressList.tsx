@@ -9,7 +9,7 @@
 // knows the background agent is still working; terminal states (ready,
 // failed) show green/red.
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   Button,
   Space,
@@ -104,20 +104,6 @@ export const UserWordPressList = () => {
   const invalidate = useInvalidate();
   const { data: identity } = useGetIdentity<Identity>();
 
-  // Domains already hosting an install — fed into the modal so the
-  // domain dropdown doesn't offer them (the backend would 409).
-  const alreadyHostedDomainIds = useMemo(() => {
-    const ids = new Set<string>();
-    const rows = (tableProps.dataSource ?? []) as WordPressInstall[];
-    for (const r of rows) {
-      // Don't block the domain just because a prior install is being
-      // deleted — but keep it out of the dropdown while the delete is
-      // in flight so users don't double-create.
-      ids.add(r.domain_id);
-    }
-    return ids;
-  }, [tableProps.dataSource]);
-
   const handleDelete = async (row: WordPressInstall) => {
     setDeletingId(row.id);
     try {
@@ -163,7 +149,6 @@ export const UserWordPressList = () => {
         open={installOpen}
         onClose={() => setInstallOpen(false)}
         onSuccess={() => tableQuery?.refetch?.()}
-        alreadyHostedDomainIds={alreadyHostedDomainIds}
         defaultAdminEmail={identity?.email}
       />
 
@@ -175,7 +160,6 @@ export const UserWordPressList = () => {
         }}
         onSuccess={() => tableQuery?.refetch?.()}
         installId={cloningId ?? ""}
-        alreadyHostedDomainIds={alreadyHostedDomainIds}
       />
 
       <SearchableTable<WordPressInstall>

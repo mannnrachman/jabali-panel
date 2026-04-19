@@ -183,14 +183,17 @@ func (h *wordPressHandler) create(c *gin.Context) {
 		return
 	}
 
-	// Check for duplicate install on same domain
-	existing, err := h.cfg.WordPressInstalls.FindByDomainID(ctx, req.DomainID)
+	// Check for duplicate install at the same (domain, subdirectory). The
+	// pair is unique on disk — same domain can host many installs but each
+	// must live at a distinct subdirectory ("" = docroot). Was a per-domain
+	// check; that blocked the obvious "main site at root + /blog" pattern.
+	existing, err := h.cfg.WordPressInstalls.FindByDomainAndSubdirectory(ctx, req.DomainID, req.Subdirectory)
 	if err == nil && existing != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "install_exists"})
 		return
 	}
 	if err != nil && !isNotFound(err) {
-		slog.ErrorContext(ctx, "wordpress create: existing install lookup failed", "err", err, "domain_id", req.DomainID)
+		slog.ErrorContext(ctx, "wordpress create: existing install lookup failed", "err", err, "domain_id", req.DomainID, "subdirectory", req.Subdirectory)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
@@ -648,8 +651,11 @@ func (h *wordPressHandler) clone(c *gin.Context) {
 		return
 	}
 
-	// Check for existing install on destination domain
-	existing, err := h.cfg.WordPressInstalls.FindByDomainID(ctx, req.DestDomainID)
+	// Check for existing install at the same (dest_domain, source_subdir).
+	// Clone preserves the source install's subdirectory, so collision only
+	// happens if the destination already hosts an install at that same
+	// subdir — sibling installs at other subdirs are fine.
+	existing, err := h.cfg.WordPressInstalls.FindByDomainAndSubdirectory(ctx, req.DestDomainID, sourceInstall.Subdirectory)
 	if err == nil && existing != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "install_exists"})
 		return

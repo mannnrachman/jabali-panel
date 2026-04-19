@@ -1,12 +1,14 @@
-// Install modal — provisions a WordPress site on a domain that doesn't
-// already host one. POSTs to /wordpress-installs; backend creates the
-// DB + DB-user + grant, spawns an async agent job, and returns 202 with
-// the admin password delivered exactly once. We show it in a reveal-
-// once panel using the same pattern as Quick Setup.
+// Install modal — provisions a WordPress site on a domain. POSTs to
+// /wordpress-installs; backend creates the DB + DB-user + grant, spawns
+// an async agent job, and returns 202 with the admin password delivered
+// exactly once. We show it in a reveal-once panel using the same pattern
+// as Quick Setup.
 //
-// The domain dropdown excludes any domain already hosting an install
-// (passed in via alreadyHosted) because the backend enforces a 1:1
-// domain↔install relationship and would 409 otherwise.
+// Multi-install per domain: a domain can host multiple WordPress installs
+// as long as each lives at a distinct subdirectory ("" = docroot install).
+// The dropdown therefore lists every domain the user owns; the backend
+// returns 409 install_exists only if (domain, subdirectory) is already
+// taken — surfaced as a field error on the subdirectory input.
 
 import { useState, useEffect } from "react";
 import {
@@ -32,7 +34,6 @@ type Props = {
   open: boolean;
   onClose: () => void;
   onSuccess: () => void;
-  alreadyHostedDomainIds: Set<string>;
   defaultAdminEmail?: string;
 };
 
@@ -86,7 +87,6 @@ export const InstallWordPressModal = ({
   open,
   onClose,
   onSuccess,
-  alreadyHostedDomainIds,
   defaultAdminEmail,
 }: Props) => {
   const [form] = Form.useForm<{
@@ -190,12 +190,21 @@ export const InstallWordPressModal = ({
       });
       refreshLists();
     } catch (err) {
-      // Check for invalid_subdirectory error from backend
       const e = err as ApiError;
       if (e.response?.data?.error === "invalid_subdirectory") {
         const detail = e.response.data.detail ?? "Invalid subdirectory";
+        form.setFields([{ name: "subdirectory", errors: [detail] }]);
+      } else if (e.response?.data?.error === "install_exists") {
+        // Server rejected because (domain, subdirectory) is already taken.
+        // Surface as a subdirectory field error so the user can pick a
+        // different subdir without losing the rest of the form.
         form.setFields([
-          { name: "subdirectory", errors: [detail] },
+          {
+            name: "subdirectory",
+            errors: [
+              "This domain already hosts a WordPress install at that location — pick a different subdirectory",
+            ],
+          },
         ]);
       } else {
         message.error(extractError(err, "Failed to install WordPress"));
@@ -232,9 +241,12 @@ export const InstallWordPressModal = ({
     return Promise.resolve();
   };
 
-  const availableDomains = domains.filter(
-    (d) => !alreadyHostedDomainIds.has(d.id),
-  );
+  // Show every domain. The backend enforces uniqueness at
+  // (domain, subdirectory) granularity, not per-domain — so a domain that
+  // already hosts /blog can still receive a docroot install or a /shop
+  // install. install_exists is surfaced as a subdirectory field error in
+  // handleSubmit when the (domain, subdir) slot is genuinely taken.
+  const availableDomains = domains;
 
   return (
     <Modal
@@ -281,8 +293,8 @@ export const InstallWordPressModal = ({
               type="info"
               showIcon
               style={{ marginBottom: 16 }}
-              message="No domains available"
-              description="Every domain already hosts a WordPress install, or you have no domains yet. Create a new domain first, or delete an existing install."
+              message="No domains yet"
+              description="You have no domains. Create one first."
             />
           )}
           <Form

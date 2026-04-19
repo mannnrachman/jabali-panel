@@ -25,7 +25,6 @@ type Props = {
   onClose: () => void;
   onSuccess: () => void;
   installId: string;
-  alreadyHostedDomainIds: Set<string>;
 };
 
 type ApiError = {
@@ -52,7 +51,6 @@ export const CloneWordPressModal = ({
   onClose,
   onSuccess,
   installId,
-  alreadyHostedDomainIds,
 }: Props) => {
   const [form] = Form.useForm<{ dest_domain_id: string }>();
   const [submitting, setSubmitting] = useState(false);
@@ -122,9 +120,10 @@ export const CloneWordPressModal = ({
     }
   };
 
-  const availableDomains = domains.filter(
-    (d) => !alreadyHostedDomainIds.has(d.id),
-  );
+  // Show every domain. Clone preserves the source's subdirectory; the
+  // backend returns 409 install_exists only if the destination already
+  // hosts an install at exactly that subdir. Surfaced via toast.
+  const availableDomains = domains;
 
   return (
     <Modal

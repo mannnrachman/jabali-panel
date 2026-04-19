@@ -299,16 +299,19 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		}
 		if deps.WordPressInstalls != nil && deps.Databases != nil && deps.DatabaseUsers != nil &&
 			deps.DatabaseUserGrants != nil && deps.Domains != nil && deps.Users != nil && deps.Agent != nil {
-			api.RegisterWordPressRoutes(v1, api.WordPressHandlerConfig{
-				WordPressInstalls: deps.WordPressInstalls,
-				Databases:         deps.Databases,
-				DatabaseUsers:     deps.DatabaseUsers,
-				DatabaseGrants:    deps.DatabaseUserGrants,
-				Domains:           deps.Domains,
-				Users:             deps.Users,
-				Packages:          deps.Packages,
-				Agent:             deps.Agent,
-			})
+			appCfg := api.ApplicationHandlerConfig{
+				ApplicationInstalls: deps.WordPressInstalls,
+				Databases:           deps.Databases,
+				DatabaseUsers:       deps.DatabaseUsers,
+				DatabaseGrants:      deps.DatabaseUserGrants,
+				Domains:             deps.Domains,
+				Users:               deps.Users,
+				Packages:            deps.Packages,
+				Agent:               deps.Agent,
+				Apps:                deps.Apps,
+			}
+			api.RegisterWordPressRoutes(v1, appCfg)
+			api.RegisterApplicationRoutes(v1, appCfg)
 		}
 
 		// Cron jobs routes (M8)

@@ -190,7 +190,7 @@ func wordPressRouter(userID string, isAdmin bool, wpRepo *mockWordPressInstallRe
 	}
 
 	cfg := WordPressHandlerConfig{
-		WordPressInstalls: wpRepo,
+		ApplicationInstalls: wpRepo,
 		Databases:         dbRepo,
 		DatabaseUsers:     &mockDatabaseUserRepo{},
 		DatabaseGrants:    &mockDatabaseGrantRepo{},
@@ -654,7 +654,7 @@ func TestWordPressCreateWritesRWGrantLevel(t *testing.T) {
 	userRepo := &mockUserRepo{users: map[string]*models.User{"user1": {ID: "user1", Username: strPtr("testuser")}}}
 	grantRepo := &mockDatabaseGrantRepo{}
 	cfg := WordPressHandlerConfig{
-		WordPressInstalls: wpRepo, Databases: dbRepo,
+		ApplicationInstalls: wpRepo, Databases: dbRepo,
 		DatabaseUsers: &mockDatabaseUserRepo{}, DatabaseGrants: grantRepo,
 		Domains: domainRepo, Users: userRepo, Packages: &mockPackageRepo{}, Agent: &mockAgent{},
 	}
@@ -703,7 +703,7 @@ func TestWordPressCreateProvisionsMariaDBViaAgentInOrder(t *testing.T) {
 	}}
 	userRepo := &mockUserRepo{users: map[string]*models.User{"user1": {ID: "user1", Username: strPtr("testuser")}}}
 	cfg := WordPressHandlerConfig{
-		WordPressInstalls: wpRepo, Databases: &mockDatabaseRepo{},
+		ApplicationInstalls: wpRepo, Databases: &mockDatabaseRepo{},
 		DatabaseUsers: &mockDatabaseUserRepo{}, DatabaseGrants: &mockDatabaseGrantRepo{},
 		Domains: domainRepo, Users: userRepo, Packages: &mockPackageRepo{}, Agent: ag,
 	}
@@ -751,7 +751,7 @@ func TestWordPressCreateDBNameIsLowerCasePrefixedRandom(t *testing.T) {
 	}}
 	userRepo := &mockUserRepo{users: map[string]*models.User{"user1": {ID: "user1", Username: strPtr("testuser")}}}
 	cfg := WordPressHandlerConfig{
-		WordPressInstalls: wpRepo, Databases: dbRepo,
+		ApplicationInstalls: wpRepo, Databases: dbRepo,
 		DatabaseUsers: &mockDatabaseUserRepo{}, DatabaseGrants: &mockDatabaseGrantRepo{},
 		Domains: domainRepo, Users: userRepo, Packages: &mockPackageRepo{}, Agent: &mockAgent{},
 	}
@@ -813,7 +813,7 @@ func TestWordPressCloneProvisionsMariaDBViaAgentInOrder(t *testing.T) {
 	}}
 	userRepo := &mockUserRepo{users: map[string]*models.User{"user1": {ID: "user1", Username: strPtr("testuser")}}}
 	cfg := WordPressHandlerConfig{
-		WordPressInstalls: wpRepo, Databases: &mockDatabaseRepo{},
+		ApplicationInstalls: wpRepo, Databases: &mockDatabaseRepo{},
 		DatabaseUsers: &mockDatabaseUserRepo{}, DatabaseGrants: &mockDatabaseGrantRepo{},
 		Domains: domainRepo, Users: userRepo, Packages: &mockPackageRepo{}, Agent: ag,
 	}

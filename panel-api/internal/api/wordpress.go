@@ -14,15 +14,20 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/apps"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-// WordPressHandlerConfig bundles repositories and services for WordPress handlers.
-type WordPressHandlerConfig struct {
-	WordPressInstalls   repository.WordPressInstallRepository
+// ApplicationHandlerConfig bundles the repositories and services every
+// per-app HTTP handler needs. M19 generalised this from the old
+// WordPressHandlerConfig — the legacy WordPress routes still see the
+// same struct via the type alias below, so existing wiring + tests
+// compile unchanged through the M19 release window.
+type ApplicationHandlerConfig struct {
+	ApplicationInstalls repository.ApplicationInstallRepository
 	Databases           repository.DatabaseRepository
 	DatabaseUsers       repository.DatabaseUserRepository
 	DatabaseGrants      repository.DatabaseUserGrantRepository
@@ -30,10 +35,24 @@ type WordPressHandlerConfig struct {
 	Users               repository.UserRepository
 	Packages            repository.PackageRepository
 	Agent               agent.AgentInterface
+	// Apps is the M19 application registry. Nil-safe: the legacy
+	// /wordpress-installs handlers in this file don't read it (they
+	// hard-code the WordPress shape); only the new /applications
+	// handlers in applications.go require it. app.NewWithDeps always
+	// populates it for production wiring.
+	Apps *apps.Registry
 }
 
-// RegisterWordPressRoutes registers WordPress routes.
-func RegisterWordPressRoutes(g *gin.RouterGroup, cfg WordPressHandlerConfig) {
+// WordPressHandlerConfig is the pre-M19 alias retained so old wiring
+// (panel-api/cmd/server/serve.go, wordpress_test.go fixtures) compiles
+// unchanged. M19.1 deletes the alias once every caller has switched.
+type WordPressHandlerConfig = ApplicationHandlerConfig
+
+// RegisterWordPressRoutes registers the legacy /wordpress-installs
+// routes. M19 added the parallel /applications surface — see
+// RegisterApplicationRoutes in applications.go. Both surfaces remain
+// mounted through M19; the UI in step 5 cuts over to /applications.
+func RegisterWordPressRoutes(g *gin.RouterGroup, cfg ApplicationHandlerConfig) {
 	h := &wordPressHandler{cfg: cfg}
 
 	installs := g.Group("/wordpress-installs")
@@ -45,7 +64,7 @@ func RegisterWordPressRoutes(g *gin.RouterGroup, cfg WordPressHandlerConfig) {
 	installs.POST("/:id/health", h.health)
 }
 
-type wordPressHandler struct{ cfg WordPressHandlerConfig }
+type wordPressHandler struct{ cfg ApplicationHandlerConfig }
 
 // ---- Request/Response types ----
 
@@ -187,7 +206,7 @@ func (h *wordPressHandler) create(c *gin.Context) {
 	// pair is unique on disk — same domain can host many installs but each
 	// must live at a distinct subdirectory ("" = docroot). Was a per-domain
 	// check; that blocked the obvious "main site at root + /blog" pattern.
-	existing, err := h.cfg.WordPressInstalls.FindByDomainAndSubdirectory(ctx, req.DomainID, req.Subdirectory)
+	existing, err := h.cfg.ApplicationInstalls.FindByDomainAndSubdirectory(ctx, req.DomainID, req.Subdirectory)
 	if err == nil && existing != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "install_exists"})
 		return
@@ -358,7 +377,7 @@ func (h *wordPressHandler) create(c *gin.Context) {
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
-	if err := h.cfg.WordPressInstalls.Create(ctx, install); err != nil {
+	if err := h.cfg.ApplicationInstalls.Create(ctx, install); err != nil {
 		// Rollback all
 		h.cfg.DatabaseGrants.Delete(ctx, grantID)
 		h.cfg.DatabaseUsers.Delete(ctx, dbUserID)
@@ -423,9 +442,9 @@ func (h *wordPressHandler) list(c *gin.Context) {
 
 	// Admins see all; users see only their own
 	if claims.IsAdmin {
-		installs, total, err = h.cfg.WordPressInstalls.List(ctx, opts)
+		installs, total, err = h.cfg.ApplicationInstalls.List(ctx, opts)
 	} else {
-		installs, total, err = h.cfg.WordPressInstalls.ListByUserID(ctx, claims.UserID, opts)
+		installs, total, err = h.cfg.ApplicationInstalls.ListByUserID(ctx, claims.UserID, opts)
 	}
 
 	if err != nil {
@@ -493,9 +512,9 @@ func (h *wordPressHandler) get(c *gin.Context) {
 	var err error
 
 	if claims.IsAdmin {
-		install, err = h.cfg.WordPressInstalls.FindByID(ctx, installID)
+		install, err = h.cfg.ApplicationInstalls.FindByID(ctx, installID)
 	} else {
-		install, err = h.cfg.WordPressInstalls.FindByIDAndUserID(ctx, installID, claims.UserID)
+		install, err = h.cfg.ApplicationInstalls.FindByIDAndUserID(ctx, installID, claims.UserID)
 	}
 
 	if err != nil {
@@ -548,9 +567,9 @@ func (h *wordPressHandler) delete(c *gin.Context) {
 	var err error
 
 	if claims.IsAdmin {
-		install, err = h.cfg.WordPressInstalls.FindByID(ctx, installID)
+		install, err = h.cfg.ApplicationInstalls.FindByID(ctx, installID)
 	} else {
-		install, err = h.cfg.WordPressInstalls.FindByIDAndUserID(ctx, installID, claims.UserID)
+		install, err = h.cfg.ApplicationInstalls.FindByIDAndUserID(ctx, installID, claims.UserID)
 	}
 
 	if err != nil {
@@ -563,7 +582,7 @@ func (h *wordPressHandler) delete(c *gin.Context) {
 	}
 
 	// Mark as deleting
-	if err := h.cfg.WordPressInstalls.UpdateStatus(ctx, installID, "deleting", nil, nil); err != nil {
+	if err := h.cfg.ApplicationInstalls.UpdateStatus(ctx, installID, "deleting", nil, nil); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
@@ -622,9 +641,9 @@ func (h *wordPressHandler) clone(c *gin.Context) {
 	var err error
 
 	if claims.IsAdmin {
-		sourceInstall, err = h.cfg.WordPressInstalls.FindByID(ctx, sourceInstallID)
+		sourceInstall, err = h.cfg.ApplicationInstalls.FindByID(ctx, sourceInstallID)
 	} else {
-		sourceInstall, err = h.cfg.WordPressInstalls.FindByIDAndUserID(ctx, sourceInstallID, targetUserID)
+		sourceInstall, err = h.cfg.ApplicationInstalls.FindByIDAndUserID(ctx, sourceInstallID, targetUserID)
 	}
 
 	if err != nil {
@@ -655,7 +674,7 @@ func (h *wordPressHandler) clone(c *gin.Context) {
 	// Clone preserves the source install's subdirectory, so collision only
 	// happens if the destination already hosts an install at that same
 	// subdir — sibling installs at other subdirs are fine.
-	existing, err := h.cfg.WordPressInstalls.FindByDomainAndSubdirectory(ctx, req.DestDomainID, sourceInstall.Subdirectory)
+	existing, err := h.cfg.ApplicationInstalls.FindByDomainAndSubdirectory(ctx, req.DestDomainID, sourceInstall.Subdirectory)
 	if err == nil && existing != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "install_exists"})
 		return
@@ -810,7 +829,7 @@ func (h *wordPressHandler) clone(c *gin.Context) {
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
-	if err := h.cfg.WordPressInstalls.Create(ctx, cloneInstall); err != nil {
+	if err := h.cfg.ApplicationInstalls.Create(ctx, cloneInstall); err != nil {
 		h.cfg.DatabaseGrants.Delete(ctx, destGrantID)
 		h.cfg.DatabaseUsers.Delete(ctx, destDBUserID)
 		h.cfg.Databases.Delete(ctx, destDBID)
@@ -850,9 +869,9 @@ func (h *wordPressHandler) health(c *gin.Context) {
 	var err error
 
 	if claims.IsAdmin {
-		_, err = h.cfg.WordPressInstalls.FindByID(ctx, installID)
+		_, err = h.cfg.ApplicationInstalls.FindByID(ctx, installID)
 	} else {
-		_, err = h.cfg.WordPressInstalls.FindByIDAndUserID(ctx, installID, claims.UserID)
+		_, err = h.cfg.ApplicationInstalls.FindByIDAndUserID(ctx, installID, claims.UserID)
 	}
 
 	if err != nil {
@@ -922,7 +941,7 @@ func createInstallAndKickAgent(parentCtx context.Context, args installKickArgs, 
 	defer cancel()
 
 	// Update status to 'installing'
-	if err := cfg.WordPressInstalls.UpdateStatus(ctx, args.InstallID, "installing", nil, nil); err != nil {
+	if err := cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "installing", nil, nil); err != nil {
 		// Log but don't fail — status was already 'pending'
 		return
 	}
@@ -930,7 +949,7 @@ func createInstallAndKickAgent(parentCtx context.Context, args installKickArgs, 
 	// Call agent to install WordPress
 	if cfg.Agent == nil {
 		errMsg := "agent not configured"
-		cfg.WordPressInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
 		return
 	}
 
@@ -952,7 +971,7 @@ func createInstallAndKickAgent(parentCtx context.Context, args installKickArgs, 
 	})
 	if err != nil {
 		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)
-		cfg.WordPressInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
 		return
 	}
 
@@ -960,7 +979,7 @@ func createInstallAndKickAgent(parentCtx context.Context, args installKickArgs, 
 	var respMap map[string]any
 	if err := json.Unmarshal(agentResp, &respMap); err != nil {
 		errMsg := truncateError(fmt.Sprintf("failed to parse agent response: %v", err), 1024)
-		cfg.WordPressInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
 		return
 	}
 
@@ -970,7 +989,7 @@ func createInstallAndKickAgent(parentCtx context.Context, args installKickArgs, 
 	}
 
 	// Update status to 'ready' with version
-	cfg.WordPressInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
+	cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
 }
 
 // createDeleteAndKickAgent removes the on-disk WordPress files via the
@@ -984,7 +1003,7 @@ func createDeleteAndKickAgent(parentCtx context.Context, installID, databaseID, 
 
 	if cfg.Agent == nil {
 		errMsg := "agent not configured"
-		cfg.WordPressInstalls.UpdateStatus(ctx, installID, "failed", &errMsg, nil)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, installID, "failed", &errMsg, nil)
 		return
 	}
 
@@ -999,7 +1018,7 @@ func createDeleteAndKickAgent(parentCtx context.Context, installID, databaseID, 
 	})
 	if err != nil {
 		errMsg := truncateError(fmt.Sprintf("agent delete failed: %v", err), 1024)
-		cfg.WordPressInstalls.UpdateStatus(ctx, installID, "failed", &errMsg, nil)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, installID, "failed", &errMsg, nil)
 		return
 	}
 
@@ -1029,7 +1048,7 @@ func createDeleteAndKickAgent(parentCtx context.Context, installID, databaseID, 
 	}
 	// Delete the WP install row BEFORE the database panel row so the
 	// fk_wpinstalls_db RESTRICT constraint releases.
-	cfg.WordPressInstalls.Delete(ctx, installID)
+	cfg.ApplicationInstalls.Delete(ctx, installID)
 	if databaseID != "" {
 		if db, dbErr := cfg.Databases.FindByID(ctx, databaseID); dbErr == nil && db != nil {
 			// Agent command is `db.drop` with `db_name` — NOT
@@ -1050,7 +1069,7 @@ func createCloneAndKickAgent(parentCtx context.Context, cloneInstallID, sourceDo
 
 	if cfg.Agent == nil {
 		errMsg := "agent not configured"
-		cfg.WordPressInstalls.UpdateStatus(ctx, cloneInstallID, "failed", &errMsg, nil)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, cloneInstallID, "failed", &errMsg, nil)
 		return
 	}
 
@@ -1063,7 +1082,7 @@ func createCloneAndKickAgent(parentCtx context.Context, cloneInstallID, sourceDo
 	})
 	if err != nil {
 		errMsg := truncateError(fmt.Sprintf("agent clone failed: %v", err), 1024)
-		cfg.WordPressInstalls.UpdateStatus(ctx, cloneInstallID, "failed", &errMsg, nil)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, cloneInstallID, "failed", &errMsg, nil)
 		// Attempt cleanup
 		cfg.Agent.Call(ctx, "wordpress.delete", map[string]any{
 			"database_id": destDatabaseID,
@@ -1075,7 +1094,7 @@ func createCloneAndKickAgent(parentCtx context.Context, cloneInstallID, sourceDo
 	var respMap map[string]any
 	if err := json.Unmarshal(agentResp, &respMap); err != nil {
 		errMsg := truncateError(fmt.Sprintf("failed to parse agent response: %v", err), 1024)
-		cfg.WordPressInstalls.UpdateStatus(ctx, cloneInstallID, "failed", &errMsg, nil)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, cloneInstallID, "failed", &errMsg, nil)
 		return
 	}
 
@@ -1085,7 +1104,7 @@ func createCloneAndKickAgent(parentCtx context.Context, cloneInstallID, sourceDo
 	}
 
 	// Update status to 'ready' with version
-	cfg.WordPressInstalls.UpdateStatus(ctx, cloneInstallID, "ready", nil, &version)
+	cfg.ApplicationInstalls.UpdateStatus(ctx, cloneInstallID, "ready", nil, &version)
 }
 
 // ---- Helpers ----

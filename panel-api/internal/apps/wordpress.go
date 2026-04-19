@@ -18,9 +18,13 @@ var WordPress = App{
 	DefaultSubdirectory:  "",
 	RequiresDB:           true,
 	SupportedPHPVersions: nil,
-	AgentInstallCmd:      "wordpress.install",
-	AgentDeleteCmd:       "wordpress.delete",
-	AgentCloneCmd:        "wordpress.clone",
+	// M19 dispatcher commands (panel-agent/internal/commands/app_dispatch.go).
+	// The legacy wordpress.* commands stay registered on the agent for one
+	// release in case a stale panel build is rolled back; new traffic goes
+	// through app.* with app_type carried in the params.
+	AgentInstallCmd:      "app.install",
+	AgentDeleteCmd:       "app.delete",
+	AgentCloneCmd:        "app.clone",
 	InstallParamSchema: map[string]ParamSpec{
 		"admin_username": {
 			Type:        "string",

@@ -409,7 +409,12 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 }
 
 func init() {
+	// Legacy command — still registered so any straggler caller keeps
+	// working through the M19 release window. M19.1 deletes this line.
 	Default.Register("wordpress.install", wordpressInstallHandler)
+	// M19 dispatch table: lets the panel call app.install with
+	// app_type="wordpress" (see panel-agent/internal/commands/app_dispatch.go).
+	RegisterAppInstaller("wordpress", wordpressInstallHandler)
 }
 
 // truncateStr trims s to at most n runes, appending "…" when truncated.

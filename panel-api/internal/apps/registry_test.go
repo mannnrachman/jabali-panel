@@ -146,8 +146,11 @@ func TestRegisterDefaults_RegistersWordPress(t *testing.T) {
 	if !ok {
 		t.Fatal("wordpress not registered after RegisterDefaults")
 	}
-	if wp.AgentInstallCmd != "wordpress.install" {
-		t.Fatalf("wordpress AgentInstallCmd = %q", wp.AgentInstallCmd)
+	if wp.AgentInstallCmd != "app.install" {
+		t.Fatalf("wordpress AgentInstallCmd = %q (want %q after M19 dispatcher rewire)", wp.AgentInstallCmd, "app.install")
+	}
+	if wp.AgentDeleteCmd != "app.delete" || wp.AgentCloneCmd != "app.clone" {
+		t.Fatalf("wordpress agent commands = (%q, %q, %q)", wp.AgentInstallCmd, wp.AgentDeleteCmd, wp.AgentCloneCmd)
 	}
 	if !wp.RequiresDB {
 		t.Fatal("wordpress should require a database")

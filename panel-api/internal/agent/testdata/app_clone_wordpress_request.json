@@ -1,0 +1,15 @@
+{
+  "app_type": "wordpress",
+  "os_user": "alice",
+  "src_docroot": "/home/alice/domains/example.com/public_html",
+  "dst_docroot": "/home/alice/domains/staging.example.com/public_html",
+  "src_db_name": "alice_wp_abcdef",
+  "dst_db_name": "alice_wp_ghijkl",
+  "dst_db_user": "alice_wp_ghijkl",
+  "dst_db_password": "s3cret-pw-2",
+  "dst_db_host": "localhost",
+  "src_site_url": "https://example.com",
+  "dst_site_url": "https://staging.example.com",
+  "use_www": false,
+  "dst_subdirectory": ""
+}

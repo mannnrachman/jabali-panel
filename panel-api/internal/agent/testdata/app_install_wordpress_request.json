@@ -1,0 +1,17 @@
+{
+  "app_type": "wordpress",
+  "os_user": "alice",
+  "docroot": "/home/alice/domains/example.com/public_html",
+  "db_name": "alice_wp_abcdef",
+  "db_user": "alice_wp_abcdef",
+  "db_password": "s3cret-pw",
+  "db_host": "localhost",
+  "site_url": "https://example.com/blog",
+  "site_title": "Hello",
+  "admin_user": "admin",
+  "admin_pass": "s3cret-pw",
+  "admin_email": "admin@example.com",
+  "locale": "en_US",
+  "subdirectory": "blog",
+  "use_www": false
+}

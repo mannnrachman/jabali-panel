@@ -1,0 +1,6 @@
+{
+  "app_type": "wordpress",
+  "os_user": "alice",
+  "docroot": "/home/alice/domains/example.com/public_html",
+  "domain": "example.com"
+}

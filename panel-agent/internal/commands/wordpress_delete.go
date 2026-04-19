@@ -120,4 +120,5 @@ func wordpressDeleteHandler(ctx context.Context, params json.RawMessage) (any, e
 
 func init() {
 	Default.Register("wordpress.delete", wordpressDeleteHandler)
+	RegisterAppDeleter("wordpress", wordpressDeleteHandler)
 }

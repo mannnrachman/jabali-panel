@@ -409,4 +409,5 @@ func escapeWordPressConstant(value string) string {
 
 func init() {
 	Default.Register("wordpress.clone", wordpressCloneHandler)
+	RegisterAppCloner("wordpress", wordpressCloneHandler)
 }

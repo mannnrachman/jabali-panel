@@ -953,7 +953,13 @@ func createInstallAndKickAgent(parentCtx context.Context, args installKickArgs, 
 		return
 	}
 
-	agentResp, err := cfg.Agent.Call(ctx, "wordpress.install", map[string]any{
+	// M19: dispatched through app.install with app_type discriminator.
+	// The agent's app dispatcher forwards the body unchanged to the
+	// registered "wordpress" installer (see panel-agent/internal/commands/
+	// app_dispatch.go). Legacy "wordpress.install" still works on the
+	// agent for any straggler caller through M19.1.
+	agentResp, err := cfg.Agent.Call(ctx, "app.install", map[string]any{
+		"app_type":      "wordpress",
 		"os_user":       args.OSUser,
 		"docroot":       args.DocRoot,
 		"db_name":       args.DBName,
@@ -1011,10 +1017,12 @@ func createDeleteAndKickAgent(parentCtx context.Context, installID, databaseID, 
 	// the domain.create placeholder index.html (when domain is non-empty)
 	// so the docroot doesn't 403 after delete. Does NOT touch the MySQL
 	// side — panel handles that below.
-	_, err := cfg.Agent.Call(ctx, "wordpress.delete", map[string]any{
-		"os_user": osUser,
-		"docroot": docroot,
-		"domain":  domainName,
+	// M19: dispatched through app.delete with app_type discriminator.
+	_, err := cfg.Agent.Call(ctx, "app.delete", map[string]any{
+		"app_type": "wordpress",
+		"os_user":  osUser,
+		"docroot":  docroot,
+		"domain":   domainName,
 	})
 	if err != nil {
 		errMsg := truncateError(fmt.Sprintf("agent delete failed: %v", err), 1024)
@@ -1073,18 +1081,20 @@ func createCloneAndKickAgent(parentCtx context.Context, cloneInstallID, sourceDo
 		return
 	}
 
-	// Call agent to clone WordPress
-	agentResp, err := cfg.Agent.Call(ctx, "wordpress.clone", map[string]any{
-		"source_domain_id":  sourceDomainID,
-		"dest_domain_id":    destDomainID,
-		"use_www":           useWWW,
-		"dst_subdirectory":  dstSubdirectory,
+	// M19: dispatched through app.clone with app_type discriminator.
+	agentResp, err := cfg.Agent.Call(ctx, "app.clone", map[string]any{
+		"app_type":         "wordpress",
+		"source_domain_id": sourceDomainID,
+		"dest_domain_id":   destDomainID,
+		"use_www":          useWWW,
+		"dst_subdirectory": dstSubdirectory,
 	})
 	if err != nil {
 		errMsg := truncateError(fmt.Sprintf("agent clone failed: %v", err), 1024)
 		cfg.ApplicationInstalls.UpdateStatus(ctx, cloneInstallID, "failed", &errMsg, nil)
-		// Attempt cleanup
-		cfg.Agent.Call(ctx, "wordpress.delete", map[string]any{
+		// Best-effort cleanup; same dispatcher path.
+		cfg.Agent.Call(ctx, "app.delete", map[string]any{
+			"app_type":    "wordpress",
 			"database_id": destDatabaseID,
 		})
 		return

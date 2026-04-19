@@ -255,6 +255,34 @@ func TestRegisterDefaults_RegistersDrupal(t *testing.T) {
 	}
 }
 
+func TestRegisterDefaults_RegistersJoomla(t *testing.T) {
+	r := New()
+	if err := RegisterDefaults(r); err != nil {
+		t.Fatalf("RegisterDefaults: %v", err)
+	}
+	j, ok := r.Get("joomla")
+	if !ok {
+		t.Fatal("joomla not registered after RegisterDefaults")
+	}
+	if !j.RequiresDB {
+		t.Error("joomla should declare RequiresDB=true (it needs MariaDB)")
+	}
+	if j.AgentCloneCmd != "" {
+		t.Errorf("joomla should NOT declare a clone command yet; got %q", j.AgentCloneCmd)
+	}
+	if j.AgentInstallCmd != "app.install" || j.AgentDeleteCmd != "app.delete" {
+		t.Errorf("joomla dispatcher commands = (%q, %q)", j.AgentInstallCmd, j.AgentDeleteCmd)
+	}
+	for _, want := range []string{"site_title", "admin_email", "admin_password", "admin_full_name"} {
+		if _, ok := j.InstallParamSchema[want]; !ok {
+			t.Errorf("joomla schema missing %q", want)
+		}
+	}
+	if _, present := j.InstallParamSchema["admin_username"]; present {
+		t.Error("joomla schema should NOT include admin_username — it's auto-generated server-side")
+	}
+}
+
 func TestRegister_ConcurrentSafe(t *testing.T) {
 	// Race detector trips here if Register's mutex disappears.
 	r := New()

@@ -52,8 +52,26 @@ func RegisterStatic(g *gin.Engine, panelFS fs.FS) {
 		// If the path resolves to a real file in the embed, serve it.
 		// Otherwise fall back to index.html so client-side routing can
 		// take over.
-		if p == "/" || !fileExists(panelFS, strings.TrimPrefix(p, "/")) {
+		isFallback := p == "/" || !fileExists(panelFS, strings.TrimPrefix(p, "/"))
+		if isFallback {
 			c.Request.URL.Path = "/"
+			// SPA shell must revalidate on every load. Vite hashes asset
+			// filenames so JS/CSS can be cached forever, but index.html
+			// references those hashes — a cached shell after a deploy
+			// points at 404'd assets. no-cache forces an If-None-Match
+			// round-trip so the browser picks up the new shell.
+			c.Header("Cache-Control", "no-cache")
+			// Users landing on /login are either post-logout or
+			// post-token-expiry. In both cases their cached /api/v1/me
+			// and /auth/refresh responses are useless (or actively
+			// harmful — Firefox attaches OpaqueResponseBlocking
+			// decisions to cached 401s and replays them, producing a
+			// blank page). Nuke the cache so the fresh login flow
+			// starts from a clean slate. Storage (JWT/refresh token
+			// state) is preserved — only HTTP cache is cleared.
+			if p == "/login" {
+				c.Header("Clear-Site-Data", `"cache"`)
+			}
 		}
 		fileServer.ServeHTTP(c.Writer, c.Request)
 	})

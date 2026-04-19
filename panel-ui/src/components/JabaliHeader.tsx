@@ -88,6 +88,9 @@ export function JabaliHeader() {
       style={{
         // Match ThemedHeaderV2's exact style contract so we slot in
         // without fighting AntD's default dark Header background.
+        // Not sticky — the header scrolls with the page; reaching
+        // content further down shouldn't waste a band of viewport on
+        // an always-visible search bar.
         backgroundColor: token.colorBgElevated,
         height: 64,
         lineHeight: "normal",
@@ -96,9 +99,6 @@ export function JabaliHeader() {
         alignItems: "center",
         gap: 16,
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
-        position: "sticky",
-        top: 0,
-        zIndex: 1,
       }}
     >
       <Input

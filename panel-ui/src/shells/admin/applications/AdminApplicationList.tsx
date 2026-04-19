@@ -123,9 +123,10 @@ export const AdminApplicationList = () => {
           sorter={{ multiple: 1 }}
           defaultSortOrder="ascend"
           render={(domainName: string, record) => {
-            const label = domainName || record.domain_id;
-            const isLink = record.status === "ready" && !!domainName;
+            const base = domainName || record.domain_id;
             const path = record.subdirectory ? `/${record.subdirectory}/` : "/";
+            const label = `${base}${path}`;
+            const isLink = record.status === "ready" && !!domainName;
             return (
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <GlobalOutlined />
@@ -144,17 +145,6 @@ export const AdminApplicationList = () => {
               </div>
             );
           }}
-        />
-        <Table.Column<ApplicationInstall>
-          dataIndex="subdirectory"
-          title="Folder"
-          render={(subdirectory: string) =>
-            subdirectory ? (
-              <Typography.Text code>/{subdirectory}/</Typography.Text>
-            ) : (
-              <Typography.Text type="secondary">/</Typography.Text>
-            )
-          }
         />
         <Table.Column<ApplicationInstall>
           dataIndex="admin_email"

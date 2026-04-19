@@ -895,18 +895,52 @@ export const FileManagerPage = () => {
         title={`Move ${selectedPaths.length} item${selectedPaths.length === 1 ? "" : "s"}`}
         open={bulkMoveOpen}
         onOk={() => void handleBulkMove()}
-        onCancel={() => setBulkMoveOpen(false)}
+        onCancel={() => {
+          setBulkMoveOpen(false);
+          setBulkMoveDest("");
+        }}
         okText="Move"
+        okButtonProps={{ disabled: !bulkMoveDest }}
       >
-        <p style={{ marginBottom: 8 }}>
-          Destination folder (absolute path inside your home):
-        </p>
-        <Input
-          value={bulkMoveDest}
-          onChange={(e) => setBulkMoveDest(e.target.value)}
-          placeholder={rootPath || "/home/..."}
-          autoFocus
-        />
+        <p style={{ marginBottom: 8 }}>Pick a destination folder:</p>
+        <div
+          style={{
+            maxHeight: 360,
+            overflow: "auto",
+            border: "1px solid #f0f0f0",
+            borderRadius: 4,
+            padding: 8,
+          }}
+        >
+          {/*
+            Reuses the same treeData + expandedKeys + lazy loader as the
+            left sidebar tree, so folders the user already expanded over
+            there stay expanded here. onSelect sets the destination;
+            titleRender is omitted — the modal tree is a picker, not a
+            drop target, and the tree-node drop handlers would swallow
+            clicks on nested folders.
+          */}
+          <Tree
+            treeData={treeData}
+            expandedKeys={expandedKeys}
+            onExpand={(keys) => setExpandedKeys(keys as string[])}
+            selectedKeys={bulkMoveDest ? [bulkMoveDest] : []}
+            loadData={(node) => loadTreeChildren(node as TreeNode)}
+            onSelect={(keys) => {
+              if (keys.length > 0) setBulkMoveDest(keys[0] as string);
+            }}
+          />
+        </div>
+        <div
+          style={{
+            marginTop: 8,
+            color: bulkMoveDest ? undefined : "#999",
+            fontFamily: "monospace",
+            fontSize: 12,
+          }}
+        >
+          {bulkMoveDest || "(no folder selected)"}
+        </div>
       </Modal>
 
       <Modal

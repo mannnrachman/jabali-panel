@@ -284,6 +284,10 @@ func (m *mockUserRepoValidate) FindByUsername(ctx context.Context, username stri
 	return nil, nil
 }
 
+func (m *mockUserRepoValidate) FindByKratosIdentityID(_ context.Context, _ string) (*models.User, error) {
+	return nil, repository.ErrNotFound
+}
+
 func (m *mockUserRepoValidate) List(ctx context.Context, opts repository.ListOptions) ([]models.User, int64, error) {
 	return nil, 0, nil
 }

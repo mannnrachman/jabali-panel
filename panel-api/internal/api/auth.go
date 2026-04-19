@@ -18,7 +18,6 @@ type AuthService interface {
 	Login(ctx context.Context, in auth.LoginInput) (*auth.LoginOutput, error)
 	Refresh(ctx context.Context, in auth.RefreshInput) (*auth.LoginOutput, error)
 	Logout(ctx context.Context, raw string) error
-	RedeemCLIToken(ctx context.Context, cliToken string, deviceID string) (*auth.LoginOutput, error)
 	ChallengeTOTP(ctx context.Context, in auth.ChallengeTOTPInput) (*auth.LoginOutput, error)
 }
 
@@ -70,7 +69,6 @@ func RegisterAuthRoutes(r *gin.Engine, cfg AuthHandlerConfig) {
 	g.POST("/login", append(loginChain, h.login)...)
 	g.POST("/refresh", h.refresh)
 	g.POST("/logout", append(logoutChain, h.logout)...)
-	g.POST("/cli-login", h.cliLogin)
 	// 2FA challenge rides the strict rate limit because it's a credential
 	// endpoint — unbounded brute-force would burn through the TOTP 30-sec
 	// window or the 10 backup codes.

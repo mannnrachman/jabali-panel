@@ -11,4 +11,6 @@ export const APP_TYPE_LABELS: Record<string, string> = {
   phpbb: "phpBB",
   grav: "Grav",
   freshrss: "FreshRSS",
+  matomo: "Matomo",
+  concrete: "Concrete CMS",
 };

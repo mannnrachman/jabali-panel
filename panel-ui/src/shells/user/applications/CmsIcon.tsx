@@ -1,5 +1,5 @@
-import { SiWordpress, SiWikipedia, SiDrupal, SiJoomla, SiPhpbb, SiGrav, SiFreshrss } from "react-icons/si";
-import { BookOutlined } from "@ant-design/icons";
+import { SiWordpress, SiWikipedia, SiDrupal, SiJoomla, SiPhpbb, SiGrav, SiFreshrss, SiMatomo } from "react-icons/si";
+import { BookOutlined, AppstoreOutlined } from "@ant-design/icons";
 import type { CSSProperties } from "react";
 
 interface CmsIconProps {
@@ -19,6 +19,8 @@ const BRAND_COLOR: Record<string, string> = {
   phpbb: "#26477F",
   grav: "#221E1F",
   freshrss: "#88BC23",
+  matomo: "#3152A0",
+  concrete: "#34669B",
 };
 
 // CmsIcon renders the brand logo for an app_type. WordPress and
@@ -57,6 +59,14 @@ export function CmsIcon({ appType, size = 18 }: CmsIconProps) {
   }
   if (key === "freshrss") {
     return <SiFreshrss style={style} />;
+  }
+  if (key === "matomo") {
+    return <SiMatomo style={style} />;
+  }
+  if (key === "concrete") {
+    // Simple Icons doesn't ship a Concrete CMS entry; fall back to a
+    // generic appstore glyph in the brand blue.
+    return <AppstoreOutlined style={style} />;
   }
   if (key === "dokuwiki") {
     return <BookOutlined style={style} />;

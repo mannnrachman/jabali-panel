@@ -196,6 +196,14 @@ type Domain struct {
 	PHPMaxExecutionTime  *int    `gorm:"type:int unsigned" json:"php_max_execution_time,omitempty"`
 	PHPMaxInputTime      *int    `gorm:"type:int unsigned" json:"php_max_input_time,omitempty"`
 
+	// M18: per-domain HTTP rate/conn limits. Zero = unlimited (no
+	// nginx directive emitted). RateLimitRPS is requests-per-SECOND
+	// as seen by the reconciler; the vhost renderer converts to
+	// nginx's native rate syntax (r/s or r/m) at render time and
+	// uses `burst=rate*2 nodelay` to absorb short spikes.
+	RateLimitRPS    uint32 `gorm:"type:int unsigned;not null;default:0" json:"rate_limit_rps"`
+	ConnectionLimit uint32 `gorm:"type:int unsigned;not null;default:0" json:"connection_limit"`
+
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }

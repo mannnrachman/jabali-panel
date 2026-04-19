@@ -885,10 +885,9 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Step 6 (DokuWiki, shipped 2026-04-19):** Second app in the catalog — flat-file PHP wiki, no database. Validates the framework's `RequiresDB=false` short-circuit end-to-end + the `enum` `ParamSpec` (license dropdown). Descriptor at `panel-api/internal/apps/dokuwiki.go`; agent installer + deleter at `panel-agent/internal/commands/dokuwiki_{install,delete}.go`. The installer downloads the upstream stable tarball, verifies SHA-256 against a hard-coded pin (currently empty pending first-deploy capture), extracts under `systemd-run --uid=<user>`, writes `conf/local.php` + `conf/users.auth.php` (bcrypt admin via `php password_hash`) + `conf/acl.auth.php`, drops `install.lock`, and normalises perms. The `m19/06-app-dokuwiki` branch ships the panel + agent code; **the SHA-256 pin must be captured on first deploy** (`curl -sSL https://download.dokuwiki.org/src/dokuwiki/dokuwiki-stable.tgz | sha256sum`) and bumped in `dokuwikiTarballSHA256` for production builds.
 
-**Deferred (step 7 — gated on DokuWiki host validation):**
-- Step 7 — MediaWiki descriptor + agent installer (validates the per-app CLI installer pattern via `php maintenance/install.php`; exercises a heavier agent flow than WordPress's wp-cli).
+**Step 7 (MediaWiki, shipped 2026-04-19):** Third app in the catalog — the wiki engine behind Wikipedia. Validates the per-app CLI installer pattern via MediaWiki's `php maintenance/install.php` so the user never sees the web installer wizard. Descriptor at `panel-api/internal/apps/mediawiki.go`; agent installer + deleter at `panel-agent/internal/commands/mediawiki_{install,delete}.go`. The installer pins `MEDIAWIKI_VERSION=1.41.2` (LTS series), downloads from `releases.wikimedia.org/mediawiki/1.41/mediawiki-1.41.2.tar.gz`, verifies SHA-256 (empty pin pending first-deploy capture), extracts under `systemd-run --uid=<user>`, then drives the CLI installer with `--dbtype=mysql --server=<origin> --scriptpath=<subdir> --lang=<lang> --pass=<wikipw>`. The CLI generates `LocalSettings.php` containing the DB credentials in the install root. **The SHA-256 pin must be captured on first deploy** (`curl -sSL https://releases.wikimedia.org/mediawiki/1.41/mediawiki-1.41.2.tar.gz | sha256sum`) and bumped in `mediawikiTarballSHA256` whenever the version constant moves.
 
-**Status:** API, agent, panel, UI, and a second app (DokuWiki) shipped end-to-end on the `m19/*` branch stack. The catalog grows to MediaWiki once the DokuWiki install is host-validated and any framework gaps surfaced are folded back.
+**Status:** API, agent, panel, UI, and three apps (WordPress + DokuWiki + MediaWiki) shipped end-to-end on the `m19/*` branch stack. The framework is now exercised by `RequiresDB=true` (WordPress, MediaWiki) AND `RequiresDB=false` (DokuWiki) AND a per-app CLI installer (MediaWiki) AND a config-file generator (DokuWiki) — each axis the plan called out is covered. The catalog grows from here per ad-hoc operator demand without further framework work.
 
 **Depends on:** M10 (WordPress install plumbing — generalised here), M9 (PHP-FPM pools — required so non-WordPress PHP apps land on the right pool), M7 (databases — required for `RequiresDB=true` apps).
 
@@ -1029,7 +1028,7 @@ Use this table to navigate the codebase when adding a new capability:
 | M16: Automation API | Planned | — |
 | M17: Diagnostic reports | Planned | — |
 | M18: Per-user resource limits | 2026-04-19 | Waves A-G on `main` (`caebe7b` → `aaa6bd0`); ADR-0032; runbook at `plans/m18-resource-limits-runbook.md`; host-level validation pending on test VM |
-| M19: Applications Framework (steps 1–6 + 8) | 2026-04-19 | `m19/*` branch stack `733d6b8` → DokuWiki commit; ADR-0033; runbook at `docs/runbooks/applications.md`; SHA-256 tarball pin pending first-deploy capture; step 7 (MediaWiki) deferred behind DokuWiki host validation |
+| M19: Applications Framework (all 8 steps) | 2026-04-19 | `m19/*` branch stack `733d6b8` → MediaWiki commit; ADR-0033; runbook at `docs/runbooks/applications.md`; DokuWiki + MediaWiki SHA-256 tarball pins pending first-deploy capture |
 
 ---
 

@@ -282,6 +282,40 @@ func (h *applicationsHandler) create(c *gin.Context) {
 			License:      paramOr(req.Params, "license", "cc-by-sa"),
 			UseWWW:       install.UseWWW,
 		}, h.cfg)
+	case "mediawiki":
+		// MediaWiki requires a database (RequiresDB=true → adminPassword
+		// already populated by provisionDBChain via the DB-user path).
+		// admin_password the user typed/generated for the wiki admin
+		// account is a separate value; we don't reuse the DB password
+		// because that one's machine-grade ULID — fine for DB but the
+		// user wanted to type a memorable wiki admin password.
+		mwPass := paramOr(req.Params, "admin_password", "")
+		if mwPass == "" {
+			mwPass = ids.NewULID()
+		}
+		// MediaWiki minimum admin password length is 10. ULID is 26
+		// chars so the generator path always satisfies; a user-supplied
+		// shorter password would be rejected by the agent's validator.
+		go createMediaWikiInstallAndKickAgent(ctx, mediaWikiKickArgs{
+			InstallID:    installID,
+			OSUser:       osUser,
+			DocRoot:      domain.DocRoot,
+			Subdirectory: install.Subdirectory,
+			SiteURL:      siteURL,
+			DBName:       chain.DBName,
+			DBUser:       chain.DBUsername,
+			DBPassword:   adminPassword, // DB password from the chain; reused as installdbpass
+			SiteTitle:    paramOr(req.Params, "site_title", "My MediaWiki"),
+			AdminUser:    paramOr(req.Params, "admin_username", "Admin"),
+			AdminPass:    mwPass,
+			AdminEmail:   install.AdminEmail,
+			Language:     paramOr(req.Params, "language", "en"),
+			UseWWW:       install.UseWWW,
+		}, h.cfg)
+		// Echo the wiki admin password (NOT the DB one) back through
+		// the response so the reveal-once panel shows the credential
+		// the user actually needs to log in to the wiki.
+		adminPassword = mwPass
 	}
 
 	resp := createApplicationResponse{
@@ -591,6 +625,82 @@ func createDokuWikiInstallAndKickAgent(parentCtx context.Context, args dokuWikiK
 		"admin_pass":   args.AdminPass,
 		"admin_email":  args.AdminEmail,
 		"license":      args.License,
+		"use_www":      args.UseWWW,
+	})
+	if err != nil {
+		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	var respMap map[string]any
+	if err := json.Unmarshal(agentResp, &respMap); err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to parse agent response: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+	version := ""
+	if v, ok := respMap["version"].(string); ok {
+		version = v
+	}
+	cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
+}
+
+// mediaWikiKickArgs is what the install-row kicker passes through to
+// the agent's mediawiki installer (via the app.install dispatcher).
+// Mirrors installKickArgs (DB fields included, since MediaWiki is
+// RequiresDB=true) plus a Language param.
+type mediaWikiKickArgs struct {
+	InstallID    string
+	OSUser       string
+	DocRoot      string
+	Subdirectory string
+	SiteURL      string
+	DBName       string
+	DBUser       string
+	DBPassword   string
+	SiteTitle    string
+	AdminUser    string
+	AdminPass    string
+	AdminEmail   string
+	Language     string
+	UseWWW       bool
+}
+
+// createMediaWikiInstallAndKickAgent flips the install row to
+// "installing", dispatches app.install with app_type="mediawiki" via
+// the agent dispatcher (step 4), and updates the row to "ready" or
+// "failed" based on the result. Mirrors createInstallAndKickAgent +
+// createDokuWikiInstallAndKickAgent for the MediaWiki-specific param
+// shape.
+func createMediaWikiInstallAndKickAgent(parentCtx context.Context, args mediaWikiKickArgs, cfg ApplicationHandlerConfig) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	if err := cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "installing", nil, nil); err != nil {
+		return
+	}
+	if cfg.Agent == nil {
+		errMsg := "agent not configured"
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	agentResp, err := cfg.Agent.Call(ctx, "app.install", map[string]any{
+		"app_type":     "mediawiki",
+		"os_user":      args.OSUser,
+		"docroot":      args.DocRoot,
+		"subdirectory": args.Subdirectory,
+		"site_url":     args.SiteURL,
+		"db_name":      args.DBName,
+		"db_user":      args.DBUser,
+		"db_password":  args.DBPassword,
+		"db_host":      "localhost",
+		"site_title":   args.SiteTitle,
+		"admin_user":   args.AdminUser,
+		"admin_pass":   args.AdminPass,
+		"admin_email":  args.AdminEmail,
+		"language":     args.Language,
 		"use_www":      args.UseWWW,
 	})
 	if err != nil {

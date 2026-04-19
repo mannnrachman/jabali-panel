@@ -66,5 +66,8 @@ func RegisterDefaults(r *Registry) error {
 	if err := r.Register(DokuWiki); err != nil {
 		return err
 	}
+	if err := r.Register(MediaWiki); err != nil {
+		return err
+	}
 	return nil
 }

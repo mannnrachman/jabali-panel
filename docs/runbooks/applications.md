@@ -150,6 +150,30 @@ bumping per upstream release. There is no automated reminder; bump
 when an operator notices the install fails with a new SHA on a
 fresh server, or proactively check the DokuWiki release page.
 
+## MediaWiki: capturing the tarball SHA-256
+
+Same pattern as DokuWiki, but with a versioned URL — the pin needs to
+be bumped together with `mediawikiVersion`:
+
+```bash
+# Replace 1.41.2 with whatever mediawikiVersion is set to:
+curl -sSL https://releases.wikimedia.org/mediawiki/1.41/mediawiki-1.41.2.tar.gz | sha256sum
+```
+
+Edit `mediawikiTarballSHA256` in
+`panel-agent/internal/commands/mediawiki_install.go`. To bump to a
+new MediaWiki release: change `mediawikiVersion` (e.g. `1.41.3`),
+recompute the SHA-256, update both constants in lockstep. The minor-
+series directory in the URL (`1.41/`) is derived from
+`mediawikiVersion` automatically, so no manual URL surgery is needed
+within an LTS series.
+
+When MediaWiki ships a new LTS major (e.g. `1.42.x`), the URL pattern
+stays the same — only `mediawikiVersion` changes. Read the upstream
+release notes before bumping; major releases occasionally change DB
+schema and benefit from running `php maintenance/update.php` post-
+upgrade, which is **not** automated by the agent installer.
+
 ## Common failure modes
 
 ### `400 invalid_app_type`

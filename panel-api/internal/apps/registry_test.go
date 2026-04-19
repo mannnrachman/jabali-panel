@@ -187,6 +187,31 @@ func TestRegisterDefaults_RegistersDokuWiki(t *testing.T) {
 	}
 }
 
+func TestRegisterDefaults_RegistersMediaWiki(t *testing.T) {
+	r := New()
+	if err := RegisterDefaults(r); err != nil {
+		t.Fatalf("RegisterDefaults: %v", err)
+	}
+	mw, ok := r.Get("mediawiki")
+	if !ok {
+		t.Fatal("mediawiki not registered after RegisterDefaults")
+	}
+	if !mw.RequiresDB {
+		t.Error("mediawiki should declare RequiresDB=true (it needs MariaDB)")
+	}
+	if mw.AgentCloneCmd != "" {
+		t.Errorf("mediawiki should NOT declare a clone command yet; got %q", mw.AgentCloneCmd)
+	}
+	if mw.AgentInstallCmd != "app.install" || mw.AgentDeleteCmd != "app.delete" {
+		t.Errorf("mediawiki dispatcher commands = (%q, %q)", mw.AgentInstallCmd, mw.AgentDeleteCmd)
+	}
+	for _, want := range []string{"site_title", "admin_username", "admin_email", "admin_password", "language"} {
+		if _, ok := mw.InstallParamSchema[want]; !ok {
+			t.Errorf("mediawiki schema missing %q", want)
+		}
+	}
+}
+
 func TestRegister_ConcurrentSafe(t *testing.T) {
 	// Race detector trips here if Register's mutex disappears.
 	r := New()

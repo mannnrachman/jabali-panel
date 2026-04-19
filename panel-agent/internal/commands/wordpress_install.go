@@ -71,6 +71,40 @@ func buildSystemdRunCmd(ctx context.Context, osUser string, args ...string) *exe
 	return exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
 }
 
+// removePlaceholderIndex deletes index.html at the install root if present.
+// domain.create writes a "this domain is provisioned" placeholder there;
+// nginx's `index index.html index.php` directive serves it before WP's
+// index.php, so it must go before the install completes — otherwise the
+// browser keeps seeing the placeholder until the user manually removes it.
+//
+// Safe to call unconditionally: the install API rejects re-installs (DB
+// idempotency check) so the only index.html the user could lose here is
+// either the placeholder or a hand-uploaded file the user is intentionally
+// replacing by clicking "Install WordPress" on this domain.
+func removePlaceholderIndex(ctx context.Context, installPath string) {
+	_ = exec.CommandContext(ctx, "rm", "-f", filepath.Join(installPath, "index.html")).Run()
+}
+
+// normalizePermsToWwwData makes the WP tree match the project's ownership
+// convention used by domain.create: owner=<user>, group=www-data,
+// dirs 0750, files 0640. nginx (in the www-data group) traverses via
+// group bits; FPM (running AS the user) writes via owner bits. Without
+// this step `wp core download` leaves files owned <user>:<user> with
+// world-readable perms — works by accident today but breaks the moment
+// any plugin or upload lands a 0700 dir or removes the world bit.
+func normalizePermsToWwwData(ctx context.Context, installPath, osUser string) error {
+	if err := exec.CommandContext(ctx, "chown", "-R", osUser+":www-data", installPath).Run(); err != nil {
+		return fmt.Errorf("chown -R %s:www-data %s: %w", osUser, installPath, err)
+	}
+	if err := exec.CommandContext(ctx, "find", installPath, "-type", "d", "-exec", "chmod", "0750", "{}", "+").Run(); err != nil {
+		return fmt.Errorf("chmod dirs 0750 under %s: %w", installPath, err)
+	}
+	if err := exec.CommandContext(ctx, "find", installPath, "-type", "f", "-exec", "chmod", "0640", "{}", "+").Run(); err != nil {
+		return fmt.Errorf("chmod files 0640 under %s: %w", installPath, err)
+	}
+	return nil
+}
+
 // cleanupWordPressFiles performs best-effort cleanup on failure.
 func cleanupWordPressFiles(ctx context.Context, docroot string) error {
 	files := []string{
@@ -204,6 +238,12 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 	// clear stale wp-* files first. Idempotent: no-op on empty dir.
 	_ = cleanupWordPressFiles(ctx, installPath)
 
+	// Drop the domain.create placeholder index.html. nginx's index
+	// directive lists html before php, so leaving it would mask WP's
+	// index.php on /. The user clicked "Install WordPress" — that's
+	// explicit intent to replace the docroot's landing page.
+	removePlaceholderIndex(ctx, installPath)
+
 	// Step 1: wp core download
 	downloadCmd := buildSystemdRunCmd(ctx,
 		req.OSUser,
@@ -281,8 +321,11 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 		}
 	}
 
-	// Chown the config file to the OS user
-	chownCmd := exec.CommandContext(ctx, "chown", req.OSUser+":"+req.OSUser, configPath)
+	// Chown the config file to <user>:www-data so it matches the rest
+	// of the docroot once normalizePermsToWwwData runs at the end.
+	// Group=www-data lets nginx (in www-data) read the file via group bits;
+	// FPM (running as <user>) reads via owner bits.
+	chownCmd := exec.CommandContext(ctx, "chown", req.OSUser+":www-data", configPath)
 	if err := chownCmd.Run(); err != nil {
 		_ = cleanupWordPressFiles(ctx, installPath)
 		return nil, &agentwire.AgentError{
@@ -342,6 +385,23 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 	}
 
 	version := strings.TrimSpace(versionOutput.String())
+
+	// Normalize ownership + perms across the entire WP tree to the
+	// project's <user>:www-data 0750/0640 convention. wp-cli ran under
+	// systemd-run --uid=user --gid=user, so files landed as user:user
+	// with the user's default umask — diverges from domain.create's
+	// docroot ownership and breaks any nginx access path that depends
+	// on group bits (e.g. a future plugin that creates a 0700 dir).
+	if err := normalizePermsToWwwData(ctx, installPath, req.OSUser); err != nil {
+		// Don't roll back the install — files are valid, perms are just
+		// off. Surface the error so the panel marks the install as
+		// having a recoverable issue rather than silently leaving the
+		// docroot in the wrong shape.
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("normalize perms failed: %v", err),
+		}
+	}
 
 	return wordpressInstallResp{
 		Version: version,

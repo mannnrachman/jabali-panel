@@ -368,6 +368,35 @@ guards (checks for existing config files before overwriting).
 
 ---
 
+### 4.10.2 PHP extensions management (M9.6)
+
+**Shipped:** Server-wide extension management per PHP version. Admin PHP page now has two tabs: the existing "PHP Versions" (install/reload/set-default) and a new "PHP Extensions" (pick a version → install/remove/enable/disable any of 63 allowlisted extensions). No per-user or per-pool scope — changes affect every `php<v>-fpm` master and every `jabali-fpm@<user>` pinned to `<v>`.
+
+**State model:** live from dpkg + `/etc/php/<v>/fpm/conf.d/*.ini` on every list call. No migration, no DB persistence, zero drift risk.
+
+**Allowlist:** 63 entries at `internal/phpext/phpext.go`, shared by panel-api + panel-agent. Built-ins (opcache, posix, pdo, mysqlnd, etc.) expose only enable/disable. Bundled packages (xml family → `php<v>-xml`) are collapsed by the resolver. The `mysql` entry is a meta-install for `php<v>-mysql` (mysqli + pdo_mysql); enable/disable rejected as ambiguous.
+
+**Files:**
+- Allowlist + resolver: `internal/phpext/phpext.go`
+- Agent: `panel-agent/internal/commands/php_ext_list.go`, `php_ext_apply.go`, `php_ext_shell.go`
+- API: `panel-api/internal/api/php_extensions.go`
+- Contract lock: `panel-api/internal/agent/php_ext_contract_test.go` + `testdata/*.json` (6 golden fixtures, round-tripped)
+- UI: `panel-ui/src/shells/admin/php/PHPVersionsPage.tsx` (Tabs container), `VersionsTab.tsx` (renamed from `PHPPoolsList.tsx`), `PHPExtensionsTab.tsx`
+
+**Agent commands:** `php.ext.list {version} → {version, extensions: [{name, installed, enabled, built_in}]}`, `php.ext.apply {version, ext, action} → {version, ext, installed, enabled}` where action ∈ `{install, remove, enable, disable}`. Serialized by `aptMu sync.Mutex` around apt calls.
+
+**API:**
+- `GET  /api/v1/admin/php/versions/:version/extensions`
+- `POST /api/v1/admin/php/versions/:version/extensions/:ext/apply` (body `{"action":"install|remove|enable|disable"}`)
+
+**Wire addition:** `agentwire.CodeFailedPrecondition` + 409 Conflict mapping in `translateAgentError` — used for "version not installed", "ext not installed for enable", "shared-package remove conflict", "apt/phpenmod non-zero exit".
+
+**ADR:** [ADR-0031](adr/0031-php-extensions-management.md)
+**Runbook:** [docs/runbooks/php-extensions.md](runbooks/php-extensions.md)
+**Plan:** [plans/php-extensions-tab.md](../plans/php-extensions-tab.md)
+
+---
+
 ### 4.11 Per-user systemd slices (M9.5)
 
 **Shipped:** Every hosting user now runs inside a nested systemd slice — PHP-FPM master, login shells, and systemd-user timers all land in the same cgroup. The distro's global `php<v>-fpm.service` is stopped, disabled, and masked after cutover.
@@ -923,6 +952,7 @@ Use this table to navigate the codebase when adding a new capability:
 | M7: Databases (MariaDB) | 2026-04-17 | ADRs 0018-0022 |
 | M8: Cron (SHIPPED) | 2026-04-18 | ADR-0029 |
 | M9: PHP/FPM pools | 2026-04-17 | 1aaa507 (ADR), 5dbf471 (shipped) |
+| M9.6: PHP extensions tab | 2026-04-19 | ADR-0031; steps in `5e6b2ab`, `8c06612`, `f345cce`, `2c8b3a3` |
 | M10: WordPress | 2026-04-18 | `85ed8b4` through `main HEAD` |
 | M11: File Manager (AntD-native, superseded filebrowser) | 2026-04-19 | ADR-0030, Waves A–E in `main` |
 | M12: SFTP via openssh | 2026-04-18 | `aaa0c82` through `0256773` |
@@ -934,4 +964,4 @@ Use this table to navigate the codebase when adding a new capability:
 
 ---
 
-**Last updated:** 2026-04-18
+**Last updated:** 2026-04-19

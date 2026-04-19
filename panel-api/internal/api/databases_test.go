@@ -190,12 +190,26 @@ func (m *mockUserRepo) Delete(ctx context.Context, id string) error {
 }
 
 func (m *mockUserRepo) SetTOTPSecret(ctx context.Context, id string, encrypted []byte) error {
+	if u, ok := m.users[id]; ok {
+		u.TOTPSecretEncrypted = encrypted
+	}
 	return nil
 }
 func (m *mockUserRepo) EnableTOTP(ctx context.Context, id string, now time.Time) error {
+	if u, ok := m.users[id]; ok {
+		u.TOTPEnabled = true
+		u.TOTPEnabledAt = &now
+	}
 	return nil
 }
-func (m *mockUserRepo) DisableTOTP(ctx context.Context, id string) error { return nil }
+func (m *mockUserRepo) DisableTOTP(ctx context.Context, id string) error {
+	if u, ok := m.users[id]; ok {
+		u.TOTPEnabled = false
+		u.TOTPEnabledAt = nil
+		u.TOTPSecretEncrypted = nil
+	}
+	return nil
+}
 
 type mockPackageRepo struct {
 	packages map[string]*models.HostingPackage

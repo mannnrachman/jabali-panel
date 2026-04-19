@@ -7,7 +7,6 @@ import {
   Spin,
   Table,
   Tag,
-  Typography,
 } from "antd";
 import {
   CheckCircleOutlined,
@@ -154,7 +153,7 @@ export const VersionsTab = () => {
 
   if (loading && !statusData) {
     return (
-      <div style={{ padding: 24, textAlign: "center" }}>
+      <div style={{ textAlign: "center" }}>
         <Spin size="large" />
       </div>
     );
@@ -173,36 +172,18 @@ export const VersionsTab = () => {
   });
 
   return (
-    <div style={{ padding: 24 }}>
-      <Space
-        style={{
-          marginBottom: 16,
-          width: "100%",
-          justifyContent: "space-between",
-        }}
-        direction="vertical"
-      >
-        <div>
-          <Typography.Title level={3} style={{ margin: "0 0 8px 0" }}>
-            PHP Versions
-          </Typography.Title>
-          <Typography.Paragraph style={{ margin: 0 }}>
-            Install, manage and configure PHP versions
-          </Typography.Paragraph>
-        </div>
-
-        {!dismissedWarning && (
-          <Alert
-            type="warning"
-            showIcon
-            message="Modifying PHP versions can cause server downtime"
-            description="Uninstalling PHP versions may break websites that depend on them. Ensure you understand the impact before making changes."
-            closable
-            onClose={() => setDismissedWarning(true)}
-            style={{ marginBottom: 16 }}
-          />
-        )}
-      </Space>
+    <>
+      {!dismissedWarning && (
+        <Alert
+          type="warning"
+          showIcon
+          message="Modifying PHP versions can cause server downtime"
+          description="Uninstalling PHP versions may break websites that depend on them. Ensure you understand the impact before making changes."
+          closable
+          onClose={() => setDismissedWarning(true)}
+          style={{ marginBottom: 16 }}
+        />
+      )}
 
       <Table<PHPVersionStatus>
         dataSource={tableData}
@@ -311,6 +292,6 @@ export const VersionsTab = () => {
           }}
         />
       </Table>
-    </div>
+    </>
   );
 };

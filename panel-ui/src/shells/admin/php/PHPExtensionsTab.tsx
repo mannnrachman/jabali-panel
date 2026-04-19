@@ -140,7 +140,7 @@ export const PHPExtensionsTab = () => {
 
   if (loadingVersions) {
     return (
-      <div style={{ padding: 24, textAlign: "center" }}>
+      <div style={{ textAlign: "center" }}>
         <Spin size="large" />
       </div>
     );
@@ -148,44 +148,27 @@ export const PHPExtensionsTab = () => {
 
   if (versions.length === 0) {
     return (
-      <div style={{ padding: 24 }}>
-        <Alert
-          type="info"
-          showIcon
-          message="No PHP versions installed"
-          description="Install a PHP version first under the PHP Versions tab. Extension management requires at least one installed version."
-        />
-      </div>
+      <Alert
+        type="info"
+        showIcon
+        message="No PHP versions installed"
+        description="Install a PHP version first under the PHP Versions tab. Extension management requires at least one installed version."
+      />
     );
   }
 
   return (
-    <div style={{ padding: 24 }}>
-      <Space
-        direction="vertical"
-        size="middle"
-        style={{ width: "100%", marginBottom: 16 }}
-      >
-        <div>
-          <Typography.Title level={3} style={{ margin: "0 0 8px 0" }}>
-            <ApiOutlined style={{ marginRight: 8 }} />
-            PHP Extensions
-          </Typography.Title>
-          <Typography.Paragraph style={{ margin: 0 }}>
-            Manage installed extensions per PHP version
-          </Typography.Paragraph>
-        </div>
-        <div>
-          <Typography.Text strong>PHP Version</Typography.Text>
-          <Select
-            style={{ display: "block", marginTop: 4, maxWidth: 320 }}
-            value={selectedVersion ?? undefined}
-            onChange={(v) => setSelectedVersion(v)}
-            options={versions.map((v) => ({ value: v, label: `PHP ${v}` }))}
-            aria-label="PHP version"
-          />
-        </div>
-      </Space>
+    <>
+      <div style={{ marginBottom: 16 }}>
+        <Typography.Text strong>PHP Version</Typography.Text>
+        <Select
+          style={{ display: "block", marginTop: 4, maxWidth: 320 }}
+          value={selectedVersion ?? undefined}
+          onChange={(v) => setSelectedVersion(v)}
+          options={versions.map((v) => ({ value: v, label: `PHP ${v}` }))}
+          aria-label="PHP version"
+        />
+      </div>
 
       <Card
         title={selectedVersion ? `PHP ${selectedVersion} Extensions` : "Extensions"}
@@ -247,7 +230,7 @@ export const PHPExtensionsTab = () => {
           />
         </Table>
       </Card>
-    </div>
+    </>
   );
 };
 

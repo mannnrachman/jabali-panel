@@ -2211,21 +2211,37 @@ install_kratos() {
 
   _ok "Kratos migrations completed"
 
-  # Install systemd unit file.
+  # Install systemd unit file. Each step is a _log line so when this
+  # function silently exits (set -e), the operator can tell which one
+  # was the last to fire — the alternative (no progress output) produced
+  # the bug reported by the first-install operator: script dies with
+  # zero diagnostic between "migrations completed" and the shell prompt.
+  _log "installing jabali-kratos systemd unit"
   if [[ ! -f "${REPO_DIR}/install/systemd/jabali-kratos.service" ]]; then
     _die "Kratos systemd unit template not found at ${REPO_DIR}/install/systemd/jabali-kratos.service"
   fi
   install -m 0644 -o root -g root "${REPO_DIR}/install/systemd/jabali-kratos.service" \
     /etc/systemd/system/jabali-kratos.service
 
+  _log "reloading systemd daemon"
   systemctl daemon-reload
 
-  # Enable and start the service.
+  _log "enabling jabali-kratos.service"
   systemctl enable --quiet jabali-kratos
-  systemctl restart --quiet jabali-kratos
 
-  # Poll for readiness. Kratos exposes /health/ready on the admin port (4434).
-  # We check via loopback port 4433 (public) for the self-service endpoints.
+  _log "restarting jabali-kratos.service"
+  # --quiet silences success output, but systemctl restart still returns
+  # non-zero if the unit fails to start (e.g. Kratos crashes on config
+  # parse). set -e would kill us silently. Capture + surface the failure
+  # with the last 20 log lines so the operator gets context instead of
+  # a bare shell prompt.
+  if ! systemctl restart --quiet jabali-kratos; then
+    _warn "jabali-kratos failed to start; dumping last 20 journal lines"
+    journalctl -u jabali-kratos -n 20 --no-pager || true
+    _die "jabali-kratos did not start — fix /etc/jabali-panel/kratos.yml and re-run install.sh"
+  fi
+
+  # Poll for readiness. Kratos exposes /health/ready on the public port (4433).
   # Use `waited=$((waited+1))` rather than `((waited++))` — the post-increment
   # form evaluates to the OLD value (0 on first iter), which `set -e` treats
   # as a failed command and silently kills the installer.

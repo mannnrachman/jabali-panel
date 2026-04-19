@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"net/http"
+	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -14,6 +16,25 @@ import (
 // systemCallTimeout bounds agent calls for system endpoints. Generous
 // because service.list probes multiple units sequentially.
 const systemCallTimeout = 10 * time.Second
+
+// resolverSetTimeout is longer than systemCallTimeout because the agent has
+// to write the drop-in and wait for systemd-resolved to restart (up to ~5s
+// on a slow box) before returning. 15s leaves headroom.
+const resolverSetTimeout = 15 * time.Second
+
+// maxResolverEntries caps the list to match the agent-side check. Keep the
+// two in sync so the API surface the admin sees matches what the agent
+// would accept.
+const maxResolverEntries = 8
+
+// resolverSetRequest is the PUT body for DNS resolvers. The agent does the
+// authoritative validation; this layer just filters out obvious garbage
+// (too many entries, non-IPs) so we can return 400 with a nice message
+// instead of bouncing off the agent with a generic bad-request.
+type resolverSetRequest struct {
+	Resolvers    []string `json:"resolvers"`
+	SearchDomain string   `json:"search_domain"`
+}
 
 // RegisterSystemRoutes mounts admin-only system endpoints under the
 // given router group. The group is expected to already carry RequireAuth
@@ -39,6 +60,102 @@ func RegisterSystemRoutes(rg *gin.RouterGroup, cli agent.AgentInterface) {
 		defer cancel()
 
 		raw, err := cli.Call(ctx, "service.list", nil)
+		if err != nil {
+			status, body := translateAgentError(err)
+			c.JSON(status, body)
+			return
+		}
+		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
+	})
+
+	// DNS resolvers — truth lives on disk (systemd-resolved drop-in) so we
+	// round-trip to the agent for both read and write; no DB involvement.
+	sys.GET("/resolvers", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), systemCallTimeout)
+		defer cancel()
+
+		raw, err := cli.Call(ctx, "system.resolver.get", nil)
+		if err != nil {
+			status, body := translateAgentError(err)
+			c.JSON(status, body)
+			return
+		}
+		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
+	})
+
+	sys.PUT("/resolvers", func(c *gin.Context) {
+		var req resolverSetRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"status": "error",
+				"error":  "validation_failed",
+				"detail": err.Error(),
+			})
+			return
+		}
+
+		// Normalize + validate at the API edge. Mirrors the agent-side rules
+		// so the admin sees a 400 with a clear detail instead of a 502 from
+		// a generic agent bounce.
+		cleaned := make([]string, 0, len(req.Resolvers))
+		seen := map[string]bool{}
+		for _, r := range req.Resolvers {
+			r = strings.TrimSpace(r)
+			if r == "" {
+				continue
+			}
+			addr, err := netip.ParseAddr(r)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"status": "error",
+					"error":  "invalid_resolver",
+					"detail": "not a valid IP: " + r,
+				})
+				return
+			}
+			if addr.IsUnspecified() || addr.IsMulticast() {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"status": "error",
+					"error":  "invalid_resolver",
+					"detail": r + " is not a usable unicast address",
+				})
+				return
+			}
+			if seen[r] {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"status": "error",
+					"error":  "duplicate_resolver",
+					"detail": "duplicate resolver: " + r,
+				})
+				return
+			}
+			seen[r] = true
+			cleaned = append(cleaned, r)
+		}
+		if len(cleaned) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  "no_resolvers",
+				"detail": "at least one resolver required",
+			})
+			return
+		}
+		if len(cleaned) > maxResolverEntries {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  "too_many_resolvers",
+				"detail": "at most 8 resolvers allowed",
+			})
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(c.Request.Context(), resolverSetTimeout)
+		defer cancel()
+
+		raw, err := cli.Call(ctx, "system.resolver.set", map[string]any{
+			"resolvers":     cleaned,
+			"search_domain": strings.TrimSpace(req.SearchDomain),
+		})
 		if err != nil {
 			status, body := translateAgentError(err)
 			c.JSON(status, body)

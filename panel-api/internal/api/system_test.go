@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -140,4 +141,166 @@ func TestSystemServices_ForbiddenForNonAdmin(t *testing.T) {
 	r.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+func TestSystemResolversGet_OK(t *testing.T) {
+	t.Parallel()
+
+	m := agent.NewMockClient().On("system.resolver.get", map[string]any{
+		"active":        true,
+		"resolvers":     []string{"1.1.1.1", "2606:4700:4700::1111"},
+		"search_domain": "example.com",
+		"source":        "drop-in",
+	})
+
+	r := adminRouter(m)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/resolvers", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "drop-in", body["source"])
+	assert.Equal(t, true, body["active"])
+}
+
+func TestSystemResolversGet_ForbiddenForNonAdmin(t *testing.T) {
+	t.Parallel()
+
+	m := agent.NewMockClient().On("system.resolver.get", map[string]any{})
+
+	r := userRouter(m)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/resolvers", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+func TestSystemResolversPut_OK(t *testing.T) {
+	t.Parallel()
+
+	m := agent.NewMockClient().On("system.resolver.set", map[string]any{
+		"active":        true,
+		"resolvers":     []string{"1.1.1.1", "1.0.0.1"},
+		"search_domain": "",
+		"source":        "drop-in",
+	})
+
+	r := adminRouter(m)
+	payload := `{"resolvers":["1.1.1.1","1.0.0.1"],"search_domain":""}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/resolvers", bytes.NewBufferString(payload))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Len(t, m.Calls(), 1)
+	assert.Equal(t, "system.resolver.set", m.Calls()[0].Command)
+
+	// Confirm API forwarded the cleaned list.
+	var forwardedParams struct {
+		Resolvers    []string `json:"resolvers"`
+		SearchDomain string   `json:"search_domain"`
+	}
+	require.NoError(t, json.Unmarshal(m.Calls()[0].Params, &forwardedParams))
+	assert.Equal(t, []string{"1.1.1.1", "1.0.0.1"}, forwardedParams.Resolvers)
+}
+
+// TestSystemResolversPut_InvalidIP — malformed resolver never reaches the
+// agent, the API returns 400 with a clear detail.
+func TestSystemResolversPut_InvalidIP(t *testing.T) {
+	t.Parallel()
+
+	m := agent.NewMockClient()
+	r := adminRouter(m)
+	payload := `{"resolvers":["1.1.1.1","not-an-ip"]}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/resolvers", bytes.NewBufferString(payload))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Empty(t, m.Calls(), "invalid input must not reach agent")
+}
+
+func TestSystemResolversPut_EmptyList(t *testing.T) {
+	t.Parallel()
+
+	m := agent.NewMockClient()
+	r := adminRouter(m)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/resolvers", bytes.NewBufferString(`{"resolvers":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Empty(t, m.Calls())
+}
+
+func TestSystemResolversPut_TooMany(t *testing.T) {
+	t.Parallel()
+
+	m := agent.NewMockClient()
+	r := adminRouter(m)
+	payload := `{"resolvers":["1.1.1.1","1.0.0.1","8.8.8.8","8.8.4.4","9.9.9.9","149.112.112.112","208.67.222.222","208.67.220.220","76.76.2.0"]}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/resolvers", bytes.NewBufferString(payload))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// TestSystemResolversPut_Duplicate — panel rejects duplicates up front so
+// the admin sees the error before the agent bounces.
+func TestSystemResolversPut_Duplicate(t *testing.T) {
+	t.Parallel()
+
+	m := agent.NewMockClient()
+	r := adminRouter(m)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/resolvers",
+		bytes.NewBufferString(`{"resolvers":["1.1.1.1","1.1.1.1"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// TestSystemResolversPut_AgentFailedPrecondition — when the agent reports
+// the restart failed (and auto-rolled back), it returns CodeFailedPrecondition
+// which translateAgentError maps to 409.
+func TestSystemResolversPut_AgentFailedPrecondition(t *testing.T) {
+	t.Parallel()
+
+	m := agent.NewMockClient().OnError("system.resolver.set", &agent.AgentError{
+		Code:    agent.CodeFailedPrecondition,
+		Message: "systemd-resolved restart failed; rolled back drop-in",
+	})
+
+	r := adminRouter(m)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/resolvers",
+		bytes.NewBufferString(`{"resolvers":["1.1.1.1"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusConflict, rec.Code)
+}
+
+func TestSystemResolversPut_ForbiddenForNonAdmin(t *testing.T) {
+	t.Parallel()
+
+	m := agent.NewMockClient()
+	r := userRouter(m)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/resolvers",
+		bytes.NewBufferString(`{"resolvers":["1.1.1.1"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Empty(t, m.Calls())
 }

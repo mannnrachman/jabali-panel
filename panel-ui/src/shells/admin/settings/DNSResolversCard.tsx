@@ -1,0 +1,350 @@
+import { useEffect, useState } from "react";
+import {
+  Alert,
+  Button,
+  Card,
+  Col,
+  Form,
+  Input,
+  Row,
+  Space,
+  Tag,
+  Typography,
+} from "antd";
+import { SaveOutlined, ApiOutlined } from "@ant-design/icons";
+import { useNotification } from "@refinedev/core";
+
+import { apiClient } from "../../../apiClient";
+
+// ResolverGet matches the GET /system/resolvers response shape. source tells
+// us whether we're reading the panel-owned drop-in ("drop-in") or there's
+// nothing there yet ("none").
+type ResolverGet = {
+  active: boolean;
+  resolvers: string[];
+  search_domain: string;
+  source: "drop-in" | "system" | "none";
+};
+
+// Provider templates. IPv4 primary/secondary + IPv6 primary/secondary so the
+// form maps cleanly. When the admin clicks a preset, we fill all four slots
+// (empty strings for providers without a second IPv6). Operator can prune
+// before saving — we only send non-empty entries.
+type Provider = {
+  key: string;
+  label: string;
+  description: string;
+  ipv4: [string, string];
+  ipv6: [string, string];
+};
+
+const providers: Provider[] = [
+  {
+    key: "cloudflare",
+    label: "Cloudflare",
+    description: "Fast, privacy-focused public resolver.",
+    ipv4: ["1.1.1.1", "1.0.0.1"],
+    ipv6: ["2606:4700:4700::1111", "2606:4700:4700::1001"],
+  },
+  {
+    key: "cloudflare-family",
+    label: "Cloudflare Family",
+    description: "Blocks malware and adult content.",
+    ipv4: ["1.1.1.3", "1.0.0.3"],
+    ipv6: ["2606:4700:4700::1113", "2606:4700:4700::1003"],
+  },
+  {
+    key: "google",
+    label: "Google Public DNS",
+    description: "Global anycast resolver operated by Google.",
+    ipv4: ["8.8.8.8", "8.8.4.4"],
+    ipv6: ["2001:4860:4860::8888", "2001:4860:4860::8844"],
+  },
+  {
+    key: "quad9",
+    label: "Quad9",
+    description: "Security-first resolver, blocks known malicious hosts.",
+    ipv4: ["9.9.9.9", "149.112.112.112"],
+    ipv6: ["2620:fe::fe", "2620:fe::9"],
+  },
+  {
+    key: "opendns",
+    label: "OpenDNS",
+    description: "Cisco-operated resolver with optional filtering.",
+    ipv4: ["208.67.222.222", "208.67.220.220"],
+    ipv6: ["2620:119:35::35", "2620:119:53::53"],
+  },
+  {
+    key: "adguard",
+    label: "AdGuard DNS",
+    description: "Blocks ads and trackers at the resolver.",
+    ipv4: ["94.140.14.14", "94.140.15.15"],
+    ipv6: ["2a10:50c0::ad1:ff", "2a10:50c0::ad2:ff"],
+  },
+  {
+    key: "mullvad",
+    label: "Mullvad",
+    description: "Privacy-oriented resolver run by Mullvad VPN.",
+    ipv4: ["194.242.2.2", ""],
+    ipv6: ["2a07:e340::2", ""],
+  },
+  {
+    key: "controld",
+    label: "Control D",
+    description: "Unfiltered resolver by Control D.",
+    ipv4: ["76.76.2.0", "76.76.10.0"],
+    ipv6: ["2606:1a40::", "2606:1a40:1::"],
+  },
+];
+
+type FormShape = {
+  ipv4_primary: string;
+  ipv4_secondary: string;
+  ipv6_primary: string;
+  ipv6_secondary: string;
+  search_domain: string;
+};
+
+// populateFromGet splits the flat resolvers[] into v4/v6 slots for the form.
+// systemd-resolved doesn't care about order, but the UI wants stable slots
+// so toggling between presets feels predictable.
+function populateFromGet(get: ResolverGet): FormShape {
+  const v4: string[] = [];
+  const v6: string[] = [];
+  for (const r of get.resolvers ?? []) {
+    (r.includes(":") ? v6 : v4).push(r);
+  }
+  return {
+    ipv4_primary: v4[0] ?? "",
+    ipv4_secondary: v4[1] ?? "",
+    ipv6_primary: v6[0] ?? "",
+    ipv6_secondary: v6[1] ?? "",
+    search_domain: get.search_domain ?? "",
+  };
+}
+
+// collectResolvers strips empties and preserves admin intent (order: v4
+// primary, v4 secondary, v6 primary, v6 secondary).
+function collectResolvers(values: FormShape): string[] {
+  return [values.ipv4_primary, values.ipv4_secondary, values.ipv6_primary, values.ipv6_secondary]
+    .map((s) => (s ?? "").trim())
+    .filter((s) => s.length > 0);
+}
+
+type NotifyFn = ReturnType<typeof useNotification>["open"];
+function notifyError(notify: NotifyFn, title: string, err: unknown) {
+  const e = err as { response?: { data?: { detail?: string } }; message?: string };
+  notify?.({
+    type: "error",
+    message: title,
+    description: e.response?.data?.detail ?? e.message ?? "Unknown error",
+  });
+}
+
+export const DNSResolversCard = () => {
+  const [form] = Form.useForm<FormShape>();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [source, setSource] = useState<ResolverGet["source"]>("none");
+  const [active, setActive] = useState<boolean>(true);
+  const { open: notify } = useNotification();
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await apiClient.get<ResolverGet>("/system/resolvers");
+        if (cancelled) return;
+        form.setFieldsValue(populateFromGet(resp.data));
+        setSource(resp.data.source);
+        setActive(resp.data.active);
+      } catch (err) {
+        notifyError(notify, "Failed to load DNS resolvers", err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const applyPreset = (p: Provider) => {
+    form.setFieldsValue({
+      ipv4_primary: p.ipv4[0],
+      ipv4_secondary: p.ipv4[1],
+      ipv6_primary: p.ipv6[0],
+      ipv6_secondary: p.ipv6[1],
+    });
+  };
+
+  const handleSubmit = async (values: FormShape) => {
+    setSaving(true);
+    try {
+      const resp = await apiClient.put<ResolverGet>("/system/resolvers", {
+        resolvers: collectResolvers(values),
+        search_domain: (values.search_domain ?? "").trim(),
+      });
+      notify?.({ type: "success", message: "DNS resolvers saved" });
+      form.setFieldsValue(populateFromGet(resp.data));
+      setSource(resp.data.source);
+      setActive(resp.data.active);
+    } catch (err) {
+      notifyError(notify, "Failed to save DNS resolvers", err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card
+      title={
+        <>
+          <ApiOutlined style={{ marginRight: 8 }} />
+          DNS Resolvers
+        </>
+      }
+      size="small"
+      style={{ marginBottom: 16 }}
+    >
+      <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+        Set the upstream DNS servers this server uses to resolve hostnames.
+        Writes a drop-in at <code>/etc/systemd/resolved.conf.d/jabali.conf</code>
+        {" "}and restarts <code>systemd-resolved</code>. Falls back gracefully
+        if the restart fails.
+      </Typography.Paragraph>
+
+      <Space size="small" wrap style={{ marginBottom: 12 }}>
+        <Typography.Text type="secondary">Status:</Typography.Text>
+        {active ? (
+          <Tag color="green">systemd-resolved active</Tag>
+        ) : (
+          <Tag color="orange">systemd-resolved inactive</Tag>
+        )}
+        <Tag>Source: {source}</Tag>
+      </Space>
+
+      {!active && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="systemd-resolved is not active"
+          description="The drop-in will still be written, but changes won't take effect until the service is running."
+        />
+      )}
+
+      <Form
+        form={form}
+        layout="vertical"
+        onFinish={handleSubmit}
+        disabled={loading}
+      >
+        <Typography.Text strong>Presets</Typography.Text>
+        <div style={{ marginTop: 8, marginBottom: 16 }}>
+          <Space size={[8, 8]} wrap>
+            {providers.map((p) => (
+              <Button
+                key={p.key}
+                size="small"
+                onClick={() => applyPreset(p)}
+                title={p.description}
+              >
+                {p.label}
+              </Button>
+            ))}
+          </Space>
+        </div>
+
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item
+              label="IPv4 Primary"
+              name="ipv4_primary"
+              rules={[
+                {
+                  pattern: /^$|^[0-9]{1,3}(\.[0-9]{1,3}){3}$/,
+                  message: "Invalid IPv4",
+                },
+              ]}
+            >
+              <Input placeholder="1.1.1.1" />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item
+              label="IPv4 Secondary (optional)"
+              name="ipv4_secondary"
+              rules={[
+                {
+                  pattern: /^$|^[0-9]{1,3}(\.[0-9]{1,3}){3}$/,
+                  message: "Invalid IPv4",
+                },
+              ]}
+            >
+              <Input placeholder="1.0.0.1" />
+            </Form.Item>
+          </Col>
+        </Row>
+
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item
+              label="IPv6 Primary (optional)"
+              name="ipv6_primary"
+              rules={[
+                {
+                  pattern: /^$|^[0-9a-fA-F:]+$/,
+                  message: "Invalid IPv6",
+                },
+              ]}
+            >
+              <Input placeholder="2606:4700:4700::1111" />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item
+              label="IPv6 Secondary (optional)"
+              name="ipv6_secondary"
+              rules={[
+                {
+                  pattern: /^$|^[0-9a-fA-F:]+$/,
+                  message: "Invalid IPv6",
+                },
+              ]}
+            >
+              <Input placeholder="2606:4700:4700::1001" />
+            </Form.Item>
+          </Col>
+        </Row>
+
+        <Form.Item
+          label="Search domain (optional)"
+          name="search_domain"
+          extra="Appended to unqualified hostnames (systemd-resolved Domains=)."
+          rules={[
+            {
+              pattern:
+                /^$|^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/,
+              message: "Invalid domain",
+            },
+          ]}
+        >
+          <Input placeholder="example.com" style={{ maxWidth: 360 }} />
+        </Form.Item>
+
+        <Space>
+          <Button
+            type="primary"
+            icon={<SaveOutlined />}
+            loading={saving}
+            htmlType="submit"
+          >
+            Save Resolvers
+          </Button>
+        </Space>
+      </Form>
+    </Card>
+  );
+};

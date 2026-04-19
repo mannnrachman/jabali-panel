@@ -27,6 +27,7 @@ import {
 import { useNotification } from "@refinedev/core";
 
 import { apiClient } from "../../../apiClient";
+import { DNSResolversCard } from "./DNSResolversCard";
 
 type ServerSettings = {
   id: number;
@@ -419,13 +420,16 @@ const DNSSettingsTab = () => {
   };
 
   return (
-    <Form
-      form={form}
-      layout="vertical"
-      onFinish={handleSubmit}
-      disabled={loading}
-    >
-      <Card title="DNS Nameservers" size="small" style={{ marginBottom: 16 }}>
+    <>
+      <DNSResolversCard />
+
+      <Form
+        form={form}
+        layout="vertical"
+        onFinish={handleSubmit}
+        disabled={loading}
+      >
+        <Card title="DNS Nameservers" size="small" style={{ marginBottom: 16 }}>
         <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
           These are the names and addresses your customers will set at their
           registrar. You typically run ns1 on this server and ns2 on a
@@ -464,17 +468,18 @@ const DNSSettingsTab = () => {
         </Row>
       </Card>
 
-      <Space>
-        <Button
-          type="primary"
-          icon={<SaveOutlined />}
-          loading={saving}
-          htmlType="submit"
-        >
-          Save DNS Settings
-        </Button>
-      </Space>
-    </Form>
+        <Space>
+          <Button
+            type="primary"
+            icon={<SaveOutlined />}
+            loading={saving}
+            htmlType="submit"
+          >
+            Save DNS Settings
+          </Button>
+        </Space>
+      </Form>
+    </>
   );
 };
 

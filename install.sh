@@ -290,15 +290,33 @@ prompt_server_settings() {
 # ---------- step 1: base packages -------------------------------------------
 
 install_base_packages() {
-  _log "installing base packages (git, curl, ca-certificates, build-essential, mariadb, PHP, rsync)"
+  _log "installing base packages (git, curl, ca-certificates, build-essential, mariadb, PHP, rsync, systemd-resolved)"
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y -qq --no-install-recommends \
     git curl ca-certificates build-essential tar openssl gnupg \
     mariadb-server mariadb-client \
     php-cli php-mysqli php-curl php-xml php-mbstring \
-    rsync acl
+    rsync acl \
+    systemd-resolved
   _ok "base packages ready"
+}
+
+# ---------- step 1c: systemd-resolved ---------------------------------------
+#
+# The panel's DNS Resolvers settings page writes a drop-in at
+# /etc/systemd/resolved.conf.d/jabali.conf and restarts systemd-resolved.
+# For that to be the resolver the OS actually uses, /etc/resolv.conf must
+# point at the stub (127.0.0.53). Debian 13 installs systemd-resolved but
+# doesn't always flip the symlink on upgrade paths — do it idempotently.
+configure_systemd_resolved() {
+  systemctl enable --now systemd-resolved.service >/dev/null 2>&1 || true
+  if [[ ! -L /etc/resolv.conf ]] || [[ "$(readlink /etc/resolv.conf)" != "../run/systemd/resolve/stub-resolv.conf" ]]; then
+    _log "symlinking /etc/resolv.conf → stub-resolv.conf (systemd-resolved stub)"
+    ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+  fi
+  install -d -m 0755 /etc/systemd/resolved.conf.d
+  _ok "systemd-resolved enabled, stub resolver wired"
 }
 
 # ---------- step 1b: nginx ----------------------------------------------------
@@ -1846,6 +1864,7 @@ main() {
   preflight
   prompt_server_settings
   install_base_packages
+  configure_systemd_resolved
   install_nginx
   install_php
   install_disabled_page

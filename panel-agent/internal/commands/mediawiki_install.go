@@ -74,9 +74,18 @@ var mediawikiTarballURL = fmt.Sprintf(
 //
 // To compute on a host with the URL accessible:
 //
-//	curl -sSL https://releases.wikimedia.org/mediawiki/1.41/mediawiki-1.41.2.tar.gz \
+//	curl -sSL -A 'jabali-panel-agent/1.0 (+https://jabali.local)' \
+//	  https://releases.wikimedia.org/mediawiki/1.41/mediawiki-1.41.2.tar.gz \
 //	  | sha256sum
-const mediawikiTarballSHA256 = ""
+const mediawikiTarballSHA256 = "52bb42c34ef502f66dfc5492195ab6ac15686caea6d88afd2480b28cbd6b1ce5"
+
+// userAgent identifies the agent in outbound HTTP requests so upstreams
+// can attribute traffic and contact us if needed. Wikimedia in
+// particular returns 403 to requests with the Go default UA
+// (`Go-http-client/1.1`) per their robot policy. Hard-coding here
+// rather than per-call so a future second app fetcher gets the same
+// treatment without re-deriving the policy.
+const userAgent = "jabali-panel-agent/1.0 (+https://jabali.local)"
 
 // mediawikiAdminUserPattern enforces MediaWiki's username rules: must
 // start with an uppercase letter, alnum + spaces only, max 235 chars.
@@ -126,6 +135,7 @@ func downloadMediaWikiTarball(ctx context.Context, dest string) error {
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
+	req.Header.Set("User-Agent", userAgent)
 	client := &http.Client{Timeout: 10 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {

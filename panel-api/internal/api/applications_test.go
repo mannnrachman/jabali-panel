@@ -213,7 +213,7 @@ func TestApplications_Create_InvalidAppType_400(t *testing.T) {
 	r, _, _ := applicationsRouter(t, "user1", false, wpRepo, domainRepo, userRepo, nil)
 
 	body := map[string]any{
-		"app_type":  "drupal",
+		"app_type":  "magento",
 		"domain_id": "domain1",
 		"params":    map[string]any{},
 	}

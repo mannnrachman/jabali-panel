@@ -317,7 +317,8 @@ install_base_packages() {
   apt-get install -y -qq --no-install-recommends \
     git curl ca-certificates build-essential tar openssl gnupg \
     mariadb-server mariadb-client \
-    php-cli php-mysqli php-curl php-xml php-mbstring \
+    php-cli php-mysqli php-curl php-xml php-mbstring php-gd php-zip \
+    composer \
     rsync acl \
     systemd-resolved \
     quota quotatool xfsprogs

@@ -217,6 +217,44 @@ func TestRegisterDefaults_RegistersMediaWiki(t *testing.T) {
 	}
 }
 
+func TestRegisterDefaults_RegistersDrupal(t *testing.T) {
+	r := New()
+	if err := RegisterDefaults(r); err != nil {
+		t.Fatalf("RegisterDefaults: %v", err)
+	}
+	d, ok := r.Get("drupal")
+	if !ok {
+		t.Fatal("drupal not registered after RegisterDefaults")
+	}
+	if !d.RequiresDB {
+		t.Error("drupal should declare RequiresDB=true (it needs MariaDB)")
+	}
+	if d.AgentCloneCmd != "" {
+		t.Errorf("drupal should NOT declare a clone command yet; got %q", d.AgentCloneCmd)
+	}
+	if d.AgentInstallCmd != "app.install" || d.AgentDeleteCmd != "app.delete" {
+		t.Errorf("drupal dispatcher commands = (%q, %q)", d.AgentInstallCmd, d.AgentDeleteCmd)
+	}
+	for _, want := range []string{"site_title", "admin_email", "admin_password", "profile"} {
+		if _, ok := d.InstallParamSchema[want]; !ok {
+			t.Errorf("drupal schema missing %q", want)
+		}
+	}
+	if _, present := d.InstallParamSchema["admin_username"]; present {
+		t.Error("drupal schema should NOT include admin_username — it's auto-generated server-side")
+	}
+	profileSpec, ok := d.InstallParamSchema["profile"]
+	if !ok {
+		t.Fatal("drupal profile field missing")
+	}
+	if profileSpec.Type != "enum" {
+		t.Errorf("drupal profile type = %q, want enum", profileSpec.Type)
+	}
+	if len(profileSpec.Values) == 0 {
+		t.Error("drupal profile enum should have values")
+	}
+}
+
 func TestRegister_ConcurrentSafe(t *testing.T) {
 	// Race detector trips here if Register's mutex disappears.
 	r := New()

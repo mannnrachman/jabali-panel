@@ -328,6 +328,37 @@ func (h *applicationsHandler) create(c *gin.Context) {
 			License:      paramOr(req.Params, "license", "cc-by-sa"),
 			UseWWW:       install.UseWWW,
 		}, h.cfg)
+	case "drupal":
+		// Drupal mirrors MediaWiki's RequiresDB=true shape. Wiki admin
+		// password and DB password are intentionally separate values:
+		// the DB password is the machine-grade ULID from the chain;
+		// admin_pass is what the user types (or we generate a memorable
+		// fallback) for logging into Drupal admin.
+		drupalPass := paramOr(req.Params, "admin_password", "")
+		if drupalPass == "" {
+			drupalPass = ids.NewULID()
+		}
+		go createDrupalInstallAndKickAgent(ctx, drupalKickArgs{
+			InstallID:    installID,
+			OSUser:       osUser,
+			DocRoot:      domain.DocRoot,
+			Subdirectory: install.Subdirectory,
+			SiteURL:      siteURL,
+			DBName:       chain.DBName,
+			DBUser:       chain.DBUsername,
+			DBPassword:   adminPassword, // DB password from the chain
+			SiteTitle:    paramOr(req.Params, "site_title", "My Drupal Site"),
+			AdminUser:    install.AdminUsername,
+			AdminPass:    drupalPass,
+			AdminEmail:   install.AdminEmail,
+			SiteMail:     paramOr(req.Params, "site_mail", install.AdminEmail),
+			Profile:      paramOr(req.Params, "profile", "standard"),
+			UseWWW:       install.UseWWW,
+		}, h.cfg)
+		// Echo the admin password (not the DB one) back so the
+		// reveal-once panel shows the credential the user needs to
+		// log into Drupal admin.
+		adminPassword = drupalPass
 	case "mediawiki":
 		// MediaWiki requires a database (RequiresDB=true → adminPassword
 		// already populated by provisionDBChain via the DB-user path).
@@ -747,6 +778,87 @@ func createMediaWikiInstallAndKickAgent(parentCtx context.Context, args mediaWik
 		"admin_pass":   args.AdminPass,
 		"admin_email":  args.AdminEmail,
 		"language":     args.Language,
+		"use_www":      args.UseWWW,
+	})
+	if err != nil {
+		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	var respMap map[string]any
+	if err := json.Unmarshal(agentResp, &respMap); err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to parse agent response: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+	version := ""
+	if v, ok := respMap["version"].(string); ok {
+		version = v
+	}
+	cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
+}
+
+// drupalKickArgs is what the install-row kicker passes through to the
+// agent's drupal installer (via the app.install dispatcher). Mirrors
+// mediaWikiKickArgs (RequiresDB=true, same DB fields) plus a Profile
+// param for drush's install-profile selection and SiteMail for the
+// outbound From-address.
+type drupalKickArgs struct {
+	InstallID    string
+	OSUser       string
+	DocRoot      string
+	Subdirectory string
+	SiteURL      string
+	DBName       string
+	DBUser       string
+	DBPassword   string
+	SiteTitle    string
+	AdminUser    string
+	AdminPass    string
+	AdminEmail   string
+	SiteMail     string
+	Profile      string
+	UseWWW       bool
+}
+
+// createDrupalInstallAndKickAgent flips the install row to "installing",
+// dispatches app.install with app_type="drupal" via the agent
+// dispatcher, and updates the row to "ready" or "failed" based on the
+// result. Mirrors createMediaWikiInstallAndKickAgent for the Drupal-
+// specific param shape.
+//
+// Timeout is 20 minutes — `composer require drush/drush` can take 5-10
+// min on a cold cache, then drush site:install another 1-2 min.
+func createDrupalInstallAndKickAgent(parentCtx context.Context, args drupalKickArgs, cfg ApplicationHandlerConfig) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+
+	if err := cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "installing", nil, nil); err != nil {
+		return
+	}
+	if cfg.Agent == nil {
+		errMsg := "agent not configured"
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	agentResp, err := cfg.Agent.Call(ctx, "app.install", map[string]any{
+		"app_type":     "drupal",
+		"os_user":      args.OSUser,
+		"docroot":      args.DocRoot,
+		"subdirectory": args.Subdirectory,
+		"site_url":     args.SiteURL,
+		"db_name":      args.DBName,
+		"db_user":      args.DBUser,
+		"db_password":  args.DBPassword,
+		"db_host":      "localhost",
+		"site_title":   args.SiteTitle,
+		"admin_user":   args.AdminUser,
+		"admin_pass":   args.AdminPass,
+		"admin_email":  args.AdminEmail,
+		"site_mail":    args.SiteMail,
+		"profile":      args.Profile,
 		"use_www":      args.UseWWW,
 	})
 	if err != nil {

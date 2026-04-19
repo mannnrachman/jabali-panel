@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -40,18 +41,37 @@ func RegisterServerSettingsRoutes(g *gin.RouterGroup, cfg ServerSettingsHandlerC
 type serverSettingsHandler struct{ cfg ServerSettingsHandlerConfig }
 
 func (h *serverSettingsHandler) get(c *gin.Context) {
-	s, err := h.cfg.Repo.Get(c.Request.Context())
+	ctx := c.Request.Context()
+	s, err := h.cfg.Repo.Get(ctx)
 	if errors.Is(err, repository.ErrNotFound) {
 		// First boot before the seed has run, or a brand-new install
 		// where config.toml had no [server] identity to seed from.
 		// Return an empty shell instead of 500 so the form loads clean.
-		c.JSON(http.StatusOK, &models.ServerSettings{ID: 1})
-		return
-	}
-	if err != nil {
+		s = &models.ServerSettings{ID: 1}
+	} else if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+
+	// Timezone fallback: when the DB column is empty (admin never picked
+	// one yet), surface the OS-configured zone so the UI dropdown shows
+	// the actual current value instead of blank. Doesn't write back —
+	// the row stays empty until the admin saves explicitly.
+	if s.Timezone == "" && h.cfg.Agent != nil {
+		infoCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if raw, err := h.cfg.Agent.Call(infoCtx, "system.info", nil); err == nil {
+			var info struct {
+				Timezone string `json:"timezone"`
+			}
+			if jsonErr := json.Unmarshal(raw, &info); jsonErr == nil && info.Timezone != "" {
+				s.Timezone = info.Timezone
+			}
+		} else {
+			h.cfg.Log.Debug("agent system.info failed during timezone fallback", "err", err)
+		}
+	}
+
 	c.JSON(http.StatusOK, s)
 }
 

@@ -13,6 +13,7 @@ import (
 // SystemInfoResponse is the payload for system.info.
 type SystemInfoResponse struct {
 	Hostname      string          `json:"hostname"`
+	Timezone      string          `json:"timezone"`
 	UptimeSeconds float64         `json:"uptime_seconds"`
 	LoadAvg       [3]float64      `json:"load_avg"`
 	CPUCount      int             `json:"cpu_count"`
@@ -62,6 +63,7 @@ func systemInfoHandler(_ context.Context, _ json.RawMessage) (any, error) {
 
 	return SystemInfoResponse{
 		Hostname:      hostname,
+		Timezone:      readSystemTimezone(),
 		UptimeSeconds: uptime,
 		LoadAvg:       loadAvg,
 		CPUCount:      cpuCount,
@@ -70,6 +72,26 @@ func systemInfoHandler(_ context.Context, _ json.RawMessage) (any, error) {
 		MemUsedKB:     memTotal - memAvail,
 		Partitions:    partitions,
 	}, nil
+}
+
+// readSystemTimezone returns the OS-configured IANA timezone (e.g.
+// "Europe/Berlin"). Tries /etc/timezone (Debian/Ubuntu standard) first,
+// then resolves the /etc/localtime symlink ("/usr/share/zoneinfo/Europe/Berlin"
+// → "Europe/Berlin"). Returns "" if neither method works — caller treats
+// that as "OS default, don't push back to set_timezone."
+func readSystemTimezone() string {
+	if data, err := os.ReadFile("/etc/timezone"); err == nil {
+		if tz := strings.TrimSpace(string(data)); tz != "" {
+			return tz
+		}
+	}
+	if target, err := os.Readlink("/etc/localtime"); err == nil {
+		const prefix = "/usr/share/zoneinfo/"
+		if i := strings.Index(target, prefix); i >= 0 {
+			return target[i+len(prefix):]
+		}
+	}
+	return ""
 }
 
 // parseUptime reads /proc/uptime → "12345.67 98765.43\n"

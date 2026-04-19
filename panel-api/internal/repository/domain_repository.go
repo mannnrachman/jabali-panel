@@ -140,8 +140,17 @@ func (r *domainRepo) ListByUserID(ctx context.Context, userID string, opts ListO
 }
 
 func (r *domainRepo) Update(ctx context.Context, d *models.Domain) error {
+	// Whitelist the columns the API's update handler is allowed to write.
+	// Anything not listed here is silently ignored by GORM's Select+Updates,
+	// which previously dropped index_priority, redirect_all_to,
+	// redirect_all_type, and page_redirects on the floor — the handler set
+	// them on the in-memory struct, the row was saved without them, and the
+	// reconciler never saw the new values. SSL flags, PHP pool binding, and
+	// PHP per-domain settings have their own dedicated repo methods.
 	if err := r.db.WithContext(ctx).Model(d).Where("id = ?", d.ID).Select(
-		"name", "doc_root", "is_enabled", "nginx_custom_directives", "updated_at",
+		"name", "doc_root", "is_enabled", "nginx_custom_directives",
+		"redirect_all_to", "redirect_all_type", "page_redirects",
+		"index_priority", "ssl_enabled", "updated_at",
 	).Updates(d).Error; err != nil {
 		return translate(err)
 	}

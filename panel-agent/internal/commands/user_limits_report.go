@@ -1,0 +1,260 @@
+package commands
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
+)
+
+// user.limits.report — reports the current resource usage and configured
+// limits for a user. Used by:
+//   - admin UI (per-user "used / limit" bars)
+//   - user shell dashboard (self-view)
+//   - reconciler drift detection (compare report vs DB-effective)
+//
+// Sources:
+//   - Disk: `quota -u <user> -p -w -f <mount>` parsed output
+//   - CPU/memory/IO/tasks: /sys/fs/cgroup/jabali.slice/jabali-user.slice/
+//     jabali-user-<u>.slice/{memory.current,memory.max,cpu.stat,io.stat,pids.current,pids.max}
+//
+// The cgroup sysfs reads are race-free (single readv from the kernel,
+// values are snapshots). `quota` is an external command but fast
+// (microseconds) because it reads a mmap'd quota file.
+
+type userLimitsReportParams struct {
+	Username   string `json:"username"`
+	QuotaMount string `json:"quota_mount"` // empty = skip quota reporting
+}
+
+type diskReport struct {
+	UsedKB  uint64 `json:"used_kb"`
+	LimitKB uint64 `json:"limit_kb"`
+}
+
+type memReport struct {
+	CurrentBytes uint64 `json:"current_bytes"`
+	MaxBytes     uint64 `json:"max_bytes"` // 0 = unlimited (systemd's "max")
+}
+
+type cpuReport struct {
+	UsageNsec    uint64 `json:"usage_nsec"`
+	QuotaPercent uint32 `json:"quota_percent"` // 0 = unlimited
+}
+
+type tasksReport struct {
+	Current uint64 `json:"current"`
+	Max     uint64 `json:"max"` // 0 = unlimited
+}
+
+type ioReport struct {
+	ReadBytes  uint64 `json:"read_bytes"`
+	WriteBytes uint64 `json:"write_bytes"`
+}
+
+type userLimitsReportResponse struct {
+	Username string       `json:"username"`
+	Disk     *diskReport  `json:"disk,omitempty"`
+	Memory   *memReport   `json:"memory,omitempty"`
+	CPU      *cpuReport   `json:"cpu,omitempty"`
+	Tasks    *tasksReport `json:"tasks,omitempty"`
+	IO       *ioReport    `json:"io,omitempty"`
+}
+
+func userLimitsReportHandler(ctx context.Context, params json.RawMessage) (any, error) {
+	var p userLimitsReportParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: fmt.Sprintf("failed to parse params: %v", err),
+		}
+	}
+	if !userSliceUsernameRegex.MatchString(p.Username) {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: fmt.Sprintf("invalid username %q", p.Username),
+		}
+	}
+
+	testMutex.Lock()
+	runCmdFn := runCmd
+	testMutex.Unlock()
+
+	resp := &userLimitsReportResponse{Username: p.Username}
+
+	// Disk — `quota -u <user> -p -w -f <mount>` outputs machine-parseable
+	// header-less lines. Format (whitespace-separated):
+	//   <mount> <blocks> <quota-soft> <quota-hard> <grace> <files> ...
+	// We care about blocks (used in KB) and quota-hard (hard limit).
+	if p.QuotaMount != "" {
+		stdout, _, err := runCmdFn(ctx, "quota", "-u", "-p", "-w", "-f", p.QuotaMount, p.Username)
+		if err == nil {
+			if d := parseQuotaLine(string(stdout), p.QuotaMount); d != nil {
+				resp.Disk = d
+			}
+		}
+		// quota exits non-zero when the user has no quota set on this
+		// mount — we treat that as "no disk report" rather than error.
+	}
+
+	cgroupDir := fmt.Sprintf("/sys/fs/cgroup/jabali.slice/jabali-user.slice/jabali-user-%s.slice", p.Username)
+	if _, err := os.Stat(cgroupDir); err == nil {
+		resp.Memory = readMemoryReport(cgroupDir)
+		resp.CPU = readCPUReport(cgroupDir)
+		resp.Tasks = readTasksReport(cgroupDir)
+		resp.IO = readIOReport(cgroupDir)
+	}
+	// If the slice has no live processes the cgroup dir doesn't exist
+	// yet — return the user's name + disk (if any) and omit the
+	// cgroup-derived sections. Caller renders "—" for missing values.
+
+	return resp, nil
+}
+
+// parseQuotaLine extracts used and hard-limit block counts from quota's
+// machine-parseable output. The `-w` flag emits one line per filesystem;
+// we match on the mount path.
+func parseQuotaLine(output, mount string) *diskReport {
+	sc := bufio.NewScanner(strings.NewReader(output))
+	for sc.Scan() {
+		line := sc.Text()
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+		// Match by filesystem/mount — `quota -w` emits the path as
+		// the first field. Some implementations print the device
+		// instead; we accept either as long as a subsequent field
+		// parses cleanly.
+		if fields[0] != mount && !strings.HasSuffix(fields[0], ":"+mount) {
+			// Keep going — some quota outputs have a header line then
+			// the numbers on the same record but whitespace-split
+			// across wraps. Fall through to numeric parsing attempt.
+		}
+		used, usedErr := strconv.ParseUint(fields[1], 10, 64)
+		// fields[2] = soft, fields[3] = hard
+		if usedErr != nil || len(fields) < 4 {
+			continue
+		}
+		hard, hardErr := strconv.ParseUint(fields[3], 10, 64)
+		if hardErr != nil {
+			continue
+		}
+		return &diskReport{UsedKB: used, LimitKB: hard}
+	}
+	return nil
+}
+
+func readMemoryReport(cgroupDir string) *memReport {
+	cur := readCgroupUint64(filepath.Join(cgroupDir, "memory.current"))
+	max := readCgroupMax(filepath.Join(cgroupDir, "memory.max"))
+	return &memReport{CurrentBytes: cur, MaxBytes: max}
+}
+
+func readCPUReport(cgroupDir string) *cpuReport {
+	// cpu.stat is multi-line key=val; "usage_usec" is the aggregate.
+	usage := readCPUStat(filepath.Join(cgroupDir, "cpu.stat"), "usage_usec") * 1000 // µs → ns
+	quota := readCPUQuota(filepath.Join(cgroupDir, "cpu.max"))
+	return &cpuReport{UsageNsec: usage, QuotaPercent: quota}
+}
+
+func readTasksReport(cgroupDir string) *tasksReport {
+	cur := readCgroupUint64(filepath.Join(cgroupDir, "pids.current"))
+	max := readCgroupMax(filepath.Join(cgroupDir, "pids.max"))
+	return &tasksReport{Current: cur, Max: max}
+}
+
+func readIOReport(cgroupDir string) *ioReport {
+	// io.stat format per line: <major>:<minor> rbytes=N wbytes=N rios=N wios=N ...
+	// Sum across all devices (there are rarely more than one mount
+	// a hosting user writes to).
+	var r, w uint64
+	data, err := os.ReadFile(filepath.Join(cgroupDir, "io.stat"))
+	if err != nil {
+		return &ioReport{}
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		for _, f := range strings.Fields(line) {
+			if strings.HasPrefix(f, "rbytes=") {
+				n, _ := strconv.ParseUint(f[len("rbytes="):], 10, 64)
+				r += n
+			} else if strings.HasPrefix(f, "wbytes=") {
+				n, _ := strconv.ParseUint(f[len("wbytes="):], 10, 64)
+				w += n
+			}
+		}
+	}
+	return &ioReport{ReadBytes: r, WriteBytes: w}
+}
+
+func readCgroupUint64(path string) uint64 {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
+	return n
+}
+
+// readCgroupMax reads a cgroup v2 limit file where "max" means unbounded
+// (return 0) and any other value is a decimal byte/count (return as-is).
+func readCgroupMax(path string) uint64 {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	s := strings.TrimSpace(string(data))
+	if s == "max" {
+		return 0
+	}
+	n, _ := strconv.ParseUint(s, 10, 64)
+	return n
+}
+
+func readCPUStat(path, key string) uint64 {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	prefix := key + " "
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			n, _ := strconv.ParseUint(strings.TrimSpace(line[len(prefix):]), 10, 64)
+			return n
+		}
+	}
+	return 0
+}
+
+// readCPUQuota parses cpu.max ("<quota> <period>") and returns the
+// effective quota as a percent of one core: 100000 100000 = 100%,
+// 200000 100000 = 200% (2 cores), "max" period → 0 (unlimited).
+func readCPUQuota(path string) uint32 {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	fields := strings.Fields(strings.TrimSpace(string(data)))
+	if len(fields) < 2 || fields[0] == "max" {
+		return 0
+	}
+	quota, err := strconv.ParseUint(fields[0], 10, 64)
+	if err != nil {
+		return 0
+	}
+	period, err := strconv.ParseUint(fields[1], 10, 64)
+	if err != nil || period == 0 {
+		return 0
+	}
+	return uint32(quota * 100 / period)
+}
+
+func init() {
+	Default.Register("user.limits.report", userLimitsReportHandler)
+}

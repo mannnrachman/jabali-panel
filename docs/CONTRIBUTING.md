@@ -126,7 +126,7 @@ Before requesting review:
 - [ ] `make lint` passes
 - [ ] `cd panel-ui && npm test && npm run lint` passes (for UI changes)
 - [ ] Coverage on new code ≥ 80% (check with `make test-coverage`)
-- [ ] No hardcoded secrets; any new env var documented in [`ENV.md`](ENV.md) and `.env.example`
+- [ ] No hardcoded secrets; any new env var documented in [`ENV.md`](ENV.md) (and `config.example.toml` if it has a TOML counterpart)
 - [ ] Any new agent command has argument-sanitisation tests
 - [ ] If this touches a shipped milestone, update [`BLUEPRINT.md`](BLUEPRINT.md)
 - [ ] If this introduces a new architectural rule, write an ADR

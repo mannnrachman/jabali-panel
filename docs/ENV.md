@@ -1,13 +1,13 @@
 # Environment Variables
 
 Reference for every env var the panel reads at runtime. Canonical source:
-`panel-api/internal/config/config.go`. Examples live in
-[`.env.example`](../.env.example) (secrets / per-deploy) and
-[`config.example.toml`](../config.example.toml) (non-secret config).
+`panel-api/internal/config/config.go`. Non-secret config template lives in
+[`config.example.toml`](../config.example.toml); secrets are set via the
+environment (systemd `EnvironmentFile=` in prod, `direnv`/manual export
+in dev).
 
 **Precedence:** env var > `config.toml` > hardcoded default. Put
-non-secrets in TOML, secrets in `.env` (loaded via systemd
-`EnvironmentFile=` in prod, or `direnv`/manual export in dev).
+non-secrets in TOML, secrets in the environment.
 
 ## Server + runtime
 
@@ -152,16 +152,21 @@ production use; listed here so the one-liner env audit stays honest.
 | `JABALI_GO_ROOT` | No | `/usr/local/go` | Where the installer writes the Go toolchain. |
 | `JABALI_SERVICE_USER` | No | `jabali` | Service account the panel + agent run as. |
 | `JABALI_REPO_DIR` | No | `/opt/jabali2` | Git checkout path on the target host. |
+| `JABALI_REPO_URL` | No | `https://git.linux-hosting.co.il/shukivaknin/jabali2.git` | Override the git remote `install.sh` clones from (useful for private mirrors). |
+| `JABALI_REPO_BRANCH` | No | `main` | Branch `install.sh` checks out. |
 | `JABALI_GITEA_TOKEN` | No | *(unset)* | Personal access token for private Gitea mirror. Used by `install.sh` when the source repo requires auth. Equivalent to the first positional arg to `install.sh`. |
 | `JABALI_PHP_VERSIONS` | No | `8.5` | Space-separated list of PHP versions `install.sh install_php` fetches from the Sury repo. Supported range: 7.4 through 8.5. Example: `JABALI_PHP_VERSIONS="7.4 8.2 8.5" bash install.sh`. See [ADR-0023](adr/0023-m9-php-fpm-pool-manager.md). |
+| `JABALI_PANEL_ADDR` | No | `0.0.0.0:8443` | Panel listen address written into `config.toml` on first install. Seeds `server_settings.addr`; DB is the source of truth after first boot. |
+| `JABALI_HOSTNAME` | No | *(unset)* | If set, `install.sh` runs `hostnamectl set-hostname` before configuring nginx and certs. Leave unset to preserve the host's current hostname. |
+| `JABALI_DEV` | No | `0` | If `1`, `install.sh` sets `PANEL_ENV=development` (log format stays text, TLS verification relaxed in relevant paths). |
+| `JABALI_TMP_SIZE` | No | `1G` | Size cap for the M18 tmpfs `/tmp` mount (`configure_tmp_tmpfs`). Accepts any tmpfs-compatible size string (e.g. `2G`, `512M`). See [ADR-0032](adr/0032-m18-resource-limits.md). |
 <!-- /AUTO-GENERATED -->
 
 ## Adding a new env var
 
 1. Read it in `panel-api/internal/config/config.go` (and fail loud at
    startup if required secrets are missing).
-2. Add a row to `.env.example` with a safe placeholder.
-3. Add a commented row to `config.example.toml` if it also has a TOML
+2. Add a commented row to `config.example.toml` if it has a TOML
    counterpart.
-4. Re-run `/update-docs` (or hand-edit this file) so the table stays
+3. Re-run `/update-docs` (or hand-edit this file) so the table stays
    in sync.

@@ -5,7 +5,7 @@ which code owns each capability. Use this as a map when onboarding, scoping new
 features, or deciding where existing logic already lives.
 
 > **Sources of truth.** This blueprint reflects what's shipped on `main` as of
-> 2026-04-17. Architecture rules and conventions live in `docs/adr/`. Cross-repo
+> 2026-04-19. Architecture rules and conventions live in `docs/adr/`. Cross-repo
 > coordination with sibling projects lives in `~/projects/jabali-shared/CONTEXT.md`.
 
 ---

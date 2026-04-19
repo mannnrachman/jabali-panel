@@ -656,6 +656,14 @@ export const FileManagerPage = () => {
             background: "#f0f5ff",
             border: "1px solid #adc6ff",
             borderRadius: 4,
+            // Sticky so bulk actions stay reachable even when scrolled
+            // deep into a long folder. top: 0 pins to the viewport top;
+            // zIndex keeps it above table rows that may have the row
+            // selection highlight. The page itself scrolls on the body,
+            // so `sticky` binds to the body scroll container.
+            position: "sticky",
+            top: 0,
+            zIndex: 10,
           }}
         >
           <Text strong>

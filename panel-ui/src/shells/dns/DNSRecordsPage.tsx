@@ -686,15 +686,9 @@ export const DNSRecordsPage = () => {
                   dataIndex: "type",
                   key: "type",
                   width: "10%",
-                  render: (_: unknown, record: DNSRecord) => {
-                    const isManaged = record.managed;
-                    return (
-                      <Space size="small">
-                        <span>{record.type}</span>
-                        {isManaged && <Tag color="blue">auto-created</Tag>}
-                      </Space>
-                    );
-                  },
+                  render: (_: unknown, record: DNSRecord) => (
+                    <Tag color="blue">{record.type}</Tag>
+                  ),
                 },
                 {
                   title: "Content",

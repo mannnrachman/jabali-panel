@@ -39,29 +39,34 @@ url = ""
 
 [auth]
 # Auth provider: "legacy" (JWT-only) or "kratos" (Ory Kratos identity platform).
-# Default: "legacy". Set via env AUTH_PROVIDER.
-provider = "legacy"
+# Fresh-install default: "kratos" (M20 cutover, 2026-04-20). The 30-day rollback
+# window documented in ADR-0034 keeps the legacy code path behind the flag — if
+# you need to roll back, set provider = "legacy" and restart jabali-panel.
+# Set via env AUTH_PROVIDER.
+provider = "kratos"
 
-# 32+ random bytes (e.g. `openssl rand -hex 32`). Required in production.
+# 32+ random bytes (e.g. `openssl rand -hex 32`). Required for legacy mode only;
+# Kratos issues its own session tokens and never touches this.
 # Never commit a real secret — set via env JWT_SECRET or a secrets manager.
 jwt_secret = ""
 
-# Short-lived access token lifetime.
+# Short-lived access token lifetime (legacy mode only). Kratos sessions are
+# governed by kratos.yml `session.lifespan` — default 24h.
 access_ttl  = "15m"
 refresh_ttl = "168h"  # 7 days
 
-# Kratos (M20+) identity provider configuration.
-# Only used when provider = "kratos".
+# Kratos identity provider configuration. Used when provider = "kratos".
+# Fresh-install defaults point at loopback Kratos provisioned by install.sh.
 [auth.kratos]
 # Public URL of Kratos instance (reachable from browser + panel-api).
-# Example: "https://auth.example.com" or "http://localhost:4433"
-# Set via env KRATOS_PUBLIC_URL.
-public_url = ""
+# Loopback by default because nginx proxies /.ory/* to this port from the
+# panel vhost. Operators fronting Kratos on a separate hostname can set
+# e.g. "https://auth.example.com". Set via env KRATOS_PUBLIC_URL.
+public_url = "http://127.0.0.1:4433"
 
-# Admin URL of Kratos instance (reachable from panel-api only).
-# Example: "https://auth.example.com" or "http://localhost:4434"
-# Set via env KRATOS_ADMIN_URL.
-admin_url = ""
+# Admin URL of Kratos instance (reachable from panel-api only — never
+# exposed externally). Set via env KRATOS_ADMIN_URL.
+admin_url = "http://127.0.0.1:4434"
 
 [agent]
 # Path to the jabali-agent Unix socket. The panel user (jabali group) needs

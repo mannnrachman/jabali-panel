@@ -55,6 +55,63 @@ export type MockState = {
   domains?: MockDomain[];
 };
 
+// ---------- Kratos flow fixtures ----------
+// Minimal shape of a Kratos browser login flow — matches KratosFlow in
+// panel-ui/src/kratos.ts. Fixed csrf_token so tests that snoop the submit
+// body can assert it round-trips.
+
+function kratosPasswordFlow(flowId: string) {
+  const now = Date.now();
+  return {
+    id: flowId,
+    type: "browser",
+    expires_at: new Date(now + 10 * 60_000).toISOString(),
+    issued_at: new Date(now).toISOString(),
+    request_url: "http://localhost/.ory/self-service/login/browser",
+    ui: {
+      action: `http://localhost/.ory/self-service/login?flow=${flowId}`,
+      method: "POST",
+      nodes: [
+        {
+          type: "input",
+          group: "default",
+          attributes: { name: "csrf_token", type: "hidden", value: "csrf-token-xyz", required: true },
+        },
+        {
+          type: "input",
+          group: "password",
+          attributes: { name: "identifier", type: "text", required: true, autocomplete: "email" },
+          meta: { label: { text: "Email" } },
+        },
+        {
+          type: "input",
+          group: "password",
+          attributes: { name: "password", type: "password", required: true, autocomplete: "current-password" },
+          meta: { label: { text: "Password" } },
+        },
+        {
+          type: "input",
+          group: "password",
+          attributes: { name: "method", type: "submit", value: "password" },
+          meta: { label: { text: "Sign in" } },
+        },
+      ],
+    },
+    requested_aal: "aal1",
+  };
+}
+
+function kratosWhoami(u: MockUser) {
+  return {
+    id: `session-${u.id}`,
+    identity: {
+      id: `kratos-${u.id}`,
+      schema_id: "default",
+      traits: { email: u.email, is_admin: u.is_admin },
+    },
+  };
+}
+
 // ---------- core installer ----------
 
 export async function mockApi(page: Page, initial: MockState): Promise<void> {
@@ -79,7 +136,92 @@ export async function mockApi(page: Page, initial: MockState): Promise<void> {
     accessToken: null,
   };
 
-  // ---- auth ----
+  // ---- auth (M20 Kratos browser flow) ----
+  // The SPA drives /.ory/* for login/logout. Kratos flow discovery + submit
+  // are mocked here so signIn() keeps working for every test unchanged.
+  // Legacy JWT /auth/login/logout/refresh routes below are vestigial — only
+  // meaningful when cfg.Auth.Provider == "legacy", and the authProvider
+  // never hits them in Kratos mode. Kept as fail-closed 401 stubs so an
+  // accidental regression to legacy transport is visibly wrong.
+  await page.route("**/.ory/self-service/login/browser", async (route) => {
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(kratosPasswordFlow("flow-mock")),
+    });
+  });
+  await page.route("**/.ory/self-service/login/flows*", async (route) => {
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(kratosPasswordFlow("flow-mock")),
+    });
+  });
+  await page.route("**/.ory/self-service/login?flow=*", async (route) => {
+    const req = route.request();
+    const body = req.postData() ?? "";
+    const emailMatch = body.match(/identifier=([^&]+)/);
+    const submittedEmail = emailMatch ? decodeURIComponent(emailMatch[1]) : "";
+    if (state.expected && submittedEmail === state.expected.email) {
+      state.session = state.expected;
+      state.accessToken = "mock-kratos-session";
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        headers: {
+          "Set-Cookie": "ory_kratos_session=mock-session; Path=/; HttpOnly; SameSite=Lax",
+        },
+        body: JSON.stringify({ session: kratosWhoami(state.expected) }),
+      });
+    }
+    return route.fulfill({
+      status: 400,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ui: {
+          messages: [
+            { id: 4000006, text: "The provided credentials are invalid, check for spelling mistakes in your password or username, email address, or phone number.", type: "error" },
+          ],
+          nodes: [],
+        },
+      }),
+    });
+  });
+  await page.route("**/.ory/sessions/whoami", async (route) => {
+    if (state.session) {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(kratosWhoami(state.session)),
+      });
+    }
+    return route.fulfill({
+      status: 401,
+      contentType: "application/json",
+      body: JSON.stringify({ error: { code: 401, message: "no session" } }),
+    });
+  });
+  await page.route("**/.ory/self-service/logout/browser", async (route) => {
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        logout_url: "http://localhost/.ory/self-service/logout?token=mock-logout-token",
+      }),
+    });
+  });
+  await page.route("**/.ory/self-service/logout*token=*", async (route) => {
+    state.session = null;
+    state.accessToken = null;
+    return route.fulfill({
+      status: 302,
+      headers: { Location: "/login" },
+      body: "",
+    });
+  });
+
+  // Legacy JWT endpoints — kept for tests that explicitly exercise the
+  // "legacy" provider. Under Kratos default the SPA never calls them.
   await page.route("**/api/v1/auth/login", async (route) => {
     const req = route.request();
     const body = req.postDataJSON() as { email: string; password: string };

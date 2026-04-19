@@ -19,6 +19,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/app"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/db"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
@@ -205,20 +206,31 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 
 		// Admin bootstrap.
+		// M20: when auth.provider == "kratos", bootstrap also creates a
+		// Kratos identity atomically so first-boot admin can actually sign
+		// in via the Kratos flow. Passing nil keeps legacy behavior.
+		var bootstrapKratos auth.KratosIdentityWriter
+		if cfg.Auth.Provider == "kratos" && cfg.Auth.Kratos.PublicURL != "" {
+			bootstrapKratos = kratosclient.NewClient(cfg.Auth.Kratos.PublicURL, cfg.Auth.Kratos.AdminURL)
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		res, err := auth.BootstrapAdmin(ctx, userRepo, auth.BootstrapOptions{
 			Email:      os.Getenv("JABALI_BOOTSTRAP_ADMIN_EMAIL"),
 			Password:   os.Getenv("JABALI_BOOTSTRAP_ADMIN_PASSWORD"),
 			BcryptCost: bcrypt.DefaultCost,
+			Kratos:     bootstrapKratos,
 		})
 		cancel()
 		switch {
 		case err != nil:
 			return err
 		case res.Created:
-			log.Warn("admin user created via bootstrap")
+			log.Warn("admin user created via bootstrap",
+				"kratos_identity_id", res.KratosIdentityID)
 		case res.ExistingID != "":
-			log.Info("admin bootstrap: already exists", "user_id", res.ExistingID)
+			log.Info("admin bootstrap: already exists",
+				"user_id", res.ExistingID,
+				"kratos_identity_id", res.KratosIdentityID)
 		}
 
 		// Merge-seed server_settings from config.toml [server] block on

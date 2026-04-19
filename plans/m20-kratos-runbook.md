@@ -152,12 +152,165 @@ kratos identities list --format json \
 Compare the output to the `email` column of the CSV; the delta is the
 "hasn't re-enrolled yet" set. Follow up personally or via a second mail.
 
-## Day-2 operations (stub — filled in by M20 Wave E)
+## Cutover (Wave E, Step 9)
 
-- `kratos identities list|get|update|delete`
-- `kratos sessions revoke <id>`
-- `mysqldump jabali_kratos` / restore
-- MFA reset — `kratos identities patch <id> --set-totp=null` (operator-driven
-  reset; the user then re-enrolls via Security → Authenticator)
-- Recovery-code generation (replaces M5a/M5b) — see Wave E step 9 runbook
-  section
+### What flipping the flag does
+
+`auth.provider = "kratos"` makes panel-api's `/api/v1/*` routes validate an
+`ory_kratos_session` cookie instead of a panel-minted JWT. The Go runtime
+default is now `"kratos"` (config.go) and config.example.toml ships with it
+pre-set; both mean **any fresh install lands on Kratos**. Any legacy
+`jabali_refresh` cookie the browser still holds returns 401 — this is
+expected UX, not a regression, and the SPA's unauthenticated-redirect
+handles it cleanly by bouncing to /login.
+
+### Flip procedure
+
+1. Ensure `jabali-kratos.service` is running and ready:
+   ```sh
+   systemctl is-active jabali-kratos && \
+     curl -sf http://127.0.0.1:4433/health/ready && \
+     curl -sf http://127.0.0.1:4434/admin/health/ready
+   ```
+2. Run `jabali kratos-migrate --dry-run` and verify all rows either would
+   link or would create. Fix any failures BEFORE step 3.
+3. Run `jabali kratos-migrate` (omit `--dry-run`). Exit 0 = every user has
+   a Kratos identity. Non-zero = re-run — it's idempotent.
+4. Run `jabali kratos-migrate --totp-only --totp-output /tmp/totp.csv` and
+   notify every affected user — see "TOTP re-enrollment" above.
+5. `/etc/jabali/config.toml`: ensure `[auth] provider = "kratos"`.
+   Fresh installs have it already; in-place upgrades need the edit.
+6. `systemctl restart jabali-panel`. Tail `journalctl -fu jabali-panel`
+   during the first 60 seconds — the Kratos-aware `BootstrapAdmin` logs
+   `kratos_identity_id=...` when it links the first admin.
+7. Smoke-test: open /login in an incognito tab, log in, verify you land
+   on /jabali-admin (or /jabali-panel for a user), `document.cookie`
+   shows `ory_kratos_session` but no `jabali_access_token` /
+   `jabali_refresh`.
+
+### Rollback (30-second path)
+
+```sh
+# Edit the single line in /etc/jabali/config.toml:
+sed -i 's/^provider = "kratos"/provider = "legacy"/' /etc/jabali/config.toml
+systemctl restart jabali-panel
+```
+
+Rolling back keeps the Kratos database intact — identities stay, `users.
+kratos_identity_id` stays. A future re-cutover is a single-line flip away.
+**Do NOT** drop `jabali_kratos` or clear `kratos_identity_id` unless you
+are rebuilding from scratch; re-running the migration against a
+half-cleaned state produces duplicate identities and email-conflict 409s.
+
+## Day-2 operations
+
+### Identity management (operator shell)
+
+```sh
+# List every identity, with email + admin status.
+kratos identities list -e http://127.0.0.1:4434 --format json \
+  | jq -r '.[] | [.id, .traits.email, .traits.is_admin] | @tsv'
+
+# Inspect one identity (credentials + verifiable addresses + state).
+kratos identities get <id> -e http://127.0.0.1:4434
+
+# Disable a compromised identity (can't log in; data preserved).
+kratos identities update <id> -e http://127.0.0.1:4434 --state=inactive
+
+# Re-enable.
+kratos identities update <id> -e http://127.0.0.1:4434 --state=active
+
+# Delete (irreversible — preserves the panel `users` row but orphans
+# kratos_identity_id; use UPDATE to clear the column if you want the
+# next kratos-migrate run to re-link).
+kratos identities delete <id> -e http://127.0.0.1:4434
+```
+
+### Session revocation
+
+```sh
+# Revoke every active session for one identity (force re-login everywhere).
+kratos sessions revoke -e http://127.0.0.1:4434 --all-for-identity <id>
+
+# Revoke one specific session (e.g. after a device-theft report).
+kratos sessions revoke <session-id> -e http://127.0.0.1:4434
+```
+
+### MFA reset
+
+Clear the TOTP credential so the user re-enrolls on next login:
+
+```sh
+kratos identities patch <id> -e http://127.0.0.1:4434 \
+  --set '[{"op":"remove","path":"/credentials/totp"}]'
+kratos identities patch <id> -e http://127.0.0.1:4434 \
+  --set '[{"op":"remove","path":"/credentials/lookup_secret"}]'
+```
+
+The user logs in with password only, then Security → Authenticator to
+re-enroll. This is also the answer to "I lost my phone" tickets.
+
+### Recovery code (replaces M5a impersonation + M5b break-glass)
+
+Generate a one-time recovery URL the operator can send to a locked-out user:
+
+```sh
+curl -sS -X POST http://127.0.0.1:4434/admin/recovery/code \
+  -H 'Content-Type: application/json' \
+  -d '{"identity_id":"<uuid>"}' | jq .
+```
+
+Response includes `recovery_link` — the user clicks it, sets a new
+password, logs in. No plaintext password ever touches the operator's
+inbox or shell.
+
+### Backup + restore
+
+```sh
+# Backup (daily cron recommended).
+mysqldump --single-transaction jabali_kratos > /var/backups/kratos-$(date +%F).sql
+
+# Restore.
+mariadb jabali_kratos < /var/backups/kratos-2026-04-20.sql
+systemctl restart jabali-kratos
+```
+
+### Kratos DB loss recovery
+
+If `jabali_kratos` is lost and no backup exists, identities are gone but
+the panel `users` table still holds `kratos_identity_id` references. The
+path forward:
+
+1. Reprovision: `install.sh` is idempotent — re-running `install_kratos`
+   rebuilds the schema. Existing `kratos_identity_id` values now point at
+   nothing.
+2. Clear the stale column so `kratos-migrate` will treat every user as
+   unmigrated:
+   ```sql
+   UPDATE users SET kratos_identity_id = NULL;
+   ```
+3. Re-run `jabali kratos-migrate`. Password hashes survived (they live in
+   panel `users.password_hash`), so bcrypt passthrough re-creates every
+   identity with zero re-enrollment.
+4. 2FA-enabled users must re-enroll TOTP — same story as the initial
+   cutover (see "TOTP re-enrollment" above). There is no way to recover
+   TOTP secrets from a lost Kratos DB.
+
+### Self-signed TLS bootstrap for split-host Kratos
+
+If operators eventually front Kratos on a separate hostname (`kratos.
+example.com` instead of loopback), they must terminate TLS there. The
+nginx `/.ory/` proxy in the panel vhost assumes loopback; the panel's
+`auth.kratos.public_url` would become the external URL. Self-signed cert
+on the Kratos host:
+
+```sh
+openssl req -x509 -nodes -newkey rsa:2048 \
+  -keyout /etc/kratos/tls.key \
+  -out /etc/kratos/tls.crt \
+  -days 365 -subj "/CN=kratos.local"
+```
+
+Drop the nginx proxy block, set `public_url = "https://kratos.local"`,
+add the self-signed cert to the panel's CA store so whoami calls verify.
+For production use, Let's Encrypt the Kratos hostname instead.

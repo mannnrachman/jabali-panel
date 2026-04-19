@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 
 import { apiClient } from "../../apiClient";
 import { getIdentity, type Identity } from "../../identity";
+import { MyProfile2FACard } from "./MyProfile2FACard";
 
 type ChangePasswordForm = {
   current_password: string;
@@ -63,6 +64,8 @@ export function MyProfile() {
             </Descriptions>
           )}
         </Card>
+
+        {me && <MyProfile2FACard userId={me.id} />}
 
         <Card title="Change password">
           <Form<ChangePasswordForm>

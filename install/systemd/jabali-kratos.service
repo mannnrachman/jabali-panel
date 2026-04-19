@@ -11,7 +11,6 @@ User=jabali
 Group=jabali
 Slice=jabali.slice
 
-EnvironmentFile=/etc/jabali-panel/kratos.env
 ExecStart=/usr/local/bin/kratos serve -c /etc/jabali-panel/kratos.yml
 
 Restart=on-failure

@@ -1646,11 +1646,14 @@ DROPINEOF
 
   # Poll for the FPM socket. ondemand mode still creates the listening
   # socket at master start, but there's a race between systemctl returning
-  # and the child pre-start shim completing the mkdir/chown, so give it
-  # a few seconds before giving up.
+  # and FPM finishing pool initialization. Observed on LXC containers
+  # where FPM takes ~5s after "Started" to bind the socket; 5s of polling
+  # (the old budget) was clipping the race. 30s gives cold-start LXC
+  # hosts headroom without meaningfully delaying healthy installs
+  # (fast hosts break out on tries 1-5).
   local sock="/run/php/jabali-pma/fpm.sock"
   local tries=0
-  while (( tries < 20 )); do
+  while (( tries < 120 )); do
     [[ -S "$sock" ]] && break
     sleep 0.25
     tries=$((tries + 1))

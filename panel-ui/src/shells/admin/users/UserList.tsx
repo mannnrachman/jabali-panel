@@ -9,7 +9,7 @@
 // total stays correct per tab.
 import { useState } from "react";
 import { useTable, EditButton, CreateButton } from "@refinedev/antd";
-import { Space, Table, Tabs, Typography } from "antd";
+import { Card, Space, Table, Typography } from "antd";
 import { TeamOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
 import { SearchableTable } from "../../../components/SearchableTable";
 import { readQValue } from "../../../components/searchableTableUtils";
@@ -141,31 +141,33 @@ export const UserList = () => {
         <CreateButton />
       </Space>
 
-      <Tabs
-        type="card"
-        activeKey={activeTab}
-        onChange={(k) => setActiveTab(k as "users" | "admins")}
-        items={[
+      {/* Card.tabList renders the tab strip visually attached to the card
+          body — gives the connected "tab → panel" look the bare Tabs
+          component lacks. activeTabKey drives which child table renders. */}
+      <Card
+        tabList={[
           {
             key: "users",
-            label: (
+            tab: (
               <span>
                 <TeamOutlined /> Users
               </span>
             ),
-            children: <UsersTable />,
           },
           {
             key: "admins",
-            label: (
+            tab: (
               <span>
                 <SafetyCertificateOutlined /> Administrators
               </span>
             ),
-            children: <AdministratorsTable />,
           },
         ]}
-      />
+        activeTabKey={activeTab}
+        onTabChange={(k) => setActiveTab(k as "users" | "admins")}
+      >
+        {activeTab === "users" ? <UsersTable /> : <AdministratorsTable />}
+      </Card>
     </div>
   );
 };

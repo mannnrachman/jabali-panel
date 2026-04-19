@@ -85,6 +85,25 @@ func (m *mockWordPressInstallRepo) FindByDomainAndSubdirectory(ctx context.Conte
 	return nil, repository.ErrNotFound
 }
 
+// FindByDomainAndSubdirectoryAndAppType — added for the M19 generalisation.
+// Pre-M19 rows had no AppType column; the model defaults to "wordpress" so
+// the legacy WP test fixtures match an app_type="wordpress" query without
+// each test having to set the field explicitly.
+func (m *mockWordPressInstallRepo) FindByDomainAndSubdirectoryAndAppType(ctx context.Context, domainID, subdirectory, appType string) (*models.WordPressInstall, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, inst := range m.installs {
+		instAppType := inst.AppType
+		if instAppType == "" {
+			instAppType = "wordpress"
+		}
+		if inst.DomainID == domainID && inst.Subdirectory == subdirectory && instAppType == appType {
+			return inst, nil
+		}
+	}
+	return nil, repository.ErrNotFound
+}
+
 func (m *mockWordPressInstallRepo) FindByDBID(ctx context.Context, dbID string) (*models.WordPressInstall, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

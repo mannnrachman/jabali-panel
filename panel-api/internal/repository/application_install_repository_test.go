@@ -33,15 +33,16 @@ func TestWordPressInstallCreate_Success(t *testing.T) {
 		LastError:     "",
 		CreatedAt:     now,
 		UpdatedAt:     now,
+		AppType:       "wordpress",
 	}
 
 	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO `wordpress_installs`").
+	mock.ExpectExec("INSERT INTO `application_installs`").
 		WithArgs(
 			install.ID, install.UserID, install.DomainID, install.DBID,
 			install.Version, install.AdminUsername, install.AdminEmail,
 			install.Locale, install.UseWWW, install.Subdirectory, install.Status, install.LastError,
-			sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), sqlmock.AnyArg(), install.AppType,
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
@@ -75,12 +76,12 @@ func TestWordPressInstallCreate_UniqueDomainIDConstraint(t *testing.T) {
 	}
 
 	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO `wordpress_installs`").
+	mock.ExpectExec("INSERT INTO `application_installs`").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
-			sqlmock.AnyArg()).
+			sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(sql.ErrNoRows) // Simulates UNIQUE constraint violation
 	mock.ExpectRollback()
 
@@ -96,7 +97,7 @@ func TestWordPressInstallFindByID_Found(t *testing.T) {
 	repo := NewWordPressInstallRepository(db)
 	now := time.Now()
 
-	mock.ExpectQuery("SELECT .* FROM `wordpress_installs` WHERE id = \\?.*LIMIT").
+	mock.ExpectQuery("SELECT .* FROM `application_installs` WHERE id = \\?.*LIMIT").
 		WithArgs("inst_abc123", 1).
 		WillReturnRows(sqlmock.NewRows(
 			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "use_www", "subdirectory", "status", "last_error", "created_at", "updated_at"},
@@ -121,7 +122,7 @@ func TestWordPressInstallFindByID_NotFound(t *testing.T) {
 
 	repo := NewWordPressInstallRepository(db)
 
-	mock.ExpectQuery("SELECT .* FROM `wordpress_installs` WHERE id = \\?.*LIMIT").
+	mock.ExpectQuery("SELECT .* FROM `application_installs` WHERE id = \\?.*LIMIT").
 		WithArgs("inst_nonexistent", 1).
 		WillReturnRows(sqlmock.NewRows(
 			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "use_www", "subdirectory", "status", "last_error", "created_at", "updated_at"},
@@ -141,7 +142,7 @@ func TestWordPressInstallFindByIDAndUserID_Found(t *testing.T) {
 	repo := NewWordPressInstallRepository(db)
 	now := time.Now()
 
-	mock.ExpectQuery("SELECT .* FROM `wordpress_installs` WHERE id = \\? AND user_id = \\?.*LIMIT").
+	mock.ExpectQuery("SELECT .* FROM `application_installs` WHERE id = \\? AND user_id = \\?.*LIMIT").
 		WithArgs("inst_abc123", "user1", 1).
 		WillReturnRows(sqlmock.NewRows(
 			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "use_www", "subdirectory", "status", "last_error", "created_at", "updated_at"},
@@ -165,7 +166,7 @@ func TestWordPressInstallFindByIDAndUserID_DifferentUser(t *testing.T) {
 	repo := NewWordPressInstallRepository(db)
 
 	// Install exists but belongs to a different user; should return ErrNotFound
-	mock.ExpectQuery("SELECT .* FROM `wordpress_installs` WHERE id = \\? AND user_id = \\?.*LIMIT").
+	mock.ExpectQuery("SELECT .* FROM `application_installs` WHERE id = \\? AND user_id = \\?.*LIMIT").
 		WithArgs("inst_abc123", "user2", 1).
 		WillReturnRows(sqlmock.NewRows(
 			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "use_www", "subdirectory", "status", "last_error", "created_at", "updated_at"},
@@ -185,7 +186,7 @@ func TestWordPressInstallFindByDomainID_Found(t *testing.T) {
 	repo := NewWordPressInstallRepository(db)
 	now := time.Now()
 
-	mock.ExpectQuery("SELECT .* FROM `wordpress_installs` WHERE domain_id = \\?.*LIMIT").
+	mock.ExpectQuery("SELECT .* FROM `application_installs` WHERE domain_id = \\?.*LIMIT").
 		WithArgs("domain1", 1).
 		WillReturnRows(sqlmock.NewRows(
 			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "use_www", "subdirectory", "status", "last_error", "created_at", "updated_at"},
@@ -207,7 +208,7 @@ func TestWordPressInstallFindByDomainID_NotFound(t *testing.T) {
 
 	repo := NewWordPressInstallRepository(db)
 
-	mock.ExpectQuery("SELECT .* FROM `wordpress_installs` WHERE domain_id = \\?.*LIMIT").
+	mock.ExpectQuery("SELECT .* FROM `application_installs` WHERE domain_id = \\?.*LIMIT").
 		WithArgs("domain_nonexistent", 1).
 		WillReturnRows(sqlmock.NewRows(
 			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "use_www", "subdirectory", "status", "last_error", "created_at", "updated_at"},
@@ -228,12 +229,12 @@ func TestWordPressInstallListByUserID(t *testing.T) {
 	now := time.Now()
 
 	// Expect COUNT query
-	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `wordpress_installs` WHERE user_id = \\?").
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `application_installs` WHERE user_id = \\?").
 		WithArgs("user1").
 		WillReturnRows(sqlmock.NewRows([]string{"count(*)"}).AddRow(2))
 
 	// Expect SELECT query with ORDER BY and LIMIT
-	mock.ExpectQuery("SELECT .* FROM `wordpress_installs` WHERE user_id = \\?.*LIMIT").
+	mock.ExpectQuery("SELECT .* FROM `application_installs` WHERE user_id = \\?.*LIMIT").
 		WithArgs("user1", 20).
 		WillReturnRows(sqlmock.NewRows(
 			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "use_www", "subdirectory", "status", "last_error", "created_at", "updated_at"},
@@ -256,11 +257,11 @@ func TestWordPressInstallList(t *testing.T) {
 	now := time.Now()
 
 	// Expect COUNT query
-	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `wordpress_installs`").
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `application_installs`").
 		WillReturnRows(sqlmock.NewRows([]string{"count(*)"}).AddRow(3))
 
 	// Expect SELECT query with ORDER BY and LIMIT
-	mock.ExpectQuery("SELECT .* FROM `wordpress_installs`.*LIMIT").
+	mock.ExpectQuery("SELECT .* FROM `application_installs`.*LIMIT").
 		WithArgs(20).
 		WillReturnRows(sqlmock.NewRows(
 			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "use_www", "subdirectory", "status", "last_error", "created_at", "updated_at"},
@@ -283,7 +284,7 @@ func TestWordPressInstallUpdateStatus(t *testing.T) {
 	repo := NewWordPressInstallRepository(db)
 
 	mock.ExpectBegin()
-	mock.ExpectExec("UPDATE `wordpress_installs` SET .* WHERE id = \\?").
+	mock.ExpectExec("UPDATE `application_installs` SET .* WHERE id = \\?").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
@@ -303,7 +304,7 @@ func TestWordPressInstallUpdateStatus_WithErrorAndVersion(t *testing.T) {
 	version := "6.5.3"
 
 	mock.ExpectBegin()
-	mock.ExpectExec("UPDATE `wordpress_installs` SET .* WHERE id = \\?").
+	mock.ExpectExec("UPDATE `application_installs` SET .* WHERE id = \\?").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
@@ -320,7 +321,7 @@ func TestWordPressInstallDelete_Success(t *testing.T) {
 	repo := NewWordPressInstallRepository(db)
 
 	mock.ExpectBegin()
-	mock.ExpectExec("DELETE FROM `wordpress_installs` WHERE id = \\?").
+	mock.ExpectExec("DELETE FROM `application_installs` WHERE id = \\?").
 		WithArgs("inst_abc123").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
@@ -337,7 +338,7 @@ func TestWordPressInstallDelete_NotFound(t *testing.T) {
 	repo := NewWordPressInstallRepository(db)
 
 	mock.ExpectBegin()
-	mock.ExpectExec("DELETE FROM `wordpress_installs` WHERE id = \\?").
+	mock.ExpectExec("DELETE FROM `application_installs` WHERE id = \\?").
 		WithArgs("inst_nonexistent").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()

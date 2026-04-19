@@ -184,6 +184,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			if err := run("", "install", "-m", "0755", repoDir+"/bin/jabali-agent.new", defaultAgentBinPath); err != nil {
 				return err
 			}
+			// Idempotent ergonomic alias: `jabali` → `jabali-panel`.
+			// install.sh creates this on fresh installs; update.go refreshes it
+			// on every upgrade in case it got clobbered.
+			_ = run("", "ln", "-sf", defaultPanelBinPath, "/usr/local/bin/jabali")
 			_ = os.Remove(repoDir + "/bin/jabali-panel.new")
 			_ = os.Remove(repoDir + "/bin/jabali-agent.new")
 			return nil

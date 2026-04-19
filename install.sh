@@ -910,8 +910,15 @@ build_backend() {
   install -m 0755 "$tmp_panel" "$BIN_PATH"
   install -m 0755 "$tmp_agent" "$AGENT_BIN_PATH"
   rm -f "$tmp_panel" "$tmp_agent"
+
+  # Ergonomic alias: `jabali ...` works the same as `jabali-panel ...`.
+  # The cobra root command is already named "jabali"; this just saves
+  # the "-panel" typing for operators. Symlink is idempotent.
+  ln -sf "$BIN_PATH" /usr/local/bin/jabali
+
   _ok "installed $BIN_PATH (version=$version)"
   _ok "installed $AGENT_BIN_PATH (version=$version)"
+  _ok "symlinked /usr/local/bin/jabali -> $BIN_PATH"
 }
 
 # ---------- step 6: env file + systemd unit ---------------------------------

@@ -629,8 +629,14 @@ func (h *wordPressHandler) delete(c *gin.Context) {
 		}
 	}
 
-	// Spawn async goroutine to delete
-	go createDeleteAndKickAgent(ctx, installID, install.DBID, dbUserID, osUser, domain.DocRoot, domain.Name, dbUserUsername, h.cfg)
+	// Spawn async goroutine to delete. Pass the AppType + Subdirectory
+	// from the install row so the kicker dispatches to the right per-
+	// app deleter (was hardcoded to "wordpress" pre-M19, which silently
+	// routed Drupal/Joomla/etc deletes to the WP file-list cleaner).
+	// install_id is plumbed through so deleters that opt into the
+	// managed-data-dir contract (Moodle/GLPI/Chamilo) can recompute the
+	// /home/<user>/<install_id>-data path and rm it.
+	go createDeleteAndKickAgent(ctx, installID, install.AppType, install.Subdirectory, install.DBID, dbUserID, osUser, domain.DocRoot, domain.Name, dbUserUsername, h.cfg)
 
 	c.JSON(http.StatusAccepted, gin.H{"status": "deleting"})
 }
@@ -1020,7 +1026,7 @@ func createInstallAndKickAgent(parentCtx context.Context, args installKickArgs, 
 // database user, grants, install record). If the agent file-removal
 // fails we flip status to failed but still allow a future retry.
 // Non-empty osUser+docroot are required; the handler pre-fills them.
-func createDeleteAndKickAgent(parentCtx context.Context, installID, databaseID, dbUserID, osUser, docroot, domainName, dbUserUsername string, cfg WordPressHandlerConfig) {
+func createDeleteAndKickAgent(parentCtx context.Context, installID, appType, subdirectory, databaseID, dbUserID, osUser, docroot, domainName, dbUserUsername string, cfg WordPressHandlerConfig) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -1030,16 +1036,30 @@ func createDeleteAndKickAgent(parentCtx context.Context, installID, databaseID, 
 		return
 	}
 
-	// Agent removes WordPress core files from the docroot AND restores
+	// Default appType to "wordpress" for any install row that pre-dates
+	// the M19 migration (the column NOT NULL DEFAULT 'wordpress' should
+	// have backfilled, but treat empty defensively).
+	if appType == "" {
+		appType = "wordpress"
+	}
+
+	// Agent removes the app's files from the docroot AND restores
 	// the domain.create placeholder index.html (when domain is non-empty)
 	// so the docroot doesn't 403 after delete. Does NOT touch the MySQL
 	// side — panel handles that below.
-	// M19: dispatched through app.delete with app_type discriminator.
+	//
+	// M19: dispatched through app.delete with app_type discriminator
+	// (was hardcoded "wordpress" before the rename).
+	// install_id + subdirectory let deleters that opted into the
+	// managed-data-dir contract recompute /home/<user>/<install_id>-data
+	// for cleanup, and let subdir installs target the right path.
 	_, err := cfg.Agent.Call(ctx, "app.delete", map[string]any{
-		"app_type": "wordpress",
-		"os_user":  osUser,
-		"docroot":  docroot,
-		"domain":   domainName,
+		"app_type":     appType,
+		"install_id":   installID,
+		"os_user":      osUser,
+		"docroot":      docroot,
+		"subdirectory": subdirectory,
+		"domain":       domainName,
 	})
 	if err != nil {
 		errMsg := truncateError(fmt.Sprintf("agent delete failed: %v", err), 1024)

@@ -449,6 +449,33 @@ func (h *applicationsHandler) create(c *gin.Context) {
 			UseWWW:       install.UseWWW,
 		}, h.cfg)
 		adminPassword = matomoPass
+	case "moodle":
+		// Moodle is the first consumer of the M19 managed-data-dir
+		// framework — install_id is plumbed through to the agent so it
+		// can ensure /home/<user>/<install_id>-data/ exists for
+		// moodledata before kicking admin/cli/install.php.
+		moodlePass := paramOr(req.Params, "admin_password", "")
+		if moodlePass == "" {
+			moodlePass = ids.NewULID()
+		}
+		go createMoodleInstallAndKickAgent(ctx, moodleKickArgs{
+			InstallID:     installID,
+			OSUser:        osUser,
+			DocRoot:       domain.DocRoot,
+			Subdirectory:  install.Subdirectory,
+			SiteURL:       siteURL,
+			DBName:        chain.DBName,
+			DBUser:        chain.DBUsername,
+			DBPassword:    adminPassword,
+			SiteTitle:     paramOr(req.Params, "site_title", "My Moodle Site"),
+			SiteShortName: paramOr(req.Params, "site_short_name", "Moodle"),
+			AdminUser:     install.AdminUsername,
+			AdminPass:     moodlePass,
+			AdminEmail:    install.AdminEmail,
+			Language:      paramOr(req.Params, "language", "en"),
+			UseWWW:        install.UseWWW,
+		}, h.cfg)
+		adminPassword = moodlePass
 	case "prestashop":
 		prestaPass := paramOr(req.Params, "admin_password", "")
 		if prestaPass == "" {
@@ -1756,6 +1783,80 @@ func createBackdropInstallAndKickAgent(parentCtx context.Context, args backdropK
 		"admin_email":  args.AdminEmail,
 		"profile":      args.Profile,
 		"use_www":      args.UseWWW,
+	})
+	if err != nil {
+		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+	var respMap map[string]any
+	if err := json.Unmarshal(agentResp, &respMap); err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to parse agent response: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+	version := ""
+	if v, ok := respMap["version"].(string); ok {
+		version = v
+	}
+	cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
+}
+
+// moodleKickArgs and createMoodleInstallAndKickAgent — first consumer of
+// the M19 managed-data-dir framework. install_id is forwarded to the
+// agent so the installer can call ensureManagedDataDir to provision
+// moodledata at /home/<user>/<install_id>-data/ outside the docroot.
+type moodleKickArgs struct {
+	InstallID     string
+	OSUser        string
+	DocRoot       string
+	Subdirectory  string
+	SiteURL       string
+	DBName        string
+	DBUser        string
+	DBPassword    string
+	SiteTitle     string
+	SiteShortName string
+	AdminUser     string
+	AdminPass     string
+	AdminEmail    string
+	Language      string
+	UseWWW        bool
+}
+
+func createMoodleInstallAndKickAgent(parentCtx context.Context, args moodleKickArgs, cfg ApplicationHandlerConfig) {
+	// 25 min — Moodle's schema migrations are the long pole, especially
+	// the question/quiz tables which add 200+ tables one by one.
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
+	defer cancel()
+
+	if err := cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "installing", nil, nil); err != nil {
+		return
+	}
+	if cfg.Agent == nil {
+		errMsg := "agent not configured"
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	agentResp, err := cfg.Agent.Call(ctx, "app.install", map[string]any{
+		"app_type":        "moodle",
+		"install_id":      args.InstallID,
+		"os_user":         args.OSUser,
+		"docroot":         args.DocRoot,
+		"subdirectory":    args.Subdirectory,
+		"site_url":        args.SiteURL,
+		"db_name":         args.DBName,
+		"db_user":         args.DBUser,
+		"db_password":     args.DBPassword,
+		"db_host":         "localhost",
+		"site_title":      args.SiteTitle,
+		"site_short_name": args.SiteShortName,
+		"admin_user":      args.AdminUser,
+		"admin_pass":      args.AdminPass,
+		"admin_email":     args.AdminEmail,
+		"language":        args.Language,
+		"use_www":         args.UseWWW,
 	})
 	if err != nil {
 		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)

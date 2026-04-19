@@ -22,7 +22,7 @@ describe("identity", () => {
     const a = await getIdentity();
     const b = await getIdentity();
 
-    expect(a).toEqual({ id: "01K...", email: "a@b.c", isAdmin: true });
+    expect(a).toEqual({ id: "01K...", email: "a@b.c", isAdmin: true, impersonatedBy: null });
     expect(b).toBe(a);
     expect(get).toHaveBeenCalledTimes(1);
   });
@@ -33,7 +33,7 @@ describe("identity", () => {
     } as never));
 
     const [a, b, c] = await Promise.all([getIdentity(), getIdentity(), getIdentity()]);
-    expect(a).toEqual({ id: "x", email: "e", isAdmin: false });
+    expect(a).toEqual({ id: "x", email: "e", isAdmin: false, impersonatedBy: null });
     expect(a).toBe(b);
     expect(b).toBe(c);
     expect(get).toHaveBeenCalledTimes(1);

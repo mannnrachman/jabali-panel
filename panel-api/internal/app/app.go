@@ -109,6 +109,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 	startRateLimiterSweeper(rl)
 	r.Use(rl.Default())
 
+	// Tag every /api/v1/* response with Cache-Control: no-store. Without
+	// this, Firefox's Opaque-Response-Blocking decision cache can replay
+	// a prior 401 with status=0ms, leaving the SPA stuck on a blank page
+	// after token expiry.
+	r.Use(middleware.NoCacheAPI())
+
 	api.RegisterServiceInfoRoute(r)
 	api.RegisterHealthRoutes(r)
 	if deps.Agent != nil {

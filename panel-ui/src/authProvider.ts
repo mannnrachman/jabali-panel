@@ -60,6 +60,13 @@ export const authProvider: AuthProvider = {
     }
     setAccessToken(null);
     clearIdentity();
+    // Wipe any impersonation-session markers so a future tab load
+    // doesn't see a stale no_refresh=1 and skip the refresh path,
+    // or read a dead imp_access_token back into memory. Belt and
+    // braces — setAccessToken(null) already clears imp_access_token,
+    // but only when no_refresh is set; we want both regardless.
+    sessionStorage.removeItem("no_refresh");
+    sessionStorage.removeItem("imp_access_token");
     return { success: true, redirectTo: "/login" };
   },
 

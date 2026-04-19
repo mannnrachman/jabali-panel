@@ -60,6 +60,11 @@ export function getAccessToken(): string | null {
 export const apiClient = axios.create({
   baseURL: API_BASE,
   withCredentials: true, // send the refresh cookie
+  // 15s hard ceiling — without a timeout, any network hang (proxy, dropped
+  // connection, Firefox's Opaque-Response-Blocking cache caught mid-flight)
+  // freezes <Authenticated>'s check() indefinitely and the SPA renders
+  // blank. Anything legitimate on this API completes in <1s.
+  timeout: 15000,
 });
 
 apiClient.interceptors.request.use((cfg: InternalAxiosRequestConfig) => {
@@ -83,7 +88,7 @@ export async function refreshAccessToken(): Promise<string | null> {
         const resp = await axios.post<{ access_token: string }>(
           `${API_BASE}/auth/refresh`,
           null,
-          { withCredentials: true },
+          { withCredentials: true, timeout: 10000 },
         );
         const tok = resp.data?.access_token ?? null;
         setAccessToken(tok);

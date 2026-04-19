@@ -159,53 +159,5 @@ func TestFilesAgentParamsWireShape(t *testing.T) {
 	}
 }
 
-// Agent-side param structs (mirrored from panel-agent/internal/commands/files_*.go)
-// These must match exactly with their panel-agent counterparts.
-
-type filesListAgentParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Path     string `json:"path"`
-}
-
-type filesReadAgentParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Path     string `json:"path"`
-	Limit    int64  `json:"limit,omitempty"`
-}
-
-type filesWriteAgentParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Path     string `json:"path"`
-	Content  string `json:"content"`
-	Mode     string `json:"mode,omitempty"`
-}
-
-type filesDeleteAgentParams struct {
-	UserID    string `json:"user_id"`
-	Username  string `json:"username"`
-	Path      string `json:"path"`
-	Recursive bool   `json:"recursive,omitempty"`
-}
-
-type filesMkdirAgentParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Path     string `json:"path"`
-	Mode     string `json:"mode,omitempty"`
-}
-
-type filesRenameAgentParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	OldPath  string `json:"old_path"`
-	NewPath  string `json:"new_path"`
-}
-
-type filesStatAgentParams struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Path     string `json:"path"`
-}
+// Agent param struct types are now defined in files.go (production); this
+// test file only guards their JSON-tag shape against drift with panel-agent.

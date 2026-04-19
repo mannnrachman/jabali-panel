@@ -106,24 +106,27 @@ export const AdminWordPressList = () => {
           title="Domain"
           sorter={{ multiple: 1 }}
           defaultSortOrder="ascend"
-          render={(domainName: string, record) => (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <GlobalOutlined />
-              <span style={{ fontWeight: 500 }}>
-                {domainName || record.domain_id}
-              </span>
-              {record.status === "ready" && domainName && (
-                <a
-                  href={`https://${domainName}/`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ fontSize: 12 }}
-                >
-                  open ↗
-                </a>
-              )}
-            </div>
-          )}
+          render={(domainName: string, record) => {
+            const label = domainName || record.domain_id;
+            const isLink = record.status === "ready" && !!domainName;
+            return (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <GlobalOutlined />
+                {isLink ? (
+                  <a
+                    href={`https://${domainName}/`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontWeight: 500 }}
+                  >
+                    {label}
+                  </a>
+                ) : (
+                  <span style={{ fontWeight: 500 }}>{label}</span>
+                )}
+              </div>
+            );
+          }}
         />
         <Table.Column<WordPressInstall>
           dataIndex="admin_email"

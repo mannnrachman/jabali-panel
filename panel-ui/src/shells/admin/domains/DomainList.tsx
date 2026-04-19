@@ -29,6 +29,34 @@ const renderDomainCell = (name: string, docRoot: string) => (
   </div>
 );
 
+export type SSLBadge = {
+  status: string;
+  issuer?: string | null;
+  issued_at?: string | null;
+  expires_at?: string | null;
+};
+
+const renderSSL = (ssl: SSLBadge | null | undefined) => {
+  if (!ssl) return <Tag>Off</Tag>;
+  switch (ssl.status) {
+    case "issued":
+      return <Tag color="green">{ssl.issuer || "Let's Encrypt"}</Tag>;
+    case "self_signed":
+      return <Tag color="orange">Self-signed</Tag>;
+    case "pending":
+    case "issuing":
+    case "renewing":
+    case "pending_acme_retry":
+      return <Tag color="gold">Issuing…</Tag>;
+    case "failed":
+      return <Tag color="red">Failed</Tag>;
+    case "revoked":
+      return <Tag color="red">Revoked</Tag>;
+    default:
+      return <Tag>Off</Tag>;
+  }
+};
+
 export type Domain = {
   id: string;
   user_id: string;
@@ -36,6 +64,7 @@ export type Domain = {
   doc_root: string;
   is_enabled: boolean;
   ssl_enabled?: boolean;
+  ssl?: SSLBadge | null;
   nginx_custom_directives: string;
   redirect_all_to?: string | null;
   redirect_all_type?: string | null;
@@ -99,11 +128,9 @@ export const DomainList = () => {
           }
         />
         <Table.Column<Domain>
-          dataIndex="ssl_enabled"
+          dataIndex="ssl"
           title="SSL"
-          render={(on?: boolean) =>
-            on ? <Tag color="green">on</Tag> : <Tag>off</Tag>
-          }
+          render={(ssl: SSLBadge | null | undefined) => renderSSL(ssl)}
         />
         <Table.Column<Domain>
           title="Actions"

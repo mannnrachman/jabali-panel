@@ -155,6 +155,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Packages:   deps.Packages,
 				Agent:      deps.Agent,
 				Reconciler: deps.Reconciler,
+				SSLCerts:   deps.SSLCerts,
 			})
 		}
 		if deps.Databases != nil && deps.DatabaseUsers != nil {

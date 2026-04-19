@@ -22,6 +22,7 @@ import (
 type DomainHandlerConfig struct {
 	Domains    repository.DomainRepository
 	Users      repository.UserRepository
+	SSLCerts   repository.SSLCertificateRepository
 	Packages   repository.PackageRepository
 	Agent      agent.AgentInterface
 	Reconciler *reconciler.Reconciler
@@ -60,6 +61,22 @@ type updateDomainRequest struct {
 	IndexPriority         *string               `json:"index_priority,omitempty"`
 }
 
+// sslBadge is the nested SSL-cert summary embedded in domain list rows so
+// the admin UI can differentiate self-signed from Let's Encrypt at a glance.
+type sslBadge struct {
+	Status    string     `json:"status"`
+	Issuer    *string    `json:"issuer,omitempty"`
+	IssuedAt  *time.Time `json:"issued_at,omitempty"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+}
+
+// domainListRow wraps a Domain with the optional SSL badge. Embedded so
+// existing consumers of the flat shape keep working.
+type domainListRow struct {
+	models.Domain
+	SSL *sslBadge `json:"ssl,omitempty"`
+}
+
 func (h *domainHandler) list(c *gin.Context) {
 	claims := ginctx.Claims(c)
 	if claims == nil {
@@ -85,12 +102,59 @@ func (h *domainHandler) list(c *gin.Context) {
 	if domains == nil {
 		domains = []models.Domain{}
 	}
+
+	// Enrich with SSL badge via a single batch lookup. Skipped cleanly if
+	// SSLCerts isn't wired (e.g. early-boot tests) so the list still works.
+	rows := make([]domainListRow, len(domains))
+	for i := range domains {
+		rows[i] = domainListRow{Domain: domains[i]}
+	}
+	if h.cfg.SSLCerts != nil && len(domains) > 0 {
+		domainIDs := make([]string, len(domains))
+		for i := range domains {
+			domainIDs[i] = domains[i].ID
+		}
+		certs, certErr := h.cfg.SSLCerts.FindByDomainIDs(c.Request.Context(), domainIDs)
+		if certErr == nil {
+			certMap := make(map[string]*models.SSLCertificate, len(certs))
+			for i := range certs {
+				certMap[certs[i].DomainID] = &certs[i]
+			}
+			for i := range rows {
+				if cert := certMap[rows[i].ID]; cert != nil {
+					rows[i].SSL = sslBadgeFromCert(cert)
+				}
+			}
+		}
+		// On SSL lookup error we drop the badge silently — list response
+		// still ships flat domain data rather than 500ing.
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"data":      domains,
+		"data":      rows,
 		"total":     total,
 		"page":      page,
 		"page_size": pageSize,
 	})
+}
+
+// sslBadgeFromCert maps a cert row to the nested badge, filling Issuer
+// based on status so the UI doesn't have to encode the label logic.
+func sslBadgeFromCert(cert *models.SSLCertificate) *sslBadge {
+	b := &sslBadge{
+		Status:    cert.Status,
+		IssuedAt:  cert.IssuedAt,
+		ExpiresAt: cert.ExpiresAt,
+	}
+	switch cert.Status {
+	case models.SSLStatusSelfSigned:
+		s := "Self-signed"
+		b.Issuer = &s
+	case models.SSLStatusIssued, models.SSLStatusRenewing:
+		s := "Let's Encrypt"
+		b.Issuer = &s
+	}
+	return b
 }
 
 func (h *domainHandler) get(c *gin.Context) {

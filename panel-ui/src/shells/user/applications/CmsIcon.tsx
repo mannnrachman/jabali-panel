@@ -1,4 +1,5 @@
 import { SiWordpress, SiWikipedia, SiDrupal, SiJoomla, SiPhpbb, SiGrav, SiFreshrss, SiMatomo } from "react-icons/si";
+import { FaOpencart } from "react-icons/fa6";
 import { BookOutlined, AppstoreOutlined } from "@ant-design/icons";
 import type { CSSProperties } from "react";
 
@@ -21,6 +22,7 @@ const BRAND_COLOR: Record<string, string> = {
   freshrss: "#88BC23",
   matomo: "#3152A0",
   concrete: "#34669B",
+  opencart: "#2AC2EF",
 };
 
 // CmsIcon renders the brand logo for an app_type. WordPress and
@@ -62,6 +64,9 @@ export function CmsIcon({ appType, size = 18 }: CmsIconProps) {
   }
   if (key === "matomo") {
     return <SiMatomo style={style} />;
+  }
+  if (key === "opencart") {
+    return <FaOpencart style={style} />;
   }
   if (key === "concrete") {
     // Simple Icons doesn't ship a Concrete CMS entry; fall back to a

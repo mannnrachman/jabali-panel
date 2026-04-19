@@ -449,6 +449,26 @@ func (h *applicationsHandler) create(c *gin.Context) {
 			UseWWW:       install.UseWWW,
 		}, h.cfg)
 		adminPassword = matomoPass
+	case "opencart":
+		opencartPass := paramOr(req.Params, "admin_password", "")
+		if opencartPass == "" {
+			opencartPass = ids.NewULID()
+		}
+		go createOpenCartInstallAndKickAgent(ctx, opencartKickArgs{
+			InstallID:    installID,
+			OSUser:       osUser,
+			DocRoot:      domain.DocRoot,
+			Subdirectory: install.Subdirectory,
+			SiteURL:      siteURL,
+			DBName:       chain.DBName,
+			DBUser:       chain.DBUsername,
+			DBPassword:   adminPassword,
+			AdminUser:    install.AdminUsername,
+			AdminPass:    opencartPass,
+			AdminEmail:   install.AdminEmail,
+			UseWWW:       install.UseWWW,
+		}, h.cfg)
+		adminPassword = opencartPass
 	case "concrete":
 		concretePass := paramOr(req.Params, "admin_password", "")
 		if concretePass == "" {
@@ -1408,6 +1428,68 @@ func createConcreteInstallAndKickAgent(parentCtx context.Context, args concreteK
 		"starting_point": args.StartingPoint,
 		"locale":         args.Locale,
 		"use_www":        args.UseWWW,
+	})
+	if err != nil {
+		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+	var respMap map[string]any
+	if err := json.Unmarshal(agentResp, &respMap); err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to parse agent response: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+	version := ""
+	if v, ok := respMap["version"].(string); ok {
+		version = v
+	}
+	cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
+}
+
+// opencartKickArgs and createOpenCartInstallAndKickAgent — e-commerce.
+type opencartKickArgs struct {
+	InstallID    string
+	OSUser       string
+	DocRoot      string
+	Subdirectory string
+	SiteURL      string
+	DBName       string
+	DBUser       string
+	DBPassword   string
+	AdminUser    string
+	AdminPass    string
+	AdminEmail   string
+	UseWWW       bool
+}
+
+func createOpenCartInstallAndKickAgent(parentCtx context.Context, args opencartKickArgs, cfg ApplicationHandlerConfig) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	if err := cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "installing", nil, nil); err != nil {
+		return
+	}
+	if cfg.Agent == nil {
+		errMsg := "agent not configured"
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	agentResp, err := cfg.Agent.Call(ctx, "app.install", map[string]any{
+		"app_type":     "opencart",
+		"os_user":      args.OSUser,
+		"docroot":      args.DocRoot,
+		"subdirectory": args.Subdirectory,
+		"site_url":     args.SiteURL,
+		"db_name":      args.DBName,
+		"db_user":      args.DBUser,
+		"db_password":  args.DBPassword,
+		"db_host":      "localhost",
+		"admin_user":   args.AdminUser,
+		"admin_pass":   args.AdminPass,
+		"admin_email":  args.AdminEmail,
+		"use_www":      args.UseWWW,
 	})
 	if err != nil {
 		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)

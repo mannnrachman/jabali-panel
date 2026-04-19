@@ -294,7 +294,7 @@ prompt_server_settings() {
 # ---------- step 1: base packages -------------------------------------------
 
 install_base_packages() {
-  _log "installing base packages (git, curl, ca-certificates, build-essential, mariadb, PHP, rsync)"
+  _log "installing base packages (git, curl, ca-certificates, build-essential, mariadb, PHP, rsync, systemd-resolved)"
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y -qq --no-install-recommends \
@@ -302,15 +302,16 @@ install_base_packages() {
     mariadb-server mariadb-client \
     php-cli php-mysqli php-curl php-xml php-mbstring \
     rsync acl \
+    systemd-resolved \
     quota quotatool xfsprogs
   _ok "base packages ready"
 }
 
-# Note: DNS is deliberately left alone at install time. The installer
-# must not change the host's resolver, flip /etc/resolv.conf, or seed
-# an upstream. The panel's Server Settings → DNS Resolvers page reads
-# whatever the host currently uses and lets the admin opt in to
-# panel-managed resolvers if they want.
+# Note: we deliberately install systemd-resolved but do NOT configure it
+# here. The admin's existing DNS setup stays untouched at install time.
+# If the admin wants to change DNS later, the panel's Server Settings →
+# DNS Resolvers page writes the drop-in and restarts the service — which
+# only works because the package is available.
 
 # ---------- step 1d: M18 — cgroups v2 probe + disk quota + /tmp tmpfs -------
 #

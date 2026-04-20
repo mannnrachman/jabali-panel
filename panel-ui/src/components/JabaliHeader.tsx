@@ -92,6 +92,22 @@ export function JabaliHeader() {
 
   const userMenu: MenuProps["items"] = [
     {
+      key: "profile",
+      icon: <UserOutlined />,
+      label: "Profile",
+      onClick: () => {
+        const inAdminShell = location.pathname.startsWith("/jabali-admin/");
+        if (inAdminShell) {
+          // Admins don't have a panel-side profile page; Kratos self-service
+          // settings covers email/password/2FA uniformly (M20).
+          window.location.assign("/.ory/self-service/settings/browser");
+        } else {
+          navigate("/jabali-panel/profile");
+        }
+      },
+    },
+    { type: "divider" },
+    {
       key: "logout",
       icon: <LogoutOutlined />,
       label: "Sign out",

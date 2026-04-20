@@ -1,13 +1,5 @@
 import { useEffect, useState } from "react";
-import {
-  SaveOutlined,
-  WarningOutlined,
-  CloudServerOutlined,
-  ClockCircleOutlined,
-  LockOutlined,
-  GlobalOutlined,
-  SettingOutlined,
-} from "@ant-design/icons";
+import { SaveOutlined, WarningOutlined } from "@ant-design/icons";
 import {
   Alert,
   Button,
@@ -173,7 +165,7 @@ const GeneralSettingsTab = () => {
         }}
       </Form.Item>
 
-      <Card title="Identity" size="small" style={{ marginBottom: 16 }}>
+      <Card title="Identity" style={{ marginBottom: 16 }}>
         <Row gutter={16}>
           <Col span={12}>
             <Form.Item
@@ -237,16 +229,7 @@ const GeneralSettingsTab = () => {
         </Row>
       </Card>
 
-      <Card
-        title={
-          <>
-            <ClockCircleOutlined style={{ marginRight: 8 }} />
-            Server Time
-          </>
-        }
-        size="small"
-        style={{ marginBottom: 16 }}
-      >
+      <Card title="Server Time" style={{ marginBottom: 16 }}>
         <Form.Item
           label="Timezone"
           name="timezone"
@@ -269,16 +252,7 @@ const GeneralSettingsTab = () => {
         </Form.Item>
       </Card>
 
-      <Card
-        title={
-          <>
-            <LockOutlined style={{ marginRight: 8 }} />
-            SSH Access
-          </>
-        }
-        size="small"
-        style={{ marginBottom: 16 }}
-      >
+      <Card title="SSH Access" style={{ marginBottom: 16 }}>
         <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
           Configure SSH port and authentication method. Changes are applied
           immediately and are reversible.
@@ -447,7 +421,7 @@ const DNSSettingsTab = () => {
         onFinish={handleSubmit}
         disabled={loading}
       >
-        <Card title="DNS Nameservers" size="small" style={{ marginBottom: 16 }}>
+        <Card title="DNS Nameservers" style={{ marginBottom: 16 }}>
         <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
           These are the names and addresses your customers will set at their
           registrar. You typically run ns1 on this server and ns2 on a
@@ -507,7 +481,6 @@ export const ServerSettingsPage = () => {
   return (
     <div style={{ padding: 24, maxWidth: 960 }}>
       <Typography.Title level={3} style={{ marginTop: 0 }}>
-        <CloudServerOutlined style={{ marginRight: 8 }} />
         Server Settings
       </Typography.Title>
       <Typography.Paragraph type="secondary">
@@ -519,22 +492,8 @@ export const ServerSettingsPage = () => {
           inactive tab are lost on switch (mirrors the Users page pattern). */}
       <Card
         tabList={[
-          {
-            key: "general",
-            tab: (
-              <span>
-                <SettingOutlined /> General
-              </span>
-            ),
-          },
-          {
-            key: "dns",
-            tab: (
-              <span>
-                <GlobalOutlined /> DNS
-              </span>
-            ),
-          },
+          { key: "general", tab: "General" },
+          { key: "dns", tab: "DNS" },
         ]}
         activeTabKey={activeTab}
         onTabChange={(k) => setActiveTab(k as "general" | "dns")}

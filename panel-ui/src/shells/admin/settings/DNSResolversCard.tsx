@@ -12,7 +12,7 @@ import {
   Typography,
   notification,
 } from "antd";
-import { SaveOutlined, ApiOutlined } from "@ant-design/icons";
+import { SaveOutlined } from "@ant-design/icons";
 
 import { apiClient } from "../../../apiClient";
 
@@ -209,16 +209,7 @@ export const DNSResolversCard = () => {
   };
 
   return (
-    <Card
-      title={
-        <>
-          <ApiOutlined style={{ marginRight: 8 }} />
-          DNS Resolvers
-        </>
-      }
-      size="small"
-      style={{ marginBottom: 16 }}
-    >
+    <Card title="DNS Resolvers" style={{ marginBottom: 16 }}>
       <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
         Set the upstream DNS servers this server uses to resolve hostnames.
         Writes a drop-in at <code>/etc/systemd/resolved.conf.d/jabali.conf</code>

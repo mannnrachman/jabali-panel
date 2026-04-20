@@ -97,12 +97,22 @@ func (c *Client) whoamiRemote(ctx context.Context, cookie string) (*Identity, er
 		return nil, fmt.Errorf("whoami: unexpected status %d: %s", resp.StatusCode, string(body))
 	}
 
-	var identity Identity
-	if err := json.NewDecoder(resp.Body).Decode(&identity); err != nil {
+	// Kratos /sessions/whoami returns a Session envelope, not a bare identity:
+	//   { "id": "<session_uuid>", "active": true, ..., "identity": { "id": "<identity_uuid>", "traits": {...} } }
+	// The top-level "id" is the SESSION id — decoding into Identity directly
+	// would populate Identity.ID with that session id and the caller's
+	// FindByKratosIdentityID(id) would never match any users row. Decode the
+	// envelope, then hand back the nested identity.
+	var sess struct {
+		Identity Identity `json:"identity"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&sess); err != nil {
 		return nil, fmt.Errorf("whoami: failed to decode response: %w", err)
 	}
-
-	return &identity, nil
+	if sess.Identity.ID == "" {
+		return nil, fmt.Errorf("whoami: response missing identity.id")
+	}
+	return &sess.Identity, nil
 }
 
 // GetTraitEmail extracts the email from a Kratos identity's traits.

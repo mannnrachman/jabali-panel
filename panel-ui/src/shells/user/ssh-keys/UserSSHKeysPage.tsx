@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  Alert,
   Button,
   Space,
   Table,
@@ -14,15 +15,38 @@ import {
 import {
   PlusSquareOutlined,
   DeleteOutlined,
+  KeyOutlined,
+  CopyOutlined,
+  DownloadOutlined,
 } from "@ant-design/icons";
+import { getKeys as getEd25519SSHKeys } from "ed25519-keygen/ssh";
 import { listSSHKeys, createSSHKey, deleteSSHKey, type SSHKey } from "../../../apiClient";
 import { useQuery } from "@tanstack/react-query";
 
 const SSH_KEY_PREFIXES = ["ssh-rsa ", "ssh-ed25519 ", "ecdsa-sha2-"];
 
+// generateEd25519Keypair runs entirely in the browser: 32 bytes from
+// Web Crypto feed ed25519-keygen's OpenSSH encoder, which returns the
+// public key in authorized_keys format and the private key in OpenSSH
+// PEM format. The private key never transits the network — only the
+// public half is POSTed via the normal /ssh-keys endpoint.
+function generateEd25519Keypair(comment: string) {
+  const seed = new Uint8Array(32);
+  crypto.getRandomValues(seed);
+  return getEd25519SSHKeys(seed, comment || "jabali");
+}
+
 export const UserSSHKeysPage = () => {
   const [form] = Form.useForm();
+  const [genForm] = Form.useForm();
   const [modalOpen, setModalOpen] = useState(false);
+  const [genOpen, setGenOpen] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  // generatedPrivate is the plaintext OpenSSH private key we just made.
+  // Held in React state only long enough to show it to the user once;
+  // cleared when the result modal closes.
+  const [generatedPrivate, setGeneratedPrivate] = useState<string | null>(null);
+  const [generatedName, setGeneratedName] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -80,6 +104,56 @@ export const UserSSHKeysPage = () => {
     }
   };
 
+  const handleGenerate = async (values: { name: string; comment?: string }) => {
+    setGenerating(true);
+    try {
+      const { publicKey, privateKey } = generateEd25519Keypair(values.comment ?? "");
+      await createSSHKey({ name: values.name, public_key: publicKey });
+      setGeneratedPrivate(privateKey);
+      setGeneratedName(values.name);
+      setGenOpen(false);
+      genForm.resetFields();
+      message.success("SSH key generated — save the private key now");
+      refetch();
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { error?: string } }; message?: string };
+      if (err?.response?.data?.error === "duplicate_key") {
+        // Extraordinarily unlikely with 32 random bytes, but if the
+        // user re-clicks fast enough we could race their own list.
+        message.error("This key is already registered — try again.");
+      } else {
+        message.error(err?.message ?? "Failed to generate SSH key");
+      }
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const downloadPrivateKey = () => {
+    if (!generatedPrivate) return;
+    // .pem is the conventional extension for OpenSSH's armored private
+    // key; ssh/sftp clients accept either .pem or no extension.
+    const blob = new Blob([generatedPrivate], { type: "application/x-pem-file" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${(generatedName || "id_ed25519").replace(/[^a-zA-Z0-9_-]/g, "_")}.pem`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const copyPrivateKey = async () => {
+    if (!generatedPrivate) return;
+    try {
+      await navigator.clipboard.writeText(generatedPrivate);
+      message.success("Private key copied to clipboard");
+    } catch {
+      message.error("Copy failed — select and copy manually");
+    }
+  };
+
   const handleDelete = async (key: SSHKey) => {
     setDeletingId(key.id);
     try {
@@ -111,13 +185,21 @@ export const UserSSHKeysPage = () => {
         <Typography.Title level={3} style={{ margin: 0 }}>
           SSH Keys
         </Typography.Title>
-        <Button
-          type="primary"
-          icon={<PlusSquareOutlined />}
-          onClick={() => setModalOpen(true)}
-        >
-          Add Key
-        </Button>
+        <Space>
+          <Button
+            icon={<KeyOutlined />}
+            onClick={() => setGenOpen(true)}
+          >
+            Generate Key
+          </Button>
+          <Button
+            type="primary"
+            icon={<PlusSquareOutlined />}
+            onClick={() => setModalOpen(true)}
+          >
+            Add Key
+          </Button>
+        </Space>
       </Space>
 
       <Table<SSHKey>
@@ -229,6 +311,100 @@ export const UserSSHKeysPage = () => {
             </Button>
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* Generate Key — collects a name + optional comment, then creates
+          an ed25519 keypair entirely in the browser via ed25519-keygen
+          and POSTs only the public half. The private key is shown once
+          in the result modal below. */}
+      <Modal
+        title="Generate SSH Key"
+        open={genOpen}
+        onCancel={() => {
+          setGenOpen(false);
+          genForm.resetFields();
+        }}
+        footer={null}
+      >
+        <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+          Generates an Ed25519 keypair in your browser. The private key
+          is shown once after creation — save it somewhere safe because
+          we never see it and cannot recover it.
+        </Typography.Paragraph>
+        <Form form={genForm} layout="vertical" onFinish={handleGenerate}>
+          <Form.Item
+            label="Name"
+            name="name"
+            rules={[
+              { required: true, message: "Please enter a name" },
+              { max: 128, message: "Name must be 128 characters or less" },
+            ]}
+          >
+            <Input placeholder="e.g., My Laptop" />
+          </Form.Item>
+          <Form.Item
+            label="Comment (optional)"
+            name="comment"
+            extra="Embedded in the public key as a label; defaults to 'jabali'."
+          >
+            <Input placeholder="user@host" />
+          </Form.Item>
+          <Form.Item>
+            <Button
+              type="primary"
+              icon={<KeyOutlined />}
+              htmlType="submit"
+              loading={generating}
+              block
+            >
+              Generate Keypair
+            </Button>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* Result modal — shown immediately after a successful generate.
+          Shows the private key once with copy + download. Dismissing
+          clears it from React state so it's not retained in memory. */}
+      <Modal
+        title="Save your private key now"
+        open={generatedPrivate !== null}
+        onCancel={() => {
+          setGeneratedPrivate(null);
+          setGeneratedName("");
+        }}
+        footer={
+          <Button type="primary" onClick={() => {
+            setGeneratedPrivate(null);
+            setGeneratedName("");
+          }}>
+            I've saved it
+          </Button>
+        }
+        width={680}
+      >
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="This is the only time the private key will be shown."
+          description="Copy or download it now. If you close this dialog without saving, you'll need to generate a new key and delete this one."
+        />
+        <Space style={{ marginBottom: 8 }}>
+          <Button icon={<CopyOutlined />} onClick={copyPrivateKey}>
+            Copy
+          </Button>
+          <Button icon={<DownloadOutlined />} onClick={downloadPrivateKey}>
+            Download .pem
+          </Button>
+        </Space>
+        <Input.TextArea
+          readOnly
+          value={generatedPrivate ?? ""}
+          rows={14}
+          style={{ fontFamily: "monospace", fontSize: 12 }}
+          onFocus={(e) => e.currentTarget.select()}
+        />
       </Modal>
     </div>
   );

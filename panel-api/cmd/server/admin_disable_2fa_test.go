@@ -44,6 +44,9 @@ func (f *fake2FAUserRepo) List(context.Context, repository.ListOptions) ([]model
 	return nil, 0, nil
 }
 func (f *fake2FAUserRepo) Update(context.Context, *models.User) error         { return nil }
+func (f *fake2FAUserRepo) LinkKratosIdentity(context.Context, string, string) error {
+	return nil
+}
 func (f *fake2FAUserRepo) SetAdmin(context.Context, string, bool) error       { return nil }
 func (f *fake2FAUserRepo) CountAdmins(context.Context) (int64, error)         { return 0, nil }
 func (f *fake2FAUserRepo) FindAdminsByEmail(context.Context) ([]*models.User, error) {

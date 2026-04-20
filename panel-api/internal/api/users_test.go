@@ -139,13 +139,24 @@ func (m *memUserRepo) Update(_ context.Context, u *models.User) error {
 	if !ok {
 		return repository.ErrNotFound
 	}
-	// mimic the real repo: leave is_admin alone
+	// mimic the real repo: leave is_admin AND kratos_identity_id alone
 	existing.Email = u.Email
 	existing.NameFirst = u.NameFirst
 	existing.NameLast = u.NameLast
 	existing.PasswordHash = u.PasswordHash
 	existing.PackageID = u.PackageID
 	existing.UpdatedAt = time.Now()
+	return nil
+}
+
+func (m *memUserRepo) LinkKratosIdentity(_ context.Context, userID, kratosID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.byID[userID]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	u.KratosIdentityID = &kratosID
 	return nil
 }
 

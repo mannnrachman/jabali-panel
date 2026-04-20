@@ -96,6 +96,16 @@ func (f *fakeUserRepo) Update(_ context.Context, u *models.User) error {
 	}
 	return nil
 }
+func (f *fakeUserRepo) LinkKratosIdentity(_ context.Context, userID, kratosID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.byID[userID]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	u.KratosIdentityID = &kratosID
+	return nil
+}
 func (f *fakeUserRepo) SetAdmin(context.Context, string, bool) error { return nil }
 func (f *fakeUserRepo) CountAdmins(context.Context) (int64, error)   { return 0, nil }
 func (f *fakeUserRepo) FindAdminsByEmail(_ context.Context) ([]*models.User, error) {

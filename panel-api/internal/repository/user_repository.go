@@ -28,6 +28,12 @@ type UserRepository interface {
 	FindByKratosIdentityID(ctx context.Context, kratosID string) (*models.User, error)
 	List(ctx context.Context, opts ListOptions) ([]models.User, int64, error)
 	Update(ctx context.Context, u *models.User) error
+	// LinkKratosIdentity writes kratos_identity_id on the row. Deliberately
+	// separate from Update — Update's column allowlist excludes this field so
+	// a profile-edit handler can't accidentally overwrite it, but the M20
+	// compensating-transaction flow in BootstrapAdmin + POST /users + the CLI
+	// create path all need to stamp it after the Kratos side succeeds.
+	LinkKratosIdentity(ctx context.Context, userID, kratosID string) error
 	// SetAdmin flips is_admin on the row. Deliberately separate from Update
 	// so the profile-edit path can't accidentally escalate privileges.
 	SetAdmin(ctx context.Context, id string, isAdmin bool) error
@@ -140,11 +146,29 @@ func (r *userRepo) List(ctx context.Context, opts ListOptions) ([]models.User, i
 func (r *userRepo) Update(ctx context.Context, u *models.User) error {
 	// Select columns explicitly to keep handlers from accidentally flipping
 	// is_admin via Save(). The admin-only endpoint bypasses this repo method
-	// and updates is_admin directly.
+	// and updates is_admin directly. kratos_identity_id is also excluded here
+	// — the M20 compensating-transaction callers use LinkKratosIdentity().
 	if err := r.db.WithContext(ctx).Model(u).Select(
 		"email", "name_first", "name_last", "password_hash", "linux_uid", "package_id",
 	).Updates(u).Error; err != nil {
 		return translate(err)
+	}
+	return nil
+}
+
+// LinkKratosIdentity writes kratos_identity_id in isolation. Returns
+// ErrNotFound if no row exists for userID so the caller can distinguish
+// missing-row from update-failure and trigger the correct rollback.
+func (r *userRepo) LinkKratosIdentity(ctx context.Context, userID, kratosID string) error {
+	res := r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Where("id = ?", userID).
+		Update("kratos_identity_id", kratosID)
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
 	}
 	return nil
 }

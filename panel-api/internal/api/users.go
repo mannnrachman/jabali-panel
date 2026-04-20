@@ -265,18 +265,21 @@ func (h *userHandler) create(c *gin.Context) {
 			return
 		}
 
+		// LinkKratosIdentity writes only that one column; Repo.Update's
+		// allowlist excludes kratos_identity_id so it would silently drop
+		// the write.
 		u.KratosIdentityID = &identityID
-		if err := h.cfg.Repo.Update(c.Request.Context(), u); err != nil {
+		if err := h.cfg.Repo.LinkKratosIdentity(c.Request.Context(), u.ID, identityID); err != nil {
 			// Undo both sides: delete the Kratos identity so re-create is safe,
 			// then delete the panel row. Best-effort — if either unwind call
 			// fails, log it so the operator sees the orphan.
 			if delErr := h.cfg.KratosClient.DeleteIdentity(c.Request.Context(), identityID); delErr != nil {
-				slog.Error("panel update failed and kratos rollback also failed — orphan identity",
-					"user_id", u.ID, "identity_id", identityID, "update_err", err, "rollback_err", delErr)
+				slog.Error("panel link failed and kratos rollback also failed — orphan identity",
+					"user_id", u.ID, "identity_id", identityID, "link_err", err, "rollback_err", delErr)
 			}
 			if delErr := h.cfg.Repo.Delete(c.Request.Context(), u.ID); delErr != nil {
-				slog.Error("panel update failed and panel rollback also failed — orphan row",
-					"user_id", u.ID, "update_err", err, "rollback_err", delErr)
+				slog.Error("panel link failed and panel rollback also failed — orphan row",
+					"user_id", u.ID, "link_err", err, "rollback_err", delErr)
 			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 			return

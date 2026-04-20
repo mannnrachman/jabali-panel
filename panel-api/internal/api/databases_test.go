@@ -182,6 +182,15 @@ func (m *mockUserRepo) Update(ctx context.Context, u *models.User) error {
 	return nil
 }
 
+func (m *mockUserRepo) LinkKratosIdentity(ctx context.Context, userID, kratosID string) error {
+	if m.users != nil {
+		if u, ok := m.users[userID]; ok {
+			u.KratosIdentityID = &kratosID
+		}
+	}
+	return nil
+}
+
 func (m *mockUserRepo) SetAdmin(ctx context.Context, id string, isAdmin bool) error {
 	return nil
 }

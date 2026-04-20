@@ -30,6 +30,16 @@ type wordpressInstallReq struct {
 	Locale       string `json:"locale"`
 	UseWWW       bool   `json:"use_www"`       // prepend www. to domain in siteurl
 	Subdirectory string `json:"subdirectory"`  // install in subdirectory (optional)
+
+	// M16 Wave D Step 7 — per-install OIDC plugin bootstrap. All three
+	// must be non-empty to trigger plugin install; any empty value
+	// skips the OIDC step entirely (WP still installs correctly, just
+	// without SSO). The secret is plaintext and one-shot — the panel
+	// sealed a copy before forwarding it here, and the agent forwards
+	// it directly into the plugin's options table.
+	OIDCClientID     string `json:"oidc_client_id,omitempty"`
+	OIDCClientSecret string `json:"oidc_client_secret,omitempty"`
+	OIDCIssuer       string `json:"oidc_issuer,omitempty"`
 }
 
 // wordpressInstallResp is the output shape for wordpress.install.
@@ -109,6 +119,119 @@ func normalizePermsToWwwData(ctx context.Context, installPath, osUser string) er
 	if err := exec.CommandContext(ctx, "find", installPath, "-type", "f", "-exec", "chmod", "0640", "{}", "+").Run(); err != nil {
 		return fmt.Errorf("chmod files 0640 under %s: %w", installPath, err)
 	}
+	return nil
+}
+
+// buildOIDCPluginSettings returns the settings map written to the
+// openid_connect_generic_settings WP option. Extracted so the shape
+// is unit-testable without standing up wp-cli.
+//
+// identify_with_username=false + link_existing_users=true means the
+// first login for a given email matches an existing WP user if one
+// exists (covers the "admin_user was pre-created by wp core install"
+// case — the admin signs in with their Kratos email and lands on the
+// pre-created admin row).
+//
+// Endpoint URLs follow Hydra's documented paths under the issuer —
+// verified via OIDC discovery at
+// <issuer>/.well-known/openid-configuration on every Hydra release.
+func buildOIDCPluginSettings(clientID, clientSecret, issuer string) map[string]any {
+	return map[string]any{
+		"login_type":               "button",
+		"client_id":                clientID,
+		"client_secret":            clientSecret,
+		"scope":                    "openid email profile",
+		"endpoint_login":           issuer + "/oauth2/auth",
+		"endpoint_userinfo":        issuer + "/userinfo",
+		"endpoint_token":           issuer + "/oauth2/token",
+		"endpoint_end_session":     issuer + "/oauth2/sessions/logout",
+		"identity_key":             "sub",
+		"nickname_key":             "preferred_username",
+		"email_format":             "{email}",
+		"displayname_format":       "{name}",
+		"identify_with_username":   false,
+		"link_existing_users":      true,
+		"create_if_does_not_exist": true,
+		"no_sslverify":             0,
+		"http_request_timeout":     5,
+		"enforce_privacy":          0,
+		"alternate_redirect_uri":   0,
+		"token_refresh_enable":     1,
+		"state_time_limit":         180,
+	}
+}
+
+// installAndConfigureOIDCPlugin installs the OpenID Connect Generic
+// WordPress plugin from wordpress.org, activates it, and writes the
+// per-install configuration (client_id/secret, Hydra endpoint URLs).
+//
+// Returns an error on any step; caller decides whether to treat as
+// fatal (currently yes — partial OIDC configuration is worse than
+// none). Does NOT roll back WP core on failure: the install is still
+// usable without SSO, and the operator can retry the plugin step
+// separately.
+//
+// Plugin slug on the WordPress.org plugin directory:
+// https://wordpress.org/plugins/daggerhart-openid-connect-generic/
+//
+// The option key `openid_connect_generic_settings` matches the
+// plugin's register_setting() call — a rename on the plugin side
+// would break this, but the plugin's semver promises stability.
+func installAndConfigureOIDCPlugin(ctx context.Context, req wordpressInstallReq, installPath string) error {
+	const pluginSlug = "daggerhart-openid-connect-generic"
+
+	// Step 1 — fetch + install + activate. `wp plugin install` uses
+	// PHP's HTTP client to download from wordpress.org, so this is
+	// the same network code path that `wp core download` already
+	// exercises. --activate rolls the activate call into the install
+	// so we don't need a separate round-trip when the download
+	// succeeds.
+	installCmd := buildSystemdRunCmd(ctx,
+		req.OSUser,
+		"wp", "plugin", "install", pluginSlug,
+		"--activate",
+		"--path="+installPath,
+	)
+	var instStdout, instStderr bytes.Buffer
+	installCmd.Stdout = &instStdout
+	installCmd.Stderr = &instStderr
+	if err := installCmd.Run(); err != nil {
+		return fmt.Errorf("wp plugin install %s failed: %v; stderr=%q; stdout=%q",
+			pluginSlug, err,
+			truncateStr(instStderr.String(), 400),
+			truncateStr(instStdout.String(), 200),
+		)
+	}
+
+	settings := buildOIDCPluginSettings(req.OIDCClientID, req.OIDCClientSecret, req.OIDCIssuer)
+	settingsJSON, err := json.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("marshal oidc settings: %w", err)
+	}
+
+	// Pass JSON via stdin so the secret never appears on argv (it
+	// would leak into `ps` output otherwise). wp-cli treats the
+	// literal "-" as the value when reading from stdin.
+	optCmd := buildSystemdRunCmd(ctx,
+		req.OSUser,
+		"wp", "option", "update",
+		"openid_connect_generic_settings",
+		"-",
+		"--format=json",
+		"--path="+installPath,
+	)
+	optCmd.Stdin = bytes.NewReader(settingsJSON)
+	var optStdout, optStderr bytes.Buffer
+	optCmd.Stdout = &optStdout
+	optCmd.Stderr = &optStderr
+	if err := optCmd.Run(); err != nil {
+		return fmt.Errorf("wp option update openid_connect_generic_settings failed: %v; stderr=%q; stdout=%q",
+			err,
+			truncateStr(optStderr.String(), 400),
+			truncateStr(optStdout.String(), 200),
+		)
+	}
+
 	return nil
 }
 
@@ -392,6 +515,25 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 	}
 
 	version := strings.TrimSpace(versionOutput.String())
+
+	// M16 Wave D Step 7 — bootstrap the OIDC plugin. Runs BEFORE the
+	// perms normalize so the plugin's wp-content/plugins/<slug> tree
+	// gets the same 0750/0640 + www-data group treatment as core.
+	// Skipped when any OIDC field is empty (panel isn't wired for
+	// Hydra, or the app descriptor doesn't advertise a callback).
+	//
+	// Deliberately NOT rolled back on failure: a successful WP core
+	// without SSO beats a fully-cleaned rollback from the user's POV.
+	// The panel surfaces the returned error in LastError so the
+	// operator can decide whether to retry or delete + reinstall.
+	if req.OIDCClientID != "" && req.OIDCClientSecret != "" && req.OIDCIssuer != "" {
+		if err := installAndConfigureOIDCPlugin(ctx, req, installPath); err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("oidc plugin bootstrap failed: %v", err),
+			}
+		}
+	}
 
 	// Normalize ownership + perms across the entire WP tree to the
 	// project's <user>:www-data 0750/0640 convention. wp-cli ran under

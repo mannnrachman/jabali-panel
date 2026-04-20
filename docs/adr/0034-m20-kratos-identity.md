@@ -131,7 +131,7 @@ Rather than reinvent a one-shot session-exchange endpoint (which is just a small
    kratos identities list|get|patch|delete  # covers create/disable/unlock/MFA-reset
    ```
 
-3. **Kratos DB lost entirely:** Restore `jabali_kratos` schema from `mysqldump` backup. If no backup exists, the panel `users` table still holds `kratos_identity_id` references; re-run the migration tool with `--rebuild-kratos` (generates password-reset links for every user).
+3. **Kratos DB lost entirely:** Restore `jabali_kratos` schema from `mysqldump` backup. If no backup exists, the panel `users` table still holds `kratos_identity_id` references; a `--rebuild-kratos` flag was planned (see Deferred section below; not yet implemented). Operator must manually recover via the runbook.
 
 The `jabali admin-login` subcommand is deleted in step 7.
 
@@ -323,6 +323,27 @@ the legacy behavior, so the two code paths share one invariant — ADR-0003
   granting admin.
 - **Kratos password-migration webhook** — not used. All current users
   have bcrypt hashes, passthrough covers them.
+
+### Deferred: `--rebuild-kratos` flag for DB-loss recovery
+
+The original plan (§8.3) stated: "re-run the migration tool with `--rebuild-kratos` (generates password-reset links for every user)."
+
+**Status:** Planned but not implemented in the M20 cutover (2026-04-20). The flag does not exist in `panel-api/cmd/server/kratos_migrate_cmd.go`, and the kratosclient has no bulk password-reset link generator.
+
+**Workaround (operator at 3 AM):**
+1. **If mysqldump backup exists:** Restore `jabali_kratos` schema from backup. Full recovery, zero manual steps.
+2. **If no backup and Kratos service is running:** Iterate panel's `users.kratos_identity_id` list manually; for each identity UUID, issue `POST http://127.0.0.1:4434/admin/recovery/code -d '{"identity_id":"<uuid>"}'` to generate a recovery link. Distribute links to users out-of-band (email, SMS, etc.). Users click link, reset password, regain access. This works only if Kratos is running and reachable.
+3. **If Kratos DB is completely lost and no backup exists, and Kratos itself is down:** The panel's `users.kratos_identity_id` FKs are dangling. Standing up a fresh Kratos instance leaves no way to link existing users without the `--rebuild-kratos` flag (which would create new Kratos identities, generate temporary passwords, re-link panel rows, and emit a CSV of reset tokens for bulk operator distribution).
+
+**Gap:** A future PR must implement `--rebuild-kratos` with the following semantics:
+- For each row in panel's `users` table with a non-NULL `kratos_identity_id`:
+  - Fetch the old identity UUID from panel (for audit trail)
+  - Call `POST /admin/identities` with a new bcrypt-hashed temporary password (cost-12, same as panel's existing hashing)
+  - Write the new Kratos identity UUID back to `users.kratos_identity_id` (compensating transaction: atomic panel UPDATE + Kratos create, or rollback both on failure)
+  - Collect the recovery link from the temporary-password flow and emit to a CSV for operator distribution
+- Exit with a summary: "N identities rebuilt, tokens emitted to /tmp/recovery-tokens.csv, operator must distribute via email"
+
+This is marked `TODO(post-M20):` and should be filed as a separate issue blocking the 30-day rollback window closure.
 
 ### Status: SHIPPED 2026-04-20
 

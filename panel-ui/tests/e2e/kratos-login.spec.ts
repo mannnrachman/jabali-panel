@@ -66,4 +66,34 @@ test.describe("Kratos login flow", () => {
     await page.goto("/jabali-admin/dashboard");
     await expect(page).toHaveURL(/\/login$/);
   });
+
+  test("logout clears ory_kratos_session cookie and redirects to /login", async ({ page }) => {
+    await mockApi(page, { me: admin });
+    await signIn(page, admin);
+    await expect(page).toHaveURL(/\/jabali-admin/);
+
+    // Verify the session cookie is present after login.
+    let cookies = await page.context().cookies();
+    const sessionCookieBeforeLogout = cookies.find((c) => c.name === "ory_kratos_session");
+    expect(sessionCookieBeforeLogout).toBeDefined();
+    expect(sessionCookieBeforeLogout?.value).toBe("mock-session");
+
+    // Trigger logout via the user dropdown "Sign out" button.
+    // JabaliHeader renders: Dropdown menu with key="logout", label="Sign out".
+    await page.getByRole("button", { name: /admin@test\.local/ }).click();
+    await page.getByRole("menuitem", { name: /sign out/i }).click();
+
+    // After logout, the browser should be redirected to /login.
+    await expect(page).toHaveURL(/\/login$/);
+
+    // Verify the session cookie is gone.
+    cookies = await page.context().cookies();
+    const sessionCookieAfterLogout = cookies.find((c) => c.name === "ory_kratos_session");
+    expect(sessionCookieAfterLogout).toBeUndefined();
+
+    // Sanity check: navigate to a protected route; should bounce back to /login
+    // because the session is dead, not just the cookie stale.
+    await page.goto("/jabali-admin/dashboard");
+    await expect(page).toHaveURL(/\/login$/);
+  });
 });

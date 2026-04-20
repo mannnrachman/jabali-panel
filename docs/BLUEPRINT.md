@@ -1001,8 +1001,20 @@ See ADRs for architectural security decisions:
 - Build: `npm run build`
 
 **CI/CD:**
-- GitHub Actions (if available; push to main runs tests + build)
-- Pre-commit hooks (local lint, type check)
+- **Gitea Actions** pipeline at `.gitea/workflows/ci.yml` runs on every push +
+  PR to `main`. Three parallel jobs on a self-hosted `act_runner` (host-mode,
+  no Docker): `Go tests + vet` (runs `make vet` + `make test -race`),
+  `panel-ui unit tests (vitest)`, and `Playwright E2E` (builds SPA, installs
+  Chromium, runs `@playwright/test --project=chromium`).
+- Concurrency group `ci-${{ github.ref }}` with `cancel-in-progress: true`
+  auto-cancels stale runs on rapid pushes so the runner queue stays shallow.
+- **Branch protection on `main`** (loose): PR merges blocked until all 3 CI
+  checks green, direct-push whitelisted for `shukivaknin` only, force-push
+  disabled, admin merge override enabled as escape hatch for genuinely-broken
+  CI. Configured via `POST /repos/:owner/:repo/branch_protections`.
+- Pre-commit hook `/.claude/hooks/block-agent-commit-main.sh` blocks direct
+  `git commit` on `main` to prevent parallel-session stomping — workflow is
+  branch + merge, enforced locally before the server-side protection kicks in.
 
 ---
 
@@ -1062,6 +1074,7 @@ Use this table to navigate the codebase when adding a new capability:
 | M5a: Admin Impersonation (DROPPED) | 2026-04-20 | Removed by M20 step 6 — replacement via Kratos `/admin/recovery/code` |
 | M5b: Break-Glass CLI Login (DROPPED) | 2026-04-20 | Removed by M20 step 7 — replacement via `kratos identities` + `/admin/recovery/code` |
 | M20: Kratos identity migration (all 9 steps) | 2026-04-20 | ADR-0034; runbook at `plans/m20-kratos-runbook.md`; Waves A–E on `main`; TOTP migration shipped as operator CSV reporter per plan deviation; legacy JWT code stays behind flag for 30-day rollback window |
+| Infra: Gitea CI + branch protection | 2026-04-20 | `.gitea/workflows/ci.yml` (3 parallel jobs), self-hosted `act_runner` in host-mode (no Docker/Podman), loose branch protection on `main`. Also fixed pre-existing data race in `TestApplications_CreateWordPress_HappyPath` (`applications_service.go`) that CI's `-race` flag caught. Commits `b181c74` (workflow), `5d1f9a7` (race fix). |
 
 ---
 

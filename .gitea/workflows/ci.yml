@@ -17,6 +17,12 @@ on:
   pull_request:
     branches: [main]
 
+# Auto-cancel prior runs on the same ref so a rapid-fire push doesn't leave
+# half a dozen in_progress jobs piling up on the single self-hosted runner.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   # Keep the Go + Node toolchains pinned so local `make test-all` and CI
   # run the same versions. Bump here to upgrade fleet-wide.

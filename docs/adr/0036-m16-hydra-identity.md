@@ -1,7 +1,7 @@
 # ADR-0036: M16 — Ory Hydra as self-hosted OAuth 2 / OIDC provider
 
 **Date**: 2026-04-20
-**Status**: proposed (blueprint phase; Wave A dispatchable after review)
+**Status**: accepted (Waves A–E shipped 2026-04-20 on `m16/hydra-identity`; Wave F — Automation API — deferred)
 **Deciders**: shuki + Claude
 **Related**: ADR-0034 (M20 Kratos identity), ADR-0033 (applications framework), M7/ADR-0021 (phpMyAdmin SSO — explicitly *not* migrated)
 
@@ -90,9 +90,9 @@ No data loss. Re-enabling = `systemctl enable --now jabali-hydra` + migration re
 - `hydra migrate sql` runs clean against MariaDB with `sql_mode=NO_ENGINE_SUBSTITUTION`.
 - Install on fresh VM via `install.sh`: Hydra starts, `/oauth2/.well-known/openid-configuration` returns 200 through panel-api's proxy, admin endpoint is NOT reachable off-host.
 - WP install via apps framework creates a working OIDC client end-to-end; plugin auto-configured; first login succeeds.
-- Runbook (`docs/m16-hydra-runbook.md`) covers client CRUD via `hydra` CLI, token revocation, DB backup/restore, janitor schedule, CVE-response procedure.
+- Runbook (`plans/m16-hydra-runbook.md`) covers client CRUD via `hydra` CLI, token revocation, DB backup/restore, janitor schedule, CVE-response procedure.
 - ADR superseded notes added to ADR-0034 (Kratos now has a peer) and to this ADR's `Related` list.
 
 ---
 
-**Status change**: `proposed` → `accepted` when Wave A lands on `main`.
+**Status change**: `proposed` → `accepted` on 2026-04-20 when Waves A–E shipped (Wave F Automation API remains deferred — separate ADR when scheduled).

@@ -5,7 +5,7 @@ which code owns each capability. Use this as a map when onboarding, scoping new
 features, or deciding where existing logic already lives.
 
 > **Sources of truth.** This blueprint reflects what's shipped on `main` as of
-> 2026-04-19. Architecture rules and conventions live in `docs/adr/`. Cross-repo
+> 2026-04-20 (M16 Wave E). Architecture rules and conventions live in `docs/adr/`. Cross-repo
 > coordination with sibling projects lives in `~/projects/jabali-shared/CONTEXT.md`.
 
 ---
@@ -812,23 +812,23 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Depends on:** M2 (domains), M7 (databases), M10 (WordPress)
 
-### M16: Identity Federation + Automation API (IN FLIGHT — Wave A shipped)
+### M16: Identity Federation + Automation API (SHIPPED through Wave E — Wave F deferred)
 
 **Goal:** Jabali becomes a standards-compliant **OAuth 2 / OIDC provider** so (a) third-party apps on the same host (first consumer: WordPress) can log users in against the panel without reinventing handshakes, and (b) external tools (Terraform, Ansible, CI) can provision resources via scoped tokens without sharing the admin password.
 
 The original M16 scope ("Automation API with HMAC tokens") is retained as **Wave F** below — Hydra's `client_credentials` grant plus a panel-side scope middleware replaces the hand-rolled HMAC scheme, giving us one token issuer for both browser SSO and machine-to-machine.
 
-**Architecture:** Self-host **Ory Hydra v2.4.x** as a separate systemd unit under `jabali.slice`, bound loopback-only (`127.0.0.1:4444` public, `:4445` admin), backed by its own MariaDB schema `jabali_hydra`. panel-api reverse-proxies `/oauth2/*`, `/.well-known/openid-configuration`, `/userinfo`, `/.well-known/jwks.json` in-process — same pattern as the M20 Kratos proxy. Hydra's login-consent flow delegates authentication to Kratos via panel-api's `/oauth2-login` + `/oauth2-consent` handlers; trusted first-party clients (panel-managed WP installs) auto-consent, untrusted clients render the AntD consent screen.
+**Architecture:** Self-host **Ory Hydra v2.3.0** as a separate systemd unit under `jabali.slice`, bound loopback-only (`127.0.0.1:4444` public, `:4445` admin), backed by its own MariaDB schema `jabali_hydra`. panel-api reverse-proxies `/oauth2/*`, `/.well-known/openid-configuration`, `/userinfo`, `/.well-known/jwks.json` in-process — same pattern as the M20 Kratos proxy. Hydra's login-consent flow delegates authentication to Kratos via panel-api's `/oauth2-login` + `/oauth2-consent` handlers; trusted first-party clients (panel-managed WP installs) auto-consent, untrusted clients render the AntD consent screen.
 
-Full 16-decision design + 9-step / 5-wave breakdown: `plans/m16-hydra-oauth.md`. ADR: `docs/adr/0036-m16-hydra-identity.md`.
+Full 16-decision design + 9-step / 5-wave breakdown: `plans/m16-hydra-oauth.md`. ADR: `docs/adr/0036-m16-hydra-identity.md`. Runbook: `plans/m16-hydra-runbook.md`.
 
 **Waves:**
 - **Wave A — Hydra foundation (SHIPPED 2026-04-20, commits `c2ef3d2` + `841fffe`):** ADR-0036, `install/hydra.yml.tmpl`, `install/hydra.sha256`, `install.sh install_hydra()`, `install/systemd/jabali-hydra.service`, panel-api in-process `/oauth2/*` proxy, `panel-api/internal/hydraclient/scope_labels.go`.
-- **Wave B — Go admin client + HTTP handlers (IN PROGRESS, wt-a):** `panel-api/internal/hydraclient/{client,consent,tokens,errors}.go` + unit tests; `panel-api/internal/api/oauth2_flow.go` (`GET /oauth2-login`, `GET /oauth2-consent`, `POST /oauth2-consent/accept|deny`); Kratos-session → Hydra login-accept with `identity_provider_session_id` so session revoke cascades.
-- **Wave C — panel-ui consent screen:** `panel-ui/src/pages/OAuth2Consent.tsx` + route wiring. Untrusted-client consent UI. Trusted clients never render this.
-- **Wave D — Per-install OIDC client minting (apps framework):** migration 000050 adds `application_installs.oidc_client_id` + `oidc_client_secret_enc` (AES-GCM via sso.key); apps framework calls `hydraclient.CreateClient` at install time; WordPress descriptor gains `OIDCCallbackPath`; OpenID Connect Generic plugin (SHA-256 pinned) auto-installed + auto-configured on WP install.
-- **Wave E — Verification + runbook:** Playwright E2E for the full WP SSO flow; `docs/m16-hydra-runbook.md` covering client CRUD via `hydra` CLI, token revocation, janitor schedule, CVE-response, DB backup/restore; ADR-0036 flipped `proposed` → `accepted`.
-- **Wave F — Automation API (follow-up, original M16 scope):** enable `client_credentials` grant in Hydra; admin UI to mint machine-tokens as OIDC clients with custom scopes (`panel:domains:write`, `panel:dns:read`, …); panel-api `/api/v1/automation/*` middleware introspects via Hydra `/admin/oauth2/introspect` and enforces scopes; rate-limiting per client. Replaces the `create_api_tokens.sql` + hand-rolled HMAC scheme from the original M16 draft.
+- **Wave B — Go admin client + HTTP handlers (SHIPPED 2026-04-20, commit `487a729`):** `panel-api/internal/hydraclient/{client,consent,tokens,errors}.go` + unit tests; `panel-api/internal/api/oauth2_flow.go` (`GET /oauth2-login`, `GET /oauth2-consent`, `POST /oauth2-consent/accept|deny`); Kratos-session → Hydra login-accept with `identity_provider_session_id` so session revoke cascades (ADR-0036 Decision 5). `sanitizeMetadata` strips any caller-supplied `metadata.trusted` at `CreateClient`; the flag is set server-side via `SetClientTrusted` from `applications_service.go` only (Decision 7).
+- **Wave C — panel-ui consent screen (SHIPPED 2026-04-20, commit `c5b030e`):** `panel-ui/src/pages/Consent.tsx` + unit tests + route wiring behind `<Authenticated>`. Untrusted-client consent UI only — trusted clients skip it because Hydra auto-accepts consent before the browser ever lands on `/consent`.
+- **Wave D — Per-install OIDC client minting (SHIPPED 2026-04-20, commits `1894087` + `d021dcf`):** migration 000050 adds `application_installs.oidc_client_id` + `oidc_client_secret_enc` (AES-256-GCM envelope via `sso.key`; both `json:"-"`); `apps.App` gains `OIDCCallbackPath`; `applications_service.go` mints + trusts + seals + persists + passes the one-shot secret to the kicker, with compensating rollback on any failure (`DeleteClient` → `Delete(install)` → `rollbackDBChain`). `wordpressInstallHandler` fetches+activates OpenID Connect Generic from WordPress.org and writes `openid_connect_generic_settings` via `wp option update` over STDIN (secret never hits argv). Delete path is best-effort `DeleteClient` before DB teardown so orphan Hydra clients don't accumulate.
+- **Wave E — Verification + runbook (SHIPPED 2026-04-20, commits `371c7cc` + this doc):** Playwright E2E `oauth2-wordpress.spec.ts` covers the consent SPA's Allow/Deny/Unauth/404 paths; `plans/m16-hydra-runbook.md` covers `hydra` CLI client CRUD, cascading Kratos→Hydra session revocation, `jabali_hydra` backup/restore ordering, scheduled `hydra janitor` cron, and CVE-response upgrade path.
+- **Wave F — Automation API (follow-up, original M16 scope — NOT YET STARTED):** enable `client_credentials` grant in Hydra; admin UI to mint machine-tokens as OIDC clients with custom scopes (`panel:domains:write`, `panel:dns:read`, …); panel-api `/api/v1/automation/*` middleware introspects via Hydra `/admin/oauth2/introspect` and enforces scopes; rate-limiting per client. Replaces the `create_api_tokens.sql` + hand-rolled HMAC scheme from the original M16 draft.
 
 **Explicit non-goals:**
 - **phpMyAdmin SSO migration** — stays on the M7 nonce pattern. Not OIDC-native (signon.php still needs shadow-password exchange over UDS), so migration adds plumbing without removing any.

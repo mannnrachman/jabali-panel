@@ -1,9 +1,11 @@
-// App root — Refine + AntD + React Router with two fully separated shells.
+// App root — AntD + TanStack Query + React Router with two fully
+// separated shells.
 //
 // URL layout:
-//   /login                       → LoginPage (shared)
+//   /login                       → LoginPage (Kratos-driven, public)
+//   /consent                     → OAuth consent screen (auth required)
 //   /jabali-admin/*              → AdminShell  (admins only, gated)
-//   /jabali-panel/*              → UserShell   (non-admins only, gated)
+//   /jabali-panel/*              → UserShell   (authenticated, gated)
 //   /                            → role-based redirect
 //
 // Why two shells instead of one role-filtered tree:
@@ -13,43 +15,24 @@
 //     and any future access logs make the two surfaces unambiguous.
 //   - Adding an admin page can't accidentally add a user page.
 //
-// The shells share providers: one Refine component wraps the whole app
-// so authProvider and dataProvider state is consistent regardless of
-// which shell you're in.
-import { Authenticated, Refine } from "@refinedev/core";
-import { useNotificationProvider } from "@refinedev/antd";
-import routerProvider, {
-  CatchAllNavigate,
-  DocumentTitleHandler,
-  UnsavedChangesNotifier,
-} from "@refinedev/react-router";
-import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router";
-import { ConfigProvider } from "antd";
+// Refine is gone as of M21: the tree composes QueryClientProvider +
+// AuthProvider + BrowserRouter + ConfigProvider directly. Every
+// protected page re-uses the same whoami cache.
+import { QueryClientProvider } from "@tanstack/react-query";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router";
+import { ConfigProvider, Spin } from "antd";
+import type { ReactNode } from "react";
 
-import {
-  AppstoreOutlined,
-  AppstoreAddOutlined,
-  CloudServerOutlined,
-  ClockCircleOutlined,
-  DashboardOutlined,
-  DatabaseOutlined,
-  FolderOutlined,
-  GlobalOutlined,
-  KeyOutlined,
-  SafetyCertificateOutlined,
-  SettingOutlined,
-  TeamOutlined,
-  ThunderboltOutlined,
-  UserOutlined,
-} from "@ant-design/icons";
+import { AuthProvider, useAuth } from "./auth/AuthContext";
+import { RequireAdmin } from "./auth/RequireAdmin";
+import { RequireAuth } from "./auth/RequireAuth";
+import { RequireUser } from "./auth/RequireUser";
 import useMuiTheme from "./muiTheme";
-import { ThemeModeProvider, useThemeMode } from "./theme/ThemeModeContext";
-import { authProvider } from "./authProvider";
-import { dataProvider } from "./dataProvider";
+import { queryClient } from "./query";
 import { AdminLayout } from "./shells/AdminLayout";
 import { UserLayout } from "./shells/UserLayout";
-import { RoleGate } from "./shells/RoleGate";
 import { LandingRedirect } from "./shells/LandingRedirect";
+import { ThemeModeProvider, useThemeMode } from "./theme/ThemeModeContext";
 import { Dashboard } from "./shells/admin/Dashboard";
 import { UserCreate } from "./shells/admin/users/UserCreate";
 import { UserEdit } from "./shells/admin/users/UserEdit";
@@ -83,6 +66,34 @@ import { PHPPoolEdit } from "./shells/admin/php-pools/PHPPoolEdit";
 import { LoginPage } from "./pages/Login";
 import { ConsentPage } from "./pages/Consent";
 
+// If a logged-in user hits /login, bounce them to their shell home
+// instead of letting them see the form. Public routes use this — the
+// Kratos-driven LoginPage itself doesn't know about AuthContext, so
+// the gate lives here.
+function PublicOnly({ children }: { children: ReactNode }) {
+  const { user, isLoading } = useAuth();
+  if (isLoading) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "100vh",
+        }}
+      >
+        <Spin size="large" />
+      </div>
+    );
+  }
+  if (user) {
+    return (
+      <Navigate to={user.isAdmin ? "/jabali-admin" : "/jabali-panel"} replace />
+    );
+  }
+  return <>{children}</>;
+}
+
 const ThemedApp = () => {
   const { mode } = useThemeMode();
   const muiConfig = useMuiTheme(mode);
@@ -90,292 +101,117 @@ const ThemedApp = () => {
   return (
     <BrowserRouter>
       <ConfigProvider {...muiConfig}>
-        <Refine
-          authProvider={authProvider}
-          dataProvider={dataProvider}
-          routerProvider={routerProvider}
-          notificationProvider={useNotificationProvider}
-          resources={[
-            // Admin shell
-            {
-              name: "dashboard",
-              list: "/jabali-admin/dashboard",
-              meta: { label: "Dashboard", icon: <DashboardOutlined />, shell: "admin" },
-            },
-            {
-              name: "users",
-              list: "/jabali-admin/users",
-              create: "/jabali-admin/users/create",
-              edit: "/jabali-admin/users/edit/:id",
-              meta: { label: "Users", icon: <TeamOutlined />, shell: "admin" },
-            },
-            {
-              name: "packages",
-              list: "/jabali-admin/packages",
-              create: "/jabali-admin/packages/create",
-              edit: "/jabali-admin/packages/edit/:id",
-              meta: { label: "Packages", icon: <AppstoreOutlined />, shell: "admin" },
-            },
-            {
-              name: "domains",
-              list: "/jabali-admin/domains",
-              create: "/jabali-admin/domains/create",
-              edit: "/jabali-admin/domains/edit/:id",
-              meta: { label: "Domains", icon: <GlobalOutlined />, shell: "admin" },
-            },
-            {
-              name: "admin-dns",
-              list: "/jabali-admin/dns",
-              meta: { label: "DNS", icon: <CloudServerOutlined />, shell: "admin" },
-            },
-            {
-              name: "admin-ssl",
-              list: "/jabali-admin/ssl",
-              meta: { label: "SSL", icon: <SafetyCertificateOutlined />, shell: "admin" },
-            },
-            {
-              name: "settings",
-              list: "/jabali-admin/settings",
-              meta: { label: "Server Settings", icon: <SettingOutlined />, shell: "admin" },
-            },
-            {
-              name: "php-pools",
-              list: "/jabali-admin/php-pools",
-              edit: "/jabali-admin/php-pools/edit/:id",
-              meta: { label: "PHP Manager", icon: <ThunderboltOutlined />, shell: "admin" },
-            },
-            {
-              name: "admin-applications",
-              list: "/jabali-admin/applications",
-              meta: { label: "Applications", icon: <AppstoreAddOutlined />, shell: "admin" },
-            },
-
-            // User shell
-            {
-              name: "profile",
-              list: "/jabali-panel/profile",
-              meta: { label: "My Profile", icon: <UserOutlined />, shell: "user" },
-            },
-            {
-              name: "user-domains",
-              list: "/jabali-panel/domains",
-              create: "/jabali-panel/domains/create",
-              meta: { label: "Domains", icon: <GlobalOutlined />, shell: "user" },
-            },
-            {
-              name: "user-dns",
-              list: "/jabali-panel/dns",
-              meta: { label: "DNS", icon: <CloudServerOutlined />, shell: "user" },
-            },
-            {
-              name: "user-ssl",
-              list: "/jabali-panel/ssl",
-              meta: { label: "SSL", icon: <SafetyCertificateOutlined />, shell: "user" },
-            },
-            {
-              name: "user-php-settings",
-              list: "/jabali-panel/php-settings",
-              meta: { label: "PHP Settings", icon: <ThunderboltOutlined />, shell: "user" },
-            },
-            {
-              // Resource name matches the API slug so useTable('databases')
-              // and any CreateButton/EditButton rendered in that table
-              // context resolve to the same entry.
-              name: "databases",
-              list: "/jabali-panel/databases",
-              create: "/jabali-panel/databases/create",
-              meta: { label: "Databases", icon: <DatabaseOutlined />, shell: "user" },
-            },
-            {
-              // Hidden — rendered inline below the databases list on
-              // the same page. The resource entry stays so the
-              // CreateButton inside the DB-users table can resolve to
-              // /database-users/create (not /databases/create, which is
-              // what happens when the surrounding route resource wins).
-              name: "database-users",
-              list: "/jabali-panel/database-users",
-              create: "/jabali-panel/database-users/create",
-              meta: { label: "DB Users", shell: "user", hidden: true },
-            },
-            {
-              name: "files",
-              list: "/jabali-panel/files",
-              meta: { label: "Files", icon: <FolderOutlined />, shell: "user" },
-            },
-            {
-              // Resource name matches the API slug (/applications) so
-              // useTable("applications") and useInvalidate all resolve
-              // to the same entry. Legacy /wordpress-installs is still
-              // mounted on the API for one release in case a stale UI
-              // is still in users' caches; new traffic goes here.
-              name: "applications",
-              list: "/jabali-panel/applications",
-              meta: { label: "Applications", icon: <AppstoreAddOutlined />, shell: "user" },
-            },
-            {
-              name: "ssh-keys",
-              list: "/jabali-panel/ssh-keys",
-              meta: { label: "SSH Keys", icon: <KeyOutlined />, shell: "user" },
-            },
-            {
-              name: "cron",
-              list: "/jabali-panel/cron",
-              meta: { label: "Cron", icon: <ClockCircleOutlined />, shell: "user" },
-            },
-          ]}
-          options={{
-            warnWhenUnsavedChanges: true,
-            syncWithLocation: true,
-          }}
-        >
-          <Routes>
-            {/* ---------------- admin shell ---------------- */}
-            <Route
-              path="/jabali-admin"
-              element={
-                <Authenticated
-                  key="admin-auth"
-                  fallback={<CatchAllNavigate to="/login" />}
-                >
-                  <RoleGate require="admin">
-                    <AdminLayout />
-                  </RoleGate>
-                </Authenticated>
-              }
-            >
-              {/* bare /jabali-admin → dashboard as default landing */}
-              <Route index element={<Navigate to="dashboard" replace />} />
-              <Route path="dashboard" element={<Dashboard />} />
-              <Route path="users">
-                <Route index element={<UserList />} />
-                <Route path="create" element={<UserCreate />} />
-                <Route path="edit/:id" element={<UserEdit />} />
-              </Route>
-              <Route path="packages">
-                <Route index element={<PackageList />} />
-                <Route path="create" element={<PackageCreate />} />
-                <Route path="edit/:id" element={<PackageEdit />} />
-              </Route>
-              <Route path="domains">
-                <Route index element={<DomainList />} />
-                <Route path="create" element={<DomainCreate />} />
-                <Route path="edit/:id" element={<DomainEdit />} />
-                <Route path=":id/dns" element={<DNSRecordsPage />} />
-              </Route>
-              <Route path="dns" element={<DNSZonesOverviewPage />} />
-              <Route path="ssl" element={<SSLManagerPage />} />
-              <Route path="settings" element={<ServerSettingsPage />} />
-              <Route path="php-pools">
-                <Route index element={<PHPVersionsPage />} />
-                <Route path="edit/:id" element={<PHPPoolEdit />} />
-              </Route>
-              <Route path="applications" element={<AdminApplicationList />} />
+        <Routes>
+          {/* ---------------- admin shell ---------------- */}
+          <Route
+            path="/jabali-admin"
+            element={
+              <RequireAdmin>
+                <AdminLayout />
+              </RequireAdmin>
+            }
+          >
+            <Route index element={<Navigate to="dashboard" replace />} />
+            <Route path="dashboard" element={<Dashboard />} />
+            <Route path="users">
+              <Route index element={<UserList />} />
+              <Route path="create" element={<UserCreate />} />
+              <Route path="edit/:id" element={<UserEdit />} />
             </Route>
-
-            {/* ---------------- user shell ----------------- */}
-            <Route
-              path="/jabali-panel"
-              element={
-                <Authenticated
-                  key="user-auth"
-                  fallback={<CatchAllNavigate to="/login" />}
-                >
-                  <RoleGate require="user">
-                    <UserLayout />
-                  </RoleGate>
-                </Authenticated>
-              }
-            >
-              <Route index element={<MyProfile />} />
-              <Route path="profile" element={<MyProfile />} />
-              <Route path="domains">
-                <Route index element={<UserDomainList />} />
-                <Route path="create" element={<UserDomainCreate />} />
-                <Route path=":id/dns" element={<DNSRecordsPage />} />
-              </Route>
-              <Route path="databases">
-                <Route index element={<UserDatabasesPage />} />
-                <Route path="create" element={<UserDatabaseCreate />} />
-              </Route>
-              <Route path="database-users">
-                <Route path="create" element={<UserDatabaseUserCreate />} />
-              </Route>
-              <Route path="dns" element={<UserDNSZonesOverviewPage />} />
-              <Route path="ssl" element={<UserSSLManagerPage />} />
-              <Route path="php-settings" element={<UserPHPSettingsPage />} />
-              <Route path="files" element={<FileManagerPage />} />
-              <Route path="applications" element={<UserApplicationList />} />
-              <Route path="ssh-keys" element={<UserSSHKeysPage />} />
-              <Route path="cron" element={<UserCronList />} />
+            <Route path="packages">
+              <Route index element={<PackageList />} />
+              <Route path="create" element={<PackageCreate />} />
+              <Route path="edit/:id" element={<PackageEdit />} />
             </Route>
-
-            {/* ---------------- public ---------------- */}
-            <Route
-              element={
-                <Authenticated key="public" fallback={<Outlet />}>
-                  <LandingRedirect />
-                </Authenticated>
-              }
-            >
-              <Route path="/login" element={<LoginPage />} />
+            <Route path="domains">
+              <Route index element={<DomainList />} />
+              <Route path="create" element={<DomainCreate />} />
+              <Route path="edit/:id" element={<DomainEdit />} />
+              <Route path=":id/dns" element={<DNSRecordsPage />} />
             </Route>
+            <Route path="dns" element={<DNSZonesOverviewPage />} />
+            <Route path="ssl" element={<SSLManagerPage />} />
+            <Route path="settings" element={<ServerSettingsPage />} />
+            <Route path="php-pools">
+              <Route index element={<PHPVersionsPage />} />
+              <Route path="edit/:id" element={<PHPPoolEdit />} />
+            </Route>
+            <Route path="applications" element={<AdminApplicationList />} />
+          </Route>
 
-            {/* OAuth 2 consent screen. Hydra's consent-start handler
-                redirects here for untrusted clients; the page reads
-                the challenge from the URL, loads metadata, and drives
-                the Allow/Deny flow. Gated by Authenticated so an
-                expired Kratos session bounces to /login with a
-                return_to that resumes the flow. */}
-            <Route
-              path="/consent"
-              element={
-                <Authenticated
-                  key="consent"
-                  fallback={<CatchAllNavigate to="/login" />}
-                >
-                  <ConsentPage />
-                </Authenticated>
-              }
-            />
+          {/* ---------------- user shell ----------------- */}
+          <Route
+            path="/jabali-panel"
+            element={
+              <RequireUser>
+                <UserLayout />
+              </RequireUser>
+            }
+          >
+            <Route index element={<MyProfile />} />
+            <Route path="profile" element={<MyProfile />} />
+            <Route path="domains">
+              <Route index element={<UserDomainList />} />
+              <Route path="create" element={<UserDomainCreate />} />
+              <Route path=":id/dns" element={<DNSRecordsPage />} />
+            </Route>
+            <Route path="databases">
+              <Route index element={<UserDatabasesPage />} />
+              <Route path="create" element={<UserDatabaseCreate />} />
+            </Route>
+            <Route path="database-users">
+              <Route path="create" element={<UserDatabaseUserCreate />} />
+            </Route>
+            <Route path="dns" element={<UserDNSZonesOverviewPage />} />
+            <Route path="ssl" element={<UserSSLManagerPage />} />
+            <Route path="php-settings" element={<UserPHPSettingsPage />} />
+            <Route path="files" element={<FileManagerPage />} />
+            <Route path="applications" element={<UserApplicationList />} />
+            <Route path="ssh-keys" element={<UserSSHKeysPage />} />
+            <Route path="cron" element={<UserCronList />} />
+          </Route>
 
-            {/* landing / catch-all */}
-            <Route
-              path="/"
-              element={
-                <Authenticated
-                  key="landing"
-                  fallback={<CatchAllNavigate to="/login" />}
-                >
-                  <LandingRedirect />
-                </Authenticated>
-              }
-            />
+          {/* ---------------- public ---------------- */}
+          <Route
+            path="/login"
+            element={
+              <PublicOnly>
+                <LoginPage />
+              </PublicOnly>
+            }
+          />
 
-            <Route
-              path="*"
-              element={
-                <Authenticated
-                  key="catchall"
-                  fallback={<CatchAllNavigate to="/login" />}
-                >
-                  <LandingRedirect />
-                </Authenticated>
-              }
-            />
-          </Routes>
+          {/* OAuth 2 consent screen. Hydra's consent-start handler
+              redirects here for untrusted clients; the page reads the
+              challenge from the URL, loads metadata, and drives the
+              Allow/Deny flow. Gated by RequireAuth so an expired
+              Kratos session bounces to /login with `from` preserved. */}
+          <Route
+            path="/consent"
+            element={
+              <RequireAuth>
+                <ConsentPage />
+              </RequireAuth>
+            }
+          />
 
-          <UnsavedChangesNotifier />
-          <DocumentTitleHandler />
-        </Refine>
+          {/* landing / catch-all */}
+          <Route path="/" element={<LandingRedirect />} />
+          <Route path="*" element={<LandingRedirect />} />
+        </Routes>
       </ConfigProvider>
     </BrowserRouter>
   );
 };
 
 const App = () => (
-  <ThemeModeProvider>
-    <ThemedApp />
-  </ThemeModeProvider>
+  <QueryClientProvider client={queryClient}>
+    <AuthProvider>
+      <ThemeModeProvider>
+        <ThemedApp />
+      </ThemeModeProvider>
+    </AuthProvider>
+  </QueryClientProvider>
 );
 
 export default App;

@@ -15,6 +15,7 @@
 // panel ULID — using the Kratos UUID triggers 403 on RequireOwner for
 // every non-admin user.
 import { apiClient } from "./apiClient";
+import { queryClient } from "./query";
 
 export type Identity = {
   id: string;
@@ -71,4 +72,10 @@ export async function getIdentity(): Promise<Identity | null> {
 export function clearIdentity(): void {
   cached = null;
   inflight = null;
+  // Also invalidate the TanStack whoami cache that AuthContext reads
+  // from. Without this, Login.tsx's post-submit navigate to /jabali-*
+  // finds AuthProvider still holding the pre-login `null` response
+  // (staleTime 60s) and RequireAdmin bounces back to /login — a loop
+  // that only breaks when the user refreshes the tab.
+  queryClient.invalidateQueries({ queryKey: ["whoami"] });
 }

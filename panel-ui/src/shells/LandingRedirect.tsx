@@ -4,35 +4,37 @@
 //   /login (while logged in)   — bounced forward instead of seeing the form again
 //   * (catch-all)              — unknown URLs after auth
 //
-// Reads the identity once, redirects to the matching shell's home.
-// During the identity fetch we render nothing (not even a spinner) —
-// the network call is ≤100ms against a healthy backend, and a flash of
-// spinner is worse UX than a blank frame.
-import { useEffect, useState } from "react";
+// Reads identity from the shared whoami cache (populated by
+// AuthProvider), dispatches by role. Full-page Spin while the first
+// whoami is in flight — matches RequireAuth's R3 mitigation from
+// ADR-0037 so cold loads don't briefly show /login before redirect.
 import { Navigate } from "react-router";
+import { Spin } from "antd";
 
-import { getIdentity, type Identity } from "../identity";
+import { useAuth } from "../auth/AuthContext";
 
 export function LandingRedirect() {
-  const [state, setState] = useState<
-    { status: "loading" } | { status: "resolved"; me: Identity | null }
-  >({ status: "loading" });
+  const { user, isLoading } = useAuth();
 
-  useEffect(() => {
-    let cancelled = false;
-    getIdentity().then((me) => {
-      if (!cancelled) setState({ status: "resolved", me });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  if (isLoading) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "100vh",
+        }}
+      >
+        <Spin size="large" />
+      </div>
+    );
+  }
 
-  if (state.status === "loading") return null;
-  if (!state.me) return <Navigate to="/login" replace />;
+  if (!user) return <Navigate to="/login" replace />;
   return (
     <Navigate
-      to={state.me.isAdmin ? "/jabali-admin" : "/jabali-panel"}
+      to={user.isAdmin ? "/jabali-admin" : "/jabali-panel"}
       replace
     />
   );

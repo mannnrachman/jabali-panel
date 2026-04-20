@@ -1,30 +1,60 @@
 // UserLayout.tsx — chrome for the user shell.
 //
-// Uses Refine's <ThemedLayoutV2> directly with slot overrides — same
-// pattern as AdminLayout; only the shell filter + brand text differ.
-import { ThemedLayoutV2 } from "@refinedev/antd";
-import { Outlet } from "react-router";
+// Same composition as AdminLayout (see that file for the "why"), but
+// driven by `userNav` so an admin-only entry can never leak into the
+// sidebar here.
+import { useState } from "react";
+import { Layout, Menu } from "antd";
+import { Outlet, useLocation, useNavigate } from "react-router";
 
 import { JabaliFooter } from "../components/JabaliFooter";
 import { JabaliHeader } from "../components/JabaliHeader";
 import { JabaliTitle } from "../components/JabaliTitle";
-import { buildShellSider } from "./shellSider";
+import { selectedNavKey, userNav } from "../nav";
 
-const UserSider = buildShellSider("user");
-
-function UserTitle({ collapsed }: { collapsed: boolean }) {
-  return <JabaliTitle collapsed={collapsed} />;
-}
+const { Sider, Content } = Layout;
 
 export function UserLayout() {
+  const [collapsed, setCollapsed] = useState(false);
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const items = userNav.map((n) => ({
+    key: n.key,
+    icon: n.icon,
+    label: n.label,
+    onClick: () => navigate(n.path),
+  }));
+
+  const selected = selectedNavKey(userNav, location.pathname);
+
   return (
-    <ThemedLayoutV2
-      Title={UserTitle}
-      Header={JabaliHeader}
-      Sider={UserSider}
-      Footer={JabaliFooter}
-    >
-      <Outlet />
-    </ThemedLayoutV2>
+    <Layout style={{ minHeight: "100vh" }}>
+      <Sider
+        breakpoint="lg"
+        collapsedWidth="64"
+        collapsible
+        collapsed={collapsed}
+        onCollapse={setCollapsed}
+      >
+        <div style={{ padding: "16px 12px" }}>
+          <JabaliTitle collapsed={collapsed} />
+        </div>
+        <Menu
+          mode="inline"
+          theme="dark"
+          selectedKeys={selected ? [selected] : []}
+          items={items}
+          style={{ border: "none" }}
+        />
+      </Sider>
+      <Layout>
+        <JabaliHeader />
+        <Content style={{ padding: 24 }}>
+          <Outlet />
+        </Content>
+        <JabaliFooter />
+      </Layout>
+    </Layout>
   );
 }

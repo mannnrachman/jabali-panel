@@ -1,37 +1,61 @@
 // AdminLayout.tsx — chrome for the admin shell.
 //
-// Uses Refine's <ThemedLayoutV2> directly: the Sider column (with our
-// shell-filtered menu) on the left, Header band with search + theme
-// toggle + user dropdown to the right of the sider, and the brand
-// logo in the Sider's Title slot at the top-left. This is the same
-// outer structure as Refine's official templates (e.g. refinefoods)
-// — the only overrides are the three slot components.
-import { ThemedLayoutV2 } from "@refinedev/antd";
-import { Outlet } from "react-router";
+// Plain AntD <Layout> + <Sider> + <Header> + <Content> + <Footer>
+// composed directly. Refine's <ThemedLayoutV2> is gone; the visual
+// arrangement (brand at top-left, menu below, header band with
+// search + theme toggle + avatar, content + footer) is the same.
+import { useState } from "react";
+import { Layout, Menu } from "antd";
+import { Outlet, useLocation, useNavigate } from "react-router";
 
 import { JabaliFooter } from "../components/JabaliFooter";
 import { JabaliHeader } from "../components/JabaliHeader";
 import { JabaliTitle } from "../components/JabaliTitle";
-import { buildShellSider } from "./shellSider";
+import { adminNav, selectedNavKey } from "../nav";
 
-const AdminSider = buildShellSider("admin");
-
-// Small wrapper so Refine's TitleProps contract (`{ collapsed }`) maps
-// to our JabaliTitle — both admin and user shells render "Jabali" now,
-// shell context is already communicated by the URL mount + sidebar.
-function AdminTitle({ collapsed }: { collapsed: boolean }) {
-  return <JabaliTitle collapsed={collapsed} />;
-}
+const { Sider, Content } = Layout;
 
 export function AdminLayout() {
+  const [collapsed, setCollapsed] = useState(false);
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const items = adminNav.map((n) => ({
+    key: n.key,
+    icon: n.icon,
+    label: n.label,
+    onClick: () => navigate(n.path),
+  }));
+
+  const selected = selectedNavKey(adminNav, location.pathname);
+
   return (
-    <ThemedLayoutV2
-      Title={AdminTitle}
-      Header={JabaliHeader}
-      Sider={AdminSider}
-      Footer={JabaliFooter}
-    >
-      <Outlet />
-    </ThemedLayoutV2>
+    <Layout style={{ minHeight: "100vh" }}>
+      <Sider
+        breakpoint="lg"
+        collapsedWidth="64"
+        collapsible
+        collapsed={collapsed}
+        onCollapse={setCollapsed}
+      >
+        <div style={{ padding: "16px 12px" }}>
+          <JabaliTitle collapsed={collapsed} />
+        </div>
+        <Menu
+          mode="inline"
+          theme="dark"
+          selectedKeys={selected ? [selected] : []}
+          items={items}
+          style={{ border: "none" }}
+        />
+      </Sider>
+      <Layout>
+        <JabaliHeader />
+        <Content style={{ padding: 24 }}>
+          <Outlet />
+        </Content>
+        <JabaliFooter />
+      </Layout>
+    </Layout>
   );
 }

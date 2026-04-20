@@ -1,39 +1,40 @@
-// JabaliHeader — Header slot for Refine's ThemedLayoutV2.
+// JabaliHeader — top bar rendered at the top of both shells.
 //
-// ThemedLayoutV2 inserts this directly as a child of its inner <Layout>
-// (right of the sider). We render the <Layout.Header> ourselves, the same
-// way Refine's default ThemedHeaderV2 does, so AntD gives us the proper
-// header flex slot. The chrome inside: global search on the left, theme
-// toggle + user dropdown pushed to the right.
+// Slots: global search on the left, theme toggle + user dropdown on
+// the right. Rendered directly as <Layout.Header>, styled to match
+// what Refine's ThemedHeaderV2 used to produce (so we don't spook
+// operators who already know the chrome).
 import { useEffect, useRef, useState } from "react";
 import { LogoutOutlined, UserOutlined, SearchOutlined } from "@ant-design/icons";
 import { Avatar, Button, Dropdown, Input, Layout, Space, theme } from "antd";
-import type { MenuProps } from "antd";
-import { useLogout } from "@refinedev/core";
+import type { InputRef, MenuProps } from "antd";
 import { useLocation, useNavigate } from "react-router";
 
-import { getIdentity } from "../identity";
+import { useAuth } from "../auth/AuthContext";
 import { ThemeToggle } from "./ThemeToggle";
 
 const { Header } = Layout;
 
 export function JabaliHeader() {
-  const { mutate: logout } = useLogout();
+  const { user, logout } = useAuth();
   const { token } = theme.useToken();
-  const [email, setEmail] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
-  const searchInputRef = useRef<any>(null);
+  const searchInputRef = useRef<InputRef | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
 
-  useEffect(() => {
-    getIdentity().then((me) => setEmail(me?.email ?? ""));
-  }, []);
+  const email = user?.email ?? "";
 
-  // Keyboard shortcut: / focuses the search input (unless already typing).
+  // Keyboard shortcut: "/" focuses the search input unless the user is
+  // already typing in a form field. Ignore when focus is inside an
+  // input, textarea, or a contenteditable element — otherwise typing
+  // a literal slash in a text field would steal focus away.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (searchInputRef.current && document.activeElement === searchInputRef.current.input) {
+      if (
+        searchInputRef.current &&
+        document.activeElement === searchInputRef.current.input
+      ) {
         return;
       }
       const target = e.target as HTMLElement;
@@ -67,11 +68,26 @@ export function JabaliHeader() {
       targetPath = isAdminShell ? "/jabali-admin/users" : "/jabali-panel/domains";
     }
 
+    // New table hooks read `q` straight from the URL. We keep the old
+    // `filters[0]` query-string shape alive for pages that still run
+    // on Refine's useTable until Wave C finishes.
     const encodedValue = encodeURIComponent(query);
-    const filterUrl = `${targetPath}?filters[0][field]=q&filters[0][operator]=contains&filters[0][value]=${encodedValue}`;
+    const filterUrl = `${targetPath}?q=${encodedValue}&filters[0][field]=q&filters[0][operator]=contains&filters[0][value]=${encodedValue}`;
     navigate(filterUrl);
     setSearchQuery("");
     searchInputRef.current?.blur();
+  };
+
+  const handleLogout = async () => {
+    await logout();
+    // Hard-navigate so the whoami refetch that AuthProvider would
+    // otherwise race against the React Router push doesn't have a
+    // chance to briefly restore a stale session (RequireAdmin then
+    // sees user=null mid-render but the URL has already come back
+    // to /jabali-admin). A full page load fixes that cleanly: fresh
+    // module state, fresh QueryClient, and /me returns 401 because
+    // the ory_kratos_session cookie has just been expired.
+    window.location.assign("/login");
   };
 
   const userMenu: MenuProps["items"] = [
@@ -79,18 +95,17 @@ export function JabaliHeader() {
       key: "logout",
       icon: <LogoutOutlined />,
       label: "Sign out",
-      onClick: () => logout(),
+      onClick: handleLogout,
     },
   ];
 
   return (
     <Header
       style={{
-        // Match ThemedHeaderV2's exact style contract so we slot in
-        // without fighting AntD's default dark Header background.
-        // Not sticky — the header scrolls with the page; reaching
-        // content further down shouldn't waste a band of viewport on
-        // an always-visible search bar.
+        // Match ThemedHeaderV2's old contract so the page doesn't jump
+        // on upgrade: elevated background, 64px band, border underline,
+        // content-left padding. Not sticky — the header scrolls with
+        // the page.
         backgroundColor: token.colorBgElevated,
         height: 64,
         lineHeight: "normal",

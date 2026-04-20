@@ -78,7 +78,14 @@ Any agent launched via the `Agent` tool in the jabali2 worktree MUST:
    - If you arrive on `main` and need to commit, switch to a new branch first. Committing directly to `main` is a dispatch failure; the dispatcher will revert your work.
    - Never run `git push`, `git push origin`, `git push --force`, or anything that publishes to remote. The dispatcher is the ONLY entity that pushes, after independent verification and a deliberate merge to `main`.
    - Never run destructive git (`reset --hard`, `checkout --`, `clean -fd`, `branch -D`) outside your own feature branch — you can corrupt a concurrent agent's working tree.
-   - Your final report MUST include: the branch name, the commit SHAs on that branch, and a `git log main..<your-branch>` summary so the dispatcher can review before merge.
+   - **Before your final report, rebase onto latest `origin/main` and re-run tests.** This is a dispatch-check item, not optional. Concretely:
+       ```
+       git fetch origin main
+       git rebase origin/main        # resolve any conflicts HERE, with full context
+       # re-run the relevant test suite for your change
+       ```
+     Rationale: conflicts between your work and what landed on `main` during your session belong to you — you have the intent and the context. If the dispatcher resolves them at merge time, they're guessing with `grep`. Two recent incidents (wt-a catalog expansion vs applications.go, wt-a jabali-app CLI vs deleted `internal/clientapi`) shipped only because the worktree author hadn't rebased; both cost cycles and one came close to landing a half-working CLI. If your rebase is clean, merge to `main` is a fast-forward — no three-way merge, no guessing.
+   - Your final report MUST include: the branch name, the commit SHAs on that branch, a `git log main..<your-branch>` summary, AND confirmation that you rebased onto the latest `origin/main` and re-ran tests post-rebase.
 
 This applies to planner, coder, backend-dev, security-architect, Explore, and every other sub-agent type. When a wave brief asks you to modify a symbol, the dispatcher assumes you've run impact analysis first AND your work lives on a feature branch. Acknowledge both in your summary output.
 

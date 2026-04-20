@@ -179,7 +179,15 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 					"groups "+serviceUser+" | grep -qw www-data || usermod -aG www-data "+serviceUser)
 		}},
 		{"npm ci", func() error {
-			return asUser(repoDir+"/panel-ui", "npm", "ci", "--no-audit", "--no-fund")
+			// Wipe node_modules before npm ci. npm ci's docs promise it
+			// does this itself, but in practice it dies with
+			//   ENOTEMPTY: directory not empty, rmdir '.../node_modules/vite'
+			// whenever a prior partial install or filesystem quirk leaves
+			// a half-removed package tree behind. Doing the rm ourselves
+			// is the canonical workaround — safe here because node_modules
+			// is fully regenerated from package-lock on every run.
+			return asUser(repoDir+"/panel-ui", "bash", "-c",
+				"rm -rf node_modules && npm ci --no-audit --no-fund")
 		}},
 		{"build frontend", func() error {
 			return asUser(repoDir+"/panel-ui", "npm", "run", "build")

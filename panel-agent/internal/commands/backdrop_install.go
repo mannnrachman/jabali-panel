@@ -59,11 +59,17 @@ const backdropZipSHA256 = ""
 // install (no system-wide install needed). Pinned to a known-working
 // version to avoid silent breakage from upstream changes.
 //
+// Tag format is `1.x-1.X.Y` (Backdrop-contrib branch+version), not
+// bare `1.X.Y`, so the URL below uses the full tag string. The
+// release ships an asset zip named `bee.zip` directly under
+// /releases/download/<tag>/ — no archive/refs/tags layout, the
+// auto-source archive at that URL would 404.
+//
 // Releases: https://github.com/backdrop-contrib/bee/releases
-const beeVersion = "1.0.4"
+const beeVersion = "1.x-1.2.0"
 
 var beeZipURL = fmt.Sprintf(
-	"https://github.com/backdrop-contrib/bee/archive/refs/tags/%s.zip",
+	"https://github.com/backdrop-contrib/bee/releases/download/%s/bee.zip",
 	beeVersion,
 )
 
@@ -198,12 +204,27 @@ func extractBackdropZip(ctx context.Context, osUser, zipPath, installPath, stagi
 
 // extractBeeZip unzips the bee CLI tool zip into stagingDir. Returns
 // the absolute path to bee.php inside the extracted tree.
+//
+// Layout differs by source: github auto-archive
+// (`archive/refs/tags/...`) wraps everything under `bee-<version>/`,
+// but the release-asset zip (`releases/download/<tag>/bee.zip`)
+// places bee.php at the root. find handles both without us having to
+// branch on URL format.
 func extractBeeZip(ctx context.Context, osUser, zipPath, stagingDir string) (string, error) {
 	cmd := buildSystemdRunCmd(ctx, osUser, "unzip", "-q", "-o", zipPath, "-d", stagingDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("unzip bee: %w (output: %s)", err, truncateStr(string(out), 512))
 	}
-	return filepath.Join(stagingDir, "bee-"+beeVersion, "bee.php"), nil
+	findCmd := buildSystemdRunCmd(ctx, osUser, "find", stagingDir, "-name", "bee.php", "-print", "-quit")
+	out, err := findCmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("find bee.php: %w (output: %s)", err, truncateStr(string(out), 256))
+	}
+	beePath := strings.TrimSpace(string(out))
+	if beePath == "" {
+		return "", fmt.Errorf("bee.php not found after unzip in %s", stagingDir)
+	}
+	return beePath, nil
 }
 
 // runBeeSiteInstall drives bee's site-install command. bee needs to

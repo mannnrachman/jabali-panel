@@ -128,8 +128,8 @@ func deleteAppDirect(ctx context.Context, installID string) (*models.Application
 	// Pre-resolve the DB user before we mark the install deleting so a
 	// FK lookup failure aborts before we mutate anything.
 	var dbUserID, dbUserUsername string
-	if install.DBID != "" {
-		grants, gErr := dbGrants.ListByDatabaseID(ctx, install.DBID)
+	if install.DBIDOr() != "" {
+		grants, gErr := dbGrants.ListByDatabaseID(ctx, install.DBIDOr())
 		if gErr == nil && len(grants) > 0 {
 			dbUserID = grants[0].DatabaseUserID
 			if dbu, duErr := dbUsers.FindByID(ctx, dbUserID); duErr == nil && dbu != nil {
@@ -197,14 +197,14 @@ func deleteAppDirect(ctx context.Context, installID string) (*models.Application
 		return install, fmt.Errorf("delete install row: %w", dErr)
 	}
 
-	if install.DBID != "" {
-		if db, dbErr := dbs.FindByID(ctx, install.DBID); dbErr == nil && db != nil {
+	if install.DBIDOr() != "" {
+		if db, dbErr := dbs.FindByID(ctx, install.DBIDOr()); dbErr == nil && db != nil {
 			if _, agentErr := sharedAgent.Call(agentCtx, "db.drop", map[string]any{"db_name": db.Name}); agentErr != nil {
 				slog.Warn("cli app delete: db.drop failed", "db_name", db.Name, "err", agentErr)
 			}
 		}
-		if dErr := dbs.Delete(ctx, install.DBID); dErr != nil {
-			slog.Warn("cli app delete: database row delete failed", "db_id", install.DBID, "err", dErr)
+		if dErr := dbs.Delete(ctx, install.DBIDOr()); dErr != nil {
+			slog.Warn("cli app delete: database row delete failed", "db_id", install.DBIDOr(), "err", dErr)
 		}
 	}
 

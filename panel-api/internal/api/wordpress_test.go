@@ -108,7 +108,7 @@ func (m *mockWordPressInstallRepo) FindByDBID(ctx context.Context, dbID string) 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, inst := range m.installs {
-		if inst.DBID == dbID {
+		if inst.DBIDOr() == dbID {
 			return inst, nil
 		}
 	}
@@ -430,7 +430,7 @@ func TestWordPressGetOwnershipCheck404(t *testing.T) {
 func TestWordPressDeleteSuccess(t *testing.T) {
 	wpRepo := &mockWordPressInstallRepo{
 		installs: map[string]*models.WordPressInstall{
-			"inst1": {ID: "inst1", UserID: "user1", DomainID: "domain1", DBID: "db1", Status: "ready"},
+			"inst1": {ID: "inst1", UserID: "user1", DomainID: "domain1", DBID: models.DBIDPtr("db1"), Status: "ready"},
 		},
 	}
 	domainRepo := &mockDomainRepo{
@@ -800,7 +800,7 @@ func TestWordPressCloneProvisionsMariaDBViaAgentInOrder(t *testing.T) {
 		return json.RawMessage(`{}`), nil
 	}}
 	sourceInstall := &models.WordPressInstall{
-		ID: "srcInstall", UserID: "user1", DomainID: "sourceDomain", DBID: "srcDB",
+		ID: "srcInstall", UserID: "user1", DomainID: "sourceDomain", DBID: models.DBIDPtr("srcDB"),
 		AdminUsername: "admin", AdminEmail: "a@b.com", Locale: "en_US", Status: "ready",
 	}
 	wpRepo := &mockWordPressInstallRepo{installs: map[string]*models.WordPressInstall{"srcInstall": sourceInstall}}

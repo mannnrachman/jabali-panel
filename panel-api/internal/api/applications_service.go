@@ -174,7 +174,7 @@ func InstallApplication(ctx context.Context, deps ApplicationHandlerConfig, p In
 		ID:            installID,
 		UserID:        p.UserID,
 		DomainID:      p.DomainID,
-		DBID:          chain.DBID,
+		DBID:          models.DBIDPtr(chain.DBID),
 		AppType:       descriptor.Name,
 		AdminUsername: adminUsername,
 		AdminEmail:    paramOr(p.Params, "admin_email", ""),

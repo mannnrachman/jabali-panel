@@ -178,7 +178,7 @@ func (h *applicationsHandler) create(c *gin.Context) {
 		ID:            install.ID,
 		AppType:       install.AppType,
 		DomainID:      install.DomainID,
-		DBID:          install.DBID,
+		DBID:          install.DBIDOr(),
 		AdminUsername: install.AdminUsername,
 		AdminPassword: res.AdminPassword,
 		AdminEmail:    install.AdminEmail,

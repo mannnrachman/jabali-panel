@@ -374,7 +374,7 @@ func (h *wordPressHandler) create(c *gin.Context) {
 		ID:            installID,
 		UserID:        targetUserID,
 		DomainID:      req.DomainID,
-		DBID:          dbID,
+		DBID:          models.DBIDPtr(dbID),
 		AdminUsername: req.AdminUsername,
 		AdminEmail:    req.AdminEmail,
 		Locale:        req.Locale,
@@ -487,7 +487,7 @@ func (h *wordPressHandler) list(c *gin.Context) {
 			AppType:       appType,
 			DomainID:      inst.DomainID,
 			DomainName:    domainNames[inst.DomainID],
-			DBID:          inst.DBID,
+			DBID:          inst.DBIDOr(),
 			AdminUsername: inst.AdminUsername,
 			AdminEmail:    inst.AdminEmail,
 			Locale:        inst.Locale,
@@ -554,7 +554,7 @@ func (h *wordPressHandler) get(c *gin.Context) {
 		AppType:       getAppType,
 		DomainID:      install.DomainID,
 		DomainName:    domainName,
-		DBID:          install.DBID,
+		DBID:          install.DBIDOr(),
 		AdminUsername: install.AdminUsername,
 		AdminEmail:    install.AdminEmail,
 		Locale:        install.Locale,
@@ -622,7 +622,7 @@ func (h *wordPressHandler) delete(c *gin.Context) {
 	}
 	dbUserID := ""
 	var dbUserUsername string
-	if grants, gerr := h.cfg.DatabaseGrants.ListByDatabaseID(ctx, install.DBID); gerr == nil && len(grants) > 0 {
+	if grants, gerr := h.cfg.DatabaseGrants.ListByDatabaseID(ctx, install.DBIDOr()); gerr == nil && len(grants) > 0 {
 		dbUserID = grants[0].DatabaseUserID
 		if dbu, duErr := h.cfg.DatabaseUsers.FindByID(ctx, dbUserID); duErr == nil && dbu != nil {
 			dbUserUsername = dbu.Username
@@ -636,7 +636,7 @@ func (h *wordPressHandler) delete(c *gin.Context) {
 	// install_id is plumbed through so deleters that opt into the
 	// managed-data-dir contract (Moodle/GLPI/Chamilo) can recompute the
 	// /home/<user>/<install_id>-data path and rm it.
-	go createDeleteAndKickAgent(ctx, installID, install.AppType, install.Subdirectory, install.DBID, dbUserID, osUser, domain.DocRoot, domain.Name, dbUserUsername, h.cfg)
+	go createDeleteAndKickAgent(ctx, installID, install.AppType, install.Subdirectory, install.DBIDOr(), dbUserID, osUser, domain.DocRoot, domain.Name, dbUserUsername, h.cfg)
 
 	c.JSON(http.StatusAccepted, gin.H{"status": "deleting"})
 }
@@ -842,7 +842,7 @@ func (h *wordPressHandler) clone(c *gin.Context) {
 		ID:            cloneInstallID,
 		UserID:        targetUserID,
 		DomainID:      req.DestDomainID,
-		DBID:          destDBID,
+		DBID:          models.DBIDPtr(destDBID),
 		AdminUsername: sourceInstall.AdminUsername,
 		AdminEmail:    sourceInstall.AdminEmail,
 		Locale:        sourceInstall.Locale,

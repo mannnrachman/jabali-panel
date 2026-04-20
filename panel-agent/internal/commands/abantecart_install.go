@@ -119,9 +119,15 @@ func extractAbanteCartZip(ctx context.Context, osUser, zipPath, installPath, sta
 		return fmt.Errorf("unzip: %w (output: %s)", err, truncateStr(string(out), 512))
 	}
 	src := filepath.Join(stagingDir, "abantecart-src-"+abantecartVersion, "public_html")
+	// Don't `rm -rf %s` here — stagingDir's parent (tmpDir) is mode 0755
+	// root-owned, so the per-domain user can read/exec but not delete
+	// entries. The caller's `defer os.RemoveAll(tmpDir)` runs as root
+	// and tears down both. The user-side rm was always redundant; it
+	// just used to silently succeed because earlier tmpDir perms let
+	// it through.
 	mvCmd := buildSystemdRunCmd(ctx, osUser, "sh", "-c",
-		fmt.Sprintf("cp -a %s/. %s/ && rm -rf %s",
-			shellQuote(src), shellQuote(installPath), shellQuote(stagingDir)),
+		fmt.Sprintf("cp -a %s/. %s/",
+			shellQuote(src), shellQuote(installPath)),
 	)
 	mvOut, err := mvCmd.CombinedOutput()
 	if err != nil {

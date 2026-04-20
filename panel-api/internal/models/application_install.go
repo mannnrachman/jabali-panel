@@ -20,7 +20,11 @@ type ApplicationInstall struct {
 	// stays stable for the existing repository sqlmock tests; AppType
 	// is appended last for the same reason.
 	DomainID      string  `gorm:"type:char(26);not null;uniqueIndex:uniq_app_installs_domain_subdir_apptype,priority:1" json:"domain_id"`
-	DBID          string  `gorm:"type:char(26);not null;column:db_id" json:"db_id"`
+	// DBID is nullable to support RequiresDB=false apps (DokuWiki,
+	// Grav, Backdrop, ...). Migration 000048 relaxed the column;
+	// callers writing this row must pass nil for flat-file apps.
+	// Reads tolerate either NULL or "" — see DBIDValue() helper.
+	DBID          *string `gorm:"type:char(26);column:db_id" json:"db_id"`
 	Version       *string `gorm:"type:varchar(32)" json:"version"`
 	AdminUsername string  `gorm:"type:varchar(60);not null" json:"admin_username"`
 	AdminEmail    string  `gorm:"type:varchar(320);not null" json:"admin_email"`
@@ -47,6 +51,28 @@ type ApplicationInstall struct {
 // changed in 000046 and a typo here would silently route writes to the
 // wrong (now non-existent) table.
 func (ApplicationInstall) TableName() string { return "application_installs" }
+
+// DBIDOr returns the string value of DBID, or "" when nil. Existing
+// readers compare to "" (RequiresDB=false sentinel) and pass DBID as a
+// string parameter; this accessor lets them keep doing both without
+// every call site sprouting a nil-check after migration 000048 made
+// the column nullable.
+func (a *ApplicationInstall) DBIDOr() string {
+	if a == nil || a.DBID == nil {
+		return ""
+	}
+	return *a.DBID
+}
+
+// DBIDPtr converts a string DBID to the *string the model expects on
+// write. "" maps to nil so RequiresDB=false apps insert NULL (the
+// only value the FK accepts).
+func DBIDPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
 
 // WordPressInstall is a transitional alias kept so the WordPress-specific
 // API + agent paths compile during the M19 window without a sweeping

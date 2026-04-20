@@ -1,0 +1,84 @@
+# Gitea Actions CI — gate every push + PR against the full test suite so the
+# kind of silent baseline rot that slipped past M20 cutover can't recur.
+#
+# Three parallel jobs so feedback is fast: Go is the biggest, vitest is cheap,
+# Playwright needs a built SPA + Chromium so it's the longest tail.
+#
+# Runner requirements:
+#   - labels include `ubuntu-latest` (or the label(s) act_runner was registered with)
+#   - `host` executor works fine; `docker` executor also OK if registered that way
+#   - Go 1.24+ and Node 20+ either preinstalled or installable via actions/setup-*
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  # Keep the Go + Node toolchains pinned so local `make test-all` and CI
+  # run the same versions. Bump here to upgrade fleet-wide.
+  GO_VERSION: "1.24"
+  NODE_VERSION: "20"
+
+jobs:
+  go:
+    name: Go tests + vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: go vet
+        run: make vet
+      - name: go test -race
+        run: make test
+
+  ui-unit:
+    name: panel-ui unit tests (vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: panel-ui/package-lock.json
+      - name: Install deps
+        run: cd panel-ui && npm ci --no-audit --no-fund
+      - name: Type check + lint
+        run: cd panel-ui && npm run lint
+      - name: vitest
+        run: cd panel-ui && npm test
+
+  e2e:
+    name: Playwright E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: panel-ui/package-lock.json
+      - name: Install deps
+        run: cd panel-ui && npm ci --no-audit --no-fund
+      - name: Install Playwright Chromium
+        run: cd panel-ui && npx playwright install --with-deps chromium
+      - name: Build SPA
+        run: cd panel-ui && npm run build
+      - name: Playwright
+        run: cd panel-ui && npx playwright test --project=chromium --reporter=list
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: playwright-report
+          path: |
+            panel-ui/test-results/
+            panel-ui/playwright-report/
+          retention-days: 7

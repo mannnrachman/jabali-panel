@@ -1,4 +1,5 @@
-.PHONY: help build run test test-short test-coverage coverage-check lint fmt vet tidy clean
+.PHONY: help build run test test-short test-coverage coverage-check lint fmt vet tidy clean \
+	test-ui test-e2e test-all ui-install ui-build
 
 GO         := go
 API_PKG    := ./panel-api/...
@@ -59,3 +60,21 @@ tidy: ## Tidy module deps
 
 clean: ## Remove build artefacts
 	rm -rf bin $(COVER)
+
+# ---------- panel-ui (frontend) ----------
+
+UI_DIR := panel-ui
+
+ui-install: ## Install panel-ui npm deps (clean, reproducible)
+	cd $(UI_DIR) && rm -rf node_modules && npm ci --no-audit --no-fund
+
+ui-build: ## Build the panel-ui SPA (required before E2E — tests run against dist/)
+	cd $(UI_DIR) && npm run build
+
+test-ui: ## Run panel-ui unit tests (vitest)
+	cd $(UI_DIR) && npx vitest run
+
+test-e2e: ui-build ## Run Playwright E2E suite against the built SPA
+	cd $(UI_DIR) && npx playwright test --project=chromium --reporter=list
+
+test-all: test test-ui test-e2e ## Run everything: Go tests + vitest + Playwright

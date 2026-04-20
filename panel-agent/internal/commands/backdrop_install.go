@@ -230,6 +230,16 @@ func extractBeeZip(ctx context.Context, osUser, zipPath, stagingDir string) (str
 // runBeeSiteInstall drives bee's site-install command. bee needs to
 // know the Backdrop install root via --root and reads its DB / admin
 // settings from CLI flags.
+//
+// Flag set tracks bee 1.x-1.2.0:
+//   - DB connection is split into --db-name / --db-user / --db-pass /
+//     --db-host (the old --db-url flag was removed; passing it is silently
+//     ignored and bee prompts for "Database name" interactively, hanging
+//     forever even with --yes because the prompt is required-input)
+//   - Admin account renamed --account-name → --username,
+//     --account-pass → --password, --account-mail → --email
+//   - --auto is required to suppress the interactive installer (--yes
+//     alone only suppresses confirm-y/n prompts, not data prompts)
 func runBeeSiteInstall(ctx context.Context, req backdropInstallReq, beeScript, installPath string) error {
 	dbHost := req.DBHost
 	if dbHost == "" {
@@ -239,23 +249,21 @@ func runBeeSiteInstall(ctx context.Context, req backdropInstallReq, beeScript, i
 	if profile == "" {
 		profile = "standard"
 	}
-	dbURL := fmt.Sprintf("mysql://%s:%s@%s/%s",
-		urlEscape(req.DBUser),
-		urlEscape(req.DBPassword),
-		dbHost,
-		req.DBName,
-	)
 
 	args := []string{
 		"php", beeScript,
 		"--root=" + installPath,
 		"--yes",
 		"site-install",
+		"--auto",
 		"--profile=" + profile,
-		"--db-url=" + dbURL,
-		"--account-name=" + req.AdminUser,
-		"--account-pass=" + req.AdminPass,
-		"--account-mail=" + req.AdminEmail,
+		"--db-name=" + req.DBName,
+		"--db-user=" + req.DBUser,
+		"--db-pass=" + req.DBPassword,
+		"--db-host=" + dbHost,
+		"--username=" + req.AdminUser,
+		"--password=" + req.AdminPass,
+		"--email=" + req.AdminEmail,
 		"--site-name=" + req.SiteTitle,
 		"--site-mail=" + req.AdminEmail,
 		"--langcode=en",

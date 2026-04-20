@@ -246,22 +246,32 @@ func writePhpbbInstallerYAML(req phpbbInstallReq, dest, scriptPath string, port 
 	return os.WriteFile(dest, []byte(yaml), 0o600)
 }
 
-// runPhpbbCLIInstaller drives `php install/app.php install <config>`.
+// runPhpbbCLIInstaller drives `php phpbbcli.php install <config>`.
 // phpBB's installer reads the YAML, persists data to MariaDB, and
 // writes config.php in the install root with the runtime DB
 // credentials.
+//
+// Two cwd-sensitive quirks:
+//   - phpbbcli.php is the documented CLI entry point (not app.php).
+//     app.php's line 30 hard-codes `require('../install/startup.php')`
+//     and only resolves correctly when cwd is install/ — running it
+//     from the docroot gives `<docroot>/../install/startup.php` which
+//     doesn't exist.
+//   - cwd MUST be installPath/install/ for the require chain to work.
+//     phpbbcli.php pulls in startup.php with the same `../install/...`
+//     pattern as app.php, so the same rule applies.
 func runPhpbbCLIInstaller(ctx context.Context, osUser, installPath, configPath string) error {
 	args := []string{
 		"php",
-		filepath.Join(installPath, "install", "app.php"),
+		"phpbbcli.php",
 		"install",
 		configPath,
 	}
 	cmd := buildSystemdRunCmd(ctx, osUser, args...)
-	cmd.Dir = installPath
+	cmd.Dir = filepath.Join(installPath, "install")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("php install/app.php install: %w (output: %s)", err, truncateStr(string(out), 1024))
+		return fmt.Errorf("php phpbbcli.php install: %w (output: %s)", err, truncateStr(string(out), 1024))
 	}
 	return nil
 }

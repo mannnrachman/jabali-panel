@@ -348,12 +348,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				HydraClient: deps.HydraClient,
 				SSOKey:      deps.SSOKey,
 				// PanelBaseURL is the public HTTPS URL of the panel
-				// itself — what Hydra advertises as its OIDC issuer.
-				// Consumed by Step 7 (the WordPress plugin needs it to
-				// fetch /.well-known/openid-configuration). Not yet
-				// surfaced in config.toml; wire to an explicit field
-				// in a follow-up alongside the plugin auto-install.
-				PanelBaseURL: "",
+				// itself — what Hydra advertises as its OIDC issuer and
+				// what the WP plugin's discovery URL resolves against.
+				// Built from Server.Hostname + the :8443 convention
+				// (the addr in PANEL_ADDR is loopback / 0.0.0.0 inside
+				// the process, not what clients see).
+				PanelBaseURL: panelBaseURLFromConfig(cfg),
 			}
 			api.RegisterWordPressRoutes(v1, appCfg)
 			api.RegisterApplicationRoutes(v1, appCfg)
@@ -423,4 +423,22 @@ func startRateLimiterSweeper(rl *middleware.RateLimiter) {
 			rl.Cleanup(rateLimiterIdleCleanup)
 		}
 	}()
+}
+
+// panelBaseURLFromConfig builds the public HTTPS URL the panel is
+// reachable at: https://<hostname>:8443. Returns "" when hostname
+// isn't set (dev/pre-bootstrap), which disables the OIDC mint at the
+// service layer — same fail-closed behaviour as missing Hydra or
+// sso.key.
+//
+// 8443 is the locked-in panel port per ADR-0014; encoded here rather
+// than derived from Server.Addr because Addr is the bind address
+// (0.0.0.0:8443 or 127.0.0.1:8443 inside the process), not what
+// clients see through any firewall / forward. The Kratos + Hydra
+// service templates use the same hostname+:8443 convention.
+func panelBaseURLFromConfig(cfg *config.Config) string {
+	if cfg == nil || cfg.Server.Hostname == "" {
+		return ""
+	}
+	return "https://" + cfg.Server.Hostname + ":8443"
 }

@@ -8,8 +8,10 @@ import (
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/apps"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/hydraclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
 // buildAppDeps assembles ApplicationHandlerConfig for the CLI. The
@@ -25,6 +27,33 @@ func buildAppDeps() (api.ApplicationHandlerConfig, error) {
 	if err := apps.RegisterDefaults(registry); err != nil {
 		return api.ApplicationHandlerConfig{}, fmt.Errorf("register app defaults: %w", err)
 	}
+	// M16 Wave D: the CLI install path must mint the per-install OIDC
+	// client exactly like the HTTP handler does, otherwise installs
+	// driven via `jabali app install` end up with NULL oidc_* columns
+	// and the in-flight SSO flow breaks the moment a user clicks "log
+	// in with Jabali" on the WP plugin. Nil-safe: missing Hydra config
+	// or sso.key leaves both deps nil and the service-layer skips the
+	// mint, matching production behaviour before Wave D rolled.
+	var hydra *hydraclient.Client
+	if sharedCfg != nil && sharedCfg.Auth.Hydra.AdminURL != "" {
+		hydra = hydraclient.New(sharedCfg.Auth.Hydra.AdminURL)
+	}
+	var ssoK *ssokey.Key
+	if sharedCfg != nil && sharedCfg.SSO.KeyPath != "" {
+		if k, err := ssokey.Load(sharedCfg.SSO.KeyPath); err == nil {
+			ssoK = &k
+		}
+	}
+	// Issuer URL shape is locked in ADR-0014 (panel on :8443) and must
+	// match what app.go's panelBaseURLFromConfig produces — otherwise
+	// CLI-driven installs would write a different issuer into the WP
+	// plugin config than HTTP-driven ones, and the JWT `iss` claim
+	// check on the plugin side would fail for one of them.
+	panelBaseURL := ""
+	if sharedCfg != nil && sharedCfg.Server.Hostname != "" {
+		panelBaseURL = "https://" + sharedCfg.Server.Hostname + ":8443"
+	}
+
 	return api.ApplicationHandlerConfig{
 		ApplicationInstalls: repository.NewApplicationInstallRepository(sharedDB),
 		Databases:           repository.NewDatabaseRepository(sharedDB),
@@ -35,6 +64,9 @@ func buildAppDeps() (api.ApplicationHandlerConfig, error) {
 		Packages:            repository.NewPackageRepository(sharedDB),
 		Agent:               sharedAgent,
 		Apps:                registry,
+		HydraClient:         hydra,
+		SSOKey:              ssoK,
+		PanelBaseURL:        panelBaseURL,
 	}, nil
 }
 

@@ -960,8 +960,7 @@ SQL
     _log "PowerDNS schema already present in jabali_pdns — skipping reload"
   fi
 
-  # Write pdns.conf. Single file, minimal surface. Listens on all
-  # interfaces; port 53 UDP+TCP.
+  # Write pdns.conf. Single file, minimal surface. Port 53 UDP+TCP.
   local pdns_conf=/etc/powerdns/pdns.d/01-jabali-mysql.conf
   cat > "$pdns_conf" <<PDNSCONF
 # Managed by Jabali Panel install.sh. Hand edits will be overwritten
@@ -973,10 +972,18 @@ gmysql-dbname=jabali_pdns
 gmysql-user=jabali_pdns
 gmysql-password=${pdns_password}
 
-# Bind on all interfaces so ns1 can be reached externally. Operator can
-# narrow this via /etc/powerdns/pdns.conf if they run a firewall in
-# front.
-local-address=0.0.0.0, ::
+# Bind to the host's public IP + 127.0.0.1 explicitly. We deliberately
+# do NOT bind 0.0.0.0 because systemd-resolved (enabled earlier in
+# install_base_packages for the panel's DNS Resolvers feature) is
+# already listening on 127.0.0.53:53 as a stub. A 0.0.0.0:53 bind
+# wildcards over every local IP — including 127.0.0.53 — and fails
+# with EADDRINUSE, which surfaces as "Job for pdns.service failed"
+# during install. Binding to the specific public IP + localhost avoids
+# the overlap while keeping \`dig @localhost\` + \`dig @<panel-ip>\`
+# both working from the host itself and from the internet.
+# Operator can widen this via /etc/powerdns/pdns.conf if they add more
+# IPs, but they must not re-add 0.0.0.0 while systemd-resolved runs.
+local-address=127.0.0.1, ${JABALI_SRV_IPV4}, ::1
 
 # socket-dir is intentionally not set — Debian's pdns.service has
 # RuntimeDirectory=powerdns which auto-creates /run/powerdns with the

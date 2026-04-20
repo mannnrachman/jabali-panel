@@ -1,16 +1,7 @@
 import { useEffect, useState } from "react";
-import {
-  Alert,
-  Button,
-  notification,
-  Space,
-  Spin,
-  Table,
-  Tag,
-} from "antd";
+import { Alert, Button, notification, Spin, Table, Tag } from "antd";
 import {
   CheckCircleOutlined,
-  CodeOutlined,
   DownloadOutlined,
   ReloadOutlined,
 } from "@ant-design/icons";
@@ -194,12 +185,7 @@ export const VersionsTab = () => {
         <Table.Column<PHPVersionStatus>
           dataIndex="version"
           title="PHP Version"
-          render={(version: string) => (
-            <Space>
-              <CodeOutlined />
-              <strong>PHP {version}</strong>
-            </Space>
-          )}
+          render={(version: string) => `PHP ${version}`}
         />
         <Table.Column<PHPVersionStatus>
           dataIndex="installed"
@@ -218,9 +204,7 @@ export const VersionsTab = () => {
           width={140}
           render={(_: any, record: PHPVersionStatus) => {
             if (record.version === statusData?.default_version && record.installed) {
-              return (
-                <CheckCircleOutlined style={{ color: "#1890ff", fontSize: 16 }} />
-              );
+              return <CheckCircleOutlined />;
             }
             // Button only shows for installed + FPM-running versions — the
             // API rejects setting a default that isn't both. Avoid the
@@ -229,7 +213,6 @@ export const VersionsTab = () => {
               return (
                 <Button
                   type="link"
-                  size="small"
                   loading={settingDefaultVersion === record.version}
                   onClick={() => handleSetDefault(record.version)}
                 >

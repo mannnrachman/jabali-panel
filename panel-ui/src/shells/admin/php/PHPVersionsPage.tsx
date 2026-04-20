@@ -1,10 +1,5 @@
 import { useState } from "react";
 import { Card, Typography } from "antd";
-import {
-  ApiOutlined,
-  CodeOutlined,
-  ThunderboltOutlined,
-} from "@ant-design/icons";
 import { VersionsTab } from "./VersionsTab";
 import { PHPExtensionsTab } from "./PHPExtensionsTab";
 
@@ -16,7 +11,6 @@ export const PHPVersionsPage = () => {
   return (
     <div style={{ padding: 24 }}>
       <Typography.Title level={3} style={{ marginTop: 0 }}>
-        <ThunderboltOutlined style={{ marginRight: 8 }} />
         PHP Manager
       </Typography.Title>
       <Typography.Paragraph type="secondary">
@@ -27,22 +21,8 @@ export const PHPVersionsPage = () => {
           mirrors the Server Settings page for consistency across admin pages. */}
       <Card
         tabList={[
-          {
-            key: "versions",
-            tab: (
-              <span>
-                <CodeOutlined /> PHP Versions
-              </span>
-            ),
-          },
-          {
-            key: "extensions",
-            tab: (
-              <span>
-                <ApiOutlined /> PHP Extensions
-              </span>
-            ),
-          },
+          { key: "versions", tab: "PHP Versions" },
+          { key: "extensions", tab: "PHP Extensions" },
         ]}
         activeTabKey={active}
         onTabChange={(k) => setActive(k as TabKey)}

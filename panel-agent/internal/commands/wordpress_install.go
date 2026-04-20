@@ -210,13 +210,15 @@ func installAndConfigureOIDCPlugin(ctx context.Context, req wordpressInstallReq,
 	}
 
 	// Pass JSON via stdin so the secret never appears on argv (it
-	// would leak into `ps` output otherwise). wp-cli treats the
-	// literal "-" as the value when reading from stdin.
+	// would leak into `ps` output otherwise). wp-cli's
+	// get_value_from_arg_or_stdin reads php://stdin when the <value>
+	// positional arg is OMITTED — passing `-` would be treated as
+	// the literal value "-" and fail JSON parsing. Omit the positional
+	// and pipe the JSON through systemd-run --pipe → wp-cli stdin.
 	optCmd := buildSystemdRunCmd(ctx,
 		req.OSUser,
 		"wp", "option", "update",
 		"openid_connect_generic_settings",
-		"-",
 		"--format=json",
 		"--path="+installPath,
 	)

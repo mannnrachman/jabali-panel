@@ -300,6 +300,17 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 			r.log.Info("reconcile: creating missing domain", "domain", name)
 		}
 		r.reconcileDNSZone(ctx, domain)
+		// Converge SSL state BEFORE the agent RPC. createDomainOnAgent
+		// renders the vhost using the cert paths the ssl_certificates row
+		// points at, so a fresh-issued cert must land in the DB before the
+		// vhost template is re-rendered this pass. This is also what drives
+		// the 3-hour ACME retry for pending_acme_retry certs — without this
+		// call in the steady-state loop, retries only ran on out-of-band
+		// Schedule() or an explicit force, and seed-time domains never got
+		// their first cert attempted at all.
+		sslCtx, sslCancel := context.WithTimeout(ctx, 2*time.Minute)
+		r.reconcileSSLForDomain(sslCtx, domain)
+		sslCancel()
 		// Auto-bind unbound domains to their owner's pool BEFORE the
 		// agent RPC. Without this, a newly-created domain renders an
 		// nginx vhost with no "location ~ \\.php$" block and the browser

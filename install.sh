@@ -978,6 +978,125 @@ PDNSCONF
   _ok "PowerDNS running on port 53"
 }
 
+# ---------- step 2.6b: bootstrap the panel's own hostname zone --------------
+#
+# User domains created via the panel declare ns1.<hostname> / ns2.<hostname>
+# as their authoritative nameservers. For anyone delegating to those NS
+# records to actually reach our PowerDNS, PowerDNS must be authoritative
+# for <hostname> itself — otherwise `host ns1.<hostname>` returns REFUSED
+# and the whole DNS infrastructure is broken from day one.
+#
+# We create the zone exactly once at install time with the minimum record
+# set PowerDNS needs to serve itself: SOA, NS×2, A for the hostname, and
+# A for each NS name. On subsequent install.sh runs the zone is left
+# alone — an admin may have edited it via the panel UI and re-installing
+# shouldn't clobber their customizations. To refresh defaults, delete the
+# zone manually and re-run install.sh.
+#
+# We use direct SQL INSERTs rather than a `jabali` CLI call because this
+# phase runs before build_backend — there's no jabali binary yet. The
+# PDNS schema has been stable for years; the column set here matches
+# what panel-agent/internal/pdns/client.go upserts for user domains.
+bootstrap_pdns_self_zone() {
+  local hostname="$JABALI_SRV_HOSTNAME"
+  local ipv4="$JABALI_SRV_IPV4"
+  local ipv6="${JABALI_SRV_IPV6:-}"
+  local ns1_name="$JABALI_SRV_NS1_NAME"
+  local ns1_ipv4="$JABALI_SRV_NS1_IPV4"
+  local ns2_name="$JABALI_SRV_NS2_NAME"
+  local ns2_ipv4="$JABALI_SRV_NS2_IPV4"
+
+  if [[ -z "$hostname" || -z "$ipv4" || -z "$ns1_name" || -z "$ns2_name" ]]; then
+    _warn "bootstrap_pdns_self_zone: server settings env vars missing; skipping"
+    return 0
+  fi
+
+  # Sanity-warn (don't fail) on non-routable identities. An admin running
+  # a lab/dev install with hostname=jabali-panel.local gets a working
+  # PDNS but the NS delegation will only work on hosts that explicitly
+  # resolve through this PDNS — it won't work from public resolvers.
+  case "$hostname" in
+    *.local|*.localdomain|localhost)
+      _warn "hostname '$hostname' ends in a non-routable TLD — public NS delegation will not work"
+      ;;
+  esac
+  if [[ "$ipv4" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|127\.) ]]; then
+    _warn "IPv4 '$ipv4' is a private/loopback range — public NS delegation will not reach this host"
+  fi
+
+  # Idempotent check: if the domain row exists, leave everything alone.
+  local existing_id
+  existing_id="$(mariadb -uroot -Ns jabali_pdns -e \
+    "SELECT id FROM domains WHERE name = '$(_sql_escape "$hostname")';" 2>/dev/null || true)"
+  if [[ -n "$existing_id" ]]; then
+    _log "self-zone '$hostname' already exists in jabali_pdns (id=$existing_id); leaving untouched"
+    return 0
+  fi
+
+  _log "bootstrapping PowerDNS self-zone '$hostname' (SOA + NS + A × 3${ipv6:+ + AAAA × 3})"
+
+  # Build the SQL as a heredoc. We can't interpolate arbitrary admin
+  # input directly into SQL without escaping, but these values came from
+  # prompt_server_settings which validates them as RFC-1123 hostnames /
+  # IP addresses. Still, run each through _sql_escape as defense in depth.
+  local h_esc ipv4_esc ns1_esc ns1_ipv4_esc ns2_esc ns2_ipv4_esc ipv6_esc
+  h_esc="$(_sql_escape "$hostname")"
+  ipv4_esc="$(_sql_escape "$ipv4")"
+  ns1_esc="$(_sql_escape "$ns1_name")"
+  ns1_ipv4_esc="$(_sql_escape "$ns1_ipv4")"
+  ns2_esc="$(_sql_escape "$ns2_name")"
+  ns2_ipv4_esc="$(_sql_escape "$ns2_ipv4")"
+  ipv6_esc="$(_sql_escape "$ipv6")"
+
+  # SOA content: primary-ns hostmaster.<hostname> serial refresh retry expire minimum
+  # Matches RFC 1035 SOA RDATA; 300s min TTL for faster negative caching recovery.
+  local soa_content="$ns1_esc hostmaster.$h_esc 1 86400 7200 604800 300"
+
+  mariadb -uroot jabali_pdns <<SQL
+INSERT INTO domains (name, type) VALUES ('$h_esc', 'NATIVE');
+SET @zid = LAST_INSERT_ID();
+INSERT INTO records (domain_id, name, type, content, ttl, prio, disabled, auth) VALUES
+  (@zid, '$h_esc',     'SOA', '$soa_content', 3600, 0, 0, 1),
+  (@zid, '$h_esc',     'NS',  '$ns1_esc',     3600, 0, 0, 1),
+  (@zid, '$h_esc',     'NS',  '$ns2_esc',     3600, 0, 0, 1),
+  (@zid, '$h_esc',     'A',   '$ipv4_esc',    300,  0, 0, 1),
+  (@zid, '$ns1_esc',   'A',   '$ns1_ipv4_esc',300,  0, 0, 1),
+  (@zid, '$ns2_esc',   'A',   '$ns2_ipv4_esc',300,  0, 0, 1);
+SQL
+
+  # AAAA records only if IPv6 is configured. Separate statement so the
+  # common IPv4-only case doesn't pay for a conditional in the heredoc.
+  if [[ -n "$ipv6" ]]; then
+    mariadb -uroot jabali_pdns <<SQL
+SET @zid = (SELECT id FROM domains WHERE name = '$h_esc');
+INSERT INTO records (domain_id, name, type, content, ttl, prio, disabled, auth) VALUES
+  (@zid, '$h_esc',   'AAAA', '$ipv6_esc', 300, 0, 0, 1),
+  (@zid, '$ns1_esc', 'AAAA', '$ipv6_esc', 300, 0, 0, 1),
+  (@zid, '$ns2_esc', 'AAAA', '$ipv6_esc', 300, 0, 0, 1);
+SQL
+  fi
+
+  # Tell pdns to drop its cache for this zone so subsequent queries see
+  # the new records immediately. NOTIFY also pings any configured slaves;
+  # with type=NATIVE and no slaves configured, this is a pure cache poke.
+  # Ignore exit — pdns_control may not be on PATH on minimal Debian
+  # installs, and the SQL rows are committed either way; the next
+  # scheduled reload (or pdns restart) will pick them up.
+  pdns_control notify "$hostname" >/dev/null 2>&1 || true
+
+  _ok "self-zone '$hostname' created in jabali_pdns"
+}
+
+# Minimal SQL string escaper: replaces ' with '' and strips backslashes
+# that MariaDB would otherwise interpret in string literals. Not a
+# general-purpose escaper — adequate for hostname / IPv4 / IPv6 values
+# that have already passed RFC-1123 / netip.ParseAddr validation earlier
+# in prompt_server_settings. Defense in depth, not primary trust.
+_sql_escape() {
+  # shellcheck disable=SC2001
+  printf '%s' "$1" | sed -e "s/'/''/g" -e 's/\\//g'
+}
+
 # ---------- step 2.7: Certbot (Let's Encrypt SSL) ---------------------------
 setup_certbot() {
   _log "installing Certbot for Let's Encrypt SSL certificates"
@@ -2326,6 +2445,7 @@ main() {
   write_env_file
   provision_mariadb
   install_powerdns
+  bootstrap_pdns_self_zone
   setup_certbot
   clone_or_update_repo
   install_jabali_slices

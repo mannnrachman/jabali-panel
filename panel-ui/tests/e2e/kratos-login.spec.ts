@@ -56,28 +56,26 @@ test.describe("Kratos login flow", () => {
       });
     });
 
-    // The fixture's whoami mock depends on state.session being set by the
-    // login submit mock — which we just replaced above. Override whoami
-    // directly: return 401 before submit (so the route guard lets /login
-    // render), 200 after (so getIdentity() post-submit returns the admin
-    // and homeForRole routes to /jabali-admin).
-    await page.route("**/.ory/sessions/whoami", async (route) => {
+    // The fixture's /me mock depends on state.session + state.accessToken
+    // being set by the login submit mock — which we just replaced above.
+    // Override /api/v1/me directly: return 401 before submit (so the route
+    // guard lets /login render), 200 with panel ULID after (so getIdentity
+    // returns the admin and homeForRole routes to /jabali-admin).
+    await page.route("**/api/v1/me", async (route) => {
       if (!loggedIn) {
         return route.fulfill({
           status: 401,
           contentType: "application/json",
-          body: JSON.stringify({ error: { code: 401, message: "no session" } }),
+          body: JSON.stringify({ error: "missing_authorization" }),
         });
       }
       return route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          id: "session-admin",
-          identity: {
-            id: "kratos-admin",
-            traits: { email: admin.email, is_admin: true },
-          },
+          id: admin.id,
+          email: admin.email,
+          is_admin: true,
         }),
       });
     });

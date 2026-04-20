@@ -29,10 +29,13 @@ test.describe("login + role-based landing", () => {
     await page.getByLabel(/password/i).fill("whatever");
     await page.getByRole("button", { name: /sign in/i }).click();
 
-    await expect(page).toHaveURL(/\/login$/);
-    // AntD's notification surfaces the auth error; look for the text
-    // the authProvider emits.
-    await expect(page.getByText(/incorrect email or password/i)).toBeVisible();
+    await expect(page).toHaveURL(/\/login(\?|$)/);
+    // M20 Kratos surfaces wrong-credential errors via flow.ui.messages —
+    // message id 4000006 reads "The provided credentials are invalid…".
+    // Login.tsx renders these in its flow-level Alert so assert on the
+    // Kratos canonical text rather than the legacy "incorrect email or
+    // password" string.
+    await expect(page.getByText(/credentials are invalid/i)).toBeVisible();
   });
 });
 

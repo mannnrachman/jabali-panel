@@ -179,17 +179,23 @@ export async function mockApi(page: Page, initial: MockState): Promise<void> {
         body: JSON.stringify({ session: kratosWhoami(state.expected) }),
       });
     }
+    // Real Kratos echoes the full flow back with the error in ui.messages
+    // so the SPA's renderer can keep the form visible while showing the
+    // error. Returning `nodes: []` makes Login.tsx's pickActiveGroup
+    // come back null and render "No credential method is currently
+    // configured" — wrong UX and wrong mock shape.
+    const errorFlow = kratosPasswordFlow("flow-mock");
+    errorFlow.ui.messages = [
+      {
+        id: 4000006,
+        text: "The provided credentials are invalid, check for spelling mistakes in your password or username, email address, or phone number.",
+        type: "error",
+      },
+    ];
     return route.fulfill({
       status: 400,
       contentType: "application/json",
-      body: JSON.stringify({
-        ui: {
-          messages: [
-            { id: 4000006, text: "The provided credentials are invalid, check for spelling mistakes in your password or username, email address, or phone number.", type: "error" },
-          ],
-          nodes: [],
-        },
-      }),
+      body: JSON.stringify(errorFlow),
     });
   });
   await page.route("**/.ory/sessions/whoami", async (route) => {

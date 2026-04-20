@@ -24,10 +24,13 @@ test.describe("users CRUD (admin)", () => {
     await page.getByRole("button", { name: /create/i }).first().click();
     await page.waitForURL(/\/jabali-admin\/users\/create/);
 
-    await page.getByLabel(/email/i).fill("new.user@test.local");
-    await page.getByLabel(/^password/i).fill("validpassword99");
-    await page.getByLabel(/first name/i).fill("New");
-    await page.getByLabel(/last name/i).fill("User");
+    // Scope to textbox role — the users list's sortable table headers
+    // carry aria-label="Email" / "First name" / "Last name" (AntD Table
+    // behavior) and would otherwise win the getByLabel match.
+    await page.getByRole("textbox", { name: /email/i }).fill("new.user@test.local");
+    await page.getByRole("textbox", { name: /password/i }).fill("validpassword99");
+    await page.getByRole("textbox", { name: /first name/i }).fill("New");
+    await page.getByRole("textbox", { name: /last name/i }).fill("User");
 
     await page.getByRole("button", { name: /save/i }).click();
 
@@ -96,9 +99,12 @@ test.describe("users CRUD (admin)", () => {
     // Delete is the trailing icon button in the actions cell.
     await victimRow.getByRole("button", { name: /delete/i }).click();
 
-    // Refine's Popconfirm: target the confirm button inside the popover
-    // overlay, not the table's icon buttons.
-    await page.locator(".ant-popconfirm-buttons").getByRole("button", { name: /delete/i }).click();
+    // UserDeleteAction opens an AntD Modal titled `Delete user "<email>"?`
+    // with a two-checkbox choice and a "Delete user" confirm button in the
+    // footer. Scope the click to that dialog so we don't re-hit the icon
+    // button in the row.
+    const confirmDialog = page.getByRole("dialog", { name: /delete user/i });
+    await confirmDialog.getByRole("button", { name: /^delete user$/i }).click();
 
     await expect(page.getByRole("cell", { name: /doomed@test\.local/ })).toHaveCount(0);
   });

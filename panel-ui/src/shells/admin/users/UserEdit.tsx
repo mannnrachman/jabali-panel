@@ -1,14 +1,21 @@
 // Edit user — admin-only page. Only admins can reach this route (URL
-// sits under /jabali-admin/* which is gated by RoleGate + Authenticated),
-// so we never need the current_password field here: admins can reset
-// any user's password without proving the old one.
+// sits under /jabali-admin/* which is gated by <RequireAdmin>), so we
+// never need the current_password field here: admins can reset any
+// user's password without proving the old one.
 //
 // Users changing their OWN password go through /jabali-panel/profile,
 // which hits the same PATCH /users/:id endpoint with current_password.
 //
 // Password is optional on edit — a blank field means "keep current".
-import { Edit, useForm, useSelect } from "@refinedev/antd";
-import { Form, Input, Switch, Select } from "antd";
+import { useEffect } from "react";
+import { Button, Card, Form, Input, Select, Spin, Switch, Typography, message } from "antd";
+import { useNavigate, useParams } from "react-router";
+
+import {
+  useOneQuery,
+  useUpdateMutation,
+} from "../../../hooks/useQueries";
+import { useSelectQuery } from "../../../hooks/useSelectQuery";
 
 type HostingPackage = {
   id: string;
@@ -24,24 +31,76 @@ type UserEditInput = {
   package_id?: string;
 };
 
+type UserRecord = UserEditInput & {
+  id: string;
+};
+
 export const UserEdit = () => {
-  const { formProps, saveButtonProps } = useForm<UserEditInput>({
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const [form] = Form.useForm<UserEditInput>();
+
+  const { data, isLoading } = useOneQuery<UserRecord>({
     resource: "users",
-    action: "edit",
+    id,
   });
 
-  return (
-    <Edit saveButtonProps={saveButtonProps}>
-      <Form
-        {...formProps}
-        layout="vertical"
-        // Strip blank password before sending so the server doesn't
-        // try to validate / re-hash an empty string.
-        onFinish={(raw) => {
-          const clean = { ...(raw as UserEditInput) };
-          if (!clean.password) delete clean.password;
-          return formProps.onFinish?.(clean);
+  const updateMutation = useUpdateMutation<UserRecord, UserEditInput>({
+    resource: "users",
+  });
+
+  useEffect(() => {
+    if (data) {
+      // Seed the form once the record arrives. We drop `password`
+      // so the edit field stays empty (blank means "keep current").
+      const { password: _password, ...rest } = data;
+      void _password;
+      form.setFieldsValue(rest);
+    }
+  }, [data, form]);
+
+  const handleFinish = async (values: UserEditInput) => {
+    if (!id) return;
+    // Strip blank password before sending so the server doesn't try
+    // to validate / re-hash an empty string.
+    const payload = { ...values };
+    if (!payload.password) delete payload.password;
+
+    try {
+      await updateMutation.mutateAsync({ id, input: payload });
+      message.success("User updated");
+      navigate("/jabali-admin/users");
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to update user";
+      message.error(msg);
+    }
+  };
+
+  if (isLoading && !data) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: 240,
         }}
+      >
+        <Spin />
+      </div>
+    );
+  }
+
+  return (
+    <Card>
+      <Typography.Title level={3} style={{ marginTop: 0 }}>
+        Edit user
+      </Typography.Title>
+      <Form<UserEditInput>
+        form={form}
+        layout="vertical"
+        onFinish={handleFinish}
       >
         <Form.Item
           label="Email"
@@ -77,27 +136,39 @@ export const UserEdit = () => {
         >
           <Input.Password autoComplete="new-password" />
         </Form.Item>
+
+        <Form.Item>
+          <Button
+            type="primary"
+            htmlType="submit"
+            loading={updateMutation.isPending}
+          >
+            Save
+          </Button>
+        </Form.Item>
       </Form>
-    </Edit>
+    </Card>
   );
 };
 
-const PackageSelect = () => {
-  const { selectProps } = useSelect<HostingPackage>({
+const PackageSelect = (props: {
+  value?: string | null;
+  onChange?: (v: string | null) => void;
+}) => {
+  const { options, isLoading } = useSelectQuery<HostingPackage>({
     resource: "packages",
-    optionLabel: "name",
-    optionValue: "id",
+    labelField: "name",
+    valueField: "id",
   });
 
   return (
     <Select
-      {...selectProps}
       placeholder="Select a package (optional)"
       allowClear
-      options={[
-        { label: "No package", value: null },
-        ...(selectProps.options ?? []),
-      ]}
+      loading={isLoading}
+      options={[{ label: "No package", value: null }, ...options]}
+      value={props.value}
+      onChange={(v) => props.onChange?.((v ?? null) as string | null)}
     />
   );
 };

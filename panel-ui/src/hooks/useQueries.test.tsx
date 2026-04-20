@@ -57,9 +57,12 @@ beforeEach(() => {
 });
 
 describe("useListQuery", () => {
-  it("calls GET /{resource} with the right query string and returns items/total", async () => {
+  it("calls GET /{resource} with page_size on the wire and projects data→items", async () => {
+    // panel-api returns `{data, total, page, page_size}` — the hook
+    // unwraps `data` to `items` so consumers never see the wire
+    // envelope and callers still write `pageSize` in camelCase.
     mocked.get.mockResolvedValueOnce({
-      data: { items: [{ id: "u1" }], total: 42 },
+      data: { data: [{ id: "u1" }], total: 42, page: 2, page_size: 10 },
     });
     const { wrapper } = makeWrapper();
     const { result } = renderHook(
@@ -72,14 +75,29 @@ describe("useListQuery", () => {
     );
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mocked.get).toHaveBeenCalledWith(
-      "/users?page=2&pageSize=10&q=alice",
+      "/users?page=2&page_size=10&q=alice",
     );
     expect(result.current.items).toEqual([{ id: "u1" }]);
     expect(result.current.total).toBe(42);
   });
 
+  it("falls back to `items` when a backend already returns the projected shape", async () => {
+    // Forward-compat: if a future endpoint emits {items, total}
+    // directly, the hook still reads it without a code change.
+    mocked.get.mockResolvedValueOnce({
+      data: { items: [{ id: "x" }], total: 1 },
+    });
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(
+      () => useListQuery<{ id: string }>({ resource: "users" }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.items).toEqual([{ id: "x" }]);
+  });
+
   it("skips empty params", async () => {
-    mocked.get.mockResolvedValueOnce({ data: { items: [], total: 0 } });
+    mocked.get.mockResolvedValueOnce({ data: { data: [], total: 0 } });
     const { wrapper } = makeWrapper();
     renderHook(
       () =>
@@ -117,7 +135,7 @@ describe("useOneQuery", () => {
 
 describe("mutations invalidate list cache", () => {
   it("create → list refetches", async () => {
-    mocked.get.mockResolvedValue({ data: { items: [], total: 0 } });
+    mocked.get.mockResolvedValue({ data: { data: [], total: 0 } });
     mocked.post.mockResolvedValueOnce({ data: { id: "new" } });
 
     const { wrapper } = makeWrapper();

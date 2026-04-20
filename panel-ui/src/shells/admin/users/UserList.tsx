@@ -1,19 +1,24 @@
-// Users + Administrators — split into two AntD card-style tabs. Each tab
-// is its own Refine useTable instance, scoped server-side via the
-// dataProvider's meta.params.is_admin passthrough. Tabs unmount inactive
-// content by default (AntD), so the two useTable calls never run
-// concurrently and there's no URL/pagination clash.
+// Users + Administrators — split into two AntD card-style tabs. Each
+// tab is its own useTableURL instance, scoped server-side via the
+// hook's `extraParams.is_admin`. Tabs unmount inactive content by
+// default (AntD), so the two useTableURL calls never run concurrently
+// and their URL params don't collide either.
 //
-// Backend allowlist governs which columns are searchable/sortable; the
-// new ?is_admin filter is applied before search/sort, so the paginated
+// Backend allowlist governs which columns are searchable/sortable;
+// the ?is_admin filter is applied before search/sort so the paginated
 // total stays correct per tab.
 import { useState } from "react";
-import { useTable, EditButton, CreateButton } from "@refinedev/antd";
-import { useList } from "@refinedev/core";
-import { Badge, Card, Space, Table, Typography } from "antd";
-import { TeamOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
-import { SearchableTable } from "../../../components/SearchableTable";
-import { readQValue } from "../../../components/searchableTableUtils";
+import { Badge, Button, Card, Space, Table, Typography } from "antd";
+import {
+  SafetyCertificateOutlined,
+  TeamOutlined,
+} from "@ant-design/icons";
+import type { SorterResult } from "antd/es/table/interface";
+import { useNavigate } from "react-router";
+
+import { SearchableTableStringQ } from "../../../components/SearchableTable";
+import { useListQuery } from "../../../hooks/useQueries";
+import { useTableURL } from "../../../hooks/useTableURL";
 import { UserDeleteAction } from "./UserDeleteAction";
 import { UserSliceStatus } from "./UserSliceStatus";
 
@@ -31,112 +36,136 @@ const renderName = (_: unknown, r: User) =>
 
 const renderCreated = (ts: string) => new Date(ts).toLocaleString();
 
-// UsersTable — non-admins only. Keeps the Slice column (only meaningful
-// for users with a Linux account).
-const UsersTable = () => {
-  const { tableProps, setFilters, filters } = useTable<User>({
-    syncWithLocation: true,
-    meta: { params: { is_admin: "false" } },
+// Shared row-action buttons for both tables. Wired to react-router
+// directly — no <EditButton> wrapper around a plain <Button>.
+//
+// Button copy intentionally does NOT include the row's email: the
+// users-spec E2E asserts on `getByRole("cell", { name: email })`, and
+// if the action cell's accessible name contained the email too, the
+// matcher would hit both cells and fail with a strict-mode violation.
+function RowActions({ user }: { user: User }) {
+  const navigate = useNavigate();
+  return (
+    <Space>
+      <Button
+        type="text"
+        size="small"
+        onClick={() => navigate(`/jabali-admin/users/edit/${user.id}`)}
+      >
+        Edit
+      </Button>
+      <UserDeleteAction recordItemId={user.id} userEmail={user.email} />
+    </Space>
+  );
+}
+
+type UsersTableProps = {
+  isAdmin: boolean;
+  searchPlaceholder: string;
+  showSliceColumn: boolean;
+};
+
+function UsersShellTable({
+  isAdmin,
+  searchPlaceholder,
+  showSliceColumn,
+}: UsersTableProps) {
+  const query = useTableURL<User>({
+    resource: "users",
+    defaultSort: "created_at",
+    defaultOrder: "desc",
+    extraParams: { is_admin: String(isAdmin) },
   });
-  const initialSearch = readQValue(filters);
+
+  // AntD Table's onChange emits the current pagination + sorter;
+  // project that back into useTableURL's params so the URL stays
+  // the single source of truth.
+  const handleTableChange: React.ComponentProps<typeof Table<User>>["onChange"] = (
+    pagination,
+    _filters,
+    sorter,
+  ) => {
+    const single = Array.isArray(sorter)
+      ? (sorter[0] as SorterResult<User> | undefined)
+      : (sorter as SorterResult<User>);
+    query.setParams({
+      page: pagination.current ?? 1,
+      pageSize: pagination.pageSize ?? 20,
+      sort: single?.columnKey ? String(single.columnKey) : undefined,
+      order:
+        single?.order === "ascend"
+          ? "asc"
+          : single?.order === "descend"
+            ? "desc"
+            : undefined,
+    });
+  };
 
   return (
-    <SearchableTable<User>
-      {...tableProps}
+    <SearchableTableStringQ<User>
       rowKey="id"
-      initialSearch={initialSearch}
-      searchPlaceholder="Search by email, username, or name"
-      onSearchChange={(filters) => setFilters(filters, "replace")}
+      loading={query.isLoading}
+      dataSource={query.items}
+      initialSearch={query.params.q}
+      searchPlaceholder={searchPlaceholder}
+      onSearchChange={(q) => query.setParams({ q, page: 1 })}
+      pagination={{
+        current: query.params.page,
+        pageSize: query.params.pageSize,
+        total: query.total,
+      }}
+      onChange={handleTableChange}
     >
-      <Table.Column dataIndex="email" title="Email" sorter={{ multiple: 1 }} />
+      <Table.Column
+        dataIndex="email"
+        title="Email"
+        key="email"
+        sorter={{ multiple: 1 }}
+      />
       <Table.Column title="Name" render={renderName} />
       <Table.Column
         dataIndex="created_at"
         title="Created"
+        key="created_at"
         sorter={{ multiple: 1 }}
         defaultSortOrder="descend"
         render={renderCreated}
       />
-      <Table.Column
-        title="Slice"
-        render={(_: unknown, r: User) => <UserSliceStatus userId={r.id} />}
-      />
-      <Table.Column
-        title="Actions"
-        dataIndex="actions"
-        render={(_: unknown, r: User) => (
-          <Space>
-            <EditButton hideText size="small" type="text" recordItemId={r.id} />
-            <UserDeleteAction recordItemId={r.id} userEmail={r.email} />
-          </Space>
-        )}
-      />
-    </SearchableTable>
-  );
-};
-
-// AdministratorsTable — admins only. No Slice column (admins don't get
-// a Linux account / per-user FPM slice).
-const AdministratorsTable = () => {
-  const { tableProps, setFilters, filters } = useTable<User>({
-    syncWithLocation: true,
-    meta: { params: { is_admin: "true" } },
-  });
-  const initialSearch = readQValue(filters);
-
-  return (
-    <SearchableTable<User>
-      {...tableProps}
-      rowKey="id"
-      initialSearch={initialSearch}
-      searchPlaceholder="Search by email or name"
-      onSearchChange={(filters) => setFilters(filters, "replace")}
-    >
-      <Table.Column dataIndex="email" title="Email" sorter={{ multiple: 1 }} />
-      <Table.Column title="Name" render={renderName} />
-      <Table.Column
-        dataIndex="created_at"
-        title="Created"
-        sorter={{ multiple: 1 }}
-        defaultSortOrder="descend"
-        render={renderCreated}
-      />
+      {showSliceColumn && (
+        <Table.Column
+          title="Slice"
+          render={(_: unknown, r: User) => <UserSliceStatus userId={r.id} />}
+        />
+      )}
       <Table.Column
         title="Actions"
         dataIndex="actions"
-        render={(_: unknown, r: User) => (
-          <Space>
-            <EditButton hideText size="small" type="text" recordItemId={r.id} />
-            <UserDeleteAction recordItemId={r.id} userEmail={r.email} />
-          </Space>
-        )}
+        render={(_: unknown, r: User) => <RowActions user={r} />}
       />
-    </SearchableTable>
+    </SearchableTableStringQ>
   );
-};
+}
 
 export const UserList = () => {
   const [activeTab, setActiveTab] = useState<"users" | "admins">("users");
+  const navigate = useNavigate();
 
-  // Tab-label badges need totals for BOTH roles regardless of which tab
-  // is active. Tabs unmount inactive content, so the per-tab useTable
-  // can't tell us the inactive count — fetch each total here with a
-  // pageSize=1 list so the payload is just the count + one row.
-  const { data: usersData } = useList<User>({
+  // Tab-label badges need totals for BOTH roles regardless of which
+  // tab is active. Tabs unmount inactive content, so the per-tab
+  // useTableURL can't tell us the inactive count — fetch each total
+  // here with a pageSize=1 list so the payload is just the count +
+  // one row.
+  const usersCountQ = useListQuery<User>({
     resource: "users",
-    pagination: { pageSize: 1 },
-    meta: { params: { is_admin: "false" } },
+    params: { pageSize: 1, is_admin: "false" },
   });
-  const { data: adminsData } = useList<User>({
+  const adminsCountQ = useListQuery<User>({
     resource: "users",
-    pagination: { pageSize: 1 },
-    meta: { params: { is_admin: "true" } },
+    params: { pageSize: 1, is_admin: "true" },
   });
-  const usersCount = usersData?.total ?? 0;
-  const adminsCount = adminsData?.total ?? 0;
 
   return (
-    <div style={{ padding: 24 }}>
+    <div>
       <Space
         style={{
           marginBottom: 16,
@@ -147,12 +176,18 @@ export const UserList = () => {
         <Typography.Title level={3} style={{ margin: 0 }}>
           Users
         </Typography.Title>
-        <CreateButton />
+        <Button
+          type="primary"
+          onClick={() => navigate("/jabali-admin/users/create")}
+        >
+          Create
+        </Button>
       </Space>
 
-      {/* Card.tabList renders the tab strip visually attached to the card
-          body — gives the connected "tab → panel" look the bare Tabs
-          component lacks. activeTabKey drives which child table renders. */}
+      {/* Card.tabList renders the tab strip visually attached to the
+          card body — gives the connected "tab → panel" look the bare
+          Tabs component lacks. activeTabKey drives which child table
+          renders. */}
       <Card
         tabList={[
           {
@@ -161,7 +196,7 @@ export const UserList = () => {
               <Space size={8}>
                 <TeamOutlined />
                 Users
-                <Badge count={usersCount} showZero />
+                <Badge count={usersCountQ.total} showZero />
               </Space>
             ),
           },
@@ -171,7 +206,7 @@ export const UserList = () => {
               <Space size={8}>
                 <SafetyCertificateOutlined />
                 Administrators
-                <Badge count={adminsCount} showZero />
+                <Badge count={adminsCountQ.total} showZero />
               </Space>
             ),
           },
@@ -179,7 +214,19 @@ export const UserList = () => {
         activeTabKey={activeTab}
         onTabChange={(k) => setActiveTab(k as "users" | "admins")}
       >
-        {activeTab === "users" ? <UsersTable /> : <AdministratorsTable />}
+        {activeTab === "users" ? (
+          <UsersShellTable
+            isAdmin={false}
+            searchPlaceholder="Search by email, username, or name"
+            showSliceColumn
+          />
+        ) : (
+          <UsersShellTable
+            isAdmin
+            searchPlaceholder="Search by email or name"
+            showSliceColumn={false}
+          />
+        )}
       </Card>
     </div>
   );

@@ -1,7 +1,12 @@
+// UserDeleteAction — row-level destructive action with a confirmation
+// modal. Exposes a two-state destructive choice (metadata-only
+// vs. purge-OS) because the second one is irreversible and the user
+// needs to see the difference before committing.
 import { useState } from "react";
 import { Button, Modal, Checkbox, Space, message } from "antd";
 import { DeleteOutlined } from "@ant-design/icons";
-import { useInvalidate } from "@refinedev/core";
+import { useQueryClient } from "@tanstack/react-query";
+
 import { apiClient } from "../../../apiClient";
 
 interface UserDeleteActionProps {
@@ -16,7 +21,7 @@ export const UserDeleteAction = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [purgeOS, setPurgeOS] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const invalidate = useInvalidate();
+  const qc = useQueryClient();
 
   const handleOpenModal = () => {
     setIsModalOpen(true);
@@ -41,11 +46,10 @@ export const UserDeleteAction = ({
           : `User "${userEmail}" deleted`
       );
 
-      // Invalidate the users list to refresh the table
-      invalidate({
-        resource: "users",
-        invalidates: ["list"],
-      });
+      // Invalidate every ["list", "users", *] variant so admin tabs
+      // and the parent badge counters all refetch after a delete.
+      qc.invalidateQueries({ queryKey: ["list", "users"] });
+      qc.invalidateQueries({ queryKey: ["one", "users", recordItemId] });
 
       setIsModalOpen(false);
       setPurgeOS(false);
@@ -65,6 +69,9 @@ export const UserDeleteAction = ({
         type="text"
         size="small"
         icon={<DeleteOutlined />}
+        // Generic "Delete" — see RowActions in UserList.tsx for why
+        // the email is intentionally kept out of the accessible name.
+        aria-label="Delete"
         onClick={handleOpenModal}
         style={{ padding: 0 }}
       />

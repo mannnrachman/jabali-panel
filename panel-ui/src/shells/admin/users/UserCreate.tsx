@@ -1,9 +1,12 @@
-// Create user — Refine useForm() wires up the "submit & navigate" flow
-// so we only own the fields. Validation rules mirror the server's
-// (email format + password min=10) so the form can reject early without
-// a round-trip.
-import { Create, useForm, useSelect } from "@refinedev/antd";
-import { Form, Input, Switch, Select } from "antd";
+// Create user — Form.useForm + useCreateMutation wire the "submit &
+// navigate" flow so we only own the fields. Validation rules mirror
+// the server's (email format + password min=10) so the form can
+// reject early without a round-trip.
+import { Button, Card, Form, Input, Select, Switch, Typography, message } from "antd";
+import { useNavigate } from "react-router";
+
+import { useCreateMutation } from "../../../hooks/useQueries";
+import { useSelectQuery } from "../../../hooks/useSelectQuery";
 
 type HostingPackage = {
   id: string;
@@ -19,15 +22,40 @@ type UserCreateInput = {
   package_id?: string;
 };
 
+type UserCreated = {
+  id: string;
+};
+
 export const UserCreate = () => {
-  const { formProps, saveButtonProps } = useForm<UserCreateInput>({
+  const navigate = useNavigate();
+  const [form] = Form.useForm<UserCreateInput>();
+  const createMutation = useCreateMutation<UserCreated, UserCreateInput>({
     resource: "users",
-    action: "create",
   });
 
+  const handleFinish = async (values: UserCreateInput) => {
+    try {
+      await createMutation.mutateAsync(values);
+      message.success("User created");
+      navigate("/jabali-admin/users");
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to create user";
+      message.error(msg);
+    }
+  };
+
   return (
-    <Create saveButtonProps={saveButtonProps}>
-      <Form {...formProps} layout="vertical" initialValues={{ is_admin: false }}>
+    <Card>
+      <Typography.Title level={3} style={{ marginTop: 0 }}>
+        Create user
+      </Typography.Title>
+      <Form<UserCreateInput>
+        form={form}
+        layout="vertical"
+        initialValues={{ is_admin: false }}
+        onFinish={handleFinish}
+      >
         <Form.Item
           label="Email"
           name="email"
@@ -81,27 +109,39 @@ export const UserCreate = () => {
         <Form.Item label="Hosting package" name="package_id">
           <PackageSelect />
         </Form.Item>
+
+        <Form.Item>
+          <Button
+            type="primary"
+            htmlType="submit"
+            loading={createMutation.isPending}
+          >
+            Save
+          </Button>
+        </Form.Item>
       </Form>
-    </Create>
+    </Card>
   );
 };
 
-const PackageSelect = () => {
-  const { selectProps } = useSelect<HostingPackage>({
+const PackageSelect = (props: {
+  value?: string | null;
+  onChange?: (v: string | null) => void;
+}) => {
+  const { options, isLoading } = useSelectQuery<HostingPackage>({
     resource: "packages",
-    optionLabel: "name",
-    optionValue: "id",
+    labelField: "name",
+    valueField: "id",
   });
 
   return (
     <Select
-      {...selectProps}
       placeholder="Select a package (optional)"
       allowClear
-      options={[
-        { label: "No package", value: null },
-        ...(selectProps.options ?? []),
-      ]}
+      loading={isLoading}
+      options={[{ label: "No package", value: null }, ...options]}
+      value={props.value}
+      onChange={(v) => props.onChange?.((v ?? null) as string | null)}
     />
   );
 };

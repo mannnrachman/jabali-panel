@@ -14,6 +14,11 @@
 //      allowlist.
 //   2. passing the hook's `tableProps` + the `setFilters` callback here.
 //
+// M21 transition note: pages migrated off Refine should use
+// `<SearchableTableStringQ>` instead — same UX, plain `(q: string) =>
+// void` callback. Kept here side-by-side so the Refine callers don't
+// have to move in lockstep.
+//
 // Why debounce: each keystroke re-fires the list request through the
 // data provider. 300ms is the usual sweet spot — responsive enough that
 // it feels live, slow enough that typing "example.com" doesn't hit the
@@ -99,3 +104,55 @@ export function SearchableTable<T extends object>({
   );
 }
 
+// ---------------------------------------------------------------------------
+// String-query variant for post-M21 (Refine-free) callers. Same debounce
+// + Enter-to-fire UX; emits a plain string so callers can feed it
+// straight into useTableURL's setParams({ q }).
+// ---------------------------------------------------------------------------
+
+export interface SearchableTableStringQProps<T> extends TableProps<T> {
+  onSearchChange: (q: string) => void;
+  searchPlaceholder?: string;
+  initialSearch?: string;
+  debounceMs?: number;
+}
+
+export function SearchableTableStringQ<T extends object>({
+  onSearchChange,
+  searchPlaceholder = "Search…",
+  initialSearch = "",
+  debounceMs = 300,
+  ...tableProps
+}: SearchableTableStringQProps<T>) {
+  const [query, setQuery] = useState(initialSearch);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      onSearchChange(query.trim());
+    }, debounceMs);
+    return () => {
+      if (timer.current) clearTimeout(timer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, debounceMs]);
+
+  return (
+    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+      <Input
+        placeholder={searchPlaceholder}
+        prefix={<SearchOutlined />}
+        allowClear
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onPressEnter={() => {
+          if (timer.current) clearTimeout(timer.current);
+          onSearchChange(query.trim());
+        }}
+        style={{ maxWidth: 360 }}
+      />
+      <Table<T> {...tableProps}>{tableProps.children}</Table>
+    </Space>
+  );
+}

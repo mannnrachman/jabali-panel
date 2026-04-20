@@ -3,13 +3,19 @@
 // useOne / useCreate / useUpdate / useDelete without the Refine
 // provider chain.
 //
-// Conventions (match panel-api):
-//   - List:   GET    /api/v1/{resource}?page=&pageSize=&q=&sort=&order=
-//             → { items: T[], total: number }
+// Conventions (match panel-api — see panel-api/internal/api/users.go
+// for the envelope definition):
+//   - List:   GET    /api/v1/{resource}?page=&page_size=&q=&sort=&order=
+//             → { data: T[], total, page, page_size }
 //   - One:    GET    /api/v1/{resource}/{id}  → T
 //   - Create: POST   /api/v1/{resource}        → T
 //   - Update: PATCH  /api/v1/{resource}/{id}   → T
 //   - Delete: DELETE /api/v1/{resource}/{id}   → 204
+//
+// The wire envelope uses `data` + `page_size`, but consumers see the
+// more React-idiomatic `items` + `pageSize` — the hook translates.
+// Callers pass `pageSize` in, we serialize as `page_size` on the wire
+// and unwrap `data` back to `items` on the way out.
 //
 // Cache keys are stable tuples so we can invalidate surgically:
 //   ["list", resource, params] — list-scoped, params-aware
@@ -48,6 +54,17 @@ export type ListResponse<T> = {
   total: number;
 };
 
+// Raw wire envelope — panel-api returns `data` (not `items`) plus the
+// echo fields we don't re-expose. Declared here so the hook can type
+// the unwrap without leaking the wire shape into the public API.
+type RawListEnvelope<T> = {
+  data?: T[];
+  items?: T[];
+  total?: number;
+  page?: number;
+  page_size?: number;
+};
+
 export type UseListQueryResult<T> = UseQueryResult<ListResponse<T>> & {
   items: T[];
   total: number;
@@ -57,7 +74,11 @@ function toQueryString(params: ListParams): string {
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
     if (v === undefined || v === null || v === "") continue;
-    sp.set(k, String(v));
+    // panel-api expects `page_size` (snake_case) on the wire. Keep
+    // callers using the camelCase `pageSize` field to stay idiomatic
+    // on the JS side and translate at the boundary.
+    const wireKey = k === "pageSize" ? "page_size" : k;
+    sp.set(wireKey, String(v));
   }
   const s = sp.toString();
   return s ? `?${s}` : "";
@@ -75,10 +96,13 @@ export function useListQuery<T>({
   const q = useQuery({
     queryKey: ["list", resource, params],
     queryFn: async () => {
-      const { data } = await apiClient.get<ListResponse<T>>(
+      const { data: raw } = await apiClient.get<RawListEnvelope<T>>(
         `/${resource}${toQueryString(params)}`,
       );
-      return data;
+      return {
+        items: raw.data ?? raw.items ?? [],
+        total: raw.total ?? 0,
+      };
     },
     enabled,
   });

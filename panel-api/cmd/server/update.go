@@ -79,9 +79,16 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	// populates preHEAD before the pull, postHEAD after — when they
 	// match and --force wasn't passed, we skip the expensive build
 	// + restart steps below.
+	//
+	// Runs via `sudo -u <serviceUser>` because the repo is owned by
+	// the jabali user; git 2.35+ refuses to operate on a repo owned
+	// by a different uid ("fatal: detected dubious ownership"),
+	// which surfaces as exit 128. Mirrors the asUser helper above
+	// but captures stdout for the SHA instead of inheriting it.
 	var preHEAD, postHEAD string
 	gitHead := func() (string, error) {
-		c := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD")
+		c := exec.Command("sudo", "-u", serviceUser,
+			"git", "-C", repoDir, "rev-parse", "HEAD")
 		out, err := c.Output()
 		if err != nil {
 			return "", fmt.Errorf("git rev-parse HEAD: %w", err)

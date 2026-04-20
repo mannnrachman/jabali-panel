@@ -4,24 +4,34 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/user"
 	"path/filepath"
 	"testing"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 )
 
+// currentUIDGID returns the invoking process's uid:gid as a string
+// suitable for `chown`. Using numeric ids (not names) side-steps the
+// common test-env failure where $USER is empty (e.g., the Gitea Actions
+// runner container's `USER runner` directive exports no USER env) and
+// a name-based fallback like "root:root" requires privilege the test
+// user doesn't have. Numeric same-as-self is always allowed.
+func currentUIDGID(t *testing.T) string {
+	t.Helper()
+	u, err := user.Current()
+	if err != nil {
+		t.Fatalf("user.Current: %v", err)
+	}
+	return u.Uid + ":" + u.Gid
+}
+
 func TestFSWriteHealthcheck_HappyPath(t *testing.T) {
 	// Create a temporary directory and file path.
 	tmpDir := t.TempDir()
 	filePath := filepath.Join(tmpDir, "jabali-healthcheck.php")
 
-	// Use current user:group to avoid permission errors in test (chown requires elevation).
-	// In production, this will be run with appropriate privileges (agent service user).
-	currentUser := os.Getenv("USER")
-	if currentUser == "" {
-		currentUser = "root"
-	}
-	userGroup := currentUser + ":" + currentUser
+	userGroup := currentUIDGID(t)
 
 	params := map[string]string{
 		"path":       filePath,
@@ -63,12 +73,7 @@ func TestFSWriteHealthcheck_Idempotent(t *testing.T) {
 		t.Fatalf("failed to create existing file: %v", err)
 	}
 
-	// Use current user:group to avoid permission errors in test.
-	currentUser := os.Getenv("USER")
-	if currentUser == "" {
-		currentUser = "root"
-	}
-	userGroup := currentUser + ":" + currentUser
+	userGroup := currentUIDGID(t)
 
 	params := map[string]string{
 		"path":       filePath,

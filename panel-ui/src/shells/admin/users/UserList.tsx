@@ -44,7 +44,6 @@ const UsersTable = () => {
     <SearchableTable<User>
       {...tableProps}
       rowKey="id"
-      bordered
       initialSearch={initialSearch}
       searchPlaceholder="Search by email, username, or name"
       onSearchChange={(filters) => setFilters(filters, "replace")}
@@ -89,7 +88,6 @@ const AdministratorsTable = () => {
     <SearchableTable<User>
       {...tableProps}
       rowKey="id"
-      bordered
       initialSearch={initialSearch}
       searchPlaceholder="Search by email or name"
       onSearchChange={(filters) => setFilters(filters, "replace")}

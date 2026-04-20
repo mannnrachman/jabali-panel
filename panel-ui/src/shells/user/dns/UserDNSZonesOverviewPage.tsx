@@ -106,7 +106,7 @@ export const UserDNSZonesOverviewPage = () => {
       ) : tableQueryResult.data?.data?.length === 0 ? (
         <Empty description="No domains found" />
       ) : (
-        <Table<Domain> {...tableProps} rowKey="id" bordered>
+        <Table<Domain> {...tableProps} rowKey="id">
           <Table.Column<Domain> dataIndex="name" title="Domain Name" />
           <Table.Column<Domain>
             title="Zone Status"

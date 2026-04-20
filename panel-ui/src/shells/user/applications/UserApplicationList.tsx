@@ -163,7 +163,6 @@ export const UserApplicationList = () => {
       <SearchableTable<ApplicationInstall>
         {...tableProps}
         rowKey="id"
-        bordered
         initialSearch={initialSearch}
         searchPlaceholder="Search by domain"
         onSearchChange={(filters) => setFilters(filters, "replace")}

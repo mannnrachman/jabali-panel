@@ -47,7 +47,6 @@ export const PackageList = () => {
       <SearchableTable<Package>
         {...tableProps}
         rowKey="id"
-        bordered
         initialSearch={initialSearch}
         searchPlaceholder="Search by package name"
         onSearchChange={(filters) => setFilters(filters, "replace")}

@@ -176,7 +176,6 @@ export const UserCronList = () => {
         dataSource={jobs}
         loading={isLoading_}
         rowKey="id"
-        bordered
         pagination={false}
         columns={[
           {

@@ -268,7 +268,6 @@ export const UserSSHKeysPage = () => {
         dataSource={keys}
         loading={isLoading || deletingId !== null}
         rowKey="id"
-        bordered
         pagination={false}
         columns={[
           {

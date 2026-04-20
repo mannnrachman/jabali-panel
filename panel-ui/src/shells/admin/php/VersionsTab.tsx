@@ -188,7 +188,6 @@ export const VersionsTab = () => {
       <Table<PHPVersionStatus>
         dataSource={tableData}
         rowKey="version"
-        bordered
         loading={loading}
         pagination={false}
       >

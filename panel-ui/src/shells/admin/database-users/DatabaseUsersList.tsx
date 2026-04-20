@@ -140,7 +140,6 @@ export const DatabaseUsersList = () => {
       <SearchableTable<DatabaseUser>
         {...tableProps}
         rowKey="id"
-        bordered
         initialSearch={initialSearch}
         searchPlaceholder="Search by username"
         onSearchChange={(f) => setFilters(f, "replace")}

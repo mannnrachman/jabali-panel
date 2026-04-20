@@ -327,7 +327,6 @@ export const SSLManagerTable = ({
           columns={columns}
           rowKey="id"
           loading={isLoading}
-          bordered
           pagination={{ pageSize: 25, showSizeChanger: true }}
         />
       )}

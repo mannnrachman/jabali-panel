@@ -158,7 +158,6 @@ export const PHPPoolEdit = () => {
           loading={overridesLoading}
           rowKey="id"
           pagination={false}
-          bordered
         />
 
         <Modal

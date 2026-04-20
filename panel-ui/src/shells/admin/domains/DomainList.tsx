@@ -99,7 +99,6 @@ export const DomainList = () => {
       <SearchableTable<Domain>
         {...tableProps}
         rowKey="id"
-        bordered
         initialSearch={initialSearch}
         searchPlaceholder="Search by domain name"
         onSearchChange={(filters) => setFilters(filters, "replace")}

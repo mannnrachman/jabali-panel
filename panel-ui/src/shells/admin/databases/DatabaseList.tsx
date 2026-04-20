@@ -3,7 +3,6 @@ import { CreateButton, DeleteButton } from "@refinedev/antd";
 import { SearchableTable } from "../../../components/SearchableTable";
 import { readQValue } from "../../../components/searchableTableUtils";
 import { Space, Table, Tag, Typography } from "antd";
-import { DatabaseOutlined } from "@ant-design/icons";
 
 export type Database = {
   id: string;
@@ -28,15 +27,6 @@ export const DatabaseList = () => {
     postgres: "green",
   };
 
-  const renderDatabaseCell = (name: string, engine: string) => (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-        <DatabaseOutlined />
-        <span style={{ fontWeight: 500 }}>{name}</span>
-      </div>
-      <div style={{ color: "#999", fontSize: "12px" }}>{engine}</div>
-    </div>
-  );
 
   return (
     <div style={{ padding: 24 }}>
@@ -56,7 +46,6 @@ export const DatabaseList = () => {
       <SearchableTable<Database>
         {...tableProps}
         rowKey="id"
-        bordered
         initialSearch={initialSearch}
         searchPlaceholder="Search by database name"
         onSearchChange={(filters) => setFilters(filters, "replace")}
@@ -66,7 +55,6 @@ export const DatabaseList = () => {
           title="Database"
           sorter={{ multiple: 1 }}
           defaultSortOrder="ascend"
-          render={(name: string, record: Database) => renderDatabaseCell(name, record.engine)}
         />
         <Table.Column<Database>
           dataIndex="user_id"

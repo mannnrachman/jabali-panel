@@ -191,13 +191,13 @@ export const UserSSHKeysPage = () => {
 
   return (
     <div style={{ padding: 24 }}>
-      <Card size="small" style={{ marginBottom: 16 }} title="SSH & SFTP Access">
-        <Typography.Paragraph style={{ marginBottom: 0 }}>
-          Connect to your server securely using SSH for terminal access or
-          SFTP for file transfers. Generate a new key pair or add your
-          existing public SSH keys below.
-        </Typography.Paragraph>
-      </Card>
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message={<strong>SSH & SFTP Access</strong>}
+        description="Connect to your server securely using SSH for terminal access or SFTP for file transfers. Generate a new key pair or add your existing public SSH keys below."
+      />
 
       <Space
         style={{

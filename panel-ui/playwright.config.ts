@@ -37,12 +37,18 @@ export default defineConfig({
   // Serve the production build locally so we're testing what ships, not
   // dev-mode vite with HMR + extra magic. `npm run build` is expected
   // to have already run; `vite preview` just serves dist/.
+  //
+  // Timeout 120s (not 30s): preview boots in ~5s locally, but the
+  // self-hosted Gitea act_runner is on a constrained host and has
+  // already timed out at 30s once (run #22 — docs-blueprint-m20-sync).
+  // stdout: "pipe" so the server's "Local: http://…" line is visible
+  // in the job log — next time it times out, we'll know why.
   webServer: {
     command: `npm run preview -- --port ${PORT} --host 127.0.0.1`,
     url: `http://127.0.0.1:${PORT}`,
     reuseExistingServer: !process.env.CI,
-    stdout: "ignore",
+    stdout: "pipe",
     stderr: "pipe",
-    timeout: 30_000,
+    timeout: 120_000,
   },
 });

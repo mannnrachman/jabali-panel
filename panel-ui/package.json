@@ -25,7 +25,7 @@
     "@refinedev/core": "^4.57.10",
     "@refinedev/react-router": "^1.0.1",
     "@refinedev/simple-rest": "^5.0.10",
-    "antd": "^5.22.3",
+    "antd": "^6.3.6",
     "axios": "^1.7.9",
     "micro-key-producer": "^0.8.5",
     "react": "^18.3.1",
@@ -46,5 +46,8 @@
     "typescript": "^5.7.2",
     "vite": "^6.0.3",
     "vitest": "^2.1.8"
+  },
+  "overrides": {
+    "antd": "$antd"
   }
 }

@@ -54,7 +54,7 @@ export const PackageCreate = () => {
           <Input placeholder="e.g., Basic, Professional, Enterprise" />
         </Form.Item>
 
-        <Divider orientation="left">Resource limits</Divider>
+        <Divider titlePlacement="left">Resource limits</Divider>
         <Typography.Paragraph type="secondary" style={{ marginTop: -8 }}>
           Enforced per-user via POSIX quota (disk) and cgroups v2 (cpu/memory/io/tasks).
           Zero on any field means unlimited.
@@ -121,7 +121,7 @@ export const PackageCreate = () => {
           </Col>
         </Row>
 
-        <Divider orientation="left">Feature quotas</Divider>
+        <Divider titlePlacement="left">Feature quotas</Divider>
 
         <Form.Item
           label="Bandwidth Quota (MB)"
@@ -168,7 +168,7 @@ export const PackageCreate = () => {
           <InputNumber min={0} />
         </Form.Item>
 
-        <Divider orientation="left">Features</Divider>
+        <Divider titlePlacement="left">Features</Divider>
 
         <Form.Item
           label="SSH Enabled"

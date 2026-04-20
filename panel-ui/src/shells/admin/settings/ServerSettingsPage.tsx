@@ -450,7 +450,7 @@ const DNSSettingsTab = () => {
           </Col>
         </Row>
 
-        <Divider orientation="left" plain style={{ fontSize: 12 }}>
+        <Divider titlePlacement="left" plain style={{ fontSize: 12 }}>
           Secondary (optional)
         </Divider>
 

@@ -74,16 +74,6 @@ export const UserSSHKeysPage = () => {
     retry: false,
   });
 
-  const copyCommand = async () => {
-    if (!conn) return;
-    try {
-      await navigator.clipboard.writeText(conn.command);
-      message.success("Command copied");
-    } catch {
-      message.error("Copy failed — select and copy manually");
-    }
-  };
-
   // Validate that public key starts with a known prefix
   const validatePublicKey = (value: string): string | undefined => {
     if (!value) return undefined;
@@ -239,36 +229,25 @@ export const UserSSHKeysPage = () => {
             </Space>
           }
         >
-          <Space direction="vertical" size={4} style={{ width: "100%" }}>
-            <Space wrap size="large">
-              <span>
-                <Typography.Text type="secondary">Host: </Typography.Text>
-                <Typography.Text code>{conn.host}</Typography.Text>
-              </span>
-              <span>
-                <Typography.Text type="secondary">Port: </Typography.Text>
-                <Typography.Text code>{conn.port}</Typography.Text>
-              </span>
-              <span>
-                <Typography.Text type="secondary">Username: </Typography.Text>
-                <Typography.Text code>{conn.username}</Typography.Text>
-              </span>
-            </Space>
-            <Space.Compact style={{ width: "100%", marginTop: 4 }}>
-              <Input
-                readOnly
-                value={conn.command}
-                style={{ fontFamily: "monospace", fontSize: 13 }}
-                onFocus={(e) => e.currentTarget.select()}
-              />
-              <Button
-                icon={<CopyOutlined />}
-                onClick={copyCommand}
-                title="Copy command"
-              >
-                Copy
-              </Button>
-            </Space.Compact>
+          <Space wrap size="large" style={{ width: "100%" }}>
+            <span>
+              <Typography.Text type="secondary">Host: </Typography.Text>
+              <Typography.Text code>{conn.host}</Typography.Text>
+            </span>
+            <span>
+              <Typography.Text type="secondary">Port: </Typography.Text>
+              <Typography.Text code>{conn.port}</Typography.Text>
+            </span>
+            <span>
+              <Typography.Text type="secondary">Username: </Typography.Text>
+              <Typography.Text code>{conn.username}</Typography.Text>
+            </span>
+            <span>
+              <Typography.Text type="secondary">Command: </Typography.Text>
+              <Typography.Text code copyable={{ text: conn.command, tooltips: ["Copy", "Copied"] }}>
+                {conn.command}
+              </Typography.Text>
+            </span>
           </Space>
         </Card>
       )}

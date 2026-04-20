@@ -261,14 +261,22 @@ func writePhpbbInstallerYAML(req phpbbInstallReq, dest, scriptPath string, port 
 //     phpbbcli.php pulls in startup.php with the same `../install/...`
 //     pattern as app.php, so the same rule applies.
 func runPhpbbCLIInstaller(ctx context.Context, osUser, installPath, configPath string) error {
+	// systemd-run launches the wrapped command in a NEW unit — Go's
+	// cmd.Dir on the systemd-run process doesn't propagate. The unit's
+	// cwd MUST be installPath/install/ because phpbbcli.php internally
+	// does `require('../install/startup.php')`, which is cwd-relative
+	// (resolves to <cwd>/../install/startup.php; only works when cwd
+	// is install/ itself). Pass `--working-directory=` to systemd-run
+	// so the unit starts in the right place.
+	installDir := filepath.Join(installPath, "install")
 	args := []string{
+		"--working-directory=" + installDir,
 		"php",
 		"phpbbcli.php",
 		"install",
 		configPath,
 	}
 	cmd := buildSystemdRunCmd(ctx, osUser, args...)
-	cmd.Dir = filepath.Join(installPath, "install")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("php phpbbcli.php install: %w (output: %s)", err, truncateStr(string(out), 1024))

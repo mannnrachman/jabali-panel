@@ -36,7 +36,17 @@ export const UserCreate = () => {
             { type: "email", message: "Must be a valid email" },
           ]}
         >
-          <Input autoComplete="email" />
+          {/*
+            autoComplete="off" (not "email"): this is an admin creating
+            another user's account, so browsers auto-filling the logged-in
+            admin's own email is wrong UX — the admin isn't the new user.
+            Also suppresses a Chromium autofill race with Playwright's
+            .fill() that made the users-spec create/edit/delete flows
+            intermittently fail (the adjacent Password's new-password
+            autocomplete triggers password-manager heuristics that clear
+            the email input asynchronously).
+          */}
+          <Input autoComplete="off" />
         </Form.Item>
 
         <Form.Item

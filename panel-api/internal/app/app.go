@@ -192,7 +192,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			authMiddleware = middleware.RequireAuth(deps.JWTIssuer)
 		}
 		v1 := r.Group("/api/v1", authMiddleware)
-		api.RegisterMeRoutes(v1)
+		api.RegisterMeRoutes(v1, api.MeHandlerConfig{
+			Users:          deps.Users,
+			ServerSettings: deps.ServerSettings,
+		})
 
 		// 2FA management endpoints (TOTP enrol/verify/disable/regen-backup).
 		// Gated by the v1 RequireAuth middleware — caller must already be

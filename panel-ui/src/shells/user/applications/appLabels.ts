@@ -18,5 +18,4 @@ export const APP_TYPE_LABELS: Record<string, string> = {
   prestashop: "PrestaShop",
   backdrop: "Backdrop CMS",
   moodle: "Moodle",
-  glpi: "GLPI",
 };

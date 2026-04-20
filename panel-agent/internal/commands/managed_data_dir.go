@@ -10,7 +10,7 @@ import (
 
 // computeManagedDataDir returns the deterministic per-install data dir
 // path for apps that need a writable directory OUTSIDE the docroot
-// (Moodle's moodledata, Chamilo's app/upload moved out, GLPI's
+// (Moodle's moodledata, Chamilo's app/upload moved out
 // files/, etc.).
 //
 // Path: /home/<osUser>/<installID>-data/

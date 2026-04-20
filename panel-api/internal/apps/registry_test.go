@@ -503,25 +503,6 @@ func TestRegisterDefaults_RegistersMoodle(t *testing.T) {
 	}
 }
 
-func TestRegisterDefaults_RegistersGLPI(t *testing.T) {
-	r := New()
-	if err := RegisterDefaults(r); err != nil {
-		t.Fatalf("RegisterDefaults: %v", err)
-	}
-	g, ok := r.Get("glpi")
-	if !ok {
-		t.Fatal("glpi not registered after RegisterDefaults")
-	}
-	if !g.RequiresDB {
-		t.Error("glpi should declare RequiresDB=true")
-	}
-	for _, want := range []string{"admin_email", "admin_password", "language"} {
-		if _, ok := g.InstallParamSchema[want]; !ok {
-			t.Errorf("glpi schema missing %q", want)
-		}
-	}
-}
-
 func TestRegister_ConcurrentSafe(t *testing.T) {
 	// Race detector trips here if Register's mutex disappears.
 	r := New()

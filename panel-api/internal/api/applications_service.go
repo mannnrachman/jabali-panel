@@ -387,27 +387,6 @@ func dispatchInstallKicker(ctx context.Context, appName string, k kickContext, d
 			UseWWW:       k.UseWWW,
 		}, deps)
 		adminPassword = matomoPass
-	case "glpi":
-		glpiPass := paramOr(k.Params, "admin_password", "")
-		if glpiPass == "" {
-			glpiPass = ids.NewULID()
-		}
-		go createGLPIInstallAndKickAgent(ctx, glpiKickArgs{
-			InstallID:    k.InstallID,
-			OSUser:       k.OSUser,
-			DocRoot:      k.DocRoot,
-			Subdirectory: k.Subdirectory,
-			SiteURL:      k.SiteURL,
-			DBName:       k.Chain.DBName,
-			DBUser:       k.Chain.DBUsername,
-			DBPassword:   adminPassword,
-			AdminUser:    k.AdminUsername,
-			AdminPass:    glpiPass,
-			AdminEmail:   k.AdminEmail,
-			Language:     paramOr(k.Params, "language", "en_GB"),
-			UseWWW:       k.UseWWW,
-		}, deps)
-		adminPassword = glpiPass
 	case "moodle":
 		moodlePass := paramOr(k.Params, "admin_password", "")
 		if moodlePass == "" {

@@ -634,7 +634,7 @@ func (h *wordPressHandler) delete(c *gin.Context) {
 	// app deleter (was hardcoded to "wordpress" pre-M19, which silently
 	// routed Drupal/Joomla/etc deletes to the WP file-list cleaner).
 	// install_id is plumbed through so deleters that opt into the
-	// managed-data-dir contract (Moodle/GLPI/Chamilo) can recompute the
+	// managed-data-dir contract (Moodle/Chamilo) can recompute the
 	// /home/<user>/<install_id>-data path and rm it.
 	go createDeleteAndKickAgent(ctx, installID, install.AppType, install.Subdirectory, install.DBIDOr(), dbUserID, osUser, domain.DocRoot, domain.Name, dbUserUsername, h.cfg)
 

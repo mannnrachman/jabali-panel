@@ -481,6 +481,47 @@ func TestRegisterDefaults_RegistersBackdrop(t *testing.T) {
 	}
 }
 
+func TestRegisterDefaults_RegistersMoodle(t *testing.T) {
+	r := New()
+	if err := RegisterDefaults(r); err != nil {
+		t.Fatalf("RegisterDefaults: %v", err)
+	}
+	m, ok := r.Get("moodle")
+	if !ok {
+		t.Fatal("moodle not registered after RegisterDefaults")
+	}
+	if !m.RequiresDB {
+		t.Error("moodle should declare RequiresDB=true")
+	}
+	if m.DefaultSubdirectory != "lms" {
+		t.Errorf("moodle default subdirectory = %q, want %q", m.DefaultSubdirectory, "lms")
+	}
+	for _, want := range []string{"site_title", "admin_email", "admin_password", "language"} {
+		if _, ok := m.InstallParamSchema[want]; !ok {
+			t.Errorf("moodle schema missing %q", want)
+		}
+	}
+}
+
+func TestRegisterDefaults_RegistersGLPI(t *testing.T) {
+	r := New()
+	if err := RegisterDefaults(r); err != nil {
+		t.Fatalf("RegisterDefaults: %v", err)
+	}
+	g, ok := r.Get("glpi")
+	if !ok {
+		t.Fatal("glpi not registered after RegisterDefaults")
+	}
+	if !g.RequiresDB {
+		t.Error("glpi should declare RequiresDB=true")
+	}
+	for _, want := range []string{"admin_email", "admin_password", "language"} {
+		if _, ok := g.InstallParamSchema[want]; !ok {
+			t.Errorf("glpi schema missing %q", want)
+		}
+	}
+}
+
 func TestRegister_ConcurrentSafe(t *testing.T) {
 	// Race detector trips here if Register's mutex disappears.
 	r := New()

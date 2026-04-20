@@ -1,6 +1,6 @@
-import { SiWordpress, SiWikipedia, SiDrupal, SiJoomla, SiPhpbb, SiGrav, SiFreshrss, SiMatomo, SiPrestashop } from "react-icons/si";
+import { SiWordpress, SiWikipedia, SiDrupal, SiJoomla, SiPhpbb, SiGrav, SiFreshrss, SiMatomo, SiPrestashop, SiMoodle } from "react-icons/si";
 import { FaOpencart } from "react-icons/fa6";
-import { BookOutlined, AppstoreOutlined } from "@ant-design/icons";
+import { BookOutlined, AppstoreOutlined, ToolOutlined } from "@ant-design/icons";
 import type { CSSProperties } from "react";
 
 interface CmsIconProps {
@@ -28,6 +28,8 @@ const BRAND_COLOR: Record<string, string> = {
   // Backdrop CMS uses Drupal's blue palette in branding; pick a slightly
   // lighter shade to avoid colliding with our existing Drupal entry.
   backdrop: "#0288D1",
+  moodle: "#F98012",
+  glpi: "#3D85C6",
 };
 
 // CmsIcon renders the brand logo for an app_type. WordPress and
@@ -81,6 +83,14 @@ export function CmsIcon({ appType, size = 18 }: CmsIconProps) {
   }
   if (key === "prestashop") {
     return <SiPrestashop style={style} />;
+  }
+  if (key === "moodle") {
+    return <SiMoodle style={style} />;
+  }
+  if (key === "glpi") {
+    // Simple Icons doesn't ship a GLPI entry. Use the AntD wrench
+    // glyph to convey "IT tooling" rather than a generic appstore.
+    return <ToolOutlined style={style} />;
   }
   if (key === "backdrop") {
     // Simple Icons doesn't ship a Backdrop entry. Fall back to the

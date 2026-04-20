@@ -283,6 +283,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 			fillIfEmpty(&row.NS1IPv4, cfg.Server.NS1IPv4)
 			fillIfEmpty(&row.NS2Name, cfg.Server.NS2Name)
 			fillIfEmpty(&row.NS2IPv4, cfg.Server.NS2IPv4)
+			// admin_email seeds from the bootstrap env var install.sh writes
+			// to /etc/jabali/panel.env. Without this, fresh installs start
+			// with admin_email="" which the SSL reconciler treats as
+			// "ACME not configured" → every domain sits on self-signed
+			// forever, retrying every 3h only to skip straight to fallback
+			// again. Mirrors JABALI_BOOTSTRAP_ADMIN_{EMAIL,PASSWORD} already
+			// read by auth.BootstrapAdmin.
+			fillIfEmpty(&row.AdminEmail, os.Getenv("JABALI_BOOTSTRAP_ADMIN_EMAIL"))
 
 			if !mutated {
 				return

@@ -1490,7 +1490,13 @@ server {
     listen 80 default_server;
     listen [::]:80 default_server;
     server_name _;
-    return 301 https://\$host\$request_uri;
+    # 444 = close without response. Any HTTP request on a hostname we
+    # don't know is silently dropped — no redirect to https because
+    # https will just 444 too, and no HTML because we don't want to
+    # leak "this server runs nginx" to random scanners. Domains with
+    # their own vhost match BEFORE this default block, so this only
+    # fires for hosts nginx has no server{} for.
+    return 444;
 }
 
 server {
@@ -1508,13 +1514,17 @@ server {
     access_log /var/log/nginx/default.access.log;
     error_log  /var/log/nginx/default.error.log;
 
-    root /var/www/html;
-    index index.html index.htm;
-
+    # phpMyAdmin stays reachable on the panel hostname for admin use.
+    # The include's server_name-less /phpmyadmin/ location is matched
+    # before the catch-all location / below.
     include /etc/nginx/sites-available/includes/phpmyadmin.conf;
 
+    # Everything else on an unknown host silently drops. The prior
+    # behaviour (try_files on /var/www/html → 403) leaked a default
+    # vhost for domains without an SSL cert yet and sent users a
+    # confusing "403 Forbidden" with the panel's self-signed cert.
     location / {
-        try_files \$uri \$uri/ =404;
+        return 444;
     }
 }
 VHOSTEOF

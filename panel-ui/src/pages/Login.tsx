@@ -25,8 +25,10 @@ import {
   Typography,
   theme,
 } from "antd";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { clearIdentity, getIdentity } from "../identity";
+import type { MeUser } from "../auth/AuthContext";
 
 // Post-M21 inline: authProvider.ts used to export this. It's a
 // trivial two-branch map, not worth its own module now that no
@@ -48,6 +50,7 @@ import {
 
 export const LoginPage = () => {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const { token } = theme.useToken();
 
   const [flow, setFlow] = useState<KratosFlow | null>(null);
@@ -88,6 +91,21 @@ export const LoginPage = () => {
     if (result.kind === "success") {
       clearIdentity();
       const me = await getIdentity();
+      // Prime the AuthContext ["whoami"] cache synchronously with the
+      // fresh identity before navigating. Without this, clearIdentity's
+      // queryClient.invalidateQueries only schedules an async refetch:
+      // by the time the admin shell mounts and RequireAdmin evaluates
+      // useAuth(), the query observer can still be holding the stale
+      // pre-login null — and the guard bounces the just-logged-in user
+      // right back to /login. E2E run 53 captured this as the
+      // "admin lands on /jabali-admin after signing in" flake that
+      // failed once then passed on retry. setQueryData is a synchronous
+      // cache write that notifies observers in the same tick, so the
+      // next render sees the authoritative user.
+      const mePrimed: MeUser | null = me
+        ? { id: me.id, email: me.email, isAdmin: me.isAdmin }
+        : null;
+      qc.setQueryData<MeUser | null>(["whoami"], mePrimed);
       navigate(homeForRole(me?.isAdmin ?? false), { replace: true });
       return;
     }

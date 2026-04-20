@@ -6,19 +6,24 @@
 // path and the AAL1→AAL2 transition without a live Kratos instance.
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { BrowserRouter } from "react-router";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as kratos from "../kratos";
 import { LoginPage } from "./Login";
 
-// LoginPage reads useNavigate + Kratos flows directly — no provider
-// context needed post-M21. BrowserRouter is the only wrapper we still
-// have to install for the navigate hook.
+// LoginPage uses useQueryClient to prime the ["whoami"] AuthContext
+// cache on successful login (eliminates the post-submit race where
+// RequireAdmin briefly saw stale null). QueryClientProvider is the
+// minimum wrapper that gives the hook something to read.
 function renderLogin() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <BrowserRouter>
-      <LoginPage />
-    </BrowserRouter>,
+    <QueryClientProvider client={qc}>
+      <BrowserRouter>
+        <LoginPage />
+      </BrowserRouter>
+    </QueryClientProvider>,
   );
 }
 

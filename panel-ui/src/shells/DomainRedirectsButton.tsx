@@ -22,8 +22,9 @@ import {
   Select,
   Card,
   Typography,
+  notification,
 } from "antd";
-import { useInvalidate, useNotification } from "@refinedev/core";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
   closestCenter,
@@ -231,8 +232,7 @@ export const DomainRedirectsButton = ({
   );
   const [isSaving, setIsSaving] = useState(false);
   const [expandedCards, setExpandedCards] = useState<Set<number>>(new Set());
-  const invalidate = useInvalidate();
-  const { open } = useNotification();
+  const qc = useQueryClient();
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -293,10 +293,7 @@ export const DomainRedirectsButton = ({
       if (wholeToggle) {
         const url = wholeUrl.trim();
         if (!url) {
-          open?.({
-            type: "error",
-            message: "Enter a redirect URL",
-          });
+          notification.error({ message: "Enter a redirect URL" });
           setIsSaving(false);
           return;
         }
@@ -318,19 +315,16 @@ export const DomainRedirectsButton = ({
       body.page_redirects = clean.filter((pr) => pr.source && pr.destination);
 
       await apiClient.patch(`/domains/${domain.id}`, body);
-      open?.({
-        type: "success",
-        message: "Redirects saved",
-      });
-      invalidate({ resource: "domains", invalidates: ["list"] });
+      notification.success({ message: "Redirects saved" });
+      qc.invalidateQueries({ queryKey: ["list", "domains"] });
+      qc.invalidateQueries({ queryKey: ["one", "domains", domain.id] });
       setIsModalOpen(false);
     } catch (err) {
       const e = err as {
         response?: { data?: { detail?: string } };
         message?: string;
       };
-      open?.({
-        type: "error",
+      notification.error({
         message: "Failed to save",
         description: e.response?.data?.detail ?? e.message ?? "Unknown error",
       });

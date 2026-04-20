@@ -22,9 +22,28 @@ import {
   Popconfirm,
   Spin,
   Empty,
+  notification,
 } from "antd";
 import { useLocation, useNavigate, useParams } from "react-router";
-import { useNotification } from "@refinedev/core";
+
+// Post-M21 notify shim — matches the Refine useNotification().open
+// contract so the call sites below need no other change.
+type NotifyInput = {
+  type?: "success" | "error" | "warning" | "info";
+  message: string;
+  description?: React.ReactNode;
+};
+function useNotification() {
+  return {
+    open: (input: NotifyInput) => {
+      notification.open({
+        message: input.message,
+        description: input.description,
+        type: input.type,
+      });
+    },
+  };
+}
 
 import { apiClient } from "../../apiClient";
 

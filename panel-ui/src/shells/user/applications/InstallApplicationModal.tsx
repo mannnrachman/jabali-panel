@@ -27,7 +27,7 @@ import {
   Switch,
 } from "antd";
 import { CopyOutlined, CheckCircleTwoTone, AppstoreOutlined } from "@ant-design/icons";
-import { useInvalidate } from "@refinedev/core";
+import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../../../apiClient";
 
 type Domain = { id: string; name: string };
@@ -321,7 +321,7 @@ export const InstallApplicationModal = ({
   const [apps, setApps] = useState<AppDescriptor[]>([]);
   const [loadingApps, setLoadingApps] = useState(false);
   const [result, setResult] = useState<CreatedResult | null>(null);
-  const invalidate = useInvalidate();
+  const qc = useQueryClient();
 
   const selectedAppType = Form.useWatch("app_type", form) as string | undefined;
   const selectedDomainId = Form.useWatch("domain_id", form);
@@ -342,9 +342,9 @@ export const InstallApplicationModal = ({
   const fieldOrder = useMemo(() => orderedFields(activeSchema), [activeSchema]);
 
   const refreshLists = () => {
-    invalidate({ resource: "applications", invalidates: ["list"] });
-    invalidate({ resource: "databases", invalidates: ["list"] });
-    invalidate({ resource: "database-users", invalidates: ["list"] });
+    qc.invalidateQueries({ queryKey: ["list", "applications"] });
+    qc.invalidateQueries({ queryKey: ["list", "databases"] });
+    qc.invalidateQueries({ queryKey: ["list", "database-users"] });
     onSuccess();
   };
 

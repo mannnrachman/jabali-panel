@@ -13,7 +13,7 @@ import {
   message,
   Typography,
 } from "antd";
-import { useInvalidate } from "@refinedev/core";
+import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../../../apiClient";
 
 type Domain = {
@@ -57,13 +57,13 @@ export const CloneApplicationModal = ({
   const [submitting, setSubmitting] = useState(false);
   const [domains, setDomains] = useState<Domain[]>([]);
   const [loadingDomains, setLoadingDomains] = useState(false);
-  const invalidate = useInvalidate();
+  const qc = useQueryClient();
 
   // Clone also creates a new DB + DB user, so invalidate those lists too.
   const refreshLists = () => {
-    invalidate({ resource: "applications", invalidates: ["list"] });
-    invalidate({ resource: "databases", invalidates: ["list"] });
-    invalidate({ resource: "database-users", invalidates: ["list"] });
+    qc.invalidateQueries({ queryKey: ["list", "applications"] });
+    qc.invalidateQueries({ queryKey: ["list", "databases"] });
+    qc.invalidateQueries({ queryKey: ["list", "database-users"] });
     onSuccess();
   };
 

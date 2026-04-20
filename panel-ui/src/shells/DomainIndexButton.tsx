@@ -3,8 +3,8 @@
 // `index ...;` directives; see indexDirectiveFor() in the agent.
 import { useEffect, useState } from "react";
 import { FileTextOutlined, CheckOutlined } from "@ant-design/icons";
-import { Button, Modal, Radio, Typography } from "antd";
-import { useInvalidate, useNotification } from "@refinedev/core";
+import { Button, Modal, Radio, Typography, notification } from "antd";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../apiClient";
 
@@ -37,8 +37,7 @@ export const DomainIndexButton = ({ domain }: { domain: DomainIndexTarget }) => 
   const [value, setValue] = useState<IndexPriority>(
     (domain.index_priority as IndexPriority) || "html_first",
   );
-  const invalidate = useInvalidate();
-  const { open: notify } = useNotification();
+  const qc = useQueryClient();
 
   // Re-sync from prop each time the modal opens so another user's
   // concurrent edit doesn't get silently clobbered.
@@ -54,16 +53,16 @@ export const DomainIndexButton = ({ domain }: { domain: DomainIndexTarget }) => 
       await apiClient.patch(`/domains/${domain.id}`, {
         index_priority: value,
       });
-      notify?.({ type: "success", message: "Index priority saved" });
-      invalidate({ resource: "domains", invalidates: ["list"] });
+      notification.success({ message: "Index priority saved" });
+      qc.invalidateQueries({ queryKey: ["list", "domains"] });
+      qc.invalidateQueries({ queryKey: ["one", "domains", domain.id] });
       setOpen(false);
     } catch (err) {
       const e = err as {
         response?: { data?: { detail?: string } };
         message?: string;
       };
-      notify?.({
-        type: "error",
+      notification.error({
         message: "Failed to save",
         description: e.response?.data?.detail ?? e.message ?? "Unknown error",
       });

@@ -1,12 +1,23 @@
-import { useTable } from "@refinedev/antd";
-import { DeleteButton } from "@refinedev/antd";
-import { SearchableTable } from "../../../components/SearchableTable";
-import { readQValue } from "../../../components/searchableTableUtils";
-import { Button, Space, Table, Tag, Typography, message, Tooltip } from "antd";
-import { PlusSquareOutlined, LinkOutlined, ThunderboltOutlined } from "@ant-design/icons";
-import { useNavigate } from "react-router";
-import { ssoPhpMyAdmin } from "../../../apiClient";
+// UserDatabaseList — tenant view of their databases with Quick Setup
+// + Open-in-phpMyAdmin + Delete. phpMyAdmin SSO is wired through the
+// apiClient helper; a blank tab is opened synchronously to dodge
+// popup blockers while the SSO call runs.
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Button, Card, Space, Table, Tag, Tooltip, Typography, message } from "antd";
+import {
+  LinkOutlined,
+  PlusSquareOutlined,
+  ThunderboltOutlined,
+} from "@ant-design/icons";
+import { useNavigate } from "react-router";
+import type { SorterResult } from "antd/es/table/interface";
+
+import { ssoPhpMyAdmin } from "../../../apiClient";
+import { RowDeleteButton } from "../../../components/RowDeleteButton";
+import { SearchableTableStringQ } from "../../../components/SearchableTable";
+import { useDeleteMutation } from "../../../hooks/useQueries";
+import { useTableURL } from "../../../hooks/useTableURL";
 import { QuickSetupModal } from "./QuickSetupModal";
 
 export type Database = {
@@ -21,39 +32,62 @@ export type Database = {
   size_bytes?: number;
 };
 
+const engineColorMap: Record<string, string> = {
+  mariadb: "blue",
+  postgres: "green",
+};
+
+const formatBytes = (bytes: number | undefined): string => {
+  if (bytes === undefined || bytes === 0) return "0 B";
+
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = bytes;
+  let unitIndex = 0;
+
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex++;
+  }
+
+  if (unitIndex === 0) {
+    return `${Math.floor(size)} B`;
+  }
+  return `${size.toFixed(1)} ${units[unitIndex]}`;
+};
+
 export const UserDatabaseList = () => {
   const navigate = useNavigate();
-  const { tableProps, tableQuery, setFilters, filters } = useTable<Database>({
+  const qc = useQueryClient();
+  const query = useTableURL<Database>({
     resource: "databases",
-    syncWithLocation: true,
+    defaultSort: "name",
+    defaultOrder: "asc",
   });
-  const initialSearch = readQValue(filters);
-  const [loadingPhpMyAdminId, setLoadingPhpMyAdminId] = useState<string | null>(null);
+  const deleteMutation = useDeleteMutation({ resource: "databases" });
+
+  const [loadingPhpMyAdminId, setLoadingPhpMyAdminId] = useState<string | null>(
+    null,
+  );
   const [quickSetupOpen, setQuickSetupOpen] = useState(false);
 
-  const engineColorMap: Record<string, string> = {
-    mariadb: "blue",
-    postgres: "green",
+  const handleTableChange: React.ComponentProps<
+    typeof Table<Database>
+  >["onChange"] = (pagination, _filters, sorter) => {
+    const single = Array.isArray(sorter)
+      ? (sorter[0] as SorterResult<Database> | undefined)
+      : (sorter as SorterResult<Database>);
+    query.setParams({
+      page: pagination.current ?? 1,
+      pageSize: pagination.pageSize ?? 20,
+      sort: single?.columnKey ? String(single.columnKey) : undefined,
+      order:
+        single?.order === "ascend"
+          ? "asc"
+          : single?.order === "descend"
+            ? "desc"
+            : undefined,
+    });
   };
-
-  const formatBytes = (bytes: number | undefined): string => {
-    if (bytes === undefined || bytes === 0) return "0 B";
-
-    const units = ["B", "KB", "MB", "GB", "TB"];
-    let size = bytes;
-    let unitIndex = 0;
-
-    while (size >= 1024 && unitIndex < units.length - 1) {
-      size /= 1024;
-      unitIndex++;
-    }
-
-    if (unitIndex === 0) {
-      return `${Math.floor(size)} B`;
-    }
-    return `${size.toFixed(1)} ${units[unitIndex]}`;
-  };
-
 
   const handleOpenPhpMyAdmin = async (row: Database) => {
     // Open a blank tab synchronously so it counts as a user-initiated
@@ -74,15 +108,11 @@ export const UserDatabaseList = () => {
       if (tab) {
         tab.location.href = response.redirect_url;
         try {
-          // Best-effort: some browsers treat opener as read-only; the
-          // try/catch is to keep the rest of the flow working if so.
           tab.opener = null;
         } catch {
-          // ignore
+          // ignore — some browsers treat opener as read-only
         }
       } else {
-        // Pop-up blocker killed the new tab before we could navigate.
-        // Fall back to same-tab navigation so the user isn't stranded.
         window.location.assign(response.redirect_url);
       }
     } catch (error) {
@@ -96,7 +126,7 @@ export const UserDatabaseList = () => {
   };
 
   return (
-    <div style={{ padding: 24 }}>
+    <div>
       <Space
         style={{
           marginBottom: 16,
@@ -127,73 +157,98 @@ export const UserDatabaseList = () => {
       <QuickSetupModal
         open={quickSetupOpen}
         onClose={() => setQuickSetupOpen(false)}
-        onSuccess={() => tableQuery?.refetch?.()}
+        onSuccess={() =>
+          qc.invalidateQueries({ queryKey: ["list", "databases"] })
+        }
       />
 
-      <SearchableTable<Database>
-        {...tableProps}
-        rowKey="id"
-        initialSearch={initialSearch}
-        searchPlaceholder="Search by database name"
-        onSearchChange={(filters) => setFilters(filters, "replace")}
-      >
-        <Table.Column<Database>
-          dataIndex="name"
-          title="Database"
-          sorter={{ multiple: 1 }}
-          defaultSortOrder="ascend"
-        />
-        <Table.Column<Database>
-          dataIndex="engine"
-          title="Engine"
-          render={(engine: string) => (
-            <Tag color={engineColorMap[engine] || "default"}>{engine}</Tag>
-          )}
-        />
-        <Table.Column<Database>
-          dataIndex="size_bytes"
-          title="Size"
-          sorter={{ multiple: 3 }}
-          render={(size_bytes?: number) => formatBytes(size_bytes)}
-        />
-        <Table.Column<Database>
-          dataIndex="charset"
-          title="Charset"
-          render={(charset?: string) => charset || "-"}
-        />
-        <Table.Column<Database>
-          dataIndex="created_at"
-          title="Created"
-          sorter={{ multiple: 2 }}
-          render={(date: string) => new Date(date).toLocaleDateString()}
-        />
-        <Table.Column<Database>
-          title="Actions"
-          dataIndex="actions"
-          render={(_, r) => {
-            const isPostgres = r.engine === "postgres";
-            const isLoading = loadingPhpMyAdminId === r.id;
-
-            return (
-              <Space size="small">
-                <Tooltip title={isPostgres ? "phpMyAdmin supports MySQL/MariaDB only" : ""}>
-                  <Button
-                    type="link"
-                    size="small"
-                    icon={<LinkOutlined />}
-                    onClick={() => handleOpenPhpMyAdmin(r)}
-                    disabled={isPostgres || isLoading}
-                    loading={isLoading}
-                  >
-                    Open in phpMyAdmin
-                  </Button>
-                </Tooltip>
-                <DeleteButton hideText size="small" type="text" resource="databases" recordItemId={r.id} />
-              </Space>
-            );
+      <Card>
+        <SearchableTableStringQ<Database>
+          rowKey="id"
+          loading={query.isLoading}
+          dataSource={query.items}
+          initialSearch={query.params.q}
+          searchPlaceholder="Search by database name"
+          onSearchChange={(q) => query.setParams({ q, page: 1 })}
+          pagination={{
+            current: query.params.page,
+            pageSize: query.params.pageSize,
+            total: query.total,
           }}
-        />
-      </SearchableTable>
+          onChange={handleTableChange}
+        >
+          <Table.Column<Database>
+            dataIndex="name"
+            title="Database"
+            key="name"
+            sorter={{ multiple: 1 }}
+            defaultSortOrder="ascend"
+          />
+          <Table.Column<Database>
+            dataIndex="engine"
+            title="Engine"
+            render={(engine: string) => (
+              <Tag color={engineColorMap[engine] || "default"}>{engine}</Tag>
+            )}
+          />
+          <Table.Column<Database>
+            dataIndex="size_bytes"
+            title="Size"
+            key="size_bytes"
+            sorter={{ multiple: 3 }}
+            render={(size_bytes?: number) => formatBytes(size_bytes)}
+          />
+          <Table.Column<Database>
+            dataIndex="charset"
+            title="Charset"
+            render={(charset?: string) => charset || "-"}
+          />
+          <Table.Column<Database>
+            dataIndex="created_at"
+            title="Created"
+            key="created_at"
+            sorter={{ multiple: 2 }}
+            render={(date: string) => new Date(date).toLocaleDateString()}
+          />
+          <Table.Column<Database>
+            title="Actions"
+            dataIndex="actions"
+            render={(_, r) => {
+              const isPostgres = r.engine === "postgres";
+              const isLoading = loadingPhpMyAdminId === r.id;
+
+              return (
+                <Space size="small">
+                  <Tooltip
+                    title={
+                      isPostgres
+                        ? "phpMyAdmin supports MySQL/MariaDB only"
+                        : ""
+                    }
+                  >
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<LinkOutlined />}
+                      onClick={() => handleOpenPhpMyAdmin(r)}
+                      disabled={isPostgres || isLoading}
+                      loading={isLoading}
+                    >
+                      Open in phpMyAdmin
+                    </Button>
+                  </Tooltip>
+                  <RowDeleteButton
+                    confirmTitle={`Delete database "${r.name}"?`}
+                    onConfirm={async () => {
+                      await deleteMutation.mutateAsync({ id: r.id });
+                    }}
+                  />
+                </Space>
+              );
+            }}
+          />
+        </SearchableTableStringQ>
+      </Card>
     </div>
   );
 };

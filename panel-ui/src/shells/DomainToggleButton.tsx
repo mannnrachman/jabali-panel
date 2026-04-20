@@ -4,8 +4,8 @@
 // disabled page (or the tenant's docroot) as appropriate.
 import { useState } from "react";
 import { PauseCircleOutlined, PlayCircleOutlined } from "@ant-design/icons";
-import { Button } from "antd";
-import { useInvalidate, useNotification } from "@refinedev/core";
+import { Button, notification } from "antd";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../apiClient";
 
@@ -18,8 +18,7 @@ export type DomainToggleTarget = {
 
 export const DomainToggleButton = ({ domain }: { domain: DomainToggleTarget }) => {
   const [loading, setLoading] = useState(false);
-  const invalidate = useInvalidate();
-  const { open } = useNotification();
+  const qc = useQueryClient();
 
   const handleToggle = async () => {
     setLoading(true);
@@ -27,14 +26,13 @@ export const DomainToggleButton = ({ domain }: { domain: DomainToggleTarget }) =
       await apiClient.patch(`/domains/${domain.id}`, {
         is_enabled: !domain.is_enabled,
       });
-      open?.({
-        type: "success",
+      notification.success({
         message: domain.is_enabled ? "Domain disabled" : "Domain enabled",
       });
-      invalidate({ resource: "domains", invalidates: ["list"] });
+      qc.invalidateQueries({ queryKey: ["list", "domains"] });
+      qc.invalidateQueries({ queryKey: ["one", "domains", domain.id] });
     } catch (err) {
-      open?.({
-        type: "error",
+      notification.error({
         message: "Failed to toggle",
         description: (err as Error).message,
       });

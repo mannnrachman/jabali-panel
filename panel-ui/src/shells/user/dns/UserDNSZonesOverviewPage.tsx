@@ -1,10 +1,13 @@
-import { useState, useEffect } from "react";
+// UserDNSZonesOverviewPage — tenant landing for DNS. Parallel of
+// admin/dns/DNSZonesOverviewPage but navigates within /jabali-panel
+// for the DNS-record deep-link.
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { useTable } from "@refinedev/antd";
-import { Button, Space, Table, Tag, Typography, Alert, Spin, Empty } from "antd";
+import { Alert, Button, Empty, Space, Spin, Table, Tag, Typography } from "antd";
 import { ArrowLeftOutlined } from "@ant-design/icons";
 
 import { apiClient } from "../../../apiClient";
+import { useTableURL } from "../../../hooks/useTableURL";
 
 interface Domain {
   id: string;
@@ -21,19 +24,18 @@ interface ZoneStatus {
 export const UserDNSZonesOverviewPage = () => {
   const navigate = useNavigate();
   const [zoneStatuses, setZoneStatuses] = useState<Map<string, ZoneStatus>>(
-    new Map()
+    new Map(),
   );
 
-  const { tableProps, tableQueryResult } = useTable<Domain>({
+  const query = useTableURL<Domain>({
     resource: "domains",
-    syncWithLocation: true,
+    defaultSort: "name",
+    defaultOrder: "asc",
   });
 
-  // Fetch zone status for each domain
   useEffect(() => {
-    if (!tableQueryResult.data?.data) return;
-
-    const domains = tableQueryResult.data.data;
+    const domains = query.items;
+    if (domains.length === 0) return;
 
     Promise.all(
       domains.map(async (domain) => {
@@ -44,13 +46,9 @@ export const UserDNSZonesOverviewPage = () => {
             provisioned: !!res.data?.data?.id,
           };
         } catch {
-          // If zone doesn't exist or error, consider it not provisioned
-          return {
-            domainId: domain.id,
-            provisioned: false,
-          };
+          return { domainId: domain.id, provisioned: false };
         }
-      })
+      }),
     ).then((results) => {
       const statusMap = new Map<string, ZoneStatus>();
       results.forEach(({ domainId, provisioned }) => {
@@ -58,7 +56,7 @@ export const UserDNSZonesOverviewPage = () => {
       });
       setZoneStatuses(statusMap);
     });
-  }, [tableQueryResult.data?.data]);
+  }, [query.items]);
 
   const getZoneStatusTag = (domainId: string) => {
     const status = zoneStatuses.get(domainId);
@@ -73,7 +71,7 @@ export const UserDNSZonesOverviewPage = () => {
   };
 
   return (
-    <div style={{ padding: 24 }}>
+    <div>
       <Space
         style={{
           marginBottom: 16,
@@ -101,12 +99,22 @@ export const UserDNSZonesOverviewPage = () => {
         style={{ marginBottom: 16 }}
       />
 
-      {tableQueryResult.isLoading ? (
+      {query.isLoading ? (
         <Spin />
-      ) : tableQueryResult.data?.data?.length === 0 ? (
+      ) : query.items.length === 0 ? (
         <Empty description="No domains found" />
       ) : (
-        <Table<Domain> {...tableProps} rowKey="id">
+        <Table<Domain>
+          rowKey="id"
+          loading={query.isLoading}
+          dataSource={query.items}
+          pagination={{
+            current: query.params.page,
+            pageSize: query.params.pageSize,
+            total: query.total,
+            onChange: (page, pageSize) => query.setParams({ page, pageSize }),
+          }}
+        >
           <Table.Column<Domain> dataIndex="name" title="Domain Name" />
           <Table.Column<Domain>
             title="Zone Status"
@@ -118,7 +126,9 @@ export const UserDNSZonesOverviewPage = () => {
               <Button
                 type="primary"
                 size="small"
-                onClick={() => navigate(`/jabali-panel/domains/${record.id}/dns`)}
+                onClick={() =>
+                  navigate(`/jabali-panel/domains/${record.id}/dns`)
+                }
               >
                 Manage Records
               </Button>

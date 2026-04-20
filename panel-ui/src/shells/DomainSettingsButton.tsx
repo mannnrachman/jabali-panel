@@ -27,8 +27,9 @@ import {
   Row,
   Col,
   Dropdown,
+  notification,
 } from "antd";
-import { useInvalidate, useNotification } from "@refinedev/core";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
   closestCenter,
@@ -666,8 +667,7 @@ export const DomainSettingsButton = ({
   );
   const [rules, setRules] = useState<NginxRule[]>(domain.nginx_rules ?? []);
   const [isSaving, setIsSaving] = useState(false);
-  const invalidate = useInvalidate();
-  const { open } = useNotification();
+  const qc = useQueryClient();
 
   const handleOpenModal = async () => {
     // Re-sync from prop in case the values were updated elsewhere
@@ -684,19 +684,16 @@ export const DomainSettingsButton = ({
         nginx_custom_directives: directivesValue,
         nginx_rules: rules,
       });
-      open?.({
-        type: "success",
-        message: "Nginx config saved",
-      });
-      invalidate({ resource: "domains", invalidates: ["list"] });
+      notification.success({ message: "Nginx config saved" });
+      qc.invalidateQueries({ queryKey: ["list", "domains"] });
+      qc.invalidateQueries({ queryKey: ["one", "domains", domain.id] });
       setIsModalOpen(false);
     } catch (err) {
       const e = err as {
         response?: { data?: { detail?: string } };
         message?: string;
       };
-      open?.({
-        type: "error",
+      notification.error({
         message: "Failed to save",
         description: e.response?.data?.detail ?? e.message ?? "Unknown error",
       });

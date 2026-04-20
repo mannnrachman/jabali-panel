@@ -6,9 +6,9 @@
 // checkbox set (SELECT/INSERT/UPDATE/DELETE/CREATE/DROP/ALTER/INDEX).
 import { useEffect, useState } from "react";
 import { Alert, Form, Modal, Radio, Select, Checkbox, Space, message } from "antd";
-import { useList } from "@refinedev/core";
 
 import { apiClient } from "../apiClient";
+import { useListQuery } from "../hooks/useQueries";
 
 interface AddGrantModalProps {
   open: boolean;
@@ -46,12 +46,12 @@ export function AddGrantModal({
 
   // Fresh list of databases each open — 200 is plenty for a
   // single-tenant panel; large installs can move to an async select.
-  const { data: dbData, isLoading } = useList<DatabaseOption>({
+  const { items: dbItems, isLoading } = useListQuery<DatabaseOption>({
     resource: "databases",
-    pagination: { pageSize: 200 },
-    queryOptions: { enabled: open },
+    params: { pageSize: 200 },
+    enabled: open,
   });
-  const databases = (dbData?.data ?? []).filter(
+  const databases = dbItems.filter(
     (d) => !excludedDatabaseIds.includes(d.id),
   );
 

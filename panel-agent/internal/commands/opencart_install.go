@@ -63,6 +63,54 @@ const opencartZipSHA256 = ""
 // no special-character restriction beyond email-style chars.
 var opencartAdminUserPattern = regexp.MustCompile(`^[A-Za-z0-9._@-]{3,20}$`)
 
+// findOpenCartWebroot locates the OpenCart webroot inside the staging
+// dir. Probes the common layouts in order:
+//   - stagingDir itself (OpenCart 4.x release zip drops files at root)
+//   - stagingDir/upload (OpenCart 3.x layout)
+//   - stagingDir/<single-subdir>/upload (some forks/repacks)
+//   - stagingDir/<single-subdir> (versioned wrapper without upload/)
+//
+// The webroot is identified by the simultaneous presence of
+// `index.php` AND an `admin/` directory — narrow enough to avoid
+// false positives on archive landing pages or installer wrappers.
+func findOpenCartWebroot(stagingDir string) (string, error) {
+	isWebroot := func(dir string) bool {
+		idx, err := os.Stat(filepath.Join(dir, "index.php"))
+		if err != nil || idx.IsDir() {
+			return false
+		}
+		adm, err := os.Stat(filepath.Join(dir, "admin"))
+		if err != nil || !adm.IsDir() {
+			return false
+		}
+		return true
+	}
+
+	if isWebroot(stagingDir) {
+		return stagingDir, nil
+	}
+	if up := filepath.Join(stagingDir, "upload"); isWebroot(up) {
+		return up, nil
+	}
+	entries, err := os.ReadDir(stagingDir)
+	if err != nil {
+		return "", fmt.Errorf("read stage dir: %w", err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		sub := filepath.Join(stagingDir, e.Name())
+		if up := filepath.Join(sub, "upload"); isWebroot(up) {
+			return up, nil
+		}
+		if isWebroot(sub) {
+			return sub, nil
+		}
+	}
+	return "", fmt.Errorf("opencart webroot (dir with index.php + admin/) not found under %s — release zip layout may have changed", stagingDir)
+}
+
 func computeOpenCartInstallPath(docroot, subdirectory string) string {
 	if subdirectory == "" {
 		return docroot
@@ -116,11 +164,13 @@ func verifyOpenCartSHA256(path string) error {
 	return nil
 }
 
-// extractOpenCartZip unzips into staging then flattens the upstream
-// `upload/*` (NOT a versioned wrapper directory like the others) into
-// installPath. OpenCart's release zip puts the actual webroot under
-// `upload/` and ships sibling install/upgrade scripts at the zip
-// root that we don't need.
+// extractOpenCartZip unzips into staging then flattens the OpenCart
+// payload into installPath. Layout-resilient: OpenCart 3.x release
+// zips wrap the webroot under `upload/`; OpenCart 4.x release zips
+// drop the webroot directly at the zip root (with no wrapper).
+// We probe for index.php to find the right source dir rather than
+// hardcoding either layout — keeps the installer working across
+// future major-version repackaging.
 //
 // Also renames the two "*.dist" config samples to their final names —
 // OpenCart's installer expects `config.php` and `admin/config.php` to
@@ -132,14 +182,22 @@ func extractOpenCartZip(ctx context.Context, osUser, zipPath, installPath, stagi
 	if err != nil {
 		return fmt.Errorf("unzip: %w (output: %s)", err, truncateStr(string(out), 512))
 	}
-	src := filepath.Join(stagingDir, "upload")
+
+	// Probe for the OpenCart webroot. Recognise it by the presence of
+	// both `index.php` and `admin/` — that combination is unique enough
+	// in OpenCart's distribution to avoid false positives on a
+	// future-version reorg.
+	src, err := findOpenCartWebroot(stagingDir)
+	if err != nil {
+		return err
+	}
 	mvCmd := buildSystemdRunCmd(ctx, osUser, "sh", "-c",
 		fmt.Sprintf("cp -a %s/. %s/ && rm -rf %s",
-			shellQuote(src), shellQuote(installPath), shellQuote(src)),
+			shellQuote(src), shellQuote(installPath), shellQuote(stagingDir)),
 	)
 	mvOut, err := mvCmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("move opencart upload contents: %w (output: %s)", err, truncateStr(string(mvOut), 512))
+		return fmt.Errorf("move opencart contents: %w (output: %s)", err, truncateStr(string(mvOut), 512))
 	}
 
 	// OpenCart ships config-dist.php samples that need to become

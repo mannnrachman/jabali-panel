@@ -21,7 +21,7 @@ import {
   DownloadOutlined,
   CodeOutlined,
 } from "@ant-design/icons";
-import { getKeys as getEd25519SSHKeys } from "ed25519-keygen/ssh";
+import { getKeys as getEd25519SSHKeys } from "micro-key-producer/ssh.js";
 import {
   listSSHKeys,
   createSSHKey,
@@ -34,10 +34,11 @@ import { useQuery } from "@tanstack/react-query";
 const SSH_KEY_PREFIXES = ["ssh-rsa ", "ssh-ed25519 ", "ecdsa-sha2-"];
 
 // generateEd25519Keypair runs entirely in the browser: 32 bytes from
-// Web Crypto feed ed25519-keygen's OpenSSH encoder, which returns the
-// public key in authorized_keys format and the private key in OpenSSH
-// PEM format. The private key never transits the network — only the
-// public half is POSTed via the normal /ssh-keys endpoint.
+// Web Crypto feed micro-key-producer's OpenSSH encoder (the successor
+// to ed25519-keygen), which returns the public key in authorized_keys
+// format and the private key in OpenSSH PEM format. The private key
+// never transits the network — only the public half is POSTed via the
+// normal /ssh-keys endpoint.
 function generateEd25519Keypair(comment: string) {
   const seed = new Uint8Array(32);
   crypto.getRandomValues(seed);
@@ -375,7 +376,7 @@ export const UserSSHKeysPage = () => {
       </Modal>
 
       {/* Generate Key — collects a name + optional comment, then creates
-          an ed25519 keypair entirely in the browser via ed25519-keygen
+          an ed25519 keypair entirely in the browser via micro-key-producer
           and POSTs only the public half. The private key is shown once
           in the result modal below. */}
       <Modal

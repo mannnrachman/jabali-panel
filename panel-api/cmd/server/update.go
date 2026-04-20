@@ -19,18 +19,21 @@ const (
 )
 
 func newUpdateCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Pull latest code, rebuild, migrate, and restart services",
-		Long: `Performs a full self-update:
+		Long: `Performs a self-update:
   1. git pull in the repo directory
-  2. npm ci + npm run build (panel-ui)
-  3. go build (panel-api + panel-agent)
-  4. Install new binaries
-  5. Run pending migrations
-  6. Restart jabali-panel + jabali-agent services`,
+  2. If HEAD moved: npm ci, vite build, go build (panel-api + panel-agent),
+     install new binaries, run pending migrations, restart services
+  3. If HEAD did not move: print "Already up to date" and exit. Use
+     --force (-f) to run the rebuild + restart cycle anyway, e.g. to
+     recover from a previous update that failed partway through.`,
 		RunE: runUpdate,
 	}
+	cmd.Flags().BoolP("force", "f", false,
+		"Run the full rebuild/restart cycle even when git pull found no new commits")
+	return cmd
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
@@ -69,7 +72,27 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return run(dir, "sudo", allArgs...)
 	}
 
-	steps := []struct {
+	force, _ := cmd.Flags().GetBool("force")
+
+	// gitHead captures HEAD as a string so we can detect whether
+	// `git pull` actually advanced the branch. The git-pull step
+	// populates preHEAD before the pull, postHEAD after — when they
+	// match and --force wasn't passed, we skip the expensive build
+	// + restart steps below.
+	var preHEAD, postHEAD string
+	gitHead := func() (string, error) {
+		c := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD")
+		out, err := c.Output()
+		if err != nil {
+			return "", fmt.Errorf("git rev-parse HEAD: %w", err)
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+
+	// Prelude steps — always run. Ownership self-heal, then git pull
+	// with before/after HEAD capture so we can decide whether to
+	// continue past this point.
+	prelude := []struct {
 		name string
 		fn   func() error
 	}{
@@ -89,8 +112,29 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 				serviceUser+":"+serviceUser, repoDir+"/.git")
 		}},
 		{"git pull", func() error {
-			return asUser(repoDir, "git", "pull", "--ff-only", "origin", "main")
+			pre, err := gitHead()
+			if err != nil {
+				return err
+			}
+			preHEAD = pre
+			if err := asUser(repoDir, "git", "pull", "--ff-only", "origin", "main"); err != nil {
+				return err
+			}
+			post, err := gitHead()
+			if err != nil {
+				return err
+			}
+			postHEAD = post
+			return nil
 		}},
+	}
+
+	// Build/apply steps — run only when HEAD moved OR --force was passed.
+	// Keep in lockstep with the install.sh counterparts they mirror.
+	buildSteps := []struct {
+		name string
+		fn   func() error
+	}{
 		{"install deps", func() error {
 			// Re-run the install script's dependency functions for any
 			// new packages added since the last update.
@@ -226,7 +270,27 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}},
 	}
 
-	for _, s := range steps {
+	for _, s := range prelude {
+		fmt.Printf("→ %s\n", s.name)
+		if err := s.fn(); err != nil {
+			return fmt.Errorf("%s: %w", s.name, err)
+		}
+	}
+
+	// Fast path: git pull reported no new commits. The build + restart
+	// cycle would do ~30-60 s of CPU work + bounce services, all for a
+	// no-op. Skip unless the operator asked for a forced rebuild.
+	if preHEAD == postHEAD && !force {
+		shortSHA := preHEAD
+		if len(shortSHA) >= 7 {
+			shortSHA = shortSHA[:7]
+		}
+		fmt.Printf("\n✓ Already up to date (HEAD=%s). Skipped rebuild.\n", shortSHA)
+		fmt.Println("  Run `jabali update --force` to rebuild and restart anyway.")
+		return nil
+	}
+
+	for _, s := range buildSteps {
 		fmt.Printf("→ %s\n", s.name)
 		if err := s.fn(); err != nil {
 			return fmt.Errorf("%s: %w", s.name, err)

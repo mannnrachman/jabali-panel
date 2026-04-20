@@ -1,9 +1,11 @@
-// JabaliTitle — brand text at the top of the Sider.
+// JabaliTitle — brand lockup (SVG logo + wordmark) at the top of the Sider.
 //
-// Plain AntD Typography — no SVG logo, no hand-picked font sizes,
-// weights, colors or letter-spacing. Renders as nothing when the
-// Sider is collapsed so the icon-only menu doesn't fight a stub.
+// The SVG swaps between light/dark variants to stay legible against the
+// current sider background. The wordmark uses plain AntD Typography.Title
+// defaults (no hand-picked font size, weight, letter-spacing, or color).
+// When the Sider collapses we render only the logo.
 import { Typography } from "antd";
+import { useThemeMode } from "../theme/ThemeModeContext";
 
 interface JabaliTitleProps {
   collapsed?: boolean;
@@ -11,10 +13,21 @@ interface JabaliTitleProps {
 }
 
 export function JabaliTitle({ collapsed = false, text = "Jabali" }: JabaliTitleProps) {
-  if (collapsed) return null;
+  const { mode } = useThemeMode();
+  const src = mode === "dark" ? "/images/jabali_logo_dark.svg" : "/images/jabali_logo.svg";
+
   return (
-    <Typography.Title level={4} style={{ margin: 0 }}>
-      {text}
-    </Typography.Title>
+    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <img
+        src={src}
+        alt="Jabali"
+        style={{ height: 32, width: "auto", flexShrink: 0 }}
+      />
+      {!collapsed && (
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          {text}
+        </Typography.Title>
+      )}
+    </div>
   );
 }

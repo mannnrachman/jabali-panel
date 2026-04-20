@@ -111,13 +111,13 @@ func createUserDirect(ctx context.Context, in cliUserInput) (*models.User, strin
 			return nil, "", fmt.Errorf("create kratos identity: %w", err)
 		}
 		u.KratosIdentityID = &identityID
-		if err := users.Update(ctx, u); err != nil {
+		if err := users.LinkKratosIdentity(ctx, u.ID, identityID); err != nil {
 			if delErr := k.DeleteIdentity(ctx, identityID); delErr != nil {
-				slog.Error("cli create: panel update failed AND kratos rollback failed — orphan identity",
-					"identity_id", identityID, "update_err", err, "rollback_err", delErr)
+				slog.Error("cli create: panel link failed AND kratos rollback failed — orphan identity",
+					"identity_id", identityID, "link_err", err, "rollback_err", delErr)
 			}
 			if delErr := users.Delete(ctx, u.ID); delErr != nil {
-				slog.Error("cli create: panel update failed AND panel rollback failed",
+				slog.Error("cli create: panel link failed AND panel rollback failed",
 					"user_id", u.ID, "rollback_err", delErr)
 			}
 			return nil, "", fmt.Errorf("link kratos identity: %w", err)

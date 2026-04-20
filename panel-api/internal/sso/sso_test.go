@@ -116,6 +116,13 @@ func (m *mockUsersForSSO) Update(ctx context.Context, u *models.User) error {
 	return nil
 }
 
+func (m *mockUsersForSSO) LinkKratosIdentity(ctx context.Context, userID, kratosID string) error {
+	if u, ok := m.users[userID]; ok {
+		u.KratosIdentityID = &kratosID
+	}
+	return nil
+}
+
 func (m *mockUsersForSSO) SetAdmin(ctx context.Context, id string, isAdmin bool) error {
 	return nil
 }

@@ -55,6 +55,9 @@ func (f *fakeUsersRepo) List(context.Context, repository.ListOptions) ([]models.
 func (f *fakeUsersRepo) Update(context.Context, *models.User) error {
 	panic("Update not expected from middleware")
 }
+func (f *fakeUsersRepo) LinkKratosIdentity(context.Context, string, string) error {
+	panic("LinkKratosIdentity not expected from middleware")
+}
 func (f *fakeUsersRepo) SetAdmin(context.Context, string, bool) error {
 	panic("SetAdmin not expected from middleware")
 }

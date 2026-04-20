@@ -127,15 +127,18 @@ func BootstrapAdmin(ctx context.Context, users repository.UserRepository, opt Bo
 		return BootstrapResult{}, fmt.Errorf("auth: create kratos identity: %w", err)
 	}
 
+	// LinkKratosIdentity is the narrow write path — Update() deliberately
+	// excludes kratos_identity_id from its column allowlist, so using it
+	// here would silently drop the write.
 	u.KratosIdentityID = &identityID
-	if err := users.Update(ctx, u); err != nil {
+	if err := users.LinkKratosIdentity(ctx, u.ID, identityID); err != nil {
 		if delErr := opt.Kratos.DeleteIdentity(ctx, identityID); delErr != nil {
-			slog.Error("bootstrap: panel update failed AND kratos rollback also failed — orphan identity",
-				"user_id", u.ID, "identity_id", identityID, "update_err", err, "rollback_err", delErr)
+			slog.Error("bootstrap: panel link failed AND kratos rollback also failed — orphan identity",
+				"user_id", u.ID, "identity_id", identityID, "link_err", err, "rollback_err", delErr)
 		}
 		if delErr := users.Delete(ctx, u.ID); delErr != nil {
-			slog.Error("bootstrap: panel update failed AND panel rollback also failed — orphan row",
-				"user_id", u.ID, "update_err", err, "rollback_err", delErr)
+			slog.Error("bootstrap: panel link failed AND panel rollback also failed — orphan row",
+				"user_id", u.ID, "link_err", err, "rollback_err", delErr)
 		}
 		return BootstrapResult{}, fmt.Errorf("auth: link kratos identity: %w", err)
 	}

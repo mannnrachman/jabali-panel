@@ -323,6 +323,15 @@ func (f *fakeUserRepo) Update(ctx context.Context, u *models.User) error {
 	return nil
 }
 
+func (f *fakeUserRepo) LinkKratosIdentity(ctx context.Context, userID, kratosID string) error {
+	u, ok := f.users[userID]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	u.KratosIdentityID = &kratosID
+	return nil
+}
+
 func (f *fakeUserRepo) Delete(ctx context.Context, id string) error {
 	delete(f.users, id)
 	return nil

@@ -296,6 +296,10 @@ func (m *mockUserRepoValidate) Update(ctx context.Context, u *models.User) error
 	return nil
 }
 
+func (m *mockUserRepoValidate) LinkKratosIdentity(ctx context.Context, userID, kratosID string) error {
+	return nil
+}
+
 func (m *mockUserRepoValidate) SetAdmin(ctx context.Context, id string, isAdmin bool) error {
 	return nil
 }

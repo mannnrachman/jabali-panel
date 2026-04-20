@@ -81,6 +81,7 @@ import { AdminApplicationList } from "./shells/admin/applications/AdminApplicati
 import { PHPVersionsPage } from "./shells/admin/php/PHPVersionsPage";
 import { PHPPoolEdit } from "./shells/admin/php-pools/PHPPoolEdit";
 import { LoginPage } from "./pages/Login";
+import { ConsentPage } from "./pages/Consent";
 
 const ThemedApp = () => {
   const { mode } = useThemeMode();
@@ -318,6 +319,24 @@ const ThemedApp = () => {
             >
               <Route path="/login" element={<LoginPage />} />
             </Route>
+
+            {/* OAuth 2 consent screen. Hydra's consent-start handler
+                redirects here for untrusted clients; the page reads
+                the challenge from the URL, loads metadata, and drives
+                the Allow/Deny flow. Gated by Authenticated so an
+                expired Kratos session bounces to /login with a
+                return_to that resumes the flow. */}
+            <Route
+              path="/consent"
+              element={
+                <Authenticated
+                  key="consent"
+                  fallback={<CatchAllNavigate to="/login" />}
+                >
+                  <ConsentPage />
+                </Authenticated>
+              }
+            />
 
             {/* landing / catch-all */}
             <Route

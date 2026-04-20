@@ -23,7 +23,11 @@ func newUpdateCmd() *cobra.Command {
 		Use:   "update",
 		Short: "Pull latest code, rebuild, migrate, and restart services",
 		Long: `Performs a self-update:
-  1. git pull in the repo directory
+  1. git fetch + hard-reset to origin/main. Local tracked-file drift is
+     discarded (the VM is a deployment target — origin is authoritative);
+     untracked files like node_modules, .env, bin/, .cache/ are preserved.
+     Any discarded drift is printed as a diffstat so it's visible; recover
+     via git reflog if needed.
   2. If HEAD moved: npm ci, vite build, go build (panel-api + panel-agent),
      install new binaries, run pending migrations, restart services
   3. If HEAD did not move: print "Already up to date" and exit. Use
@@ -118,13 +122,41 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			return run("", "chown", "-R",
 				serviceUser+":"+serviceUser, repoDir+"/.git")
 		}},
-		{"git pull", func() error {
+		{"git fetch + reset to origin/main", func() error {
+			// The VM is a deployment target, not a source of truth. Tracked-
+			// file drift (typical cause: operator `sed`/patches a file in
+			// place on the VM to test a fix, then later commits the same
+			// change from a dev box and pushes) is ALWAYS disposable on
+			// update — the authoritative copy is origin/main. Using
+			// `git pull --ff-only` fails loudly in this case and forces the
+			// operator to hand-stash or hand-reset before the update can
+			// proceed; switching to fetch + `reset --hard origin/main`
+			// makes the update self-healing without clobbering anything
+			// the operator would actually want to keep.
+			//
+			// Untracked files (node_modules, bin/, .env, .cache/) are
+			// untouched by `reset --hard` — it only rewrites tracked
+			// content. Be LOUD about discarded drift so an operator who
+			// didn't expect it sees what's gone and can recover it from
+			// reflog if needed.
 			pre, err := gitHead()
 			if err != nil {
 				return err
 			}
 			preHEAD = pre
-			if err := asUser(repoDir, "git", "pull", "--ff-only", "origin", "main"); err != nil {
+			if err := asUser(repoDir, "git", "fetch", "origin", "main"); err != nil {
+				return err
+			}
+			// Show diffstat of any local drift vs HEAD before we reset so
+			// the operator can see what was clobbered. Silent on clean tree.
+			_ = asUser(repoDir, "bash", "-c",
+				`d=$(git diff --stat HEAD); `+
+					`if [ -n "$d" ]; then `+
+					`  echo "  (discarding local modifications on deployment target:)"; `+
+					`  echo "$d" | sed "s/^/    /"; `+
+					`  echo "  (recover from reflog if this was a surprise: git reflog, git reset --hard <sha>)"; `+
+					`fi`)
+			if err := asUser(repoDir, "git", "reset", "--hard", "origin/main"); err != nil {
 				return err
 			}
 			post, err := gitHead()

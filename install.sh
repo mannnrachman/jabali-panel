@@ -1682,6 +1682,26 @@ start_and_verify() {
   rm -f /tmp/jabali-health.json
 }
 
+# ---------- step: seed last-built-sha --------------------------------------
+# Matches the contract in panel-api/cmd/server/update.go: that file tracks
+# the SHA of the last fully-rebuilt + restarted commit so `jabali update`
+# can tell "no-op, skip rebuild" from "HEAD moved or a prior build failed
+# mid-flow, must rebuild". Fresh install is by definition a successful
+# build against the current HEAD, so we seed it here.
+
+seed_last_built_sha() {
+  local sha
+  sha="$(sudo -u "$SERVICE_USER" git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
+  if [[ -z "$sha" ]]; then
+    _warn "could not resolve HEAD in $REPO_DIR; skipping last-built-sha seed"
+    return 0
+  fi
+  install -d -m 0755 -o root -g root /var/lib/jabali-panel
+  printf '%s\n' "$sha" >/var/lib/jabali-panel/last-built-sha
+  chmod 0644 /var/lib/jabali-panel/last-built-sha
+  _ok "last-built-sha seeded to ${sha:0:7}"
+}
+
 # ---------- step: SSO key generation ----------------------------------------
 
 
@@ -2779,6 +2799,7 @@ main() {
   write_systemd_unit
   start_and_verify_agent
   start_and_verify
+  seed_last_built_sha
   _ok "jabali-panel + jabali-agent installed. Status:"
   _ok "  systemctl status $AGENT_SERVICE_NAME"
   _ok "  systemctl status $SERVICE_NAME"

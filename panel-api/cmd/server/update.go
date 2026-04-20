@@ -16,6 +16,12 @@ const (
 	defaultPanelBinPath = "/usr/local/bin/jabali-panel"
 	defaultAgentBinPath = "/usr/local/bin/jabali-agent"
 	defaultGoRoot       = "/usr/local/go"
+
+	// lastBuiltSHAPath is where the SHA of the last fully-rebuilt
+	// commit is persisted. Compared against HEAD on each update to
+	// decide whether to run the build+restart chain. See runUpdate
+	// for the self-heal rationale (why we don't compare pre==post).
+	lastBuiltSHAPath = "/var/lib/jabali-panel/last-built-sha"
 )
 
 func newUpdateCmd() *cobra.Command {
@@ -28,11 +34,13 @@ func newUpdateCmd() *cobra.Command {
      untracked files like node_modules, .env, bin/, .cache/ are preserved.
      Any discarded drift is printed as a diffstat so it's visible; recover
      via git reflog if needed.
-  2. If HEAD moved: npm ci, vite build, go build (panel-api + panel-agent),
-     install new binaries, run pending migrations, restart services
-  3. If HEAD did not move: print "Already up to date" and exit. Use
-     --force (-f) to run the rebuild + restart cycle anyway, e.g. to
-     recover from a previous update that failed partway through.`,
+  2. If HEAD differs from /var/lib/jabali-panel/last-built-sha: npm ci,
+     vite build, go build (panel-api + panel-agent), install new binaries,
+     run pending migrations, restart services — then write HEAD back to
+     last-built-sha. A partial-build failure leaves the file stale, so
+     the next update retries automatically (self-heal).
+  3. If HEAD matches last-built-sha: print "Already up to date" and exit.
+     Use --force (-f) to run the rebuild + restart cycle anyway.`,
 		RunE: runUpdate,
 	}
 	cmd.Flags().BoolP("force", "f", false,
@@ -78,18 +86,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	force, _ := cmd.Flags().GetBool("force")
 
-	// gitHead captures HEAD as a string so we can detect whether
-	// `git pull` actually advanced the branch. The git-pull step
-	// populates preHEAD before the pull, postHEAD after — when they
-	// match and --force wasn't passed, we skip the expensive build
-	// + restart steps below.
-	//
-	// Runs via `sudo -u <serviceUser>` because the repo is owned by
-	// the jabali user; git 2.35+ refuses to operate on a repo owned
-	// by a different uid ("fatal: detected dubious ownership"),
-	// which surfaces as exit 128. Mirrors the asUser helper above
-	// but captures stdout for the SHA instead of inheriting it.
-	var preHEAD, postHEAD string
+	// gitHead captures HEAD as a string. Runs via `sudo -u <serviceUser>`
+	// because the repo is owned by the jabali user; git 2.35+ refuses to
+	// operate on a repo owned by a different uid ("fatal: detected
+	// dubious ownership"), which surfaces as exit 128.
+	var postHEAD string
 	gitHead := func() (string, error) {
 		c := exec.Command("sudo", "-u", serviceUser,
 			"git", "-C", repoDir, "rev-parse", "HEAD")
@@ -98,6 +99,39 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			return "", fmt.Errorf("git rev-parse HEAD: %w", err)
 		}
 		return strings.TrimSpace(string(out)), nil
+	}
+
+	// readLastBuiltSHA returns the SHA written after the last fully-
+	// successful rebuild, or "" if the file doesn't exist (fresh install,
+	// or a previous update failed before it could write). An IO error
+	// other than "not exists" returns the error — better to bail out
+	// than silently rebuild a quiescent host.
+	readLastBuiltSHA := func() (string, error) {
+		b, err := os.ReadFile(lastBuiltSHAPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return "", nil
+			}
+			return "", fmt.Errorf("read %s: %w", lastBuiltSHAPath, err)
+		}
+		return strings.TrimSpace(string(b)), nil
+	}
+
+	// writeLastBuiltSHA persists the given SHA atomically (temp + rename)
+	// so a crash mid-write can't leave a corrupt file. Called only after
+	// the full build+restart chain succeeds.
+	writeLastBuiltSHA := func(sha string) error {
+		if err := os.MkdirAll("/var/lib/jabali-panel", 0o755); err != nil {
+			return fmt.Errorf("mkdir /var/lib/jabali-panel: %w", err)
+		}
+		tmp := lastBuiltSHAPath + ".tmp"
+		if err := os.WriteFile(tmp, []byte(sha+"\n"), 0o644); err != nil {
+			return fmt.Errorf("write %s: %w", tmp, err)
+		}
+		if err := os.Rename(tmp, lastBuiltSHAPath); err != nil {
+			return fmt.Errorf("rename %s → %s: %w", tmp, lastBuiltSHAPath, err)
+		}
+		return nil
 	}
 
 	// Prelude steps — always run. Ownership self-heal, then git pull
@@ -139,11 +173,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			// content. Be LOUD about discarded drift so an operator who
 			// didn't expect it sees what's gone and can recover it from
 			// reflog if needed.
-			pre, err := gitHead()
-			if err != nil {
-				return err
-			}
-			preHEAD = pre
 			if err := asUser(repoDir, "git", "fetch", "origin", "main"); err != nil {
 				return err
 			}
@@ -316,11 +345,22 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Fast path: git pull reported no new commits. The build + restart
+	// Fast path: we already fully rebuilt this SHA. The build + restart
 	// cycle would do ~30-60 s of CPU work + bounce services, all for a
 	// no-op. Skip unless the operator asked for a forced rebuild.
-	if preHEAD == postHEAD && !force {
-		shortSHA := preHEAD
+	//
+	// Self-heal: if a PREVIOUS update advanced HEAD but failed before
+	// last-built-sha was written, lastBuilt stays at the old SHA (or ""
+	// on a fresh host) and we re-run the build chain — which is what
+	// the operator wanted. The earlier implementation compared
+	// preHEAD==postHEAD, which would have skipped the rebuild in that
+	// stuck state, requiring --force to recover.
+	lastBuilt, err := readLastBuiltSHA()
+	if err != nil {
+		return err
+	}
+	if lastBuilt == postHEAD && !force {
+		shortSHA := postHEAD
 		if len(shortSHA) >= 7 {
 			shortSHA = shortSHA[:7]
 		}
@@ -334,6 +374,16 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		if err := s.fn(); err != nil {
 			return fmt.Errorf("%s: %w", s.name, err)
 		}
+	}
+
+	// Record the SHA we just fully built + restarted against. Must be
+	// the LAST thing we do — if any step above fails, we DON'T write,
+	// and the next update retries the build chain automatically.
+	if err := writeLastBuiltSHA(postHEAD); err != nil {
+		// Don't fail the whole update for a cosmetic bookkeeping miss;
+		// binaries + migrations + services are already updated. Next
+		// run will simply rebuild once more (harmless).
+		fmt.Printf("  (warning: could not persist last-built-sha: %v)\n", err)
 	}
 
 	fmt.Println("\n✓ Update complete.")

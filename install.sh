@@ -2523,19 +2523,33 @@ install_hydra() {
   # stay on the last semver self-hosted line until we have a reason to jump.
   local hydra_version="2.3.0"
   local hydra_binary="/usr/local/bin/hydra"
-  local hydra_tar="/tmp/hydra_${hydra_version}-linux_64bit.tar.gz"
+  # SQLite variant (CGO build). The default `-linux_64bit` tarball is
+  # compiled without SQLite; our DSN is sqlite:///... per ADR-0036
+  # amendment, so we must pull the `-linux_sqlite_64bit` flavour.
+  local hydra_tar="/tmp/hydra_${hydra_version}-linux_sqlite_64bit.tar.gz"
   local hydra_sha_file="${REPO_DIR}/install/hydra.sha256"
-  local hydra_url="https://github.com/ory/hydra/releases/download/v${hydra_version}/hydra_${hydra_version}-linux_64bit.tar.gz"
+  local hydra_url="https://github.com/ory/hydra/releases/download/v${hydra_version}/hydra_${hydra_version}-linux_sqlite_64bit.tar.gz"
 
-  # Skip download if the binary already matches. `hydra version` prints
-  # a semver on its own line; grep for it and compare.
+  # Skip download if the binary already matches. Two checks:
+  #   1. Version string matches (standard semver compare)
+  #   2. SQLite support is compiled in — the default linux_64bit tarball
+  #      from Ory has NO SQLite support, so a pre-sqlite-pivot host can
+  #      carry the right version string but fail at migrate time. We
+  #      probe by feeding the real sqlite:// DSN to `migrate sql up`
+  #      with --dry-run-ish args and grepping for the well-known error
+  #      message. Only the non-SQLite binary emits that message; the
+  #      SQLite binary either proceeds or complains about something
+  #      else.
   if [[ -f "$hydra_binary" ]]; then
-    local installed_version
+    local installed_version sqlite_probe
     installed_version=$("$hydra_binary" version 2>&1 | grep -oP 'Version:\s+\K[^[:space:]]+' || echo "unknown")
-    if [[ "$installed_version" == "v${hydra_version}" ]]; then
-      _ok "Hydra $hydra_version already installed"
+    sqlite_probe=$("$hydra_binary" migrate sql up --yes "sqlite:///nonexistent/probe.db?_fk=true" 2>&1 || true)
+    if [[ "$installed_version" == "v${hydra_version}" ]] \
+       && [[ "$sqlite_probe" != *"SQLite support was not built"* ]]; then
+      _ok "Hydra $hydra_version (SQLite build) already installed"
       return
     fi
+    _log "reinstalling Hydra (version=$installed_version, needs SQLite build)"
   fi
 
   _log "downloading Hydra $hydra_version from GitHub"

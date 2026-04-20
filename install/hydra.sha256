@@ -1,12 +1,21 @@
-# Ory Hydra v2.3.0 SHA-256 checksum for hydra_2.3.0-linux_64bit.tar.gz
+# Ory Hydra v2.3.0 — SQLite-enabled binary (CGO build with libsqlite3).
+# File: hydra_2.3.0-linux_sqlite_64bit.tar.gz
 # Source: https://github.com/ory/hydra/releases/download/v2.3.0/checksums.txt
 # Verified: 2026-04-20
 #
+# WHY THE SQLITE VARIANT (not the default linux_64bit build):
+# Ory ships two Linux amd64 tarballs per release — the default is
+# compiled WITHOUT SQLite support (MySQL/Postgres/CockroachDB only).
+# A SQLite-flavoured CGO build lives behind the `-sqlite_64bit` suffix.
+# Our DSN is sqlite:///var/lib/jabali-hydra/db.sqlite3 (ADR-0036
+# amendment), so the default binary errors out at migrate time with
+# "SQLite support was not built into the binary. Binary archives
+# indicate SQLite support by appending the -sqlite suffix".
+#
 # Plan m16-hydra-oauth.md §8 pinned "v2.4.x" as the target at blueprint
-# time; v2.3.0 is the latest stable 2.x at dispatch (2026-04-20). Ory's
-# newer releases (v25.x, v26.x) follow calendar versioning and ship as
-# part of the Ory stack bundle — we stay on the last semver-tagged
-# self-hosted line until we have a reason to jump. Bump the version +
-# this checksum + the install.sh plumbing together; Hydra's migrations
-# are idempotent and safe to re-run on upgrade.
-74b359b78b144fb4d8b2a80aedfc2a5b8d2c9a52184fdf9dd665c25afecb6b51  hydra_2.3.0-linux_64bit.tar.gz
+# time; v2.3.0 is the latest stable 2.x (Ory jumped straight to
+# calendar-versioned v25.x/v26.x after — no v2.4 exists). We stay on
+# the last semver-tagged self-hosted line until we have a reason to
+# jump. Bump the version + this checksum + the install.sh URL together;
+# Hydra's migrations are idempotent and safe to re-run on upgrade.
+9a05dca5076427d18f6a57bc58542c75989a0e37a605c85962ffc8a7cc3ba707  hydra_2.3.0-linux_sqlite_64bit.tar.gz

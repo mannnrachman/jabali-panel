@@ -13,7 +13,7 @@ import { buildShellSider } from "./shellSider";
 const UserSider = buildShellSider("user");
 
 function UserTitle({ collapsed }: { collapsed: boolean }) {
-  return <JabaliTitle collapsed={collapsed} text="Jabali Panel" />;
+  return <JabaliTitle collapsed={collapsed} />;
 }
 
 export function UserLayout() {

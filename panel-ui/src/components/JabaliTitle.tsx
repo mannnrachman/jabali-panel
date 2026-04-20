@@ -15,7 +15,7 @@ interface JabaliTitleProps {
   text?: string;
 }
 
-export function JabaliTitle({ collapsed = false, text = "Jabali Panel" }: JabaliTitleProps) {
+export function JabaliTitle({ collapsed = false, text = "Jabali" }: JabaliTitleProps) {
   const { mode } = useThemeMode();
   const src = mode === "dark" ? "/images/jabali_logo_dark.svg" : "/images/jabali_logo.svg";
 
@@ -24,20 +24,20 @@ export function JabaliTitle({ collapsed = false, text = "Jabali Panel" }: Jabali
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 10,
+        gap: 12,
         padding: "0 4px",
       }}
     >
       <img
         src={src}
         alt="Jabali"
-        style={{ height: 28, width: "auto", flexShrink: 0 }}
+        style={{ height: 32, width: "auto", flexShrink: 0 }}
       />
       {!collapsed && (
         <span
           style={{
-            fontSize: 16,
-            fontWeight: 600,
+            fontSize: 22,
+            fontWeight: 700,
             letterSpacing: 0.5,
             color: mode === "dark" ? "#f5f5f5" : "#1f1f1f",
           }}

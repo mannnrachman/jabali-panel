@@ -17,9 +17,10 @@ import { buildShellSider } from "./shellSider";
 const AdminSider = buildShellSider("admin");
 
 // Small wrapper so Refine's TitleProps contract (`{ collapsed }`) maps
-// to our JabaliTitle while injecting the admin-specific brand text.
+// to our JabaliTitle — both admin and user shells render "Jabali" now,
+// shell context is already communicated by the URL mount + sidebar.
 function AdminTitle({ collapsed }: { collapsed: boolean }) {
-  return <JabaliTitle collapsed={collapsed} text="Jabali Admin" />;
+  return <JabaliTitle collapsed={collapsed} />;
 }
 
 export function AdminLayout() {

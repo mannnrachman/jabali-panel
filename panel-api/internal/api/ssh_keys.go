@@ -74,7 +74,7 @@ func (h *sshKeysHandler) create(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	userID := claims.Subject
+	userID := claims.UserID
 
 	// Validate and parse the public key
 	normalizedKey, fingerprint, err := sshkeys.ParseAndFingerprint(req.PublicKey)
@@ -145,7 +145,7 @@ func (h *sshKeysHandler) list(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	userID := claims.Subject
+	userID := claims.UserID
 
 	keys, err := h.cfg.SSHKeys.ListByUserID(ctx, userID)
 	if err != nil {
@@ -178,7 +178,7 @@ func (h *sshKeysHandler) delete(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	userID := claims.Subject
+	userID := claims.UserID
 	keyID := c.Param("id")
 
 	// Verify ownership

@@ -166,6 +166,15 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 	// for RequireKratosSession binding.
 	if cfg.Auth.Provider == "kratos" && cfg.Auth.Kratos.PublicURL != "" {
 		deps.KratosClient = kratosclient.NewClient(cfg.Auth.Kratos.PublicURL, cfg.Auth.Kratos.AdminURL)
+
+		// Same-origin reverse proxy for /.ory/* — the SPA fetches relative
+		// Kratos self-service endpoints and panel-api binds :8443 directly
+		// (no nginx in front on that port), so we proxy in-process. See
+		// kratos_proxy.go for the full rationale.
+		if err := RegisterKratosProxy(r, cfg.Auth.Kratos.PublicURL); err != nil {
+			deps.Log.Error("registering Kratos reverse proxy failed; login will be broken",
+				"err", err, "public_url", cfg.Auth.Kratos.PublicURL)
+		}
 	}
 
 	if deps.JWTIssuer != nil || deps.KratosClient != nil {

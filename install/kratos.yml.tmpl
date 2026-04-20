@@ -8,12 +8,12 @@ dsn: "mysql://{{.KratosDatabaseUser}}:{{.KratosDatabasePassword}}@tcp(127.0.0.1:
 
 serve:
   public:
-    base_url: "https://{{.PanelHostname}}/.ory/"
+    base_url: "https://{{.PanelHostname}}:8443/.ory/"
     port: 4433
     cors:
       enabled: true
       allowed_origins:
-        - "https://{{.PanelHostname}}"
+        - "https://{{.PanelHostname}}:8443"
       allowed_methods:
         - GET
         - POST
@@ -34,12 +34,12 @@ serve:
     port: 4434
 
 selfservice:
-  default_browser_return_url: "https://{{.PanelHostname}}/dashboard"
+  default_browser_return_url: "https://{{.PanelHostname}}:8443/dashboard"
   allowed_return_urls:
-    - "https://{{.PanelHostname}}"
-    - "https://{{.PanelHostname}}/dashboard"
-    - "https://{{.PanelHostname}}/login"
-    - "https://{{.PanelHostname}}/admin"
+    - "https://{{.PanelHostname}}:8443"
+    - "https://{{.PanelHostname}}:8443/dashboard"
+    - "https://{{.PanelHostname}}:8443/login"
+    - "https://{{.PanelHostname}}:8443/admin"
 
   methods:
     password:
@@ -57,12 +57,12 @@ selfservice:
 
   flows:
     login:
-      ui_url: "https://{{.PanelHostname}}/login"
+      ui_url: "https://{{.PanelHostname}}:8443/login"
       lifespan: 1h
 
     registration:
       enabled: false
-      ui_url: "https://{{.PanelHostname}}/register"
+      ui_url: "https://{{.PanelHostname}}:8443/register"
       lifespan: 1h
       after:
         password:
@@ -70,23 +70,23 @@ selfservice:
             - hook: session
 
     settings:
-      ui_url: "https://{{.PanelHostname}}/settings"
+      ui_url: "https://{{.PanelHostname}}:8443/settings"
       privileged_session_max_age: 15m
       lifespan: 1h
 
     recovery:
       enabled: true
-      ui_url: "https://{{.PanelHostname}}/recovery"
+      ui_url: "https://{{.PanelHostname}}:8443/recovery"
       lifespan: 1h
 
     verification:
       enabled: true
-      ui_url: "https://{{.PanelHostname}}/verify"
+      ui_url: "https://{{.PanelHostname}}:8443/verify"
       lifespan: 24h
 
     logout:
       after:
-        default_browser_return_url: "https://{{.PanelHostname}}/login"
+        default_browser_return_url: "https://{{.PanelHostname}}:8443/login"
 
 identity:
   default_schema_id: default

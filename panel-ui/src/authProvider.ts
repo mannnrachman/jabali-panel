@@ -2,8 +2,12 @@
 //
 // M20: all authentication state is the `ory_kratos_session` cookie, which the
 // browser attaches automatically to same-origin requests. There is no access
-// token in JS, no refresh dance, no in-memory session copy. The SPA simply
-// asks Kratos "am I logged in?" via /sessions/whoami and routes accordingly.
+// token in JS, no refresh dance, no in-memory session copy. The SPA asks
+// panel-api's /api/v1/me for the caller's identity — that endpoint already
+// runs behind RequireKratosSession (which calls Kratos whoami under the
+// hood) and returns the panel ULID + authoritative is_admin. Sourcing
+// identity from /me instead of Kratos whoami directly means the ID we
+// carry in JS matches what panel-api expects on /users/:id path params.
 //
 // Role-based routing: after login we fetch the identity and redirect to the
 // appropriate shell — admins go to /jabali-admin, everyone else to
@@ -38,8 +42,8 @@ export const authProvider: AuthProvider = {
     return { success: true, redirectTo: "/login" };
   },
 
-  // check: called by Refine on route transitions. Asks Kratos whoami;
-  // the cookie is sent automatically. No refresh step needed.
+  // check: called by Refine on route transitions. Hits /api/v1/me;
+  // the Kratos session cookie is sent automatically. No refresh step needed.
   check: async () => {
     const me = await getIdentity();
     if (me) return { authenticated: true };

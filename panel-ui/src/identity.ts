@@ -1,16 +1,31 @@
 // identity.ts — single source of truth for "who am I", shared across
 // authProvider, RoleGate, and any page component that needs to know the
-// caller's role.
+// caller's panel user ID or role.
 //
-// M20: identity comes from Kratos's /sessions/whoami (via /.ory/). The
-// is_admin trait is authoritative; a missing trait defaults to false so
-// a compromised identity can't accidentally elevate.
-import { whoami } from "./kratos";
+// Source: GET /api/v1/me (NOT Kratos whoami directly). The panel-api's
+// RequireKratosSession middleware already validates the ory_kratos_session
+// cookie and resolves the Kratos identity → panel user row, so /me
+// returns claims.UserID (the panel ULID) and claims.IsAdmin (the panel
+// DB is_admin, which is authoritative per ADR-0034, not the advisory
+// Kratos trait).
+//
+// Why not whoami: the Kratos identity UUID and the panel ULID are
+// DIFFERENT values. Any code that needs to pass `me.id` to a panel
+// endpoint (PATCH /users/:id, GET /users/:id/usage, etc.) needs the
+// panel ULID — using the Kratos UUID triggers 403 on RequireOwner for
+// every non-admin user.
+import { apiClient } from "./apiClient";
 
 export type Identity = {
   id: string;
   email: string;
   isAdmin: boolean;
+};
+
+type MeResponse = {
+  id: string;
+  email: string;
+  is_admin: boolean;
 };
 
 let cached: Identity | null = null;
@@ -19,10 +34,11 @@ let inflight: Promise<Identity | null> | null = null;
 /**
  * Fetch the current user's identity, memoized across the session.
  *
- * Returns null when we're not logged in. Re-throws on transient upstream
- * errors (Kratos 5xx) so the caller can tell the difference between "no
- * session" and "identity service blip" — only the former should trigger
- * a /login redirect.
+ * Returns null when we're not logged in (401) or when the identity
+ * service is transiently unreachable. The caller (authProvider.check,
+ * RoleGate, etc.) sees `null` the same way either way and routes to
+ * /login — that's acceptable because a genuinely logged-in user with
+ * a transient blip just re-auths once.
  */
 export async function getIdentity(): Promise<Identity | null> {
   if (cached) return cached;
@@ -30,21 +46,18 @@ export async function getIdentity(): Promise<Identity | null> {
 
   inflight = (async () => {
     try {
-      const session = await whoami();
-      if (!session?.identity) {
-        return null;
-      }
-      const traits = session.identity.traits ?? { email: "" };
+      const { data } = await apiClient.get<MeResponse>("/me");
+      if (!data?.id) return null;
       cached = {
-        id: session.identity.id,
-        email: traits.email ?? "",
-        isAdmin: traits.is_admin === true,
+        id: data.id,
+        email: data.email ?? "",
+        isAdmin: data.is_admin === true,
       };
       return cached;
     } catch {
-      // Network / 5xx — treat as "unknown" rather than "logged out". The
-      // caller can retry or surface a toast; we don't want a Kratos blip
-      // to force everyone to re-login.
+      // 401 (no session) and transient 5xx/network both collapse to null
+      // here. The Refine authProvider.onError interceptor separately
+      // handles 401 routing to /login for the initial call site.
       return null;
     } finally {
       inflight = null;
@@ -54,7 +67,7 @@ export async function getIdentity(): Promise<Identity | null> {
   return inflight;
 }
 
-/** Drop the cache. Call on logout or on any 401 that bubbles from whoami. */
+/** Drop the cache. Call on logout or on any 401 that bubbles from /me. */
 export function clearIdentity(): void {
   cached = null;
   inflight = null;

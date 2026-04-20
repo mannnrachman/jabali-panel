@@ -1,23 +1,16 @@
-// Identity cache smoke test. Stubs the kratos whoami call so we can exercise
-// the memoization + clearIdentity paths without a live Kratos instance.
+// Identity cache smoke test. Stubs the /api/v1/me call so we can exercise
+// the memoization + clearIdentity paths without a live backend. Sourcing
+// from /me (not Kratos whoami) gives us the panel ULID — see identity.ts
+// for the rationale.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { apiClient } from "./apiClient";
 import { clearIdentity, getIdentity } from "./identity";
-import * as kratos from "./kratos";
 
-function session(
-  id: string,
-  email: string,
-  isAdmin: boolean,
-): kratos.KratosSession {
-  return {
-    id: "session-" + id,
-    active: true,
-    identity: {
-      id,
-      traits: { email, is_admin: isAdmin },
-    },
-  };
+type MeResponse = { id: string; email: string; is_admin: boolean };
+
+function meResponse(id: string, email: string, isAdmin: boolean): MeResponse {
+  return { id, email, is_admin: isAdmin };
 }
 
 describe("identity", () => {
@@ -29,10 +22,10 @@ describe("identity", () => {
     vi.restoreAllMocks();
   });
 
-  it("caches the whoami response across calls", async () => {
+  it("caches the /me response across calls", async () => {
     const spy = vi
-      .spyOn(kratos, "whoami")
-      .mockResolvedValue(session("01K...", "a@b.c", true));
+      .spyOn(apiClient, "get")
+      .mockResolvedValue({ data: meResponse("01K...", "a@b.c", true) });
 
     const a = await getIdentity();
     const b = await getIdentity();
@@ -46,10 +39,10 @@ describe("identity", () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it("coalesces concurrent callers into one whoami call", async () => {
+  it("coalesces concurrent callers into one /me call", async () => {
     const spy = vi
-      .spyOn(kratos, "whoami")
-      .mockImplementation(async () => session("x", "e", false));
+      .spyOn(apiClient, "get")
+      .mockImplementation(async () => ({ data: meResponse("x", "e", false) }));
 
     const [a, b, c] = await Promise.all([
       getIdentity(),
@@ -66,23 +59,23 @@ describe("identity", () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it("returns null when whoami resolves to no session (not logged in)", async () => {
-    vi.spyOn(kratos, "whoami").mockResolvedValue(null);
+  it("returns null when /me rejects (401 no session)", async () => {
+    vi.spyOn(apiClient, "get").mockRejectedValue({
+      response: { status: 401 },
+    });
     const me = await getIdentity();
     expect(me).toBeNull();
   });
 
-  it("returns null (not throws) when whoami fails transiently — Kratos blip shouldn't force logout", async () => {
-    vi.spyOn(kratos, "whoami").mockRejectedValue(new Error("5xx"));
+  it("returns null (not throws) when /me fails transiently — blip shouldn't force logout", async () => {
+    vi.spyOn(apiClient, "get").mockRejectedValue(new Error("5xx"));
     const me = await getIdentity();
     expect(me).toBeNull();
   });
 
-  it("defaults is_admin to false when the trait is missing or non-boolean", async () => {
-    vi.spyOn(kratos, "whoami").mockResolvedValue({
-      id: "s",
-      active: true,
-      identity: { id: "x", traits: { email: "e@x" } },
+  it("defaults is_admin to false when the field is missing or non-boolean", async () => {
+    vi.spyOn(apiClient, "get").mockResolvedValue({
+      data: { id: "x", email: "e@x" } as MeResponse,
     });
     const me = await getIdentity();
     expect(me?.isAdmin).toBe(false);
@@ -90,9 +83,9 @@ describe("identity", () => {
 
   it("refetches after clearIdentity()", async () => {
     const spy = vi
-      .spyOn(kratos, "whoami")
-      .mockResolvedValueOnce(session("1", "a", false))
-      .mockResolvedValueOnce(session("2", "b", true));
+      .spyOn(apiClient, "get")
+      .mockResolvedValueOnce({ data: meResponse("1", "a", false) })
+      .mockResolvedValueOnce({ data: meResponse("2", "b", true) });
 
     const first = await getIdentity();
     expect(first?.id).toBe("1");

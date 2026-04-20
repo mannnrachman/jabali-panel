@@ -71,6 +71,17 @@ jobs:
   e2e:
     name: Playwright E2E
     runs-on: ubuntu-latest
+    # Serialize e2e across ALL refs, not just the same ref. Port 4173 is
+    # a host-level resource on the single-runner host-mode setup, so a
+    # PR run (refs/pull/N/head) and a main push run (refs/heads/main) — in
+    # different top-level concurrency groups — can both pass their own
+    # "Free port 4173" cleanup step, then race to bind 4173, and one
+    # loses with EADDRINUSE. Pinning every e2e job to a shared group makes
+    # them queue instead of race. cancel-in-progress: false preserves the
+    # authoritative green/red history on main and lets PR runs finish.
+    concurrency:
+      group: e2e-port-4173
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

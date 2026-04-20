@@ -932,7 +932,10 @@ DATABASE_URL=mysql://root:password@127.0.0.1:3306/jabali_panel
 AGENT_SOCKET=/run/jabali/agent.sock
 AGENT_TIMEOUT=5s
 PANEL_ADDR=0.0.0.0:8443
-JWT_SECRET=<base64-encoded 32-byte key>
+AUTH_PROVIDER=kratos                 # "kratos" (default since M20) or "legacy"
+KRATOS_PUBLIC_URL=http://127.0.0.1:4433
+KRATOS_ADMIN_URL=http://127.0.0.1:4434
+JWT_SECRET=<base64-encoded 32-byte key>   # only required when AUTH_PROVIDER=legacy
 RECONCILER_INTERVAL=30s
 ```
 
@@ -942,7 +945,18 @@ RECONCILER_INTERVAL=30s
 [panel]
 port = 8443
 addr = "0.0.0.0:8443"
-jwt_secret = "..."
+
+[auth]
+# "kratos" (M20 default, 2026-04-20) or "legacy" (30-day rollback window)
+provider = "kratos"
+# Only used when provider = "legacy". Kratos issues its own session tokens.
+jwt_secret = ""
+access_ttl  = "15m"
+refresh_ttl = "168h"
+
+[auth.kratos]
+public_url = "http://127.0.0.1:4433"   # nginx proxies /.ory/* here
+admin_url  = "http://127.0.0.1:4434"   # loopback-only, never exposed
 
 [agent]
 socket = "/run/jabali/agent.sock"
@@ -955,6 +969,8 @@ enabled = true
 [database]
 url = "mysql://..."
 ```
+
+See `config.example.toml` for the full annotated shape (including `[cors]`).
 
 ### Server settings (DB-backed)
 
@@ -974,8 +990,8 @@ All read/write via `/api/v1/system/settings`:
 1. **No hardcoded secrets** — all via environment variables or config files (not in code)
 2. **Input validation** — every user input validated at API boundaries
 3. **SQL injection prevention** — GORM parameterized queries throughout
-4. **Authentication** — JWT tokens (access + refresh), bcrypt passwords
-5. **Authorization** — RBAC middleware (RequireAdmin, RequireOwner) on protected routes
+4. **Authentication** — Ory Kratos session cookies (default since M20, 2026-04-20); legacy JWT access+refresh retained behind `auth.provider = "legacy"` for the 30-day rollback window. Passwords hashed with bcrypt cost-12 (Kratos passes hashes through; no argon2id rehash).
+5. **Authorization** — RBAC middleware (RequireAdmin, RequireOwner) on protected routes. DB is authoritative for `is_admin`; Kratos identity traits are advisory only.
 6. **Agent argument sanitization** — all agent command arguments escaped before passing to shell
 7. **Rate limiting** — per-IP on auth endpoints, per-token on automation API (planned M15)
 8. **Error messages** — never leak sensitive data (database names, file paths, internal IPs)

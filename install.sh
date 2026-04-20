@@ -2284,10 +2284,10 @@ install_sso_key() {
 # ---------- step 8: Kratos identity provider (M20) ---------------------------
 
 install_kratos() {
-  _log "installing Ory Kratos identity provider (v1.3.1)"
-
   # Kratos binary: vendored SHA-256 verification pattern matching wp-cli + phpmyadmin.
   local kratos_version="26.2.0"
+  _log "installing Ory Kratos identity provider (v${kratos_version})"
+
   local kratos_binary="/usr/local/bin/kratos"
   local kratos_tar="/tmp/kratos_${kratos_version}-linux_64bit.tar.gz"
   local kratos_sha_file="${REPO_DIR}/install/kratos.sha256"
@@ -2514,14 +2514,14 @@ install_kratos() {
 }
 
 install_hydra() {
-  _log "installing Ory Hydra OAuth 2 / OIDC provider (v2.3.0)"
-
   # Hydra binary: vendored SHA-256 verification, same pattern as install_kratos.
-  # Plan m16-hydra-oauth.md §8 pinned v2.4.x at blueprint time; v2.3.0 is
-  # the latest stable 2.x at dispatch. Ory's newer calendar-versioned
-  # releases (v25.x, v26.x) ship as part of the Ory stack bundle — we
-  # stay on the last semver self-hosted line until we have a reason to jump.
+  # Ory switched from semver to calendar versioning after v2.3.0;
+  # v26.2.0 (March 2026) is the latest stable. Bump the version here,
+  # update install/hydra.sha256, and re-run install.sh — Hydra's
+  # migrations are idempotent and safe across boots.
   local hydra_version="26.2.0"
+  _log "installing Ory Hydra OAuth 2 / OIDC provider (v${hydra_version})"
+
   local hydra_binary="/usr/local/bin/hydra"
   # SQLite variant (CGO build). The default `-linux_64bit` tarball is
   # compiled without SQLite; our DSN is sqlite:///... per ADR-0036

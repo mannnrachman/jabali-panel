@@ -67,18 +67,31 @@ export const UserDatabaseList = () => {
   const handleOpenPhpMyAdmin = async (row: Database) => {
     // Open a blank tab synchronously so it counts as a user-initiated
     // popup; most browsers block window.open() that fires after an
-    // await. We navigate the tab once the SSO redirect URL resolves.
-    // The tab is opened with `noopener,noreferrer` so phpMyAdmin can't
-    // reach back through window.opener.
-    const tab = window.open("", "_blank", "noopener,noreferrer");
+    // await. Opening with no features (not "noopener,noreferrer")
+    // because `noopener` makes window.open return null — which then
+    // falls into the else-branch below and navigates the CURRENT tab
+    // while the blank tab stays open, orphaned. phpMyAdmin is served
+    // same-origin from our nginx vhost, so window.opener access is
+    // same-origin self-reference and not a cross-site threat anyway.
+    // We still null out tab.opener after navigation as defense in
+    // depth so the phpMyAdmin page can't reach back to navigate the
+    // panel tab.
+    const tab = window.open("", "_blank");
     try {
       setLoadingPhpMyAdminId(row.id);
       const response = await ssoPhpMyAdmin(row.id);
       if (tab) {
         tab.location.href = response.redirect_url;
+        try {
+          // Best-effort: some browsers treat opener as read-only; the
+          // try/catch is to keep the rest of the flow working if so.
+          tab.opener = null;
+        } catch {
+          // ignore
+        }
       } else {
-        // Pop-up blocker closed the tab before we got the URL; fall
-        // back to same-tab navigation so the user isn't stranded.
+        // Pop-up blocker killed the new tab before we could navigate.
+        // Fall back to same-tab navigation so the user isn't stranded.
         window.location.assign(response.redirect_url);
       }
     } catch (error) {

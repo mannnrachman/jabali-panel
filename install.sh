@@ -363,6 +363,54 @@ install_base_packages() {
   #      as the cheapest post-start health probe)
   if [[ ! -L /etc/resolv.conf && -e /etc/resolv.conf ]] \
      && systemctl is-active --quiet systemd-resolved.service; then
+
+    # Before flipping the symlink, migrate the admin's existing DNS
+    # config into resolved so the host doesn't go dark. If /etc/resolv.conf
+    # has (say) corporate DNS at 10.0.0.1 + search corp.example.com,
+    # a raw symlink flip would point all lookups at resolved, which
+    # has no upstreams configured → every query SERVFAILs until the
+    # admin visits the panel UI.
+    #
+    # Write harvested values to /etc/systemd/resolved.conf.d/jabali.conf
+    # (the panel's own drop-in) — NOT a separate migrated.conf file —
+    # so the panel UI shows Source: drop-in with the admin's previous
+    # upstreams pre-filled, giving them a one-click point to modify.
+    # Skip if jabali.conf already exists so re-running install.sh on a
+    # host where the admin has already saved via the UI doesn't clobber
+    # their panel-managed config.
+    local panel_dropin="/etc/systemd/resolved.conf.d/jabali.conf"
+    if [[ ! -f "$panel_dropin" ]]; then
+      # Harvest nameservers: exclude only 127.0.0.53 (self-reference
+      # once we symlink to the stub). Preserve everything else including
+      # 127.0.0.1 (local dnsmasq/unbound) and RFC 1918 addresses
+      # (corporate resolvers).
+      local migrated_ns migrated_search
+      migrated_ns="$(awk '/^nameserver[[:space:]]+/{print $2}' /etc/resolv.conf \
+                     | grep -v '^127\.0\.0\.53$' \
+                     | paste -sd' ' -)"
+      # Take first search/domain directive (resolv.conf's older 'domain'
+      # keyword is equivalent to a single-entry 'search').
+      migrated_search="$(awk '/^(search|domain)[[:space:]]+/{print $2; exit}' /etc/resolv.conf)"
+
+      if [[ -n "$migrated_ns" ]]; then
+        _log "migrating existing /etc/resolv.conf upstreams to panel drop-in: ${migrated_ns}${migrated_search:+ (search: ${migrated_search})}"
+        install -d -m 0755 /etc/systemd/resolved.conf.d
+        {
+          echo "# Managed by jabali-panel — edits via /jabali-admin/settings → DNS."
+          echo "# Seeded by install.sh from the host's previous /etc/resolv.conf"
+          echo "# so the host's DNS stayed working when install.sh handed"
+          echo "# /etc/resolv.conf over to systemd-resolved's stub. The admin"
+          echo "# can modify these upstreams via the panel UI at any time;"
+          echo "# changes land in this same file."
+          echo "[Resolve]"
+          echo "DNS=${migrated_ns}"
+          [[ -n "$migrated_search" ]] && echo "Domains=${migrated_search}"
+        } > "$panel_dropin"
+        chmod 0644 "$panel_dropin"
+        systemctl restart systemd-resolved.service 2>/dev/null || true
+      fi
+    fi
+
     _log "linking /etc/resolv.conf → /run/systemd/resolve/stub-resolv.conf (was plain file)"
     ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
   fi

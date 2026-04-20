@@ -58,6 +58,15 @@ type OAuth2FlowHandlerConfig struct {
 	// Gin would preempt the SPA's NoRoute fallback. Default
 	// "/consent".
 	ConsentUIPath string
+	// BrowserAuth is the middleware used on the Hydra-target browser
+	// routes (GET /oauth2-login, GET /oauth2-consent). It MUST emit a
+	// 302 to /login on no-session rather than a JSON 401 — the flow
+	// starts with Hydra redirecting a browser to us, and a 401 leaves
+	// first-time users staring at a JSON blob. Typically
+	// middleware.RequireKratosSessionOrRedirect. When nil, the
+	// handlers fall back to the protected-group's middleware
+	// (JSON-401 behaviour) so existing test wiring keeps working.
+	BrowserAuth gin.HandlerFunc
 }
 
 // RegisterOAuth2FlowRoutes wires the login + consent handlers into
@@ -92,16 +101,28 @@ func RegisterOAuth2FlowRoutes(protected *gin.RouterGroup, root *gin.Engine, cfg 
 	consentAccept := makeConsentAcceptHandler(cfg)
 	consentDeny := makeConsentDenyHandler(cfg)
 
-	// Attach RequireKratosSession via the same middleware chain
-	// used on the /api/v1 group. The protected arg is that group;
-	// extract its handlers chain (without the /api/v1 prefix) by
-	// registering on the root engine and manually invoking.
-	authChain := protected.Handlers
+	// Two middleware tiers:
+	//
+	//   * Browser-target routes (GET /oauth2-login, GET /oauth2-consent)
+	//     need a 302-to-/login on missing session — a browser handles a
+	//     redirect; it cannot do anything useful with a 401 JSON blob
+	//     in the middle of a Hydra handshake. Use cfg.BrowserAuth when
+	//     provided; fall back to the JSON-401 chain when callers (e.g.
+	//     tests) leave BrowserAuth nil.
+	//
+	//   * SPA submit + metadata routes stay on the hard JSON-401 chain.
+	//     They're reached via axios, not full-page nav, and the SPA's
+	//     auth provider already knows how to handle 401.
+	apiChain := protected.Handlers
+	browserChain := apiChain
+	if cfg.BrowserAuth != nil {
+		browserChain = []gin.HandlerFunc{cfg.BrowserAuth}
+	}
 
-	root.GET("/oauth2-login", append(authChain, loginStart)...)
-	root.GET("/oauth2-consent", append(authChain, consentStart)...)
-	root.POST("/oauth2-consent/accept", append(authChain, consentAccept)...)
-	root.POST("/oauth2-consent/deny", append(authChain, consentDeny)...)
+	root.GET("/oauth2-login", append(browserChain, loginStart)...)
+	root.GET("/oauth2-consent", append(browserChain, consentStart)...)
+	root.POST("/oauth2-consent/accept", append(apiChain, consentAccept)...)
+	root.POST("/oauth2-consent/deny", append(apiChain, consentDeny)...)
 
 	// Read-only metadata for the SPA consent UI. Lives under
 	// /api/v1 so the SPA's axios baseURL picks it up automatically.

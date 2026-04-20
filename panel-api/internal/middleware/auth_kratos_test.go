@@ -321,3 +321,92 @@ func TestRequireKratosSession_KratosUnreachable_Returns503(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	assert.Contains(t, rec.Body.String(), "identity_service_unavailable")
 }
+
+// redirectProbe mounts RequireKratosSessionOrRedirect on /guarded
+// and echoes the authenticated user on success. Used by the
+// browser-flow redirect tests below.
+func redirectProbe(client *kratosclient.Client, users repository.UserRepository) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/guarded", middleware.RequireKratosSessionOrRedirect(client, users, "/login"),
+		func(c *gin.Context) {
+			cl := ginctx.Claims(c)
+			c.JSON(http.StatusOK, gin.H{"user_id": cl.UserID})
+		})
+	return r
+}
+
+// TestRequireKratosSessionOrRedirect_MissingCookie_Redirects pins the
+// "first-time SSO" browser flow: a user lands on /oauth2-login via
+// Hydra with no panel session yet. A 401 would strand them; the
+// browser variant must emit a 302 to /login with a return_to that
+// preserves the full original URL so the SPA can bounce back after
+// login.
+func TestRequireKratosSessionOrRedirect_MissingCookie_Redirects(t *testing.T) {
+	t.Parallel()
+	srv := fakeKratos(t, http.StatusOK, `{}`)
+	defer srv.Close()
+
+	client := kratosclient.NewClient(srv.URL, srv.URL)
+	repo := seededRepo()
+
+	req := httptest.NewRequest(http.MethodGet, "/guarded?login_challenge=abc", nil)
+	rec := httptest.NewRecorder()
+
+	redirectProbe(client, repo).ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusFound, rec.Code)
+	loc := rec.Header().Get("Location")
+	assert.Contains(t, loc, "/login?return_to=")
+	// return_to must round-trip the full original path+query so the
+	// SPA can POST /login and then bounce back to exactly the URL
+	// that triggered the redirect.
+	assert.Contains(t, loc, "login_challenge%3Dabc")
+}
+
+// TestRequireKratosSessionOrRedirect_InvalidSession_Redirects covers
+// the same browser-flow outcome when Kratos returns 401 (expired
+// session, revoked token). Same 302, not a 401 blob.
+func TestRequireKratosSessionOrRedirect_InvalidSession_Redirects(t *testing.T) {
+	t.Parallel()
+	srv := fakeKratos(t, http.StatusUnauthorized, `{"error":"no active session"}`)
+	defer srv.Close()
+
+	client := kratosclient.NewClient(srv.URL, srv.URL)
+	repo := seededRepo()
+
+	req := httptest.NewRequest(http.MethodGet, "/guarded", nil)
+	req.AddCookie(&http.Cookie{Name: "ory_kratos_session", Value: "expired-token"})
+	rec := httptest.NewRecorder()
+
+	redirectProbe(client, repo).ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusFound, rec.Code)
+	assert.Contains(t, rec.Header().Get("Location"), "/login?return_to=")
+}
+
+// TestRequireKratosSessionOrRedirect_ValidSession_AllowsThrough
+// sanity-check: with a real session the handler runs normally and
+// claims are populated.
+func TestRequireKratosSessionOrRedirect_ValidSession_AllowsThrough(t *testing.T) {
+	t.Parallel()
+	srv := fakeKratos(t, http.StatusOK,
+		`{"id":"sess","identity":{"id":"kratos-uuid-01","traits":{"email":"u@x.com"}}}`)
+	defer srv.Close()
+
+	client := kratosclient.NewClient(srv.URL, srv.URL)
+	repo := seededRepo(&models.User{
+		ID:               "01PANEL-REDIR",
+		Email:            "u@x.com",
+		KratosIdentityID: ptrString("kratos-uuid-01"),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/guarded", nil)
+	req.AddCookie(&http.Cookie{Name: "ory_kratos_session", Value: "valid-token"})
+	rec := httptest.NewRecorder()
+
+	redirectProbe(client, repo).ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"user_id":"01PANEL-REDIR"`)
+}

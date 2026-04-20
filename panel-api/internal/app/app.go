@@ -209,6 +209,13 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterOAuth2FlowRoutes(v1, r, api.OAuth2FlowHandlerConfig{
 				Hydra: deps.HydraClient,
 				Log:   deps.Log,
+				// BrowserAuth swaps the default JSON-401 auth for a
+				// 302-to-/login on missing session. Hydra redirects
+				// browsers into /oauth2-login + /oauth2-consent; a
+				// first-time user without a panel session must be
+				// bounced to the SPA login with a return_to pointing
+				// back at the Hydra handshake URL.
+				BrowserAuth: middleware.RequireKratosSessionOrRedirect(deps.KratosClient, deps.Users, "/login"),
 			})
 		}
 

@@ -87,17 +87,31 @@ jobs:
       # Host-mode runners don't get a fresh netns per job, so a stuck
       # vite-preview from a previous run can hold 4173. Playwright's
       # webServer is configured with --strictPort (see playwright.config.ts)
-      # so a leftover would otherwise fail the test loudly — but killing
-      # here is safer and logs what was running.
+      # so any leftover fails the test loudly instead of picking 4174.
+      # Kill any prior vite-preview first; procps is always preinstalled
+      # so pkill is available (unlike fuser/lsof which are optional).
+      # ss is part of iproute2, also always present; we use it to verify
+      # the port is actually free after the kill so we don't race.
       - name: Free port 4173
         run: |
-          if command -v fuser >/dev/null 2>&1; then
-            fuser -k 4173/tcp 2>/dev/null || true
+          echo "=== processes matching 'vite preview' ==="
+          pgrep -a -f "vite preview" || echo "(none)"
+          echo "=== listeners on :4173 before ==="
+          ss -tln | awk 'NR==1 || /:4173 /' || true
+          pkill -9 -f "vite preview" 2>/dev/null || true
+          # Wait up to 10s for the port to actually free (kernel TIME_WAIT
+          # is a SO_REUSEADDR concern, but vite-preview uses fresh sockets
+          # so kill → free is near-instant).
+          for i in $(seq 1 10); do
+            ss -tln | grep -q ":4173 " || break
+            sleep 1
+          done
+          echo "=== listeners on :4173 after ==="
+          ss -tln | awk 'NR==1 || /:4173 /' || true
+          if ss -tln | grep -q ":4173 "; then
+            echo "ERROR: port 4173 still in use after kill + 10s wait"
+            exit 1
           fi
-          if command -v lsof >/dev/null 2>&1; then
-            lsof -ti:4173 | xargs -r kill -9 2>/dev/null || true
-          fi
-          sleep 1
       - name: Playwright
         run: cd panel-ui && npx playwright test --project=chromium --reporter=list
       - name: Upload failure artifacts

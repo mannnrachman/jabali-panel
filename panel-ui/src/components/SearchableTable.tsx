@@ -20,6 +20,7 @@
 // server 11 times.
 import { useEffect, useRef, useState } from "react";
 import { Input, Space, Table } from "antd";
+import { SearchOutlined } from "@ant-design/icons";
 import type { TableProps } from "antd";
 import type { CrudFilters } from "@refinedev/core";
 
@@ -73,20 +74,20 @@ export function SearchableTable<T extends object>({
   // that need those knobs can opt in explicitly.
   return (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-      <Input.Search
+      <Input
         placeholder={searchPlaceholder}
+        prefix={<SearchOutlined />}
         allowClear
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         // Pressing Enter fires immediately (bypasses debounce timer).
-        onSearch={(v) => {
+        onPressEnter={() => {
           if (timer.current) clearTimeout(timer.current);
-          if (v.trim() === "") {
+          const v = query.trim();
+          if (v === "") {
             onSearchChange([]);
           } else {
-            onSearchChange([
-              { field: "q", operator: "contains", value: v.trim() },
-            ]);
+            onSearchChange([{ field: "q", operator: "contains", value: v }]);
           }
         }}
         style={{ maxWidth: 360 }}

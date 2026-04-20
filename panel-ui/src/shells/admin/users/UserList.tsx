@@ -161,16 +161,7 @@ export const UserList = () => {
               <Space size={8}>
                 <TeamOutlined />
                 Users
-                <Badge
-                  count={usersCount}
-                  showZero
-                  color={activeTab === "users" ? "blue" : undefined}
-                  style={
-                    activeTab === "users"
-                      ? undefined
-                      : { backgroundColor: "#d9d9d9", color: "#000" }
-                  }
-                />
+                <Badge count={usersCount} showZero />
               </Space>
             ),
           },
@@ -180,16 +171,7 @@ export const UserList = () => {
               <Space size={8}>
                 <SafetyCertificateOutlined />
                 Administrators
-                <Badge
-                  count={adminsCount}
-                  showZero
-                  color={activeTab === "admins" ? "blue" : undefined}
-                  style={
-                    activeTab === "admins"
-                      ? undefined
-                      : { backgroundColor: "#d9d9d9", color: "#000" }
-                  }
-                />
+                <Badge count={adminsCount} showZero />
               </Space>
             ),
           },

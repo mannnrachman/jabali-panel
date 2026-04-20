@@ -220,9 +220,15 @@ prompt_server_settings() {
   # hit EOF instantly. Fix: read from /dev/tty (the controlling terminal)
   # if one exists. If it doesn't — CI / cloud-init / no TTY at all —
   # fall back to env-var overrides / auto-detected defaults.
+  #
+  # Note: `[[ -r /dev/tty ]]` lies on non-interactive SSH (the device
+  # node exists and looks readable to the test, but `exec 3</dev/tty`
+  # fails with "No such device or address" because the session has no
+  # controlling terminal). So we don't pre-test — we try the exec
+  # directly inside an `if`, which neutralises errexit and lets us
+  # fall through to the stdin-TTY branch on failure.
   local input_fd
-  if [[ -r /dev/tty ]]; then
-    exec 3</dev/tty
+  if exec 3</dev/tty 2>/dev/null; then
     input_fd=3
   elif [[ -t 0 ]]; then
     input_fd=0
@@ -319,7 +325,7 @@ install_base_packages() {
   apt-get install -y -qq --no-install-recommends \
     git curl ca-certificates build-essential tar bzip2 unzip openssl gnupg \
     mariadb-server mariadb-client \
-    php-cli php-mysqli php-curl php-xml php-mbstring php-gd php-zip \
+    php-cli php-mysql php-curl php-xml php-mbstring php-gd php-zip \
     composer \
     rsync acl \
     systemd-resolved \

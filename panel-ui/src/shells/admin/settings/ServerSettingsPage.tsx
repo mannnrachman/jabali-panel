@@ -23,8 +23,26 @@ import {
   Space,
   Switch,
   Typography,
+  notification,
 } from "antd";
-import { useNotification } from "@refinedev/core";
+
+// Post-M21 notify shim: matches the Refine useNotification().open
+// contract (`{ type, message, description }`) so callers don't have
+// to change. Forwards to AntD's native `notification.open`.
+type NotifyInput = {
+  type?: "success" | "error" | "warning" | "info";
+  message: string;
+  description?: React.ReactNode;
+};
+function useNotify() {
+  return (input: NotifyInput) => {
+    notification.open({
+      message: input.message,
+      description: input.description,
+      type: input.type,
+    });
+  };
+}
 
 import { apiClient } from "../../../apiClient";
 import { DNSResolversCard } from "./DNSResolversCard";
@@ -47,10 +65,10 @@ type ServerSettings = {
 };
 
 // notifyError narrows axios-style errors to a friendly message.
-type NotifyFn = ReturnType<typeof useNotification>["open"];
+type NotifyFn = ReturnType<typeof useNotify>;
 function notifyError(notify: NotifyFn, title: string, err: unknown) {
   const e = err as { response?: { data?: { detail?: string } }; message?: string };
-  notify?.({
+  notify({
     type: "error",
     message: title,
     description: e.response?.data?.detail ?? e.message ?? "Unknown error",
@@ -68,7 +86,7 @@ const GeneralSettingsTab = () => {
   const [originalSSHPort, setOriginalSSHPort] = useState(22);
   const [originalSSHPasswordAuth, setOriginalSSHPasswordAuth] = useState(false);
   const [originalSSHUserPasswordAuth, setOriginalSSHUserPasswordAuth] = useState(false);
-  const { open: notify } = useNotification();
+  const notify = useNotify();
 
   useEffect(() => {
     let cancelled = false;
@@ -106,7 +124,7 @@ const GeneralSettingsTab = () => {
         ssh_password_auth: values.ssh_password_auth || false,
         ssh_user_password_auth: values.ssh_user_password_auth || false,
       });
-      notify?.({ type: "success", message: "Settings saved" });
+      notify({ type: "success", message: "Settings saved" });
       form.setFieldsValue(resp.data);
       setOriginalHostname(resp.data.hostname);
       setOriginalSSHPort(resp.data.ssh_port || 22);
@@ -380,7 +398,7 @@ const DNSSettingsTab = () => {
   const [form] = Form.useForm<ServerSettings>();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const { open: notify } = useNotification();
+  const notify = useNotify();
 
   useEffect(() => {
     let cancelled = false;
@@ -410,7 +428,7 @@ const DNSSettingsTab = () => {
         ns2_name: values.ns2_name || "",
         ns2_ipv4: values.ns2_ipv4 || "",
       });
-      notify?.({ type: "success", message: "DNS nameservers saved" });
+      notify({ type: "success", message: "DNS nameservers saved" });
       form.setFieldsValue(resp.data);
     } catch (err) {
       notifyError(notify, "Failed to save", err);

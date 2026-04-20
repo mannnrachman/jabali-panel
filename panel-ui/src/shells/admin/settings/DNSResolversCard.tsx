@@ -10,9 +10,9 @@ import {
   Space,
   Tag,
   Typography,
+  notification,
 } from "antd";
 import { SaveOutlined, ApiOutlined } from "@ant-design/icons";
-import { useNotification } from "@refinedev/core";
 
 import { apiClient } from "../../../apiClient";
 
@@ -131,10 +131,16 @@ function collectResolvers(values: FormShape): string[] {
     .filter((s) => s.length > 0);
 }
 
-type NotifyFn = ReturnType<typeof useNotification>["open"];
+// Post-M21: useNotification shim. See ServerSettingsPage.tsx for why.
+type NotifyInput = {
+  type?: "success" | "error" | "warning" | "info";
+  message: string;
+  description?: React.ReactNode;
+};
+type NotifyFn = (input: NotifyInput) => void;
 function notifyError(notify: NotifyFn, title: string, err: unknown) {
   const e = err as { response?: { data?: { detail?: string } }; message?: string };
-  notify?.({
+  notify({
     type: "error",
     message: title,
     description: e.response?.data?.detail ?? e.message ?? "Unknown error",
@@ -147,7 +153,12 @@ export const DNSResolversCard = () => {
   const [saving, setSaving] = useState(false);
   const [source, setSource] = useState<ResolverGet["source"]>("none");
   const [active, setActive] = useState<boolean>(true);
-  const { open: notify } = useNotification();
+  const notify: NotifyFn = (input) =>
+    notification.open({
+      message: input.message,
+      description: input.description,
+      type: input.type,
+    });
 
   useEffect(() => {
     let cancelled = false;
@@ -186,7 +197,7 @@ export const DNSResolversCard = () => {
         resolvers: collectResolvers(values),
         search_domain: (values.search_domain ?? "").trim(),
       });
-      notify?.({ type: "success", message: "DNS resolvers saved" });
+      notify({ type: "success", message: "DNS resolvers saved" });
       form.setFieldsValue(populateFromGet(resp.data));
       setSource(resp.data.source);
       setActive(resp.data.active);

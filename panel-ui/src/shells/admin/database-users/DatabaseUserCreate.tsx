@@ -1,13 +1,12 @@
 // Create-user form — username only.
 //
 // The user is provisioned as a MariaDB account with a random password
-// returned exactly once. Database access is granted in a separate step
-// from the user row's "Add Access" action (see AddGrantModal). This
-// mirrors the standard shared-hosting model: one user can hold any
-// number of grants across different databases.
+// returned exactly once. Database access is granted in a separate
+// step from the user row's "Add Access" action (see AddGrantModal).
+// This mirrors the standard shared-hosting model: one user can hold
+// any number of grants across different databases.
 import { useState } from "react";
-import { Create } from "@refinedev/antd";
-import { Button, Form, Input, Space, message } from "antd";
+import { Button, Card, Form, Input, Space, Typography, message } from "antd";
 import { useNavigate } from "react-router";
 
 import { apiClient } from "../../../apiClient";
@@ -39,7 +38,10 @@ export const DatabaseUserCreate = () => {
         "/database-users",
         values,
       );
-      setRevealed({ username: resp.data.username, password: resp.data.password });
+      setRevealed({
+        username: resp.data.username,
+        password: resp.data.password,
+      });
     } catch (err) {
       const msg =
         (err as { response?: { data?: { error?: string } } })?.response?.data
@@ -59,12 +61,10 @@ export const DatabaseUserCreate = () => {
 
   return (
     <>
-      <Create
-        saveButtonProps={{
-          loading: submitting,
-          onClick: () => form.submit(),
-        }}
-      >
+      <Card>
+        <Typography.Title level={3} style={{ marginTop: 0 }}>
+          Create database user
+        </Typography.Title>
         <Form<CreateInput>
           form={form}
           layout="vertical"
@@ -87,11 +87,20 @@ export const DatabaseUserCreate = () => {
             <Input placeholder="e.g. api" autoComplete="off" />
           </Form.Item>
 
-          <Space>
-            <Button onClick={() => navigate(-1)}>Cancel</Button>
-          </Space>
+          <Form.Item>
+            <Space>
+              <Button
+                type="primary"
+                htmlType="submit"
+                loading={submitting}
+              >
+                Save
+              </Button>
+              <Button onClick={() => navigate(-1)}>Cancel</Button>
+            </Space>
+          </Form.Item>
         </Form>
-      </Create>
+      </Card>
 
       <DatabaseUserPasswordModal
         open={revealed !== null}

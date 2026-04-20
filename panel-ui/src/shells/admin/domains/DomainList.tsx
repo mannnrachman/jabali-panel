@@ -1,11 +1,15 @@
-import { useTable } from "@refinedev/antd";
-import { DeleteButton, EditButton } from "@refinedev/antd";
-import { SearchableTable } from "../../../components/SearchableTable";
-import { readQValue } from "../../../components/searchableTableUtils";
-import { Button, Space, Table, Tag, Typography } from "antd";
+// DomainList — admin domains grid. Post-M21 the row action strip
+// stays the same (DNS/Redirects/Index/Settings/Toggle/Edit/Delete);
+// only the hook and the two Refine action buttons change.
+import { Button, Card, Space, Table, Tag, Typography } from "antd";
 import { GlobalOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router";
+import type { SorterResult } from "antd/es/table/interface";
 
+import { RowDeleteButton } from "../../../components/RowDeleteButton";
+import { SearchableTableStringQ } from "../../../components/SearchableTable";
+import { useDeleteMutation } from "../../../hooks/useQueries";
+import { useTableURL } from "../../../hooks/useTableURL";
 import { DomainToggleButton } from "../../DomainToggleButton";
 import { DomainSettingsButton } from "../../DomainSettingsButton";
 import { DomainRedirectsButton } from "../../DomainRedirectsButton";
@@ -68,22 +72,52 @@ export type Domain = {
   nginx_custom_directives: string;
   redirect_all_to?: string | null;
   redirect_all_type?: string | null;
-  page_redirects?: { source: string; destination: string; type: "301" | "302" | "307" | "308" }[] | null;
-  index_priority?: "html_first" | "php_first" | "html_only" | "php_only" | "full" | null;
+  page_redirects?:
+    | { source: string; destination: string; type: "301" | "302" | "307" | "308" }[]
+    | null;
+  index_priority?:
+    | "html_first"
+    | "php_first"
+    | "html_only"
+    | "php_only"
+    | "full"
+    | null;
   created_at: string;
   updated_at: string;
 };
 
 export const DomainList = () => {
   const navigate = useNavigate();
-  const { tableProps, setFilters, filters } = useTable<Domain>({
+  const query = useTableURL<Domain>({
     resource: "domains",
-    syncWithLocation: true,
+    defaultSort: "name",
+    defaultOrder: "asc",
   });
-  const initialSearch = readQValue(filters);
+  const deleteMutation = useDeleteMutation({ resource: "domains" });
+
+  const handleTableChange: React.ComponentProps<typeof Table<Domain>>["onChange"] = (
+    pagination,
+    _filters,
+    sorter,
+  ) => {
+    const single = Array.isArray(sorter)
+      ? (sorter[0] as SorterResult<Domain> | undefined)
+      : (sorter as SorterResult<Domain>);
+    query.setParams({
+      page: pagination.current ?? 1,
+      pageSize: pagination.pageSize ?? 20,
+      sort: single?.columnKey ? String(single.columnKey) : undefined,
+      order:
+        single?.order === "ascend"
+          ? "asc"
+          : single?.order === "descend"
+            ? "desc"
+            : undefined,
+    });
+  };
 
   return (
-    <div style={{ padding: 24 }}>
+    <div>
       <Space
         style={{
           marginBottom: 16,
@@ -96,64 +130,89 @@ export const DomainList = () => {
         </Typography.Title>
       </Space>
 
-      <SearchableTable<Domain>
-        {...tableProps}
-        rowKey="id"
-        initialSearch={initialSearch}
-        searchPlaceholder="Search by domain name"
-        onSearchChange={(filters) => setFilters(filters, "replace")}
-      >
-        <Table.Column<Domain>
-          dataIndex="name"
-          title="Domain"
-          sorter={{ multiple: 1 }}
-          defaultSortOrder="ascend"
-          render={(name: string, record: Domain) => renderDomainCell(name, record.doc_root)}
-        />
-        <Table.Column<Domain>
-          dataIndex="user_id"
-          title="User ID"
-          render={(value: string) => value.substring(0, 8)}
-        />
-        <Table.Column<Domain>
-          dataIndex="is_enabled"
-          title="Status"
-          render={(enabled: boolean) =>
-            enabled ? (
-              <Tag color="green">active</Tag>
-            ) : (
-              <Tag>disabled</Tag>
-            )
-          }
-        />
-        <Table.Column<Domain>
-          dataIndex="ssl"
-          title="SSL"
-          render={(ssl: SSLBadge | null | undefined) => renderSSL(ssl)}
-        />
-        <Table.Column<Domain>
-          title="Actions"
-          dataIndex="actions"
-          render={(_, r) => (
-            <Space size="small">
-              <Button
-                type="text"
-                size="small"
-                icon={<GlobalOutlined />}
-                onClick={() => navigate(`/jabali-admin/domains/${r.id}/dns`)}
-              >
-                DNS
-              </Button>
-              <DomainRedirectsButton domain={r} />
-              <DomainIndexButton domain={r} />
-              <DomainSettingsButton domain={r} />
-              <DomainToggleButton domain={r} />
-              <EditButton hideText size="small" type="text" recordItemId={r.id} />
-              <DeleteButton hideText size="small" type="text" resource="domains" recordItemId={r.id} />
-            </Space>
-          )}
-        />
-      </SearchableTable>
+      <Card>
+        <SearchableTableStringQ<Domain>
+          rowKey="id"
+          loading={query.isLoading}
+          dataSource={query.items}
+          initialSearch={query.params.q}
+          searchPlaceholder="Search by domain name"
+          onSearchChange={(q) => query.setParams({ q, page: 1 })}
+          pagination={{
+            current: query.params.page,
+            pageSize: query.params.pageSize,
+            total: query.total,
+          }}
+          onChange={handleTableChange}
+        >
+          <Table.Column<Domain>
+            dataIndex="name"
+            title="Domain"
+            key="name"
+            sorter={{ multiple: 1 }}
+            defaultSortOrder="ascend"
+            render={(name: string, record: Domain) =>
+              renderDomainCell(name, record.doc_root)
+            }
+          />
+          <Table.Column<Domain>
+            dataIndex="user_id"
+            title="User ID"
+            render={(value: string) => value.substring(0, 8)}
+          />
+          <Table.Column<Domain>
+            dataIndex="is_enabled"
+            title="Status"
+            render={(enabled: boolean) =>
+              enabled ? (
+                <Tag color="green">active</Tag>
+              ) : (
+                <Tag>disabled</Tag>
+              )
+            }
+          />
+          <Table.Column<Domain>
+            dataIndex="ssl"
+            title="SSL"
+            render={(ssl: SSLBadge | null | undefined) => renderSSL(ssl)}
+          />
+          <Table.Column<Domain>
+            title="Actions"
+            dataIndex="actions"
+            render={(_, r) => (
+              <Space size="small">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<GlobalOutlined />}
+                  onClick={() => navigate(`/jabali-admin/domains/${r.id}/dns`)}
+                >
+                  DNS
+                </Button>
+                <DomainRedirectsButton domain={r} />
+                <DomainIndexButton domain={r} />
+                <DomainSettingsButton domain={r} />
+                <DomainToggleButton domain={r} />
+                <Button
+                  type="text"
+                  size="small"
+                  onClick={() =>
+                    navigate(`/jabali-admin/domains/edit/${r.id}`)
+                  }
+                >
+                  Edit
+                </Button>
+                <RowDeleteButton
+                  confirmTitle={`Delete domain "${r.name}"?`}
+                  onConfirm={async () => {
+                    await deleteMutation.mutateAsync({ id: r.id });
+                  }}
+                />
+              </Space>
+            )}
+          />
+        </SearchableTableStringQ>
+      </Card>
     </div>
   );
 };

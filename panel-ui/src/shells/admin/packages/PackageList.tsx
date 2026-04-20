@@ -1,8 +1,15 @@
-import { useTable } from "@refinedev/antd";
-import { Space, Table, Tag, Typography } from "antd";
-import { CreateButton, DeleteButton, EditButton } from "@refinedev/antd";
-import { SearchableTable } from "../../../components/SearchableTable";
-import { readQValue } from "../../../components/searchableTableUtils";
+// PackageList — hosting packages admin list. Sortable + searchable.
+// Post-M21: useTable → useTableURL, <CreateButton>/<EditButton>/
+// <DeleteButton> replaced with plain react-router <Button>s + a
+// RowDeleteButton wired to useDeleteMutation.
+import { Button, Card, Space, Table, Tag, Typography } from "antd";
+import { useNavigate } from "react-router";
+import type { SorterResult } from "antd/es/table/interface";
+
+import { RowDeleteButton } from "../../../components/RowDeleteButton";
+import { SearchableTableStringQ } from "../../../components/SearchableTable";
+import { useDeleteMutation } from "../../../hooks/useQueries";
+import { useTableURL } from "../../../hooks/useTableURL";
 
 type Package = {
   id: string;
@@ -19,18 +26,41 @@ type Package = {
   updated_at: string;
 };
 
-export const PackageList = () => {
-  const { tableProps, setFilters, filters } = useTable<Package>({
-    resource: "packages",
-    syncWithLocation: true,
-  });
-  const initialSearch = readQValue(filters);
+// "∞" for 0 quotas keeps the cell readable instead of printing 0.
+const formatQuota = (value: number) => (value === 0 ? "∞" : value);
 
-  // "∞" for 0 quotas keeps the cell readable instead of printing 0.
-  const formatQuota = (value: number) => (value === 0 ? "∞" : value);
+export const PackageList = () => {
+  const navigate = useNavigate();
+  const query = useTableURL<Package>({
+    resource: "packages",
+    defaultSort: "name",
+    defaultOrder: "asc",
+  });
+  const deleteMutation = useDeleteMutation({ resource: "packages" });
+
+  const handleTableChange: React.ComponentProps<typeof Table<Package>>["onChange"] = (
+    pagination,
+    _filters,
+    sorter,
+  ) => {
+    const single = Array.isArray(sorter)
+      ? (sorter[0] as SorterResult<Package> | undefined)
+      : (sorter as SorterResult<Package>);
+    query.setParams({
+      page: pagination.current ?? 1,
+      pageSize: pagination.pageSize ?? 20,
+      sort: single?.columnKey ? String(single.columnKey) : undefined,
+      order:
+        single?.order === "ascend"
+          ? "asc"
+          : single?.order === "descend"
+            ? "desc"
+            : undefined,
+    });
+  };
 
   return (
-    <div style={{ padding: 24 }}>
+    <div>
       <Space
         style={{
           marginBottom: 16,
@@ -41,70 +71,99 @@ export const PackageList = () => {
         <Typography.Title level={3} style={{ margin: 0 }}>
           Packages
         </Typography.Title>
-        <CreateButton />
+        <Button
+          type="primary"
+          onClick={() => navigate("/jabali-admin/packages/create")}
+        >
+          Create
+        </Button>
       </Space>
 
-      <SearchableTable<Package>
-        {...tableProps}
-        rowKey="id"
-        initialSearch={initialSearch}
-        searchPlaceholder="Search by package name"
-        onSearchChange={(filters) => setFilters(filters, "replace")}
-      >
-        <Table.Column
-          dataIndex="name"
-          title="Name"
-          sorter={{ multiple: 1 }}
-          defaultSortOrder="ascend"
-        />
-        <Table.Column
-          dataIndex="disk_quota_mb"
-          title="Disk (MB)"
-          render={(value: number) => formatQuota(value)}
-        />
-        <Table.Column
-          dataIndex="bandwidth_quota_mb"
-          title="Bandwidth (MB)"
-          render={(value: number) => formatQuota(value)}
-        />
-        <Table.Column
-          dataIndex="max_domains"
-          title="Domains"
-          render={(value: number) => formatQuota(value)}
-        />
-        <Table.Column
-          dataIndex="max_email_accounts"
-          title="Email"
-          render={(value: number) => formatQuota(value)}
-        />
-        <Table.Column
-          dataIndex="max_databases"
-          title="DB"
-          render={(value: number) => formatQuota(value)}
-        />
-        <Table.Column
-          dataIndex="ssh_enabled"
-          title="SSH"
-          render={(enabled: boolean) =>
-            enabled ? <Tag color="green">yes</Tag> : <Tag>no</Tag>
-          }
-        />
-        <Table.Column
-          dataIndex="created_at"
-          title="Created"
-          sorter={{ multiple: 1 }}
-        />
-        <Table.Column
-          title="Actions"
-          dataIndex="actions"
-          render={(_: unknown, r: Package) => (
-            <Space>
-              <EditButton hideText size="small" type="text" recordItemId={r.id} />
-              <DeleteButton hideText size="small" type="text" recordItemId={r.id} />
-            </Space>
-          )}
-        />
-      </SearchableTable>
+      <Card>
+        <SearchableTableStringQ<Package>
+          rowKey="id"
+          loading={query.isLoading}
+          dataSource={query.items}
+          initialSearch={query.params.q}
+          searchPlaceholder="Search by package name"
+          onSearchChange={(q) => query.setParams({ q, page: 1 })}
+          pagination={{
+            current: query.params.page,
+            pageSize: query.params.pageSize,
+            total: query.total,
+          }}
+          onChange={handleTableChange}
+        >
+          <Table.Column
+            dataIndex="name"
+            title="Name"
+            key="name"
+            sorter={{ multiple: 1 }}
+            defaultSortOrder="ascend"
+          />
+          <Table.Column
+            dataIndex="disk_quota_mb"
+            title="Disk (MB)"
+            render={(value: number) => formatQuota(value)}
+          />
+          <Table.Column
+            dataIndex="bandwidth_quota_mb"
+            title="Bandwidth (MB)"
+            render={(value: number) => formatQuota(value)}
+          />
+          <Table.Column
+            dataIndex="max_domains"
+            title="Domains"
+            render={(value: number) => formatQuota(value)}
+          />
+          <Table.Column
+            dataIndex="max_email_accounts"
+            title="Email"
+            render={(value: number) => formatQuota(value)}
+          />
+          <Table.Column
+            dataIndex="max_databases"
+            title="DB"
+            render={(value: number) => formatQuota(value)}
+          />
+          <Table.Column
+            dataIndex="ssh_enabled"
+            title="SSH"
+            render={(enabled: boolean) =>
+              enabled ? <Tag color="green">yes</Tag> : <Tag>no</Tag>
+            }
+          />
+          <Table.Column
+            dataIndex="created_at"
+            title="Created"
+            key="created_at"
+            sorter={{ multiple: 1 }}
+          />
+          <Table.Column
+            title="Actions"
+            dataIndex="actions"
+            render={(_: unknown, r: Package) => (
+              <Space>
+                <Button
+                  type="text"
+                  size="small"
+                  onClick={() =>
+                    navigate(`/jabali-admin/packages/edit/${r.id}`)
+                  }
+                >
+                  Edit
+                </Button>
+                <RowDeleteButton
+                  confirmTitle={`Delete package "${r.name}"?`}
+                  onConfirm={async () => {
+                    await deleteMutation.mutateAsync({ id: r.id });
+                  }}
+                />
+              </Space>
+            )}
+          />
+        </SearchableTableStringQ>
+      </Card>
     </div>
   );
 };

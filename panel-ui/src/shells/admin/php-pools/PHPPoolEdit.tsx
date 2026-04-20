@@ -1,13 +1,41 @@
-import { Edit, useForm } from "@refinedev/antd";
-import { Form, Input, InputNumber, Select, Table, Button, Modal, Space, Tag } from "antd";
-import { useState } from "react";
-import { useList } from "@refinedev/core";
+// PHPPoolEdit — admin edit for a per-(user, php-version) FPM pool.
+//
+// Main form tweaks pm_mode / pm_max_children / idle timeout. A nested
+// INI overrides table lives below the save button, driven by its own
+// useListQuery + direct apiClient POST/DELETE calls.
+import { useEffect, useState } from "react";
+import {
+  Button,
+  Card,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Select,
+  Space,
+  Spin,
+  Table,
+  Tag,
+  Typography,
+  message,
+} from "antd";
+import { useNavigate, useParams } from "react-router";
+
+import { apiClient } from "../../../apiClient";
+import {
+  useListQuery,
+  useOneQuery,
+  useUpdateMutation,
+} from "../../../hooks/useQueries";
 
 type PHPPoolInput = {
   pm_mode: string;
   pm_max_children: number;
   process_idle_timeout_seconds: number;
+  php_version?: string;
 };
+
+type PHPPoolRecord = PHPPoolInput & { id: string };
 
 type IniOverride = {
   id: string;
@@ -23,56 +51,109 @@ type IniOverrideInput = {
 };
 
 export const PHPPoolEdit = () => {
-  const { formProps, saveButtonProps, id } = useForm<PHPPoolInput>({
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const [form] = Form.useForm<PHPPoolInput>();
+
+  const { data: pool, isLoading } = useOneQuery<PHPPoolRecord>({
     resource: "php-pools",
-    action: "edit",
+    id,
+  });
+  const updateMutation = useUpdateMutation<PHPPoolRecord, PHPPoolInput>({
+    resource: "php-pools",
+  });
+
+  // INI overrides are mounted as their own sub-resource; useListQuery
+  // handles the list envelope unwrap. Refetch after add/delete.
+  const overridesQ = useListQuery<IniOverride>({
+    resource: id ? `php-pools/${id}/ini-overrides` : "",
+    enabled: !!id,
   });
 
   const [isOverrideModalOpen, setIsOverrideModalOpen] = useState(false);
-  const [overrideForm, setOverrideForm] = useState<IniOverrideInput>({ directive: "", value: "", kind: "value" });
-
-  const { data: overridesData, refetch: refetchOverrides, isLoading: overridesLoading } = useList<IniOverride>({
-    resource: `php-pools/${id}/ini-overrides`,
-    queryOptions: {
-      enabled: !!id,
-    },
+  const [overrideForm, setOverrideForm] = useState<IniOverrideInput>({
+    directive: "",
+    value: "",
+    kind: "value",
   });
 
-  const overrides = overridesData?.data || [];
+  useEffect(() => {
+    if (pool) {
+      form.setFieldsValue(pool);
+    }
+  }, [pool, form]);
+
+  const handleFinish = async (values: PHPPoolInput) => {
+    if (!id) return;
+    try {
+      await updateMutation.mutateAsync({ id, input: values });
+      message.success("Pool updated");
+      navigate("/jabali-admin/php-pools");
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to update pool";
+      message.error(msg);
+    }
+  };
 
   const handleAddOverride = async () => {
-    if (!overrideForm.directive.trim()) {
+    if (!overrideForm.directive.trim() || !id) {
       return;
     }
-    // POST to create ini override
     try {
-      await fetch(`/api/v1/php-pools/${id}/ini-overrides`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(overrideForm),
-      });
+      await apiClient.post(
+        `/php-pools/${id}/ini-overrides`,
+        overrideForm,
+      );
       setOverrideForm({ directive: "", value: "", kind: "value" });
       setIsOverrideModalOpen(false);
-      refetchOverrides();
-    } catch (error) {
-      console.error("Failed to add override:", error);
+      await overridesQ.refetch();
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to add override";
+      message.error(msg);
     }
   };
 
   const handleDeleteOverride = async (overrideId: string) => {
+    if (!id) return;
     try {
-      await fetch(`/api/v1/php-pools/${id}/ini-overrides/${overrideId}`, {
-        method: "DELETE",
-      });
-      refetchOverrides();
-    } catch (error) {
-      console.error("Failed to delete override:", error);
+      await apiClient.delete(
+        `/php-pools/${id}/ini-overrides/${overrideId}`,
+      );
+      await overridesQ.refetch();
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to delete override";
+      message.error(msg);
     }
   };
 
+  if (isLoading && !pool) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: 240,
+        }}
+      >
+        <Spin />
+      </div>
+    );
+  }
+
   return (
-    <Edit saveButtonProps={saveButtonProps}>
-      <Form {...formProps} layout="vertical">
+    <Card>
+      <Typography.Title level={3} style={{ marginTop: 0 }}>
+        Edit PHP pool
+      </Typography.Title>
+      <Form<PHPPoolInput>
+        form={form}
+        layout="vertical"
+        onFinish={handleFinish}
+      >
         <Form.Item
           label="Process Mode"
           name="pm_mode"
@@ -104,11 +185,27 @@ export const PHPPoolEdit = () => {
         <Form.Item label="PHP Version" name="php_version">
           <Input disabled />
         </Form.Item>
+
+        <Form.Item>
+          <Button
+            type="primary"
+            htmlType="submit"
+            loading={updateMutation.isPending}
+          >
+            Save
+          </Button>
+        </Form.Item>
       </Form>
 
       {/* INI Overrides Section */}
       <div style={{ marginTop: 32, paddingTop: 24, borderTop: "1px solid #f0f0f0" }}>
-        <Space style={{ marginBottom: 16, display: "flex", justifyContent: "space-between" }}>
+        <Space
+          style={{
+            marginBottom: 16,
+            display: "flex",
+            justifyContent: "space-between",
+          }}
+        >
           <h3 style={{ margin: 0 }}>INI Overrides</h3>
           <Button type="primary" onClick={() => setIsOverrideModalOpen(true)}>
             Add Override
@@ -117,17 +214,20 @@ export const PHPPoolEdit = () => {
 
         <Table<IniOverride>
           columns={[
-            {
-              dataIndex: "directive",
-              title: "Directive",
-              key: "directive",
-            },
+            { dataIndex: "directive", title: "Directive", key: "directive" },
             {
               dataIndex: "value",
               title: "Value",
               key: "value",
               render: (value: string) => (
-                <div style={{ maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <div
+                  style={{
+                    maxWidth: 300,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   {value}
                 </div>
               ),
@@ -136,7 +236,9 @@ export const PHPPoolEdit = () => {
               dataIndex: "kind",
               title: "Kind",
               key: "kind",
-              render: (kind: string) => <Tag color={kind === "flag" ? "orange" : "blue"}>{kind}</Tag>,
+              render: (kind: string) => (
+                <Tag color={kind === "flag" ? "orange" : "blue"}>{kind}</Tag>
+              ),
             },
             {
               title: "Actions",
@@ -154,8 +256,8 @@ export const PHPPoolEdit = () => {
               ),
             },
           ]}
-          dataSource={overrides}
-          loading={overridesLoading}
+          dataSource={overridesQ.items}
+          loading={overridesQ.isLoading}
           rowKey="id"
           pagination={false}
         />
@@ -175,7 +277,10 @@ export const PHPPoolEdit = () => {
                 placeholder="e.g., memory_limit"
                 value={overrideForm.directive}
                 onChange={(e) =>
-                  setOverrideForm({ ...overrideForm, directive: e.target.value })
+                  setOverrideForm({
+                    ...overrideForm,
+                    directive: e.target.value,
+                  })
                 }
               />
             </Form.Item>
@@ -202,6 +307,6 @@ export const PHPPoolEdit = () => {
           </Form>
         </Modal>
       </div>
-    </Edit>
+    </Card>
   );
 };

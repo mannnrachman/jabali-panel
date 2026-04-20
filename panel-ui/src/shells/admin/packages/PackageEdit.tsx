@@ -1,6 +1,25 @@
-import { useForm } from "@refinedev/antd";
-import { Edit } from "@refinedev/antd";
-import { Col, Divider, Form, Input, InputNumber, Row, Switch, Typography } from "antd";
+// PackageEdit — admin form for updating a hosting package.
+//
+// Same field set as PackageCreate; initial values load via useOneQuery
+// and seed the Form once they arrive.
+import { useEffect } from "react";
+import {
+  Button,
+  Card,
+  Col,
+  Divider,
+  Form,
+  Input,
+  InputNumber,
+  Row,
+  Spin,
+  Switch,
+  Typography,
+  message,
+} from "antd";
+import { useNavigate, useParams } from "react-router";
+
+import { useOneQuery, useUpdateMutation } from "../../../hooks/useQueries";
 
 type PackageEditInput = {
   name: string;
@@ -20,15 +39,67 @@ type PackageEditInput = {
   cgi_enabled: boolean;
 };
 
+type PackageRecord = PackageEditInput & { id: string };
+
 export const PackageEdit = () => {
-  const { formProps, saveButtonProps } = useForm<PackageEditInput>({
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const [form] = Form.useForm<PackageEditInput>();
+
+  const { data, isLoading } = useOneQuery<PackageRecord>({
     resource: "packages",
-    action: "edit",
+    id,
+  });
+  const updateMutation = useUpdateMutation<PackageRecord, PackageEditInput>({
+    resource: "packages",
   });
 
+  useEffect(() => {
+    if (data) {
+      const { id: _id, ...rest } = data;
+      void _id;
+      form.setFieldsValue(rest);
+    }
+  }, [data, form]);
+
+  const handleFinish = async (values: PackageEditInput) => {
+    if (!id) return;
+    try {
+      await updateMutation.mutateAsync({ id, input: values });
+      message.success("Package updated");
+      navigate("/jabali-admin/packages");
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to update package";
+      message.error(msg);
+    }
+  };
+
+  if (isLoading && !data) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: 240,
+        }}
+      >
+        <Spin />
+      </div>
+    );
+  }
+
   return (
-    <Edit saveButtonProps={saveButtonProps}>
-      <Form {...formProps} layout="vertical">
+    <Card>
+      <Typography.Title level={3} style={{ marginTop: 0 }}>
+        Edit package
+      </Typography.Title>
+      <Form<PackageEditInput>
+        form={form}
+        layout="vertical"
+        onFinish={handleFinish}
+      >
         <Form.Item
           label="Name"
           name="name"
@@ -39,12 +110,10 @@ export const PackageEdit = () => {
 
         <Divider titlePlacement="left">Resource limits</Divider>
         <Typography.Paragraph type="secondary" style={{ marginTop: -8 }}>
-          Enforced per-user via POSIX quota (disk) and cgroups v2 (cpu/memory/io/tasks).
-          Zero on any field means unlimited.
+          Enforced per-user via POSIX quota (disk) and cgroups v2
+          (cpu/memory/io/tasks). Zero on any field means unlimited.
         </Typography.Paragraph>
 
-        {/* Resource limits — 3 cols on md+, 2 on sm, 1 stacked on xs.
-            Mirrors the same layout in PackageCreate.tsx. */}
         <Row gutter={16}>
           <Col xs={24} sm={12} md={8}>
             <Form.Item
@@ -126,7 +195,9 @@ export const PackageEdit = () => {
         <Form.Item
           label="Max Email Accounts"
           name="max_email_accounts"
-          rules={[{ required: true, message: "Max email accounts is required" }]}
+          rules={[
+            { required: true, message: "Max email accounts is required" },
+          ]}
           tooltip="0 = unlimited"
         >
           <InputNumber min={0} />
@@ -144,7 +215,9 @@ export const PackageEdit = () => {
         <Form.Item
           label="Max FTP Accounts"
           name="max_ftp_accounts"
-          rules={[{ required: true, message: "Max FTP accounts is required" }]}
+          rules={[
+            { required: true, message: "Max FTP accounts is required" },
+          ]}
           tooltip="0 = unlimited"
         >
           <InputNumber min={0} />
@@ -169,7 +242,17 @@ export const PackageEdit = () => {
         >
           <Switch />
         </Form.Item>
+
+        <Form.Item>
+          <Button
+            type="primary"
+            htmlType="submit"
+            loading={updateMutation.isPending}
+          >
+            Save
+          </Button>
+        </Form.Item>
       </Form>
-    </Edit>
+    </Card>
   );
 };

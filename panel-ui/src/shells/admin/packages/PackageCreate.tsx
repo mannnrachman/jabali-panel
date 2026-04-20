@@ -1,6 +1,23 @@
-import { useForm } from "@refinedev/antd";
-import { Create } from "@refinedev/antd";
-import { Col, Divider, Form, Input, InputNumber, Row, Switch, Typography } from "antd";
+// PackageCreate — admin form for a new hosting package.
+//
+// Form.useForm + useCreateMutation; layout matches the old Refine
+// version (grid of resource limits + feature quotas + two switches).
+import {
+  Button,
+  Card,
+  Col,
+  Divider,
+  Form,
+  Input,
+  InputNumber,
+  Row,
+  Switch,
+  Typography,
+  message,
+} from "antd";
+import { useNavigate } from "react-router";
+
+import { useCreateMutation } from "../../../hooks/useQueries";
 
 type PackageCreateInput = {
   name: string;
@@ -19,16 +36,34 @@ type PackageCreateInput = {
   cgi_enabled: boolean;
 };
 
+type PackageCreated = { id: string };
+
 export const PackageCreate = () => {
-  const { formProps, saveButtonProps } = useForm<PackageCreateInput>({
+  const navigate = useNavigate();
+  const [form] = Form.useForm<PackageCreateInput>();
+  const createMutation = useCreateMutation<PackageCreated, PackageCreateInput>({
     resource: "packages",
-    action: "create",
   });
 
+  const handleFinish = async (values: PackageCreateInput) => {
+    try {
+      await createMutation.mutateAsync(values);
+      message.success("Package created");
+      navigate("/jabali-admin/packages");
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to create package";
+      message.error(msg);
+    }
+  };
+
   return (
-    <Create saveButtonProps={saveButtonProps}>
-      <Form
-        {...formProps}
+    <Card>
+      <Typography.Title level={3} style={{ marginTop: 0 }}>
+        Create package
+      </Typography.Title>
+      <Form<PackageCreateInput>
+        form={form}
         layout="vertical"
         initialValues={{
           ssh_enabled: false,
@@ -45,6 +80,7 @@ export const PackageCreate = () => {
           max_databases: 0,
           max_ftp_accounts: 0,
         }}
+        onFinish={handleFinish}
       >
         <Form.Item
           label="Name"
@@ -56,13 +92,10 @@ export const PackageCreate = () => {
 
         <Divider titlePlacement="left">Resource limits</Divider>
         <Typography.Paragraph type="secondary" style={{ marginTop: -8 }}>
-          Enforced per-user via POSIX quota (disk) and cgroups v2 (cpu/memory/io/tasks).
-          Zero on any field means unlimited.
+          Enforced per-user via POSIX quota (disk) and cgroups v2
+          (cpu/memory/io/tasks). Zero on any field means unlimited.
         </Typography.Paragraph>
 
-        {/* Resource limits — 3 columns on md+, 2 on sm, 1 stacked on xs.
-            Inputs use width:100% so they fill the column instead of
-            the AntD default narrow width. */}
         <Row gutter={16}>
           <Col xs={24} sm={12} md={8}>
             <Form.Item
@@ -144,7 +177,9 @@ export const PackageCreate = () => {
         <Form.Item
           label="Max Email Accounts"
           name="max_email_accounts"
-          rules={[{ required: true, message: "Max email accounts is required" }]}
+          rules={[
+            { required: true, message: "Max email accounts is required" },
+          ]}
           tooltip="0 = unlimited"
         >
           <InputNumber min={0} />
@@ -162,7 +197,9 @@ export const PackageCreate = () => {
         <Form.Item
           label="Max FTP Accounts"
           name="max_ftp_accounts"
-          rules={[{ required: true, message: "Max FTP accounts is required" }]}
+          rules={[
+            { required: true, message: "Max FTP accounts is required" },
+          ]}
           tooltip="0 = unlimited"
         >
           <InputNumber min={0} />
@@ -187,7 +224,17 @@ export const PackageCreate = () => {
         >
           <Switch />
         </Form.Item>
+
+        <Form.Item>
+          <Button
+            type="primary"
+            htmlType="submit"
+            loading={createMutation.isPending}
+          >
+            Save
+          </Button>
+        </Form.Item>
       </Form>
-    </Create>
+    </Card>
   );
 };

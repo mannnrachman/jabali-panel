@@ -1,6 +1,12 @@
-import { useForm } from "@refinedev/antd";
-import { Create } from "@refinedev/antd";
-import { Form, Input } from "antd";
+// DomainCreate — admin form for a new domain.
+//
+// Intentionally thin: name + user id + optional doc root. The server
+// auto-generates doc_root when blank. Post-M21: Form.useForm +
+// useCreateMutation, no Refine wrappers.
+import { Button, Card, Form, Input, Typography, message } from "antd";
+import { useNavigate } from "react-router";
+
+import { useCreateMutation } from "../../../hooks/useQueries";
 
 export type DomainCreateInput = {
   name: string;
@@ -8,15 +14,37 @@ export type DomainCreateInput = {
   doc_root?: string;
 };
 
+type DomainCreated = { id: string };
+
 export const DomainCreate = () => {
-  const { formProps, saveButtonProps } = useForm<DomainCreateInput>({
+  const navigate = useNavigate();
+  const [form] = Form.useForm<DomainCreateInput>();
+  const createMutation = useCreateMutation<DomainCreated, DomainCreateInput>({
     resource: "domains",
-    action: "create",
   });
 
+  const handleFinish = async (values: DomainCreateInput) => {
+    try {
+      await createMutation.mutateAsync(values);
+      message.success("Domain created");
+      navigate("/jabali-admin/domains");
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to create domain";
+      message.error(msg);
+    }
+  };
+
   return (
-    <Create saveButtonProps={saveButtonProps}>
-      <Form {...formProps} layout="vertical">
+    <Card>
+      <Typography.Title level={3} style={{ marginTop: 0 }}>
+        Create domain
+      </Typography.Title>
+      <Form<DomainCreateInput>
+        form={form}
+        layout="vertical"
+        onFinish={handleFinish}
+      >
         <Form.Item
           label="Name"
           name="name"
@@ -40,7 +68,17 @@ export const DomainCreate = () => {
         >
           <Input placeholder="auto-generated if empty" />
         </Form.Item>
+
+        <Form.Item>
+          <Button
+            type="primary"
+            htmlType="submit"
+            loading={createMutation.isPending}
+          >
+            Save
+          </Button>
+        </Form.Item>
       </Form>
-    </Create>
+    </Card>
   );
 };

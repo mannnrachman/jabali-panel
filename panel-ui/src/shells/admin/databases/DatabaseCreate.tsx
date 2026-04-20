@@ -1,23 +1,47 @@
-// Admin-side "Create database" form. Backend accepts only the bare name
-// segment — non-admin users get their username auto-prefixed on the
-// server (see panel-api/internal/api/databases.go). Admins create without
-// a prefix. The helper text reflects that distinction.
-import { useForm, Create } from "@refinedev/antd";
-import { Form, Input } from "antd";
+// Admin-side "Create database" form. Backend accepts only the bare
+// name segment — non-admin users get their username auto-prefixed
+// on the server (see panel-api/internal/api/databases.go). Admins
+// create without a prefix. The helper text reflects that distinction.
+import { Button, Card, Form, Input, Typography, message } from "antd";
+import { useNavigate } from "react-router";
+
+import { useCreateMutation } from "../../../hooks/useQueries";
 
 type DatabaseCreateInput = {
   name: string;
 };
 
+type DatabaseCreated = { id: string };
+
 export const DatabaseCreate = () => {
-  const { formProps, saveButtonProps } = useForm<DatabaseCreateInput>({
+  const navigate = useNavigate();
+  const [form] = Form.useForm<DatabaseCreateInput>();
+  const createMutation = useCreateMutation<DatabaseCreated, DatabaseCreateInput>({
     resource: "databases",
-    action: "create",
   });
 
+  const handleFinish = async (values: DatabaseCreateInput) => {
+    try {
+      await createMutation.mutateAsync(values);
+      message.success("Database created");
+      navigate("/jabali-admin/databases");
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to create database";
+      message.error(msg);
+    }
+  };
+
   return (
-    <Create saveButtonProps={saveButtonProps}>
-      <Form {...formProps} layout="vertical">
+    <Card>
+      <Typography.Title level={3} style={{ marginTop: 0 }}>
+        Create database
+      </Typography.Title>
+      <Form<DatabaseCreateInput>
+        form={form}
+        layout="vertical"
+        onFinish={handleFinish}
+      >
         <Form.Item
           label="Name"
           name="name"
@@ -33,7 +57,17 @@ export const DatabaseCreate = () => {
         >
           <Input placeholder="e.g. wp_prod" autoComplete="off" />
         </Form.Item>
+
+        <Form.Item>
+          <Button
+            type="primary"
+            htmlType="submit"
+            loading={createMutation.isPending}
+          >
+            Save
+          </Button>
+        </Form.Item>
       </Form>
-    </Create>
+    </Card>
   );
 };

@@ -5,16 +5,19 @@
 // × that revokes just that grant. Row-level actions are Add Access
 // (open AddGrantModal), Password (rotate + reveal modal), and Delete
 // (drops the whole user, cascading all grants).
-import { useMemo, useState } from "react";
-import { useTable, DeleteButton, CreateButton } from "@refinedev/antd";
-import { Button, Space, Table, Tag, Tooltip, Typography, message } from "antd";
+import { useState } from "react";
+import { Button, Card, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import { KeyOutlined, PlusOutlined, UserOutlined } from "@ant-design/icons";
+import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router";
 
 import { apiClient } from "../../../apiClient";
-import { SearchableTable } from "../../../components/SearchableTable";
-import { readQValue } from "../../../components/searchableTableUtils";
-import { DatabaseUserPasswordModal } from "../../../components/DatabaseUserPasswordModal";
 import { AddGrantModal } from "../../../components/AddGrantModal";
+import { DatabaseUserPasswordModal } from "../../../components/DatabaseUserPasswordModal";
+import { RowDeleteButton } from "../../../components/RowDeleteButton";
+import { SearchableTableStringQ } from "../../../components/SearchableTable";
+import { useDeleteMutation } from "../../../hooks/useQueries";
+import { useTableURL } from "../../../hooks/useTableURL";
 
 export type Grant = {
   id: string;
@@ -64,12 +67,14 @@ function grantLabel(grant: Grant): string {
 }
 
 export const DatabaseUsersList = () => {
-  const { tableProps, setFilters, filters, tableQueryResult } =
-    useTable<DatabaseUser>({
-      resource: "database-users",
-      syncWithLocation: true,
-    });
-  const initialSearch = useMemo(() => readQValue(filters), [filters]);
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const query = useTableURL<DatabaseUser>({
+    resource: "database-users",
+    defaultSort: "username",
+    defaultOrder: "asc",
+  });
+  const deleteMutation = useDeleteMutation({ resource: "database-users" });
 
   const [passwordModal, setPasswordModal] = useState<{
     username: string;
@@ -81,7 +86,7 @@ export const DatabaseUsersList = () => {
   const [grantTarget, setGrantTarget] = useState<DatabaseUser | null>(null);
 
   const refresh = () => {
-    tableQueryResult?.refetch();
+    qc.invalidateQueries({ queryKey: ["list", "database-users"] });
   };
 
   const rotate = async (row: DatabaseUser) => {
@@ -110,7 +115,9 @@ export const DatabaseUsersList = () => {
     setRevokingId(grant.id);
     try {
       await apiClient.delete(`/database-user-grants/${grant.id}`);
-      message.success(`Revoked ${grantLabel(grant).toLowerCase()} on ${grant.database_name}`);
+      message.success(
+        `Revoked ${grantLabel(grant).toLowerCase()} on ${grant.database_name}`,
+      );
       refresh();
     } catch (err) {
       const msg =
@@ -123,7 +130,7 @@ export const DatabaseUsersList = () => {
   };
 
   return (
-    <div style={{ padding: 24 }}>
+    <div>
       <Space
         style={{
           marginBottom: 16,
@@ -134,101 +141,120 @@ export const DatabaseUsersList = () => {
         <Typography.Title level={3} style={{ margin: 0 }}>
           Database Users
         </Typography.Title>
-        <CreateButton resource="database-users">Create User</CreateButton>
+        <Button
+          type="primary"
+          onClick={() => navigate("/jabali-admin/database-users/create")}
+        >
+          Create User
+        </Button>
       </Space>
 
-      <SearchableTable<DatabaseUser>
-        {...tableProps}
-        rowKey="id"
-        initialSearch={initialSearch}
-        searchPlaceholder="Search by username"
-        onSearchChange={(f) => setFilters(f, "replace")}
-      >
-        <Table.Column<DatabaseUser>
-          dataIndex="username"
-          title="User"
-          sorter={{ multiple: 1 }}
-          defaultSortOrder="ascend"
-          render={(username: string) => (
-            <Space>
-              <UserOutlined />
-              <span style={{ fontFamily: "monospace" }}>{username}</span>
-              <Typography.Text type="secondary">@localhost</Typography.Text>
-            </Space>
-          )}
-        />
-        <Table.Column<DatabaseUser>
-          title="Database Privileges"
-          dataIndex="grants"
-          render={(grants: Grant[] | undefined) => {
-            if (!grants || grants.length === 0) {
-              return <Typography.Text type="secondary">No grants</Typography.Text>;
-            }
-            return (
-              <Space size={[4, 4]} wrap>
-                {grants.map((g) => (
-                  <Tag
-                    key={g.id}
-                    color={g.grant_level === "rw" ? "green" : g.grant_level === "ro" ? "blue" : "orange"}
-                    closable
-                    onClose={(e) => {
-                      e.preventDefault();
-                      revokeGrant(g);
-                    }}
-                    style={{
-                      opacity: revokingId === g.id ? 0.5 : 1,
-                      pointerEvents: revokingId === g.id ? "none" : undefined,
-                    }}
-                  >
-                    {g.database_name} ({grantLabel(g)})
-                  </Tag>
-                ))}
-              </Space>
-            );
+      <Card>
+        <SearchableTableStringQ<DatabaseUser>
+          rowKey="id"
+          loading={query.isLoading}
+          dataSource={query.items}
+          initialSearch={query.params.q}
+          searchPlaceholder="Search by username"
+          onSearchChange={(q) => query.setParams({ q, page: 1 })}
+          pagination={{
+            current: query.params.page,
+            pageSize: query.params.pageSize,
+            total: query.total,
           }}
-        />
-        <Table.Column<DatabaseUser>
-          dataIndex="created_at"
-          title="Created"
-          sorter={{ multiple: 2 }}
-          render={(date: string) => new Date(date).toLocaleDateString()}
-          width={120}
-        />
-        <Table.Column<DatabaseUser>
-          title="Actions"
-          dataIndex="actions"
-          width={180}
-          render={(_, row) => (
-            <Space size="small">
-              <Tooltip title="Add database access">
-                <Button
-                  size="small"
-                  type="text"
-                  icon={<PlusOutlined />}
-                  onClick={() => setGrantTarget(row)}
+        >
+          <Table.Column<DatabaseUser>
+            dataIndex="username"
+            title="User"
+            sorter={{ multiple: 1 }}
+            defaultSortOrder="ascend"
+            render={(username: string) => (
+              <Space>
+                <UserOutlined />
+                <span style={{ fontFamily: "monospace" }}>{username}</span>
+                <Typography.Text type="secondary">@localhost</Typography.Text>
+              </Space>
+            )}
+          />
+          <Table.Column<DatabaseUser>
+            title="Database Privileges"
+            dataIndex="grants"
+            render={(grants: Grant[] | undefined) => {
+              if (!grants || grants.length === 0) {
+                return (
+                  <Typography.Text type="secondary">No grants</Typography.Text>
+                );
+              }
+              return (
+                <Space size={[4, 4]} wrap>
+                  {grants.map((g) => (
+                    <Tag
+                      key={g.id}
+                      color={
+                        g.grant_level === "rw"
+                          ? "green"
+                          : g.grant_level === "ro"
+                            ? "blue"
+                            : "orange"
+                      }
+                      closable
+                      onClose={(e) => {
+                        e.preventDefault();
+                        revokeGrant(g);
+                      }}
+                      style={{
+                        opacity: revokingId === g.id ? 0.5 : 1,
+                        pointerEvents: revokingId === g.id ? "none" : undefined,
+                      }}
+                    >
+                      {g.database_name} ({grantLabel(g)})
+                    </Tag>
+                  ))}
+                </Space>
+              );
+            }}
+          />
+          <Table.Column<DatabaseUser>
+            dataIndex="created_at"
+            title="Created"
+            sorter={{ multiple: 2 }}
+            render={(date: string) => new Date(date).toLocaleDateString()}
+            width={120}
+          />
+          <Table.Column<DatabaseUser>
+            title="Actions"
+            dataIndex="actions"
+            width={180}
+            render={(_, row) => (
+              <Space size="small">
+                <Tooltip title="Add database access">
+                  <Button
+                    size="small"
+                    type="text"
+                    icon={<PlusOutlined />}
+                    onClick={() => setGrantTarget(row)}
+                  />
+                </Tooltip>
+                <Tooltip title="Rotate password">
+                  <Button
+                    size="small"
+                    type="text"
+                    icon={<KeyOutlined />}
+                    loading={rotatingId === row.id}
+                    onClick={() => rotate(row)}
+                  />
+                </Tooltip>
+                <RowDeleteButton
+                  confirmTitle={`Delete user "${row.username}"?`}
+                  onConfirm={async () => {
+                    await deleteMutation.mutateAsync({ id: row.id });
+                  }}
                 />
-              </Tooltip>
-              <Tooltip title="Rotate password">
-                <Button
-                  size="small"
-                  type="text"
-                  icon={<KeyOutlined />}
-                  loading={rotatingId === row.id}
-                  onClick={() => rotate(row)}
-                />
-              </Tooltip>
-              <DeleteButton
-                hideText
-                size="small"
-                type="text"
-                resource="database-users"
-                recordItemId={row.id}
-                onSuccess={refresh}
-              />
-            </Space>
-          )}
-        />
-      </SearchableTable>
+              </Space>
+            )}
+          />
+        </SearchableTableStringQ>
+      </Card>
 
       <DatabaseUserPasswordModal
         open={passwordModal !== null}

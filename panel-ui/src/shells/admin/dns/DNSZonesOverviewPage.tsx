@@ -1,10 +1,15 @@
-import { useState, useEffect } from "react";
+// DNSZonesOverviewPage — admin landing for DNS. Lists every domain
+// with a "zone provisioned?" badge so operators can see at a glance
+// which zones didn't come up. Post-M21: useTable → useTableURL; the
+// per-domain zone probe is unchanged (apiClient.get on each row
+// after the list resolves).
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { useTable } from "@refinedev/antd";
-import { Button, Space, Table, Tag, Typography, Alert, Spin, Empty } from "antd";
+import { Alert, Button, Empty, Space, Spin, Table, Tag, Typography } from "antd";
 import { ArrowLeftOutlined } from "@ant-design/icons";
 
 import { apiClient } from "../../../apiClient";
+import { useTableURL } from "../../../hooks/useTableURL";
 
 interface Domain {
   id: string;
@@ -21,19 +26,21 @@ interface ZoneStatus {
 export const DNSZonesOverviewPage = () => {
   const navigate = useNavigate();
   const [zoneStatuses, setZoneStatuses] = useState<Map<string, ZoneStatus>>(
-    new Map()
+    new Map(),
   );
 
-  const { tableProps, tableQueryResult } = useTable<Domain>({
+  const query = useTableURL<Domain>({
     resource: "domains",
-    syncWithLocation: true,
+    defaultSort: "name",
+    defaultOrder: "asc",
   });
 
-  // Fetch zone status for each domain
+  // Fetch zone status for each domain after the list resolves.
+  // Keep this lightweight — one GET per row. Panel-side zones are
+  // cheap to look up and most admin-scale installs have <100 domains.
   useEffect(() => {
-    if (!tableQueryResult.data?.data) return;
-
-    const domains = tableQueryResult.data.data;
+    const domains = query.items;
+    if (domains.length === 0) return;
 
     Promise.all(
       domains.map(async (domain) => {
@@ -44,13 +51,13 @@ export const DNSZonesOverviewPage = () => {
             provisioned: !!res.data?.data?.id,
           };
         } catch {
-          // If zone doesn't exist or error, consider it not provisioned
+          // If zone doesn't exist or error, consider it not provisioned.
           return {
             domainId: domain.id,
             provisioned: false,
           };
         }
-      })
+      }),
     ).then((results) => {
       const statusMap = new Map<string, ZoneStatus>();
       results.forEach(({ domainId, provisioned }) => {
@@ -58,7 +65,7 @@ export const DNSZonesOverviewPage = () => {
       });
       setZoneStatuses(statusMap);
     });
-  }, [tableQueryResult.data?.data]);
+  }, [query.items]);
 
   const getZoneStatusTag = (domainId: string) => {
     const status = zoneStatuses.get(domainId);
@@ -73,7 +80,7 @@ export const DNSZonesOverviewPage = () => {
   };
 
   return (
-    <div style={{ padding: 24 }}>
+    <div>
       <Space
         style={{
           marginBottom: 16,
@@ -101,12 +108,22 @@ export const DNSZonesOverviewPage = () => {
         style={{ marginBottom: 16 }}
       />
 
-      {tableQueryResult.isLoading ? (
+      {query.isLoading ? (
         <Spin />
-      ) : tableQueryResult.data?.data?.length === 0 ? (
+      ) : query.items.length === 0 ? (
         <Empty description="No domains found" />
       ) : (
-        <Table<Domain> {...tableProps} rowKey="id">
+        <Table<Domain>
+          rowKey="id"
+          loading={query.isLoading}
+          dataSource={query.items}
+          pagination={{
+            current: query.params.page,
+            pageSize: query.params.pageSize,
+            total: query.total,
+            onChange: (page, pageSize) => query.setParams({ page, pageSize }),
+          }}
+        >
           <Table.Column<Domain> dataIndex="name" title="Domain Name" />
           <Table.Column<Domain>
             dataIndex="user_id"
@@ -123,7 +140,9 @@ export const DNSZonesOverviewPage = () => {
               <Button
                 type="primary"
                 size="small"
-                onClick={() => navigate(`/jabali-admin/domains/${record.id}/dns`)}
+                onClick={() =>
+                  navigate(`/jabali-admin/domains/${record.id}/dns`)
+                }
               >
                 Manage Records
               </Button>

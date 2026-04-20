@@ -1,8 +1,14 @@
-import { useTable } from "@refinedev/antd";
-import { CreateButton, DeleteButton } from "@refinedev/antd";
-import { SearchableTable } from "../../../components/SearchableTable";
-import { readQValue } from "../../../components/searchableTableUtils";
-import { Space, Table, Tag, Typography } from "antd";
+// DatabaseList — admin view. Currently unrouted (no /jabali-admin/
+// databases mount in App.tsx) but kept Refine-free so a future route
+// wire-up doesn't have to touch this file again.
+import { Button, Card, Space, Table, Tag, Typography } from "antd";
+import { useNavigate } from "react-router";
+import type { SorterResult } from "antd/es/table/interface";
+
+import { RowDeleteButton } from "../../../components/RowDeleteButton";
+import { SearchableTableStringQ } from "../../../components/SearchableTable";
+import { useDeleteMutation } from "../../../hooks/useQueries";
+import { useTableURL } from "../../../hooks/useTableURL";
 
 export type Database = {
   id: string;
@@ -15,21 +21,41 @@ export type Database = {
   updated_at: string;
 };
 
-export const DatabaseList = () => {
-  const { tableProps, setFilters, filters } = useTable<Database>({
-    resource: "databases",
-    syncWithLocation: true,
-  });
-  const initialSearch = readQValue(filters);
+const engineColorMap: Record<string, string> = {
+  mariadb: "blue",
+  postgres: "green",
+};
 
-  const engineColorMap: Record<string, string> = {
-    mariadb: "blue",
-    postgres: "green",
+export const DatabaseList = () => {
+  const navigate = useNavigate();
+  const query = useTableURL<Database>({
+    resource: "databases",
+    defaultSort: "name",
+    defaultOrder: "asc",
+  });
+  const deleteMutation = useDeleteMutation({ resource: "databases" });
+
+  const handleTableChange: React.ComponentProps<
+    typeof Table<Database>
+  >["onChange"] = (pagination, _filters, sorter) => {
+    const single = Array.isArray(sorter)
+      ? (sorter[0] as SorterResult<Database> | undefined)
+      : (sorter as SorterResult<Database>);
+    query.setParams({
+      page: pagination.current ?? 1,
+      pageSize: pagination.pageSize ?? 20,
+      sort: single?.columnKey ? String(single.columnKey) : undefined,
+      order:
+        single?.order === "ascend"
+          ? "asc"
+          : single?.order === "descend"
+            ? "desc"
+            : undefined,
+    });
   };
 
-
   return (
-    <div style={{ padding: 24 }}>
+    <div>
       <Space
         style={{
           marginBottom: 16,
@@ -40,55 +66,76 @@ export const DatabaseList = () => {
         <Typography.Title level={3} style={{ margin: 0 }}>
           Databases
         </Typography.Title>
-        <CreateButton />
+        <Button
+          type="primary"
+          onClick={() => navigate("/jabali-admin/databases/create")}
+        >
+          Create
+        </Button>
       </Space>
 
-      <SearchableTable<Database>
-        {...tableProps}
-        rowKey="id"
-        initialSearch={initialSearch}
-        searchPlaceholder="Search by database name"
-        onSearchChange={(filters) => setFilters(filters, "replace")}
-      >
-        <Table.Column<Database>
-          dataIndex="name"
-          title="Database"
-          sorter={{ multiple: 1 }}
-          defaultSortOrder="ascend"
-        />
-        <Table.Column<Database>
-          dataIndex="user_id"
-          title="User ID"
-          render={(value: string) => value.substring(0, 8)}
-        />
-        <Table.Column<Database>
-          dataIndex="engine"
-          title="Engine"
-          render={(engine: string) => (
-            <Tag color={engineColorMap[engine] || "default"}>{engine}</Tag>
-          )}
-        />
-        <Table.Column<Database>
-          dataIndex="charset"
-          title="Charset"
-          render={(charset?: string) => charset || "-"}
-        />
-        <Table.Column<Database>
-          dataIndex="created_at"
-          title="Created"
-          sorter={{ multiple: 2 }}
-          render={(date: string) => new Date(date).toLocaleDateString()}
-        />
-        <Table.Column<Database>
-          title="Actions"
-          dataIndex="actions"
-          render={(_, r) => (
-            <Space size="small">
-              <DeleteButton hideText size="small" type="text" resource="databases" recordItemId={r.id} />
-            </Space>
-          )}
-        />
-      </SearchableTable>
+      <Card>
+        <SearchableTableStringQ<Database>
+          rowKey="id"
+          loading={query.isLoading}
+          dataSource={query.items}
+          initialSearch={query.params.q}
+          searchPlaceholder="Search by database name"
+          onSearchChange={(q) => query.setParams({ q, page: 1 })}
+          pagination={{
+            current: query.params.page,
+            pageSize: query.params.pageSize,
+            total: query.total,
+          }}
+          onChange={handleTableChange}
+        >
+          <Table.Column<Database>
+            dataIndex="name"
+            title="Database"
+            key="name"
+            sorter={{ multiple: 1 }}
+            defaultSortOrder="ascend"
+          />
+          <Table.Column<Database>
+            dataIndex="user_id"
+            title="User ID"
+            render={(value: string) => value.substring(0, 8)}
+          />
+          <Table.Column<Database>
+            dataIndex="engine"
+            title="Engine"
+            render={(engine: string) => (
+              <Tag color={engineColorMap[engine] || "default"}>{engine}</Tag>
+            )}
+          />
+          <Table.Column<Database>
+            dataIndex="charset"
+            title="Charset"
+            render={(charset?: string) => charset || "-"}
+          />
+          <Table.Column<Database>
+            dataIndex="created_at"
+            title="Created"
+            key="created_at"
+            sorter={{ multiple: 2 }}
+            render={(date: string) => new Date(date).toLocaleDateString()}
+          />
+          <Table.Column<Database>
+            title="Actions"
+            dataIndex="actions"
+            render={(_, r) => (
+              <Space size="small">
+                <RowDeleteButton
+                  confirmTitle={`Delete database "${r.name}"?`}
+                  onConfirm={async () => {
+                    await deleteMutation.mutateAsync({ id: r.id });
+                  }}
+                />
+              </Space>
+            )}
+          />
+        </SearchableTableStringQ>
+      </Card>
     </div>
   );
 };

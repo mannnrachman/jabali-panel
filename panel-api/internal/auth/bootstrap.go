@@ -108,6 +108,7 @@ func BootstrapAdmin(ctx context.Context, users repository.UserRepository, opt Bo
 		return BootstrapResult{}, fmt.Errorf("auth: create admin: %w", err)
 	}
 
+	// M20 LEGACY: remove after 2026-05-20 — legacy bootstrap path
 	if opt.Kratos == nil {
 		return BootstrapResult{Created: true}, nil
 	}

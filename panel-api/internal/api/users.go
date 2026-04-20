@@ -245,6 +245,7 @@ func (h *userHandler) create(c *gin.Context) {
 	// panel DB row (compensating delete) so the two systems can't drift. The
 	// failure surface is explicitly 5xx — callers retry. We never return 201
 	// for a half-created user.
+	// M20 LEGACY: remove after 2026-05-20 — keep only the kratos branch
 	if h.cfg.kratosEnabled() {
 		traits := kratosclient.AdminTraits{
 			Email:   u.Email,

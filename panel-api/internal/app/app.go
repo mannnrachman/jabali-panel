@@ -164,6 +164,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 	// Instantiate Kratos client if provider is "kratos".
 	// This happens before middleware registration so the client is available
 	// for RequireKratosSession binding.
+	// M20 LEGACY: remove after 2026-05-20 — collapse to unconditional when legacy branch deletes
 	if cfg.Auth.Provider == "kratos" && cfg.Auth.Kratos.PublicURL != "" {
 		deps.KratosClient = kratosclient.NewClient(cfg.Auth.Kratos.PublicURL, cfg.Auth.Kratos.AdminURL)
 
@@ -187,6 +188,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			// ownership check in the API expects.
 			authMiddleware = middleware.RequireKratosSession(deps.KratosClient, deps.Users)
 		} else {
+			// M20 LEGACY: remove after 2026-05-20 — legacy JWT path
 			authMiddleware = middleware.RequireAuth(deps.JWTIssuer)
 		}
 		v1 := r.Group("/api/v1", authMiddleware)

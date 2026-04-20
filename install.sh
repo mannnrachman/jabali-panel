@@ -325,29 +325,57 @@ install_base_packages() {
     systemd-resolved \
     quota quotatool xfsprogs
 
-  # Some Debian images ship systemd-resolved masked (upgrade paths from
-  # bullseye/bookworm, certain cloud images, or admins who masked it to
-  # stop a prior DNS-stack conflict). A masked unit can't be started by
-  # the panel's DNS Resolvers page, so `systemctl restart` from the agent
-  # fails with exit 1 and the write+restart flow rolls the drop-in back.
-  # Unmasking is a no-op on hosts where it's already unmasked, and
-  # matches the installer's contract of shipping a usable resolved binary.
-  # We still don't enable or start it here — that's the admin's choice
-  # via the panel UI or their own preferred DNS-manager setup.
-  if systemctl is-enabled systemd-resolved.service 2>/dev/null | grep -q '^masked$'; then
-    _log "unmasking systemd-resolved (was masked; panel DNS feature requires it unblocked)"
+  # Make systemd-resolved actually usable by the panel's DNS Resolvers
+  # feature. Historically the installer just apt-installed the package
+  # and left state untouched "so the admin's existing DNS isn't
+  # disrupted" — but on a dedicated jabali-panel host there is no
+  # pre-existing DNS-manager to preserve, and the effect of the
+  # hands-off stance was that clicking "Save Resolvers" in the UI
+  # appeared to succeed (drop-in written to disk) while doing nothing
+  # useful (nobody reads the drop-in because resolved isn't running).
+  #
+  # So: normalize to "unmasked + enabled + running" on every install.
+  # Only rewire /etc/resolv.conf if it's a plain regular file today —
+  # if it's already a symlink, another tool (resolvconf, NetworkManager,
+  # or a prior systemd-resolved setup) owns it and we must not fight
+  # that. Idempotent across reinstalls.
+  local resolved_state
+  resolved_state="$(systemctl is-enabled systemd-resolved.service 2>/dev/null || true)"
+
+  if [[ "$resolved_state" == "masked" ]]; then
+    _log "unmasking systemd-resolved (was masked; image default or prior admin action)"
     systemctl unmask systemd-resolved.service
+    resolved_state="disabled"
+  fi
+
+  if [[ "$resolved_state" != "enabled" ]] || ! systemctl is-active --quiet systemd-resolved.service; then
+    _log "enabling + starting systemd-resolved"
+    if ! systemctl enable --now systemd-resolved.service; then
+      _warn "systemd-resolved failed to start — panel DNS Resolvers page will be non-functional until fixed manually (check 'journalctl -u systemd-resolved')"
+    fi
+  fi
+
+  # Hand /etc/resolv.conf over to systemd-resolved's stub so queries
+  # actually traverse the drop-in the panel writes. Gated on:
+  #   1. resolv.conf is a plain file (not already a symlink — symlink
+  #      means another manager owns it; don't stomp)
+  #   2. systemd-resolved started successfully above (checking is-active
+  #      as the cheapest post-start health probe)
+  if [[ ! -L /etc/resolv.conf && -e /etc/resolv.conf ]] \
+     && systemctl is-active --quiet systemd-resolved.service; then
+    _log "linking /etc/resolv.conf → /run/systemd/resolve/stub-resolv.conf (was plain file)"
+    ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
   fi
 
   _ok "base packages ready"
 }
 
-# Note: we deliberately install systemd-resolved but do NOT enable/start
-# it here. The admin's existing DNS setup stays untouched at install time.
-# We DO unmask the unit if a prior image/upgrade left it masked, otherwise
-# the panel's Server Settings → DNS Resolvers page can't restart it when
-# the admin saves new resolvers. Enabling + starting remains the admin's
-# decision (via the panel or manually).
+# Note: systemd-resolved is installed, unmasked, enabled, started, and
+# (when /etc/resolv.conf was previously a plain file) has
+# /etc/resolv.conf pointed at its stub so the panel's DNS Resolvers
+# page works end-to-end on a fresh install. Hosts where /etc/resolv.conf
+# is a symlink to another manager's output are left untouched to avoid
+# fighting that manager.
 
 # ---------- step 1d: M18 — cgroups v2 probe + disk quota + /tmp tmpfs -------
 #

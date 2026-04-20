@@ -125,7 +125,7 @@ func verifyConcreteSHA256(path string) error {
 // present, since concrete keeps changing the slug shape.
 func extractConcreteZip(ctx context.Context, osUser, zipPath, installPath, stagingDir string) error {
 	cmd := buildSystemdRunCmd(ctx, osUser, "unzip", "-q", "-o", zipPath, "-d", stagingDir)
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("unzip: %w (output: %s)", err, truncateStr(string(out), 512))
 	}
@@ -140,7 +140,7 @@ func extractConcreteZip(ctx context.Context, osUser, zipPath, installPath, stagi
 		fmt.Sprintf("cp -a %s/. %s/",
 			shellQuote(src), shellQuote(installPath)),
 	)
-	mvOut, err := mvCmd.CombinedOutput()
+	mvOut, err := runBoundedOutput(mvCmd, 0)
 	if err != nil {
 		return fmt.Errorf("move concrete contents: %w (output: %s)", err, truncateStr(string(mvOut), 512))
 	}
@@ -167,7 +167,7 @@ func findConcreteWrapper(ctx context.Context, osUser, stagingDir string) (string
 	listCmd := buildSystemdRunCmd(ctx, osUser, "sh", "-c",
 		fmt.Sprintf("find %s -mindepth 1 -maxdepth 1 -type d | head -n1",
 			shellQuote(stagingDir)))
-	out, err := listCmd.CombinedOutput()
+	out, err := runBoundedOutput(listCmd, 0)
 	if err != nil {
 		return "", fmt.Errorf("list staging: %w", err)
 	}
@@ -212,7 +212,7 @@ func runConcreteCLIInstaller(ctx context.Context, req concreteInstallReq, instal
 	}
 	cmd := buildSystemdRunCmd(ctx, req.OSUser, args...)
 	cmd.Dir = installPath
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("concrete c5:install: %w (output: %s)", err, truncateStr(string(out), 1024))
 	}
@@ -271,7 +271,7 @@ func concreteInstallHandler(ctx context.Context, params json.RawMessage) (any, e
 
 	if req.Subdirectory != "" {
 		mkdirCmd := buildSystemdRunCmd(ctx, req.OSUser, "mkdir", "-p", installPath)
-		if out, err := mkdirCmd.CombinedOutput(); err != nil {
+		if out, err := runBoundedOutput(mkdirCmd, 0); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mkdir %s: %v (output: %s)", installPath, err, truncateStr(string(out), 256))}
 		}
 	}

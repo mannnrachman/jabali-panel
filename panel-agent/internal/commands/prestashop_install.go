@@ -131,7 +131,7 @@ func verifyPrestaShopSHA256(path string) error {
 // 3. cp -a staging/<wherever>/. installPath/
 func extractPrestaShopZip(ctx context.Context, osUser, outerZip, installPath, stagingDir string) error {
 	cmd := buildSystemdRunCmd(ctx, osUser, "unzip", "-q", "-o", outerZip, "-d", stagingDir)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := runBoundedOutput(cmd, 0); err != nil {
 		return fmt.Errorf("unzip outer: %w (output: %s)", err, truncateStr(string(out), 512))
 	}
 
@@ -149,7 +149,7 @@ func extractPrestaShopZip(ctx context.Context, osUser, outerZip, installPath, st
 	}
 
 	cmd2 := buildSystemdRunCmd(ctx, osUser, "unzip", "-q", "-o", innerZip, "-d", innerStage)
-	if out, err := cmd2.CombinedOutput(); err != nil {
+	if out, err := runBoundedOutput(cmd2, 0); err != nil {
 		return fmt.Errorf("unzip inner: %w (output: %s)", err, truncateStr(string(out), 512))
 	}
 
@@ -160,7 +160,7 @@ func extractPrestaShopZip(ctx context.Context, osUser, outerZip, installPath, st
 		fmt.Sprintf("cp -a %s/. %s/",
 			shellQuote(innerStage), shellQuote(installPath)),
 	)
-	if out, err := mvCmd.CombinedOutput(); err != nil {
+	if out, err := runBoundedOutput(mvCmd, 0); err != nil {
 		return fmt.Errorf("move prestashop contents: %w (output: %s)", err, truncateStr(string(out), 512))
 	}
 	return nil
@@ -228,7 +228,7 @@ func runPrestaShopCLIInstaller(ctx context.Context, req prestashopInstallReq, in
 	}
 	cmd := buildSystemdRunCmd(ctx, req.OSUser, args...)
 	cmd.Dir = installPath
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("install/index_cli.php: %w (output: %s)", err, truncateStr(string(out), 1024))
 	}
@@ -239,7 +239,7 @@ func runPrestaShopCLIInstaller(ctx context.Context, req prestashopInstallReq, in
 // install. PrestaShop's runtime won't load while it exists.
 func removePrestaShopInstallDir(ctx context.Context, osUser, installPath string) error {
 	cmd := buildSystemdRunCmd(ctx, osUser, "rm", "-rf", filepath.Join(installPath, "install"))
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("rm install/: %w (output: %s)", err, truncateStr(string(out), 256))
 	}
@@ -292,7 +292,7 @@ func prestashopInstallHandler(ctx context.Context, params json.RawMessage) (any,
 
 	if req.Subdirectory != "" {
 		mkdirCmd := buildSystemdRunCmd(ctx, req.OSUser, "mkdir", "-p", installPath)
-		if out, err := mkdirCmd.CombinedOutput(); err != nil {
+		if out, err := runBoundedOutput(mkdirCmd, 0); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mkdir %s: %v (output: %s)", installPath, err, truncateStr(string(out), 256))}
 		}
 	}

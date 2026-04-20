@@ -114,7 +114,7 @@ func verifyAbanteCartSHA256(path string) error {
 // directory inside the version-named folder.
 func extractAbanteCartZip(ctx context.Context, osUser, zipPath, installPath, stagingDir string) error {
 	cmd := buildSystemdRunCmd(ctx, osUser, "unzip", "-q", "-o", zipPath, "-d", stagingDir)
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("unzip: %w (output: %s)", err, truncateStr(string(out), 512))
 	}
@@ -129,7 +129,7 @@ func extractAbanteCartZip(ctx context.Context, osUser, zipPath, installPath, sta
 		fmt.Sprintf("cp -a %s/. %s/",
 			shellQuote(src), shellQuote(installPath)),
 	)
-	mvOut, err := mvCmd.CombinedOutput()
+	mvOut, err := runBoundedOutput(mvCmd, 0)
 	if err != nil {
 		return fmt.Errorf("move abantecart contents: %w (output: %s)", err, truncateStr(string(mvOut), 512))
 	}
@@ -168,7 +168,7 @@ func runAbanteCartCLIInstaller(ctx context.Context, req abantecartInstallReq, in
 	}
 	cmd := buildSystemdRunCmd(ctx, req.OSUser, args...)
 	cmd.Dir = installPath
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("install/cli_install.php: %w (output: %s)", err, truncateStr(string(out), 1024))
 	}
@@ -180,7 +180,7 @@ func runAbanteCartCLIInstaller(ctx context.Context, req abantecartInstallReq, in
 // the install folder" warning otherwise.
 func removeAbanteCartInstallDir(ctx context.Context, osUser, installPath string) error {
 	cmd := buildSystemdRunCmd(ctx, osUser, "rm", "-rf", filepath.Join(installPath, "install"))
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("rm install/: %w (output: %s)", err, truncateStr(string(out), 256))
 	}
@@ -224,7 +224,7 @@ func abantecartInstallHandler(ctx context.Context, params json.RawMessage) (any,
 
 	if req.Subdirectory != "" {
 		mkdirCmd := buildSystemdRunCmd(ctx, req.OSUser, "mkdir", "-p", installPath)
-		if out, err := mkdirCmd.CombinedOutput(); err != nil {
+		if out, err := runBoundedOutput(mkdirCmd, 0); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mkdir %s: %v (output: %s)", installPath, err, truncateStr(string(out), 256))}
 		}
 	}

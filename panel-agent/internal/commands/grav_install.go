@@ -129,7 +129,7 @@ func verifyGravSHA256(path string) error {
 func extractGravZip(ctx context.Context, osUser, zipPath, installPath, stagingDir string) error {
 	// 1. unzip into stagingDir
 	cmd := buildSystemdRunCmd(ctx, osUser, "unzip", "-q", "-o", zipPath, "-d", stagingDir)
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("unzip: %w (output: %s)", err, truncateStr(string(out), 512))
 	}
@@ -141,7 +141,7 @@ func extractGravZip(ctx context.Context, osUser, zipPath, installPath, stagingDi
 		fmt.Sprintf("cp -a %s/. %s/ && rm -rf %s",
 			shellQuote(src), shellQuote(installPath), shellQuote(src)),
 	)
-	mvOut, err := mvCmd.CombinedOutput()
+	mvOut, err := runBoundedOutput(mvCmd, 0)
 	if err != nil {
 		return fmt.Errorf("move grav-admin contents: %w (output: %s)", err, truncateStr(string(mvOut), 512))
 	}
@@ -182,7 +182,7 @@ func runGravNewUser(ctx context.Context, req gravInstallReq, installPath string)
 	}
 	cmd := buildSystemdRunCmd(ctx, req.OSUser, args...)
 	cmd.Dir = installPath
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("bin/plugin login newuser: %w (output: %s)", err, truncateStr(string(out), 1024))
 	}
@@ -196,7 +196,7 @@ func runGravNewUser(ctx context.Context, req gravInstallReq, installPath string)
 func writeGravSiteConfig(ctx context.Context, osUser, installPath, siteTitle string) error {
 	configDir := filepath.Join(installPath, "user", "config")
 	mkCmd := buildSystemdRunCmd(ctx, osUser, "mkdir", "-p", configDir)
-	if out, err := mkCmd.CombinedOutput(); err != nil {
+	if out, err := runBoundedOutput(mkCmd, 0); err != nil {
 		return fmt.Errorf("mkdir user/config: %w (output: %s)", err, truncateStr(string(out), 256))
 	}
 
@@ -206,7 +206,7 @@ func writeGravSiteConfig(ctx context.Context, osUser, installPath, siteTitle str
 		fmt.Sprintf("cat > %s", shellQuote(configPath)),
 	)
 	teeCmd.Stdin = strings.NewReader(yaml)
-	if out, err := teeCmd.CombinedOutput(); err != nil {
+	if out, err := runBoundedOutput(teeCmd, 0); err != nil {
 		return fmt.Errorf("write user/config/site.yaml: %w (output: %s)", err, truncateStr(string(out), 256))
 	}
 	return nil
@@ -249,7 +249,7 @@ func gravInstallHandler(ctx context.Context, params json.RawMessage) (any, error
 
 	if req.Subdirectory != "" {
 		mkdirCmd := buildSystemdRunCmd(ctx, req.OSUser, "mkdir", "-p", installPath)
-		if out, err := mkdirCmd.CombinedOutput(); err != nil {
+		if out, err := runBoundedOutput(mkdirCmd, 0); err != nil {
 			return nil, &agentwire.AgentError{
 				Code:    agentwire.CodeInternal,
 				Message: fmt.Sprintf("mkdir %s: %v (output: %s)", installPath, err, truncateStr(string(out), 256)),

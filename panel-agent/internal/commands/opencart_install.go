@@ -178,7 +178,7 @@ func verifyOpenCartSHA256(path string) error {
 // installer write into them.
 func extractOpenCartZip(ctx context.Context, osUser, zipPath, installPath, stagingDir string) error {
 	cmd := buildSystemdRunCmd(ctx, osUser, "unzip", "-q", "-o", zipPath, "-d", stagingDir)
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("unzip: %w (output: %s)", err, truncateStr(string(out), 512))
 	}
@@ -198,7 +198,7 @@ func extractOpenCartZip(ctx context.Context, osUser, zipPath, installPath, stagi
 		fmt.Sprintf("cp -a %s/. %s/",
 			shellQuote(src), shellQuote(installPath)),
 	)
-	mvOut, err := mvCmd.CombinedOutput()
+	mvOut, err := runBoundedOutput(mvCmd, 0)
 	if err != nil {
 		return fmt.Errorf("move opencart contents: %w (output: %s)", err, truncateStr(string(mvOut), 512))
 	}
@@ -211,7 +211,7 @@ func extractOpenCartZip(ctx context.Context, osUser, zipPath, installPath, stagi
 		touchCmd := buildSystemdRunCmd(ctx, osUser, "sh", "-c",
 			fmt.Sprintf("touch %s && chmod 0640 %s", shellQuote(full), shellQuote(full)),
 		)
-		if tOut, err := touchCmd.CombinedOutput(); err != nil {
+		if tOut, err := runBoundedOutput(touchCmd, 0); err != nil {
 			return fmt.Errorf("touch %s: %w (output: %s)", p, err, truncateStr(string(tOut), 256))
 		}
 	}
@@ -248,7 +248,7 @@ func runOpenCartCLIInstaller(ctx context.Context, req opencartInstallReq, instal
 	}
 	cmd := buildSystemdRunCmd(ctx, req.OSUser, args...)
 	cmd.Dir = installPath
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("install/cli_install.php install: %w (output: %s)", err, truncateStr(string(out), 1024))
 	}
@@ -261,7 +261,7 @@ func runOpenCartCLIInstaller(ctx context.Context, req opencartInstallReq, instal
 // still around.
 func removeOpenCartInstallDir(ctx context.Context, osUser, installPath string) error {
 	cmd := buildSystemdRunCmd(ctx, osUser, "rm", "-rf", filepath.Join(installPath, "install"))
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("rm install/: %w (output: %s)", err, truncateStr(string(out), 256))
 	}
@@ -305,7 +305,7 @@ func opencartInstallHandler(ctx context.Context, params json.RawMessage) (any, e
 
 	if req.Subdirectory != "" {
 		mkdirCmd := buildSystemdRunCmd(ctx, req.OSUser, "mkdir", "-p", installPath)
-		if out, err := mkdirCmd.CombinedOutput(); err != nil {
+		if out, err := runBoundedOutput(mkdirCmd, 0); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mkdir %s: %v (output: %s)", installPath, err, truncateStr(string(out), 256))}
 		}
 	}

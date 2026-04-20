@@ -161,14 +161,14 @@ func extractPhpbbTarball(ctx context.Context, osUser, tarballPath, installPath s
 		"--file", tarballPath,
 		"--directory", stagingDir,
 	)
-	if out, err := tarCmd.CombinedOutput(); err != nil {
+	if out, err := runBoundedOutput(tarCmd, 0); err != nil {
 		return fmt.Errorf("tar extract: %w (output: %s)", err, truncateStr(string(out), 512))
 	}
 	src := filepath.Join(stagingDir, "phpBB")
 	mvCmd := buildSystemdRunCmd(ctx, osUser, "sh", "-c",
 		fmt.Sprintf("cp -a %s/. %s/", shellQuote(src), shellQuote(installPath)),
 	)
-	if out, err := mvCmd.CombinedOutput(); err != nil {
+	if out, err := runBoundedOutput(mvCmd, 0); err != nil {
 		return fmt.Errorf("move phpBB contents: %w (output: %s)", err, truncateStr(string(out), 512))
 	}
 	return nil
@@ -277,7 +277,7 @@ func runPhpbbCLIInstaller(ctx context.Context, osUser, installPath, configPath s
 		configPath,
 	}
 	cmd := buildSystemdRunCmd(ctx, osUser, args...)
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("php phpbbcli.php install: %w (output: %s)", err, truncateStr(string(out), 1024))
 	}
@@ -294,7 +294,7 @@ func runPhpbbComposerInstall(ctx context.Context, osUser, installPath string) er
 		"--working-directory="+installPath,
 		"composer", "install", "--no-dev", "--no-progress", "--no-interaction",
 	)
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("composer install: %w (output: %s)", err, truncateStr(string(out), 1024))
 	}
@@ -306,7 +306,7 @@ func runPhpbbComposerInstall(ctx context.Context, osUser, installPath string) er
 // otherwise; the upstream docs say it's mandatory.
 func removePhpbbInstallDir(ctx context.Context, osUser, installPath string) error {
 	cmd := buildSystemdRunCmd(ctx, osUser, "rm", "-rf", filepath.Join(installPath, "install"))
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("rm install/: %w (output: %s)", err, truncateStr(string(out), 256))
 	}
@@ -359,7 +359,7 @@ func phpbbInstallHandler(ctx context.Context, params json.RawMessage) (any, erro
 
 	if req.Subdirectory != "" {
 		mkdirCmd := buildSystemdRunCmd(ctx, req.OSUser, "mkdir", "-p", installPath)
-		if out, err := mkdirCmd.CombinedOutput(); err != nil {
+		if out, err := runBoundedOutput(mkdirCmd, 0); err != nil {
 			return nil, &agentwire.AgentError{
 				Code:    agentwire.CodeInternal,
 				Message: fmt.Sprintf("mkdir %s: %v (output: %s)", installPath, err, truncateStr(string(out), 256)),

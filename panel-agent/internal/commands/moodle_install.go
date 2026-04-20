@@ -129,7 +129,7 @@ func extractMoodleTarball(ctx context.Context, osUser, tarballPath, installPath 
 		"--file", tarballPath,
 		"--directory", installPath,
 	)
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("tar extract: %w (output: %s)", err, truncateStr(string(out), 512))
 	}
@@ -178,7 +178,7 @@ func runMoodleCLIInstaller(ctx context.Context, req moodleInstallReq, installPat
 	}
 	cmd := buildSystemdRunCmd(ctx, req.OSUser, args...)
 	cmd.Dir = installPath
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("admin/cli/install.php: %w (output: %s)", err, truncateStr(string(out), 1024))
 	}
@@ -237,7 +237,7 @@ func moodleInstallHandler(ctx context.Context, params json.RawMessage) (any, err
 
 	if req.Subdirectory != "" {
 		mkdirCmd := buildSystemdRunCmd(ctx, req.OSUser, "mkdir", "-p", installPath)
-		if out, err := mkdirCmd.CombinedOutput(); err != nil {
+		if out, err := runBoundedOutput(mkdirCmd, 0); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mkdir %s: %v (output: %s)", installPath, err, truncateStr(string(out), 256))}
 		}
 	}

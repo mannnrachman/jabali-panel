@@ -186,7 +186,7 @@ func verifyBeeSHA256(path string) error {
 // the contents into installPath.
 func extractBackdropZip(ctx context.Context, osUser, zipPath, installPath, stagingDir string) error {
 	cmd := buildSystemdRunCmd(ctx, osUser, "unzip", "-q", "-o", zipPath, "-d", stagingDir)
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("unzip backdrop: %w (output: %s)", err, truncateStr(string(out), 512))
 	}
@@ -195,7 +195,7 @@ func extractBackdropZip(ctx context.Context, osUser, zipPath, installPath, stagi
 		fmt.Sprintf("cp -a %s/. %s/ && rm -rf %s",
 			shellQuote(src), shellQuote(installPath), shellQuote(src)),
 	)
-	mvOut, err := mvCmd.CombinedOutput()
+	mvOut, err := runBoundedOutput(mvCmd, 0)
 	if err != nil {
 		return fmt.Errorf("move backdrop contents: %w (output: %s)", err, truncateStr(string(mvOut), 512))
 	}
@@ -212,11 +212,11 @@ func extractBackdropZip(ctx context.Context, osUser, zipPath, installPath, stagi
 // branch on URL format.
 func extractBeeZip(ctx context.Context, osUser, zipPath, stagingDir string) (string, error) {
 	cmd := buildSystemdRunCmd(ctx, osUser, "unzip", "-q", "-o", zipPath, "-d", stagingDir)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := runBoundedOutput(cmd, 0); err != nil {
 		return "", fmt.Errorf("unzip bee: %w (output: %s)", err, truncateStr(string(out), 512))
 	}
 	findCmd := buildSystemdRunCmd(ctx, osUser, "find", stagingDir, "-name", "bee.php", "-print", "-quit")
-	out, err := findCmd.CombinedOutput()
+	out, err := runBoundedOutput(findCmd, 0)
 	if err != nil {
 		return "", fmt.Errorf("find bee.php: %w (output: %s)", err, truncateStr(string(out), 256))
 	}
@@ -270,7 +270,7 @@ func runBeeSiteInstall(ctx context.Context, req backdropInstallReq, beeScript, i
 	}
 	cmd := buildSystemdRunCmd(ctx, req.OSUser, args...)
 	cmd.Dir = installPath
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("bee site-install: %w (output: %s)", err, truncateStr(string(out), 1024))
 	}
@@ -320,7 +320,7 @@ func backdropInstallHandler(ctx context.Context, params json.RawMessage) (any, e
 
 	if req.Subdirectory != "" {
 		mkdirCmd := buildSystemdRunCmd(ctx, req.OSUser, "mkdir", "-p", installPath)
-		if out, err := mkdirCmd.CombinedOutput(); err != nil {
+		if out, err := runBoundedOutput(mkdirCmd, 0); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mkdir %s: %v (output: %s)", installPath, err, truncateStr(string(out), 256))}
 		}
 	}

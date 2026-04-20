@@ -118,7 +118,7 @@ func verifyMatomoSHA256(path string) error {
 // top-level "matomo/" wrapper directory.
 func extractMatomoZip(ctx context.Context, osUser, zipPath, installPath, stagingDir string) error {
 	cmd := buildSystemdRunCmd(ctx, osUser, "unzip", "-q", "-o", zipPath, "-d", stagingDir)
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("unzip: %w (output: %s)", err, truncateStr(string(out), 512))
 	}
@@ -127,7 +127,7 @@ func extractMatomoZip(ctx context.Context, osUser, zipPath, installPath, staging
 		fmt.Sprintf("cp -a %s/. %s/ && rm -rf %s",
 			shellQuote(src), shellQuote(installPath), shellQuote(src)),
 	)
-	mvOut, err := mvCmd.CombinedOutput()
+	mvOut, err := runBoundedOutput(mvCmd, 0)
 	if err != nil {
 		return fmt.Errorf("move matomo contents: %w (output: %s)", err, truncateStr(string(mvOut), 512))
 	}
@@ -148,7 +148,7 @@ func writeMatomoConfig(ctx context.Context, osUser, installPath string, req mato
 
 	configDir := filepath.Join(installPath, "config")
 	mkCmd := buildSystemdRunCmd(ctx, osUser, "mkdir", "-p", configDir)
-	if out, err := mkCmd.CombinedOutput(); err != nil {
+	if out, err := runBoundedOutput(mkCmd, 0); err != nil {
 		return fmt.Errorf("mkdir config: %w (output: %s)", err, truncateStr(string(out), 256))
 	}
 
@@ -178,7 +178,7 @@ func writeMatomoConfig(ctx context.Context, osUser, installPath string, req mato
 		fmt.Sprintf("cat > %s", shellQuote(configPath)),
 	)
 	teeCmd.Stdin = strings.NewReader(ini)
-	if out, err := teeCmd.CombinedOutput(); err != nil {
+	if out, err := runBoundedOutput(teeCmd, 0); err != nil {
 		return fmt.Errorf("write config.ini.php: %w (output: %s)", err, truncateStr(string(out), 256))
 	}
 	if err := exec.CommandContext(ctx, "chmod", "0640", configPath).Run(); err != nil {
@@ -222,7 +222,7 @@ func runMatomoCoreInstall(ctx context.Context, osUser, installPath string) error
 	}
 	cmd := buildSystemdRunCmd(ctx, osUser, args...)
 	cmd.Dir = installPath
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("console core:install: %w (output: %s)", err, truncateStr(string(out), 1024))
 	}
@@ -242,7 +242,7 @@ func runMatomoUserCreate(ctx context.Context, req matomoInstallReq, installPath 
 	}
 	cmd := buildSystemdRunCmd(ctx, req.OSUser, args...)
 	cmd.Dir = installPath
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("console user:create: %w (output: %s)", err, truncateStr(string(out), 1024))
 	}
@@ -257,7 +257,7 @@ func finalizeMatomoConfig(ctx context.Context, osUser, installPath string) error
 		"s/^installation_in_progress = 1$/installation_in_progress = 0/",
 		configPath,
 	)
-	out, err := cmd.CombinedOutput()
+	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("sed config.ini.php: %w (output: %s)", err, truncateStr(string(out), 256))
 	}
@@ -301,7 +301,7 @@ func matomoInstallHandler(ctx context.Context, params json.RawMessage) (any, err
 
 	if req.Subdirectory != "" {
 		mkdirCmd := buildSystemdRunCmd(ctx, req.OSUser, "mkdir", "-p", installPath)
-		if out, err := mkdirCmd.CombinedOutput(); err != nil {
+		if out, err := runBoundedOutput(mkdirCmd, 0); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mkdir %s: %v (output: %s)", installPath, err, truncateStr(string(out), 256))}
 		}
 	}

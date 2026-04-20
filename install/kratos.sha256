@@ -1,4 +1,9 @@
-# Ory Kratos v1.3.1 SHA-256 checksum for kratos_1.3.1-linux_64bit.tar.gz
-# Source: https://github.com/ory/kratos/releases/download/v1.3.1/checksums.txt
-# Verified: 2026-04-19
-3124e4366656eb3dfb5b0155a5b13da3b3d1769367dc2f7674825ecc54f1af46  kratos_1.3.1-linux_64bit.tar.gz
+# Ory Kratos v26.2.0 SHA-256 checksum for kratos_26.2.0-linux_64bit.tar.gz
+# Source: https://github.com/ory/kratos/releases/tag/v26.2.0
+# Verified: 2026-04-21
+#
+# Ory switched Kratos from semver (v1.3.1 was the last) to calendar
+# versioning starting with v25.4.0. v26.2.0 (March 2026) is the latest
+# stable. Default Linux amd64 build — Kratos persists to MariaDB per
+# ADR-0034, so we don't need the CGO SQLite variant.
+a20d2d8614202700dc479e464ae7a264bad871728f9eae939f81fc0c3e7b1b28  kratos_26.2.0-linux_64bit.tar.gz

@@ -25,7 +25,7 @@ Routine operations:
 | Revoke sessions by identity | `curl -s -X DELETE "http://127.0.0.1:4445/admin/oauth2/auth/sessions/login?subject=<kratos-id>"` |
 | Service status | `systemctl status jabali-hydra` |
 | Service logs (follow) | `journalctl -u jabali-hydra -f` |
-| DB schema | `mysql jabali_hydra -e "SHOW TABLES"` |
+| State (SQLite) | `sqlite3 /var/lib/jabali-hydra/db.sqlite3 ".tables"` |
 
 ---
 
@@ -174,38 +174,53 @@ tuning too low produces load.
 
 ---
 
-## DB backup + restore
+## State backup + restore
 
-Hydra has its own MariaDB schema `jabali_hydra`, separate from
-`jabali`. Backing up `jabali` alone is **not** sufficient — a restore
-without the Hydra tables leaves every `application_installs.oidc_client_id`
-pointing at a nonexistent Hydra row, and every login attempt 404s at
-`hydra get client`.
+Hydra's state is a single SQLite file at `/var/lib/jabali-hydra/db.sqlite3`
+(owned by the `jabali` service user, mode 0640, parent dir 0750). It
+lives separately from the panel's MariaDB — so backing up `jabali` alone
+is **not** sufficient. A restore without Hydra's file leaves every
+`application_installs.oidc_client_id` pointing at a nonexistent Hydra
+row, and every login attempt 404s at `hydra get client`.
 
-### Backup (both schemas)
+### Backup (both the panel DB and Hydra's SQLite)
 
 ```bash
-mysqldump --single-transaction --routines --triggers \
-  jabali jabali_hydra \
+# Panel DB (contains application_installs with oidc_client_id + the
+# AES-GCM-sealed client secrets).
+mysqldump --single-transaction --routines --triggers jabali \
   > /var/backups/jabali-$(date +%F).sql
-
 gzip /var/backups/jabali-$(date +%F).sql
+
+# Hydra's SQLite — quiesce-and-copy. `hydra serve` holds the file open
+# but WAL mode (SQLite default for Hydra) makes atomic copies safe.
+# `.backup` drives SQLite's online backup API; the destination is a
+# consistent snapshot even if Hydra is actively writing.
+sqlite3 /var/lib/jabali-hydra/db.sqlite3 \
+  ".backup '/var/backups/jabali-hydra-$(date +%F).sqlite3'"
+gzip /var/backups/jabali-hydra-$(date +%F).sqlite3
 ```
 
 ### Restore order matters
 
-On restore:
+On a full restore (both backups survived):
 
-1. Restore `jabali_hydra` first (Hydra schema must exist before Hydra
-   starts up — otherwise the systemd unit crashes on migration check).
-2. Start `systemctl start jabali-hydra` and wait for ready.
-3. Restore `jabali` second. The `oidc_client_id` FKs aren't strict
-   database FKs — they're soft pointers verified at runtime by
-   `hydraclient.GetClient` — so restore order within `jabali` is
-   unrestricted.
-4. Start `systemctl start jabali-panel-api`.
+1. Restore Hydra's SQLite file first. Stop the service, drop in the
+   file, chown, restart:
+   ```bash
+   systemctl stop jabali-hydra
+   gunzip -c /var/backups/jabali-hydra-YYYY-MM-DD.sqlite3.gz \
+     > /var/lib/jabali-hydra/db.sqlite3
+   chown jabali:jabali /var/lib/jabali-hydra/db.sqlite3
+   chmod 0640 /var/lib/jabali-hydra/db.sqlite3
+   systemctl start jabali-hydra
+   ```
+2. Restore the panel DB. The `oidc_client_id` FKs are soft pointers
+   verified at runtime by `hydraclient.GetClient`, so restore order
+   within `jabali` is unrestricted.
+3. Start `systemctl start jabali-panel-api`.
 
-### After a partial restore (only `jabali` came back)
+### After a partial restore (only `jabali` came back, Hydra's file gone)
 
 Every install row's Hydra client is gone. The cleanest recovery is:
 
@@ -222,6 +237,25 @@ mysql -D jabali -e "
 WP's username/password), and lets operators re-enable SSO per install
 by clicking **Repair OIDC** (follow-up feature; for now, delete +
 recreate the install).
+
+### After a Hydra file loss with an intact panel DB (fast path)
+
+Because `application_installs` already carries both `oidc_client_id`
+and the AES-GCM-sealed `oidc_client_secret_enc`, every Hydra client is
+re-createable from the panel side without re-minting secrets. On a
+fresh `/var/lib/jabali-hydra/db.sqlite3`:
+
+1. Start `jabali-hydra` (runs migrations against the empty file, boots
+   clean — nothing to restore).
+2. For each install row with `oidc_client_id IS NOT NULL`, POST the
+   stored client back via Hydra admin:
+   ```bash
+   # Pseudocode — a helper subcommand is a follow-up (M16-FU1). For
+   # now, operators can script this loop or use the SQL above to null
+   # out the columns and re-install affected WP sites.
+   ```
+   Until the helper lands, the pragmatic recovery is the partial-
+   restore path above (NULL the columns, re-install affected sites).
 
 ---
 
@@ -256,10 +290,13 @@ path:
 vim install/hydra.yml.tmpl            # confirm config still parses
 vim install/hydra.sha256              # paste the new vN.N.N SHA
 
-# 2. Test migrations on a snapshot before touching prod:
-mysqldump jabali_hydra > /tmp/hydra.sql.bak
-mysql -D jabali_hydra < /tmp/hydra.sql.bak   # into a throwaway DB name
-HYDRA_VERSION=<new-version> ./install.sh install_hydra --dry-run
+# 2. Snapshot Hydra's SQLite before touching prod:
+sqlite3 /var/lib/jabali-hydra/db.sqlite3 \
+  ".backup '/tmp/hydra-pre-upgrade.sqlite3'"
+# Test migrations on the snapshot in a scratch location:
+cp /tmp/hydra-pre-upgrade.sqlite3 /tmp/hydra-scratch.sqlite3
+# (manual: run `hydra migrate sql` with a config pointing at the
+# scratch file; confirm clean completion before touching prod)
 
 # 3. Roll forward on the host:
 ./install.sh install_hydra
@@ -270,9 +307,9 @@ systemctl status jabali-hydra
 #    verify redirect → consent skip → land on wp-admin.
 ```
 
-**Don't downgrade Hydra through the CLI flag** — the DB schema moves
-forward only. A rollback requires restoring `jabali_hydra` from the
-pre-upgrade mysqldump.
+**Don't downgrade Hydra through the CLI flag** — the schema moves
+forward only. A rollback requires restoring `db.sqlite3` from the
+pre-upgrade snapshot taken in step 2.
 
 ---
 

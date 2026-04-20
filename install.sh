@@ -2566,37 +2566,18 @@ install_hydra() {
 
   _ok "Hydra binary installed at $hydra_binary"
 
-  # Provision MariaDB database + user for Hydra. Kept in a separate
-  # schema (jabali_hydra) so a misfire in one provider can't corrupt
-  # the other — mirrors ADR-0034's isolation between jabali_panel and
-  # jabali_kratos.
-  local hydra_db_name="jabali_hydra"
-  local hydra_db_user="jabali_hydra"
-  local hydra_pw_file="/etc/jabali-panel/hydra-db-password"
-
-  if [[ ! -f "$hydra_pw_file" ]]; then
-    _log "generating Hydra DB password → $hydra_pw_file"
-    umask 077
-    openssl rand -hex 32 >"$hydra_pw_file"
-    chmod 0600 "$hydra_pw_file"
-    chown root:root "$hydra_pw_file"
-  fi
-
-  local hydra_db_pass
-  hydra_db_pass="$(cat "$hydra_pw_file")"
-
-  mariadb -e "
-    CREATE DATABASE IF NOT EXISTS \`${hydra_db_name}\`
-      CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-    CREATE USER IF NOT EXISTS '${hydra_db_user}'@'localhost' IDENTIFIED BY '${hydra_db_pass}';
-    ALTER USER '${hydra_db_user}'@'localhost' IDENTIFIED BY '${hydra_db_pass}';
-    GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER,
-          REFERENCES, LOCK TABLES, CREATE TEMPORARY TABLES
-      ON \`${hydra_db_name}\`.* TO '${hydra_db_user}'@'localhost';
-    FLUSH PRIVILEGES;
-  "
-
-  _ok "Hydra database provisioned: DB=${hydra_db_name}, user=${hydra_db_user}"
+  # State directory for Hydra's SQLite file. systemd's StateDirectory=
+  # directive in jabali-hydra.service will also create this on first
+  # boot, but we create it here too so `hydra migrate sql` (which runs
+  # BEFORE the service first starts) has a writable parent.
+  #
+  # MariaDB is deliberately NOT used for Hydra's persistence — see
+  # ADR-0036 amendment for the rationale (upstream migration bug
+  # ory/hydra#3387; Hydra's state is nearly ephemeral so SQLite is
+  # the minimum-footprint fit).
+  local hydra_state_dir="/var/lib/jabali-hydra"
+  install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 "$hydra_state_dir"
+  _ok "Hydra state dir ready: $hydra_state_dir (SQLite)"
 
   # Persisted secrets directory — Hydra uses a `system` secret to
   # encrypt login/consent challenge state. Rotation rule (from the
@@ -2635,9 +2616,6 @@ install_hydra() {
   fi
 
   sed \
-    -e "s|{{\.HydraDatabaseUser}}|${hydra_db_user}|g" \
-    -e "s|{{\.HydraDatabasePassword}}|${hydra_db_pass}|g" \
-    -e "s|{{\.HydraDatabaseName}}|${hydra_db_name}|g" \
     -e "s|{{\.PanelHostname}}|${panel_hostname}|g" \
     -e "s|{{\.HydraSystemSecret}}|${hydra_system_secret}|g" \
     "${REPO_DIR}/install/hydra.yml.tmpl" > "$hydra_config"

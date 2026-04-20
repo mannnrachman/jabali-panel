@@ -1,9 +1,40 @@
 # ADR-0036: M16 — Ory Hydra as self-hosted OAuth 2 / OIDC provider
 
-**Date**: 2026-04-20
+**Date**: 2026-04-20 (original); amended 2026-04-20 to record MariaDB→SQLite pivot for Hydra's state
 **Status**: accepted (Waves A–E shipped 2026-04-20 on `m16/hydra-identity`; Wave F — Automation API — deferred)
 **Deciders**: shuki + Claude
-**Related**: ADR-0034 (M20 Kratos identity), ADR-0033 (applications framework), M7/ADR-0021 (phpMyAdmin SSO — explicitly *not* migrated)
+**Related**: ADR-0034 (M20 Kratos identity), ADR-0033 (applications framework), M7/ADR-0021 (phpMyAdmin SSO — explicitly *not* migrated), [ory/hydra#3387](https://github.com/ory/hydra/issues/3387)
+
+## Amendment 2026-04-20 — Hydra persistence moved from MariaDB to SQLite
+
+The original decision put Hydra's state in a MariaDB schema `jabali_hydra` for parity with Kratos. First-host validation on a clean Debian 13 VM surfaced that this path doesn't actually work: Hydra's migration `20220513000001000001_string_slice_json.mysql.up.sql` uses `CAST(... AS JSON)`, which MariaDB 11.8.6 rejects as a syntax error. The MariaDB `.mysql.up.sql` migration has shipped broken since 2022 (see [ory/hydra#3387](https://github.com/ory/hydra/issues/3387)); Ory closed the issue as "MariaDB is not officially supported." Verified via GitHub API: v26.2.0 (latest as of 2026-03-20) has the byte-identical broken migration, so version-bumping Hydra doesn't fix it.
+
+Four workaround options were weighed (full notes in conversation log and `plans/m16-hydra-oauth.md` design discussion):
+
+1. **Version bump** — dead end, upstream hasn't fixed in 4 years.
+2. **Switch to Postgres** — works but adds a new daemon, new backup ritual, new permissions surface. Overweight for single-operator panel.
+3. **MariaDB + manual SQL workaround** (the `JSON_VALUE(json_object('tmp',...),'$.tmp')` pattern from issue #3387) — works today on MariaDB 11 + Hydra v25.4.0 per community validation, but accumulates perpetual maintenance: every Hydra upgrade may add a new MariaDB-hostile migration and require extending the workaround.
+4. **SQLite** — Hydra's `.sqlite.up.sql` migrations are clean and upstream-tested. One file under systemd's `StateDirectory=`. Zero new daemons.
+
+We picked SQLite. Key insight: Hydra's state for our use case is nearly ephemeral. Access/refresh tokens are short-TTL and naturally recycle; consent sessions auto-accept for trusted first-party clients and re-prompt is harmless for anyone else; auth codes and login flow state are measured in minutes. The one category of permanent state — per-install OIDC clients — is already duplicated in `application_installs.oidc_client_id + oidc_client_secret_enc` on the panel DB side. Losing Hydra's SQLite is recoverable: users re-login once, WP plugins re-fetch JWKS, and panel-side data has the material to re-register every client if needed.
+
+**What changed in the code:**
+
+- `install/hydra.yml.tmpl`: DSN line from `mysql://{{.HydraDatabaseUser}}:...@tcp(127.0.0.1:3306)/{{.HydraDatabaseName}}?...` → `sqlite:///var/lib/jabali-hydra/db.sqlite3?_fk=true`. The three `HydraDatabase*` mustache slots are gone.
+- `install.sh install_hydra()`: dropped the `jabali_hydra` MariaDB schema + user + password-file provisioning block. Added `install -d -o jabali -g jabali -m 0750 /var/lib/jabali-hydra` so `hydra migrate sql` has a writable parent before the systemd unit first starts.
+- `install/systemd/jabali-hydra.service`: removed `After=mariadb.service`, added `StateDirectory=jabali-hydra` + `StateDirectoryMode=0750`, extended `ReadWritePaths=` to cover `/var/lib/jabali-hydra`.
+- `plans/m16-hydra-runbook.md`: backup uses `sqlite3 ... .backup` instead of `mysqldump jabali_hydra`; restore procedure is a file drop + chown + restart.
+
+**Operator action on existing installs that hit the MariaDB blocker:** the half-populated `jabali_hydra` schema and the `/etc/jabali-panel/hydra-db-password` file are now unused. One-liner cleanup, idempotent and safe:
+
+```
+sudo mysql -e "DROP DATABASE IF EXISTS jabali_hydra; DROP USER IF EXISTS 'jabali_hydra'@'localhost'; FLUSH PRIVILEGES;"
+sudo rm -f /etc/jabali-panel/hydra-db-password
+```
+
+All other decisions in the ADR still apply. The DB-choice text in the main Decision section below is superseded by this amendment — read any "MariaDB schema jabali_hydra" as "SQLite at /var/lib/jabali-hydra/db.sqlite3" post-2026-04-20.
+
+---
 
 ## Context
 

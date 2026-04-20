@@ -4,16 +4,23 @@
 # fails the install if any mustache slot (double-brace, dot-prefixed
 # name) survives the substitution pass.
 #
-# Binding + DB conventions mirror Kratos (install/kratos.yml.tmpl):
+# Binding + state conventions:
 #   * Loopback-only (public 4444 / admin 4445) — never exposed off-host.
 #     Panel-api fronts the public endpoints via an in-process reverse
 #     proxy (see panel-api/internal/app/hydra_proxy.go), so clients see
 #     https://<panel>/oauth2/* and never know Hydra is on loopback.
-#   * MariaDB schema jabali_hydra, DSN pinned with
-#     sql_mode=NO_ENGINE_SUBSTITUTION so `hydra migrate sql` doesn't trip
-#     over MariaDB's strict mode (same K-2 workaround from M20).
+#   * SQLite at /var/lib/jabali-hydra/db.sqlite3 — NOT MariaDB.
+#     Rationale: Hydra's MariaDB migrations have shipped broken JSON
+#     handling since 2022 (ory/hydra#3387, upstream closed as "MariaDB
+#     not supported"). Hydra's SQLite migrations are clean and
+#     upstream-tested. Hydra's state is also nearly ephemeral for our
+#     use case (tokens are short-TTL, consent auto-accepts for trusted
+#     first-party clients, OIDC clients are duplicated in
+#     application_installs on the panel side) — so a single SQLite
+#     file under systemd's StateDirectory is the minimum-footprint,
+#     minimum-ops choice. See ADR-0036 amendment for the full analysis.
 
-dsn: "mysql://{{.HydraDatabaseUser}}:{{.HydraDatabasePassword}}@tcp(127.0.0.1:3306)/{{.HydraDatabaseName}}?parseTime=true&sql_mode=NO_ENGINE_SUBSTITUTION"
+dsn: "sqlite:///var/lib/jabali-hydra/db.sqlite3?_fk=true"
 
 serve:
   public:

@@ -9,6 +9,7 @@
 import { ThemedLayoutV2 } from "@refinedev/antd";
 import { Outlet } from "react-router";
 
+import { JabaliFooter } from "../components/JabaliFooter";
 import { JabaliHeader } from "../components/JabaliHeader";
 import { JabaliTitle } from "../components/JabaliTitle";
 import { buildShellSider } from "./shellSider";
@@ -27,6 +28,7 @@ export function AdminLayout() {
       Title={AdminTitle}
       Header={JabaliHeader}
       Sider={AdminSider}
+      Footer={JabaliFooter}
     >
       <Outlet />
     </ThemedLayoutV2>

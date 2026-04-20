@@ -198,6 +198,17 @@ func InstallApplication(ctx context.Context, deps ApplicationHandlerConfig, p In
 	// overwrite adminPassword with the per-app credential the user
 	// will actually use to log in (separate from the DB password).
 	siteURL := buildSiteURL(domain.Name, p.UseWWW, p.Subdirectory)
+
+	// Snapshot the install state before launching the async kicker.
+	// The kicker goroutine calls UpdateStatus, which the GORM repo
+	// implements as SQL UPDATE (no shared memory), but in-memory repos
+	// (tests, potential future caches) may mutate the *ApplicationInstall
+	// pointer we also return to the HTTP handler — a data race under
+	// `go test -race`. The HTTP response should reflect the deterministic
+	// "pending" state at creation time, not whatever the kicker raced to
+	// write first; snapshotting gives callers a stable view either way.
+	snapshot := *install
+
 	adminPassword = dispatchInstallKicker(ctx, descriptor.Name, kickContext{
 		InstallID:     installID,
 		OSUser:        osUser,
@@ -213,7 +224,7 @@ func InstallApplication(ctx context.Context, deps ApplicationHandlerConfig, p In
 		DBPassword:    adminPassword,
 	}, deps)
 
-	return &InstallResult{Install: install, AdminPassword: adminPassword}, nil
+	return &InstallResult{Install: &snapshot, AdminPassword: adminPassword}, nil
 }
 
 // kickContext bundles the per-app args we already computed so the

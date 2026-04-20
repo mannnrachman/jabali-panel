@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   Alert,
   Button,
+  Card,
   Space,
   Table,
   Typography,
@@ -18,9 +19,16 @@ import {
   KeyOutlined,
   CopyOutlined,
   DownloadOutlined,
+  CodeOutlined,
 } from "@ant-design/icons";
 import { getKeys as getEd25519SSHKeys } from "ed25519-keygen/ssh";
-import { listSSHKeys, createSSHKey, deleteSSHKey, type SSHKey } from "../../../apiClient";
+import {
+  listSSHKeys,
+  createSSHKey,
+  deleteSSHKey,
+  getSSHConnection,
+  type SSHKey,
+} from "../../../apiClient";
 import { useQuery } from "@tanstack/react-query";
 
 const SSH_KEY_PREFIXES = ["ssh-rsa ", "ssh-ed25519 ", "ecdsa-sha2-"];
@@ -57,6 +65,24 @@ export const UserSSHKeysPage = () => {
   });
 
   const keys = listResponse.items || [];
+
+  // Connection details — separate query so a 409 "no_linux_account" (admins
+  // without a shell user) just hides the card instead of blocking the page.
+  const { data: conn, isLoading: connLoading } = useQuery({
+    queryKey: ["ssh-connection"],
+    queryFn: getSSHConnection,
+    retry: false,
+  });
+
+  const copyCommand = async () => {
+    if (!conn) return;
+    try {
+      await navigator.clipboard.writeText(conn.command);
+      message.success("Command copied");
+    } catch {
+      message.error("Copy failed — select and copy manually");
+    }
+  };
 
   // Validate that public key starts with a known prefix
   const validatePublicKey = (value: string): string | undefined => {
@@ -201,6 +227,54 @@ export const UserSSHKeysPage = () => {
           </Button>
         </Space>
       </Space>
+
+      {conn && (
+        <Card
+          size="small"
+          style={{ marginBottom: 16 }}
+          title={
+            <Space>
+              <CodeOutlined />
+              <span>Connection Details</span>
+            </Space>
+          }
+        >
+          <Space direction="vertical" size={4} style={{ width: "100%" }}>
+            <Space wrap size="large">
+              <span>
+                <Typography.Text type="secondary">Host: </Typography.Text>
+                <Typography.Text code>{conn.host}</Typography.Text>
+              </span>
+              <span>
+                <Typography.Text type="secondary">Port: </Typography.Text>
+                <Typography.Text code>{conn.port}</Typography.Text>
+              </span>
+              <span>
+                <Typography.Text type="secondary">Username: </Typography.Text>
+                <Typography.Text code>{conn.username}</Typography.Text>
+              </span>
+            </Space>
+            <Space.Compact style={{ width: "100%", marginTop: 4 }}>
+              <Input
+                readOnly
+                value={conn.command}
+                style={{ fontFamily: "monospace", fontSize: 13 }}
+                onFocus={(e) => e.currentTarget.select()}
+              />
+              <Button
+                icon={<CopyOutlined />}
+                onClick={copyCommand}
+                title="Copy command"
+              >
+                Copy
+              </Button>
+            </Space.Compact>
+          </Space>
+        </Card>
+      )}
+      {connLoading && !conn && (
+        <Card size="small" loading style={{ marginBottom: 16 }} />
+      )}
 
       <Table<SSHKey>
         dataSource={keys}

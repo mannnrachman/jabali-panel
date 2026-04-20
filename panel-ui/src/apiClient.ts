@@ -181,6 +181,23 @@ export async function deleteSSHKey(id: string): Promise<void> {
   await apiClient.delete(`/ssh-keys/${id}`);
 }
 
+export interface SSHConnection {
+  host: string;
+  port: number;
+  username: string;
+  command: string;
+}
+
+/**
+ * Fetch the caller's SSH connection details (host, port, username, command).
+ * Returns 409 with error "no_linux_account" for accounts without a Linux user
+ * (e.g., admins) — callers should treat that as "SSH not applicable".
+ */
+export async function getSSHConnection(): Promise<SSHConnection> {
+  const resp = await apiClient.get<SSHConnection>("/me/ssh-connection");
+  return resp.data;
+}
+
 // === Cron Jobs API ===
 
 export interface CronJob {

@@ -39,12 +39,18 @@ export default defineConfig({
   // to have already run; `vite preview` just serves dist/.
   //
   // Timeout 120s (not 30s): preview boots in ~5s locally, but the
-  // self-hosted Gitea act_runner is on a constrained host and has
-  // already timed out at 30s once (run #22 — docs-blueprint-m20-sync).
+  // self-hosted Gitea act_runner is on a constrained host.
   // stdout: "pipe" so the server's "Local: http://…" line is visible
-  // in the job log — next time it times out, we'll know why.
+  // in the job log.
+  //
+  // --strictPort: run #24 showed vite picking port 4174 when 4173 was
+  // still held by a leftover process from a previous CI run on the
+  // host-mode runner. Playwright then waited for 4173 forever and
+  // timed out. --strictPort makes vite fail fast with "Port 4173 is
+  // already in use" instead, which is a loud signal the runner needs
+  // cleanup — and the CI step below kills any stray process first.
   webServer: {
-    command: `npm run preview -- --port ${PORT} --host 127.0.0.1`,
+    command: `npm run preview -- --port ${PORT} --host 127.0.0.1 --strictPort`,
     url: `http://127.0.0.1:${PORT}`,
     reuseExistingServer: !process.env.CI,
     stdout: "pipe",

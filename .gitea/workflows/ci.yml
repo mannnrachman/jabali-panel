@@ -84,6 +84,20 @@ jobs:
         run: cd panel-ui && npx playwright install --with-deps chromium
       - name: Build SPA
         run: cd panel-ui && npm run build
+      # Host-mode runners don't get a fresh netns per job, so a stuck
+      # vite-preview from a previous run can hold 4173. Playwright's
+      # webServer is configured with --strictPort (see playwright.config.ts)
+      # so a leftover would otherwise fail the test loudly — but killing
+      # here is safer and logs what was running.
+      - name: Free port 4173
+        run: |
+          if command -v fuser >/dev/null 2>&1; then
+            fuser -k 4173/tcp 2>/dev/null || true
+          fi
+          if command -v lsof >/dev/null 2>&1; then
+            lsof -ti:4173 | xargs -r kill -9 2>/dev/null || true
+          fi
+          sleep 1
       - name: Playwright
         run: cd panel-ui && npx playwright test --project=chromium --reporter=list
       - name: Upload failure artifacts

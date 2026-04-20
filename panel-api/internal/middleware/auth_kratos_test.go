@@ -133,9 +133,16 @@ func ptrString(s string) *string { return &s }
 
 func TestRequireKratosSession_ValidCookie_ResolvesToPanelUser(t *testing.T) {
 	t.Parallel()
+	// Real Kratos /sessions/whoami returns a Session envelope; the nested
+	// identity.id is what matches users.kratos_identity_id. The top-level
+	// `id` is the SESSION id and must be ignored by the decoder.
 	identityJSON := `{
-		"id": "kratos-uuid-01",
-		"traits": {"email": "user@example.com", "username": "alice", "is_admin": true}
+		"id": "session-uuid-ignore",
+		"active": true,
+		"identity": {
+			"id": "kratos-uuid-01",
+			"traits": {"email": "user@example.com", "username": "alice", "is_admin": true}
+		}
 	}`
 	srv := fakeKratos(t, http.StatusOK, identityJSON)
 	defer srv.Close()
@@ -167,8 +174,12 @@ func TestRequireKratosSession_PanelIsAdminOverridesKratosTrait(t *testing.T) {
 	// row wins so an admin demotion takes effect on next request even if the
 	// Kratos identity trait hasn't been updated yet.
 	identityJSON := `{
-		"id": "kratos-uuid-02",
-		"traits": {"email": "alice@x", "is_admin": true}
+		"id": "session-uuid-ignore",
+		"active": true,
+		"identity": {
+			"id": "kratos-uuid-02",
+			"traits": {"email": "alice@x", "is_admin": true}
+		}
 	}`
 	srv := fakeKratos(t, http.StatusOK, identityJSON)
 	defer srv.Close()
@@ -193,7 +204,7 @@ func TestRequireKratosSession_PanelIsAdminOverridesKratosTrait(t *testing.T) {
 
 func TestRequireKratosSession_IdentityNotLinked_ReturnsUnauthorized(t *testing.T) {
 	t.Parallel()
-	srv := fakeKratos(t, http.StatusOK, `{"id":"kratos-orphan","traits":{"email":"e@x"}}`)
+	srv := fakeKratos(t, http.StatusOK, `{"id":"sess","active":true,"identity":{"id":"kratos-orphan","traits":{"email":"e@x"}}}`)
 	defer srv.Close()
 
 	client := kratosclient.NewClient(srv.URL, srv.URL)

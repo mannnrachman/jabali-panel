@@ -26,12 +26,19 @@ func TestWhoami_ValidSessionReturnsIdentity(t *testing.T) {
 		assert.Equal(t, "test-session-123", cookie.Value)
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(&kratosclient.Identity{
-			ID: "user-456",
-			Traits: map[string]interface{}{
-				"email":    "user@example.com",
-				"username": "testuser",
-				"is_admin": true,
+		// Real Kratos shape: a Session envelope with `identity` nested. The
+		// top-level `id` is the SESSION id and MUST NOT leak into Identity.ID
+		// (which is what our users.kratos_identity_id column references).
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":     "session-abc",
+			"active": true,
+			"identity": map[string]any{
+				"id": "user-456",
+				"traits": map[string]any{
+					"email":    "user@example.com",
+					"username": "testuser",
+					"is_admin": true,
+				},
 			},
 		})
 	}))
@@ -41,7 +48,7 @@ func TestWhoami_ValidSessionReturnsIdentity(t *testing.T) {
 	identity, err := client.Whoami(context.Background(), "test-session-123")
 
 	require.NoError(t, err)
-	assert.Equal(t, "user-456", identity.ID)
+	assert.Equal(t, "user-456", identity.ID, "must be identity.id, not session.id")
 	assert.Equal(t, "user@example.com", identity.GetTraitEmail())
 	assert.Equal(t, "testuser", identity.GetTraitUsername())
 	assert.True(t, identity.GetTraitIsAdmin())
@@ -80,9 +87,12 @@ func TestWhoami_CacheHitSkipsRemoteCall(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(&kratosclient.Identity{
-			ID:     "user-123",
-			Traits: map[string]interface{}{"email": "user@example.com"},
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "session-cache-test",
+			"identity": map[string]any{
+				"id":     "user-123",
+				"traits": map[string]any{"email": "user@example.com"},
+			},
 		})
 	}))
 	defer server.Close()
@@ -112,9 +122,12 @@ func TestWhoami_DifferentCookiesRequireSeparateCalls(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		userID := "user-for-" + cookie.Value
-		json.NewEncoder(w).Encode(&kratosclient.Identity{
-			ID:     userID,
-			Traits: map[string]interface{}{"email": "user@example.com"},
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "session-" + cookie.Value,
+			"identity": map[string]any{
+				"id":     userID,
+				"traits": map[string]any{"email": "user@example.com"},
+			},
 		})
 	}))
 	defer server.Close()

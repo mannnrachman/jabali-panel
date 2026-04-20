@@ -73,6 +73,21 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		name string
 		fn   func() error
 	}{
+		{"fix repo ownership", func() error {
+			// `git pull` runs as the jabali user, but a previous hand-run
+			// of `git fetch`/`git pull` as root inside the repo silently
+			// chowns FETCH_HEAD/ORIG_HEAD/objects/* to root — and the
+			// next `jabali update` then dies with "cannot open
+			// '.git/FETCH_HEAD': Permission denied". Re-chown the .git
+			// dir before pulling so the update self-heals instead of
+			// requiring the operator to know the magic chown command.
+			//
+			// Scope intentionally narrow: just .git/, not the whole
+			// repo (we don't want to clobber node_modules or other
+			// trees that might legitimately be group-owned differently).
+			return run("", "chown", "-R",
+				serviceUser+":"+serviceUser, repoDir+"/.git")
+		}},
 		{"git pull", func() error {
 			return asUser(repoDir, "git", "pull", "--ff-only", "origin", "main")
 		}},

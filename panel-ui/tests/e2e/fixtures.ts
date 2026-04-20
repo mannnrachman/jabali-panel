@@ -69,7 +69,11 @@ function kratosPasswordFlow(flowId: string) {
     issued_at: new Date(now).toISOString(),
     request_url: "http://localhost/.ory/self-service/login/browser",
     ui: {
-      action: `http://localhost/.ory/self-service/login?flow=${flowId}`,
+      // Same-origin relative path. Real Kratos emits an absolute URL that
+      // matches the browser's origin (via the /.ory nginx proxy); the mock
+      // must match the Playwright baseURL too, otherwise Set-Cookie lands on
+      // the wrong domain and page.context().cookies() can't see it.
+      action: `/self-service/login?flow=${flowId}`,
       method: "POST",
       nodes: [
         {
@@ -159,9 +163,10 @@ export async function mockApi(page: Page, initial: MockState): Promise<void> {
   });
   await page.route("**/.ory/self-service/login?flow=*", async (route) => {
     const req = route.request();
-    const body = req.postData() ?? "";
-    const emailMatch = body.match(/identifier=([^&]+)/);
-    const submittedEmail = emailMatch ? decodeURIComponent(emailMatch[1]) : "";
+    // The SPA's kratos.ts uses axios which defaults to JSON for object bodies.
+    // Real Kratos accepts either encoding on its browser-flow submit endpoint;
+    // the mock must as well or it silently 400s on every test.
+    const submittedEmail = extractSubmittedField(req.postData(), "identifier");
     if (state.expected && submittedEmail === state.expected.email) {
       state.session = state.expected;
       state.accessToken = "mock-kratos-session";
@@ -206,7 +211,11 @@ export async function mockApi(page: Page, initial: MockState): Promise<void> {
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        logout_url: "http://localhost/.ory/self-service/logout?token=mock-logout-token",
+        // Same-origin so the Set-Cookie clearing below applies to the
+        // Playwright baseURL origin (127.0.0.1). kratos.ts also reads
+        // logout_token, so emit that too.
+        logout_token: "mock-logout-token",
+        logout_url: "/self-service/logout?token=mock-logout-token",
       }),
     });
   });
@@ -215,7 +224,13 @@ export async function mockApi(page: Page, initial: MockState): Promise<void> {
     state.accessToken = null;
     return route.fulfill({
       status: 302,
-      headers: { Location: "/login" },
+      headers: {
+        Location: "/login",
+        // Real Kratos clears the session cookie with Max-Age=0 on logout.
+        // Without this, page.context().cookies() still shows the cookie
+        // and the logout E2E assertion fails.
+        "Set-Cookie": "ory_kratos_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax",
+      },
       body: "",
     });
   });
@@ -560,6 +575,31 @@ export async function mockApi(page: Page, initial: MockState): Promise<void> {
     }
     return unsupported(route);
   });
+}
+
+/**
+ * Extract a named field from a POST body that may be JSON (axios default for
+ * object bodies) or application/x-www-form-urlencoded (traditional form
+ * submit). Kratos browser-flow endpoints accept either, and the SPA uses
+ * JSON via axios — so the mock must handle both.
+ */
+export function extractSubmittedField(body: string | null | undefined, field: string): string {
+  if (!body) return "";
+  // Try JSON first — axios' default Content-Type for object bodies.
+  const trimmed = body.trimStart();
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(body) as Record<string, unknown>;
+      const v = parsed[field];
+      return typeof v === "string" ? v : v == null ? "" : String(v);
+    } catch {
+      // fall through to form-encoded parse
+    }
+  }
+  // Fallback: form-URL-encoded.
+  const re = new RegExp(`(?:^|&)${field}=([^&]*)`);
+  const match = body.match(re);
+  return match ? decodeURIComponent(match[1].replace(/\+/g, " ")) : "";
 }
 
 function notFound(route: Route) {

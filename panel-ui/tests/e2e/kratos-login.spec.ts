@@ -5,7 +5,7 @@
 //
 // Complements panel-ui/src/pages/Login.test.tsx (which covers the same
 // flow progression at the unit level against mocked axios).
-import { admin, expect, mockApi, signIn, test, user } from "./fixtures";
+import { admin, expect, extractSubmittedField, mockApi, signIn, test, user } from "./fixtures";
 
 test.describe("Kratos login flow", () => {
   test("admin signs in via /.ory self-service flow and lands on /jabali-admin", async ({ page }) => {
@@ -26,12 +26,17 @@ test.describe("Kratos login flow", () => {
     // Intercept the submit POST BEFORE signIn so the route-match wins over
     // the fixtures.ts handler. Assert the form body includes the exact
     // csrf_token value emitted by kratosPasswordFlow().
+    // Track whether login submit has fired so the whoami override below
+    // returns 401 during initial page load (otherwise the route guard would
+    // bounce straight to /jabali-admin before the form ever renders).
     let submittedCSRF: string | null = null;
+    let loggedIn = false;
     await page.route("**/.ory/self-service/login?flow=*", async (route) => {
       const req = route.request();
-      const body = req.postData() ?? "";
-      const match = body.match(/csrf_token=([^&]+)/);
-      if (match) submittedCSRF = decodeURIComponent(match[1]);
+      // Body is JSON (axios default) — use the shared helper so parse logic
+      // stays in one place.
+      submittedCSRF = extractSubmittedField(req.postData(), "csrf_token") || null;
+      loggedIn = true;
       return route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -51,6 +56,32 @@ test.describe("Kratos login flow", () => {
       });
     });
 
+    // The fixture's whoami mock depends on state.session being set by the
+    // login submit mock — which we just replaced above. Override whoami
+    // directly: return 401 before submit (so the route guard lets /login
+    // render), 200 after (so getIdentity() post-submit returns the admin
+    // and homeForRole routes to /jabali-admin).
+    await page.route("**/.ory/sessions/whoami", async (route) => {
+      if (!loggedIn) {
+        return route.fulfill({
+          status: 401,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { code: 401, message: "no session" } }),
+        });
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: "session-admin",
+          identity: {
+            id: "kratos-admin",
+            traits: { email: admin.email, is_admin: true },
+          },
+        }),
+      });
+    });
+
     await signIn(page, admin);
 
     await expect(page).toHaveURL(/\/jabali-admin/);
@@ -62,9 +93,11 @@ test.describe("Kratos login flow", () => {
   test("whoami 401 on a cold load keeps us on /login", async ({ page }) => {
     // No mockApi here — fixtures install whoami=401 when state.session is null.
     // The SPA should treat this as "unauthenticated" and redirect to /login.
+    // Refine's route guard appends `?to=<originalPath>` so the URL ends in
+    // `/login?to=%2Fjabali-admin%2Fdashboard` — match pathname only.
     await mockApi(page, { me: null });
     await page.goto("/jabali-admin/dashboard");
-    await expect(page).toHaveURL(/\/login$/);
+    await expect(page).toHaveURL(/\/login(\?|$)/);
   });
 
   test("logout clears ory_kratos_session cookie and redirects to /login", async ({ page }) => {
@@ -84,7 +117,7 @@ test.describe("Kratos login flow", () => {
     await page.getByRole("menuitem", { name: /sign out/i }).click();
 
     // After logout, the browser should be redirected to /login.
-    await expect(page).toHaveURL(/\/login$/);
+    await expect(page).toHaveURL(/\/login(\?|$)/);
 
     // Verify the session cookie is gone.
     cookies = await page.context().cookies();
@@ -94,6 +127,6 @@ test.describe("Kratos login flow", () => {
     // Sanity check: navigate to a protected route; should bounce back to /login
     // because the session is dead, not just the cookie stale.
     await page.goto("/jabali-admin/dashboard");
-    await expect(page).toHaveURL(/\/login$/);
+    await expect(page).toHaveURL(/\/login(\?|$)/);
   });
 });

@@ -152,7 +152,7 @@ func runAbanteCartCLIInstaller(ctx context.Context, req abantecartInstallReq, in
 
 	args := []string{
 		"php",
-		filepath.Join(installPath, "install", "abantecart_install.php"),
+		filepath.Join(installPath, "install", "cli_install.php"),
 		"db_host=" + dbHost,
 		"db_user=" + req.DBUser,
 		"db_password=" + req.DBPassword,
@@ -170,7 +170,7 @@ func runAbanteCartCLIInstaller(ctx context.Context, req abantecartInstallReq, in
 	cmd.Dir = installPath
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("install/abantecart_install.php: %w (output: %s)", err, truncateStr(string(out), 1024))
+		return fmt.Errorf("install/cli_install.php: %w (output: %s)", err, truncateStr(string(out), 1024))
 	}
 	return nil
 }

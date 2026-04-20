@@ -153,9 +153,12 @@ func extractPrestaShopZip(ctx context.Context, osUser, outerZip, installPath, st
 		return fmt.Errorf("unzip inner: %w (output: %s)", err, truncateStr(string(out), 512))
 	}
 
+	// Don't `rm -rf %s` here — stagingDir's parent (tmpDir) is mode 0755
+	// root-owned, so the per-domain user can't delete entries from it.
+	// Caller's `defer os.RemoveAll(tmpDir)` handles cleanup as root.
 	mvCmd := buildSystemdRunCmd(ctx, osUser, "sh", "-c",
-		fmt.Sprintf("cp -a %s/. %s/ && rm -rf %s",
-			shellQuote(innerStage), shellQuote(installPath), shellQuote(stagingDir)),
+		fmt.Sprintf("cp -a %s/. %s/",
+			shellQuote(innerStage), shellQuote(installPath)),
 	)
 	if out, err := mvCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("move prestashop contents: %w (output: %s)", err, truncateStr(string(out), 512))

@@ -57,9 +57,16 @@ func validateDocrootPath(osUser, docroot string) error {
 }
 
 // buildSystemdRunCmd wraps a command in systemd-run for the given user/slice.
+//
+// `--quiet` suppresses systemd-run's own "Running as unit: ..." chatter
+// on stderr — when callers pipe CombinedOutput into a downstream
+// command (e.g. `find ... | xargs php`), that chatter contaminates
+// the path. It also makes failure-error messages 90% shorter so
+// LastError stays readable at the column's 1024-byte cap.
 func buildSystemdRunCmd(ctx context.Context, osUser string, args ...string) *exec.Cmd {
 	cmdArgs := []string{
 		"systemd-run",
+		"--quiet",
 		"--uid=" + osUser,
 		"--gid=" + osUser,
 		"--slice=jabali-user-" + osUser + ".slice",

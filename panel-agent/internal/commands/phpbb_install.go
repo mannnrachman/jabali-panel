@@ -47,16 +47,18 @@ type phpbbInstallResp struct {
 // to a 3.3.x because 3.3 is the current stable line; 4.x is in alpha
 // as of late 2025.
 //
-// Released tarballs live at:
-// https://download.phpbb.com/pub/release/3.3/<version>/phpBB-<version>.tar.bz2
-//
-// phpBB ships .tar.bz2 (no .tar.gz alternative), so the extract step
-// uses --bzip2 instead of --gzip.
+// download.phpbb.com sits behind Cloudflare with a UA challenge that
+// returns 403 to any non-browser client (we tried `Mozilla/5.0 ...`,
+// real Chrome UA — all 403). Fetch from GitHub source archive instead;
+// the github auto-archive is unauthenticated and unrestricted. Tag
+// format on the repo is `release-X.Y.Z` (with `release-` prefix), and
+// the archive extracts as `phpbb-release-X.Y.Z/` containing the source
+// tree — webroot is the inner `phpBB/` subdir, see extractPhpbbTarball.
 const phpbbVersion = "3.3.13"
 
 var phpbbTarballURL = fmt.Sprintf(
-	"https://download.phpbb.com/pub/release/3.3/%s/phpBB-%s.tar.bz2",
-	phpbbVersion, phpbbVersion,
+	"https://github.com/phpbb/phpbb/archive/refs/tags/release-%s.tar.gz",
+	phpbbVersion,
 )
 
 // phpbbTarballSHA256 is the SHA-256 of the tarball at phpbbTarballURL
@@ -130,21 +132,44 @@ func verifyPhpbbSHA256(path string) error {
 	return nil
 }
 
-// extractPhpbbTarball untars phpBB-X.Y.Z.tar.bz2 into installPath. The
-// upstream tarball wraps content under a top-level "phpBB3" directory;
-// --strip-components=1 flattens that out.
+// extractPhpbbTarball untars the GitHub source archive and copies the
+// inner phpBB webroot into installPath. The github archive shape is:
+//
+//	phpbb-release-3.3.13/
+//	├── phpBB/                  (← the actual webroot, what we want)
+//	├── tests/
+//	├── travis/
+//	├── README.md
+//	└── ...
+//
+// `--strip-components=2` would peel both wrappers but also expose
+// tests/ and travis/ as siblings of installPath's contents, so use
+// `--strip-components=1` and then cp the inner phpBB/. → installPath/.
 func extractPhpbbTarball(ctx context.Context, osUser, tarballPath, installPath string) error {
-	cmd := buildSystemdRunCmd(ctx, osUser,
+	stagingDir := filepath.Join(filepath.Dir(tarballPath), "stage")
+	if err := os.MkdirAll(stagingDir, 0o755); err != nil {
+		return fmt.Errorf("mkdir staging: %w", err)
+	}
+	if err := exec.CommandContext(ctx, "chown", "-R", osUser+":"+osUser, stagingDir).Run(); err != nil {
+		return fmt.Errorf("chown staging: %w", err)
+	}
+	tarCmd := buildSystemdRunCmd(ctx, osUser,
 		"tar",
 		"--extract",
-		"--bzip2",
+		"--gzip",
 		"--strip-components=1",
 		"--file", tarballPath,
-		"--directory", installPath,
+		"--directory", stagingDir,
 	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
+	if out, err := tarCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("tar extract: %w (output: %s)", err, truncateStr(string(out), 512))
+	}
+	src := filepath.Join(stagingDir, "phpBB")
+	mvCmd := buildSystemdRunCmd(ctx, osUser, "sh", "-c",
+		fmt.Sprintf("cp -a %s/. %s/", shellQuote(src), shellQuote(installPath)),
+	)
+	if out, err := mvCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("move phpBB contents: %w (output: %s)", err, truncateStr(string(out), 512))
 	}
 	return nil
 }

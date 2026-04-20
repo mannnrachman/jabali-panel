@@ -191,9 +191,12 @@ func extractOpenCartZip(ctx context.Context, osUser, zipPath, installPath, stagi
 	if err != nil {
 		return err
 	}
+	// Don't `rm -rf %s` here — stagingDir's parent (tmpDir) is mode 0755
+	// root-owned, so the per-domain user can't delete entries from it.
+	// Caller's `defer os.RemoveAll(tmpDir)` handles cleanup as root.
 	mvCmd := buildSystemdRunCmd(ctx, osUser, "sh", "-c",
-		fmt.Sprintf("cp -a %s/. %s/ && rm -rf %s",
-			shellQuote(src), shellQuote(installPath), shellQuote(stagingDir)),
+		fmt.Sprintf("cp -a %s/. %s/",
+			shellQuote(src), shellQuote(installPath)),
 	)
 	mvOut, err := mvCmd.CombinedOutput()
 	if err != nil {

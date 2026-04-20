@@ -12,6 +12,7 @@ import { JabaliFooter } from "../components/JabaliFooter";
 import { JabaliHeader } from "../components/JabaliHeader";
 import { JabaliTitle } from "../components/JabaliTitle";
 import { adminNav, selectedNavKey } from "../nav";
+import { useThemeMode } from "../theme/ThemeModeContext";
 
 const { Sider, Content } = Layout;
 
@@ -19,6 +20,7 @@ export function AdminLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  const { mode } = useThemeMode();
 
   const items = adminNav.map((n) => ({
     key: n.key,
@@ -32,6 +34,7 @@ export function AdminLayout() {
   return (
     <Layout style={{ minHeight: "100vh" }}>
       <Sider
+        theme={mode}
         breakpoint="lg"
         collapsedWidth="64"
         collapsible
@@ -43,7 +46,7 @@ export function AdminLayout() {
         </div>
         <Menu
           mode="inline"
-          theme="dark"
+          theme={mode}
           selectedKeys={selected ? [selected] : []}
           items={items}
           style={{ border: "none" }}

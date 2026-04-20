@@ -1,50 +1,20 @@
-// JabaliTitle — brand lockup (SVG + wordmark), theme-aware.
+// JabaliTitle — brand text at the top of the Sider.
 //
-// Rendered in the Title slot of Refine's ThemedLayoutV2 (i.e. at the
-// top-left of the Sider). Refine passes `collapsed: boolean` when the
-// sider collapses; we shrink to icon-only in that state.
-//
-// Chooses the light or dark SVG variant from the current theme mode so
-// it reads correctly against the sider background.
-import { useThemeMode } from "../theme/ThemeModeContext";
+// Plain AntD Typography — no SVG logo, no hand-picked font sizes,
+// weights, colors or letter-spacing. Renders as nothing when the
+// Sider is collapsed so the icon-only menu doesn't fight a stub.
+import { Typography } from "antd";
 
 interface JabaliTitleProps {
-  /** Refine's TitleProps contract. */
   collapsed?: boolean;
-  /** Override text. Defaults to the product name. */
   text?: string;
 }
 
 export function JabaliTitle({ collapsed = false, text = "Jabali" }: JabaliTitleProps) {
-  const { mode } = useThemeMode();
-  const src = mode === "dark" ? "/images/jabali_logo_dark.svg" : "/images/jabali_logo.svg";
-
+  if (collapsed) return null;
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-        padding: "0 4px",
-      }}
-    >
-      <img
-        src={src}
-        alt="Jabali"
-        style={{ height: 32, width: "auto", flexShrink: 0 }}
-      />
-      {!collapsed && (
-        <span
-          style={{
-            fontSize: 22,
-            fontWeight: 700,
-            letterSpacing: 0.5,
-            color: mode === "dark" ? "#f5f5f5" : "#1f1f1f",
-          }}
-        >
-          {text}
-        </span>
-      )}
-    </div>
+    <Typography.Title level={4} style={{ margin: 0 }}>
+      {text}
+    </Typography.Title>
   );
 }

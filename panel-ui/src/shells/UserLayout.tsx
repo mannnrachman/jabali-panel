@@ -11,6 +11,7 @@ import { JabaliFooter } from "../components/JabaliFooter";
 import { JabaliHeader } from "../components/JabaliHeader";
 import { JabaliTitle } from "../components/JabaliTitle";
 import { selectedNavKey, userNav } from "../nav";
+import { useThemeMode } from "../theme/ThemeModeContext";
 
 const { Sider, Content } = Layout;
 
@@ -18,6 +19,7 @@ export function UserLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  const { mode } = useThemeMode();
 
   const items = userNav.map((n) => ({
     key: n.key,
@@ -31,6 +33,7 @@ export function UserLayout() {
   return (
     <Layout style={{ minHeight: "100vh" }}>
       <Sider
+        theme={mode}
         breakpoint="lg"
         collapsedWidth="64"
         collapsible
@@ -42,7 +45,7 @@ export function UserLayout() {
         </div>
         <Menu
           mode="inline"
-          theme="dark"
+          theme={mode}
           selectedKeys={selected ? [selected] : []}
           items={items}
           style={{ border: "none" }}

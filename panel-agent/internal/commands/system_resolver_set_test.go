@@ -171,6 +171,73 @@ func TestSystemResolverSet_RollbackWhenNoPriorDropIn(t *testing.T) {
 	}
 }
 
+// TestSystemResolverSet_InactiveResolvedPersistsDropInAndSkipsRestart —
+// on hosts where systemd-resolved isn't running (NetworkManager, resolvconf,
+// or plain /etc/resolv.conf in use), saving resolvers must still persist
+// the drop-in and MUST NOT try to restart a service the admin has already
+// been told is inactive. Regression for the bug reported via UI where every
+// save round-tripped through a failed restart + rollback on such hosts.
+func TestSystemResolverSet_InactiveResolvedPersistsDropInAndSkipsRestart(t *testing.T) {
+	path := setResolverTestPath(t)
+	stubResolvedActive(t, false)
+	calls := stubRestartResolved(t, errors.New("would fail if called"))
+
+	params := json.RawMessage(`{"resolvers":["1.1.1.1","1.0.0.1"],"search_domain":"example.com"}`)
+	resp, err := systemResolverSetHandler(context.Background(), params)
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	got := resp.(systemResolverGetResponse)
+	if got.Active {
+		t.Error("expected Active=false in response when service is inactive")
+	}
+	if got.Source != "drop-in" {
+		t.Errorf("source = %q, want drop-in", got.Source)
+	}
+	if len(got.Resolvers) != 2 {
+		t.Errorf("resolvers = %v, want 2", got.Resolvers)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read drop-in: %v", err)
+	}
+	if !strings.Contains(string(content), "DNS=1.1.1.1 1.0.0.1") {
+		t.Errorf("drop-in missing DNS= line: %s", content)
+	}
+
+	// The restart stub must NOT have been called; if it had been, the
+	// stub would have returned an error and we'd have failed above.
+	if *calls != 0 {
+		t.Errorf("restart calls = %d, want 0 (service is inactive, don't touch it)", *calls)
+	}
+}
+
+// TestSystemResolverSet_InactiveResolvedPreservesPriorOnWriteFailure —
+// belt-and-suspenders: if the atomic write itself fails on an inactive host,
+// we still surface the write error without ever touching systemctl.
+func TestSystemResolverSet_InactiveResolvedDoesNotCallRestartEvenOnWriteError(t *testing.T) {
+	setResolverTestPath(t)
+	stubResolvedActive(t, false)
+	calls := stubRestartResolved(t, errors.New("would fail if called"))
+
+	old := atomicWriteResolvedDropIn
+	atomicWriteResolvedDropIn = func(_ string, _ []byte) error {
+		return errors.New("disk full")
+	}
+	t.Cleanup(func() { atomicWriteResolvedDropIn = old })
+
+	params := json.RawMessage(`{"resolvers":["1.1.1.1"]}`)
+	_, err := systemResolverSetHandler(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected write error")
+	}
+	if *calls != 0 {
+		t.Errorf("restart calls = %d, want 0", *calls)
+	}
+}
+
 func TestSystemResolverSet_Registered(t *testing.T) {
 	t.Parallel()
 	for _, name := range Default.Commands() {

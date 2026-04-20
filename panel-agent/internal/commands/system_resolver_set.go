@@ -47,24 +47,36 @@ func systemResolverSetHandler(ctx context.Context, params json.RawMessage) (any,
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
 	}
 
+	// Capture the service state at entry so the restart path only runs on
+	// hosts that actually run systemd-resolved. If it's inactive, the admin
+	// has been told so by the UI ("drop-in will still be written, but
+	// changes won't take effect until the service is running") — we honor
+	// that contract: persist the drop-in and return. Trying to start an
+	// inactive service here would just fail on hosts that use a different
+	// resolver stack (NetworkManager, resolvconf, plain /etc/resolv.conf),
+	// and the rollback would then make the feature unusable on those hosts.
+	wasActive := systemdResolvedActive()
+
 	previous, _ := os.ReadFile(resolvedDropInPath) // #nosec G304 — fixed path
 	newContent := renderResolvedDropIn(p.Resolvers, p.SearchDomain)
 	if err := atomicWriteResolvedDropIn(resolvedDropInPath, newContent); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("write drop-in: %v", err)}
 	}
 
-	if err := restartSystemdResolved(ctx); err != nil {
-		// Rollback to previous content so the host isn't left with an
-		// invalid drop-in keeping resolved in a failed state.
-		if previous != nil {
-			_ = atomicWriteResolvedDropIn(resolvedDropInPath, previous)
-		} else {
-			_ = os.Remove(resolvedDropInPath)
-		}
-		_ = restartSystemdResolved(ctx) // best-effort recover
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeFailedPrecondition,
-			Message: fmt.Sprintf("systemd-resolved restart failed; rolled back drop-in: %v", err),
+	if wasActive {
+		if err := restartSystemdResolved(ctx); err != nil {
+			// Rollback to previous content so the host isn't left with an
+			// invalid drop-in keeping resolved in a failed state.
+			if previous != nil {
+				_ = atomicWriteResolvedDropIn(resolvedDropInPath, previous)
+			} else {
+				_ = os.Remove(resolvedDropInPath)
+			}
+			_ = restartSystemdResolved(ctx) // best-effort recover
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeFailedPrecondition,
+				Message: fmt.Sprintf("systemd-resolved restart failed; rolled back drop-in: %v", err),
+			}
 		}
 	}
 

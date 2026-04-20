@@ -2531,19 +2531,23 @@ install_hydra() {
   local hydra_url="https://github.com/ory/hydra/releases/download/v${hydra_version}/hydra_${hydra_version}-linux_sqlite_64bit.tar.gz"
 
   # Skip download if the binary already matches. Two checks:
-  #   1. Version string matches (standard semver compare)
+  #   1. Version string matches (standard semver compare).
   #   2. SQLite support is compiled in — the default linux_64bit tarball
   #      from Ory has NO SQLite support, so a pre-sqlite-pivot host can
-  #      carry the right version string but fail at migrate time. We
-  #      probe by feeding the real sqlite:// DSN to `migrate sql up`
-  #      with --dry-run-ish args and grepping for the well-known error
-  #      message. Only the non-SQLite binary emits that message; the
-  #      SQLite binary either proceeds or complains about something
-  #      else.
+  #      carry the right version string but fail at migrate time.
+  #
+  # Flavour probe: feed `migrate sql up` a sqlite DSN and grep for the
+  # "SQLite support was not built" marker. Wrap in `timeout 3s` because
+  # the SQLite-enabled binary doesn't fail fast on a bad path — it
+  # retries the migration via pop-migrations' backoff loop, which can
+  # hang for tens of seconds. The non-SQLite binary errors immediately
+  # with the marker we're grepping for, so 3 seconds is ample for the
+  # positive-detect case. Timeout = "probably SQLite" = no re-install.
   if [[ -f "$hydra_binary" ]]; then
     local installed_version sqlite_probe
     installed_version=$("$hydra_binary" version 2>&1 | grep -oP 'Version:\s+\K[^[:space:]]+' || echo "unknown")
-    sqlite_probe=$("$hydra_binary" migrate sql up --yes "sqlite:///nonexistent/probe.db?_fk=true" 2>&1 || true)
+    sqlite_probe=$(timeout 3s "$hydra_binary" migrate sql up --yes "sqlite:///tmp/jabali-hydra-flavour-probe.db?_fk=true" 2>&1 || true)
+    rm -f /tmp/jabali-hydra-flavour-probe.db*
     if [[ "$installed_version" == "v${hydra_version}" ]] \
        && [[ "$sqlite_probe" != *"SQLite support was not built"* ]]; then
       _ok "Hydra $hydra_version (SQLite build) already installed"

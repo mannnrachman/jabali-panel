@@ -284,6 +284,23 @@ func runPhpbbCLIInstaller(ctx context.Context, osUser, installPath, configPath s
 	return nil
 }
 
+// runPhpbbComposerInstall runs `composer install --no-dev --no-progress`
+// in the phpBB root to populate vendor/. composer is provisioned by
+// install.sh (used by Drupal too). --no-dev skips testing/linting
+// packages we don't need at runtime; --no-progress keeps stdout
+// quiet so the agent's CombinedOutput buffer stays small.
+func runPhpbbComposerInstall(ctx context.Context, osUser, installPath string) error {
+	cmd := buildSystemdRunCmd(ctx, osUser,
+		"--working-directory="+installPath,
+		"composer", "install", "--no-dev", "--no-progress", "--no-interaction",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("composer install: %w (output: %s)", err, truncateStr(string(out), 1024))
+	}
+	return nil
+}
+
 // removePhpbbInstallDir deletes the install/ folder after a successful
 // install. phpBB serves a "you must delete the install dir" warning
 // otherwise; the upstream docs say it's mandatory.
@@ -374,6 +391,14 @@ func phpbbInstallHandler(ctx context.Context, params json.RawMessage) (any, erro
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("chmod tarball: %v", err)}
 	}
 	if err := extractPhpbbTarball(ctx, req.OSUser, tarballPath, installPath); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
+	}
+	// GitHub source archive doesn't ship vendor/ — phpBB's autoloader
+	// (and phpbbcli.php) require it. The release tarball at
+	// download.phpbb.com had vendor/ baked in, so this step was a
+	// no-op there; switching to the github source as our download
+	// mirror means we have to bootstrap composer ourselves.
+	if err := runPhpbbComposerInstall(ctx, req.OSUser, installPath); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
 

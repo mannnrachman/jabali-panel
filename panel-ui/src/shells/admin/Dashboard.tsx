@@ -184,8 +184,8 @@ export function Dashboard() {
         <>
           <Row gutter={[16, 16]}>
             <Col xs={24} md={12}>
-              <Card title="System" size="small">
-                <Descriptions column={1} size="small">
+              <Card title="System">
+                <Descriptions column={1}>
                   <Descriptions.Item label="Hostname">
                     {info.hostname}
                   </Descriptions.Item>
@@ -202,10 +202,10 @@ export function Dashboard() {
               </Card>
             </Col>
             <Col xs={24} md={12}>
-              <Card title="Memory" size="small">
+              <Card title="Memory">
                 <Progress
                   percent={memPercent}
-                  status={memPercent > 90 ? "exception" : "active"}
+                  status={memPercent > 90 ? "exception" : undefined}
                   format={() =>
                     `${formatBytes(info.mem_used_kb * 1024)} / ${formatBytes(info.mem_total_kb * 1024)}`
                   }
@@ -215,11 +215,10 @@ export function Dashboard() {
           </Row>
 
           {info.partitions.length > 0 && (
-            <Card title="Disk" size="small" style={{ marginTop: 16 }}>
+            <Card title="Disk" style={{ marginTop: 16 }}>
               <Table
                 dataSource={info.partitions}
                 rowKey="mount_point"
-                size="small"
                 pagination={false}
               >
                 <Table.Column
@@ -248,8 +247,7 @@ export function Dashboard() {
                     return (
                       <Progress
                         percent={pct}
-                        size="small"
-                        status={pct > 90 ? "exception" : "normal"}
+                        status={pct > 90 ? "exception" : undefined}
                       />
                     );
                   }}
@@ -260,11 +258,10 @@ export function Dashboard() {
         </>
       )}
 
-      <Card title="Services" size="small" style={{ marginTop: 16 }}>
+      <Card title="Services" style={{ marginTop: 16 }}>
         <Table<ServiceStatus>
           dataSource={services}
           rowKey="name"
-          size="small"
           pagination={false}
         >
           <Table.Column<ServiceStatus> dataIndex="name" title="Service" />
@@ -283,7 +280,6 @@ export function Dashboard() {
             width={130}
             render={(_, row) => (
               <Button
-                size="small"
                 icon={<RedoOutlined />}
                 loading={restartingName === row.name}
                 // Masked units can't be restarted via systemctl —

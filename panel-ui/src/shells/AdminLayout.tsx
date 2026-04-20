@@ -35,6 +35,7 @@ export function AdminLayout() {
     <Layout style={{ minHeight: "100vh" }}>
       <Sider
         theme={mode}
+        width={256}
         breakpoint="lg"
         collapsedWidth="64"
         collapsible

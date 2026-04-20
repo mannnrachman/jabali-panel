@@ -325,3 +325,107 @@ the legacy behavior, so the two code paths share one invariant — ADR-0003
   have bcrypt hashes, passthrough covers them.
 
 ### Status: SHIPPED 2026-04-20
+
+### Post-cutover bug fixes (2026-04-20 afternoon)
+
+Four material bugs surfaced during the first fresh-install verification
+on the dev VM. All fixed and documented here so the next operator
+debugging auth doesn't re-discover them.
+
+#### Fix 1 — Kratos 1.3.1 config schema drift (`cedb2e5`)
+
+`install/kratos.yml.tmpl` was authored against the 1.3 docs but never
+validated against a real binary. Seven field-name violations surfaced as
+`additionalProperties not allowed` errors in journalctl, putting the
+service in a restart loop. Corrected with Context7-verified field names:
+
+| Wrong | Correct |
+|---|---|
+| `hashers.bcrypt.enabled: true` | Remove (bcrypt is the default) |
+| `hashers.argon2.enabled: false` | Remove (block doesn't exist) |
+| `selfservice.methods.totp.config.issuer_name` | `issuer` |
+| `serve.public.cors.credentials` | `allow_credentials` |
+| `serve.public.cors.expose_headers` | `exposed_headers` |
+| `session.cookie.secure` + `http_only` | Remove (not in schema; handled by URL scheme) |
+| `session.upstream.check_session_url` | Remove (legacy Oathkeeper vestige) |
+| top-level `oauth2:` + `profiling:` | Remove (not Kratos schema keys) |
+
+Lesson: any new upstream config template gets run against a live binary
+before being merged.
+
+#### Fix 2 — Identity schema missing `traits` wrapper (`549d6b6`)
+
+`install/kratos-identity-schema.json` put `email`/`username`/`is_admin`
+at the root `properties`. Kratos 1.3.x expects them nested under
+`properties.traits.properties` — the top-level `properties` slot is
+reserved for Kratos's own `allOf` wrapper. Fixed by wrapping the three
+trait fields inside a `traits` object. `panel-api/internal/kratosclient`
+already marshals request bodies with `json:"traits"`, so no Go change
+needed — just the JSON schema file.
+
+#### Fix 3 — Whoami response decoded as bare Identity (`85e9513`)
+
+`kratosclient.whoamiRemote` decoded `/sessions/whoami` responses
+directly into `Identity{ID, Traits}`. Real Kratos returns a Session
+envelope: `{id: <session_uuid>, active, identity: {id, traits}}`. The
+top-level `id` is the session UUID, not the identity UUID. So every
+`FindByKratosIdentityID(<session_uuid>)` returned ErrNotFound and the
+middleware 401'd every `/api/v1/*` call for a freshly-logged-in admin.
+
+Tests self-consistently emitted the wrong shape (mock server encoded
+`&Identity{ID: ...}`), which is why nobody caught it. Fixed by decoding
+into a `struct{Identity Identity}` envelope and updating all three test
+fixtures (client_test.go, auth_kratos_test.go) to use the real shape.
+Defensive: fail with explicit error if `identity.id` comes back empty.
+
+#### Fix 4 — `users.Update` column allowlist drops `kratos_identity_id` (`fcceb59`)
+
+`UserRepository.Update`'s `Select(...)` allowlist explicitly excludes
+`kratos_identity_id` — to stop profile-edit handlers accidentally
+re-linking identities. But the three compensating-transaction call
+sites (`BootstrapAdmin`, `POST /api/v1/admin/users`, `jabali-panel user
+create`) were all calling `u.KratosIdentityID = &id; users.Update(u)`,
+which GORM silently dropped. Result: Kratos identity created OK, panel
+row created OK, but `users.kratos_identity_id` stayed NULL — same 401
+chain as fix 3 for a different reason.
+
+Added `UserRepository.LinkKratosIdentity(ctx, userID, kratosID)` that
+writes only that column. All three sites switched to it. Update's
+allowlist stays tight so the split invariant holds. Every test mock
+(7 files) gets a parallel method.
+
+#### Additional fixes
+
+**`/.ory/*` proxy lives in panel-api** (`908c78c`) — panel-api binds
+`:8443` directly; nginx doesn't front it on that port. Without a
+same-origin proxy, the SPA's relative `axios.get("/.ory/...")` falls
+through to the SPA static handler, gets `index.html` as the body, and
+`flow.ui` ends up undefined. Added `app.RegisterKratosProxy` as an
+`httputil.ReverseProxy` at `/.ory/*proxyPath` that strips `/.ory` and
+forwards to `cfg.Auth.Kratos.PublicURL`. Cookies flow through
+automatically (host-only, no Domain attribute).
+
+**Kratos `base_url` pinned to `:8443`** (`908c78c`) — `flow.ui.action`
+URLs that Kratos embeds in flows must match the SPA's origin, including
+port. Before the fix, the action URL pointed at `:443` (nginx default
+vhost, no `/.ory/` location there) and every POST 404'd.
+`install/kratos.yml.tmpl` hard-codes `:8443` in `base_url`, `ui_url`
+for all flows, and `allowed_return_urls`.
+
+**SSL reconciler in periodic tick** (`c10594a`) — `ReconcileAll` did
+DNS + `domain.create` but never called `reconcileSSLForDomain`. Seed-
+time domains never got a cert row, and `pending_acme_retry` certs
+waited forever for their `next_retry_at` to be checked. Fixed by
+adding `reconcileSSLForDomain` to the enabledDomains loop so the
+3-hour ACME retry promise actually holds.
+
+### Operational notes
+
+- **First fresh install seeds `server_settings.admin_email`** from
+  `JABALI_BOOTSTRAP_ADMIN_EMAIL` in `/etc/jabali/panel.env` at first-boot
+  via `serve.go`'s server-settings seeder. Without it, every domain's
+  SSL flow skips straight to self-signed + 3h retry because ACME
+  requires an email for LE registration.
+- **Default nginx `:443` vhost returns 444** on unknown hosts. The
+  prior "hit /var/www/html → 403" leaked a panel vhost to domains
+  without certs yet.

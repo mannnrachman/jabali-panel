@@ -339,3 +339,82 @@ openssl req -x509 -nodes -newkey rsa:2048 \
 Drop the nginx proxy block, set `public_url = "https://kratos.local"`,
 add the self-signed cert to the panel's CA store so whoami calls verify.
 For production use, Let's Encrypt the Kratos hostname instead.
+
+## Troubleshooting
+
+Symptoms from post-cutover debugging, with root causes. If a fresh
+install falls into any of these states, start here before reading code.
+
+### Login crashes with `e.ui is undefined`
+
+Browser DevTools shows `TypeError: can't access property "messages", e.ui is undefined`; the login form never renders.
+
+Means: `GET /.ory/self-service/login/browser` either 404'd or returned
+HTML (SPA fallback). Check:
+
+```sh
+curl -sS -k -H "Accept: application/json" -H "Host: jabali-panel.local:8443" \
+  "https://127.0.0.1:8443/.ory/self-service/login/browser" | head -c 100
+```
+
+Expect JSON starting `{"id":"...`. If it's `<!DOCTYPE html>`, the
+`/.ory/*` reverse proxy isn't registered. Binary predates commit
+`908c78c` → rebuild.
+
+### Every `/api/v1/*` returns 401 `identity_not_linked` right after login
+
+Login succeeds in Kratos (journalctl shows "Identity authenticated
+successfully") but the dashboard can't fetch anything.
+
+Two causes with identical responses but different bugs:
+
+1. **`users.kratos_identity_id` is NULL** — compensating transaction's
+   final UPDATE got dropped by GORM's allowlist. Verify:
+   ```sh
+   mariadb -uroot -e "SELECT email, kratos_identity_id FROM jabali_panel.users WHERE is_admin=1;"
+   ```
+   NULL → binary predates `fcceb59` (adds `LinkKratosIdentity`).
+   Patch by hand for existing admins:
+   ```sh
+   curl -sS http://127.0.0.1:4434/admin/identities | python3 -c "import sys,json; [print(i['id'], i['traits']['email']) for i in json.load(sys.stdin)]"
+   mariadb -uroot -e "UPDATE jabali_panel.users SET kratos_identity_id='<uuid>' WHERE email='<email>';"
+   ```
+
+2. **Whoami decoder returns session UUID as identity ID** — tests
+   self-consistent with the wrong shape. Verify:
+   ```sh
+   strings /usr/local/bin/jabali-panel | grep "response missing identity.id"
+   ```
+   No match → binary predates `85e9513`; rebuild.
+
+### Kratos restart-loops with `allOf failed` / `additionalProperties not allowed`
+
+`install/kratos.yml.tmpl` drifted from Kratos's JSON Schema. Full
+field-by-field fix list is in ADR-0034's post-cutover section. If
+Kratos upgrades past 1.3.x and new errors surface, cross-reference
+Ory's [configuration reference](https://www.ory.sh/docs/kratos/reference/configuration).
+No `kratos validate-config` subcommand exists; journalctl is ground truth.
+
+### `https://domain/` shows nginx 403 + "Not secure" cert
+
+The domain has `ssl_enabled=1` but no cert yet. ACME either hasn't
+attempted or skipped because `server_settings.admin_email` is empty:
+
+```sh
+mariadb -uroot -e "SELECT admin_email FROM jabali_panel.server_settings;"
+```
+
+Empty → set via Server Settings page in the admin UI, or:
+
+```sh
+mariadb -uroot -e "UPDATE jabali_panel.server_settings SET admin_email='you@example.com' WHERE id=1;"
+```
+
+Next 60s reconciler tick will attempt ACME; failure falls back to
+self-signed + 3h retry. (Fresh installs after the admin_email seeder
+commit pick this up from `JABALI_BOOTSTRAP_ADMIN_EMAIL` automatically.)
+
+Post-`c10594a`, the default `:443` vhost also returns 444 for unknown
+hosts instead of 403, so the symptom changes to "connection closed" —
+which is what you actually want for a scan attempt against a domain
+with no cert.

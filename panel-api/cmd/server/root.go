@@ -60,6 +60,7 @@ func newRootCmd() *cobra.Command {
 		newUserCmd(),
 		newPackageCmd(),
 		newDomainCmd(),
+		newAppCmd(),
 		newSystemCmd(),
 		newMigrateCmd(),
 		newUpdateCmd(),

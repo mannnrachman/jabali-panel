@@ -59,6 +59,8 @@ logs/
 !panel-ui/public/**/*.png
 !docs/**/*.png
 .claude/worktrees/
+.claude/scheduled_tasks.lock
+.claude/scheduled_tasks/
 
 # direnv project-scoped env (DB creds etc.)
 .envrc

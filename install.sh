@@ -324,14 +324,30 @@ install_base_packages() {
     rsync acl \
     systemd-resolved \
     quota quotatool xfsprogs
+
+  # Some Debian images ship systemd-resolved masked (upgrade paths from
+  # bullseye/bookworm, certain cloud images, or admins who masked it to
+  # stop a prior DNS-stack conflict). A masked unit can't be started by
+  # the panel's DNS Resolvers page, so `systemctl restart` from the agent
+  # fails with exit 1 and the write+restart flow rolls the drop-in back.
+  # Unmasking is a no-op on hosts where it's already unmasked, and
+  # matches the installer's contract of shipping a usable resolved binary.
+  # We still don't enable or start it here — that's the admin's choice
+  # via the panel UI or their own preferred DNS-manager setup.
+  if systemctl is-enabled systemd-resolved.service 2>/dev/null | grep -q '^masked$'; then
+    _log "unmasking systemd-resolved (was masked; panel DNS feature requires it unblocked)"
+    systemctl unmask systemd-resolved.service
+  fi
+
   _ok "base packages ready"
 }
 
-# Note: we deliberately install systemd-resolved but do NOT configure it
-# here. The admin's existing DNS setup stays untouched at install time.
-# If the admin wants to change DNS later, the panel's Server Settings →
-# DNS Resolvers page writes the drop-in and restarts the service — which
-# only works because the package is available.
+# Note: we deliberately install systemd-resolved but do NOT enable/start
+# it here. The admin's existing DNS setup stays untouched at install time.
+# We DO unmask the unit if a prior image/upgrade left it masked, otherwise
+# the panel's Server Settings → DNS Resolvers page can't restart it when
+# the admin saves new resolvers. Enabling + starting remains the admin's
+# decision (via the panel or manually).
 
 # ---------- step 1d: M18 — cgroups v2 probe + disk quota + /tmp tmpfs -------
 #

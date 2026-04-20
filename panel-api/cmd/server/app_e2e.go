@@ -97,7 +97,7 @@ missing system packages, and per-app extraction quirks in one run.`,
 	}
 
 	cmd.Flags().StringVar(&domainID, "domain-id", "", "Domain ID to install all apps under (required)")
-	cmd.Flags().StringVar(&baseSubdir, "base-subdir", "/e2e", "Subdir prefix; each app installs under <prefix>-<app>-<rand>")
+	cmd.Flags().StringVar(&baseSubdir, "base-subdir", "e2e", "Subdir prefix; each app installs under <prefix>_<app>_<rand>")
 	cmd.Flags().StringSliceVar(&only, "only", nil, "Only run these app_types (comma-separated)")
 	cmd.Flags().StringSliceVar(&skip, "skip", nil, "Skip these app_types (comma-separated)")
 	cmd.Flags().BoolVar(&keep, "keep", false, "Don't delete installs after the run (debug)")
@@ -200,15 +200,32 @@ func runOneE2E(parent context.Context, app apps.App, domainID, baseSubdir string
 
 // buildSubdir guarantees uniqueness across reruns so a stale row
 // (failed-but-undeleted) doesn't poison this run with a 409.
+//
+// Output must satisfy validateSubdirectory's `^[a-z0-9][a-z0-9_-]{0,63}$`:
+// no leading slash, lowercase alnum start, no other punctuation. We
+// build `<base>_<app>_<rand6>`, replacing illegal chars in base with
+// underscores. The regex allows hyphens, but underscore-separators
+// keep the slug single-token-looking (matches reservedSubdirectories
+// style).
 func buildSubdir(base, appType string) string {
 	rnd := make([]byte, 3)
 	_, _ = rand.Read(rnd)
 	suffix := hex.EncodeToString(rnd)
-	clean := strings.Trim(base, "/")
+	clean := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			return r
+		case r >= 'A' && r <= 'Z':
+			return r + ('a' - 'A')
+		default:
+			return '_'
+		}
+	}, base)
+	clean = strings.Trim(clean, "_")
 	if clean == "" {
-		return "/" + appType + "-" + suffix
+		return appType + "_" + suffix
 	}
-	return "/" + clean + "-" + appType + "-" + suffix
+	return clean + "_" + appType + "_" + suffix
 }
 
 // synthesizeParams produces a value for every required key. Optional

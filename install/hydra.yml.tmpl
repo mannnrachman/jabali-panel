@@ -1,7 +1,8 @@
 # Ory Hydra v2.3.0 configuration template.
 # Rendered by install.sh install_hydra() via sed — Mustache slots below
 # are substituted at install time. The post-render check in install_hydra
-# fails the install if any `{{.Slot}}` survives the substitution pass.
+# fails the install if any mustache slot (double-brace, dot-prefixed
+# name) survives the substitution pass.
 #
 # Binding + DB conventions mirror Kratos (install/kratos.yml.tmpl):
 #   * Loopback-only (public 4444 / admin 4445) — never exposed off-host.

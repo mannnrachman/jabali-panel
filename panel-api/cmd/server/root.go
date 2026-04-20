@@ -45,15 +45,15 @@ func newRootCmd() *cobra.Command {
 	cmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output as JSON")
 
 	// `jabali admin` is a grouping command for operator-only subcommands.
-	// The M5b `admin-login` was removed by M20 step 7; what's left is
-	// slice-cutover (per-user systemd slice migration) and disable-2fa
-	// (recovery helper when a user loses their authenticator).
+	// M5b (admin-login) and M5c (disable-2fa) were removed by M20 — 2FA
+	// now lives in Kratos and is managed via `kratos identities patch
+	// <id> --clear-totp`. Slice-cutover stays because it's filesystem
+	// migration, not auth.
 	adminCmd := &cobra.Command{
 		Use:   "admin",
 		Short: "Operator-only administrative subcommands",
 	}
 	adminCmd.AddCommand(newAdminSliceCutoverCmd())
-	adminCmd.AddCommand(newAdminDisable2FACmd())
 
 	cmd.AddCommand(
 		newServeCmd(),
@@ -67,7 +67,6 @@ func newRootCmd() *cobra.Command {
 		newLimitsCmd(),
 		adminCmd,
 		newSSOCmd(),
-		newKratosMigrateCmd(),
 	)
 	// `jabali reconcile` was removed by M20 — the reconciler already ticks
 	// every cfg.Agent.ReconcilerInterval (default 60s), and the CLI's

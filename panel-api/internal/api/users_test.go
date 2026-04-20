@@ -207,36 +207,6 @@ func (m *memUserRepo) Delete(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *memUserRepo) SetTOTPSecret(_ context.Context, id string, encrypted []byte) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if u, ok := m.byID[id]; ok {
-		u.TOTPSecretEncrypted = encrypted
-	}
-	return nil
-}
-
-func (m *memUserRepo) EnableTOTP(_ context.Context, id string, now time.Time) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if u, ok := m.byID[id]; ok {
-		u.TOTPEnabled = true
-		u.TOTPEnabledAt = &now
-	}
-	return nil
-}
-
-func (m *memUserRepo) DisableTOTP(_ context.Context, id string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if u, ok := m.byID[id]; ok {
-		u.TOTPEnabled = false
-		u.TOTPEnabledAt = nil
-		u.TOTPSecretEncrypted = nil
-	}
-	return nil
-}
-
 // ---------- in-memory package repo ----------
 
 // memPackageRepo is a tiny in-memory PackageRepository for handler tests.
@@ -567,9 +537,12 @@ func TestUsers_Create_NonAdmin403(t *testing.T) {
 
 // ---------- PATCH ----------
 
-func TestUsers_Patch_OwnerChangesOwnPassword(t *testing.T) {
+func TestUsers_Patch_PasswordFieldRejected(t *testing.T) {
 	t.Parallel()
 
+	// Post-M20: password changes live in Kratos. The panel PATCH handler no
+	// longer accepts a password field at all — it's silently ignored by
+	// json.Unmarshal (the struct has no such field). Hash must be unchanged.
 	repo := newMemUserRepo()
 	u := makeUser(t, "u@example.com", false, "password01")
 	repo.seed(u)
@@ -578,29 +551,14 @@ func TestUsers_Patch_OwnerChangesOwnPassword(t *testing.T) {
 	rec := doJSON(t, r, http.MethodPatch, "/api/v1/users/"+u.ID, map[string]any{
 		"password":         "newpassword9",
 		"current_password": "password01",
+		"name_first":       "Renamed",
 	})
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	// verify the hash changed
 	after, err := repo.FindByID(context.Background(), u.ID)
 	require.NoError(t, err)
-	assert.NotEqual(t, u.PasswordHash, after.PasswordHash)
-	require.NoError(t, bcrypt.CompareHashAndPassword([]byte(after.PasswordHash), []byte("newpassword9")))
-}
-
-func TestUsers_Patch_OwnerWrongCurrentPassword401(t *testing.T) {
-	t.Parallel()
-
-	repo := newMemUserRepo()
-	u := makeUser(t, "u@example.com", false, "password01")
-	repo.seed(u)
-
-	r := buildRouter(repo, &auth.AccessClaims{UserID: u.ID})
-	rec := doJSON(t, r, http.MethodPatch, "/api/v1/users/"+u.ID, map[string]any{
-		"password":         "newpassword9",
-		"current_password": "not-the-password",
-	})
-	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Equal(t, u.PasswordHash, after.PasswordHash, "panel DB must not accept password PATCHes post-M20")
+	assert.Equal(t, "Renamed", after.NameFirst, "other fields still update")
 }
 
 func TestUsers_Patch_OwnerCannotSetIsAdmin(t *testing.T) {
@@ -869,17 +827,17 @@ func TestUsers_Patch_WithInvalidPackageID(t *testing.T) {
 // ---------- M20: Kratos inline-hook on POST /users ----------
 //
 // The create handler must:
-//   - skip Kratos entirely when provider = "legacy" (no upstream call),
-//   - create a Kratos identity atomically when provider = "kratos",
+//   - skip Kratos when the client is nil (dev-without-Kratos),
+//   - create a Kratos identity atomically when the client is wired,
 //   - roll back the panel row if Kratos rejects the create,
 //   - unwind both sides if the post-create Update fails.
 
 // buildRouterWithKratos wires a router whose UserHandlerConfig points at the
-// given fake Kratos admin server.
+// given fake Kratos admin server. An empty kratosURL leaves the client nil
+// (panel-only mode).
 func buildRouterWithKratos(
 	repo repository.UserRepository,
 	kratosURL string,
-	provider string,
 	claims *auth.AccessClaims,
 ) *gin.Engine {
 	gin.SetMode(gin.TestMode)
@@ -891,9 +849,8 @@ func buildRouterWithKratos(
 		c.Next()
 	})
 	cfg := api.UserHandlerConfig{
-		Repo:         repo,
-		BcryptCost:   bcrypt.MinCost,
-		AuthProvider: provider,
+		Repo:       repo,
+		BcryptCost: bcrypt.MinCost,
 	}
 	if kratosURL != "" {
 		cfg.KratosClient = kratosclient.NewClient(kratosURL, kratosURL)
@@ -902,7 +859,7 @@ func buildRouterWithKratos(
 	return r
 }
 
-func TestUsers_Create_KratosLegacyProvider_NoKratosCall(t *testing.T) {
+func TestUsers_Create_NoKratosClient_NoUpstreamCall(t *testing.T) {
 	t.Parallel()
 
 	hit := 0
@@ -916,15 +873,15 @@ func TestUsers_Create_KratosLegacyProvider_NoKratosCall(t *testing.T) {
 	admin := makeUser(t, "admin@example.com", true, "adminpassword")
 	repo.seed(admin)
 
-	// provider="legacy" → Kratos must never be called even though the
-	// (intentionally-broken) server would respond 500.
-	r := buildRouterWithKratos(repo, srv.URL, "legacy", &auth.AccessClaims{UserID: admin.ID, IsAdmin: true})
+	// No Kratos client wired → the panel row is created in isolation, and
+	// even an intentionally-broken server is never contacted.
+	r := buildRouterWithKratos(repo, "", &auth.AccessClaims{UserID: admin.ID, IsAdmin: true})
 	rec := doJSON(t, r, http.MethodPost, "/api/v1/users", map[string]any{
-		"email":    "legacy-user@example.com",
+		"email":    "local-only@example.com",
 		"password": "password123",
 	})
 	require.Equal(t, http.StatusCreated, rec.Code)
-	assert.Equal(t, 0, hit, "Kratos must not be called in legacy mode")
+	assert.Equal(t, 0, hit, "Kratos must not be called when the client is nil")
 }
 
 func TestUsers_Create_KratosProvider_HappyPath_IDPersisted(t *testing.T) {
@@ -945,7 +902,7 @@ func TestUsers_Create_KratosProvider_HappyPath_IDPersisted(t *testing.T) {
 	admin := makeUser(t, "admin@example.com", true, "adminpassword")
 	repo.seed(admin)
 
-	r := buildRouterWithKratos(repo, srv.URL, "kratos", &auth.AccessClaims{UserID: admin.ID, IsAdmin: true})
+	r := buildRouterWithKratos(repo, srv.URL, &auth.AccessClaims{UserID: admin.ID, IsAdmin: true})
 	rec := doJSON(t, r, http.MethodPost, "/api/v1/users", map[string]any{
 		"email":    "k@example.com",
 		"password": "password123",
@@ -974,7 +931,7 @@ func TestUsers_Create_KratosRejects_PanelRolledBack(t *testing.T) {
 	admin := makeUser(t, "admin@example.com", true, "adminpassword")
 	repo.seed(admin)
 
-	r := buildRouterWithKratos(repo, srv.URL, "kratos", &auth.AccessClaims{UserID: admin.ID, IsAdmin: true})
+	r := buildRouterWithKratos(repo, srv.URL, &auth.AccessClaims{UserID: admin.ID, IsAdmin: true})
 	rec := doJSON(t, r, http.MethodPost, "/api/v1/users", map[string]any{
 		"email":    "dup@example.com",
 		"password": "password123",
@@ -1001,7 +958,7 @@ func TestUsers_Create_KratosUnreachable_PanelRolledBack(t *testing.T) {
 	admin := makeUser(t, "admin@example.com", true, "adminpassword")
 	repo.seed(admin)
 
-	r := buildRouterWithKratos(repo, srv.URL, "kratos", &auth.AccessClaims{UserID: admin.ID, IsAdmin: true})
+	r := buildRouterWithKratos(repo, srv.URL, &auth.AccessClaims{UserID: admin.ID, IsAdmin: true})
 	rec := doJSON(t, r, http.MethodPost, "/api/v1/users", map[string]any{
 		"email":    "noroute@example.com",
 		"password": "password123",

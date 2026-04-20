@@ -96,7 +96,7 @@ func createUserDirect(ctx context.Context, in cliUserInput) (*models.User, strin
 
 	// M20: atomic Kratos identity. Compensating delete on failure so retries
 	// don't hit a unique-email conflict from a ghost panel row.
-	if sharedCfg.Auth.Provider == "kratos" && sharedCfg.Auth.Kratos.PublicURL != "" {
+	if sharedCfg.Auth.Kratos.PublicURL != "" {
 		k := kratosclient.NewClient(sharedCfg.Auth.Kratos.PublicURL, sharedCfg.Auth.Kratos.AdminURL)
 		traits := kratosclient.AdminTraits{Email: u.Email, IsAdmin: u.IsAdmin}
 		if u.Username != nil {

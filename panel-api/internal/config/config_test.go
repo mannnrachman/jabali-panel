@@ -31,9 +31,8 @@ func clearPanelEnv(t *testing.T) {
 		"LOG_LEVEL",
 		"LOG_FORMAT",
 		"DATABASE_URL",
-		"JWT_SECRET",
-		"JWT_ACCESS_TTL",
-		"JWT_REFRESH_TTL",
+		"KRATOS_PUBLIC_URL",
+		"KRATOS_ADMIN_URL",
 		"AGENT_SOCKET",
 		"AGENT_TIMEOUT",
 		"CORS_ALLOWED_ORIGINS",
@@ -54,8 +53,6 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, "development", cfg.Server.Env)
 	assert.Equal(t, "info", cfg.Log.Level)
 	assert.Equal(t, "text", cfg.Log.Format) // dev default
-	assert.Equal(t, 15*time.Minute, cfg.Auth.AccessTTL)
-	assert.Equal(t, 7*24*time.Hour, cfg.Auth.RefreshTTL)
 	assert.Equal(t, 30*time.Second, cfg.Agent.Timeout)
 	assert.Equal(t, "/run/jabali/agent.sock", cfg.Agent.SocketPath)
 	assert.Empty(t, cfg.CORS.AllowedOrigins)
@@ -78,9 +75,8 @@ func TestLoad_EnvOverridesDefaults(t *testing.T) {
 		"LOG_LEVEL":            "debug",
 		"LOG_FORMAT":           "json",
 		"DATABASE_URL":         "mysql://u:p@tcp(db:3306)/jabali_panel?parseTime=true",
-		"JWT_SECRET":           "01234567890123456789012345678901", // 32 bytes
-		"JWT_ACCESS_TTL":       "30m",
-		"JWT_REFRESH_TTL":      "48h",
+		"KRATOS_PUBLIC_URL":    "http://127.0.0.1:4433",
+		"KRATOS_ADMIN_URL":     "http://127.0.0.1:4434",
 		"AGENT_SOCKET":         "/run/jabali/agent.sock",
 		"AGENT_TIMEOUT":        "10s",
 		"CORS_ALLOWED_ORIGINS": "https://a.example,https://b.example",
@@ -92,9 +88,8 @@ func TestLoad_EnvOverridesDefaults(t *testing.T) {
 	assert.Equal(t, "debug", cfg.Log.Level)
 	assert.Equal(t, "json", cfg.Log.Format)
 	assert.Equal(t, "mysql://u:p@tcp(db:3306)/jabali_panel?parseTime=true", cfg.Database.URL)
-	assert.Equal(t, "01234567890123456789012345678901", cfg.Auth.JWTSecret)
-	assert.Equal(t, 30*time.Minute, cfg.Auth.AccessTTL)
-	assert.Equal(t, 48*time.Hour, cfg.Auth.RefreshTTL)
+	assert.Equal(t, "http://127.0.0.1:4433", cfg.Auth.Kratos.PublicURL)
+	assert.Equal(t, "http://127.0.0.1:4434", cfg.Auth.Kratos.AdminURL)
 	assert.Equal(t, "/run/jabali/agent.sock", cfg.Agent.SocketPath)
 	assert.Equal(t, 10*time.Second, cfg.Agent.Timeout)
 	assert.Equal(t, []string{"https://a.example", "https://b.example"}, cfg.CORS.AllowedOrigins)
@@ -113,8 +108,9 @@ env = "production"
 [log]
 level = "warn"
 
-[auth]
-access_ttl = "20m"
+[auth.kratos]
+public_url = "http://127.0.0.1:4433"
+admin_url = "http://127.0.0.1:4434"
 
 [agent]
 socket_path = "/tmp/a.sock"
@@ -129,7 +125,7 @@ dsn = "jabali_pdns:test_password@tcp(127.0.0.1:3306)/jabali_pdns?charset=utf8mb4
 	assert.Equal(t, "production", cfg.Server.Env)
 	assert.Equal(t, "warn", cfg.Log.Level)
 	assert.Equal(t, "json", cfg.Log.Format) // derived from env=production
-	assert.Equal(t, 20*time.Minute, cfg.Auth.AccessTTL)
+	assert.Equal(t, "http://127.0.0.1:4433", cfg.Auth.Kratos.PublicURL)
 	assert.Equal(t, "/tmp/a.sock", cfg.Agent.SocketPath)
 	assert.Equal(t, "jabali_pdns:test_password@tcp(127.0.0.1:3306)/jabali_pdns?charset=utf8mb4&parseTime=true", cfg.PDNS.DSN)
 }
@@ -186,26 +182,26 @@ func TestValidate_RejectsBadLogFormat(t *testing.T) {
 	require.Error(t, cfg.Validate())
 }
 
-func TestValidate_RejectsShortJWTSecretInProd(t *testing.T) {
-	cfg := config.Defaults()
-	cfg.Server.Env = "production"
-	cfg.Auth.JWTSecret = "too-short"
-	require.Error(t, cfg.Validate())
-}
-
 func TestValidate_RequiresDatabaseURLInProd(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Server.Env = "production"
-	cfg.Auth.JWTSecret = "01234567890123456789012345678901"
+	cfg.Auth.Kratos.PublicURL = "http://127.0.0.1:4433"
 	cfg.Database.URL = ""
 	require.Error(t, cfg.Validate())
 }
 
-func TestValidate_AllowsEmptyJWTSecretInDev(t *testing.T) {
+func TestValidate_RequiresKratosPublicURLInProd(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Server.Env = "production"
+	cfg.Database.URL = "mysql://u:p@tcp(db:3306)/jabali_panel"
+	cfg.Auth.Kratos.PublicURL = ""
+	require.Error(t, cfg.Validate())
+}
+
+func TestValidate_AllowsMissingKratosInDev(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Server.Env = "development"
-	// JWT secret empty, DB empty, agent empty — all fine in dev (Phase 2
-	// doesn't use them yet; they become required as phases turn them on).
+	// Empty Kratos URL is fine in dev — panel boots; /api/v1/* just 404s.
 	require.NoError(t, cfg.Validate())
 }
 

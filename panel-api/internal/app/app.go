@@ -12,7 +12,6 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/apps"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
@@ -25,11 +24,9 @@ import (
 )
 
 // Deps bundles the collaborators NewWithDeps needs so main.go keeps its
-// argument list short. Anything a handler family needs — auth service, JWT
-// issuer, repositories — plugs in here.
+// argument list short. Anything a handler family needs — Kratos client,
+// repositories — plugs in here.
 type Deps struct {
-	Auth                api.AuthService
-	JWTIssuer           *auth.JWTIssuer
 	KratosClient        *kratosclient.Client
 	Users               repository.UserRepository
 	Packages            repository.PackageRepository
@@ -66,7 +63,6 @@ type Deps struct {
 	QuotaMount          string
 	SSO                 *sso.Service
 	SSOKey              *ssokey.Key
-	TOTPBackupCodes     repository.TOTPBackupCodeRepository
 	Log                 *slog.Logger
 }
 
@@ -150,65 +146,31 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		api.RegisterAgentHealthRoute(r, deps.Agent)
 	}
 
-	if deps.Auth != nil {
-		api.RegisterAuthRoutes(r, api.AuthHandlerConfig{
-			Service:            deps.Auth,
-			AccessTTL:          cfg.Auth.AccessTTL,
-			RefreshTTL:         cfg.Auth.RefreshTTL,
-			CookieSecure:       cfg.CookieSecureResolved(),
-			CookieSameSiteNone: false,
-			StrictRateLimit:    rl.Strict(),
-		})
-	}
-
-	// Instantiate Kratos client if provider is "kratos".
-	// This happens before middleware registration so the client is available
-	// for RequireKratosSession binding.
-	// M20 LEGACY: remove after 2026-05-20 — collapse to unconditional when legacy branch deletes
-	if cfg.Auth.Provider == "kratos" && cfg.Auth.Kratos.PublicURL != "" {
+	// Instantiate Kratos client + same-origin reverse proxy for /.ory/*.
+	// The SPA fetches relative Kratos self-service endpoints and panel-api
+	// binds :8443 directly (no nginx in front on that port), so we proxy
+	// in-process. See kratos_proxy.go for the full rationale.
+	if cfg.Auth.Kratos.PublicURL != "" {
 		deps.KratosClient = kratosclient.NewClient(cfg.Auth.Kratos.PublicURL, cfg.Auth.Kratos.AdminURL)
 
-		// Same-origin reverse proxy for /.ory/* — the SPA fetches relative
-		// Kratos self-service endpoints and panel-api binds :8443 directly
-		// (no nginx in front on that port), so we proxy in-process. See
-		// kratos_proxy.go for the full rationale.
 		if err := RegisterKratosProxy(r, cfg.Auth.Kratos.PublicURL); err != nil {
 			deps.Log.Error("registering Kratos reverse proxy failed; login will be broken",
 				"err", err, "public_url", cfg.Auth.Kratos.PublicURL)
 		}
 	}
 
-	if deps.JWTIssuer != nil || deps.KratosClient != nil {
-		// Protected API group — everything under /api/v1/* except /auth
-		// flows through RequireAuth (JWT) or RequireKratosSession (Kratos).
-		var authMiddleware gin.HandlerFunc
-		if cfg.Auth.Provider == "kratos" && deps.KratosClient != nil {
-			// deps.Users is required: the middleware resolves Kratos identity
-			// UUIDs → panel user rows so claims.UserID carries the ULID every
-			// ownership check in the API expects.
-			authMiddleware = middleware.RequireKratosSession(deps.KratosClient, deps.Users)
-		} else {
-			// M20 LEGACY: remove after 2026-05-20 — legacy JWT path
-			authMiddleware = middleware.RequireAuth(deps.JWTIssuer)
-		}
+	if deps.KratosClient != nil {
+		// Protected API group — everything under /api/v1/* flows through
+		// RequireKratosSession, which resolves Kratos identity UUIDs →
+		// panel user rows so claims.UserID carries the ULID every
+		// ownership check in the API expects.
+		authMiddleware := middleware.RequireKratosSession(deps.KratosClient, deps.Users)
 		v1 := r.Group("/api/v1", authMiddleware)
 		api.RegisterMeRoutes(v1, api.MeHandlerConfig{
 			Users:          deps.Users,
 			ServerSettings: deps.ServerSettings,
 		})
 
-		// 2FA management endpoints (TOTP enrol/verify/disable/regen-backup).
-		// Gated by the v1 RequireAuth middleware — caller must already be
-		// logged in with a real access token. The /auth/2fa/challenge leg,
-		// which accepts a 2fa_pending token instead, is registered inside
-		// RegisterAuthRoutes below.
-		if deps.Users != nil && deps.TOTPBackupCodes != nil && deps.SSOKey != nil {
-			api.RegisterTOTPRoutes(v1, api.TOTPHandlerConfig{
-				Users:       deps.Users,
-				BackupCodes: deps.TOTPBackupCodes,
-				SSOKey:      deps.SSOKey,
-			})
-		}
 		if deps.Users != nil {
 			api.RegisterUserRoutes(v1, api.UserHandlerConfig{
 				Repo:            deps.Users,
@@ -216,16 +178,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				StrictRateLimit: rl.Strict(),
 				Domains:         deps.Domains,
 				Reconciler:      deps.Reconciler,
-				AccessTTL:       cfg.Auth.AccessTTL,
-				RefreshTTL:      cfg.Auth.RefreshTTL,
-				CookieName:      api.DefaultRefreshCookieName,
-				CookieSecure:    cfg.CookieSecureResolved(),
 				Log:             deps.Log,
 				// M20: atomic Kratos identity creation on POST /users.
-				// Both are zero-value unless the flag is "kratos" AND the
-				// client is wired, which cfg.kratosEnabled() enforces.
 				KratosClient: deps.KratosClient,
-				AuthProvider: cfg.Auth.Provider,
 			})
 		}
 		if deps.Packages != nil {

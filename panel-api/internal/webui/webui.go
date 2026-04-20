@@ -62,13 +62,13 @@ func RegisterStatic(g *gin.Engine, panelFS fs.FS) {
 			// round-trip so the browser picks up the new shell.
 			c.Header("Cache-Control", "no-cache")
 			// Users landing on /login are either post-logout or
-			// post-token-expiry. In both cases their cached /api/v1/me
-			// and /auth/refresh responses are useless (or actively
-			// harmful — Firefox attaches OpaqueResponseBlocking
-			// decisions to cached 401s and replays them, producing a
-			// blank page). Nuke the cache so the fresh login flow
-			// starts from a clean slate. Storage (JWT/refresh token
-			// state) is preserved — only HTTP cache is cleared.
+			// post-session-expiry. In both cases their cached
+			// /api/v1/me responses are useless (or actively harmful —
+			// Firefox attaches OpaqueResponseBlocking decisions to
+			// cached 401s and replays them, producing a blank page).
+			// Nuke the HTTP cache so the fresh Kratos login flow
+			// starts from a clean slate; session cookies are managed
+			// by Kratos and unaffected.
 			if p == "/login" {
 				c.Header("Clear-Site-Data", `"cache"`)
 			}

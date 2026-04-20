@@ -14,7 +14,7 @@ import (
 
 // Direct-DB helpers for `jabali app *`. Mirrors the pattern in cli_ops.go
 // (user/domain) — straight to the DB so the CLI keeps working under
-// auth.provider="kratos" where CLI-minted JWTs are 401'd by the HTTP path.
+// a CLI environment where the Kratos session cookie isn't available.
 //
 // Scope is intentionally narrow: registry + list + get + delete. The
 // HTTP create handler (api.applications.go) carries 16 per-app kicker

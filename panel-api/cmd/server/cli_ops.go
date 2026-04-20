@@ -14,10 +14,10 @@ import (
 
 // Mirrors the HTTP-handler ops in internal/api/{users,domains}.go — list
 // reads, single-row updates, delete with cascade — but goes straight to the
-// DB so the CLI stays usable under auth.provider = "kratos" (the HTTP path
-// 401s any CLI-minted JWT). All helpers assume initConfig + initDB already
-// ran (returned no error); they'd panic-nil otherwise. That's intentional:
-// these are hot-path wrappers, not library code.
+// DB so the CLI stays usable without a browser-mode Kratos session cookie
+// (which is what /api/v1/* requires). All helpers assume initConfig +
+// initDB already ran (returned no error); they'd panic-nil otherwise.
+// That's intentional: these are hot-path wrappers, not library code.
 
 // ---------- user ----------
 
@@ -91,7 +91,7 @@ func deleteUserDirect(ctx context.Context, userID string, purgeHome bool) error 
 	}
 
 	// Kratos identity delete (if linked).
-	if target.KratosIdentityID != nil && sharedCfg.Auth.Provider == "kratos" && sharedCfg.Auth.Kratos.PublicURL != "" {
+	if target.KratosIdentityID != nil && sharedCfg.Auth.Kratos.PublicURL != "" {
 		k := kratosclient.NewClient(sharedCfg.Auth.Kratos.PublicURL, sharedCfg.Auth.Kratos.AdminURL)
 		if err := k.DeleteIdentity(ctx, *target.KratosIdentityID); err != nil {
 			// Non-fatal: log + continue with panel delete so the operator

@@ -1,9 +1,53 @@
 # ADR-0034: M20 Kratos identity migration — self-hosted Ory Kratos as identity provider
 
-**Date**: 2026-04-19
+**Date**: 2026-04-19 (original); amended 2026-04-20 to record legacy removal
 **Status**: accepted
 **Deciders**: shuki + Claude
 **Related**: ADR-0003 (one write path), ADR-0013 (users inline best-effort), ADR-0015 (admin impersonation), ADR-0016 (break-glass CLI), M5c (TOTP), M7 (phpMyAdmin SSO)
+
+## Amendment 2026-04-20 — legacy JWT stack fully removed
+
+The original ADR §12 described a 30-day feature-flagged rollback window
+(`auth.provider = "legacy" | "kratos"`). That was dropped the same day as
+the cutover. Rationale:
+
+- The panel is a single-operator product with no production hosts yet;
+  the only install is the operator's own VM.
+- Rollback via `git revert` of the M20 merge is equivalent in speed and
+  safety to a flag flip — both require a redeploy. The flag added no
+  recovery capability that `git revert` didn't already provide.
+- Keeping the `provider` field forced every PR to think about two auth
+  paths, kept the `refresh_tokens` + `totp_*` storage alive in the
+  panel DB, and required dual-mode tests. Net drag with no offsetting
+  benefit.
+- The E2E suite + Kratos spike validated the cutover the same day; the
+  30-day "stability observation" window buys nothing without production
+  traffic to observe.
+
+Removed in the follow-up batch:
+
+- `auth.provider` config field + `AUTH_PROVIDER` env + legacy TTL fields
+  (`JWTSecret`, `AccessTTL`, `RefreshTTL`, `CookieSecure`).
+- `panel-api/internal/auth/{jwt,refresh,service}.go` + tests, plus
+  `middleware/jwt.go` + test.
+- `POST /api/v1/auth/{login,refresh,logout}` and the whole
+  `internal/api/auth.go` handler family.
+- `POST /api/v1/auth/2fa/*` endpoints, `internal/api/twofa.go`,
+  `internal/twofa/` package (Kratos owns MFA now).
+- `MyProfile2FACard.tsx` + `MyProfile` change-password form. The
+  profile page now links to `/.ory/self-service/settings/browser`.
+- `users.password_hash` writes via `PATCH /api/v1/users/:id` — only
+  initial Kratos-identity creation still uses the hash column.
+- `admin-disable-2fa` + `kratos-migrate` CLI subcommands (obsolete on a
+  fresh install; recovery paths now documented in the runbook as direct
+  Kratos admin-API calls).
+- Migration 000049 drops `refresh_tokens`, `totp_backup_codes`, and the
+  three `totp_*` columns on `users`.
+
+All decisions below still apply, but with Kratos as the unconditional
+auth path. Read any "when provider=kratos" qualifier as "in all cases
+post-2026-04-20." Decision §12 (rollback window) is superseded by this
+amendment; there is no in-product toggle.
 
 ## Context
 

@@ -52,23 +52,11 @@ type User struct {
 	// NULL until the shadow account is created.
 	MysqladminProvisionedAt *time.Time `gorm:"type:datetime(6)" json:"mysqladmin_provisioned_at,omitempty"`
 
-	// TOTPSecretEncrypted holds the AES-256-GCM-sealed TOTP shared secret
-	// (via internal/ssokey). NULL when the user has never started enrolment.
-	// Present but TOTPEnabled=false during the enrol-but-not-verified window.
-	TOTPSecretEncrypted []byte `gorm:"column:totp_secret_encrypted;type:varbinary(256)" json:"-"`
-
-	// TOTPEnabled becomes true only after the user verifies the first code,
-	// which also generates the 10 backup codes. Login flow consults this
-	// to decide whether to short-circuit with a 2fa_pending token.
-	TOTPEnabled bool `gorm:"column:totp_enabled;type:tinyint(1);not null;default:0" json:"totp_enabled"`
-
-	// TOTPEnabledAt records when 2FA was successfully turned on. Useful for
-	// audit/observability; not load-bearing for auth.
-	TOTPEnabledAt *time.Time `gorm:"column:totp_enabled_at;type:datetime(6)" json:"totp_enabled_at,omitempty"`
-
-	// KratosIdentityID is the UUID of the corresponding Kratos identity
-	// when auth.provider == "kratos". NULL for legacy auth mode or unmigrated users.
+	// KratosIdentityID is the UUID of the corresponding Kratos identity.
 	// Set atomically during user creation (inline hook) or during kratos-migrate batch.
+	// NULL only for rows created before the identity write landed — should
+	// not happen on a post-M20 install, but the column stays nullable so a
+	// compensating-delete race can't FK-fail the panel insert.
 	KratosIdentityID *string `gorm:"type:varchar(64);uniqueIndex:ux_users_kratos_identity_id" json:"kratos_identity_id,omitempty"`
 
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`

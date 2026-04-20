@@ -85,25 +85,11 @@ type DatabaseConfig struct {
 	URL string `toml:"url"`
 }
 
-// AuthConfig holds JWT + refresh token settings, plus provider selection.
+// AuthConfig carries the Kratos identity-provider URLs the panel needs to
+// validate session cookies and create identities. Post-M20 Kratos is the
+// only auth source — no JWT secret, no TTL knobs, no provider switch.
 type AuthConfig struct {
-	JWTSecret  string        `toml:"jwt_secret"`
-	AccessTTL  time.Duration `toml:"access_ttl"`
-	RefreshTTL time.Duration `toml:"refresh_ttl"`
-
-	// CookieSecure marks the refresh cookie Secure. When nil, defaults to
-	// env=production. Only set to false in dev when serving over plain HTTP
-	// without a TLS-terminating proxy in front; browsers + curl silently
-	// drop Secure cookies received over http://.
-	CookieSecure *bool `toml:"cookie_secure"`
-
-	// Provider selects the authentication provider: "legacy" for JWT or "kratos"
-	// for Ory Kratos integration (M20+). Defaults to "legacy".
-	// Environment: AUTH_PROVIDER
-	Provider string `toml:"provider"`
-
-	// Kratos holds Ory Kratos identity provider configuration (M20+).
-	// Only used when Provider == "kratos".
+	// Kratos holds Ory Kratos identity provider configuration.
 	Kratos KratosConfig `toml:"kratos"`
 }
 
@@ -195,11 +181,7 @@ func Defaults() *Config {
 			Level:  "info",
 			Format: "text", // auto-upgraded to json in production by Load()
 		},
-		Auth: AuthConfig{
-			AccessTTL:  15 * time.Minute,
-			RefreshTTL: 7 * 24 * time.Hour,
-			Provider:   "kratos", // M20 cutover 2026-04-20; legacy still selectable via AUTH_PROVIDER=legacy
-		},
+		Auth: AuthConfig{},
 		Agent: AgentConfig{
 			SocketPath: "/run/jabali/agent.sock",
 			// 30s: generous for most commands, short enough that a wedged
@@ -279,30 +261,6 @@ func applyEnv(cfg *Config) error {
 	}
 	if v := os.Getenv("DATABASE_URL"); v != "" {
 		cfg.Database.URL = v
-	}
-	if v := os.Getenv("JWT_SECRET"); v != "" {
-		cfg.Auth.JWTSecret = v
-	}
-	if v := os.Getenv("JWT_ACCESS_TTL"); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			return fmt.Errorf("JWT_ACCESS_TTL: %w", err)
-		}
-		cfg.Auth.AccessTTL = d
-	}
-	if v := os.Getenv("JWT_REFRESH_TTL"); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			return fmt.Errorf("JWT_REFRESH_TTL: %w", err)
-		}
-		cfg.Auth.RefreshTTL = d
-	}
-	if v := os.Getenv("AUTH_COOKIE_SECURE"); v != "" {
-		b := v == "true" || v == "1"
-		cfg.Auth.CookieSecure = &b
-	}
-	if v := os.Getenv("AUTH_PROVIDER"); v != "" {
-		cfg.Auth.Provider = v
 	}
 	if v := os.Getenv("KRATOS_PUBLIC_URL"); v != "" {
 		cfg.Auth.Kratos.PublicURL = v
@@ -389,42 +347,16 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("log.format %q: must be text|json", c.Log.Format)
 	}
 
-	// Validate auth provider
-	switch c.Auth.Provider {
-	case "legacy", "kratos":
-	default:
-		return fmt.Errorf("auth.provider %q: must be legacy|kratos", c.Auth.Provider)
+	// Kratos PublicURL is required in production; dev can run without it
+	// (only /health and static SPA are reachable in that state — deliberate).
+	if c.Auth.Kratos.PublicURL == "" && c.Server.Env == "production" {
+		return errors.New("auth.kratos.public_url: required in production")
 	}
 
-	// When provider is "kratos", PublicURL is required (AdminURL is optional for now)
-	if c.Auth.Provider == "kratos" && c.Auth.Kratos.PublicURL == "" {
-		if c.Server.Env == "production" {
-			return errors.New("auth.kratos.public_url: required when provider=kratos in production")
-		}
-		// In development, missing URLs just means Kratos auth is unavailable; not fatal
-	}
-
-	// Production hardening: anything a live panel cannot boot without
-	// is required here. Phase 2 doesn't use these yet — future phases
-	// will; validating now catches misconfig at the earliest point.
-	if c.Server.Env == "production" {
-		if len(c.Auth.JWTSecret) < 32 {
-			return errors.New("auth.jwt_secret: at least 32 bytes required in production")
-		}
-		if c.Database.URL == "" {
-			return errors.New("database.url: required in production")
-		}
+	if c.Server.Env == "production" && c.Database.URL == "" {
+		return errors.New("database.url: required in production")
 	}
 	return nil
-}
-
-// CookieSecureResolved returns the effective Secure flag for the refresh
-// cookie. Explicit config wins; otherwise it mirrors env=production.
-func (c *Config) CookieSecureResolved() bool {
-	if c.Auth.CookieSecure != nil {
-		return *c.Auth.CookieSecure
-	}
-	return c.Server.Env == EnvProduction
 }
 
 func splitAndTrim(s, sep string) []string {

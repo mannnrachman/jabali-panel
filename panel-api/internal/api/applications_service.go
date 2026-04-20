@@ -14,7 +14,7 @@ import (
 // InstallApplication is the transport-agnostic version of the gin
 // create handler. It exists so the CLI (panel-api/cmd/server/app_cmd.go)
 // can drive the same install pipeline as HTTP without going through
-// /api/v1/applications — under auth.provider="kratos" CLI-minted JWTs
+// /api/v1/applications — over the HTTP API, an in-panel auth middleware (RequireKratosSession)
 // are 401'd at the HTTP edge, but the service-level pipeline is the
 // same.
 //

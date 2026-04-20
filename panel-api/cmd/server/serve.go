@@ -33,9 +33,6 @@ const (
 	writeTimeout      = 30 * time.Second
 	idleTimeout       = 90 * time.Second
 	shutdownTimeout   = 10 * time.Second
-
-	jwtIssuerName = "jabali-panel"
-	jwtKeyID      = "v1"
 )
 
 func newServeCmd() *cobra.Command {
@@ -97,7 +94,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	deps.SSOKey = ssoKeyPtr
 	if sharedDB != nil {
 		userRepo := repository.NewUserRepository(sharedDB)
-		tokenRepo := repository.NewRefreshTokenRepository(sharedDB)
 		packageRepo := repository.NewPackageRepository(sharedDB)
 		domainRepo := repository.NewDomainRepository(sharedDB)
 		dnsZoneRepo := repository.NewDNSZoneRepository(sharedDB)
@@ -112,30 +108,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		phpPoolIniOverrideRepo := repository.NewPHPPoolIniOverrideRepository(sharedDB)
 		wordpressInstallRepo := repository.NewWordPressInstallRepository(sharedDB)
 		cronJobsRepo := repository.NewCronJobRepository(sharedDB)
-		totpBackupCodeRepo := repository.NewTOTPBackupCodeRepository(sharedDB)
 		limitOverridesRepo := repository.NewUserLimitOverrideRepository(sharedDB)
 
 		serverSettingsRepo := repository.NewServerSettingsRepository(sharedDB)
-		jwtIss, err := auth.NewJWTIssuer(auth.JWTConfig{
-			Secret:    []byte(cfg.Auth.JWTSecret),
-			Issuer:    jwtIssuerName,
-			KeyID:     jwtKeyID,
-			AccessTTL: cfg.Auth.AccessTTL,
-		})
-		if err != nil {
-			return err
-		}
-
-		authSvc := auth.NewService(auth.ServiceConfig{
-			Users:           userRepo,
-			RefreshRepo:     tokenRepo,
-			JWT:             jwtIss,
-			BcryptCost:      bcrypt.DefaultCost,
-			RefreshTTL:      cfg.Auth.RefreshTTL,
-			TOTPBackupCodes: totpBackupCodeRepo,
-			SSOKey:          ssoKeyPtr,
-		})
-		deps.Auth = authSvc
 
 		// SSO service for phpMyAdmin
 		ssoService := sso.NewService(
@@ -146,7 +121,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 			ssoKeyPtr,
 			log,
 		)
-		deps.JWTIssuer = jwtIss
 		deps.Users = userRepo
 		deps.Packages = packageRepo
 		deps.Domains = domainRepo
@@ -191,7 +165,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.PHPPoolIniOverrides = phpPoolIniOverrideRepo
 		deps.WordPressInstalls = wordpressInstallRepo
 		deps.CronJobs = cronJobsRepo
-		deps.TOTPBackupCodes = totpBackupCodeRepo
 		deps.LimitOverrides = limitOverridesRepo
 		// M18: resolve the /home mount once at startup. Passed to every
 		// user.limits.{apply,clear,report} call so the agent runs
@@ -205,21 +178,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 			log.Warn("m18: could not resolve /home mount; disk-quota plumbing disabled", "err", err)
 		}
 
-		// Admin bootstrap.
-		// M20: when auth.provider == "kratos", bootstrap also creates a
-		// Kratos identity atomically so first-boot admin can actually sign
-		// in via the Kratos flow. Passing nil keeps legacy behavior.
+		// Admin bootstrap — atomic panel row + Kratos identity. Wait up to
+		// 60s for Kratos to answer /health/ready first: install.sh starts
+		// jabali-kratos immediately before jabali-panel, and the panel can
+		// beat Kratos to binding :4434 on a slow boot. If Kratos never
+		// answers, we bootstrap the panel DB row only and log a pointer
+		// to `jabali kratos-migrate` so the operator can backfill once
+		// Kratos is healthy — crashing the panel here would be worse.
 		var bootstrapKratos auth.KratosIdentityWriter
-		if cfg.Auth.Provider == "kratos" && cfg.Auth.Kratos.PublicURL != "" {
-			// Race-protection: install.sh starts jabali-kratos immediately
-			// before jabali-panel, so the panel can beat Kratos to binding
-			// :4434 on a slow boot and crash its first BootstrapAdmin call
-			// with "connection refused". Wait up to 60s for Kratos to
-			// answer /health/ready before continuing. If it never does,
-			// log + continue bootstrap WITHOUT a Kratos client — the
-			// admin gets created in the panel DB only, and the operator
-			// has to run `jabali kratos-migrate` after fixing Kratos.
-			// Better than crashing the panel.
+		if cfg.Auth.Kratos.PublicURL != "" {
 			if waitForKratosReady(cfg.Auth.Kratos.AdminURL, 60*time.Second, log) {
 				bootstrapKratos = kratosclient.NewClient(cfg.Auth.Kratos.PublicURL, cfg.Auth.Kratos.AdminURL)
 			} else {

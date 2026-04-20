@@ -61,8 +61,9 @@ func NewRateLimiter(cfg RateLimiterConfig) *RateLimiter {
 func (l *RateLimiter) Default() gin.HandlerFunc { return l.handler(tierDefault) }
 
 // Strict returns a middleware enforcing the strict-tier bucket per client IP.
-// Fires before /auth/login, /auth/refresh, /auth/logout to bound brute-force
-// attempts.
+// Applied to expensive/sensitive POST endpoints (e.g. user re-provision) to
+// bound replay or burst-retry patterns. Kratos owns its own credential-endpoint
+// rate limiting; /.ory/* is not fronted by this middleware.
 func (l *RateLimiter) Strict() gin.HandlerFunc { return l.handler(tierStrict) }
 
 func (l *RateLimiter) handler(t tier) gin.HandlerFunc {

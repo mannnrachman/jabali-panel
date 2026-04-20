@@ -34,25 +34,19 @@ type UserHandlerConfig struct {
 	Domains         repository.DomainRepository
 	Packages        repository.PackageRepository
 	Reconciler      *reconciler.Reconciler
-	AccessTTL       time.Duration
-	RefreshTTL      time.Duration
-	CookieName      string
-	CookieSecure    bool
 	Log             *slog.Logger
 
-	// M20: Kratos hook. When AuthProvider == "kratos" AND KratosClient is
-	// non-nil, POST /users atomically creates both a panel user row and a
-	// Kratos identity. When "legacy" or KratosClient is nil, the Kratos call
-	// is skipped — existing flow is preserved so the flag can flip cleanly.
+	// KratosClient is the (required in production) identity-provider client.
+	// POST /users atomically creates both a panel user row and a Kratos
+	// identity; if the client is nil (dev-without-Kratos), the identity
+	// write is skipped and the panel row is created in isolation.
 	KratosClient *kratosclient.Client
-	AuthProvider string
 }
 
-// kratosEnabled reports whether the current config selects the Kratos provider
-// AND the client is wired. Both checks are required because the config may be
-// set to "kratos" before the client is constructed (e.g. in tests).
+// kratosEnabled reports whether the Kratos client is wired up on this handler
+// config. Dev/test paths leave it nil; production always sets it.
 func (c UserHandlerConfig) kratosEnabled() bool {
-	return c.AuthProvider == "kratos" && c.KratosClient != nil
+	return c.KratosClient != nil
 }
 
 // Paging defaults/limits chosen so a misbehaving client can't issue
@@ -111,14 +105,15 @@ type createUserRequest struct {
 
 // updateUserRequest uses pointers so the handler can distinguish "omit this
 // field" from "set this field to the zero value" (e.g. clearing a name).
+// Passwords are intentionally absent: they live in Kratos post-M20, and
+// users change them through the Kratos self-service settings flow rather
+// than PATCHing a panel row.
 type updateUserRequest struct {
-	Email           *string `json:"email,omitempty"            binding:"omitempty,email"`
-	NameFirst       *string `json:"name_first,omitempty"`
-	NameLast        *string `json:"name_last,omitempty"`
-	Password        *string `json:"password,omitempty"         binding:"omitempty,min=10"`
-	CurrentPassword *string `json:"current_password,omitempty"`
-	IsAdmin         *bool   `json:"is_admin,omitempty"`
-	PackageID       *string `json:"package_id,omitempty"`
+	Email     *string `json:"email,omitempty" binding:"omitempty,email"`
+	NameFirst *string `json:"name_first,omitempty"`
+	NameLast  *string `json:"name_last,omitempty"`
+	IsAdmin   *bool   `json:"is_admin,omitempty"`
+	PackageID *string `json:"package_id,omitempty"`
 }
 
 type reprovisionRequest struct {
@@ -347,21 +342,6 @@ func (h *userHandler) update(c *gin.Context) {
 		return
 	}
 
-	// Owner changing their own password must re-authenticate with the
-	// current one. Admins bypass this — that's the definition of admin.
-	if req.Password != nil && !claims.IsAdmin {
-		if req.CurrentPassword == nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "current_password_required"})
-			return
-		}
-		if err := bcrypt.CompareHashAndPassword(
-			[]byte(existing.PasswordHash), []byte(*req.CurrentPassword),
-		); err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_credentials"})
-			return
-		}
-	}
-
 	// Refuse demoting the last admin — otherwise a careless PATCH locks
 	// everyone out. Check BEFORE mutating anything.
 	if req.IsAdmin != nil && existing.IsAdmin && !*req.IsAdmin {
@@ -386,15 +366,6 @@ func (h *userHandler) update(c *gin.Context) {
 	if req.NameLast != nil {
 		existing.NameLast = *req.NameLast
 	}
-	if req.Password != nil {
-		hash, err := bcrypt.GenerateFromPassword([]byte(*req.Password), h.cfg.BcryptCost)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-			return
-		}
-		existing.PasswordHash = string(hash)
-	}
-
 	// Validate and apply package_id if provided (including clearing it with empty string).
 	if req.PackageID != nil {
 		if *req.PackageID != "" {
@@ -424,33 +395,6 @@ func (h *userHandler) update(c *gin.Context) {
 	if err := h.cfg.Repo.Update(ctx, existing); err != nil {
 		h.translateErr(c, err)
 		return
-	}
-
-	if req.Password != nil && claims.UserID != id {
-		slog.Info("audit",
-			"event", "admin_password_reset",
-			"actor_id", claims.UserID,
-			"target_id", id,
-			"target_email", existing.Email)
-	}
-
-	// Best-effort password sync to OS user. Only for non-admins
-	// (admins have full system access). Run in background so client
-	// sees DB update immediately; if agent fails, user can still log in
-	// with the new password via SSH.
-	if req.Password != nil && !claims.IsAdmin && h.cfg.Agent != nil && existing.Username != nil {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			_, err := h.cfg.Agent.Call(ctx, "user.password", map[string]any{
-				"username": *existing.Username,
-				"password": *req.Password,
-			})
-			if err != nil {
-				slog.Warn("user password sync to OS failed",
-					"user_id", id, "email", existing.Email, "err", err)
-			}
-		}()
 	}
 
 	// Flip is_admin in its own call so the repo's privilege-safe Update

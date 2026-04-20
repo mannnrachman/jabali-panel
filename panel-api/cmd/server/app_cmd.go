@@ -19,7 +19,7 @@ import (
 
 // `jabali app *` is a thin direct-DB CLI for the M19 application
 // installer surface — mirrors the user/domain pattern in cli_ops.go
-// rather than going through HTTP (which 401s under auth.provider="kratos").
+// rather than going through HTTP (which 401s without a Kratos session cookie).
 //
 // Scope deliberately omits `create` and `e2e`: the HTTP create handler
 // in api.applications.go pulls in 16 per-app kicker goroutines and

@@ -891,34 +891,35 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Depends on:** M10 (WordPress install plumbing — generalised here), M9 (PHP-FPM pools — required so non-WordPress PHP apps land on the right pool), M7 (databases — required for `RequiresDB=true` apps).
 
-### M20: Kratos identity migration (SHIPPED)
+### M20: Kratos identity migration (SHIPPED — legacy fully removed)
 
-**Goal:** Replace the hand-rolled JWT + HttpOnly-refresh auth stack with self-hosted Ory Kratos as the identity provider. panel-api becomes a session-cookie validator; zero custom JWT code after the 30-day rollback window closes.
+**Goal:** Replace the hand-rolled JWT + HttpOnly-refresh auth stack with self-hosted Ory Kratos as the identity provider. panel-api is a session-cookie validator; zero custom JWT code in the tree.
 
-**Deliverables (all 9 steps shipped across Waves A–E 2026-04-20):**
+**Deliverables (all 9 steps + legacy removal shipped 2026-04-20):**
 
 - `install_kratos()` in `install.sh`: downloads Kratos v1.3.1 (SHA-256 pinned in `install/kratos.sha256`), provisions `jabali_kratos` MariaDB schema, renders `/etc/jabali-panel/kratos.yml` from `install/kratos.yml.tmpl`, runs `kratos migrate sql`, writes `/etc/systemd/system/jabali-kratos.service` under `jabali.slice`, enables + starts. Idempotent.
 - nginx `/.ory/` proxy snippet in the panel vhost: same-origin fronting so browsers attach `ory_kratos_session` to every panel request.
 - `panel-api/internal/kratosclient/`: `Client` with Whoami (10s LRU cache keyed by SHA-256(cookie)), admin-identity CRUD, bcrypt-passthrough canary, keyset-pagination identity scan.
-- Feature-flagged auth middleware: `RequireKratosSession(kratosClient, users)` replaces `RequireAuth(jwtIssuer)` when `auth.provider == "kratos"`. Resolves Kratos identity UUID → panel ULID via `users.kratos_identity_id` so every downstream ownership check (`db.UserID == claims.UserID`) keeps working. DB is authoritative for `is_admin` (Kratos trait is advisory only).
-- `jabali kratos-migrate`: one-shot Cobra subcommand that backfills Kratos identities from `users` using bcrypt passthrough. Bcrypt canary runs before any write (aborts on hash-format rejection). Race-safe per-user linkage (`UPDATE … WHERE kratos_identity_id IS NULL`, compensating delete on orphan). Dry-run flag.
+- Auth middleware: `RequireKratosSession(kratosClient, users)` is the only `/api/v1/*` gate. Resolves Kratos identity UUID → panel ULID via `users.kratos_identity_id` so every downstream ownership check (`db.UserID == claims.UserID`) keeps working. DB is authoritative for `is_admin` (Kratos trait is advisory only).
 - API user-create inline hook: `POST /api/v1/admin/users` creates the Kratos identity atomically with the panel row (compensating transaction — ADR-0003 preserved).
 - `BootstrapAdmin` Kratos extension: same atomic semantics at boot — first-boot admin gets a Kratos identity in the same call. `auth.KratosIdentityWriter` interface lets tests exercise the rollback paths.
-- SPA rewrite: `authProvider.ts` cookie-only, no access token in JS, no 401 refresh interceptor. `pages/Login.tsx` fetches Kratos flow on mount, renders `ui.nodes` as AntD form fields, submits to `flow.ui.action` with CSRF token round-tripped. `kratos.ts` thin typed wrapper over the self-service API.
-- Migration 000046: adds `users.kratos_identity_id VARCHAR(64)` with a plain `UNIQUE KEY` (MariaDB treats multiple NULLs as distinct, so no partial-index contortions).
-- Cutover default flip: fresh installs land on `auth.provider = "kratos"` via both config.example.toml and the Go runtime default. 30-second rollback by flipping back to `"legacy"` in config.toml + `systemctl restart jabali-panel`.
+- SPA rewrite: `authProvider.ts` cookie-only, no access token in JS, no 401 refresh interceptor. `pages/Login.tsx` fetches Kratos flow on mount, renders `ui.nodes` as AntD form fields, submits to `flow.ui.action` with CSRF token round-tripped. `kratos.ts` thin typed wrapper over the self-service API. `MyProfile` Security card links out to `/.ory/self-service/settings/browser` for password + 2FA.
+- Migration 000046: adds `users.kratos_identity_id VARCHAR(64) UNIQUE` (nullable, MariaDB treats multiple NULLs as distinct).
+- Migration 000049: drops `refresh_tokens`, `totp_backup_codes`, and the `totp_*` columns on `users` — no legacy storage remains post-removal.
 - Playwright E2E spec: `panel-ui/tests/e2e/kratos-login.spec.ts` covers login + role-based landing + CSRF token round-trip + cold-load whoami-401. `fixtures.ts` gained shared `/.ory/*` mocks so the existing tests keep working.
-- `jabali kratos-migrate --totp-only`: **plan deviation** — Kratos 1.3.x does NOT accept TOTP/lookup_secret credential imports, so the flag emits an operator CSV for pre-cutover user notification instead. Users re-enroll TOTP via Kratos Security → Authenticator after cutover (runbook covers the flow).
-- ADR-0034 + runbook at `plans/m20-kratos-runbook.md`: design rationale, plan deviations documented, cutover + rollback procedures, day-2 operations (identity list/disable/delete, session revoke, MFA reset, recovery-code generation, Kratos DB loss recovery, split-host TLS).
+- ADR-0034 + runbook at `plans/m20-kratos-runbook.md`: design rationale, cutover procedures, day-2 operations (identity list/disable/delete, session revoke, MFA reset, recovery-code generation, Kratos DB loss recovery, split-host TLS).
 
 **Dropped (intentionally):**
 
-- **M5a admin impersonation** — Kratos 1.3.1 OSS doesn't expose an admin-session-minting endpoint. Replaced by Kratos recovery-code flow: admin generates a recovery URL via `/admin/recovery/code`, sends to user, user resets password, admin signs in as them with the temp password, helps, user resets to permanent. Historic `impersonated_by` audit rows preserved read-only.
+- **M5a admin impersonation** — Kratos 1.3.1 OSS doesn't expose an admin-session-minting endpoint. Replaced by Kratos recovery-code flow: admin generates a recovery URL via `/admin/recovery/code`, sends to user, user resets password, admin signs in as them with the temp password, helps, user resets to permanent.
 - **M5b break-glass CLI (`jabali admin-login`)** — Operators use `kratos identities list/patch` + `/admin/recovery/code` directly. If Kratos itself is down, restore `jabali_kratos` from `mysqldump`.
+- **M5c panel-side 2FA (`/auth/2fa/*`, TOTP secret storage in panel DB, backup codes)** — 2FA now lives entirely in Kratos; users manage TOTP via `/.ory/self-service/settings/browser`.
+- **Legacy JWT auth (`/api/v1/auth/{login,refresh,logout}`, `auth.JWTIssuer`, `middleware.RequireAuth`, refresh-token table)** — removed wholesale. No `auth.provider` flag, no `jwt_secret` config, no dual-mode middleware.
+- **`jabali kratos-migrate`** — one-shot migration tool dropped after use; fresh installs have no legacy rows to backfill.
 
-**Status:** Cutover 2026-04-20. Legacy JWT code stays behind the feature flag for 30 days. Full legacy removal scheduled as a follow-up PR after stable operation.
+**Status:** Cutover 2026-04-20. Custom JWT surface fully removed the same day. No rollback window — ADR-0034 records the decision to compress it once the VM validated green.
 
-**Depends on:** M1 (existing users table, migrated via `kratos-migrate`), M7 (MariaDB, reused for Kratos's own schema).
+**Depends on:** M1 (users table), M7 (MariaDB, reused for Kratos's own schema).
 **Blocks:** M16 (Automation API tokens via Hydra — Hydra integrates with Kratos via the login-consent flow).
 
 ---
@@ -932,10 +933,8 @@ DATABASE_URL=mysql://root:password@127.0.0.1:3306/jabali_panel
 AGENT_SOCKET=/run/jabali/agent.sock
 AGENT_TIMEOUT=5s
 PANEL_ADDR=0.0.0.0:8443
-AUTH_PROVIDER=kratos                 # "kratos" (default since M20) or "legacy"
 KRATOS_PUBLIC_URL=http://127.0.0.1:4433
 KRATOS_ADMIN_URL=http://127.0.0.1:4434
-JWT_SECRET=<base64-encoded 32-byte key>   # only required when AUTH_PROVIDER=legacy
 RECONCILER_INTERVAL=30s
 ```
 
@@ -946,16 +945,8 @@ RECONCILER_INTERVAL=30s
 port = 8443
 addr = "0.0.0.0:8443"
 
-[auth]
-# "kratos" (M20 default, 2026-04-20) or "legacy" (30-day rollback window)
-provider = "kratos"
-# Only used when provider = "legacy". Kratos issues its own session tokens.
-jwt_secret = ""
-access_ttl  = "15m"
-refresh_ttl = "168h"
-
 [auth.kratos]
-public_url = "http://127.0.0.1:4433"   # nginx proxies /.ory/* here
+public_url = "http://127.0.0.1:4433"   # panel proxies /.ory/* here
 admin_url  = "http://127.0.0.1:4434"   # loopback-only, never exposed
 
 [agent]
@@ -990,7 +981,7 @@ All read/write via `/api/v1/system/settings`:
 1. **No hardcoded secrets** — all via environment variables or config files (not in code)
 2. **Input validation** — every user input validated at API boundaries
 3. **SQL injection prevention** — GORM parameterized queries throughout
-4. **Authentication** — Ory Kratos session cookies (default since M20, 2026-04-20); legacy JWT access+refresh retained behind `auth.provider = "legacy"` for the 30-day rollback window. Passwords hashed with bcrypt cost-12 (Kratos passes hashes through; no argon2id rehash).
+4. **Authentication** — Ory Kratos session cookies are the only credential. Kratos stores passwords with bcrypt cost-12 (argon2id rehash disabled). Panel-api validates every request via `/sessions/whoami` and never signs tokens.
 5. **Authorization** — RBAC middleware (RequireAdmin, RequireOwner) on protected routes. DB is authoritative for `is_admin`; Kratos identity traits are advisory only.
 6. **Agent argument sanitization** — all agent command arguments escaped before passing to shell
 7. **Rate limiting** — per-IP on auth endpoints, per-token on automation API (planned M15)
@@ -1089,7 +1080,7 @@ Use this table to navigate the codebase when adding a new capability:
 | M19: Applications Framework (all 8 steps) | 2026-04-19 | `m19/*` branch stack `733d6b8` → MediaWiki commit; ADR-0033; runbook at `docs/runbooks/applications.md`; DokuWiki + MediaWiki SHA-256 tarball pins pending first-deploy capture |
 | M5a: Admin Impersonation (DROPPED) | 2026-04-20 | Removed by M20 step 6 — replacement via Kratos `/admin/recovery/code` |
 | M5b: Break-Glass CLI Login (DROPPED) | 2026-04-20 | Removed by M20 step 7 — replacement via `kratos identities` + `/admin/recovery/code` |
-| M20: Kratos identity migration (all 9 steps) | 2026-04-20 | ADR-0034; runbook at `plans/m20-kratos-runbook.md`; Waves A–E on `main`; TOTP migration shipped as operator CSV reporter per plan deviation; legacy JWT code stays behind flag for 30-day rollback window |
+| M20: Kratos identity migration (all 9 steps + legacy removal) | 2026-04-20 | ADR-0034; runbook at `plans/m20-kratos-runbook.md`; Waves A–E on `main`; legacy JWT stack + M5c panel-side 2FA + `kratos-migrate` tool all deleted in the same batch — no dual-mode, no rollback flag |
 | Infra: Gitea CI + branch protection | 2026-04-20 | `.gitea/workflows/ci.yml` (3 parallel jobs), self-hosted `act_runner` in host-mode (no Docker/Podman), loose branch protection on `main`. Also fixed pre-existing data race in `TestApplications_CreateWordPress_HappyPath` (`applications_service.go`) that CI's `-race` flag caught. Commits `b181c74` (workflow), `5d1f9a7` (race fix). |
 
 ---

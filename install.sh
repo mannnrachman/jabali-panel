@@ -2642,18 +2642,41 @@ install_hydra() {
 
   _ok "Hydra config written to $hydra_config"
 
-  # Run database migrations. Hydra emits one JSON log line per migration
-  # step — hundreds on a fresh install. Silence on success, surface
-  # everything on failure (same pattern as install_kratos).
-  _log "running Hydra database migrations"
+  # Run database migrations AS THE SERVICE USER so the resulting SQLite
+  # file is created owned by jabali:jabali. Running as root would create
+  # a root-owned db.sqlite3, and `jabali-hydra.service` (running as
+  # User=jabali) would then open it read-only — every write attempt
+  # surfaces as "sqlite create: named insert: attempt to write a
+  # readonly database" in the service journal, and every POST to the
+  # admin API returns 500.
+  #
+  # `runuser -u jabali` preserves the environment but drops root. The
+  # jabali user has write on /var/lib/jabali-hydra (owner) and read on
+  # /etc/jabali-panel/hydra.yml (group), which is exactly what migrate
+  # needs.
+  #
+  # Hydra emits one JSON log line per migration step — hundreds on a
+  # fresh install. Silence on success, surface everything on failure.
+  # `migrate sql` is deprecated in v2.3.0 (prints a warning); use
+  # `migrate sql up` which is the documented form.
+  _log "running Hydra database migrations (as $SERVICE_USER)"
   local hydra_migrate_log="/tmp/jabali-hydra-migrate.$$.log"
-  if ! "$hydra_binary" migrate sql -e -c "$hydra_config" --yes >"$hydra_migrate_log" 2>&1; then
+  if ! runuser -u "$SERVICE_USER" -- "$hydra_binary" migrate sql up -e -c "$hydra_config" --yes >"$hydra_migrate_log" 2>&1; then
     _err "Hydra database migrations failed — full output:"
     cat "$hydra_migrate_log" >&2
     rm -f "$hydra_migrate_log"
     _die "Hydra database migrations failed"
   fi
   rm -f "$hydra_migrate_log"
+
+  # Belt-and-suspenders: if a prior buggy install created the db.sqlite3
+  # as root (pre-this-fix), re-chown it on re-run so the fix heals
+  # itself without requiring manual operator action. Idempotent — file
+  # created by runuser above is already jabali-owned.
+  if [[ -f "$hydra_state_dir/db.sqlite3" ]]; then
+    chown "$SERVICE_USER":"$SERVICE_USER" "$hydra_state_dir"/db.sqlite3*
+    chmod 0640 "$hydra_state_dir"/db.sqlite3*
+  fi
   _ok "Hydra database migrations completed"
 
   _log "installing jabali-hydra systemd unit"

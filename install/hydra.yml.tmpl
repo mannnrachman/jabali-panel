@@ -1,0 +1,142 @@
+# Ory Hydra v2.3.0 configuration template.
+# Rendered by install.sh install_hydra() via sed — Mustache slots below
+# are substituted at install time. The post-render check in install_hydra
+# fails the install if any `{{.Slot}}` survives the substitution pass.
+#
+# Binding + DB conventions mirror Kratos (install/kratos.yml.tmpl):
+#   * Loopback-only (public 4444 / admin 4445) — never exposed off-host.
+#     Panel-api fronts the public endpoints via an in-process reverse
+#     proxy (see panel-api/internal/app/hydra_proxy.go), so clients see
+#     https://<panel>/oauth2/* and never know Hydra is on loopback.
+#   * MariaDB schema jabali_hydra, DSN pinned with
+#     sql_mode=NO_ENGINE_SUBSTITUTION so `hydra migrate sql` doesn't trip
+#     over MariaDB's strict mode (same K-2 workaround from M20).
+
+dsn: "mysql://{{.HydraDatabaseUser}}:{{.HydraDatabasePassword}}@tcp(127.0.0.1:3306)/{{.HydraDatabaseName}}?parseTime=true&sql_mode=NO_ENGINE_SUBSTITUTION"
+
+serve:
+  public:
+    # Hydra's public OAuth 2 / OIDC endpoints. Exposed to the outside
+    # world only through panel-api's in-process /oauth2/* proxy.
+    port: 4444
+    host: 127.0.0.1
+    cors:
+      enabled: false
+
+  admin:
+    # Client CRUD, login/consent accept+reject, token introspection and
+    # revocation. Never proxied, never exposed off-host — only
+    # panel-api (same host) calls this via hydraclient.
+    port: 4445
+    host: 127.0.0.1
+
+  tls:
+    # Loopback is plain HTTP. TLS terminates at nginx for external
+    # traffic; intra-host is inside the trust boundary. Same convention
+    # as Kratos (ADR-0034 §14).
+    allow_termination_from:
+      - 127.0.0.1/32
+
+urls:
+  # login/consent UI URLs — Hydra redirects to these handlers, which are
+  # served by panel-api under /oauth2-login and /oauth2-consent (Step 4).
+  # Both are gated by the Kratos session middleware: a request without a
+  # valid ory_kratos_session is bounced to /login with a return_to that
+  # brings the user back to /oauth2-login once authenticated.
+  login: "https://{{.PanelHostname}}:8443/oauth2-login"
+  consent: "https://{{.PanelHostname}}:8443/oauth2-consent"
+  logout: "https://{{.PanelHostname}}:8443/oauth2-logout"
+
+  # Issuer identity the /.well-known/openid-configuration advertises and
+  # that OIDC clients use to discover the token endpoint. Must match the
+  # panel-api hostname so ID-token `iss` claims validate on the client
+  # side.
+  self:
+    issuer: "https://{{.PanelHostname}}:8443/"
+    public: "https://{{.PanelHostname}}:8443/"
+
+  # Error page shown when Hydra itself has to surface a fault (bad
+  # redirect_uri, malformed request). Panel-ui renders this at a dedicated
+  # route; the handler emits a generic copy that doesn't leak challenge ids.
+  error: "https://{{.PanelHostname}}:8443/oauth2-error"
+
+  # Post-consent redirect for prompt=none when no user session exists —
+  # we send users back to the panel dashboard.
+  post_logout_redirect: "https://{{.PanelHostname}}:8443/dashboard"
+
+ttl:
+  # Plan §0 Decision 13. Refresh tokens rotate on use; a leaked
+  # refresh-token replay triggers a CRITICAL audit event and session
+  # revocation (Decision 15).
+  login_consent_request: 15m
+  access_token: 30m
+  refresh_token: 720h  # 30 days
+  id_token: 30m
+  auth_code: 10m
+
+oauth2:
+  # Skip the consent screen ONLY for first-party clients whose metadata
+  # we set server-side (applications_service.go sets
+  # client_metadata.trusted=true). This flag is the runtime switch that
+  # lets Hydra honor our trusted marker. A regression that allows a
+  # caller to set trusted=true from a request body would bypass all
+  # consent — Decision 7 + ADR-0036 R1 is the single guard. The guard
+  # lives in the Go code, not here.
+  allowed_top_level_claims:
+    - jabali.is_admin
+
+  pkce:
+    # PKCE mandatory for public clients; enforced even for confidential
+    # ones because every OIDC plugin in our first consumer set (WP OIDC
+    # Generic, Drupal openid_connect, Joomla) supports it and defence-
+    # in-depth is free.
+    enforced: true
+
+  # Grant types allowed. authorization_code + refresh_token is the whole
+  # M16 surface. client_credentials is deliberately OFF here — it
+  # unlocks with the Automation API follow-up PR when the scope
+  # middleware is in place.
+  grant:
+    jwt:
+      max_ttl: 720h
+      iat_optional: false
+      jti_optional: false
+
+webfinger:
+  # OpenID discovery metadata — Hydra serves /.well-known/openid-configuration
+  # with this issuer. Matches urls.self.issuer above.
+  oidc_discovery:
+    supported_scope:
+      - openid
+      - email
+      - profile
+    supported_claims:
+      - sub
+      - email
+      - email_verified
+      - name
+      - jabali.is_admin
+
+log:
+  level: info
+  format: json
+  leak_sensitive_values: false
+
+secrets:
+  # System-wide secret used to encrypt consent/login challenge state.
+  # Rotation policy: append the new secret first, deploy, then remove
+  # the old entry on the next release (Hydra accepts a list for zero-
+  # downtime rotation). install_hydra writes a single secret at install
+  # time; rotation is operator-driven.
+  system:
+    - "{{.HydraSystemSecret}}"
+
+strategies:
+  # Access tokens are JWT so OIDC clients (WP plugin, etc.) can verify
+  # them offline against JWKS. Refresh tokens are opaque (Hydra-side).
+  access_token: jwt
+  jwt:
+    # Signing key rotation is operator-driven via `hydra keys rotate`
+    # against the admin URL. Default rotation on Hydra's clock without
+    # operator action is ON — see the runbook for the schedule.
+    scope_claim: list

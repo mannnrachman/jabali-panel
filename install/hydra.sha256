@@ -1,0 +1,12 @@
+# Ory Hydra v2.3.0 SHA-256 checksum for hydra_2.3.0-linux_64bit.tar.gz
+# Source: https://github.com/ory/hydra/releases/download/v2.3.0/checksums.txt
+# Verified: 2026-04-20
+#
+# Plan m16-hydra-oauth.md §8 pinned "v2.4.x" as the target at blueprint
+# time; v2.3.0 is the latest stable 2.x at dispatch (2026-04-20). Ory's
+# newer releases (v25.x, v26.x) follow calendar versioning and ship as
+# part of the Ory stack bundle — we stay on the last semver-tagged
+# self-hosted line until we have a reason to jump. Bump the version +
+# this checksum + the install.sh plumbing together; Hydra's migrations
+# are idempotent and safe to re-run on upgrade.
+74b359b78b144fb4d8b2a80aedfc2a5b8d2c9a52184fdf9dd665c25afecb6b51  hydra_2.3.0-linux_64bit.tar.gz

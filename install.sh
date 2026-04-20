@@ -2507,6 +2507,198 @@ install_kratos() {
   _ok "Kratos identity provider installed and running"
 }
 
+install_hydra() {
+  _log "installing Ory Hydra OAuth 2 / OIDC provider (v2.3.0)"
+
+  # Hydra binary: vendored SHA-256 verification, same pattern as install_kratos.
+  # Plan m16-hydra-oauth.md §8 pinned v2.4.x at blueprint time; v2.3.0 is
+  # the latest stable 2.x at dispatch. Ory's newer calendar-versioned
+  # releases (v25.x, v26.x) ship as part of the Ory stack bundle — we
+  # stay on the last semver self-hosted line until we have a reason to jump.
+  local hydra_version="2.3.0"
+  local hydra_binary="/usr/local/bin/hydra"
+  local hydra_tar="/tmp/hydra_${hydra_version}-linux_64bit.tar.gz"
+  local hydra_sha_file="${REPO_DIR}/install/hydra.sha256"
+  local hydra_url="https://github.com/ory/hydra/releases/download/v${hydra_version}/hydra_${hydra_version}-linux_64bit.tar.gz"
+
+  # Skip download if the binary already matches. `hydra version` prints
+  # a semver on its own line; grep for it and compare.
+  if [[ -f "$hydra_binary" ]]; then
+    local installed_version
+    installed_version=$("$hydra_binary" version 2>&1 | grep -oP 'Version:\s+\K[^[:space:]]+' || echo "unknown")
+    if [[ "$installed_version" == "v${hydra_version}" ]]; then
+      _ok "Hydra $hydra_version already installed"
+      return
+    fi
+  fi
+
+  _log "downloading Hydra $hydra_version from GitHub"
+  if ! curl -fsSL "$hydra_url" -o "$hydra_tar"; then
+    _die "failed to download Hydra from $hydra_url"
+  fi
+
+  if [[ ! -f "$hydra_sha_file" ]]; then
+    _die "Hydra SHA-256 checksum file not found at $hydra_sha_file"
+  fi
+
+  # Same checksum-line parsing as install_kratos — skip comment/blank
+  # lines so the sha file can carry provenance metadata.
+  local expected_sha
+  expected_sha="$(awk '/^[[:space:]]*#/ || NF==0 { next } { print $1; exit }' "$hydra_sha_file")"
+  local actual_sha
+  actual_sha="$(sha256sum "$hydra_tar" | awk '{print $1}')"
+  if [[ -z "$expected_sha" ]]; then
+    _die "no checksum line found in $hydra_sha_file (comments only?)"
+  fi
+  if [[ "$expected_sha" != "$actual_sha" ]]; then
+    _die "Hydra SHA-256 mismatch. Expected: $expected_sha, got: $actual_sha"
+  fi
+
+  tar -xzf "$hydra_tar" -C /tmp/
+  install -m 0755 -o root -g root /tmp/hydra "$hydra_binary"
+  rm -f "$hydra_tar" /tmp/hydra
+
+  _ok "Hydra binary installed at $hydra_binary"
+
+  # Provision MariaDB database + user for Hydra. Kept in a separate
+  # schema (jabali_hydra) so a misfire in one provider can't corrupt
+  # the other — mirrors ADR-0034's isolation between jabali_panel and
+  # jabali_kratos.
+  local hydra_db_name="jabali_hydra"
+  local hydra_db_user="jabali_hydra"
+  local hydra_pw_file="/etc/jabali-panel/hydra-db-password"
+
+  if [[ ! -f "$hydra_pw_file" ]]; then
+    _log "generating Hydra DB password → $hydra_pw_file"
+    umask 077
+    openssl rand -hex 32 >"$hydra_pw_file"
+    chmod 0600 "$hydra_pw_file"
+    chown root:root "$hydra_pw_file"
+  fi
+
+  local hydra_db_pass
+  hydra_db_pass="$(cat "$hydra_pw_file")"
+
+  mariadb -e "
+    CREATE DATABASE IF NOT EXISTS \`${hydra_db_name}\`
+      CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    CREATE USER IF NOT EXISTS '${hydra_db_user}'@'localhost' IDENTIFIED BY '${hydra_db_pass}';
+    ALTER USER '${hydra_db_user}'@'localhost' IDENTIFIED BY '${hydra_db_pass}';
+    GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER,
+          REFERENCES, LOCK TABLES, CREATE TEMPORARY TABLES
+      ON \`${hydra_db_name}\`.* TO '${hydra_db_user}'@'localhost';
+    FLUSH PRIVILEGES;
+  "
+
+  _ok "Hydra database provisioned: DB=${hydra_db_name}, user=${hydra_db_user}"
+
+  # Persisted secrets directory — Hydra uses a `system` secret to
+  # encrypt login/consent challenge state. Rotation rule (from the
+  # runbook): append new secret, deploy, remove old on next release.
+  # Same umask-and-persist pattern as Kratos.
+  local hydra_config="/etc/jabali-panel/hydra.yml"
+  local hydra_secrets_dir="/etc/jabali-panel/hydra-secrets"
+  install -d -m 0700 -o root -g root "$hydra_secrets_dir"
+
+  _hydra_ensure_secret() {
+    local path="$1"
+    if [[ ! -f "$path" ]]; then
+      umask 077
+      openssl rand -hex 32 > "$path"
+      chmod 0600 "$path"
+      chown root:root "$path"
+    fi
+  }
+  _hydra_ensure_secret "$hydra_secrets_dir/system"
+
+  local hydra_system_secret
+  hydra_system_secret="$(cat "$hydra_secrets_dir/system")"
+
+  if [[ ! -f "${REPO_DIR}/install/hydra.yml.tmpl" ]]; then
+    _die "Hydra template not found at ${REPO_DIR}/install/hydra.yml.tmpl"
+  fi
+
+  # Resolve panel hostname the same way install_kratos does — a fresh
+  # install has JABALI_SRV_HOSTNAME set; a re-run reads config.toml.
+  local panel_hostname="${JABALI_SRV_HOSTNAME:-}"
+  if [[ -z "$panel_hostname" && -f /etc/jabali-panel/config.toml ]]; then
+    panel_hostname="$(awk -F'[= "]+' '/^[[:space:]]*hostname[[:space:]]*=/{print $2; exit}' /etc/jabali-panel/config.toml)"
+  fi
+  if [[ -z "$panel_hostname" ]]; then
+    panel_hostname="$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo 'localhost')"
+  fi
+
+  sed \
+    -e "s|{{\.HydraDatabaseUser}}|${hydra_db_user}|g" \
+    -e "s|{{\.HydraDatabasePassword}}|${hydra_db_pass}|g" \
+    -e "s|{{\.HydraDatabaseName}}|${hydra_db_name}|g" \
+    -e "s|{{\.PanelHostname}}|${panel_hostname}|g" \
+    -e "s|{{\.HydraSystemSecret}}|${hydra_system_secret}|g" \
+    "${REPO_DIR}/install/hydra.yml.tmpl" > "$hydra_config"
+  chmod 0640 "$hydra_config"
+  chown root:"$SERVICE_USER" "$hydra_config"
+
+  if grep -q '{{\..*}}' "$hydra_config"; then
+    _die "unsubstituted mustaches left in $hydra_config — template drift?"
+  fi
+
+  _ok "Hydra config written to $hydra_config"
+
+  # Run database migrations. Hydra emits one JSON log line per migration
+  # step — hundreds on a fresh install. Silence on success, surface
+  # everything on failure (same pattern as install_kratos).
+  _log "running Hydra database migrations"
+  local hydra_migrate_log="/tmp/jabali-hydra-migrate.$$.log"
+  if ! "$hydra_binary" migrate sql -e -c "$hydra_config" --yes >"$hydra_migrate_log" 2>&1; then
+    _err "Hydra database migrations failed — full output:"
+    cat "$hydra_migrate_log" >&2
+    rm -f "$hydra_migrate_log"
+    _die "Hydra database migrations failed"
+  fi
+  rm -f "$hydra_migrate_log"
+  _ok "Hydra database migrations completed"
+
+  _log "installing jabali-hydra systemd unit"
+  if [[ ! -f "${REPO_DIR}/install/systemd/jabali-hydra.service" ]]; then
+    _die "Hydra systemd unit template not found at ${REPO_DIR}/install/systemd/jabali-hydra.service"
+  fi
+  install -m 0644 -o root -g root "${REPO_DIR}/install/systemd/jabali-hydra.service" \
+    /etc/systemd/system/jabali-hydra.service
+
+  _log "reloading systemd daemon"
+  systemctl daemon-reload
+
+  _log "enabling jabali-hydra.service"
+  systemctl enable --quiet jabali-hydra
+
+  _log "restarting jabali-hydra.service"
+  if ! systemctl restart --quiet jabali-hydra; then
+    _warn "jabali-hydra failed to start; dumping last 20 journal lines"
+    journalctl -u jabali-hydra -n 20 --no-pager || true
+    _die "jabali-hydra did not start — fix /etc/jabali-panel/hydra.yml and re-run install.sh"
+  fi
+
+  # Poll for readiness. Hydra exposes /health/ready on the admin port (4445)
+  # and /health/ready on the public port (4444). Public is what clients
+  # will hit, so that's what we probe.
+  _log "waiting for Hydra to be ready (max 30s)"
+  local waited=0
+  while [[ $waited -lt 30 ]]; do
+    if curl -sf http://127.0.0.1:4444/health/ready >/dev/null 2>&1; then
+      _ok "Hydra is ready"
+      break
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  if [[ $waited -eq 30 ]]; then
+    _warn "Hydra did not become ready within 30s. Check: systemctl status jabali-hydra"
+  fi
+
+  _ok "Hydra OAuth 2 / OIDC provider installed and running"
+}
+
 # ---------- main ------------------------------------------------------------
 
 main() {
@@ -2540,6 +2732,7 @@ main() {
   clone_or_update_repo
   install_jabali_slices
   install_kratos
+  install_hydra
   install_php_pool_template
   build_frontend
   build_backend

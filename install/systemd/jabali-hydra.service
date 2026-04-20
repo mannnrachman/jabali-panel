@@ -1,0 +1,44 @@
+[Unit]
+Description=Ory Hydra OAuth 2 / OIDC Provider
+Documentation=https://www.ory.sh/docs/hydra
+# Hydra needs MariaDB running AND Kratos available (login/consent
+# handlers in panel-api delegate to Kratos session validation). We
+# don't hard-order against panel-api itself because panel-api's routes
+# are registered on start regardless; ordering against Kratos is
+# sufficient for Hydra's own migrations to succeed and for the first
+# OIDC flow to complete.
+After=network-online.target mariadb.service jabali-kratos.service
+Wants=network-online.target
+PartOf=jabali.slice
+
+[Service]
+Type=simple
+User=jabali
+Group=jabali
+Slice=jabali.slice
+
+# Hydra runs its own migrations on every boot; idempotent + safe to
+# re-run. The config file carries the DSN with the MariaDB K-2
+# workaround (sql_mode=NO_ENGINE_SUBSTITUTION) so migrations don't
+# trip over strict mode.
+ExecStart=/usr/local/bin/hydra serve all -c /etc/jabali-panel/hydra.yml
+
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening mirrors jabali-kratos.service. ReadWritePaths
+# only includes the config directory (for live reload of signing keys
+# if we ever wire that) and /run/jabali for anything Hydra writes
+# under the runtime dir. No /var/lib/hydra needed — Hydra's state
+# lives entirely in MariaDB.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/etc/jabali-panel /run/jabali
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

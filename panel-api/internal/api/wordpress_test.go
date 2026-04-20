@@ -163,6 +163,28 @@ func (m *mockWordPressInstallRepo) Delete(ctx context.Context, id string) error 
 	return repository.ErrNotFound
 }
 
+// UpdateOIDCFields back-fills the M16 Wave D OIDC columns on an
+// existing install. Mirrors the GORM-backed implementation: fail
+// with ErrNotFound when the row is gone (which is what the rollback
+// race path checks for).
+func (m *mockWordPressInstallRepo) UpdateOIDCFields(ctx context.Context, id, oidcClientID string, secretEnc []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.installs[id]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	clientIDCopy := oidcClientID
+	inst.OIDCClientID = &clientIDCopy
+	// Slice copy so the caller mutating its local buffer can't change
+	// what the mock thinks the DB recorded.
+	encCopy := make([]byte, len(secretEnc))
+	copy(encCopy, secretEnc)
+	inst.OIDCClientSecretEnc = encCopy
+	inst.UpdatedAt = time.Now()
+	return nil
+}
+
 // GetByIDUnsafe returns the install without locking (for tests that need quick reads)
 // This is only safe if called immediately after an operation or if the caller ensures no concurrent access
 func (m *mockWordPressInstallRepo) GetByIDUnsafe(id string) *models.WordPressInstall {

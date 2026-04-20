@@ -35,6 +35,14 @@ type ApplicationInstallRepository interface {
 	ListByUserID(ctx context.Context, userID string, opts ListOptions) ([]models.ApplicationInstall, int64, error)
 	List(ctx context.Context, opts ListOptions) ([]models.ApplicationInstall, int64, error)
 	UpdateStatus(ctx context.Context, id, status string, lastError *string, version *string) error
+	// UpdateOIDCFields persists the Hydra-minted OAuth 2 client id + the
+	// AES-256-GCM-sealed client_secret on an existing install row. Called
+	// by the M16 Wave D client-provisioning path in applications_service.go
+	// AFTER hydraclient.CreateClient returns — the row exists first, then
+	// the OIDC columns are back-filled. secretEnc is the envelope
+	// produced by ssokey.Key.Seal (nonce(12) || ciphertext || auth_tag(16));
+	// callers MUST NOT persist plaintext.
+	UpdateOIDCFields(ctx context.Context, id, oidcClientID string, secretEnc []byte) error
 	Delete(ctx context.Context, id string) error
 }
 
@@ -193,6 +201,24 @@ func (r *applicationInstallRepo) UpdateStatus(ctx context.Context, id, status st
 	}
 	if err := r.db.WithContext(ctx).Model(&models.ApplicationInstall{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 		return err
+	}
+	return nil
+}
+
+func (r *applicationInstallRepo) UpdateOIDCFields(ctx context.Context, id, oidcClientID string, secretEnc []byte) error {
+	// Model(&ApplicationInstall{}).Where(id).Updates(map) + pointer form
+	// for oidc_client_id so GORM writes a real CHAR(40) value (not the
+	// zero-value empty string the Updates(struct) shape would skip).
+	updates := map[string]interface{}{
+		"oidc_client_id":          oidcClientID,
+		"oidc_client_secret_enc":  secretEnc,
+	}
+	res := r.db.WithContext(ctx).Model(&models.ApplicationInstall{}).Where("id = ?", id).Updates(updates)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
 	}
 	return nil
 }

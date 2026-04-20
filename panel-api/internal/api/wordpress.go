@@ -16,9 +16,11 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/apps"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/hydraclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
 // ApplicationHandlerConfig bundles the repositories and services every
@@ -41,6 +43,25 @@ type ApplicationHandlerConfig struct {
 	// handlers in applications.go require it. app.NewWithDeps always
 	// populates it for production wiring.
 	Apps *apps.Registry
+
+	// HydraClient is the Ory Hydra admin-API wrapper used by the
+	// apps-framework install path to mint per-install OAuth 2
+	// clients (M16 Wave D Step 6). Nil-safe: when the descriptor's
+	// OIDCCallbackPath is empty OR HydraClient is nil, OIDC
+	// provisioning is skipped and the install proceeds without SSO.
+	HydraClient *hydraclient.Client
+
+	// SSOKey is the AES-256-GCM key used to seal the Hydra
+	// client_secret at rest on application_installs. Same key used
+	// by M7's phpMyAdmin shadow password. Nil-safe when HydraClient
+	// is also nil.
+	SSOKey *ssokey.Key
+
+	// PanelBaseURL is the public HTTPS URL of the panel itself
+	// (e.g. "https://jabali.example.com:8443"). Used by M16 to
+	// render the OIDC issuer + auth/token/userinfo URLs embedded in
+	// each per-install client. Empty in tests where Hydra isn't wired.
+	PanelBaseURL string
 }
 
 // WordPressHandlerConfig is the pre-M19 alias retained so old wiring
@@ -636,7 +657,13 @@ func (h *wordPressHandler) delete(c *gin.Context) {
 	// install_id is plumbed through so deleters that opt into the
 	// managed-data-dir contract (Moodle/Chamilo) can recompute the
 	// /home/<user>/<install_id>-data path and rm it.
-	go createDeleteAndKickAgent(ctx, installID, install.AppType, install.Subdirectory, install.DBIDOr(), dbUserID, osUser, domain.DocRoot, domain.Name, dbUserUsername, h.cfg)
+	// OIDCClientID is *string on the model — pass "" when unset so the
+	// delete kicker can skip Hydra cleanup entirely without nil-checks.
+	oidcClientID := ""
+	if install.OIDCClientID != nil {
+		oidcClientID = *install.OIDCClientID
+	}
+	go createDeleteAndKickAgent(ctx, installID, install.AppType, install.Subdirectory, install.DBIDOr(), dbUserID, osUser, domain.DocRoot, domain.Name, dbUserUsername, oidcClientID, h.cfg)
 
 	c.JSON(http.StatusAccepted, gin.H{"status": "deleting"})
 }
@@ -941,6 +968,12 @@ type installKickArgs struct {
 	Locale        string
 	Subdirectory  string
 	UseWWW        bool
+	// M16 Wave D — OIDC plugin fields. Empty = skip plugin install.
+	// Secret is plaintext + one-shot; forwarded to the agent and then
+	// dropped. The sealed copy lives on the install row.
+	OIDCClientID     string
+	OIDCClientSecret string
+	OIDCIssuer       string
 }
 
 // buildSiteURL composes the canonical WordPress siteurl/home value.
@@ -981,7 +1014,7 @@ func createInstallAndKickAgent(parentCtx context.Context, args installKickArgs, 
 	// registered "wordpress" installer (see panel-agent/internal/commands/
 	// app_dispatch.go). Legacy "wordpress.install" still works on the
 	// agent for any straggler caller through M19.1.
-	agentResp, err := cfg.Agent.Call(ctx, "app.install", map[string]any{
+	payload := map[string]any{
 		"app_type":      "wordpress",
 		"os_user":       args.OSUser,
 		"docroot":       args.DocRoot,
@@ -997,7 +1030,18 @@ func createInstallAndKickAgent(parentCtx context.Context, args installKickArgs, 
 		"locale":        args.Locale,
 		"subdirectory":  args.Subdirectory,
 		"use_www":       args.UseWWW,
-	})
+	}
+	// M16 Wave D — thread OIDC plugin bootstrap through to the agent.
+	// Only attach when ClientID+Secret are both present; empty values
+	// mean the descriptor didn't opt into OIDC or the panel isn't
+	// Hydra-wired, and the agent-side kicker should skip plugin
+	// install entirely rather than install-and-leave-unconfigured.
+	if args.OIDCClientID != "" && args.OIDCClientSecret != "" {
+		payload["oidc_client_id"] = args.OIDCClientID
+		payload["oidc_client_secret"] = args.OIDCClientSecret
+		payload["oidc_issuer"] = args.OIDCIssuer
+	}
+	agentResp, err := cfg.Agent.Call(ctx, "app.install", payload)
 	if err != nil {
 		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)
 		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
@@ -1026,7 +1070,7 @@ func createInstallAndKickAgent(parentCtx context.Context, args installKickArgs, 
 // database user, grants, install record). If the agent file-removal
 // fails we flip status to failed but still allow a future retry.
 // Non-empty osUser+docroot are required; the handler pre-fills them.
-func createDeleteAndKickAgent(parentCtx context.Context, installID, appType, subdirectory, databaseID, dbUserID, osUser, docroot, domainName, dbUserUsername string, cfg WordPressHandlerConfig) {
+func createDeleteAndKickAgent(parentCtx context.Context, installID, appType, subdirectory, databaseID, dbUserID, osUser, docroot, domainName, dbUserUsername, oidcClientID string, cfg WordPressHandlerConfig) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -1034,6 +1078,19 @@ func createDeleteAndKickAgent(parentCtx context.Context, installID, appType, sub
 		errMsg := "agent not configured"
 		cfg.ApplicationInstalls.UpdateStatus(ctx, installID, "failed", &errMsg, nil)
 		return
+	}
+
+	// M16 Wave D — tear down the per-install Hydra OAuth 2 client so a
+	// future install at the same path doesn't clash, and so Hydra
+	// doesn't retain redirect URIs pointing at a removed docroot.
+	// Best-effort: orphaned Hydra clients are harmless (their redirect
+	// URIs point at paths that won't accept auth), so we log and
+	// continue. ErrNotFound is the idempotent case — someone already
+	// deleted the client, which is exactly what we want.
+	if oidcClientID != "" && cfg.HydraClient != nil {
+		if delErr := cfg.HydraClient.DeleteClient(ctx, oidcClientID); delErr != nil {
+			slog.WarnContext(ctx, "wordpress delete: hydra client delete failed (continuing)", "err", delErr, "install_id", installID, "client_id", oidcClientID)
+		}
 	}
 
 	// Default appType to "wordpress" for any install row that pre-dates

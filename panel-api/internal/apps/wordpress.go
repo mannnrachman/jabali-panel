@@ -25,6 +25,12 @@ var WordPress = App{
 	AgentInstallCmd:      "app.install",
 	AgentDeleteCmd:       "app.delete",
 	AgentCloneCmd:        "app.clone",
+	// M16 Wave D: per-install OIDC SSO via the OpenID Connect Generic
+	// plugin. The plugin's authorize callback is registered under
+	// wp-admin/admin-ajax.php; the framework prepends the site URL so
+	// the full redirect_uri becomes
+	// https://<domain>/<subdir>/wp-admin/admin-ajax.php?action=openid-connect-authorize.
+	OIDCCallbackPath: "/wp-admin/admin-ajax.php?action=openid-connect-authorize",
 	// admin_username intentionally NOT in this schema — the API
 	// generates a random 6-letter username server-side (per the
 	// operator's directive: "admin username is a bad idea, should be

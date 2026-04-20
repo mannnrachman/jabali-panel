@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/hydraclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 )
@@ -199,6 +200,99 @@ func InstallApplication(ctx context.Context, deps ApplicationHandlerConfig, p In
 	// will actually use to log in (separate from the DB password).
 	siteURL := buildSiteURL(domain.Name, p.UseWWW, p.Subdirectory)
 
+	// M16 Wave D — OIDC client provisioning. Runs BEFORE the kicker
+	// goroutine so the per-install WordPress (or future per-app) OIDC
+	// plugin configuration lands atomically with the first wp-cli
+	// run. Skipped when the descriptor doesn't advertise a callback
+	// path OR the panel isn't wired for Hydra+SSO key; in both cases
+	// the install still succeeds, just without SSO.
+	//
+	// Rollback on any failure deletes every row this handler created
+	// (install + DB chain) plus the Hydra client if CreateClient already
+	// returned — otherwise an orphan Hydra client would linger with
+	// redirect URIs pointing at a docroot that no longer exists.
+	var oidcClientID string
+	var oidcClientSecret string
+	if descriptor.OIDCCallbackPath != "" && deps.HydraClient != nil && deps.SSOKey != nil {
+		redirectURI := siteURL + descriptor.OIDCCallbackPath
+		clientName := descriptor.DisplayName + " @ " + domain.Name
+		if p.Subdirectory != "" {
+			clientName += "/" + p.Subdirectory
+		}
+
+		rollback := func(hydraClientID string) {
+			if hydraClientID != "" && deps.HydraClient != nil {
+				// Best-effort: orphaned clients are harmless (they
+				// point at paths that won't accept auth). Log the
+				// failure but don't fail the rollback itself.
+				if delErr := deps.HydraClient.DeleteClient(ctx, hydraClientID); delErr != nil {
+					slog.WarnContext(ctx, "applications create: hydra client delete during rollback failed", "err", delErr, "client_id", hydraClientID)
+				}
+			}
+			_ = deps.ApplicationInstalls.Delete(ctx, installID)
+			if descriptor.RequiresDB {
+				rollbackDBChain(ctx, deps, chain)
+			}
+		}
+
+		out, ccErr := deps.HydraClient.CreateClient(ctx, hydraclient.CreateClientInput{
+			ClientName:              clientName,
+			RedirectURIs:            []string{redirectURI},
+			GrantTypes:              []string{"authorization_code", "refresh_token"},
+			ResponseTypes:           []string{"code"},
+			Scope:                   "openid email profile",
+			TokenEndpointAuthMethod: "client_secret_post",
+			Metadata: map[string]any{
+				// Reverse-lookup key: the oauth2 delete handler reads
+				// this back out of Hydra when the panel-side install
+				// row is already gone (e.g. a DB-only rollback raced
+				// with a manual Hydra delete).
+				"application_install_id": installID,
+				// NB: "trusted" is intentionally NOT set here.
+				// hydraclient.CreateClient strips it; we call
+				// SetClientTrusted right after to make the client
+				// skip the consent UI for panel-managed installs.
+				// See ADR-0036 Decision 7.
+			},
+		})
+		if ccErr != nil {
+			rollback("")
+			slog.ErrorContext(ctx, "applications create: hydra CreateClient failed", "err", ccErr, "install_id", installID)
+			return nil, newInstallErr(http.StatusBadGateway, "hydra_failed", ccErr.Error())
+		}
+
+		// Decision 7 (server-side only) — panel-managed installs are
+		// trusted, so the consent UI is skipped once the user has an
+		// active Kratos session. A malicious caller cannot reach this
+		// line: the sanitizeMetadata strip on CreateClient guarantees
+		// the caller-supplied trusted flag is ignored.
+		if trustErr := deps.HydraClient.SetClientTrusted(ctx, out.ClientID, true); trustErr != nil {
+			rollback(out.ClientID)
+			slog.ErrorContext(ctx, "applications create: hydra SetClientTrusted failed", "err", trustErr, "install_id", installID, "client_id", out.ClientID)
+			return nil, newInstallErr(http.StatusBadGateway, "hydra_failed", trustErr.Error())
+		}
+
+		sealed, sealErr := deps.SSOKey.Seal([]byte(out.ClientSecret.Raw()))
+		if sealErr != nil {
+			rollback(out.ClientID)
+			slog.ErrorContext(ctx, "applications create: seal oidc secret failed", "err", sealErr, "install_id", installID)
+			return nil, newInstallErr(http.StatusInternalServerError, "internal", "")
+		}
+
+		if upErr := deps.ApplicationInstalls.UpdateOIDCFields(ctx, installID, out.ClientID, sealed); upErr != nil {
+			rollback(out.ClientID)
+			slog.ErrorContext(ctx, "applications create: persist oidc fields failed", "err", upErr, "install_id", installID)
+			return nil, newInstallErr(http.StatusInternalServerError, "internal", "")
+		}
+
+		oidcClientID = out.ClientID
+		// Plaintext secret is one-shot: it's never read back from the
+		// DB (the sealed form is). Passed down to the kicker so the
+		// per-app installer can configure the plugin's OIDC client
+		// credentials before the very first page load.
+		oidcClientSecret = out.ClientSecret.Raw()
+	}
+
 	// Snapshot the install state before launching the async kicker.
 	// The kicker goroutine calls UpdateStatus, which the GORM repo
 	// implements as SQL UPDATE (no shared memory), but in-memory repos
@@ -210,18 +304,21 @@ func InstallApplication(ctx context.Context, deps ApplicationHandlerConfig, p In
 	snapshot := *install
 
 	adminPassword = dispatchInstallKicker(ctx, descriptor.Name, kickContext{
-		InstallID:     installID,
-		OSUser:        osUser,
-		DocRoot:       domain.DocRoot,
-		Subdirectory:  install.Subdirectory,
-		SiteURL:       siteURL,
-		AdminUsername: install.AdminUsername,
-		AdminEmail:    install.AdminEmail,
-		Locale:        install.Locale,
-		UseWWW:        install.UseWWW,
-		Chain:         chain,
-		Params:        p.Params,
-		DBPassword:    adminPassword,
+		InstallID:        installID,
+		OSUser:           osUser,
+		DocRoot:          domain.DocRoot,
+		Subdirectory:     install.Subdirectory,
+		SiteURL:          siteURL,
+		AdminUsername:    install.AdminUsername,
+		AdminEmail:       install.AdminEmail,
+		Locale:           install.Locale,
+		UseWWW:           install.UseWWW,
+		Chain:            chain,
+		Params:           p.Params,
+		DBPassword:       adminPassword,
+		OIDCClientID:     oidcClientID,
+		OIDCClientSecret: oidcClientSecret,
+		OIDCIssuer:       deps.PanelBaseURL,
 	}, deps)
 
 	return &InstallResult{Install: &snapshot, AdminPassword: adminPassword}, nil
@@ -246,6 +343,17 @@ type kickContext struct {
 	Chain         provisionedDB
 	Params        map[string]any
 	DBPassword    string
+	// M16 Wave D — OIDC plugin bootstrap arguments, populated only when
+	// the descriptor sets OIDCCallbackPath AND Hydra+SSOKey are wired.
+	// All three travel together: a non-empty ClientID implies the
+	// corresponding plaintext Secret and Issuer must also be present.
+	// Empty = skip plugin install in the agent kicker. Secret is
+	// plaintext and one-shot — it is never persisted plaintext; the
+	// kicker forwards it to the agent, the agent writes it to the
+	// app's config, and this in-memory copy is discarded.
+	OIDCClientID     string
+	OIDCClientSecret string
+	OIDCIssuer       string
 }
 
 // dispatchInstallKicker runs the per-app installer goroutine and
@@ -257,20 +365,23 @@ func dispatchInstallKicker(ctx context.Context, appName string, k kickContext, d
 	switch appName {
 	case "wordpress":
 		go createInstallAndKickAgent(ctx, installKickArgs{
-			InstallID:     k.InstallID,
-			OSUser:        k.OSUser,
-			DocRoot:       k.DocRoot,
-			DBName:        k.Chain.DBName,
-			DBUser:        k.Chain.DBUsername,
-			DBPassword:    adminPassword,
-			SiteURL:       k.SiteURL,
-			SiteTitle:     paramOr(k.Params, "site_title", "My WordPress Site"),
-			AdminUsername: k.AdminUsername,
-			AdminPassword: adminPassword,
-			AdminEmail:    k.AdminEmail,
-			Locale:        k.Locale,
-			Subdirectory:  k.Subdirectory,
-			UseWWW:        k.UseWWW,
+			InstallID:        k.InstallID,
+			OSUser:           k.OSUser,
+			DocRoot:          k.DocRoot,
+			DBName:           k.Chain.DBName,
+			DBUser:           k.Chain.DBUsername,
+			DBPassword:       adminPassword,
+			SiteURL:          k.SiteURL,
+			SiteTitle:        paramOr(k.Params, "site_title", "My WordPress Site"),
+			AdminUsername:    k.AdminUsername,
+			AdminPassword:    adminPassword,
+			AdminEmail:       k.AdminEmail,
+			Locale:           k.Locale,
+			Subdirectory:     k.Subdirectory,
+			UseWWW:           k.UseWWW,
+			OIDCClientID:     k.OIDCClientID,
+			OIDCClientSecret: k.OIDCClientSecret,
+			OIDCIssuer:       k.OIDCIssuer,
 		}, deps)
 	case "dokuwiki":
 		dokuPass := paramOr(k.Params, "admin_password", "")

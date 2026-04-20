@@ -230,7 +230,7 @@ export const DNSResolversCard = () => {
           type="warning"
           showIcon
           style={{ marginBottom: 12 }}
-          message="systemd-resolved is not active"
+          title="systemd-resolved is not active"
           description="The drop-in will still be written, but changes won't take effect until the service is running."
         />
       )}

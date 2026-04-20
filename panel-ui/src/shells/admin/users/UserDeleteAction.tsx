@@ -88,7 +88,7 @@ export const UserDeleteAction = ({
           </Button>,
         ]}
       >
-        <Space direction="vertical" style={{ width: "100%" }}>
+        <Space orientation="vertical" style={{ width: "100%" }}>
           <div>
             <p>
               <strong>Delete user:</strong> Removes the user record and all

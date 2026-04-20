@@ -52,11 +52,11 @@ export function DatabaseUserPasswordModal({
       maskClosable={false}
       destroyOnClose
     >
-      <Space direction="vertical" style={{ width: "100%" }} size="middle">
+      <Space orientation="vertical" style={{ width: "100%" }} size="middle">
         <Alert
           type="warning"
           showIcon
-          message="This password will never be shown again."
+          title="This password will never be shown again."
           description="Copy it now. We only store a bcrypt hash — we can't retrieve the plaintext later. If lost, you'll need to rotate the password."
         />
 

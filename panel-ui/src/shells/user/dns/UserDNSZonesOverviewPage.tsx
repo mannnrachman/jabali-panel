@@ -95,7 +95,7 @@ export const UserDNSZonesOverviewPage = () => {
       </Space>
 
       <Alert
-        message="DNS zones are provisioned automatically when a domain is created. Nameservers are configured in Server Settings."
+        title="DNS zones are provisioned automatically when a domain is created. Nameservers are configured in Server Settings."
         type="info"
         showIcon
         style={{ marginBottom: 16 }}

@@ -177,7 +177,7 @@ export const VersionsTab = () => {
         <Alert
           type="warning"
           showIcon
-          message="Modifying PHP versions can cause server downtime"
+          title="Modifying PHP versions can cause server downtime"
           description="Uninstalling PHP versions may break websites that depend on them. Ensure you understand the impact before making changes."
           closable
           onClose={() => setDismissedWarning(true)}

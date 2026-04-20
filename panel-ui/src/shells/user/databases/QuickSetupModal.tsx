@@ -202,12 +202,12 @@ export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
       )}
 
       {result && (
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
           <Alert
             type="success"
             showIcon
             icon={<CheckCircleTwoTone twoToneColor="#52c41a" />}
-            message="Database and user created"
+            title="Database and user created"
             description="Copy the password now — it is shown only once. We store only a bcrypt hash."
           />
           <div>

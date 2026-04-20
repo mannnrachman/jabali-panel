@@ -18,7 +18,7 @@ export function MyProfile() {
 
   return (
     <div style={{ padding: 24, maxWidth: 720, margin: "0 auto" }}>
-      <Space direction="vertical" size="large" style={{ width: "100%" }}>
+      <Space orientation="vertical" size="large" style={{ width: "100%" }}>
         <Typography.Title level={2} style={{ margin: 0 }}>
           My profile
         </Typography.Title>

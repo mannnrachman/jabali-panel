@@ -739,7 +739,7 @@ export const DomainSettingsButton = ({
         <Alert
           type="warning"
           icon={<WarningOutlined />}
-          message="Use with caution"
+          title="Use with caution"
           description="Incorrect directives can break your website. Changes are tested with nginx before applying, but you are responsible for ensuring your configuration is correct."
           showIcon
           style={{ marginBottom: 24 }}

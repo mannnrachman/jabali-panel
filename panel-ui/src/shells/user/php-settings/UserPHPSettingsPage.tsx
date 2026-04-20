@@ -247,13 +247,13 @@ export function UserPHPSettingsPage() {
 
   return (
     <div style={{ padding: 24, maxWidth: 800, margin: "0 auto" }}>
-      <Space direction="vertical" size="large" style={{ width: "100%" }}>
+      <Space orientation="vertical" size="large" style={{ width: "100%" }}>
         <Typography.Title level={2} style={{ margin: 0 }}>
           PHP Settings
         </Typography.Title>
 
         <Alert
-          message="Caution"
+          title="Caution"
           description="Changing PHP settings can affect your website performance and functionality. Incorrect values may cause errors or prevent your site from functioning properly. Changes apply after the next request to PHP."
           type="warning"
           showIcon

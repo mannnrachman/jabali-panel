@@ -149,12 +149,12 @@ export const DomainSSLSection = ({ domainId, sslEnabled, onToggled }: Props) => 
   const days = daysUntil(cert?.expires_at);
 
   return (
-    <Space direction="vertical" style={{ width: "100%" }}>
+    <Space orientation="vertical" style={{ width: "100%" }}>
       {!adminEmail && (
         <Alert
           type="warning"
           showIcon
-          message="Set an admin email to use SSL"
+          title="Set an admin email to use SSL"
           description={
             <>
               Let&apos;s Encrypt requires an email on the account. Configure it in{" "}
@@ -168,7 +168,7 @@ export const DomainSSLSection = ({ domainId, sslEnabled, onToggled }: Props) => 
         <Alert
           type="warning"
           showIcon
-          message="Using self-signed certificate"
+          title="Using self-signed certificate"
           description="This domain is using a self-signed certificate while Let's Encrypt issuance retries. Browsers will show a security warning until the real cert is issued."
         />
       ) : null}
@@ -177,7 +177,7 @@ export const DomainSSLSection = ({ domainId, sslEnabled, onToggled }: Props) => 
         <Alert
           type="error"
           showIcon
-          message="ACME issuance failed"
+          title="ACME issuance failed"
           description={
             <>
               {cert?.last_error && <div>Error: {cert.last_error}</div>}

@@ -29,9 +29,9 @@ export const RunNowResultModal = ({
       footer={null}
       width={700}
     >
-      <Space direction="vertical" style={{ width: "100%" }}>
+      <Space orientation="vertical" style={{ width: "100%" }}>
         <Alert
-          message={isSuccess ? "Execution Successful" : "Execution Failed"}
+          title={isSuccess ? "Execution Successful" : "Execution Failed"}
           description={`Exit code: ${result.exit_code}`}
           type={isSuccess ? "success" : "error"}
           showIcon

@@ -10,7 +10,7 @@ export const SSLManagerPage = () => {
           width: "100%",
           justifyContent: "space-between",
         }}
-        direction="vertical"
+        orientation="vertical"
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
           SSL Certificates

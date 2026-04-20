@@ -112,13 +112,13 @@ export const LoginPage = () => {
       }}
     >
       <Card style={{ width: 420 }}>
-        <Space direction="vertical" size="large" style={{ width: "100%" }}>
+        <Space orientation="vertical" size="large" style={{ width: "100%" }}>
           <Typography.Title level={3} style={{ margin: 0 }}>
             Jabali Panel
           </Typography.Title>
 
           {initError && (
-            <Alert message={initError} type="error" showIcon />
+            <Alert title={initError} type="error" showIcon />
           )}
 
           {loadingFlow && !initError && (
@@ -154,7 +154,7 @@ function FlowForm({ flow, onFinish }: FlowFormProps) {
   if (!activeGroup) {
     return (
       <Alert
-        message="No credential method is currently configured for your account. Contact an administrator."
+        title="No credential method is currently configured for your account. Contact an administrator."
         type="warning"
         showIcon
       />
@@ -165,7 +165,7 @@ function FlowForm({ flow, onFinish }: FlowFormProps) {
   return (
     <>
       {topErrors.map((msg, i) => (
-        <Alert key={i} message={msg} type="error" showIcon />
+        <Alert key={i} title={msg} type="error" showIcon />
       ))}
       <GroupForm
         groupName={activeGroup}

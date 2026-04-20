@@ -571,7 +571,7 @@ export const InstallApplicationModal = ({
             type="info"
             showIcon
             style={{ marginBottom: 16 }}
-            message="What happens next"
+            title="What happens next"
             description={
               <>
                 We&rsquo;ll provision the application&rsquo;s database (if
@@ -588,7 +588,7 @@ export const InstallApplicationModal = ({
               type="info"
               showIcon
               style={{ marginBottom: 16 }}
-              message="No domains yet"
+              title="No domains yet"
               description="You have no domains. Create one first."
             />
           )}
@@ -685,12 +685,12 @@ export const InstallApplicationModal = ({
       )}
 
       {result && (
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
           <Alert
             type="success"
             showIcon
             icon={<CheckCircleTwoTone twoToneColor="#52c41a" />}
-            message="Install queued"
+            title="Install queued"
             description="The install runs in the background. Copy the password now — it is shown only once. We store only a bcrypt hash."
           />
           <div>

@@ -138,7 +138,7 @@ const GeneralSettingsTab = () => {
               type="warning"
               showIcon
               icon={<WarningOutlined />}
-              message="Hostname change"
+              title="Hostname change"
               description={
                 <>
                   Changing the hostname updates the OS hostname and the
@@ -338,7 +338,7 @@ const GeneralSettingsTab = () => {
                   <Alert
                     type="warning"
                     showIcon
-                    message="Potential Lockout Risk"
+                    title="Potential Lockout Risk"
                     description={
                       <>
                         Changing SSH settings may affect your ability to

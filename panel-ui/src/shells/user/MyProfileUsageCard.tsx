@@ -83,7 +83,7 @@ export function MyProfileUsageCard({ userId }: { userId: string }) {
   const { effective, current } = data;
   return (
     <Card title="Resource usage" size="small">
-      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
         <UsageRow
           label="Disk"
           used={current?.disk?.used_kb ?? 0}

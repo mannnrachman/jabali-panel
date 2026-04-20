@@ -104,7 +104,7 @@ export function AddGrantModal({
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message={`Grant privileges to ${username || "—"}@localhost`}
+        title={`Grant privileges to ${username || "—"}@localhost`}
       />
 
       <Form<AddGrantInput>
@@ -134,7 +134,7 @@ export function AddGrantModal({
 
         <Form.Item label="Grant Type" name="grantType" rules={[{ required: true }]}>
           <Radio.Group>
-            <Space direction="vertical" style={{ width: "100%" }}>
+            <Space orientation="vertical" style={{ width: "100%" }}>
               <Radio value="preset">Preset Privileges</Radio>
               <Radio value="custom">Custom Privileges</Radio>
             </Space>
@@ -144,7 +144,7 @@ export function AddGrantModal({
         {grantType === "preset" && (
           <Form.Item label="Privilege Level" name="grant_level" rules={[{ required: true }]}>
             <Radio.Group>
-              <Space direction="vertical">
+              <Space orientation="vertical">
                 <Radio value="rw">Full Access (all privileges)</Radio>
                 <Radio value="ro">Read Only (SELECT only)</Radio>
               </Space>

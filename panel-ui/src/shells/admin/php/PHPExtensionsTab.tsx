@@ -151,7 +151,7 @@ export const PHPExtensionsTab = () => {
       <Alert
         type="info"
         showIcon
-        message="No PHP versions installed"
+        title="No PHP versions installed"
         description="Install a PHP version first under the PHP Versions tab. Extension management requires at least one installed version."
       />
     );

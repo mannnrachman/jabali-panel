@@ -72,7 +72,7 @@ export function SearchableTable<T extends object>({
   // page-number buttons, no size chooser, no total-row summary). Callers
   // that need those knobs can opt in explicitly.
   return (
-    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       <Input.Search
         placeholder={searchPlaceholder}
         allowClear

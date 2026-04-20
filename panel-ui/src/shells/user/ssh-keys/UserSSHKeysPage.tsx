@@ -196,7 +196,7 @@ export const UserSSHKeysPage = () => {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message={<strong>SSH & SFTP Access</strong>}
+        title={<strong>SSH & SFTP Access</strong>}
         description="Connect to your server securely using SSH for terminal access or SFTP for file transfers. Generate a new key pair or add your existing public SSH keys below."
       />
 
@@ -449,7 +449,7 @@ export const UserSSHKeysPage = () => {
           type="warning"
           showIcon
           style={{ marginBottom: 12 }}
-          message="This is the only time the private key will be shown."
+          title="This is the only time the private key will be shown."
           description="Copy or download it now. If you close this dialog without saving, you'll need to generate a new key and delete this one."
         />
         <Space style={{ marginBottom: 8 }}>

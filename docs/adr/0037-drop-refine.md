@@ -1,7 +1,7 @@
 # ADR-0037: Drop Refine framework; migrate to TanStack Query + AntD + react-router
 
-**Date**: 2026-04-20
-**Status**: proposed (blueprint phase; Wave A dispatchable after review)
+**Date**: 2026-04-20 (proposed), 2026-04-21 (accepted)
+**Status**: accepted — all five waves (A–E) shipped on `m21/drop-refine` 2026-04-21. Zero `@refinedev/*` imports remain under `src/`, `tests/`, or `package.json`; production bundle dropped from ~2.2 MB to ~1.6 MB (gzip: 700 → 507 kB). See the "Outcome" section below.
 **Deciders**: shuki + Claude
 **Related**: ADR-0034 (M20 Kratos identity — supersedes Refine's `authProvider` role), ADR-0036 (M16 Hydra — unaffected by this change), memory `project_plan_panel_ui_migration` (parked 2026-04-17, pre-Kratos)
 
@@ -99,4 +99,28 @@ Work tracked as **M21 — Drop Refine** in `plans/m21-drop-refine.md` across 5 w
 
 ---
 
-**Status change**: `proposed` → `accepted` when Wave E lands on `main`.
+## Outcome (2026-04-21)
+
+All five waves shipped on `m21/drop-refine` across one day (2026-04-20 → 2026-04-21):
+
+- **Wave A** (foundation) — `src/query.ts`, `src/hooks/{useQueries,useTableURL,useSelectQuery}.ts`, `src/auth/{AuthContext,RequireAuth,RequireAdmin,RequireUser}.tsx`. Eight unit tests.
+- **Wave B** (shell) — `src/App.tsx` rewritten to `QueryClientProvider > AuthProvider > BrowserRouter > ConfigProvider > Routes`. `AdminLayout`/`UserLayout` reduced to plain AntD `<Layout>` + `<Sider>` + `<Header>` + `<Content>` + `<Footer>`. Single source of menu items at `src/nav.ts`.
+- **Wave C** (admin pages) — users, packages, domains, DNS, SSL, settings, PHP pools, databases, database-users all off Refine. Fixed a Wave A wire-contract bug where `useQueries.ts` was shaped for `{items, total}` but panel-api actually returns `{data, total, page, page_size}`. The four users-spec E2E failures that had been red on `main` since pre-Wave A cleared on this commit.
+- **Wave D** (user pages + shared chrome) — domains, databases (with Quick Setup + phpMyAdmin SSO), DNS, applications (with transitional-state polling). Shared `Domain*` buttons + `dns/DNSRecordsPage` moved from `useInvalidate`/`useNotification` to `useQueryClient` + AntD `notification`. Dead files (`shellSider.tsx`, `RoleGate.tsx`) deleted.
+- **Wave E** (cleanup) — `@refinedev/{core,antd,react-router,simple-rest}` removed from `package.json`; `@ant-design/icons` promoted to direct dep; `authProvider.ts`, `dataProvider.ts`, `searchableTableUtils.ts` deleted; `SearchableTable.tsx` trimmed to its string-`q` variant; Login/Consent tests dropped their `<Refine>` wrapper; `main.tsx`'s `@refinedev/antd/dist/reset.css` → `antd/dist/reset.css`; `overrides: { antd: "$antd" }` removed (no longer needed without Refine's `antd@5` peer).
+
+### Measured results
+
+- `grep -r "@refinedev" panel-ui/src panel-ui/tests panel-ui/package.json`: 0 hits ✓
+- `npx tsc -b`: clean ✓
+- `npm test`: 28/28 vitest ✓
+- `npm run build`: clean ✓; **production JS 2,192 kB → 1,586 kB (−606 kB / −27.6%)**, gzip 700.74 kB → 507.37 kB (−193 kB / −27.6%). Beats the ≥50 kB gzipped target by ~4×.
+- `npm run test:e2e`: 22/22 ✓
+- `node_modules/` installed packages: 358 → 239 (−119).
+
+### Deviations from the blueprint
+
+- The Wave C "Refine hooks return `{data, total, page, page_size}`" detail was not reflected in the Wave A hook signature until a fix-in-flight folded into Wave C.1. Logged as a lesson for future wire-contract work — look at `panel-api/internal/api/*.go` first, not the blueprint's assumed envelope.
+- `Login.tsx` and `Consent.tsx` were scope-fenced from M21 edits, but Wave E had to remove the `<Refine>` test-stub wrapper from their `*.test.tsx` files and inline a 3-line `homeForRole` helper in `Login.tsx` once `authProvider.ts` was deleted. These were unavoidable consequences of the cleanup, not functional changes to the auth flow.
+- `admin/applications/AdminApplicationList.tsx` was rewritten in Wave E despite being wt-a's territory — keeping its `useTable` usage would have blocked `@refinedev/*` removal. The rewrite is read-only view code; no behavioural change.
+

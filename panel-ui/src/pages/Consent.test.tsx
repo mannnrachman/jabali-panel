@@ -14,30 +14,21 @@
 //   - Expired / unknown challenge surfaces actionable copy, not a
 //     raw HTTP status code.
 
-import { Refine } from "@refinedev/core";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ConsentPage } from "./Consent";
 
-// Minimal auth provider stub — ConsentPage itself doesn't call
-// authProvider, but Refine complains without one.
-const noopAuth = {
-  login: async () => ({ success: false }),
-  logout: async () => ({ success: true }),
-  check: async () => ({ authenticated: true }),
-  onError: async () => ({}),
-};
-
+// ConsentPage reads only URL params + does its own fetches; it needs
+// nothing from the provider chain. Post-M21 we drop the <Refine>
+// wrapper entirely and render under MemoryRouter alone.
 function renderConsent(initialPath = "/consent?challenge=chal-abc") {
   return render(
     <MemoryRouter initialEntries={[initialPath]}>
-      <Refine authProvider={noopAuth}>
-        <Routes>
-          <Route path="/consent" element={<ConsentPage />} />
-        </Routes>
-      </Refine>
+      <Routes>
+        <Route path="/consent" element={<ConsentPage />} />
+      </Routes>
     </MemoryRouter>,
   );
 }

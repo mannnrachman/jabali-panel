@@ -929,6 +929,28 @@ Full 16-decision design + 9-step / 5-wave breakdown: `plans/m16-hydra-oauth.md`.
 **Depends on:** M1 (users table), M7 (MariaDB, reused for Kratos's own schema).
 **Blocks:** M16 (Automation API tokens via Hydra — Hydra integrates with Kratos via the login-consent flow).
 
+### M21: Drop Refine (SHIPPED 2026-04-21)
+
+**Goal:** Remove the Refine framework from the panel SPA. After M20 made identity Kratos-native, Refine's `authProvider`/`dataProvider`/`resources`/`<ThemedLayoutV2>` shrank to indirection around calls panel-api already served natively. Wrappers (`<List>`/`<Create>`/`<Edit>`) were injecting chrome (auto headings, breadcrumbs, sticky save bars, card wrappings) the operator had spent a day trying to strip at the call-site — the framework itself was the source.
+
+**Deliverables (all five waves shipped on `m21/drop-refine` 2026-04-21):**
+
+- **Wave A (foundation):** `src/query.ts` (singleton `QueryClient`), `src/hooks/useQueries.ts` (`useListQuery` / `useOneQuery` / `useCreate|Update|DeleteMutation`), `src/hooks/useTableURL.ts` (URL-backed page/sort/q/order state via `useSearchParams`), `src/hooks/useSelectQuery.ts`, `src/auth/{AuthContext,RequireAuth,RequireAdmin,RequireUser}.tsx`. Additive — existing pages untouched.
+- **Wave B (shell):** `src/App.tsx` rewritten to `QueryClientProvider > AuthProvider > BrowserRouter > ConfigProvider > Routes`. Drop `<Refine>`, `routerProvider`, `resources[]`, `<ThemedLayoutV2>`, `<ThemedSiderV2>`. `AdminLayout`/`UserLayout` become plain AntD `<Layout>` + `<Sider>` + filtered `<Menu>` + `<Header>` + `<Content>` + `<Footer>`. Single source of menu items at `src/nav.ts`. `JabaliHeader` uses `useAuth().logout` (hard-nav to `/login` after) instead of Refine's `useLogout`.
+- **Wave C (admin pages):** mechanical rewrite of every page under `src/shells/admin/*` — users (list/create/edit), packages, domains, DNS, SSL, server settings, PHP pools, databases, database-users. `useTable` → `useTableURL`, `useForm` → `Form.useForm + useCreate|UpdateMutation + useOneQuery`, `<List>/<Create>/<Edit>` wrappers deleted. Also folded a Wave A wire-contract fix: panel-api returns `{data, total, page, page_size}` (not `{items, total}` as the blueprint had assumed), so `useListQuery` now projects `data → items` and serializes camelCase `pageSize` as wire-side `page_size`. This cleared the four pre-existing `users.spec.ts` failures that had been red on `main` since before Wave A.
+- **Wave D (user pages + shared chrome):** same mechanical rewrite across `src/shells/user/*` — domains, databases (with Quick Setup + phpMyAdmin SSO), DNS, applications (with transitional-state polling via a plain `setInterval` effect instead of Refine's `refetchInterval`). Shared `Domain*` buttons and `dns/DNSRecordsPage` moved from `useInvalidate` + `useNotification` to `useQueryClient` + AntD `notification`. Dead `shellSider.tsx` and `RoleGate.tsx` deleted.
+- **Wave E (cleanup):** `@refinedev/{core,antd,react-router,simple-rest}` removed from `package.json`; `@ant-design/icons` promoted to a direct dep (Refine used to pull it in transitively). `authProvider.ts`, `dataProvider.ts`, `searchableTableUtils.ts` deleted. `SearchableTable.tsx` trimmed to its string-`q` variant. Login/Consent test stubs dropped their `<Refine>` wrapper. `main.tsx`'s `@refinedev/antd/dist/reset.css` → `antd/dist/reset.css`. `admin/applications/AdminApplicationList.tsx` rewritten (it was scope-fenced for wt-a but its `useTable` usage would have blocked `@refinedev/*` removal).
+
+**Measured results:**
+
+- `grep -r "@refinedev" panel-ui/src panel-ui/tests panel-ui/package.json`: 0 hits
+- Production JS bundle: 2,192 kB → **1,586 kB** (−27.6%), gzip 700.7 kB → **507.4 kB** (−27.6%) — beats the ≥50 kB gzipped target by ~4×.
+- `node_modules` installed packages: 358 → 239 (−119).
+- `npx tsc -b` clean; `npm test` 28/28 vitest; `npm run build` clean; `npm run test:e2e` 22/22.
+
+**Depends on:** M20 (Kratos identity — supersedes Refine's `authProvider` role so removing it doesn't lose functionality).
+**Related:** ADR-0037 (design rationale, rollback note, outcome), `plans/m21-drop-refine.md` (five-wave blueprint).
+
 ---
 
 ## 7. Configuration
@@ -1089,6 +1111,7 @@ Use this table to navigate the codebase when adding a new capability:
 | M5b: Break-Glass CLI Login (DROPPED) | 2026-04-20 | Removed by M20 step 7 — replacement via `kratos identities` + `/admin/recovery/code` |
 | M20: Kratos identity migration (all 9 steps + legacy removal) | 2026-04-20 | ADR-0034; runbook at `plans/m20-kratos-runbook.md`; Waves A–E on `main`; legacy JWT stack + M5c panel-side 2FA + `kratos-migrate` tool all deleted in the same batch — no dual-mode, no rollback flag |
 | Infra: Gitea CI + branch protection | 2026-04-20 | `.gitea/workflows/ci.yml` (3 parallel jobs), self-hosted `act_runner` in host-mode (no Docker/Podman), loose branch protection on `main`. Also fixed pre-existing data race in `TestApplications_CreateWordPress_HappyPath` (`applications_service.go`) that CI's `-race` flag caught. Commits `b181c74` (workflow), `5d1f9a7` (race fix). |
+| M21: Drop Refine (all 5 waves) | 2026-04-21 | ADR-0037; blueprint at `plans/m21-drop-refine.md`; Waves A–E on `m21/drop-refine`; 4 `@refinedev/*` packages removed; production JS −606 kB (−27.6%) / gzip −193 kB; `@ant-design/icons` promoted to direct dep; `useTableURL` + `useQueries` + `AuthContext` now power every list/form/whoami call |
 
 ---
 

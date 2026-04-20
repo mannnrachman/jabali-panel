@@ -5,13 +5,14 @@
 //
 // Status badge styling is inlined from UserApplicationList to keep
 // coupling low and avoid tight dependency on that component.
-
+import { useEffect } from "react";
 import {
+  Card,
   Space,
   Table,
   Tag,
-  Typography,
   Tooltip,
+  Typography,
 } from "antd";
 import {
   GlobalOutlined,
@@ -19,9 +20,10 @@ import {
   CheckCircleOutlined,
   ExclamationCircleOutlined,
 } from "@ant-design/icons";
-import { useTable } from "@refinedev/antd";
-import { SearchableTable } from "../../../components/SearchableTable";
-import { readQValue } from "../../../components/searchableTableUtils";
+import type { SorterResult } from "antd/es/table/interface";
+
+import { SearchableTableStringQ } from "../../../components/SearchableTable";
+import { useTableURL } from "../../../hooks/useTableURL";
 import { APP_TYPE_LABELS } from "../../user/applications/appLabels";
 import { CmsIcon } from "../../user/applications/CmsIcon";
 
@@ -48,42 +50,66 @@ type ApplicationInstall = {
   updated_at: string;
 };
 
-
 const STATUS_META: Record<
   ApplicationInstall["status"],
   { color: string; icon: React.ReactNode; label: string; spinning: boolean }
 > = {
-  pending:    { color: "default",    icon: <LoadingOutlined spin />,           label: "Pending",    spinning: true  },
-  installing: { color: "processing", icon: <LoadingOutlined spin />,           label: "Installing", spinning: true  },
-  cloning:    { color: "processing", icon: <LoadingOutlined spin />,           label: "Cloning",    spinning: true  },
-  deleting:   { color: "warning",    icon: <LoadingOutlined spin />,           label: "Deleting",   spinning: true  },
-  ready:      { color: "success",    icon: <CheckCircleOutlined />,            label: "Ready",      spinning: false },
-  failed:     { color: "error",      icon: <ExclamationCircleOutlined />,      label: "Failed",     spinning: false },
+  pending:    { color: "default",    icon: <LoadingOutlined spin />,      label: "Pending",    spinning: true  },
+  installing: { color: "processing", icon: <LoadingOutlined spin />,      label: "Installing", spinning: true  },
+  cloning:    { color: "processing", icon: <LoadingOutlined spin />,      label: "Cloning",    spinning: true  },
+  deleting:   { color: "warning",    icon: <LoadingOutlined spin />,      label: "Deleting",   spinning: true  },
+  ready:      { color: "success",    icon: <CheckCircleOutlined />,       label: "Ready",      spinning: false },
+  failed:     { color: "error",      icon: <ExclamationCircleOutlined />, label: "Failed",     spinning: false },
 };
 
+const TRANSITIONAL = new Set<ApplicationInstall["status"]>([
+  "pending",
+  "installing",
+  "cloning",
+  "deleting",
+]);
+
 export const AdminApplicationList = () => {
-  const { tableProps, setFilters, filters } = useTable<ApplicationInstall>({
+  const query = useTableURL<ApplicationInstall>({
     resource: "applications",
-    syncWithLocation: true,
-    queryOptions: {
-      refetchInterval: (data) => {
-        const rows = (data as { data?: ApplicationInstall[] } | undefined)?.data ?? [];
-        const hasTransitional = rows.some(
-          (r) =>
-            r.status === "pending" ||
-            r.status === "installing" ||
-            r.status === "cloning" ||
-            r.status === "deleting",
-        );
-        return hasTransitional ? 5000 : false;
-      },
-    },
+    defaultSort: "created_at",
+    defaultOrder: "desc",
   });
 
-  const initialSearch = readQValue(filters);
+  // Poll while any row is transitional — same cadence as the
+  // user-shell list. Cheaper than running a second useQuery with
+  // its own subscription.
+  const hasTransitional = query.items.some((r) =>
+    TRANSITIONAL.has(r.status),
+  );
+  useEffect(() => {
+    if (!hasTransitional) return;
+    const h = setInterval(() => query.refetch(), 5000);
+    return () => clearInterval(h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasTransitional]);
+
+  const handleTableChange: React.ComponentProps<
+    typeof Table<ApplicationInstall>
+  >["onChange"] = (pagination, _filters, sorter) => {
+    const single = Array.isArray(sorter)
+      ? (sorter[0] as SorterResult<ApplicationInstall> | undefined)
+      : (sorter as SorterResult<ApplicationInstall>);
+    query.setParams({
+      page: pagination.current ?? 1,
+      pageSize: pagination.pageSize ?? 20,
+      sort: single?.columnKey ? String(single.columnKey) : undefined,
+      order:
+        single?.order === "ascend"
+          ? "asc"
+          : single?.order === "descend"
+            ? "desc"
+            : undefined,
+    });
+  };
 
   return (
-    <div style={{ padding: 24 }}>
+    <div>
       <Space
         style={{
           marginBottom: 16,
@@ -96,92 +122,105 @@ export const AdminApplicationList = () => {
         </Typography.Title>
       </Space>
 
-      <SearchableTable<ApplicationInstall>
-        {...tableProps}
-        rowKey="id"
-        initialSearch={initialSearch}
-        searchPlaceholder="Search by domain or user"
-        onSearchChange={(filters) => setFilters(filters, "replace")}
-      >
-        <Table.Column<ApplicationInstall>
-          dataIndex="app_type"
-          title="App"
-          render={(appType: string | undefined) => {
-            const key = appType || "wordpress";
-            const label = APP_TYPE_LABELS[key] ?? key;
-            return (
-              <Space size={6}>
-                <CmsIcon appType={key} />
-                <Typography.Text>{label}</Typography.Text>
-              </Space>
-            );
+      <Card>
+        <SearchableTableStringQ<ApplicationInstall>
+          rowKey="id"
+          loading={query.isLoading}
+          dataSource={query.items}
+          initialSearch={query.params.q}
+          searchPlaceholder="Search by domain or user"
+          onSearchChange={(q) => query.setParams({ q, page: 1 })}
+          pagination={{
+            current: query.params.page,
+            pageSize: query.params.pageSize,
+            total: query.total,
           }}
-        />
-        <Table.Column<ApplicationInstall>
-          dataIndex="domain_name"
-          title="Domain"
-          sorter={{ multiple: 1 }}
-          defaultSortOrder="ascend"
-          render={(domainName: string, record) => {
-            const base = domainName || record.domain_id;
-            const path = record.subdirectory ? `/${record.subdirectory}/` : "/";
-            const label = `${base}${path}`;
-            const isLink = record.status === "ready" && !!domainName;
-            return (
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <GlobalOutlined />
-                {isLink ? (
-                  <a
-                    href={`https://${domainName}${path}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{ fontWeight: 500 }}
-                  >
-                    {label}
-                  </a>
-                ) : (
-                  <span style={{ fontWeight: 500 }}>{label}</span>
-                )}
-              </div>
-            );
-          }}
-        />
-        <Table.Column<ApplicationInstall>
-          dataIndex="admin_email"
-          title="User"
-          render={(email: string) => {
-            return <span>{email}</span>;
-          }}
-        />
-        <Table.Column<ApplicationInstall>
-          dataIndex="version"
-          title="Version"
-          render={(version: string | null) => version || "-"}
-        />
-        <Table.Column<ApplicationInstall>
-          dataIndex="status"
-          title="Status"
-          render={(status: ApplicationInstall["status"], record) => {
-            const meta = STATUS_META[status] ?? STATUS_META.pending;
-            const tag = (
-              <Tag color={meta.color} icon={meta.icon}>
-                {meta.label}
-              </Tag>
-            );
-            if (status === "failed" && record.last_error) {
-              return <Tooltip title={record.last_error}>{tag}</Tooltip>;
-            }
-            return tag;
-          }}
-        />
-        <Table.Column<ApplicationInstall>
-          dataIndex="created_at"
-          title="Created"
-          sorter={{ multiple: 2 }}
-          defaultSortOrder="descend"
-          render={(date: string) => new Date(date).toLocaleDateString()}
-        />
-      </SearchableTable>
+          onChange={handleTableChange}
+        >
+          <Table.Column<ApplicationInstall>
+            dataIndex="app_type"
+            title="App"
+            render={(appType: string | undefined) => {
+              const key = appType || "wordpress";
+              const label = APP_TYPE_LABELS[key] ?? key;
+              return (
+                <Space size={6}>
+                  <CmsIcon appType={key} />
+                  <Typography.Text>{label}</Typography.Text>
+                </Space>
+              );
+            }}
+          />
+          <Table.Column<ApplicationInstall>
+            dataIndex="domain_name"
+            title="Domain"
+            key="domain_name"
+            sorter={{ multiple: 1 }}
+            defaultSortOrder="ascend"
+            render={(domainName: string, record) => {
+              const base = domainName || record.domain_id;
+              const path = record.subdirectory
+                ? `/${record.subdirectory}/`
+                : "/";
+              const label = `${base}${path}`;
+              const isLink = record.status === "ready" && !!domainName;
+              return (
+                <div
+                  style={{ display: "flex", alignItems: "center", gap: 8 }}
+                >
+                  <GlobalOutlined />
+                  {isLink ? (
+                    <a
+                      href={`https://${domainName}${path}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ fontWeight: 500 }}
+                    >
+                      {label}
+                    </a>
+                  ) : (
+                    <span style={{ fontWeight: 500 }}>{label}</span>
+                  )}
+                </div>
+              );
+            }}
+          />
+          <Table.Column<ApplicationInstall>
+            dataIndex="admin_email"
+            title="User"
+            render={(email: string) => <span>{email}</span>}
+          />
+          <Table.Column<ApplicationInstall>
+            dataIndex="version"
+            title="Version"
+            render={(version: string | null) => version || "-"}
+          />
+          <Table.Column<ApplicationInstall>
+            dataIndex="status"
+            title="Status"
+            render={(status: ApplicationInstall["status"], record) => {
+              const meta = STATUS_META[status] ?? STATUS_META.pending;
+              const tag = (
+                <Tag color={meta.color} icon={meta.icon}>
+                  {meta.label}
+                </Tag>
+              );
+              if (status === "failed" && record.last_error) {
+                return <Tooltip title={record.last_error}>{tag}</Tooltip>;
+              }
+              return tag;
+            }}
+          />
+          <Table.Column<ApplicationInstall>
+            dataIndex="created_at"
+            title="Created"
+            key="created_at"
+            sorter={{ multiple: 2 }}
+            defaultSortOrder="descend"
+            render={(date: string) => new Date(date).toLocaleDateString()}
+          />
+        </SearchableTableStringQ>
+      </Card>
     </div>
   );
 };

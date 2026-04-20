@@ -4,7 +4,6 @@
 // ui.nodes as AntD form fields, and submits to flow.ui.action. This
 // test suite stubs the kratos wrapper so we can exercise the render
 // path and the AAL1→AAL2 transition without a live Kratos instance.
-import { Refine } from "@refinedev/core";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { BrowserRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,19 +11,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as kratos from "../kratos";
 import { LoginPage } from "./Login";
 
-const noopAuthProvider = {
-  login: async () => ({ success: false }),
-  logout: async () => ({ success: true }),
-  check: async () => ({ authenticated: false }),
-  onError: async () => ({}),
-};
-
+// LoginPage reads useNavigate + Kratos flows directly — no provider
+// context needed post-M21. BrowserRouter is the only wrapper we still
+// have to install for the navigate hook.
 function renderLogin() {
   return render(
     <BrowserRouter>
-      <Refine authProvider={noopAuthProvider}>
-        <LoginPage />
-      </Refine>
+      <LoginPage />
     </BrowserRouter>,
   );
 }

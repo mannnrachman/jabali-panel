@@ -26,8 +26,16 @@ import {
   theme,
 } from "antd";
 
-import { homeForRole } from "../authProvider";
 import { clearIdentity, getIdentity } from "../identity";
+
+// Post-M21 inline: authProvider.ts used to export this. It's a
+// trivial two-branch map, not worth its own module now that no
+// provider context depends on it.
+const ADMIN_HOME = "/jabali-admin";
+const USER_HOME = "/jabali-panel";
+function homeForRole(isAdmin: boolean): string {
+  return isAdmin ? ADMIN_HOME : USER_HOME;
+}
 import {
   csrfToken,
   flowMessages,

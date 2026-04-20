@@ -7,3 +7,8 @@ node_modules/
 # install and never committed.
 dist/*
 !dist/.gitkeep
+
+# Playwright run artifacts — trace zips, failure screenshots, last-run
+# state. All regenerated on every test run; nothing here is portable.
+test-results/
+playwright-report/

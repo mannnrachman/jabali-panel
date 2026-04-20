@@ -1,6 +1,6 @@
 import { useForm } from "@refinedev/antd";
 import { Edit } from "@refinedev/antd";
-import { Divider, Form, Input, InputNumber, Switch, Typography } from "antd";
+import { Col, Divider, Form, Input, InputNumber, Row, Switch, Typography } from "antd";
 
 type PackageEditInput = {
   name: string;
@@ -43,54 +43,65 @@ export const PackageEdit = () => {
           Zero on any field means unlimited.
         </Typography.Paragraph>
 
-        <Form.Item
-          label="Disk Quota (MB)"
-          name="disk_quota_mb"
-          rules={[{ required: true, message: "Disk quota is required" }]}
-          tooltip="Hard limit enforced via setquota(8). 0 = unlimited."
-        >
-          <InputNumber min={0} />
-        </Form.Item>
-
-        <Form.Item
-          label="CPU Quota (%)"
-          name="cpu_quota_percent"
-          tooltip="systemd CPUQuota — 100% = 1 core, 200% = 2 cores. 0 = unlimited."
-        >
-          <InputNumber min={0} max={10000} />
-        </Form.Item>
-
-        <Form.Item
-          label="Memory Limit (MB)"
-          name="memory_limit_mb"
-          tooltip="systemd MemoryMax; MemoryHigh is fixed at 90% of this. 0 = unlimited."
-        >
-          <InputNumber min={0} max={1048576} />
-        </Form.Item>
-
-        <Form.Item
-          label="IO Read Bandwidth (MB/s)"
-          name="io_read_mbps"
-          tooltip="systemd IOReadBandwidthMax on /. 0 = unlimited."
-        >
-          <InputNumber min={0} max={10000} />
-        </Form.Item>
-
-        <Form.Item
-          label="IO Write Bandwidth (MB/s)"
-          name="io_write_mbps"
-          tooltip="systemd IOWriteBandwidthMax on /. 0 = unlimited."
-        >
-          <InputNumber min={0} max={10000} />
-        </Form.Item>
-
-        <Form.Item
-          label="Max Tasks"
-          name="max_tasks"
-          tooltip="systemd TasksMax — upper bound on concurrent processes. 0 = unlimited."
-        >
-          <InputNumber min={0} max={100000} />
-        </Form.Item>
+        {/* Resource limits — 3 cols on md+, 2 on sm, 1 stacked on xs.
+            Mirrors the same layout in PackageCreate.tsx. */}
+        <Row gutter={16}>
+          <Col xs={24} sm={12} md={8}>
+            <Form.Item
+              label="Disk Quota (MB)"
+              name="disk_quota_mb"
+              rules={[{ required: true, message: "Disk quota is required" }]}
+              tooltip="Hard limit enforced via setquota(8). 0 = unlimited."
+            >
+              <InputNumber min={0} style={{ width: "100%" }} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <Form.Item
+              label="CPU Quota (%)"
+              name="cpu_quota_percent"
+              tooltip="systemd CPUQuota — 100% = 1 core, 200% = 2 cores. 0 = unlimited."
+            >
+              <InputNumber min={0} max={10000} style={{ width: "100%" }} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <Form.Item
+              label="Memory Limit (MB)"
+              name="memory_limit_mb"
+              tooltip="systemd MemoryMax; MemoryHigh is fixed at 90% of this. 0 = unlimited."
+            >
+              <InputNumber min={0} max={1048576} style={{ width: "100%" }} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <Form.Item
+              label="IO Read Bandwidth (MB/s)"
+              name="io_read_mbps"
+              tooltip="systemd IOReadBandwidthMax on /. 0 = unlimited."
+            >
+              <InputNumber min={0} max={10000} style={{ width: "100%" }} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <Form.Item
+              label="IO Write Bandwidth (MB/s)"
+              name="io_write_mbps"
+              tooltip="systemd IOWriteBandwidthMax on /. 0 = unlimited."
+            >
+              <InputNumber min={0} max={10000} style={{ width: "100%" }} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <Form.Item
+              label="Max Tasks"
+              name="max_tasks"
+              tooltip="systemd TasksMax — upper bound on concurrent processes. 0 = unlimited."
+            >
+              <InputNumber min={0} max={100000} style={{ width: "100%" }} />
+            </Form.Item>
+          </Col>
+        </Row>
 
         <Divider orientation="left">Feature quotas</Divider>
 

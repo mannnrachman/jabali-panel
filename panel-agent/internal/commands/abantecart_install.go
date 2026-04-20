@@ -40,13 +40,14 @@ type abantecartInstallResp struct {
 
 // abantecartVersion is the upstream AbanteCart release this build
 // targets. Bump alongside abantecartZipSHA256 when moving to a new
-// release.
+// release. The git tag is bare-numeric ("1.4.3") — no `v` prefix — so
+// the archive URL below mirrors that. Hitting `v1.4.3.zip` returns 404.
 //
 // Releases: https://github.com/abantecart/abantecart-src/releases
-const abantecartVersion = "1.4.0"
+const abantecartVersion = "1.4.3"
 
 var abantecartZipURL = fmt.Sprintf(
-	"https://github.com/abantecart/abantecart-src/archive/refs/tags/v%s.zip",
+	"https://github.com/abantecart/abantecart-src/archive/refs/tags/%s.zip",
 	abantecartVersion,
 )
 

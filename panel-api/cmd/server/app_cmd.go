@@ -2,15 +2,18 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/apps"
 )
 
@@ -32,7 +35,9 @@ func newAppCmd() *cobra.Command {
 		newAppRegistryCmd(),
 		newAppListCmd(),
 		newAppGetCmd(),
+		newAppInstallCmd(),
 		newAppDeleteCmd(),
+		newAppE2ECmd(),
 	)
 	return cmd
 }
@@ -193,6 +198,131 @@ func newAppGetCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// ---- install ----
+
+// newAppInstallCmd posts an install through the shared
+// api.InstallApplication service (same code path as the HTTP handler).
+// Owner is auto-resolved from the domain; --user-id is exposed for
+// admin overrides only.
+//
+// --param k=v repeats; values are JSON-decoded so booleans/numbers/
+// objects round-trip without manual escaping. --wait blocks until the
+// install row reaches a terminal status.
+func newAppInstallCmd() *cobra.Command {
+	var (
+		appType  string
+		domainID string
+		userID   string
+		subdir   string
+		useWWW   bool
+		params   []string
+		wait     bool
+		waitSec  int
+	)
+
+	cmd := &cobra.Command{
+		Use:   "install",
+		Short: "Install an app on a domain (direct service — M20-safe)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if appType == "" {
+				return fmt.Errorf("--app-type is required")
+			}
+			if domainID == "" {
+				return fmt.Errorf("--domain-id is required")
+			}
+
+			parsed, err := parseParamFlags(params)
+			if err != nil {
+				return fmt.Errorf("--param: %w", err)
+			}
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
+			defer cancel()
+
+			res, err := installAppDirect(ctx, api.InstallParams{
+				AppType:      appType,
+				UserID:       userID,
+				DomainID:     domainID,
+				Subdirectory: subdir,
+				UseWWW:       useWWW,
+				Params:       parsed,
+			})
+			if err != nil {
+				return err
+			}
+
+			if jsonOutput && !wait {
+				return printJSON(res)
+			}
+
+			fmt.Printf("Install queued: %s (app=%s, status=%s)\n",
+				res.Install.ID, res.Install.AppType, res.Install.Status)
+			if res.Install.AdminUsername != "" {
+				fmt.Printf("  admin: %s\n", res.Install.AdminUsername)
+			}
+			if res.AdminPassword != "" {
+				fmt.Printf("  password (shown once): %s\n", res.AdminPassword)
+			}
+
+			if !wait {
+				return nil
+			}
+
+			final, perr := pollInstallStatus(cmd.Context(), res.Install.ID, time.Duration(waitSec)*time.Second)
+			if perr != nil {
+				return perr
+			}
+			if jsonOutput {
+				return printJSON(final)
+			}
+			fmt.Printf("\nFinal status: %s\n", final.Status)
+			if final.LastError != "" {
+				fmt.Printf("Error: %s\n", final.LastError)
+				os.Exit(1)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&appType, "app-type", "", "App descriptor name (see `jabali app registry`)")
+	cmd.Flags().StringVar(&domainID, "domain-id", "", "Target domain ID")
+	cmd.Flags().StringVar(&userID, "user-id", "", "Owner user ID (default: domain owner)")
+	cmd.Flags().StringVar(&subdir, "subdir", "", "Subdirectory under docroot (empty = site root)")
+	cmd.Flags().BoolVar(&useWWW, "use-www", false, "Reachable at www.<domain> too")
+	cmd.Flags().StringArrayVar(&params, "param", nil, "Per-app param: --param key=value (value is JSON; repeat for multiple)")
+	cmd.Flags().BoolVar(&wait, "wait", false, "Poll until status is ready or failed")
+	cmd.Flags().IntVar(&waitSec, "wait-timeout", 600, "Seconds to wait when --wait is set")
+	return cmd
+}
+
+// parseParamFlags converts ["site_title=My Site", "is_public=true"]
+// into a typed map. Values are JSON-decoded first so booleans/numbers
+// round-trip; on JSON failure we try ParseBool, then fall back to the
+// raw string. Quoting `"hello"` lets callers force-string a numeric.
+func parseParamFlags(flags []string) (map[string]interface{}, error) {
+	out := make(map[string]interface{}, len(flags))
+	for _, raw := range flags {
+		eq := strings.IndexByte(raw, '=')
+		if eq <= 0 {
+			return nil, fmt.Errorf("expected key=value, got %q", raw)
+		}
+		key := raw[:eq]
+		val := raw[eq+1:]
+
+		var parsed interface{}
+		if err := json.Unmarshal([]byte(val), &parsed); err == nil {
+			out[key] = parsed
+			continue
+		}
+		if b, err := strconv.ParseBool(val); err == nil {
+			out[key] = b
+			continue
+		}
+		out[key] = val
+	}
+	return out, nil
 }
 
 // ---- delete ----

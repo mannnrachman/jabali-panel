@@ -1932,11 +1932,18 @@ install_phpmyadmin() {
     mkdir -p "$pma_root"
     chmod 0755 "$pma_root"
 
-    # Download the tarball
+    # Download the tarball. files.phpmyadmin.net's CDN occasionally
+    # closes the TLS connection mid-transfer (OpenSSL errno 0,
+    # "unexpected eof while reading"). --retry covers that class of
+    # transient failure; --retry-all-errors (curl 7.71+) means we also
+    # retry on HTTP 5xx and non-network glitches. --max-time 300 caps
+    # total wall-time so the installer doesn't stall forever on a
+    # dead upstream.
     _log "downloading phpMyAdmin $pma_version"
-    if ! curl -fsSL -o "$pma_archive" \
-      "https://files.phpmyadmin.net/phpMyAdmin/${pma_version}/phpMyAdmin-${pma_version}-all-languages.tar.gz"; then
-      _die "failed to download phpMyAdmin $pma_version tarball"
+    if ! curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors \
+         --max-time 300 -o "$pma_archive" \
+         "https://files.phpmyadmin.net/phpMyAdmin/${pma_version}/phpMyAdmin-${pma_version}-all-languages.tar.gz"; then
+      _die "failed to download phpMyAdmin $pma_version tarball after 5 retries — check network / upstream status at https://www.phpmyadmin.net/downloads/"
     fi
 
     # Verify checksum

@@ -355,3 +355,105 @@ func TestVerifyBcryptPassthrough_LoginFailSurfacesError(t *testing.T) {
 		t.Error("canary identity must be deleted even when login fails")
 	}
 }
+
+func TestCreateRecoveryCode_Success(t *testing.T) {
+	t.Parallel()
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/admin/recovery/code" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.Error(w, "wrong endpoint", http.StatusMethodNotAllowed)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &captured); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"recovery_link":"https://panel.example/recover?token=abc","recovery_code":"abc","expires_at":"2026-05-01T00:00:00Z"}`))
+	}))
+	defer srv.Close()
+
+	c := newAdminClient(srv)
+	rc, err := c.CreateRecoveryCode(context.Background(), "id-uuid", "1h")
+	if err != nil {
+		t.Fatalf("CreateRecoveryCode: %v", err)
+	}
+	if rc.RecoveryLink != "https://panel.example/recover?token=abc" {
+		t.Errorf("unexpected recovery_link: %q", rc.RecoveryLink)
+	}
+	if captured["identity_id"] != "id-uuid" {
+		t.Errorf("identity_id = %v, want id-uuid", captured["identity_id"])
+	}
+	if captured["expires_in"] != "1h" {
+		t.Errorf("expires_in = %v, want 1h", captured["expires_in"])
+	}
+}
+
+func TestCreateRecoveryCode_OmitsExpiresInWhenEmpty(t *testing.T) {
+	t.Parallel()
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"recovery_link":"https://x/r","recovery_code":"c"}`))
+	}))
+	defer srv.Close()
+
+	c := newAdminClient(srv)
+	_, err := c.CreateRecoveryCode(context.Background(), "id-uuid", "")
+	if err != nil {
+		t.Fatalf("CreateRecoveryCode: %v", err)
+	}
+	if _, present := captured["expires_in"]; present {
+		t.Error("expires_in must be omitted when empty — let Kratos pick its default")
+	}
+}
+
+func TestCreateRecoveryCode_EmptyIDShortCircuits(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("should not hit kratos when identityID is empty")
+	}))
+	defer srv.Close()
+
+	c := newAdminClient(srv)
+	_, err := c.CreateRecoveryCode(context.Background(), "", "1h")
+	if err == nil {
+		t.Fatal("expected error on empty identityID")
+	}
+}
+
+func TestCreateRecoveryCode_RejectsEmptyLinkFromKratos(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		// Kratos misconfigured (no recovery method enabled) will return an
+		// empty recovery_link. Fail loudly rather than emit garbage CSV.
+		_, _ = w.Write([]byte(`{"recovery_link":"","recovery_code":"c"}`))
+	}))
+	defer srv.Close()
+
+	c := newAdminClient(srv)
+	_, err := c.CreateRecoveryCode(context.Background(), "id-uuid", "")
+	if err == nil || !strings.Contains(err.Error(), "empty recovery_link") {
+		t.Fatalf("expected empty-link error, got %v", err)
+	}
+}
+
+func TestCreateRecoveryCode_ServerErrorPropagates(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "identity not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := newAdminClient(srv)
+	_, err := c.CreateRecoveryCode(context.Background(), "missing-id", "")
+	if err == nil || !strings.Contains(err.Error(), "404") {
+		t.Fatalf("expected 404 propagation, got %v", err)
+	}
+}

@@ -368,7 +368,20 @@ the legacy behavior, so the two code paths share one invariant — ADR-0003
 - **Kratos password-migration webhook** — not used. All current users
   have bcrypt hashes, passthrough covers them.
 
-### Deferred: `--rebuild-kratos` flag for DB-loss recovery
+### Shipped: `jabali admin rebuild-kratos` for DB-loss recovery
+
+The gap documented below was closed by shipping a dedicated subcommand.
+Call path: `jabali admin rebuild-kratos [--dry-run] [--yes] [--output PATH] [--expires-in 24h]`.
+Per-user behavior: mint new Kratos identity with random cost-12 bcrypt
+temp password (never exposed) → `users.LinkKratosIdentity` (compensating
+rollback deletes the new identity on UPDATE failure) → `POST /admin/recovery/code`
+→ write `email,kratos_identity_id,recovery_link,status` to CSV.
+Implementation: `panel-api/cmd/server/kratos_rebuild_cmd.go`
++ `kratosclient.CreateRecoveryCode`. Runbook section updated.
+
+The original deferred-plan text below is retained for history.
+
+### Deferred (historical): `--rebuild-kratos` flag for DB-loss recovery
 
 The original plan (§8.3) stated: "re-run the migration tool with `--rebuild-kratos` (generates password-reset links for every user)."
 

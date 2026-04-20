@@ -91,6 +91,69 @@ func (c *Client) CreateIdentityWithPassword(ctx context.Context, traits AdminTra
 	return result.ID, nil
 }
 
+// RecoveryCode is the subset of Kratos's admin recovery-code response Jabali
+// consumes. Kratos returns more (`expires_at`, raw code) but operators only
+// need the pre-filled URL — clicking it lands on the password-reset flow.
+type RecoveryCode struct {
+	RecoveryLink string `json:"recovery_link"`
+	RecoveryCode string `json:"recovery_code"`
+	ExpiresAt    string `json:"expires_at"`
+}
+
+// CreateRecoveryCode generates a recovery link for the given identity ID.
+// Used by `jabali admin rebuild-kratos` (post-DB-loss recovery) so the
+// operator can distribute a one-click password-reset URL per user without
+// handing out a shared temp password.
+//
+// Kratos admin endpoint: POST /admin/recovery/code
+// Body: {"identity_id": "<uuid>", "expires_in": "1h"}
+// 201 response body: {"recovery_link": "...", "recovery_code": "...", "expires_at": "..."}.
+//
+// `expiresIn` accepts Kratos's duration format (e.g. "1h", "15m", "24h").
+// Pass "" to use the server's default (1h in current configs).
+func (c *Client) CreateRecoveryCode(ctx context.Context, identityID, expiresIn string) (*RecoveryCode, error) {
+	if identityID == "" {
+		return nil, fmt.Errorf("createrecoverycode: identityID is empty")
+	}
+
+	payload := map[string]any{"identity_id": identityID}
+	if expiresIn != "" {
+		payload["expires_in"] = expiresIn
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("createrecoverycode: marshal: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.adminURL+"/admin/recovery/code", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("createrecoverycode: request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("createrecoverycode: do: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		errBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("createrecoverycode: status %d: %s", resp.StatusCode, string(errBody))
+	}
+
+	var result RecoveryCode
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("createrecoverycode: decode: %w", err)
+	}
+	if result.RecoveryLink == "" {
+		return nil, fmt.Errorf("createrecoverycode: kratos returned empty recovery_link")
+	}
+	return &result, nil
+}
+
 // DeleteIdentity removes an identity by ID. 404 is treated as success because
 // a missing identity is the desired end state; this keeps the delete idempotent
 // during unwind/cleanup paths where we may race with a concurrent delete.

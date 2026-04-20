@@ -54,6 +54,7 @@ func newRootCmd() *cobra.Command {
 		Short: "Operator-only administrative subcommands",
 	}
 	adminCmd.AddCommand(newAdminSliceCutoverCmd())
+	adminCmd.AddCommand(newAdminRebuildKratosCmd())
 
 	cmd.AddCommand(
 		newServeCmd(),

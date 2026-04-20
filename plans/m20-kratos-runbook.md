@@ -108,29 +108,35 @@ If `jabali_kratos` is lost and no backup exists, identities and
 credentials are gone. Passwords were stored only in Kratos (bcrypt
 cost-12) — the panel DB no longer mirrors them. Recovery path:
 
-1. Reprovision: `install.sh install_kratos` is idempotent — re-running
-   it rebuilds the schema.
-2. Clear the orphaned link column on the panel side:
-   ```sql
-   UPDATE jabali_panel.users SET kratos_identity_id = NULL;
-   ```
-3. For every user, recreate their Kratos identity via the admin API
-   and issue a recovery link:
+1. **Reprovision Kratos:** `install.sh install_kratos` is idempotent —
+   re-running it rebuilds the schema.
+2. **Rebuild every identity in one shot:**
    ```sh
-   curl -sS -X POST http://127.0.0.1:4434/admin/identities \
-     -H 'Content-Type: application/json' \
-     -d '{"schema_id":"default","traits":{"email":"<email>","is_admin":false}}' \
-     | jq -r .id
-   # feed the returned UUID back into jabali_panel.users.kratos_identity_id,
-   # then POST /admin/recovery/code for the same id so the user can set a
-   # fresh password.
-   ```
-4. The `BootstrapAdmin` path in serve.go handles the first admin
-   automatically when `JABALI_BOOTSTRAP_ADMIN_EMAIL/_PASSWORD` are set.
+   # Dry-run first — lists the users that would be rebuilt and exits.
+   jabali admin rebuild-kratos --dry-run
 
-There is no bulk migration tool anymore — the `jabali kratos-migrate`
-command was deleted with the legacy stack. For multi-user restores,
-script the admin-API calls above.
+   # Real run. Emits a CSV of per-user recovery links to /tmp by default.
+   jabali admin rebuild-kratos --output /tmp/recovery-tokens.csv
+   ```
+   For each user with a non-NULL `kratos_identity_id`, the command:
+   - creates a new Kratos identity (bcrypt cost-12 temp password, never
+     exposed — the user resets via the recovery link);
+   - relinks `users.kratos_identity_id` to the new UUID via the same
+     compensating-transaction plumbing M20 user-create uses (new ID is
+     deleted from Kratos if the relink UPDATE fails);
+   - generates a one-click recovery link (`--expires-in 24h` by default)
+     and writes a row to the CSV: `email, kratos_identity_id, recovery_link, status`.
+
+   Distribute the CSV rows out-of-band (email, SMS, chat). `status =
+   ok_no_link` means the user was relinked but the recovery-code call
+   failed — re-run the admin recovery endpoint for that identity
+   manually, or re-run the whole command (it won't re-create identities
+   it already linked; that's currently a TODO — for now the command
+   DOES re-create on every run, so only invoke it on a DB-loss event).
+3. **First admin bootstrap:** `BootstrapAdmin` in serve.go still handles
+   the seed admin automatically when `JABALI_BOOTSTRAP_ADMIN_EMAIL /
+   _PASSWORD` are set in `panel.env`. If the admin already existed in the
+   panel DB (non-seed install), `rebuild-kratos` covers them.
 
 ### CLI after M20
 

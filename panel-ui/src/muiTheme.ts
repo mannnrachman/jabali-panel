@@ -1,17 +1,147 @@
+// muiTheme.ts — AntD v6 ConfigProvider configuration modeled on the
+// MUI-flavored reference demo. Light mode is a near-verbatim port of
+// the upstream example: MUI palette tokens, elevation shadows, 500-
+// weight uppercase buttons, Roboto text inputs, and a Material-style
+// inset ripple wired via ConfigProvider's `wave` slot. Dark mode
+// piggybacks on AntD's darkAlgorithm for surface/text derivation and
+// keeps only brand primary + sizing to avoid maintaining a second
+// 50-token palette.
 import { useMemo } from "react";
+import raf from "@rc-component/util/lib/raf";
 import { theme } from "antd";
-import type { ConfigProviderProps } from "antd";
+import type { ConfigProviderProps, GetProp } from "antd";
+import { createStyles } from "antd-style";
+import clsx from "clsx";
 
 import type { ThemeMode } from "./theme/ThemeModeContext";
 
-// Base font size applied to both light and dark tokens. AntD's default is
-// 14; 16 matches iOS/macOS body type and lifts heading/form/tag sizes via
-// the algorithm's seed-derivation. Bump here, not per-token, to keep the
-// two palettes in lockstep.
+type WaveConfig = GetProp<ConfigProviderProps, "wave">;
+
+// Base font size applied to both light and dark tokens. Upstream MUI
+// sits at 14; we bump to 16 to match iOS/macOS body type. Tables are
+// pinned back to 14 via the per-component override below.
 const baseFontSize = 16;
 
-// Light palette — MUI-flavoured tokens kept verbatim so light mode stays
-// pixel-identical to the pre-dark-mode design.
+// ---------------------------------------------------------------------------
+// Inset ripple — Material-style wave that sweeps a translucent white
+// dot out from the click point inside the Button's own bounds. Only
+// applied to Button; other components keep AntD's default outset wave.
+// ---------------------------------------------------------------------------
+const createHolder = (node: HTMLElement) => {
+  const { borderWidth } = getComputedStyle(node);
+  const borderWidthNum = Number.parseInt(borderWidth, 10) || 0;
+  const div = document.createElement("div");
+  div.style.position = "absolute";
+  div.style.inset = `-${borderWidthNum}px`;
+  div.style.borderRadius = "inherit";
+  div.style.background = "transparent";
+  div.style.zIndex = "999";
+  div.style.pointerEvents = "none";
+  div.style.overflow = "hidden";
+  node.appendChild(div);
+  return div;
+};
+
+const createDot = (
+  holder: HTMLElement,
+  color: string,
+  left: number,
+  top: number,
+  size = 0,
+) => {
+  const dot = document.createElement("div");
+  dot.style.position = "absolute";
+  dot.style.insetInlineStart = `${left}px`;
+  dot.style.top = `${top}px`;
+  dot.style.width = `${size}px`;
+  dot.style.height = `${size}px`;
+  dot.style.borderRadius = "50%";
+  dot.style.background = color;
+  dot.style.transform = "translate3d(-50%, -50%, 0)";
+  dot.style.transition = "all 1s ease-out";
+  holder.appendChild(dot);
+  return dot;
+};
+
+const showInsetEffect: WaveConfig["showEffect"] = (
+  node,
+  { event, component },
+) => {
+  if (component !== "Button") return;
+  const holder = createHolder(node);
+  const rect = holder.getBoundingClientRect();
+  const left = event.clientX - rect.left;
+  const top = event.clientY - rect.top;
+  const dot = createDot(holder, "rgba(255, 255, 255, 0.65)", left, top);
+  raf(() => {
+    dot.ontransitionend = () => holder.remove();
+    dot.style.width = "200px";
+    dot.style.height = "200px";
+    dot.style.opacity = "0";
+  });
+};
+
+// ---------------------------------------------------------------------------
+// Component classNames — MUI-style button/input/select chrome (uppercase
+// labels, Roboto text, elevation shadows) applied via antd-style's
+// createStyles so the CSS gets scoped + hashed. Only used in light mode;
+// dark mode opts out so AntD's darkAlgorithm surfaces don't fight
+// hand-rolled MUI colors.
+// ---------------------------------------------------------------------------
+const useLightStyles = createStyles(({ css }) => ({
+  buttonPrimary: css({
+    backgroundColor: "#1976d2",
+    color: "#ffffff",
+    border: "none",
+    fontWeight: 500,
+    textTransform: "uppercase",
+    letterSpacing: "0.02857em",
+    boxShadow:
+      "0px 3px 1px -2px rgba(0,0,0,0.2), 0px 2px 2px 0px rgba(0,0,0,0.14), 0px 1px 5px 0px rgba(0,0,0,0.12)",
+    transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+  }),
+  buttonDefault: css({
+    backgroundColor: "#ffffff",
+    color: "rgba(0, 0, 0, 0.87)",
+    border: "1px solid rgba(0, 0, 0, 0.23)",
+    fontWeight: 500,
+    textTransform: "uppercase",
+    letterSpacing: "0.02857em",
+    transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+  }),
+  buttonDanger: css({
+    backgroundColor: "#d32f2f",
+    color: "#ffffff",
+    border: "none",
+    fontWeight: 500,
+    textTransform: "uppercase",
+    letterSpacing: "0.02857em",
+    boxShadow:
+      "0px 3px 1px -2px rgba(0,0,0,0.2), 0px 2px 2px 0px rgba(0,0,0,0.14), 0px 1px 5px 0px rgba(0,0,0,0.12)",
+  }),
+  inputRoot: css({
+    borderColor: "rgba(0, 0, 0, 0.23)",
+    transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+  }),
+  inputElement: css({
+    color: "rgba(0, 0, 0, 0.87)",
+    fontFamily: '"Roboto", "Helvetica", "Arial", sans-serif',
+  }),
+  inputError: css({
+    borderColor: "#d32f2f",
+  }),
+  selectRoot: css({
+    borderColor: "rgba(0, 0, 0, 0.23)",
+    fontFamily: '"Roboto", "Helvetica", "Arial", sans-serif',
+  }),
+}));
+
+// ---------------------------------------------------------------------------
+// Tokens — Light is the upstream MUI-flavored palette verbatim. Dark
+// keeps brand primary + sizing and lets AntD's darkAlgorithm derive
+// surface/text/border so the two modes stay in lockstep without
+// hand-maintaining a second 50-token palette.
+// ---------------------------------------------------------------------------
 const lightTokens = {
   fontSize: baseFontSize,
   colorPrimary: "#1976d2",
@@ -94,9 +224,6 @@ const lightTokens = {
     "0px 3px 3px -2px rgba(0,0,0,0.2),0px 3px 4px 0px rgba(0,0,0,0.14),0px 1px 8px 0px rgba(0,0,0,0.12)",
 };
 
-// Dark palette — just the brand primary + sizing; AntD's darkAlgorithm
-// fills in surface/text/border so we don't have to hand-maintain 50+
-// tokens twice.
 const darkTokens = {
   fontSize: baseFontSize,
   colorPrimary: "#1976d2",
@@ -116,16 +243,34 @@ const darkTokens = {
   marginLG: 24,
 };
 
-// Table-specific font overrides: the app-wide base is 16 (user preference
-// for body text legibility) but tables at 16 make rows and headers feel
-// heavier than AntD's stock look. Pin Table components back to AntD's
-// native 14 so list pages feel compact and familiar.
+// Tables pin to fontSize 14 regardless of mode — 16 makes rows feel
+// heavier than AntD's stock list pages.
 const tableTokens = {
   fontSize: 14,
   cellPaddingBlock: 8,
 };
 
+const buttonComponentTokens = {
+  primaryShadow:
+    "0px 3px 1px -2px rgba(0,0,0,0.2), 0px 2px 2px 0px rgba(0,0,0,0.14), 0px 1px 5px 0px rgba(0,0,0,0.12)",
+  defaultShadow:
+    "0px 3px 1px -2px rgba(0,0,0,0.2), 0px 2px 2px 0px rgba(0,0,0,0.14), 0px 1px 5px 0px rgba(0,0,0,0.12)",
+  dangerShadow:
+    "0px 3px 1px -2px rgba(0,0,0,0.2), 0px 2px 2px 0px rgba(0,0,0,0.14), 0px 1px 5px 0px rgba(0,0,0,0.12)",
+  fontWeight: 500,
+  defaultBorderColor: "rgba(0, 0, 0, 0.23)",
+  defaultColor: "rgba(0, 0, 0, 0.87)",
+  defaultBg: "#ffffff",
+  defaultHoverBg: "rgba(25, 118, 210, 0.04)",
+  defaultHoverBorderColor: "rgba(0, 0, 0, 0.23)",
+  paddingInline: 16,
+  paddingBlock: 6,
+  contentFontSize: 14,
+  borderRadius: 4,
+};
+
 const lightComponents = {
+  Button: buttonComponentTokens,
   Alert: { borderRadiusLG: 4 },
   Modal: { borderRadiusLG: 4 },
   Progress: {
@@ -159,8 +304,10 @@ const darkComponents = {
   Table: tableTokens,
 };
 
-// Layout surface tokens (sider, header, content) per mode.  Shells pull
-// these via useShellTokens() so nothing hardcodes hex values.
+// ---------------------------------------------------------------------------
+// Shell surface tokens — consumed by layouts (sider, header, content)
+// via useShellTokens(). Keeps hex values out of components.
+// ---------------------------------------------------------------------------
 export interface ShellTokens {
   siderBg: string;
   siderHeaderColor: string;
@@ -187,6 +334,11 @@ const shellTokensByMode = (mode: ThemeMode): ShellTokens =>
       };
 
 const useMuiTheme = (mode: ThemeMode) => {
+  // createStyles must be called unconditionally (hook rules). Class
+  // names are only attached in light mode; dark mode passes undefined
+  // so AntD's darkAlgorithm surfaces render cleanly.
+  const { styles } = useLightStyles();
+
   return useMemo<ConfigProviderProps>(
     () => ({
       theme: {
@@ -195,8 +347,41 @@ const useMuiTheme = (mode: ThemeMode) => {
         token: mode === "dark" ? darkTokens : lightTokens,
         components: mode === "dark" ? darkComponents : lightComponents,
       },
+      wave: mode === "dark" ? undefined : { showEffect: showInsetEffect },
+      button:
+        mode === "dark"
+          ? undefined
+          : {
+              classNames: ({ props }) => ({
+                root: clsx(
+                  props.type === "primary" && styles.buttonPrimary,
+                  props.type === "default" && styles.buttonDefault,
+                  props.danger && styles.buttonDanger,
+                ),
+              }),
+            },
+      input:
+        mode === "dark"
+          ? undefined
+          : {
+              classNames: ({ props }) => ({
+                root: clsx(
+                  styles.inputRoot,
+                  props.status === "error" && styles.inputError,
+                ),
+                input: styles.inputElement,
+              }),
+            },
+      select:
+        mode === "dark"
+          ? undefined
+          : {
+              classNames: {
+                root: styles.selectRoot,
+              },
+            },
     }),
-    [mode],
+    [mode, styles],
   );
 };
 

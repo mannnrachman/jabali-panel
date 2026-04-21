@@ -307,7 +307,6 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Packages:            deps.Packages,
 				Agent:               deps.Agent,
 				Apps:                deps.Apps,
-				PanelHost:           cfg.Server.Hostname,
 			}
 			api.RegisterWordPressRoutes(v1, appCfg)
 			api.RegisterApplicationRoutes(v1, appCfg)

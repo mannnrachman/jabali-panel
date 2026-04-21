@@ -41,11 +41,10 @@ type ApplicationHandlerConfig struct {
 	// handlers in applications.go require it. app.NewWithDeps always
 	// populates it for production wiring.
 	Apps *apps.Registry
-	// PanelHost is the public hostname (no scheme, no port) the WP
-	// magic-link must-use plugin POSTs to for validate. Empty in dev
-	// runs that don't ship the plugin; the agent skips the install
-	// step when either PanelHost or InstallID is unavailable.
-	PanelHost string
+	// (PanelHost field removed in M22 rework — see ADR-0040. The new
+	// sso-file design has no panel-side WordPress code calling back to
+	// the panel, so the panel's public hostname doesn't need to be
+	// threaded through to the agent at install time.)
 }
 
 // WordPressHandlerConfig is the pre-M19 alias retained so old wiring
@@ -1003,14 +1002,10 @@ func createInstallAndKickAgent(parentCtx context.Context, args installKickArgs, 
 		"subdirectory":  args.Subdirectory,
 		"use_www":       args.UseWWW,
 	}
-	// M22 — thread the magic-link mu-plugin install through to the
-	// agent. Both must be non-empty; the agent skips the plugin step
-	// when either is missing (dev hosts without install_jabali_wp_mu_plugin).
-	if cfg.PanelHost != "" && args.InstallID != "" {
-		payload["panel_host"] = cfg.PanelHost
-		payload["install_id"] = args.InstallID
-	}
-	// M16 Wave D — thread OIDC plugin bootstrap through to the agent.
+	// (M22 magic-link mu-plugin payload plumbing removed in the M22
+	// rework — see ADR-0040. SSO files are minted on demand via
+	// wordpress.create_sso_file, not threaded through wordpress.install.)
+
 	agentResp, err := cfg.Agent.Call(ctx, "app.install", payload)
 	if err != nil {
 		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)

@@ -9,8 +9,6 @@ import {
   DeleteOutlined,
   PlusOutlined,
   DragOutlined,
-  DownOutlined,
-  UpOutlined,
 } from "@ant-design/icons";
 import {
   Button,
@@ -72,8 +70,6 @@ const REDIRECT_TYPE_OPTIONS = [
 interface SortableCardProps {
   idx: number;
   pr: PageRedirect;
-  isExpanded: boolean;
-  onToggleExpanded: (idx: number) => void;
   onRemove: (idx: number) => void;
   onUpdate: (idx: number, key: keyof PageRedirect, value: string | boolean) => void;
 }
@@ -81,8 +77,6 @@ interface SortableCardProps {
 const SortableCard = ({
   idx,
   pr,
-  isExpanded,
-  onToggleExpanded,
   onRemove,
   onUpdate,
 }: SortableCardProps) => {
@@ -133,12 +127,6 @@ const SortableCard = ({
             → {pr.type}
           </Typography.Text>
           <Button
-            type="text"
-            icon={isExpanded ? <UpOutlined /> : <DownOutlined />}
-            onClick={() => onToggleExpanded(idx)}
-            style={{ padding: 4 }}
-          />
-          <Button
             danger
             icon={<DeleteOutlined />}
             type="text"
@@ -146,9 +134,8 @@ const SortableCard = ({
           />
         </div>
 
-        {isExpanded && (
-          <>
-            <Row gutter={16} style={{ marginBottom: 12 }}>
+        <>
+          <Row gutter={16} style={{ marginBottom: 12 }}>
               <Col span={12}>
                 <div style={{ marginBottom: 8 }}>
                   <Typography.Text>
@@ -209,8 +196,7 @@ const SortableCard = ({
                 </Typography.Text>
               </Col>
             </Row>
-          </>
-        )}
+        </>
       </Card>
     </div>
   );
@@ -229,7 +215,6 @@ export const DomainRedirectsButton = ({
     domain.page_redirects ?? []
   );
   const [isSaving, setIsSaving] = useState(false);
-  const [expandedCards, setExpandedCards] = useState<Set<number>>(new Set());
   const qc = useQueryClient();
 
   const sensors = useSensors(
@@ -442,16 +427,6 @@ export const DomainRedirectsButton = ({
                       key={idx}
                       idx={idx}
                       pr={pr}
-                      isExpanded={expandedCards.has(idx)}
-                      onToggleExpanded={(i) => {
-                        const newSet = new Set(expandedCards);
-                        if (newSet.has(i)) {
-                          newSet.delete(i);
-                        } else {
-                          newSet.add(i);
-                        }
-                        setExpandedCards(newSet);
-                      }}
                       onRemove={removePageRedirect}
                       onUpdate={updatePageRedirect}
                     />

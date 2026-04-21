@@ -739,7 +739,7 @@ export const DomainSettingsButton = ({
         />
 
         <Tabs
-          defaultActiveKey="raw"
+          defaultActiveKey="builder"
           items={[
             {
               key: "builder",

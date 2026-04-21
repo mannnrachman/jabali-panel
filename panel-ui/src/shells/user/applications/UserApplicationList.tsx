@@ -328,12 +328,11 @@ export const UserApplicationList = () => {
                       href={`https://${domainName}${path}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      style={{ fontWeight: 500 }}
                     >
                       {label}
                     </a>
                   ) : (
-                    <span style={{ fontWeight: 500 }}>{label}</span>
+                    <span>{label}</span>
                   )}
                 </div>
               );

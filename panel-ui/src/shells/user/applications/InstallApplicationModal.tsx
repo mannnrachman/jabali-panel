@@ -622,7 +622,7 @@ export const InstallApplicationModal = ({
 
             {selectedApp?.description && (
               <Form.Item style={{ marginTop: -8, marginBottom: 16 }}>
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                <Typography.Text type="secondary">
                   {selectedApp.description}
                 </Typography.Text>
               </Form.Item>
@@ -655,7 +655,7 @@ export const InstallApplicationModal = ({
                   <Switch />
                 </Form.Item>
                 <Form.Item style={{ marginBottom: 16 }}>
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  <Typography.Text type="secondary">
                     Install on www.domain.com instead of domain.com
                   </Typography.Text>
                 </Form.Item>

@@ -383,6 +383,39 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 		}
 	}
 
+	// Step 3b: Set pretty permalink structure.
+	//
+	// Out of the box WP uses "Plain" permalinks (?p=N), which means WP's
+	// request parser never looks at the path segment for routing. An
+	// unknown URL like /blah/ hits nginx's try_files, falls through to
+	// /index.php (which carries $query_string, but "blah" is not a known
+	// query param), WP sees an empty query → main loop returns the blog
+	// homepage with HTTP 200. The operator sees what looks like a
+	// legitimate /blah/ page rendering the blog, no 404. Setting any
+	// pretty permalink structure turns on WP's path-based routing so
+	// unknown slugs produce a proper 404. /%postname%/ is the most
+	// common choice and matches the URL shape operators expect when they
+	// migrate content in.
+	permalinkCmd := buildSystemdRunCmd(ctx,
+		req.OSUser,
+		"wp", "rewrite", "structure", "/%postname%/",
+		"--path="+installPath,
+	)
+	var permalinkStdout, permalinkStderr bytes.Buffer
+	permalinkCmd.Stdout = &permalinkStdout
+	permalinkCmd.Stderr = &permalinkStderr
+	if err := permalinkCmd.Run(); err != nil {
+		_ = cleanupWordPressFiles(ctx, installPath)
+		return nil, &agentwire.AgentError{
+			Code: agentwire.CodeInternal,
+			Message: fmt.Sprintf("wp rewrite structure failed: %v; stderr=%q; stdout=%q",
+				err,
+				truncateStr(permalinkStderr.String(), 400),
+				truncateStr(permalinkStdout.String(), 200),
+			),
+		}
+	}
+
 	// Step 4: Get WordPress version
 	versionCmd := buildSystemdRunCmd(ctx,
 		req.OSUser,

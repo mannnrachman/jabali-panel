@@ -39,8 +39,7 @@ var (
 )
 
 // crockfordULID is the Crockford base32 alphabet ULIDs use: 0-9 + A-Z
-// minus I, L, O, U. Copied from wordpress_magic_link.go which Step 5
-// of the M22 rework will delete.
+// minus I, L, O, U.
 const crockfordULID = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 // GenerateNonce returns 32 bytes of crypto/rand encoded as base64url
@@ -77,7 +76,7 @@ func RenderSSOTemplate(nonce, wpLoadPath, installID, adminUsername string) (stri
 	if !wpLoadPathRE.MatchString(wpLoadPath) {
 		return "", fmt.Errorf("invalid wpLoadPath: must be absolute, end in wp-load.php, contain only [A-Za-z0-9_/.\\-], got %q", wpLoadPath)
 	}
-	if !sedSafeULIDLocal(installID) {
+	if !sedSafeULID(installID) {
 		return "", fmt.Errorf("invalid installID: must be 26-char Crockford ULID, got %q", installID)
 	}
 	if !adminUserRE.MatchString(adminUsername) {
@@ -108,11 +107,8 @@ func phpStringLiteral(s string) string {
 	return "'" + s + "'"
 }
 
-// sedSafeULIDLocal validates a 26-char Crockford ULID. Local copy of the
-// validator currently in wordpress_magic_link.go (which Step 5 will
-// delete). Renamed with the Local suffix so we don't conflict with the
-// existing exported name during the migration window.
-func sedSafeULIDLocal(s string) bool {
+// sedSafeULID validates a 26-char Crockford ULID.
+func sedSafeULID(s string) bool {
 	if len(s) != 26 {
 		return false
 	}

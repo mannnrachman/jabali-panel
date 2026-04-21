@@ -167,11 +167,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.CronJobs = cronJobsRepo
 		deps.LimitOverrides = limitOverridesRepo
 
-		// (M22 magic-link key load + token repository wiring removed in
-		// the rework — ADR-0040. The new sso-file design has no signing
-		// key and no panel-side token store. Operators may leave a
-		// dead `magic_link_key_path` line in /etc/jabali/config.toml;
-		// the BurntSushi TOML loader silently ignores it.)
 		// M18: resolve the /home mount once at startup. Passed to every
 		// user.limits.{apply,clear,report} call so the agent runs
 		// setquota against the explicit mount path, never -a. Failure

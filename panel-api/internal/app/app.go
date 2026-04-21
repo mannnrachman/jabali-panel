@@ -63,10 +63,7 @@ type Deps struct {
 	QuotaMount          string
 	SSO                 *sso.Service
 	SSOKey              *ssokey.Key
-	// (MagicLinkKeys + MagicLinkTokens removed in M22 rework — ADR-0040.
-	// The new mint handler dispatches wordpress.create_sso_file via the
-	// agent and needs no panel-side key or token store.)
-	Log *slog.Logger
+	Log                 *slog.Logger
 }
 
 // Default tier: chosen so a reasonable SPA (polling, a few concurrent
@@ -308,11 +305,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterApplicationRoutes(v1, appCfg)
 		}
 
-		// Magic-link admin login (M22 rework — ADR-0040). Mint endpoint
-		// only; the validate endpoint is gone (the agent-written PHP file
-		// is its own validator). MagicLinkKeys + MagicLinkTokens deps are
-		// no longer read here — Step 6 of the rework deletes those fields
-		// from deps + serve.go's boot-time guard.
+		// Magic-link admin login (ADR-0040): mint-only. The agent-written
+		// PHP file is its own validator, so no validate endpoint lives here.
 		if deps.WordPressInstalls != nil && deps.Domains != nil &&
 			deps.Users != nil && deps.Agent != nil {
 			api.RegisterMagicLinkRoutes(v1, api.MagicLinkHandlerConfig{

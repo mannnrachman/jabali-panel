@@ -147,11 +147,6 @@ type SSOConfig struct {
 	// Examples: "http://localhost", "https://pma.example.com"
 	// When empty, defaults to http://<Host> with port stripped.
 	PhpMyAdminBaseURL string `toml:"phpmyadmin_base_url"`
-
-	// (MagicLinkKeyPath removed in M22 rework — ADR-0040. The new
-	// sso-file design has no signing key. BurntSushi TOML silently
-	// ignores any leftover `magic_link_key_path` line in operator
-	// config files, so removing the field is safe at runtime.)
 }
 
 type WordPressConfig struct {

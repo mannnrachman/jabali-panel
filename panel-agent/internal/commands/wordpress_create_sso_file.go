@@ -64,7 +64,7 @@ func CreateSSOFile(ctx context.Context, req createSSOFileReq) (createSSOFileResp
 	if req.OSUser == "" {
 		return zero, fmt.Errorf("os_user required")
 	}
-	if !sedSafeULIDLocal(req.InstallID) {
+	if !sedSafeULID(req.InstallID) {
 		return zero, fmt.Errorf("install_id must be 26-char Crockford ULID, got %q", req.InstallID)
 	}
 	// adminUsername is validated inside RenderSSOTemplate; a separate

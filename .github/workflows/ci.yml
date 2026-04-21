@@ -1,0 +1,110 @@
+# GitHub Actions CI — mirror of .gitea/workflows/ci.yml with GitHub-specific
+# tweaks. The Gitea workflow remains the source of truth for the self-hosted
+# path; this file runs the same gates against GitHub-hosted ubuntu-latest
+# runners so shukiv/jabali2 (private GitHub mirror) gets an independent
+# green/red signal.
+#
+# Differences vs .gitea/workflows/ci.yml:
+#   - actions/upload-artifact pinned to @v4 (v3 is deprecated + being removed
+#     by GitHub, still current on Gitea Actions)
+#   - setup-go keeps cache:false for parity with the Gitea host-mode runner's
+#     persistent $GOMODCACHE quirk; on GitHub-hosted ephemeral runners this
+#     is slightly suboptimal (we pay dep re-download per job) but avoids
+#     workflow drift. Flip to true later once the mirror is stable.
+#   - e2e port-4173 cleanup kept: it's a no-op on ephemeral runners (no
+#     leftover vite-preview to kill), and still needed if/when this workflow
+#     runs on a self-hosted runner.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  GO_VERSION: "1.24"
+  NODE_VERSION: "20"
+
+jobs:
+  go:
+    name: Go tests + vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: go vet
+        run: make vet
+      - name: go test -race
+        run: make test
+
+  ui-unit:
+    name: panel-ui unit tests (vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: panel-ui/package-lock.json
+      - name: Install deps
+        run: cd panel-ui && npm ci --no-audit --no-fund
+      - name: vitest
+        run: cd panel-ui && npm test
+
+  e2e:
+    name: Playwright E2E
+    runs-on: ubuntu-latest
+    concurrency:
+      group: e2e-port-4173
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: panel-ui/package-lock.json
+      - name: Install deps
+        run: cd panel-ui && npm ci --no-audit --no-fund
+      - name: Install Playwright Chromium
+        run: cd panel-ui && npx playwright install --with-deps chromium
+      - name: Build SPA
+        run: cd panel-ui && npm run build
+      - name: Free port 4173
+        run: |
+          echo "=== processes matching 'vite preview' ==="
+          pgrep -a -f "vite preview" || echo "(none)"
+          echo "=== listeners on :4173 before ==="
+          ss -tln | awk 'NR==1 || /:4173 /' || true
+          pkill -9 -f "vite preview" 2>/dev/null || true
+          for i in $(seq 1 10); do
+            ss -tln | grep -q ":4173 " || break
+            sleep 1
+          done
+          echo "=== listeners on :4173 after ==="
+          ss -tln | awk 'NR==1 || /:4173 /' || true
+          if ss -tln | grep -q ":4173 "; then
+            echo "ERROR: port 4173 still in use after kill + 10s wait"
+            exit 1
+          fi
+      - name: Playwright
+        run: cd panel-ui && npx playwright test --project=chromium --reporter=list
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            panel-ui/test-results/
+            panel-ui/playwright-report/
+          retention-days: 7

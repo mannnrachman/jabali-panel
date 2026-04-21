@@ -3,7 +3,9 @@ package dkim
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"io/fs"
 	"os"
@@ -247,3 +249,61 @@ func TestLoadEd25519_InvalidContent(t *testing.T) {
 		})
 	}
 }
+
+func TestSeedToPKCS8PEM(t *testing.T) {
+	t.Parallel()
+
+	// Round-trip: generate a seed, wrap as PKCS#8 PEM, then parse it back
+	// with x509.ParsePKCS8PrivateKey and verify the seed matches.
+	k, err := GenerateEd25519()
+	if err != nil {
+		t.Fatalf("GenerateEd25519: %v", err)
+	}
+	seed, err := base64.StdEncoding.DecodeString(string(k.PrivateRawBase64))
+	if err != nil {
+		t.Fatalf("decode seed: %v", err)
+	}
+
+	p, err := SeedToPKCS8PEM(seed)
+	if err != nil {
+		t.Fatalf("SeedToPKCS8PEM: %v", err)
+	}
+	if !bytes.HasPrefix(p, []byte("-----BEGIN PRIVATE KEY-----\n")) {
+		t.Errorf("PEM missing expected BEGIN header: %q", p[:64])
+	}
+	if !bytes.HasSuffix(p, []byte("-----END PRIVATE KEY-----\n")) {
+		t.Errorf("PEM missing expected END footer")
+	}
+
+	// Parse the PEM back — it should decode into an Ed25519 key with the
+	// same seed. This is exactly what Stalwart v0.16's
+	// `Ed25519Key::from_pkcs8_maybe_unchecked_der` does after PEM-decoding.
+	block, _ := pem.Decode(p)
+	if block == nil {
+		t.Fatal("pem.Decode returned nil block")
+	}
+	if block.Type != "PRIVATE KEY" {
+		t.Errorf("PEM type: got %q, want PRIVATE KEY", block.Type)
+	}
+	parsedKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse PKCS#8: %v", err)
+	}
+	priv, ok := parsedKey.(ed25519.PrivateKey)
+	if !ok {
+		t.Fatalf("parsed key type: got %T, want ed25519.PrivateKey", parsedKey)
+	}
+	if !bytes.Equal(priv.Seed(), seed) {
+		t.Error("round-trip seed mismatch")
+	}
+}
+
+func TestSeedToPKCS8PEM_InvalidSeed(t *testing.T) {
+	t.Parallel()
+	// 31 bytes — one short. Any length other than 32 should error.
+	_, err := SeedToPKCS8PEM(make([]byte, 31))
+	if !errors.Is(err, ErrInvalidSeed) {
+		t.Errorf("err: got %v, want Is(ErrInvalidSeed)", err)
+	}
+}
+

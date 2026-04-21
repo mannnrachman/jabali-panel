@@ -16,7 +16,9 @@ package dkim
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
@@ -92,6 +94,36 @@ func PublicDKIMTxtFromSeed(seed []byte) ([]byte, error) {
 	}
 	pubB64 := base64.StdEncoding.EncodeToString(pub)
 	return []byte(fmt.Sprintf("v=DKIM1; k=ed25519; p=%s", pubB64)), nil
+}
+
+// SeedToPKCS8PEM wraps a 32-byte Ed25519 seed as a PEM-encoded
+// PKCS#8 private key, the format Stalwart v0.16's DkimSignature
+// ingestion expects (source:
+// crates/common/src/config/smtp/auth.rs —
+// `Ed25519Key::from_pkcs8_maybe_unchecked_der` after PEM-decoding).
+//
+// The on-disk form under /etc/jabali-panel/dkim/<domain>.key stays
+// raw-seed base64 (ADR-0043 + the package doc-comment explain why).
+// This helper is only used when preparing the JMAP payload for
+// x:DkimSignature/set create, so that Stalwart receives the private
+// key in the shape it wants while the panel's backup/DR path keeps
+// the simplest possible format.
+//
+// Output ends with a trailing newline per RFC 7468; the PEM block
+// type is "PRIVATE KEY" (PKCS#8, unencrypted).
+func SeedToPKCS8PEM(seed []byte) ([]byte, error) {
+	if len(seed) != ed25519.SeedSize {
+		return nil, fmt.Errorf("%w: got %d bytes, want %d", ErrInvalidSeed, len(seed), ed25519.SeedSize)
+	}
+	key := ed25519.NewKeyFromSeed(seed)
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("dkim: marshal PKCS#8: %w", err)
+	}
+	return pem.EncodeToMemory(&pem.Block{
+		Type:  "PRIVATE KEY",
+		Bytes: der,
+	}), nil
 }
 
 // LoadEd25519 reads a key file written by WritePrivate and returns the

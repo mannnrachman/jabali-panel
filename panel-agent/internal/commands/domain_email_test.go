@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,35 +47,65 @@ func wireDKIMDir(t *testing.T) string {
 }
 
 // --- domain.email_enable --------------------------------------------
-//
-// The handler currently returns a TASK-13 typed refusal error after
-// provisioning DKIM + systemctl enable (see domain_email_enable.go's
-// rationale block). Tests therefore assert:
-//   - side effects (DKIM keyfile written, systemctl called) ran as expected
-//   - the handler returned the typed error with the task-13 marker
-//
-// DKIM-stability assertions (TXT re-derivation, byte-identical keyfile
-// on re-enable) go against the pure ensureDKIMKey helper to avoid
-// re-entering the handler's task-13 refusal path. When task #13 lifts,
-// these tests get updated alongside the handler change.
 
-func TestDomainEmailEnable_FreshKeyGeneration(t *testing.T) {
+// enableJMAPRoutes is the full JMAP fake-server route map for a
+// successful domain.email_enable. Separate helper because three enable
+// tests reuse the same shape.
+func enableJMAPRoutes(existingDomainID string, createdDomainID string) map[string]jmapHandler {
+	queryResult := jmapQueryResult{Total: 0}
+	if existingDomainID != "" {
+		queryResult.IDs = []string{existingDomainID}
+		queryResult.Total = 1
+	}
+	createResult := jmapSetResult{
+		Created: map[string]json.RawMessage{
+			"#d1": json.RawMessage(fmt.Sprintf(`{"id":%q}`, createdDomainID)),
+		},
+	}
+	sigCreateResult := jmapSetResult{
+		Created: map[string]json.RawMessage{
+			"#sig1": json.RawMessage(`{"id":"sig-42"}`),
+		},
+	}
+	return map[string]jmapHandler{
+		"x:Domain/query":        jmapHandlerReturning(queryResult),
+		"x:Domain/set":          jmapHandlerReturning(createResult),
+		"x:DkimSignature/set":   jmapHandlerReturning(sigCreateResult),
+	}
+}
+
+func TestDomainEmailEnable_FreshDomain_CreatesDomainAndDkimSignature(t *testing.T) {
 	dir := wireDKIMDir(t)
 	var sysctl systemctlCapture
 	wireSystemctl(t, &sysctl)
+	srv := newJMAPServer(t, enableJMAPRoutes("", "dom-new-42"))
+	defer srv.Close()
+	wireJMAP(t, srv)
 
-	_, err := domainEmailEnableHandler(context.Background(), json.RawMessage(
+	got, err := domainEmailEnableHandler(context.Background(), json.RawMessage(
 		`{"domain_id":"01J","domain_name":"example.com"}`))
-	requireAgentErrorCode(t, err, agentwire.CodeInternal)
-	if err == nil || !strings.Contains(err.Error(), "m6-task-13") {
-		t.Errorf("expected task-13 refusal marker in err, got: %v", err)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	resp, ok := got.(domainEmailEnableResponse)
+	if !ok {
+		t.Fatalf("type: got %T, want domainEmailEnableResponse", got)
+	}
+	if !resp.Ok {
+		t.Error("ok: false, want true")
+	}
+	if resp.DKIMSelector != "jabali" {
+		t.Errorf("selector: got %q, want %q", resp.DKIMSelector, "jabali")
+	}
+	if !strings.HasPrefix(resp.DKIMPublicKey, "v=DKIM1; k=ed25519; p=") {
+		t.Errorf("public key wrong shape: %q", resp.DKIMPublicKey)
 	}
 
-	// Side effects still ran: keyfile exists at mode 0600.
+	// Keyfile should exist, mode 0600.
 	keyPath := filepath.Join(dir, "example.com.key")
-	fi, statErr := os.Stat(keyPath)
-	if statErr != nil {
-		t.Fatalf("stat keyfile: %v (side effects should run before task-13 refusal)", statErr)
+	fi, err := os.Stat(keyPath)
+	if err != nil {
+		t.Fatalf("stat keyfile: %v", err)
 	}
 	if mode := fi.Mode() & os.ModePerm; mode != 0o600 {
 		t.Errorf("mode: got %o, want 0600", mode)
@@ -93,6 +124,35 @@ func TestDomainEmailEnable_FreshKeyGeneration(t *testing.T) {
 		if strings.Join(sysctl.calls[i], " ") != strings.Join(wantArgs[i], " ") {
 			t.Errorf("call %d: got %v, want %v", i, sysctl.calls[i], wantArgs[i])
 		}
+	}
+}
+
+func TestDomainEmailEnable_AlreadyRegistered_SkipsDomainAndSignatureCreates(t *testing.T) {
+	// Domain already exists in Stalwart's registry (operator called
+	// email_enable twice without a disable in between, or panel
+	// reconciler is re-converging). Handler must detect the existing
+	// domain and NOT re-create Domain or DkimSignature. The fake's
+	// route map deliberately omits x:Domain/set + x:DkimSignature/set
+	// — a stray create call would 400 (no such route) and fail the test.
+	wireDKIMDir(t)
+	var sysctl systemctlCapture
+	wireSystemctl(t, &sysctl)
+	srv := newJMAPServer(t, map[string]jmapHandler{
+		"x:Domain/query": jmapHandlerReturning(jmapQueryResult{
+			IDs: []string{"dom-existing"}, Total: 1,
+		}),
+	})
+	defer srv.Close()
+	wireJMAP(t, srv)
+
+	got, err := domainEmailEnableHandler(context.Background(), json.RawMessage(
+		`{"domain_id":"01J","domain_name":"example.com"}`))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	resp := got.(domainEmailEnableResponse)
+	if !resp.Ok {
+		t.Error("ok: false, want true")
 	}
 }
 
@@ -155,6 +215,8 @@ func TestDomainEmailEnable_BadDomainNameRejected(t *testing.T) {
 }
 
 func TestDomainEmailEnable_SystemctlEnableFailure(t *testing.T) {
+	// systemctl enable fails BEFORE any JMAP call — no JMAP fake needed
+	// because the handler errors out before reaching the Domain/query.
 	wireDKIMDir(t)
 	sysctl := &systemctlCapture{
 		respond: func(args []string) ([]byte, error) {
@@ -171,13 +233,12 @@ func TestDomainEmailEnable_SystemctlEnableFailure(t *testing.T) {
 	requireAgentErrorCode(t, err, agentwire.CodeInternal)
 }
 
-func TestDomainEmailEnable_ReloadNotSupportedSkippedBeforeTask13Refusal(t *testing.T) {
+func TestDomainEmailEnable_ReloadNotSupportedIsNotFatal(t *testing.T) {
 	// If Stalwart's unit doesn't declare ExecReload, systemctl reload
 	// returns a "reload is not applicable" error. The handler swallows
-	// it (per the isReloadNotSupportedErr check) and proceeds to the
-	// task-13 refusal path. We pin that behaviour here: the reload
-	// failure MUST NOT mask the task-13 refusal — we want the typed
-	// error downstream, not a spurious "reload failed".
+	// it (per isReloadNotSupportedErr) and proceeds to the JMAP
+	// Domain + DkimSignature creates. Re-verify that the handler
+	// still acks ok when only the reload fails this way.
 	wireDKIMDir(t)
 	sysctl := &systemctlCapture{
 		respond: func(args []string) ([]byte, error) {
@@ -189,12 +250,14 @@ func TestDomainEmailEnable_ReloadNotSupportedSkippedBeforeTask13Refusal(t *testi
 		},
 	}
 	wireSystemctl(t, sysctl)
+	srv := newJMAPServer(t, enableJMAPRoutes("", "dom-reload-42"))
+	defer srv.Close()
+	wireJMAP(t, srv)
 
 	_, err := domainEmailEnableHandler(context.Background(), json.RawMessage(
 		`{"domain_id":"01J","domain_name":"example.com"}`))
-	requireAgentErrorCode(t, err, agentwire.CodeInternal)
-	if err == nil || !strings.Contains(err.Error(), "m6-task-13") {
-		t.Errorf("expected task-13 refusal marker (reload-not-supported should not mask it), got: %v", err)
+	if err != nil {
+		t.Fatalf("reload-not-applicable should not fail: %v", err)
 	}
 }
 

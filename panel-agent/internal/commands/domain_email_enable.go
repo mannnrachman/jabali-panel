@@ -107,31 +107,55 @@ func domainEmailEnableHandler(ctx context.Context, params json.RawMessage) (any,
 		}
 	}
 
-	// M6 task #13 gate — typed refusal (ADR-0045 + user feedback
-	// 2026-04-21). Returning a structured error here rather than a
-	// silent ok guarantees that a partial deploy can't advertise
-	// "email enabled" while Stalwart is still incapable of actually
-	// routing or signing mail for the domain.
+	// Seed Stalwart's registry with a Domain + DkimSignature so
+	// inbound SMTP is routed for this domain and outbound is signed.
 	//
-	// Side effects above (DKIM key on disk + systemctl enable + reload)
-	// are safe to leave in place; they're idempotent and task #13's
-	// implementation will build on top of them. When task #13 lifts,
-	// the block below is replaced with the JMAP Domain/set +
-	// DkimSignature/set create calls that require live v0.16 schema
-	// verification (see feedback_verify_wire_contract).
-	//
-	// What DOES NOT yet work end-to-end against a real v0.16 server:
-	//   - Inbound SMTP for this domain (Stalwart 550s unknown domains)
-	//   - DKIM signing for outbound mail from this domain
-	// The DKIM key + DNS TXT are correct and will match what Stalwart
-	// signs with once DkimSignature/set create is wired up.
-	_ = publicTXT // keep in scope so the eventual JMAP call sees it.
-	return nil, &agentwire.AgentError{
-		Code: agentwire.CodeInternal,
-		Message: "m6-task-13: JMAP Domain/set + DkimSignature/set create unverified against live v0.16 schema — " +
-			"email cannot be enabled end-to-end until task #13 lands. DKIM key + systemd unit are already provisioned; " +
-			"retry this command after task #13 merges.",
+	// Idempotency: on a re-enable-after-disable (which destroyed the
+	// Domain via domain.email_disable's JMAP call), the registry has
+	// no record and we create both. If a Domain for this name already
+	// exists (operator re-ran email_enable without an intervening
+	// disable), skip both creates — the existing Domain + DkimSignature
+	// keep working. The panel-side DB is the source of truth for
+	// whether email SHOULD be enabled; the registry is Stalwart's
+	// synchronized copy.
+	existingDomainID, err := domainIDByName(ctx, p.DomainName)
+	if err != nil {
+		return nil, err
 	}
+	if existingDomainID == "" {
+		newDomainID, err := createDomain(ctx, p.DomainName)
+		if err != nil {
+			return nil, err
+		}
+
+		// Wrap the on-disk Ed25519 seed as PKCS#8 PEM before pushing
+		// to Stalwart. v0.16's DKIM signer expects the PEM form
+		// (crates/common/src/config/smtp/auth.rs ::
+		//  Ed25519Key::from_pkcs8_maybe_unchecked_der).
+		seed, err := dkim.LoadEd25519(keyPath)
+		if err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("load DKIM key for JMAP push: %v", err),
+			}
+		}
+		pemKey, err := dkim.SeedToPKCS8PEM(seed)
+		if err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("wrap DKIM seed as PKCS#8 PEM: %v", err),
+			}
+		}
+		if err := createDkimSignature(ctx, newDomainID, dkimSelector, string(pemKey)); err != nil {
+			return nil, err
+		}
+	}
+
+	return domainEmailEnableResponse{
+		Ok:            true,
+		DKIMSelector:  dkimSelector,
+		DKIMPublicKey: publicTXT,
+	}, nil
 }
 
 // ensureDKIMKey returns the DNS TXT value for the domain's DKIM key.

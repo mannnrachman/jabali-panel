@@ -382,6 +382,108 @@ func accountDestroy(ctx context.Context, id string) error {
 	return nil
 }
 
+// createDomain creates a new x:Domain via JMAP x:Domain/set and
+// returns the server-assigned id. Field names + enum values verified
+// against schema.json.gz (ADR-0045 §Schema-pull):
+//
+//   - name: string
+//   - isEnabled: bool
+//   - directoryId: nullable objectId (omitted → uses Authentication.directoryId)
+//   - dkimManagement: enum "Manual" or "Automatic" (we use Manual — panel
+//     generates keys + publishes TXT via PowerDNS per ADR-0043)
+//   - dnsManagement: enum "Manual" or "Automatic" (we use Manual — PowerDNS
+//     is the single DNS writer per ADR-0002)
+func createDomain(ctx context.Context, name string) (string, error) {
+	args := map[string]any{
+		"create": map[string]any{
+			"#d1": map[string]any{
+				"name":           name,
+				"isEnabled":      true,
+				"dkimManagement": "Manual",
+				"dnsManagement":  "Manual",
+			},
+		},
+	}
+	var result jmapSetResult
+	if err := jmapCall(ctx, "x:Domain/set", args, &result); err != nil {
+		return "", err
+	}
+	created, ok := result.Created["#d1"]
+	if !ok {
+		if reason, nok := result.NotCreated["#d1"]; nok {
+			return "", &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("stalwart x:Domain/set create refused: %s", string(reason)),
+			}
+		}
+		return "", &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: "stalwart x:Domain/set: neither created nor notCreated contained our tempId",
+		}
+	}
+	var createdObj struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(created, &createdObj); err != nil {
+		return "", &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("decode x:Domain/set create response: %v", err),
+		}
+	}
+	return createdObj.ID, nil
+}
+
+// createDkimSignature creates an x:DkimSignature object of variant
+// Dkim1Ed25519Sha256 with the given domainId + selector + PEM-wrapped
+// PKCS#8 private key.
+//
+// Shape verified against schema.json.gz (ADR-0045 §Schema-pull):
+//   - Tagged-enum @type = "Dkim1Ed25519Sha256"
+//   - privateKey is x:SecretText variant "Text" with {secret: string}
+//   - stage enum "active" (vs pending/retiring/retired — we want this
+//     signing immediately since the panel has already published the
+//     public half via PowerDNS)
+//   - canonicalization enum "relaxed/relaxed" (industry standard)
+//
+// The PEM-wrapped PKCS#8 DER form of the Ed25519 seed is what
+// Stalwart's signing path expects (source:
+// crates/common/src/config/smtp/auth.rs —
+// `Ed25519Key::from_pkcs8_maybe_unchecked_der`).
+func createDkimSignature(ctx context.Context, domainID, selector, pemPrivateKey string) error {
+	args := map[string]any{
+		"create": map[string]any{
+			"#sig1": map[string]any{
+				"@type":    "Dkim1Ed25519Sha256",
+				"domainId": domainID,
+				"selector": selector,
+				"privateKey": map[string]any{
+					"@type":  "Text",
+					"secret": pemPrivateKey,
+				},
+				"canonicalization": "relaxed/relaxed",
+				"stage":            "active",
+			},
+		},
+	}
+	var result jmapSetResult
+	if err := jmapCall(ctx, "x:DkimSignature/set", args, &result); err != nil {
+		return err
+	}
+	if _, ok := result.Created["#sig1"]; ok {
+		return nil
+	}
+	if reason, nok := result.NotCreated["#sig1"]; nok {
+		return &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("stalwart x:DkimSignature/set create refused: %s", string(reason)),
+		}
+	}
+	return &agentwire.AgentError{
+		Code:    agentwire.CodeInternal,
+		Message: "stalwart x:DkimSignature/set: unexpected response shape",
+	}
+}
+
 // domainIDByName resolves a registry Domain's id by its name.
 // Semantics identical to accountIDByEmail.
 func domainIDByName(ctx context.Context, name string) (string, error) {

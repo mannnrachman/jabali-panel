@@ -24,7 +24,7 @@ export function JabaliTitle({ collapsed = false, text = "Jabali" }: JabaliTitleP
         style={{ height: 32, width: "auto", flexShrink: 0 }}
       />
       {!collapsed && (
-        <Typography.Title level={4} style={{ margin: 0 }}>
+        <Typography.Title level={2} style={{ margin: 0 }}>
           {text}
         </Typography.Title>
       )}

@@ -64,24 +64,22 @@ func installFakeSystemctl(t *testing.T, state map[string]fakeServiceState) {
 }
 
 // TestServiceList_FiltersNotInstalled — dashboard should hide services
-// that aren't on the host (LoadState=not-found). Before this filter,
-// a stock Debian box showed php8.1/8.2/8.3 rows for versions the admin
-// never installed.
+// that aren't on the host (LoadState=not-found) AND services that are
+// deliberately masked (per ADR-0025 the global php<v>-fpm.service units
+// are masked on every host; showing them on the dashboard with a greyed
+// Restart button is noise).
 func TestServiceList_FiltersNotInstalled(t *testing.T) {
 	origBase := BaseAllowedServices
-	origSupported := SupportedPHPVersions
 	t.Cleanup(func() {
 		BaseAllowedServices = origBase
-		SupportedPHPVersions = origSupported
 	})
-	BaseAllowedServices = []string{"nginx", "mariadb", "pdns"}
-	SupportedPHPVersions = []string{"8.4", "8.5"}
+	BaseAllowedServices = []string{"nginx", "mariadb", "pdns", "masked-service"}
 
 	installFakeSystemctl(t, map[string]fakeServiceState{
-		"nginx":      {active: "active", loadState: "loaded"},
-		"mariadb":    {active: "active", loadState: "loaded"},
-		"php8.5-fpm": {active: "inactive", loadState: "masked"},
-		// pdns and php8.4-fpm have no state → LoadState=not-found → filtered.
+		"nginx":          {active: "active", loadState: "loaded"},
+		"mariadb":        {active: "active", loadState: "loaded"},
+		"masked-service": {active: "inactive", loadState: "masked"},
+		// pdns has no state → LoadState=not-found → filtered.
 	})
 
 	r := NewRegistry()
@@ -91,7 +89,7 @@ func TestServiceList_FiltersNotInstalled(t *testing.T) {
 
 	var resp ServiceListResponse
 	require.NoError(t, json.Unmarshal(data, &resp))
-	require.Len(t, resp.Services, 3, "only installed services should be returned")
+	require.Len(t, resp.Services, 2, "only loaded+installed services should be returned; masked and not-found are filtered")
 
 	names := make(map[string]ServiceStatus)
 	for _, s := range resp.Services {
@@ -99,14 +97,8 @@ func TestServiceList_FiltersNotInstalled(t *testing.T) {
 	}
 	assert.Contains(t, names, "nginx")
 	assert.Contains(t, names, "mariadb")
-	assert.Contains(t, names, "php8.5-fpm")
 	assert.NotContains(t, names, "pdns")
-	assert.NotContains(t, names, "php8.4-fpm")
-
-	// 8.5 is masked (per ADR-0025); UI needs LoadState to hide the
-	// Restart button for it.
-	assert.Equal(t, "masked", names["php8.5-fpm"].LoadState)
-	assert.Equal(t, "inactive", names["php8.5-fpm"].Active)
+	assert.NotContains(t, names, "masked-service")
 }
 
 // TestServiceList_UsesPdnsNotNamed — PowerDNS is the nameserver of
@@ -116,12 +108,16 @@ func TestServiceList_UsesPdnsNotNamed(t *testing.T) {
 	assert.NotContains(t, BaseAllowedServices, "named")
 }
 
-// TestServiceList_PHPVersionsDynamic — adding a PHP version to the
-// supported list makes it appear on the dashboard (when installed).
-func TestServiceList_PHPVersionsDynamic(t *testing.T) {
+// TestServiceList_NoGlobalPHPFPM — global php<v>-fpm units are masked
+// on every host by install.sh (per ADR-0025; per-user FPMs run under
+// jabali-fpm@<user>.service). They MUST NOT appear in the allow-list
+// or on the dashboard — showing masked services produces user-visible
+// noise (greyed-out Restart for a service that's architecturally dead).
+func TestServiceList_NoGlobalPHPFPM(t *testing.T) {
 	all := AllowedServices()
 	for _, v := range SupportedPHPVersions {
-		assert.Contains(t, all, "php"+v+"-fpm")
+		assert.NotContains(t, all, "php"+v+"-fpm",
+			"global php%s-fpm must not be in allow-list — masked per ADR-0025", v)
 	}
 }
 

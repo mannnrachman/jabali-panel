@@ -26,10 +26,15 @@ type ServiceListResponse struct {
 }
 
 // BaseAllowedServices is the fixed set of services the agent will report
-// on — the PHP-FPM list is appended dynamically from SupportedPHPVersions
-// so adding a new PHP version to that constant also adds it to the
-// dashboard. This is a security boundary: callers can't probe arbitrary
+// on. This is a security boundary: callers can't probe arbitrary
 // systemd units.
+//
+// Global `php<v>-fpm.service` units are deliberately NOT listed. Per
+// ADR-0025 (per-user slices, shipped 2026-04-18) install.sh masks every
+// global FPM service on every host — the real workers run as
+// `jabali-fpm@<user>.service` inside per-user slices. Listing the masked
+// global units just showed noise on the dashboard (greyed-out Restart
+// button beside a service that's architecturally guaranteed to be dead).
 var BaseAllowedServices = []string{
 	"nginx",
 	"mariadb",
@@ -40,15 +45,10 @@ var BaseAllowedServices = []string{
 	"jabali-agent",
 }
 
-// AllowedServices returns the full list (base + one php<v>-fpm per
-// supported version). Kept as a function so SupportedPHPVersions edits
-// flow through without a restart-to-regenerate cycle.
+// AllowedServices returns the agent-probe allow-list.
 func AllowedServices() []string {
-	out := make([]string, 0, len(BaseAllowedServices)+len(SupportedPHPVersions))
+	out := make([]string, 0, len(BaseAllowedServices))
 	out = append(out, BaseAllowedServices...)
-	for _, v := range SupportedPHPVersions {
-		out = append(out, fmt.Sprintf("php%s-fpm", v))
-	}
 	return out
 }
 
@@ -68,8 +68,11 @@ func serviceListHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 		status := probeService(ctx, svc)
 		// Skip services that aren't installed on this host — the
 		// dashboard should reflect reality, not a wishlist. LoadState
-		// "not-found" means systemd can't find the unit file.
-		if status.LoadState == "not-found" || status.LoadState == "" {
+		// "not-found" means systemd can't find the unit file. "masked"
+		// means the unit is deliberately blocked from starting (install.sh
+		// masks global php-fpm services per ADR-0025). Either way, showing
+		// it to the operator with a greyed-out Restart button is noise.
+		if status.LoadState == "not-found" || status.LoadState == "" || status.LoadState == "masked" {
 			continue
 		}
 		services = append(services, status)

@@ -29,21 +29,29 @@ import { useLocation, useNavigate, useParams } from "react-router";
 
 // Post-M21 notify shim — matches the Refine useNotification().open
 // contract so the call sites below need no other change.
+//
+// The `open` function is defined at module scope (not inside the hook)
+// so it has a STABLE reference across renders. Returning a freshly-
+// allocated { open: ... } object on every call would make `open`'s
+// identity churn, and useEffects that include `open` in their deps
+// would re-fire every render → infinite refetch loop → API 429s.
+// That's exactly the bug the DNS Records page hit (rate-limited
+// "Failed to load" notification stack).
 type NotifyInput = {
   type?: "success" | "error" | "warning" | "info";
   message: string;
   description?: React.ReactNode;
 };
+const stableNotifyOpen = (input: NotifyInput) => {
+  notification.open({
+    message: input.message,
+    description: input.description,
+    type: input.type,
+  });
+};
+const stableNotify = { open: stableNotifyOpen };
 function useNotification() {
-  return {
-    open: (input: NotifyInput) => {
-      notification.open({
-        message: input.message,
-        description: input.description,
-        type: input.type,
-      });
-    },
-  };
+  return stableNotify;
 }
 
 import { apiClient } from "../../apiClient";

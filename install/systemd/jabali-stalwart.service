@@ -25,7 +25,12 @@ ExecStart=/usr/local/bin/stalwart --config=/etc/stalwart/config.json
 
 Restart=on-failure
 RestartSec=5s
-WatchdogSec=30s
+# WatchdogSec intentionally omitted: Stalwart v0.16 does not send
+# sd_notify WATCHDOG=1 heartbeats, so systemd kills it on every
+# WatchdogSec interval (confirmed on fresh VM install 2026-04-21:
+# restart counter climbed monotonically with "Failed with result
+# 'watchdog'" entries every ~30s). Liveness is covered by process-
+# level Restart=on-failure + the panel-agent's mailbox.usage probe.
 
 # Security hardening (matches jabali-kratos.service shape).
 NoNewPrivileges=true

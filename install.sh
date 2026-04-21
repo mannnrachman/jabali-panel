@@ -2635,8 +2635,12 @@ _install_stalwart_apply_plan() {
   while (( waited < max_wait )); do
     for p in 8446 8080; do
       local status
+      # `|| true` is load-bearing: curl exits 7 on "connection refused"
+      # which is expected while Stalwart is still binding its listeners.
+      # Under `set -euo pipefail`, the bare assignment would abort the
+      # script on the first refused port before we ever get to try :8080.
       status="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 -m 3 \
-        "http://127.0.0.1:${p}/jmap/session" 2>/dev/null)"
+        "http://127.0.0.1:${p}/jmap/session" 2>/dev/null || true)"
       status="${status:-000}"
       if [[ "$status" =~ ^[234][0-9][0-9]$ ]]; then
         jmap_port="$p"

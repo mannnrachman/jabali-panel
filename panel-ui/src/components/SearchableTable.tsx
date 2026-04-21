@@ -15,7 +15,6 @@
 // the server 11 times.
 import { useEffect, useRef, useState } from "react";
 import { Input, Space, Table } from "antd";
-import { SearchOutlined } from "@ant-design/icons";
 import type { TableProps } from "antd";
 
 export interface SearchableTableStringQProps<T> extends TableProps<T> {
@@ -55,16 +54,16 @@ export function SearchableTableStringQ<T extends object>({
 
   return (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-      <Input
+      <Input.Search
         placeholder={searchPlaceholder}
-        prefix={<SearchOutlined />}
         allowClear
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        // Pressing Enter fires immediately (bypasses debounce timer).
-        onPressEnter={() => {
+        // onSearch fires on Enter or on search-button click — bypasses
+        // the debounce timer since the user just asked for "now".
+        onSearch={(value) => {
           if (timer.current) clearTimeout(timer.current);
-          onSearchChange(query.trim());
+          onSearchChange(value.trim());
         }}
         style={{ maxWidth: 360 }}
       />

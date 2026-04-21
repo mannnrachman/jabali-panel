@@ -66,14 +66,12 @@ export const UserDeleteAction = ({
     <>
       <Button
         danger
-        type="text"
-        size="small"
+        type="link"
         icon={<DeleteOutlined />}
         // Generic "Delete" — see RowActions in UserList.tsx for why
         // the email is intentionally kept out of the accessible name.
         aria-label="Delete"
         onClick={handleOpenModal}
-        style={{ padding: 0 }}
       />
 
       <Modal

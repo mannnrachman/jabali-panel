@@ -9,10 +9,6 @@
 // total stays correct per tab.
 import { useState } from "react";
 import { Badge, Button, Card, Space, Table, Typography } from "antd";
-import {
-  SafetyCertificateOutlined,
-  TeamOutlined,
-} from "@ant-design/icons";
 import type { SorterResult } from "antd/es/table/interface";
 import { useNavigate } from "react-router";
 
@@ -32,7 +28,7 @@ type User = {
 };
 
 const renderName = (_: unknown, r: User) =>
-  [r.name_first, r.name_last].filter(Boolean).join(" ") || "—";
+  [r.name_first, r.name_last].filter(Boolean).join(" ");
 
 const renderCreated = (ts: string) => new Date(ts).toLocaleString();
 
@@ -46,10 +42,9 @@ const renderCreated = (ts: string) => new Date(ts).toLocaleString();
 function RowActions({ user }: { user: User }) {
   const navigate = useNavigate();
   return (
-    <Space>
+    <Space size="middle">
       <Button
-        type="text"
-        size="small"
+        type="link"
         onClick={() => navigate(`/jabali-admin/users/edit/${user.id}`)}
       >
         Edit
@@ -193,8 +188,7 @@ export const UserList = () => {
           {
             key: "users",
             tab: (
-              <Space size={8}>
-                <TeamOutlined />
+              <Space size="small">
                 Users
                 <Badge count={usersCountQ.total} showZero />
               </Space>
@@ -203,8 +197,7 @@ export const UserList = () => {
           {
             key: "admins",
             tab: (
-              <Space size={8}>
-                <SafetyCertificateOutlined />
+              <Space size="small">
                 Administrators
                 <Badge count={adminsCountQ.total} showZero />
               </Space>

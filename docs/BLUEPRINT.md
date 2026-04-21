@@ -930,16 +930,18 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 **Depends on:** M20 (Kratos identity — supersedes Refine's `authProvider` role so removing it doesn't lose functionality).
 **Related:** ADR-0037 (design rationale, rollback note, outcome), `plans/m21-drop-refine.md` (five-wave blueprint).
 
-### M22: Magic-link token for WordPress admin SSO (SHIPPED 2026-04-21)
+### M22: Magic-link → self-deleting SSO file (REWORK IN-FLIGHT 2026-04-21)
 
-**Status:** Shipped (ADR-0039 accepted, Steps 8–11 complete)
+**Status:** Rework in-flight (ADR-0040 accepted, 8-step blueprint dispatchable). Original magic-link design (ADR-0039) shipped 2026-04-21 and is being replaced — see "Why" below.
 
-**Goal:** Replace M16's rolled-back OIDC stack with a simpler magic-link token mechanism. Operator clicks "Admin" button on an Applications row → new tab opens → lands signed in to that WordPress install's `/wp-admin` as the site's admin user. No OAuth, no federation, no consent screens—just opaque, single-use, 60-second tokens signed with HMAC-SHA256.
+**Goal:** One-click admin login from the panel to any managed WordPress install. Operator clicks "Log in to admin" on an Applications row → new tab opens → lands signed in to `/wp-admin` as the install's admin user.
 
-**Design (ADR-0039):** Tokens are base64url-encoded opaque strings, not JWT. Format: `<token_id_b64>.<signature_b64>`. Server stores SHA256(token_id) in the database so a DB read leak doesn't leak valid tokens. Single-use enforcement via atomic CAS on `used_at` column. TTL 60s. Signing key rotates via comma-separated base64 key list in `/etc/jabali-panel/magic-link.key`. Threat model covers 9 scenarios (token leak in URL, replay, forgery, key leak, cross-install, CSRF, phishing, logs/APM, collision).
+**Why the rework:** The original magic-link design (ADR-0039) shipped end-to-end and was verified on test VM 10.0.3.13 the same day. Verification surfaced 5 connectivity / lifecycle gaps all caused by the same root pattern: persistent panel-side WordPress mu-plugin + HTTPS callback from WP back to the panel. (1) Plugin's "did sed run?" guard self-mutates and silently no-ops; (2) `update.go` doesn't sync the canonical mu-plugin source; (3) existing pre-M22 installs never get the per-install plugin copy; (4) nginx default vhost has no `/applications/.../validate` proxy → 444 silent drop; (5) panel self-signed cert isn't in OS CA bundle → `wp_remote_post sslverify=true` fails. All five disappear if there's no persistent WP-side code and no callback.
 
-**Depends on:** M16R (OIDC rollback must land first).
-**Related:** ADR-0038 (M16 rollback), ADR-0039 (magic-link design + threat model), `plans/m22-magic-link-runbook.md` (operator guide for key provisioning, rotation, troubleshooting).
+**New design (ADR-0040):** Self-deleting `jabali-sso-<43chars>.php` file written per login to the WP webroot — the Installatron / Softaculous pattern that has run at scale for ~15 years. Filename embeds a 256-bit `crypto/rand` nonce (the filename **is** the capability — no HMAC, no signing key, no DB row). Single-use via `flock(LOCK_EX|LOCK_NB)` + `unlink(__FILE__)`. TTL via systemd reaper sweeping every 30s. Wire contract `{url, expires_in}` preserved — only the URL shape changes from `?jabali_admin_login=<token>` to `/jabali-sso-<nonce>.php`. Eliminates the entire 5-item M22 follow-up list (placeholder guard fix, update.go sync, reconciler ensure, nginx proxy, OS CA trust) — none apply once there's no panel-side WP code or callback.
+
+**Depends on:** M16R (OIDC rollback already landed).
+**Related:** ADR-0038 (M16 rollback), ADR-0039 (M22 magic-link — superseded), ADR-0040 (M22 sso-file design + threat model), `plans/m22-rework-sso-file.md` (8-step rework blueprint, opus-reviewed).
 
 ---
 

@@ -1,6 +1,6 @@
 # ADR-0039: Magic-Link Token for Panel→WordPress Admin Single Sign-On
 
-**Status**: accepted (after adversarial threat-model review folded in 2026-04-21)
+**Status**: superseded by [ADR-0040](./0040-m22-sso-file.md) (2026-04-21)
 
 **Date**: 2026-04-21
 
@@ -9,8 +9,18 @@
 **Related**:
 - [ADR-0036: OIDC for WordPress Admin Access (M16)](./0036-oidc-for-wordpress-admin.md) — superseded by this ADR
 - [ADR-0038: Rollback of M16 OIDC (M16R)](./0038-rollback-of-m16-oidc.md) — immediate predecessor
+- [ADR-0040: Self-Deleting SSO File (M22 Rework)](./0040-m22-sso-file.md) — supersedes this ADR
 - [M16 Hydra Deployment](../runbooks/m16-hydra.md) — decommissioned by M16R
 - [M22 Magic-Link Plan](../../plans/m16-rollback-and-m22-magic-link.md)
+- [M22 Rework Plan](../../plans/m22-rework-sso-file.md)
+
+## Why superseded
+
+This design shipped on 2026-04-21 in 11 steps. End-to-end verification on test VM `10.0.3.13` the same day exposed five separate connectivity / lifecycle gaps in one validation session, all caused by the same root pattern: the design requires a **persistent panel-side WordPress plugin** and an **HTTPS callback from WP back to the panel**.
+
+The five gaps: (1) the mu-plugin's "did sed run?" guard contained the literal placeholder strings sed targets — the install-time global sed mutated the guard into a self-comparison that always evaluated true → silent no-op on every request; (2) `panel-api/cmd/server/update.go` doesn't sync the canonical mu-plugin into `/usr/local/lib/jabali/wp-mu-plugins/`, so `jabali update` rebuilds binaries but never deploys the plugin source; (3) `installMagicLinkMUPlugin` only runs during a fresh `wp install`, leaving every pre-M22 WordPress install without the plugin; (4) nginx's default vhost on `:443` returns 444 for any path it doesn't explicitly route, so the WP plugin's `POST /applications/.../magic-link/validate` request is silently dropped; (5) the panel's self-signed cert isn't in the OS CA bundle, so `wp_remote_post sslverify=true` fails with `X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN`.
+
+All five disappear under the Installatron / Softaculous self-deleting `sso-<nonce>.php` pattern documented in [ADR-0040](./0040-m22-sso-file.md): no persistent WP-side code, no callback, no signing key, no mu-plugin, no nginx routing change, no CA trust setup. This ADR is preserved as historical context — the M22 rework plan at `plans/m22-rework-sso-file.md` documents the migration steps.
 
 ## Context
 

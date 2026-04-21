@@ -33,7 +33,7 @@ func TestCreateSSOFile_HappyPath(t *testing.T) {
 		InstallPath: dir,
 		OSUser:      me.Username, // chown to ourselves so it works without root
 		InstallID:   validULID,
-		AdminUID:    1,
+		AdminUsername: "admin",
 	})
 	if err != nil {
 		// chown to www-data fails for non-root, so accept that as a skip.
@@ -78,7 +78,7 @@ func TestCreateSSOFile_RejectsNonAbsoluteInstallPath(t *testing.T) {
 		InstallPath: "relative/path",
 		OSUser:      "irrelevant",
 		InstallID:   validULID,
-		AdminUID:    1,
+		AdminUsername: "admin",
 	})
 	if err == nil || !strings.Contains(err.Error(), "absolute") {
 		t.Errorf("expected absolute-path error, got %v", err)
@@ -91,7 +91,7 @@ func TestCreateSSOFile_MissingWPLoad(t *testing.T) {
 		InstallPath: dir,
 		OSUser:      "irrelevant",
 		InstallID:   validULID,
-		AdminUID:    1,
+		AdminUsername: "admin",
 	})
 	if err == nil || !strings.Contains(err.Error(), "wp-load.php not found") {
 		t.Errorf("expected wp-load-not-found error, got %v", err)
@@ -104,23 +104,23 @@ func TestCreateSSOFile_RejectsInvalidInstallID(t *testing.T) {
 		InstallPath: dir,
 		OSUser:      "x",
 		InstallID:   "not-a-ulid",
-		AdminUID:    1,
+		AdminUsername: "admin",
 	})
 	if err == nil || !strings.Contains(err.Error(), "ULID") {
 		t.Errorf("expected ULID error, got %v", err)
 	}
 }
 
-func TestCreateSSOFile_RejectsInvalidAdminUID(t *testing.T) {
+func TestCreateSSOFile_RejectsInvalidAdminUsername(t *testing.T) {
 	dir := fakeWPInstall(t)
 	_, err := CreateSSOFile(context.Background(), createSSOFileReq{
-		InstallPath: dir,
-		OSUser:      "x",
-		InstallID:   validULID,
-		AdminUID:    0,
+		InstallPath:   dir,
+		OSUser:        "x",
+		InstallID:     validULID,
+		AdminUsername: "", // empty rejected by RenderSSOTemplate
 	})
-	if err == nil || !strings.Contains(err.Error(), "admin_uid") {
-		t.Errorf("expected admin_uid error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "adminUsername") {
+		t.Errorf("expected adminUsername error, got %v", err)
 	}
 }
 
@@ -132,7 +132,7 @@ func TestCreateSSOFile_ChownFailureCleansUp(t *testing.T) {
 		InstallPath: dir,
 		OSUser:      "definitely-not-a-real-user-9876543210",
 		InstallID:   validULID,
-		AdminUID:    1,
+		AdminUsername: "admin",
 	})
 	if err == nil {
 		t.Fatalf("expected chown error, got nil")

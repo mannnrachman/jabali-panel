@@ -35,7 +35,7 @@ func TestGenerateNonce(t *testing.T) {
 }
 
 func TestRenderSSOTemplate_HappyPath(t *testing.T) {
-	out, err := RenderSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, 1)
+	out, err := RenderSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, "admin")
 	if err != nil {
 		t.Fatalf("RenderSSOTemplate: %v", err)
 	}
@@ -45,8 +45,8 @@ func TestRenderSSOTemplate_HappyPath(t *testing.T) {
 	if !strings.Contains(out, validULID) {
 		t.Errorf("output missing install id")
 	}
-	if !strings.Contains(out, "$admin_uid = 1;") {
-		t.Errorf("output missing admin_uid integer literal: %s", excerpt(out, "$admin_uid"))
+	if !strings.Contains(out, "$admin_username = 'admin';") {
+		t.Errorf("output missing admin_username literal: %s", excerpt(out, "$admin_username"))
 	}
 	if !strings.Contains(out, "'/var/www/html/wp-load.php'") {
 		t.Errorf("output missing single-quoted wp-load.php path")
@@ -71,7 +71,7 @@ func TestRenderSSOTemplate_RejectsInvalidNonce(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := RenderSSOTemplate(c.nonce, "/var/www/html/wp-load.php", validULID, 1)
+			_, err := RenderSSOTemplate(c.nonce, "/var/www/html/wp-load.php", validULID, "admin")
 			if err == nil {
 				t.Errorf("expected error for %s, got nil", c.name)
 			}
@@ -92,7 +92,7 @@ func TestRenderSSOTemplate_RejectsInvalidWpLoadPath(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := RenderSSOTemplate(validNonce, c.path, validULID, 1)
+			_, err := RenderSSOTemplate(validNonce, c.path, validULID, "admin")
 			if err == nil {
 				t.Errorf("expected error for %s, got nil", c.name)
 			}
@@ -115,7 +115,7 @@ func TestRenderSSOTemplate_RejectsInvalidInstallID(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := RenderSSOTemplate(validNonce, "/var/www/html/wp-load.php", c.id, 1)
+			_, err := RenderSSOTemplate(validNonce, "/var/www/html/wp-load.php", c.id, "admin")
 			if err == nil {
 				t.Errorf("expected error for %s, got nil", c.name)
 			}
@@ -123,20 +123,46 @@ func TestRenderSSOTemplate_RejectsInvalidInstallID(t *testing.T) {
 	}
 }
 
-func TestRenderSSOTemplate_RejectsInvalidAdminUID(t *testing.T) {
+func TestRenderSSOTemplate_RejectsInvalidAdminUsername(t *testing.T) {
 	cases := []struct {
-		name string
-		uid  int
+		name, username string
 	}{
-		{"zero", 0},
-		{"negative", -1},
-		{"2^31", 1 << 31},
+		{"empty", ""},
+		{"too long (61 chars)", strings.Repeat("a", 61)},
+		{"contains single quote", "ad'min"},
+		{"contains backslash", `ad\min`},
+		{"contains semicolon", "ad;min"},
+		{"contains slash", "ad/min"},
+		{"contains newline", "ad\nmin"},
+		{"leading space", " admin"},
+		{"trailing space", "admin "},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := RenderSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, c.uid)
+			_, err := RenderSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, c.username)
 			if err == nil {
 				t.Errorf("expected error for %s, got nil", c.name)
+			}
+		})
+	}
+}
+
+func TestRenderSSOTemplate_AcceptsRealisticUsernames(t *testing.T) {
+	cases := []string{
+		"admin",
+		"a",                 // single char
+		"shuki.vaknin",      // dot
+		"alice_bob",         // underscore
+		"user-1",            // dash
+		"someone@example.com",
+		"user with space",   // internal space
+		strings.Repeat("a", 60), // max length
+	}
+	for _, u := range cases {
+		t.Run(u, func(t *testing.T) {
+			_, err := RenderSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, u)
+			if err != nil {
+				t.Errorf("expected ok for %q, got %v", u, err)
 			}
 		})
 	}
@@ -146,7 +172,7 @@ func TestRenderSSOTemplate_PassesPHPLint(t *testing.T) {
 	if _, err := exec.LookPath("php"); err != nil {
 		t.Skip("php not on PATH, skipping syntax check")
 	}
-	out, err := RenderSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, 1)
+	out, err := RenderSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, "admin")
 	if err != nil {
 		t.Fatalf("RenderSSOTemplate: %v", err)
 	}
@@ -162,7 +188,7 @@ func TestRenderSSOTemplate_PassesPHPLint(t *testing.T) {
 }
 
 func TestRenderSSOTemplate_NoUnsubstitutedMarkers(t *testing.T) {
-	out, err := RenderSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, 1)
+	out, err := RenderSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, "admin")
 	if err != nil {
 		t.Fatalf("RenderSSOTemplate: %v", err)
 	}

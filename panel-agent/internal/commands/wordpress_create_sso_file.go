@@ -30,10 +30,10 @@ type createSSOFileReq struct {
 	// InstallID is the application_installs row's ULID. Embedded in
 	// the file's comment + error_log lines for grep-ability.
 	InstallID string `json:"install_id"`
-	// AdminUID is the WP user id the file will sign in as. Baked in
-	// at write time from the install row's admin_user_id column —
-	// the PHP file does NOT do a live wp_capabilities lookup.
-	AdminUID int `json:"admin_uid"`
+	// AdminUsername is the WP login the file resolves to a WP_User via
+	// get_user_by('login', ...) at file-execution time. Baked in at
+	// write time from the install row's admin_username column.
+	AdminUsername string `json:"admin_username"`
 }
 
 // createSSOFileResp is the output shape for wordpress.create_sso_file.
@@ -67,9 +67,8 @@ func CreateSSOFile(ctx context.Context, req createSSOFileReq) (createSSOFileResp
 	if !sedSafeULIDLocal(req.InstallID) {
 		return zero, fmt.Errorf("install_id must be 26-char Crockford ULID, got %q", req.InstallID)
 	}
-	if req.AdminUID <= 0 || req.AdminUID >= (1<<31) {
-		return zero, fmt.Errorf("admin_uid must be > 0 and < 2^31, got %d", req.AdminUID)
-	}
+	// adminUsername is validated inside RenderSSOTemplate; a separate
+	// check here would duplicate the regex without adding value.
 
 	// Resolve wp-load.php: try install_path first, then walk up two
 	// levels. WP installed at the docroot has wp-load.php there;
@@ -84,7 +83,7 @@ func CreateSSOFile(ctx context.Context, req createSSOFileReq) (createSSOFileResp
 		return zero, fmt.Errorf("generate nonce: %w", err)
 	}
 
-	body, err := RenderSSOTemplate(nonce, wpLoadPath, req.InstallID, req.AdminUID)
+	body, err := RenderSSOTemplate(nonce, wpLoadPath, req.InstallID, req.AdminUsername)
 	if err != nil {
 		return zero, fmt.Errorf("render template: %w", err)
 	}

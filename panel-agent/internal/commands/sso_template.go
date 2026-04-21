@@ -27,6 +27,11 @@ var (
 	nonceRE        = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
 	wpLoadPathRE   = regexp.MustCompile(`^/[A-Za-z0-9_/.\-]+/wp-load\.php$`)
 	wpLoadDotDotRE = regexp.MustCompile(`(^|/)\.\.(/|$)`)
+	// adminUserRE accepts the WordPress username alphabet. wp_validate_username
+	// permits letters/digits/space/_/./-/@ up to 60 chars. We additionally
+	// reject leading/trailing whitespace because such a username can't be
+	// created via the WP admin UI and almost certainly indicates corruption.
+	adminUserRE = regexp.MustCompile(`^[A-Za-z0-9_.\-@][A-Za-z0-9 _.\-@]{0,58}[A-Za-z0-9_.\-@]$|^[A-Za-z0-9_.\-@]$`)
 	// leftoverMarker matches our namespaced placeholders only — NOT PHP's
 	// magic constants like __FILE__ / __LINE__ / __DIR__ which the template
 	// uses legitimately.
@@ -53,9 +58,16 @@ func GenerateNonce() (string, error) {
 // All inputs are validated; on any failure returns an empty string and a
 // clear error.
 //
+// adminUsername is the WordPress username (the install row's
+// admin_username column) — the PHP file resolves it to a WP_User via
+// get_user_by('login', ...). We use the username instead of a numeric uid
+// because the application_installs schema has admin_username but no
+// admin_user_id column; adding one would require a migration + backfill
+// for no real benefit.
+//
 // We use strings.ReplaceAll (NOT text/template) because `{{` would collide
 // with PHP echo blocks if the template ever grows them.
-func RenderSSOTemplate(nonce, wpLoadPath, installID string, adminUID int) (string, error) {
+func RenderSSOTemplate(nonce, wpLoadPath, installID, adminUsername string) (string, error) {
 	if !nonceRE.MatchString(nonce) {
 		return "", fmt.Errorf("invalid nonce: must be 43 base64url chars, got %q", nonce)
 	}
@@ -68,14 +80,14 @@ func RenderSSOTemplate(nonce, wpLoadPath, installID string, adminUID int) (strin
 	if !sedSafeULIDLocal(installID) {
 		return "", fmt.Errorf("invalid installID: must be 26-char Crockford ULID, got %q", installID)
 	}
-	if adminUID <= 0 || adminUID >= (1<<31) {
-		return "", fmt.Errorf("invalid adminUID: must be > 0 and < 2^31, got %d", adminUID)
+	if !adminUserRE.MatchString(adminUsername) {
+		return "", fmt.Errorf("invalid adminUsername: must match WordPress username alphabet [A-Za-z0-9 _.\\-@], 1-60 chars, no leading/trailing whitespace, got %q", adminUsername)
 	}
 
 	out := ssoTemplate
 	out = strings.ReplaceAll(out, "__JABALI_TTL_SECONDS__", fmt.Sprintf("%d", ssoTTLSeconds))
 	out = strings.ReplaceAll(out, "__JABALI_WP_LOAD_PATH__", phpStringLiteral(wpLoadPath))
-	out = strings.ReplaceAll(out, "__JABALI_ADMIN_UID__", fmt.Sprintf("%d", adminUID))
+	out = strings.ReplaceAll(out, "__JABALI_ADMIN_USERNAME__", phpStringLiteral(adminUsername))
 	// installID and nonce appear in comment + error_log strings only;
 	// validators above already restrict their character sets.
 	out = strings.ReplaceAll(out, "__JABALI_INSTALL_ID__", installID)

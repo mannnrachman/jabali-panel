@@ -38,11 +38,15 @@ if (filemtime(__FILE__) + __JABALI_TTL_SECONDS__ < time()) {
 // 4. Load WordPress.
 require_once __JABALI_WP_LOAD_PATH__;
 
-// 5. Verify the admin user. Agent baked $admin_uid in at write time from
-//    the install row's admin_user_id column — no live SQL pattern-match
-//    against serialised wp_capabilities at request time.
-$admin_uid = __JABALI_ADMIN_UID__;
-$user = get_userdata($admin_uid);
+// 5. Resolve the admin user by username. Agent baked __JABALI_ADMIN_USERNAME__
+//    in at write time from the install row's admin_username column (the
+//    canonical, schema-stable identifier — admin_user_id was never added
+//    to application_installs and would require a migration + backfill).
+//    get_user_by('login', ...) is the same lookup wp-login.php uses; the
+//    user_can() check guards against the user existing but not having
+//    admin caps on this site (multisite, demoted user, etc.).
+$admin_username = __JABALI_ADMIN_USERNAME__;
+$user = get_user_by('login', $admin_username);
 if (!$user || !user_can($user, 'manage_options')) {
     error_log('jabali-sso: admin lookup failed for install __JABALI_INSTALL_ID__');
     http_response_code(500);
@@ -50,8 +54,8 @@ if (!$user || !user_can($user, 'manage_options')) {
 }
 
 // 6. Sign the operator in. Don't set "remember me" — one-shot session.
-wp_set_current_user($admin_uid);
-wp_set_auth_cookie($admin_uid, false, is_ssl());
+wp_set_current_user($user->ID);
+wp_set_auth_cookie($user->ID, false, is_ssl());
 
 // 7. Audit on the WP side. Don't log the admin uid —
 //    wp-content/debug.log can be world-readable when WP_DEBUG_LOG is on.

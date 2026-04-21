@@ -78,22 +78,6 @@ type App struct {
 	// Keys are JSON field names sent by the UI; the API validates
 	// against this schema before dispatching to the agent.
 	InstallParamSchema map[string]ParamSpec `json:"install_param_schema,omitempty"`
-
-	// OIDCCallbackPath is the OIDC redirect_uri path (rendered under
-	// the install's siteURL) the per-install OAuth 2 client is
-	// registered with at Hydra CreateClient time. M16 Wave D Step 6.
-	//
-	// Empty = this app isn't OIDC-capable; the framework skips
-	// client provisioning and the agent installer does not install
-	// the per-app OIDC plugin. WordPress sets
-	// "/wp-admin/admin-ajax.php?action=openid-connect-authorize"
-	// (the OpenID Connect Generic plugin's default callback).
-	//
-	// Keep the path ABSOLUTE from the install subdir: the framework
-	// prepends the site URL (scheme + host + subdir). A caller
-	// starting the string with "/" avoids double-slash joins when
-	// the install is at the docroot.
-	OIDCCallbackPath string `json:"oidc_callback_path,omitempty"`
 }
 
 // Registry is the in-memory catalog. Safe for concurrent reads after

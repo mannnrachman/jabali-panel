@@ -348,19 +348,6 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Packages:            deps.Packages,
 				Agent:               deps.Agent,
 				Apps:                deps.Apps,
-				// M16 Wave D: OIDC client provisioning on app install.
-				// Nil-safe: when either HydraClient or SSOKey is missing,
-				// InstallApplication skips minting and the install
-				// proceeds without per-install SSO.
-				HydraClient: deps.HydraClient,
-				SSOKey:      deps.SSOKey,
-				// PanelBaseURL is the public HTTPS URL of the panel
-				// itself — what Hydra advertises as its OIDC issuer and
-				// what the WP plugin's discovery URL resolves against.
-				// Built from Server.Hostname + the :8443 convention
-				// (the addr in PANEL_ADDR is loopback / 0.0.0.0 inside
-				// the process, not what clients see).
-				PanelBaseURL: panelBaseURLFromConfig(cfg),
 			}
 			api.RegisterWordPressRoutes(v1, appCfg)
 			api.RegisterApplicationRoutes(v1, appCfg)

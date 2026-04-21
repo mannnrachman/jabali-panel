@@ -83,13 +83,6 @@ func (m *mockWordPressInstallRepo) Delete(ctx context.Context, id string) error 
 	return nil
 }
 
-// UpdateOIDCFields is a no-op for the reconciler tests — they never
-// touch the OIDC back-fill path. Satisfies the M16 Wave D addition to
-// the ApplicationInstallRepository interface.
-func (m *mockWordPressInstallRepo) UpdateOIDCFields(ctx context.Context, id, oidcClientID string, secretEnc []byte) error {
-	return nil
-}
-
 func TestReconcileWordPressInstalls_StuckInstallingTimeout(t *testing.T) {
 	now := time.Now()
 

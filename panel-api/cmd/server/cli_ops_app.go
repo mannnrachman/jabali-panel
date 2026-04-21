@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/apps"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/hydraclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -147,18 +146,6 @@ func deleteAppDirect(ctx context.Context, installID string) (*models.Application
 	// path (panel-api/internal/api/wordpress.go:createDeleteAndKickAgent):
 	// orphan clients are harmless (redirect_uris point at a vanished
 	// docroot) but they pollute `hydra list clients` and operators
-	// should not have to prune them by hand on every CLI-driven
-	// teardown. Failure is logged and swallowed — we still want the
-	// panel-side cleanup to proceed, and ErrNotFound is the idempotent
-	// happy path.
-	if install.OIDCClientID != nil && *install.OIDCClientID != "" && sharedCfg != nil && sharedCfg.Auth.Hydra.AdminURL != "" {
-		hydra := hydraclient.New(sharedCfg.Auth.Hydra.AdminURL)
-		if delErr := hydra.DeleteClient(ctx, *install.OIDCClientID); delErr != nil {
-			slog.Warn("cli app delete: hydra DeleteClient failed — continuing",
-				"install_id", installID, "client_id", *install.OIDCClientID, "err", delErr)
-		}
-	}
-
 	appType := install.AppType
 	if appType == "" {
 		// Pre-M19 rows had no AppType; the column default backfilled to

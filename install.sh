@@ -567,27 +567,55 @@ POLICYEOF
       # keyword is equivalent to a single-entry 'search').
       migrated_search="$(awk '/^(search|domain)[[:space:]]+/{print $2; exit}' /etc/resolv.conf)"
 
-      if [[ -n "$migrated_ns" ]]; then
-        _log "migrating existing /etc/resolv.conf upstreams to panel drop-in: ${migrated_ns}${migrated_search:+ (search: ${migrated_search})}"
-        install -d -m 0755 /etc/systemd/resolved.conf.d
-        {
-          echo "# Managed by jabali-panel — edits via /jabali-admin/settings → DNS."
+      # Fallback: if the host's /etc/resolv.conf had no harvestable
+      # upstream (empty file, comments-only, or only 127.0.0.53),
+      # seed the drop-in with Cloudflare + Quad9. Without this, the
+      # symlink flip below points /etc/resolv.conf at a resolved stub
+      # that has ZERO upstreams configured and the host goes dark —
+      # exactly the "lost all DNS after install" failure we hit on
+      # Debian 13 minimal images.
+      local seed_source="migrated"
+      if [[ -z "$migrated_ns" ]]; then
+        migrated_ns="1.1.1.1 9.9.9.9"
+        seed_source="fallback"
+        _warn "no upstream harvested from /etc/resolv.conf — seeding panel drop-in with Cloudflare + Quad9 defaults (override via Admin → DNS)"
+      fi
+
+      _log "writing panel DNS drop-in (${seed_source}): ${migrated_ns}${migrated_search:+ (search: ${migrated_search})}"
+      install -d -m 0755 /etc/systemd/resolved.conf.d
+      {
+        echo "# Managed by jabali-panel — edits via /jabali-admin/settings → DNS."
+        if [[ "$seed_source" == "migrated" ]]; then
           echo "# Seeded by install.sh from the host's previous /etc/resolv.conf"
           echo "# so the host's DNS stayed working when install.sh handed"
-          echo "# /etc/resolv.conf over to systemd-resolved's stub. The admin"
-          echo "# can modify these upstreams via the panel UI at any time;"
-          echo "# changes land in this same file."
-          echo "[Resolve]"
-          echo "DNS=${migrated_ns}"
-          [[ -n "$migrated_search" ]] && echo "Domains=${migrated_search}"
-        } > "$panel_dropin"
-        chmod 0644 "$panel_dropin"
-        systemctl restart systemd-resolved.service 2>/dev/null || true
-      fi
+          echo "# /etc/resolv.conf over to systemd-resolved's stub."
+        else
+          echo "# install.sh found no usable upstream in the host's previous"
+          echo "# /etc/resolv.conf and seeded these public defaults so the"
+          echo "# host didn't go dark after the symlink flip below."
+        fi
+        echo "# The admin can modify these upstreams via the panel UI at any"
+        echo "# time; changes land in this same file."
+        echo "[Resolve]"
+        echo "DNS=${migrated_ns}"
+        [[ -n "$migrated_search" ]] && echo "Domains=${migrated_search}"
+      } > "$panel_dropin"
+      chmod 0644 "$panel_dropin"
+      systemctl restart systemd-resolved.service 2>/dev/null || true
     fi
 
     _log "linking /etc/resolv.conf → /run/systemd/resolve/stub-resolv.conf (was plain file)"
     ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+
+    # Post-flip sanity probe. If DNS is broken after our changes, the
+    # admin needs to know BEFORE we move on to 700 more lines of apt/
+    # systemd work that might try to reach package registries. Warn
+    # loudly but don't die — they can still fix it manually via
+    # /etc/systemd/resolved.conf.d/jabali.conf.
+    if ! getent hosts deb.debian.org >/dev/null 2>&1; then
+      _warn "DNS still broken after resolved setup: 'getent hosts deb.debian.org' failed."
+      _warn "Check: resolvectl status; cat /etc/systemd/resolved.conf.d/jabali.conf"
+    fi
   fi
 
   _ok "base packages ready"

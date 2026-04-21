@@ -430,6 +430,49 @@ export async function mockApi(page: Page, initial: MockState): Promise<void> {
     return unsupported(route);
   });
 
+  // ---- M18 resource limits / live usage ----
+  // MyProfileUsageCard and UserSliceStatus poll these on a 5-10s cadence.
+  // Without mocks they proxy through vite → panel-api (which isn't up in
+  // e2e) → ECONNREFUSED → TanStack retries → log floods + background
+  // re-renders that can race with Playwright's actionability checks
+  // during form interaction (see users-spec "create flow" flake — input
+  // resolves in DOM but isn't "editable" within the timeout).
+  await page.route(/\/api\/v1\/users\/[^/?]+\/usage(\?.*)?$/, async (route) => {
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        user_id: "mock",
+        effective: {
+          DiskQuotaMB: 10240,
+          CPUQuotaPercent: 100,
+          MemoryLimitMB: 2048,
+          IOReadMbps: 0,
+          IOWriteMbps: 0,
+          MaxTasks: 512,
+        },
+        // current omitted — UI handles its absence gracefully
+      }),
+    });
+  });
+  await page.route(
+    /\/api\/v1\/admin\/users\/[^/?]+\/slice-status(\?.*)?$/,
+    async (route) => {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          username: "jabali-mock",
+          slice_active: true,
+          fpm_active: true,
+          memory_current_bytes: 0,
+          tasks_current: 0,
+          cpu_usage_nsec: 0,
+        }),
+      });
+    },
+  );
+
   // ---- packages CRUD ----
   await page.route(/\/api\/v1\/packages(\?.*)?$/, async (route) => {
     const req = route.request();

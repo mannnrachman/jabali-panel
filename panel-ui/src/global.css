@@ -1,0 +1,21 @@
+/* Global AntD chrome overrides the component tokens don't reach.
+ *
+ * Why: AntD's Card component exposes a few tokens (bodyPadding,
+ * headerBg, etc.) but no hook for the shadow or the border we want
+ * to swap out. AntD v5+ prefixes its own rules with `:where()` so
+ * plain class selectors like `.ant-card` outrank them without
+ * needing `!important`.
+ */
+
+/* Cards: drop the grey outline, add a soft elevation lift so they
+ * read as raised surfaces (AntD "MUI-like" preset vibe). The shadow
+ * is a mid-gray rgba rather than a token because Card doesn't
+ * expose a boxShadow token — keep it low-opacity so it looks
+ * subtle on the gray-50 content bg in light mode and vanishes
+ * politely in dark mode. */
+.ant-card,
+.ant-card-bordered {
+  border-color: transparent;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04),
+    0 4px 12px rgba(0, 0, 0, 0.06);
+}

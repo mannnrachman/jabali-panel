@@ -6,7 +6,9 @@
 
 ## Architecture
 
-The "Log in to admin" button on a ready WordPress install row mints a one-shot SSO file directly in the WP webroot. There is no persistent panel-side WordPress plugin, no callback to the panel, and no signing key.
+The "Log in to admin" button on a ready **WordPress, Drupal, or Joomla** install row mints a one-shot SSO file directly in the install's webroot. There is no persistent panel-side CMS plugin, no callback to the panel, and no signing key.
+
+**Supported CMSes** (as of 2026-04-21): WordPress, Drupal 10+, Joomla 4+. Each has its own PHP template under `panel-agent/internal/commands/sso_template_<cms>.php` and its own agent command (`wordpress.create_sso_file`, `drupal.create_sso_file`, `joomla.create_sso_file`). Dispatch is by `application_installs.app_type` in the panel-api mint handler (`ssoAgentCommandFor`). Adding a new CMS is three steps: (1) write the CMS-specific template + agent handler, (2) add the mapping in `ssoAgentCommandFor`, (3) widen the panel-ui `canLogin` filter.
 
 End-to-end flow:
 
@@ -47,7 +49,7 @@ The reaper (`jabali-sso-reaper.timer`, every 30s) walks the `application_install
   | Code | Meaning |
   |------|---------|
   | `install_not_ready` | The install row's status is not `ready`. Wait or check `jabali app list`. |
-  | `unsupported_app_type` | The install isn't WordPress. Other CMS types are not supported by M22. |
+  | `unsupported_app_type` | The install isn't WordPress/Drupal/Joomla. Other CMS types don't have an SSO-file handler yet. |
   | `user_not_provisioned` | The OS user doesn't exist. Run `jabali user reconcile <id>` and retry. |
   | `admin_user_unresolved` | `application_installs.admin_username` is empty. Set it manually (see Troubleshooting). |
   | `agent_failed` | UDS call to the agent failed. Check `journalctl -u jabali-agent`. |
@@ -60,7 +62,7 @@ The reaper is a systemd timer + service pair:
 - `jabali-sso-reaper.service` — `Type=oneshot`, `ExecStart=/usr/local/bin/jabali sso-reap`.
 
 The `jabali sso-reap` subcommand:
-- Queries `application_installs WHERE app_type='wordpress' AND status IN ('ready','installing','failed')`.
+- Queries `application_installs WHERE app_type IN ('wordpress','drupal','joomla') AND status IN ('ready','installing','failed')` — matches the set in `ssoAgentCommandFor`. When adding a new CMS, widen this list too.
 - Joins `domains` to compose each install path (`docroot + subdirectory`, `path.Clean`'d).
 - Calls `agent.Call("wordpress.reap_sso_files", {install_paths: [...]})`.
 - Logs `sso-reap: scanned=N deleted=M paths=K`.

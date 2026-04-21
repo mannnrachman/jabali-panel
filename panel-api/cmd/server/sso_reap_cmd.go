@@ -34,13 +34,20 @@ func newSSOReapCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
-			// Pull every WP install whose webroot is plausibly hosting a
+			// Pull every install whose webroot is plausibly hosting a
 			// live SSO file. "ready" is the obvious case; "installing"
-			// and "failed" cover edge windows where the file may have been
-			// written before status moved on.
+			// and "failed" cover edge windows where the file may have
+			// been written before status moved on.
+			//
+			// app_type is filtered to the set that actually mints SSO
+			// files today (mirrors ssoAgentCommandFor in the mint
+			// handler). Adding a new CMS requires widening this list
+			// too — otherwise stranded SSO files for that CMS sit until
+			// manually removed.
+			ssoAppTypes := []string{"wordpress", "drupal", "joomla"}
 			var installs []models.ApplicationInstall
 			if err := sharedDB.WithContext(ctx).
-				Where("app_type = ? AND status IN ?", "wordpress", []string{"ready", "installing", "failed"}).
+				Where("app_type IN ? AND status IN ?", ssoAppTypes, []string{"ready", "installing", "failed"}).
 				Find(&installs).Error; err != nil {
 				return fmt.Errorf("list installs: %w", err)
 			}

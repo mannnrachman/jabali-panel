@@ -34,10 +34,10 @@ func TestGenerateNonce(t *testing.T) {
 	}
 }
 
-func TestRenderSSOTemplate_HappyPath(t *testing.T) {
-	out, err := RenderSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, "admin")
+func TestRenderWordPressSSOTemplate_HappyPath(t *testing.T) {
+	out, err := RenderWordPressSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, "admin")
 	if err != nil {
-		t.Fatalf("RenderSSOTemplate: %v", err)
+		t.Fatalf("RenderWordPressSSOTemplate: %v", err)
 	}
 	if !strings.Contains(out, validNonce) {
 		t.Errorf("output missing nonce")
@@ -59,17 +59,17 @@ func TestRenderSSOTemplate_HappyPath(t *testing.T) {
 	}
 }
 
-// TestRenderSSOTemplate_GuardsAllSpeculativeFetches is a regression guard
+// TestRenderWordPressSSOTemplate_GuardsAllSpeculativeFetches is a regression guard
 // for the 2026-04-21 field incident: the template's prefetch guard used
 // strict equality `$secPurpose === 'prefetch'` and missed Chrome's
 // `Sec-Purpose: prefetch;prerender` header. A Chrome prerender silently
 // consumed the SSO file (302 + unlink) before the user's real click,
 // which then 404'd. The fix treats any non-empty Sec-Purpose as
 // speculative, per the Fetch Metadata spec.
-func TestRenderSSOTemplate_GuardsAllSpeculativeFetches(t *testing.T) {
-	out, err := RenderSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, "admin")
+func TestRenderWordPressSSOTemplate_GuardsAllSpeculativeFetches(t *testing.T) {
+	out, err := RenderWordPressSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, "admin")
 	if err != nil {
-		t.Fatalf("RenderSSOTemplate: %v", err)
+		t.Fatalf("RenderWordPressSSOTemplate: %v", err)
 	}
 	if !strings.Contains(out, "$secPurpose !== ''") {
 		t.Errorf("template missing forward-compatible Sec-Purpose guard " +
@@ -81,7 +81,7 @@ func TestRenderSSOTemplate_GuardsAllSpeculativeFetches(t *testing.T) {
 	}
 }
 
-func TestRenderSSOTemplate_RejectsInvalidNonce(t *testing.T) {
+func TestRenderWordPressSSOTemplate_RejectsInvalidNonce(t *testing.T) {
 	cases := []struct {
 		name, nonce string
 	}{
@@ -93,7 +93,7 @@ func TestRenderSSOTemplate_RejectsInvalidNonce(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := RenderSSOTemplate(c.nonce, "/var/www/html/wp-load.php", validULID, "admin")
+			_, err := RenderWordPressSSOTemplate(c.nonce, "/var/www/html/wp-load.php", validULID, "admin")
 			if err == nil {
 				t.Errorf("expected error for %s, got nil", c.name)
 			}
@@ -101,7 +101,7 @@ func TestRenderSSOTemplate_RejectsInvalidNonce(t *testing.T) {
 	}
 }
 
-func TestRenderSSOTemplate_RejectsInvalidWpLoadPath(t *testing.T) {
+func TestRenderWordPressSSOTemplate_RejectsInvalidWpLoadPath(t *testing.T) {
 	cases := []struct {
 		name, path string
 	}{
@@ -114,7 +114,7 @@ func TestRenderSSOTemplate_RejectsInvalidWpLoadPath(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := RenderSSOTemplate(validNonce, c.path, validULID, "admin")
+			_, err := RenderWordPressSSOTemplate(validNonce, c.path, validULID, "admin")
 			if err == nil {
 				t.Errorf("expected error for %s, got nil", c.name)
 			}
@@ -122,7 +122,7 @@ func TestRenderSSOTemplate_RejectsInvalidWpLoadPath(t *testing.T) {
 	}
 }
 
-func TestRenderSSOTemplate_RejectsInvalidInstallID(t *testing.T) {
+func TestRenderWordPressSSOTemplate_RejectsInvalidInstallID(t *testing.T) {
 	cases := []struct {
 		name, id string
 	}{
@@ -137,7 +137,7 @@ func TestRenderSSOTemplate_RejectsInvalidInstallID(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := RenderSSOTemplate(validNonce, "/var/www/html/wp-load.php", c.id, "admin")
+			_, err := RenderWordPressSSOTemplate(validNonce, "/var/www/html/wp-load.php", c.id, "admin")
 			if err == nil {
 				t.Errorf("expected error for %s, got nil", c.name)
 			}
@@ -145,7 +145,7 @@ func TestRenderSSOTemplate_RejectsInvalidInstallID(t *testing.T) {
 	}
 }
 
-func TestRenderSSOTemplate_RejectsInvalidAdminUsername(t *testing.T) {
+func TestRenderWordPressSSOTemplate_RejectsInvalidAdminUsername(t *testing.T) {
 	cases := []struct {
 		name, username string
 	}{
@@ -161,7 +161,7 @@ func TestRenderSSOTemplate_RejectsInvalidAdminUsername(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := RenderSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, c.username)
+			_, err := RenderWordPressSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, c.username)
 			if err == nil {
 				t.Errorf("expected error for %s, got nil", c.name)
 			}
@@ -169,7 +169,7 @@ func TestRenderSSOTemplate_RejectsInvalidAdminUsername(t *testing.T) {
 	}
 }
 
-func TestRenderSSOTemplate_AcceptsRealisticUsernames(t *testing.T) {
+func TestRenderWordPressSSOTemplate_AcceptsRealisticUsernames(t *testing.T) {
 	cases := []string{
 		"admin",
 		"a",                 // single char
@@ -182,7 +182,7 @@ func TestRenderSSOTemplate_AcceptsRealisticUsernames(t *testing.T) {
 	}
 	for _, u := range cases {
 		t.Run(u, func(t *testing.T) {
-			_, err := RenderSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, u)
+			_, err := RenderWordPressSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, u)
 			if err != nil {
 				t.Errorf("expected ok for %q, got %v", u, err)
 			}
@@ -190,13 +190,13 @@ func TestRenderSSOTemplate_AcceptsRealisticUsernames(t *testing.T) {
 	}
 }
 
-func TestRenderSSOTemplate_PassesPHPLint(t *testing.T) {
+func TestRenderWordPressSSOTemplate_PassesPHPLint(t *testing.T) {
 	if _, err := exec.LookPath("php"); err != nil {
 		t.Skip("php not on PATH, skipping syntax check")
 	}
-	out, err := RenderSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, "admin")
+	out, err := RenderWordPressSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, "admin")
 	if err != nil {
-		t.Fatalf("RenderSSOTemplate: %v", err)
+		t.Fatalf("RenderWordPressSSOTemplate: %v", err)
 	}
 	cmd := exec.Command("php", "-l")
 	cmd.Stdin = strings.NewReader(out)
@@ -209,10 +209,10 @@ func TestRenderSSOTemplate_PassesPHPLint(t *testing.T) {
 	}
 }
 
-func TestRenderSSOTemplate_NoUnsubstitutedMarkers(t *testing.T) {
-	out, err := RenderSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, "admin")
+func TestRenderWordPressSSOTemplate_NoUnsubstitutedMarkers(t *testing.T) {
+	out, err := RenderWordPressSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, "admin")
 	if err != nil {
-		t.Fatalf("RenderSSOTemplate: %v", err)
+		t.Fatalf("RenderWordPressSSOTemplate: %v", err)
 	}
 	if regexp.MustCompile(`__JABALI_[A-Z_]+__`).MatchString(out) {
 		t.Errorf("output still contains a __MARKER__ token")

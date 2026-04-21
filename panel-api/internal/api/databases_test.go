@@ -241,13 +241,15 @@ func (m *mockPackageRepo) Delete(ctx context.Context, id string) error {
 
 // Mock agent for testing
 type mockAgent struct {
-	callFn    func(ctx context.Context, command string, params any) (json.RawMessage, error)
-	callErr   error
-	callCount int
+	callFn      func(ctx context.Context, command string, params any) (json.RawMessage, error)
+	callErr     error
+	callCount   int
+	lastCommand string
 }
 
 func (m *mockAgent) Call(ctx context.Context, command string, params any) (json.RawMessage, error) {
 	m.callCount++
+	m.lastCommand = command
 	if m.callFn != nil {
 		return m.callFn(ctx, command, params)
 	}

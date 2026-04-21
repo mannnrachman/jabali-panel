@@ -376,12 +376,15 @@ export const UserApplicationList = () => {
             render={(_, r) => {
               const isDeleting =
                 deletingId === r.id || r.status === "deleting";
+              const appType = r.app_type ?? "wordpress";
               const canClone =
-                r.status === "ready" &&
-                (r.app_type ?? "wordpress") === "wordpress";
-              const isWordPress = (r.app_type ?? "wordpress") === "wordpress";
+                r.status === "ready" && appType === "wordpress";
+              // Admin login is implemented for WordPress, Drupal, and
+              // Joomla — matches panel-api ssoAgentCommandFor. When
+              // adding a new CMS to the SSO-file flow, widen this list.
               const canLogin =
-                r.status === "ready" && isWordPress;
+                r.status === "ready" &&
+                (appType === "wordpress" || appType === "drupal" || appType === "joomla");
 
               return (
                 <ActionsCell

@@ -217,14 +217,16 @@ func TestMagicLinkMint_InstallNotReady(t *testing.T) {
 	}
 }
 
-func TestMagicLinkMint_NonWordPressAppType(t *testing.T) {
+func TestMagicLinkMint_UnsupportedAppType(t *testing.T) {
 	const owner = "user_X"
 	const installID = "01ARZ3NDEKTSV4RRFFQ69G5NWP"
 	const domainID = "01ARZ3NDEKTSV4RRFFQ69G5NW2"
 
 	r, wpRepo, dRepo, uRepo, _ := magicLinkRouter(t, owner, false)
 	seedReadyWPInstall(t, wpRepo, dRepo, uRepo, owner, installID, domainID, "example.com", "/home/shuki/domains/example.com/public_html", "")
-	wpRepo.installs[installID].AppType = "joomla"
+	// phpbb has no SSO-file handler yet — ssoAgentCommandFor returns
+	// (_, false), so the mint handler should 409 with unsupported_app_type.
+	wpRepo.installs[installID].AppType = "phpbb"
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/applications/"+installID+"/magic-link", nil)
 	w := httptest.NewRecorder()
@@ -235,6 +237,46 @@ func TestMagicLinkMint_NonWordPressAppType(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "unsupported_app_type") {
 		t.Errorf("body missing unsupported_app_type: %s", w.Body.String())
+	}
+}
+
+func TestMagicLinkMint_DispatchByAppType(t *testing.T) {
+	cases := []struct {
+		appType string
+		wantCmd string
+	}{
+		{"wordpress", "wordpress.create_sso_file"},
+		{"drupal", "drupal.create_sso_file"},
+		{"joomla", "joomla.create_sso_file"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.appType, func(t *testing.T) {
+			const owner = "user_X"
+			// install_id must be a valid 26-char Crockford ULID for
+			// agent-side validation; build a deterministic one per case.
+			installID := "01ARZ3NDEKTSV4RRFFQ69G5" + strings.ToUpper(tc.appType[:3])
+			domainID := "01ARZ3NDEKTSV4RRFFQ69G5D00"
+
+			r, wpRepo, dRepo, uRepo, ag := magicLinkRouter(t, owner, false)
+			seedReadyWPInstall(t, wpRepo, dRepo, uRepo, owner, installID, domainID, tc.appType+".example.com", "/home/shuki/domains/"+tc.appType+"/public_html", "")
+			wpRepo.installs[installID].AppType = tc.appType
+
+			const fakeFile = "jabali-sso-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.php"
+			ag.callFn = func(ctx context.Context, command string, params any) (json.RawMessage, error) {
+				return fakeAgentResponse(fakeFile, 1700000000), nil
+			}
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/applications/"+installID+"/magic-link", nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+			}
+			if ag.lastCommand != tc.wantCmd {
+				t.Errorf("agent command = %q, want %q", ag.lastCommand, tc.wantCmd)
+			}
+		})
 	}
 }
 

@@ -52,6 +52,30 @@ type MagicLinkHandlerConfig struct {
 // without the other the SPA's countdown drifts vs the actual lifetime.
 const ssoTTLSeconds = 60
 
+// ssoAgentCommandFor maps an application_installs.app_type value to the
+// agent command that writes the self-deleting SSO PHP file for that
+// CMS. Returns false for app_types that don't yet have an SSO-file
+// implementation — the mint handler maps that to 409
+// unsupported_app_type.
+//
+// Adding a new CMS to magic-link is three steps:
+//   1. Add a `<cms>.create_sso_file` handler in panel-agent with its
+//      per-CMS PHP template.
+//   2. Add the mapping here.
+//   3. Widen the panel-ui "Log in to admin" button's app_type filter.
+func ssoAgentCommandFor(appType string) (string, bool) {
+	switch appType {
+	case "wordpress":
+		return "wordpress.create_sso_file", true
+	case "drupal":
+		return "drupal.create_sso_file", true
+	case "joomla":
+		return "joomla.create_sso_file", true
+	default:
+		return "", false
+	}
+}
+
 // RegisterMagicLinkRoutes mounts POST /applications/:id/magic-link under
 // the v1 group where the Kratos session middleware already applies.
 //
@@ -111,10 +135,11 @@ func (h *magicLinkHandlers) mint(c *gin.Context) {
 		})
 		return
 	}
-	if install.AppType != "wordpress" {
+	agentCommand, ok := ssoAgentCommandFor(install.AppType)
+	if !ok {
 		c.AbortWithStatusJSON(http.StatusConflict, gin.H{
 			"error":  "unsupported_app_type",
-			"detail": "magic-link login is currently WordPress-only",
+			"detail": "magic-link login not implemented for app_type " + install.AppType,
 		})
 		return
 	}
@@ -154,7 +179,7 @@ func (h *magicLinkHandlers) mint(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "agent not configured"})
 		return
 	}
-	raw, err := h.cfg.Agent.Call(ctx, "wordpress.create_sso_file", payload)
+	raw, err := h.cfg.Agent.Call(ctx, agentCommand, payload)
 	if err != nil {
 		slog.ErrorContext(ctx, "magiclink mint: agent call failed", "err", err, "install_id", installID)
 		c.AbortWithStatusJSON(http.StatusBadGateway, gin.H{"error": "agent_failed"})

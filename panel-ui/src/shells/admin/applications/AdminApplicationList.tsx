@@ -268,9 +268,12 @@ export const AdminApplicationList = () => {
             title="Actions"
             dataIndex="actions"
             render={(_, r) => {
-              const isWordPress = (r.app_type ?? "wordpress") === "wordpress";
+              const appType = r.app_type ?? "wordpress";
+              // Admin login is implemented for WordPress, Drupal, and
+              // Joomla — matches panel-api ssoAgentCommandFor.
               const canLogin =
-                r.status === "ready" && isWordPress;
+                r.status === "ready" &&
+                (appType === "wordpress" || appType === "drupal" || appType === "joomla");
 
               return (
                 <AdminActionsCell

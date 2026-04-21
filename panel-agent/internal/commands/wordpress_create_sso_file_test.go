@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// fakeWPInstall creates a tmpdir with a stub wp-load.php so CreateSSOFile
+// fakeWPInstall creates a tmpdir with a stub wp-load.php so CreateWordPressSSOFile
 // can resolve the path. Returns the install dir.
 func fakeWPInstall(t *testing.T) string {
 	t.Helper()
@@ -22,14 +22,14 @@ func fakeWPInstall(t *testing.T) string {
 	return dir
 }
 
-func TestCreateSSOFile_HappyPath(t *testing.T) {
+func TestCreateWordPressSSOFile_HappyPath(t *testing.T) {
 	dir := fakeWPInstall(t)
 	me, err := user.Current()
 	if err != nil {
 		t.Fatalf("user.Current: %v", err)
 	}
 
-	resp, err := CreateSSOFile(context.Background(), createSSOFileReq{
+	resp, err := CreateWordPressSSOFile(context.Background(), createSSOFileReq{
 		InstallPath: dir,
 		OSUser:      me.Username, // chown to ourselves so it works without root
 		InstallID:   validULID,
@@ -40,7 +40,7 @@ func TestCreateSSOFile_HappyPath(t *testing.T) {
 		if strings.Contains(err.Error(), "chown") {
 			t.Skipf("chown to www-data unavailable in this test env: %v", err)
 		}
-		t.Fatalf("CreateSSOFile: %v", err)
+		t.Fatalf("CreateWordPressSSOFile: %v", err)
 	}
 
 	// File name shape
@@ -73,8 +73,8 @@ func TestCreateSSOFile_HappyPath(t *testing.T) {
 	}
 }
 
-func TestCreateSSOFile_RejectsNonAbsoluteInstallPath(t *testing.T) {
-	_, err := CreateSSOFile(context.Background(), createSSOFileReq{
+func TestCreateWordPressSSOFile_RejectsNonAbsoluteInstallPath(t *testing.T) {
+	_, err := CreateWordPressSSOFile(context.Background(), createSSOFileReq{
 		InstallPath: "relative/path",
 		OSUser:      "irrelevant",
 		InstallID:   validULID,
@@ -85,9 +85,9 @@ func TestCreateSSOFile_RejectsNonAbsoluteInstallPath(t *testing.T) {
 	}
 }
 
-func TestCreateSSOFile_MissingWPLoad(t *testing.T) {
+func TestCreateWordPressSSOFile_MissingWPLoad(t *testing.T) {
 	dir := t.TempDir() // no wp-load.php seeded
-	_, err := CreateSSOFile(context.Background(), createSSOFileReq{
+	_, err := CreateWordPressSSOFile(context.Background(), createSSOFileReq{
 		InstallPath: dir,
 		OSUser:      "irrelevant",
 		InstallID:   validULID,
@@ -98,9 +98,9 @@ func TestCreateSSOFile_MissingWPLoad(t *testing.T) {
 	}
 }
 
-func TestCreateSSOFile_RejectsInvalidInstallID(t *testing.T) {
+func TestCreateWordPressSSOFile_RejectsInvalidInstallID(t *testing.T) {
 	dir := fakeWPInstall(t)
-	_, err := CreateSSOFile(context.Background(), createSSOFileReq{
+	_, err := CreateWordPressSSOFile(context.Background(), createSSOFileReq{
 		InstallPath: dir,
 		OSUser:      "x",
 		InstallID:   "not-a-ulid",
@@ -111,24 +111,24 @@ func TestCreateSSOFile_RejectsInvalidInstallID(t *testing.T) {
 	}
 }
 
-func TestCreateSSOFile_RejectsInvalidAdminUsername(t *testing.T) {
+func TestCreateWordPressSSOFile_RejectsInvalidAdminUsername(t *testing.T) {
 	dir := fakeWPInstall(t)
-	_, err := CreateSSOFile(context.Background(), createSSOFileReq{
+	_, err := CreateWordPressSSOFile(context.Background(), createSSOFileReq{
 		InstallPath:   dir,
 		OSUser:        "x",
 		InstallID:     validULID,
-		AdminUsername: "", // empty rejected by RenderSSOTemplate
+		AdminUsername: "", // empty rejected by RenderWordPressSSOTemplate
 	})
 	if err == nil || !strings.Contains(err.Error(), "adminUsername") {
 		t.Errorf("expected adminUsername error, got %v", err)
 	}
 }
 
-func TestCreateSSOFile_ChownFailureCleansUp(t *testing.T) {
+func TestCreateWordPressSSOFile_ChownFailureCleansUp(t *testing.T) {
 	// Point at a definitely-nonexistent user so chown fails. Verify
 	// no jabali-sso-*.php file is left behind in the install dir.
 	dir := fakeWPInstall(t)
-	_, err := CreateSSOFile(context.Background(), createSSOFileReq{
+	_, err := CreateWordPressSSOFile(context.Background(), createSSOFileReq{
 		InstallPath: dir,
 		OSUser:      "definitely-not-a-real-user-9876543210",
 		InstallID:   validULID,

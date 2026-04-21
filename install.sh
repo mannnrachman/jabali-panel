@@ -332,6 +332,15 @@ install_base_packages() {
   _log "installing all system packages in one batch"
   export DEBIAN_FRONTEND=noninteractive
 
+  # Bootstrap: `gpg` (from gnupg) + `curl` + `ca-certificates` must be
+  # present BEFORE we add third-party repos (Sury, NodeSource) and verify
+  # their GPG keys. Minimal LXC containers often ship without gnupg. Two
+  # apt runs total (this bootstrap + the big install below) is still a
+  # huge win over the pre-consolidation 6 calls.
+  _log "bootstrap: gnupg + ca-certificates + curl (needed to verify third-party repo keys)"
+  apt-get update -qq
+  apt-get install -y -qq --no-install-recommends gnupg ca-certificates curl
+
   # Third-party repos added BEFORE the big install so one `apt-get update`
   # sees them and one `apt-get install` resolves everything together. Each
   # adder is idempotent (bails out if the source file already exists).

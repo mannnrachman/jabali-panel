@@ -1340,6 +1340,14 @@ build_frontend() {
     HOME="$REPO_DIR" \
     PATH="/usr/bin:/bin" \
     bash -c "cd '$REPO_DIR/panel-ui' && npm ci --no-audit --no-fund --prefer-offline"
+
+  # Wipe Vite's dep pre-bundling cache. When a previous install/update
+  # left a node_modules/.vite dir, its cached resolutions for packages
+  # like react-dom can point at paths invalidated by the fresh npm ci,
+  # and vite build fails with "Failed to resolve entry for package X".
+  # Cheap to regenerate (seconds).
+  rm -rf "$REPO_DIR/panel-ui/node_modules/.vite"
+
   sudo -u "$SERVICE_USER" -H env \
     HOME="$REPO_DIR" \
     PATH="/usr/bin:/bin" \

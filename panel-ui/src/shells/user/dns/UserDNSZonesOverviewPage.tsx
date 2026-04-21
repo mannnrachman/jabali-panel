@@ -3,6 +3,7 @@
 // for the DNS-record deep-link.
 import { useEffect, useState } from "react";
 import { Alert, Button, Empty, Spin, Table, Tag, Typography } from "antd";
+import { useNavigate } from "react-router";
 
 import { apiClient } from "../../../apiClient";
 import { useTableURL } from "../../../hooks/useTableURL";
@@ -20,6 +21,7 @@ interface ZoneStatus {
 }
 
 export const UserDNSZonesOverviewPage = () => {
+  const navigate = useNavigate();
   const [zoneStatuses, setZoneStatuses] = useState<Map<string, ZoneStatus>>(
     new Map(),
   );

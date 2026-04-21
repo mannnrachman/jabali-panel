@@ -11,6 +11,7 @@ import type { InputRef, MenuProps } from "antd";
 import { useLocation, useNavigate } from "react-router";
 
 import { useAuth } from "../auth/AuthContext";
+import { JabaliTitle } from "./JabaliTitle";
 import { ThemeToggle } from "./ThemeToggle";
 
 const { Header } = Layout;
@@ -132,6 +133,10 @@ export function JabaliHeader() {
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
       }}
     >
+      <div style={{ flexShrink: 0 }}>
+        <JabaliTitle />
+      </div>
+
       <Input.Search
         ref={searchInputRef}
         placeholder="Search users, domains… (/)"

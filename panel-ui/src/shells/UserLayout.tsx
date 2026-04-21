@@ -4,12 +4,11 @@
 // driven by `userNav` so an admin-only entry can never leak into the
 // sidebar here.
 import { useState } from "react";
-import { Layout, Menu } from "antd";
+import { Layout, Menu, theme } from "antd";
 import { Outlet, useLocation, useNavigate } from "react-router";
 
 import { JabaliFooter } from "../components/JabaliFooter";
 import { JabaliHeader } from "../components/JabaliHeader";
-import { JabaliTitle } from "../components/JabaliTitle";
 import { selectedNavKey, userNav } from "../nav";
 import { useThemeMode } from "../theme/ThemeModeContext";
 
@@ -20,6 +19,7 @@ export function UserLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const { mode } = useThemeMode();
+  const { token } = theme.useToken();
 
   const items = userNav.map((n) => ({
     key: n.key,
@@ -32,32 +32,32 @@ export function UserLayout() {
 
   return (
     <Layout style={{ minHeight: "100vh" }}>
-      <Sider
-        theme={mode}
-        width={256}
-        breakpoint="lg"
-        collapsedWidth="64"
-        collapsible
-        collapsed={collapsed}
-        onCollapse={setCollapsed}
-      >
-        <div style={{ padding: "16px 12px" }}>
-          <JabaliTitle collapsed={collapsed} />
-        </div>
-        <Menu
-          mode="inline"
-          theme={mode}
-          selectedKeys={selected ? [selected] : []}
-          items={items}
-          style={{ border: "none" }}
-        />
-      </Sider>
+      <JabaliHeader />
       <Layout>
-        <JabaliHeader />
-        <Content style={{ padding: 24 }}>
-          <Outlet />
-        </Content>
-        <JabaliFooter />
+        <Sider
+          theme={mode}
+          width={256}
+          breakpoint="lg"
+          collapsedWidth="64"
+          collapsible
+          collapsed={collapsed}
+          onCollapse={setCollapsed}
+          style={{ background: token.colorBgLayout }}
+        >
+          <Menu
+            mode="inline"
+            theme={mode}
+            selectedKeys={selected ? [selected] : []}
+            items={items}
+            style={{ border: "none", background: token.colorBgLayout }}
+          />
+        </Sider>
+        <Layout>
+          <Content style={{ padding: 24 }}>
+            <Outlet />
+          </Content>
+          <JabaliFooter />
+        </Layout>
       </Layout>
     </Layout>
   );

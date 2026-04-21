@@ -930,16 +930,16 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 **Depends on:** M20 (Kratos identity — supersedes Refine's `authProvider` role so removing it doesn't lose functionality).
 **Related:** ADR-0037 (design rationale, rollback note, outcome), `plans/m21-drop-refine.md` (five-wave blueprint).
 
-### M22: Magic-link token for WordPress admin SSO (IN-FLIGHT)
+### M22: Magic-link token for WordPress admin SSO (SHIPPED 2026-04-21)
 
-**Status:** In-flight (ADR-0039 proposed, Steps 8–11 queued)
+**Status:** Shipped (ADR-0039 accepted, Steps 8–11 complete)
 
 **Goal:** Replace M16's rolled-back OIDC stack with a simpler magic-link token mechanism. Operator clicks "Admin" button on an Applications row → new tab opens → lands signed in to that WordPress install's `/wp-admin` as the site's admin user. No OAuth, no federation, no consent screens—just opaque, single-use, 60-second tokens signed with HMAC-SHA256.
 
 **Design (ADR-0039):** Tokens are base64url-encoded opaque strings, not JWT. Format: `<token_id_b64>.<signature_b64>`. Server stores SHA256(token_id) in the database so a DB read leak doesn't leak valid tokens. Single-use enforcement via atomic CAS on `used_at` column. TTL 60s. Signing key rotates via comma-separated base64 key list in `/etc/jabali-panel/magic-link.key`. Threat model covers 9 scenarios (token leak in URL, replay, forgery, key leak, cross-install, CSRF, phishing, logs/APM, collision).
 
 **Depends on:** M16R (OIDC rollback must land first).
-**Related:** ADR-0038 (M16 rollback), ADR-0039 (magic-link design + threat model), `plans/m16-rollback-and-m22-magic-link.md` (four-step blueprint).
+**Related:** ADR-0038 (M16 rollback), ADR-0039 (magic-link design + threat model), `plans/m22-magic-link-runbook.md` (operator guide for key provisioning, rotation, troubleshooting).
 
 ---
 

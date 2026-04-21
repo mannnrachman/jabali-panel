@@ -23,6 +23,7 @@ import {
   ExclamationCircleOutlined,
   DeleteOutlined,
   CopyOutlined,
+  LoginOutlined,
 } from "@ant-design/icons";
 import { useQueryClient } from "@tanstack/react-query";
 import type { SorterResult } from "antd/es/table/interface";
@@ -31,6 +32,7 @@ import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { apiClient } from "../../../apiClient";
 import { useAuth } from "../../../auth/AuthContext";
 import { useTableURL } from "../../../hooks/useTableURL";
+import { useMagicLink } from "../../../hooks/useMagicLink";
 import { InstallApplicationModal } from "./InstallApplicationModal";
 import { CloneApplicationModal } from "./CloneApplicationModal";
 import { APP_TYPE_LABELS } from "./appLabels";
@@ -77,6 +79,91 @@ const TRANSITIONAL = new Set<ApplicationInstall["status"]>([
   "cloning",
   "deleting",
 ]);
+
+interface ActionsCellProps {
+  record: ApplicationInstall;
+  isDeleting: boolean;
+  canClone: boolean;
+  canLogin: boolean;
+  onClone: () => void;
+  onDelete: () => void;
+}
+
+const ActionsCell = ({
+  record,
+  isDeleting,
+  canClone,
+  canLogin,
+  onClone,
+  onDelete,
+}: ActionsCellProps) => {
+  const { mint: mintMagicLink, loading: magicLinkLoading, error: magicLinkError } = useMagicLink(record.id);
+
+  const handleMagicLink = async () => {
+    try {
+      const response = await mintMagicLink();
+      window.open(
+        response.url,
+        "_blank",
+        "noopener,noreferrer"
+      );
+      message.success("Admin login link opened");
+    } catch {
+      message.error(magicLinkError || "Failed to generate admin login link");
+    }
+  };
+
+  return (
+    <Space>
+      {canLogin && (
+        <Tooltip title="Log in to the admin dashboard">
+          <Button
+            type="link"
+            icon={<LoginOutlined />}
+            loading={magicLinkLoading}
+            onClick={handleMagicLink}
+          >
+            Log in to admin
+          </Button>
+        </Tooltip>
+      )}
+      <Tooltip
+        title={
+          canClone
+            ? ""
+            : "Clone is only available for healthy WordPress installs"
+        }
+      >
+        <Button
+          type="link"
+          icon={<CopyOutlined />}
+          disabled={!canClone}
+          onClick={onClone}
+        >
+          Clone
+        </Button>
+      </Tooltip>
+      <Popconfirm
+        title="Delete this application?"
+        description="The database and files will be removed. This cannot be undone."
+        okText="Delete"
+        okButtonProps={{ danger: true }}
+        cancelText="Cancel"
+        onConfirm={onDelete}
+        disabled={isDeleting}
+      >
+        <Button
+          type="link"
+          danger
+          icon={<DeleteOutlined />}
+          loading={isDeleting}
+        >
+          Delete
+        </Button>
+      </Popconfirm>
+    </Space>
+  );
+};
 
 export const UserApplicationList = () => {
   const { user } = useAuth();
@@ -293,46 +380,22 @@ export const UserApplicationList = () => {
               const canClone =
                 r.status === "ready" &&
                 (r.app_type ?? "wordpress") === "wordpress";
+              const isWordPress = (r.app_type ?? "wordpress") === "wordpress";
+              const canLogin =
+                r.status === "ready" && isWordPress;
+
               return (
-                <Space>
-                  <Tooltip
-                    title={
-                      canClone
-                        ? ""
-                        : "Clone is only available for healthy WordPress installs"
-                    }
-                  >
-                    <Button
-                      type="text"
-                      icon={<CopyOutlined />}
-                      disabled={!canClone}
-                      onClick={() => {
-                        setCloningId(r.id);
-                        setCloneOpen(true);
-                      }}
-                    >
-                      Clone
-                    </Button>
-                  </Tooltip>
-                  <Popconfirm
-                    title="Delete this application?"
-                    description="The database and files will be removed. This cannot be undone."
-                    okText="Delete"
-                    okButtonProps={{ danger: true }}
-                    cancelText="Cancel"
-                    onConfirm={() => handleDelete(r)}
-                    disabled={isDeleting}
-                  >
-                    <Button
-                      type="text"
-                      danger
-                      icon={<DeleteOutlined />}
-                      loading={isDeleting}
-                    >
-                      Delete
-                    </Button>
-                  </Popconfirm>
-                </Space>
+                <ActionsCell
+                  record={r}
+                  isDeleting={isDeleting}
+                  canClone={canClone}
+                  canLogin={canLogin}
+                  onClone={() => {
+                    setCloningId(r.id);
+                    setCloneOpen(true);
+                  }}
+                  onDelete={() => handleDelete(r)}
+                />
               );
             }}
           />

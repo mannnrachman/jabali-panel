@@ -7,23 +7,27 @@
 // coupling low and avoid tight dependency on that component.
 import { useEffect } from "react";
 import {
+  Button,
   Card,
   Space,
   Table,
   Tag,
   Tooltip,
   Typography,
+  message,
 } from "antd";
 import {
   GlobalOutlined,
   LoadingOutlined,
   CheckCircleOutlined,
   ExclamationCircleOutlined,
+  LoginOutlined,
 } from "@ant-design/icons";
 import type { SorterResult } from "antd/es/table/interface";
 
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useTableURL } from "../../../hooks/useTableURL";
+import { useMagicLink } from "../../../hooks/useMagicLink";
 import { APP_TYPE_LABELS } from "../../user/applications/appLabels";
 import { CmsIcon } from "../../user/applications/CmsIcon";
 
@@ -68,6 +72,49 @@ const TRANSITIONAL = new Set<ApplicationInstall["status"]>([
   "cloning",
   "deleting",
 ]);
+
+interface AdminActionsCellProps {
+  record: ApplicationInstall;
+  canLogin: boolean;
+}
+
+const AdminActionsCell = ({
+  record,
+  canLogin,
+}: AdminActionsCellProps) => {
+  const { mint: mintMagicLink, loading: magicLinkLoading, error: magicLinkError } = useMagicLink(record.id);
+
+  const handleMagicLink = async () => {
+    try {
+      const response = await mintMagicLink();
+      window.open(
+        response.url,
+        "_blank",
+        "noopener,noreferrer"
+      );
+      message.success("Admin login link opened");
+    } catch {
+      message.error(magicLinkError || "Failed to generate admin login link");
+    }
+  };
+
+  return (
+    <Space>
+      {canLogin && (
+        <Tooltip title="Log in to the admin dashboard">
+          <Button
+            type="link"
+            icon={<LoginOutlined />}
+            loading={magicLinkLoading}
+            onClick={handleMagicLink}
+          >
+            Log in to admin
+          </Button>
+        </Tooltip>
+      )}
+    </Space>
+  );
+};
 
 export const AdminApplicationList = () => {
   const query = useTableURL<ApplicationInstall>({
@@ -217,6 +264,22 @@ export const AdminApplicationList = () => {
             sorter={{ multiple: 2 }}
             defaultSortOrder="descend"
             render={(date: string) => new Date(date).toLocaleDateString()}
+          />
+          <Table.Column<ApplicationInstall>
+            title="Actions"
+            dataIndex="actions"
+            render={(_, r) => {
+              const isWordPress = (r.app_type ?? "wordpress") === "wordpress";
+              const canLogin =
+                r.status === "ready" && isWordPress;
+
+              return (
+                <AdminActionsCell
+                  record={r}
+                  canLogin={canLogin}
+                />
+              );
+            }}
           />
         </SearchableTableStringQ>
       </Card>

@@ -106,6 +106,36 @@ Then:
    permanent use when no WebUI-created admin exists. For our automation
    path, the env-seeded admin IS the production credential.)
 
+### Two-phase install ordering (amendment, 2026-04-21)
+
+The steps above are split across **two functions** in install.sh for
+ordering reasons — the SqlDirectory targets need to exist before the
+GRANT can succeed.
+
+- `install_stalwart` (phase 1, called in `main()` before
+  `start_and_verify`): downloads binaries + CLI, creates service user
+  and paths, generates admin token + MariaDB password, renders
+  config.json / stalwart.env / apply-plan.json, installs systemd unit.
+  Does NOT run GRANT or start Stalwart.
+- `install_stalwart_apply` (phase 2, called in `main()` after
+  `start_and_verify`): runs the MariaDB `CREATE USER ... GRANT SELECT
+  ON jabali_panel.mailboxes, jabali_panel.domains`, then
+  `systemctl enable --now jabali-stalwart`, then polls /jmap, then
+  `stalwart-cli apply`.
+
+The GRANT cannot live in phase 1 because `jabali_panel.mailboxes` is
+created by migration `000054_create_mailboxes.up.sql`, which runs
+inside `jabali-panel.service` on first start — which happens inside
+`start_and_verify`. Running the GRANT before that point fails with
+`ERROR 1146 (42S02): Table 'jabali_panel.mailboxes' doesn't exist`,
+aborting install on a fresh VM.
+
+Splitting also keeps the artefacts rendered in phase 1 available for
+manual recovery: if phase 2 fails (e.g. stalwart.service crash-loops),
+an operator can fix the underlying cause and re-run
+`install_stalwart_apply` (or `stalwart-cli apply` by hand) without
+re-downloading or re-rendering anything.
+
 The recovery-mode foreground dance (upgrade doc §5–7) is NOT used —
 it's required only for migrating an existing v0.15 deployment. Fresh
 installs use normal mode with seeded admin, which is simpler and has

@@ -946,7 +946,7 @@ provision_mariadb() {
     CREATE USER IF NOT EXISTS '${db_user}'@'localhost' IDENTIFIED BY '${db_pass}';
     ALTER USER '${db_user}'@'localhost' IDENTIFIED BY '${db_pass}';
     GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER,
-          REFERENCES, LOCK TABLES
+          REFERENCES, LOCK TABLES, TRIGGER
       ON \`${db_name}\`.* TO '${db_user}'@'localhost';
     FLUSH PRIVILEGES;
   "

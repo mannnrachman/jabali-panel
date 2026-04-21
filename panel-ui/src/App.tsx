@@ -25,7 +25,6 @@ import type { ReactNode } from "react";
 
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { RequireAdmin } from "./auth/RequireAdmin";
-import { RequireAuth } from "./auth/RequireAuth";
 import { RequireUser } from "./auth/RequireUser";
 import useMuiTheme from "./muiTheme";
 import { queryClient } from "./query";

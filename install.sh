@@ -200,6 +200,30 @@ _detect_public_ipv6() {
 
 prompt_server_settings() {
   local config_file="/etc/jabali-panel/config.toml"
+
+  # If --hostname (or JABALI_HOSTNAME env) was passed, apply it at the OS
+  # layer immediately — even on re-runs where config.toml already has a
+  # hostname and we skip the prompt below. Without this, a second install
+  # pass with --hostname=new-name silently ignored the flag because the
+  # early-return fired before line 306's hostnamectl call.
+  if [[ -n "${JABALI_HOSTNAME:-}" ]]; then
+    local _hostname_regex='^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$'
+    if [[ ! "$JABALI_HOSTNAME" =~ $_hostname_regex ]]; then
+      _die "invalid JABALI_HOSTNAME: '$JABALI_HOSTNAME' (use letters/digits/dots/hyphens)"
+    fi
+    local _cur_hostname
+    _cur_hostname="$(hostname 2>/dev/null || echo '')"
+    if [[ "$_cur_hostname" != "$JABALI_HOSTNAME" ]]; then
+      _log "applying --hostname: $_cur_hostname → $JABALI_HOSTNAME"
+      hostnamectl set-hostname "$JABALI_HOSTNAME" 2>/dev/null || \
+        _warn "hostnamectl set-hostname failed (container without CAP_SYS_ADMIN?) — /etc/hostname may be stale"
+    fi
+    if ! grep -q "[[:space:]]${JABALI_HOSTNAME}\([[:space:]]\|$\)" /etc/hosts 2>/dev/null; then
+      # Best-effort loopback entry so `hostname -f` resolves locally.
+      printf '127.0.1.1\t%s\n' "$JABALI_HOSTNAME" >> /etc/hosts
+    fi
+  fi
+
   if [[ -f "$config_file" ]] && grep -q '^[[:space:]]*hostname[[:space:]]*=' "$config_file"; then
     _log "server settings already configured in $config_file — skipping prompt"
     # Re-export for downstream use so write_config_file is a no-op on re-run.

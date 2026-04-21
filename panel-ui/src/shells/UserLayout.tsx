@@ -58,7 +58,7 @@ export function UserLayout() {
               {collapsed ? <RightOutlined /> : <LeftOutlined />}
             </span>
           }
-          style={{ background: siderBg, paddingTop: 16 }}
+          style={{ background: siderBg, paddingTop: 16, paddingInline: 8 }}
         >
           <Menu
             mode="inline"

@@ -8,7 +8,7 @@
 // the ?is_admin filter is applied before search/sort so the paginated
 // total stays correct per tab.
 import { useState } from "react";
-import { Badge, Button, Card, Space, Table, Typography } from "antd";
+import { Button, Card, Space, Table, Tag, Typography } from "antd";
 import type { SorterResult } from "antd/es/table/interface";
 import { useNavigate } from "react-router";
 
@@ -190,7 +190,7 @@ export const UserList = () => {
             tab: (
               <Space>
                 Users
-                <Badge count={usersCountQ.total} showZero />
+                <Tag>{usersCountQ.total}</Tag>
               </Space>
             ),
           },
@@ -199,7 +199,7 @@ export const UserList = () => {
             tab: (
               <Space>
                 Administrators
-                <Badge count={adminsCountQ.total} showZero />
+                <Tag>{adminsCountQ.total}</Tag>
               </Space>
             ),
           },

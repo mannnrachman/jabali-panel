@@ -124,7 +124,7 @@ const renderCustomHeaderBody = (
       <Col span={12}>
         <div style={{ marginBottom: 8 }}>
           <Typography.Text>
-            Header Name <span style={{ color: "#ff4d4f" }}>*</span>
+            Header Name <Typography.Text type="danger">*</Typography.Text>
           </Typography.Text>
         </div>
         <Input
@@ -136,7 +136,7 @@ const renderCustomHeaderBody = (
       <Col span={12}>
         <div style={{ marginBottom: 8 }}>
           <Typography.Text>
-            Value <span style={{ color: "#ff4d4f" }}>*</span>
+            Value <Typography.Text type="danger">*</Typography.Text>
           </Typography.Text>
         </div>
         <Input
@@ -168,7 +168,7 @@ const renderRewriteBody = (
       <Col span={12}>
         <div style={{ marginBottom: 8 }}>
           <Typography.Text>
-            Pattern <span style={{ color: "#ff4d4f" }}>*</span>
+            Pattern <Typography.Text type="danger">*</Typography.Text>
           </Typography.Text>
         </div>
         <Input
@@ -183,7 +183,7 @@ const renderRewriteBody = (
       <Col span={12}>
         <div style={{ marginBottom: 8 }}>
           <Typography.Text>
-            Replacement <span style={{ color: "#ff4d4f" }}>*</span>
+            Replacement <Typography.Text type="danger">*</Typography.Text>
           </Typography.Text>
         </div>
         <Input
@@ -223,7 +223,7 @@ const renderProxyPassBody = (
       <Col span={12}>
         <div style={{ marginBottom: 8 }}>
           <Typography.Text>
-            Path <span style={{ color: "#ff4d4f" }}>*</span>
+            Path <Typography.Text type="danger">*</Typography.Text>
           </Typography.Text>
         </div>
         <Input
@@ -231,14 +231,14 @@ const renderProxyPassBody = (
           value={rule.path}
           onChange={(e) => onUpdate("path", e.target.value)}
         />
-        <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 4 }}>
+        <Typography.Text type="secondary" style={{ display: "block", marginTop: 4 }}>
           Location prefix
         </Typography.Text>
       </Col>
       <Col span={12}>
         <div style={{ marginBottom: 8 }}>
           <Typography.Text>
-            Target URL <span style={{ color: "#ff4d4f" }}>*</span>
+            Target URL <Typography.Text type="danger">*</Typography.Text>
           </Typography.Text>
         </div>
         <Input
@@ -246,7 +246,7 @@ const renderProxyPassBody = (
           value={rule.target}
           onChange={(e) => onUpdate("target", e.target.value)}
         />
-        <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 4 }}>
+        <Typography.Text type="secondary" style={{ display: "block", marginTop: 4 }}>
           Upstream service URL
         </Typography.Text>
       </Col>
@@ -263,7 +263,7 @@ const renderIpAccessBody = (
       <Col span={12}>
         <div style={{ marginBottom: 8 }}>
           <Typography.Text>
-            Path <span style={{ color: "#ff4d4f" }}>*</span>
+            Path <Typography.Text type="danger">*</Typography.Text>
           </Typography.Text>
         </div>
         <Input
@@ -275,7 +275,7 @@ const renderIpAccessBody = (
       <Col span={12}>
         <div style={{ marginBottom: 8 }}>
           <Typography.Text>
-            Mode <span style={{ color: "#ff4d4f" }}>*</span>
+            Mode <Typography.Text type="danger">*</Typography.Text>
           </Typography.Text>
         </div>
         <Select
@@ -293,7 +293,7 @@ const renderIpAccessBody = (
       <Col span={24}>
         <div style={{ marginBottom: 8 }}>
           <Typography.Text>
-            IP Addresses <span style={{ color: "#ff4d4f" }}>*</span>
+            IP Addresses <Typography.Text type="danger">*</Typography.Text>
           </Typography.Text>
         </div>
         <Select
@@ -318,7 +318,7 @@ const renderPhpSettingBody = (
       <Col span={12}>
         <div style={{ marginBottom: 8 }}>
           <Typography.Text>
-            PHP Directive <span style={{ color: "#ff4d4f" }}>*</span>
+            PHP Directive <Typography.Text type="danger">*</Typography.Text>
           </Typography.Text>
         </div>
         <Input
@@ -330,7 +330,7 @@ const renderPhpSettingBody = (
       <Col span={12}>
         <div style={{ marginBottom: 8 }}>
           <Typography.Text>
-            Value <span style={{ color: "#ff4d4f" }}>*</span>
+            Value <Typography.Text type="danger">*</Typography.Text>
           </Typography.Text>
         </div>
         <Input
@@ -352,7 +352,7 @@ const renderMaxUploadSizeBody = (
       <Col span={12}>
         <div style={{ marginBottom: 8 }}>
           <Typography.Text>
-            Size <span style={{ color: "#ff4d4f" }}>*</span>
+            Size <Typography.Text type="danger">*</Typography.Text>
           </Typography.Text>
         </div>
         <Input
@@ -360,7 +360,7 @@ const renderMaxUploadSizeBody = (
           value={rule.size}
           onChange={(e) => onUpdate("size", e.target.value)}
         />
-        <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 4 }}>
+        <Typography.Text type="secondary" style={{ display: "block", marginTop: 4 }}>
           e.g. 10M, 1G
         </Typography.Text>
       </Col>
@@ -441,7 +441,7 @@ const SortableRuleCard = ({
               alignItems: "center",
             }}
           >
-            <MenuOutlined style={{ color: "#999" }} />
+            <MenuOutlined />
           </button>
 
           <Typography.Text strong style={{ fontSize: 13 }}>
@@ -585,7 +585,7 @@ const RuleBuilder = ({
 
   return (
     <div>
-      <Typography.Paragraph style={{ color: "#666", marginBottom: 16 }}>
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
         Add rules using the form below. They will be converted to nginx directives automatically.
       </Typography.Paragraph>
 
@@ -594,7 +594,6 @@ const RuleBuilder = ({
           style={{
             padding: "32px 24px",
             textAlign: "center",
-            color: "#999",
           }}
         >
           <Typography.Text type="secondary">

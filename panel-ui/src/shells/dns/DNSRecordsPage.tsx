@@ -523,7 +523,7 @@ export const DNSRecordsPage = () => {
                   <Row gutter={16} style={{ marginBottom: 16 }}>
                     <Col span={12}>
                       <div style={{ marginBottom: 8 }}>
-                        <Typography.Text style={{ fontSize: 12 }}>Refresh (seconds)</Typography.Text>
+                        <Typography.Text>Refresh (seconds)</Typography.Text>
                       </div>
                       <InputNumber
                         min={0}
@@ -536,7 +536,7 @@ export const DNSRecordsPage = () => {
                     </Col>
                     <Col span={12}>
                       <div style={{ marginBottom: 8 }}>
-                        <Typography.Text style={{ fontSize: 12 }}>Retry (seconds)</Typography.Text>
+                        <Typography.Text>Retry (seconds)</Typography.Text>
                       </div>
                       <InputNumber
                         min={0}
@@ -552,7 +552,7 @@ export const DNSRecordsPage = () => {
                   <Row gutter={16} style={{ marginBottom: 16 }}>
                     <Col span={12}>
                       <div style={{ marginBottom: 8 }}>
-                        <Typography.Text style={{ fontSize: 12 }}>Expire (seconds)</Typography.Text>
+                        <Typography.Text>Expire (seconds)</Typography.Text>
                       </div>
                       <InputNumber
                         min={0}
@@ -565,7 +565,7 @@ export const DNSRecordsPage = () => {
                     </Col>
                     <Col span={12}>
                       <div style={{ marginBottom: 8 }}>
-                        <Typography.Text style={{ fontSize: 12 }}>Minimum TTL (seconds)</Typography.Text>
+                        <Typography.Text>Minimum TTL (seconds)</Typography.Text>
                       </div>
                       <InputNumber
                         min={0}
@@ -627,7 +627,7 @@ export const DNSRecordsPage = () => {
                 <Row gutter={16} style={{ marginTop: 12, marginBottom: 12 }}>
                   <Col span={6}>
                     <div style={{ marginBottom: 8 }}>
-                      <Typography.Text style={{ fontSize: 12 }}>Name</Typography.Text>
+                      <Typography.Text>Name</Typography.Text>
                     </div>
                     <Input
                       value={editRecordName}
@@ -637,13 +637,13 @@ export const DNSRecordsPage = () => {
                   </Col>
                   <Col span={4}>
                     <div style={{ marginBottom: 8 }}>
-                      <Typography.Text style={{ fontSize: 12 }}>Type</Typography.Text>
+                      <Typography.Text>Type</Typography.Text>
                     </div>
                     <Input value={editingRecord.type} disabled />
                   </Col>
                   <Col span={10}>
                     <div style={{ marginBottom: 8 }}>
-                      <Typography.Text style={{ fontSize: 12 }}>Content</Typography.Text>
+                      <Typography.Text>Content</Typography.Text>
                     </div>
                     <Input
                       value={editRecordContent}
@@ -653,7 +653,7 @@ export const DNSRecordsPage = () => {
                   </Col>
                   <Col span={4}>
                     <div style={{ marginBottom: 8 }}>
-                      <Typography.Text style={{ fontSize: 12 }}>TTL</Typography.Text>
+                      <Typography.Text>TTL</Typography.Text>
                     </div>
                     <InputNumber
                       min={0}
@@ -667,7 +667,7 @@ export const DNSRecordsPage = () => {
                   <Row gutter={16} style={{ marginBottom: 12 }}>
                     <Col span={6}>
                       <div style={{ marginBottom: 8 }}>
-                        <Typography.Text style={{ fontSize: 12 }}>
+                        <Typography.Text>
                           Priority
                         </Typography.Text>
                       </div>
@@ -725,7 +725,7 @@ export const DNSRecordsPage = () => {
                   width: "30%",
                   render: (text: string) => (
                     <Typography.Text
-                      style={{ fontFamily: "monospace", fontSize: 12 }}
+                      style={{ fontFamily: "monospace" }}
                     >
                       {text}
                     </Typography.Text>
@@ -755,10 +755,9 @@ export const DNSRecordsPage = () => {
                     if (readonly) {
                       return (
                         <Space>
-                          <LockOutlined style={{ color: "#999" }} />
+                          <LockOutlined />
                           <Typography.Text
                             type="secondary"
-                            style={{ fontSize: 12 }}
                           >
                             Managed
                           </Typography.Text>
@@ -802,7 +801,7 @@ export const DNSRecordsPage = () => {
         <Row gutter={16} style={{ marginBottom: 16 }}>
           <Col span={12}>
             <div style={{ marginBottom: 8 }}>
-              <Typography.Text style={{ fontSize: 12 }}>Type</Typography.Text>
+              <Typography.Text>Type</Typography.Text>
             </div>
             <Select
               value={addRecordType}
@@ -820,7 +819,7 @@ export const DNSRecordsPage = () => {
           </Col>
           <Col span={12}>
             <div style={{ marginBottom: 8 }}>
-              <Typography.Text style={{ fontSize: 12 }}>Name</Typography.Text>
+              <Typography.Text>Name</Typography.Text>
             </div>
             <Input
               placeholder={placeholders.nameHelper}
@@ -833,7 +832,7 @@ export const DNSRecordsPage = () => {
         <Row gutter={16} style={{ marginBottom: 16 }}>
           <Col span={24}>
             <div style={{ marginBottom: 8 }}>
-              <Typography.Text style={{ fontSize: 12 }}>Content</Typography.Text>
+              <Typography.Text>Content</Typography.Text>
             </div>
             <Input
               placeholder={placeholders.contentHelper}
@@ -846,7 +845,7 @@ export const DNSRecordsPage = () => {
         <Row gutter={16} style={{ marginBottom: 16 }}>
           <Col span={12}>
             <div style={{ marginBottom: 8 }}>
-              <Typography.Text style={{ fontSize: 12 }}>TTL (seconds)</Typography.Text>
+              <Typography.Text>TTL (seconds)</Typography.Text>
             </div>
             <InputNumber
               min={0}
@@ -858,7 +857,7 @@ export const DNSRecordsPage = () => {
           {addRecordType === "MX" && (
             <Col span={12}>
               <div style={{ marginBottom: 8 }}>
-                <Typography.Text style={{ fontSize: 12 }}>Priority</Typography.Text>
+                <Typography.Text>Priority</Typography.Text>
               </div>
               <InputNumber
                 min={0}

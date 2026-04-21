@@ -115,7 +115,7 @@ const SortableCard = ({
               alignItems: "center",
             }}
           >
-            <DragOutlined style={{ color: "#999" }} />
+            <DragOutlined />
           </button>
 
           <Switch
@@ -123,7 +123,7 @@ const SortableCard = ({
             onChange={(checked) => onUpdate(idx, "active", checked)}
             style={{ marginRight: 4 }}
           />
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          <Typography.Text type="secondary">
             Active
           </Typography.Text>
 
@@ -152,7 +152,7 @@ const SortableCard = ({
               <Col span={12}>
                 <div style={{ marginBottom: 8 }}>
                   <Typography.Text>
-                    Source Path <span style={{ color: "red" }}>*</span>
+                    Source Path <Typography.Text type="danger">*</Typography.Text>
                   </Typography.Text>
                 </div>
                 <Input
@@ -160,14 +160,14 @@ const SortableCard = ({
                   value={pr.source}
                   onChange={(e) => onUpdate(idx, "source", e.target.value)}
                 />
-                <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 4 }}>
+                <Typography.Text type="secondary" style={{ display: "block", marginTop: 4 }}>
                   Path to redirect from (e.g., /old-page)
                 </Typography.Text>
               </Col>
               <Col span={12}>
                 <div style={{ marginBottom: 8 }}>
                   <Typography.Text>
-                    Destination URL <span style={{ color: "red" }}>*</span>
+                    Destination URL <Typography.Text type="danger">*</Typography.Text>
                   </Typography.Text>
                 </div>
                 <Input
@@ -175,7 +175,7 @@ const SortableCard = ({
                   value={pr.destination}
                   onChange={(e) => onUpdate(idx, "destination", e.target.value)}
                 />
-                <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 4 }}>
+                <Typography.Text type="secondary" style={{ display: "block", marginTop: 4 }}>
                   Full URL to redirect to
                 </Typography.Text>
               </Col>
@@ -185,7 +185,7 @@ const SortableCard = ({
               <Col span={12}>
                 <div style={{ marginBottom: 8 }}>
                   <Typography.Text>
-                    Type <span style={{ color: "red" }}>*</span>
+                    Type <Typography.Text type="danger">*</Typography.Text>
                   </Typography.Text>
                 </div>
                 <Select
@@ -204,7 +204,7 @@ const SortableCard = ({
                   onChange={(checked) => onUpdate(idx, "wildcard", checked)}
                   style={{ marginRight: 8 }}
                 />
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                <Typography.Text type="secondary">
                   Prefix match + capture path (301/302 only)
                 </Typography.Text>
               </Col>
@@ -361,7 +361,7 @@ export const DomainRedirectsButton = ({
           </Button>,
         ]}
       >
-        <Typography.Paragraph style={{ color: "#666", marginBottom: 24 }}>
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 24 }}>
           Redirect this domain to another domain or set up page redirects.
         </Typography.Paragraph>
 
@@ -385,7 +385,7 @@ export const DomainRedirectsButton = ({
                 <Col span={12}>
                   <div style={{ marginBottom: 8 }}>
                     <Typography.Text>
-                      Redirect To <span style={{ color: "red" }}>*</span>
+                      Redirect To <Typography.Text type="danger">*</Typography.Text>
                     </Typography.Text>
                   </div>
                   <Input
@@ -397,7 +397,7 @@ export const DomainRedirectsButton = ({
                 <Col span={12}>
                   <div style={{ marginBottom: 8 }}>
                     <Typography.Text>
-                      Redirect Type <span style={{ color: "red" }}>*</span>
+                      Redirect Type <Typography.Text type="danger">*</Typography.Text>
                     </Typography.Text>
                   </div>
                   <Select
@@ -408,7 +408,7 @@ export const DomainRedirectsButton = ({
                   />
                 </Col>
               </Row>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              <Typography.Text type="secondary">
                 All requests to this domain will be redirected to this URL
               </Typography.Text>
             </>

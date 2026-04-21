@@ -70,7 +70,7 @@ export const DNSZonesOverviewPage = () => {
   const getZoneStatusTag = (domainId: string) => {
     const status = zoneStatuses.get(domainId);
     if (status === undefined) {
-      return <Spin size="small" />;
+      return <Spin />;
     }
     return status.provisioned ? (
       <Tag color="green">Provisioned</Tag>
@@ -139,7 +139,6 @@ export const DNSZonesOverviewPage = () => {
             render={(_, record) => (
               <Button
                 type="primary"
-                size="small"
                 onClick={() =>
                   navigate(`/jabali-admin/domains/${record.id}/dns`)
                 }

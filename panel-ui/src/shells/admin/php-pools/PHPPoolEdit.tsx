@@ -248,7 +248,6 @@ export const PHPPoolEdit = () => {
                 <Button
                   type="text"
                   danger
-                  size="small"
                   onClick={() => handleDeleteOverride(record.id)}
                 >
                   Delete

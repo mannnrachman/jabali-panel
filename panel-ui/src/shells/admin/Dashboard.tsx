@@ -269,7 +269,7 @@ export function Dashboard() {
             dataIndex="active"
             title="Status"
             render={(active: string, row: ServiceStatus) => (
-              <Space size="small">
+              <Space>
                 <Tag color={serviceTagColor(active)}>{active}</Tag>
                 {row.load_state === "masked" && <Tag>masked</Tag>}
               </Space>

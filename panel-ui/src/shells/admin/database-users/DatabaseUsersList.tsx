@@ -226,10 +226,9 @@ export const DatabaseUsersList = () => {
             dataIndex="actions"
             width={180}
             render={(_, row) => (
-              <Space size="small">
+              <Space>
                 <Tooltip title="Add database access">
                   <Button
-                    size="small"
                     type="text"
                     icon={<PlusOutlined />}
                     onClick={() => setGrantTarget(row)}
@@ -237,7 +236,6 @@ export const DatabaseUsersList = () => {
                 </Tooltip>
                 <Tooltip title="Rotate password">
                   <Button
-                    size="small"
                     type="text"
                     icon={<KeyOutlined />}
                     loading={rotatingId === row.id}

@@ -180,10 +180,9 @@ export const DomainList = () => {
             title="Actions"
             dataIndex="actions"
             render={(_, r) => (
-              <Space size="small">
+              <Space>
                 <Button
                   type="text"
-                  size="small"
                   icon={<GlobalOutlined />}
                   onClick={() => navigate(`/jabali-admin/domains/${r.id}/dns`)}
                 >
@@ -195,7 +194,6 @@ export const DomainList = () => {
                 <DomainToggleButton domain={r} />
                 <Button
                   type="text"
-                  size="small"
                   onClick={() =>
                     navigate(`/jabali-admin/domains/edit/${r.id}`)
                   }

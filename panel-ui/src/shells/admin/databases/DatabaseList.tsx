@@ -111,7 +111,6 @@ export const DatabaseList = () => {
           <Table.Column<Database>
             dataIndex="charset"
             title="Charset"
-            render={(charset?: string) => charset || "-"}
           />
           <Table.Column<Database>
             dataIndex="created_at"
@@ -124,7 +123,7 @@ export const DatabaseList = () => {
             title="Actions"
             dataIndex="actions"
             render={(_, r) => (
-              <Space size="small">
+              <Space>
                 <RowDeleteButton
                   confirmTitle={`Delete database "${r.name}"?`}
                   onConfirm={async () => {

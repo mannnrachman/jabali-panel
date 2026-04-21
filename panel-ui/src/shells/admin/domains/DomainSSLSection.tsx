@@ -182,7 +182,6 @@ export const DomainSSLSection = ({ domainId, sslEnabled, onToggled }: Props) => 
             <>
               {cert?.last_error && <div>Error: {cert.last_error}</div>}
               <Button
-                size="small"
                 type="primary"
                 loading={renewing}
                 onClick={onRetry}
@@ -223,7 +222,6 @@ export const DomainSSLSection = ({ domainId, sslEnabled, onToggled }: Props) => 
 
         {status === "issued" && (
           <Button
-            size="small"
             icon={<ReloadOutlined />}
             loading={renewing}
             onClick={onRenew}

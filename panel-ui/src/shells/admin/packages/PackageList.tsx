@@ -146,7 +146,6 @@ export const PackageList = () => {
               <Space>
                 <Button
                   type="text"
-                  size="small"
                   onClick={() =>
                     navigate(`/jabali-admin/packages/edit/${r.id}`)
                   }

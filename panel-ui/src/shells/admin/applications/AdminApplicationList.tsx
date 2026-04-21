@@ -193,7 +193,6 @@ export const AdminApplicationList = () => {
           <Table.Column<ApplicationInstall>
             dataIndex="version"
             title="Version"
-            render={(version: string | null) => version || "-"}
           />
           <Table.Column<ApplicationInstall>
             dataIndex="status"

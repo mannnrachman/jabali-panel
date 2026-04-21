@@ -217,7 +217,7 @@ export const DNSResolversCard = () => {
         if the restart fails.
       </Typography.Paragraph>
 
-      <Space size="small" wrap style={{ marginBottom: 12 }}>
+      <Space wrap style={{ marginBottom: 12 }}>
         <Typography.Text type="secondary">Status:</Typography.Text>
         {active ? (
           <Tag color="green">systemd-resolved active</Tag>
@@ -249,7 +249,6 @@ export const DNSResolversCard = () => {
             {providers.map((p) => (
               <Button
                 key={p.key}
-                size="small"
                 onClick={() => applyPreset(p)}
                 title={p.description}
               >

@@ -98,22 +98,19 @@ test.describe("users CRUD (admin)", () => {
     });
     await signIn(page, admin);
     await page.waitForURL(/\/jabali-admin/);
-    await page.goto("/jabali-admin/users");
 
-    // Click the Edit icon on the victim row.
-    const victimRow = page.getByRole("row", { name: /victim@test\.local/ });
-    await victimRow.getByRole("button").first().click();
-    await page.waitForURL(/\/jabali-admin\/users\/edit\//);
+    // goto /users/edit/<id> directly, same rationale as the create-flow
+    // fix (c830630): clicking the row's Edit icon on /users races with
+    // AntD Table's initial-render onChange, which calls setSearchParams
+    // to write ?page=1. On CI the late setSearchParams navigates back
+    // to /users?page=1 *after* we've already clicked through to /edit,
+    // the edit form unmounts, and every subsequent locator times out.
+    // Bypassing the click keeps UserList from ever mounting.
+    await page.goto("/jabali-admin/users/edit/01KPVICTIM00000000000000AA");
 
-    // Same form-ready anchors the create-flow needs: wait for Save to be
-    // visible (proves form tree mounted) and for network to go idle (the
-    // edit form's initial GET /users/:id + hosting-package Select query
-    // finish), otherwise a mid-load re-render detaches the Save button
-    // during the click and Playwright retries into the 30s test timeout.
     await expect(
       page.getByRole("button", { name: /save/i }),
     ).toBeVisible();
-    await page.waitForLoadState("networkidle");
 
     await page.getByLabel(/first name/i).fill("Changed");
     await page.getByRole("button", { name: /save/i }).click();

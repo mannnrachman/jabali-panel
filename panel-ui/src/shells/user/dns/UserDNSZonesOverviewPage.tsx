@@ -2,7 +2,7 @@
 // admin/dns/DNSZonesOverviewPage but navigates within /jabali-panel
 // for the DNS-record deep-link.
 import { useEffect, useState } from "react";
-import { Alert, Button, Empty, Spin, Table, Tag, Typography } from "antd";
+import { Alert, Button, Card, Empty, Spin, Table, Tag, Typography } from "antd";
 import { useNavigate } from "react-router";
 
 import { apiClient } from "../../../apiClient";
@@ -82,42 +82,44 @@ export const UserDNSZonesOverviewPage = () => {
         style={{ marginBottom: 16 }}
       />
 
-      {query.isLoading ? (
-        <Spin />
-      ) : query.items.length === 0 ? (
-        <Empty description="No domains found" />
-      ) : (
-        <Table<Domain>
-          rowKey="id"
-          loading={query.isLoading}
-          dataSource={query.items}
-          pagination={{
-            current: query.params.page,
-            pageSize: query.params.pageSize,
-            total: query.total,
-            onChange: (page, pageSize) => query.setParams({ page, pageSize }),
-          }}
-        >
-          <Table.Column<Domain> dataIndex="name" title="Domain Name" />
-          <Table.Column<Domain>
-            title="Zone Status"
-            render={(_, record) => getZoneStatusTag(record.id)}
-          />
-          <Table.Column<Domain>
-            title="Actions"
-            render={(_, record) => (
-              <Button
-                type="primary"
-                onClick={() =>
-                  navigate(`/jabali-panel/domains/${record.id}/dns`)
-                }
-              >
-                Manage Records
-              </Button>
-            )}
-          />
-        </Table>
-      )}
+      <Card>
+        {query.isLoading ? (
+          <Spin />
+        ) : query.items.length === 0 ? (
+          <Empty description="No domains found" />
+        ) : (
+          <Table<Domain>
+            rowKey="id"
+            loading={query.isLoading}
+            dataSource={query.items}
+            pagination={{
+              current: query.params.page,
+              pageSize: query.params.pageSize,
+              total: query.total,
+              onChange: (page, pageSize) => query.setParams({ page, pageSize }),
+            }}
+          >
+            <Table.Column<Domain> dataIndex="name" title="Domain Name" />
+            <Table.Column<Domain>
+              title="Zone Status"
+              render={(_, record) => getZoneStatusTag(record.id)}
+            />
+            <Table.Column<Domain>
+              title="Actions"
+              render={(_, record) => (
+                <Button
+                  type="primary"
+                  onClick={() =>
+                    navigate(`/jabali-panel/domains/${record.id}/dns`)
+                  }
+                >
+                  Manage Records
+                </Button>
+              )}
+            />
+          </Table>
+        )}
+      </Card>
     </div>
   );
 };

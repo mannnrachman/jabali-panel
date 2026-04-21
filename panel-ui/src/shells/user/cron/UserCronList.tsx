@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   App,
   Button,
+  Card,
   Popconfirm,
   Space,
   Switch,
@@ -152,7 +153,7 @@ export const UserCronList = () => {
   const isLoading_ = isLoading || deletingId !== null;
 
   return (
-    <div style={{ padding: 24 }}>
+    <div>
       <Space
         style={{
           marginBottom: 16,
@@ -172,7 +173,8 @@ export const UserCronList = () => {
         </Button>
       </Space>
 
-      <Table<CronJob>
+      <Card>
+        <Table<CronJob>
         dataSource={jobs}
         loading={isLoading_}
         rowKey="id"
@@ -289,7 +291,8 @@ export const UserCronList = () => {
             ),
           },
         ]}
-      />
+        />
+      </Card>
 
       <CreateCronModal
         open={createModalOpen}

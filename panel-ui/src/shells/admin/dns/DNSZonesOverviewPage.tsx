@@ -4,7 +4,7 @@
 // per-domain zone probe is unchanged (apiClient.get on each row
 // after the list resolves).
 import { useEffect, useState } from "react";
-import { Alert, Button, Empty, Spin, Table, Tag, Typography } from "antd";
+import { Alert, Button, Card, Empty, Spin, Table, Tag, Typography } from "antd";
 import { useNavigate } from "react-router";
 
 import { apiClient } from "../../../apiClient";
@@ -91,12 +91,13 @@ export const DNSZonesOverviewPage = () => {
         style={{ marginBottom: 16 }}
       />
 
-      {query.isLoading ? (
-        <Spin />
-      ) : query.items.length === 0 ? (
-        <Empty description="No domains found" />
-      ) : (
-        <Table<Domain>
+      <Card>
+        {query.isLoading ? (
+          <Spin />
+        ) : query.items.length === 0 ? (
+          <Empty description="No domains found" />
+        ) : (
+          <Table<Domain>
           rowKey="id"
           loading={query.isLoading}
           dataSource={query.items}
@@ -130,8 +131,9 @@ export const DNSZonesOverviewPage = () => {
               </Button>
             )}
           />
-        </Table>
-      )}
+          </Table>
+        )}
+      </Card>
     </div>
   );
 };

@@ -191,7 +191,7 @@ export const UserSSHKeysPage = () => {
   };
 
   return (
-    <div style={{ padding: 24 }}>
+    <div>
       <Alert
         type="info"
         showIcon
@@ -263,62 +263,64 @@ export const UserSSHKeysPage = () => {
         <Card loading style={{ marginBottom: 16 }} />
       )}
 
-      <Table<SSHKey>
-        dataSource={keys}
-        loading={isLoading || deletingId !== null}
-        rowKey="id"
-        pagination={false}
-        columns={[
-          {
-            title: "Name",
-            dataIndex: "name",
-            sorter: (a, b) => a.name.localeCompare(b.name),
-            defaultSortOrder: "ascend",
-          },
-          {
-            title: "Fingerprint",
-            dataIndex: "fingerprint",
-            render: (fingerprint: string) => (
-              <Tooltip title={fingerprint}>
-                <span style={{ fontFamily: "monospace" }}>
-                  {truncateFingerprint(fingerprint)}
-                </span>
-              </Tooltip>
-            ),
-          },
-          {
-            title: "Created",
-            dataIndex: "created_at",
-            sorter: (a, b) =>
-              new Date(a.created_at).getTime() -
-              new Date(b.created_at).getTime(),
-            render: (date: string) => new Date(date).toLocaleDateString(),
-          },
-          {
-            title: "Actions",
-            dataIndex: "actions",
-            render: (_, record) => (
-              <Popconfirm
-                title="Delete SSH Key"
-                description="Are you sure? This revokes SFTP access."
-                onConfirm={() => handleDelete(record)}
-                okText="Yes"
-                cancelText="No"
-              >
-                <Button
-                  type="text"
-                  danger
-                  icon={<DeleteOutlined />}
-                  loading={deletingId === record.id}
-                  disabled={deletingId !== null && deletingId !== record.id}
+      <Card>
+        <Table<SSHKey>
+          dataSource={keys}
+          loading={isLoading || deletingId !== null}
+          rowKey="id"
+          pagination={false}
+          columns={[
+            {
+              title: "Name",
+              dataIndex: "name",
+              sorter: (a, b) => a.name.localeCompare(b.name),
+              defaultSortOrder: "ascend",
+            },
+            {
+              title: "Fingerprint",
+              dataIndex: "fingerprint",
+              render: (fingerprint: string) => (
+                <Tooltip title={fingerprint}>
+                  <span style={{ fontFamily: "monospace" }}>
+                    {truncateFingerprint(fingerprint)}
+                  </span>
+                </Tooltip>
+              ),
+            },
+            {
+              title: "Created",
+              dataIndex: "created_at",
+              sorter: (a, b) =>
+                new Date(a.created_at).getTime() -
+                new Date(b.created_at).getTime(),
+              render: (date: string) => new Date(date).toLocaleDateString(),
+            },
+            {
+              title: "Actions",
+              dataIndex: "actions",
+              render: (_, record) => (
+                <Popconfirm
+                  title="Delete SSH Key"
+                  description="Are you sure? This revokes SFTP access."
+                  onConfirm={() => handleDelete(record)}
+                  okText="Yes"
+                  cancelText="No"
                 >
-                  Delete
-                </Button>
-              </Popconfirm>
-            ),
-          },
-        ]}
-      />
+                  <Button
+                    type="text"
+                    danger
+                    icon={<DeleteOutlined />}
+                    loading={deletingId === record.id}
+                    disabled={deletingId !== null && deletingId !== record.id}
+                  >
+                    Delete
+                  </Button>
+                </Popconfirm>
+              ),
+            },
+          ]}
+        />
+      </Card>
 
       <Modal
         title="Add SSH Key"

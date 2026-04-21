@@ -73,6 +73,27 @@ func GenerateEd25519() (Ed25519Key, error) {
 	}, nil
 }
 
+// PublicDKIMTxtFromSeed re-derives the DKIM TXT record value for an
+// existing Ed25519 seed. The agent uses this after reading a key file
+// back from disk — DKIM signing with a stored seed would produce a
+// signature the freshly-rendered TXT wouldn't match, so the handler
+// needs one canonical derivation path for both freshly-generated and
+// reloaded keys.
+//
+// Output format is byte-identical to Ed25519Key.PublicDKIMTxt so a
+// fixture captured from one path validates against the other.
+func PublicDKIMTxtFromSeed(seed []byte) ([]byte, error) {
+	if len(seed) != ed25519.SeedSize {
+		return nil, fmt.Errorf("%w: got %d bytes, want %d", ErrInvalidSeed, len(seed), ed25519.SeedSize)
+	}
+	pub, ok := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("ed25519.NewKeyFromSeed returned unexpected public-key type")
+	}
+	pubB64 := base64.StdEncoding.EncodeToString(pub)
+	return []byte(fmt.Sprintf("v=DKIM1; k=ed25519; p=%s", pubB64)), nil
+}
+
 // LoadEd25519 reads a key file written by WritePrivate and returns the
 // 32-byte Ed25519 seed. Validates length; does not verify cryptographic
 // invariants (any 32 random bytes is a legal seed).

@@ -2301,6 +2301,36 @@ install_sso_key() {
   _ok "SSO key created at $sso_key_path"
 }
 
+install_magic_link_key() {
+  # M22: HMAC-SHA256 signing key for the magic-link admin-login flow.
+  # File format expected by panel-api's magiclink.Load: comma-separated
+  # base64url-encoded 32-byte keys, newest-first. Fresh installs get a
+  # single key; rotation appends new keys to the front (operator-driven).
+  local key_path="/etc/jabali-panel/magic-link.key"
+
+  mkdir -p /etc/jabali-panel
+  chmod 0755 /etc/jabali-panel
+
+  if [[ -f "$key_path" ]]; then
+    chown "$SERVICE_USER:$SERVICE_USER" "$key_path"
+    chmod 0600 "$key_path"
+    _ok "magic-link key already exists at $key_path (ownership refreshed)"
+    return
+  fi
+
+  _log "generating magic-link HMAC key (32 bytes, base64url-encoded)"
+
+  # 32 random bytes → standard base64 → URL-safe (- and _ instead of + and /)
+  # → strip padding (RawURLEncoding format, matches magiclink.Load).
+  local key
+  key=$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')
+  printf '%s\n' "$key" > "$key_path"
+  chown "$SERVICE_USER:$SERVICE_USER" "$key_path"
+  chmod 0600 "$key_path"
+
+  _ok "magic-link key created at $key_path"
+}
+
 # ---------- step 8: Kratos identity provider (M20) ---------------------------
 
 install_kratos() {
@@ -2574,6 +2604,7 @@ main() {
   provision_tls_cert
   seed_admin_env
   install_sso_key
+  install_magic_link_key
   # Order matters: install_phpmyadmin extracts the tarball to
   # /opt/phpmyadmin/current, which the pma pool config references as
   # chdir=. Starting the FPM service before the tarball is extracted

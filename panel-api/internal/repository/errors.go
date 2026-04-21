@@ -15,3 +15,12 @@ var ErrNotFound = errors.New("repository: not found")
 // (duplicate email, duplicate token_hash). Callers translate this into
 // HTTP 409 at the handler boundary.
 var ErrConflict = errors.New("repository: conflict")
+
+// ErrLocked is returned when a SELECT ... FOR UPDATE NOWAIT fails to acquire
+// the lock immediately (another transaction holds it). This indicates a concurrent
+// attempt to consume the same magic link token.
+var ErrLocked = errors.New("repository: locked")
+
+// ErrAlreadyUsed is returned when a token has already been consumed (UsedAt is not nil).
+// This prevents single-use enforcement from being bypassed.
+var ErrAlreadyUsed = errors.New("repository: already used")

@@ -147,6 +147,14 @@ type SSOConfig struct {
 	// Examples: "http://localhost", "https://pma.example.com"
 	// When empty, defaults to http://<Host> with port stripped.
 	PhpMyAdminBaseURL string `toml:"phpmyadmin_base_url"`
+
+	// MagicLinkKeyPath is the filesystem path to the M22 magic-link
+	// HMAC signing key file (`/etc/jabali-panel/magic-link.key`).
+	// File is expected to contain a comma-separated list of base64url
+	// 32-byte keys, newest-first (multi-key rotation per ADR-0039 §4).
+	// Missing or malformed key is FATAL at panel startup — see
+	// magiclink.Load's boot-time guards.
+	MagicLinkKeyPath string `toml:"magic_link_key_path"`
 }
 
 type WordPressConfig struct {
@@ -190,8 +198,9 @@ func Defaults() *Config {
 			ReconcilerInterval: 60 * time.Second,
 		},
 		SSO: SSOConfig{
-			KeyPath:    "/etc/jabali-panel/sso.key",
-			SocketPath: "/run/jabali-panel/sso.sock",
+			KeyPath:          "/etc/jabali-panel/sso.key",
+			SocketPath:       "/run/jabali-panel/sso.sock",
+			MagicLinkKeyPath: "/etc/jabali-panel/magic-link.key",
 		},
 		WordPress: WordPressConfig{
 			InstallTimeout: 10 * time.Minute,
@@ -285,6 +294,9 @@ func applyEnv(cfg *Config) error {
 	}
 	if v := os.Getenv("JABALI_SSO_KEY_PATH"); v != "" {
 		cfg.SSO.KeyPath = v
+	}
+	if v := os.Getenv("JABALI_MAGIC_LINK_KEY_PATH"); v != "" {
+		cfg.SSO.MagicLinkKeyPath = v
 	}
 	if v := os.Getenv("JABALI_SSO_SOCKET_PATH"); v != "" {
 		cfg.SSO.SocketPath = v

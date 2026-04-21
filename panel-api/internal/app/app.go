@@ -177,6 +177,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Agent:           deps.Agent,
 				StrictRateLimit: rl.Strict(),
 				Domains:         deps.Domains,
+				Packages:        deps.Packages,
 				Reconciler:      deps.Reconciler,
 				Log:             deps.Log,
 				// M20: atomic Kratos identity creation on POST /users.

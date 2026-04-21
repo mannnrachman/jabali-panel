@@ -263,40 +263,41 @@ func TestDomainEmailEnable_ReloadNotSupportedIsNotFatal(t *testing.T) {
 
 // --- domain.email_disable --------------------------------------------
 //
-// v0.16 flow: agent calls JMAP Domain/query (resolve id) then Domain/set
-// destroy, removes the DKIM keyfile, reloads Stalwart. Happy path
-// therefore requires a JMAP fake in addition to the systemctl capture.
+// Updated v0.16 flow (post-live-bug-fix): agent does NOT destroy the
+// Stalwart registry Domain (Stalwart refuses with objectIsLinked when
+// mailboxes exist) and does NOT remove the DKIM private key (ADR-0043
+// preserves it across enable/disable cycles). The handler is now just
+// a Stalwart reload — the panel DB is authoritative; SqlDirectory
+// blocks new auths once email_enabled=0.
 
-func TestDomainEmailDisable_DestroysRegistryAndRemovesKeyAndReloads(t *testing.T) {
+func TestDomainEmailDisable_ReloadOnly(t *testing.T) {
+	// Seed a keyfile so we can assert it SURVIVES the disable — this
+	// is the ADR-0043 contract (DKIM key preserved for re-enable). If
+	// disable removed it, re-enable would re-roll and invalidate every
+	// cached DKIM signature downstream.
 	dir := wireDKIMDir(t)
-	var sysctl systemctlCapture
-	wireSystemctl(t, &sysctl)
-
-	// JMAP fake: answer Domain/query with an id, Domain/set destroy ok.
-	srv := newJMAPServer(t, map[string]jmapHandler{
-		"x:Domain/query": jmapHandlerReturning(jmapQueryResult{
-			IDs: []string{"dom-42"}, Total: 1,
-		}),
-		"x:Domain/set": jmapHandlerReturning(jmapSetResult{Destroyed: []string{"dom-42"}}),
-	})
-	defer srv.Close()
-	wireJMAP(t, srv)
-
-	// Seed a keyfile to be removed.
 	keyPath := filepath.Join(dir, "example.com.key")
 	if err := os.WriteFile(keyPath, []byte("seed"), 0o600); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+
+	var sysctl systemctlCapture
+	wireSystemctl(t, &sysctl)
 
 	_, err := domainEmailDisableHandler(context.Background(), json.RawMessage(
 		`{"domain_id":"01J","domain_name":"example.com"}`))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if _, err := os.Stat(keyPath); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("keyfile should be gone, stat err: %v", err)
+
+	// Key must still be on disk.
+	if _, err := os.Stat(keyPath); err != nil {
+		t.Errorf("keyfile should survive disable, stat err: %v", err)
 	}
-	// Exactly one systemctl call: reload.
+
+	// Exactly one systemctl call: reload. No JMAP required; no fake
+	// server was wired, so any call to Stalwart would blow up — the
+	// absence of blow-up is part of the assertion.
 	if len(sysctl.calls) != 1 {
 		t.Fatalf("systemctl calls: got %d, want 1 (%v)", len(sysctl.calls), sysctl.calls)
 	}
@@ -305,46 +306,21 @@ func TestDomainEmailDisable_DestroysRegistryAndRemovesKeyAndReloads(t *testing.T
 	}
 }
 
-func TestDomainEmailDisable_NeverSynced_SkipsDestroyCall(t *testing.T) {
-	// Domain not in registry (enable was never called for this host's
-	// Stalwart). Query returns no ids, destroy route is not hit — the
-	// route map deliberately omits Domain/set to catch an unexpected call.
+func TestDomainEmailDisable_NoRegistryInteraction(t *testing.T) {
+	// Regression guard: any JMAP call from disable indicates the
+	// destroy path is back. Wire a server that 400s on every method
+	// so an unexpected call is loud.
 	wireDKIMDir(t)
 	var sysctl systemctlCapture
 	wireSystemctl(t, &sysctl)
-
-	srv := newJMAPServer(t, map[string]jmapHandler{
-		"x:Domain/query": jmapHandlerReturning(jmapQueryResult{IDs: nil, Total: 0}),
-	})
+	srv := newJMAPServer(t, map[string]jmapHandler{})
 	defer srv.Close()
 	wireJMAP(t, srv)
 
 	_, err := domainEmailDisableHandler(context.Background(), json.RawMessage(
 		`{"domain_id":"01J","domain_name":"example.com"}`))
 	if err != nil {
-		t.Fatalf("never-synced disable should succeed: %v", err)
-	}
-	if len(sysctl.calls) != 1 {
-		t.Errorf("expected 1 systemctl call (reload), got %d", len(sysctl.calls))
-	}
-}
-
-func TestDomainEmailDisable_IdempotentOnMissingKey(t *testing.T) {
-	wireDKIMDir(t) // fresh tempdir, no keyfile
-	var sysctl systemctlCapture
-	wireSystemctl(t, &sysctl)
-
-	// JMAP fake: destroy path not exercised (registry empty).
-	srv := newJMAPServer(t, map[string]jmapHandler{
-		"x:Domain/query": jmapHandlerReturning(jmapQueryResult{IDs: nil, Total: 0}),
-	})
-	defer srv.Close()
-	wireJMAP(t, srv)
-
-	_, err := domainEmailDisableHandler(context.Background(), json.RawMessage(
-		`{"domain_id":"01J","domain_name":"example.com"}`))
-	if err != nil {
-		t.Fatalf("missing-keyfile disable should succeed: %v", err)
+		t.Fatalf("disable must not touch Stalwart registry: %v", err)
 	}
 }
 

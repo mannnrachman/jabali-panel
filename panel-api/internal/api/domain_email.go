@@ -376,33 +376,30 @@ func (h *domainEmailHandler) buildHintsWithStatus(ctx context.Context, domainID,
 
 	var warnings []string
 	for i := range hints {
-		// Hints use FQDN form (name + trailing dot); existing records
-		// store the short label relative to the zone. Map the two so
-		// we can compare.
+		// Hints use FQDN form (name + trailing dot); dns_records stores
+		// short labels relative to the zone (and "@" for the apex).
+		// Normalise to the short form before lookup.
 		shortName := shortLabelForHint(hints[i].Name, domainName)
 		rec := findRecord(existing, shortName, hints[i].Type)
 		switch {
 		case rec == nil:
 			hints[i].Status = "missing"
-		case rec.Managed && rec.ManagedBy != nil:
-			// Panel-managed record — compare content only when we
-			// have an expected value to check against. Empty
-			// `Value` means we don't know (pre-enable hint line for
-			// DKIM). Treat as ok in that case.
-			if hints[i].Value == "" || hintMatches(rec.Content, hints[i].Value) {
-				hints[i].Status = "ok"
-			} else {
-				hints[i].Status = "conflict"
-				warnings = append(warnings, "Panel-managed "+hints[i].Type+" record at "+hints[i].Name+" drifted from the expected value — reconciler will fix on next tick.")
-			}
+		case rec.Managed:
+			// Managed=true means M4 bootstrap or M6 — content belongs
+			// to the panel's own render pipeline (compile.go expands
+			// short labels to FQDNs at wire time). Trust it without
+			// textual comparison: the hint's FQDN/priority-inlined
+			// format would never match the stored short label anyway
+			// ("mail" vs "10 mail.example.com."). Drift detection is
+			// the reconciler's job, not this live-check.
+			hints[i].Status = "ok"
 		default:
-			// User-edited. Block the override; don't warn if it matches.
-			if hints[i].Value != "" && !hintMatches(rec.Content, hints[i].Value) {
-				hints[i].Status = "conflict"
-				warnings = append(warnings, "User-edited "+hints[i].Type+" record at "+hints[i].Name+" overrides the email autoconfig; remove it to let M6 manage this slot.")
-			} else {
-				hints[i].Status = "ok"
-			}
+			// Managed=false → user-edited. Surface as conflict so the
+			// operator sees the override is blocking M6.
+			hints[i].Status = "conflict"
+			warnings = append(warnings,
+				"User-edited "+hints[i].Type+" record at "+hints[i].Name+
+					" overrides the email autoconfig; remove it to let M6 manage this slot.")
 		}
 	}
 	return hints, warnings

@@ -271,7 +271,7 @@ func runPhpbbCLIInstaller(ctx context.Context, osUser, installPath, configPath s
 	installDir := filepath.Join(installPath, "install")
 	args := []string{
 		"--working-directory=" + installDir,
-		"php",
+		phpCLIFor(osUser),
 		"phpbbcli.php",
 		"install",
 		configPath,

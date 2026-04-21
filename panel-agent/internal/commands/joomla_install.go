@@ -173,7 +173,7 @@ func runJoomlaCLIInstaller(ctx context.Context, req joomlaInstallReq, installPat
 	}
 
 	args := []string{
-		"php", filepath.Join(installPath, "installation", "joomla.php"),
+		phpCLIFor(req.OSUser), filepath.Join(installPath, "installation", "joomla.php"),
 		"install",
 		"--site-name=" + req.SiteTitle,
 		"--admin-email=" + req.AdminEmail,

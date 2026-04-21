@@ -205,7 +205,7 @@ func runPrestaShopCLIInstaller(ctx context.Context, req prestashopInstallReq, in
 	}
 
 	args := []string{
-		"php", filepath.Join(installPath, "install", "index_cli.php"),
+		phpCLIFor(req.OSUser), filepath.Join(installPath, "install", "index_cli.php"),
 		"--step=all",
 		"--language=" + language,
 		"--country=" + country,

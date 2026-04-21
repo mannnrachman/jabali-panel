@@ -57,11 +57,16 @@ func defaultRunAptGet(ctx context.Context, action string, pkgs ...string) ([]byt
 	return out.Bytes(), err
 }
 
-// defaultRunPhpenmod enables a module for a specific (version, sapi=fpm).
+// defaultRunPhpenmod enables a module for the given PHP version across
+// ALL SAPIs (CLI + FPM). We used to pass "-s fpm" but that left CLI
+// out of sync, so CMS installers that exec `php <script>` saw the
+// extension as missing even though FPM had it. readEnabledModules
+// in php_ext_list.go already requires BOTH SAPIs to report "enabled";
+// enabling both here keeps the writer and reader aligned.
 // gosec G204: version is validated via phpext.ValidVersion; module is the
 // EnableName field from phpext.Lookup, which is a hardcoded allowlist entry.
 func defaultRunPhpenmod(ctx context.Context, version, module string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "phpenmod", "-v", version, "-s", "fpm", module) //nolint:gosec // validated upstream
+	cmd := exec.CommandContext(ctx, "phpenmod", "-v", version, module) //nolint:gosec // validated upstream
 	cmd.Env = minimalEnv
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -70,10 +75,11 @@ func defaultRunPhpenmod(ctx context.Context, version, module string) ([]byte, er
 	return out.Bytes(), err
 }
 
-// defaultRunPhpdismod disables a module for a specific (version, sapi=fpm).
+// defaultRunPhpdismod disables a module across ALL SAPIs (CLI + FPM).
+// Mirrors defaultRunPhpenmod — see its comment for rationale.
 // gosec G204: same justification as defaultRunPhpenmod.
 func defaultRunPhpdismod(ctx context.Context, version, module string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "phpdismod", "-v", version, "-s", "fpm", module) //nolint:gosec // validated upstream
+	cmd := exec.CommandContext(ctx, "phpdismod", "-v", version, module) //nolint:gosec // validated upstream
 	cmd.Env = minimalEnv
 	var out bytes.Buffer
 	cmd.Stdout = &out

@@ -232,7 +232,7 @@ func runOpenCartCLIInstaller(ctx context.Context, req opencartInstallReq, instal
 	}
 
 	args := []string{
-		"php", filepath.Join(installPath, "install", "cli_install.php"),
+		phpCLIFor(req.OSUser), filepath.Join(installPath, "install", "cli_install.php"),
 		"install",
 		"--db_hostname", dbHost,
 		"--db_username", req.DBUser,

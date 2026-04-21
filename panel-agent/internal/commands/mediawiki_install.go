@@ -219,7 +219,7 @@ func runMediaWikiCLIInstaller(ctx context.Context, req mediawikiInstallReq, inst
 	}
 
 	args := []string{
-		"php", filepath.Join(installPath, "maintenance", "install.php"),
+		phpCLIFor(req.OSUser), filepath.Join(installPath, "maintenance", "install.php"),
 		"--dbtype=mysql",
 		"--dbserver=" + dbHost,
 		"--dbname=" + req.DBName,

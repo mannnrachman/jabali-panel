@@ -39,12 +39,15 @@ server {
   ssl_certificate {{.SSLCertPath}};
   ssl_certificate_key {{.SSLKeyPath}};
 
+  # Intentionally no X-Forwarded-Proto on this location — Next.js
+  # middleware-rewrite uses it to build internal proxy URLs, and with
+  # "https" would try to TLS-connect to Bulwark's plain-HTTP upstream.
+  # See the source-of-truth template in install/nginx/jabali-mail-vhost.conf.tmpl.
   location / {
     proxy_pass http://127.0.0.1:3000;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto https;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";

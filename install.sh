@@ -716,10 +716,24 @@ _install_sury_source() {
   fi
   [[ -n "$codename" ]] || _die "cannot determine distro codename (no VERSION_CODENAME in /etc/os-release)"
 
-  _log "downloading and verifying Sury GPG key"
-  curl -fsSL https://packages.sury.org/php/apt.gpg -o /usr/share/keyrings/sury-php.gpg
-  gpg --show-keys /usr/share/keyrings/sury-php.gpg 2>/dev/null | grep -q "$SURY_GPG_FINGERPRINT" || \
-    _die "Sury GPG key fingerprint mismatch. Expected: $SURY_GPG_FINGERPRINT"
+  # Ensure target dir exists on minimal Debian images.
+  install -d -m 0755 /usr/share/keyrings
+
+  _log "downloading Sury GPG key (curl: connect 15s, total 60s)"
+  curl -fsSL --connect-timeout 15 --max-time 60 \
+    https://packages.sury.org/php/apt.gpg -o /usr/share/keyrings/sury-php.gpg \
+    || _die "curl failed to fetch Sury GPG key from packages.sury.org — check egress / DNS from this host"
+
+  _log "verifying Sury GPG key fingerprint"
+  # GNUPGHOME=mktemp skips any ~/.gnupg / gpg-agent startup, which can
+  # hang silently on first-gpg invocation inside LXC containers. Drop
+  # the 2>/dev/null so gpg errors reach the terminal if verification
+  # fails — otherwise the operator sees only "mismatch" with no clue
+  # whether gpg actually parsed the file.
+  GNUPGHOME="$(mktemp -d)" gpg --no-default-keyring --no-tty --batch \
+    --show-keys /usr/share/keyrings/sury-php.gpg 2>&1 \
+    | grep -q "$SURY_GPG_FINGERPRINT" \
+    || _die "Sury GPG key fingerprint mismatch. Expected: $SURY_GPG_FINGERPRINT"
   _ok "Sury GPG key validated"
 
   cat > /etc/apt/sources.list.d/sury-php.list <<EOF
@@ -880,10 +894,19 @@ _install_nodesource_source() {
   # deb.nodesource.com/node_22.x instead of Debian's older nodejs.
   [[ -f /etc/apt/sources.list.d/nodesource.list ]] && { _ok "NodeSource repo already configured"; return; }
 
-  _log "adding NodeSource repo for Node.js 22"
+  _log "adding NodeSource repo for Node.js 22 (curl: connect 15s, total 60s)"
   install -d -m 0755 /etc/apt/keyrings
-  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-    | gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg
+  # Fetch → tmp file so a network error surfaces distinctly from a gpg
+  # parsing error. Same hang/diagnostic story as _install_sury_source.
+  local ns_armored
+  ns_armored="$(mktemp)"
+  curl -fsSL --connect-timeout 15 --max-time 60 \
+    https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o "$ns_armored" \
+    || _die "curl failed to fetch NodeSource GPG key from deb.nodesource.com — check egress / DNS from this host"
+  GNUPGHOME="$(mktemp -d)" gpg --no-default-keyring --no-tty --batch \
+    --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg < "$ns_armored" 2>&1 \
+    || _die "gpg --dearmor failed on NodeSource key"
+  rm -f "$ns_armored"
   chmod 0644 /etc/apt/keyrings/nodesource.gpg
   echo 'deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main' \
     >/etc/apt/sources.list.d/nodesource.list

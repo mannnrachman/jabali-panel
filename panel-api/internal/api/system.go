@@ -68,32 +68,50 @@ func RegisterSystemRoutes(rg *gin.RouterGroup, cli agent.AgentInterface) {
 		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
 	})
 
-	// POST /system/services/:name/restart — the agent enforces the
-	// same allow-list as /services. We just forward; path param naming
-	// mirrors the GET payload so the UI can round-trip without
-	// remapping.
-	sys.POST("/services/:name/restart", func(c *gin.Context) {
-		name := strings.TrimSpace(c.Param("name"))
-		if name == "" {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"status": "error",
-				"error":  "missing_name",
-				"detail": "service name required",
-			})
-			return
-		}
+	// POST /system/services/:name/{restart,stop,start,enable,disable} —
+	// the agent enforces the same allow-list as /services. Each verb
+	// forwards with no body. Self-destruct guard: stop + disable are
+	// rejected for jabali-panel and jabali-agent at this layer — a root
+	// operator who genuinely wants to stop them can `systemctl stop`
+	// from the shell they're already on. The panel UI must not ship a
+	// "click to lock yourself out" button.
+	registerServiceAction := func(verb string, selfDestructGuard bool) {
+		sys.POST("/services/:name/"+verb, func(c *gin.Context) {
+			name := strings.TrimSpace(c.Param("name"))
+			if name == "" {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"status": "error",
+					"error":  "missing_name",
+					"detail": "service name required",
+				})
+				return
+			}
+			if selfDestructGuard && (name == "jabali-panel" || name == "jabali-agent") {
+				c.JSON(http.StatusConflict, gin.H{
+					"status": "error",
+					"error":  "self_destruct_refused",
+					"detail": "stop/disable on " + name + " via the panel is refused — use systemctl from the shell",
+				})
+				return
+			}
 
-		ctx, cancel := context.WithTimeout(c.Request.Context(), systemCallTimeout)
-		defer cancel()
+			ctx, cancel := context.WithTimeout(c.Request.Context(), systemCallTimeout)
+			defer cancel()
 
-		raw, err := cli.Call(ctx, "service.restart", map[string]any{"name": name})
-		if err != nil {
-			status, body := translateAgentError(err)
-			c.JSON(status, body)
-			return
-		}
-		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
-	})
+			raw, err := cli.Call(ctx, "service."+verb, map[string]any{"name": name})
+			if err != nil {
+				status, body := translateAgentError(err)
+				c.JSON(status, body)
+				return
+			}
+			c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
+		})
+	}
+	registerServiceAction("restart", false) // restart is safe — panel + agent come right back up
+	registerServiceAction("start", false)
+	registerServiceAction("stop", true)
+	registerServiceAction("enable", false)
+	registerServiceAction("disable", true) // disable = won't auto-start on next boot; same class of foot-gun
 
 	// DNS resolvers — truth lives on disk (systemd-resolved drop-in) so we
 	// round-trip to the agent for both read and write; no DB involvement.

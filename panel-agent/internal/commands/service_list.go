@@ -18,6 +18,12 @@ type ServiceStatus struct {
 	//   "not-found" — unit doesn't exist (filtered out upstream).
 	//   "error" — systemd couldn't parse the unit file.
 	LoadState string `json:"load_state"`
+	// Enabled reports `systemctl is-enabled` output. Common values:
+	//   "enabled" | "disabled" | "static" | "alias" | "masked" |
+	//   "enabled-runtime" | "indirect" | "generated" | "transient"
+	// UIs typically render "enabled"/"enabled-runtime"/"static" as
+	// "Enabled" and "disabled"/"indirect" as "Disabled".
+	Enabled string `json:"enabled"`
 }
 
 // ServiceListResponse is the payload for service.list.
@@ -43,6 +49,8 @@ var BaseAllowedServices = []string{
 	"pdns", // PowerDNS, not BIND — see ADR-0003
 	"jabali-panel",
 	"jabali-agent",
+	"ssh",  // Debian unit name for OpenSSH is ssh.service, not sshd.service
+	"cron", // cron.service on Debian (cronie on RHEL — not our target OS)
 }
 
 // AllowedServices returns the agent-probe allow-list.
@@ -98,20 +106,29 @@ func probeService(ctx context.Context, name string) ServiceStatus {
 	loadState, _ := systemctlRunner(ctx, "show", "-p", "LoadState", "--value", unit)
 	loadState = strings.TrimSpace(loadState)
 
+	// is-enabled exits non-zero for "disabled" / "static" / etc. — the
+	// state word is in stdout regardless, so we accept the error.
+	enabledOut, _ := systemctlRunner(ctx, "is-enabled", unit)
+	enabled := strings.TrimSpace(enabledOut)
+	// Multi-line output (e.g. "alias" with target) — take the first token.
+	if nl := strings.IndexByte(enabled, '\n'); nl >= 0 {
+		enabled = enabled[:nl]
+	}
+
 	out, err := systemctlRunner(ctx, "is-active", unit)
 	if err != nil {
 		// systemctl exits non-zero for inactive/failed; the output still
 		// contains the state word.
 		if out == "" {
-			return ServiceStatus{Name: name, Active: "unknown", LoadState: loadState}
+			return ServiceStatus{Name: name, Active: "unknown", LoadState: loadState, Enabled: enabled}
 		}
 	}
 	state := strings.TrimSpace(out)
 	switch state {
 	case "active", "inactive", "failed", "activating", "deactivating":
-		return ServiceStatus{Name: name, Active: state, LoadState: loadState}
+		return ServiceStatus{Name: name, Active: state, LoadState: loadState, Enabled: enabled}
 	default:
-		return ServiceStatus{Name: name, Active: "unknown", LoadState: loadState}
+		return ServiceStatus{Name: name, Active: "unknown", LoadState: loadState, Enabled: enabled}
 	}
 }
 

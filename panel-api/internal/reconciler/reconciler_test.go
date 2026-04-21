@@ -589,20 +589,17 @@ func TestReconcileAll_DomainWithPHPPool(t *testing.T) {
 	// createDomainOnAgent runs for every enabled domain on every reconcile pass
 	// (the agent's writeVhost is content-hash gated, so the no-change case is cheap).
 	allCalls := filterCallsByPrefix(agent.calls, "")
-	var phpcalls, domainCalls, fsCalls []fakeCall
+	var phpcalls, domainCalls []fakeCall
 	for _, call := range allCalls {
 		if call.method == "user.slice.ensure" || call.method == "php.pool.apply" {
 			phpcalls = append(phpcalls, call)
 		} else if call.method == "domain.list" || call.method == "domain.create" {
 			domainCalls = append(domainCalls, call)
-		} else if call.method == "fs.write_healthcheck" {
-			fsCalls = append(fsCalls, call)
 		}
 	}
 
 	require.GreaterOrEqual(t, len(phpcalls), 1, "should call user.slice.ensure and/or php.pool.apply")
 	require.Len(t, domainCalls, 2, "should call domain.list and domain.create")
-	require.Len(t, fsCalls, 1, "should call fs.write_healthcheck")
 
 	// Verify that domain.create was called with correct PHP params
 	var domainCreateCall *fakeCall
@@ -617,18 +614,12 @@ func TestReconcileAll_DomainWithPHPPool(t *testing.T) {
 	require.Equal(t, true, params["has_php"], "has_php should be true")
 	require.Equal(t, "8.2", params["php_version"], "php_version should be 8.2")
 
-	// Verify that fs.write_healthcheck was called with correct path and user:group
-	var hcCall *fakeCall
+	// fs.write_healthcheck was removed 2026-04-21 — the jabali-healthcheck.php
+	// file was only consumed by the one-shot per-user-slices cutover (shipped
+	// 2026-04-18). Regression guard: ensure no healthcheck RPC fires.
 	for _, call := range agent.calls {
-		if call.method == "fs.write_healthcheck" {
-			hcCall = &call
-			break
-		}
+		require.NotEqual(t, "fs.write_healthcheck", call.method, "healthcheck RPC should not be called — removed 2026-04-21")
 	}
-	require.NotNil(t, hcCall, "fs.write_healthcheck should be called")
-	hcParams := hcCall.params.(map[string]string)
-	require.Equal(t, "/home/phpuser/domains/phpsite.com/public_html/jabali-healthcheck.php", hcParams["path"], "healthcheck path should be correct")
-	require.Equal(t, "phpuser:www-data", hcParams["user_group"], "healthcheck user_group should be correct")
 }
 
 func TestReconcileAll_DomainWithPHPSettingsOverrides(t *testing.T) {

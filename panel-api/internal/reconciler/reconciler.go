@@ -364,12 +364,6 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 		}
 	}
 
-	// Note: no separate healthcheck backfill loop. Bucket 1 now runs
-	// createDomainOnAgent for every enabled domain on every pass, which
-	// already invokes writeHealthcheckForDomain. A separate loop would
-	// double the agent RPC cost for every PHP domain every minute with
-	// zero functional benefit.
-
 	r.reconcileWordPressInstalls(ctx)
 	// Reconcile WordPress installs (sweep stuck rows, probe drift).
 
@@ -899,36 +893,6 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 			"domain_id", domain.ID,
 			"domain", domain.Name,
 			"err", err)
-	}
-
-	// Write the health-check PHP file if domain has PHP and docroot is set.
-	// This file is probed during the cutover (step 6) to verify PHP execution.
-	if hasPHP && domain.DocRoot != "" {
-		r.writeHealthcheckForDomain(ctx, domain, username)
-	}
-}
-
-// writeHealthcheckForDomain pushes the jabali-healthcheck.php file to the
-// domain's docroot via the agent. Safe to call repeatedly — the agent's
-// fs.write_healthcheck handler is idempotent and does not overwrite an
-// existing file. Called from createDomainOnAgent on first provisioning
-// and from ReconcileAll to backfill existing domains whose healthcheck
-// predates this code path.
-func (r *Reconciler) writeHealthcheckForDomain(ctx context.Context, domain *models.Domain, username string) {
-	healthcheckPath := domain.DocRoot + "/jabali-healthcheck.php"
-	healthcheckParams := map[string]string{
-		"path":       healthcheckPath,
-		"user_group": username + ":www-data",
-	}
-	hcCtx, hcCancel := context.WithTimeout(ctx, 10*time.Second)
-	_, hcErr := r.agent.Call(hcCtx, "fs.write_healthcheck", healthcheckParams)
-	hcCancel()
-	if hcErr != nil {
-		r.log.Warn("failed to write healthcheck file",
-			"domain_id", domain.ID,
-			"domain", domain.Name,
-			"healthcheck_path", healthcheckPath,
-			"err", hcErr)
 	}
 }
 // been removed. Called by the DELETE handler after it deletes the row,

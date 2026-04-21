@@ -4,6 +4,7 @@
 // driven by `userNav` so an admin-only entry can never leak into the
 // sidebar here.
 import { useState } from "react";
+import { LeftOutlined, RightOutlined } from "@ant-design/icons";
 import { Layout, Menu, theme } from "antd";
 import { Outlet, useLocation, useNavigate } from "react-router";
 
@@ -30,6 +31,8 @@ export function UserLayout() {
 
   const selected = selectedNavKey(userNav, location.pathname);
 
+  const siderBg = mode === "dark" ? token.colorBgLayout : "#f9fafb";
+
   return (
     <Layout style={{ minHeight: "100vh" }}>
       <JabaliHeader />
@@ -42,14 +45,27 @@ export function UserLayout() {
           collapsible
           collapsed={collapsed}
           onCollapse={setCollapsed}
-          style={{ background: token.colorBgLayout }}
+          trigger={
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: token.colorTextSecondary,
+                background: "transparent",
+              }}
+            >
+              {collapsed ? <RightOutlined /> : <LeftOutlined />}
+            </span>
+          }
+          style={{ background: siderBg, paddingTop: 16 }}
         >
           <Menu
             mode="inline"
             theme={mode}
             selectedKeys={selected ? [selected] : []}
             items={items}
-            style={{ border: "none", background: token.colorBgLayout }}
+            style={{ border: "none", background: siderBg }}
           />
         </Sider>
         <Layout>

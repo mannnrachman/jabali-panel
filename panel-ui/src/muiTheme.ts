@@ -26,6 +26,14 @@ const useMuiTheme = (mode: ThemeMode): ConfigProviderProps =>
           Layout: {
             triggerBg: "transparent",
           },
+          // Light-mode sidebar selected-row bg = Tailwind gray-100 per
+          // operator. Dark mode keeps the algorithm default (which
+          // already pairs well with colorBgLayout). AntD Menu
+          // itemSelectedColor stays default so the active text keeps
+          // its primary-color emphasis.
+          ...(mode === "light"
+            ? { Menu: { itemSelectedBg: "#f3f4f6" } }
+            : {}),
         },
       },
     }),

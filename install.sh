@@ -2331,6 +2331,27 @@ install_magic_link_key() {
   _ok "magic-link key created at $key_path"
 }
 
+install_jabali_wp_mu_plugin() {
+  # M22: ship the canonical jabali-magic-link.php to a system-wide
+  # source path. The panel-agent's WordPress installer copies from
+  # this path on every wp install (see installMagicLinkMUPlugin), so a
+  # single `jabali update` propagates fixes to all future installs
+  # without touching existing ones.
+  local src="install/wp-mu-plugins/jabali-magic-link.php"
+  local dst_dir="/usr/local/lib/jabali/wp-mu-plugins"
+  local dst="$dst_dir/jabali-magic-link.php"
+
+  if [[ ! -f "$src" ]]; then
+    _err "magic-link mu-plugin source missing at $src"
+    exit 1
+  fi
+
+  mkdir -p "$dst_dir"
+  install -m 0644 -o root -g root "$src" "$dst"
+
+  _ok "magic-link mu-plugin staged at $dst"
+}
+
 # ---------- step 8: Kratos identity provider (M20) ---------------------------
 
 install_kratos() {
@@ -2605,6 +2626,7 @@ main() {
   seed_admin_env
   install_sso_key
   install_magic_link_key
+  install_jabali_wp_mu_plugin
   # Order matters: install_phpmyadmin extracts the tarball to
   # /opt/phpmyadmin/current, which the pma pool config references as
   # chdir=. Starting the FPM service before the tarball is extracted

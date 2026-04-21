@@ -25,6 +25,10 @@ func buildAppDeps() (api.ApplicationHandlerConfig, error) {
 	if err := apps.RegisterDefaults(registry); err != nil {
 		return api.ApplicationHandlerConfig{}, fmt.Errorf("register app defaults: %w", err)
 	}
+	panelHost := ""
+	if sharedCfg != nil {
+		panelHost = sharedCfg.Server.Hostname
+	}
 	return api.ApplicationHandlerConfig{
 		ApplicationInstalls: repository.NewApplicationInstallRepository(sharedDB),
 		Databases:           repository.NewDatabaseRepository(sharedDB),
@@ -32,9 +36,10 @@ func buildAppDeps() (api.ApplicationHandlerConfig, error) {
 		DatabaseGrants:      repository.NewDatabaseUserGrantRepository(sharedDB),
 		Domains:             repository.NewDomainRepository(sharedDB),
 		Users:               userRepo(),
-		Packages: repository.NewPackageRepository(sharedDB),
-		Agent:    sharedAgent,
-		Apps:     registry,
+		Packages:  repository.NewPackageRepository(sharedDB),
+		Agent:     sharedAgent,
+		Apps:      registry,
+		PanelHost: panelHost,
 	}, nil
 }
 

@@ -41,6 +41,11 @@ type ApplicationHandlerConfig struct {
 	// handlers in applications.go require it. app.NewWithDeps always
 	// populates it for production wiring.
 	Apps *apps.Registry
+	// PanelHost is the public hostname (no scheme, no port) the WP
+	// magic-link must-use plugin POSTs to for validate. Empty in dev
+	// runs that don't ship the plugin; the agent skips the install
+	// step when either PanelHost or InstallID is unavailable.
+	PanelHost string
 }
 
 // WordPressHandlerConfig is the pre-M19 alias retained so old wiring
@@ -997,6 +1002,13 @@ func createInstallAndKickAgent(parentCtx context.Context, args installKickArgs, 
 		"locale":        args.Locale,
 		"subdirectory":  args.Subdirectory,
 		"use_www":       args.UseWWW,
+	}
+	// M22 — thread the magic-link mu-plugin install through to the
+	// agent. Both must be non-empty; the agent skips the plugin step
+	// when either is missing (dev hosts without install_jabali_wp_mu_plugin).
+	if cfg.PanelHost != "" && args.InstallID != "" {
+		payload["panel_host"] = cfg.PanelHost
+		payload["install_id"] = args.InstallID
 	}
 	// M16 Wave D — thread OIDC plugin bootstrap through to the agent.
 	agentResp, err := cfg.Agent.Call(ctx, "app.install", payload)

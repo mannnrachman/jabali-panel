@@ -307,9 +307,24 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Packages:            deps.Packages,
 				Agent:               deps.Agent,
 				Apps:                deps.Apps,
+				PanelHost:           cfg.Server.Hostname,
 			}
 			api.RegisterWordPressRoutes(v1, appCfg)
 			api.RegisterApplicationRoutes(v1, appCfg)
+		}
+
+		// Magic-link admin login (M22). Mint endpoint mounts under v1
+		// (Kratos session enforced); validate endpoint mounts on the
+		// root engine without auth (the WordPress plugin is the caller —
+		// see ADR-0039 §6).
+		if deps.MagicLinkKeys != nil && deps.MagicLinkTokens != nil &&
+			deps.WordPressInstalls != nil && deps.Domains != nil {
+			api.RegisterMagicLinkRoutes(v1, r, api.MagicLinkHandlerConfig{
+				ApplicationInstalls: deps.WordPressInstalls,
+				Domains:             deps.Domains,
+				Tokens:              deps.MagicLinkTokens,
+				Keys:                deps.MagicLinkKeys,
+			})
 		}
 
 		// Cron jobs routes (M8)

@@ -37,9 +37,24 @@ type wordpressInstallReq struct {
 	// without SSO). The secret is plaintext and one-shot — the panel
 	// sealed a copy before forwarding it here, and the agent forwards
 	// it directly into the plugin's options table.
+	//
+	// (M16 was rolled back; these fields are vestigial — the panel no
+	// longer sends them and the install path no longer reads them.
+	// Kept on the struct so older payloads still decode without error;
+	// scheduled for removal in a chore commit once all hosts have
+	// updated past Step 9 of the rollback.)
 	OIDCClientID     string `json:"oidc_client_id,omitempty"`
 	OIDCClientSecret string `json:"oidc_client_secret,omitempty"`
 	OIDCIssuer       string `json:"oidc_issuer,omitempty"`
+
+	// M22 magic-link admin login. Both must be non-empty to trigger
+	// the must-use plugin install; either empty skips it (the install
+	// still completes; the operator just won't have one-click admin).
+	// PanelHost is the SNI/Host the WP plugin POSTs to for validate.
+	// InstallID is the ULID of the install row, sed-substituted into
+	// the mu-plugin's JABALI_INSTALL_ID constant.
+	PanelHost string `json:"panel_host,omitempty"`
+	InstallID string `json:"install_id,omitempty"`
 }
 
 // wordpressInstallResp is the output shape for wordpress.install.
@@ -437,6 +452,23 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 
 	version := strings.TrimSpace(versionOutput.String())
 
+	// Step 5: Install M22 magic-link must-use plugin (if the panel
+	// supplied PanelHost + InstallID). Skipped silently when either is
+	// empty — the install still completes, the operator just won't
+	// have one-click admin login. This runs BEFORE perms normalisation
+	// so the mu-plugin file gets the same <user>:www-data 0640
+	// treatment as the rest of the tree.
+	if req.PanelHost != "" && req.InstallID != "" {
+		if err := installMagicLinkMUPlugin(ctx, installPath, req.OSUser, req.PanelHost, req.InstallID); err != nil {
+			// Don't roll back the install — WP is valid; the mu-plugin
+			// is best-effort and the operator can copy it manually
+			// from /usr/local/lib/jabali/wp-mu-plugins/ if needed.
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("install magic-link mu-plugin: %v", err),
+			}
+		}
+	}
 
 	// Normalize ownership + perms across the entire WP tree to the
 	// project's <user>:www-data 0750/0640 convention. wp-cli ran under

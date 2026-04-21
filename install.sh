@@ -2848,14 +2848,21 @@ install_bulwark() {
 
   chown -R jabali-webmail:jabali-webmail "$new_dir"
 
+  # jabali-webmail is created `--no-create-home`, so `/home/jabali-webmail`
+  # doesn't exist. npm refuses to run without a writable $HOME (it needs a
+  # cache dir + logs dir). Point HOME at /var/lib/jabali-webmail, which we
+  # created above at 0750 jabali-webmail:jabali-webmail, and use `sudo -E`
+  # so the explicit HOME actually propagates.
+  local webmail_home="/var/lib/jabali-webmail"
+
   _log "running npm ci in $new_dir (this takes a minute on a clean box)"
-  if ! sudo -u jabali-webmail -H sh -c "cd '$new_dir' && npm ci --no-audit --no-fund"; then
+  if ! sudo -u jabali-webmail HOME="$webmail_home" sh -c "cd '$new_dir' && npm ci --no-audit --no-fund"; then
     rm -rf "$new_dir"
     _die "Bulwark npm ci failed"
   fi
 
   _log "running npm run build in $new_dir"
-  if ! sudo -u jabali-webmail -H sh -c "cd '$new_dir' && npm run build"; then
+  if ! sudo -u jabali-webmail HOME="$webmail_home" sh -c "cd '$new_dir' && npm run build"; then
     rm -rf "$new_dir"
     _die "Bulwark npm run build failed"
   fi

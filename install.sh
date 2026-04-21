@@ -2657,6 +2657,19 @@ _install_stalwart_apply_plan() {
   fi
   _ok "Stalwart /jmap ready on :${jmap_port} (HTTP ${jmap_status}) after ${waited}s"
 
+  # If Stalwart is serving on :8446 we know the plan is already applied
+  # (that's the whole point of the 8080→restart→8446 dance below). Re-
+  # running `stalwart-cli apply` against an already-applied plan fails
+  # with primaryKeyViolation on the NetworkListener create steps because
+  # the plan uses `@type: create`, not an upsert action — stalwart-cli
+  # has no first-class "apply or update" verb. Skipping a no-op apply is
+  # the right call here; reconciler-driven drift correction is out of
+  # scope for install.sh.
+  if [[ "$jmap_port" == "8446" ]]; then
+    _ok "Stalwart plan already applied (serving on :8446) — skipping re-apply"
+    return
+  fi
+
   _log "applying plan via stalwart-cli against :${jmap_port}"
   if ! STALWART_URL="http://127.0.0.1:${jmap_port}" \
        STALWART_USER="admin" \
@@ -2668,11 +2681,9 @@ _install_stalwart_apply_plan() {
   fi
   _ok "Stalwart plan applied (SqlDirectory + listeners + Authentication)"
 
-  # If we applied against the default :8080 (i.e. no plan was present
-  # before this run), we need to restart Stalwart so it rebinds to the
-  # newly-created NetworkListener objects (including 127.0.0.1:8446).
-  # If we already came in on :8446, the plan was previously applied and
-  # no restart is needed.
+  # Always reached via :8080 here — the :8446 branch above already
+  # returned. Restart Stalwart so it rebinds to the newly-created
+  # NetworkListener objects (including 127.0.0.1:8446).
   if [[ "$jmap_port" == "8080" ]]; then
     _log "restarting jabali-stalwart to pick up plan-defined listeners"
     systemctl restart jabali-stalwart.service

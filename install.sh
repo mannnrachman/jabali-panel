@@ -2307,6 +2307,7 @@ install_sso_reaper_timer() {
   # than 60s. Defence in depth — the PHP file unlinks itself after
   # successful login, so the reaper only catches files that didn't get
   # to that step (PHP fatal mid-execution, web server crash, etc.).
+  _log "installing sso reaper systemd timer"
   local svc_src="install/systemd/jabali-sso-reaper.service"
   local timer_src="install/systemd/jabali-sso-reaper.timer"
   local svc_dst="/etc/systemd/system/jabali-sso-reaper.service"
@@ -2320,7 +2321,14 @@ install_sso_reaper_timer() {
   install -m 0644 -o root -g root "$svc_src" "$svc_dst"
   install -m 0644 -o root -g root "$timer_src" "$timer_dst"
 
+  # daemon-reload + enable --now are the two places this function has
+  # historically stalled. Log before each so a bash `set -e` exit pins
+  # the culprit — previous regression showed "SSO key created" as the
+  # last line because every step in this function was silent.
+  _log "sso reaper: systemctl daemon-reload"
   systemctl daemon-reload
+
+  _log "sso reaper: enable --now jabali-sso-reaper.timer"
   systemctl enable --now jabali-sso-reaper.timer
 
   _ok "sso reaper timer enabled (every 30s)"

@@ -157,7 +157,7 @@ func TestJMAPCall_Unauthorized(t *testing.T) {
 	defer srv.Close()
 	wireJMAP(t, srv)
 
-	err := jmapCall(context.Background(), "Account/query", map[string]any{}, nil)
+	err := jmapCall(context.Background(), "x:Account/query", map[string]any{}, nil)
 	var ae *agentwire.AgentError
 	if !errors.As(err, &ae) {
 		t.Fatalf("expected AgentError, got %T: %v", err, err)
@@ -187,7 +187,7 @@ func TestJMAPCall_NotReachable_ReturnsUnavailable(t *testing.T) {
 		stalwartHTTPClientFunc = origClient
 	})
 
-	err := jmapCall(context.Background(), "Account/query", map[string]any{}, nil)
+	err := jmapCall(context.Background(), "x:Account/query", map[string]any{}, nil)
 	var ae *agentwire.AgentError
 	if !errors.As(err, &ae) {
 		t.Fatalf("expected AgentError, got %T: %v", err, err)
@@ -202,14 +202,14 @@ func TestJMAPCall_StalwartError_Propagates(t *testing.T) {
 	// should translate this into an AgentError carrying the type +
 	// description in its Message so the operator sees what went wrong.
 	srv := newJMAPServer(t, map[string]jmapHandler{
-		"Account/query": func(_ json.RawMessage) (any, *jmapFakeError) {
+		"x:Account/query": func(_ json.RawMessage) (any, *jmapFakeError) {
 			return nil, &jmapFakeError{Type: "invalidArguments", Description: "filter required"}
 		},
 	})
 	defer srv.Close()
 	wireJMAP(t, srv)
 
-	err := jmapCall(context.Background(), "Account/query", map[string]any{}, nil)
+	err := jmapCall(context.Background(), "x:Account/query", map[string]any{}, nil)
 	var ae *agentwire.AgentError
 	if !errors.As(err, &ae) {
 		t.Fatalf("expected AgentError, got %T: %v", err, err)
@@ -223,7 +223,7 @@ func TestJMAPCall_StalwartError_Propagates(t *testing.T) {
 
 func TestAccountIDByEmail_Found(t *testing.T) {
 	srv := newJMAPServer(t, map[string]jmapHandler{
-		"Account/query": jmapHandlerReturning(jmapQueryResult{
+		"x:Account/query": jmapHandlerReturning(jmapQueryResult{
 			IDs: []string{"acct-123"}, Total: 1,
 		}),
 	})
@@ -241,7 +241,7 @@ func TestAccountIDByEmail_Found(t *testing.T) {
 
 func TestAccountIDByEmail_NotFound_ReturnsEmpty(t *testing.T) {
 	srv := newJMAPServer(t, map[string]jmapHandler{
-		"Account/query": jmapHandlerReturning(jmapQueryResult{IDs: nil, Total: 0}),
+		"x:Account/query": jmapHandlerReturning(jmapQueryResult{IDs: nil, Total: 0}),
 	})
 	defer srv.Close()
 	wireJMAP(t, srv)
@@ -257,10 +257,10 @@ func TestAccountIDByEmail_NotFound_ReturnsEmpty(t *testing.T) {
 
 func TestAccountQuota_Happy(t *testing.T) {
 	srv := newJMAPServer(t, map[string]jmapHandler{
-		"Account/get": func(_ json.RawMessage) (any, *jmapFakeError) {
+		"x:Account/get": func(_ json.RawMessage) (any, *jmapFakeError) {
 			return jmapGetResult{
 				List: []json.RawMessage{
-					json.RawMessage(`{"quotaUsed":15728640,"messageCount":42,"lastAuthenticatedAt":"2026-04-21T19:03:00Z"}`),
+					json.RawMessage(`{"usedDiskQuota":15728640}`),
 				},
 			}, nil
 		},
@@ -272,17 +272,14 @@ func TestAccountQuota_Happy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if view.QuotaUsed != 15728640 || view.MessageCount != 42 {
-		t.Errorf("view: %+v", view)
-	}
-	if view.LastAuthAt == nil {
-		t.Fatal("lastAuthAt: got nil, want non-nil")
+	if view.UsedDiskQuota != 15728640 {
+		t.Errorf("UsedDiskQuota: got %d, want 15728640", view.UsedDiskQuota)
 	}
 }
 
 func TestAccountQuota_RaceDestroyed_ReturnsZeros(t *testing.T) {
 	srv := newJMAPServer(t, map[string]jmapHandler{
-		"Account/get": jmapHandlerReturning(jmapGetResult{List: nil, NotFound: []string{"acct-gone"}}),
+		"x:Account/get": jmapHandlerReturning(jmapGetResult{List: nil, NotFound: []string{"acct-gone"}}),
 	})
 	defer srv.Close()
 	wireJMAP(t, srv)
@@ -291,8 +288,8 @@ func TestAccountQuota_RaceDestroyed_ReturnsZeros(t *testing.T) {
 	if err != nil {
 		t.Fatalf("empty list should not error (race with destroy): %v", err)
 	}
-	if view.QuotaUsed != 0 || view.MessageCount != 0 {
-		t.Errorf("expected zeros, got %+v", view)
+	if view.UsedDiskQuota != 0 {
+		t.Errorf("expected zero usage, got %+v", view)
 	}
 }
 
@@ -300,7 +297,7 @@ func TestAccountQuota_RaceDestroyed_ReturnsZeros(t *testing.T) {
 
 func TestAccountDestroy_Happy(t *testing.T) {
 	srv := newJMAPServer(t, map[string]jmapHandler{
-		"Account/set": jmapHandlerReturning(jmapSetResult{Destroyed: []string{"acct-123"}}),
+		"x:Account/set": jmapHandlerReturning(jmapSetResult{Destroyed: []string{"acct-123"}}),
 	})
 	defer srv.Close()
 	wireJMAP(t, srv)
@@ -314,7 +311,7 @@ func TestAccountDestroy_AlreadyGone_IsNotAnError(t *testing.T) {
 	// Stalwart reports notDestroyed with type: "notFound" when the
 	// id no longer exists. Our helper treats this as success.
 	srv := newJMAPServer(t, map[string]jmapHandler{
-		"Account/set": func(_ json.RawMessage) (any, *jmapFakeError) {
+		"x:Account/set": func(_ json.RawMessage) (any, *jmapFakeError) {
 			return jmapSetResult{
 				NotDestroyed: map[string]json.RawMessage{
 					"acct-gone": json.RawMessage(`{"type":"notFound"}`),
@@ -332,7 +329,7 @@ func TestAccountDestroy_AlreadyGone_IsNotAnError(t *testing.T) {
 
 func TestAccountDestroy_OtherReason_Errors(t *testing.T) {
 	srv := newJMAPServer(t, map[string]jmapHandler{
-		"Account/set": func(_ json.RawMessage) (any, *jmapFakeError) {
+		"x:Account/set": func(_ json.RawMessage) (any, *jmapFakeError) {
 			return jmapSetResult{
 				NotDestroyed: map[string]json.RawMessage{
 					"acct-x": json.RawMessage(`{"type":"forbidden","description":"protected principal"}`),
@@ -355,7 +352,7 @@ func TestAccountDestroy_OtherReason_Errors(t *testing.T) {
 
 func TestDomainDestroy_Happy(t *testing.T) {
 	srv := newJMAPServer(t, map[string]jmapHandler{
-		"Domain/set": jmapHandlerReturning(jmapSetResult{Destroyed: []string{"dom-42"}}),
+		"x:Domain/set": jmapHandlerReturning(jmapSetResult{Destroyed: []string{"dom-42"}}),
 	})
 	defer srv.Close()
 	wireJMAP(t, srv)

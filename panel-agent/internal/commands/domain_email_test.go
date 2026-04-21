@@ -211,10 +211,10 @@ func TestDomainEmailDisable_DestroysRegistryAndRemovesKeyAndReloads(t *testing.T
 
 	// JMAP fake: answer Domain/query with an id, Domain/set destroy ok.
 	srv := newJMAPServer(t, map[string]jmapHandler{
-		"Domain/query": jmapHandlerReturning(jmapQueryResult{
+		"x:Domain/query": jmapHandlerReturning(jmapQueryResult{
 			IDs: []string{"dom-42"}, Total: 1,
 		}),
-		"Domain/set": jmapHandlerReturning(jmapSetResult{Destroyed: []string{"dom-42"}}),
+		"x:Domain/set": jmapHandlerReturning(jmapSetResult{Destroyed: []string{"dom-42"}}),
 	})
 	defer srv.Close()
 	wireJMAP(t, srv)
@@ -251,7 +251,7 @@ func TestDomainEmailDisable_NeverSynced_SkipsDestroyCall(t *testing.T) {
 	wireSystemctl(t, &sysctl)
 
 	srv := newJMAPServer(t, map[string]jmapHandler{
-		"Domain/query": jmapHandlerReturning(jmapQueryResult{IDs: nil, Total: 0}),
+		"x:Domain/query": jmapHandlerReturning(jmapQueryResult{IDs: nil, Total: 0}),
 	})
 	defer srv.Close()
 	wireJMAP(t, srv)
@@ -273,7 +273,7 @@ func TestDomainEmailDisable_IdempotentOnMissingKey(t *testing.T) {
 
 	// JMAP fake: destroy path not exercised (registry empty).
 	srv := newJMAPServer(t, map[string]jmapHandler{
-		"Domain/query": jmapHandlerReturning(jmapQueryResult{IDs: nil, Total: 0}),
+		"x:Domain/query": jmapHandlerReturning(jmapQueryResult{IDs: nil, Total: 0}),
 	})
 	defer srv.Close()
 	wireJMAP(t, srv)

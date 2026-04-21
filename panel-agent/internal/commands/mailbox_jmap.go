@@ -273,18 +273,20 @@ type jmapSetResult struct {
 // (mailbox in panel DB but nobody has authenticated yet — registry is
 // populated lazily on first auth per ADR-0045). The caller decides
 // whether absence is an error for their operation.
+//
+// Filter property: `emailAddress` (schema-verified — x:UserAccount has
+// emailAddress as format:"emailAddress", derived server-side from
+// name+'@'+domain.name; Group accounts use the same property name).
 func accountIDByEmail(ctx context.Context, email string) (string, error) {
-	// Account/query with an equality filter. The filter shape is the
-	// JMAP standard FilterCondition: { property, value } pairs.
 	args := map[string]any{
 		"filter": map[string]any{
-			"property": "email",
+			"property": "emailAddress",
 			"value":    email,
 		},
 		"limit": 1,
 	}
 	var result jmapQueryResult
-	if err := jmapCall(ctx, "Account/query", args, &result); err != nil {
+	if err := jmapCall(ctx, "x:Account/query", args, &result); err != nil {
 		return "", err
 	}
 	if len(result.IDs) == 0 {
@@ -293,23 +295,38 @@ func accountIDByEmail(ctx context.Context, email string) (string, error) {
 	return result.IDs[0], nil
 }
 
-// accountQuotaView is the subset of the Account object that
-// mailbox.usage needs. Field names match Stalwart v0.16's registry
-// schema (crates/registry/src/schema/structs.rs — `UserAccount`).
+// accountQuotaView is the subset of the x:UserAccount JMAP object
+// that mailbox.usage needs. Property name + type verified against
+// the upstream schema at
+// github.com/stalwartlabs/stalwart/resources/schema/schema.json.gz
+// (pulled 2026-04-21, SHA-URL-b64 aJJKvnpsjjwAEzJ0eKDWdfSLK_RvBKsLhk8BwCq-7qA).
+//
+// SCHEMA GAP — v0.16 does not expose per-Account properties
+// equivalent to v0.15's usageResponse.messageCount or lastUsedAt.
+// Verified absent from schema.json (regex grep:
+//
+//	'messageCount'        → 0 occurrences
+//	'lastAuth*|lastLogin*' → 0 occurrences
+//	'lastUsed*'           → 0 occurrences
+//
+// mailbox.usage therefore always returns message_count=0 and
+// last_used_at="" against v0.16. The wire contract is preserved
+// (panel-side sampler still sets last_usage_bytes); the two empty
+// fields are pinned to their zero-value semantics in the handler.
+// A future Stalwart version exposing message count or last-auth
+// timestamp lifts this gap with a one-line property addition.
 type accountQuotaView struct {
-	QuotaUsed    uint64     `json:"quotaUsed"`
-	MessageCount uint64     `json:"messageCount"`
-	LastAuthAt   *time.Time `json:"lastAuthenticatedAt,omitempty"`
+	UsedDiskQuota uint64 `json:"usedDiskQuota"`
 }
 
-// accountQuota fetches quota + message-count for a resolved account id.
+// accountQuota fetches usage bytes for a resolved account id.
 func accountQuota(ctx context.Context, id string) (accountQuotaView, error) {
 	args := map[string]any{
 		"ids":        []string{id},
-		"properties": []string{"quotaUsed", "messageCount", "lastAuthenticatedAt"},
+		"properties": []string{"usedDiskQuota"},
 	}
 	var result jmapGetResult
-	if err := jmapCall(ctx, "Account/get", args, &result); err != nil {
+	if err := jmapCall(ctx, "x:Account/get", args, &result); err != nil {
 		return accountQuotaView{}, err
 	}
 	if len(result.List) == 0 {
@@ -321,7 +338,7 @@ func accountQuota(ctx context.Context, id string) (accountQuotaView, error) {
 	if err := json.Unmarshal(result.List[0], &view); err != nil {
 		return accountQuotaView{}, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("decode Account/get result: %v", err),
+			Message: fmt.Sprintf("decode x:Account/get result: %v", err),
 		}
 	}
 	return view, nil
@@ -335,7 +352,7 @@ func accountDestroy(ctx context.Context, id string) error {
 		"destroy": []string{id},
 	}
 	var result jmapSetResult
-	if err := jmapCall(ctx, "Account/set", args, &result); err != nil {
+	if err := jmapCall(ctx, "x:Account/set", args, &result); err != nil {
 		return err
 	}
 	// Success if id appears in destroyed, or in notDestroyed with a
@@ -376,7 +393,7 @@ func domainIDByName(ctx context.Context, name string) (string, error) {
 		"limit": 1,
 	}
 	var result jmapQueryResult
-	if err := jmapCall(ctx, "Domain/query", args, &result); err != nil {
+	if err := jmapCall(ctx, "x:Domain/query", args, &result); err != nil {
 		return "", err
 	}
 	if len(result.IDs) == 0 {
@@ -392,7 +409,7 @@ func domainDestroy(ctx context.Context, id string) error {
 		"destroy": []string{id},
 	}
 	var result jmapSetResult
-	if err := jmapCall(ctx, "Domain/set", args, &result); err != nil {
+	if err := jmapCall(ctx, "x:Domain/set", args, &result); err != nil {
 		return err
 	}
 	for _, d := range result.Destroyed {

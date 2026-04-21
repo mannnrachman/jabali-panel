@@ -86,10 +86,10 @@ func TestMailbox_SetQuotaResponse_EchoesValue(t *testing.T) {
 func TestMailboxDelete_AccountFoundThenDestroyed(t *testing.T) {
 	// Two JMAP calls: Account/query -> id, then Account/set destroy.
 	srv := newJMAPServer(t, map[string]jmapHandler{
-		"Account/query": jmapHandlerReturning(jmapQueryResult{
+		"x:Account/query": jmapHandlerReturning(jmapQueryResult{
 			IDs: []string{"acct-123"}, Total: 1,
 		}),
-		"Account/set": jmapHandlerReturning(jmapSetResult{Destroyed: []string{"acct-123"}}),
+		"x:Account/set": jmapHandlerReturning(jmapSetResult{Destroyed: []string{"acct-123"}}),
 	})
 	defer srv.Close()
 	wireJMAP(t, srv)
@@ -112,7 +112,7 @@ func TestMailboxDelete_NeverSynced_AcksWithoutDestroyCall(t *testing.T) {
 	// called — if it is, the route map below would respond with 400
 	// (no such route) and the test fails.
 	srv := newJMAPServer(t, map[string]jmapHandler{
-		"Account/query": jmapHandlerReturning(jmapQueryResult{IDs: nil, Total: 0}),
+		"x:Account/query": jmapHandlerReturning(jmapQueryResult{IDs: nil, Total: 0}),
 	})
 	defer srv.Close()
 	wireJMAP(t, srv)
@@ -139,13 +139,13 @@ func TestMailboxDelete_BadParams(t *testing.T) {
 
 func TestMailboxUsage_Happy(t *testing.T) {
 	srv := newJMAPServer(t, map[string]jmapHandler{
-		"Account/query": jmapHandlerReturning(jmapQueryResult{
+		"x:Account/query": jmapHandlerReturning(jmapQueryResult{
 			IDs: []string{"acct-alice"}, Total: 1,
 		}),
-		"Account/get": func(_ json.RawMessage) (any, *jmapFakeError) {
+		"x:Account/get": func(_ json.RawMessage) (any, *jmapFakeError) {
 			return jmapGetResult{
 				List: []json.RawMessage{
-					json.RawMessage(`{"quotaUsed":15728640,"messageCount":42,"lastAuthenticatedAt":"2026-04-21T19:03:00Z"}`),
+					json.RawMessage(`{"usedDiskQuota":15728640}`),
 				},
 			}, nil
 		},
@@ -165,11 +165,13 @@ func TestMailboxUsage_Happy(t *testing.T) {
 	if resp.UsedBytes != 15728640 {
 		t.Errorf("UsedBytes: got %d", resp.UsedBytes)
 	}
-	if resp.MessageCount != 42 {
-		t.Errorf("MessageCount: got %d", resp.MessageCount)
+	// MessageCount + LastUsedAt are pinned at zero/empty in v0.16 —
+	// see mailbox_jmap.go's accountQuotaView schema-gap comment.
+	if resp.MessageCount != 0 {
+		t.Errorf("MessageCount: expected 0 (v0.16 gap), got %d", resp.MessageCount)
 	}
-	if resp.LastUsedAt != "2026-04-21T19:03:00Z" {
-		t.Errorf("LastUsedAt: got %q", resp.LastUsedAt)
+	if resp.LastUsedAt != "" {
+		t.Errorf("LastUsedAt: expected empty (v0.16 gap), got %q", resp.LastUsedAt)
 	}
 }
 
@@ -177,7 +179,7 @@ func TestMailboxUsage_NeverSynced_ReturnsZeros(t *testing.T) {
 	// Never-authed mailbox: Account/query returns no ids, handler
 	// skips Account/get entirely and returns zero-value response.
 	srv := newJMAPServer(t, map[string]jmapHandler{
-		"Account/query": jmapHandlerReturning(jmapQueryResult{IDs: nil, Total: 0}),
+		"x:Account/query": jmapHandlerReturning(jmapQueryResult{IDs: nil, Total: 0}),
 	})
 	defer srv.Close()
 	wireJMAP(t, srv)

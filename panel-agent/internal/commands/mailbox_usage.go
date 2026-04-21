@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 )
@@ -22,18 +21,27 @@ type mailboxUsageParams struct {
 
 // mailboxUsageResponse is the wire contract consumed by the reconciler.
 // Panel maps used_bytes -> mailboxes.last_usage_bytes + updates
-// last_usage_at = wall-clock now() (not the last_used_at Stalwart
-// returns — that's "when the principal was last authed", which is
-// different from "when we last polled").
+// last_usage_at = wall-clock now() (not any server-side last-used-at).
 //
-// Wire contract unchanged from Step 3's v0.15 draft — only the agent's
-// internal impl pivoted from REST to JMAP.
+// Wire contract shape unchanged from Step 3's v0.15 draft so the
+// panel-side sampler and golden fixtures don't need updating. In v0.16,
+// though, two of the three fields are pinned at zero/empty (see
+// mailbox_jmap.go's accountQuotaView schema-gap note):
+//
+//   - UsedBytes: populated from x:UserAccount.usedDiskQuota
+//   - MessageCount: always 0 (no equivalent JMAP property in v0.16)
+//   - LastUsedAt:   always "" (no equivalent JMAP property in v0.16)
+//
+// Panel UI treats MessageCount=0 as "unknown/not shown" and never
+// relied on LastUsedAt pre-v0.16 anyway. A future Stalwart release that
+// exposes message counts or last-auth timestamps flips these back on
+// with a single-field accountQuotaView addition.
 type mailboxUsageResponse struct {
 	UsedBytes    uint64 `json:"used_bytes"`
 	MessageCount uint64 `json:"message_count"`
-	// LastUsedAt is Stalwart's view of the last auth/access timestamp.
-	// Empty string if Stalwart has never seen an auth for this
-	// principal (fresh mailbox, never synced into the registry).
+	// LastUsedAt kept in the shape for wire-contract stability even
+	// though v0.16 can't populate it. omitempty keeps the golden
+	// fixtures clean.
 	LastUsedAt string `json:"last_used_at,omitempty"`
 }
 
@@ -65,20 +73,15 @@ func mailboxUsageHandler(ctx context.Context, params json.RawMessage) (any, erro
 		return mailboxUsageResponse{}, nil
 	}
 
-	// Step 2: read quota + message-count + last-auth timestamp.
+	// Step 2: read disk usage. MessageCount + LastUsedAt stay zero —
+	// v0.16 doesn't expose equivalent JMAP properties (see
+	// mailbox_jmap.go's accountQuotaView comment for the schema grep).
 	info, err := accountQuota(ctx, accountID)
 	if err != nil {
 		return nil, err
 	}
-
-	var lastUsed string
-	if info.LastAuthAt != nil && !info.LastAuthAt.IsZero() {
-		lastUsed = info.LastAuthAt.UTC().Format(time.RFC3339)
-	}
 	return mailboxUsageResponse{
-		UsedBytes:    info.QuotaUsed,
-		MessageCount: info.MessageCount,
-		LastUsedAt:   lastUsed,
+		UsedBytes: info.UsedDiskQuota,
 	}, nil
 }
 

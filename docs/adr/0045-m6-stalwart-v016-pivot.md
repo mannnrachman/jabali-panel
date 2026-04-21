@@ -184,10 +184,49 @@ errors surface in `journalctl -u jabali-stalwart` + the install.sh exit
 code, not at file-write time. Accept this: it's the same failure mode
 operators already expect from other start-up reconcile steps.
 
+## Schema-pull procedure
+
+Stalwart publishes the full JMAP schema as a checked-in artifact at
+`resources/schema/schema.json.gz` in the upstream `stalwartlabs/stalwart`
+repo. To re-verify field names before writing apply-plan / JMAP payloads:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/stalwartlabs/stalwart/main/resources/schema/schema.json.gz \
+  | gunzip > /tmp/stalwart-schema.json
+# URL-safe base64 of the .gz sha256 should match resources/schema/schema.json.sha256
+python3 -c "import hashlib, base64, sys; b=sys.stdin.buffer.read(); print(base64.urlsafe_b64encode(hashlib.sha256(b).digest()).rstrip(b'=').decode())" \
+  < <(curl -fsSL https://raw.githubusercontent.com/stalwartlabs/stalwart/main/resources/schema/schema.json.gz)
+# Grep properties, variants, enums:
+jq '.fields["x:Domain"].properties | keys' /tmp/stalwart-schema.json
+jq '.schemas["x:DkimSignature"]' /tmp/stalwart-schema.json
+jq '.enums.NetworkListenerProtocol' /tmp/stalwart-schema.json
+```
+
+The 2026-04-21 schema pull (URL-safe b64 sha256
+`aJJKvnpsjjwAEzJ0eKDWdfSLK_RvBKsLhk8BwCq-7qA`) informed:
+
+- JMAP method names are namespaced `x:`: `x:Account/query`, `x:Domain/set`.
+- `x:Account` variant tags are `User` / `Group`.
+- `x:DkimSignature` variant tags are `Dkim1Ed25519Sha256` / `Dkim1RsaSha256`.
+- `x:Directory` variant tags are `Ldap` / `Sql` / `Oidc`.
+- `x:UserAccount.emailAddress` is `serverSet` (derived from name + '@' + domain).
+- `x:UserAccount.usedDiskQuota` is the sole per-account usage property.
+- `messageCount` / `lastAuthenticatedAt` / `lastUsedAt` do not exist in the
+  v0.16 account schema — mailbox.usage zero-pins these fields.
+- `NetworkListenerProtocol` enum values are lower-case: `smtp`, `lmtp`,
+  `http`, `imap`, `pop3`, `manageSieve`. (JMAP is served over `http`.)
+- `DkimManagementType` / `DnsManagementType` enums are `Manual` / `Automatic`.
+- `x:Dkim1Signature.privateKey` is `x:SecretText` (variants `Text`,
+  `EnvironmentVariable`, `File`); the `Text` variant's `secret` field
+  is a string and v0.16 parses it as PEM-wrapped PKCS#8 DER for Ed25519
+  (source: `crates/common/src/config/smtp/auth.rs` —
+  `Ed25519Key::from_pkcs8_maybe_unchecked_der`).
+
 ## References
 
 - Upstream upgrade guide: `UPGRADING/v0_16.md` at github.com/stalwartlabs/stalwart
 - `stalwart-cli` README: github.com/stalwartlabs/cli
+- Schema artifact: `resources/schema/schema.json.gz` in the same repo.
 - `SqlDirectory` schema: `crates/registry/src/schema/structs.rs` (pinned
   to commit referenced in `install/stalwart.sha256` once Step 1 is re-tagged)
 - Amends: ADR-0041 (storage), ADR-0042 (SQL directory)

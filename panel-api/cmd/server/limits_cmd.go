@@ -89,15 +89,24 @@ func newLimitsCheckCmd() *cobra.Command {
 				fmt.Fprintf(w, "quota mount\tOK\t%s\n", mount)
 			}
 
-			// nginx modules — ask nginx itself what's compiled in.
+			// nginx modules — limit_req_module and limit_conn_module are
+			// stock default-on modules: `nginx -V` only lists optional
+			// `--with-*` and explicitly disabled `--without-*` flags, so
+			// their absence from -V doesn't prove absence from the binary.
+			// Correct probe: flag FAIL only when -V mentions the explicit
+			// `--without-http_<mod>_module` disable flag; otherwise assume
+			// compiled in (true for stock builds from Debian, Ubuntu, RHEL,
+			// Alpine, upstream nginx.org). This matches what `nginx -t`
+			// against a config using the directive would report.
 			if out, err := exec.Command("nginx", "-V").CombinedOutput(); err == nil {
 				s := string(out)
 				for _, mod := range []string{"limit_req", "limit_conn"} {
-					if containsModuleMention(s, mod) {
-						fmt.Fprintf(w, "nginx %s\tOK\tcompiled in\n", mod)
-					} else {
-						fmt.Fprintf(w, "nginx %s\tFAIL\tnot compiled in (check nginx package flavor)\n", mod)
+					disableFlag := "--without-http_" + mod + "_module"
+					if indexOfAny(s, []string{disableFlag}) {
+						fmt.Fprintf(w, "nginx %s\tFAIL\tdisabled via %s (rebuild nginx without that flag)\n", mod, disableFlag)
 						ok = false
+					} else {
+						fmt.Fprintf(w, "nginx %s\tOK\tcompiled in (default)\n", mod)
 					}
 				}
 			} else {
@@ -111,15 +120,6 @@ func newLimitsCheckCmd() *cobra.Command {
 			return nil
 		},
 	}
-}
-
-// containsModuleMention handles both built-in ("--with-http_limit_req_module")
-// and dynamic ("--add-module=...limit_req...") flavors without a regex.
-func containsModuleMention(haystack, needle string) bool {
-	return indexOfAny(haystack, []string{
-		"http_" + needle + "_module",
-		needle + "_module",
-	})
 }
 
 func indexOfAny(s string, needles []string) bool {

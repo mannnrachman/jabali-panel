@@ -343,7 +343,6 @@ export function Dashboard() {
           dataSource={services}
           rowKey="name"
           pagination={false}
-          showHeader={false}
         >
           <Table.Column<ServiceStatus>
             title="Service"
@@ -391,7 +390,7 @@ export function Dashboard() {
             )}
           />
           <Table.Column<ServiceStatus>
-            title="Actions"
+            title=""
             width={320}
             align="right"
             render={(_: unknown, row: ServiceStatus) => {

@@ -1,9 +1,5 @@
 [
   {
-    "_comment": "Stalwart v0.16 first-install apply plan (ADR-0045). Executed once by install.sh via `stalwart-cli apply --file` against a freshly-started Stalwart with the bootstrap admin from stalwart.env. Subsequent re-applies on this same file are idempotent: create ops against existing named objects become no-ops; update ops on singletons (Authentication) converge to the target state. Template mustaches substituted by install.sh; any unsubstituted mustache aborts the install."
-  },
-
-  {
     "@type": "create",
     "object": "x:Directory",
     "value": {

@@ -31,14 +31,22 @@ const useMuiTheme = (mode: ThemeMode): ConfigProviderProps =>
             triggerBg: "transparent",
             ...(mode === "light" ? { bodyBg: "#f9fafb" } : {}),
           },
-          // Light-mode sidebar selected-row bg = Tailwind gray-100 per
-          // operator. Dark mode keeps the algorithm default (which
-          // already pairs well with colorBgLayout). AntD Menu
-          // itemSelectedColor stays default so the active text keeps
-          // its primary-color emphasis.
-          ...(mode === "light"
-            ? { Menu: { itemSelectedBg: "#f3f4f6" } }
-            : {}),
+          // Sidebar Menu selected-row styling per operator. Red
+          // accent on both algorithms, bg tuned per mode:
+          // - Light: gray-100 bg + red-600 text/icon.
+          // - Dark:  slightly-elevated dark bg + red-500 text/icon.
+          // The red tone shifts one stop between modes so it keeps
+          // WCAG contrast against its respective background.
+          Menu:
+            mode === "dark"
+              ? {
+                  itemSelectedBg: "#1f1f1f",
+                  itemSelectedColor: "#ef4444",
+                }
+              : {
+                  itemSelectedBg: "#f3f4f6",
+                  itemSelectedColor: "#dc2626",
+                },
         },
       },
     }),

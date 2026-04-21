@@ -280,7 +280,7 @@ export const UserSSHKeysPage = () => {
             dataIndex: "fingerprint",
             render: (fingerprint: string) => (
               <Tooltip title={fingerprint}>
-                <span style={{ fontFamily: "monospace", fontSize: "12px" }}>
+                <span style={{ fontFamily: "monospace" }}>
                   {truncateFingerprint(fingerprint)}
                 </span>
               </Tooltip>
@@ -461,7 +461,7 @@ export const UserSSHKeysPage = () => {
           readOnly
           value={generatedPrivate ?? ""}
           rows={14}
-          style={{ fontFamily: "monospace", fontSize: 12 }}
+          style={{ fontFamily: "monospace" }}
           onFocus={(e) => e.currentTarget.select()}
         />
       </Modal>

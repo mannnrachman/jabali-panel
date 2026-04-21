@@ -15,7 +15,7 @@
 // thundering herd every 5 seconds. Each row starts at a different
 // moment inside the 5s cycle, smoothing agent load.
 import { useQuery } from "@tanstack/react-query";
-import { Tag, Tooltip } from "antd";
+import { Tag, Tooltip, Typography } from "antd";
 import { useMemo } from "react";
 import { apiClient } from "../../../apiClient";
 
@@ -67,7 +67,7 @@ export function UserSliceStatus({ userId }: { userId: string }) {
   });
 
   if (isLoading && !data) {
-    return <span style={{ color: "#999" }}>…</span>;
+    return <Typography.Text type="secondary">…</Typography.Text>;
   }
   if (isError) {
     return (
@@ -78,7 +78,7 @@ export function UserSliceStatus({ userId }: { userId: string }) {
   }
   if (!data || data.username === "") {
     // Admin with no Linux user, or server returned an empty username.
-    return <span style={{ color: "#999" }}>—</span>;
+    return <Typography.Text type="secondary">—</Typography.Text>;
   }
   if (!data.slice_active && !data.fpm_active) {
     return (

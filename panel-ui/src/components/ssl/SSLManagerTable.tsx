@@ -8,6 +8,7 @@ import {
   Empty,
   Space,
   Tooltip,
+  Typography,
 } from "antd";
 import { ReloadOutlined, DeleteOutlined, SyncOutlined, WarningOutlined, RedoOutlined } from "@ant-design/icons";
 import { apiClient } from "../../apiClient";
@@ -101,9 +102,9 @@ const formatExpiry = (expiresAt: string | null): JSX.Element => {
           : `in ${days} days`;
 
   return (
-    <span style={{ color: isExpiringSoon ? "#ff4d4f" : "inherit" }}>
+    <Typography.Text type={isExpiringSoon ? "danger" : undefined}>
       {dateStr} ({label})
-    </span>
+    </Typography.Text>
   );
 };
 
@@ -184,7 +185,7 @@ export const SSLManagerTable = ({
       dataIndex: "domain_name",
       key: "domain_name",
       render: (text: string) => (
-        <span style={{ fontFamily: "monospace", fontSize: "12px" }}>
+        <span style={{ fontFamily: "monospace" }}>
           {text}
         </span>
       ),
@@ -248,9 +249,9 @@ export const SSLManagerTable = ({
       render: (dateStr: string | null, record: SSLCertificate) => {
         if (record.status === "self_signed") {
           return (
-            <span style={{ color: "#999" }}>
+            <Typography.Text type="secondary">
               {formatDate(dateStr)} <em>(self-signed)</em>
-            </span>
+            </Typography.Text>
           );
         }
         return formatExpiry(dateStr);

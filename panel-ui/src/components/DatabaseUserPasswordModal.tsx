@@ -62,7 +62,7 @@ export function DatabaseUserPasswordModal({
 
         <div>
           <Typography.Text type="secondary">User</Typography.Text>
-          <div style={{ fontFamily: "monospace", fontSize: 14 }}>{username}</div>
+          <div style={{ fontFamily: "monospace" }}>{username}</div>
         </div>
 
         <div>

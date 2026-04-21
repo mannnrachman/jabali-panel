@@ -35,6 +35,16 @@
 
 set -euo pipefail
 
+# ---------- fail-loud: ERR trap -------------------------------------------
+# set -e exits on the first non-zero command. The default behavior prints
+# nothing — whatever step failed looks identical to a clean exit, and the
+# operator sees only the previous step's success log. This trap prints the
+# line number + failing command + exit code on any non-zero exit in the
+# script, including sub-shells. Don't use _err() yet (logger is defined
+# further down and bash loads top-to-bottom); printf inline so the trap
+# works regardless of which section triggers it.
+trap '__rc=$?; printf "\033[1;31m[jabali-install]\033[0m install.sh exited with code %d at line %d: %s\n" "$__rc" "$LINENO" "$BASH_COMMAND" >&2' ERR
+
 # ---------- config (override via env) ---------------------------------------
 
 REPO_URL="${JABALI_REPO_URL:-https://git.linux-hosting.co.il/shukivaknin/jabali2.git}"
@@ -2313,12 +2323,15 @@ install_sso_reaper_timer() {
   local svc_dst="/etc/systemd/system/jabali-sso-reaper.service"
   local timer_dst="/etc/systemd/system/jabali-sso-reaper.timer"
 
+  _log "sso reaper: cwd=$(pwd) svc_src=$svc_src"
   if [[ ! -f "$svc_src" || ! -f "$timer_src" ]]; then
     _err "sso reaper systemd units missing at $svc_src / $timer_src"
     exit 1
   fi
 
+  _log "sso reaper: install service -> $svc_dst"
   install -m 0644 -o root -g root "$svc_src" "$svc_dst"
+  _log "sso reaper: install timer -> $timer_dst"
   install -m 0644 -o root -g root "$timer_src" "$timer_dst"
 
   # daemon-reload + enable --now are the two places this function has

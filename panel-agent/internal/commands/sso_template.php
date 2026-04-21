@@ -4,13 +4,20 @@
 
 declare(strict_types=1);
 
-// 1. Reject browser prefetch / link preview / non-GET methods before
-//    consuming any single-use state. Plan §11 / ADR-0040 T1.
+// 1. Reject speculative navigation (prefetch / prerender / preview) and
+//    non-GET methods before consuming any single-use state. Per Fetch
+//    Metadata spec, Sec-Purpose is set ONLY on speculative requests
+//    (prefetch, prerender, `prefetch;prerender`, and any future values)
+//    and omitted on real user-initiated navigation. Using "any non-empty
+//    Sec-Purpose" is forward-compatible with new speculation types —
+//    strict equality against 'prefetch' missed Chrome's `prefetch;prerender`
+//    and caused the first SSO file consumption to come from a prerender,
+//    leaving the user's real click with a 404.
 $secPurpose = $_SERVER['HTTP_SEC_PURPOSE'] ?? '';
 $purpose    = $_SERVER['HTTP_PURPOSE']     ?? '';
 $xMoz       = $_SERVER['HTTP_X_MOZ']       ?? '';
 $xPurpose   = $_SERVER['HTTP_X_PURPOSE']   ?? '';
-if ($secPurpose === 'prefetch'
+if ($secPurpose !== ''
  || $purpose === 'prefetch'
  || stripos($xMoz, 'prefetch') !== false
  || $xPurpose === 'preview'

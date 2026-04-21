@@ -134,7 +134,7 @@ The full threat model lives in [ADR-0040](../docs/adr/0040-m22-sso-file.md). Top
 |----|--------|------------|
 | T1 | Filename leak in URL (browser history, Referer, log archive) | 256-bit nonce + single-use unlink + 60s TTL + `Referrer-Policy: no-referrer` |
 | T2 | Webserver access log persistence | TTL means leaked filenames expire faster than any practical log-mining window |
-| T3 | Browser prefetch / preview consumes file | PHP template short-circuits prefetch headers + non-GET → 204 |
+| T3 | Browser prefetch / prerender / preview consumes file | PHP template short-circuits on any non-empty `Sec-Purpose` (covers prefetch, prerender, `prefetch;prerender`, and future speculation types) + `Purpose: prefetch` + `X-Moz: prefetch` + `X-Purpose: preview` + non-GET → 204 |
 | T4 | Race: two requests hit the file at once | `flock(LOCK_EX | LOCK_NB)` — second loses |
 | T5 | Reaper deletes a file mid-execution | Open fd survives `unlink`; PHP keeps reading the inode |
 | T6 | Hostile user creates lookalike file in own webroot | Strict regex; reaper only sweeps managed install paths; user's own webroot was theirs already |

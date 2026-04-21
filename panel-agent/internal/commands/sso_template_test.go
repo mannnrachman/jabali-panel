@@ -59,6 +59,28 @@ func TestRenderSSOTemplate_HappyPath(t *testing.T) {
 	}
 }
 
+// TestRenderSSOTemplate_GuardsAllSpeculativeFetches is a regression guard
+// for the 2026-04-21 field incident: the template's prefetch guard used
+// strict equality `$secPurpose === 'prefetch'` and missed Chrome's
+// `Sec-Purpose: prefetch;prerender` header. A Chrome prerender silently
+// consumed the SSO file (302 + unlink) before the user's real click,
+// which then 404'd. The fix treats any non-empty Sec-Purpose as
+// speculative, per the Fetch Metadata spec.
+func TestRenderSSOTemplate_GuardsAllSpeculativeFetches(t *testing.T) {
+	out, err := RenderSSOTemplate(validNonce, "/var/www/html/wp-load.php", validULID, "admin")
+	if err != nil {
+		t.Fatalf("RenderSSOTemplate: %v", err)
+	}
+	if !strings.Contains(out, "$secPurpose !== ''") {
+		t.Errorf("template missing forward-compatible Sec-Purpose guard " +
+			"($secPurpose !== ''). Reverting to '=== prefetch' misses " +
+			"Chrome's 'prefetch;prerender' and lets prerender consume the file.")
+	}
+	if strings.Contains(out, "$secPurpose === 'prefetch'") {
+		t.Errorf("template uses strict Sec-Purpose equality — misses prerender")
+	}
+}
+
 func TestRenderSSOTemplate_RejectsInvalidNonce(t *testing.T) {
 	cases := []struct {
 		name, nonce string

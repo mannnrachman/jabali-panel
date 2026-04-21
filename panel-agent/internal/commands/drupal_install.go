@@ -247,6 +247,34 @@ func runDrushSiteInstall(ctx context.Context, req drupalInstallReq, installPath 
 	return nil
 }
 
+// runDrushDisableAssetAggregation turns off Drupal's CSS/JS preprocessing
+// so the site doesn't reference /sites/default/files/{css,js}/<hash>
+// URLs that only work with Apache's .htaccess-based on-demand regen.
+// See the caller for the rationale.
+func runDrushDisableAssetAggregation(ctx context.Context, req drupalInstallReq, installPath string) error {
+	composerHome := filepath.Join(installPath, ".composer")
+	drush := filepath.Join(installPath, "vendor", "bin", "drush")
+	for _, key := range []string{"css.preprocess", "js.preprocess"} {
+		args := []string{
+			"env",
+			"COMPOSER_HOME=" + composerHome,
+			drush,
+			"config:set",
+			"system.performance",
+			key,
+			"0",
+			"--yes",
+		}
+		cmd := buildSystemdRunCmd(ctx, req.OSUser, args...)
+		cmd.Dir = installPath
+		if out, err := runBoundedOutput(cmd, 0); err != nil {
+			return fmt.Errorf("drush config:set system.performance %s 0: %w (output: %s)",
+				key, err, truncateStr(string(out), 512))
+		}
+	}
+	return nil
+}
+
 // urlEscape percent-encodes characters that would break the db-url
 // query string drush parses. We intentionally only escape the small
 // set of characters that actually break URLs (#, ?, /, @, :, %, &)
@@ -360,6 +388,19 @@ func drupalInstallHandler(ctx context.Context, params json.RawMessage) (any, err
 		// re-install attempt isn't blocked.
 		settingsPath := filepath.Join(installPath, "sites", "default", "settings.php")
 		_ = exec.CommandContext(ctx, "rm", "-f", settingsPath).Run()
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
+	}
+
+	// Disable CSS/JS aggregation. Drupal's default is to emit aggregated
+	// bundles at /sites/default/files/{css,js}/<hash>.{css,js} and expect
+	// Apache's .htaccess rewrite to route 404s back through index.php for
+	// on-demand regen. We serve via nginx which doesn't read .htaccess;
+	// adding the equivalent rewrite is awkward for subdir installs (the
+	// vhost is domain-level). Turning preprocessing off makes Drupal serve
+	// individual, never-aggregated source files (core/themes/.../css/*.css)
+	// which are real files on disk — nginx serves them directly.
+	// Trade-off: more HTTP requests per page. Acceptable for small sites.
+	if err := runDrushDisableAssetAggregation(ctx, req, installPath); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
 

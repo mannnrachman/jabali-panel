@@ -216,7 +216,8 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		{"sync systemd + shims", func() error {
 			// install.sh copies these on first install; the update path
 			// needs to re-copy them so unit file / shim changes land.
-			// Keep in sync with install_jabali_slices() in install.sh.
+			// Keep in sync with install_jabali_slices() and
+			// install_sso_reaper_timer() in install.sh.
 			return run("", "bash", "-c",
 				"set -e; "+
 					"install -d -m 0755 /usr/local/libexec/jabali; "+
@@ -225,7 +226,13 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 					"install -m 0644 "+repoDir+"/install/systemd/jabali.slice /etc/systemd/system/jabali.slice; "+
 					"install -m 0644 "+repoDir+"/install/systemd/jabali-user.slice /etc/systemd/system/jabali-user.slice; "+
 					"install -m 0644 "+repoDir+"/install/systemd/jabali-fpm@.service /etc/systemd/system/jabali-fpm@.service; "+
-					"systemctl daemon-reload")
+					// M22 sso reaper (ADR-0040). Idempotent: install -m
+					// is a no-op when source matches target. enable --now
+					// is a no-op when the timer is already enabled+active.
+					"install -m 0644 "+repoDir+"/install/systemd/jabali-sso-reaper.service /etc/systemd/system/jabali-sso-reaper.service; "+
+					"install -m 0644 "+repoDir+"/install/systemd/jabali-sso-reaper.timer /etc/systemd/system/jabali-sso-reaper.timer; "+
+					"systemctl daemon-reload; "+
+					"systemctl enable --now jabali-sso-reaper.timer")
 		}},
 		{"sync static assets", func() error {
 			// Mirror the file-writing half of install_php_pool_template(),

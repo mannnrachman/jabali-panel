@@ -1,0 +1,17 @@
+[Unit]
+Description=Jabali SSO file reaper (M22 — sweeps stale jabali-sso-*.php)
+Documentation=https://git.linux-hosting.co.il/shukivaknin/jabali2/src/branch/main/docs/adr/0040-m22-sso-file.md
+After=jabali-panel.service jabali-agent.service
+Requires=jabali-agent.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/jabali sso-reap
+StandardOutput=journal
+StandardError=journal
+
+# The reaper queries the panel DB and dispatches to the agent socket.
+# Both connections succeed only when the panel + agent are healthy;
+# transient failures during boot or restart are tolerated by the timer
+# (next firing 30s later).
+Restart=no

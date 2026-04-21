@@ -2301,55 +2301,29 @@ install_sso_key() {
   _ok "SSO key created at $sso_key_path"
 }
 
-install_magic_link_key() {
-  # M22: HMAC-SHA256 signing key for the magic-link admin-login flow.
-  # File format expected by panel-api's magiclink.Load: comma-separated
-  # base64url-encoded 32-byte keys, newest-first. Fresh installs get a
-  # single key; rotation appends new keys to the front (operator-driven).
-  local key_path="/etc/jabali-panel/magic-link.key"
+install_sso_reaper_timer() {
+  # M22 rework (ADR-0040): the self-deleting sso-file design uses a
+  # systemd timer to sweep stranded jabali-sso-<nonce>.php files older
+  # than 60s. Defence in depth — the PHP file unlinks itself after
+  # successful login, so the reaper only catches files that didn't get
+  # to that step (PHP fatal mid-execution, web server crash, etc.).
+  local svc_src="install/systemd/jabali-sso-reaper.service"
+  local timer_src="install/systemd/jabali-sso-reaper.timer"
+  local svc_dst="/etc/systemd/system/jabali-sso-reaper.service"
+  local timer_dst="/etc/systemd/system/jabali-sso-reaper.timer"
 
-  mkdir -p /etc/jabali-panel
-  chmod 0755 /etc/jabali-panel
-
-  if [[ -f "$key_path" ]]; then
-    chown "$SERVICE_USER:$SERVICE_USER" "$key_path"
-    chmod 0600 "$key_path"
-    _ok "magic-link key already exists at $key_path (ownership refreshed)"
-    return
-  fi
-
-  _log "generating magic-link HMAC key (32 bytes, base64url-encoded)"
-
-  # 32 random bytes → standard base64 → URL-safe (- and _ instead of + and /)
-  # → strip padding (RawURLEncoding format, matches magiclink.Load).
-  local key
-  key=$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')
-  printf '%s\n' "$key" > "$key_path"
-  chown "$SERVICE_USER:$SERVICE_USER" "$key_path"
-  chmod 0600 "$key_path"
-
-  _ok "magic-link key created at $key_path"
-}
-
-install_jabali_wp_mu_plugin() {
-  # M22: ship the canonical jabali-magic-link.php to a system-wide
-  # source path. The panel-agent's WordPress installer copies from
-  # this path on every wp install (see installMagicLinkMUPlugin), so a
-  # single `jabali update` propagates fixes to all future installs
-  # without touching existing ones.
-  local src="install/wp-mu-plugins/jabali-magic-link.php"
-  local dst_dir="/usr/local/lib/jabali/wp-mu-plugins"
-  local dst="$dst_dir/jabali-magic-link.php"
-
-  if [[ ! -f "$src" ]]; then
-    _err "magic-link mu-plugin source missing at $src"
+  if [[ ! -f "$svc_src" || ! -f "$timer_src" ]]; then
+    _err "sso reaper systemd units missing at $svc_src / $timer_src"
     exit 1
   fi
 
-  mkdir -p "$dst_dir"
-  install -m 0644 -o root -g root "$src" "$dst"
+  install -m 0644 -o root -g root "$svc_src" "$svc_dst"
+  install -m 0644 -o root -g root "$timer_src" "$timer_dst"
 
-  _ok "magic-link mu-plugin staged at $dst"
+  systemctl daemon-reload
+  systemctl enable --now jabali-sso-reaper.timer
+
+  _ok "sso reaper timer enabled (every 30s)"
 }
 
 # ---------- step 8: Kratos identity provider (M20) ---------------------------
@@ -2625,8 +2599,7 @@ main() {
   provision_tls_cert
   seed_admin_env
   install_sso_key
-  install_magic_link_key
-  install_jabali_wp_mu_plugin
+  install_sso_reaper_timer
   # Order matters: install_phpmyadmin extracts the tarball to
   # /opt/phpmyadmin/current, which the pma pool config references as
   # chdir=. Starting the FPM service before the tarball is extracted

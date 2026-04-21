@@ -23,8 +23,13 @@ const useMuiTheme = (mode: ThemeMode): ConfigProviderProps =>
           // light) which clashes with our Sider body bg pinned to
           // `colorBgLayout`. Transparent lets the Sider bg show
           // through so the trigger blends with the sidebar.
+          //
+          // Light-mode bodyBg = Tailwind gray-50 (#f9fafb) so the main
+          // content surface matches the sidebar (also gray-50). Cards
+          // on top stay white (colorBgContainer) and read as raised.
           Layout: {
             triggerBg: "transparent",
+            ...(mode === "light" ? { bodyBg: "#f9fafb" } : {}),
           },
           // Light-mode sidebar selected-row bg = Tailwind gray-100 per
           // operator. Dark mode keeps the algorithm default (which

@@ -17,6 +17,16 @@ const useMuiTheme = (mode: ThemeMode): ConfigProviderProps =>
       theme: {
         algorithm:
           mode === "dark" ? theme.darkAlgorithm : theme.defaultAlgorithm,
+        components: {
+          // The Sider's collapse trigger bar at the bottom otherwise
+          // paints its own hardcoded color (navy in dark, white in
+          // light) which clashes with our Sider body bg pinned to
+          // `colorBgLayout`. Transparent lets the Sider bg show
+          // through so the trigger blends with the sidebar.
+          Layout: {
+            triggerBg: "transparent",
+          },
+        },
       },
     }),
     [mode],

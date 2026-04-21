@@ -43,7 +43,17 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          # cache: false (not true) on our host-mode act_runner:
+          # setup-go's cache layer tars $GOMODCACHE on one run and
+          # untars into the same path on the next. GitHub-hosted
+          # runners wipe between jobs, so no conflict. Our host-mode
+          # runner persists $GOMODCACHE across jobs (which is what we
+          # want for speed), so setup-go's tar hits "File exists" on
+          # every pre-existing module and the whole step cancels
+          # (see run 70's ~20,000 line tar error log). The host's
+          # persistent $GOMODCACHE already gives us the caching
+          # benefit; setup-go's extra layer is redundant here.
+          cache: false
       - name: go vet
         run: make vet
       - name: go test -race

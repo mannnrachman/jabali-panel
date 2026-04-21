@@ -1256,7 +1256,6 @@ export const FileManagerPage = () => {
                 color: token.colorText,
                 padding: 12,
                 borderRadius: token.borderRadius,
-                fontSize: 12,
                 whiteSpace: "pre-wrap",
                 wordBreak: "break-all",
               }}
@@ -1314,7 +1313,6 @@ export const FileManagerPage = () => {
             marginTop: 8,
             color: bulkMoveDest ? token.colorText : token.colorTextTertiary,
             fontFamily: "monospace",
-            fontSize: 12,
           }}
         >
           {bulkMoveDest || "(no folder selected)"}

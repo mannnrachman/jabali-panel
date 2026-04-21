@@ -15,6 +15,19 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
+// quotaMountOrEmpty resolves the mount path /home lives on, mapping
+// "/home on root filesystem" to "" to match install.sh's quota-off
+// contract (see serve.go QuotaMount docstring). Callers pass the
+// returned value as `quota_mount` on agent RPCs; "" tells the agent
+// to skip setquota entirely (ADR-0032 degradability rule).
+func quotaMountOrEmpty() string {
+	m, err := limits.QuotaMountFor("/home")
+	if err != nil || m == "/" {
+		return ""
+	}
+	return m
+}
+
 // `jabali limits` groups M18 operator commands: host-prerequisite
 // probes, per-user re-apply, status readback, and bulk package apply.
 //
@@ -172,10 +185,9 @@ func newLimitsStatusCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
-			mount, _ := limits.QuotaMountFor("/home")
 			raw, err := sharedAgent.Call(ctx, "user.limits.report", map[string]any{
 				"username":    username,
-				"quota_mount": mount,
+				"quota_mount": quotaMountOrEmpty(),
 			})
 			if err != nil {
 				return fmt.Errorf("agent: %w", err)
@@ -328,7 +340,6 @@ func applyForUsername(ctx context.Context, username string) error {
 	}
 	effective := limits.Resolve(pkgL, ovL)
 
-	mount, _ := limits.QuotaMountFor("/home")
 	_, err = sharedAgent.Call(ctx, "user.limits.apply", map[string]any{
 		"username":          username,
 		"disk_quota_mb":     effective.DiskQuotaMB,
@@ -337,7 +348,7 @@ func applyForUsername(ctx context.Context, username string) error {
 		"io_read_mbps":      effective.IOReadMbps,
 		"io_write_mbps":     effective.IOWriteMbps,
 		"max_tasks":         effective.MaxTasks,
-		"quota_mount":       mount,
+		"quota_mount":       quotaMountOrEmpty(),
 	})
 	if err != nil {
 		return fmt.Errorf("agent: %w", err)

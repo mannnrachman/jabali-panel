@@ -23,6 +23,7 @@ import {
   Spin,
   Empty,
   notification,
+  theme,
 } from "antd";
 import { useLocation, useNavigate, useParams } from "react-router";
 
@@ -142,6 +143,7 @@ export const DNSRecordsPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { open } = useNotification();
+  const { token } = theme.useToken();
 
   // Back-link target: DNS list in the same shell we're currently in.
   // Admin path prefix is /jabali-admin; user path prefix is /jabali-panel.
@@ -618,8 +620,8 @@ export const DNSRecordsPage = () => {
               <div
                 style={{
                   padding: 16,
-                  border: "1px solid #f0f0f0",
-                  borderRadius: 4,
+                  border: `1px solid ${token.colorBorderSecondary}`,
+                  borderRadius: token.borderRadius,
                   marginBottom: 16,
                 }}
               >

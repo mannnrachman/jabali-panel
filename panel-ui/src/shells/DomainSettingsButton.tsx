@@ -7,6 +7,7 @@ import {
   ToolOutlined,
   CodeOutlined,
   CheckOutlined,
+  CloseOutlined,
   WarningOutlined,
   PlusOutlined,
   DownOutlined,
@@ -147,7 +148,7 @@ const renderCustomHeaderBody = (
     </Row>
     <Row gutter={16}>
       <Col span={24}>
-        <Switch
+        <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />}
           checked={rule.always ?? true}
           onChange={(v) => onUpdate("always", v)}
           style={{ marginRight: 8 }}

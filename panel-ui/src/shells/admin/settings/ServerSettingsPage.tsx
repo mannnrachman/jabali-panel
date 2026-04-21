@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { SaveOutlined, WarningOutlined } from "@ant-design/icons";
+import { CheckOutlined, CloseOutlined, SaveOutlined, WarningOutlined } from "@ant-design/icons";
 import {
   Alert,
   Button,
@@ -280,26 +280,30 @@ const GeneralSettingsTab = () => {
         </Row>
         <Row gutter={16}>
           <Col span={12}>
-            <Form.Item
-              label="Root Password Authentication"
-              name="ssh_password_auth"
-              valuePropName="checked"
-              rules={[{ required: false }]}
-              extra="Allow root and other non-hosting users to log in with a password. Key-based authentication is always available."
-            >
-              <Switch />
-            </Form.Item>
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <Form.Item name="ssh_password_auth" valuePropName="checked" noStyle>
+                  <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
+                </Form.Item>
+                <Typography.Text>Root Password Authentication</Typography.Text>
+              </div>
+              <Typography.Text type="secondary">
+                Allow root and other non-hosting users to log in with a password. Key-based authentication is always available.
+              </Typography.Text>
+            </div>
           </Col>
           <Col span={12}>
-            <Form.Item
-              label="User Password Authentication"
-              name="ssh_user_password_auth"
-              valuePropName="checked"
-              rules={[{ required: false }]}
-              extra="Allow hosting users (jabali-sftp group) to authenticate with a password. They are still SFTP-only — no shell."
-            >
-              <Switch />
-            </Form.Item>
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <Form.Item name="ssh_user_password_auth" valuePropName="checked" noStyle>
+                  <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
+                </Form.Item>
+                <Typography.Text>User Password Authentication</Typography.Text>
+              </div>
+              <Typography.Text type="secondary">
+                Allow hosting users (jabali-sftp group) to authenticate with a password. They are still SFTP-only — no shell.
+              </Typography.Text>
+            </div>
           </Col>
         </Row>
       </Card>

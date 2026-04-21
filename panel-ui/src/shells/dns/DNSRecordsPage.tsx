@@ -4,6 +4,8 @@ import {
   DeleteOutlined,
   EditOutlined,
   LockOutlined,
+  CheckOutlined,
+  CloseOutlined,
 } from "@ant-design/icons";
 import {
   Button,
@@ -592,7 +594,7 @@ export const DNSRecordsPage = () => {
                     <Col span={24}>
                       <Space>
                         <Typography.Text>Enabled</Typography.Text>
-                        <Switch
+                        <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />}
                           checked={zone.is_enabled}
                           onChange={(v) =>
                             setZone({ ...zone, is_enabled: v })

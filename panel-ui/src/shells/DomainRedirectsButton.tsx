@@ -6,6 +6,7 @@ import { useState } from "react";
 import {
   SwapOutlined,
   CheckOutlined,
+  CloseOutlined,
   DeleteOutlined,
   PlusOutlined,
   DragOutlined,
@@ -112,7 +113,7 @@ const SortableCard = ({
             <DragOutlined />
           </button>
 
-          <Switch
+          <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />}
             checked={pr.active ?? true}
             onChange={(checked) => onUpdate(idx, "active", checked)}
             style={{ marginRight: 4 }}
@@ -186,7 +187,7 @@ const SortableCard = ({
                 <div style={{ marginBottom: 8 }}>
                   <Typography.Text>Wildcard Matching</Typography.Text>
                 </div>
-                <Switch
+                <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />}
                   checked={pr.wildcard ?? false}
                   onChange={(checked) => onUpdate(idx, "wildcard", checked)}
                   style={{ marginRight: 8 }}
@@ -353,7 +354,7 @@ export const DomainRedirectsButton = ({
         {/* Section 1: Redirect Entire Domain */}
         <div style={{ marginBottom: 32 }}>
           <div style={{ marginBottom: 12 }}>
-            <Switch
+            <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />}
               checked={wholeToggle}
               onChange={setWholeToggle}
               style={{ marginRight: 8 }}

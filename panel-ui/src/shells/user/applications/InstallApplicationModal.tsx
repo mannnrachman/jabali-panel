@@ -26,7 +26,7 @@ import {
   Tooltip,
   Switch,
 } from "antd";
-import { CopyOutlined, CheckCircleTwoTone, AppstoreOutlined } from "@ant-design/icons";
+import { AppstoreOutlined, CheckCircleTwoTone, CheckOutlined, CloseOutlined, CopyOutlined } from "@ant-design/icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../../../apiClient";
 
@@ -269,18 +269,24 @@ function renderParamField(
       );
     case "bool":
       return (
-        <Form.Item
-          key={name}
-          label={label}
-          name={name}
-          valuePropName="checked"
-          initialValue={
-            typeof initialValue === "boolean" ? initialValue : false
-          }
-          extra={spec.description}
-        >
-          <Switch />
-        </Form.Item>
+        <div key={name} style={{ marginBottom: 24 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+            <Form.Item
+              name={name}
+              valuePropName="checked"
+              initialValue={
+                typeof initialValue === "boolean" ? initialValue : false
+              }
+              noStyle
+            >
+              <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
+            </Form.Item>
+            <Typography.Text>{label}</Typography.Text>
+          </div>
+          {spec.description && (
+            <Typography.Text type="secondary">{spec.description}</Typography.Text>
+          )}
+        </div>
       );
     default:
       return (
@@ -647,18 +653,17 @@ export const InstallApplicationModal = ({
 
             {domainSelected && (
               <>
-                <Form.Item
-                  label="Use www prefix"
-                  name="use_www"
-                  valuePropName="checked"
-                >
-                  <Switch />
-                </Form.Item>
-                <Form.Item style={{ marginBottom: 16 }}>
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                    <Form.Item name="use_www" valuePropName="checked" noStyle>
+                      <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
+                    </Form.Item>
+                    <Typography.Text>Use www prefix</Typography.Text>
+                  </div>
                   <Typography.Text type="secondary">
                     Install on www.domain.com instead of domain.com
                   </Typography.Text>
-                </Form.Item>
+                </div>
 
                 <Form.Item
                   label="Directory (optional)"

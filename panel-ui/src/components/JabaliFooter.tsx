@@ -6,7 +6,7 @@
 // The version string is imported from panel-ui/package.json at build
 // time so bumping the SPA version there propagates automatically.
 import { GithubOutlined } from "@ant-design/icons";
-import { Layout, Space, Typography } from "antd";
+import { Layout, Space, theme, Typography } from "antd";
 
 import { useThemeMode } from "../theme/ThemeModeContext";
 import pkg from "../../package.json";
@@ -18,8 +18,14 @@ const WEBSITE_URL = "https://jabali-panel.com/";
 
 export function JabaliFooter() {
   const { mode } = useThemeMode();
+  const { token } = theme.useToken();
   const logoSrc =
     mode === "dark" ? "/images/jabali_logo_dark.svg" : "/images/jabali_logo.svg";
+  // Match the Layout body color (gray-50 light / colorBgLayout dark) so
+  // the footer blends seamlessly with the sidebar and content gutter.
+  // Inline "transparent" wasn't enough — AntD's Footer ships a token-
+  // backed bg that can paint colorBgContainer depending on algorithm.
+  const footerBg = mode === "dark" ? token.colorBgLayout : "#f9fafb";
 
   return (
     <Layout.Footer
@@ -32,11 +38,7 @@ export function JabaliFooter() {
         // leaves a visible gap above the logo on short list views. Tight
         // to 8px vertical; keep 24px horizontal to match Content padding.
         padding: "8px 24px",
-        // AntD's Footer paints colorBgContainer (white in light mode)
-        // by default, which breaks the continuity with the gray-50
-        // content surface above. Transparent lets the outer Layout bg
-        // show through in both modes.
-        background: "transparent",
+        background: footerBg,
       }}
     >
       <Space size={12}>

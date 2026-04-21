@@ -16,6 +16,8 @@ import {
   DeleteOutlined,
   PlayCircleOutlined,
   EyeOutlined,
+  CheckOutlined,
+  CloseOutlined,
 } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
 import dayjs from "dayjs";
@@ -230,7 +232,7 @@ export const UserCronList = () => {
             title: "Enabled",
             dataIndex: "enabled",
             render: (enabled: boolean, record) => (
-              <Switch
+              <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />}
                 checked={enabled}
                 onChange={() => handleToggleEnabled(record)}
                 loading={togglingId === record.id}

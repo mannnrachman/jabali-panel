@@ -17,6 +17,7 @@ import {
   Typography,
   message,
 } from "antd";
+import { CheckOutlined, CloseOutlined } from "@ant-design/icons";
 import { useNavigate, useParams } from "react-router";
 
 import { useOneQuery, useUpdateMutation } from "../../../hooks/useQueries";
@@ -233,23 +234,29 @@ export const PackageEdit = () => {
 
         <Divider titlePlacement="left">Features</Divider>
 
-        <Form.Item
-          label="SSH Enabled"
-          name="ssh_enabled"
-          valuePropName="checked"
-          tooltip="Allow SSH access"
-        >
-          <Switch />
-        </Form.Item>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+          <Form.Item
+            name="ssh_enabled"
+            valuePropName="checked"
+            tooltip="Allow SSH access"
+            noStyle
+          >
+            <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
+          </Form.Item>
+          <Typography.Text>SSH Enabled</Typography.Text>
+        </div>
 
-        <Form.Item
-          label="CGI Enabled"
-          name="cgi_enabled"
-          valuePropName="checked"
-          tooltip="Allow CGI scripts"
-        >
-          <Switch />
-        </Form.Item>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
+          <Form.Item
+            name="cgi_enabled"
+            valuePropName="checked"
+            tooltip="Allow CGI scripts"
+            noStyle
+          >
+            <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
+          </Form.Item>
+          <Typography.Text>CGI Enabled</Typography.Text>
+        </div>
 
         <Form.Item>
           <Button

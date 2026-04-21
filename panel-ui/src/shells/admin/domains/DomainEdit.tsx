@@ -13,6 +13,7 @@ import {
   Typography,
   message,
 } from "antd";
+import { CheckOutlined, CloseOutlined } from "@ant-design/icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router";
 
@@ -96,9 +97,12 @@ export const DomainEdit = () => {
           </Typography.Text>
         </Form.Item>
 
-        <Form.Item label="Enabled" name="is_enabled" valuePropName="checked">
-          <Switch />
-        </Form.Item>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
+          <Form.Item name="is_enabled" valuePropName="checked" noStyle>
+            <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
+          </Form.Item>
+          <Typography.Text>Enabled</Typography.Text>
+        </div>
 
         <Form.Item
           label="Nginx Custom Directives"

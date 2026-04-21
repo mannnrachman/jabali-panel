@@ -9,6 +9,7 @@
 // Password is optional on edit — a blank field means "keep current".
 import { useEffect } from "react";
 import { Button, Card, Form, Input, Select, Spin, Switch, Typography, message } from "antd";
+import { CheckOutlined, CloseOutlined } from "@ant-design/icons";
 import { useNavigate, useParams } from "react-router";
 
 import {
@@ -120,9 +121,12 @@ export const UserEdit = () => {
           <Input />
         </Form.Item>
 
-        <Form.Item label="Admin" name="is_admin" valuePropName="checked">
-          <Switch />
-        </Form.Item>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
+          <Form.Item name="is_admin" valuePropName="checked" noStyle>
+            <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
+          </Form.Item>
+          <Typography.Text>Admin</Typography.Text>
+        </div>
 
         <Form.Item label="Hosting package" name="package_id">
           <PackageSelect />

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Skeleton, Space, Switch, Tag, Tooltip, message } from "antd";
-import { ReloadOutlined } from "@ant-design/icons";
+import { CheckOutlined, CloseOutlined, ReloadOutlined } from "@ant-design/icons";
 import { Link } from "react-router";
 
 import { apiClient } from "../../../apiClient";
@@ -195,7 +195,7 @@ export const DomainSSLSection = ({ domainId, sslEnabled, onToggled }: Props) => 
       ) : null}
 
       <Space size="middle" align="center">
-        <Switch
+        <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />}
           checked={sslEnabled}
           loading={toggling}
           onChange={onFlip}

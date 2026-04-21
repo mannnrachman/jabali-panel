@@ -3,6 +3,7 @@
 // the server's (email format + password min=10) so the form can
 // reject early without a round-trip.
 import { Button, Card, Form, Input, Select, Switch, Typography, message } from "antd";
+import { CheckOutlined, CloseOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router";
 
 import { useCreateMutation } from "../../../hooks/useQueries";
@@ -97,14 +98,17 @@ export const UserCreate = () => {
           <Input />
         </Form.Item>
 
-        <Form.Item
-          label="Admin"
-          name="is_admin"
-          valuePropName="checked"
-          tooltip="Admins can see and manage all users."
-        >
-          <Switch />
-        </Form.Item>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
+          <Form.Item
+            name="is_admin"
+            valuePropName="checked"
+            tooltip="Admins can see and manage all users."
+            noStyle
+          >
+            <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
+          </Form.Item>
+          <Typography.Text>Admin</Typography.Text>
+        </div>
 
         <Form.Item label="Hosting package" name="package_id">
           <PackageSelect />

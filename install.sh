@@ -2679,8 +2679,11 @@ _install_stalwart_apply_plan() {
     waited=0
     while (( waited < 15 )); do
       local s
+      # Same `|| true` rationale as the pre-apply probe loop above:
+      # curl exits 7 on "connection refused" while Stalwart re-binds,
+      # which would abort the script under `set -euo pipefail`.
       s="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 -m 3 \
-        http://127.0.0.1:8446/jmap/session 2>/dev/null)"
+        http://127.0.0.1:8446/jmap/session 2>/dev/null || true)"
       s="${s:-000}"
       if [[ "$s" =~ ^[234][0-9][0-9]$ ]]; then
         _ok "Stalwart now serving plan-defined listener on :8446 (HTTP $s)"

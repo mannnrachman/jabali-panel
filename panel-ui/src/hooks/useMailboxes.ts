@@ -51,6 +51,12 @@ export interface DomainEmailState {
   dkim_public_key?: string;
   email_enabled_at?: string;
   records: DomainEmailDNSHint[];
+  /**
+   * Operator-actionable advisories from the last enable/get. Populated
+   * when a user-edited DNS row blocks an M6 insert — UI renders each
+   * entry as a list item in a warning alert above the records table.
+   */
+  warnings?: string[];
 }
 
 export interface Mailbox {

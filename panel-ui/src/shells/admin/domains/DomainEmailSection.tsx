@@ -16,6 +16,7 @@ import {
   Space,
   Switch,
   Table,
+  Tag,
   Typography,
   message,
 } from "antd";
@@ -98,21 +99,39 @@ export const DomainEmailSection = ({ domainId }: Props) => {
         />
       )}
 
+      {enabled && data.warnings && data.warnings.length > 0 && (
+        // Panel-API sends these when an M6 record can't be written
+        // because a user-edited row blocks the slot. One line per
+        // blocked record — no header, no dismissal: the operator
+        // needs to resolve them by touching DNS.
+        <Alert
+          type="warning"
+          showIcon
+          message="DNS autoconfig partially applied"
+          description={
+            <ul style={{ margin: 0, paddingInlineStart: 20 }}>
+              {data.warnings.map((w) => (
+                <li key={w}>{w}</li>
+              ))}
+            </ul>
+          }
+        />
+      )}
+
       {enabled && (
-        <Card size="small" title="Publish these DNS records">
-          <Alert
-            type="info"
-            showIcon
-            style={{ marginBottom: 12 }}
-            message="Live record-status checking ships in a later milestone."
-            description="For now, publish each row in your domain's zone (the panel's DNS editor or your registrar). The DKIM record is the only one that's unique to this install — MX/SPF/DMARC are boilerplate."
-          />
+        <Card size="small" title="DNS records">
           <Table<DomainEmailDNSHint>
             size="small"
             pagination={false}
             dataSource={data.records}
             rowKey={(r) => `${r.type}:${r.name}`}
             columns={[
+              {
+                title: "Status",
+                dataIndex: "status",
+                width: 100,
+                render: (status: string | undefined) => renderStatusTag(status),
+              },
               {
                 title: "Purpose",
                 dataIndex: "purpose",
@@ -159,3 +178,21 @@ export const DomainEmailSection = ({ domainId }: Props) => {
     </Space>
   );
 };
+
+// renderStatusTag maps the panel-API's 4 documented status values to
+// AntD tag colours. Empty string is "no live data" — the panel has no
+// zone on file, usually because PowerDNS isn't wired in this install.
+// "ok" is green (present + managed or matching), "missing" is default
+// (zone has no row there), "conflict" is red (user-edited row blocks M6).
+function renderStatusTag(status: string | undefined) {
+  switch (status) {
+    case "ok":
+      return <Tag color="green">ok</Tag>;
+    case "missing":
+      return <Tag color="default">missing</Tag>;
+    case "conflict":
+      return <Tag color="red">conflict</Tag>;
+    default:
+      return <Tag color="default">—</Tag>;
+  }
+}

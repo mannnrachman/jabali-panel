@@ -20,7 +20,6 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/db"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/magiclink"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
@@ -168,23 +167,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.CronJobs = cronJobsRepo
 		deps.LimitOverrides = limitOverridesRepo
 
-		// M22 magic-link admin login. Wire the keys from disk + the
-		// repository for token storage. Per ADR-0039 §4 the key load
-		// is FATAL on missing/bad-mode/malformed input — log.Fatal
-		// instead of degrading silently. Keys may be nil only when
-		// MagicLinkKeyPath is empty (dev hosts that haven't been
-		// installed yet).
-		if cfg.SSO.MagicLinkKeyPath != "" {
-			keys, err := magiclink.Load(cfg.SSO.MagicLinkKeyPath)
-			if err != nil {
-				log.Error("magic-link key load failed (boot-time guard, ADR-0039 §4)",
-					"path", cfg.SSO.MagicLinkKeyPath, "err", err)
-				return fmt.Errorf("load magic-link key: %w", err)
-			}
-			deps.MagicLinkKeys = keys
-			deps.MagicLinkTokens = repository.NewMagicLinkTokenRepository(sharedDB)
-			log.Info("magic-link signing keys loaded", "key_count", len(keys.All()))
-		}
+		// (M22 magic-link key load + token repository wiring removed in
+		// the rework — ADR-0040. The new sso-file design has no signing
+		// key and no panel-side token store. Operators may leave a
+		// dead `magic_link_key_path` line in /etc/jabali/config.toml;
+		// the BurntSushi TOML loader silently ignores it.)
 		// M18: resolve the /home mount once at startup. Passed to every
 		// user.limits.{apply,clear,report} call so the agent runs
 		// setquota against the explicit mount path, never -a. Failure

@@ -14,7 +14,6 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/apps"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/magiclink"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
@@ -64,13 +63,10 @@ type Deps struct {
 	QuotaMount          string
 	SSO                 *sso.Service
 	SSOKey              *ssokey.Key
-	// MagicLinkKeys + MagicLinkTokens are wired by Step 9 of the M22
-	// rollout; the actual HTTP routes that consume them are added in
-	// Step 10. Both nil-safe — the apps framework checks before
-	// offering the "Log in to admin" button to operators.
-	MagicLinkKeys       *magiclink.Keys
-	MagicLinkTokens     repository.MagicLinkTokenRepository
-	Log                 *slog.Logger
+	// (MagicLinkKeys + MagicLinkTokens removed in M22 rework — ADR-0040.
+	// The new mint handler dispatches wordpress.create_sso_file via the
+	// agent and needs no panel-side key or token store.)
+	Log *slog.Logger
 }
 
 // Default tier: chosen so a reasonable SPA (polling, a few concurrent

@@ -43,9 +43,6 @@ test.describe("users CRUD (admin)", () => {
     ).toBeVisible();
     await page.waitForLoadState("networkidle");
 
-    // Scope to textbox role — the users list's sortable table headers
-    // carry aria-label="Email" / "First name" / "Last name" (AntD Table
-    // behavior) and would otherwise win the getByLabel match.
     // Fill email LAST. Filling email first and then tabbing through the
     // password field loses the email value ~1/3 of runs — an async event
     // (Chromium autofill tick / useSelect fetching packages) clears the
@@ -53,7 +50,15 @@ test.describe("users CRUD (admin)", () => {
     // Filling email last leaves no async window for that clearing to
     // happen. Production isn't affected because humans take >100ms
     // between fields and the clearing event is benign to user experience.
-    await page.getByRole("textbox", { name: /password/i }).fill("validpassword99");
+    //
+    // Password uses getByLabel, not getByRole("textbox"): AntD's
+    // <Input.Password> renders <input type="password">, which has NO
+    // ARIA "textbox" role (the password type is excluded from the role
+    // by the HTML-ARIA spec to avoid screen-reader leaks). Text fields
+    // stay on getByRole("textbox") to skip AntD Table's sortable column
+    // headers (aria-label="Email" / "First name" / "Last name") that
+    // would otherwise race the form inputs on a getByLabel match.
+    await page.getByLabel(/^password$/i).fill("validpassword99");
     await page.getByRole("textbox", { name: /first name/i }).fill("New");
     await page.getByRole("textbox", { name: /last name/i }).fill("User");
     await page.getByRole("textbox", { name: /email/i }).fill("new.user@test.local");

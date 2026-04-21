@@ -7,8 +7,8 @@ import { UserDatabaseList } from "./UserDatabaseList";
 import { UserDatabaseUsersList } from "../database-users/UserDatabaseUsersList";
 
 export const UserDatabasesPage = () => (
-  <>
+  <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
     <UserDatabaseList />
     <UserDatabaseUsersList />
-  </>
+  </div>
 );

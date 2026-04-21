@@ -4,9 +4,7 @@
 // per-domain zone probe is unchanged (apiClient.get on each row
 // after the list resolves).
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router";
-import { Alert, Button, Empty, Space, Spin, Table, Tag, Typography } from "antd";
-import { ArrowLeftOutlined } from "@ant-design/icons";
+import { Alert, Button, Empty, Spin, Table, Tag, Typography } from "antd";
 
 import { apiClient } from "../../../apiClient";
 import { useTableURL } from "../../../hooks/useTableURL";
@@ -24,7 +22,6 @@ interface ZoneStatus {
 }
 
 export const DNSZonesOverviewPage = () => {
-  const navigate = useNavigate();
   const [zoneStatuses, setZoneStatuses] = useState<Map<string, ZoneStatus>>(
     new Map(),
   );
@@ -81,25 +78,9 @@ export const DNSZonesOverviewPage = () => {
 
   return (
     <div>
-      <Space
-        style={{
-          marginBottom: 16,
-          width: "100%",
-          justifyContent: "space-between",
-        }}
-      >
-        <Button
-          type="text"
-          icon={<ArrowLeftOutlined />}
-          onClick={() => navigate("/jabali-admin/domains")}
-        >
-          Back to Domains
-        </Button>
-        <Typography.Title level={3} style={{ margin: 0 }}>
-          DNS Zones
-        </Typography.Title>
-        <div />
-      </Space>
+      <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
+        DNS Zones
+      </Typography.Title>
 
       <Alert
         title="DNS zones are provisioned automatically when a domain is created. Nameservers are configured in Server Settings."

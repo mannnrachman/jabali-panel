@@ -1056,7 +1056,7 @@ export const FileManagerPage = () => {
 
       <div style={{ display: "flex", gap: 16, alignItems: "stretch" }}>
         <Card
-          title="Folders"
+          title={<Typography.Text type="secondary">Folders</Typography.Text>}
           style={{ width: 280, flexShrink: 0 }}
           // body takes the scrollable region; the header is fixed so the
           // "Folders" title stays visible even when a deep tree scrolls.

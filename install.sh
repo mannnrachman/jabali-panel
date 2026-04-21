@@ -108,6 +108,56 @@ _warn() { printf '\033[1;33m[jabali-install]\033[0m %s\n' "$*" >&2; }
 _err()  { printf '\033[1;31m[jabali-install]\033[0m %s\n' "$*" >&2; }
 _die()  { printf '\033[1;31m[jabali-install]\033[0m %s\n' "$*" >&2; exit 1; }
 
+# _spin runs the given command with stdout+stderr captured to a temp log
+# and a live spinner + elapsed counter on the terminal. On success, the
+# log is discarded and an _ok line prints. On failure, the last 60 log
+# lines dump to stderr so diagnostics aren't lost — then the original
+# exit code propagates. Usage: _spin "label" cmd args…
+#
+# Non-TTY stdout (CI, tee'd logs) falls back to a simple start/end pair
+# with no spinner so the scrollback stays readable.
+_spin() {
+  local label="$1"; shift
+  local log; log="$(mktemp /tmp/jabali-spin.XXXXXX.log)"
+
+  if [[ ! -t 1 ]]; then
+    _log "$label…"
+    if ! "$@" >"$log" 2>&1; then
+      local rc=$?
+      _err "$label FAILED (exit $rc) — tail of log:"
+      tail -n 60 "$log" >&2
+      rm -f "$log"
+      exit "$rc"
+    fi
+    _ok "$label"
+    rm -f "$log"
+    return 0
+  fi
+
+  "$@" >"$log" 2>&1 &
+  local pid=$!
+  local spinners='|/-\'
+  local i=0
+  local start; start=$(date +%s)
+  while kill -0 "$pid" 2>/dev/null; do
+    local elapsed=$(( $(date +%s) - start ))
+    printf '\r\033[K  \033[1;36m%s\033[0m  %s  (%ds)' \
+      "${spinners:i++%4:1}" "$label" "$elapsed"
+    sleep 0.2
+  done
+  wait "$pid"; local rc=$?
+  printf '\r\033[K'
+
+  if [[ $rc -ne 0 ]]; then
+    _err "$label FAILED (exit $rc) — tail of log:"
+    tail -n 60 "$log" >&2
+    rm -f "$log"
+    exit "$rc"
+  fi
+  _ok "$label"
+  rm -f "$log"
+}
+
 # ---------- banner ----------------------------------------------------------
 # Prints the jabali ASCII art at install start. Uses ANSI colour (yellow)
 # for visibility without being garish. Unicode block characters require
@@ -370,9 +420,10 @@ install_base_packages() {
   # their GPG keys. Minimal LXC containers often ship without gnupg. Two
   # apt runs total (this bootstrap + the big install below) is still a
   # huge win over the pre-consolidation 6 calls.
-  _log "bootstrap: gnupg + ca-certificates + curl (needed to verify third-party repo keys)"
-  apt-get update -qq
-  apt-get install -y -qq --no-install-recommends gnupg ca-certificates curl
+  _spin "apt update (bootstrap)" \
+    apt-get update -qq
+  _spin "apt install bootstrap (gnupg + ca-certificates + curl)" \
+    apt-get install -y -qq --no-install-recommends gnupg ca-certificates curl
 
   # Third-party repos added BEFORE the big install so one `apt-get update`
   # sees them and one `apt-get install` resolves everything together. Each
@@ -380,7 +431,8 @@ install_base_packages() {
   _install_sury_source
   _install_nodesource_source
 
-  apt-get update -qq
+  _spin "apt update (with Sury + NodeSource)" \
+    apt-get update -qq
 
   # PowerDNS's postinst would restart pdns before its MySQL backend is
   # configured (fails loudly with exit 99 + a systemctl status dump). Drop
@@ -425,19 +477,20 @@ POLICYEOF
   # One big install. Downstream functions (install_nginx, _install_php_version,
   # install_node, install_powerdns, setup_certbot) short-circuit on
   # `command -v` / package-present checks now that the packages land here.
-  apt-get install -y -qq --no-install-recommends \
-    git curl ca-certificates build-essential tar bzip2 unzip openssl gnupg \
-    mariadb-server mariadb-client \
-    php-cli php-mysql php-curl php-xml php-mbstring php-gd php-zip \
-    composer \
-    rsync acl \
-    systemd-resolved \
-    quota quotatool xfsprogs \
-    nginx \
-    certbot python3-certbot-nginx \
-    nodejs \
-    pdns-server pdns-backend-mysql \
-    "${php_extensions[@]}"
+  _spin "apt install system packages (this is the long one)" \
+    apt-get install -y -qq --no-install-recommends \
+      git curl ca-certificates build-essential tar bzip2 unzip openssl gnupg \
+      mariadb-server mariadb-client \
+      php-cli php-mysql php-curl php-xml php-mbstring php-gd php-zip \
+      composer \
+      rsync acl \
+      systemd-resolved \
+      quota quotatool xfsprogs \
+      nginx \
+      certbot python3-certbot-nginx \
+      nodejs \
+      pdns-server pdns-backend-mysql \
+      "${php_extensions[@]}"
 
   # Undo the policy-rc.d trap regardless of exit path above (set -e would
   # have left the trap in place — restore is best-effort but ordered so

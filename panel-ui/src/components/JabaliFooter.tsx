@@ -5,7 +5,8 @@
 //
 // The version string is imported from panel-ui/package.json at build
 // time so bumping the SPA version there propagates automatically.
-import { Layout, Space, Tag, Typography } from "antd";
+import { GithubOutlined } from "@ant-design/icons";
+import { Layout, Space, Typography } from "antd";
 
 import { useThemeMode } from "../theme/ThemeModeContext";
 import pkg from "../../package.json";
@@ -27,6 +28,10 @@ export function JabaliFooter() {
         alignItems: "center",
         justifyContent: "space-between",
         gap: 16,
+        // AntD's Footer default padding is 24px 50px — the 24 top/bottom
+        // leaves a visible gap above the logo on short list views. Tight
+        // to 8px vertical; keep 24px horizontal to match Content padding.
+        padding: "8px 24px",
       }}
     >
       <Space size={12}>
@@ -46,14 +51,18 @@ export function JabaliFooter() {
       </Space>
 
       <Space size={12}>
-        <Typography.Text type="secondary">
-          <a href={SOURCE_URL} target="_blank" rel="noreferrer">
-            GitHub
-          </a>
-        </Typography.Text>
+        <a
+          href={SOURCE_URL}
+          target="_blank"
+          rel="noreferrer"
+          aria-label="Source code"
+          style={{ color: "inherit", display: "inline-flex", alignItems: "center" }}
+        >
+          <GithubOutlined style={{ fontSize: 18 }} />
+        </a>
         <Typography.Text type="secondary">·</Typography.Text>
         <Typography.Text type="secondary">© {year} Jabali</Typography.Text>
-        <Tag>v{pkg.version}</Tag>
+        <Typography.Text strong>v{pkg.version}</Typography.Text>
       </Space>
     </Layout.Footer>
   );

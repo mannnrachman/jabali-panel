@@ -1,7 +1,7 @@
 {
   "name": "jabali-panel-ui",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.10",
   "description": "Jabali Panel SPA — React + TanStack Query + Ant Design",
   "type": "module",
   "scripts": {

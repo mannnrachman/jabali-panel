@@ -159,16 +159,16 @@ export const PHPExtensionsTab = () => {
 
   return (
     <>
-      <div style={{ marginBottom: 16 }}>
+      <Space style={{ marginBottom: 16 }} align="center">
         <Typography.Text strong>PHP Version</Typography.Text>
         <Select
-          style={{ display: "block", marginTop: 4, maxWidth: 320 }}
+          style={{ width: 160 }}
           value={selectedVersion ?? undefined}
           onChange={(v) => setSelectedVersion(v)}
           options={versions.map((v) => ({ value: v, label: `PHP ${v}` }))}
           aria-label="PHP version"
         />
-      </div>
+      </Space>
 
       <Card
         title={selectedVersion ? `PHP ${selectedVersion} Extensions` : "Extensions"}

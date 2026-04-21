@@ -12,7 +12,7 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { ApiOutlined, DownloadOutlined } from "@ant-design/icons";
+import { ApiOutlined, DownloadOutlined, SearchOutlined } from "@ant-design/icons";
 import { apiClient } from "../../../apiClient";
 
 // Shape mirrors the contract locked in panel-api/internal/agent/php_ext_contract_test.go.
@@ -172,16 +172,6 @@ export const PHPExtensionsTab = () => {
 
       <Card
         title={selectedVersion ? `PHP ${selectedVersion} Extensions` : "Extensions"}
-        extra={
-          <Input.Search
-            placeholder="Search"
-            aria-label="Search extensions"
-            allowClear
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ maxWidth: 280 }}
-          />
-        }
       >
         <Table<ExtensionState>
           dataSource={filtered}
@@ -193,6 +183,27 @@ export const PHPExtensionsTab = () => {
           <Table.Column<ExtensionState>
             dataIndex="name"
             title="Extension"
+            sorter={(a, b) => a.name.localeCompare(b.name)}
+            filterIcon={() => <SearchOutlined />}
+            // Column-level search wired to the same `search` state that
+            // drives the previous top-right Input.Search; the icon in
+            // the column header reveals a popover so operators see the
+            // filter affordance without scanning for the external
+            // search box.
+            filterDropdown={({ confirm, close }) => (
+              <div style={{ padding: 8, minWidth: 220 }}>
+                <Input.Search
+                  placeholder="Search extensions"
+                  allowClear
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  onSearch={() => {
+                    confirm({ closeDropdown: false });
+                    close();
+                  }}
+                />
+              </div>
+            )}
             render={(name: string, record) => (
               <Space>
                 <ApiOutlined />
@@ -205,6 +216,7 @@ export const PHPExtensionsTab = () => {
             dataIndex="enabled"
             title="Status"
             width={120}
+            sorter={(a, b) => Number(b.enabled) - Number(a.enabled)}
             render={(enabled: boolean) =>
               enabled ? <Tag color="green">Enabled</Tag> : <Tag>Disabled</Tag>
             }
@@ -213,6 +225,7 @@ export const PHPExtensionsTab = () => {
             dataIndex="installed"
             title="Installed"
             width={120}
+            sorter={(a, b) => Number(b.installed) - Number(a.installed)}
             render={(installed: boolean) =>
               installed ? <Tag color="green">Yes</Tag> : <Tag>No</Tag>
             }

@@ -725,15 +725,22 @@ _install_sury_source() {
     || _die "curl failed to fetch Sury GPG key from packages.sury.org — check egress / DNS from this host"
 
   _log "verifying Sury GPG key fingerprint"
-  # GNUPGHOME=mktemp skips any ~/.gnupg / gpg-agent startup, which can
-  # hang silently on first-gpg invocation inside LXC containers. Drop
-  # the 2>/dev/null so gpg errors reach the terminal if verification
-  # fails — otherwise the operator sees only "mismatch" with no clue
-  # whether gpg actually parsed the file.
-  GNUPGHOME="$(mktemp -d)" gpg --no-default-keyring --no-tty --batch \
-    --show-keys /usr/share/keyrings/sury-php.gpg 2>&1 \
-    | grep -q "$SURY_GPG_FINGERPRINT" \
-    || _die "Sury GPG key fingerprint mismatch. Expected: $SURY_GPG_FINGERPRINT"
+  # Capture gpg output + exit code independently so we can surface both
+  # to the operator if anything goes wrong. The `if ! cmd` form disables
+  # set -e just for the capture. GNUPGHOME=mktemp skips any ~/.gnupg /
+  # gpg-agent startup, which hangs silently on first-gpg invocation
+  # inside minimal LXC containers.
+  local sury_gpg_out
+  if ! sury_gpg_out="$(GNUPGHOME="$(mktemp -d)" gpg --no-default-keyring --no-tty --batch --show-keys /usr/share/keyrings/sury-php.gpg 2>&1)"; then
+    _err "gpg --show-keys failed; output was:"
+    printf '%s\n' "$sury_gpg_out" >&2
+    _die "cannot parse Sury GPG key at /usr/share/keyrings/sury-php.gpg"
+  fi
+  if ! grep -q "$SURY_GPG_FINGERPRINT" <<< "$sury_gpg_out"; then
+    _err "gpg parsed the key but the fingerprint doesn't match. gpg output:"
+    printf '%s\n' "$sury_gpg_out" >&2
+    _die "Sury GPG key fingerprint mismatch. Expected: $SURY_GPG_FINGERPRINT"
+  fi
   _ok "Sury GPG key validated"
 
   cat > /etc/apt/sources.list.d/sury-php.list <<EOF
@@ -903,9 +910,12 @@ _install_nodesource_source() {
   curl -fsSL --connect-timeout 15 --max-time 60 \
     https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o "$ns_armored" \
     || _die "curl failed to fetch NodeSource GPG key from deb.nodesource.com — check egress / DNS from this host"
-  GNUPGHOME="$(mktemp -d)" gpg --no-default-keyring --no-tty --batch \
-    --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg < "$ns_armored" 2>&1 \
-    || _die "gpg --dearmor failed on NodeSource key"
+  local ns_gpg_out
+  if ! ns_gpg_out="$(GNUPGHOME="$(mktemp -d)" gpg --no-default-keyring --no-tty --batch --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg "$ns_armored" 2>&1)"; then
+    _err "gpg --dearmor failed on NodeSource key; output was:"
+    printf '%s\n' "$ns_gpg_out" >&2
+    _die "cannot dearmor NodeSource key"
+  fi
   rm -f "$ns_armored"
   chmod 0644 /etc/apt/keyrings/nodesource.gpg
   echo 'deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main' \

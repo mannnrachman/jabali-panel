@@ -1,13 +1,66 @@
 # Plan: M6 — Email via Stalwart Mail Server
 
-**Status:** Draft (2026-04-21). Ready for adversarial review, then dispatch.
+**Status:** Draft (2026-04-21). Rework in progress (v0.16 pivot, 2026-04-21 pm). See REWORK preamble below.
 **Owner:** shuki
 **Scope:** M6 per `docs/BLUEPRINT.md` §4.? (currently listed as PLANNED).
 **Depends on:** M1 ✅ (users), M2 ✅ (domains + nginx), M4 ✅ (DNS zones via PowerDNS), M7 ✅ (shadow-password + SSO pattern), M9.5 ✅ (per-user slices — Roundcube PHP app consumes this), M20 ✅ (Kratos — webmail SSO handoff).
 **Next migration:** `000054_create_mailboxes` (single migration groups 4 new columns + 2 tables; see step 1).
-**Next ADRs:** `0041-m6-mail-storage-rocksdb`, `0042-m6-sql-directory-mailboxes-table`, `0043-m6-dkim-key-rotation-policy`, `0044-m6-imap-migrate-deferred-to-m15`.
+**ADRs:** `0041-m6-mail-storage-rocksdb` (amended), `0042-m6-sql-directory-mailboxes-table` (amended), `0043-m6-dkim-key-rotation-policy`, `0044-m6-imap-migrate-deferred-to-m15`, **`0045-m6-stalwart-v016-pivot` (NEW — supersedes TOML-based sections of 0041)**.
 **Working directory:** `/home/shuki/projects/jabali2-c` — branch `m6/email-stalwart` (this plan lives on that branch).
 **Baseline commit at plan time:** `44fdafc` (two commits ahead of `main`; rebase before dispatch).
+
+---
+
+## REWORK preamble — 2026-04-21 pm (Stalwart v0.16 pivot)
+
+Stalwart v0.16.0 shipped 2026-04-20 (one day before M6 impl started).
+It is a **complete rewrite of the config + management surface** with
+explicit "multiple breaking changes" upstream notice. ADR-0045 records
+the decision to pivot rather than pin to v0.15.
+
+**What the rework changes, per step:**
+
+- **Step 1 (migration + internal packages + install skeleton):** migration
+  000054 unchanged (directory-shape-agnostic). `internal/mailaddr` + `internal/dkim`
+  unchanged. `install/stalwart/config.toml.tmpl` is **deleted**; replaced by
+  `install/stalwart/config.json.tmpl` (datastore wiring only — everything else
+  moves to a JMAP apply-plan). `install.sh::install_stalwart` rewritten to
+  use the `stalwart-cli apply` bootstrap flow described in ADR-0045.
+- **Step 2 (Stalwart config + provisioning):** was "render TOML with SQL directory
+  block". Becomes "write `apply-plan.json.tmpl` (JMAP object plan) + MariaDB user
+  provisioning + first-install bootstrap sequence". Still the same artefacts
+  shape (plan + users + creds), different format.
+- **Step 3 (agent commands + wire contract):** wire contracts UNCHANGED (same
+  JSON on the panel ↔ agent socket). Internal impl pivots from REST `/api/*` to
+  JMAP `/jmap`. Four of the seven commands collapse to near-no-ops on the
+  Stalwart side because v0.16's SqlDirectory has no TTL cache (syncs on every
+  auth). See ADR-0045 §"Agent-side command surface".
+- **Steps 4–9 (panel API, reconciler, DNS, CLI, UI, webmail, E2E):** scope
+  unchanged. Reconciler's role when a plan file changes: call `stalwart-cli apply`
+  (same shape as nginx reload on vhost write). The panel stays blissfully
+  unaware of JMAP — it talks to the agent over NDJSON as always.
+
+**Why this lands cleanly:**
+
+- The wire contract between panel-api and panel-agent was designed around the
+  intent of each command, not Stalwart's v0.15 API. So `{id, email} → {ok:
+  true}` still makes sense in v0.16.
+- Stalwart's SqlDirectory still exists in v0.16 with the same conceptual
+  shape (query_login / query_recipient / column_email etc.) — just reached
+  via a different provisioning path.
+- Our ADR-0042 decision to own identity in `jabali_panel.mailboxes` looks
+  even better under v0.16: Stalwart's auto-sync-on-auth means we never have
+  to invalidate anything.
+
+**Files that don't change under the pivot:** migration 000054 (.up + .down),
+`internal/mailaddr/*`, `internal/dkim/*`, all `panel-api/internal/agent/testdata/*.json`
+(golden fixtures), the JSON tags on agent command structs, Step 4–9 deliverable list.
+
+**Files that change:** `install.sh::install_stalwart`, `install/stalwart/config.toml.tmpl`
+(→ `.json.tmpl`), `install/stalwart/apply-plan.json.tmpl` (NEW),
+`install/systemd/jabali-stalwart.service`, every `panel-agent/internal/commands/mailbox_*.go`
++ `domain_email_*.go` handler body (test files + mock wiring along with them),
+this plan (step deliverables), ADRs 0041 + 0042 (amendment notes), ADR-0045 (new).
 
 ---
 

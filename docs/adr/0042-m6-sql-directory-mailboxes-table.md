@@ -1,9 +1,9 @@
 # ADR-0042: M6 SQL directory — Stalwart reads `jabali_panel.mailboxes`
 
 **Date**: 2026-04-21
-**Status**: accepted
+**Status**: accepted (amended 2026-04-21 by ADR-0045 — cache model clarified: v0.16's SqlDirectory syncs on every auth, no TTL window; no explicit invalidation API needed for credential/quota changes)
 **Deciders**: shuki + Claude
-**Related**: ADR-0002 (DB as source of truth), ADR-0003 (one write path = API), ADR-0013 (inline best-effort), ADR-0041 (RocksDB + Bulwark)
+**Related**: ADR-0002 (DB as source of truth), ADR-0003 (one write path = API), ADR-0013 (inline best-effort), ADR-0041 (RocksDB + Bulwark), ADR-0045 (v0.16 management surface)
 
 ## Context
 

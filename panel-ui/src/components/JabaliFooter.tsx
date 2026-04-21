@@ -14,12 +14,12 @@ import pkg from "../../package.json";
 // Canonical source-code URL. Pointing at the Gitea mirror for now; swap
 // to a GitHub URL here if the project gets mirrored publicly.
 const SOURCE_URL = "https://git.linux-hosting.co.il/shukivaknin/jabali2";
+const WEBSITE_URL = "https://jabali-panel.com/";
 
 export function JabaliFooter() {
   const { mode } = useThemeMode();
   const logoSrc =
     mode === "dark" ? "/images/jabali_logo_dark.svg" : "/images/jabali_logo.svg";
-  const year = new Date().getFullYear();
 
   return (
     <Layout.Footer
@@ -42,7 +42,14 @@ export function JabaliFooter() {
         />
         <div>
           <Typography.Text strong style={{ display: "block" }}>
-            Jabali Panel
+            <a
+              href={WEBSITE_URL}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: "inherit" }}
+            >
+              Jabali Panel
+            </a>
           </Typography.Text>
           <Typography.Text type="secondary">
             Web Hosting Control Panel
@@ -61,7 +68,16 @@ export function JabaliFooter() {
           <GithubOutlined style={{ fontSize: 18 }} />
         </a>
         <Typography.Text type="secondary">·</Typography.Text>
-        <Typography.Text type="secondary">© {year} Jabali</Typography.Text>
+        <Typography.Text type="secondary">
+          <a
+            href="https://www.gnu.org/licenses/gpl-3.0.html"
+            target="_blank"
+            rel="noreferrer"
+            style={{ color: "inherit" }}
+          >
+            GPL-3.0
+          </a>
+        </Typography.Text>
         <Typography.Text strong>v{pkg.version}</Typography.Text>
       </Space>
     </Layout.Footer>

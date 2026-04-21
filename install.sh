@@ -329,9 +329,60 @@ prompt_server_settings() {
 # ---------- step 1: base packages -------------------------------------------
 
 install_base_packages() {
-  _log "installing base packages (git, curl, ca-certificates, build-essential, mariadb, PHP, rsync, systemd-resolved)"
+  _log "installing all system packages in one batch"
   export DEBIAN_FRONTEND=noninteractive
+
+  # Third-party repos added BEFORE the big install so one `apt-get update`
+  # sees them and one `apt-get install` resolves everything together. Each
+  # adder is idempotent (bails out if the source file already exists).
+  _install_sury_source
+  _install_nodesource_source
+
   apt-get update -qq
+
+  # PowerDNS's postinst would restart pdns before its MySQL backend is
+  # configured (fails loudly with exit 99 + a systemctl status dump). Drop
+  # a policy-rc.d that tells dpkg to skip service starts during this
+  # install — every service in the batch (nginx, php-fpm, pdns) is
+  # explicitly enabled+started later in its own step, so "don't auto-
+  # start" is harmless across the board.
+  local policy_rc=/usr/sbin/policy-rc.d
+  local policy_rc_preexisted=0
+  if [[ -e "$policy_rc" ]]; then
+    policy_rc_preexisted=1
+    mv "$policy_rc" "${policy_rc}.jabali-bak"
+  fi
+  cat > "$policy_rc" <<'POLICYEOF'
+#!/bin/sh
+# Temporarily installed by jabali-panel install.sh during the one-shot
+# package batch. Tells dpkg to skip service start during install — every
+# service is explicitly enabled+started later.
+exit 101
+POLICYEOF
+  chmod 0755 "$policy_rc"
+
+  # Sury's PHP extension packaging drifts between versions (8.5 ships
+  # OPcache inside -common instead of as a standalone -opcache package).
+  # Probe apt-cache for each optional extension per PHP version and
+  # include only what's actually available.
+  local php_versions="${JABALI_PHP_VERSIONS:-8.5}"
+  local -a php_extensions=()
+  local version
+  for version in $php_versions; do
+    php_extensions+=("php${version}-fpm" "php${version}-cli")
+    local ext
+    for ext in mysql mbstring zip gd curl xml intl bcmath opcache; do
+      if apt-cache show "php${version}-${ext}" >/dev/null 2>&1; then
+        php_extensions+=("php${version}-${ext}")
+      else
+        _log "php${version}-${ext} not in apt sources — skipping (bundled elsewhere or unavailable)"
+      fi
+    done
+  done
+
+  # One big install. Downstream functions (install_nginx, _install_php_version,
+  # install_node, install_powerdns, setup_certbot) short-circuit on
+  # `command -v` / package-present checks now that the packages land here.
   apt-get install -y -qq --no-install-recommends \
     git curl ca-certificates build-essential tar bzip2 unzip openssl gnupg \
     mariadb-server mariadb-client \
@@ -339,7 +390,20 @@ install_base_packages() {
     composer \
     rsync acl \
     systemd-resolved \
-    quota quotatool xfsprogs
+    quota quotatool xfsprogs \
+    nginx \
+    certbot python3-certbot-nginx \
+    nodejs \
+    pdns-server pdns-backend-mysql \
+    "${php_extensions[@]}"
+
+  # Undo the policy-rc.d trap regardless of exit path above (set -e would
+  # have left the trap in place — restore is best-effort but ordered so
+  # the original file comes back if one existed).
+  rm -f "$policy_rc"
+  if [[ "$policy_rc_preexisted" == "1" ]]; then
+    mv "${policy_rc}.jabali-bak" "$policy_rc"
+  fi
 
   # Make systemd-resolved actually usable by the panel's DNS Resolvers
   # feature. Historically the installer just apt-installed the package
@@ -609,13 +673,14 @@ configure_tmp_tmpfs() {
 # ---------- step 1b: nginx ----------------------------------------------------
 
 install_nginx() {
-  if command -v nginx >/dev/null 2>&1; then
-    _ok "nginx already installed ($(nginx -v 2>&1 | awk -F/ '{print $2}'))"
-  else
-    _log "installing nginx"
-    apt-get install -y -qq --no-install-recommends nginx
-    _ok "nginx installed"
+  # nginx is installed in install_base_packages's one-shot apt batch.
+  # This function owns the post-install config (vhost dirs, include
+  # line, enable+start). Kept as a separate step so the ordering in
+  # main() stays readable and so reinstalls re-run the config checks.
+  if ! command -v nginx >/dev/null 2>&1; then
+    _die "nginx binary not found — install_base_packages should have installed it"
   fi
+  _ok "nginx present ($(nginx -v 2>&1 | awk -F/ '{print $2}'))"
 
   # Ensure sites-available / sites-enabled dirs exist (some minimal
   # nginx packages skip them).
@@ -665,28 +730,14 @@ EOF
 
 _install_php_version() {
   local version="$1"
+  # PHP packages (php<v>-fpm, php<v>-cli, optional extensions) are
+  # installed in install_base_packages's one-shot apt batch. This
+  # function owns the per-version post-install config: placeholder
+  # pool, FPM mask, default-pool disable.
   if ! command -v "php${version}" >/dev/null 2>&1; then
-    _log "installing PHP ${version}"
-    # Required packages: install must succeed.
-    local required=("php${version}-fpm" "php${version}-cli")
-    # Optional extensions: Sury's packaging drifts between PHP versions
-    # (e.g. 8.5 ships OPcache inside -common instead of a standalone
-    # -opcache package). Probe apt-cache and install only what's there.
-    local optional_names=(mysql mbstring zip gd curl xml intl bcmath opcache)
-    local optional=()
-    for ext in "${optional_names[@]}"; do
-      if apt-cache show "php${version}-${ext}" >/dev/null 2>&1; then
-        optional+=("php${version}-${ext}")
-      else
-        _log "php${version}-${ext} not in apt sources — skipping (bundled elsewhere or unavailable)"
-      fi
-    done
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      "${required[@]}" "${optional[@]}"
-    _ok "PHP ${version} installed (${#optional[@]}/${#optional_names[@]} optional extensions)"
-  else
-    _ok "PHP ${version} already installed"
+    _die "php${version} binary not found — install_base_packages should have installed it (check JABALI_PHP_VERSIONS=\"${JABALI_PHP_VERSIONS:-8.5}\")"
   fi
+  _ok "PHP ${version} present"
 
   local pool_file="/etc/php/${version}/fpm/pool.d/www.conf"
   [[ -f "$pool_file" ]] && { mv "$pool_file" "${pool_file}.disabled"; _log "disabled default pool for PHP ${version}"; }
@@ -739,10 +790,7 @@ PLACEHOLDER_EOF
 }
 
 install_php() {
-  _log "installing PHP/FPM from Sury repository"
-  _install_sury_source
-  apt-get update -qq
-
+  _log "configuring PHP/FPM (packages installed in base batch; this runs per-version post-install config)"
   # Default install is PHP 8.5 (current stable). Sury supports 7.4–8.5;
   # set JABALI_PHP_VERSIONS to install additional versions side-by-side,
   # e.g. JABALI_PHP_VERSIONS="7.4 8.2 8.5" bash install.sh
@@ -751,7 +799,6 @@ install_php() {
   for version in $php_versions; do
     _install_php_version "$version"
   done
-
 }
 
 
@@ -827,29 +874,35 @@ EOF
 
 # ---------- step 1d: Node.js 22 LTS (for panel-ui) --------------------------
 
-install_node() {
-  # Idempotent: skip if a new-enough node is already installed. NodeSource
-  # ships v22 for Debian 13 / Ubuntu 24.04 so apt stays consistent.
-  if command -v node >/dev/null 2>&1; then
-    local cur_major
-    cur_major="$(node -v | sed -E 's/^v([0-9]+).*/\1/')"
-    if [[ "$cur_major" -ge 22 ]]; then
-      _ok "Node $(node -v) already installed"
-      return
-    fi
-    _warn "upgrading Node $cur_major → 22"
-  fi
+_install_nodesource_source() {
+  # Idempotent NodeSource repo add. Called from install_base_packages
+  # before the one-shot apt batch so nodejs resolves against
+  # deb.nodesource.com/node_22.x instead of Debian's older nodejs.
+  [[ -f /etc/apt/sources.list.d/nodesource.list ]] && { _ok "NodeSource repo already configured"; return; }
 
-  _log "installing Node.js 22 LTS (NodeSource)"
+  _log "adding NodeSource repo for Node.js 22"
   install -d -m 0755 /etc/apt/keyrings
   curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
     | gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg
   chmod 0644 /etc/apt/keyrings/nodesource.gpg
   echo 'deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main' \
     >/etc/apt/sources.list.d/nodesource.list
-  apt-get update -qq
-  apt-get install -y -qq --no-install-recommends nodejs
-  _ok "Node $(node -v) / npm $(npm -v) installed"
+  _ok "NodeSource repo configured"
+}
+
+install_node() {
+  # nodejs is installed in install_base_packages's one-shot apt batch
+  # (NodeSource repo added by _install_nodesource_source before the
+  # install). This function is now just a version-check + log.
+  if ! command -v node >/dev/null 2>&1; then
+    _die "node binary not found — install_base_packages should have installed it"
+  fi
+  local cur_major
+  cur_major="$(node -v | sed -E 's/^v([0-9]+).*/\1/')"
+  if [[ "$cur_major" -lt 22 ]]; then
+    _warn "Node $cur_major is older than expected v22 — NodeSource repo may not have taken effect"
+  fi
+  _ok "Node $(node -v) / npm $(npm -v) present"
 }
 
 # ---------- step 2.5: MariaDB DB + scoped user ------------------------------
@@ -917,7 +970,17 @@ provision_mariadb() {
 # ---------- step 2.6: PowerDNS authoritative nameserver ----------------------
 
 install_powerdns() {
-  _log "installing PowerDNS (pdns-server + pdns-backend-mysql)"
+  _log "configuring PowerDNS (packages installed in base batch; this runs post-install config)"
+
+  # pdns-server + pdns-backend-mysql are installed in install_base_packages's
+  # one-shot apt batch. The policy-rc.d trap that prevents pdns from
+  # auto-starting before its MySQL backend is wired up ALSO lives in
+  # install_base_packages — the trap wraps the entire batch so every
+  # service defers its start to its own config function (here, for pdns).
+
+  if ! dpkg -s pdns-server >/dev/null 2>&1; then
+    _die "pdns-server not installed — install_base_packages should have installed it"
+  fi
 
   # The config directory for our env/cred files must exist before we
   # try to write into it. The panel's own config.toml lives here too;
@@ -925,38 +988,6 @@ install_powerdns() {
   # runs first.
   mkdir -p /etc/jabali-panel
   chmod 0755 /etc/jabali-panel
-
-  # The Debian pdns-server package runs `invoke-rc.d pdns restart`
-  # in its postinst before we've wired the MySQL backend. That would
-  # fail loudly (exit 99, no backend configured) and print a scary
-  # systemctl status dump. Pre-drop a policy-rc.d that tells the
-  # package scripts to skip the start — we'll start pdns ourselves
-  # after writing the correct config.
-  local policy_rc=/usr/sbin/policy-rc.d
-  local policy_rc_preexisted=0
-  if [[ -e "$policy_rc" ]]; then
-    policy_rc_preexisted=1
-    mv "$policy_rc" "${policy_rc}.jabali-bak"
-  fi
-  cat > "$policy_rc" <<'POLICYEOF'
-#!/bin/sh
-# Temporarily installed by jabali-panel install.sh during pdns setup.
-# Tells dpkg not to start services during package install — we start
-# pdns explicitly once its MySQL backend is configured.
-exit 101
-POLICYEOF
-  chmod 0755 "$policy_rc"
-
-  # pdns-server is the daemon; pdns-backend-mysql is the SQL storage
-  # backend. Stock Debian/Ubuntu package names.
-  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    pdns-server pdns-backend-mysql
-
-  # Undo the policy-rc.d trap regardless of exit path below.
-  rm -f "$policy_rc"
-  if [[ "$policy_rc_preexisted" == "1" ]]; then
-    mv "${policy_rc}.jabali-bak" "$policy_rc"
-  fi
 
   # The Debian package drops a default /etc/powerdns/pdns.d/*.conf that
   # wires up the bind backend. We don't want that — replace the whole
@@ -1198,30 +1229,18 @@ _sql_escape() {
 
 # ---------- step 2.7: Certbot (Let's Encrypt SSL) ---------------------------
 setup_certbot() {
-  _log "installing Certbot for Let's Encrypt SSL certificates"
+  _log "configuring Certbot (packages installed in base batch; this runs post-install config)"
 
-  # Check if certbot is already installed (idempotent).
-  if command -v certbot &>/dev/null; then
-    local version
-    version="$(certbot --version 2>/dev/null | head -n1)"
-    _ok "Certbot already installed: $version"
-    return 0
-  fi
-
-  # Install certbot and the nginx plugin. Stock Debian/Ubuntu package names.
-  # The nginx plugin allows certbot to verify domain ownership via .well-known/acme-challenge
-  # served through nginx, and can optionally auto-configure SSL in nginx.
-  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    certbot python3-certbot-nginx
-
-  # Verify installation succeeded.
+  # certbot + python3-certbot-nginx are installed in install_base_packages's
+  # one-shot apt batch. This function owns the letsencrypt directory
+  # layout the agent + nginx both expect.
   if ! command -v certbot &>/dev/null; then
-    _die "Certbot installation failed"
+    _die "certbot binary not found — install_base_packages should have installed it"
   fi
 
   local version
   version="$(certbot --version 2>/dev/null | head -n1)"
-  _ok "Certbot installed: $version"
+  _ok "Certbot present: $version"
 
   # Pre-create the letsencrypt directories with correct ownership.
   # The panel-agent will write certificates here; nginx may also read them.

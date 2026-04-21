@@ -174,54 +174,62 @@ export const PackageEdit = () => {
 
         <Divider titlePlacement="left">Feature quotas</Divider>
 
-        <Form.Item
-          label="Bandwidth Quota (MB)"
-          name="bandwidth_quota_mb"
-          rules={[{ required: true, message: "Bandwidth quota is required" }]}
-          tooltip="0 = unlimited"
-        >
-          <InputNumber min={0} />
-        </Form.Item>
-
-        <Form.Item
-          label="Max Domains"
-          name="max_domains"
-          rules={[{ required: true, message: "Max domains is required" }]}
-          tooltip="0 = unlimited"
-        >
-          <InputNumber min={0} />
-        </Form.Item>
-
-        <Form.Item
-          label="Max Email Accounts"
-          name="max_email_accounts"
-          rules={[
-            { required: true, message: "Max email accounts is required" },
-          ]}
-          tooltip="0 = unlimited"
-        >
-          <InputNumber min={0} />
-        </Form.Item>
-
-        <Form.Item
-          label="Max Databases"
-          name="max_databases"
-          rules={[{ required: true, message: "Max databases is required" }]}
-          tooltip="0 = unlimited"
-        >
-          <InputNumber min={0} />
-        </Form.Item>
-
-        <Form.Item
-          label="Max FTP Accounts"
-          name="max_ftp_accounts"
-          rules={[
-            { required: true, message: "Max FTP accounts is required" },
-          ]}
-          tooltip="0 = unlimited"
-        >
-          <InputNumber min={0} />
-        </Form.Item>
+        <Row gutter={16}>
+          <Col xs={24} sm={12} md={8}>
+            <Form.Item
+              label="Bandwidth Quota (MB)"
+              name="bandwidth_quota_mb"
+              rules={[{ required: true, message: "Bandwidth quota is required" }]}
+              tooltip="0 = unlimited"
+            >
+              <InputNumber min={0} style={{ width: "100%" }} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <Form.Item
+              label="Max Domains"
+              name="max_domains"
+              rules={[{ required: true, message: "Max domains is required" }]}
+              tooltip="0 = unlimited"
+            >
+              <InputNumber min={0} style={{ width: "100%" }} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <Form.Item
+              label="Max Email Accounts"
+              name="max_email_accounts"
+              rules={[
+                { required: true, message: "Max email accounts is required" },
+              ]}
+              tooltip="0 = unlimited"
+            >
+              <InputNumber min={0} style={{ width: "100%" }} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <Form.Item
+              label="Max Databases"
+              name="max_databases"
+              rules={[{ required: true, message: "Max databases is required" }]}
+              tooltip="0 = unlimited"
+            >
+              <InputNumber min={0} style={{ width: "100%" }} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <Form.Item
+              label="Max FTP Accounts"
+              name="max_ftp_accounts"
+              rules={[
+                { required: true, message: "Max FTP accounts is required" },
+              ]}
+              tooltip="0 = unlimited"
+            >
+              <InputNumber min={0} style={{ width: "100%" }} />
+            </Form.Item>
+          </Col>
+        </Row>
 
         <Divider titlePlacement="left">Features</Divider>
 

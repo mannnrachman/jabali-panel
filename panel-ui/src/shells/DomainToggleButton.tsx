@@ -43,8 +43,7 @@ export const DomainToggleButton = ({ domain }: { domain: DomainToggleTarget }) =
 
   return (
     <Button
-      type="text"
-      size="small"
+      type="link"
       icon={domain.is_enabled ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
       onClick={handleToggle}
       loading={loading}

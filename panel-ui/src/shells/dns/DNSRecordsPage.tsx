@@ -453,7 +453,7 @@ export const DNSRecordsPage = () => {
     return (
       <div style={{ padding: 24 }}>
         <Button
-          type="text"
+          type="link"
           icon={<ArrowLeftOutlined />}
           onClick={() => navigate(dnsListPath)}
           style={{ marginBottom: 16 }}
@@ -487,7 +487,7 @@ export const DNSRecordsPage = () => {
     <div style={{ padding: 24 }}>
       {/* Header */}
       <Button
-        type="text"
+        type="link"
         icon={<ArrowLeftOutlined />}
         onClick={() => navigate(dnsListPath)}
         style={{ marginBottom: 16 }}
@@ -630,7 +630,6 @@ export const DNSRecordsPage = () => {
                       <Typography.Text style={{ fontSize: 12 }}>Name</Typography.Text>
                     </div>
                     <Input
-                      size="small"
                       value={editRecordName}
                       onChange={(e) => setEditRecordName(e.target.value)}
                       placeholder={editPlaceholders.nameHelper}
@@ -640,14 +639,13 @@ export const DNSRecordsPage = () => {
                     <div style={{ marginBottom: 8 }}>
                       <Typography.Text style={{ fontSize: 12 }}>Type</Typography.Text>
                     </div>
-                    <Input size="small" value={editingRecord.type} disabled />
+                    <Input value={editingRecord.type} disabled />
                   </Col>
                   <Col span={10}>
                     <div style={{ marginBottom: 8 }}>
                       <Typography.Text style={{ fontSize: 12 }}>Content</Typography.Text>
                     </div>
                     <Input
-                      size="small"
                       value={editRecordContent}
                       onChange={(e) => setEditRecordContent(e.target.value)}
                       placeholder={editPlaceholders.contentHelper}
@@ -658,7 +656,6 @@ export const DNSRecordsPage = () => {
                       <Typography.Text style={{ fontSize: 12 }}>TTL</Typography.Text>
                     </div>
                     <InputNumber
-                      size="small"
                       min={0}
                       value={editRecordTTL}
                       onChange={(v) => setEditRecordTTL(v ?? 3600)}
@@ -675,7 +672,6 @@ export const DNSRecordsPage = () => {
                         </Typography.Text>
                       </div>
                       <InputNumber
-                        size="small"
                         min={0}
                         value={editRecordPriority ?? 0}
                         onChange={(v) => setEditRecordPriority(v ?? null)}
@@ -684,16 +680,15 @@ export const DNSRecordsPage = () => {
                     </Col>
                   </Row>
                 )}
-                <Space size="small">
+                <Space>
                   <Button
                     type="primary"
-                    size="small"
                     onClick={handleEditSave}
                     loading={savingEdit}
                   >
                     Save
                   </Button>
-                  <Button size="small" onClick={handleEditCancel}>
+                  <Button onClick={handleEditCancel}>
                     Cancel
                   </Button>
                 </Space>
@@ -704,7 +699,6 @@ export const DNSRecordsPage = () => {
               dataSource={displayRecords}
               rowKey="id"
               pagination={false}
-              size="small"
               columns={[
                 {
                   title: "Name",
@@ -773,10 +767,9 @@ export const DNSRecordsPage = () => {
                     }
 
                     return (
-                      <Space size="small">
+                      <Space>
                         <Button
-                          type="text"
-                          size="small"
+                          type="link"
                           icon={<EditOutlined />}
                           onClick={() => handleEditStart(record)}
                         />
@@ -788,8 +781,7 @@ export const DNSRecordsPage = () => {
                           okButtonProps={{ danger: true }}
                         >
                           <Button
-                            type="text"
-                            size="small"
+                            type="link"
                             danger
                             icon={<DeleteOutlined />}
                             loading={deletingRecordId === record.id}

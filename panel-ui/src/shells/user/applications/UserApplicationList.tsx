@@ -294,7 +294,7 @@ export const UserApplicationList = () => {
                 r.status === "ready" &&
                 (r.app_type ?? "wordpress") === "wordpress";
               return (
-                <Space size="small">
+                <Space>
                   <Tooltip
                     title={
                       canClone
@@ -303,8 +303,7 @@ export const UserApplicationList = () => {
                     }
                   >
                     <Button
-                      size="small"
-                      type="text"
+                      type="link"
                       icon={<CopyOutlined />}
                       disabled={!canClone}
                       onClick={() => {
@@ -325,8 +324,7 @@ export const UserApplicationList = () => {
                     disabled={isDeleting}
                   >
                     <Button
-                      size="small"
-                      type="text"
+                      type="link"
                       danger
                       icon={<DeleteOutlined />}
                       loading={isDeleting}

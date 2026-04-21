@@ -25,7 +25,7 @@ export function MyProfile() {
 
         <Card title="Account" loading={!me}>
           {me && (
-            <Descriptions column={1} size="small">
+            <Descriptions column={1}>
               <Descriptions.Item label="Email">{me.email}</Descriptions.Item>
               <Descriptions.Item label="User ID">
                 <Typography.Text code>{me.id}</Typography.Text>

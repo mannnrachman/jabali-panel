@@ -38,7 +38,7 @@ export const RunNowResultModal = ({
         />
 
         {result.stdout && (
-          <Card size="small" title="Standard Output">
+          <Card title="Standard Output">
             <pre
               style={{
                 fontFamily: "monospace",
@@ -60,7 +60,6 @@ export const RunNowResultModal = ({
 
         {result.stderr && (
           <Card
-            size="small"
             title="Standard Error"
             style={{ borderColor: "#ff4d4f" }}
           >

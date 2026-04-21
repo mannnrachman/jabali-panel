@@ -218,8 +218,7 @@ export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
               addonAfter={
                 <Tooltip title="Copy">
                   <Button
-                    size="small"
-                    type="text"
+                    type="link"
                     icon={<CopyOutlined />}
                     onClick={() => copy("Database name", result.databaseName)}
                   />
@@ -235,8 +234,7 @@ export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
               addonAfter={
                 <Tooltip title="Copy">
                   <Button
-                    size="small"
-                    type="text"
+                    type="link"
                     icon={<CopyOutlined />}
                     onClick={() => copy("Username", result.username)}
                   />
@@ -253,8 +251,7 @@ export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
               addonAfter={
                 <Tooltip title="Copy">
                   <Button
-                    size="small"
-                    type="text"
+                    type="link"
                     icon={<CopyOutlined />}
                     onClick={() => copy("Password", result.password)}
                   />

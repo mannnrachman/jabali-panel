@@ -274,7 +274,6 @@ export const SSLManagerTable = ({
             {isRetryable && (
               <Tooltip title="Force ACME retry now">
                 <Button
-                  size="small"
                   icon={<RedoOutlined />}
                   loading={retryMutation.isPending}
                   onClick={() => retryMutation.mutate(record.domain_id)}
@@ -285,7 +284,6 @@ export const SSLManagerTable = ({
               <Tooltip title="Renew certificate">
                 <Button
                   type="primary"
-                  size="small"
                   icon={<ReloadOutlined />}
                   loading={renewMutation.isPending}
                   onClick={() => renewMutation.mutate(record.domain_id)}
@@ -302,7 +300,6 @@ export const SSLManagerTable = ({
               >
                 <Button
                   danger
-                  size="small"
                   icon={<DeleteOutlined />}
                   loading={revokeMutation.isPending}
                 />

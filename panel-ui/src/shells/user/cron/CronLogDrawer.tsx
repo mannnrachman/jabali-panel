@@ -58,16 +58,14 @@ export const CronLogDrawer = ({
       extra={
         <Space>
           <Button
-            type="text"
-            size="small"
+            type="link"
             icon={<CopyOutlined />}
             onClick={handleCopyToClipboard}
           >
             Copy
           </Button>
           <Button
-            type="text"
-            size="small"
+            type="link"
             icon={<ReloadOutlined />}
             onClick={handleRefresh}
             loading={isLoading}
@@ -92,7 +90,6 @@ export const CronLogDrawer = ({
 
       <Spin spinning={isLoading}>
         <Card
-          size="small"
           style={{
             backgroundColor: "#f5f5f5",
           }}

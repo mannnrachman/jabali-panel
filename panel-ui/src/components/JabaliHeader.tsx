@@ -5,7 +5,7 @@
 // what Refine's ThemedHeaderV2 used to produce (so we don't spook
 // operators who already know the chrome).
 import { useEffect, useRef, useState } from "react";
-import { LogoutOutlined, UserOutlined, SearchOutlined } from "@ant-design/icons";
+import { LogoutOutlined, UserOutlined } from "@ant-design/icons";
 import { Avatar, Button, Dropdown, Input, Layout, Space, theme } from "antd";
 import type { InputRef, MenuProps } from "antd";
 import { useLocation, useNavigate } from "react-router";
@@ -132,25 +132,20 @@ export function JabaliHeader() {
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
       }}
     >
-      <Input
+      <Input.Search
         ref={searchInputRef}
         placeholder="Search users, domains… (/)"
-        prefix={<SearchOutlined style={{ color: token.colorTextTertiary }} />}
         value={searchQuery}
         onChange={(e) => setSearchQuery(e.target.value)}
-        onPressEnter={handleSearchSubmit}
+        onSearch={handleSearchSubmit}
         allowClear
-        style={{
-          flex: 1,
-          maxWidth: 520,
-          borderRadius: token.borderRadiusLG,
-        }}
+        style={{ flex: 1, maxWidth: 520 }}
       />
 
       <Space style={{ marginLeft: "auto" }} size={4}>
         <ThemeToggle />
         <Dropdown menu={{ items: userMenu }} placement="bottomRight">
-          <Button type="text" icon={<Avatar size="small" icon={<UserOutlined />} />}>
+          <Button type="link" icon={<Avatar icon={<UserOutlined />} />}>
             &nbsp;{email || "…"}
           </Button>
         </Dropdown>

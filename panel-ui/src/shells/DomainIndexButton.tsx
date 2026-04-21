@@ -74,8 +74,7 @@ export const DomainIndexButton = ({ domain }: { domain: DomainIndexTarget }) => 
   return (
     <>
       <Button
-        type="text"
-        size="small"
+        type="link"
         icon={<FileTextOutlined />}
         onClick={() => setOpen(true)}
       >

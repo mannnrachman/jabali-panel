@@ -934,7 +934,7 @@ export const FileManagerPage = () => {
         ];
         return (
           <Dropdown trigger={["click"]} menu={{ items }}>
-            <Button type="text" icon={<MoreOutlined />} />
+            <Button type="link" icon={<MoreOutlined />} />
           </Dropdown>
         );
       },
@@ -1031,25 +1031,24 @@ export const FileManagerPage = () => {
             {selectedNames.length} selected
           </Text>
           <Button
-            size="small"
             icon={<DownloadOutlined />}
             onClick={() => void handleBulkDownloadZip()}
           >
             Download
           </Button>
-          <Button size="small" onClick={handleCopyToClipboard}>
+          <Button onClick={handleCopyToClipboard}>
             Copy
           </Button>
-          <Button size="small" onClick={() => setBulkMoveOpen(true)}>
+          <Button onClick={() => setBulkMoveOpen(true)}>
             Move to…
           </Button>
-          <Button size="small" onClick={() => setBulkChmodOpen(true)}>
+          <Button onClick={() => setBulkChmodOpen(true)}>
             Permissions
           </Button>
-          <Button danger size="small" onClick={handleBulkDelete}>
+          <Button danger onClick={handleBulkDelete}>
             Delete
           </Button>
-          <Button size="small" type="text" onClick={() => setSelectedNames([])}>
+          <Button type="link" onClick={() => setSelectedNames([])}>
             Clear
           </Button>
         </div>
@@ -1057,7 +1056,6 @@ export const FileManagerPage = () => {
 
       <div style={{ display: "flex", gap: 16, alignItems: "stretch" }}>
         <Card
-          size="small"
           title="Folders"
           style={{ width: 280, flexShrink: 0 }}
           // body takes the scrollable region; the header is fixed so the
@@ -1144,7 +1142,6 @@ export const FileManagerPage = () => {
               dataSource={entries}
               columns={columns as never}
               pagination={false}
-              size="small"
               locale={{ emptyText: <Empty description="Empty directory" /> }}
               // Row drag-to-move: any row is draggable; folders are drop
               // targets. `dragPathMime` carries the list of paths being

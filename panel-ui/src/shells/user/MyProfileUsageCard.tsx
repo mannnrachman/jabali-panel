@@ -68,7 +68,7 @@ export function MyProfileUsageCard({ userId }: { userId: string }) {
 
   if (error) {
     return (
-      <Card title="Resource usage" size="small">
+      <Card title="Resource usage">
         <Typography.Text type="secondary">
           Usage data is currently unavailable.
         </Typography.Text>
@@ -77,12 +77,12 @@ export function MyProfileUsageCard({ userId }: { userId: string }) {
   }
 
   if (!data) {
-    return <Card title="Resource usage" size="small" loading />;
+    return <Card title="Resource usage" loading />;
   }
 
   const { effective, current } = data;
   return (
-    <Card title="Resource usage" size="small">
+    <Card title="Resource usage">
       <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
         <UsageRow
           label="Disk"
@@ -99,7 +99,7 @@ export function MyProfileUsageCard({ userId }: { userId: string }) {
           }
           formatter={humanBytes}
         />
-        <Descriptions column={1} size="small">
+        <Descriptions column={1}>
           <Descriptions.Item label="CPU quota">
             {effective.CPUQuotaPercent > 0
               ? `${effective.CPUQuotaPercent}% (${(effective.CPUQuotaPercent / 100).toFixed(1)} cores)`

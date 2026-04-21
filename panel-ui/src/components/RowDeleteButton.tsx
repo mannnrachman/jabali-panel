@@ -55,8 +55,7 @@ export function RowDeleteButton({
     >
       <Button
         danger
-        type="text"
-        size="small"
+        type="link"
         icon={<DeleteOutlined />}
         aria-label="Delete"
       />

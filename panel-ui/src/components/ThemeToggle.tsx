@@ -11,7 +11,7 @@ export function ThemeToggle() {
   return (
     <Tooltip title={`Switch to ${next} mode`}>
       <Button
-        type="text"
+        type="link"
         aria-label={`Switch to ${next} mode`}
         icon={mode === "dark" ? <SunOutlined /> : <MoonOutlined />}
         onClick={toggle}

@@ -218,7 +218,7 @@ export const UserDatabaseList = () => {
               const isLoading = loadingPhpMyAdminId === r.id;
 
               return (
-                <Space size="small">
+                <Space>
                   <Tooltip
                     title={
                       isPostgres
@@ -228,7 +228,6 @@ export const UserDatabaseList = () => {
                   >
                     <Button
                       type="link"
-                      size="small"
                       icon={<LinkOutlined />}
                       onClick={() => handleOpenPhpMyAdmin(r)}
                       disabled={isPostgres || isLoading}

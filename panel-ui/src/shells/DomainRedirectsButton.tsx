@@ -99,7 +99,6 @@ const SortableCard = ({
   return (
     <div ref={setNodeRef} style={style}>
       <Card
-        size="small"
         style={{ marginBottom: 12 }}
         bodyStyle={{ padding: 12 }}
       >
@@ -134,7 +133,7 @@ const SortableCard = ({
             → {pr.type}
           </Typography.Text>
           <Button
-            type="text"
+            type="link"
             icon={isExpanded ? <UpOutlined /> : <DownOutlined />}
             onClick={() => onToggleExpanded(idx)}
             style={{ padding: 4 }}
@@ -142,8 +141,7 @@ const SortableCard = ({
           <Button
             danger
             icon={<DeleteOutlined />}
-            type="text"
-            size="small"
+            type="link"
             onClick={() => onRemove(idx)}
           />
         </div>
@@ -336,8 +334,7 @@ export const DomainRedirectsButton = ({
   return (
     <>
       <Button
-        type="text"
-        size="small"
+        type="link"
         icon={<SwapOutlined />}
         onClick={handleOpenModal}
       >

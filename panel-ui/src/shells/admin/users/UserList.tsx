@@ -188,7 +188,7 @@ export const UserList = () => {
           {
             key: "users",
             tab: (
-              <Space size="small">
+              <Space>
                 Users
                 <Badge count={usersCountQ.total} showZero />
               </Space>
@@ -197,7 +197,7 @@ export const UserList = () => {
           {
             key: "admins",
             tab: (
-              <Space size="small">
+              <Space>
                 Administrators
                 <Badge count={adminsCountQ.total} showZero />
               </Space>

@@ -229,7 +229,6 @@ export const UserSSHKeysPage = () => {
 
       {conn && (
         <Card
-          size="small"
           style={{ marginBottom: 16 }}
           title={
             <Space>
@@ -261,7 +260,7 @@ export const UserSSHKeysPage = () => {
         </Card>
       )}
       {connLoading && !conn && (
-        <Card size="small" loading style={{ marginBottom: 16 }} />
+        <Card loading style={{ marginBottom: 16 }} />
       )}
 
       <Table<SSHKey>
@@ -307,9 +306,8 @@ export const UserSSHKeysPage = () => {
                 cancelText="No"
               >
                 <Button
-                  type="text"
+                  type="link"
                   danger
-                  size="small"
                   icon={<DeleteOutlined />}
                   loading={deletingId === record.id}
                   disabled={deletingId !== null && deletingId !== record.id}

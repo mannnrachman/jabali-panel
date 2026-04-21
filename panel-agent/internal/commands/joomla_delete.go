@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 )
@@ -90,6 +91,12 @@ func joomlaDeleteHandler(ctx context.Context, params json.RawMessage) (any, erro
 		if _, err := os.Stat(indexPath); os.IsNotExist(err) {
 			_ = writeDefaultIndex(ctx, indexPath, req.OSUser, req.Domain, req.Docroot)
 		}
+	}
+
+	// Remove the per-install nginx rewrite snippet if one was written
+	// at install time. No-op for docroot installs.
+	if sub := strings.Trim(req.Subdirectory, "/"); sub != "" && req.Domain != "" {
+		_ = removeAppRewrite(ctx, "joomla", req.Domain, sub)
 	}
 
 	return joomlaDeleteResp{Status: "deleted"}, nil

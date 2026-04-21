@@ -408,6 +408,22 @@ func drupalInstallHandler(ctx context.Context, params json.RawMessage) (any, err
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
 
+	// Write the per-install nginx rewrite snippet for subdir installs.
+	// Drupal's pretty URLs (/<subdir>/user, /<subdir>/admin/*) would
+	// otherwise 404 because our generic vhost's try_files fallback
+	// targets /index.php at the docroot, not /<subdir>/index.php.
+	// No-op for docroot installs.
+	subdir := strings.Trim(req.Subdirectory, "/")
+	if subdir != "" {
+		domain, err := DomainFromSiteURL(req.SiteURL)
+		if err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("extract domain: %v", err)}
+		}
+		if err := writeAppRewrite(ctx, "drupal", domain, req.OSUser, subdir); err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("write nginx rewrite: %v", err)}
+		}
+	}
+
 	return drupalInstallResp{Version: drupalVersion}, nil
 }
 

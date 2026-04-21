@@ -305,6 +305,20 @@ func joomlaInstallHandler(ctx context.Context, params json.RawMessage) (any, err
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
 
+	// Per-install nginx rewrite for subdir installs — same rationale as
+	// Drupal (pretty URLs under /<subdir>/ need to land at
+	// /<subdir>/index.php, not the docroot's index.php).
+	subdir := strings.Trim(req.Subdirectory, "/")
+	if subdir != "" {
+		domain, err := DomainFromSiteURL(req.SiteURL)
+		if err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("extract domain: %v", err)}
+		}
+		if err := writeAppRewrite(ctx, "joomla", domain, req.OSUser, subdir); err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("write nginx rewrite: %v", err)}
+		}
+	}
+
 	return joomlaInstallResp{Version: joomlaVersion}, nil
 }
 

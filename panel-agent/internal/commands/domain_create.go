@@ -106,6 +106,11 @@ server {
     access_log /var/log/nginx/{{.Domain}}-access.log;
     error_log /var/log/nginx/{{.Domain}}-error.log;
 
+    # Per-install rewrites (e.g. Drupal/Joomla subdir pretty-URL routing).
+    # Written by the per-CMS install handler; reloaded on install/delete.
+    # nginx tolerates a missing directory here — no file = no include.
+    include /etc/nginx/jabali/{{.Domain}}/*.conf;
+
     {{.RedirectDirectives}}
     {{.RuleDirectives}}
     {{.CustomDirectives}}

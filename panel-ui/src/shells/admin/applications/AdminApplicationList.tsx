@@ -17,7 +17,6 @@ import {
   message,
 } from "antd";
 import {
-  GlobalOutlined,
   LoadingOutlined,
   CheckCircleOutlined,
   ExclamationCircleOutlined,
@@ -28,7 +27,6 @@ import type { SorterResult } from "antd/es/table/interface";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useTableURL } from "../../../hooks/useTableURL";
 import { useMagicLink } from "../../../hooks/useMagicLink";
-import { APP_TYPE_LABELS } from "../../user/applications/appLabels";
 import { CmsIcon } from "../../user/applications/CmsIcon";
 
 type ApplicationInstall = {
@@ -185,20 +183,6 @@ export const AdminApplicationList = () => {
           onChange={handleTableChange}
         >
           <Table.Column<ApplicationInstall>
-            dataIndex="app_type"
-            title="App"
-            render={(appType: string | undefined) => {
-              const key = appType || "wordpress";
-              const label = APP_TYPE_LABELS[key] ?? key;
-              return (
-                <Space size={6}>
-                  <CmsIcon appType={key} />
-                  <Typography.Text>{label}</Typography.Text>
-                </Space>
-              );
-            }}
-          />
-          <Table.Column<ApplicationInstall>
             dataIndex="domain_name"
             title="Domain"
             key="domain_name"
@@ -211,11 +195,12 @@ export const AdminApplicationList = () => {
                 : "/";
               const label = `${base}${path}`;
               const isLink = record.status === "ready" && !!domainName;
+              const appKey = record.app_type || "wordpress";
               return (
                 <div
                   style={{ display: "flex", alignItems: "center", gap: 8 }}
                 >
-                  <GlobalOutlined />
+                  <CmsIcon appType={appKey} />
                   {isLink ? (
                     <a
                       href={`https://${domainName}${path}`}

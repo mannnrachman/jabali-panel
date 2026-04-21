@@ -2,7 +2,15 @@
 Description=Jabali SSO file reaper (M22 — sweeps stale jabali-sso-*.php)
 Documentation=https://git.linux-hosting.co.il/shukivaknin/jabali2/src/branch/main/docs/adr/0040-m22-sso-file.md
 After=jabali-panel.service jabali-agent.service
-Requires=jabali-agent.service
+# No Requires= on jabali-agent.service: install.sh enables this timer
+# (install_sso_reaper_timer at step 7) BEFORE it writes the panel +
+# agent unit files (happens much later in the install flow). systemd
+# would queue the startup, not find the required unit, and fail the
+# timer with `Result: resources`. Dropping the Requires= lets the
+# timer enable successfully on first install; the ExecStart still
+# only succeeds when the agent socket is up, which `Restart=no`
+# below converts into a tolerated oneshot failure retried 30s later.
+# After= keeps boot ordering correct without enforcing hard coupling.
 
 [Service]
 Type=oneshot

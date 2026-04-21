@@ -122,6 +122,29 @@ cat $base/cpu.stat; sleep 2; cat $base/cpu.stat
 # throttled_usec should grow substantially.
 ```
 
+### Disk quota actually blocks writes — LXC gotcha
+
+POSIX user quota can't be validated inside an unprivileged LXC
+container. Two specific blockers:
+- `/home` on the same filesystem as `/` triggers install.sh's
+  quota-on-root guard (documented above).
+- Even when you try to work around it with a loop-mounted backing
+  file (`fallocate /var/lib/jabali-home.img` + `mount -o loop,usrquota`
+  + `quotacheck`), LXC's default seccomp+cgroup profile blocks
+  `/dev/loop*` access inside the container — `mount -o loop` returns
+  `failed to setup loop device` and the whole chain stops.
+
+Workarounds that DO work for a CI/dev sandbox:
+- Run the quota smoke test on a privileged LXC (`lxc.apparmor.profile = unconfined`
+  + `lxc.mount.entry = /dev/loop0 dev/loop0 none bind,create=file 0 0`)
+- Or a real VM/bare-metal host with `/home` on its own partition
+- Or bind-mount a host-side quota-enabled directory into the container's
+  `/home` (`lxc.mount.entry = /srv/jabali-home home none bind 0 0` with
+  quota already configured on the host side)
+
+On a production deploy with a dedicated `/home` partition this test
+just works — the kernel + quota-tools path is upstream-tested.
+
 ### Nginx rate limit returns 503 on burst
 
 ```bash

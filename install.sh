@@ -2318,20 +2318,23 @@ install_sso_reaper_timer() {
   # successful login, so the reaper only catches files that didn't get
   # to that step (PHP fatal mid-execution, web server crash, etc.).
   _log "installing sso reaper systemd timer"
-  local svc_src="install/systemd/jabali-sso-reaper.service"
-  local timer_src="install/systemd/jabali-sso-reaper.timer"
+  # install.sh never cd's into $REPO_DIR — every other function anchors
+  # source paths against ${REPO_DIR} explicitly (see install_jabali_slices,
+  # install_php_pool_template, install_kratos). A relative path like
+  # "install/systemd/..." resolves against $PWD, which is /root when the
+  # script runs via `curl | bash`, and the file-exists check below fires
+  # with _err → exit 1. Fix: match the pattern used everywhere else.
+  local svc_src="${REPO_DIR}/install/systemd/jabali-sso-reaper.service"
+  local timer_src="${REPO_DIR}/install/systemd/jabali-sso-reaper.timer"
   local svc_dst="/etc/systemd/system/jabali-sso-reaper.service"
   local timer_dst="/etc/systemd/system/jabali-sso-reaper.timer"
 
-  _log "sso reaper: cwd=$(pwd) svc_src=$svc_src"
   if [[ ! -f "$svc_src" || ! -f "$timer_src" ]]; then
     _err "sso reaper systemd units missing at $svc_src / $timer_src"
     exit 1
   fi
 
-  _log "sso reaper: install service -> $svc_dst"
   install -m 0644 -o root -g root "$svc_src" "$svc_dst"
-  _log "sso reaper: install timer -> $timer_dst"
   install -m 0644 -o root -g root "$timer_src" "$timer_dst"
 
   # daemon-reload + enable --now are the two places this function has

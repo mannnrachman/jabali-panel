@@ -88,11 +88,10 @@ test.describe.skip("Magic Link Admin Login", () => {
       }
     }
 
-    // Verify that window.open was called with the correct URL pattern
-    // The URL should contain the domain and the magic link token
+    // Verify that window.open was called with the M22-rework URL shape
+    // (ADR-0040): https://<site>[/<subdir>]/jabali-sso-<43chars>.php.
     if (newPageUrl) {
-      expect(newPageUrl).toMatch(/jabali_admin_login=/);
-      expect(newPageUrl).toMatch(/[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}/);
+      expect(newPageUrl).toMatch(/\/jabali-sso-[A-Za-z0-9_-]{43}\.php(\?|$)/);
     }
   });
 

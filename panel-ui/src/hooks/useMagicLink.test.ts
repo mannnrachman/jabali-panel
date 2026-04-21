@@ -27,7 +27,7 @@ describe("useMagicLink", () => {
   it("should successfully mint a magic link", async () => {
     const mockResponse = {
       data: {
-        url: "https://example.com/?jabali_admin_login=token123",
+        url: "https://example.com/jabali-sso-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.php",
         expires_in: 60,
       },
     };
@@ -44,7 +44,7 @@ describe("useMagicLink", () => {
       `/applications/${installId}/magic-link`,
       {}
     );
-    expect(response.url).toBe("https://example.com/?jabali_admin_login=token123");
+    expect(response.url).toBe("https://example.com/jabali-sso-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.php");
     expect(response.expires_in).toBe(60);
     expect(result.current.error).toBe(null);
     expect(result.current.loading).toBe(false);
@@ -53,7 +53,7 @@ describe("useMagicLink", () => {
   it("should handle loading state transitions", async () => {
     const mockResponse = {
       data: {
-        url: "https://example.com/?jabali_admin_login=token123",
+        url: "https://example.com/jabali-sso-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.php",
         expires_in: 60,
       },
     };
@@ -185,7 +185,7 @@ describe("useMagicLink", () => {
     // Now, mock a successful response
     mockApiClient.post.mockResolvedValueOnce({
       data: {
-        url: "https://example.com/?jabali_admin_login=token456",
+        url: "https://example.com/jabali-sso-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB.php",
         expires_in: 60,
       },
     });

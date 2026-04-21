@@ -834,7 +834,7 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Depends on:** M1 (admin access)
 
-### M18: Per-user resource limits (SHIPPED — pending host validation)
+### M18: Per-user resource limits (SHIPPED 2026-04-21)
 
 **Goal:** Hosting packages become *enforceable* bundles. Admins set disk, CPU, memory, I/O, task, and per-domain request/connection limits on a package; the reconciler converges the system so every hosting user is capped by kernel + filesystem + nginx. Per-user override rows allow one-off tuning without forking packages.
 
@@ -850,7 +850,7 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 - install.sh: `usrquota` configuration + tmpfs `/tmp` + cgroups v2 probe (idempotent, fail-loud on unsupported FS)
 - ADR-0032 + runbook at `plans/m18-resource-limits-runbook.md`
 
-**Status:** Code complete; 7 waves shipped (A-G) 2026-04-19. **Host validation** — the OS-level tests (setquota EDQUOT, OOM-kill, nginx 503 on burst) cannot run from the dev host and are documented in runbook §3 for post-deploy execution on the test VM.
+**Status:** Code complete; 7 waves shipped (A-G) 2026-04-19. **Host validation** — the OS-level smoke tests (cgroups drop-in matches kernel state, OOM-kill, CPU throttling, nginx 503 on burst) executed against the test VM 2026-04-21 and all pass. Disk-quota enforcement is disabled on /home-on-root hosts (install.sh deliberately skips usrquota there — quota-on-root is unsafe). Three bugs surfaced during validation and were fixed in the same pass: (1) `jabali limits check` nginx-module probe false-negated on stock Debian (false "not compiled in" report; default-on modules aren't listed by `nginx -V`); (2) `serve.go` + `jabali limits {status,apply}` CLI passed `QuotaMount=/` on /home-on-root hosts, aborting the whole apply pipeline before cgroups drop-ins got written; (3) runbook §3 used `su - testuser` for memory/CPU tests — wrong, `su` spawns children in the root session scope not the user slice, so the enforcement never applies. Replaced with `systemd-run --slice=...`. **One known bug deferred:** the reconciler's domain.create path writes the vhost with `limit_req zone=rl_<id>` before the `00-jabali-ratelimits.conf` fragment declares the zone, causing nginx `zero size shared memory zone` error and aborting domain provisioning for any domain with `rate_limit_rps > 0`. Worked around in validation by crafting the test vhost by hand; needs a follow-up commit to sequence the agent's apply order (write zone fragment first, reload, then write vhost).
 
 **Depends on:** M9.5 (per-user slices from ADR-0025)
 

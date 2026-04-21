@@ -88,19 +88,38 @@ quota -u testuser    # shows used ≈ hard limit, status *
 
 ### Memory cap actually OOMs
 
+**IMPORTANT:** use `systemd-run --slice=jabali-user-<u>.slice --uid=<u>`,
+NOT `su - <u>`. `su` spawns children in the invoking session's scope
+(`/user.slice/user-0.slice/session-*.scope` when invoked from root
+shell) — the jabali user-slice's MemoryMax never applies. `systemd-run`
+places the child directly into the target slice.
+
 ```bash
 # With memory_limit_mb=256 on the package:
-su - testuser -c 'php -r "str_repeat(\"x\", 1024 * 1024 * 400);"'
-# Expected: process killed, journal shows memory-oom-kill:
-journalctl -u jabali-user-testuser.slice -n 20 | grep -i oom
+systemd-run --uid=testuser --slice=jabali-user-testuser.slice \
+  --wait --collect --setenv=HOME=/home/testuser -p MemorySwapMax=0 \
+  /usr/bin/php -r 'str_repeat(chr(97), 1024 * 1024 * 400);'
+# Expected: "Finished with result: oom-kill" + "status=9/KILL"
+# Peak memory should be ~255M (just under the 256M hard cap).
+journalctl --since "30 seconds ago" --no-pager | grep -iE "oom-kill"
 ```
 
 ### CPU throttling kicks in
 
+Same `systemd-run` trick as above (su doesn't route through the slice).
+
 ```bash
 # With cpu_quota_percent=50 (half a core):
-su - testuser -c 'for i in $(seq 1 4); do yes > /dev/null & done; sleep 2; systemd-cgtop -n 1 --cgroup=/jabali.slice/jabali-user.slice/jabali-user-testuser.slice'
-# Expected: CPU column shows ≈50% regardless of 4 parallel busy-loops.
+systemd-run --uid=testuser --slice=jabali-user-testuser.slice \
+  --setenv=HOME=/home/testuser \
+  /bin/bash -c 'for i in 1 2 3 4; do yes > /dev/null & done; sleep 4; jobs -p | xargs -r kill -9'
+
+# Read cpu.stat twice, 2 seconds apart; Δusage_usec should be ~1e6
+# (1s of CPU per 2s wall = 50%). nr_throttled should increment.
+base=/sys/fs/cgroup/jabali.slice/jabali-user.slice/jabali-user-testuser.slice
+cat $base/cpu.stat; sleep 2; cat $base/cpu.stat
+# usage_usec delta ≈ 1,000,000 (50% of one core)
+# throttled_usec should grow substantially.
 ```
 
 ### Nginx rate limit returns 503 on burst

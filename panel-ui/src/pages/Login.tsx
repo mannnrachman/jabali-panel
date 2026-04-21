@@ -29,6 +29,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { clearIdentity, getIdentity } from "../identity";
 import type { MeUser } from "../auth/AuthContext";
+import { useThemeMode } from "../theme/ThemeModeContext";
 
 // Post-M21 inline: authProvider.ts used to export this. It's a
 // trivial two-branch map, not worth its own module now that no
@@ -52,6 +53,11 @@ export const LoginPage = () => {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { token } = theme.useToken();
+  const { mode } = useThemeMode();
+  const logoSrc =
+    mode === "dark"
+      ? "/images/jabali_logo_dark.svg"
+      : "/images/jabali_logo.svg";
 
   const [flow, setFlow] = useState<KratosFlow | null>(null);
   const [loadingFlow, setLoadingFlow] = useState(true);
@@ -139,9 +145,23 @@ export const LoginPage = () => {
     >
       <Card style={{ width: 420 }}>
         <Space orientation="vertical" size="large" style={{ width: "100%" }}>
-          <Typography.Title level={3} style={{ margin: 0 }}>
-            Jabali Panel
-          </Typography.Title>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 12,
+            }}
+          >
+            <img
+              src={logoSrc}
+              alt="Jabali"
+              style={{ height: 64, width: "auto" }}
+            />
+            <Typography.Title level={2} style={{ margin: 0 }}>
+              Jabali Panel
+            </Typography.Title>
+          </div>
 
           {initError && (
             <Alert title={initError} type="error" showIcon />

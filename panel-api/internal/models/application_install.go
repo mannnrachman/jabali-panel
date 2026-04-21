@@ -37,24 +37,6 @@ type ApplicationInstall struct {
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 
-	// OIDCClientID is the Hydra OAuth 2 client provisioned for this
-	// install (M16 Wave D). Nil for (a) pre-M16 rows, (b) apps whose
-	// descriptor doesn't set OIDCCallbackPath, (c) the narrow window
-	// between install-row insert and successful Hydra CreateClient.
-	// The value is a ULID we generate panel-side so a compensating
-	// DeleteClient on install-delete can target it without guessing.
-	// Never serialised to clients — see the JSON tag.
-	OIDCClientID *string `gorm:"type:char(40);column:oidc_client_id;uniqueIndex:uniq_app_installs_oidc_client_id" json:"-"`
-
-	// OIDCClientSecretEnc is the AES-256-GCM envelope of the client
-	// secret Hydra returned at CreateClient. Sealed with the same
-	// sso.key used for phpMyAdmin shadow passwords. Shape:
-	// nonce(12) || ciphertext || auth_tag(16). Nil when OIDCClientID
-	// is nil. NEVER serialised (json:"-") and NEVER logged — callers
-	// that need the plaintext call ssokey.Key.Open at the single
-	// callsite that passes it to the agent.
-	OIDCClientSecretEnc []byte `gorm:"type:varbinary(512);column:oidc_client_secret_enc" json:"-"`
-
 	// AppType picks which app's installer the agent runs. Default
 	// 'wordpress' so existing rows back-fill without a code change in
 	// callers that still pre-date M19. Validated against the registry

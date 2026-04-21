@@ -636,7 +636,6 @@ func (h *wordPressHandler) delete(c *gin.Context) {
 	// install_id is plumbed through so deleters that opt into the
 	// managed-data-dir contract (Moodle/Chamilo) can recompute the
 	// /home/<user>/<install_id>-data path and rm it.
-	// OIDCClientID is *string on the model — pass "" when unset so the
 	go createDeleteAndKickAgent(ctx, installID, install.AppType, install.Subdirectory, install.DBIDOr(), dbUserID, osUser, domain.DocRoot, domain.Name, dbUserUsername, h.cfg)
 
 	c.JSON(http.StatusAccepted, gin.H{"status": "deleting"})

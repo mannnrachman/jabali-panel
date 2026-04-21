@@ -43,11 +43,6 @@ func TestWordPressInstallCreate_Success(t *testing.T) {
 			install.Version, install.AdminUsername, install.AdminEmail,
 			install.Locale, install.UseWWW, install.Subdirectory, install.Status, install.LastError,
 			sqlmock.AnyArg(), sqlmock.AnyArg(),
-			// M16 Wave D added oidc_client_id + oidc_client_secret_enc
-			// between UpdatedAt and AppType. Both are nil on first
-			// insert — the OIDC minting path calls UpdateOIDCFields
-			// AFTER Create, so Create never observes populated values.
-			install.OIDCClientID, install.OIDCClientSecretEnc,
 			install.AppType,
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -82,16 +77,14 @@ func TestWordPressInstallCreate_UniqueDomainIDConstraint(t *testing.T) {
 	}
 
 	mock.ExpectBegin()
-	// 17 columns after M16 Wave D (migration 000050 added
-	// oidc_client_id + oidc_client_secret_enc between updated_at and
-	// app_type).
+	// 15 columns after M16 rollback (migration 000051 dropped
+	// oidc_client_id + oidc_client_secret_enc).
 	mock.ExpectExec("INSERT INTO `application_installs`").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
-			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
-			sqlmock.AnyArg()).
+			sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(sql.ErrNoRows) // Simulates UNIQUE constraint violation
 	mock.ExpectRollback()
 

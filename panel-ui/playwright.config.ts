@@ -13,7 +13,14 @@ const PORT = 4173;
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  timeout: 15_000,
+  // 30s per test (was 15s). Local median is ~2s; 15s had ~7x headroom,
+  // which isn't enough on the single-host-mode act_runner where go +
+  // ui-unit jobs run in parallel with e2e and eat CPU. CI run 60's
+  // users-spec create flow timed out on .fill() actionability waits
+  // (element resolved in DOM but wasn't "visible + enabled + editable"
+  // within 15s under load). 30s is still under Playwright's own 30s
+  // default; no structural risk, just breathing room.
+  timeout: 30_000,
   expect: { timeout: 4_000 },
   fullyParallel: true,
   forbidOnly: !!process.env.CI,

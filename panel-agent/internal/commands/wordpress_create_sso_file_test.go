@@ -1,0 +1,151 @@
+package commands
+
+import (
+	"context"
+	"os"
+	"os/user"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+)
+
+// fakeWPInstall creates a tmpdir with a stub wp-load.php so CreateSSOFile
+// can resolve the path. Returns the install dir.
+func fakeWPInstall(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "wp-load.php"), []byte("<?php // stub\n"), 0o644); err != nil {
+		t.Fatalf("seed wp-load.php: %v", err)
+	}
+	return dir
+}
+
+func TestCreateSSOFile_HappyPath(t *testing.T) {
+	dir := fakeWPInstall(t)
+	me, err := user.Current()
+	if err != nil {
+		t.Fatalf("user.Current: %v", err)
+	}
+
+	resp, err := CreateSSOFile(context.Background(), createSSOFileReq{
+		InstallPath: dir,
+		OSUser:      me.Username, // chown to ourselves so it works without root
+		InstallID:   validULID,
+		AdminUID:    1,
+	})
+	if err != nil {
+		// chown to www-data fails for non-root, so accept that as a skip.
+		if strings.Contains(err.Error(), "chown") {
+			t.Skipf("chown to www-data unavailable in this test env: %v", err)
+		}
+		t.Fatalf("CreateSSOFile: %v", err)
+	}
+
+	// File name shape
+	if !regexp.MustCompile(`^jabali-sso-[A-Za-z0-9_-]{43}\.php$`).MatchString(resp.FileName) {
+		t.Errorf("FileName %q does not match jabali-sso-<43chars>.php", resp.FileName)
+	}
+
+	// File exists at the expected path
+	full := filepath.Join(dir, resp.FileName)
+	if _, err := os.Stat(full); err != nil {
+		t.Errorf("file not on disk at %s: %v", full, err)
+	}
+
+	// Content contains the install id and the wp-load path
+	body, err := os.ReadFile(full)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !strings.Contains(string(body), validULID) {
+		t.Errorf("file body missing install id")
+	}
+	if !strings.Contains(string(body), "wp-load.php") {
+		t.Errorf("file body missing wp-load.php path")
+	}
+
+	// Expiry is now + 60s (allow a few seconds slack for test timing)
+	now := time.Now().Unix()
+	if resp.ExpiresAtUnix < now+58 || resp.ExpiresAtUnix > now+62 {
+		t.Errorf("ExpiresAtUnix = %d, want roughly now+60 (= %d)", resp.ExpiresAtUnix, now+60)
+	}
+}
+
+func TestCreateSSOFile_RejectsNonAbsoluteInstallPath(t *testing.T) {
+	_, err := CreateSSOFile(context.Background(), createSSOFileReq{
+		InstallPath: "relative/path",
+		OSUser:      "irrelevant",
+		InstallID:   validULID,
+		AdminUID:    1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "absolute") {
+		t.Errorf("expected absolute-path error, got %v", err)
+	}
+}
+
+func TestCreateSSOFile_MissingWPLoad(t *testing.T) {
+	dir := t.TempDir() // no wp-load.php seeded
+	_, err := CreateSSOFile(context.Background(), createSSOFileReq{
+		InstallPath: dir,
+		OSUser:      "irrelevant",
+		InstallID:   validULID,
+		AdminUID:    1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "wp-load.php not found") {
+		t.Errorf("expected wp-load-not-found error, got %v", err)
+	}
+}
+
+func TestCreateSSOFile_RejectsInvalidInstallID(t *testing.T) {
+	dir := fakeWPInstall(t)
+	_, err := CreateSSOFile(context.Background(), createSSOFileReq{
+		InstallPath: dir,
+		OSUser:      "x",
+		InstallID:   "not-a-ulid",
+		AdminUID:    1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "ULID") {
+		t.Errorf("expected ULID error, got %v", err)
+	}
+}
+
+func TestCreateSSOFile_RejectsInvalidAdminUID(t *testing.T) {
+	dir := fakeWPInstall(t)
+	_, err := CreateSSOFile(context.Background(), createSSOFileReq{
+		InstallPath: dir,
+		OSUser:      "x",
+		InstallID:   validULID,
+		AdminUID:    0,
+	})
+	if err == nil || !strings.Contains(err.Error(), "admin_uid") {
+		t.Errorf("expected admin_uid error, got %v", err)
+	}
+}
+
+func TestCreateSSOFile_ChownFailureCleansUp(t *testing.T) {
+	// Point at a definitely-nonexistent user so chown fails. Verify
+	// no jabali-sso-*.php file is left behind in the install dir.
+	dir := fakeWPInstall(t)
+	_, err := CreateSSOFile(context.Background(), createSSOFileReq{
+		InstallPath: dir,
+		OSUser:      "definitely-not-a-real-user-9876543210",
+		InstallID:   validULID,
+		AdminUID:    1,
+	})
+	if err == nil {
+		t.Fatalf("expected chown error, got nil")
+	}
+
+	// No jabali-sso-*.php should remain
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "jabali-sso-") {
+			t.Errorf("jabali-sso file leaked after chown failure: %s", e.Name())
+		}
+		if strings.HasPrefix(e.Name(), ".jabali-sso-") {
+			t.Errorf("jabali-sso tmp file leaked after chown failure: %s", e.Name())
+		}
+	}
+}

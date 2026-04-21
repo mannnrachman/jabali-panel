@@ -86,16 +86,10 @@ type DatabaseConfig struct {
 }
 
 // AuthConfig carries the identity-provider URLs the panel needs to
-// validate session cookies and issue OAuth 2 / OIDC tokens. Post-M20
-// Kratos owns identities; post-M16 Hydra owns OAuth 2 grants.
+// validate session cookies. Post-M20 Kratos owns identities.
 type AuthConfig struct {
 	// Kratos holds Ory Kratos identity provider configuration.
 	Kratos KratosConfig `toml:"kratos"`
-
-	// Hydra holds Ory Hydra OAuth 2 / OIDC provider configuration.
-	// Empty in environments where SSO isn't wired (dev); loopback URLs
-	// in production where install_hydra() provisioned the service.
-	Hydra HydraConfig `toml:"hydra"`
 }
 
 // KratosConfig holds Ory Kratos URLs for identity validation.
@@ -107,27 +101,6 @@ type KratosConfig struct {
 
 	// AdminURL is the admin-facing base URL of Kratos, e.g. https://auth-admin.example.com
 	// or http://localhost:4434 for loopback. Reserved for future admin operations.
-	AdminURL string `toml:"admin_url"`
-}
-
-// HydraConfig holds Ory Hydra URLs for OAuth 2 / OIDC token issuance.
-//
-// In the shipped layout Hydra binds loopback-only (public 4444, admin
-// 4445) and panel-api fronts the public endpoints via an in-process
-// reverse proxy (see app/hydra_proxy.go). Clients see the panel's own
-// URL as the OIDC issuer, never the loopback — so PublicURL is what we
-// pass to the proxy, not what we advertise to OIDC clients.
-type HydraConfig struct {
-	// PublicURL is the upstream base URL of Hydra's public endpoints
-	// (/oauth2/*, /.well-known/openid-configuration, /userinfo,
-	// /.well-known/jwks.json). Proxied by panel-api; never seen by
-	// clients directly. Typically http://127.0.0.1:4444.
-	PublicURL string `toml:"public_url"`
-
-	// AdminURL is the admin-facing base URL of Hydra, e.g.
-	// http://127.0.0.1:4445 for the shipped loopback binding. Used by
-	// hydraclient for CRUD on OAuth clients and for login/consent
-	// accept+reject. Loopback-only — NEVER expose off-host.
 	AdminURL string `toml:"admin_url"`
 }
 
@@ -293,12 +266,6 @@ func applyEnv(cfg *Config) error {
 	}
 	if v := os.Getenv("KRATOS_ADMIN_URL"); v != "" {
 		cfg.Auth.Kratos.AdminURL = v
-	}
-	if v := os.Getenv("HYDRA_PUBLIC_URL"); v != "" {
-		cfg.Auth.Hydra.PublicURL = v
-	}
-	if v := os.Getenv("HYDRA_ADMIN_URL"); v != "" {
-		cfg.Auth.Hydra.AdminURL = v
 	}
 	if v := os.Getenv("AGENT_SOCKET"); v != "" {
 		cfg.Agent.SocketPath = v

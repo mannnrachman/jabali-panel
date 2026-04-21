@@ -159,21 +159,6 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		}
 	}
 
-	// Same-origin reverse proxy for Hydra's public OAuth 2 / OIDC
-	// endpoints. See hydra_proxy.go for the full route list and why
-	// the admin API is deliberately NOT proxied.
-	//
-	// Hydra is optional: environments without install_hydra() (dev, or
-	// installs predating M16) leave HydraConfig empty and /oauth2/*
-	// routes stay unrouted. The applications framework's OIDC client
-	// provisioning (Step 6) will no-op in that case.
-	if cfg.Auth.Hydra.PublicURL != "" {
-		if err := RegisterHydraProxy(r, cfg.Auth.Hydra.PublicURL); err != nil {
-			deps.Log.Error("registering Hydra reverse proxy failed; OIDC SSO will be broken",
-				"err", err, "public_url", cfg.Auth.Hydra.PublicURL)
-		}
-	}
-
 	if deps.KratosClient != nil {
 		// Protected API group — everything under /api/v1/* flows through
 		// RequireKratosSession, which resolves Kratos identity UUIDs →

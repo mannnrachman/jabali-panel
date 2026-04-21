@@ -50,22 +50,6 @@ public_url = "http://127.0.0.1:4433"
 # exposed externally). Set via env KRATOS_ADMIN_URL.
 admin_url = "http://127.0.0.1:4434"
 
-# Hydra OAuth 2 / OIDC provider. Added in M16 for WordPress + future
-# OIDC-speaking app SSO, sits on top of Kratos for user auth.
-# Fresh-install defaults point at loopback Hydra provisioned by
-# install.sh's install_hydra(). Leave empty to disable SSO.
-[auth.hydra]
-# Public URL Hydra listens on (loopback only — 4444). Panel-api
-# reverse-proxies /oauth2/*, /.well-known/openid-configuration,
-# /.well-known/jwks.json, and /userinfo to this URL so OIDC clients
-# see same-origin URLs on the panel hostname. Set via env HYDRA_PUBLIC_URL.
-public_url = "http://127.0.0.1:4444"
-
-# Admin URL of Hydra. Client CRUD, login/consent accept+reject, token
-# introspection. Loopback ONLY — never proxy, never expose off-host.
-# Set via env HYDRA_ADMIN_URL.
-admin_url = "http://127.0.0.1:4445"
-
 [agent]
 # Path to the jabali-agent Unix socket. The panel user (jabali group) needs
 # read+write access to the socket file and traverse access to its parent dir.

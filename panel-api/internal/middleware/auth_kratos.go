@@ -3,7 +3,6 @@ package middleware
 import (
 	"errors"
 	"net/http"
-	"net/url"
 
 	"github.com/gin-gonic/gin"
 
@@ -108,85 +107,3 @@ func RequireKratosSession(kratosClient *kratosclient.Client, users repository.Us
 	}
 }
 
-// RequireKratosSessionOrRedirect is the browser-flow variant of
-// RequireKratosSession. Identical happy path (session → claims →
-// c.Next), but on any "no valid session" outcome it emits a
-// 302 Found to loginPath with a return_to query param so the user
-// can sign in and resume whatever URL brought them here.
-//
-// Use this on routes that are user-facing browser navigations
-// (Hydra's login/consent URL targets) rather than XHR endpoints —
-// a raw 401 JSON kills the flow, whereas a redirect lets the user
-// log in once and continue. Auth-failure outcomes that mean
-// "something is wrong with your identity record" (identity not
-// linked to a panel user) still 401 — those are operator-level
-// misconfiguration, not "please sign in".
-//
-// loginPath is the relative SPA route that renders the Kratos login
-// UI (typically "/login"). return_to is URL-encoded so the SPA's
-// post-login handler can safely redirect back.
-func RequireKratosSessionOrRedirect(kratosClient *kratosclient.Client, users repository.UserRepository, loginPath string) gin.HandlerFunc {
-	if loginPath == "" {
-		loginPath = "/login"
-	}
-	return func(c *gin.Context) {
-		cookie, err := c.Cookie("ory_kratos_session")
-		if err != nil {
-			redirectToLogin(c, loginPath)
-			return
-		}
-		identity, err := kratosClient.Whoami(c.Request.Context(), cookie)
-		if err != nil {
-			if errors.Is(err, kratosclient.ErrUnauthenticated) {
-				redirectToLogin(c, loginPath)
-				return
-			}
-			// Infra failure — keep the 5xx shape so the SPA/browser
-			// can show a transient-error card rather than looping
-			// through /login.
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"error":   "identity_service_unavailable",
-				"message": "identity service temporarily unavailable",
-			})
-			c.Abort()
-			return
-		}
-		panelUser, err := users.FindByKratosIdentityID(c.Request.Context(), identity.ID)
-		if err != nil {
-			if errors.Is(err, repository.ErrNotFound) {
-				// Identity exists in Kratos but has no panel row —
-				// operator-level misconfiguration, not a login prompt.
-				// Same 401 shape as the hard-middleware; there is no
-				// safe "log in and try again" from here.
-				c.JSON(http.StatusUnauthorized, gin.H{
-					"error":   "identity_not_linked",
-					"message": "Kratos identity has no corresponding panel user — contact an administrator",
-				})
-			} else {
-				c.JSON(http.StatusServiceUnavailable, gin.H{
-					"error":   "identity_lookup_failed",
-					"message": "could not resolve identity to panel user",
-				})
-			}
-			c.Abort()
-			return
-		}
-		ginctx.SetClaims(c, &auth.AccessClaims{
-			UserID:  panelUser.ID,
-			Email:   panelUser.Email,
-			IsAdmin: panelUser.IsAdmin,
-		})
-		c.Next()
-	}
-}
-
-// redirectToLogin emits a 302 to loginPath?return_to=<current-url>.
-// Preserves the full request URI (path + query) so the SPA can
-// bounce the user back to the exact OIDC handshake they were on
-// after authentication completes.
-func redirectToLogin(c *gin.Context, loginPath string) {
-	returnTo := c.Request.URL.RequestURI()
-	dest := loginPath + "?return_to=" + url.QueryEscape(returnTo)
-	c.Redirect(http.StatusFound, dest)
-	c.Abort()
-}

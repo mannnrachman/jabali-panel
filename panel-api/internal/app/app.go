@@ -13,7 +13,6 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/apps"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/hydraclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
@@ -29,11 +28,6 @@ import (
 // repositories — plugs in here.
 type Deps struct {
 	KratosClient        *kratosclient.Client
-	// HydraClient is the admin-API client for Ory Hydra (OAuth 2 /
-	// OIDC). Nil in environments without install_hydra (dev, pre-M16).
-	// When nil, OAuth2 flow routes are not registered and the
-	// applications framework's OIDC client provisioning is skipped.
-	HydraClient         *hydraclient.Client
 	Users               repository.UserRepository
 	Packages            repository.PackageRepository
 	Domains             repository.DomainRepository
@@ -180,14 +174,6 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		}
 	}
 
-	// Hydra admin client — used by oauth2_flow handlers and (Wave D)
-	// apps framework client-provisioning. Only constructed when the
-	// admin URL is configured; pre-M16 installs leave this nil and
-	// the OAuth2 routes skip registration below.
-	if cfg.Auth.Hydra.AdminURL != "" && deps.HydraClient == nil {
-		deps.HydraClient = hydraclient.New(cfg.Auth.Hydra.AdminURL)
-	}
-
 	if deps.KratosClient != nil {
 		// Protected API group — everything under /api/v1/* flows through
 		// RequireKratosSession, which resolves Kratos identity UUIDs →
@@ -199,25 +185,6 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			Users:          deps.Users,
 			ServerSettings: deps.ServerSettings,
 		})
-
-		// OAuth2 flow handlers (login-start, consent-start, accept,
-		// deny, consent metadata). Only registered when Hydra is
-		// configured — pre-M16 installs skip this and /oauth2-login
-		// falls through to the SPA's NoRoute fallback (which will
-		// 404 via webui's API-prefix guard).
-		if deps.HydraClient != nil {
-			api.RegisterOAuth2FlowRoutes(v1, r, api.OAuth2FlowHandlerConfig{
-				Hydra: deps.HydraClient,
-				Log:   deps.Log,
-				// BrowserAuth swaps the default JSON-401 auth for a
-				// 302-to-/login on missing session. Hydra redirects
-				// browsers into /oauth2-login + /oauth2-consent; a
-				// first-time user without a panel session must be
-				// bounced to the SPA login with a return_to pointing
-				// back at the Hydra handshake URL.
-				BrowserAuth: middleware.RequireKratosSessionOrRedirect(deps.KratosClient, deps.Users, "/login"),
-			})
-		}
 
 		if deps.Users != nil {
 			api.RegisterUserRoutes(v1, api.UserHandlerConfig{
@@ -417,22 +384,4 @@ func startRateLimiterSweeper(rl *middleware.RateLimiter) {
 			rl.Cleanup(rateLimiterIdleCleanup)
 		}
 	}()
-}
-
-// panelBaseURLFromConfig builds the public HTTPS URL the panel is
-// reachable at: https://<hostname>:8443. Returns "" when hostname
-// isn't set (dev/pre-bootstrap), which disables the OIDC mint at the
-// service layer — same fail-closed behaviour as missing Hydra or
-// sso.key.
-//
-// 8443 is the locked-in panel port per ADR-0014; encoded here rather
-// than derived from Server.Addr because Addr is the bind address
-// (0.0.0.0:8443 or 127.0.0.1:8443 inside the process), not what
-// clients see through any firewall / forward. The Kratos + Hydra
-// service templates use the same hostname+:8443 convention.
-func panelBaseURLFromConfig(cfg *config.Config) string {
-	if cfg == nil || cfg.Server.Hostname == "" {
-		return ""
-	}
-	return "https://" + cfg.Server.Hostname + ":8443"
 }

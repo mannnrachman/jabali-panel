@@ -64,7 +64,6 @@ import { AdminApplicationList } from "./shells/admin/applications/AdminApplicati
 import { PHPVersionsPage } from "./shells/admin/php/PHPVersionsPage";
 import { PHPPoolEdit } from "./shells/admin/php-pools/PHPPoolEdit";
 import { LoginPage } from "./pages/Login";
-import { ConsentPage } from "./pages/Consent";
 
 // If a logged-in user hits /login, bounce them to their shell home
 // instead of letting them see the form. Public routes use this — the
@@ -178,20 +177,6 @@ const ThemedApp = () => {
               <PublicOnly>
                 <LoginPage />
               </PublicOnly>
-            }
-          />
-
-          {/* OAuth 2 consent screen. Hydra's consent-start handler
-              redirects here for untrusted clients; the page reads the
-              challenge from the URL, loads metadata, and drives the
-              Allow/Deny flow. Gated by RequireAuth so an expired
-              Kratos session bounces to /login with `from` preserved. */}
-          <Route
-            path="/consent"
-            element={
-              <RequireAuth>
-                <ConsentPage />
-              </RequireAuth>
             }
           />
 

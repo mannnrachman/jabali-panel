@@ -18,6 +18,7 @@ import {
   Tag,
   Typography,
   message,
+  theme,
 } from "antd";
 import { useNavigate, useParams } from "react-router";
 
@@ -54,6 +55,7 @@ export const PHPPoolEdit = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [form] = Form.useForm<PHPPoolInput>();
+  const { token } = theme.useToken();
 
   const { data: pool, isLoading } = useOneQuery<PHPPoolRecord>({
     resource: "php-pools",
@@ -198,7 +200,7 @@ export const PHPPoolEdit = () => {
       </Form>
 
       {/* INI Overrides Section */}
-      <div style={{ marginTop: 32, paddingTop: 24, borderTop: "1px solid #f0f0f0" }}>
+      <div style={{ marginTop: 32, paddingTop: 24, borderTop: `1px solid ${token.colorBorder}` }}>
         <Space
           style={{
             marginBottom: 16,

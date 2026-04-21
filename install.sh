@@ -302,12 +302,19 @@ prompt_server_settings() {
       _die "no TTY and no --hostname given (detected: '$inp_hostname')"
     fi
   else
-    echo "Just one thing — your server's hostname. You can change it"
-    echo "later from the admin panel."
+    echo "Just one thing — your server's hostname. Press Enter to keep"
+    echo "the current value, or type a new one. You can change it later"
+    echo "from the admin panel."
     echo ""
 
     while true; do
-      read -rp "Server hostname [${sys_hostname}]: " -u "$input_fd" inp_hostname || true
+      # Explicit printf instead of `read -p` — bash doesn't reliably
+      # flush the `-p` prompt when paired with `-u <non-stdin-fd>`
+      # (as we do here, reading from /dev/tty on fd 3 inside a
+      # `curl | bash` pipeline). The user was left staring at a blank
+      # line with no visible prompt.
+      printf "Enter your hostname [%s]: " "$sys_hostname" >&2
+      read -r -u "$input_fd" inp_hostname || true
       inp_hostname="${inp_hostname:-$sys_hostname}"
       [[ "$inp_hostname" =~ $_hostname_regex ]] && break
       _warn "invalid hostname; use letters/digits/dots/hyphens"

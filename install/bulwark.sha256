@@ -1,0 +1,15 @@
+# Bulwark Webmail 1.4.14 standalone tarball SHA-256.
+# Source: https://github.com/bulwarkmail/webmail/releases/tag/1.4.14
+#   asset: bulwark-standalone-1.4.14-linux-amd64.tar.gz
+# Captured 2026-04-21 on VM 10.0.3.13.
+#
+# v1.4.14 shipped a prebuilt "standalone" Next.js tarball (server.js +
+# node_modules + .next), so we no longer git-clone + `npm ci` +
+# `npm run build`. install_bulwark() downloads this tarball, verifies
+# the SHA below, and extracts it.
+#
+# To re-capture on a version bump:
+#   curl -sSL https://github.com/bulwarkmail/webmail/releases/download/<v>/bulwark-standalone-<v>-linux-amd64.tar.gz | sha256sum
+# Paste the returned 64-char hex below. install.sh `_die`s if the
+# placeholder PLACEHOLDER_CAPTURE_ON_FIRST_DEPLOY survives.
+52a1a73634c553f0e6bc95c734ff4b7003465d8d9666becd9b11aa244113be3e

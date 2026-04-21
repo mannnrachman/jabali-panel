@@ -12,10 +12,18 @@ Group=jabali-webmail
 Slice=jabali.slice
 
 WorkingDirectory=/opt/jabali-webmail
-# Bulwark ships as a Next.js app; `npm start` resolves to `next start`
-# via the package.json script. Runtime config comes from bulwark.env.
-ExecStart=/usr/bin/npm start -- --hostname 127.0.0.1 --port 3000
-EnvironmentFile=/etc/jabali-panel/bulwark.env
+# Bulwark ships a Next.js standalone build — server.js is the entry
+# point and reads HOSTNAME + PORT from env. Loopback-only by default;
+# the panel's nginx vhost fronts it at /webmail/ with Kratos SSO.
+Environment=HOSTNAME=127.0.0.1
+Environment=PORT=3000
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node /opt/jabali-webmail/server.js
+# bulwark.env is provisioned in Step 8 of the M6 plan. Optional at
+# install time so the unit survives `install -> systemctl enable` runs
+# before Step 8 has created it; runtime settings (JMAP_SERVER_URL etc.)
+# land there.
+EnvironmentFile=-/etc/jabali-panel/bulwark.env
 
 Restart=on-failure
 RestartSec=5s

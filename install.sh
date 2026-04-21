@@ -2822,11 +2822,10 @@ _install_stalwart_cli() {
 
 install_bulwark() {
   local bulwark_version="1.4.14"
-  # Upstream tags the Bulwark repo without a `v` prefix — `1.4.14`, not
-  # `v1.4.14`. Cloning with the `v`-prefixed form fails with "Remote
-  # branch not found".
-  local bulwark_tag="${bulwark_version}"
-  _log "installing Bulwark webmail (tag $bulwark_tag)"
+  local arch="linux-amd64"
+  local tarball="bulwark-standalone-${bulwark_version}-${arch}.tar.gz"
+  local url="https://github.com/bulwarkmail/webmail/releases/download/${bulwark_version}/${tarball}"
+  _log "installing Bulwark webmail (standalone tarball ${bulwark_version})"
 
   if ! getent passwd jabali-webmail >/dev/null 2>&1; then
     _log "creating jabali-webmail service user"
@@ -2852,82 +2851,73 @@ install_bulwark() {
     _ok "Bulwark SESSION_SECRET already present"
   fi
 
-  # Pinned commit SHA.
-  local sha_file="${REPO_DIR}/install/bulwark.commit-sha"
+  # Idempotence: skip re-download if VERSION file already matches target.
+  local version_file="/opt/jabali-webmail/VERSION"
+  if [[ -f "$version_file" ]] && [[ "$(cat "$version_file")" == "$bulwark_version" ]]; then
+    _ok "Bulwark $bulwark_version already installed"
+    _install_bulwark_systemd
+    return
+  fi
+
+  # Pinned SHA of the release tarball (not a git commit — v1.4.14 ships
+  # a prebuilt standalone Next.js bundle).
+  local sha_file="${REPO_DIR}/install/bulwark.sha256"
   if [[ ! -f "$sha_file" ]]; then
-    _die "Bulwark commit-SHA pin file not found at $sha_file"
+    _die "Bulwark SHA-256 checksum file not found at $sha_file"
   fi
   local expected_sha
   expected_sha="$(awk '/^[[:space:]]*#/ || NF==0 { next } { print $1; exit }' "$sha_file")"
   if [[ -z "$expected_sha" ]]; then
-    _die "no commit SHA found in $sha_file"
+    _die "no checksum line found in $sha_file (comments only?)"
   fi
   if [[ "$expected_sha" == "PLACEHOLDER_CAPTURE_ON_FIRST_DEPLOY" ]]; then
-    _die "Bulwark commit-SHA placeholder in $sha_file — capture with: git ls-remote https://github.com/bulwarkmail/webmail $bulwark_tag | awk '{print \$1}' and bump the file"
+    _die "Bulwark SHA-256 placeholder in $sha_file — capture with: curl -sSL $url | sha256sum, then bump the file"
   fi
 
-  # Idempotence: skip re-clone if VERSION file matches + commit SHA matches.
-  local version_file="/opt/jabali-webmail/VERSION"
-  if [[ -f "$version_file" ]] && [[ "$(cat "$version_file")" == "$bulwark_version" ]]; then
-    local current_sha
-    current_sha="$(git -C /opt/jabali-webmail rev-parse HEAD 2>/dev/null || echo "")"
-    if [[ "$current_sha" == "$expected_sha" ]]; then
-      _ok "Bulwark $bulwark_version already installed (sha $expected_sha)"
-      _install_bulwark_systemd
-      return
-    fi
-    _warn "Bulwark tree drift detected (expected $expected_sha, got $current_sha) — rebuilding"
-  fi
-
-  # Atomic clone + build + swap.
-  local new_dir="/opt/jabali-webmail.new"
-  rm -rf "$new_dir"
-  _log "cloning Bulwark $bulwark_tag into $new_dir"
-  if ! git clone --quiet --branch "$bulwark_tag" --depth 1 https://github.com/bulwarkmail/webmail.git "$new_dir"; then
-    _die "git clone of Bulwark $bulwark_tag failed"
+  local tarball_path="/tmp/${tarball}"
+  _log "downloading $tarball"
+  if ! curl -fsSL "$url" -o "$tarball_path"; then
+    _die "failed to download Bulwark from $url"
   fi
 
   local actual_sha
-  actual_sha="$(git -C "$new_dir" rev-parse HEAD)"
-  if [[ "$actual_sha" != "$expected_sha" ]]; then
-    rm -rf "$new_dir"
-    _die "Bulwark commit SHA mismatch. Expected: $expected_sha, got: $actual_sha. Update $sha_file or investigate tag re-targeting."
+  actual_sha="$(sha256sum "$tarball_path" | awk '{print $1}')"
+  if [[ "$expected_sha" != "$actual_sha" ]]; then
+    rm -f "$tarball_path"
+    _die "Bulwark SHA-256 mismatch. Expected: $expected_sha, got: $actual_sha"
   fi
 
-  chown -R jabali-webmail:jabali-webmail "$new_dir"
+  # Extract into a sibling directory, then atomic swap. The tarball's
+  # top-level dir is `bulwark-standalone/`, so we extract into a staging
+  # parent and then move the inner dir into place.
+  local stage="/opt/jabali-webmail.stage"
+  rm -rf "$stage"
+  install -d -m 0755 -o jabali-webmail -g jabali-webmail "$stage"
+  tar -xzf "$tarball_path" -C "$stage"
+  rm -f "$tarball_path"
 
-  # jabali-webmail is created `--no-create-home`, so `/home/jabali-webmail`
-  # doesn't exist. npm refuses to run without a writable $HOME (it needs a
-  # cache dir + logs dir). Point HOME at /var/lib/jabali-webmail, which we
-  # created above at 0750 jabali-webmail:jabali-webmail, and use `sudo -E`
-  # so the explicit HOME actually propagates.
-  local webmail_home="/var/lib/jabali-webmail"
-
-  _log "running npm ci in $new_dir (this takes a minute on a clean box)"
-  if ! sudo -u jabali-webmail HOME="$webmail_home" sh -c "cd '$new_dir' && npm ci --no-audit --no-fund"; then
-    rm -rf "$new_dir"
-    _die "Bulwark npm ci failed"
+  local inner_dir="$stage/bulwark-standalone"
+  if [[ ! -d "$inner_dir" ]]; then
+    rm -rf "$stage"
+    _die "Bulwark tarball did not contain bulwark-standalone/ directory"
+  fi
+  if [[ ! -f "$inner_dir/server.js" ]]; then
+    rm -rf "$stage"
+    _die "Bulwark tarball missing server.js entry — layout may have changed in a newer release"
   fi
 
-  _log "running npm run build in $new_dir"
-  if ! sudo -u jabali-webmail HOME="$webmail_home" sh -c "cd '$new_dir' && npm run build"; then
-    rm -rf "$new_dir"
-    _die "Bulwark npm run build failed"
-  fi
-
-  echo "$bulwark_version" >"$new_dir/VERSION"
-  chown jabali-webmail:jabali-webmail "$new_dir/VERSION"
+  echo "$bulwark_version" >"$inner_dir/VERSION"
+  chown -R jabali-webmail:jabali-webmail "$inner_dir"
 
   # Atomic swap.
   rm -rf /opt/jabali-webmail.prev
   if [[ -d /opt/jabali-webmail ]] && [[ "$(ls -A /opt/jabali-webmail 2>/dev/null)" ]]; then
     mv /opt/jabali-webmail /opt/jabali-webmail.prev
   else
-    # Empty target dir (from initial install -d above) — just remove it.
     rmdir /opt/jabali-webmail 2>/dev/null || rm -rf /opt/jabali-webmail
   fi
-  mv "$new_dir" /opt/jabali-webmail
-  rm -rf /opt/jabali-webmail.prev
+  mv "$inner_dir" /opt/jabali-webmail
+  rm -rf "$stage" /opt/jabali-webmail.prev
 
   _ok "Bulwark $bulwark_version installed at /opt/jabali-webmail"
 

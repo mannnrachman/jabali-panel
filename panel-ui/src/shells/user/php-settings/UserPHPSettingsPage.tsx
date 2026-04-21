@@ -283,18 +283,13 @@ export function UserPHPSettingsPage() {
             <Spin spinning={loading}>
               {selectedDomain && phpSettings && (
                 <>
-                  <Form.Item
-                    label={
-                      phpSettings.php_version
-                        ? `PHP Version (${phpSettings.php_version})`
-                        : "PHP Version"
-                    }
-                  >
+                  <Form.Item label="PHP Version">
                     <Select
                       value={phpSettings.php_version ?? null}
                       loading={versionSaving}
                       disabled={versionSaving}
                       onChange={(v) => onChangePHPVersion(v)}
+                      style={{ width: 200 }}
                       options={[
                         { label: "Server default", value: null },
                         ...availableVersions.map((v) => ({

@@ -308,12 +308,14 @@ prompt_server_settings() {
     echo ""
 
     while true; do
-      # Explicit printf instead of `read -p` — bash doesn't reliably
-      # flush the `-p` prompt when paired with `-u <non-stdin-fd>`
-      # (as we do here, reading from /dev/tty on fd 3 inside a
-      # `curl | bash` pipeline). The user was left staring at a blank
-      # line with no visible prompt.
-      printf "Enter your hostname [%s]: " "$sys_hostname" >&2
+      # Write the prompt directly to /dev/tty, bypassing stdout/stderr
+      # entirely. `read -p` and `printf >&2` both failed to render this
+      # line under `curl | bash` on Debian 13 — likely bash's own
+      # block-buffering of stderr when the parent pipe (curl) is still
+      # live. Writing to /dev/tty hits the same device the user is
+      # looking at with zero intermediaries.
+      printf "Enter your hostname [%s]: " "$sys_hostname" > /dev/tty 2>/dev/null \
+        || printf "Enter your hostname [%s]: " "$sys_hostname"
       read -r -u "$input_fd" inp_hostname || true
       inp_hostname="${inp_hostname:-$sys_hostname}"
       [[ "$inp_hostname" =~ $_hostname_regex ]] && break

@@ -60,6 +60,7 @@ import { UserPHPSettingsPage } from "./shells/user/php-settings/UserPHPSettingsP
 import { UserApplicationList } from "./shells/user/applications/UserApplicationList";
 import { UserSSHKeysPage } from "./shells/user/ssh-keys/UserSSHKeysPage";
 import { UserCronList } from "./shells/user/cron/UserCronList";
+import { UserMailboxesPage } from "./shells/user/mailboxes/UserMailboxesPage";
 import { AdminApplicationList } from "./shells/admin/applications/AdminApplicationList";
 import { PHPVersionsPage } from "./shells/admin/php/PHPVersionsPage";
 import { PHPPoolEdit } from "./shells/admin/php-pools/PHPPoolEdit";
@@ -171,6 +172,7 @@ const ThemedApp = () => {
             <Route path="applications" element={<UserApplicationList />} />
             <Route path="ssh-keys" element={<UserSSHKeysPage />} />
             <Route path="cron" element={<UserCronList />} />
+            <Route path="mailboxes" element={<UserMailboxesPage />} />
           </Route>
 
           {/* ---------------- public ---------------- */}

@@ -21,6 +21,7 @@ import {
   FolderOutlined,
   GlobalOutlined,
   KeyOutlined,
+  MailOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
   TeamOutlined,
@@ -152,6 +153,12 @@ export const userNav: NavItem[] = [
     label: "Cron",
     icon: createElement(ClockCircleOutlined),
     path: "/jabali-panel/cron",
+  },
+  {
+    key: "mailboxes",
+    label: "Mailboxes",
+    icon: createElement(MailOutlined),
+    path: "/jabali-panel/mailboxes",
   },
 ];
 

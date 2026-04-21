@@ -1,0 +1,344 @@
+// DomainMailboxesSection — list + CRUD for mailboxes within a domain.
+//
+// Renders as a Card beneath the Email section on DomainEdit. The
+// section is only useful once email is enabled (the panel-API returns
+// 409 email_not_enabled on create otherwise), so the empty-state
+// explains that. Reveal-once passwords reuse DatabaseUserPasswordModal
+// — the UX is identical (operator saves, we never display again).
+import { useState } from "react";
+import {
+  Alert,
+  Button,
+  Card,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Popconfirm,
+  Progress,
+  Skeleton,
+  Space,
+  Table,
+  Tag,
+  Tooltip,
+  Typography,
+  message,
+} from "antd";
+import { DeleteOutlined, KeyOutlined, PlusOutlined } from "@ant-design/icons";
+
+import { DatabaseUserPasswordModal } from "../../../components/DatabaseUserPasswordModal";
+import {
+  useCreateMailbox,
+  useDeleteMailbox,
+  useDomainEmail,
+  useMailboxes,
+  useRotateMailboxPassword,
+  type Mailbox,
+} from "../../../hooks/useMailboxes";
+
+type Props = {
+  domainId: string;
+};
+
+// Quota presets in bytes — 1 GiB default matches the DB column default;
+// the 16 MiB floor is panel-api's minMailboxQuotaBytes.
+const QUOTA_DEFAULT_BYTES = 1 * 1024 * 1024 * 1024;
+const QUOTA_MIN_BYTES = 16 * 1024 * 1024;
+
+function formatBytes(n: number): string {
+  if (n === 0) return "0 B";
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  const i = Math.floor(Math.log(n) / Math.log(1024));
+  const v = n / Math.pow(1024, i);
+  return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function parseQuotaInput(v: number | string | null | undefined): number | undefined {
+  if (v === null || v === undefined || v === "") return undefined;
+  const n = typeof v === "number" ? v : Number(v);
+  if (Number.isNaN(n) || n <= 0) return undefined;
+  return Math.floor(n * 1024 * 1024); // UI unit is MiB, wire unit is bytes
+}
+
+export const DomainMailboxesSection = ({ domainId }: Props) => {
+  const email = useDomainEmail(domainId);
+  const enabled = email.data?.email_enabled ?? false;
+
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const list = useMailboxes({
+    domainId,
+    params: { page, pageSize, sort: "local_part", order: "asc" },
+    enabled,
+  });
+
+  const createMutation = useCreateMailbox();
+  const deleteMutation = useDeleteMailbox();
+  const rotateMutation = useRotateMailboxPassword();
+
+  const [createOpen, setCreateOpen] = useState(false);
+  const [passwordModal, setPasswordModal] = useState<{
+    email: string;
+    password: string;
+    title: string;
+  } | null>(null);
+  const [rotatingId, setRotatingId] = useState<string | null>(null);
+  const [form] = Form.useForm<{
+    local_part: string;
+    password?: string;
+    quota_mib?: number;
+  }>();
+
+  if (email.isLoading) {
+    return <Skeleton active paragraph={{ rows: 2 }} />;
+  }
+
+  if (!enabled) {
+    return (
+      <Alert
+        type="info"
+        showIcon
+        message="Enable email first"
+        description="Mailboxes can only be created once email is enabled on this domain. Flip the switch in the Email section above."
+      />
+    );
+  }
+
+  const rotate = async (row: Mailbox) => {
+    setRotatingId(row.id);
+    try {
+      const resp = await rotateMutation.mutateAsync({ id: row.id });
+      if (resp.password) {
+        setPasswordModal({
+          email: row.email,
+          password: resp.password,
+          title: "New mailbox password (rotation)",
+        });
+      } else {
+        message.success("Password rotated");
+      }
+    } catch (err) {
+      const msg =
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??
+        "Failed to rotate password";
+      message.error(msg);
+    } finally {
+      setRotatingId(null);
+    }
+  };
+
+  const onCreate = async () => {
+    const values = await form.validateFields();
+    try {
+      const resp = await createMutation.mutateAsync({
+        domainId,
+        input: {
+          local_part: values.local_part,
+          password: values.password || undefined,
+          quota_bytes: parseQuotaInput(values.quota_mib),
+        },
+      });
+      setCreateOpen(false);
+      form.resetFields();
+      if (resp.password) {
+        setPasswordModal({
+          email: resp.email,
+          password: resp.password,
+          title: "New mailbox password",
+        });
+      } else {
+        message.success(`Mailbox ${resp.email} created`);
+      }
+    } catch (err) {
+      const resp = (err as { response?: { data?: { error?: string; detail?: string } } })
+        ?.response?.data;
+      message.error(resp?.detail ?? resp?.error ?? "Failed to create mailbox");
+    }
+  };
+
+  return (
+    <>
+      <Space
+        style={{ width: "100%", justifyContent: "space-between", marginBottom: 12 }}
+      >
+        <Typography.Text type="secondary">
+          {list.total} mailbox{list.total === 1 ? "" : "es"}
+        </Typography.Text>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={() => {
+            form.resetFields();
+            setCreateOpen(true);
+          }}
+        >
+          Create mailbox
+        </Button>
+      </Space>
+
+      <Card size="small" bodyStyle={{ padding: 0 }}>
+        <Table<Mailbox>
+          rowKey="id"
+          loading={list.isLoading}
+          dataSource={list.items}
+          pagination={{
+            current: page,
+            pageSize,
+            total: list.total,
+            onChange: (p, s) => {
+              setPage(p);
+              setPageSize(s);
+            },
+          }}
+          columns={[
+            {
+              title: "Email",
+              dataIndex: "email",
+              render: (v: string) => (
+                <Typography.Text style={{ fontFamily: "monospace" }}>{v}</Typography.Text>
+              ),
+            },
+            {
+              title: "Quota",
+              dataIndex: "quota_bytes",
+              width: 220,
+              render: (quota: number, row: Mailbox) => {
+                const used = row.last_usage_bytes ?? 0;
+                const pct = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0;
+                return (
+                  <Tooltip title={`${formatBytes(used)} of ${formatBytes(quota)}`}>
+                    <Progress
+                      percent={pct}
+                      size="small"
+                      status={pct >= 90 ? "exception" : "normal"}
+                      format={() => `${formatBytes(used)} / ${formatBytes(quota)}`}
+                    />
+                  </Tooltip>
+                );
+              },
+            },
+            {
+              title: "Last usage",
+              dataIndex: "last_usage_at",
+              width: 140,
+              render: (v: string | null) =>
+                v ? new Date(v).toLocaleString() : (
+                  <Typography.Text type="secondary">never</Typography.Text>
+                ),
+            },
+            {
+              title: "Status",
+              dataIndex: "is_disabled",
+              width: 100,
+              render: (disabled: boolean) =>
+                disabled ? <Tag color="red">disabled</Tag> : <Tag color="green">active</Tag>,
+            },
+            {
+              title: "Actions",
+              width: 140,
+              render: (_, row) => (
+                <Space>
+                  <Tooltip title="Rotate password">
+                    <Button
+                      type="text"
+                      icon={<KeyOutlined />}
+                      loading={rotatingId === row.id}
+                      onClick={() => rotate(row)}
+                    />
+                  </Tooltip>
+                  <Popconfirm
+                    title={`Delete ${row.email}?`}
+                    description="All mail in this mailbox will be removed. This cannot be undone."
+                    onConfirm={async () => {
+                      try {
+                        await deleteMutation.mutateAsync({
+                          id: row.id,
+                          domainId,
+                        });
+                        message.success("Mailbox deleted");
+                      } catch (err) {
+                        const msg =
+                          (err as { response?: { data?: { detail?: string } } })?.response
+                            ?.data?.detail ?? "Failed to delete";
+                        message.error(msg);
+                      }
+                    }}
+                    okText="Delete"
+                    okButtonProps={{ danger: true }}
+                  >
+                    <Button type="text" danger icon={<DeleteOutlined />} />
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]}
+        />
+      </Card>
+
+      <Modal
+        title="Create mailbox"
+        open={createOpen}
+        onCancel={() => setCreateOpen(false)}
+        onOk={onCreate}
+        confirmLoading={createMutation.isPending}
+        okText="Create"
+        destroyOnClose
+      >
+        <Form form={form} layout="vertical">
+          <Form.Item
+            label="Local part"
+            name="local_part"
+            rules={[
+              { required: true, message: "Required" },
+              {
+                pattern: /^[a-z0-9][a-z0-9._+-]*$/i,
+                message: "Letters, digits, dot/underscore/plus/hyphen only",
+              },
+              { max: 64, message: "64 characters max" },
+            ]}
+            tooltip={`Full address will be <local>@${email.data?.domain_name ?? ""}`}
+          >
+            <Input
+              placeholder="alice"
+              autoComplete="off"
+              addonAfter={`@${email.data?.domain_name ?? ""}`}
+            />
+          </Form.Item>
+
+          <Form.Item
+            label="Password"
+            name="password"
+            tooltip="Leave blank to auto-generate. Generated passwords are shown exactly once."
+            rules={[
+              { min: 8, message: "8 characters minimum" },
+            ]}
+          >
+            <Input.Password autoComplete="new-password" placeholder="(auto-generate)" />
+          </Form.Item>
+
+          <Form.Item
+            label="Quota (MiB)"
+            name="quota_mib"
+            tooltip={`Default 1024 MiB. Minimum ${QUOTA_MIN_BYTES / 1024 / 1024} MiB.`}
+            initialValue={QUOTA_DEFAULT_BYTES / 1024 / 1024}
+          >
+            <InputNumber
+              min={QUOTA_MIN_BYTES / 1024 / 1024}
+              max={1024 * 1024}
+              step={256}
+              style={{ width: 200 }}
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <DatabaseUserPasswordModal
+        open={passwordModal !== null}
+        username={passwordModal?.email ?? ""}
+        password={passwordModal?.password ?? ""}
+        title={passwordModal?.title}
+        onClose={() => setPasswordModal(null)}
+      />
+    </>
+  );
+};

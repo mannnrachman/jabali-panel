@@ -58,6 +58,17 @@ const useMuiTheme = (mode: ThemeMode): ConfigProviderProps =>
                   itemHoverBg: "#f9fafb",
                   itemHoverColor: "rgba(0, 0, 0, 0.88)",
                 },
+          // Tabs pick up the same red accent the selected sidebar row
+          // uses so the "active thing on this page" color stays
+          // consistent across chrome and content. inkBarColor paints
+          // the underline; itemSelectedColor the active tab label;
+          // itemHoverColor keeps the subtle hover emphasis.
+          Tabs: {
+            itemSelectedColor: mode === "dark" ? "#ef4444" : "#dc2626",
+            inkBarColor: mode === "dark" ? "#ef4444" : "#dc2626",
+            itemHoverColor: mode === "dark" ? "#ef4444" : "#dc2626",
+            itemActiveColor: mode === "dark" ? "#ef4444" : "#dc2626",
+          },
         },
       },
     }),

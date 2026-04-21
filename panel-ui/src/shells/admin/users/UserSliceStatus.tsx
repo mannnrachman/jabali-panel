@@ -28,6 +28,15 @@ type SliceStatus = {
   cpu_usage_nsec: number;
 };
 
+// Shape returned by /users/:id/usage (panel-api/internal/api/user_limits.go).
+// We only read the disk slice here — the rest (memory/tasks/cpu) is
+// already fetched via slice-status. A subset type keeps the surface
+// area honest.
+type UsageResponse = {
+  effective?: { DiskQuotaMB?: number };
+  current?: { disk?: { used_kb?: number; limit_kb?: number } };
+};
+
 const REFRESH_MS = 5_000;
 const STALE_MS = 4_000;
 
@@ -66,6 +75,21 @@ export function UserSliceStatus({ userId }: { userId: string }) {
     staleTime: STALE_MS,
   });
 
+  // Separate query for disk usage + quota. The slice-status endpoint
+  // doesn't include disk; /users/:id/usage does. Same refresh cadence
+  // so they stay in lockstep without a merged backend call.
+  const { data: usage } = useQuery({
+    queryKey: ["user-usage", userId],
+    queryFn: async () => {
+      const resp = await apiClient.get<UsageResponse>(
+        `/users/${userId}/usage`,
+      );
+      return resp.data;
+    },
+    refetchInterval: REFRESH_MS,
+    staleTime: STALE_MS,
+  });
+
   if (isLoading && !data) {
     return <Typography.Text type="secondary">…</Typography.Text>;
   }
@@ -96,6 +120,18 @@ export function UserSliceStatus({ userId }: { userId: string }) {
   }
 
   const mem = formatMemory(data.memory_current_bytes);
+  const diskUsedKB = usage?.current?.disk?.used_kb ?? 0;
+  const diskLimitKB =
+    usage?.current?.disk?.limit_kb ??
+    (usage?.effective?.DiskQuotaMB
+      ? usage.effective.DiskQuotaMB * 1024
+      : 0);
+  const diskLabel =
+    diskLimitKB > 0
+      ? `${formatMemory(diskUsedKB * 1024)} / ${formatMemory(diskLimitKB * 1024)}`
+      : diskUsedKB > 0
+        ? formatMemory(diskUsedKB * 1024)
+        : null;
   return (
     <Tooltip
       title={
@@ -103,11 +139,18 @@ export function UserSliceStatus({ userId }: { userId: string }) {
           Memory: {mem}
           <br />
           Tasks: {data.tasks_current}
+          {diskLabel && (
+            <>
+              <br />
+              Disk: {diskLabel}
+            </>
+          )}
         </>
       }
     >
       <Tag color="green">
         {mem} · {data.tasks_current} tasks
+        {diskLabel && <> · {diskLabel}</>}
       </Tag>
     </Tooltip>
   );

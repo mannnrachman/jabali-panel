@@ -2924,8 +2924,10 @@ install_bulwark() {
   _install_bulwark_systemd
 }
 
-# _install_bulwark_systemd installs the unit file. Env file + nginx vhost
-# are Step 8 of the M6 plan — not written by Step 1.
+# _install_bulwark_systemd installs the unit file. Env file is rendered
+# separately by _install_bulwark_env; the nginx per-domain vhost is
+# written by the panel-agent's webmail.vhost_apply command, driven by
+# the reconciler once a domain flips email_enabled=1.
 _install_bulwark_systemd() {
   if [[ ! -f "${REPO_DIR}/install/systemd/jabali-webmail.service" ]]; then
     _die "Bulwark systemd unit not found at ${REPO_DIR}/install/systemd/jabali-webmail.service"
@@ -2934,6 +2936,56 @@ _install_bulwark_systemd() {
     /etc/systemd/system/jabali-webmail.service
   systemctl daemon-reload
   _ok "jabali-webmail.service installed (disabled — starts on first domain.email_enable)"
+  _install_bulwark_env
+}
+
+# _install_bulwark_env renders install/bulwark/bulwark.env.tmpl into
+# /etc/jabali-panel/bulwark.env. Idempotent: writes only when the
+# rendered content's SHA-256 differs from the on-disk file. Template
+# variable is $JABALI_HOSTNAME (captured by the install.sh preamble).
+# Invoked unconditionally from _install_bulwark_systemd so that even
+# on a second run that skips the tarball re-download, the env file
+# is kept in sync with the template (the one Bulwark actually reads
+# at every service start).
+_install_bulwark_env() {
+  local src="${REPO_DIR}/install/bulwark/bulwark.env.tmpl"
+  local dst="/etc/jabali-panel/bulwark.env"
+  if [[ ! -f "$src" ]]; then
+    _die "Bulwark env template not found at $src"
+  fi
+  if [[ -z "${JABALI_HOSTNAME:-}" ]]; then
+    _die "JABALI_HOSTNAME is unset; cannot render Bulwark env"
+  fi
+
+  # Render into a tmpfile first so we can diff by hash before writing.
+  # Using envsubst would pull in gettext as a dep; sed is enough for
+  # the two variables this template uses.
+  local tmp
+  tmp=$(mktemp)
+  # shellcheck disable=SC2016
+  sed "s|\${JABALI_SERVER_HOSTNAME}|${JABALI_HOSTNAME}|g" "$src" >"$tmp"
+
+  local new_sha old_sha=""
+  new_sha=$(sha256sum "$tmp" | awk '{print $1}')
+  if [[ -f "$dst" ]]; then
+    old_sha=$(sha256sum "$dst" | awk '{print $1}')
+  fi
+  if [[ "$new_sha" == "$old_sha" ]]; then
+    rm -f "$tmp"
+    _ok "Bulwark env ($dst) already up to date"
+    return
+  fi
+
+  install -m 0640 -o jabali-webmail -g jabali-webmail "$tmp" "$dst"
+  rm -f "$tmp"
+  _ok "Bulwark env rendered -> $dst"
+
+  # Soft reload: if the service is already running, restart so the new
+  # env takes effect. If it's inactive, the next reconciler-triggered
+  # start will pick up the file.
+  if systemctl is-active jabali-webmail >/dev/null 2>&1; then
+    systemctl restart jabali-webmail || _warn "failed to restart jabali-webmail after env update"
+  fi
 }
 
 # ---------- step 8: Kratos identity provider (M20) ---------------------------

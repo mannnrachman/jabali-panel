@@ -373,6 +373,11 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	r.reconcileWordPressInstalls(ctx)
 	// Reconcile WordPress installs (sweep stuck rows, probe drift).
 
+	// Webmail (M6 Step 8): toggle mail.<domain> vhost based on
+	// domains.email_enabled. Self-scoping — no-op when sslCerts isn't
+	// wired; per-domain errors don't abort the sweep.
+	r.reconcileWebmailVhosts(ctx)
+
 	r.reconcileCronJobs(ctx)
 	// Reconcile cron jobs: apply enabled jobs, remove disabled jobs, cleanup orphans.
 

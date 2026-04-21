@@ -279,9 +279,12 @@ type jmapSetResult struct {
 // name+'@'+domain.name; Group accounts use the same property name).
 func accountIDByEmail(ctx context.Context, email string) (string, error) {
 	args := map[string]any{
+		// JMAP FilterCondition per RFC 8620 §4.4.1: property names go
+		// directly at the top level of the filter object. Stalwart
+		// v0.16 returns `unsupportedFilter — property` on the
+		// {"property": X, "value": Y} shape.
 		"filter": map[string]any{
-			"property": "emailAddress",
-			"value":    email,
+			"emailAddress": email,
 		},
 		"limit": 1,
 	}
@@ -475,12 +478,22 @@ func createDkimSignature(ctx context.Context, domainID, selector, pemPrivateKey 
 				"canonicalization": "relaxed/relaxed",
 				"stage":            "active",
 				// RFC 6376 §5.4 canonical "sign these" set. Schema marks
-				// headers as non-nullable Set<string>, so omitting it risks
-				// a "required field missing" error at create time.
-				"headers": []string{
-					"From", "To", "Cc", "Subject", "Date",
-					"Message-ID", "In-Reply-To", "References",
-					"MIME-Version", "Content-Type",
+				// headers as `set` (Map<String> in the registry), which
+				// Stalwart serialises as {"<name>": true} — NOT a JSON
+				// array. Sending [] rejects with "unsupportedFilter" or
+				// a type-mismatch error at create time. See also the
+				// NetworkListener.bind fix in the apply-plan template.
+				"headers": map[string]bool{
+					"From":         true,
+					"To":           true,
+					"Cc":           true,
+					"Subject":      true,
+					"Date":         true,
+					"Message-ID":   true,
+					"In-Reply-To":  true,
+					"References":   true,
+					"MIME-Version": true,
+					"Content-Type": true,
 				},
 				"report": false,
 			},
@@ -509,9 +522,11 @@ func createDkimSignature(ctx context.Context, domainID, selector, pemPrivateKey 
 // Semantics identical to accountIDByEmail.
 func domainIDByName(ctx context.Context, name string) (string, error) {
 	args := map[string]any{
+		// Same correction as accountIDByEmail — FilterCondition is
+		// property→value pairs at the top level, not a single
+		// {property, value} object.
 		"filter": map[string]any{
-			"property": "name",
-			"value":    name,
+			"name": name,
 		},
 		"limit": 1,
 	}

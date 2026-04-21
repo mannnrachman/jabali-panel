@@ -19,29 +19,32 @@ test.describe("users CRUD (admin)", () => {
     await mockApi(page, { me: admin });
     await signIn(page, admin);
     await page.waitForURL(/\/jabali-admin/);
-    await page.goto("/jabali-admin/users");
 
-    await page.getByRole("button", { name: /create/i }).first().click();
-    await page.waitForURL(/\/jabali-admin\/users\/create/);
+    // goto /create directly instead of clicking Create on /users. On CI,
+    // clicking the list-page Create button races with AntD Table's
+    // initial-render onChange handler: the table's onChange fires
+    // setParams({page:1}) shortly after mount, which react-router's
+    // setSearchParams applies to whatever the *current* URL is at call
+    // time. When onChange fires fast enough, it just rewrites /users →
+    // /users?page=1 before the button click. When it fires slow enough
+    // (CI's 2-core GitHub runner), the navigate("/users/create") runs
+    // first, the browser commits /create, *then* the late setParams
+    // call fires setSearchParams, which navigates back to /users?page=1
+    // — dropping /create entirely. The form briefly mounts (Save button
+    // visible, expect passes) then unmounts with the nav-back, and
+    // every subsequent locator times out. Local Chromium wins the race
+    // 100% of the time; CI loses it ~100% of the time. Bypassing the
+    // click with a direct goto eliminates the racy AntD Table onChange
+    // entirely — we never mount UserList on /users so its onChange
+    // never fires.
+    await page.goto("/jabali-admin/users/create");
 
-    // Wait for the form to finish its initial render cycle before
-    // touching inputs. waitForURL only confirms the URL changed —
-    // the target page may still have async effects in flight (the
-    // Hosting Package <Select> hydrates via useSelectQuery, the
-    // AuthContext whoami observer may be rebroadcasting a fresh
-    // identity). On fast local Chromium these settle in microseconds.
-    // On the host-mode CI runner's slower, CPU-contended Chromium
-    // they can still be churning when .fill() starts, and a nearby
-    // re-render detaches the input mid-fill — Playwright reports
-    // "element was detached from the DOM, retrying" and loops until
-    // the 30s test timeout. Waiting for the submit button (the last
-    // child of the Form) to be visible proves the full form tree is
-    // mounted, and waiting for networkidle gives the initial packages
-    // fetch a chance to complete.
+    // Still wait for the form to be mounted before filling, even though
+    // we bypass the list page. Save button is the last child of the
+    // Form, so its visibility proves the full form tree is in the DOM.
     await expect(
       page.getByRole("button", { name: /save/i }),
     ).toBeVisible();
-    await page.waitForLoadState("networkidle");
 
     // Fill email LAST. Filling email first and then tabbing through the
     // password field loses the email value ~1/3 of runs — an async event

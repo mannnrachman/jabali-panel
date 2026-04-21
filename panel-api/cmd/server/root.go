@@ -66,6 +66,7 @@ func newRootCmd() *cobra.Command {
 		newMigrateCmd(),
 		newUpdateCmd(),
 		newLimitsCmd(),
+		newMailboxCmd(),
 		adminCmd,
 		newSSOCmd(),
 		newSSOReapCmd(),

@@ -2644,20 +2644,26 @@ _install_stalwart_binary() {
   tar -xzf "$tarball_path" -C "$new_dir" --strip-components=0
   rm -f "$tarball_path"
 
-  # Stalwart tarball layout: top-level `stalwart` binary. Defensive find
-  # in case upstream ever changes the layout.
+  # Stalwart tarball layout: top-level `stalwart` binary. v0.16.0 ships
+  # it mode 0644 (no exec bit) — the installer must chmod it +x before
+  # use. Defensive find in case upstream nests the binary in a future
+  # release.
   local bin_in_tar
-  bin_in_tar="$(find "$new_dir" -maxdepth 2 -type f -name stalwart -perm -u+x | head -n1)"
+  bin_in_tar="$(find "$new_dir" -maxdepth 2 -type f -name stalwart | head -n1)"
   if [[ -z "$bin_in_tar" ]]; then
     rm -rf "$new_dir"
     _die "Stalwart binary not found in tarball at $new_dir"
   fi
+  chmod 0755 "$bin_in_tar"
 
   rm -rf /opt/stalwart.prev
   if [[ -d /opt/stalwart ]]; then
     mv /opt/stalwart /opt/stalwart.prev
   fi
   mv "$new_dir" /opt/stalwart
+  # Recompute the path under its final location — $bin_in_tar still
+  # points at the old /opt/stalwart.new tree.
+  bin_in_tar="$(find /opt/stalwart -maxdepth 2 -type f -name stalwart | head -n1)"
   ln -sfn "$bin_in_tar" /usr/local/bin/stalwart
   rm -rf /opt/stalwart.prev
   _ok "Stalwart $version installed at /opt/stalwart (symlinked to /usr/local/bin/stalwart)"

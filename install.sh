@@ -2446,10 +2446,11 @@ install_stalwart() {
     _ok "Stalwart admin token already present"
   fi
 
-  # MariaDB read-only user for Stalwart's SQL directory lookups.
-  # Panel writes jabali_panel.mailboxes; Stalwart only reads (ADR-0042).
-  # Password is provisioned once + preserved across re-runs.
-  local stalwart_db_user="jabali-stalwart-ro"
+  # MariaDB read-only password for Stalwart's SQL directory lookups.
+  # Generated here (needed for config.json template rendering below), but
+  # the actual CREATE USER + GRANT happens in install_stalwart_apply after
+  # start_and_verify — migration 000054 creates the mailboxes table and
+  # GRANT SELECT on a non-existent table is a fatal error (ERROR 1146).
   local stalwart_db_pw_file="/etc/jabali-panel/stalwart-mariadb.password"
   if [[ ! -f "$stalwart_db_pw_file" ]]; then
     _log "generating Stalwart MariaDB password -> $stalwart_db_pw_file"
@@ -2460,18 +2461,6 @@ install_stalwart() {
   fi
   local stalwart_db_pass
   stalwart_db_pass="$(cat "$stalwart_db_pw_file")"
-
-  # SELECT-only grant. Stalwart never writes to the source-of-truth
-  # directory; on-every-auth `synchronize_account` writes into its own
-  # registry (ADR-0045 §"Cache/invalidation model").
-  mariadb -e "
-    CREATE USER IF NOT EXISTS '${stalwart_db_user}'@'localhost' IDENTIFIED BY '${stalwart_db_pass}';
-    ALTER USER '${stalwart_db_user}'@'localhost' IDENTIFIED BY '${stalwart_db_pass}';
-    GRANT SELECT ON jabali_panel.mailboxes  TO '${stalwart_db_user}'@'localhost';
-    GRANT SELECT ON jabali_panel.domains    TO '${stalwart_db_user}'@'localhost';
-    FLUSH PRIVILEGES;
-  "
-  _ok "Stalwart MariaDB user provisioned: ${stalwart_db_user} (SELECT on mailboxes, domains)"
 
   # Render /etc/stalwart/config.json from template. v0.16 stores only
   # the datastore descriptor on disk (ADR-0045); everything else lives
@@ -2548,9 +2537,58 @@ EOF
   install -m 0644 -o root -g root "${REPO_DIR}/install/systemd/jabali-stalwart.service" \
     /etc/systemd/system/jabali-stalwart.service
   systemctl daemon-reload
+  _ok "jabali-stalwart.service installed (apply deferred to install_stalwart_apply)"
+}
+
+# install_stalwart_apply — second phase of Stalwart bootstrap. Runs AFTER
+# start_and_verify so that jabali-panel.service has applied migration
+# 000054 (which creates jabali_panel.mailboxes + jabali_panel.domains).
+# This phase:
+#   1. Creates the jabali-stalwart-ro MariaDB user + SELECT grants
+#   2. Enables + starts jabali-stalwart.service
+#   3. Polls /jmap until ready
+#   4. Runs stalwart-cli apply against the rendered plan
+#
+# Split out from install_stalwart (ADR-0045 bootstrap flow) because step 1
+# requires the mailboxes table to already exist — migrations run inside
+# the panel service on first start, not up-front in install.sh.
+install_stalwart_apply() {
+  _log "provisioning Stalwart MariaDB user + applying JMAP plan"
+
+  local stalwart_db_user="jabali-stalwart-ro"
+  local stalwart_db_pw_file="/etc/jabali-panel/stalwart-mariadb.password"
+  if [[ ! -f "$stalwart_db_pw_file" ]]; then
+    _die "Stalwart MariaDB password file missing at $stalwart_db_pw_file (install_stalwart must run first)"
+  fi
+  local stalwart_db_pass
+  stalwart_db_pass="$(cat "$stalwart_db_pw_file")"
+
+  # SELECT-only grant. Stalwart never writes to the source-of-truth
+  # directory; on-every-auth `synchronize_account` writes into its own
+  # registry (ADR-0045 §"Cache/invalidation model").
+  mariadb -e "
+    CREATE USER IF NOT EXISTS '${stalwart_db_user}'@'localhost' IDENTIFIED BY '${stalwart_db_pass}';
+    ALTER USER '${stalwart_db_user}'@'localhost' IDENTIFIED BY '${stalwart_db_pass}';
+    GRANT SELECT ON jabali_panel.mailboxes  TO '${stalwart_db_user}'@'localhost';
+    GRANT SELECT ON jabali_panel.domains    TO '${stalwart_db_user}'@'localhost';
+    FLUSH PRIVILEGES;
+  "
+  _ok "Stalwart MariaDB user provisioned: ${stalwart_db_user} (SELECT on mailboxes, domains)"
+
+  local admin_token_file="/etc/jabali-panel/stalwart-admin.token"
+  if [[ ! -f "$admin_token_file" ]]; then
+    _die "Stalwart admin token missing at $admin_token_file (install_stalwart must run first)"
+  fi
+  local stalwart_admin_token
+  stalwart_admin_token="$(cat "$admin_token_file")"
+
+  local stalwart_apply_plan="/etc/jabali-panel/stalwart-apply-plan.json"
+  if [[ ! -f "$stalwart_apply_plan" ]]; then
+    _die "Stalwart apply plan missing at $stalwart_apply_plan (install_stalwart must run first)"
+  fi
 
   _install_stalwart_apply_plan "$stalwart_apply_plan" "$stalwart_admin_token"
-  _ok "jabali-stalwart.service installed + applied"
+  _ok "jabali-stalwart.service started + plan applied"
 }
 
 # _install_stalwart_apply_plan starts Stalwart (if not already running),
@@ -3144,6 +3182,10 @@ main() {
   write_systemd_unit
   start_and_verify_agent
   start_and_verify
+  # Second-phase Stalwart bootstrap: needs jabali_panel.{mailboxes,domains}
+  # to exist, which the panel service creates via migration 000054 on its
+  # first start (inside start_and_verify). Must run after, never before.
+  install_stalwart_apply
   seed_last_built_sha
   _ok "jabali-panel + jabali-agent installed. Status:"
   _ok "  systemctl status $AGENT_SERVICE_NAME"

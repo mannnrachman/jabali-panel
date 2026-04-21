@@ -36,13 +36,14 @@
 - **Cluster mode (FoundationDB)** — single-node RocksDB only. This is a hosting panel, not a mailcluster.
 - **Provider-external antispam** — rely on Stalwart's built-in spam-filter pipeline (FTRL-Proximal linear classifier + DNSBL lookups + greylist).
 - **Stalwart's native auto-DNS** — Stalwart v0.16.0 can publish MX/SPF/DKIM/DMARC itself via its DNS management layer. **We disable this.** The panel's M4 PowerDNS code path is the single DNS source of truth (ADR-0002). ADR-0043 records the trade-off: one DNS writer, predictable DKIM rotation.
-- **Stalwart's webadmin as end-user webmail** — the `webadmin` ships with v0.16.0 but is admin-facing. Real webmail is Roundcube 1.6.x (Phase-0 decision recorded in ADR-0041).
+- **Stalwart's webadmin as end-user webmail** — the `webadmin` ships with v0.16.0 but is admin-facing. Real webmail is Bulwark 1.4.14 (decision recorded in ADR-0041).
 - **IMAP migration (`imap-migrate`)** — Stalwart has a built-in importer, but first-class importer UX lives in M15. ADR-0044 pins this deferral and describes the CLI escape hatch (`stalwart-cli imap-migrate …`) for operators who need it day-one.
 
 ### Version pins (verified 2026-04-21)
 
 - **Stalwart** `v0.16.0` (released 2026-04-20 — latest stable). Upstream install script at `https://github.com/stalwartlabs/stalwart/blob/main/install.sh`; we capture a SHA-256 of the tarball into `install/stalwart.sha256` (same shape as `install/kratos.sha256`).
-- **Roundcube** `1.6.9` (latest 1.6.x LTS as of 2026-04-21; confirm via `curl -sL https://api.github.com/repos/roundcube/roundcubemail/releases/latest | jq -r .tag_name` in Step 8 before pinning, bump `roundcubeTarballSHA256` if newer). Required PHP ≥ 7.3; we have multi-version PHP (M9) so pin to the user's active PHP version at install time.
+- **Bulwark webmail** `v1.4.14` (latest stable; `https://github.com/bulwarkmail/webmail`). Next.js, JMAP-native, purpose-built for Stalwart. AGPL-v3 licensed — we ship unmodified as a network service (no linking, no fork), so the source-provision obligation is satisfied by Bulwark's own public repo. If we fork to patch, the panel's own repo publication obligation kicks in — ADR-0041 records the trade-off. Installed from source (`git clone` → `npm ci` → `npm run build` → `npm start`), pinned via `.bulwark-version` + SHA-256 of the tarball captured on first deploy.
+- **Node.js** 20 LTS (panel-ui already requires ≥20 per `package.json`; `install.sh` installs NodeSource tarball if the host has no Node yet).
 
 ### Upstream behaviour that shapes the design
 
@@ -99,7 +100,7 @@ All via the existing M4 `dnscompile` path — the reconciler writes these record
 | `@` | MX | `10 mail.<domain>.` | panel |
 | `mail` | A / AAAA | server public IPv4/IPv6 | panel |
 | `@` | TXT (SPF) | `v=spf1 mx ~all` | panel |
-| `jabali._domainkey` | TXT (DKIM) | `v=DKIM1; k=rsa; p=<base64pub>` | panel |
+| `jabali._domainkey` | TXT (DKIM) | `v=DKIM1; k=ed25519; p=<base64pub>` | panel |
 | `_dmarc` | TXT (DMARC) | `v=DMARC1; p=quarantine; rua=mailto:postmaster@<domain>` | panel |
 | `autoconfig` | CNAME | `mail.<domain>.` | panel |
 | `_autodiscover._tcp` | SRV | `0 0 443 mail.<domain>.` | panel |
@@ -139,13 +140,15 @@ Step 5  Step 6  Step 7  Step 8
 **Rollback:** revert the branch; no cutover has happened yet.
 **Rebase:** `git fetch origin main && git rebase origin/main` before PR. Re-run `go test ./... && cd panel-ui && npm test && npx playwright test` post-rebase.
 
-**Pre-dispatch decisions (for the dispatcher to make before handing off):**
+**Pre-dispatch decisions (operator-confirmed 2026-04-21):**
 
-1. **Roundcube vs Stalwart webadmin for end-user webmail.** Decision: **Roundcube 1.6.9**. Rationale: Stalwart's webadmin is operator-facing in v0.16.0 (JMAP management UI), not an inbox UI. Roundcube is the mature PHP webmail that slots into the existing per-user PHP-FPM pool without a second runtime. Stalwart's built-in JMAP endpoint is the modern protocol path for API clients / native mail apps, not a web UI. Record in ADR-0041.
+1. **Webmail:** **Bulwark 1.4.14** (`https://github.com/bulwarkmail/webmail`) — Next.js + JMAP, purpose-built for Stalwart. Rationale: native Stalwart integration via `STALWART_FEATURES=true` + `STALWART_API_URL`; password change flows webmail → Stalwart admin API directly (panel stays out of the loop, matches the post-review decision to avoid panel-mediated SSO); OAuth2/OIDC native so Kratos integration is a future drop-in rather than a custom shim. Trade-off: AGPL-v3 license (fine for unmodified network-service deployment; if we ever fork to patch, source-publication obligation kicks in — ADR-0041 records this explicitly), second runtime (Node 20) alongside Go + PHP. Record in ADR-0041.
 2. **RocksDB vs Maildir vs MariaDB-everywhere for mail data.** Decision: **RocksDB**. Rationale: Stalwart's default; has FTS + blob dedup; single-node performance > Maildir; MariaDB is not a supported backend for message content in v0.16.0. Record in ADR-0041.
 3. **Directory table vs Stalwart internal directory.** Decision: **External SQL directory against `jabali_panel.mailboxes`**. Rationale: panel already writes the row (ADR-0003 one-write-path), no sync between internal Stalwart directory and panel rows, single-transaction provisioning. Record in ADR-0042.
-4. **DKIM panel-owned vs Stalwart-auto-rotate.** Decision: **Panel-owned keys under `/etc/jabali-panel/dkim/<domain>.key`, Stalwart auto-DNS disabled.** Rationale: one DNS source of truth (PowerDNS), predictable rotation cadence, backup/restore story matches the panel's. Record in ADR-0043. Rotation schedule: every 365 days, selector bump `jabali-YYYY-MM` rolled in via a reconciler pass + DNS TXT coexistence window (old + new for 72h).
+4. **DKIM key type + storage.** Decision: **Ed25519 (RFC 8463), panel-owned keys under `/etc/jabali-panel/dkim/<domain>.key`, Stalwart auto-DNS disabled.** Rationale: one DNS source of truth (PowerDNS), predictable rotation, smaller DNS TXT record (no packed 2048-bit RSA → no multi-string split hell), faster signing. **Known trade-off:** Ed25519 DKIM is RFC 8463 (Sept 2018); Gmail / M365 / Fastmail support it, but long-tail corporate + government mail servers may silently skip the signature. With default `DMARC p=quarantine` + passing SPF, affected recipients get messages into spam/junk rather than full rejection. **Mitigation pre-committed in ADR-0043:** if delivery issues surface against a specific receiver, add a second RSA-2048 selector (`jabali-rsa`) alongside the Ed25519 primary — Stalwart can sign with both, receivers pick the algorithm they understand. Escape-hatched in the runbook, not in v1 default. Rotation schedule: every 365 days, selector bump `jabali-YYYY-MM` rolled by reconciler + DNS TXT coexistence window (old + new for 72h).
 5. **imap-migrate on day 1?** Decision: **Deferred to M15**. Record in ADR-0044. Operators needing day-one migration use `stalwart-cli imap-migrate …` manually (runbook links to upstream docs).
+6. **Default per-mailbox quota:** **1 GiB flat** (not inherited from `hosting_packages`). Simpler v1; per-package plumbing is a later add.
+7. **Mail hostname shape:** **per-domain `mail.<domain>` MX label** with a dedicated A record per domain pointing at the server's public IPv4 (and AAAA for IPv6). Not shared `mail.<server-hostname>`. Upside: each domain's mail traffic is independently addressable; splitting a domain to a different mailserver later doesn't require an MX change on the other domains.
 
 **Deliverables:**
 
@@ -207,13 +210,26 @@ Step 5  Step 6  Step 7  Step 8
   ```
   Down migration drops triggers first, then column additions, then the `mailboxes` table. No data loss for pre-M6 rows on either direction.
 - `install.sh` additions (idempotent, fail-loud):
-  - `install_stalwart()`: download `stalwart-x86_64-unknown-linux-gnu.tar.gz` for tag `v0.16.0`, verify against `install/stalwart.sha256` (captured on first deploy — leave a placeholder + `_die` if empty, per the DokuWiki/MediaWiki precedent), extract to `/opt/stalwart/`, symlink `/usr/local/bin/stalwart`.
-  - Create `jabali-mail` service user (primary group `jabali-mail`, supplementary group `jabali`), `/var/lib/stalwart/` (0750 `jabali-mail:jabali-mail`), `/etc/stalwart/` (0750 `jabali-mail:jabali-mail`), `/etc/jabali-panel/dkim/` (0750 `jabali:jabali`).
-  - Write `/etc/systemd/system/jabali-stalwart.service` under `jabali.slice` (not `jabali-user.slice` — Stalwart is a system daemon, not a hosting-user process). `User=jabali-mail`, `ExecStart=/usr/local/bin/stalwart --config=/etc/stalwart/config.toml`, `Restart=on-failure`.
+  - `install_stalwart()`: download `stalwart-x86_64-unknown-linux-gnu.tar.gz` for tag `v0.16.0`, verify against `install/stalwart.sha256` (captured on first deploy — leave a placeholder + `_err` if empty, per the DokuWiki/MediaWiki precedent), extract to `/opt/stalwart/`, symlink `/usr/local/bin/stalwart`.
+  - `install_node20()`: if `node --version` returns less than `v20.0.0` or node is absent, install Node.js 20 LTS from NodeSource tarball (pin + SHA-256 in `install/node.sha256`). Skip if already satisfied (panel-ui's build requirement means Node 20 is often already present). Idempotent.
+  - `install_bulwark()`: if `/opt/jabali-webmail/VERSION` matches `1.4.14`, skip. Otherwise `git clone https://github.com/bulwarkmail/webmail.git --branch v1.4.14 --depth 1 /opt/jabali-webmail-new`, verify the commit's SHA (pinned in `install/bulwark.commit-sha`; on first deploy, capture the commit SHA that v1.4.14 resolves to), `npm ci` + `npm run build` as `jabali-webmail` user, then atomic swap (`mv /opt/jabali-webmail /opt/jabali-webmail-prev && mv /opt/jabali-webmail-new /opt/jabali-webmail`). Write `VERSION` file with `1.4.14`.
+  - Create service users:
+    - `jabali-mail` (primary group `jabali-mail`, supplementary group `jabali`) — runs Stalwart.
+    - `jabali-webmail` (primary group `jabali-webmail`, supplementary group `jabali`) — runs Bulwark.
+  - Create dirs:
+    - `/var/lib/stalwart/` (0750 `jabali-mail:jabali-mail`)
+    - `/etc/stalwart/` (0750 `jabali-mail:jabali-mail`)
+    - `/etc/jabali-panel/dkim/` (0750 `jabali:jabali` — agent reads this as root via supplementary group; Stalwart reads it via `jabali-mail:jabali` group membership)
+    - `/opt/jabali-webmail/` (0755 `jabali-webmail:jabali-webmail`)
+    - `/var/lib/jabali-webmail/` (0750 `jabali-webmail:jabali-webmail`) — Bulwark's settings-sync data dir.
+  - Write systemd units under `jabali.slice` (system daemons, not per-user):
+    - `/etc/systemd/system/jabali-stalwart.service`: `User=jabali-mail`, `ExecStart=/usr/local/bin/stalwart --config=/etc/stalwart/config.toml`, `Restart=on-failure`, `WatchdogSec=30`.
+    - `/etc/systemd/system/jabali-webmail.service`: `User=jabali-webmail`, `WorkingDirectory=/opt/jabali-webmail`, `ExecStart=/usr/bin/node /opt/jabali-webmail/server.js` (actual path resolved from Bulwark's `package.json` → `start` script in Step 8), `Environment=HOSTNAME=127.0.0.1 PORT=3000`, `EnvironmentFile=/etc/jabali-panel/bulwark.env` (created in Step 8), `Restart=on-failure`.
   - Write a minimal `/etc/stalwart/config.toml` skeleton: listeners bound to `127.0.0.1:8446` (HTTP/JMAP), `0.0.0.0:25/465/587/993` (mail protocols); storage = rocksdb at `/var/lib/stalwart/`; directory = placeholder (filled in Step 2); TLS paths point at `/etc/letsencrypt/live/` with per-binding SNI resolution.
   - nginx snippet at `/etc/nginx/sites-available/00-jabali-mail-proxy.conf` stubbed (filled in Step 4/8).
-  - Systemd unit is disabled by default — enabled by the first panel `domain.email_enable` call via `systemctl enable --now jabali-stalwart.service` executed from the agent. Idempotent: re-runs of `install.sh` don't start the service.
+  - **Both systemd units disabled by default** — enabled by the first panel `domain.email_enable` call via `systemctl enable --now jabali-stalwart jabali-webmail` executed from the agent. Idempotent: re-runs of `install.sh` don't start the services.
   - **JMAP admin token** `/etc/jabali-panel/stalwart-admin.token` (0640 `jabali:jabali-mail`): generated **only if missing** via `openssl rand -base64 32`; re-runs of `install.sh` read the existing file. Stalwart config references it via `!include_path "/etc/jabali-panel/stalwart-admin.token"` so rotation is a file write + `systemctl reload` without re-rendering the whole config. Rotation procedure documented in the runbook (Step 9).
+  - **Bulwark SESSION_SECRET** `/etc/jabali-panel/bulwark-session.key` (0640 `jabali-webmail:jabali-webmail`): generated only if missing via `openssl rand -base64 32`; re-runs preserve. Referenced by `/etc/jabali-panel/bulwark.env` via `SESSION_SECRET_FILE=`.
 - `internal/mailaddr/mailaddr.go`: `Canonicalise(raw string) (local, domain string, err error)` — lowercases, strips `+tag`, rejects non-ASCII for v1 (punycode domains OK; UTF-8 locals deferred), rejects shell metacharacters. Shared by panel-api + panel-agent.
 
 **Verification:**
@@ -303,9 +319,9 @@ echo 'QUIT' | openssl s_client -starttls smtp -connect localhost:587 -quiet < <(
 - `panel-agent/internal/commands/mailbox_create.go` and siblings for each command — registered via `Default.Register("mailbox.create", handler)` etc. Handlers:
   - `mailbox.create` / `mailbox.delete` / `mailbox.set_quota` / `mailbox.set_password`: **no-op except for a JMAP cache-invalidation call** (`POST /jmap` with `{"using": ["…:core"], "methodCalls": [["Principal/invalidate", {...}, "c0"]]}`). The row is written by the panel; Stalwart re-reads SQL on the next auth; invalidate just clears the Stalwart LRU.
   - `mailbox.usage`: JMAP `Quota/get` against the principal, returns `{used_bytes, message_count, last_used_at}`. If the mailbox hasn't been touched yet, all zeros.
-  - `domain.email_enable`: (a) generate RSA-2048 DKIM keypair via `crypto/rsa`, write private key to `/etc/jabali-panel/dkim/<domain>.key` (0600 `jabali:jabali`), return public key in base64 DKIM TXT format; (b) `systemctl enable --now jabali-stalwart.service` (idempotent); (c) reload Stalwart via `systemctl reload jabali-stalwart.service` (drops SIGHUP → Stalwart re-reads directory query cache).
+  - `domain.email_enable`: (a) generate **Ed25519** DKIM keypair via `crypto/ed25519` (32-byte seed + 32-byte public), write the 32-byte raw private key base64-encoded to `/etc/jabali-panel/dkim/<domain>.key` (0600 `jabali:jabali`) and return the public key in DKIM TXT format `v=DKIM1; k=ed25519; p=<base64-32B-pub>` (a single short string — no `"…" "…"` concatenation needed, unlike RSA-2048); (b) `systemctl enable --now jabali-stalwart.service` (idempotent); (c) reload Stalwart via `systemctl reload jabali-stalwart.service` (drops SIGHUP → Stalwart re-reads directory query cache).
   - `domain.email_disable`: (a) `rm /etc/jabali-panel/dkim/<domain>.key`; (b) reload Stalwart; (c) do NOT stop the Stalwart service — other domains may still be enabled.
-- `internal/dkim/dkim.go`: `GenerateRSA2048() (privatePEM, publicDKIMTxt []byte, err error)`; `WritePrivate(path string, priv []byte) error` with atomic `os.CreateTemp` + `os.Rename` + `chmod 0600`. Shared by panel-api (reconciler uses it for rotation) and panel-agent.
+- `internal/dkim/dkim.go`: `GenerateEd25519() (privateRawBase64, publicDKIMTxt []byte, err error)` — uses `crypto/ed25519.GenerateKey`, base64-encodes the 32-byte seed for `privateRawBase64`, formats the 32-byte public key as `v=DKIM1; k=ed25519; p=<base64pub>`. `WritePrivate(path string, priv []byte) error` with atomic `os.CreateTemp` + `os.Rename` + `chmod 0600`. Shared by panel-api (reconciler uses it for rotation) and panel-agent. Structure also leaves room for a future `GenerateRSA2048` sibling if ADR-0043's fallback path is ever needed — same `WritePrivate` semantics, different key-type tag in the filename suffix.
 - **All seven cross-boundary golden fixtures owned by this step** (Step 4 imports the same files, does not duplicate):
   `panel-api/internal/agent/testdata/mailbox_create.json`, `mailbox_delete.json`, `mailbox_set_quota.json`, `mailbox_set_password.json`, `mailbox_usage.json`, `domain_email_enable.json`, `domain_email_disable.json`.
   Round-trip tests in `panel-api/internal/agent/mailbox_contract_test.go` (mirror `php_ext_contract_test.go`) — each fixture is unmarshalled into the panel-side request type, marshalled back through the agent-side handler, and compared byte-for-byte. Tests live on both sides so neither can drift without CI catching it.
@@ -480,50 +496,100 @@ npm run test:e2e -- --grep @m6  # tagged e2e, written in Step 9
 
 ---
 
-### Step 8 — Webmail: Roundcube 1.6.9 (no panel SSO in v1) **[default model]**
+### Step 8 — Webmail: Bulwark 1.4.14 (Next.js + JMAP) **[default model]**
 
 **Branch:** `m6-step8-webmail`.
-**Depends on:** Step 4 merged (needs mailbox-create API so there's something to log into).
+**Depends on:** Step 4 merged (mailbox-create API gives accounts to log into) + Step 1's Bulwark install (binary + systemd unit already placed; this step wires config + nginx + reconciler).
 **Parallel with:** 5, 6, 7.
 
-**Scope reduction after adversarial review:** The original design proposed a panel → Roundcube SSO shim (Kratos cookie → one-click inbox). Dropped from v1 because:
+**Scope note:** Originally proposed Roundcube 1.6.9; operator chose Bulwark (`https://github.com/bulwarkmail/webmail`) — purpose-built for Stalwart, JMAP-native, with OAuth2/OIDC and native Stalwart admin-API integration. This is cleaner than Roundcube: single Node service (not per-user PHP-FPM), password change flows webmail → Stalwart admin API directly (panel stays out of the loop), no separate webmail database, no PHP plugin wiring. No panel-mediated SSO in v1 (same decision as the Roundcube design for the same post-review reasons); revisit in M6.1 once Bulwark's OAuth2/OIDC can be pointed at Kratos as the IdP.
 
-1. It required persisting AES-GCM-enveloped plaintext passwords alongside bcrypt hashes, doubling the secret surface.
-2. Roundcube's password-change UI would need a panel callback that either accepts plaintext or breaks password-change entirely.
-3. Stalwart v0.16.0's JMAP admin-session-minting primitive (the clean SSO path) is undocumented upstream; depending on it would be speculative.
-
-**v1 contract:** Users log into webmail with the mailbox password they saw once at create time (`POST /api/v1/mailboxes` response). No panel-mediated shim. Password rotation from Roundcube goes directly to Stalwart via its SQL-directory `change_password` filter — panel is not in the loop. This is functionally equivalent to every shared-hosting provider's webmail today.
-
-**v1.1 (deferred, M6.1):** Revisit webmail SSO once Stalwart JMAP admin-session support is confirmed. ADR-0041 notes the deferral.
+**What's already in place from Step 1:** `jabali-webmail` service user, `/opt/jabali-webmail/` checkout with `npm run build` output, `/var/lib/jabali-webmail/` data dir, `/etc/jabali-panel/bulwark-session.key` secret, `jabali-webmail.service` systemd unit (disabled, points at `/etc/jabali-panel/bulwark.env`). All idempotent in install.sh.
 
 **Deliverables:**
 
-- `install.sh install_roundcube()`: download Roundcube 1.6.9 tarball (pin + SHA-256 in `install/roundcube.sha256` — placeholder + `_err` if missing, captured on first deploy), extract to `/opt/roundcube/`, symlink `/usr/share/nginx/html/webmail` → `/opt/roundcube/public_html/`. Idempotent: if `/opt/roundcube/VERSION` matches the pin, skip.
-- `/etc/roundcube/config.inc.php` (rendered by install.sh from `install/roundcube/config.inc.php.tmpl`): IMAP host `tls://127.0.0.1:993`, SMTP host `tls://127.0.0.1:587`, `$config['default_host'] = '127.0.0.1'` (users log in with full `alice@example.com`), session store = `database` on a new `jabali_roundcube` DB (separate from `jabali_panel` to isolate schema migration risk; install.sh creates it + grants the `jabali-roundcube` DB user). des_key generated once on first install via `openssl rand -hex 24`, stored at `/etc/roundcube/des.key` (0640 `jabali:www-data`), never regenerated on re-run.
-- Roundcube `password` plugin enabled, driver = `sql`. Config points at the `jabali_panel.mailboxes` table via a Roundcube-scoped MariaDB user (`jabali-roundcube-pw`) granted `SELECT, UPDATE(password_hash)` on `mailboxes` only. Password hash scheme `bcrypt`. This lets Roundcube change passwords without involving the panel. Account lookup filter `email_cached = %u`.
-- nginx vhost snippet at `install/nginx/roundcube.conf.tmpl` → per-domain include that maps `https://<domain>/webmail/` to `/opt/roundcube/public_html/` running under the per-user PHP-FPM pool that owns the domain (same as WordPress in M10). A dedicated `server { server_name mail.<domain>; root /opt/roundcube/public_html; }` block for users who prefer the mail-hostname path — uses a separate **shared** PHP-FPM pool `jabali-webmail` (runs as `www-data` under `jabali.slice`) because `mail.<domain>` isn't scoped to a specific hosting user. install.sh creates this shared pool alongside per-user pools.
-- Reconciler hook `reconcileWebmailVhosts`: for every domain with `email_enabled=1`, ensure `/etc/nginx/sites-enabled/<domain>-webmail.conf` includes the Roundcube snippet; for disabled domains, remove it. Idempotent nginx reload (only if the hash of generated files changed).
-- Tests: vitest-side test that `GET https://<domain>/webmail/` returns Roundcube's login HTML (Playwright E2E check — included in Step 9). No new Go tests in this step.
+- `install/bulwark/bulwark.env.tmpl` rendered to `/etc/jabali-panel/bulwark.env` (0640 `jabali-webmail:jabali-webmail`):
+  ```env
+  # Bulwark config — all runtime, no rebuild needed on change.
+  HOSTNAME=127.0.0.1
+  PORT=3000
+  JMAP_SERVER_URL=https://mail.${JABALI_SERVER_HOSTNAME}   # nginx routes /jmap → Stalwart
+  STALWART_FEATURES=true
+  STALWART_API_URL=http://127.0.0.1:8446                    # Bulwark → Stalwart admin API (loopback)
+  SESSION_SECRET_FILE=/etc/jabali-panel/bulwark-session.key
+  SETTINGS_SYNC_ENABLED=true
+  SETTINGS_DATA_DIR=/var/lib/jabali-webmail/settings
+  LOG_FORMAT=json
+  LOG_LEVEL=info
+  # Branding — point at the panel's own assets so the webmail matches the control-panel theme.
+  APP_NAME=Jabali Mail
+  LOGIN_COMPANY_NAME=${JABALI_SERVER_HOSTNAME}
+  # No OAUTH_ENABLED in v1 — password login against Stalwart. Kratos-as-IdP is M6.1.
+  ```
+  Rendered by install.sh at the Stalwart-config phase (Step 2) so rendering is co-located with the other config templates. Idempotent: re-rendering only touches the file if it'd change, keyed by sha256 of the rendered content.
+- `install/nginx/jabali-mail-vhost.conf.tmpl` — per-domain `mail.<domain>` server block:
+  ```nginx
+  server {
+    listen 443 ssl http2;
+    server_name mail.${DOMAIN};
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+
+    # Bulwark webmail (Next.js) — everything not under /jmap or /api routes here.
+    location / {
+      proxy_pass http://127.0.0.1:3000;
+      proxy_set_header Host $host;
+      proxy_set_header X-Forwarded-For $remote_addr;
+      proxy_set_header X-Forwarded-Proto https;
+      proxy_http_version 1.1;
+      proxy_set_header Upgrade $http_upgrade;        # JMAP push via websocket
+      proxy_set_header Connection "upgrade";
+      proxy_read_timeout 3600s;                       # long-poll JMAP push
+    }
+
+    # Stalwart JMAP + admin API — everything the browser needs to talk to the mailserver.
+    location /jmap               { proxy_pass http://127.0.0.1:8446; proxy_set_header Host $host; proxy_http_version 1.1; proxy_read_timeout 3600s; }
+    location /.well-known/jmap   { proxy_pass http://127.0.0.1:8446; proxy_set_header Host $host; }
+    location /api                { proxy_pass http://127.0.0.1:8446; proxy_set_header Host $host; }  # Stalwart admin API (Bulwark's STALWART_API_URL target)
+    location /autoconfig         { proxy_pass http://127.0.0.1:8443; proxy_set_header Host $host; }  # panel serves /mail/config-v1.1.xml (Step 5)
+  }
+  # HTTP -> HTTPS redirect.
+  server {
+    listen 80;
+    server_name mail.${DOMAIN};
+    return 301 https://$host$request_uri;
+  }
+  ```
+  **No `/webmail/` path-mount on the primary domain** — operator chose the clean per-domain `mail.<domain>` shape (decision 7 in pre-dispatch). Users go to `https://mail.<domain>/` and that's it.
+- Reconciler hook `reconcileWebmailVhosts` (panel-api/internal/reconciler/webmail_reconcile.go): for every domain with `email_enabled=1`, render the template above, write to `/etc/nginx/sites-enabled/<domain>-mail.conf`, nginx-reload if the hash changed; for disabled domains, `rm` the file + reload. On any domain with email enabled but Bulwark service not running, `systemctl start jabali-webmail` (same lazy-start semantics as Stalwart).
+- Certbot wiring: when `domain.email_enable` fires, the existing M5 SSL path must already cover `mail.<domain>` — the reconciler queues a certificate issuance for `mail.<domain>` using the same ACME-first-then-self-signed code. Panel's SAN-list for the domain's cert includes both `<domain>` and `mail.<domain>` (verify in Step 4's cert plumbing; if not, fold a `ssl.expand_san` agent command call into `domain.email_enable`).
+- Tests:
+  - `install.sh` idempotence test: two consecutive runs of `install_bulwark()` + `install_stalwart()` on a clean VM; second run reports "skip" for both and neither regenerates secrets.
+  - Go test for `reconcileWebmailVhosts` — mock domain repository, assert exact file content for an enabled + a disabled domain.
 
 **Verification:**
 
 ```bash
-# Post-install VM walkthrough (manual, ≤ 5 min):
-curl -fsS https://example.com/webmail/ | grep -q '<title>Roundcube Webmail</title>'  # login page served
-# Log in as alice@example.com with the password from mailbox create:
-# … use a browser or `curl` against the login POST …
-# Change password via Roundcube Settings → Password:
-# -> Roundcube writes password_hash directly via its SQL password driver; no panel callback.
-# Verify: panel's "reveal" ability is gone (there is none); SELECT password_hash FROM mailboxes WHERE email_cached = 'alice@example.com' shows the new bcrypt.
+# On a clean VM, post-install:
+systemctl status jabali-webmail   # inactive (dead) — no domain enabled yet.
+curl -fsS http://127.0.0.1:8443/api/v1/domains/<id>/email -X POST -H "Cookie: ory_kratos_session=…"
+systemctl status jabali-webmail   # active (running).
+curl -fsSL https://mail.example.com/ | grep -qi 'Bulwark'    # login page served.
+# Log in as alice@example.com with the mailbox password from Step 4's create response:
+#   browser → https://mail.example.com → login form → JMAP Session call to /jmap → inbox.
+# Password change via Settings → Account Security:
+#   Bulwark calls Stalwart admin API at http://127.0.0.1:8446/api/… → Stalwart updates password_hash in the SQL directory.
+#   Verify: SELECT password_hash FROM jabali_panel.mailboxes WHERE email_cached='alice@example.com'; shows a new bcrypt vs the pre-change value.
 ```
 
 **Exit criteria:**
 
-- `https://<domain>/webmail/` and `https://mail.<domain>/` both serve Roundcube 1.6.9.
-- Mailbox password from panel create → IMAP login via Roundcube → inbox visible.
-- Password change inside Roundcube → next IMAP auth uses the new password → panel's `password_hash` reflects the new bcrypt (confirmed via `SELECT`).
-- Reconciler hook toggles the vhost snippet in sync with `domain.email_enabled`.
-- install.sh idempotence: two consecutive runs don't regenerate `des.key` or the Roundcube DB user password.
+- `https://mail.<domain>/` serves Bulwark 1.4.14; Page has `<title>Bulwark…</title>`.
+- Mailbox password from panel create → JMAP login via Bulwark → inbox visible.
+- Password change inside Bulwark → next JMAP auth uses new password → `mailboxes.password_hash` bcrypt reflects it.
+- Reconciler hook toggles the vhost snippet in sync with `domain.email_enabled`; disabled domains don't expose the webmail endpoint.
+- Certificate for `mail.<domain>` issued (or self-signed fallback per M5) automatically on email-enable.
+- install.sh idempotence: two consecutive full runs don't regenerate `bulwark-session.key` or `stalwart-admin.token`; Bulwark source tree isn't re-cloned if the pin matches.
 - Branch rebased + CI green + report.
 
 ---
@@ -551,7 +617,13 @@ curl -fsS https://example.com/webmail/ | grep -q '<title>Roundcube Webmail</titl
   - Backup/restore of `/var/lib/stalwart/` (RocksDB checkpoint) + `/etc/jabali-panel/dkim/`.
   - Migrating an existing mailbox from an external server using `stalwart-cli imap-migrate` (pointer to upstream docs — M15 is the real answer).
   - Port reachability test: `openssl s_client -connect <host>:465 -servername <host>` + expected TLS cert output.
-  - Troubleshooting matrix: "Roundcube login fails" → check SSO token nonce directory + panel log; "mailbox usage always 0" → reconciler `reconcileMailboxUsage` health; "DKIM records missing" → ports reachability guard; "ports-unreachable guard false-positive" → `?force=1` override.
+  - Troubleshooting matrix:
+    - "Bulwark login fails" → `systemctl status jabali-webmail` + `journalctl -u jabali-webmail -n 200`; verify `JMAP_SERVER_URL` reachable from browser (`curl https://mail.<domain>/jmap -I`).
+    - "mailbox usage always 0" → reconciler `reconcileMailboxUsage` health; check `journalctl -u jabali-panel | grep mailbox.usage`.
+    - "DKIM records missing" → `dig @127.0.0.1 jabali._domainkey.<domain> TXT`; if empty, check `/etc/jabali-panel/dkim/<domain>.key` exists and reconciler enqueued records.
+    - "Mail to Gmail delivers but mail to Corp-mail-server bounces/spams" → **known Ed25519 DKIM long-tail issue (see ADR-0043)**. Fallback: enable dual-signing by adding an RSA-2048 selector. Recipe in the runbook escape-hatch section: `jabali domain email-dkim-add-rsa <domain>` (command added in M6.1; in v1, the manual recipe is documented step-by-step — generate RSA-2048 key, write to `/etc/jabali-panel/dkim/<domain>.rsa.key`, add `jabali-rsa._domainkey` TXT record, flip a `dkim_selectors` JSON column on the domain, reload Stalwart).
+    - "Port 25 blocked by ISP (AWS/GCP/Hetzner/OVH default)" → operator must request unblock from the upstream provider; panel cannot work around this. Detection: `openssl s_client -connect aspmx.l.google.com:25` from the server times out. Documented as the first checklist item.
+    - "Bulwark shows stale mailbox after password change via panel CLI" → `systemctl reload jabali-stalwart` (Bulwark's JMAP session uses Stalwart's directory cache; reload clears it).
 - `docs/BLUEPRINT.md` M6 entry flipped from PLANNED → SHIPPED with anchor commits + updated changelog row.
 - `CHANGELOG` entry in whatever form the repo uses (currently rolled into the BLUEPRINT changelog table).
 
@@ -602,7 +674,18 @@ Each sub-agent dispatched for a step MUST:
 6. Report format: branch name, commit SHAs on branch, `git log main..<branch>` summary, rebase + re-test confirmation, impact-analysis summary for touched symbols.
 7. For Step 8 (strongest-model): reference the M22 SSO-file lessons (`project_m22_rework_sso_file.md` memory) — the one-shot filename + flock + unlink + systemd reaper pattern is the mental model for the SSO token handling; do NOT invent callback-based flows that echo M22's original (failed) magic-link design.
 
-## 6. Adversarial-review fold-in (audit trail)
+## 6. Post-review operator decisions (2026-04-21)
+
+Operator (shuki) confirmed the §7 open questions with these choices; plan already reflects them:
+
+1. **Webmail:** Bulwark 1.4.14 (not Roundcube). Step 8 fully rewritten for Next.js + JMAP. Single Node service on 127.0.0.1:3000, no per-user PHP-FPM, no separate webmail database. AGPL-v3 license trade-off noted in ADR-0041.
+2. **DKIM key type:** Ed25519 (not RSA-2048). Step 1 & 3 DKIM keygen switched to `crypto/ed25519`; DNS TXT record format updated to `k=ed25519`; ADR-0043 records the RFC 8463 compatibility trade-off and the RSA-2048 fallback-selector escape hatch for corporate-receiver delivery issues.
+3. **Default per-mailbox quota:** 1 GiB flat (plan already used this).
+4. **Mail hostname shape:** per-domain `mail.<domain>` MX label (plan already used this). Dual `/webmail/` path-mount on the primary domain dropped; only `mail.<domain>` is served.
+
+§7 below (open questions) is now closed — kept for audit trail.
+
+## 7. Adversarial-review fold-in (audit trail)
 
 Opus sub-agent reviewed the first draft on 2026-04-21. **Zero CRITICAL, 4 HIGH, 4 MEDIUM/LOW.** Folded in before registration:
 
@@ -615,13 +698,15 @@ Opus sub-agent reviewed the first draft on 2026-04-21. **Zero CRITICAL, 4 HIGH, 
 - **LOW #9 (CLI scoping):** Added the per-domain disjoint-result unit test to Step 6.
 - **LOW #10 (E2E flake):** E2E IMAP poll loop bounded to 15s with journal tail on failure.
 
-## 7. Open questions for the user before dispatch
+## 8. Open questions for the user before dispatch (CLOSED 2026-04-21)
 
-- **Confirm webmail choice:** Roundcube 1.6.9 is my recommendation based on research (Stalwart's webadmin is admin-ops, not end-user). Override if you want to evaluate a different client (e.g. SnappyMail, Rainloop). Decision blocks Step 1 ADR-0041 and Step 8.
-- **DKIM key type:** RSA-2048 is my default. Some providers want ED25519 (smaller, faster, not universally supported). v1 = RSA-2048; v1.1 adds ED25519 as a second selector. Confirm or override.
-- **Default per-mailbox quota:** 1 GiB in the plan. Override if the hosting package should inherit (then plumb `hosting_packages.default_mailbox_quota_bytes`). Low-effort add; say the word.
-- **Server hostname for mail.<domain> MX target vs using the domain's own `mail.` A record:** plan uses `mail.<domain> → A <server-IPv4>` so each domain has a stable MX label. Alternative: single shared `mail.<hostname>.` — cheaper DNS, but co-mingles domains. Confirm per-domain preference.
+- ~~**Webmail choice:**~~ → Bulwark 1.4.14. Recorded in §6.
+- ~~**DKIM key type:**~~ → Ed25519. Recorded in §6 + ADR-0043 decision + runbook escape hatch.
+- ~~**Default per-mailbox quota:**~~ → 1 GiB flat. Recorded in §6.
+- ~~**Mail hostname shape:**~~ → per-domain `mail.<domain>`. Recorded in §6.
+
+All four answered. Plan is dispatch-ready.
 
 ---
 
-**Last updated:** 2026-04-21 (reviewed — adversarial pass by Opus sub-agent, 0 CRITICAL, 4 HIGH + 4 MEDIUM/LOW folded in; §6 is the audit trail).
+**Last updated:** 2026-04-21 — adversarial review + operator decisions folded in. Webmail = Bulwark 1.4.14 (Next.js + JMAP); DKIM = Ed25519; quota = 1 GiB; per-domain `mail.<domain>`. §6 + §7 are the audit trail. Plan is dispatch-ready.

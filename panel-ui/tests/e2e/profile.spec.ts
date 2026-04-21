@@ -9,6 +9,10 @@ test.describe("user panel — MyProfile", () => {
     await signIn(page, user);
     await page.waitForURL(/\/jabali-panel/);
 
+    // da73d78: user shell lands on /dashboard now, not /profile. The
+    // profile page still exists (reachable from header dropdown) and
+    // this spec covers its content, so navigate explicitly.
+    await page.goto("/jabali-panel/profile");
     await expect(page.getByRole("heading", { name: /my profile/i })).toBeVisible();
 
     // Email appears in both the header avatar button and the Descriptions

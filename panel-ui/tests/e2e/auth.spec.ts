@@ -17,8 +17,11 @@ test.describe("login + role-based landing", () => {
     await mockApi(page, { me: user });
     await signIn(page, user);
 
-    await expect(page).toHaveURL(/\/jabali-panel(\/profile)?$/);
-    await expect(page.getByRole("heading", { name: /my profile/i })).toBeVisible();
+    // da73d78: user shell's default landing moved from /profile to
+    // /dashboard (matching the admin shell). MyProfile still exists
+    // and is reachable from the header dropdown.
+    await expect(page).toHaveURL(/\/jabali-panel(\/dashboard)?$/);
+    await expect(page.getByRole("heading", { name: /dashboard/i })).toBeVisible();
   });
 
   test("wrong password stays on /login and shows an error", async ({ page }) => {

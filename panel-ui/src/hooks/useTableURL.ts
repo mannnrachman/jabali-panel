@@ -78,6 +78,27 @@ export function useTableURL<T>({
         next.set(k, String(v));
       }
     }
+    // Strip default values so they don't pollute the URL — page=1,
+    // pageSize=defaultPageSize, order=defaultOrder are implied by the
+    // hook's contract and reproducing them as query-string noise was
+    // the e2e flake root cause: AntD Table's onChange fires on initial
+    // mount with the default pagination, and the resulting
+    // setSearchParams({page:1}) was landing AFTER a pending
+    // navigate('/create' or '/edit/:id'), clobbering the URL back to
+    // '/users?page=1' and unmounting the target page. Stripping
+    // defaults turns the initial-mount onChange into a no-op (see the
+    // equality guard below). See c830630 and 599c9b2 for the
+    // e2e-side workarounds; this is the product-side root-cause fix.
+    if (next.get("page") === "1") next.delete("page");
+    if (next.get("pageSize") === String(defaultPageSize)) next.delete("pageSize");
+    if (next.get("order") === defaultOrder) next.delete("order");
+    // No-op guard: don't call setSearchParams when the result is
+    // identical to the current URL — that still triggers a history
+    // push on some react-router versions and can race with in-flight
+    // navigate() calls in a Link/onClick handler.
+    if (next.toString() === searchParams.toString()) {
+      return;
+    }
     setSearchParams(next);
   };
 

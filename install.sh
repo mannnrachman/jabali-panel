@@ -2774,8 +2774,11 @@ _install_stalwart_cli() {
 
 install_bulwark() {
   local bulwark_version="1.4.14"
-  local bulwark_tag="v${bulwark_version}"
-  _log "installing Bulwark webmail ($bulwark_tag)"
+  # Upstream tags the Bulwark repo without a `v` prefix — `1.4.14`, not
+  # `v1.4.14`. Cloning with the `v`-prefixed form fails with "Remote
+  # branch not found".
+  local bulwark_tag="${bulwark_version}"
+  _log "installing Bulwark webmail (tag $bulwark_tag)"
 
   if ! getent passwd jabali-webmail >/dev/null 2>&1; then
     _log "creating jabali-webmail service user"

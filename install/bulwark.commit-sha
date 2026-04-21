@@ -1,13 +1,17 @@
-# Bulwark Webmail v1.4.14 git commit SHA.
-# Source: https://github.com/bulwarkmail/webmail (tag v1.4.14).
-# Verified: PENDING — capture on first deploy.
+# Bulwark Webmail 1.4.14 git commit SHA.
+# Source: https://github.com/bulwarkmail/webmail (tag 1.4.14).
+# Captured 2026-04-21 on first-deploy VM 10.0.3.13.
 #
 # Bulwark is checked out as a git clone (not a release tarball) because
 # its `npm run build` step consumes the workspace layout + local files
 # that the release artefacts don't include. install_bulwark() in
 # install.sh clones the tag and verifies HEAD matches this SHA.
 #
-# To capture: `git ls-remote https://github.com/bulwarkmail/webmail v1.4.14`
+# Upstream tags this repo as "1.4.14" (no "v" prefix) — install.sh
+# constructs the tag without a prefix for that reason.
+#
+# To re-capture on a version bump:
+#   git ls-remote https://github.com/bulwarkmail/webmail <tag>
 # and paste the returned object SHA below. install.sh `_die`s if the
 # placeholder survives.
-PLACEHOLDER_CAPTURE_ON_FIRST_DEPLOY
+f303478850357bb62248ad9712d872e4dbe8327d

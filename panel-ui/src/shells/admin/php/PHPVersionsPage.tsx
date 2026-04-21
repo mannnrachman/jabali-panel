@@ -13,9 +13,6 @@ export const PHPVersionsPage = () => {
       <Typography.Title level={3} style={{ marginTop: 0 }}>
         PHP Manager
       </Typography.Title>
-      <Typography.Paragraph type="secondary">
-        Install PHP versions and manage extensions per version.
-      </Typography.Paragraph>
 
       {/* Card.tabList pins the tab strip to the top-left of the card body —
           mirrors the Server Settings page for consistency across admin pages. */}

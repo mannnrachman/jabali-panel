@@ -802,9 +802,13 @@ func TestReconcileOne_DomainFound(t *testing.T) {
 	err := r.ReconcileOne(ctx, domain.ID)
 	require.NoError(t, err)
 
-	// Verify that domain.create was called
-	require.Len(t, agent.calls, 1)
-	require.Equal(t, "domain.create", agent.calls[0].method)
+	// ReconcileOne also converges the rate-limit zone fragment (see
+	// reconciler.go; fixes nginx -t ordering when rate_limit_rps>0).
+	// Assert on the domain.create-specific subset so this test stays
+	// focused on the per-domain call shape.
+	domainCalls := filterCallsByPrefix(agent.calls, "domain.create")
+	require.Len(t, domainCalls, 1)
+	require.Equal(t, "domain.create", domainCalls[0].method)
 }
 
 func TestReconcileOne_DomainNotFound(t *testing.T) {
@@ -860,12 +864,14 @@ func TestReconcileOne_PassesCustomDirectives(t *testing.T) {
 	err := r.ReconcileOne(ctx, domain.ID)
 	require.NoError(t, err)
 
-	// Verify that domain.create was called
-	require.Len(t, agent.calls, 1)
-	require.Equal(t, "domain.create", agent.calls[0].method)
+	// Filter to domain.create — ReconcileOne also pushes the rate-limit
+	// zone fragment (empty when no domain opts in).
+	domainCalls := filterCallsByPrefix(agent.calls, "domain.create")
+	require.Len(t, domainCalls, 1)
+	require.Equal(t, "domain.create", domainCalls[0].method)
 
 	// Verify that custom_directives was passed in params
-	params := agent.calls[0].params.(map[string]any)
+	params := domainCalls[0].params.(map[string]any)
 	require.Equal(t, customDirectives, params["custom_directives"])
 }
 
@@ -924,21 +930,76 @@ func TestReconcileAllForce_RerendersEveryDomain(t *testing.T) {
 	err := r.ReconcileAllForce(ctx)
 	require.NoError(t, err)
 
-	// Verify that domain.create was called 3 times (one for each domain)
-	require.Len(t, agent.calls, 3)
+	// ReconcileAllForce also converges the rate-limit zone fragment once
+	// at the top (ordering rule — see reconciler.go). Filter to the
+	// domain.create subset for assertions.
+	domainCalls := filterCallsByPrefix(agent.calls, "domain.create")
+	require.Len(t, domainCalls, 3)
 	for i := 0; i < 3; i++ {
-		require.Equal(t, "domain.create", agent.calls[i].method)
+		require.Equal(t, "domain.create", domainCalls[i].method)
 	}
 
 	// Verify all three domains appear in the calls
 	domainNames := make(map[string]bool)
-	for _, call := range agent.calls {
+	for _, call := range domainCalls {
 		params := call.params.(map[string]any)
 		domainNames[params["domain"].(string)] = true
 	}
 	require.True(t, domainNames["enabled.com"])
 	require.True(t, domainNames["disabled.com"])
 	require.True(t, domainNames["another.com"])
+}
+
+// TestReconcileOne_RateLimitZoneFragmentPrecedesDomainCreate asserts the
+// ordering invariant that fixes the nginx "zero size shared memory zone"
+// abort: nginx.ratelimits.apply (declares zones) must land on the wire
+// BEFORE domain.create (writes vhost that references the zone). Regression
+// guard — without this, a 0→N rate_limit_rps change fails nginx -t on the
+// agent and the domain never lands.
+func TestReconcileOne_RateLimitZoneFragmentPrecedesDomainCreate(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+
+	now := time.Now().UTC()
+	username := "alice"
+	user := &models.User{
+		ID:       "user-rl",
+		Email:    "alice@example.com",
+		Username: &username,
+	}
+	userRepo.users[user.ID] = user
+	domain := &models.Domain{
+		ID:           "domain-rl",
+		UserID:       user.ID,
+		Name:         "rl.example.com",
+		DocRoot:      "/home/alice/domains/rl.example.com/public_html",
+		IsEnabled:    true,
+		RateLimitRPS: 100, // trigger zone emission
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	domainRepo.domains[domain.ID] = domain
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second})
+	require.NoError(t, r.ReconcileOne(ctx, domain.ID))
+
+	// Find the index of each method in the recorded call order.
+	rlIdx, createIdx := -1, -1
+	for i, c := range agent.calls {
+		if rlIdx == -1 && c.method == "nginx.ratelimits.apply" {
+			rlIdx = i
+		}
+		if createIdx == -1 && c.method == "domain.create" {
+			createIdx = i
+		}
+	}
+	require.NotEqual(t, -1, rlIdx, "nginx.ratelimits.apply must be called")
+	require.NotEqual(t, -1, createIdx, "domain.create must be called")
+	require.Less(t, rlIdx, createIdx, "nginx.ratelimits.apply must precede domain.create — zone must be declared before vhost references it")
 }
 
 func TestSchedule_NonBlocking(t *testing.T) {

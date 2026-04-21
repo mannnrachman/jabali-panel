@@ -244,6 +244,18 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// This is a separate pass that doesn't block domain reconciliation.
 	r.reconcileMysqlAdminShadow(ctx)
 
+	// M18 rate-limit zone fragment MUST converge BEFORE the domain loop:
+	// domain.create on the agent writes each vhost then runs `nginx -t`.
+	// If a vhost references `limit_req zone=rl_<id>` but the zone hasn't
+	// been declared in 00-jabali-ratelimits.conf yet, `nginx -t` fails with
+	// "zero size shared memory zone" (actually "unknown zone" but the
+	// symptom is the same) and domain.create aborts — the domain never
+	// lands. Running this first makes the zone declaration visible before
+	// any vhost that references it is (re-)written. The post-loop call
+	// further down handles the reverse transition (rate_limit_rps → 0:
+	// vhost stops referencing first, then the fragment drops the zone).
+	r.ReconcileNginxRateLimits(ctx)
+
 	// Get the list of enabled sites from the agent
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -371,6 +383,13 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// Both are safe to run last — they do their own drift detection
 	// and are idempotent when nothing has changed.
 	r.ReconcileUserLimits(ctx)
+	// ReconcileNginxRateLimits also runs at the TOP of ReconcileAll to
+	// guarantee zones are declared BEFORE vhosts that reference them
+	// (fixes 0→N rate_limit_rps). Running it again here handles the
+	// reverse direction (N→0): after the domain loop re-rendered the
+	// vhost without `limit_req`, this pass drops the stale zone
+	// declaration from the fragment. Both calls are content-hash
+	// gated so the no-change case is a cheap file-read.
 	r.ReconcileNginxRateLimits(ctx)
 
 	return nil
@@ -414,6 +433,15 @@ func (r *Reconciler) ReconcileOne(ctx context.Context, domainID string) error {
 	// domain whose user's pool was created after its Schedule call.
 	r.ensureDomainPHPBinding(ctx, domain)
 
+	// Converge the rate-limit zone fragment BEFORE domain.create. Without
+	// this, a user who changes rate_limit_rps from 0→N via the API gets a
+	// Schedule() that runs ReconcileOne, which writes a vhost referencing
+	// `rl_<id>` before the zone is declared → nginx -t fails → the change
+	// never lands. Same ordering rule as ReconcileAll; the function is
+	// idempotent (content-hash gated) so calling it per-domain is cheap
+	// in the unchanged case.
+	r.ReconcileNginxRateLimits(ctx)
+
 	// Always call domain.create with is_enabled to converge to desired state.
 	// The agent handles both enabled and disabled via the is_enabled parameter.
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -427,6 +455,11 @@ func (r *Reconciler) ReconcileOne(ctx context.Context, domainID string) error {
 // regardless of their current state on the agent. Every domain gets a fresh
 // domain.create call to ensure all configurations are up-to-date.
 func (r *Reconciler) ReconcileAllForce(ctx context.Context) error {
+	// Rate-limit zone fragment first — same ordering rule as ReconcileAll.
+	// Vhost-side limit_req references must find their zones already
+	// declared or the agent's nginx -t will abort domain.create.
+	r.ReconcileNginxRateLimits(ctx)
+
 	allDomains, _, err := r.domains.List(ctx, repository.ListOptions{Limit: 10000})
 	if err != nil {
 		return fmt.Errorf("failed to list domains: %w", err)

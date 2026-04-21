@@ -16,7 +16,12 @@ Group=jabali-mail
 SupplementaryGroups=jabali
 Slice=jabali.slice
 
-ExecStart=/usr/local/bin/stalwart --config=/etc/stalwart/config.toml
+# v0.16 config is a small JSON file describing only the datastore
+# (ADR-0045). All other settings (SqlDirectory, listeners, TLS, DKIM
+# signatures) live as JMAP objects in Stalwart's registry, provisioned
+# via `stalwart-cli apply` at bootstrap time.
+EnvironmentFile=-/etc/jabali-panel/stalwart.env
+ExecStart=/usr/local/bin/stalwart --config=/etc/stalwart/config.json
 
 Restart=on-failure
 RestartSec=5s

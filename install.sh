@@ -2426,10 +2426,18 @@ install_stalwart() {
     _install_stalwart_binary "$stalwart_version"
   fi
 
-  # JMAP admin token — generate once, preserve across re-runs.
+  # stalwart-cli is the v0.16 management surface (ADR-0045). Install
+  # alongside the server so apply-plan.json can be provisioned during
+  # the bootstrap step (follow-up commit). Version-pin independently of
+  # the server binary.
+  _install_stalwart_cli
+
+  # JMAP admin token — used later for panel <-> Stalwart management auth
+  # (JMAP basic auth with stored credential). Generated once + preserved
+  # across re-runs so a re-install doesn't break the panel-agent's auth.
   local admin_token_file="/etc/jabali-panel/stalwart-admin.token"
   if [[ ! -f "$admin_token_file" ]]; then
-    _log "generating Stalwart JMAP admin token -> $admin_token_file"
+    _log "generating Stalwart admin token -> $admin_token_file"
     umask 077
     openssl rand -base64 32 >"$admin_token_file"
     chmod 0640 "$admin_token_file"
@@ -2438,33 +2446,55 @@ install_stalwart() {
     _ok "Stalwart admin token already present"
   fi
 
-  # Render skeleton config.toml from template. Step 2 of the plan fills
-  # the SQL directory block with v0.16.0-verified filter syntax.
-  local stalwart_config="/etc/stalwart/config.toml"
-  if [[ ! -f "${REPO_DIR}/install/stalwart/config.toml.tmpl" ]]; then
-    _die "Stalwart config template not found at ${REPO_DIR}/install/stalwart/config.toml.tmpl"
+  # MariaDB read-only user for Stalwart's SQL directory lookups.
+  # Panel writes jabali_panel.mailboxes; Stalwart only reads (ADR-0042).
+  # Password is provisioned once + preserved across re-runs.
+  local stalwart_db_user="jabali-stalwart-ro"
+  local stalwart_db_pw_file="/etc/jabali-panel/stalwart-mariadb.password"
+  if [[ ! -f "$stalwart_db_pw_file" ]]; then
+    _log "generating Stalwart MariaDB password -> $stalwart_db_pw_file"
+    umask 077
+    openssl rand -hex 32 >"$stalwart_db_pw_file"
+    chmod 0640 "$stalwart_db_pw_file"
+    chown root:jabali-mail "$stalwart_db_pw_file"
   fi
+  local stalwart_db_pass
+  stalwart_db_pass="$(cat "$stalwart_db_pw_file")"
 
-  local panel_hostname="${JABALI_SRV_HOSTNAME:-}"
-  if [[ -z "$panel_hostname" && -f /etc/jabali-panel/config.toml ]]; then
-    panel_hostname="$(awk -F'[= "]+' '/^[[:space:]]*hostname[[:space:]]*=/{print $2; exit}' /etc/jabali-panel/config.toml)"
-  fi
-  if [[ -z "$panel_hostname" ]]; then
-    panel_hostname="$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo 'localhost')"
-  fi
+  # SELECT-only grant. Stalwart never writes to the source-of-truth
+  # directory; on-every-auth `synchronize_account` writes into its own
+  # registry (ADR-0045 §"Cache/invalidation model").
+  mariadb -e "
+    CREATE USER IF NOT EXISTS '${stalwart_db_user}'@'localhost' IDENTIFIED BY '${stalwart_db_pass}';
+    ALTER USER '${stalwart_db_user}'@'localhost' IDENTIFIED BY '${stalwart_db_pass}';
+    GRANT SELECT ON jabali_panel.mailboxes  TO '${stalwart_db_user}'@'localhost';
+    GRANT SELECT ON jabali_panel.domains    TO '${stalwart_db_user}'@'localhost';
+    FLUSH PRIVILEGES;
+  "
+  _ok "Stalwart MariaDB user provisioned: ${stalwart_db_user} (SELECT on mailboxes, domains)"
 
-  sed -e "s|{{\.PanelHostname}}|${panel_hostname}|g" \
-    "${REPO_DIR}/install/stalwart/config.toml.tmpl" >"$stalwart_config"
+  # Render /etc/stalwart/config.json from template. v0.16 stores only
+  # the datastore descriptor on disk (ADR-0045); everything else lives
+  # as JMAP objects applied via `stalwart-cli apply` (next install step,
+  # follow-up commit).
+  local stalwart_config="/etc/stalwart/config.json"
+  if [[ ! -f "${REPO_DIR}/install/stalwart/config.json.tmpl" ]]; then
+    _die "Stalwart config template not found at ${REPO_DIR}/install/stalwart/config.json.tmpl"
+  fi
+  sed -e "s|{{\.MariaDBPassword}}|${stalwart_db_pass}|g" \
+    "${REPO_DIR}/install/stalwart/config.json.tmpl" >"$stalwart_config"
   chown jabali-mail:jabali-mail "$stalwart_config"
   chmod 0640 "$stalwart_config"
 
   if grep -q '{{\..*}}' "$stalwart_config"; then
     _die "unsubstituted mustaches in $stalwart_config — template drift?"
   fi
-  _ok "Stalwart config skeleton at $stalwart_config (SQL directory block deferred to Step 2)"
+  _ok "Stalwart datastore config at $stalwart_config"
 
-  # Systemd unit — installed disabled by default. Agent's
-  # domain.email_enable command will `systemctl enable --now` on first use.
+  # Systemd unit — installed disabled by default. First
+  # `domain.email_enable` triggers bootstrap + `systemctl enable --now`
+  # (see ADR-0045 §"Bootstrap flow"). Remains disabled on fresh hosts
+  # with no email-enabled domains so ports 25/465/587/993 stay unbound.
   if [[ ! -f "${REPO_DIR}/install/systemd/jabali-stalwart.service" ]]; then
     _die "Stalwart systemd unit not found at ${REPO_DIR}/install/systemd/jabali-stalwart.service"
   fi
@@ -2532,6 +2562,71 @@ _install_stalwart_binary() {
   ln -sfn "$bin_in_tar" /usr/local/bin/stalwart
   rm -rf /opt/stalwart.prev
   _ok "Stalwart $version installed at /opt/stalwart (symlinked to /usr/local/bin/stalwart)"
+}
+
+# _install_stalwart_cli downloads + verifies the stalwart-cli release
+# tarball (separate repo github.com/stalwartlabs/cli) and drops the binary
+# at /usr/local/bin/stalwart-cli. ADR-0045 explains the role: the CLI
+# speaks the v0.16 JMAP management API, used by install.sh bootstrap and
+# the reconciler. Idempotent against version reported by --version.
+_install_stalwart_cli() {
+  local cli_version="1.0.0"
+  local cli_binary="/usr/local/bin/stalwart-cli"
+  local arch="x86_64-unknown-linux-gnu"
+  local tarball="stalwart-cli-${arch}.tar.xz"
+  local tarball_path="/tmp/${tarball}"
+  local url="https://github.com/stalwartlabs/cli/releases/download/v${cli_version}/${tarball}"
+  local sha_file="${REPO_DIR}/install/stalwart-cli.sha256"
+
+  if [[ -x "$cli_binary" ]]; then
+    local installed_version
+    installed_version="$("$cli_binary" --version 2>&1 | grep -oP 'v?\K[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || echo unknown)"
+    if [[ "$installed_version" == "$cli_version" ]]; then
+      _ok "stalwart-cli $cli_version already installed"
+      return 0
+    fi
+    _warn "upgrading stalwart-cli $installed_version -> $cli_version"
+  fi
+
+  _log "downloading stalwart-cli $cli_version"
+  if ! curl -fsSL "$url" -o "$tarball_path"; then
+    _die "failed to download stalwart-cli from $url"
+  fi
+
+  if [[ ! -f "$sha_file" ]]; then
+    _die "stalwart-cli SHA-256 checksum file not found at $sha_file"
+  fi
+  local expected_sha
+  expected_sha="$(awk '/^[[:space:]]*#/ || NF==0 { next } { print $1; exit }' "$sha_file")"
+  if [[ -z "$expected_sha" ]]; then
+    _die "no checksum line found in $sha_file (comments only?)"
+  fi
+  if [[ "$expected_sha" == "PLACEHOLDER_CAPTURE_ON_FIRST_DEPLOY" ]]; then
+    _die "stalwart-cli SHA-256 placeholder in $sha_file — capture the real checksum on first deploy and bump the file"
+  fi
+  local actual_sha
+  actual_sha="$(sha256sum "$tarball_path" | awk '{print $1}')"
+  if [[ "$expected_sha" != "$actual_sha" ]]; then
+    _die "stalwart-cli SHA-256 mismatch. Expected: $expected_sha, got: $actual_sha"
+  fi
+
+  # .tar.xz — extract to a tmp dir, find the binary, atomic swap.
+  local new_dir="/tmp/stalwart-cli.new"
+  rm -rf "$new_dir"
+  install -d -m 0755 -o root -g root "$new_dir"
+  tar -xJf "$tarball_path" -C "$new_dir"
+  rm -f "$tarball_path"
+
+  local bin_in_tar
+  bin_in_tar="$(find "$new_dir" -maxdepth 3 -type f -name stalwart-cli -perm -u+x | head -n1)"
+  if [[ -z "$bin_in_tar" ]]; then
+    rm -rf "$new_dir"
+    _die "stalwart-cli binary not found in tarball"
+  fi
+
+  install -m 0755 -o root -g root "$bin_in_tar" "$cli_binary"
+  rm -rf "$new_dir"
+  _ok "stalwart-cli $cli_version installed at $cli_binary"
 }
 
 install_bulwark() {

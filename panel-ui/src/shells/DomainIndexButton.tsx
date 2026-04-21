@@ -104,7 +104,7 @@ export const DomainIndexButton = ({ domain }: { domain: DomainIndexTarget }) => 
           Set the default directory index files
         </Typography.Paragraph>
         <Typography.Text strong>
-          Directory Index Priority <span style={{ color: "#ff4d4f" }}>*</span>
+          Directory Index Priority <Typography.Text type="danger">*</Typography.Text>
         </Typography.Text>
         <Radio.Group
           value={value}
@@ -123,7 +123,7 @@ export const DomainIndexButton = ({ domain }: { domain: DomainIndexTarget }) => 
         </Radio.Group>
         <Typography.Text
           type="secondary"
-          style={{ display: "block", marginTop: 12, fontSize: 12 }}
+          style={{ display: "block", marginTop: 12 }}
         >
           Choose which file should be served as the default index
         </Typography.Text>

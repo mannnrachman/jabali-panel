@@ -101,12 +101,11 @@ rewrite ^/old$ /new permanent;
 add_header X-Frame-Options "DENY" always;`}
       style={{
         fontFamily: "monospace",
-        fontSize: 12,
       }}
     />
     <Typography.Text
       type="secondary"
-      style={{ display: "block", marginTop: 8, fontSize: 12 }}
+      style={{ display: "block", marginTop: 8 }}
     >
       Restricted to safe directives (rewrite, add_header, proxy_pass, etc.).
       Dangerous directives are blocked.
@@ -176,7 +175,7 @@ const renderRewriteBody = (
           value={rule.pattern}
           onChange={(e) => onUpdate("pattern", e.target.value)}
         />
-        <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 4 }}>
+        <Typography.Text type="secondary" style={{ display: "block", marginTop: 4 }}>
           Regex matched against the URI
         </Typography.Text>
       </Col>
@@ -444,11 +443,11 @@ const SortableRuleCard = ({
             <MenuOutlined />
           </button>
 
-          <Typography.Text strong style={{ fontSize: 13 }}>
+          <Typography.Text strong>
             {getRuleTypeLabel(rule.type)}
           </Typography.Text>
 
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          <Typography.Text type="secondary">
             {getRuleSummary(rule)}
           </Typography.Text>
 

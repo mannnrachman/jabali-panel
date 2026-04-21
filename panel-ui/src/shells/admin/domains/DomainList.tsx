@@ -27,9 +27,9 @@ const renderDomainCell = (name: string, docRoot: string) => (
   <div>
     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
       <GlobalOutlined />
-      <span style={{ fontWeight: 500 }}>{name}</span>
+      <span>{name}</span>
     </div>
-    <div style={{ color: "#999", fontSize: "12px" }}>{stripHomePrefix(docRoot)}</div>
+    <Typography.Text type="secondary">{stripHomePrefix(docRoot)}</Typography.Text>
   </div>
 );
 

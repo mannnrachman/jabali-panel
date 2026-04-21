@@ -44,6 +44,7 @@ import { DomainEdit } from "./shells/admin/domains/DomainEdit";
 import { DomainList } from "./shells/admin/domains/DomainList";
 import { ServerSettingsPage } from "./shells/admin/settings/ServerSettingsPage";
 import { MyProfile } from "./shells/user/MyProfile";
+import { UserDashboard } from "./shells/user/UserDashboard";
 import { FileManagerPage } from "./shells/user/files/FileManagerPage";
 import { UserDomainList } from "./shells/user/domains/UserDomainList";
 import { UserDomainCreate } from "./shells/user/domains/UserDomainCreate";
@@ -146,7 +147,10 @@ const ThemedApp = () => {
               </RequireUser>
             }
           >
-            <Route index element={<MyProfile />} />
+            <Route index element={<Navigate to="dashboard" replace />} />
+            <Route path="dashboard" element={<UserDashboard />} />
+            {/* Profile stays reachable via the header dropdown — no
+                longer a sidebar entry as of the dashboard addition. */}
             <Route path="profile" element={<MyProfile />} />
             <Route path="domains">
               <Route index element={<UserDomainList />} />

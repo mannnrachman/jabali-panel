@@ -25,7 +25,6 @@ import {
   SettingOutlined,
   TeamOutlined,
   ThunderboltOutlined,
-  UserOutlined,
 } from "@ant-design/icons";
 import { createElement } from "react";
 
@@ -95,10 +94,10 @@ export const adminNav: NavItem[] = [
 
 export const userNav: NavItem[] = [
   {
-    key: "profile",
-    label: "My Profile",
-    icon: createElement(UserOutlined),
-    path: "/jabali-panel/profile",
+    key: "dashboard",
+    label: "Dashboard",
+    icon: createElement(DashboardOutlined),
+    path: "/jabali-panel/dashboard",
   },
   {
     key: "domains",

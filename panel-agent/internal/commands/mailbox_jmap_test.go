@@ -222,7 +222,16 @@ func TestJMAPCall_StalwartError_Propagates(t *testing.T) {
 // --- accountIDByEmail / accountQuota ---------------------------------
 
 func TestAccountIDByEmail_Found(t *testing.T) {
+	// accountIDByEmail issues TWO calls against Stalwart v0.16:
+	//   1. x:Domain/query to resolve the domain name → domainId (Stalwart
+	//      rejects emailAddress as a filter property so we can't do it
+	//      in a single call).
+	//   2. x:Account/query with filter:{name, domainId}.
+	// The fake server must route both to avoid a 400.
 	srv := newJMAPServer(t, map[string]jmapHandler{
+		"x:Domain/query": jmapHandlerReturning(jmapQueryResult{
+			IDs: []string{"dom-1"}, Total: 1,
+		}),
 		"x:Account/query": jmapHandlerReturning(jmapQueryResult{
 			IDs: []string{"acct-123"}, Total: 1,
 		}),
@@ -241,6 +250,9 @@ func TestAccountIDByEmail_Found(t *testing.T) {
 
 func TestAccountIDByEmail_NotFound_ReturnsEmpty(t *testing.T) {
 	srv := newJMAPServer(t, map[string]jmapHandler{
+		"x:Domain/query": jmapHandlerReturning(jmapQueryResult{
+			IDs: []string{"dom-1"}, Total: 1,
+		}),
 		"x:Account/query": jmapHandlerReturning(jmapQueryResult{IDs: nil, Total: 0}),
 	})
 	defer srv.Close()
@@ -252,6 +264,28 @@ func TestAccountIDByEmail_NotFound_ReturnsEmpty(t *testing.T) {
 	}
 	if id != "" {
 		t.Errorf("id: got %q, want empty for not-found", id)
+	}
+}
+
+// Guards the short-circuit: domain not synced yet → no point querying
+// x:Account/query, return empty immediately. Matches how mailbox.delete
+// and mailbox.usage should behave against a v0.16 registry that is
+// populated lazily on first auth.
+func TestAccountIDByEmail_DomainNotSynced_ReturnsEmpty(t *testing.T) {
+	srv := newJMAPServer(t, map[string]jmapHandler{
+		"x:Domain/query": jmapHandlerReturning(jmapQueryResult{IDs: nil, Total: 0}),
+		// No x:Account/query route — the implementation must not reach
+		// it. Unrouted methods 400 so a regression is noisy.
+	})
+	defer srv.Close()
+	wireJMAP(t, srv)
+
+	id, err := accountIDByEmail(context.Background(), "ghost@fresh.example")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if id != "" {
+		t.Errorf("id: got %q, want empty when domain absent from registry", id)
 	}
 }
 

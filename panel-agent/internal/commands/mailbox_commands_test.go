@@ -84,8 +84,13 @@ func TestMailbox_SetQuotaResponse_EchoesValue(t *testing.T) {
 // --- mailbox.delete (calls JMAP) -------------------------------------
 
 func TestMailboxDelete_AccountFoundThenDestroyed(t *testing.T) {
-	// Two JMAP calls: Account/query -> id, then Account/set destroy.
+	// Three JMAP calls against Stalwart v0.16: Domain/query (resolve
+	// domain name → domainId) + Account/query (filter:{name, domainId})
+	// + Account/set destroy.
 	srv := newJMAPServer(t, map[string]jmapHandler{
+		"x:Domain/query": jmapHandlerReturning(jmapQueryResult{
+			IDs: []string{"dom-1"}, Total: 1,
+		}),
 		"x:Account/query": jmapHandlerReturning(jmapQueryResult{
 			IDs: []string{"acct-123"}, Total: 1,
 		}),
@@ -110,8 +115,12 @@ func TestMailboxDelete_AccountFoundThenDestroyed(t *testing.T) {
 func TestMailboxDelete_NeverSynced_AcksWithoutDestroyCall(t *testing.T) {
 	// Account/query returns empty IDs. The destroy route must NOT be
 	// called — if it is, the route map below would respond with 400
-	// (no such route) and the test fails.
+	// (no such route) and the test fails. Domain/query has to be
+	// present because accountIDByEmail resolves the domain first.
 	srv := newJMAPServer(t, map[string]jmapHandler{
+		"x:Domain/query": jmapHandlerReturning(jmapQueryResult{
+			IDs: []string{"dom-1"}, Total: 1,
+		}),
 		"x:Account/query": jmapHandlerReturning(jmapQueryResult{IDs: nil, Total: 0}),
 	})
 	defer srv.Close()
@@ -139,6 +148,9 @@ func TestMailboxDelete_BadParams(t *testing.T) {
 
 func TestMailboxUsage_Happy(t *testing.T) {
 	srv := newJMAPServer(t, map[string]jmapHandler{
+		"x:Domain/query": jmapHandlerReturning(jmapQueryResult{
+			IDs: []string{"dom-1"}, Total: 1,
+		}),
 		"x:Account/query": jmapHandlerReturning(jmapQueryResult{
 			IDs: []string{"acct-alice"}, Total: 1,
 		}),
@@ -178,7 +190,12 @@ func TestMailboxUsage_Happy(t *testing.T) {
 func TestMailboxUsage_NeverSynced_ReturnsZeros(t *testing.T) {
 	// Never-authed mailbox: Account/query returns no ids, handler
 	// skips Account/get entirely and returns zero-value response.
+	// Domain/query still runs because accountIDByEmail resolves the
+	// domain first.
 	srv := newJMAPServer(t, map[string]jmapHandler{
+		"x:Domain/query": jmapHandlerReturning(jmapQueryResult{
+			IDs: []string{"dom-1"}, Total: 1,
+		}),
 		"x:Account/query": jmapHandlerReturning(jmapQueryResult{IDs: nil, Total: 0}),
 	})
 	defer srv.Close()

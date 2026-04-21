@@ -278,13 +278,38 @@ type jmapSetResult struct {
 // emailAddress as format:"emailAddress", derived server-side from
 // name+'@'+domain.name; Group accounts use the same property name).
 func accountIDByEmail(ctx context.Context, email string) (string, error) {
+	// Stalwart v0.16 rejects filters on `emailAddress` with
+	// `unsupportedFilter` even though the schema documents the property
+	// — it only accepts filters on the stored columns (`name`,
+	// `domainId`, `memberTenantId`, …). The SQL directory stores the
+	// local part in `name` and the registry domain id in `domainId`, so
+	// we reconstruct the compound filter from the email's two halves.
+	at := strings.LastIndex(email, "@")
+	if at <= 0 || at == len(email)-1 {
+		// Defence in depth — requireEmail should have rejected this.
+		return "", fmt.Errorf("accountIDByEmail: malformed email %q", email)
+	}
+	localPart, domainName := email[:at], email[at+1:]
+
+	// If the domain isn't in the registry yet, nobody has authed
+	// against it, so there's no account to find either. Match the
+	// "no registry entry" semantic the caller already expects (empty
+	// id, nil error).
+	domainID, err := domainIDByName(ctx, domainName)
+	if err != nil {
+		return "", err
+	}
+	if domainID == "" {
+		return "", nil
+	}
+
 	args := map[string]any{
-		// JMAP FilterCondition per RFC 8620 §4.4.1: property names go
-		// directly at the top level of the filter object. Stalwart
-		// v0.16 returns `unsupportedFilter — property` on the
-		// {"property": X, "value": Y} shape.
+		// JMAP FilterCondition per RFC 8620 §4.4.1: property names at
+		// the top level. The pair (name, domainId) is unique per
+		// ADR-0042's schema (UNIQUE (domain_id, local_part)).
 		"filter": map[string]any{
-			"emailAddress": email,
+			"name":     localPart,
+			"domainId": domainID,
 		},
 		"limit": 1,
 	}

@@ -453,7 +453,7 @@ export const DNSRecordsPage = () => {
 
   if (loading) {
     return (
-      <div style={{ padding: 24, textAlign: "center" }}>
+      <div style={{ textAlign: "center" }}>
         <Spin />
       </div>
     );
@@ -461,7 +461,7 @@ export const DNSRecordsPage = () => {
 
   if (zoneNotProvisioned) {
     return (
-      <div style={{ padding: 24 }}>
+      <div >
         <Button
           type="text"
           icon={<ArrowLeftOutlined />}
@@ -494,7 +494,7 @@ export const DNSRecordsPage = () => {
   }
 
   return (
-    <div style={{ padding: 24 }}>
+    <div >
       {/* Header */}
       <Button
         type="text"

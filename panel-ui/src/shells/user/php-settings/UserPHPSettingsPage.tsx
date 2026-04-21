@@ -246,7 +246,7 @@ export function UserPHPSettingsPage() {
   ];
 
   return (
-    <div style={{ padding: 24, maxWidth: 800, margin: "0 auto" }}>
+    <div style={{ maxWidth: 800, margin: "0 auto" }}>
       <Space orientation="vertical" size="large" style={{ width: "100%" }}>
         <Typography.Title level={2} style={{ margin: 0 }}>
           PHP Settings

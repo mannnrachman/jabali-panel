@@ -145,7 +145,7 @@ export function Dashboard() {
 
   if (loading && !info) {
     return (
-      <div style={{ padding: 24, textAlign: "center" }}>
+      <div style={{ textAlign: "center" }}>
         <Spin size="large" />
       </div>
     );
@@ -153,7 +153,7 @@ export function Dashboard() {
 
   if (error && !info) {
     return (
-      <div style={{ padding: 24 }}>
+      <div >
         <Typography.Text type="danger">{error}</Typography.Text>
       </div>
     );
@@ -164,7 +164,7 @@ export function Dashboard() {
     : 0;
 
   return (
-    <div style={{ padding: 24 }}>
+    <div >
       <Space
         style={{
           marginBottom: 16,

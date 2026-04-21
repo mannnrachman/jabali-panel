@@ -9,7 +9,7 @@ export const PHPVersionsPage = () => {
   const [active, setActive] = useState<TabKey>("versions");
 
   return (
-    <div style={{ padding: 24 }}>
+    <div >
       <Typography.Title level={3} style={{ marginTop: 0 }}>
         PHP Manager
       </Typography.Title>

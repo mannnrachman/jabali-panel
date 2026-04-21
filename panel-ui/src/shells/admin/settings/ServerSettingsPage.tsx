@@ -479,7 +479,7 @@ export const ServerSettingsPage = () => {
   const [activeTab, setActiveTab] = useState<"general" | "dns">("general");
 
   return (
-    <div style={{ padding: 24, maxWidth: 960 }}>
+    <div style={{ maxWidth: 960 }}>
       <Typography.Title level={3} style={{ marginTop: 0 }}>
         Server Settings
       </Typography.Title>

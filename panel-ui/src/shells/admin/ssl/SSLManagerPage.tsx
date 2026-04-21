@@ -3,7 +3,7 @@ import { SSLManagerTable } from "../../../components/ssl/SSLManagerTable";
 
 export const SSLManagerPage = () => {
   return (
-    <div style={{ padding: 24 }}>
+    <div >
       <Space
         style={{
           marginBottom: 16,

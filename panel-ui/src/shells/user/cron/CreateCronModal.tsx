@@ -166,7 +166,7 @@ export const CreateCronModal = ({
         </Form.Item>
 
         <Form.Item>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          <Typography.Text type="secondary">
             Must start with <code>wp</code> or <code>php</code>. Shell operators (|, &, $, ...) are rejected.
           </Typography.Text>
         </Form.Item>
@@ -204,7 +204,7 @@ export const CreateCronModal = ({
 
         {scheduleMode === "advanced" && (
           <Form.Item>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            <Typography.Text type="secondary">
               5-field cron expression (minute hour day month weekday).{" "}
               <a href="https://crontab.guru" target="_blank" rel="noopener noreferrer">
                 Learn more

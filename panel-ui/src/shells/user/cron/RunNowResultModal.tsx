@@ -42,11 +42,10 @@ export const RunNowResultModal = ({
             <pre
               style={{
                 fontFamily: "monospace",
-                fontSize: "12px",
                 margin: 0,
                 maxHeight: "300px",
                 overflow: "auto",
-                backgroundColor: "#f5f5f5",
+                backgroundColor: "var(--ant-color-bg-container)",
                 padding: "12px",
                 borderRadius: "4px",
                 whiteSpace: "pre-wrap",
@@ -61,21 +60,20 @@ export const RunNowResultModal = ({
         {result.stderr && (
           <Card
             title="Standard Error"
-            style={{ borderColor: "#ff4d4f" }}
+            style={{ borderColor: "var(--ant-color-error)" }}
           >
             <pre
               style={{
                 fontFamily: "monospace",
-                fontSize: "12px",
                 margin: 0,
                 maxHeight: "300px",
                 overflow: "auto",
-                backgroundColor: "#fff1f0",
+                backgroundColor: "var(--ant-color-error-bg)",
                 padding: "12px",
                 borderRadius: "4px",
                 whiteSpace: "pre-wrap",
                 wordWrap: "break-word",
-                color: "#ff4d4f",
+                color: "var(--ant-color-error)",
               }}
             >
               {result.stderr}

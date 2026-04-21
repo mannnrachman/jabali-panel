@@ -91,13 +91,12 @@ export const CronLogDrawer = ({
       <Spin spinning={isLoading}>
         <Card
           style={{
-            backgroundColor: "#f5f5f5",
+            backgroundColor: "var(--ant-color-bg-container)",
           }}
         >
           <pre
             style={{
               fontFamily: "monospace",
-              fontSize: "12px",
               margin: 0,
               maxHeight: "600px",
               overflow: "auto",

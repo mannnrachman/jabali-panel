@@ -201,7 +201,6 @@ export const UserCronList = () => {
                 <span
                   style={{
                     fontFamily: "monospace",
-                    fontSize: "12px",
                   }}
                 >
                   {truncateCommand(command)}
@@ -219,7 +218,7 @@ export const UserCronList = () => {
             title: "Last Exit",
             dataIndex: "last_exit_code",
             render: (code: number | null) => {
-              if (code === null) return <span style={{ color: "#999" }}>—</span>;
+              if (code === null) return <Typography.Text type="secondary">—</Typography.Text>;
               if (code === 0)
                 return <Tag color="green">{code}</Tag>;
               return <Tag color="red"><code>{code}</code></Tag>;

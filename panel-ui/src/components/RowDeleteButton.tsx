@@ -57,8 +57,9 @@ export function RowDeleteButton({
         danger
         type="text"
         icon={<DeleteOutlined />}
-        aria-label="Delete"
-      />
+      >
+        Delete
+      </Button>
     </Popconfirm>
   );
 }

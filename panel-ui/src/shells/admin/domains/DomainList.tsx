@@ -2,7 +2,7 @@
 // stays the same (DNS/Redirects/Index/Settings/Toggle/Edit/Delete);
 // only the hook and the two Refine action buttons change.
 import { Button, Card, Dropdown, Space, Table, Tag, Typography } from "antd";
-import { DownOutlined, GlobalOutlined } from "@ant-design/icons";
+import { DownOutlined, EditOutlined, GlobalOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router";
 import type { SorterResult } from "antd/es/table/interface";
 
@@ -190,6 +190,7 @@ export const DomainList = () => {
                 </Button>
                 <Button
                   type="text"
+                  icon={<EditOutlined />}
                   onClick={() =>
                     navigate(`/jabali-admin/domains/edit/${r.id}`)
                   }

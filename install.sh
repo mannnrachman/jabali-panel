@@ -2622,30 +2622,39 @@ _install_stalwart_apply_plan() {
   # to run an authenticated apply. Only 2xx/3xx/4xx are accepted; 5xx
   # means "server exists but is broken" and we keep polling. 000 means
   # curl couldn't connect (daemon not listening yet).
-  local jmap_url="http://127.0.0.1:8446/jmap/session"
+  #
+  # Port probing: on first run the apply-plan has NOT created the
+  # `jmap-loopback` NetworkListener yet, so Stalwart falls back to its
+  # built-in default HTTP port 8080. On every subsequent run the
+  # registry holds the plan's `127.0.0.1:8446` listener, so 8446 is the
+  # management port. We probe both and apply against whichever answers.
+  local jmap_port=""
+  local jmap_status=""
   local waited=0
   local max_wait=30
-  local ready=0
   while (( waited < max_wait )); do
-    local status
-    status="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 -m 3 "$jmap_url" 2>/dev/null)"
-    # Normalise: empty string (curl crash) -> 000 sentinel.
-    status="${status:-000}"
-    if [[ "$status" =~ ^[234][0-9][0-9]$ ]]; then
-      _ok "Stalwart /jmap ready (HTTP $status) after ${waited}s"
-      ready=1
-      break
-    fi
+    for p in 8446 8080; do
+      local status
+      status="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 -m 3 \
+        "http://127.0.0.1:${p}/jmap/session" 2>/dev/null)"
+      status="${status:-000}"
+      if [[ "$status" =~ ^[234][0-9][0-9]$ ]]; then
+        jmap_port="$p"
+        jmap_status="$status"
+        break 2
+      fi
+    done
     sleep 1
     waited=$((waited + 1))
   done
-  if (( ready == 0 )); then
-    _err "Stalwart /jmap did not come up within ${max_wait}s — check 'journalctl -u jabali-stalwart'"
+  if [[ -z "$jmap_port" ]]; then
+    _err "Stalwart /jmap did not come up on 8446 or 8080 within ${max_wait}s — check 'journalctl -u jabali-stalwart'"
     _die "Stalwart bootstrap timed out"
   fi
+  _ok "Stalwart /jmap ready on :${jmap_port} (HTTP ${jmap_status}) after ${waited}s"
 
-  _log "applying plan via stalwart-cli: $plan_file"
-  if ! STALWART_URL="http://127.0.0.1:8446" \
+  _log "applying plan via stalwart-cli against :${jmap_port}"
+  if ! STALWART_URL="http://127.0.0.1:${jmap_port}" \
        STALWART_USER="admin" \
        STALWART_PASSWORD="$admin_token" \
        /usr/local/bin/stalwart-cli apply --file "$plan_file"; then
@@ -2654,6 +2663,30 @@ _install_stalwart_apply_plan() {
     _die "Stalwart apply failed"
   fi
   _ok "Stalwart plan applied (SqlDirectory + listeners + Authentication)"
+
+  # If we applied against the default :8080 (i.e. no plan was present
+  # before this run), we need to restart Stalwart so it rebinds to the
+  # newly-created NetworkListener objects (including 127.0.0.1:8446).
+  # If we already came in on :8446, the plan was previously applied and
+  # no restart is needed.
+  if [[ "$jmap_port" == "8080" ]]; then
+    _log "restarting jabali-stalwart to pick up plan-defined listeners"
+    systemctl restart jabali-stalwart.service
+    waited=0
+    while (( waited < 15 )); do
+      local s
+      s="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 -m 3 \
+        http://127.0.0.1:8446/jmap/session 2>/dev/null)"
+      s="${s:-000}"
+      if [[ "$s" =~ ^[234][0-9][0-9]$ ]]; then
+        _ok "Stalwart now serving plan-defined listener on :8446 (HTTP $s)"
+        return
+      fi
+      sleep 1
+      waited=$((waited + 1))
+    done
+    _warn "Stalwart did not come up on :8446 after apply — plan may be missing the jmap-loopback NetworkListener; check 'journalctl -u jabali-stalwart'"
+  fi
 }
 
 # _install_stalwart_binary is a private helper: download the release

@@ -70,12 +70,12 @@ export function JabaliFooter() {
         <Typography.Text type="secondary">·</Typography.Text>
         <Typography.Text type="secondary">
           <a
-            href="https://www.gnu.org/licenses/gpl-3.0.html"
+            href="https://www.gnu.org/licenses/agpl-3.0.html"
             target="_blank"
             rel="noreferrer"
             style={{ color: "inherit" }}
           >
-            GPL-3.0
+            AGPL-3.0
           </a>
         </Typography.Text>
         <Typography.Text strong>v{pkg.version}</Typography.Text>

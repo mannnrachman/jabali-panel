@@ -22,7 +22,7 @@ import {
   theme,
 } from "antd";
 import type { MenuProps } from "antd";
-import type { BaseSelectRef } from "rc-select";
+import type { BaseSelectRef } from "@rc-component/select";
 import { useLocation, useNavigate } from "react-router";
 
 import { apiClient } from "../apiClient";

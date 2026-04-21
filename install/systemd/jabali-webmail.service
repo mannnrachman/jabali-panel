@@ -1,0 +1,35 @@
+[Unit]
+Description=Jabali Webmail (Bulwark, Next.js)
+Documentation=https://github.com/bulwarkmail/webmail
+After=network-online.target jabali-stalwart.service
+Wants=network-online.target
+PartOf=jabali.slice
+
+[Service]
+Type=simple
+User=jabali-webmail
+Group=jabali-webmail
+Slice=jabali.slice
+
+WorkingDirectory=/opt/jabali-webmail
+# Bulwark ships as a Next.js app; `npm start` resolves to `next start`
+# via the package.json script. Runtime config comes from bulwark.env.
+ExecStart=/usr/bin/npm start -- --hostname 127.0.0.1 --port 3000
+EnvironmentFile=/etc/jabali-panel/bulwark.env
+
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/jabali-webmail /opt/jabali-webmail/.next/cache
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+# Intentionally NOT enabled — see jabali-stalwart.service.
+WantedBy=multi-user.target

@@ -73,32 +73,52 @@ Pivot M6 to the v0.16 model rather than pinning to v0.15.x.
 
 ### Bootstrap flow
 
-`install.sh::install_stalwart` writes three files on first install:
+`install.sh::install_stalwart` writes three files on every install run
+(idempotent — re-runs rewrite from current inputs):
 
 - `/etc/stalwart/config.json` — datastore wiring (RocksDB path + MySQL
-  connection for the SQL directory).
+  connection for the SQL directory), rendered from
+  `install/stalwart/config.json.tmpl` with the MariaDB password for the
+  `jabali-stalwart-ro` user.
 - `/etc/jabali-panel/stalwart-apply-plan.json` — declarative JMAP
-  object plan (SqlStore, SqlDirectory, listeners, TLS, Authentication).
-- `/etc/jabali-panel/stalwart.env` — temporarily contains
-  `STALWART_RECOVERY_ADMIN=bootstrap:<random-password>` for the initial
-  admin seeding. Normal-mode start, not recovery mode (per v0.16
-  upgrade doc §9).
+  object plan (SqlDirectory, NetworkListeners for 25/465/587/993 +
+  loopback JMAP, Authentication.directoryId pointer) rendered from
+  `install/stalwart/apply-plan.json.tmpl`.
+- `/etc/jabali-panel/stalwart.env` — contains
+  `STALWART_RECOVERY_ADMIN=admin:<token>` where `<token>` is the
+  contents of `/etc/jabali-panel/stalwart-admin.token`. Paired so
+  Stalwart accepts Basic-auth calls from the panel-agent against /jmap.
 
 Then:
 
-1. `systemctl enable --now jabali-stalwart`.
-2. Poll `127.0.0.1:8446/jmap` until ready (≤ 10s on typical hardware).
+1. `systemctl enable --now jabali-stalwart` (idempotent — no-op if
+   already enabled and active).
+2. Poll `http://127.0.0.1:8446/jmap/session` until a non-5xx HTTP
+   status (401 counts as "ready": the HTTP layer is up and refusing
+   our deliberately-unauthenticated GET). Typical ≤ 10s on a healthy
+   host; install aborts after 30s with a `journalctl` hint.
 3. Run `stalwart-cli apply --file /etc/jabali-panel/stalwart-apply-plan.json`
-   with bootstrap creds. Plan creates the real admin credential
-   (stored at `/etc/jabali-panel/stalwart-admin.token` for later panel
-   use) + SqlDirectory + listeners.
-4. Remove `STALWART_RECOVERY_ADMIN` from stalwart.env, `systemctl
-   daemon-reload`.
+   with `STALWART_USER=admin STALWART_PASSWORD=<token>`. Plan seeds
+   SqlDirectory + listeners + Authentication pointer.
+4. `STALWART_RECOVERY_ADMIN` stays in stalwart.env permanently — it's
+   the only admin credential the panel-agent uses. (Upstream docs call
+   it "temporary" in the migration narrative, but explicitly allow
+   permanent use when no WebUI-created admin exists. For our automation
+   path, the env-seeded admin IS the production credential.)
 
 The recovery-mode foreground dance (upgrade doc §5–7) is NOT used —
 it's required only for migrating an existing v0.15 deployment. Fresh
 installs use normal mode with seeded admin, which is simpler and has
 no state-transition cliffs.
+
+**Note on ExecStartPre.** `ExecStartPre=stalwart-cli apply` is NOT
+wired into the systemd unit, even though that would match the
+reconciler pattern we use elsewhere (nginx reload on vhost write, PHP
+pool regen on phpext install). ExecStartPre fires before ExecStart
+binds /jmap, so the CLI would always hit a dead port and fail the
+unit on every boot. Reconciliation lives in install.sh (first apply)
+and will move to the panel-api reconciler (plan-file-change trigger)
+when domain.email_enable grows beyond one-shot semantics.
 
 ### Reconciliation
 

@@ -1,0 +1,100 @@
+[
+  {
+    "_comment": "Stalwart v0.16 first-install apply plan (ADR-0045). Executed once by install.sh via `stalwart-cli apply --file` against a freshly-started Stalwart with the bootstrap admin from stalwart.env. Subsequent re-applies on this same file are idempotent: create ops against existing named objects become no-ops; update ops on singletons (Authentication) converge to the target state. Template mustaches substituted by install.sh; any unsubstituted mustache aborts the install."
+  },
+
+  {
+    "@type": "create",
+    "object": "x:Directory",
+    "value": {
+      "#sql-directory": {
+        "@type": "Sql",
+        "description": "Jabali panel mailboxes (authoritative; see ADR-0042)",
+        "store": {
+          "@type": "MySql",
+          "host": "127.0.0.1",
+          "port": 3306,
+          "database": "jabali_panel",
+          "authUsername": "jabali-stalwart-ro",
+          "authSecret": {
+            "@type": "Value",
+            "secret": "{{.MariaDBPassword}}"
+          },
+          "useTls": false,
+          "allowInvalidCerts": false
+        },
+        "columnEmail": "email_cached",
+        "columnSecret": "password_hash",
+        "queryLogin": "SELECT email_cached, password_hash FROM mailboxes WHERE email_cached = ? AND is_disabled = 0",
+        "queryRecipient": "SELECT email_cached, password_hash FROM mailboxes WHERE email_cached = ? AND is_disabled = 0"
+      }
+    }
+  },
+
+  {
+    "@type": "update",
+    "object": "x:Authentication",
+    "id": "singleton",
+    "value": {
+      "directoryId": "#sql-directory",
+      "passwordHashAlgorithm": "bcrypt"
+    }
+  },
+
+  {
+    "@type": "create",
+    "object": "x:NetworkListener",
+    "value": {
+      "#smtp-25": {
+        "name": "smtp-25",
+        "bind": ["0.0.0.0:25"],
+        "protocol": "smtp",
+        "useTls": false,
+        "tlsImplicit": false,
+        "socketReuseAddress": true,
+        "socketReusePort": false,
+        "socketNoDelay": true
+      },
+      "#smtp-submissions-465": {
+        "name": "smtp-submissions-465",
+        "bind": ["0.0.0.0:465"],
+        "protocol": "smtp",
+        "useTls": true,
+        "tlsImplicit": true,
+        "socketReuseAddress": true,
+        "socketReusePort": false,
+        "socketNoDelay": true
+      },
+      "#smtp-submission-587": {
+        "name": "smtp-submission-587",
+        "bind": ["0.0.0.0:587"],
+        "protocol": "smtp",
+        "useTls": true,
+        "tlsImplicit": false,
+        "socketReuseAddress": true,
+        "socketReusePort": false,
+        "socketNoDelay": true
+      },
+      "#imap-993": {
+        "name": "imap-993",
+        "bind": ["0.0.0.0:993"],
+        "protocol": "imap",
+        "useTls": true,
+        "tlsImplicit": true,
+        "socketReuseAddress": true,
+        "socketReusePort": false,
+        "socketNoDelay": true
+      },
+      "#jmap-loopback": {
+        "name": "jmap-loopback",
+        "bind": ["127.0.0.1:8446"],
+        "protocol": "http",
+        "useTls": false,
+        "tlsImplicit": false,
+        "socketReuseAddress": true,
+        "socketReusePort": false,
+        "socketNoDelay": true
+      }
+    }
+  }
+]

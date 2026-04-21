@@ -383,24 +383,36 @@ func accountDestroy(ctx context.Context, id string) error {
 }
 
 // createDomain creates a new x:Domain via JMAP x:Domain/set and
-// returns the server-assigned id. Field names + enum values verified
-// against schema.json.gz (ADR-0045 §Schema-pull):
+// returns the server-assigned id. Field types verified against
+// schema.json.gz (ADR-0045 §Schema-pull):
 //
 //   - name: string
 //   - isEnabled: bool
 //   - directoryId: nullable objectId (omitted → uses Authentication.directoryId)
-//   - dkimManagement: enum "Manual" or "Automatic" (we use Manual — panel
-//     generates keys + publishes TXT via PowerDNS per ADR-0043)
-//   - dnsManagement: enum "Manual" or "Automatic" (we use Manual — PowerDNS
-//     is the single DNS writer per ADR-0002)
+//   - dkimManagement: x:DkimManagement (tagged-enum object, variants
+//     {"@type":"Manual"} or {"@type":"Automatic", ...props}). We use
+//     Manual — panel generates keys + publishes TXT via PowerDNS per ADR-0043.
+//   - dnsManagement: x:DnsManagement ({"@type":"Manual"} or
+//     {"@type":"Automatic", ...}). We use Manual — PowerDNS is the
+//     single DNS writer per ADR-0002.
+//   - certificateManagement: x:CertificateManagement ({"@type":"Manual"} —
+//     we reuse the panel's certbot plumbing rather than Stalwart's ACME).
+//   - subAddressing: x:SubAddressing ({"@type":"Enabled"} — plus-addressing
+//     is standard and we don't need custom rewrites).
+//
+// All four tagged-enum objects are set explicitly. The schema marks
+// them as non-nullable object properties, so omitting them risks a
+// "required field missing" error at create time.
 func createDomain(ctx context.Context, name string) (string, error) {
 	args := map[string]any{
 		"create": map[string]any{
 			"#d1": map[string]any{
-				"name":           name,
-				"isEnabled":      true,
-				"dkimManagement": "Manual",
-				"dnsManagement":  "Manual",
+				"name":                  name,
+				"isEnabled":             true,
+				"dkimManagement":        map[string]any{"@type": "Manual"},
+				"dnsManagement":         map[string]any{"@type": "Manual"},
+				"certificateManagement": map[string]any{"@type": "Manual"},
+				"subAddressing":         map[string]any{"@type": "Enabled"},
 			},
 		},
 	}
@@ -462,6 +474,15 @@ func createDkimSignature(ctx context.Context, domainID, selector, pemPrivateKey 
 				},
 				"canonicalization": "relaxed/relaxed",
 				"stage":            "active",
+				// RFC 6376 §5.4 canonical "sign these" set. Schema marks
+				// headers as non-nullable Set<string>, so omitting it risks
+				// a "required field missing" error at create time.
+				"headers": []string{
+					"From", "To", "Cc", "Subject", "Date",
+					"Message-ID", "In-Reply-To", "References",
+					"MIME-Version", "Content-Type",
+				},
+				"report": false,
 			},
 		},
 	}

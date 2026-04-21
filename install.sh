@@ -2491,36 +2491,116 @@ install_stalwart() {
   fi
   _ok "Stalwart datastore config at $stalwart_config"
 
-  # stalwart.env — EnvironmentFile referenced by jabali-stalwart.service
-  # (optional, "EnvironmentFile=-" prefix). Task #13 will populate
-  # STALWART_RECOVERY_ADMIN=admin:<token> here as part of the bootstrap
-  # flow; until then the file is placeholder-only so code review doesn't
-  # flag an empty EnvironmentFile as an install bug.
+  # stalwart.env — systemd EnvironmentFile. Populated with
+  # STALWART_RECOVERY_ADMIN=admin:<stalwart-admin.token> so Stalwart
+  # accepts Basic-auth calls from the panel-agent (ADR-0045 §Bootstrap).
+  # Written/rewritten on every install run so a rotated admin token
+  # propagates into the unit after a `jabali update`.
   local stalwart_env="/etc/jabali-panel/stalwart.env"
-  if [[ ! -f "$stalwart_env" ]]; then
-    cat >"$stalwart_env" <<'EOF'
+  local stalwart_admin_token
+  stalwart_admin_token="$(cat "$admin_token_file")"
+  cat >"$stalwart_env" <<EOF
 # Stalwart Mail Server — systemd EnvironmentFile.
-# Populated by install.sh when the v0.16 bootstrap flow (M6 task #13)
-# lands. Currently a placeholder: the systemd unit references this file
-# with the "EnvironmentFile=-" optional prefix, so an empty body is
-# accepted. Do not hand-edit — install.sh is the single writer.
+# Managed by install.sh. Do NOT hand-edit.
+# STALWART_RECOVERY_ADMIN seeds an admin principal Stalwart accepts for
+# HTTP Basic auth against /jmap; paired with the token at
+# ${admin_token_file} the panel-agent uses for every management call.
+STALWART_RECOVERY_ADMIN=admin:${stalwart_admin_token}
 EOF
-    chmod 0640 "$stalwart_env"
-    chown root:jabali-mail "$stalwart_env"
-    _ok "Stalwart env placeholder at $stalwart_env"
-  fi
+  chmod 0640 "$stalwart_env"
+  chown root:jabali-mail "$stalwart_env"
+  _ok "Stalwart env written (admin seed) at $stalwart_env"
 
-  # Systemd unit — installed disabled by default. First
-  # `domain.email_enable` triggers bootstrap + `systemctl enable --now`
-  # (see ADR-0045 §"Bootstrap flow"). Remains disabled on fresh hosts
-  # with no email-enabled domains so ports 25/465/587/993 stay unbound.
+  # Render /etc/jabali-panel/stalwart-apply-plan.json from template.
+  # This is the JMAP declarative plan (ADR-0045) that seeds the
+  # SqlDirectory + listeners + Authentication pointer. Rendered every
+  # run; stalwart-cli apply is idempotent against already-applied state.
+  local stalwart_apply_plan="/etc/jabali-panel/stalwart-apply-plan.json"
+  if [[ ! -f "${REPO_DIR}/install/stalwart/apply-plan.json.tmpl" ]]; then
+    _die "Stalwart apply plan template not found at ${REPO_DIR}/install/stalwart/apply-plan.json.tmpl"
+  fi
+  sed -e "s|{{\.MariaDBPassword}}|${stalwart_db_pass}|g" \
+    "${REPO_DIR}/install/stalwart/apply-plan.json.tmpl" >"$stalwart_apply_plan"
+  chown root:jabali-mail "$stalwart_apply_plan"
+  chmod 0640 "$stalwart_apply_plan"
+  if grep -q '{{\..*}}' "$stalwart_apply_plan"; then
+    _die "unsubstituted mustaches in $stalwart_apply_plan — template drift?"
+  fi
+  _ok "Stalwart apply plan at $stalwart_apply_plan"
+
+  # Systemd unit — installed then started + applied. We start on install
+  # (not lazy on first domain.email_enable) because applying the plan
+  # requires a running /jmap endpoint; the bootstrap sequence is:
+  #
+  #   1. install/update the unit
+  #   2. systemctl daemon-reload
+  #   3. systemctl enable --now jabali-stalwart
+  #   4. poll 127.0.0.1:8446/jmap/session until 2xx/4xx (ready)
+  #   5. stalwart-cli apply --file <plan>
+  #
+  # Ports 25/465/587/993 will bind on step 3. On a host with no
+  # email-enabled domains this is an idle listener — Stalwart 550s
+  # any inbound recipient until a Domain object exists in the registry
+  # (which domain.email_enable creates via JMAP on first enable).
   if [[ ! -f "${REPO_DIR}/install/systemd/jabali-stalwart.service" ]]; then
     _die "Stalwart systemd unit not found at ${REPO_DIR}/install/systemd/jabali-stalwart.service"
   fi
   install -m 0644 -o root -g root "${REPO_DIR}/install/systemd/jabali-stalwart.service" \
     /etc/systemd/system/jabali-stalwart.service
   systemctl daemon-reload
-  _ok "jabali-stalwart.service installed (disabled — starts on first domain.email_enable)"
+
+  _install_stalwart_apply_plan "$stalwart_apply_plan" "$stalwart_admin_token"
+  _ok "jabali-stalwart.service installed + applied"
+}
+
+# _install_stalwart_apply_plan starts Stalwart (if not already running),
+# waits for /jmap to be reachable, then runs stalwart-cli apply against
+# the rendered plan. Idempotent: on re-runs where Stalwart is already
+# up, the start is a no-op and the apply converges any drift.
+_install_stalwart_apply_plan() {
+  local plan_file="$1"
+  local admin_token="$2"
+
+  if ! systemctl is-enabled --quiet jabali-stalwart.service 2>/dev/null; then
+    _log "enabling + starting jabali-stalwart.service"
+    systemctl enable --now jabali-stalwart.service
+  elif ! systemctl is-active --quiet jabali-stalwart.service; then
+    _log "starting jabali-stalwart.service"
+    systemctl start jabali-stalwart.service
+  fi
+
+  # Poll /jmap/session until Stalwart is serving HTTP. A 401 counts as
+  # "ready" — it means the HTTP layer is up and rejecting our missing
+  # Authorization header, which is exactly what we want before we try
+  # to run an authenticated apply.
+  local jmap_url="http://127.0.0.1:8446/jmap/session"
+  local waited=0
+  local max_wait=30
+  while (( waited < max_wait )); do
+    local status
+    status="$(curl -s -o /dev/null -w '%{http_code}' "$jmap_url" 2>/dev/null || echo 000)"
+    if [[ "$status" != "000" && "$status" != "502" && "$status" != "503" ]]; then
+      _ok "Stalwart /jmap ready (HTTP $status) after ${waited}s"
+      break
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if (( waited >= max_wait )); then
+    _err "Stalwart /jmap did not come up within ${max_wait}s — check 'journalctl -u jabali-stalwart'"
+    _die "Stalwart bootstrap timed out"
+  fi
+
+  _log "applying plan via stalwart-cli: $plan_file"
+  if ! STALWART_URL="http://127.0.0.1:8446" \
+       STALWART_USER="admin" \
+       STALWART_PASSWORD="$admin_token" \
+       /usr/local/bin/stalwart-cli apply --file "$plan_file"; then
+    _err "stalwart-cli apply failed — the plan's object shapes may have drifted from the v0.16 schema"
+    _err "inspect the plan at $plan_file; re-verify against the upstream schema (ADR-0045 §Schema-pull)"
+    _die "Stalwart apply failed"
+  fi
+  _ok "Stalwart plan applied (SqlDirectory + listeners + Authentication)"
 }
 
 # _install_stalwart_binary is a private helper: download the release

@@ -44,7 +44,10 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-# Intentionally NOT enabled here — install.sh leaves the unit disabled
-# until the first panel `domain.email_enable` call (from the agent).
-# See plan §1 and ADR-0041.
+# install.sh enables + starts this unit as part of the v0.16 bootstrap
+# flow (ADR-0045): it needs a running /jmap endpoint to run
+# `stalwart-cli apply` against, which seeds the SqlDirectory + listeners.
+# On a host with no email-enabled domains the unit still runs idle —
+# Stalwart rejects inbound mail for domains that have no registry Domain
+# object, which domain.email_enable creates via JMAP on first enable.
 WantedBy=multi-user.target

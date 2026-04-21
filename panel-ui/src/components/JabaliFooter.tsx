@@ -32,6 +32,11 @@ export function JabaliFooter() {
         // leaves a visible gap above the logo on short list views. Tight
         // to 8px vertical; keep 24px horizontal to match Content padding.
         padding: "8px 24px",
+        // AntD's Footer paints colorBgContainer (white in light mode)
+        // by default, which breaks the continuity with the gray-50
+        // content surface above. Transparent lets the outer Layout bg
+        // show through in both modes.
+        background: "transparent",
       }}
     >
       <Space size={12}>

@@ -27,6 +27,7 @@ import { useLocation, useNavigate } from "react-router";
 
 import { apiClient } from "../apiClient";
 import { useAuth } from "../auth/AuthContext";
+import { adminNav, userNav } from "../nav";
 import { JabaliTitle } from "./JabaliTitle";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -85,18 +86,39 @@ export function JabaliHeader() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  // The "Pages" group is always present so clicking the input (like
+  // the AntD docs example for AutoComplete) shows every destination
+  // in the current shell. When the user types, we substring-match the
+  // label so unrelated pages drop out of the dropdown.
+  const pagesGroup = useMemo<OptionGroup>(() => {
+    const items = isAdminShell ? adminNav : userNav;
+    const trimmed = query.trim().toLowerCase();
+    const filtered = trimmed
+      ? items.filter((n) => n.label.toLowerCase().includes(trimmed))
+      : items;
+    return {
+      label: "Pages",
+      options: filtered.map((n) => ({
+        value: `page:${n.path}`,
+        label: n.label,
+      })),
+    };
+  }, [isAdminShell, query]);
+
   // Debounced remote fetch. 250ms is tight enough to feel live without
-  // hammering the API; an empty/whitespace query clears the dropdown.
+  // hammering the API; an empty/whitespace query keeps the Pages
+  // group visible but skips the user/domain API calls.
   useEffect(() => {
     const trimmed = query.trim();
     if (!trimmed) {
-      setGroups([]);
+      setGroups([pagesGroup]);
       return;
     }
     let cancelled = false;
     const timer = setTimeout(async () => {
       const qs = new URLSearchParams({ q: trimmed, page_size: "5" }).toString();
       const next: OptionGroup[] = [];
+      if (pagesGroup.options.length > 0) next.push(pagesGroup);
       if (isAdminShell) {
         try {
           const { data } = await apiClient.get<{ data?: UserRow[] }>(
@@ -146,7 +168,7 @@ export function JabaliHeader() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query, isAdminShell]);
+  }, [query, isAdminShell, pagesGroup]);
 
   // Fallback: if the user hits Enter without picking a suggestion
   // (e.g. their target isn't in the top-5 dropdown), push the query
@@ -173,9 +195,17 @@ export function JabaliHeader() {
   };
 
   const handleSelect = (value: string) => {
-    const [kind, id] = value.split(":");
+    // value is `kind:payload` — split on the first colon so nav paths
+    // containing colons (none today, but don't design in a trap) or
+    // UUIDs-with-dashes still route correctly.
+    const colon = value.indexOf(":");
+    if (colon < 0) return;
+    const kind = value.slice(0, colon);
+    const id = value.slice(colon + 1);
     if (!id) return;
-    if (kind === "user") {
+    if (kind === "page") {
+      navigate(id);
+    } else if (kind === "user") {
       navigate(`/jabali-admin/users/edit/${id}`);
     } else if (kind === "domain") {
       // User shell has no dedicated edit route — fall back to the

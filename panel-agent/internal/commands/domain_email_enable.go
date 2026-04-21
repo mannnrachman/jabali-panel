@@ -107,30 +107,31 @@ func domainEmailEnableHandler(ctx context.Context, params json.RawMessage) (any,
 		}
 	}
 
-	// TODO(M6 v0.16 pivot, task #13): create the registry Domain +
-	// DkimSignature JMAP objects here. Schema field names for those
-	// two object types (specifically the DkimSignature tagged-enum
-	// variant + privateKey wrapping + the Domain "enabled" / name
-	// shape) haven't been verified against a live v0.16 Stalwart, and
-	// ADR-0045 explicitly defers speculative JMAP shapes to avoid the
-	// first-deploy fail-loop pattern (see feedback_verify_wire_contract).
+	// M6 task #13 gate — typed refusal (ADR-0045 + user feedback
+	// 2026-04-21). Returning a structured error here rather than a
+	// silent ok guarantees that a partial deploy can't advertise
+	// "email enabled" while Stalwart is still incapable of actually
+	// routing or signing mail for the domain.
 	//
-	// Without those JMAP creates the following DOES NOT yet work
-	// end-to-end against a real v0.16 server:
+	// Side effects above (DKIM key on disk + systemctl enable + reload)
+	// are safe to leave in place; they're idempotent and task #13's
+	// implementation will build on top of them. When task #13 lifts,
+	// the block below is replaced with the JMAP Domain/set +
+	// DkimSignature/set create calls that require live v0.16 schema
+	// verification (see feedback_verify_wire_contract).
+	//
+	// What DOES NOT yet work end-to-end against a real v0.16 server:
 	//   - Inbound SMTP for this domain (Stalwart 550s unknown domains)
 	//   - DKIM signing for outbound mail from this domain
-	//
-	// The DKIM key file on disk + the DNS TXT record returned to the
-	// panel are correct and will match what Stalwart signs with once
-	// the DkimSignature/set create is wired up. Functional unblocking
-	// of mail flow is a single ~30-line edit once a v0.16 VM is
-	// available to validate schema field names.
-
-	return domainEmailEnableResponse{
-		Ok:            true,
-		DKIMSelector:  dkimSelector,
-		DKIMPublicKey: publicTXT,
-	}, nil
+	// The DKIM key + DNS TXT are correct and will match what Stalwart
+	// signs with once DkimSignature/set create is wired up.
+	_ = publicTXT // keep in scope so the eventual JMAP call sees it.
+	return nil, &agentwire.AgentError{
+		Code: agentwire.CodeInternal,
+		Message: "m6-task-13: JMAP Domain/set + DkimSignature/set create unverified against live v0.16 schema — " +
+			"email cannot be enabled end-to-end until task #13 lands. DKIM key + systemd unit are already provisioned; " +
+			"retry this command after task #13 merges.",
+	}
 }
 
 // ensureDKIMKey returns the DNS TXT value for the domain's DKIM key.

@@ -46,36 +46,35 @@ func wireDKIMDir(t *testing.T) string {
 }
 
 // --- domain.email_enable --------------------------------------------
+//
+// The handler currently returns a TASK-13 typed refusal error after
+// provisioning DKIM + systemctl enable (see domain_email_enable.go's
+// rationale block). Tests therefore assert:
+//   - side effects (DKIM keyfile written, systemctl called) ran as expected
+//   - the handler returned the typed error with the task-13 marker
+//
+// DKIM-stability assertions (TXT re-derivation, byte-identical keyfile
+// on re-enable) go against the pure ensureDKIMKey helper to avoid
+// re-entering the handler's task-13 refusal path. When task #13 lifts,
+// these tests get updated alongside the handler change.
 
 func TestDomainEmailEnable_FreshKeyGeneration(t *testing.T) {
 	dir := wireDKIMDir(t)
 	var sysctl systemctlCapture
 	wireSystemctl(t, &sysctl)
 
-	got, err := domainEmailEnableHandler(context.Background(), json.RawMessage(
+	_, err := domainEmailEnableHandler(context.Background(), json.RawMessage(
 		`{"domain_id":"01J","domain_name":"example.com"}`))
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	resp, ok := got.(domainEmailEnableResponse)
-	if !ok {
-		t.Fatalf("type: got %T, want domainEmailEnableResponse", got)
-	}
-	if !resp.Ok {
-		t.Error("ok: false, want true")
-	}
-	if resp.DKIMSelector != "jabali" {
-		t.Errorf("selector: got %q, want %q", resp.DKIMSelector, "jabali")
-	}
-	if !strings.HasPrefix(resp.DKIMPublicKey, "v=DKIM1; k=ed25519; p=") {
-		t.Errorf("public key wrong shape: %q", resp.DKIMPublicKey)
+	requireAgentErrorCode(t, err, agentwire.CodeInternal)
+	if err == nil || !strings.Contains(err.Error(), "m6-task-13") {
+		t.Errorf("expected task-13 refusal marker in err, got: %v", err)
 	}
 
-	// Keyfile should exist, mode 0600.
+	// Side effects still ran: keyfile exists at mode 0600.
 	keyPath := filepath.Join(dir, "example.com.key")
-	fi, err := os.Stat(keyPath)
-	if err != nil {
-		t.Fatalf("stat keyfile: %v", err)
+	fi, statErr := os.Stat(keyPath)
+	if statErr != nil {
+		t.Fatalf("stat keyfile: %v (side effects should run before task-13 refusal)", statErr)
 	}
 	if mode := fi.Mode() & os.ModePerm; mode != 0o600 {
 		t.Errorf("mode: got %o, want 0600", mode)
@@ -97,39 +96,37 @@ func TestDomainEmailEnable_FreshKeyGeneration(t *testing.T) {
 	}
 }
 
-func TestDomainEmailEnable_ReusesExistingKey(t *testing.T) {
+func TestEnsureDKIMKey_ReusesExistingKey(t *testing.T) {
+	// Stability test against the pure helper — handler can't reach its
+	// response path while task-13 refusal is in force, so we test the
+	// DKIM re-derivation guarantee at the helper level.
 	dir := wireDKIMDir(t)
-	var sysctl systemctlCapture
-	wireSystemctl(t, &sysctl)
+	keyPath := filepath.Join(dir, "example.com.key")
 
-	// First call: generate.
-	first, err := domainEmailEnableHandler(context.Background(), json.RawMessage(
-		`{"domain_id":"01J","domain_name":"example.com"}`))
+	firstTXT, err := ensureDKIMKey(keyPath)
 	if err != nil {
-		t.Fatalf("first call: %v", err)
+		t.Fatalf("first ensureDKIMKey: %v", err)
 	}
-	firstTXT := first.(domainEmailEnableResponse).DKIMPublicKey
-
-	keyBefore, err := os.ReadFile(filepath.Join(dir, "example.com.key"))
+	if !strings.HasPrefix(firstTXT, "v=DKIM1; k=ed25519; p=") {
+		t.Errorf("public key wrong shape: %q", firstTXT)
+	}
+	keyBefore, err := os.ReadFile(keyPath)
 	if err != nil {
 		t.Fatalf("read keyfile: %v", err)
 	}
 
-	// Second call: must re-derive same TXT from the existing seed.
-	second, err := domainEmailEnableHandler(context.Background(), json.RawMessage(
-		`{"domain_id":"01J","domain_name":"example.com"}`))
+	secondTXT, err := ensureDKIMKey(keyPath)
 	if err != nil {
-		t.Fatalf("second call: %v", err)
+		t.Fatalf("second ensureDKIMKey: %v", err)
 	}
-	secondTXT := second.(domainEmailEnableResponse).DKIMPublicKey
 	if firstTXT != secondTXT {
-		t.Errorf("TXT drift between first + second enable\n first: %s\nsecond: %s", firstTXT, secondTXT)
+		t.Errorf("TXT drift between first + second derivation\n first: %s\nsecond: %s", firstTXT, secondTXT)
 	}
 
-	// Keyfile bytes must be byte-identical (no rewrite on re-enable).
-	keyAfter, _ := os.ReadFile(filepath.Join(dir, "example.com.key"))
+	// Keyfile bytes must be byte-identical (no rewrite on re-derivation).
+	keyAfter, _ := os.ReadFile(keyPath)
 	if string(keyBefore) != string(keyAfter) {
-		t.Error("keyfile rewritten on re-enable — DKIM key must be stable")
+		t.Error("keyfile rewritten on second call — DKIM key must be stable")
 	}
 }
 
@@ -174,11 +171,13 @@ func TestDomainEmailEnable_SystemctlEnableFailure(t *testing.T) {
 	requireAgentErrorCode(t, err, agentwire.CodeInternal)
 }
 
-func TestDomainEmailEnable_ReloadNotSupportedIsNotFatal(t *testing.T) {
+func TestDomainEmailEnable_ReloadNotSupportedSkippedBeforeTask13Refusal(t *testing.T) {
 	// If Stalwart's unit doesn't declare ExecReload, systemctl reload
-	// returns a "reload is not applicable" error. We ignore it —
-	// the SQL-directory's own cache TTL will pick up email_enabled=1
-	// within 60s anyway.
+	// returns a "reload is not applicable" error. The handler swallows
+	// it (per the isReloadNotSupportedErr check) and proceeds to the
+	// task-13 refusal path. We pin that behaviour here: the reload
+	// failure MUST NOT mask the task-13 refusal — we want the typed
+	// error downstream, not a spurious "reload failed".
 	wireDKIMDir(t)
 	sysctl := &systemctlCapture{
 		respond: func(args []string) ([]byte, error) {
@@ -193,8 +192,9 @@ func TestDomainEmailEnable_ReloadNotSupportedIsNotFatal(t *testing.T) {
 
 	_, err := domainEmailEnableHandler(context.Background(), json.RawMessage(
 		`{"domain_id":"01J","domain_name":"example.com"}`))
-	if err != nil {
-		t.Fatalf("reload-not-applicable should not fail: %v", err)
+	requireAgentErrorCode(t, err, agentwire.CodeInternal)
+	if err == nil || !strings.Contains(err.Error(), "m6-task-13") {
+		t.Errorf("expected task-13 refusal marker (reload-not-supported should not mask it), got: %v", err)
 	}
 }
 

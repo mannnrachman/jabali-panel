@@ -2491,6 +2491,25 @@ install_stalwart() {
   fi
   _ok "Stalwart datastore config at $stalwart_config"
 
+  # stalwart.env — EnvironmentFile referenced by jabali-stalwart.service
+  # (optional, "EnvironmentFile=-" prefix). Task #13 will populate
+  # STALWART_RECOVERY_ADMIN=admin:<token> here as part of the bootstrap
+  # flow; until then the file is placeholder-only so code review doesn't
+  # flag an empty EnvironmentFile as an install bug.
+  local stalwart_env="/etc/jabali-panel/stalwart.env"
+  if [[ ! -f "$stalwart_env" ]]; then
+    cat >"$stalwart_env" <<'EOF'
+# Stalwart Mail Server — systemd EnvironmentFile.
+# Populated by install.sh when the v0.16 bootstrap flow (M6 task #13)
+# lands. Currently a placeholder: the systemd unit references this file
+# with the "EnvironmentFile=-" optional prefix, so an empty body is
+# accepted. Do not hand-edit — install.sh is the single writer.
+EOF
+    chmod 0640 "$stalwart_env"
+    chown root:jabali-mail "$stalwart_env"
+    _ok "Stalwart env placeholder at $stalwart_env"
+  fi
+
   # Systemd unit — installed disabled by default. First
   # `domain.email_enable` triggers bootstrap + `systemctl enable --now`
   # (see ADR-0045 §"Bootstrap flow"). Remains disabled on fresh hosts

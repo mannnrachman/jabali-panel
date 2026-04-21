@@ -272,25 +272,6 @@ func dispatchInstallKicker(ctx context.Context, appName string, k kickContext, d
 			Subdirectory:     k.Subdirectory,
 			UseWWW:           k.UseWWW,
 		}, deps)
-	case "dokuwiki":
-		dokuPass := paramOr(k.Params, "admin_password", "")
-		if dokuPass == "" {
-			dokuPass = ids.NewULID()
-		}
-		adminPassword = dokuPass
-		go createDokuWikiInstallAndKickAgent(ctx, dokuWikiKickArgs{
-			InstallID:    k.InstallID,
-			OSUser:       k.OSUser,
-			DocRoot:      k.DocRoot,
-			Subdirectory: k.Subdirectory,
-			SiteURL:      k.SiteURL,
-			SiteTitle:    paramOr(k.Params, "site_title", "My DokuWiki"),
-			AdminUser:    k.AdminUsername,
-			AdminPass:    dokuPass,
-			AdminEmail:   k.AdminEmail,
-			License:      paramOr(k.Params, "license", "cc-by-sa"),
-			UseWWW:       k.UseWWW,
-		}, deps)
 	case "drupal":
 		drupalPass := paramOr(k.Params, "admin_password", "")
 		if drupalPass == "" {
@@ -359,68 +340,6 @@ func dispatchInstallKicker(ctx context.Context, appName string, k kickContext, d
 			UseWWW:           k.UseWWW,
 		}, deps)
 		adminPassword = phpbbPass
-	case "grav":
-		gravPass := paramOr(k.Params, "admin_password", "")
-		if gravPass == "" {
-			gravPass = ids.NewULID()
-		}
-		adminPassword = gravPass
-		go createGravInstallAndKickAgent(ctx, gravKickArgs{
-			InstallID:     k.InstallID,
-			OSUser:        k.OSUser,
-			DocRoot:       k.DocRoot,
-			Subdirectory:  k.Subdirectory,
-			SiteURL:       k.SiteURL,
-			SiteTitle:     paramOr(k.Params, "site_title", "My Grav Site"),
-			AdminUser:     k.AdminUsername,
-			AdminPass:     gravPass,
-			AdminEmail:    k.AdminEmail,
-			AdminFullName: paramOr(k.Params, "admin_full_name", "Site Administrator"),
-			UseWWW:        k.UseWWW,
-		}, deps)
-	case "matomo":
-		matomoPass := paramOr(k.Params, "admin_password", "")
-		if matomoPass == "" {
-			matomoPass = ids.NewULID()
-		}
-		go createMatomoInstallAndKickAgent(ctx, matomoKickArgs{
-			InstallID:    k.InstallID,
-			OSUser:       k.OSUser,
-			DocRoot:      k.DocRoot,
-			Subdirectory: k.Subdirectory,
-			SiteURL:      k.SiteURL,
-			DBName:       k.Chain.DBName,
-			DBUser:       k.Chain.DBUsername,
-			DBPassword:   adminPassword,
-			AdminUser:    k.AdminUsername,
-			AdminPass:    matomoPass,
-			AdminEmail:   k.AdminEmail,
-			UseWWW:       k.UseWWW,
-		}, deps)
-		adminPassword = matomoPass
-	case "moodle":
-		moodlePass := paramOr(k.Params, "admin_password", "")
-		if moodlePass == "" {
-			moodlePass = ids.NewULID()
-		}
-		go createMoodleInstallAndKickAgent(ctx, moodleKickArgs{
-			InstallID:     k.InstallID,
-			OSUser:        k.OSUser,
-			DocRoot:       k.DocRoot,
-			Subdirectory:  k.Subdirectory,
-			SiteURL:       k.SiteURL,
-			DBName:        k.Chain.DBName,
-			DBUser:        k.Chain.DBUsername,
-			DBPassword:    adminPassword,
-			SiteTitle:     paramOr(k.Params, "site_title", "My Moodle Site"),
-			SiteShortName: paramOr(k.Params, "site_short_name", "Moodle"),
-			AdminUser:     k.AdminUsername,
-			AdminPass:     moodlePass,
-			AdminEmail:    k.AdminEmail,
-			Language:      paramOr(k.Params, "language", "en"),
-			UseWWW:        k.UseWWW,
-		}, deps)
-		adminPassword = moodlePass
 	case "prestashop":
 		prestaPass := paramOr(k.Params, "admin_password", "")
 		if prestaPass == "" {
@@ -445,48 +364,6 @@ func dispatchInstallKicker(ctx context.Context, appName string, k kickContext, d
 			UseWWW:         k.UseWWW,
 		}, deps)
 		adminPassword = prestaPass
-	case "backdrop":
-		backdropPass := paramOr(k.Params, "admin_password", "")
-		if backdropPass == "" {
-			backdropPass = ids.NewULID()
-		}
-		go createBackdropInstallAndKickAgent(ctx, backdropKickArgs{
-			InstallID:    k.InstallID,
-			OSUser:       k.OSUser,
-			DocRoot:      k.DocRoot,
-			Subdirectory: k.Subdirectory,
-			SiteURL:      k.SiteURL,
-			DBName:       k.Chain.DBName,
-			DBUser:       k.Chain.DBUsername,
-			DBPassword:   adminPassword,
-			SiteTitle:    paramOr(k.Params, "site_title", "My Backdrop Site"),
-			AdminUser:    k.AdminUsername,
-			AdminPass:    backdropPass,
-			AdminEmail:   k.AdminEmail,
-			Profile:      paramOr(k.Params, "profile", "standard"),
-			UseWWW:       k.UseWWW,
-		}, deps)
-		adminPassword = backdropPass
-	case "abantecart":
-		abantePass := paramOr(k.Params, "admin_password", "")
-		if abantePass == "" {
-			abantePass = ids.NewULID()
-		}
-		go createAbanteCartInstallAndKickAgent(ctx, abantecartKickArgs{
-			InstallID:    k.InstallID,
-			OSUser:       k.OSUser,
-			DocRoot:      k.DocRoot,
-			Subdirectory: k.Subdirectory,
-			SiteURL:      k.SiteURL,
-			DBName:       k.Chain.DBName,
-			DBUser:       k.Chain.DBUsername,
-			DBPassword:   adminPassword,
-			AdminUser:    k.AdminUsername,
-			AdminPass:    abantePass,
-			AdminEmail:   k.AdminEmail,
-			UseWWW:       k.UseWWW,
-		}, deps)
-		adminPassword = abantePass
 	case "opencart":
 		opencartPass := paramOr(k.Params, "admin_password", "")
 		if opencartPass == "" {
@@ -507,50 +384,6 @@ func dispatchInstallKicker(ctx context.Context, appName string, k kickContext, d
 			UseWWW:       k.UseWWW,
 		}, deps)
 		adminPassword = opencartPass
-	case "concrete":
-		concretePass := paramOr(k.Params, "admin_password", "")
-		if concretePass == "" {
-			concretePass = ids.NewULID()
-		}
-		go createConcreteInstallAndKickAgent(ctx, concreteKickArgs{
-			InstallID:     k.InstallID,
-			OSUser:        k.OSUser,
-			DocRoot:       k.DocRoot,
-			Subdirectory:  k.Subdirectory,
-			SiteURL:       k.SiteURL,
-			DBName:        k.Chain.DBName,
-			DBUser:        k.Chain.DBUsername,
-			DBPassword:    adminPassword,
-			SiteTitle:     paramOr(k.Params, "site_title", "My Concrete Site"),
-			AdminUser:     k.AdminUsername,
-			AdminPass:     concretePass,
-			AdminEmail:    k.AdminEmail,
-			StartingPoint: paramOr(k.Params, "starting_point", "elemental_full"),
-			Locale:        paramOr(k.Params, "locale", "en_US"),
-			UseWWW:        k.UseWWW,
-		}, deps)
-		adminPassword = concretePass
-	case "freshrss":
-		freshrssPass := paramOr(k.Params, "admin_password", "")
-		if freshrssPass == "" {
-			freshrssPass = ids.NewULID()
-		}
-		go createFreshRSSInstallAndKickAgent(ctx, freshrssKickArgs{
-			InstallID:    k.InstallID,
-			OSUser:       k.OSUser,
-			DocRoot:      k.DocRoot,
-			Subdirectory: k.Subdirectory,
-			SiteURL:      k.SiteURL,
-			DBName:       k.Chain.DBName,
-			DBUser:       k.Chain.DBUsername,
-			DBPassword:   adminPassword,
-			AdminUser:    k.AdminUsername,
-			AdminPass:    freshrssPass,
-			AdminEmail:   k.AdminEmail,
-			Language:     paramOr(k.Params, "language", "en"),
-			UseWWW:       k.UseWWW,
-		}, deps)
-		adminPassword = freshrssPass
 	case "mediawiki":
 		mwPass := paramOr(k.Params, "admin_password", "")
 		if mwPass == "" {

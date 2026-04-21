@@ -157,36 +157,6 @@ func TestRegisterDefaults_RegistersWordPress(t *testing.T) {
 	}
 }
 
-func TestRegisterDefaults_RegistersDokuWiki(t *testing.T) {
-	r := New()
-	if err := RegisterDefaults(r); err != nil {
-		t.Fatalf("RegisterDefaults: %v", err)
-	}
-	dw, ok := r.Get("dokuwiki")
-	if !ok {
-		t.Fatal("dokuwiki not registered after RegisterDefaults")
-	}
-	if dw.RequiresDB {
-		t.Error("dokuwiki should declare RequiresDB=false (validates the M19 short-circuit)")
-	}
-	if dw.AgentCloneCmd != "" {
-		t.Errorf("dokuwiki should NOT declare a clone command; got %q", dw.AgentCloneCmd)
-	}
-	if dw.AgentInstallCmd != "app.install" || dw.AgentDeleteCmd != "app.delete" {
-		t.Errorf("dokuwiki dispatcher commands = (%q, %q)", dw.AgentInstallCmd, dw.AgentDeleteCmd)
-	}
-	licenseSpec, ok := dw.InstallParamSchema["license"]
-	if !ok {
-		t.Fatal("dokuwiki install schema missing license")
-	}
-	if licenseSpec.Type != "enum" {
-		t.Errorf("license should be enum, got %q", licenseSpec.Type)
-	}
-	if len(licenseSpec.Values) == 0 {
-		t.Error("license enum should have values")
-	}
-}
-
 func TestRegisterDefaults_RegistersMediaWiki(t *testing.T) {
 	r := New()
 	if err := RegisterDefaults(r); err != nil {
@@ -308,95 +278,6 @@ func TestRegisterDefaults_RegistersPhpBB(t *testing.T) {
 	}
 }
 
-func TestRegisterDefaults_RegistersGrav(t *testing.T) {
-	r := New()
-	if err := RegisterDefaults(r); err != nil {
-		t.Fatalf("RegisterDefaults: %v", err)
-	}
-	g, ok := r.Get("grav")
-	if !ok {
-		t.Fatal("grav not registered after RegisterDefaults")
-	}
-	if g.RequiresDB {
-		t.Error("grav is flat-file — should declare RequiresDB=false")
-	}
-	if g.AgentInstallCmd != "app.install" || g.AgentDeleteCmd != "app.delete" {
-		t.Errorf("grav dispatcher commands = (%q, %q)", g.AgentInstallCmd, g.AgentDeleteCmd)
-	}
-	for _, want := range []string{"site_title", "admin_email", "admin_password", "admin_full_name"} {
-		if _, ok := g.InstallParamSchema[want]; !ok {
-			t.Errorf("grav schema missing %q", want)
-		}
-	}
-}
-
-func TestRegisterDefaults_RegistersFreshRSS(t *testing.T) {
-	r := New()
-	if err := RegisterDefaults(r); err != nil {
-		t.Fatalf("RegisterDefaults: %v", err)
-	}
-	f, ok := r.Get("freshrss")
-	if !ok {
-		t.Fatal("freshrss not registered after RegisterDefaults")
-	}
-	if !f.RequiresDB {
-		t.Error("freshrss should declare RequiresDB=true (it needs MariaDB)")
-	}
-	if f.AgentInstallCmd != "app.install" || f.AgentDeleteCmd != "app.delete" {
-		t.Errorf("freshrss dispatcher commands = (%q, %q)", f.AgentInstallCmd, f.AgentDeleteCmd)
-	}
-	for _, want := range []string{"admin_email", "admin_password", "language"} {
-		if _, ok := f.InstallParamSchema[want]; !ok {
-			t.Errorf("freshrss schema missing %q", want)
-		}
-	}
-}
-
-func TestRegisterDefaults_RegistersMatomo(t *testing.T) {
-	r := New()
-	if err := RegisterDefaults(r); err != nil {
-		t.Fatalf("RegisterDefaults: %v", err)
-	}
-	m, ok := r.Get("matomo")
-	if !ok {
-		t.Fatal("matomo not registered after RegisterDefaults")
-	}
-	if !m.RequiresDB {
-		t.Error("matomo should declare RequiresDB=true")
-	}
-	for _, want := range []string{"admin_email", "admin_password"} {
-		if _, ok := m.InstallParamSchema[want]; !ok {
-			t.Errorf("matomo schema missing %q", want)
-		}
-	}
-}
-
-func TestRegisterDefaults_RegistersConcrete(t *testing.T) {
-	r := New()
-	if err := RegisterDefaults(r); err != nil {
-		t.Fatalf("RegisterDefaults: %v", err)
-	}
-	c, ok := r.Get("concrete")
-	if !ok {
-		t.Fatal("concrete not registered after RegisterDefaults")
-	}
-	if !c.RequiresDB {
-		t.Error("concrete should declare RequiresDB=true")
-	}
-	for _, want := range []string{"site_title", "admin_email", "admin_password", "starting_point", "locale"} {
-		if _, ok := c.InstallParamSchema[want]; !ok {
-			t.Errorf("concrete schema missing %q", want)
-		}
-	}
-	sp, ok := c.InstallParamSchema["starting_point"]
-	if !ok {
-		t.Fatal("starting_point missing")
-	}
-	if sp.Type != "enum" || len(sp.Values) == 0 {
-		t.Errorf("concrete starting_point should be enum with values")
-	}
-}
-
 func TestRegisterDefaults_RegistersOpenCart(t *testing.T) {
 	r := New()
 	if err := RegisterDefaults(r); err != nil {
@@ -419,23 +300,6 @@ func TestRegisterDefaults_RegistersOpenCart(t *testing.T) {
 	}
 }
 
-func TestRegisterDefaults_RegistersAbanteCart(t *testing.T) {
-	r := New()
-	if err := RegisterDefaults(r); err != nil {
-		t.Fatalf("RegisterDefaults: %v", err)
-	}
-	a, ok := r.Get("abantecart")
-	if !ok {
-		t.Fatal("abantecart not registered after RegisterDefaults")
-	}
-	if !a.RequiresDB {
-		t.Error("abantecart should declare RequiresDB=true")
-	}
-	if a.DefaultSubdirectory != "shop" {
-		t.Errorf("abantecart default subdirectory = %q, want %q", a.DefaultSubdirectory, "shop")
-	}
-}
-
 func TestRegisterDefaults_RegistersPrestaShop(t *testing.T) {
 	r := New()
 	if err := RegisterDefaults(r); err != nil {
@@ -451,54 +315,6 @@ func TestRegisterDefaults_RegistersPrestaShop(t *testing.T) {
 	for _, want := range []string{"site_title", "admin_email", "admin_password", "country", "language"} {
 		if _, ok := p.InstallParamSchema[want]; !ok {
 			t.Errorf("prestashop schema missing %q", want)
-		}
-	}
-}
-
-func TestRegisterDefaults_RegistersBackdrop(t *testing.T) {
-	r := New()
-	if err := RegisterDefaults(r); err != nil {
-		t.Fatalf("RegisterDefaults: %v", err)
-	}
-	b, ok := r.Get("backdrop")
-	if !ok {
-		t.Fatal("backdrop not registered after RegisterDefaults")
-	}
-	if !b.RequiresDB {
-		t.Error("backdrop should declare RequiresDB=true")
-	}
-	for _, want := range []string{"site_title", "admin_email", "admin_password", "profile"} {
-		if _, ok := b.InstallParamSchema[want]; !ok {
-			t.Errorf("backdrop schema missing %q", want)
-		}
-	}
-	profile, ok := b.InstallParamSchema["profile"]
-	if !ok {
-		t.Fatal("backdrop profile field missing")
-	}
-	if profile.Type != "enum" || len(profile.Values) == 0 {
-		t.Errorf("backdrop profile should be enum with values")
-	}
-}
-
-func TestRegisterDefaults_RegistersMoodle(t *testing.T) {
-	r := New()
-	if err := RegisterDefaults(r); err != nil {
-		t.Fatalf("RegisterDefaults: %v", err)
-	}
-	m, ok := r.Get("moodle")
-	if !ok {
-		t.Fatal("moodle not registered after RegisterDefaults")
-	}
-	if !m.RequiresDB {
-		t.Error("moodle should declare RequiresDB=true")
-	}
-	if m.DefaultSubdirectory != "lms" {
-		t.Errorf("moodle default subdirectory = %q, want %q", m.DefaultSubdirectory, "lms")
-	}
-	for _, want := range []string{"site_title", "admin_email", "admin_password", "language"} {
-		if _, ok := m.InstallParamSchema[want]; !ok {
-			t.Errorf("moodle schema missing %q", want)
 		}
 	}
 }

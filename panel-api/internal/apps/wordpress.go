@@ -64,9 +64,6 @@ func RegisterDefaults(r *Registry) error {
 	if err := r.Register(WordPress); err != nil {
 		return err
 	}
-	if err := r.Register(DokuWiki); err != nil {
-		return err
-	}
 	if err := r.Register(MediaWiki); err != nil {
 		return err
 	}
@@ -79,31 +76,10 @@ func RegisterDefaults(r *Registry) error {
 	if err := r.Register(PhpBB); err != nil {
 		return err
 	}
-	if err := r.Register(Grav); err != nil {
-		return err
-	}
-	if err := r.Register(FreshRSS); err != nil {
-		return err
-	}
-	if err := r.Register(Matomo); err != nil {
-		return err
-	}
-	if err := r.Register(ConcreteCMS); err != nil {
-		return err
-	}
 	if err := r.Register(OpenCart); err != nil {
 		return err
 	}
-	if err := r.Register(AbanteCart); err != nil {
-		return err
-	}
 	if err := r.Register(PrestaShop); err != nil {
-		return err
-	}
-	if err := r.Register(Backdrop); err != nil {
-		return err
-	}
-	if err := r.Register(Moodle); err != nil {
 		return err
 	}
 	return nil

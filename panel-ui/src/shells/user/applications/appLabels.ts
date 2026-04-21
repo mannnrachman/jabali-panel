@@ -4,18 +4,10 @@
 // readable instead of blank.
 export const APP_TYPE_LABELS: Record<string, string> = {
   wordpress: "WordPress",
-  dokuwiki: "DokuWiki",
   mediawiki: "MediaWiki",
   drupal: "Drupal",
   joomla: "Joomla",
   phpbb: "phpBB",
-  grav: "Grav",
-  freshrss: "FreshRSS",
-  matomo: "Matomo",
-  concrete: "Concrete CMS",
   opencart: "OpenCart",
-  abantecart: "AbanteCart",
   prestashop: "PrestaShop",
-  backdrop: "Backdrop CMS",
-  moodle: "Moodle",
 };

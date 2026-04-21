@@ -9,7 +9,7 @@ import (
 // runBoundedOutput is a drop-in replacement for exec.Cmd.CombinedOutput()
 // that keeps only the last `tailBytes` of stdout+stderr, discarding the
 // rest as it streams. Protects the agent from heavy-output children
-// (composer, drush, wp-cli, matomo, concrete) whose progress/debug logs
+// (composer, drush, wp-cli) whose progress/debug logs
 // can exceed gigabytes and OOM-kill the agent at 9+ GB RSS when
 // CombinedOutput() buffers unbounded.
 //

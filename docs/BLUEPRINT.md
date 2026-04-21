@@ -930,9 +930,9 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 **Depends on:** M20 (Kratos identity — supersedes Refine's `authProvider` role so removing it doesn't lose functionality).
 **Related:** ADR-0037 (design rationale, rollback note, outcome), `plans/m21-drop-refine.md` (five-wave blueprint).
 
-### M22: Magic-link → self-deleting SSO file (REWORK IN-FLIGHT 2026-04-21)
+### M22: Magic-link → self-deleting SSO file (REWORK SHIPPED 2026-04-21)
 
-**Status:** Rework in-flight (ADR-0040 accepted, 8-step blueprint dispatchable). Original magic-link design (ADR-0039) shipped 2026-04-21 and is being replaced — see "Why" below.
+**Status:** Rework shipped (all 8 steps merged to main 2026-04-21 in 4 waves). ADR-0040 accepted; ADR-0039 superseded. Operator runbook at `plans/m22-sso-file-runbook.md`; existing test VM (10.0.3.13) cleaned up via `plans/m22-rework-vm-teardown.md`.
 
 **Goal:** One-click admin login from the panel to any managed WordPress install. Operator clicks "Log in to admin" on an Applications row → new tab opens → lands signed in to `/wp-admin` as the install's admin user.
 

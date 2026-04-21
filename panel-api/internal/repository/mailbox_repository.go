@@ -24,6 +24,13 @@ type MailboxRepository interface {
 	Create(ctx context.Context, mb *models.Mailbox) error
 	Delete(ctx context.Context, id string) error
 	UpdatePasswordHash(ctx context.Context, id string, hash string) error
+	// UpdatePasswordHashAndEnc writes both the bcrypt hash (used by
+	// Stalwart's SqlDirectory for IMAP/SMTP/JMAP auth) and the
+	// AES-256-GCM envelope of the plaintext (used by the webmail SSO
+	// landing to drive Bulwark's /api/auth/session). Both must be
+	// updated atomically so an SSO-mint can't hand out a token that
+	// decrypts to a password Stalwart no longer accepts.
+	UpdatePasswordHashAndEnc(ctx context.Context, id string, hash string, enc []byte) error
 	UpdateQuota(ctx context.Context, id string, quotaBytes uint64) error
 	UpdateUsage(ctx context.Context, id string, usageBytes uint64, at time.Time) error
 	ExistsByDomainAndLocalPart(ctx context.Context, domainID, localPart string) (bool, error)
@@ -119,6 +126,19 @@ func (r *mailboxRepo) UpdatePasswordHash(ctx context.Context, id string, hash st
 		Where("id = ?", id).
 		Updates(map[string]any{
 			"password_hash": hash,
+			"updated_at":    time.Now().UTC(),
+		}).Error
+}
+
+// UpdatePasswordHashAndEnc atomically sets both bcrypt hash + plaintext
+// cipher envelope. Callers hand in the already-sealed bytes from
+// ssokey.Key.Seal; the repository never touches plaintext.
+func (r *mailboxRepo) UpdatePasswordHashAndEnc(ctx context.Context, id string, hash string, enc []byte) error {
+	return r.db.WithContext(ctx).Model(&models.Mailbox{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"password_hash": hash,
+			"password_enc":  enc,
 			"updated_at":    time.Now().UTC(),
 		}).Error
 }

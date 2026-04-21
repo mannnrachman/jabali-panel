@@ -2,6 +2,10 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"net/http"
 	"time"
 
@@ -15,13 +19,24 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
 // MailboxHandlerConfig plugs the mailbox HTTP handlers into the router.
 type MailboxHandlerConfig struct {
-	Mailboxes repository.MailboxRepository
-	Domains   repository.DomainRepository
-	Agent     agent.AgentInterface
+	Mailboxes      repository.MailboxRepository
+	Domains        repository.DomainRepository
+	Agent          agent.AgentInterface
+	// SSOKey + SSOTokens enable the webmail SSO flow (M6 Step 8 Phase B).
+	// When either is nil, create/rotate still succeed but password_enc
+	// stays NULL and POST /mailboxes/:id/sso returns 503 — matches the
+	// panel-running-without-sso.key pre-M20 topology.
+	SSOKey     *ssokey.Key
+	SSOTokens  repository.MailboxSSOTokenRepository
+	// SSOTokenTTL controls how long a minted SSO token is valid before
+	// the landing endpoint refuses it. Defaults to 5 minutes (matches
+	// PhpMyAdmin SSO) when zero-valued.
+	SSOTokenTTL time.Duration
 }
 
 const (
@@ -76,6 +91,7 @@ func RegisterMailboxRoutes(g *gin.RouterGroup, cfg MailboxHandlerConfig) {
 	mbox.GET("/:mbid", h.get)
 	mbox.PATCH("/:mbid", h.updateQuota)
 	mbox.POST("/:mbid/rotate-password", h.rotatePassword)
+	mbox.POST("/:mbid/sso", h.mintSSO)
 	mbox.DELETE("/:mbid", h.delete)
 }
 
@@ -267,12 +283,27 @@ func (h *mailboxHandler) create(c *gin.Context) {
 		return
 	}
 
+	// Cipher the plaintext for the webmail SSO flow. Best-effort — when
+	// the SSOKey isn't configured (panel running without sso.key) we
+	// store the mailbox without an encrypted blob; the SSO mint endpoint
+	// will then 503 until the next rotate repopulates it.
+	var enc []byte
+	if h.cfg.SSOKey != nil {
+		sealed, err := h.cfg.SSOKey.Seal([]byte(password))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		enc = sealed
+	}
+
 	now := time.Now().UTC()
 	mb := &models.Mailbox{
 		ID:           ids.NewULID(),
 		DomainID:     dom.ID,
 		LocalPart:    canonLocal,
 		PasswordHash: string(hash),
+		PasswordEnc:  enc,
 		QuotaBytes:   quota,
 		CreatedAt:    now,
 		UpdatedAt:    now,
@@ -397,7 +428,19 @@ func (h *mailboxHandler) rotatePassword(c *gin.Context) {
 		return
 	}
 
-	if err := h.cfg.Mailboxes.UpdatePasswordHash(ctx, mb.ID, string(hash)); err != nil {
+	// Re-cipher the plaintext so password_enc stays in sync with
+	// password_hash. Same best-effort fallback as create.
+	if h.cfg.SSOKey != nil {
+		sealed, err := h.cfg.SSOKey.Seal([]byte(password))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		if err := h.cfg.Mailboxes.UpdatePasswordHashAndEnc(ctx, mb.ID, string(hash), sealed); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+	} else if err := h.cfg.Mailboxes.UpdatePasswordHash(ctx, mb.ID, string(hash)); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
@@ -446,6 +489,88 @@ func (h *mailboxHandler) delete(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+// mintSSOResponse carries the short-lived URL the UI redirects the
+// user's browser to. `mail_host` is the mail.<domain> origin — exposed
+// so the UI can render the full URL itself when preferred (matches
+// the phpMyAdmin SSO response shape).
+type mintSSOResponse struct {
+	URL       string `json:"url"`
+	MailHost  string `json:"mail_host"`
+	ExpiresIn int    `json:"expires_in"`
+}
+
+// mintSSO handles POST /mailboxes/:mbid/sso. Returns a one-shot URL
+// the panel UI opens in a new tab; the browser follows it, the
+// landing endpoint at /sso/webmail on mail.<domain> consumes the
+// token and forwards the user into Bulwark with a session cookie set.
+//
+// Auth model: admin or the mailbox's owning user (same scope as
+// rotatePassword / updateQuota). Tokens are mailbox-scoped, so the
+// "user who clicks" must be able to see the mailbox to begin with.
+func (h *mailboxHandler) mintSSO(c *gin.Context) {
+	ctx := c.Request.Context()
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	if h.cfg.SSOKey == nil || h.cfg.SSOTokens == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "sso_not_configured"})
+		return
+	}
+
+	mb, dom, err := h.loadMailboxWithAuth(ctx, c.Param("mbid"), claims)
+	if err != nil {
+		h.writeLoadErr(c, err)
+		return
+	}
+	if len(mb.PasswordEnc) == 0 {
+		// Mailbox predates migration 000056 or was created before SSOKey
+		// was wired. Surface a typed error so the UI can show a
+		// "rotate password to enable webmail SSO" hint.
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  "sso_unavailable_rotate_password",
+			"detail": "Rotate the mailbox password to enable webmail SSO; password_enc is unset.",
+		})
+		return
+	}
+
+	// 32 random bytes → base64url token (plaintext) + SHA-256 hash.
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	plaintextToken := base64.RawURLEncoding.EncodeToString(raw)
+	hash := sha256.Sum256(raw)
+
+	ttl := h.cfg.SSOTokenTTL
+	if ttl == 0 {
+		ttl = 5 * time.Minute
+	}
+	now := time.Now().UTC()
+	tok := &models.MailboxSSOToken{
+		ID:        ids.NewULID(),
+		MailboxID: mb.ID,
+		UserID:    claims.UserID,
+		TokenHash: hex.EncodeToString(hash[:]),
+		ExpiresAt: now.Add(ttl),
+		CreatedAt: now,
+	}
+	if err := h.cfg.SSOTokens.Create(ctx, tok); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+
+	mailHost := "mail." + dom.Name
+	url := "https://" + mailHost + "/sso/webmail?token=" + plaintextToken
+	c.JSON(http.StatusOK, mintSSOResponse{
+		URL:       url,
+		MailHost:  mailHost,
+		ExpiresIn: int(ttl.Seconds()),
+	})
 }
 
 // ---- helpers ----

@@ -62,18 +62,33 @@ server {
     proxy_set_header Host $host;
   }
 
-  # Stalwart admin API — Bulwark's STALWART_API_URL target. Needed for
-  # user-initiated password-change flows (Bulwark → Stalwart → SQL
-  # directory → mailboxes.password_hash column).
-  location /api {
-    proxy_pass http://127.0.0.1:8446;
-    proxy_set_header Host $host;
-    proxy_http_version 1.1;
-  }
+  # NOTE: /api/* is deliberately NOT proxied to Stalwart. Bulwark owns
+  # every /api/* path (its own /api/auth/session, /api/health, etc.)
+  # and proxies Stalwart admin calls internally via STALWART_API_URL=
+  # http://127.0.0.1:8446 set in bulwark.env. Routing /api → 8446 at
+  # the nginx layer hijacks Bulwark's own endpoints and breaks login
+  # (the POST body is Next.js JSON, Stalwart rejects it).
 
   # Block access to autodiscover helper paths so a misconfigured client
   # doesn't leak probes to Bulwark. Stalwart serves its own JMAP
   # discovery at /.well-known/jmap above.
+  # Webmail SSO landing (M6 Step 8 Phase B). panel-api binds :8443 on
+  # the server hostname; we proxy /sso/webmail to it here because the
+  # landing needs to set a cookie under mail.<domain> (so Bulwark's
+  # existing session-cookie handling works), but the panel itself is
+  # already listening on 127.0.0.1:8443 for its own vhost. No
+  # X-Forwarded-Proto rewrite here: panel-api handles HTTPS-aware
+  # cookie options via its own config, not proxy headers.
+  location = /sso/webmail {
+    proxy_pass https://127.0.0.1:8443;
+    proxy_ssl_verify off;                    # panel's self-signed cert is fine loopback
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_http_version 1.1;
+  }
+
   location = /autodiscover/autodiscover.xml { return 404; }
   location = /Autodiscover/Autodiscover.xml { return 404; }
 }

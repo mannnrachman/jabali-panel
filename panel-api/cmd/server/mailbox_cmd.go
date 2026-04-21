@@ -126,7 +126,7 @@ and cannot be recovered.`,
 				return err
 			}
 			quotaBytes := quotaMB * 1024 * 1024
-			mb, generatedPassword, err := createMailboxDirect(ctx, mailboxRepoFromDB(), notifyAgentMailbox, dom, localPart, password, quotaBytes)
+			mb, generatedPassword, err := createMailboxDirect(ctx, mailboxRepoFromDB(), notifyAgentMailbox, ssoKeyForCLI(), dom, localPart, password, quotaBytes)
 			if err != nil {
 				return err
 			}
@@ -230,7 +230,7 @@ change takes effect immediately — no daemon reload needed.`,
 			email := args[0]
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
-			generated, err := rotateMailboxPasswordDirect(ctx, mailboxRepoFromDB(), notifyAgentMailbox, email, password)
+			generated, err := rotateMailboxPasswordDirect(ctx, mailboxRepoFromDB(), notifyAgentMailbox, ssoKeyForCLI(), email, password)
 			if err != nil {
 				return err
 			}

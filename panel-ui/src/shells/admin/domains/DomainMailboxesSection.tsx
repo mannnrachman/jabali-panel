@@ -24,7 +24,12 @@ import {
   Typography,
   message,
 } from "antd";
-import { DeleteOutlined, KeyOutlined, PlusOutlined } from "@ant-design/icons";
+import {
+  DeleteOutlined,
+  KeyOutlined,
+  MailOutlined,
+  PlusOutlined,
+} from "@ant-design/icons";
 
 import { DatabaseUserPasswordModal } from "../../../components/DatabaseUserPasswordModal";
 import {
@@ -32,6 +37,7 @@ import {
   useDeleteMailbox,
   useDomainEmail,
   useMailboxes,
+  useMintMailboxSSO,
   useRotateMailboxPassword,
   type Mailbox,
 } from "../../../hooks/useMailboxes";
@@ -75,6 +81,7 @@ export const DomainMailboxesSection = ({ domainId }: Props) => {
   const createMutation = useCreateMailbox();
   const deleteMutation = useDeleteMailbox();
   const rotateMutation = useRotateMailboxPassword();
+  const ssoMutation = useMintMailboxSSO();
 
   const [createOpen, setCreateOpen] = useState(false);
   const [passwordModal, setPasswordModal] = useState<{
@@ -125,6 +132,45 @@ export const DomainMailboxesSection = ({ domainId }: Props) => {
     } finally {
       setRotatingId(null);
     }
+  };
+
+  // openWebmail mints a one-shot SSO URL and opens it in a new tab.
+  // IMPORTANT: window.open MUST be called synchronously with the click
+  // event or popup blockers intercept it. We pop a blank tab first,
+  // then navigate it once the mint responds — same trick the
+  // phpMyAdmin-SSO flow uses.
+  const openWebmail = (row: Mailbox) => {
+    const popup = window.open("about:blank", "_blank");
+    if (!popup) {
+      message.warning(
+        "Browser blocked the webmail popup — allow popups for this site or click again.",
+      );
+      return;
+    }
+    ssoMutation.mutate(
+      { id: row.id },
+      {
+        onSuccess: (data) => {
+          popup.location.href = data.url;
+        },
+        onError: (err: unknown) => {
+          popup.close();
+          const resp = (err as { response?: { data?: { error?: string; detail?: string } } })
+            ?.response?.data;
+          // sso_unavailable_rotate_password is the typed hint for
+          // pre-Step-8 mailboxes (password_enc is NULL) — surface the
+          // remediation so the user knows what to do.
+          if (resp?.error === "sso_unavailable_rotate_password") {
+            message.warning(
+              resp.detail ??
+                "Rotate the mailbox password to enable webmail SSO.",
+            );
+            return;
+          }
+          message.error(resp?.detail ?? resp?.error ?? "Failed to open webmail");
+        },
+      },
+    );
   };
 
   const onCreate = async () => {
@@ -235,9 +281,17 @@ export const DomainMailboxesSection = ({ domainId }: Props) => {
             },
             {
               title: "Actions",
-              width: 140,
+              width: 180,
               render: (_, row) => (
                 <Space>
+                  <Tooltip title="Open webmail for this mailbox">
+                    <Button
+                      type="text"
+                      icon={<MailOutlined />}
+                      loading={ssoMutation.isPending && ssoMutation.variables?.id === row.id}
+                      onClick={() => openWebmail(row)}
+                    />
+                  </Tooltip>
                   <Tooltip title="Rotate password">
                     <Button
                       type="text"

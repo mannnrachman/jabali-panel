@@ -276,3 +276,29 @@ export function useUpdateMailboxQuota(): UseMutationResult<
     },
   });
 }
+
+// Webmail SSO (M6 Step 8 Phase B): panel mints a one-shot URL that
+// lands on mail.<domain>/sso/webmail, which forwards the user into
+// Bulwark with a session cookie set. The mutation returns the URL;
+// the caller pops a new tab to it — opening synchronously from the
+// click handler is important so browsers don't block the popup.
+export interface MailboxSSOResponse {
+  url: string;
+  mail_host: string;
+  expires_in: number;
+}
+
+export function useMintMailboxSSO(): UseMutationResult<
+  MailboxSSOResponse,
+  unknown,
+  { id: string }
+> {
+  return useMutation({
+    mutationFn: async ({ id }) => {
+      const { data } = await apiClient.post<MailboxSSOResponse>(
+        `/mailboxes/${id}/sso`,
+      );
+      return data;
+    },
+  });
+}

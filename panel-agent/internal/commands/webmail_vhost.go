@@ -67,9 +67,21 @@ server {
     proxy_set_header Host $host;
   }
 
-  location /api {
-    proxy_pass http://127.0.0.1:8446;
+  # /api/* intentionally routes to Bulwark (catch-all /) — Bulwark owns
+  # its own API endpoints (/api/auth/session, etc.) and proxies
+  # Stalwart admin internally via STALWART_API_URL. Routing /api → 8446
+  # here would hijack Bulwark's login route.
+
+  # Webmail SSO landing — proxy to panel-api (:8443 loopback). Panel
+  # itself serves GET /sso/webmail?token=… and sets the Bulwark session
+  # cookie on its response so the 303 lands the user logged in.
+  location = /sso/webmail {
+    proxy_pass https://127.0.0.1:8443;
+    proxy_ssl_verify off;
     proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
     proxy_http_version 1.1;
   }
 

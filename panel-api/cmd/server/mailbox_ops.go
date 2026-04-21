@@ -13,6 +13,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
 // mailbox_ops.go mirrors the HTTP mailbox handlers but goes straight to
@@ -42,6 +43,19 @@ type agentNotifier func(ctx context.Context, cmd string, params any)
 // domainRepoFromDB / packageRepoFromDB in root.go.
 func mailboxRepoFromDB() repository.MailboxRepository {
 	return repository.NewMailboxRepository(sharedDB)
+}
+
+// ssoKeyForCLI loads /etc/jabali-panel/sso.key on demand. Returns nil
+// when the key isn't configured — callers pass that through to
+// create/rotate which then skip ciphering plaintext into password_enc
+// and leave the webmail SSO feature unavailable for rows touched via
+// CLI. On a healthy install (install.sh has always generated sso.key
+// since M7 shipped), this returns a valid key.
+func ssoKeyForCLI() *ssokey.Key {
+	if sharedCfg == nil || sharedCfg.SSO.KeyPath == "" {
+		return nil
+	}
+	return loadSSOKey(sharedCfg.SSO.KeyPath, sharedLog)
 }
 
 // resolveDomainSpec accepts either a domain name (preferred CLI UX) or
@@ -90,10 +104,15 @@ func listMailboxesDirect(ctx context.Context, repo repository.MailboxRepository,
 //   - bcrypt the password
 //   - Create() then fire mailbox.create agent RPC best-effort (ADR-0013)
 //
+// When `ssoKey` is non-nil the plaintext is also sealed into
+// password_enc so the webmail SSO endpoint can decrypt it later.
+// Pre-Step-8 mailboxes (ssoKey=nil) still work — the SSO mint
+// surfaces a typed error until the next rotate with a live ssoKey.
+//
 // Returns the row plus the generated password, which is empty when the
 // caller supplied one — the CLI layer owns the reveal-once printing
 // contract.
-func createMailboxDirect(ctx context.Context, repo repository.MailboxRepository, notify agentNotifier, dom *models.Domain, localPart, password string, quotaBytes uint64) (*models.Mailbox, string, error) {
+func createMailboxDirect(ctx context.Context, repo repository.MailboxRepository, notify agentNotifier, ssoKey *ssokey.Key, dom *models.Domain, localPart, password string, quotaBytes uint64) (*models.Mailbox, string, error) {
 	if !dom.EmailEnabled {
 		return nil, "", fmt.Errorf("email is not enabled on domain %s — run `jabali domain email-enable %s` first", dom.Name, dom.Name)
 	}
@@ -127,12 +146,22 @@ func createMailboxDirect(ctx context.Context, repo repository.MailboxRepository,
 		return nil, "", fmt.Errorf("quota-mb must be at least 16 (MiB)")
 	}
 
+	var enc []byte
+	if ssoKey != nil {
+		sealed, err := ssoKey.Seal([]byte(password))
+		if err != nil {
+			return nil, "", fmt.Errorf("seal password: %w", err)
+		}
+		enc = sealed
+	}
+
 	now := time.Now().UTC()
 	mb := &models.Mailbox{
 		ID:           ids.NewULID(),
 		DomainID:     dom.ID,
 		LocalPart:    canonLocal,
 		PasswordHash: string(hash),
+		PasswordEnc:  enc,
 		QuotaBytes:   quotaBytes,
 		CreatedAt:    now,
 		UpdatedAt:    now,
@@ -224,8 +253,10 @@ func setMailboxQuotaDirect(ctx context.Context, repo repository.MailboxRepositor
 }
 
 // rotateMailboxPasswordDirect mirrors POST /mailboxes/:mbid/rotate-password.
-// Empty `newPassword` → generate a ULID and return it once.
-func rotateMailboxPasswordDirect(ctx context.Context, repo repository.MailboxRepository, notify agentNotifier, email, newPassword string) (string, error) {
+// Empty `newPassword` → generate a ULID and return it once. Writes the
+// AES-256-GCM envelope too when ssoKey is non-nil so the webmail SSO
+// flow stays in sync with the bcrypt hash.
+func rotateMailboxPasswordDirect(ctx context.Context, repo repository.MailboxRepository, notify agentNotifier, ssoKey *ssokey.Key, email, newPassword string) (string, error) {
 	mb, err := repo.FindByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
@@ -243,7 +274,15 @@ func rotateMailboxPasswordDirect(ctx context.Context, repo repository.MailboxRep
 	if err != nil {
 		return "", fmt.Errorf("hash password: %w", err)
 	}
-	if err := repo.UpdatePasswordHash(ctx, mb.ID, string(hash)); err != nil {
+	if ssoKey != nil {
+		sealed, err := ssoKey.Seal([]byte(newPassword))
+		if err != nil {
+			return "", fmt.Errorf("seal password: %w", err)
+		}
+		if err := repo.UpdatePasswordHashAndEnc(ctx, mb.ID, string(hash), sealed); err != nil {
+			return "", fmt.Errorf("update password: %w", err)
+		}
+	} else if err := repo.UpdatePasswordHash(ctx, mb.ID, string(hash)); err != nil {
 		return "", fmt.Errorf("update password: %w", err)
 	}
 	if notify != nil {

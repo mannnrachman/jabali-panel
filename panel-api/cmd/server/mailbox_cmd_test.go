@@ -110,6 +110,19 @@ func (f *fakeMailboxRepo) UpdatePasswordHash(_ context.Context, id string, hash 
 	return repository.ErrNotFound
 }
 
+func (f *fakeMailboxRepo) UpdatePasswordHashAndEnc(_ context.Context, id string, hash string, enc []byte) error {
+	if f.updateErr != nil {
+		return f.updateErr
+	}
+	if mb, ok := f.rows[id]; ok {
+		mb.PasswordHash = hash
+		mb.PasswordEnc = enc
+		mb.UpdatedAt = time.Now().UTC()
+		return nil
+	}
+	return repository.ErrNotFound
+}
+
 func (f *fakeMailboxRepo) UpdateQuota(_ context.Context, id string, quotaBytes uint64) error {
 	if f.updateErr != nil {
 		return f.updateErr
@@ -249,7 +262,7 @@ func TestCreateMailbox_HappyPath(t *testing.T) {
 	}
 
 	mb, generated, err := createMailboxDirect(
-		context.Background(), repo, notify,
+		context.Background(), repo, notify, nil,
 		dom, "Alice", "", 0,
 	)
 	if err != nil {
@@ -287,7 +300,7 @@ func TestCreateMailbox_RefusesOnDisabledEmail(t *testing.T) {
 	dom := testDomain("dom1", "example.com", false) // email disabled
 
 	_, _, err := createMailboxDirect(
-		context.Background(), repo, nil,
+		context.Background(), repo, nil, nil,
 		dom, "alice", "", 0,
 	)
 	if err == nil {
@@ -311,7 +324,7 @@ func TestCreateMailbox_UniquenessConflict(t *testing.T) {
 
 	// First create succeeds.
 	_, _, err := createMailboxDirect(
-		context.Background(), repo, nil,
+		context.Background(), repo, nil, nil,
 		dom, "alice", "", 0,
 	)
 	if err != nil {
@@ -319,7 +332,7 @@ func TestCreateMailbox_UniquenessConflict(t *testing.T) {
 	}
 	// Second create with the same local_part must fail.
 	_, _, err = createMailboxDirect(
-		context.Background(), repo, nil,
+		context.Background(), repo, nil, nil,
 		dom, "alice", "", 0,
 	)
 	if err == nil {
@@ -339,7 +352,7 @@ func TestCreateMailbox_ExplicitPassword(t *testing.T) {
 	dom := testDomain("dom1", "example.com", true)
 
 	mb, generated, err := createMailboxDirect(
-		context.Background(), repo, nil,
+		context.Background(), repo, nil, nil,
 		dom, "alice", "super-secret-12345", 0,
 	)
 	if err != nil {
@@ -360,7 +373,7 @@ func TestCreateMailbox_QuotaFloor(t *testing.T) {
 	dom := testDomain("dom1", "example.com", true)
 
 	_, _, err := createMailboxDirect(
-		context.Background(), repo, nil,
+		context.Background(), repo, nil, nil,
 		dom, "alice", "pw12345678", 1*1024*1024, // 1 MiB — below floor
 	)
 	if err == nil || !strings.Contains(err.Error(), "at least 16") {
@@ -477,7 +490,7 @@ func TestRotatePassword_HappyPath(t *testing.T) {
 		notifyCmd = cmd
 	}
 	generated, err := rotateMailboxPasswordDirect(
-		context.Background(), repo, notify,
+		context.Background(), repo, notify, nil,
 		mb.EmailCached, "",
 	)
 	if err != nil {
@@ -505,7 +518,7 @@ func TestRotatePassword_ExplicitPassword(t *testing.T) {
 	mb := preseedMailbox(repo, "mb1", "dom1", "example.com", "alice")
 
 	generated, err := rotateMailboxPasswordDirect(
-		context.Background(), repo, nil,
+		context.Background(), repo, nil, nil,
 		mb.EmailCached, "my-new-secret",
 	)
 	if err != nil {
@@ -524,7 +537,7 @@ func TestRotatePassword_NotFound(t *testing.T) {
 	t.Parallel()
 	repo := newFakeMailboxRepo()
 	_, err := rotateMailboxPasswordDirect(
-		context.Background(), repo, nil,
+		context.Background(), repo, nil, nil,
 		"missing@example.com", "",
 	)
 	if err == nil || !strings.Contains(err.Error(), "not found") {

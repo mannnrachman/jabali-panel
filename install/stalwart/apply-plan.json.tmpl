@@ -47,7 +47,7 @@
     "value": {
       "#smtp-25": {
         "name": "smtp-25",
-        "bind": ["0.0.0.0:25"],
+        "bind": {"0.0.0.0:25": true},
         "protocol": "smtp",
         "useTls": false,
         "tlsImplicit": false,
@@ -57,7 +57,7 @@
       },
       "#smtp-submissions-465": {
         "name": "smtp-submissions-465",
-        "bind": ["0.0.0.0:465"],
+        "bind": {"0.0.0.0:465": true},
         "protocol": "smtp",
         "useTls": true,
         "tlsImplicit": true,
@@ -67,7 +67,7 @@
       },
       "#smtp-submission-587": {
         "name": "smtp-submission-587",
-        "bind": ["0.0.0.0:587"],
+        "bind": {"0.0.0.0:587": true},
         "protocol": "smtp",
         "useTls": true,
         "tlsImplicit": false,
@@ -77,7 +77,7 @@
       },
       "#imap-993": {
         "name": "imap-993",
-        "bind": ["0.0.0.0:993"],
+        "bind": {"0.0.0.0:993": true},
         "protocol": "imap",
         "useTls": true,
         "tlsImplicit": true,
@@ -87,7 +87,7 @@
       },
       "#jmap-loopback": {
         "name": "jmap-loopback",
-        "bind": ["127.0.0.1:8446"],
+        "bind": {"127.0.0.1:8446": true},
         "protocol": "http",
         "useTls": false,
         "tlsImplicit": false,

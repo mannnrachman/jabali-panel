@@ -113,6 +113,39 @@ Stalwart connects to MariaDB as a new user `jabali-stalwart-ro` (created by `ins
 - **STORED generated column for `email_cached`**: requires a JOIN expression in the column definition. MariaDB doesn't allow subquery in generated columns — portability blocker.
 - **One-table schema (email as-is, LOWER() on every query)**: was the first sub-agent draft. Forces full-column scan for case-insensitive lookup, can't be indexed by LOWER() in older MariaDB. Derived `email_cached` column with a UNIQUE index beats it at every auth.
 
+## Amendment 2026-04-21: explicit-null optional queries (live-test)
+
+Live IMAP-LOGIN validation on VM 10.0.3.13 surfaced a trap. Stalwart
+v0.16's `x:Directory` schema defaults `queryMemberOf` and
+`queryEmailAliases` to **PostgreSQL-style** placeholder syntax:
+
+    "queryMemberOf":     "SELECT member_of FROM group_members WHERE name = $1"
+    "queryEmailAliases": "SELECT address FROM emails WHERE name = $1"
+
+On a MySQL/MariaDB-backed SqlDirectory these queries fail at prepare
+time (`mysql_async` rejects `$1` — MySQL uses `?`). Because
+`SqlDirectory::authenticate` runs them AFTER a successful login
+query to pull group + alias data, every login surfaces as
+`NO [CONTACTADMIN] MySQL error` even though the bcrypt verify
+itself succeeded.
+
+Fix: the apply-plan MUST explicitly set the optional query fields to
+`null`, not omit them:
+
+    "queryMemberOf":     null,
+    "queryEmailAliases": null,
+    "columnClass":       null,
+    "columnDescription": null,
+
+Omitting them does NOT yield `None` — the registry create path fills
+in the PostgreSQL strings as defaults. Shipping `null` explicitly
+forces `Option<String>::None` and Stalwart skips the follow-up
+queries entirely.
+
+Contract test for Step 3 must include a "login succeeds without a
+`group_members` or `emails` table present" case — otherwise regressions
+slip past httptest mocks.
+
 ## Related
 
 - ADR-0002 — DB is truth. This ADR extends it to mail directory.

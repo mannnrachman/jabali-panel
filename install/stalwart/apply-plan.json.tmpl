@@ -21,8 +21,12 @@
         },
         "columnEmail": "email_cached",
         "columnSecret": "password_hash",
+        "columnClass": null,
+        "columnDescription": null,
         "queryLogin": "SELECT email_cached, password_hash FROM mailboxes WHERE email_cached = ? AND is_disabled = 0",
-        "queryRecipient": "SELECT email_cached, password_hash FROM mailboxes WHERE email_cached = ? AND is_disabled = 0"
+        "queryRecipient": "SELECT email_cached, password_hash FROM mailboxes WHERE email_cached = ? AND is_disabled = 0",
+        "queryMemberOf": null,
+        "queryEmailAliases": null
       }
     }
   },

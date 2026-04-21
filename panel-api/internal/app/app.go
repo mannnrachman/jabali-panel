@@ -34,6 +34,7 @@ type Deps struct {
 	Databases           repository.DatabaseRepository
 	DatabaseUsers       repository.DatabaseUserRepository
 	DatabaseUserGrants  repository.DatabaseUserGrantRepository
+	Mailboxes           repository.MailboxRepository
 	PhpMyAdminSSOTokens repository.PhpMyAdminSSOTokenRepository
 	Agent               agent.AgentInterface
 	Reconciler          *reconciler.Reconciler
@@ -227,6 +228,13 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Users:          deps.Users,
 				Packages:       deps.Packages,
 				Agent:          deps.Agent,
+			})
+		}
+		if deps.Mailboxes != nil && deps.Domains != nil {
+			api.RegisterMailboxRoutes(v1, api.MailboxHandlerConfig{
+				Mailboxes: deps.Mailboxes,
+				Domains:   deps.Domains,
+				Agent:     deps.Agent,
 			})
 		}
 		if deps.Domains != nil && deps.DNSZones != nil && deps.DNSRecords != nil {

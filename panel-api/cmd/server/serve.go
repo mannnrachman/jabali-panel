@@ -102,6 +102,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		databaseRepo := repository.NewDatabaseRepository(sharedDB)
 		databaseUserRepo := repository.NewDatabaseUserRepository(sharedDB)
 		databaseUserGrantRepo := repository.NewDatabaseUserGrantRepository(sharedDB)
+		mailboxRepo := repository.NewMailboxRepository(sharedDB)
 
 		phpMyAdminSSOTokenRepo := repository.NewPhpMyAdminSSOTokenRepository(sharedDB)
 		phpPoolRepo := repository.NewPHPPoolRepository(sharedDB)
@@ -160,6 +161,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.Databases = databaseRepo
 		deps.DatabaseUsers = databaseUserRepo
 		deps.DatabaseUserGrants = databaseUserGrantRepo
+		deps.Mailboxes = mailboxRepo
 		deps.PhpMyAdminSSOTokens = phpMyAdminSSOTokenRepo
 		deps.PHPPools = phpPoolRepo
 		deps.PHPPoolIniOverrides = phpPoolIniOverrideRepo

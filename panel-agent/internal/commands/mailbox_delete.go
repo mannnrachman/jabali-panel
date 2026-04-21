@@ -10,14 +10,19 @@ import (
 
 // mailboxDeleteParams is the request shape for mailbox.delete.
 //
-// Panel has already removed the mailboxes row. Same as mailbox.create:
-// invalidate Stalwart's directory cache so any in-flight auth for this
-// address fails immediately instead of succeeding until the TTL expires.
+// Unlike mailbox.create (which is a no-op in v0.16 — ADR-0045), delete
+// requires an active Stalwart call: deleting the mailboxes row makes
+// new auths fail, but any registry Account record Stalwart synced on a
+// prior auth survives as a ghost until we explicitly destroy it.
 //
-// Note: this command does NOT touch Stalwart's mail data (RocksDB blobs
-// for the deleted user). Stalwart garbage-collects orphan principals on
-// its own schedule. If the operator needs immediate reclamation they run
-// `stalwart-cli purge-principal` manually — documented in the runbook.
+// Flow:
+//  1. Resolve the registry id via Account/query on the email.
+//  2. If no registry record (never authed → nothing synced), ack ok.
+//  3. Otherwise Account/set destroy the record.
+//
+// Mail data (RocksDB blobs for the deleted user's messages) is NOT
+// touched here — Stalwart garbage-collects orphan storage on its own
+// schedule. Immediate reclamation is an operator task via the webadmin.
 type mailboxDeleteParams struct {
 	ID    string `json:"id"`
 	Email string `json:"email"`
@@ -39,7 +44,16 @@ func mailboxDeleteHandler(ctx context.Context, params json.RawMessage) (any, err
 		return nil, err
 	}
 
-	if err := invalidateStalwartPrincipal(ctx, email); err != nil {
+	accountID, err := accountIDByEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	if accountID == "" {
+		// Never synced into Stalwart's registry (no prior auth).
+		// Nothing to destroy.
+		return okBody{Ok: true}, nil
+	}
+	if err := accountDestroy(ctx, accountID); err != nil {
 		return nil, err
 	}
 	return okBody{Ok: true}, nil

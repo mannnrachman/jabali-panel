@@ -199,11 +199,25 @@ func TestDomainEmailEnable_ReloadNotSupportedIsNotFatal(t *testing.T) {
 }
 
 // --- domain.email_disable --------------------------------------------
+//
+// v0.16 flow: agent calls JMAP Domain/query (resolve id) then Domain/set
+// destroy, removes the DKIM keyfile, reloads Stalwart. Happy path
+// therefore requires a JMAP fake in addition to the systemctl capture.
 
-func TestDomainEmailDisable_RemovesKeyAndReloads(t *testing.T) {
+func TestDomainEmailDisable_DestroysRegistryAndRemovesKeyAndReloads(t *testing.T) {
 	dir := wireDKIMDir(t)
 	var sysctl systemctlCapture
 	wireSystemctl(t, &sysctl)
+
+	// JMAP fake: answer Domain/query with an id, Domain/set destroy ok.
+	srv := newJMAPServer(t, map[string]jmapHandler{
+		"Domain/query": jmapHandlerReturning(jmapQueryResult{
+			IDs: []string{"dom-42"}, Total: 1,
+		}),
+		"Domain/set": jmapHandlerReturning(jmapSetResult{Destroyed: []string{"dom-42"}}),
+	})
+	defer srv.Close()
+	wireJMAP(t, srv)
 
 	// Seed a keyfile to be removed.
 	keyPath := filepath.Join(dir, "example.com.key")
@@ -228,12 +242,42 @@ func TestDomainEmailDisable_RemovesKeyAndReloads(t *testing.T) {
 	}
 }
 
+func TestDomainEmailDisable_NeverSynced_SkipsDestroyCall(t *testing.T) {
+	// Domain not in registry (enable was never called for this host's
+	// Stalwart). Query returns no ids, destroy route is not hit — the
+	// route map deliberately omits Domain/set to catch an unexpected call.
+	wireDKIMDir(t)
+	var sysctl systemctlCapture
+	wireSystemctl(t, &sysctl)
+
+	srv := newJMAPServer(t, map[string]jmapHandler{
+		"Domain/query": jmapHandlerReturning(jmapQueryResult{IDs: nil, Total: 0}),
+	})
+	defer srv.Close()
+	wireJMAP(t, srv)
+
+	_, err := domainEmailDisableHandler(context.Background(), json.RawMessage(
+		`{"domain_id":"01J","domain_name":"example.com"}`))
+	if err != nil {
+		t.Fatalf("never-synced disable should succeed: %v", err)
+	}
+	if len(sysctl.calls) != 1 {
+		t.Errorf("expected 1 systemctl call (reload), got %d", len(sysctl.calls))
+	}
+}
+
 func TestDomainEmailDisable_IdempotentOnMissingKey(t *testing.T) {
 	wireDKIMDir(t) // fresh tempdir, no keyfile
 	var sysctl systemctlCapture
 	wireSystemctl(t, &sysctl)
 
-	// Should succeed even though there's no key to delete.
+	// JMAP fake: destroy path not exercised (registry empty).
+	srv := newJMAPServer(t, map[string]jmapHandler{
+		"Domain/query": jmapHandlerReturning(jmapQueryResult{IDs: nil, Total: 0}),
+	})
+	defer srv.Close()
+	wireJMAP(t, srv)
+
 	_, err := domainEmailDisableHandler(context.Background(), json.RawMessage(
 		`{"domain_id":"01J","domain_name":"example.com"}`))
 	if err != nil {

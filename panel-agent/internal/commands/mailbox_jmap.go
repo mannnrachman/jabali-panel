@@ -1,5 +1,27 @@
 package commands
 
+// JMAP client for Stalwart v0.16's management API (ADR-0045).
+//
+// Stalwart's v0.15 REST surface under /api/principal/... is gone; all
+// management operations happen through the JMAP-shaped endpoint at /jmap.
+// This file is the narrow client the panel-agent command handlers use:
+//
+//  - accountIDByEmail(ctx, email): resolve a registry Account id from an
+//    email string (uses Account/query with a filter).
+//  - accountQuota(ctx, id): read quotaUsed + messageCount + lastAuthenticatedAt
+//    for an Account (uses Account/get).
+//  - accountDestroy(ctx, id): drop a stale registry Account record (uses
+//    Account/set { destroy }).
+//  - domainIDByName + domainDestroy: same shape for Domain objects.
+//
+// Auth is HTTP Basic with ("admin", <token from stalwart-admin.token>),
+// paired with STALWART_RECOVERY_ADMIN=admin:<token> in stalwart.env so
+// Stalwart accepts it against the env-seeded admin credential. A follow-up
+// install.sh commit wires that env line.
+//
+// Timeouts: loopback JMAP calls resolve in single-digit ms on a healthy
+// host; a 5-second cap catches process-wedge without surprising operators.
+
 import (
 	"bytes"
 	"context"
@@ -14,31 +36,44 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 )
 
-// Stalwart admin API coordinates. Overridable via env so tests point at an
-// httptest.Server and the installer can retarget if the config bind ever
-// moves off loopback.
 const (
 	defaultStalwartAdminURL       = "http://127.0.0.1:8446"
 	defaultStalwartAdminTokenPath = "/etc/jabali-panel/stalwart-admin.token"
 
+	// jmapAPIPath is the Stalwart default path for the JMAP method endpoint.
+	// Normally the client would discover this via GET /jmap/session; we
+	// hardcode for simplicity because the panel-agent only talks to a
+	// Stalwart we provisioned ourselves.
+	jmapAPIPath = "/jmap"
+
+	// jmapSessionPath is the session-discovery endpoint — not currently
+	// used but reserved for a future capability-aware reconciler.
+	jmapSessionPath = "/jmap/session"
+
 	envStalwartAdminURL       = "JABALI_STALWART_ADMIN_URL"
 	envStalwartAdminTokenPath = "JABALI_STALWART_ADMIN_TOKEN_PATH"
 
-	// stalwartHTTPTimeout caps the loopback-call wall time. JMAP admin
-	// calls resolve in single-digit milliseconds on a healthy host; a
-	// 5-second cap catches process-wedge scenarios without surprising
-	// operators during a routine burst.
 	stalwartHTTPTimeout = 5 * time.Second
+
+	// jmapAdminUser is the fixed username the panel-agent uses when
+	// authenticating against Stalwart. Paired with the token from
+	// stalwart-admin.token via STALWART_RECOVERY_ADMIN.
+	jmapAdminUser = "admin"
 )
 
-// stalwartHTTPClientFunc is the injection seam for tests. Replace in
-// _test.go files via a helper; restore in t.Cleanup.
+// USING is the JMAP capability list the client advertises in every
+// request body. Matches what stalwart-cli itself sends (see upstream
+// cli/src/jmap/protocol.rs USING constant).
+var jmapUsing = []string{
+	"urn:ietf:params:jmap:core",
+	"urn:stalwart:jmap",
+}
+
+// Test injection seams. _test.go files swap these and restore in Cleanup.
 var stalwartHTTPClientFunc = func() *http.Client {
 	return &http.Client{Timeout: stalwartHTTPTimeout}
 }
 
-// stalwartAdminURLFunc + stalwartAdminTokenFunc let tests swap these
-// without touching the process env, which is racy under t.Parallel.
 var stalwartAdminURLFunc = func() string {
 	if u := os.Getenv(envStalwartAdminURL); u != "" {
 		return u
@@ -58,135 +93,336 @@ var stalwartAdminTokenFunc = func() (string, error) {
 	return strings.TrimSpace(string(b)), nil
 }
 
-// invalidateStalwartPrincipal tells Stalwart to drop its cached directory
-// entry for the given email address so the next auth re-reads MariaDB.
-//
-// Design note: Stalwart re-reads the SQL directory on every auth, but
-// keeps a short (default 60s) LRU cache keyed by account. After a panel-
-// side mutation (row insert, password change, quota change, row delete)
-// the cache must be invalidated or a user could briefly hit stale state.
-// `POST /api/principal/{email}/invalidate` is the Stalwart v0.16.0 admin
-// path for this; if Stalwart isn't running yet (first enable of a fresh
-// domain) the call returns 503 — not an error from the panel's perspective
-// because there's nothing cached to invalidate.
-func invalidateStalwartPrincipal(ctx context.Context, email string) error {
-	url := stalwartAdminURLFunc() + "/api/principal/" + email + "/invalidate"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+// jmapRequestBody is the wire shape for a JMAP request (RFC 8620 §3.3).
+// Matches the stalwart-cli Rust struct exactly.
+type jmapRequestBody struct {
+	Using       []string          `json:"using"`
+	MethodCalls []jmapMethodCall  `json:"methodCalls"`
+	CreatedIds  map[string]string `json:"createdIds,omitempty"`
+}
+
+// jmapMethodCall is a [name, args, callId] triple. We marshal as a
+// 3-element JSON array to match the JMAP wire contract.
+type jmapMethodCall struct {
+	Name   string
+	Args   any
+	CallID string
+}
+
+func (c jmapMethodCall) MarshalJSON() ([]byte, error) {
+	return json.Marshal([]any{c.Name, c.Args, c.CallID})
+}
+
+func (c *jmapMethodCall) UnmarshalJSON(data []byte) error {
+	var arr [3]json.RawMessage
+	if err := json.Unmarshal(data, &arr); err != nil {
+		return fmt.Errorf("method call must be a 3-element array: %w", err)
+	}
+	if err := json.Unmarshal(arr[0], &c.Name); err != nil {
+		return fmt.Errorf("method name: %w", err)
+	}
+	c.Args = arr[1] // keep as RawMessage; caller decodes into their struct
+	if err := json.Unmarshal(arr[2], &c.CallID); err != nil {
+		return fmt.Errorf("method callId: %w", err)
+	}
+	return nil
+}
+
+// jmapResponseBody — response shape. Mirror of jmapRequestBody with
+// `methodResponses` instead of `methodCalls`.
+type jmapResponseBody struct {
+	MethodResponses []jmapMethodCall  `json:"methodResponses"`
+	SessionState    string            `json:"sessionState,omitempty"`
+	CreatedIds      map[string]string `json:"createdIds,omitempty"`
+}
+
+// jmapCall issues a single-method JMAP POST against /jmap and decodes
+// the single response into `out`. If Stalwart returns a "error" method
+// (wrong credentials, invalid args, unknown method), this returns a
+// structured AgentError. Connection-level failure is CodeUnavailable.
+func jmapCall(ctx context.Context, method string, args any, out any) error {
+	body := jmapRequestBody{
+		Using: jmapUsing,
+		MethodCalls: []jmapMethodCall{
+			{Name: method, Args: args, CallID: "c0"},
+		},
+	}
+	buf, err := json.Marshal(body)
 	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+		return fmt.Errorf("marshal jmap request: %w", err)
+	}
+
+	url := stalwartAdminURLFunc() + jmapAPIPath
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(buf))
+	if err != nil {
+		return fmt.Errorf("build jmap request: %w", err)
 	}
 	token, err := stalwartAdminTokenFunc()
 	if err != nil {
 		return fmt.Errorf("admin token: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth(jmapAdminUser, token)
 
 	resp, err := stalwartHTTPClientFunc().Do(req)
 	if err != nil {
-		// Connection-level failure — Stalwart not running or loopback
-		// routing broken. The panel row is already committed, so the
-		// auth will still work once Stalwart is up (directory is SQL);
-		// surface as CodeUnavailable so the panel can log + retry later.
 		return &agentwire.AgentError{
 			Code:    agentwire.CodeUnavailable,
-			Message: fmt.Sprintf("stalwart admin API unreachable: %v", err),
-		}
-	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
-
-	// 404 is fine — "no cache entry" is success (happens for a fresh
-	// row the agent is acking before Stalwart has seen the address).
-	// 503 is fine for the same reason (Stalwart up but the SQL directory
-	// hasn't been touched yet for this email).
-	switch {
-	case resp.StatusCode >= 200 && resp.StatusCode < 300,
-		resp.StatusCode == http.StatusNotFound,
-		resp.StatusCode == http.StatusServiceUnavailable:
-		return nil
-	case resp.StatusCode == http.StatusUnauthorized:
-		return &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: "stalwart admin API rejected bearer token — admin token rotated without agent restart?",
-		}
-	default:
-		return &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("stalwart admin API returned %d", resp.StatusCode),
-		}
-	}
-}
-
-// principalQuotaResponse is the subset of Stalwart's principal-info reply
-// the panel cares about. Stalwart emits more fields (roles, quotas,
-// identities); we decode only what we consume.
-type principalQuotaResponse struct {
-	UsedBytes    uint64     `json:"usedBytes"`
-	MessageCount uint64     `json:"messageCount"`
-	LastUsedAt   *time.Time `json:"lastUsedAt,omitempty"`
-}
-
-// getStalwartPrincipalQuota returns usage bytes + message count + last-used
-// timestamp for one email address via Stalwart's admin principal info.
-// Returns a zero-value struct with nil error if Stalwart reports 404 (the
-// mailbox exists in SQL but has never been touched — usage genuinely zero).
-func getStalwartPrincipalQuota(ctx context.Context, email string) (principalQuotaResponse, error) {
-	url := stalwartAdminURLFunc() + "/api/principal/" + email
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return principalQuotaResponse{}, fmt.Errorf("build request: %w", err)
-	}
-	token, err := stalwartAdminTokenFunc()
-	if err != nil {
-		return principalQuotaResponse{}, fmt.Errorf("admin token: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := stalwartHTTPClientFunc().Do(req)
-	if err != nil {
-		return principalQuotaResponse{}, &agentwire.AgentError{
-			Code:    agentwire.CodeUnavailable,
-			Message: fmt.Sprintf("stalwart admin API unreachable: %v", err),
+			Message: fmt.Sprintf("stalwart JMAP unreachable: %v", err),
 		}
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		// Never-used mailbox — return zeros, no error.
-		return principalQuotaResponse{}, nil
+	if resp.StatusCode == http.StatusUnauthorized {
+		return &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: "stalwart JMAP rejected basic auth — admin token rotated without agent restart?",
+		}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return principalQuotaResponse{}, &agentwire.AgentError{
+		return &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("stalwart admin API returned %d", resp.StatusCode),
+			Message: fmt.Sprintf("stalwart JMAP returned HTTP %d", resp.StatusCode),
 		}
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return principalQuotaResponse{}, fmt.Errorf("read response: %w", err)
+		return fmt.Errorf("read jmap response: %w", err)
 	}
-	var out principalQuotaResponse
-	if err := json.Unmarshal(body, &out); err != nil {
-		return principalQuotaResponse{}, &agentwire.AgentError{
+	var parsed jmapResponseBody
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("stalwart admin API returned unparseable body: %v", err),
+			Message: fmt.Sprintf("stalwart JMAP returned unparseable body: %v", err),
 		}
 	}
-	return out, nil
+	if len(parsed.MethodResponses) != 1 {
+		return &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("expected 1 method response, got %d", len(parsed.MethodResponses)),
+		}
+	}
+
+	mr := parsed.MethodResponses[0]
+	if mr.Name == "error" {
+		// JMAP-level error: args carry { type, description }.
+		var errResp struct {
+			Type        string `json:"type"`
+			Description string `json:"description"`
+		}
+		if raw, ok := mr.Args.(json.RawMessage); ok {
+			_ = json.Unmarshal(raw, &errResp)
+		}
+		return &agentwire.AgentError{
+			Code: agentwire.CodeInternal,
+			Message: fmt.Sprintf("stalwart JMAP error: %s — %s",
+				errResp.Type, errResp.Description),
+		}
+	}
+	if mr.Name != method {
+		return &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("stalwart JMAP method mismatch: expected %q, got %q", method, mr.Name),
+		}
+	}
+
+	if out == nil {
+		return nil
+	}
+	raw, ok := mr.Args.(json.RawMessage)
+	if !ok {
+		return fmt.Errorf("internal: method-call args not RawMessage")
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		return &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("stalwart JMAP response decode: %v", err),
+		}
+	}
+	return nil
+}
+
+// jmapQueryResult is the shape of <Object>/query responses.
+type jmapQueryResult struct {
+	IDs   []string `json:"ids"`
+	Total uint64   `json:"total"`
+}
+
+// jmapGetResult wraps the `list` array returned by <Object>/get. Each
+// element is an opaque raw message — callers decode into their own
+// struct with the fields they care about.
+type jmapGetResult struct {
+	List     []json.RawMessage `json:"list"`
+	NotFound []string          `json:"notFound"`
+}
+
+// jmapSetResult is the shape of <Object>/set responses.
+type jmapSetResult struct {
+	Created   map[string]json.RawMessage `json:"created,omitempty"`
+	Updated   map[string]json.RawMessage `json:"updated,omitempty"`
+	Destroyed []string                   `json:"destroyed,omitempty"`
+	// NotCreated/NotUpdated/NotDestroyed carry { type, description } per id.
+	NotCreated   map[string]json.RawMessage `json:"notCreated,omitempty"`
+	NotUpdated   map[string]json.RawMessage `json:"notUpdated,omitempty"`
+	NotDestroyed map[string]json.RawMessage `json:"notDestroyed,omitempty"`
+}
+
+// accountIDByEmail resolves a registry Account's id by its email
+// address. Returns "" + nil if Stalwart doesn't have a record yet
+// (mailbox in panel DB but nobody has authenticated yet — registry is
+// populated lazily on first auth per ADR-0045). The caller decides
+// whether absence is an error for their operation.
+func accountIDByEmail(ctx context.Context, email string) (string, error) {
+	// Account/query with an equality filter. The filter shape is the
+	// JMAP standard FilterCondition: { property, value } pairs.
+	args := map[string]any{
+		"filter": map[string]any{
+			"property": "email",
+			"value":    email,
+		},
+		"limit": 1,
+	}
+	var result jmapQueryResult
+	if err := jmapCall(ctx, "Account/query", args, &result); err != nil {
+		return "", err
+	}
+	if len(result.IDs) == 0 {
+		return "", nil
+	}
+	return result.IDs[0], nil
+}
+
+// accountQuotaView is the subset of the Account object that
+// mailbox.usage needs. Field names match Stalwart v0.16's registry
+// schema (crates/registry/src/schema/structs.rs — `UserAccount`).
+type accountQuotaView struct {
+	QuotaUsed    uint64     `json:"quotaUsed"`
+	MessageCount uint64     `json:"messageCount"`
+	LastAuthAt   *time.Time `json:"lastAuthenticatedAt,omitempty"`
+}
+
+// accountQuota fetches quota + message-count for a resolved account id.
+func accountQuota(ctx context.Context, id string) (accountQuotaView, error) {
+	args := map[string]any{
+		"ids":        []string{id},
+		"properties": []string{"quotaUsed", "messageCount", "lastAuthenticatedAt"},
+	}
+	var result jmapGetResult
+	if err := jmapCall(ctx, "Account/get", args, &result); err != nil {
+		return accountQuotaView{}, err
+	}
+	if len(result.List) == 0 {
+		// Account existed at query time but vanished at get time —
+		// race with a parallel delete. Treat as zero usage, no error.
+		return accountQuotaView{}, nil
+	}
+	var view accountQuotaView
+	if err := json.Unmarshal(result.List[0], &view); err != nil {
+		return accountQuotaView{}, &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("decode Account/get result: %v", err),
+		}
+	}
+	return view, nil
+}
+
+// accountDestroy removes a registry Account record. Idempotent: if
+// the id doesn't exist (already-destroyed race), the response's
+// notDestroyed entry is ignored rather than surfaced as an error.
+func accountDestroy(ctx context.Context, id string) error {
+	args := map[string]any{
+		"destroy": []string{id},
+	}
+	var result jmapSetResult
+	if err := jmapCall(ctx, "Account/set", args, &result); err != nil {
+		return err
+	}
+	// Success if id appears in destroyed, or in notDestroyed with a
+	// "not found" reason (already gone). Any other notDestroyed reason
+	// is an error.
+	for _, d := range result.Destroyed {
+		if d == id {
+			return nil
+		}
+	}
+	if reason, ok := result.NotDestroyed[id]; ok {
+		var r struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal(reason, &r)
+		if r.Type == "notFound" {
+			return nil
+		}
+		return &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("stalwart Account/set destroy %s refused: %s", id, string(reason)),
+		}
+	}
+	// No signal either way — return ok (JMAP's contract is that the id
+	// must appear in either destroyed or notDestroyed, so this branch
+	// shouldn't fire, but don't fail the caller on a malformed response).
+	return nil
+}
+
+// domainIDByName resolves a registry Domain's id by its name.
+// Semantics identical to accountIDByEmail.
+func domainIDByName(ctx context.Context, name string) (string, error) {
+	args := map[string]any{
+		"filter": map[string]any{
+			"property": "name",
+			"value":    name,
+		},
+		"limit": 1,
+	}
+	var result jmapQueryResult
+	if err := jmapCall(ctx, "Domain/query", args, &result); err != nil {
+		return "", err
+	}
+	if len(result.IDs) == 0 {
+		return "", nil
+	}
+	return result.IDs[0], nil
+}
+
+// domainDestroy removes a registry Domain record. Same
+// not-found-is-ok semantics as accountDestroy.
+func domainDestroy(ctx context.Context, id string) error {
+	args := map[string]any{
+		"destroy": []string{id},
+	}
+	var result jmapSetResult
+	if err := jmapCall(ctx, "Domain/set", args, &result); err != nil {
+		return err
+	}
+	for _, d := range result.Destroyed {
+		if d == id {
+			return nil
+		}
+	}
+	if reason, ok := result.NotDestroyed[id]; ok {
+		var r struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal(reason, &r)
+		if r.Type == "notFound" {
+			return nil
+		}
+		return &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("stalwart Domain/set destroy %s refused: %s", id, string(reason)),
+		}
+	}
+	return nil
 }
 
 // requireEmail validates + lowercases an email-shaped string for agent
-// commands. Returns an AgentError-typed *invalid_argument on failure so
-// the panel sees a structured error code instead of "internal".
+// commands. Unchanged from the v0.15 implementation — the email
+// validation doesn't depend on the transport.
 func requireEmail(raw string) (string, error) {
 	if raw == "" {
 		return "", &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "email parameter required"}
 	}
-	// Defence in depth: reject control characters + shell metachars
-	// before the address hits a URL builder. Panel-side
-	// internal/mailaddr.Canonicalise is the canonical validator; this
-	// is just a last-mile guard against a malformed NDJSON input.
 	if strings.ContainsAny(raw, " \t\n\r;&|<>`$\\(){}'\"!*?[]") {
 		return "", &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "shell metacharacter in email"}
 	}
@@ -196,14 +432,8 @@ func requireEmail(raw string) (string, error) {
 	return strings.ToLower(raw), nil
 }
 
-// okBody is the trivial positive response shape shared by the four
-// cache-invalidate commands. Keeping it in a named struct so the
-// cross-boundary contract test pins the wire shape rather than
-// anonymous struct literals.
+// okBody is the trivial positive response shape shared by commands
+// whose ack carries no payload.
 type okBody struct {
 	Ok bool `json:"ok"`
 }
-
-// discardBody is used to feed an ignored but non-nil body to
-// http.Request in tests; not used in production.
-func discardBody() io.Reader { return bytes.NewReader(nil) }

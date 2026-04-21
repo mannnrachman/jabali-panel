@@ -11,9 +11,10 @@ import (
 
 // mailboxUsageParams is the request shape for mailbox.usage.
 //
-// Unlike the four cache-invalidate commands this one READS from Stalwart
-// — it's how the reconciler's 5-minute sampler keeps mailboxes.last_usage_*
-// columns fresh so the UI's progress bar has something to show.
+// Unlike the four no-op commands, this one READS from Stalwart's
+// registry via JMAP — it's how the reconciler's 5-minute sampler
+// keeps mailboxes.last_usage_* columns fresh for the UI's progress
+// bar.
 type mailboxUsageParams struct {
 	ID    string `json:"id"`
 	Email string `json:"email"`
@@ -24,12 +25,15 @@ type mailboxUsageParams struct {
 // last_usage_at = wall-clock now() (not the last_used_at Stalwart
 // returns — that's "when the principal was last authed", which is
 // different from "when we last polled").
+//
+// Wire contract unchanged from Step 3's v0.15 draft — only the agent's
+// internal impl pivoted from REST to JMAP.
 type mailboxUsageResponse struct {
 	UsedBytes    uint64 `json:"used_bytes"`
 	MessageCount uint64 `json:"message_count"`
-	// LastUsedAt is Stalwart's view of the last auth/access timestamp
-	// (not the sampler's poll time). RFC 3339. Empty string if Stalwart
-	// has never seen an auth for this principal (fresh mailbox).
+	// LastUsedAt is Stalwart's view of the last auth/access timestamp.
+	// Empty string if Stalwart has never seen an auth for this
+	// principal (fresh mailbox, never synced into the registry).
 	LastUsedAt string `json:"last_used_at,omitempty"`
 }
 
@@ -49,17 +53,30 @@ func mailboxUsageHandler(ctx context.Context, params json.RawMessage) (any, erro
 		return nil, err
 	}
 
-	info, err := getStalwartPrincipalQuota(ctx, email)
+	// Step 1: resolve the registry Account id. Lazy-sync means the
+	// record won't exist until the mailbox owner has authenticated at
+	// least once; for a brand-new mailbox the sampler sees no usage,
+	// which maps to "all zeros" — not an error.
+	accountID, err := accountIDByEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	if accountID == "" {
+		return mailboxUsageResponse{}, nil
+	}
+
+	// Step 2: read quota + message-count + last-auth timestamp.
+	info, err := accountQuota(ctx, accountID)
 	if err != nil {
 		return nil, err
 	}
 
 	var lastUsed string
-	if info.LastUsedAt != nil && !info.LastUsedAt.IsZero() {
-		lastUsed = info.LastUsedAt.UTC().Format(time.RFC3339)
+	if info.LastAuthAt != nil && !info.LastAuthAt.IsZero() {
+		lastUsed = info.LastAuthAt.UTC().Format(time.RFC3339)
 	}
 	return mailboxUsageResponse{
-		UsedBytes:    info.UsedBytes,
+		UsedBytes:    info.QuotaUsed,
 		MessageCount: info.MessageCount,
 		LastUsedAt:   lastUsed,
 	}, nil

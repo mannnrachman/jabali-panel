@@ -10,21 +10,25 @@ import (
 
 // mailboxSetPasswordParams is the request shape for mailbox.set_password.
 //
-// NB: this command does NOT carry the new password — the panel has already
-// bcrypted it and written mailboxes.password_hash before calling us. All
-// we do is evict Stalwart's directory-cache entry so the NEXT auth
-// re-reads the hash from MariaDB. A stale cached entry would keep
-// accepting the OLD password until the TTL expires.
+// NB: this command does NOT carry the new password — the panel has
+// already bcrypted it and written mailboxes.password_hash before calling
+// us. In v0.16 the agent is a Stalwart-side no-op (ADR-0045): Stalwart's
+// SqlDirectory re-reads the hash on the next auth attempt, so the new
+// password is effective immediately for new sessions.
 //
-// Plaintext never reaches the agent. That's the whole point of the post-
-// review password model in ADR-0042 + plan §1 (two-column -> one-column
-// bcrypt-only).
+// Plaintext never reaches the agent. That's the whole point of the
+// post-review password model in ADR-0042 + plan §1 (two-column ->
+// one-column bcrypt-only).
+//
+// Mid-session note: existing AccessTokens are unaffected — the password
+// change doesn't revoke active sessions. That's standard session
+// behavior. Forced logout is a runbook escape-hatch via webadmin.
 type mailboxSetPasswordParams struct {
 	ID    string `json:"id"`
 	Email string `json:"email"`
 }
 
-func mailboxSetPasswordHandler(ctx context.Context, params json.RawMessage) (any, error) {
+func mailboxSetPasswordHandler(_ context.Context, params json.RawMessage) (any, error) {
 	if len(params) == 0 {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "params required"}
 	}
@@ -35,12 +39,7 @@ func mailboxSetPasswordHandler(ctx context.Context, params json.RawMessage) (any
 	if p.ID == "" {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "id parameter required"}
 	}
-	email, err := requireEmail(p.Email)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := invalidateStalwartPrincipal(ctx, email); err != nil {
+	if _, err := requireEmail(p.Email); err != nil {
 		return nil, err
 	}
 	return okBody{Ok: true}, nil

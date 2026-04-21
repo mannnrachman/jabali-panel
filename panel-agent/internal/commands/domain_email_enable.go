@@ -96,12 +96,9 @@ func domainEmailEnableHandler(ctx context.Context, params json.RawMessage) (any,
 		}
 	}
 
-	// Reload Stalwart so it re-reads the SQL directory (picks up the
-	// newly-enabled domain without dropping existing sessions).
+	// Reload Stalwart so it re-reads any config picked up from disk.
+	// A SIGHUP-equivalent reload is enough; we don't stop any unit.
 	if out, err := runSystemctl(ctx, "reload", "jabali-stalwart.service"); err != nil {
-		// reload may not be implemented by the unit; fall back to kill -HUP
-		// which Stalwart treats as reload. Ignore a reload-not-supported
-		// error cleanly here because the unit is still running.
 		if !isReloadNotSupportedErr(out) {
 			return nil, &agentwire.AgentError{
 				Code:    agentwire.CodeInternal,
@@ -109,6 +106,25 @@ func domainEmailEnableHandler(ctx context.Context, params json.RawMessage) (any,
 			}
 		}
 	}
+
+	// TODO(M6 v0.16 pivot, task #13): create the registry Domain +
+	// DkimSignature JMAP objects here. Schema field names for those
+	// two object types (specifically the DkimSignature tagged-enum
+	// variant + privateKey wrapping + the Domain "enabled" / name
+	// shape) haven't been verified against a live v0.16 Stalwart, and
+	// ADR-0045 explicitly defers speculative JMAP shapes to avoid the
+	// first-deploy fail-loop pattern (see feedback_verify_wire_contract).
+	//
+	// Without those JMAP creates the following DOES NOT yet work
+	// end-to-end against a real v0.16 server:
+	//   - Inbound SMTP for this domain (Stalwart 550s unknown domains)
+	//   - DKIM signing for outbound mail from this domain
+	//
+	// The DKIM key file on disk + the DNS TXT record returned to the
+	// panel are correct and will match what Stalwart signs with once
+	// the DkimSignature/set create is wired up. Functional unblocking
+	// of mail flow is a single ~30-line edit once a v0.16 VM is
+	// available to validate schema field names.
 
 	return domainEmailEnableResponse{
 		Ok:            true,

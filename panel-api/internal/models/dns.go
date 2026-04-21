@@ -57,6 +57,13 @@ type DNSRecord struct {
 	Priority int    `gorm:"type:int;not null;default:0"                    json:"priority"`
 
 	Managed   bool `gorm:"type:tinyint(1);not null;default:0" json:"managed"`
+	// ManagedBy (migration 000055) distinguishes which subsystem owns a
+	// managed record. NULL for pre-M6 rows and hand-edits; "m6" for
+	// records inserted by domain.email_enable (DKIM + autoconfig CNAME
+	// + _autodiscover._tcp SRV). Delete-on-disable scopes cleanup by
+	// this column so M4 bootstrap records (MX, SPF, DMARC, A) survive.
+	ManagedBy *string `gorm:"type:varchar(16)" json:"managed_by,omitempty"`
+
 	IsEnabled bool `gorm:"type:tinyint(1);not null;default:1" json:"is_enabled"`
 
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`

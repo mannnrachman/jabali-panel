@@ -3,20 +3,26 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/dnscompile"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // DomainEmailHandlerConfig wires the email-on-domain endpoints.
 type DomainEmailHandlerConfig struct {
-	Domains repository.DomainRepository
-	Agent   agent.AgentInterface
+	Domains    repository.DomainRepository
+	Agent      agent.AgentInterface
+	DNSZones   repository.DNSZoneRepository
+	DNSRecords repository.DNSRecordRepository
 }
 
 const (
@@ -48,24 +54,31 @@ func RegisterDomainEmailRoutes(g *gin.RouterGroup, cfg DomainEmailHandlerConfig)
 
 type domainEmailHandler struct{ cfg DomainEmailHandlerConfig }
 
-// domainEmailResponse is what the UI reads on every poll. Keep the
-// shape stable — dns_records will grow a per-record `status` field
-// once Step 5 lands; clients that only look at `records` today will
-// continue to render them as static instructions.
+// domainEmailResponse is what the UI reads on every poll. `warnings`
+// surface operator-actionable messages — typically a conflict with a
+// user-edited DNS record that M6 refused to overwrite.
 type domainEmailResponse struct {
-	DomainID       string                `json:"domain_id"`
-	DomainName     string                `json:"domain_name"`
-	EmailEnabled   bool                  `json:"email_enabled"`
-	DkimSelector   string                `json:"dkim_selector,omitempty"`
-	DkimPublicKey  string                `json:"dkim_public_key,omitempty"`
-	EmailEnabledAt *time.Time            `json:"email_enabled_at,omitempty"`
-	Records        []domainEmailDNSHint  `json:"records"`
+	DomainID       string               `json:"domain_id"`
+	DomainName     string               `json:"domain_name"`
+	EmailEnabled   bool                 `json:"email_enabled"`
+	DkimSelector   string               `json:"dkim_selector,omitempty"`
+	DkimPublicKey  string               `json:"dkim_public_key,omitempty"`
+	EmailEnabledAt *time.Time           `json:"email_enabled_at,omitempty"`
+	Records        []domainEmailDNSHint `json:"records"`
+	Warnings       []string             `json:"warnings,omitempty"`
 }
 
-// domainEmailDNSHint is one recommended DNS record. `Status` is an
-// empty string today (no live status) and becomes "ok" / "missing" /
-// "conflict" once the dns-status endpoint is wired. `Purpose` is a
-// human label for the UI table.
+// domainEmailDNSHint is one recommended DNS record. `Status` is one of:
+//
+//	"ok"       — present in dns_records with matching content
+//	"missing"  — expected but no row at (name, type)
+//	"conflict" — a user-edited (ManagedBy=NULL, Managed=false) row is
+//	             there with different content; M6 won't overwrite it
+//	""         — zone missing (domain has no DNS zone on the panel);
+//	             the UI renders this as "no live data" rather than an
+//	             error so non-PowerDNS setups don't look broken
+//
+// Purpose is a human label for the UI table.
 type domainEmailDNSHint struct {
 	Purpose string `json:"purpose"`
 	Name    string `json:"name"`
@@ -103,6 +116,7 @@ func (h *domainEmailHandler) get(c *gin.Context) {
 	if dom.DkimPublicKey != nil {
 		pubKey = *dom.DkimPublicKey
 	}
+	hints, warnings := h.buildHintsWithStatus(ctx, dom.ID, dom.Name, selector, pubKey)
 	c.JSON(http.StatusOK, domainEmailResponse{
 		DomainID:       dom.ID,
 		DomainName:     dom.Name,
@@ -110,7 +124,8 @@ func (h *domainEmailHandler) get(c *gin.Context) {
 		DkimSelector:   selector,
 		DkimPublicKey:  pubKey,
 		EmailEnabledAt: dom.EmailEnabledAt,
-		Records:        dnsRecordHints(dom.Name, selector, pubKey),
+		Records:        hints,
+		Warnings:       warnings,
 	})
 }
 
@@ -181,10 +196,18 @@ func (h *domainEmailHandler) enable(c *gin.Context) {
 		return
 	}
 
+	// Inject M6 DNS records (DKIM + autoconfig + autodiscover) into the
+	// domain's zone. Best-effort — a DNS-side failure doesn't roll back
+	// the email_enable flip (the mailbox system is still usable without
+	// the convenience records). Warnings from this step flow back to
+	// the UI so the operator sees conflicts / missing-zone issues.
+	warnings := h.syncEmailDNSOnEnable(ctx, dom.ID, selector, pubKey)
+
 	dom.EmailEnabled = true
 	dom.DkimSelector = &selector
 	dom.DkimPublicKey = &pubKey
 	dom.EmailEnabledAt = &now
+	hints, statusWarnings := h.buildHintsWithStatus(ctx, dom.ID, dom.Name, selector, pubKey)
 	c.JSON(http.StatusOK, domainEmailResponse{
 		DomainID:       dom.ID,
 		DomainName:     dom.Name,
@@ -192,7 +215,8 @@ func (h *domainEmailHandler) enable(c *gin.Context) {
 		DkimSelector:   selector,
 		DkimPublicKey:  pubKey,
 		EmailEnabledAt: &now,
-		Records:        dnsRecordHints(dom.Name, selector, pubKey),
+		Records:        hints,
+		Warnings:       append(warnings, statusWarnings...),
 	})
 }
 
@@ -245,49 +269,242 @@ func (h *domainEmailHandler) disable(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+
+	// Clean up M6-managed DNS records. M4 bootstrap records (A/MX/SPF/
+	// DMARC with ManagedBy=NULL) and any user-edited rows survive.
+	// Best-effort — if the DB delete fails we log and move on (the
+	// email_enabled flip itself already succeeded, which is the thing
+	// the operator asked for). ManagedBy-scoped WHERE clause can never
+	// hit the wrong rows even if this were retried.
+	h.deleteEmailDNSOnDisable(ctx, dom.ID)
 	c.Status(http.StatusNoContent)
 }
 
-// dnsRecordHints returns the canonical set of records that should be
-// published in the domain's zone for email to work. Pure function of
-// (domain name, DKIM selector, DKIM public-key TXT value). When email
-// is disabled (selector/pubkey empty) the DKIM entry still appears so
-// the UI can show the user *what* they'll need when they enable.
-func dnsRecordHints(name, selector, pubKey string) []domainEmailDNSHint {
+// syncEmailDNSOnEnable inserts the three M6-managed records into the
+// domain's zone, skipping rows where a non-managed (user-edited)
+// record already occupies the (name, type) slot. Returns a slice of
+// human-readable warning messages for each conflict or hard error so
+// the UI can surface them. Best-effort: the email_enable flip has
+// already succeeded by the time we get here, so errors are
+// accumulated into warnings rather than failing the request.
+func (h *domainEmailHandler) syncEmailDNSOnEnable(ctx context.Context, domainID, selector, dkimPub string) []string {
+	if h.cfg.DNSZones == nil || h.cfg.DNSRecords == nil {
+		// DNS repos not wired — panel running in a config without
+		// PowerDNS integration. Caller (the UI) will show the hint
+		// list with empty status; no warning, no error.
+		return nil
+	}
+	zone, err := h.cfg.DNSZones.FindByDomainID(ctx, domainID)
+	if err != nil {
+		if isNotFound(err) {
+			return []string{"DNS autoconfig skipped: no zone on file for this domain."}
+		}
+		slog.Error("m6 dns: load zone", "domain_id", domainID, "err", err)
+		return []string{"DNS autoconfig failed to read the domain's zone."}
+	}
+
+	existing, err := h.cfg.DNSRecords.ListByZoneID(ctx, zone.ID)
+	if err != nil {
+		slog.Error("m6 dns: list records", "zone_id", zone.ID, "err", err)
+		return []string{"DNS autoconfig couldn't read existing records."}
+	}
+	intended := dnscompile.BuildEmailRecords(zone.ID, selector, dkimPub, ids.NewULID, time.Now().UTC())
+
+	var warnings []string
+	for _, rec := range intended {
+		// Skip if we've already placed this exact M6 row on a prior
+		// enable (idempotent). Match by (name, type, managed_by).
+		if hasExistingM6Record(existing, rec.Name, rec.Type) {
+			continue
+		}
+		if conflict := findConflict(existing, rec.Name, rec.Type); conflict != nil {
+			warnings = append(warnings,
+				"A user-edited "+rec.Type+" record at "+rec.Name+" is blocking the "+
+					"autoconfig entry. Remove it in the DNS editor or accept M6 may overwrite.")
+			continue
+		}
+		r := rec
+		if err := h.cfg.DNSRecords.Create(ctx, &r); err != nil {
+			slog.Error("m6 dns: create record", "zone_id", zone.ID, "name", rec.Name, "type", rec.Type, "err", err)
+			warnings = append(warnings, "Failed to publish "+rec.Type+" record at "+rec.Name+".")
+		}
+	}
+	return warnings
+}
+
+// deleteEmailDNSOnDisable removes M6-managed records (by managed_by
+// marker). Silent no-op when DNS repos aren't wired.
+func (h *domainEmailHandler) deleteEmailDNSOnDisable(ctx context.Context, domainID string) {
+	if h.cfg.DNSZones == nil || h.cfg.DNSRecords == nil {
+		return
+	}
+	zone, err := h.cfg.DNSZones.FindByDomainID(ctx, domainID)
+	if err != nil {
+		if !isNotFound(err) {
+			slog.Error("m6 dns: load zone on disable", "domain_id", domainID, "err", err)
+		}
+		return
+	}
+	if err := h.cfg.DNSRecords.DeleteByZoneIDAndManagedBy(ctx, zone.ID, dnscompile.EmailRecordsManagedBy); err != nil {
+		slog.Error("m6 dns: delete managed records", "zone_id", zone.ID, "err", err)
+	}
+}
+
+// buildHintsWithStatus projects the authoritative M6 record set onto
+// the UI's list-of-hints shape, marking each entry with its live
+// status from dns_records. Records the blueprint lists (M4 + M6)
+// appear here; status reflects what's actually stored in PowerDNS via
+// the panel's dns_records mirror.
+//
+// When DNS repos aren't wired or the domain has no zone, returns the
+// bare hint list with empty `Status` — the UI falls back to showing
+// them as static instructions.
+func (h *domainEmailHandler) buildHintsWithStatus(ctx context.Context, domainID, domainName, selector, pubKey string) ([]domainEmailDNSHint, []string) {
+	hints := staticEmailHints(domainName, selector, pubKey)
+
+	if h.cfg.DNSZones == nil || h.cfg.DNSRecords == nil {
+		return hints, nil
+	}
+	zone, err := h.cfg.DNSZones.FindByDomainID(ctx, domainID)
+	if err != nil || zone == nil {
+		return hints, nil
+	}
+	existing, err := h.cfg.DNSRecords.ListByZoneID(ctx, zone.ID)
+	if err != nil {
+		return hints, nil
+	}
+
+	var warnings []string
+	for i := range hints {
+		// Hints use FQDN form (name + trailing dot); existing records
+		// store the short label relative to the zone. Map the two so
+		// we can compare.
+		shortName := shortLabelForHint(hints[i].Name, domainName)
+		rec := findRecord(existing, shortName, hints[i].Type)
+		switch {
+		case rec == nil:
+			hints[i].Status = "missing"
+		case rec.Managed && rec.ManagedBy != nil:
+			// Panel-managed record — compare content only when we
+			// have an expected value to check against. Empty
+			// `Value` means we don't know (pre-enable hint line for
+			// DKIM). Treat as ok in that case.
+			if hints[i].Value == "" || hintMatches(rec.Content, hints[i].Value) {
+				hints[i].Status = "ok"
+			} else {
+				hints[i].Status = "conflict"
+				warnings = append(warnings, "Panel-managed "+hints[i].Type+" record at "+hints[i].Name+" drifted from the expected value — reconciler will fix on next tick.")
+			}
+		default:
+			// User-edited. Block the override; don't warn if it matches.
+			if hints[i].Value != "" && !hintMatches(rec.Content, hints[i].Value) {
+				hints[i].Status = "conflict"
+				warnings = append(warnings, "User-edited "+hints[i].Type+" record at "+hints[i].Name+" overrides the email autoconfig; remove it to let M6 manage this slot.")
+			} else {
+				hints[i].Status = "ok"
+			}
+		}
+	}
+	return hints, warnings
+}
+
+// staticEmailHints is the pure-function part: returns the list of
+// records the operator should see regardless of whether live state
+// can be read. When DKIM isn't set yet (pre-enable) the DKIM entry
+// still appears with an empty Value so the UI shows it as "pending".
+func staticEmailHints(domainName, selector, pubKey string) []domainEmailDNSHint {
 	hints := []domainEmailDNSHint{
-		{
-			Purpose: "MX — delivers incoming mail to this host",
-			Name:    name + ".",
-			Type:    "MX",
-			Value:   "10 mail." + name + ".",
-		},
-		{
-			Purpose: "SPF — authorises this host to send mail for the domain",
-			Name:    name + ".",
-			Type:    "TXT",
-			Value:   "v=spf1 mx -all",
-		},
-		{
-			Purpose: "DMARC — tells receivers to reject unauthenticated mail",
-			Name:    "_dmarc." + name + ".",
-			Type:    "TXT",
-			Value:   "v=DMARC1; p=reject; rua=mailto:postmaster@" + name,
-		},
+		{Purpose: "MX — delivers incoming mail to this host", Name: domainName + ".", Type: "MX", Value: "10 mail." + domainName + "."},
+		{Purpose: "SPF — authorises this host to send mail for the domain", Name: domainName + ".", Type: "TXT", Value: `v=spf1 mx ~all`},
+		{Purpose: "DMARC — tells receivers to reject unauthenticated mail", Name: "_dmarc." + domainName + ".", Type: "TXT", Value: "v=DMARC1; p=none"},
+		{Purpose: "autoconfig — Thunderbird / mobile client auto-discovery", Name: "autoconfig." + domainName + ".", Type: "CNAME", Value: "mail." + domainName + "."},
+		{Purpose: "_autodiscover._tcp — alternative auto-discovery flavour (Outlook)", Name: "_autodiscover._tcp." + domainName + ".", Type: "SRV", Value: "0 0 443 mail." + domainName + "."},
 	}
 	if selector != "" && pubKey != "" {
 		hints = append(hints, domainEmailDNSHint{
 			Purpose: "DKIM — signs outbound mail so receivers can verify it",
-			Name:    selector + "._domainkey." + name + ".",
+			Name:    selector + "._domainkey." + domainName + ".",
 			Type:    "TXT",
 			Value:   pubKey,
 		})
 	} else {
 		hints = append(hints, domainEmailDNSHint{
 			Purpose: "DKIM — generated automatically when email is enabled",
-			Name:    "<selector>._domainkey." + name + ".",
+			Name:    "<selector>._domainkey." + domainName + ".",
 			Type:    "TXT",
 			Value:   "",
 		})
 	}
 	return hints
+}
+
+// shortLabelForHint maps a hint's FQDN back to the short label stored
+// in dns_records. "@" is used for the apex (matches BootstrapRecords).
+func shortLabelForHint(hintName, domain string) string {
+	// Strip the single trailing dot.
+	n := hintName
+	if len(n) > 0 && n[len(n)-1] == '.' {
+		n = n[:len(n)-1]
+	}
+	if n == domain {
+		return "@"
+	}
+	// Strip ".<domain>" suffix to get the relative label.
+	suffix := "." + domain
+	if len(n) > len(suffix) && n[len(n)-len(suffix):] == suffix {
+		return n[:len(n)-len(suffix)]
+	}
+	return n
+}
+
+func findRecord(records []models.DNSRecord, name, typ string) *models.DNSRecord {
+	for i := range records {
+		if records[i].Name == name && records[i].Type == typ {
+			return &records[i]
+		}
+	}
+	return nil
+}
+
+func hasExistingM6Record(records []models.DNSRecord, name, typ string) bool {
+	for i := range records {
+		r := &records[i]
+		if r.Name == name && r.Type == typ && r.ManagedBy != nil && *r.ManagedBy == dnscompile.EmailRecordsManagedBy {
+			return true
+		}
+	}
+	return false
+}
+
+// findConflict returns an existing row at (name, type) that M6 must
+// NOT overwrite — i.e. a user-edited row (Managed=false) OR a
+// differently-managed panel record (Managed=true but ManagedBy != m6,
+// e.g. M4 bootstrap). Returns nil when the slot is empty or already
+// owned by m6 (caller should use hasExistingM6Record for that case).
+func findConflict(records []models.DNSRecord, name, typ string) *models.DNSRecord {
+	for i := range records {
+		r := &records[i]
+		if r.Name != name || r.Type != typ {
+			continue
+		}
+		if r.ManagedBy != nil && *r.ManagedBy == dnscompile.EmailRecordsManagedBy {
+			continue
+		}
+		return r
+	}
+	return nil
+}
+
+// hintMatches is a tolerant comparison for TXT-style contents where
+// BootstrapRecords stores `"v=spf1..."` (quoted) and PowerDNS also
+// accepts unquoted. Strips a surrounding pair of double quotes on both
+// sides before comparing so we don't falsely flag a match as conflict.
+func hintMatches(stored, expected string) bool {
+	trim := func(s string) string {
+		if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+			return s[1 : len(s)-1]
+		}
+		return s
+	}
+	return trim(stored) == trim(expected)
 }

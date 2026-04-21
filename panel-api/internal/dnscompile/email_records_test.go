@@ -1,0 +1,90 @@
+package dnscompile
+
+import (
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+)
+
+// idCounter returns a stable id generator so assertions can pin exact
+// values instead of doing wildcard matches. Tests that don't care about
+// id content pass the result through anyway.
+func idCounter() func() string {
+	n := 0
+	return func() string {
+		n++
+		return "id" + strconv.Itoa(n)
+	}
+}
+
+func TestBuildEmailRecords_ShapeAndContent(t *testing.T) {
+	now := time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC)
+	recs := BuildEmailRecords(
+		"zone1",
+		"jabali",
+		"v=DKIM1; k=ed25519; p=AAAA",
+		idCounter(),
+		now,
+	)
+
+	require.Len(t, recs, 3, "M6 should inject 3 records — DKIM + autoconfig + autodiscover")
+
+	// Record 0 — DKIM TXT. Quoted content to match BootstrapRecords.
+	require.Equal(t, "jabali._domainkey", recs[0].Name)
+	require.Equal(t, "TXT", recs[0].Type)
+	require.Equal(t, `"v=DKIM1; k=ed25519; p=AAAA"`, recs[0].Content)
+
+	// Record 1 — autoconfig CNAME with short target.
+	require.Equal(t, "autoconfig", recs[1].Name)
+	require.Equal(t, "CNAME", recs[1].Type)
+	require.Equal(t, "mail", recs[1].Content)
+
+	// Record 2 — _autodiscover._tcp SRV per RFC 2782.
+	require.Equal(t, "_autodiscover._tcp", recs[2].Name)
+	require.Equal(t, "SRV", recs[2].Type)
+	require.Equal(t, "0 0 443 mail", recs[2].Content)
+
+	// All three must be flagged Managed + ManagedBy="m6" so the
+	// delete-on-disable WHERE clause can find them without touching
+	// M4 bootstrap records (which have ManagedBy=NULL).
+	for i, r := range recs {
+		require.True(t, r.Managed, "rec[%d].Managed should be true", i)
+		require.NotNil(t, r.ManagedBy, "rec[%d].ManagedBy should be set", i)
+		require.Equal(t, "m6", *r.ManagedBy, "rec[%d].ManagedBy", i)
+		require.True(t, r.IsEnabled, "rec[%d].IsEnabled", i)
+		require.Equal(t, "zone1", r.ZoneID, "rec[%d].ZoneID", i)
+		require.Equal(t, now, r.CreatedAt, "rec[%d].CreatedAt", i)
+	}
+}
+
+// Custom selector paths out to a different name — confirms we don't
+// hardcode "jabali" downstream of the argument. When ADR-0043's
+// rotation lands, the handler will pass the rotated selector through.
+func TestBuildEmailRecords_HonorsSelector(t *testing.T) {
+	recs := BuildEmailRecords(
+		"z", "rotated-20260101", "dummy-pub", idCounter(), time.Now(),
+	)
+	require.Equal(t, "rotated-20260101._domainkey", recs[0].Name)
+}
+
+// idNew must be called exactly once per record — guards against a
+// refactor that accidentally reuses ids across records (which would
+// violate the PK and blow up Create).
+func TestBuildEmailRecords_IDGeneratorCalledOncePerRecord(t *testing.T) {
+	recs := BuildEmailRecords("z", "s", "p", idCounter(), time.Now())
+	seen := map[string]bool{}
+	for _, r := range recs {
+		require.False(t, seen[r.ID], "duplicate id %q", r.ID)
+		seen[r.ID] = true
+	}
+	require.Len(t, seen, 3)
+}
+
+// Sanity — the exported constants used across the package and the
+// email-handler don't drift accidentally.
+func TestExportedConstants(t *testing.T) {
+	require.Equal(t, "m6", EmailRecordsManagedBy)
+	require.Equal(t, "jabali", EmailRecordsSelector)
+}

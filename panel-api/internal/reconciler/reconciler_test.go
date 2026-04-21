@@ -257,6 +257,19 @@ func (f *fakeDNSRecordRepo) DeleteByZoneID(ctx context.Context, zoneID string) e
 	return nil
 }
 
+func (f *fakeDNSRecordRepo) DeleteByZoneIDAndManagedBy(ctx context.Context, zoneID, managedBy string) error {
+	for id, r := range f.records {
+		if r.ZoneID != zoneID {
+			continue
+		}
+		if r.ManagedBy == nil || *r.ManagedBy != managedBy {
+			continue
+		}
+		delete(f.records, id)
+	}
+	return nil
+}
+
 func (f *fakeDNSRecordRepo) Update(ctx context.Context, record *models.DNSRecord) error {
 	f.records[record.ID] = record
 	return nil

@@ -206,6 +206,19 @@ func (m *mockDNSRecordRepo) DeleteByZoneID(ctx context.Context, zoneID string) e
 	return nil
 }
 
+func (m *mockDNSRecordRepo) DeleteByZoneIDAndManagedBy(ctx context.Context, zoneID, managedBy string) error {
+	for id, r := range m.records {
+		if r.ZoneID != zoneID {
+			continue
+		}
+		if r.ManagedBy == nil || *r.ManagedBy != managedBy {
+			continue
+		}
+		delete(m.records, id)
+	}
+	return nil
+}
+
 // Mock reconciler
 type mockDNSReconciler struct {
 	scheduled []string

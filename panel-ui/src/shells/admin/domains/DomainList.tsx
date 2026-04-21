@@ -182,7 +182,7 @@ export const DomainList = () => {
             render={(_, r) => (
               <Space>
                 <Button
-                  type="link"
+                  type="text"
                   icon={<GlobalOutlined />}
                   onClick={() => navigate(`/jabali-admin/domains/${r.id}/dns`)}
                 >
@@ -193,7 +193,7 @@ export const DomainList = () => {
                 <DomainSettingsButton domain={r} />
                 <DomainToggleButton domain={r} />
                 <Button
-                  type="link"
+                  type="text"
                   onClick={() =>
                     navigate(`/jabali-admin/domains/edit/${r.id}`)
                   }

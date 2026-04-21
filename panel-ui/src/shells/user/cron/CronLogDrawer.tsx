@@ -58,14 +58,14 @@ export const CronLogDrawer = ({
       extra={
         <Space>
           <Button
-            type="link"
+            type="text"
             icon={<CopyOutlined />}
             onClick={handleCopyToClipboard}
           >
             Copy
           </Button>
           <Button
-            type="link"
+            type="text"
             icon={<ReloadOutlined />}
             onClick={handleRefresh}
             loading={isLoading}

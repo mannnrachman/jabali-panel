@@ -168,7 +168,7 @@ export const UserDomainList = () => {
             render={(_, r) => (
               <Space>
                 <Button
-                  type="link"
+                  type="text"
                   icon={<GlobalOutlined />}
                   onClick={() =>
                     navigate(`/jabali-panel/domains/${r.id}/dns`)

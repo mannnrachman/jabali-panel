@@ -243,7 +243,7 @@ export const UserCronList = () => {
             render: (_, record) => (
               <Space>
                 <Button
-                  type="link"
+                  type="text"
                   icon={<PlayCircleOutlined />}
                   onClick={() => handleRunNow(record)}
                   loading={runningId === record.id}
@@ -254,7 +254,7 @@ export const UserCronList = () => {
                   Run now
                 </Button>
                 <Button
-                  type="link"
+                  type="text"
                   icon={<EyeOutlined />}
                   onClick={() => {
                     setLogJobId(record.id);
@@ -264,7 +264,7 @@ export const UserCronList = () => {
                   Log
                 </Button>
                 <Button
-                  type="link"
+                  type="text"
                   onClick={() => handleOpenEditModal(record)}
                 >
                   Edit
@@ -277,7 +277,7 @@ export const UserCronList = () => {
                   cancelText="No"
                 >
                   <Button
-                    type="link"
+                    type="text"
                     danger
                     icon={<DeleteOutlined />}
                     loading={deletingId === record.id}

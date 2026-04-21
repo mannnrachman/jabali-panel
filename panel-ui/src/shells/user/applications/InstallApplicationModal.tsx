@@ -705,7 +705,7 @@ export const InstallApplicationModal = ({
               addonAfter={
                 <Tooltip title="Copy">
                   <Button
-                    type="link"
+                    type="text"
                     icon={<CopyOutlined />}
                     onClick={() => copy("Username", result.adminUsername)}
                   />
@@ -726,7 +726,7 @@ export const InstallApplicationModal = ({
               addonAfter={
                 <Tooltip title="Copy">
                   <Button
-                    type="link"
+                    type="text"
                     icon={<CopyOutlined />}
                     onClick={() => copy("Password", result.adminPassword)}
                   />

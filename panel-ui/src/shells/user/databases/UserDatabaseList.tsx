@@ -227,7 +227,7 @@ export const UserDatabaseList = () => {
                     }
                   >
                     <Button
-                      type="link"
+                      type="text"
                       icon={<LinkOutlined />}
                       onClick={() => handleOpenPhpMyAdmin(r)}
                       disabled={isPostgres || isLoading}

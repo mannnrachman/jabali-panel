@@ -455,7 +455,7 @@ const SortableRuleCard = ({
           <div style={{ flex: 1 }} />
 
           <Button
-            type="link"
+            type="text"
             icon={isExpanded ? <UpOutlined /> : <DownOutlined />}
             onClick={() => onToggleExpanded(idx)}
             style={{ padding: 4 }}
@@ -463,7 +463,7 @@ const SortableRuleCard = ({
           <Button
             danger
             icon={<DeleteOutlined />}
-            type="link"
+            type="text"
             onClick={() => onRemove(idx)}
           />
         </div>
@@ -704,7 +704,7 @@ export const DomainSettingsButton = ({
   return (
     <>
       <Button
-        type="link"
+        type="text"
         icon={<SettingOutlined />}
         onClick={handleOpenModal}
       >

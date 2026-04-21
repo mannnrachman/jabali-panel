@@ -934,7 +934,7 @@ export const FileManagerPage = () => {
         ];
         return (
           <Dropdown trigger={["click"]} menu={{ items }}>
-            <Button type="link" icon={<MoreOutlined />} />
+            <Button type="text" icon={<MoreOutlined />} />
           </Dropdown>
         );
       },
@@ -1048,7 +1048,7 @@ export const FileManagerPage = () => {
           <Button danger onClick={handleBulkDelete}>
             Delete
           </Button>
-          <Button type="link" onClick={() => setSelectedNames([])}>
+          <Button type="text" onClick={() => setSelectedNames([])}>
             Clear
           </Button>
         </div>

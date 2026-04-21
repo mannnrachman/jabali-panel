@@ -133,7 +133,7 @@ const SortableCard = ({
             → {pr.type}
           </Typography.Text>
           <Button
-            type="link"
+            type="text"
             icon={isExpanded ? <UpOutlined /> : <DownOutlined />}
             onClick={() => onToggleExpanded(idx)}
             style={{ padding: 4 }}
@@ -141,7 +141,7 @@ const SortableCard = ({
           <Button
             danger
             icon={<DeleteOutlined />}
-            type="link"
+            type="text"
             onClick={() => onRemove(idx)}
           />
         </div>
@@ -334,7 +334,7 @@ export const DomainRedirectsButton = ({
   return (
     <>
       <Button
-        type="link"
+        type="text"
         icon={<SwapOutlined />}
         onClick={handleOpenModal}
       >

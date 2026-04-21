@@ -250,11 +250,11 @@ const ExtensionActions = ({ record, busy, onApply }: ExtensionActionsProps) => {
   // Built-ins: apt install/remove rejected; only enable/disable.
   if (record.built_in) {
     return record.enabled ? (
-      <Button type="link" danger loading={busy} onClick={() => onApply("disable")}>
+      <Button type="text" danger loading={busy} onClick={() => onApply("disable")}>
         Disable
       </Button>
     ) : (
-      <Button type="link" loading={busy} onClick={() => onApply("enable")}>
+      <Button type="text" loading={busy} onClick={() => onApply("enable")}>
         Enable
       </Button>
     );
@@ -264,7 +264,7 @@ const ExtensionActions = ({ record, busy, onApply }: ExtensionActionsProps) => {
   if (!record.installed) {
     return (
       <Button
-        type="link"
+        type="text"
         icon={<DownloadOutlined />}
         loading={busy}
         onClick={() => onApply("install")}
@@ -279,15 +279,15 @@ const ExtensionActions = ({ record, busy, onApply }: ExtensionActionsProps) => {
     <Space>
       {!isMysqlMeta &&
         (record.enabled ? (
-          <Button type="link" danger loading={busy} onClick={() => onApply("disable")}>
+          <Button type="text" danger loading={busy} onClick={() => onApply("disable")}>
             Disable
           </Button>
         ) : (
-          <Button type="link" loading={busy} onClick={() => onApply("enable")}>
+          <Button type="text" loading={busy} onClick={() => onApply("enable")}>
             Enable
           </Button>
         ))}
-      <Button type="link" danger loading={busy} onClick={() => onApply("remove")}>
+      <Button type="text" danger loading={busy} onClick={() => onApply("remove")}>
         Remove
       </Button>
     </Space>

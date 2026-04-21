@@ -303,7 +303,7 @@ export const UserApplicationList = () => {
                     }
                   >
                     <Button
-                      type="link"
+                      type="text"
                       icon={<CopyOutlined />}
                       disabled={!canClone}
                       onClick={() => {
@@ -324,7 +324,7 @@ export const UserApplicationList = () => {
                     disabled={isDeleting}
                   >
                     <Button
-                      type="link"
+                      type="text"
                       danger
                       icon={<DeleteOutlined />}
                       loading={isDeleting}

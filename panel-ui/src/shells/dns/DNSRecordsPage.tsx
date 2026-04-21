@@ -453,7 +453,7 @@ export const DNSRecordsPage = () => {
     return (
       <div style={{ padding: 24 }}>
         <Button
-          type="link"
+          type="text"
           icon={<ArrowLeftOutlined />}
           onClick={() => navigate(dnsListPath)}
           style={{ marginBottom: 16 }}
@@ -487,7 +487,7 @@ export const DNSRecordsPage = () => {
     <div style={{ padding: 24 }}>
       {/* Header */}
       <Button
-        type="link"
+        type="text"
         icon={<ArrowLeftOutlined />}
         onClick={() => navigate(dnsListPath)}
         style={{ marginBottom: 16 }}
@@ -769,7 +769,7 @@ export const DNSRecordsPage = () => {
                     return (
                       <Space>
                         <Button
-                          type="link"
+                          type="text"
                           icon={<EditOutlined />}
                           onClick={() => handleEditStart(record)}
                         />
@@ -781,7 +781,7 @@ export const DNSRecordsPage = () => {
                           okButtonProps={{ danger: true }}
                         >
                           <Button
-                            type="link"
+                            type="text"
                             danger
                             icon={<DeleteOutlined />}
                             loading={deletingRecordId === record.id}

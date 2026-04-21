@@ -80,7 +80,7 @@ export const UserDNSZonesOverviewPage = () => {
         }}
       >
         <Button
-          type="link"
+          type="text"
           icon={<ArrowLeftOutlined />}
           onClick={() => navigate("/jabali-panel/domains")}
         >

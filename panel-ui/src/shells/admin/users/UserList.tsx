@@ -44,7 +44,7 @@ function RowActions({ user }: { user: User }) {
   return (
     <Space size="middle">
       <Button
-        type="link"
+        type="text"
         onClick={() => navigate(`/jabali-admin/users/edit/${user.id}`)}
       >
         Edit

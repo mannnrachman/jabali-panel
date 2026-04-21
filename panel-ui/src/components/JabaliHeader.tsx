@@ -317,7 +317,7 @@ export function JabaliHeader() {
       <Space size={4}>
         <ThemeToggle />
         <Dropdown menu={{ items: userMenu }} placement="bottomRight">
-          <Button type="link" icon={<Avatar icon={<UserOutlined />} />}>
+          <Button type="text" icon={<Avatar icon={<UserOutlined />} />}>
             &nbsp;{email || "…"}
           </Button>
         </Dropdown>

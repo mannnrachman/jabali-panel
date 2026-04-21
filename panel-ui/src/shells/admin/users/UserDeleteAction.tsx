@@ -66,7 +66,7 @@ export const UserDeleteAction = ({
     <>
       <Button
         danger
-        type="link"
+        type="text"
         icon={<DeleteOutlined />}
         // Generic "Delete" — see RowActions in UserList.tsx for why
         // the email is intentionally kept out of the accessible name.

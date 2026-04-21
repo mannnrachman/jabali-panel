@@ -145,7 +145,7 @@ export const PackageList = () => {
             render={(_: unknown, r: Package) => (
               <Space>
                 <Button
-                  type="link"
+                  type="text"
                   onClick={() =>
                     navigate(`/jabali-admin/packages/edit/${r.id}`)
                   }

@@ -212,7 +212,7 @@ export const VersionsTab = () => {
             if (record.installed && record.fpm_running) {
               return (
                 <Button
-                  type="link"
+                  type="text"
                   loading={settingDefaultVersion === record.version}
                   onClick={() => handleSetDefault(record.version)}
                 >
@@ -249,7 +249,7 @@ export const VersionsTab = () => {
             if (record.installed) {
               return (
                 <Button
-                  type="link"
+                  type="text"
                   icon={<ReloadOutlined />}
                   onClick={() => handleReload(record.version)}
                   loading={isReloading}
@@ -261,7 +261,7 @@ export const VersionsTab = () => {
             } else {
               return (
                 <Button
-                  type="link"
+                  type="text"
                   icon={<DownloadOutlined />}
                   onClick={() => handleInstall(record.version)}
                   loading={isInstalling}

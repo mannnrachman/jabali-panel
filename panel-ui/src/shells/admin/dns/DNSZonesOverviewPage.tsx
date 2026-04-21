@@ -89,7 +89,7 @@ export const DNSZonesOverviewPage = () => {
         }}
       >
         <Button
-          type="link"
+          type="text"
           icon={<ArrowLeftOutlined />}
           onClick={() => navigate("/jabali-admin/domains")}
         >

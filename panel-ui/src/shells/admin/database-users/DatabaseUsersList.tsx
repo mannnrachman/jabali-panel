@@ -229,14 +229,14 @@ export const DatabaseUsersList = () => {
               <Space>
                 <Tooltip title="Add database access">
                   <Button
-                    type="link"
+                    type="text"
                     icon={<PlusOutlined />}
                     onClick={() => setGrantTarget(row)}
                   />
                 </Tooltip>
                 <Tooltip title="Rotate password">
                   <Button
-                    type="link"
+                    type="text"
                     icon={<KeyOutlined />}
                     loading={rotatingId === row.id}
                     onClick={() => rotate(row)}

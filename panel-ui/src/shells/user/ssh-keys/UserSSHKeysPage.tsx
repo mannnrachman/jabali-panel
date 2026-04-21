@@ -306,7 +306,7 @@ export const UserSSHKeysPage = () => {
                 cancelText="No"
               >
                 <Button
-                  type="link"
+                  type="text"
                   danger
                   icon={<DeleteOutlined />}
                   loading={deletingId === record.id}

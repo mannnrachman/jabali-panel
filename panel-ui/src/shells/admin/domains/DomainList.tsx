@@ -1,8 +1,8 @@
 // DomainList — admin domains grid. Post-M21 the row action strip
 // stays the same (DNS/Redirects/Index/Settings/Toggle/Edit/Delete);
 // only the hook and the two Refine action buttons change.
-import { Button, Card, Space, Table, Tag, Typography } from "antd";
-import { GlobalOutlined } from "@ant-design/icons";
+import { Button, Card, Dropdown, Space, Table, Tag, Typography } from "antd";
+import { DownOutlined, GlobalOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router";
 import type { SorterResult } from "antd/es/table/interface";
 
@@ -188,10 +188,6 @@ export const DomainList = () => {
                 >
                   DNS
                 </Button>
-                <DomainRedirectsButton domain={r} />
-                <DomainIndexButton domain={r} />
-                <DomainSettingsButton domain={r} />
-                <DomainToggleButton domain={r} />
                 <Button
                   type="text"
                   onClick={() =>
@@ -200,12 +196,48 @@ export const DomainList = () => {
                 >
                   Edit
                 </Button>
-                <RowDeleteButton
-                  confirmTitle={`Delete domain "${r.name}"?`}
-                  onConfirm={async () => {
-                    await deleteMutation.mutateAsync({ id: r.id });
+                {/* Secondary actions live behind a "More" menu — the
+                    existing self-contained button components (each owns
+                    its own modal state) render as menu-item labels so
+                    clicking fires their modal without any rewiring. */}
+                <Dropdown
+                  menu={{
+                    items: [
+                      {
+                        key: "redirects",
+                        label: <DomainRedirectsButton domain={r} />,
+                      },
+                      {
+                        key: "index",
+                        label: <DomainIndexButton domain={r} />,
+                      },
+                      {
+                        key: "settings",
+                        label: <DomainSettingsButton domain={r} />,
+                      },
+                      {
+                        key: "toggle",
+                        label: <DomainToggleButton domain={r} />,
+                      },
+                      { type: "divider" },
+                      {
+                        key: "delete",
+                        label: (
+                          <RowDeleteButton
+                            confirmTitle={`Delete domain "${r.name}"?`}
+                            onConfirm={async () => {
+                              await deleteMutation.mutateAsync({ id: r.id });
+                            }}
+                          />
+                        ),
+                      },
+                    ],
                   }}
-                />
+                >
+                  <Button type="text">
+                    More <DownOutlined />
+                  </Button>
+                </Dropdown>
               </Space>
             )}
           />

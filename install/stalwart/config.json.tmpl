@@ -1,27 +1,4 @@
 {
-  "_comment": "Stalwart Mail Server v0.16 bootstrap config — ADR-0045. This file describes ONLY the datastore. Everything else (SqlDirectory, listeners, TLS, DKIM) is a JMAP object provisioned via `stalwart-cli apply` against the running server. Template mustaches are substituted by install.sh using sed; any unsubstituted mustache aborts the install.",
-
-  "store": {
-    "mail-rocksdb": {
-      "type": "rocksdb",
-      "path": "/var/lib/stalwart"
-    },
-    "jabali-mariadb": {
-      "type": "mysql",
-      "host": "127.0.0.1",
-      "port": 3306,
-      "database": "jabali_panel",
-      "user": "jabali-stalwart-ro",
-      "password": "{{.MariaDBPassword}}",
-      "max-connections": 10,
-      "min-connections": 2
-    }
-  },
-
-  "storage": {
-    "data": "mail-rocksdb",
-    "blob": "mail-rocksdb",
-    "fts": "mail-rocksdb",
-    "lookup": "mail-rocksdb"
-  }
+  "@type": "RocksDb",
+  "path": "/var/lib/stalwart"
 }

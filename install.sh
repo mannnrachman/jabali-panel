@@ -2470,18 +2470,19 @@ install_stalwart() {
   local stalwart_db_pass
   stalwart_db_pass="$(cat "$stalwart_db_pw_file")"
 
-  # Render /etc/stalwart/config.json from template. v0.16 stores only
-  # the datastore descriptor on disk (ADR-0045); everything else lives
-  # as JMAP objects applied via `stalwart-cli apply` (next install step,
-  # follow-up commit).
+  # Render /etc/stalwart/config.json from template. v0.16's config.json
+  # is just a single tagged-enum `DataStore` descriptor for the REGISTRY
+  # store (ADR-0045); it holds settings, directories, listeners, DKIM
+  # etc. All mail storage / SQL directory backends are JMAP objects
+  # inside that registry, applied via `stalwart-cli apply`. Template
+  # therefore has no mustaches — but install.sh still runs the mustache
+  # sanity check to protect against future template drift.
   local stalwart_config="/etc/stalwart/config.json"
   if [[ ! -f "${REPO_DIR}/install/stalwart/config.json.tmpl" ]]; then
     _die "Stalwart config template not found at ${REPO_DIR}/install/stalwart/config.json.tmpl"
   fi
-  sed -e "s|{{\.MariaDBPassword}}|${stalwart_db_pass}|g" \
-    "${REPO_DIR}/install/stalwart/config.json.tmpl" >"$stalwart_config"
-  chown jabali-mail:jabali-mail "$stalwart_config"
-  chmod 0640 "$stalwart_config"
+  install -m 0640 -o jabali-mail -g jabali-mail \
+    "${REPO_DIR}/install/stalwart/config.json.tmpl" "$stalwart_config"
 
   if grep -q '{{\..*}}' "$stalwart_config"; then
     _die "unsubstituted mustaches in $stalwart_config — template drift?"
@@ -2618,21 +2619,27 @@ _install_stalwart_apply_plan() {
   # Poll /jmap/session until Stalwart is serving HTTP. A 401 counts as
   # "ready" — it means the HTTP layer is up and rejecting our missing
   # Authorization header, which is exactly what we want before we try
-  # to run an authenticated apply.
+  # to run an authenticated apply. Only 2xx/3xx/4xx are accepted; 5xx
+  # means "server exists but is broken" and we keep polling. 000 means
+  # curl couldn't connect (daemon not listening yet).
   local jmap_url="http://127.0.0.1:8446/jmap/session"
   local waited=0
   local max_wait=30
+  local ready=0
   while (( waited < max_wait )); do
     local status
-    status="$(curl -s -o /dev/null -w '%{http_code}' "$jmap_url" 2>/dev/null || echo 000)"
-    if [[ "$status" != "000" && "$status" != "502" && "$status" != "503" ]]; then
+    status="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 -m 3 "$jmap_url" 2>/dev/null)"
+    # Normalise: empty string (curl crash) -> 000 sentinel.
+    status="${status:-000}"
+    if [[ "$status" =~ ^[234][0-9][0-9]$ ]]; then
       _ok "Stalwart /jmap ready (HTTP $status) after ${waited}s"
+      ready=1
       break
     fi
     sleep 1
     waited=$((waited + 1))
   done
-  if (( waited >= max_wait )); then
+  if (( ready == 0 )); then
     _err "Stalwart /jmap did not come up within ${max_wait}s — check 'journalctl -u jabali-stalwart'"
     _die "Stalwart bootstrap timed out"
   fi

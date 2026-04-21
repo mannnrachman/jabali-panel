@@ -76,10 +76,16 @@ Pivot M6 to the v0.16 model rather than pinning to v0.15.x.
 `install.sh::install_stalwart` writes three files on every install run
 (idempotent — re-runs rewrite from current inputs):
 
-- `/etc/stalwart/config.json` — datastore wiring (RocksDB path + MySQL
-  connection for the SQL directory), rendered from
-  `install/stalwart/config.json.tmpl` with the MariaDB password for the
-  `jabali-stalwart-ro` user.
+- `/etc/stalwart/config.json` — **the registry store** (singular).
+  v0.16's `config.json` is a single tagged-enum `DataStore` descriptor
+  with `@type: RocksDb` / `MySql` / `Sqlite` / `PostgreSql` /
+  `FoundationDb` at the top level — NOT a map of named stores plus a
+  `storage` routing block like v0.15. It points at where the
+  registry itself lives; mail/blob/fts storage and the SQL directory
+  are JMAP objects inside that registry, applied via `stalwart-cli`.
+  Template is therefore static (no mustaches) — the MariaDB password
+  is only substituted into `stalwart-apply-plan.json` (which contains
+  the `x:Directory` SqlAuthStore MySQL connection).
 - `/etc/jabali-panel/stalwart-apply-plan.json` — declarative JMAP
   object plan (SqlDirectory, NetworkListeners for 25/465/587/993 +
   loopback JMAP, Authentication.directoryId pointer) rendered from

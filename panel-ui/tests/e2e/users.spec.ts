@@ -51,14 +51,21 @@ test.describe("users CRUD (admin)", () => {
     // happen. Production isn't affected because humans take >100ms
     // between fields and the clearing event is benign to user experience.
     //
-    // Password uses getByLabel, not getByRole("textbox"): AntD's
-    // <Input.Password> renders <input type="password">, which has NO
-    // ARIA "textbox" role (the password type is excluded from the role
-    // by the HTML-ARIA spec to avoid screen-reader leaks). Text fields
-    // stay on getByRole("textbox") to skip AntD Table's sortable column
-    // headers (aria-label="Email" / "First name" / "Last name") that
-    // would otherwise race the form inputs on a getByLabel match.
-    await page.getByLabel(/^password$/i).fill("validpassword99");
+    // Password uses a type selector, not getByRole/getByLabel:
+    //   - <input type="password"> has no ARIA "textbox" role (HTML-ARIA
+    //     spec excludes the password type to avoid screen-reader leaks),
+    //     so getByRole("textbox") never matches.
+    //   - getByLabel(/^password$/i) also misses: AntD renders the Form.Item
+    //     tooltip ("At least 10 characters") as a QuestionCircleOutlined
+    //     icon *inside* the <label>, and that icon's aria-label pollutes
+    //     the label's computed accessible name to "Password question-circle",
+    //     breaking the strict ^/$ anchors. Dropping the anchors would work
+    //     but a plain type selector is less brittle and doesn't depend on
+    //     AntD internals.
+    // Text fields stay on getByRole("textbox") to dodge AntD Table's
+    // sortable column headers (aria-label="Email" / "First name" /
+    // "Last name") that share names with the form inputs.
+    await page.locator('input[type="password"]').fill("validpassword99");
     await page.getByRole("textbox", { name: /first name/i }).fill("New");
     await page.getByRole("textbox", { name: /last name/i }).fill("User");
     await page.getByRole("textbox", { name: /email/i }).fill("new.user@test.local");
@@ -94,6 +101,16 @@ test.describe("users CRUD (admin)", () => {
     const victimRow = page.getByRole("row", { name: /victim@test\.local/ });
     await victimRow.getByRole("button").first().click();
     await page.waitForURL(/\/jabali-admin\/users\/edit\//);
+
+    // Same form-ready anchors the create-flow needs: wait for Save to be
+    // visible (proves form tree mounted) and for network to go idle (the
+    // edit form's initial GET /users/:id + hosting-package Select query
+    // finish), otherwise a mid-load re-render detaches the Save button
+    // during the click and Playwright retries into the 30s test timeout.
+    await expect(
+      page.getByRole("button", { name: /save/i }),
+    ).toBeVisible();
+    await page.waitForLoadState("networkidle");
 
     await page.getByLabel(/first name/i).fill("Changed");
     await page.getByRole("button", { name: /save/i }).click();

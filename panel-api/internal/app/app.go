@@ -312,17 +312,18 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterApplicationRoutes(v1, appCfg)
 		}
 
-		// Magic-link admin login (M22). Mint endpoint mounts under v1
-		// (Kratos session enforced); validate endpoint mounts on the
-		// root engine without auth (the WordPress plugin is the caller —
-		// see ADR-0039 §6).
-		if deps.MagicLinkKeys != nil && deps.MagicLinkTokens != nil &&
-			deps.WordPressInstalls != nil && deps.Domains != nil {
-			api.RegisterMagicLinkRoutes(v1, r, api.MagicLinkHandlerConfig{
+		// Magic-link admin login (M22 rework — ADR-0040). Mint endpoint
+		// only; the validate endpoint is gone (the agent-written PHP file
+		// is its own validator). MagicLinkKeys + MagicLinkTokens deps are
+		// no longer read here — Step 6 of the rework deletes those fields
+		// from deps + serve.go's boot-time guard.
+		if deps.WordPressInstalls != nil && deps.Domains != nil &&
+			deps.Users != nil && deps.Agent != nil {
+			api.RegisterMagicLinkRoutes(v1, api.MagicLinkHandlerConfig{
 				ApplicationInstalls: deps.WordPressInstalls,
 				Domains:             deps.Domains,
-				Tokens:              deps.MagicLinkTokens,
-				Keys:                deps.MagicLinkKeys,
+				Users:               deps.Users,
+				Agent:               deps.Agent,
 			})
 		}
 

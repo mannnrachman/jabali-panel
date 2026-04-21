@@ -32,16 +32,18 @@ const useMuiTheme = (mode: ThemeMode): ConfigProviderProps =>
             ...(mode === "light" ? { bodyBg: "#f9fafb" } : {}),
           },
           // Sidebar Menu selected-row styling per operator. Red
-          // accent on both algorithms, bg tuned per mode:
-          // - Light: gray-100 bg + red-600 text/icon.
-          // - Dark:  slightly-elevated dark bg + red-500 text/icon.
-          // The red tone shifts one stop between modes so it keeps
-          // WCAG contrast against its respective background.
+          // accent on both algorithms, bg tuned per mode.
+          //
+          // AntD Menu uses separate tokens once you pass theme="dark"
+          // at the component level — the `item*` set applies to the
+          // light theme, while `darkItem*` targets the dark theme.
+          // Setting only itemSelectedBg in dark mode silently no-ops
+          // because the dark-theme CSS path never reads it.
           Menu:
             mode === "dark"
               ? {
-                  itemSelectedBg: "#1f1f1f",
-                  itemSelectedColor: "#ef4444",
+                  darkItemSelectedBg: "#1f1f1f",
+                  darkItemSelectedColor: "#ef4444",
                 }
               : {
                   itemSelectedBg: "#f3f4f6",

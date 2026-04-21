@@ -130,9 +130,12 @@ cost-12) — the panel DB no longer mirrors them. Recovery path:
    Distribute the CSV rows out-of-band (email, SMS, chat). `status =
    ok_no_link` means the user was relinked but the recovery-code call
    failed — re-run the admin recovery endpoint for that identity
-   manually, or re-run the whole command (it won't re-create identities
-   it already linked; that's currently a TODO — for now the command
-   DOES re-create on every run, so only invoke it on a DB-loss event).
+   manually, or re-run the whole command. The command is idempotent:
+   before minting, it probes Kratos for the current `kratos_identity_id`
+   and skips the user (`status = skipped_live`) if it's still live. If
+   the probe itself fails (Kratos 5xx), the user is marked
+   `status = probe_failed` and NO mutation happens — fix Kratos first,
+   then re-run.
 3. **First admin bootstrap:** `BootstrapAdmin` in serve.go still handles
    the seed admin automatically when `JABALI_BOOTSTRAP_ADMIN_EMAIL /
    _PASSWORD` are set in `panel.env`. If the admin already existed in the

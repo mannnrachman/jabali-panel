@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/csv"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -118,7 +119,7 @@ Always run with --dry-run first. --yes skips the interactive prompt.`,
 			}
 
 			users := userRepo()
-			var rebuilt, failed, linkMissing int
+			var rebuilt, failed, linkMissing, skipped int
 			for _, u := range targets {
 				status, newKratosID, link := rebuildOne(ctx, kc, users, &u, expiresIn)
 				switch status {
@@ -127,6 +128,8 @@ Always run with --dry-run first. --yes skips the interactive prompt.`,
 				case statusRecoveryMissing:
 					rebuilt++
 					linkMissing++
+				case statusSkippedLive:
+					skipped++
 				default:
 					failed++
 				}
@@ -140,8 +143,8 @@ Always run with --dry-run first. --yes skips the interactive prompt.`,
 				fmt.Printf("  [%s] %s → %s\n", status, u.Email, shortID(newKratosID))
 			}
 
-			fmt.Printf("\nSummary: %d rebuilt (%d without recovery link), %d failed.\n",
-				rebuilt, linkMissing, failed)
+			fmt.Printf("\nSummary: %d rebuilt (%d without recovery link), %d skipped (already live), %d failed.\n",
+				rebuilt, linkMissing, skipped, failed)
 			fmt.Printf("CSV: %s\n", outputPath)
 			if linkMissing > 0 {
 				fmt.Println("\n! Rows with an empty recovery_link were relinked but the admin/recovery/code call failed;")
@@ -169,8 +172,10 @@ type rebuildStatus string
 const (
 	statusOK              rebuildStatus = "ok"
 	statusRecoveryMissing rebuildStatus = "ok_no_link"
+	statusSkippedLive     rebuildStatus = "skipped_live"
 	statusCreateFailed    rebuildStatus = "create_failed"
 	statusLinkFailed      rebuildStatus = "link_failed"
+	statusProbeFailed     rebuildStatus = "probe_failed"
 )
 
 // rebuildOne does the per-user work. Returns status + the new Kratos UUID
@@ -178,7 +183,32 @@ const (
 // endpoint failed AFTER a successful relink — operator can regenerate).
 // Takes `users` as a parameter (rather than calling userRepo() internally)
 // so unit tests can inject a mock without touching sharedDB.
+//
+// Idempotency: before minting a new identity, probe Kratos for the
+// current kratos_identity_id. If it resolves (200 OK), the user is
+// already linked to a live identity and we skip them — useful when
+// recovering from a partial rebuild (e.g. operator Ctrl-C'd a prior
+// run halfway through) or when only SOME of the Kratos DB was lost.
+// Only ErrIdentityNotFound triggers the actual rebuild; any other
+// error (network/5xx) returns statusProbeFailed so the operator sees
+// something is wrong with Kratos itself before we start mutating.
 func rebuildOne(ctx context.Context, kc *kratosclient.Client, users repository.UserRepository, u *models.User, expiresIn string) (rebuildStatus, string, string) {
+	currentKratosID := derefOrEmpty(u.KratosIdentityID)
+	if currentKratosID != "" {
+		_, err := kc.GetIdentity(ctx, currentKratosID)
+		switch {
+		case err == nil:
+			// Identity still live — don't touch it. Leave the panel row
+			// linked to the existing (working) identity.
+			return statusSkippedLive, currentKratosID, ""
+		case errors.Is(err, kratosclient.ErrIdentityNotFound):
+			// Expected in the DB-loss case — fall through to rebuild.
+		default:
+			fmt.Fprintf(os.Stderr, "  ! %s: GetIdentity probe failed: %v (skipping to avoid mutating on a broken Kratos)\n", u.Email, err)
+			return statusProbeFailed, currentKratosID, ""
+		}
+	}
+
 	tempHash, err := genTempBcrypt()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  ! %s: temp-password hash failed: %v\n", u.Email, err)

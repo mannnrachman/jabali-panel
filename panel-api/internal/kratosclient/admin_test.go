@@ -356,6 +356,87 @@ func TestVerifyBcryptPassthrough_LoginFailSurfacesError(t *testing.T) {
 	}
 }
 
+func TestGetIdentity_Success(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/admin/identities/id-abc" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.Error(w, "wrong endpoint", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"id-abc","traits":{"email":"u@example.com","is_admin":true}}`))
+	}))
+	defer srv.Close()
+
+	c := newAdminClient(srv)
+	id, err := c.GetIdentity(context.Background(), "id-abc")
+	if err != nil {
+		t.Fatalf("GetIdentity: %v", err)
+	}
+	if id.ID != "id-abc" || id.Traits.Email != "u@example.com" || !id.Traits.IsAdmin {
+		t.Errorf("decoded identity wrong: %+v", id)
+	}
+}
+
+func TestGetIdentity_404ReturnsSentinel(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "identity not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := newAdminClient(srv)
+	_, err := c.GetIdentity(context.Background(), "gone-id")
+	if err == nil {
+		t.Fatal("expected ErrIdentityNotFound for 404")
+	}
+	// errors.Is must work so callers can distinguish "rebuild me" from
+	// "something is wrong with Kratos" — the idempotency probe depends
+	// on this exact sentinel.
+	if !isIdentityNotFound(err) {
+		t.Errorf("error must match ErrIdentityNotFound (so errors.Is works): got %v", err)
+	}
+}
+
+func TestGetIdentity_EmptyIDReturnsSentinel(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("must not hit kratos for empty id")
+	}))
+	defer srv.Close()
+
+	c := newAdminClient(srv)
+	_, err := c.GetIdentity(context.Background(), "")
+	if !isIdentityNotFound(err) {
+		t.Errorf("empty id must return ErrIdentityNotFound, got %v", err)
+	}
+}
+
+func TestGetIdentity_ServerErrorPropagates(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "kratos down", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	c := newAdminClient(srv)
+	_, err := c.GetIdentity(context.Background(), "id")
+	if err == nil || isIdentityNotFound(err) {
+		t.Fatalf("expected transport error distinguishable from ErrIdentityNotFound, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("error must carry the status code: %v", err)
+	}
+}
+
+// isIdentityNotFound is a tiny errors.Is helper so tests in this package
+// don't need to import errors just for one call.
+func isIdentityNotFound(err error) bool {
+	return err != nil && err.Error() == ErrIdentityNotFound.Error()
+}
+
 func TestCreateRecoveryCode_Success(t *testing.T) {
 	t.Parallel()
 	var captured map[string]any

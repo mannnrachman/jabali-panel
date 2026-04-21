@@ -91,6 +91,49 @@ func (c *Client) CreateIdentityWithPassword(ctx context.Context, traits AdminTra
 	return result.ID, nil
 }
 
+// ErrIdentityNotFound is returned by GetIdentity when Kratos replies 404
+// (or the identity-id is empty). Callers use this to distinguish "identity
+// doesn't exist in Kratos" from transport/server errors — the rebuild
+// command treats ErrIdentityNotFound as "needs rebuild" and any other
+// error as "abort, something is wrong with Kratos itself".
+var ErrIdentityNotFound = fmt.Errorf("kratos identity not found")
+
+// GetIdentity looks up an identity by ID on the admin API. Returns
+// ErrIdentityNotFound for 404 so callers can distinguish the "already
+// rebuilt on a previous run" case from a transport failure. Any other
+// non-2xx status returns a wrapped error. A nil identity-id short-circuits
+// with ErrIdentityNotFound — rebuildOne passes this for users whose
+// panel row has kratos_identity_id = NULL (shouldn't happen in practice
+// since we only target NON-NULL rows, but defensive).
+func (c *Client) GetIdentity(ctx context.Context, identityID string) (*AdminIdentity, error) {
+	if identityID == "" {
+		return nil, ErrIdentityNotFound
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		c.adminURL+"/admin/identities/"+url.PathEscape(identityID), nil)
+	if err != nil {
+		return nil, fmt.Errorf("getidentity: request: %w", err)
+	}
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("getidentity: do: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrIdentityNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		errBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("getidentity: status %d: %s", resp.StatusCode, string(errBody))
+	}
+	var result AdminIdentity
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("getidentity: decode: %w", err)
+	}
+	return &result, nil
+}
+
 // RecoveryCode is the subset of Kratos's admin recovery-code response Jabali
 // consumes. Kratos returns more (`expires_at`, raw code) but operators only
 // need the pre-filled URL — clicking it lands on the password-reset flow.

@@ -63,11 +63,14 @@ func (*fakeRebuildUserRepo) Delete(context.Context, string) error { return nil }
 // fakeKratos routes POST /admin/identities → returns a new UUID; POST
 // /admin/recovery/code → returns a recovery link. Both paths are optional
 // and can be overridden per test via the `identityHandler` / `codeHandler`
-// fields.
+// fields. `getHandler` intercepts GET /admin/identities/{id} (the
+// idempotency probe); default 404 lets existing tests proceed as if the
+// old identity were gone.
 type fakeKratos struct {
 	identityHandler http.HandlerFunc
 	codeHandler     http.HandlerFunc
 	deleteHandler   http.HandlerFunc
+	getHandler      http.HandlerFunc
 }
 
 func newFakeKratosServer(fk *fakeKratos) *httptest.Server {
@@ -93,6 +96,15 @@ func newFakeKratosServer(fk *fakeKratos) *httptest.Server {
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/admin/identities/"):
+			if fk.getHandler != nil {
+				fk.getHandler(w, r)
+				return
+			}
+			// Default 404 keeps existing tests (which exercise the
+			// rebuild path) behaving as if the current identity is
+			// gone — matching the DB-loss scenario.
+			http.Error(w, "identity not found", http.StatusNotFound)
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
 		}
@@ -257,3 +269,95 @@ func TestRebuildOne_TraitsCarryUsernameAndAdmin(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+func TestRebuildOne_SkipsWhenCurrentIdentityIsLive(t *testing.T) {
+	t.Parallel()
+	var createCalled bool
+	fk := &fakeKratos{
+		getHandler: func(w http.ResponseWriter, r *http.Request) {
+			// Current ID still resolves — operator is re-running after a
+			// partial rebuild and this user was already handled.
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"live-existing","traits":{"email":"already@ok.com","is_admin":false}}`))
+		},
+		identityHandler: func(w http.ResponseWriter, r *http.Request) {
+			createCalled = true
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"wrong"}`))
+		},
+	}
+	srv := newFakeKratosServer(fk)
+	defer srv.Close()
+	kc := kratosclient.NewClient(srv.URL, srv.URL)
+	users := &fakeRebuildUserRepo{}
+
+	u := testUser("user-id-5", "already@ok.com", false, "live-existing")
+	status, kratosID, link := rebuildOne(context.Background(), kc, users, u, "1h")
+
+	if status != statusSkippedLive {
+		t.Errorf("status = %q, want skipped_live", status)
+	}
+	if kratosID != "live-existing" {
+		t.Errorf("kratosID = %q, want live-existing (unchanged)", kratosID)
+	}
+	if link != "" {
+		t.Errorf("recovery link should be empty for skipped user, got %q", link)
+	}
+	if createCalled {
+		t.Error("CreateIdentityWithPassword must NOT be called when current identity is already live — that's the idempotency guarantee")
+	}
+	if users.linkAttempt != 0 {
+		t.Errorf("LinkKratosIdentity must NOT be called for skipped users (got %d)", users.linkAttempt)
+	}
+}
+
+func TestRebuildOne_ProbeTransportErrorAborts(t *testing.T) {
+	t.Parallel()
+	var createCalled bool
+	fk := &fakeKratos{
+		getHandler: func(w http.ResponseWriter, r *http.Request) {
+			// Simulate Kratos being down or misconfigured — NOT a 404.
+			// We must NOT proceed to mutate state in this case, or we'd
+			// create duplicate identities the next time it recovers.
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		},
+		identityHandler: func(w http.ResponseWriter, r *http.Request) {
+			createCalled = true
+		},
+	}
+	srv := newFakeKratosServer(fk)
+	defer srv.Close()
+	kc := kratosclient.NewClient(srv.URL, srv.URL)
+	users := &fakeRebuildUserRepo{}
+
+	u := testUser("user-id-6", "down@example.com", false, "existing-id")
+	status, _, _ := rebuildOne(context.Background(), kc, users, u, "1h")
+
+	if status != statusProbeFailed {
+		t.Errorf("status = %q, want probe_failed", status)
+	}
+	if createCalled {
+		t.Error("must not create new identity when the probe itself failed — Kratos state is ambiguous")
+	}
+}
+
+func TestRebuildOne_ProbeNotFoundTriggersRebuild(t *testing.T) {
+	t.Parallel()
+	// This is the actual DB-loss case: the old identity_id points at
+	// nothing because the Kratos DB is gone. Probe returns 404, we
+	// proceed with the normal mint+relink+recovery dance.
+	srv := newFakeKratosServer(&fakeKratos{})
+	defer srv.Close()
+	kc := kratosclient.NewClient(srv.URL, srv.URL)
+	users := &fakeRebuildUserRepo{}
+
+	u := testUser("user-id-7", "dbloss@example.com", false, "dangling-id")
+	status, newID, _ := rebuildOne(context.Background(), kc, users, u, "1h")
+
+	if status != statusOK {
+		t.Errorf("status = %q, want ok (probe 404 must fall through to rebuild)", status)
+	}
+	if newID != "new-kratos-uuid" {
+		t.Errorf("newID = %q, want new-kratos-uuid", newID)
+	}
+}

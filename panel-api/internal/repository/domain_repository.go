@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -34,6 +35,24 @@ type DomainRepository interface {
 	// columns. NULL values explicitly clear the override. This is a dedicated
 	// method because the columns are not in Update()'s allowlist.
 	UpdatePHPSettings(ctx context.Context, id string, settings DomainPHPSettings) error
+	// UpdateEmailState writes the four M6 email columns (email_enabled,
+	// dkim_selector, dkim_public_key, email_enabled_at) in one go. Dedicated
+	// method because none of these are in Update()'s allowlist and because
+	// all four flip together when email is enabled/disabled (ADR-0042).
+	// Passing enabled=false clears the timestamp but keeps dkim_selector +
+	// dkim_public_key so DNS re-publication after a later re-enable doesn't
+	// re-roll the key per ADR-0043.
+	UpdateEmailState(ctx context.Context, id string, state DomainEmailState) error
+}
+
+// DomainEmailState is the bundle of columns written together by
+// UpdateEmailState. Nil DkimSelector / DkimPublicKey leave those
+// columns alone (used by disable, which keeps the key material).
+type DomainEmailState struct {
+	Enabled        bool
+	DkimSelector   *string
+	DkimPublicKey  *string
+	EmailEnabledAt *time.Time
 }
 
 // DomainPHPSettings holds per-domain PHP INI overrides.
@@ -208,6 +227,31 @@ func (r *domainRepo) UpdatePHPSettings(ctx context.Context, id string, settings 
 			"php_max_execution_time":  settings.MaxExecutionTime,
 			"php_max_input_time":      settings.MaxInputTime,
 		})
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *domainRepo) UpdateEmailState(ctx context.Context, id string, state DomainEmailState) error {
+	updates := map[string]interface{}{
+		"email_enabled":    state.Enabled,
+		"email_enabled_at": state.EmailEnabledAt,
+	}
+	// Only write DKIM material when the caller supplies it — disable
+	// intentionally keeps the existing key (ADR-0043).
+	if state.DkimSelector != nil {
+		updates["dkim_selector"] = state.DkimSelector
+	}
+	if state.DkimPublicKey != nil {
+		updates["dkim_public_key"] = state.DkimPublicKey
+	}
+	res := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Where("id = ?", id).
+		Updates(updates)
 	if res.Error != nil {
 		return translate(res.Error)
 	}

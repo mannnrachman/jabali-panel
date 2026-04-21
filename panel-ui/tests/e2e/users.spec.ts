@@ -24,17 +24,35 @@ test.describe("users CRUD (admin)", () => {
     await page.getByRole("button", { name: /create/i }).first().click();
     await page.waitForURL(/\/jabali-admin\/users\/create/);
 
+    // Wait for the form to finish its initial render cycle before
+    // touching inputs. waitForURL only confirms the URL changed —
+    // the target page may still have async effects in flight (the
+    // Hosting Package <Select> hydrates via useSelectQuery, the
+    // AuthContext whoami observer may be rebroadcasting a fresh
+    // identity). On fast local Chromium these settle in microseconds.
+    // On the host-mode CI runner's slower, CPU-contended Chromium
+    // they can still be churning when .fill() starts, and a nearby
+    // re-render detaches the input mid-fill — Playwright reports
+    // "element was detached from the DOM, retrying" and loops until
+    // the 30s test timeout. Waiting for the submit button (the last
+    // child of the Form) to be visible proves the full form tree is
+    // mounted, and waiting for networkidle gives the initial packages
+    // fetch a chance to complete.
+    await expect(
+      page.getByRole("button", { name: /save/i }),
+    ).toBeVisible();
+    await page.waitForLoadState("networkidle");
+
     // Scope to textbox role — the users list's sortable table headers
     // carry aria-label="Email" / "First name" / "Last name" (AntD Table
     // behavior) and would otherwise win the getByLabel match.
     // Fill email LAST. Filling email first and then tabbing through the
     // password field loses the email value ~1/3 of runs — an async event
-    // (Chromium autofill tick / Refine useForm settling / useSelect
-    // fetching packages) clears the Email input after the later fills
-    // but before the Save click. Filling email last leaves no async
-    // window for that clearing to happen. Production isn't affected
-    // because humans take >100ms between fields and the clearing event
-    // is benign to user experience.
+    // (Chromium autofill tick / useSelect fetching packages) clears the
+    // Email input after the later fills but before the Save click.
+    // Filling email last leaves no async window for that clearing to
+    // happen. Production isn't affected because humans take >100ms
+    // between fields and the clearing event is benign to user experience.
     await page.getByRole("textbox", { name: /password/i }).fill("validpassword99");
     await page.getByRole("textbox", { name: /first name/i }).fill("New");
     await page.getByRole("textbox", { name: /last name/i }).fill("User");

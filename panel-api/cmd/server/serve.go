@@ -155,6 +155,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// dep they need. Mount path resolved below after deps are set.
 		rec.WithPackages(packageRepo)
 		rec.WithLimitOverrides(limitOverridesRepo)
+		managedIPRepo := repository.NewManagedIPRepository(sharedDB)
+		rec.WithManagedIPs(managedIPRepo)
+		deps.ManagedIPs = managedIPRepo
 		deps.Reconciler = rec
 		deps.DNSZones = dnsZoneRepo
 		deps.DNSRecords = dnsRecordRepo

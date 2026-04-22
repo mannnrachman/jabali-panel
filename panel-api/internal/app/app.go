@@ -308,15 +308,16 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			})
 		}
 		if deps.ManagedIPs != nil {
-			// AgentIPCommandsEnabled stays false here. Step 4 flips it
-			// once panel-api ↔ agent ip.bind/ip.unbind contract is wired.
-			// Until then the CRUD writes the DB rows but the agent never
-			// sees them — operators must pre-bind via netplan etc.
+			// Step 4 flips AgentIPCommandsEnabled on: CRUD round-trips
+			// through the agent's ip.bind / ip.unbind commands, and the
+			// reconciler's managed-ip pass rebinds any DB-bound rows
+			// the kernel has lost (host reboot between missing netplan
+			// persistence and agent recovery).
 			api.RegisterIPRoutes(v1, api.IPHandlerConfig{
 				Repo:                   deps.ManagedIPs,
 				Domains:                deps.Domains,
 				Agent:                  deps.Agent,
-				AgentIPCommandsEnabled: false,
+				AgentIPCommandsEnabled: deps.Agent != nil,
 				Log:                    deps.Log,
 			})
 		}

@@ -54,6 +54,10 @@ type Reconciler struct {
 	packages       repository.PackageRepository
 	limitOverrides repository.UserLimitOverrideRepository
 	quotaMount     string
+	// M24 — managed IPs pool. Optional; when nil, the managed-IP
+	// rebind pass is skipped entirely (lets existing test harnesses
+	// pass without touching the new repo).
+	managedIPs repository.ManagedIPRepository
 }
 
 // WithSSLCerts adds SSL certificate repository support to the reconciler.
@@ -117,6 +121,15 @@ func (r *Reconciler) WithDNSRepos(dnsZones repository.DNSZoneRepository, dnsReco
 	r.dnsZones = dnsZones
 	r.dnsRecords = dnsRecords
 	r.serverSettings = serverSettings
+	return r
+}
+
+// WithManagedIPs registers the M24 managed_ips repo. When set, each
+// ReconcileAll pass runs a managed-IP rebind sweep: rows flagged
+// is_bound=TRUE whose address is missing from the kernel get an
+// ip.bind; rows that exceed their retry budget flip to degraded=TRUE.
+func (r *Reconciler) WithManagedIPs(repo repository.ManagedIPRepository) *Reconciler {
+	r.managedIPs = repo
 	return r
 }
 
@@ -239,6 +252,12 @@ func (r *Reconciler) Schedule(domainID string) {
 func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// PHP pool reconciliation first, so domain regens see latest pool state.
 	r.ReconcilePHPPools(ctx)
+
+	// M24: managed IPs BEFORE the domain loop. If a domain is bound to a
+	// secondary IP that fell off the kernel (host reboot, netplan drop),
+	// re-bind it first so the vhost render later in the loop can find
+	// the address live when nginx parses the config.
+	r.ReconcileManagedIPs(ctx)
 
 	// Backfill mysqladmin shadow accounts for users that don't have one yet.
 	// This is a separate pass that doesn't block domain reconciliation.

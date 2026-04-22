@@ -968,12 +968,17 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 		return
 	}
 
+	srv, _ := r.serverSettings.Get(ctx)
+	// Migrate legacy M4-bootstrap rows to the current shape before we
+	// list records for compile. Safe to call every tick: idempotent by
+	// design (re-running finds no rows matching the sentinel content).
+	r.migrateBootstrapShape(ctx, zone, srv)
+
 	records, err := r.dnsRecords.ListByZoneID(ctx, zone.ID)
 	if err != nil {
 		r.log.Error("list records failed", "zone", zone.Name, "err", err)
 		return
 	}
-	srv, _ := r.serverSettings.Get(ctx)
 	compiled := dnscompile.Compile(zone, records, srv)
 
 	// Bump serial on push.
@@ -1409,4 +1414,122 @@ func indexByte(s string, b byte) int {
 		}
 	}
 	return -1
+}
+
+// migrateBootstrapShape rewrites legacy M4-bootstrap rows to the current
+// shape on every zone reconcile. Two rewrites happen:
+//
+//  1. www A / AAAA → www CNAME <zone>. Apex-IP changes then propagate
+//     via the single apex A/AAAA row, instead of per-record.
+//  2. The pre-ip4 SPF `"v=spf1 mx ~all"` → `"v=spf1 mx ip4:… ~all"`
+//     (plus ip6 when configured). Matches what BootstrapRecords now
+//     emits for freshly-provisioned zones.
+//
+// Guard rails keep operator edits untouched:
+//
+//   - Only rows with Managed=true AND ManagedBy IS NULL are considered.
+//     Operator-created rows (Managed=false) and feature-scoped rows
+//     (M6 email uses ManagedBy="m6") stay as they are.
+//   - SPF rewrite requires an EXACT match against
+//     dnscompile.LegacyBootstrapSPFContent. One character of drift
+//     means the operator touched it; skip.
+//   - www rewrite requires that a CNAME doesn't already exist —
+//     otherwise a double-run could crash on a unique-index violation,
+//     and a manual (legitimate) CNAME override from the operator
+//     must not be clobbered by the legacy A row this function is
+//     about to delete.
+//
+// Idempotent: once the new shape is in place, subsequent calls find
+// nothing to do (no legacy A rows, no legacy SPF content).
+func (r *Reconciler) migrateBootstrapShape(ctx context.Context, zone *models.DNSZone, srv *models.ServerSettings) {
+	if r.dnsRecords == nil || srv == nil || zone == nil {
+		return
+	}
+	existing, err := r.dnsRecords.ListByZoneID(ctx, zone.ID)
+	if err != nil {
+		r.log.Error("migrate bootstrap: list records failed", "zone", zone.Name, "err", err)
+		return
+	}
+
+	// ---------- www A/AAAA → www CNAME <zone> -----------------------
+	//
+	// Two filters, different scopes. Eligibility to delete requires the
+	// row be a Managed bootstrap row (Managed=true, ManagedBy=nil).
+	// But ANY www CNAME — operator-created or otherwise — disqualifies
+	// the whole rewrite: we must never leave both a CNAME and an A on
+	// the same name (DNS protocol violation), and we must never delete
+	// an A out from under a CNAME the operator added deliberately.
+	var legacyWWW []models.DNSRecord
+	wwwCNAMEExists := false
+	for i := range existing {
+		rec := existing[i]
+		if rec.Name != "www" {
+			continue
+		}
+		if rec.Type == "CNAME" {
+			wwwCNAMEExists = true
+			continue
+		}
+		if (rec.Type == "A" || rec.Type == "AAAA") && rec.Managed && rec.ManagedBy == nil {
+			legacyWWW = append(legacyWWW, rec)
+		}
+	}
+	if len(legacyWWW) > 0 && !wwwCNAMEExists && zone.Name != "" {
+		failed := false
+		for _, rec := range legacyWWW {
+			if err := r.dnsRecords.Delete(ctx, rec.ID); err != nil {
+				r.log.Error("migrate bootstrap: delete legacy www failed",
+					"zone", zone.Name, "id", rec.ID, "type", rec.Type, "err", err)
+				failed = true
+				break
+			}
+		}
+		if !failed {
+			now := time.Now().UTC()
+			cname := models.DNSRecord{
+				ID:        ids.NewULID(),
+				ZoneID:    zone.ID,
+				Name:      "www",
+				Type:      "CNAME",
+				Content:   zone.Name,
+				TTL:       3600,
+				Managed:   true,
+				IsEnabled: true,
+				CreatedAt: now,
+				UpdatedAt: now,
+			}
+			if err := r.dnsRecords.Create(ctx, &cname); err != nil {
+				r.log.Error("migrate bootstrap: create www CNAME failed",
+					"zone", zone.Name, "err", err)
+			} else {
+				r.log.Info("migrated www to CNAME",
+					"zone", zone.Name, "deleted", len(legacyWWW), "cname_target", zone.Name)
+			}
+		}
+	}
+
+	// ---------- legacy SPF → ip4/ip6 SPF ----------------------------
+	want := dnscompile.BuildSPFString(srv)
+	for i := range existing {
+		rec := existing[i]
+		if rec.Name != "@" || rec.Type != "TXT" || !rec.Managed || rec.ManagedBy != nil {
+			continue
+		}
+		if rec.Content != dnscompile.LegacyBootstrapSPFContent {
+			continue
+		}
+		if rec.Content == want {
+			continue // no-op (neither v4 nor v6 configured)
+		}
+		rec.Content = want
+		rec.UpdatedAt = time.Now().UTC()
+		if err := r.dnsRecords.Update(ctx, &rec); err != nil {
+			r.log.Error("migrate bootstrap: update SPF failed",
+				"zone", zone.Name, "err", err)
+		} else {
+			r.log.Info("migrated SPF to ip4/ip6 shape",
+				"zone", zone.Name, "new_content", rec.Content)
+		}
+		break // only one apex SPF row, stop scanning
+	}
 }

@@ -78,22 +78,46 @@ func BootstrapRecords(zoneID, zoneName string, srv *models.ServerSettings, idNew
 	// This record is paired with the mail A/AAAA above.
 	out = append(out, mk("@", "MX", "mail", 10))
 
-	// SPF — always has `mx` (covers the mail.<domain> host via its A
-	// record), plus explicit ip4/ip6 for the apex IP so panel-local
-	// senders passing through stalwart at the apex bind still match.
-	var spf strings.Builder
-	spf.WriteString(`"v=spf1 mx`)
-	if srv.PublicIPv4 != "" {
-		spf.WriteString(" ip4:")
-		spf.WriteString(srv.PublicIPv4)
-	}
-	if srv.PublicIPv6 != "" {
-		spf.WriteString(" ip6:")
-		spf.WriteString(srv.PublicIPv6)
-	}
-	spf.WriteString(` ~all"`)
-	out = append(out, mk("@", "TXT", spf.String(), 0))
+	out = append(out, mk("@", "TXT", BuildSPFString(srv), 0))
 
 	out = append(out, mk("_dmarc", "TXT", `"v=DMARC1; p=none"`, 0))
 	return out
 }
+
+// BuildSPFString renders the bootstrap SPF TXT content from server
+// settings. Always returns a quoted, trailing-"~all" SPF record with
+// the `mx` directive plus any configured ip4/ip6 directives. Exported
+// so the reconciler's legacy-shape migration can compute the exact
+// string it expects to write without duplicating the format.
+//
+// Examples:
+//
+//	srv{v4=1.2.3.4}            → `"v=spf1 mx ip4:1.2.3.4 ~all"`
+//	srv{v4=1.2.3.4, v6=2001::1} → `"v=spf1 mx ip4:1.2.3.4 ip6:2001::1 ~all"`
+//	srv{} (no IPs)              → `"v=spf1 mx ~all"` (matches the
+//	                               pre-migration bootstrap shape; the
+//	                               migration uses this fact as the
+//	                               legacy-content sentinel).
+func BuildSPFString(srv *models.ServerSettings) string {
+	var spf strings.Builder
+	spf.WriteString(`"v=spf1 mx`)
+	if srv != nil && srv.PublicIPv4 != "" {
+		spf.WriteString(" ip4:")
+		spf.WriteString(srv.PublicIPv4)
+	}
+	if srv != nil && srv.PublicIPv6 != "" {
+		spf.WriteString(" ip6:")
+		spf.WriteString(srv.PublicIPv6)
+	}
+	spf.WriteString(` ~all"`)
+	return spf.String()
+}
+
+// LegacyBootstrapSPFContent is the exact SPF TXT value BootstrapRecords
+// wrote before the ip4/ip6 change. The migration uses it as the
+// sentinel to decide whether a row was operator-edited or is the
+// pristine pre-migration bootstrap content. A single character of
+// drift (extra space, a different spf modifier) is enough to mark the
+// row as operator-touched and skip the rewrite.
+const LegacyBootstrapSPFContent = `"v=spf1 mx ~all"`
+

@@ -2855,6 +2855,13 @@ install_bulwark() {
   install -d -m 0755 -o jabali-webmail -g jabali-webmail /opt/jabali-webmail
   install -d -m 0750 -o jabali-webmail -g jabali-webmail /var/lib/jabali-webmail
   install -d -m 0750 -o jabali-webmail -g jabali-webmail /var/lib/jabali-webmail/settings
+  # jabali-webmail.service lists /opt/jabali-webmail/.next/cache in its
+  # ReadWritePaths. systemd refuses to enter mount namespacing when a
+  # ReadWritePaths entry doesn't exist yet, so Bulwark fails to start on
+  # a fresh install until Next.js first writes to its own cache dir —
+  # a chicken-and-egg. Pre-create the dir so systemd is happy. The
+  # tarball ships .next/ without the cache subdir.
+  install -d -m 0755 -o jabali-webmail -g jabali-webmail /opt/jabali-webmail/.next/cache
 
   # SESSION_SECRET — generate once, preserve across re-runs (rotating it
   # would invalidate every existing "remember me" cookie).

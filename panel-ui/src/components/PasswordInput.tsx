@@ -14,7 +14,6 @@
 // existing password, not generating a new one.
 
 import { Button, Input, Space, Tooltip } from "antd";
-import { ThunderboltOutlined } from "@ant-design/icons";
 import type { ChangeEvent, ComponentProps } from "react";
 
 import { generatePassword } from "./passwordGenerator";
@@ -24,6 +23,33 @@ type InputPasswordProps = ComponentProps<typeof Input.Password>;
 interface PasswordInputProps extends Omit<InputPasswordProps, "suffix"> {
   /** Length passed to generatePassword. Default 16. */
   generatorLength?: number;
+}
+
+// Dice icon for the "generate password" affordance. Matches AntD icon
+// sizing conventions: 1em × 1em, currentColor, aria-hidden. The five-pip
+// face reads cleanly at 14–16px, which is where AntD renders icons
+// inside standard Buttons.
+function DiceIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="1em"
+      height="1em"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <rect x="3" y="3" width="18" height="18" rx="3" />
+      <circle cx="7.5" cy="7.5" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="16.5" cy="7.5" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="7.5" cy="16.5" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="16.5" cy="16.5" r="1.2" fill="currentColor" stroke="none" />
+    </svg>
+  );
 }
 
 export function PasswordInput({
@@ -55,7 +81,7 @@ export function PasswordInput({
         <Button
           type="default"
           onClick={handleGenerate}
-          icon={<ThunderboltOutlined />}
+          icon={<DiceIcon />}
           aria-label="Generate strong password"
         />
       </Tooltip>

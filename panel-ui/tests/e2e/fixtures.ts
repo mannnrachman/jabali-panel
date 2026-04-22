@@ -698,5 +698,21 @@ export async function signIn(page: Page, u: MockUser, password = "anypassword123
   await page.getByRole("button", { name: /sign in/i }).click();
 }
 
+// Asserts the document is not horizontally scrolling. Used by the M23
+// responsive spec on every page transition — a responsive regression
+// almost always announces itself by making documentElement.scrollWidth
+// exceed clientWidth. See ADR-0046.
+export async function expectNoHorizontalOverflow(page: Page): Promise<void> {
+  const hasOverflow = await page.evaluate(
+    () =>
+      document.documentElement.scrollWidth >
+      document.documentElement.clientWidth,
+  );
+  expect(
+    hasOverflow,
+    "viewport is horizontally scrolling — table without scroll=max-content, fixed-width element, or overflow leak",
+  ).toBe(false);
+}
+
 // Re-export expect so test files import everything from one place.
 export { base as test, expect };

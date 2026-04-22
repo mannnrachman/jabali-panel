@@ -39,6 +39,34 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
     },
+    // Mobile responsive coverage (M23 / ADR-0046). Phone and tablet
+    // share the same spec; what changes is the viewport. Both projects
+    // use the Chromium engine — iPhone 13 / iPad Mini in the AntD
+    // `devices` map would switch the engine to WebKit, which isn't
+    // installed in our CI (we only ship the Chromium browsers to keep
+    // the act_runner image small). Overlaying viewport + userAgent
+    // onto Desktop Chrome gives us the same pixel surface.
+    {
+      name: "mobile-chromium",
+      testMatch: /responsive\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 390, height: 844 },
+        userAgent:
+          "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36",
+        hasTouch: true,
+        isMobile: true,
+      },
+    },
+    {
+      name: "tablet-chromium",
+      testMatch: /responsive\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 768, height: 1024 },
+        hasTouch: true,
+      },
+    },
   ],
 
   // Serve the production build locally so we're testing what ships, not

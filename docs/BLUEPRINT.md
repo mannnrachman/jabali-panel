@@ -655,6 +655,59 @@ until NS delegation propagates. `/etc/hosts` has been the stopgap.
 `plans/m6.3-pdns-recursor.md` (7-step blueprint),
 `plans/m6.3-pdns-recursor-runbook.md` (operator runbook).
 
+### M6.4: Panel hostname as primary mail domain (IN PROGRESS — branch)
+
+**Status:** Blueprint drafted at `plans/m6.4-panel-hostname-mail-domain.md`
+(6-step plan, architect-reviewed — 4 CRITICAL + 3 HIGH + 4 MEDIUM + 3 LOW
+folded). Branch `m6.4/panel-hostname-mail-domain`. Step 1 dispatchable.
+ADR-0048 target.
+
+**Goal:** Make `<panel-hostname>` itself a first-class email domain so
+`admin@<panel-hostname>` works on every fresh install, the panel's
+self-signed cert covers `mail.<panel-hostname>`, and
+`{panel-hostname}/webmail` redirects to the Bulwark webmail at
+`https://mail.<panel-hostname>/`.
+
+**Driving evidence:** On 10.0.3.13 fresh reinstall, browsing to
+`mail.jabali-panel.local` returned `SEC_ERROR_INADEQUATE_CERT_TYPE` —
+the panel's self-signed cert covers only the apex hostname, no `mail.`
+SAN. Separately, there's no nginx vhost for the panel hostname's
+`mail.` subdomain because the panel hostname has never been a
+configured email-enabled domain: no row in `domains` with
+`email_enabled=1`, no DKIM keypair, no MX/SPF/DMARC records in the
+M6.3 self-zone. The operator has no ergonomic path to their own
+mailbox from a fresh install.
+
+**Strategy (ADR-0048):**
+- New column `domains.is_panel_primary` (TINYINT, at-most-one enforced
+  in the Go repo layer) marks the single auto-registered hostname
+  domain. Marker is distinct from `name` equality so hostname changes
+  are handled in-place.
+- `install.sh` adds `install_panel_primary_domain()` that INSERTs the
+  domain row with `email_enabled=1, is_panel_primary=1` after
+  `bootstrap_admin_user` + `bootstrap_pdns_self_zone`. Reconciler then
+  takes over via the existing M6 email-enable path (DKIM keypair,
+  Stalwart domain, nginx mail vhost, MX/SPF/DMARC TXT in self-zone).
+- `provision_tls_cert` gains hostname-drift detection (CN vs current
+  `$JABALI_SRV_HOSTNAME`) + `mail.<hostname>` SAN. Regen triggers full
+  panel-api restart (Go HTTP server caches cert in memory; SIGHUP is
+  a no-op).
+- nginx default vhost gains `location = /webmail { return 301
+  https://mail.<hostname>/; }` — heredoc-interpolated at install time,
+  re-rendered on every install.sh run, so hostname drift propagates.
+- Panel-primary row is delete-protected at both repo + API layer
+  (403 with `panel_primary_protected` code). Panel UI Settings → Email
+  card shows read-only state; Domains list hides Delete button with a
+  "System" tag.
+- `/webmail` fallback: no graceful-503; reconciler converges in ~30s
+  and the TLS-handshake-fail window is deemed acceptable. M6.4.4
+  follow-up if operators complain.
+
+**Depends on:** M6 (email plumbing), M6.1 (cert SAN helper — reused),
+M6.2 (webmail SSO — unchanged), M6.3 (self-zone local-resolvable).
+**Related:** ADR-0048 (panel-primary domain marker + hostname-change +
+/webmail fallback), `plans/m6.4-panel-hostname-mail-domain.md`.
+
 ### M7: Databases (MariaDB) (SHIPPED)
 
 **Goal:** Users can create and manage databases + database users with grant tables.

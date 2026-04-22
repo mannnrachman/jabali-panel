@@ -204,6 +204,15 @@ type Domain struct {
 	RateLimitRPS    uint32 `gorm:"type:int unsigned;not null;default:0" json:"rate_limit_rps"`
 	ConnectionLimit uint32 `gorm:"type:int unsigned;not null;default:0" json:"connection_limit"`
 
+	// M24: optional binding to specific IPv4/IPv6 in the managed_ips
+	// pool. NULL means "use server primary" (managed_ips.is_default for
+	// the family). FK enforced at DB level with ON DELETE RESTRICT;
+	// the API translates restrict-violations into 409 with the affected
+	// domains list. Pointers because nullable; uint64 because the
+	// referenced managed_ips.id is BIGINT UNSIGNED auto-increment.
+	ListenIPv4ID *uint64 `gorm:"column:listen_ipv4_id;type:bigint unsigned" json:"listen_ipv4_id,omitempty"`
+	ListenIPv6ID *uint64 `gorm:"column:listen_ipv6_id;type:bigint unsigned" json:"listen_ipv6_id,omitempty"`
+
 	// M6 email state (migration 000054). EmailEnabled drives whether the
 	// reconciler sets up MX/SPF/DMARC zone records and whether the API
 	// accepts mailbox creates. DkimSelector + DkimPublicKey mirror the

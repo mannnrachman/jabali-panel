@@ -17,6 +17,7 @@ type HostingPackage = {
 
 type UserCreateInput = {
   email: string;
+  username?: string;
   password: string;
   name_first?: string;
   name_last?: string;
@@ -77,6 +78,35 @@ export const UserCreate = () => {
             the email input asynchronously).
           */}
           <Input autoComplete="off" />
+        </Form.Item>
+
+        <Form.Item
+          label="Username"
+          name="username"
+          tooltip="The Linux account name for this user. Lowercase letters and digits only, 3–32 characters, must start with a letter. Unique per server. Leave blank only for admin-only accounts (no OS user)."
+          dependencies={["is_admin"]}
+          rules={[
+            ({ getFieldValue }) => ({
+              validator(_, value: string | undefined) {
+                const isAdmin = getFieldValue("is_admin");
+                if (!isAdmin && !value) {
+                  return Promise.reject(
+                    new Error("Username is required for non-admin users"),
+                  );
+                }
+                if (value && !/^[a-z][a-z0-9]{2,31}$/.test(value)) {
+                  return Promise.reject(
+                    new Error(
+                      "3–32 chars, lowercase letters and digits, must start with a letter",
+                    ),
+                  );
+                }
+                return Promise.resolve();
+              },
+            }),
+          ]}
+        >
+          <Input autoComplete="off" placeholder="e.g. alice, dev42" />
         </Form.Item>
 
         <Form.Item

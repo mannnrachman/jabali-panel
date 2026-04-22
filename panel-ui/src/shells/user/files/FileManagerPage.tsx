@@ -21,8 +21,10 @@ import {
   Breadcrumb,
   Button,
   Card,
+  Drawer,
   Dropdown,
   Empty,
+  Grid,
   Input,
   Modal,
   Space,
@@ -271,6 +273,12 @@ export const FileManagerPage = () => {
   // hard-coded #f0f5ff / #adc6ff / dim text before and those only
   // read correctly on the light theme.
   const { token } = theme.useToken();
+  const screens = Grid.useBreakpoint();
+  // Tree pane sits inline on tablet+ (md ≥768). Below md it moves
+  // into a left Drawer opened by a Folders button — no room for a
+  // 280px pane plus a file list on phones.
+  const inlineTree = screens.md !== false;
+  const [treeDrawerOpen, setTreeDrawerOpen] = useState(false);
 
   const [rootPath, setRootPath] = useState<string | null>(null);
   const [currentPath, setCurrentPath] = useState<string | null>(null);
@@ -1054,7 +1062,43 @@ export const FileManagerPage = () => {
         </div>
       )}
 
+      {!inlineTree && (
+        <Button
+          icon={<FolderOutlined />}
+          onClick={() => setTreeDrawerOpen(true)}
+          style={{ marginBottom: 12 }}
+        >
+          Folders
+        </Button>
+      )}
+
+      <Drawer
+        open={!inlineTree && treeDrawerOpen}
+        onClose={() => setTreeDrawerOpen(false)}
+        placement="left"
+        width={280}
+        title="Folders"
+        styles={{ body: { padding: 8 } }}
+      >
+        <Tree
+          treeData={treeData}
+          expandedKeys={expandedKeys}
+          onExpand={(keys) => setExpandedKeys(keys as string[])}
+          selectedKeys={[currentPath]}
+          loadData={(node) => loadTreeChildren(node as TreeNode)}
+          showLine
+          switcherIcon={<DownOutlined />}
+          onSelect={(keys) => {
+            if (keys.length > 0) {
+              setCurrentPath(keys[0] as string);
+              setTreeDrawerOpen(false);
+            }
+          }}
+        />
+      </Drawer>
+
       <div style={{ display: "flex", gap: 16, alignItems: "stretch" }}>
+        {inlineTree && (
         <Card
           title={<Typography.Text type="secondary">Folders</Typography.Text>}
           style={{ width: 280, flexShrink: 0 }}
@@ -1116,6 +1160,7 @@ export const FileManagerPage = () => {
             }}
           />
         </Card>
+        )}
 
         <div
           style={{ flex: 1, minWidth: 0 }}

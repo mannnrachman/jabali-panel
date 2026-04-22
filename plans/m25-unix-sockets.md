@@ -2,21 +2,47 @@
 
 **Branch:** `m25/unix-sockets`
 **Target:** 8 PR-sized steps across 4 waves.
-**Status:** Draft, pending opus adversarial review.
+**Status:** Dispatch-ready (2026-04-23). Opus adversarial review complete (3 CRITICAL + 5 HIGH folded in). Pre-dispatch investigations I1 + I2 resolved on live VM 10.0.3.13 + Debian trixie nginx 1.26.3.
 
 ## Goal
 
 Every localhost-only HTTP backend becomes a Unix-domain socket with filesystem permissions. Every `:::`-bound TCP service that doesn't support Unix sockets gets an explicit `127.0.0.1` bind. The Kratos admin API — currently reachable on all interfaces with zero auth on prod VMs without an external firewall — stops being a takeover surface.
 
-## Pre-dispatch investigations (MUST complete before Wave A)
+## Pre-dispatch investigations — RESOLVED (2026-04-23)
 
-Per adversarial review findings F-H-1 and F-C-2, two verification gates block Wave A:
+Both gates closed; findings baked into the step definitions below.
 
-**I1. Stalwart port 8080 + 35181 ownership.** SSH into a live jabali instance (10.0.3.13), run `sudo ss -lntp | grep -E ':8080|:35181'`, note each PID, then `sudo cat /proc/<pid>/cmdline | tr '\0' ' '` and `sudo cat /proc/<pid>/status | grep Name`. Confirm both are Stalwart subsystems; document what each serves (Prometheus metrics? JMAP admin? gRPC? clustering?). Record findings in the plan's "Open answers" section. If either cannot bind `127.0.0.1` (e.g., requires multi-NIC access), Step 7 scope changes and the plan must be re-reviewed.
+### I1 — Stalwart port 8080 + 35181 ownership [RESOLVED]
 
-**I2. nginx Unix-socket proxy_pass syntax verified.** Write a throwaway nginx config at `/tmp/nginx-socket-test.conf` with `proxy_pass http://unix:/tmp/doesnt-exist.sock:/;`, run `nginx -t -c /tmp/nginx-socket-test.conf`. Expect failure (socket doesn't exist) BUT syntax should parse clean. Then vary `:/` vs `:/;` vs no-trailing-colon-slash forms and record which ones pass `nginx -t` on Debian trixie's nginx 1.26. The plan assumes `http://unix:/path/sock:/` (trailing colon + slash + path, with final URI); verify this is the correct literal and adjust Steps 3/4/5 if not.
+Investigated on live VM 10.0.3.13 via `ss -lntp` + `/proc/<pid>/cmdline` + curl probes.
 
-Both investigations must complete and their findings folded into the plan (Answered Questions section at the bottom) before Step 1 is dispatched.
+| Port | Listener | Identity | Source of binding |
+|---|---|---|---|
+| `0.0.0.0:8080` | stalwart-mail (PID 32798) | **Admin HTTP / Management UI** — `/admin`, `/management`, `/health`, `/status` all return 302 (auth redirect); this is the same surface Bulwark proxies on localhost. | **NOT** in `config/stalwart/apply-plan.json.tmpl`. Stalwart ships an implicit default `#admin-http` listener on `0.0.0.0:8080` that has to be **added explicitly** to the apply-plan with `"bind": {"127.0.0.1:8080": true}` to override the default. |
+| `:35181` | (transient — not listening at probe time) | Likely ephemeral spam-classifier training or internal IPC socket chosen by OS when no `server.listener.<id>.bind` is set. Non-deterministic port. | Not in apply-plan. Fix: add an explicit internal listener with a pinned `127.0.0.1:<port>` in Step 7 so it stops roulette-picking. |
+
+**Security finding:** `:::8080` is a real admin-takeover surface equivalent to Kratos `:::4434`. It must be closed in Wave D Step 7 before M25 ships.
+
+**Step 7 scope confirmed:** add `#admin-http` (and `#internal-training` placeholder for :35181) as explicit `x:NetworkListener` entries in `apply-plan.json.tmpl`, each with `"bind": {"127.0.0.1:<port>": true}`. Apply via `stalwart-cli apply`; verify with `ss -lntp | grep stalwart` expects only `127.0.0.1:<port>` rows.
+
+### I2 — nginx Unix-socket proxy_pass syntax [RESOLVED]
+
+Tested on Debian trixie nginx 1.26.3 (the target platform) using 4 syntactic forms with `nginx -t -c /tmp/nginx-socket-test.conf`:
+
+| Form | Literal | `nginx -t` result |
+|---|---|---|
+| A | `proxy_pass http://unix:/run/x.sock;` | PASS (no URI) |
+| B | `proxy_pass http://unix:/run/x.sock:/;` | PASS (colon + URI `/`) |
+| C | `proxy_pass http://unix:/run/x.sock:;` | PASS (colon + empty URI) |
+| **D** | `upstream u { server unix:/run/x.sock; } ... proxy_pass http://u/;` | **PASS + recommended** |
+
+**Adopted:** **Form D** (named `upstream { server unix:...; }` + `proxy_pass http://u/;`). Rationale: swap unix↔TCP in one line without touching any `proxy_pass` directive; matches the existing upstream pattern already used for panel-api in some server blocks; makes the feature-flag rollback (see Wave D Step 8) a one-line edit per service.
+
+**Steps 3, 4, 5 updated** to use Form D where they previously inlined `proxy_pass http://unix:...:/;`. The proxy_pass literal in every rewritten `nginx` block is now `proxy_pass http://<service-upstream>/;` with a sibling `upstream <service-upstream> { server unix:<path>; }` declaration.
+
+### Verdict
+
+Both investigations green. **Plan is fully dispatch-ready** — Wave A (Step 1 foundation) can start immediately. Step 7 gains a specific "add `#admin-http` listener with explicit `127.0.0.1:8080` bind" task instead of the prior "investigate first" placeholder.
 
 ## Motivation
 
@@ -188,10 +214,12 @@ Step 2 resolved the Unix-socket-vs-127.0.0.1 question. Step 3 applies the same a
 
 **Tasks:**
 1. Apply the same path (socket or 127.0.0.1) chosen in Step 2 to `serve.public` in `kratos.yml.tmpl`. Path: `/run/jabali-kratos/public.sock`.
-2. Update `install/nginx/.ory-location.conf:9` from `proxy_pass http://127.0.0.1:4433/;` to either:
-   - Socket path: `proxy_pass http://unix:/run/jabali-kratos/public.sock:/;` — nginx syntax, trailing colon + URI.
-   - 127.0.0.1 path: unchanged.
-3. Add an nginx upstream block if it simplifies future changes: `upstream kratos_public { server unix:/run/jabali-kratos/public.sock; }` then `proxy_pass http://kratos_public/;`.
+2. Update `install/nginx/.ory-location.conf:9` using **Form D** (adopted at pre-dispatch I2). Declare an upstream in a server-block-adjacent snippet:
+   ```nginx
+   upstream kratos_public { server unix:/run/jabali-kratos/public.sock; }
+   ```
+   and change `proxy_pass http://127.0.0.1:4433/;` → `proxy_pass http://kratos_public/;`. Rationale: single source of truth for the backend target; rollback to TCP is a one-line edit (`server unix:...;` → `server 127.0.0.1:4433;`) without touching the `proxy_pass` directive.
+3. If Step 2 chose the **127.0.0.1 fallback** (Kratos doesn't honour Unix sockets in v26.2.0): leave the nginx snippet on `server 127.0.0.1:4433;` inside the same upstream block. The `proxy_pass http://kratos_public/;` directive is identical either way — this is the whole point of Form D.
 4. Run `nginx -t` → `nginx -s reload` in install.sh post-config.
 5. Integration test: SPA loads `/login`, Kratos flow initialization round-trips through nginx.
 6. `verify_socket_perms /run/jabali-kratos/public.sock jabali jabali-sockets 0660` OR `verify_no_all_interface_binds 4433`.
@@ -220,7 +248,7 @@ panel-api's listener at `panel-api/cmd/server/serve.go:306`, address config-driv
    - `grep -rn 'panelAPIURL\|PANEL_API_URL' .`
    Enumerate every hit in the step's PR description BEFORE writing any code. If the list is empty, state that explicitly — a zero-count result is meaningful data. Expected surfaces: reconciler internal HTTP calls, panel-agent callbacks (if any), install.sh post-start health probes, Kratos client config pointing at panel-api, E2E helpers.
 5. **Update all internal clients** — each call-site either (a) switches to a unix-dial Go `http.Client` or (b) keeps HTTPS-to-nginx at `https://<panel>/api/v1/...`. Prefer (b) where the caller is already using the panel's public URL (defense-in-depth: all internal traffic passes through nginx, subject to rate-limits + access logs).
-5. **nginx** — update `jabali-mail-vhost.conf.tmpl:84` from `proxy_pass https://127.0.0.1:8443` to `proxy_pass http://unix:/run/jabali-panel/api.sock:/`. Verify TLS config removed from the upstream (it's plaintext over socket now).
+5. **nginx** — update `jabali-mail-vhost.conf.tmpl:84` using **Form D**: add `upstream panel_api { server unix:/run/jabali-panel/api.sock; }` to the relevant http{} or server{} context, then change `proxy_pass https://127.0.0.1:8443` → `proxy_pass http://panel_api/;` (note protocol change `https→http` — plaintext over Unix socket). Strip all `proxy_ssl_*` directives from that location block.
 6. **Systemd unit** — create `install/systemd/jabali-panel.service` if it doesn't exist as a checked-in file (research says it runs via install.sh logic — reverse that; a checked-in unit is the right shape). Add `RuntimeDirectory=jabali-panel`, `User=jabali`, `Group=jabali-sockets`, `RuntimeDirectoryMode=0750`.
 7. **install.sh config rewrite** — the config file panel-api reads (probably `/etc/jabali-panel/config.yml` or similar) gets `server.addr: "/run/jabali-panel/api.sock"` and no `tls_cert`/`tls_key` keys.
 8. **Reconciler / monitoring internal HTTP calls** — grep for any `http.Get("http://127.0.0.1:8443/...")` in reconciler code. Switch to unix dialer.
@@ -249,7 +277,7 @@ Bulwark is Next.js v14+ standalone at `/opt/jabali-webmail/server.js`. Systemd u
 2. **If (a):** create `install/jabali-webmail/server-unix.js`. Deploy alongside `server.js` via install.sh's existing Bulwark install block. Edit systemd unit: `ExecStart=/usr/bin/node /opt/jabali-webmail/server-unix.js`, `Environment=SOCKET_PATH=/run/jabali-bulwark/bulwark.sock`. Add `RuntimeDirectory=jabali-bulwark`, `Group=jabali-sockets`.
 3. **If (c):** skip the conversion; add an ADR-0050 entry noting Bulwark stays TCP and why. Proceed directly to task 5.
 4. (If a) **Integration test**: curl `/webmail/` via socket, assert 200 + body matches the TCP baseline.
-5. Update `install/nginx/jabali-mail-vhost.conf.tmpl:40`: `proxy_pass http://unix:/run/jabali-bulwark/bulwark.sock:/` (if a) or leave unchanged (if c).
+5. Update `install/nginx/jabali-mail-vhost.conf.tmpl:40` using **Form D** (if a): add `upstream bulwark_webmail { server unix:/run/jabali-bulwark/bulwark.sock; }` in the surrounding http{} context, then `proxy_pass http://bulwark_webmail/;`. Leave unchanged (if c).
 6. `verify_socket_perms` OR `verify_no_all_interface_binds 3000`.
 
 **Exit criteria (option a):** `/webmail` loads, JMAP calls via socket complete, `ss -lntp | grep 3000` empty. (Option c): no `:::3000` anywhere — must remain `127.0.0.1:3000`.
@@ -293,15 +321,26 @@ MariaDB Debian default install; `/var/run/mysqld/mysqld.sock` exists but install
 **Dependencies:** Step 6. **Model tier:** default. **Branch:** `m25/step-7-stalwart-tighten`.
 
 **Context brief:**
-Stalwart (v0.16.0) doesn't support Unix sockets. Current binds at `install/stalwart/apply-plan.json.tmpl` (lines 48-96): SMTP 25/465/587 on `0.0.0.0` (correct, public), IMAP 993 on `0.0.0.0` (correct, public), JMAP 8446 on `127.0.0.1` (correct, private). Runtime netstat showed `:::8080` and `:::35181` — NOT in the checked-in config. These are either defaults or dynamic.
+Stalwart (v0.16.0) doesn't support Unix sockets. Current apply-plan at `install/stalwart/apply-plan.json.tmpl` declares SMTP 25/465/587 on `0.0.0.0` (correct, public), IMAP 993 on `0.0.0.0` (correct, public), JMAP 8446 on `127.0.0.1` (correct, private). I1 confirmed `:::8080` is Stalwart's **admin HTTP** listener — default `0.0.0.0:8080`, **not present** in the apply-plan, so it falls to the Stalwart default bind. `:::35181` is a transient/ephemeral internal listener with non-deterministic port. Both need explicit `NetworkListener` entries to override the default.
 
 **Tasks:**
-1. **Investigate `:::8080`** — `sudo ss -lntp | grep 8080` on the live VM to confirm PID. Check `/proc/<pid>/cmdline` to see which Stalwart binary + arg. Check Stalwart's config schema (`stalwart-cli config export`) for what `8080` is. Likely candidates: Prometheus metrics endpoint, Stalwart management API, gRPC admin. Whatever it is — the default bind is `:::`, we want `127.0.0.1:8080`.
-2. **Investigate `:::35181`** — same procedure. Stalwart ≥0.11.x has a "spam filter training" / cluster coordination port that picks an ephemeral free port when not configured. Set it explicitly: `127.0.0.1:35181` (or pick a stable port and document). NOTE: if I1 pre-dispatch investigation already identified these ports, Step 7 becomes a config-application step rather than research.
-3. **Config-file updates** — `install/stalwart/apply-plan.json.tmpl`: add explicit `bind` for every listener found, even ones that worked fine before. Pin IPv4-only `127.0.0.1` for loopback listeners (Stalwart's `0.0.0.0` binds accept IPv4 only; add a second listener for `[::1]` IPv6 loopback only if `::1` access is needed — not currently).
-4. **install.sh verification** — after Stalwart starts, run `verify_no_all_interface_binds 8080` + `verify_no_all_interface_binds 35181`. Run a broader sweep: `ss -lntp -e '!( sport = :80 or sport = :443 or sport = :25 or sport = :465 or sport = :587 or sport = :993 or sport = :995 or sport = :4190 or sport = :22 or sport = :53 )' | grep -E '0\.0\.0\.0|\[::\]:'` should produce no output on a healthy install.
-5. **Audit for OTHER `:::`/`0.0.0.0` binds** — grep repo for `"0.0.0.0"`, `"::"`, `":::"` in `install/**/*.{yml,yaml,toml,json,tmpl}`. Every hit that's not a documented public-facing service becomes a step 7 finding. Document in the PR.
-6. Restart Stalwart, verify.
+1. **Add `#admin-http` listener to `install/stalwart/apply-plan.json.tmpl`** — new `x:NetworkListener` object:
+   ```json
+   {
+     "@type": "NetworkListener",
+     "id": "admin-http",
+     "bind": { "127.0.0.1:8080": true },
+     "protocol": { "@type": "Http" },
+     "tls": { "@type": "Disabled" }
+   }
+   ```
+   Confirm the exact `protocol`/`tls` shape with `stalwart-cli config export | jq '.listeners'` on the live VM (the admin listener may have a different protocol discriminator in v0.16.0 — use the exported value verbatim).
+2. **Add a pinned listener for the :35181 ephemeral** — pick a stable port (e.g. `127.0.0.1:35181` or better, pick an unreserved high port like `127.0.0.1:18181` and document). Same `NetworkListener` shape. Rationale: without an explicit `bind`, Stalwart picks a random free port at startup which breaks firewall-whitelisting and any health-check.
+3. **install.sh verification** — after `stalwart-cli apply` runs in the Stalwart install block, assert:
+   - `verify_no_all_interface_binds 8080` + `verify_no_all_interface_binds <pinned-35181-replacement>`
+   - Broader sweep: `ss -lntp -e '!( sport = :80 or sport = :443 or sport = :25 or sport = :465 or sport = :587 or sport = :993 or sport = :995 or sport = :4190 or sport = :22 or sport = :53 )' | grep -E '0\.0\.0\.0|\[::\]:'` — must produce no output on a healthy install.
+4. **Audit for OTHER `:::`/`0.0.0.0` binds** — grep repo for `"0.0.0.0"`, `"::"`, `":::"` in `install/**/*.{yml,yaml,toml,json,tmpl}`. Every hit that's not a documented public-facing service becomes a Step 7 finding. Document in the PR description.
+5. Restart Stalwart, verify on live VM.
 
 **Exit criteria:** every localhost-only Stalwart listener binds `127.0.0.1` explicitly; every service-wide `ss -lntp` assertion in install.sh passes; no `0.0.0.0` or `[::]:` lines appear on non-public ports.
 
@@ -359,8 +398,8 @@ Before merging a wave's branches into `m25/unix-sockets`:
 1. **Kratos v26.2.0 Unix socket support for its HTTP listener** — resolved at Step 2's verification gate. Plan has both paths; no blocker.
 2. **Kratos v26.2.0 Unix socket support for its MariaDB DSN** — resolved at Step 6's verification gate (per review F-M-3). Plan assumes it works via `go-sql-driver/mysql`; escalation path if not.
 3. **Bulwark custom server wrapper complexity** — resolved at Step 5's decision gate. Plan has fall-back.
-4. **nginx `proxy_pass http://unix:...:/` syntax exact form on Debian trixie nginx 1.26** — resolved at pre-dispatch I2.
-5. **Stalwart port 8080 + 35181 identity** — resolved at pre-dispatch I1.
+4. **nginx `proxy_pass http://unix:...:/` syntax exact form on Debian trixie nginx 1.26** — ✅ resolved at pre-dispatch I2. Adopted Form D: `upstream u { server unix:/path; } ... proxy_pass http://u/;`.
+5. **Stalwart port 8080 + 35181 identity** — ✅ resolved at pre-dispatch I1. `:8080` is the Stalwart admin HTTP listener (default `0.0.0.0:8080`, NOT in apply-plan); Step 7 adds an explicit `#admin-http` NetworkListener bound to `127.0.0.1:8080`. `:35181` is transient/ephemeral; pin it in Step 7 via a dedicated NetworkListener.
 6. **LLMNR drop-in removes the `:5355` listener entirely** — verify at Step 1. If systemd-resolved keeps a listener even with `LLMNR=no`, document and accept.
 7. **If a future `bulwark update` (upstream) overwrites `server-unix.js`** — build an install.sh smoke that re-installs `server-unix.js` every update. Flag in runbook.
 8. **ADR-0049 was claimed by M24 (shipped 2026-04-22 per memory `project_m24_ip_manager.md`).** M25's next unused ADR is 0050. Confirmed.
@@ -370,4 +409,6 @@ Before merging a wave's branches into `m25/unix-sockets`:
 ## Post-review status
 
 **Review date:** 2026-04-23 (opus/architect adversarial pass).
-**Review verdict:** GO-WITH-FIXES → all 3 CRITICAL + 5 HIGH findings folded in. Plan is dispatch-ready after the two pre-dispatch investigations (I1 + I2) complete.
+**Review verdict:** GO-WITH-FIXES → all 3 CRITICAL + 5 HIGH findings folded in.
+
+**Dispatch status (2026-04-23):** ✅ **READY**. Both pre-dispatch investigations (I1 Stalwart ports + I2 nginx syntax) completed on live VM 10.0.3.13 + Debian trixie nginx 1.26.3. Findings folded into the top "Pre-dispatch investigations — RESOLVED" section and Steps 3/4/5/7. Wave A (Step 1) dispatchable now.

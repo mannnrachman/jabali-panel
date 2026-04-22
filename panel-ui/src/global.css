@@ -19,3 +19,22 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04),
     0 4px 12px rgba(0, 0, 0, 0.06);
 }
+
+/* Dropdown menu items that embed a <Button type="text"> as their label
+ * (DomainRedirectsButton, DomainSettingsButton, RowDeleteButton, …) end
+ * up painting two hover backgrounds: the menu item's own row hover and
+ * the inner Button's text-hover. Suppress the inner Button's hover bg
+ * so the row hover alone provides the visual feedback, and strip the
+ * Button's padding/height so the label sits where a plain menu item
+ * label would. */
+.ant-dropdown-menu-item .ant-btn-text,
+.ant-dropdown-menu-item .ant-btn-text:hover,
+.ant-dropdown-menu-item .ant-btn-text:focus,
+.ant-dropdown-menu-item .ant-btn-text:active {
+  background: transparent;
+  padding: 0;
+  height: auto;
+  width: 100%;
+  justify-content: flex-start;
+  box-shadow: none;
+}

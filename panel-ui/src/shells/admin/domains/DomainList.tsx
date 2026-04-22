@@ -24,11 +24,12 @@ const stripHomePrefix = (path: string): string => {
   return path;
 };
 
-const renderDomainCell = (name: string, docRoot: string) => (
+const renderDomainCell = (name: string, docRoot: string, isPanelPrimary?: boolean) => (
   <div>
     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
       <GlobalOutlined />
       <span>{name}</span>
+      {isPanelPrimary && <Tag color="purple">System</Tag>}
     </div>
     <Typography.Text type="secondary">{stripHomePrefix(docRoot)}</Typography.Text>
   </div>
@@ -68,6 +69,7 @@ export type Domain = {
   name: string;
   doc_root: string;
   is_enabled: boolean;
+  is_panel_primary?: boolean;
   ssl_enabled?: boolean;
   ssl?: SSLBadge | null;
   nginx_custom_directives: string;
@@ -158,7 +160,7 @@ export const DomainList = () => {
               onSearch: (v) => query.setParams({ q: v, page: 1 }),
             })}
             render={(name: string, record: Domain) =>
-              renderDomainCell(name, record.doc_root)
+              renderDomainCell(name, record.doc_root, record.is_panel_primary)
             }
           />
           <Table.Column<Domain>
@@ -226,18 +228,26 @@ export const DomainList = () => {
                         key: "toggle",
                         label: <DomainToggleButton domain={r} />,
                       },
-                      { type: "divider" },
-                      {
-                        key: "delete",
-                        label: (
-                          <RowDeleteButton
-                            confirmTitle={`Delete domain "${r.name}"?`}
-                            onConfirm={async () => {
-                              await deleteMutation.mutateAsync({ id: r.id });
-                            }}
-                          />
-                        ),
-                      },
+                      // M6.4 (ADR-0048): hide Delete on the panel-primary
+                      // row. The API would return 403 panel_primary_protected
+                      // anyway; omitting the menu items keeps the UI
+                      // honest about what's allowed.
+                      ...(r.is_panel_primary
+                        ? []
+                        : [
+                            { type: "divider" as const },
+                            {
+                              key: "delete",
+                              label: (
+                                <RowDeleteButton
+                                  confirmTitle={`Delete domain "${r.name}"?`}
+                                  onConfirm={async () => {
+                                    await deleteMutation.mutateAsync({ id: r.id });
+                                  }}
+                                />
+                              ),
+                            },
+                          ]),
                     ],
                   }}
                 >

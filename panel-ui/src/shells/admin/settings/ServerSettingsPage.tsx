@@ -38,6 +38,7 @@ function useNotify() {
 
 import { apiClient } from "../../../apiClient";
 import { DNSResolversCard } from "./DNSResolversCard";
+import { EmailCard } from "./EmailCard";
 
 type ServerSettings = {
   id: number;
@@ -480,7 +481,7 @@ const DNSSettingsTab = () => {
 };
 
 export const ServerSettingsPage = () => {
-  const [activeTab, setActiveTab] = useState<"general" | "dns">("general");
+  const [activeTab, setActiveTab] = useState<"general" | "dns" | "email">("general");
 
   return (
     <div style={{ maxWidth: 960 }}>
@@ -498,11 +499,14 @@ export const ServerSettingsPage = () => {
         tabList={[
           { key: "general", tab: "General" },
           { key: "dns", tab: "DNS" },
+          { key: "email", tab: "Email" },
         ]}
         activeTabKey={activeTab}
-        onTabChange={(k) => setActiveTab(k as "general" | "dns")}
+        onTabChange={(k) => setActiveTab(k as "general" | "dns" | "email")}
       >
-        {activeTab === "general" ? <GeneralSettingsTab /> : <DNSSettingsTab />}
+        {activeTab === "general" && <GeneralSettingsTab />}
+        {activeTab === "dns" && <DNSSettingsTab />}
+        {activeTab === "email" && <EmailCard />}
       </Card>
     </div>
   );

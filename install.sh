@@ -2598,6 +2598,22 @@ server {
     # before the catch-all location / below.
     include /etc/nginx/sites-available/includes/phpmyadmin.conf;
 
+    # M6.4 (ADR-0048): /webmail bounces to the panel-primary domain's
+    # Bulwark instance on mail.<hostname>. Target is interpolated here
+    # at install.sh render time (heredoc expands \${JABALI_SRV_HOSTNAME});
+    # hostname changes propagate on the next install.sh run because the
+    # whole default vhost is rewritten unconditionally.
+    #
+    # No graceful fallback on pre-convergence — the ~30s window where
+    # mail.<hostname> isn't yet served is documented in ADR-0048 Decision
+    # 4 as acceptable; operators who want a 503 page see M6.4.4 follow-up.
+    location = /webmail {
+        return 301 https://mail.${JABALI_SRV_HOSTNAME}/;
+    }
+    location = /webmail/ {
+        return 301 https://mail.${JABALI_SRV_HOSTNAME}/;
+    }
+
     # Everything else on an unknown host silently drops. The prior
     # behaviour (try_files on /var/www/html → 403) leaked a default
     # vhost for domains without an SSL cert yet and sent users a

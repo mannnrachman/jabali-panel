@@ -58,15 +58,24 @@ type Options struct {
 	Clock func() time.Time
 	// FileMode for the forwards file; default 0640.
 	FileMode os.FileMode
-	// Owner as "user:group" for chown; empty disables chown.
+	// Owner as "user:group" for chown. If empty (the production case),
+	// New() auto-detects the recursor's group by probing `pdns-recursor`
+	// then `pdns`; whichever exists wins, Owner resolves to `root:<group>`.
 	//
-	// Production wiring passes empty (see commands/pdns_recursor.go),
-	// leaving the file at whatever ownership install.sh seeded — which
-	// is `root:pdns` on Debian. pdns-recursor and pdns-server both run
-	// as the `pdns` account (the pdns-recursor package does NOT create
-	// its own `pdns-recursor` user/group, contra an earlier comment on
-	// this field). Tests set "" to skip chown in tmpdir.
+	// Why this has to happen on EVERY write, not just install:
+	// the agent runs as `root:jabali`, so os.WriteFile() on the tmp file
+	// creates it with uid:gid root:jabali. Atomic rename preserves that,
+	// clobbering install.sh's `root:pdns` seed. Without the chown here,
+	// the pdns-group recursor daemon cannot read its own forwards file
+	// and every `rec_control reload-zones` fails silently — which is the
+	// bug that shipped to production on 2026-04-22.
+	//
+	// Set SkipChown:true to bypass both auto-detection and chown (tests).
 	Owner string
+	// SkipChown disables ownership management entirely — no detection,
+	// no chown. Use in tests where the target directory is a tmpdir and
+	// the `pdns`/`pdns-recursor` groups may not exist.
+	SkipChown bool
 }
 
 // ExecRunner wraps exec.Cmd so tests can stub rec_control invocations.
@@ -101,7 +110,11 @@ func New(opts Options) (*Manager, error) {
 		opts.Exec = &osExecRunner{Timeout: 5 * time.Second}
 	}
 	if opts.Prober == nil {
-		opts.Prober = &netResolverProbe{Addr: "127.0.0.1:53", Timeout: 2 * time.Second}
+		opts.Prober = &netResolverProbe{
+			Addr:     "127.0.0.1:53",
+			AuthAddr: "127.0.0.1:5300",
+			Timeout:  2 * time.Second,
+		}
 	}
 	if opts.Clock == nil {
 		opts.Clock = time.Now
@@ -109,8 +122,29 @@ func New(opts Options) (*Manager, error) {
 	if opts.FileMode == 0 {
 		opts.FileMode = 0o640
 	}
-	// Owner: leave as caller-provided; empty means "skip chown" (test mode).
+	if !opts.SkipChown && opts.Owner == "" {
+		group, err := detectRecursorGroup()
+		if err != nil {
+			return nil, fmt.Errorf("pdnsrecursor: auto-detect recursor group: %w (pass SkipChown:true for tests, or set Owner explicitly)", err)
+		}
+		opts.Owner = "root:" + group
+	}
 	return &Manager{opts: opts}, nil
+}
+
+// detectRecursorGroup probes for the group the pdns-recursor daemon runs
+// as. Debian trixie's pdns-recursor 5.2.x ships user/group `pdns` (shared
+// with pdns-server). Earlier distros or a future package split may create
+// a dedicated `pdns-recursor`. We prefer `pdns-recursor` when present,
+// then fall back to `pdns`. Both absent → fatal: something is wrong with
+// the package install.
+func detectRecursorGroup() (string, error) {
+	for _, g := range []string{"pdns-recursor", "pdns"} {
+		if _, err := lookupGID(g); err == nil {
+			return g, nil
+		}
+	}
+	return "", fmt.Errorf("neither `pdns-recursor` nor `pdns` group exists — pdns-recursor package not installed?")
 }
 
 // AddZone is idempotent: no-op if the entry already matches exactly
@@ -231,6 +265,17 @@ func (m *Manager) applyChange(ctx context.Context, desired map[string]Entry, zon
 		_ = os.Remove(m.opts.TempPath)
 		return fmt.Errorf("validate tmp: %w", err)
 	}
+	// Chown the tmp BEFORE rename. The agent runs as root:jabali, so
+	// WriteFile() above created tmp as root:jabali; if we rename first
+	// and chown second, a rollback to empty would inherit root:jabali
+	// and the pdns-group recursor still couldn't read. Chowning tmp
+	// makes the atomic rename ship correct ownership in one step, so
+	// any rollback never leaves an unreadable live file. See
+	// ADR-0047 follow-up (2026-04-22 production incident).
+	if err := applyOwnership(m.opts.TempPath, m.opts.FileMode, m.opts.Owner); err != nil {
+		_ = os.Remove(m.opts.TempPath)
+		return fmt.Errorf("chown tmp: %w", err)
+	}
 
 	// Rolling backup: single .bak. Rename live → .bak if live exists.
 	if _, err := os.Stat(m.opts.ForwardsPath); err == nil {
@@ -240,16 +285,11 @@ func (m *Manager) applyChange(ctx context.Context, desired map[string]Entry, zon
 		}
 	}
 
-	// Atomic swap .tmp → live.
+	// Atomic swap .tmp → live. Ownership from the tmp carries over.
 	if err := os.Rename(m.opts.TempPath, m.opts.ForwardsPath); err != nil {
 		// Try to restore .bak so we don't leave a missing live file.
 		_ = os.Rename(m.opts.BackupPath, m.opts.ForwardsPath)
 		return fmt.Errorf("rename tmp to live: %w", err)
-	}
-	if err := applyOwnership(m.opts.ForwardsPath, m.opts.FileMode, m.opts.Owner); err != nil {
-		// Non-fatal — live file is in place; we just didn't chown. Record
-		// and continue; operator can fix later without blocking recursor.
-		_ = err // TODO: structured log once logger injected
 	}
 
 	// Ask recursor to re-read forwards. 5s timeout.

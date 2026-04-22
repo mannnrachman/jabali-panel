@@ -64,7 +64,7 @@ func newTestManager(t *testing.T) (*Manager, *fakeExec, *fakeProbe, string) {
 		ForwardsPath: filepath.Join(dir, "recursor.forwards"),
 		Exec:         exec,
 		Prober:       probe,
-		Owner:        "", // skip chown in tests (no pdns-recursor user in CI)
+		SkipChown:    true, // no pdns/pdns-recursor group on CI boxes
 		Clock:        func() time.Time { return time.Unix(1700000000, 0) },
 	})
 	if err != nil {

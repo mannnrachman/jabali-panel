@@ -49,7 +49,7 @@ func newTestCmdManager(t *testing.T) (*pdnsrecursor.Manager, *testExec, *testPro
 		ForwardsPath: filepath.Join(dir, "recursor.forwards"),
 		Exec:         exec,
 		Prober:       probe,
-		Owner:        "",
+		SkipChown:    true,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

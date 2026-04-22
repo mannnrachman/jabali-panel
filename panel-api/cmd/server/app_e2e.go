@@ -38,7 +38,7 @@ type e2eResult struct {
 
 func newAppE2ECmd() *cobra.Command {
 	var (
-		domainID   string
+		domainSpec string
 		baseSubdir string
 		only       []string
 		skip       []string
@@ -53,7 +53,7 @@ func newAppE2ECmd() *cobra.Command {
 		Long: `End-to-end smoke test of the application installer framework.
 
 For each registered app_type:
-  1. install as a unique subdir under --domain-id
+  1. install as a unique subdir under --domain
   2. poll until status is ready/failed
   3. delete the install (unless --keep)
 
@@ -62,6 +62,20 @@ missing system packages, and per-app extraction quirks in one run.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Hour)
 			defer cancel()
+
+			// --domain takes a name or ULID. Resolving up-front means the
+			// per-app install loop below gets a stable domain ID and the
+			// header prints the human-readable name.
+			if err := initConfig(); err != nil {
+				return err
+			}
+			if err := initDB(); err != nil {
+				return err
+			}
+			dom, err := resolveDomainSpec(ctx, domainRepoFromDB(), domainSpec)
+			if err != nil {
+				return err
+			}
 
 			registry := apps.New()
 			if err := apps.RegisterDefaults(registry); err != nil {
@@ -73,11 +87,11 @@ missing system packages, and per-app extraction quirks in one run.`,
 			}
 			sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 
-			fmt.Printf("Running e2e on %d app(s) against domain %s\n\n", len(entries), domainID)
+			fmt.Printf("Running e2e on %d app(s) against domain %s (id=%s)\n\n", len(entries), dom.Name, dom.ID)
 
 			results := make([]e2eResult, 0, len(entries))
 			for _, app := range entries {
-				res := runOneE2E(ctx, app, domainID, baseSubdir, keep, waitSec)
+				res := runOneE2E(ctx, app, dom.ID, baseSubdir, keep, waitSec)
 				results = append(results, res)
 				printResultLine(res)
 				if stopOnFail && res.Outcome != "pass" {
@@ -92,14 +106,14 @@ missing system packages, and per-app extraction quirks in one run.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&domainID, "domain-id", "", "Domain ID to install all apps under (required)")
+	cmd.Flags().StringVar(&domainSpec, "domain", "", "Domain name or ULID to install all apps under (required)")
 	cmd.Flags().StringVar(&baseSubdir, "base-subdir", "e2e", "Subdir prefix; each app installs under <prefix>_<app>_<rand>")
 	cmd.Flags().StringSliceVar(&only, "only", nil, "Only run these app_types (comma-separated)")
 	cmd.Flags().StringSliceVar(&skip, "skip", nil, "Skip these app_types (comma-separated)")
 	cmd.Flags().BoolVar(&keep, "keep", false, "Don't delete installs after the run (debug)")
 	cmd.Flags().IntVar(&waitSec, "wait-timeout", 600, "Per-app install timeout in seconds")
 	cmd.Flags().BoolVar(&stopOnFail, "stop-on-fail", false, "Stop the sweep after the first failure")
-	_ = cmd.MarkFlagRequired("domain-id")
+	_ = cmd.MarkFlagRequired("domain")
 	return cmd
 }
 

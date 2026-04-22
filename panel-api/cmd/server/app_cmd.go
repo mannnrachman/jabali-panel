@@ -212,14 +212,14 @@ func newAppGetCmd() *cobra.Command {
 // install row reaches a terminal status.
 func newAppInstallCmd() *cobra.Command {
 	var (
-		appType  string
-		domainID string
-		userID   string
-		subdir   string
-		useWWW   bool
-		params   []string
-		wait     bool
-		waitSec  int
+		appType    string
+		domainSpec string
+		userID     string
+		subdir     string
+		useWWW     bool
+		params     []string
+		wait       bool
+		waitSec    int
 	)
 
 	cmd := &cobra.Command{
@@ -234,10 +234,26 @@ func newAppInstallCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
 			defer cancel()
 
+			// --domain accepts a bare name ("example.com") or a ULID;
+			// names read better at the terminal and ULIDs remain valid
+			// so existing scripts that pipe `jabali domain list --json`
+			// keep working. resolveDomainSpec is the same helper the
+			// mailbox and domain-email commands use.
+			if err := initConfig(); err != nil {
+				return err
+			}
+			if err := initDB(); err != nil {
+				return err
+			}
+			dom, err := resolveDomainSpec(ctx, domainRepoFromDB(), domainSpec)
+			if err != nil {
+				return err
+			}
+
 			res, err := installAppDirect(ctx, api.InstallParams{
 				AppType:      appType,
 				UserID:       userID,
-				DomainID:     domainID,
+				DomainID:     dom.ID,
 				Subdirectory: subdir,
 				UseWWW:       useWWW,
 				Params:       parsed,
@@ -280,7 +296,7 @@ func newAppInstallCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&appType, "app-type", "", "App descriptor name (see `jabali app registry`)")
-	cmd.Flags().StringVar(&domainID, "domain-id", "", "Target domain ID")
+	cmd.Flags().StringVar(&domainSpec, "domain", "", "Target domain name or ULID (e.g. example.com or 01KPR…)")
 	cmd.Flags().StringVar(&userID, "user-id", "", "Owner user ID (default: domain owner)")
 	cmd.Flags().StringVar(&subdir, "subdir", "", "Subdirectory under docroot (empty = site root)")
 	cmd.Flags().BoolVar(&useWWW, "use-www", false, "Reachable at www.<domain> too")
@@ -288,7 +304,7 @@ func newAppInstallCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&wait, "wait", false, "Poll until status is ready or failed")
 	cmd.Flags().IntVar(&waitSec, "wait-timeout", 600, "Seconds to wait when --wait is set")
 	_ = cmd.MarkFlagRequired("app-type")
-	_ = cmd.MarkFlagRequired("domain-id")
+	_ = cmd.MarkFlagRequired("domain")
 	return cmd
 }
 

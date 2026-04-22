@@ -11,7 +11,7 @@
 // selection falls back to the list-page filter navigation so the
 // search box is still useful when the right row isn't in the top-5.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LogoutOutlined, UserOutlined } from "@ant-design/icons";
+import { LogoutOutlined, MenuOutlined, UserOutlined } from "@ant-design/icons";
 import {
   AutoComplete,
   Avatar,
@@ -53,7 +53,14 @@ type SearchOption = {
 };
 type OptionGroup = { label: string; options: SearchOption[] };
 
-export function JabaliHeader() {
+type JabaliHeaderProps = {
+  /** Render the hamburger menu button on the left. Set by the shell when
+   * the persistent <Sider> is hidden (mobile drawer mode). */
+  showMenuButton?: boolean;
+  onMenuClick?: () => void;
+};
+
+export function JabaliHeader({ showMenuButton = false, onMenuClick }: JabaliHeaderProps = {}) {
   const { user, logout } = useAuth();
   const { token } = theme.useToken();
   const [query, setQuery] = useState("");
@@ -272,6 +279,17 @@ export function JabaliHeader() {
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
       }}
     >
+      {showMenuButton && (
+        <Button
+          type="text"
+          size="large"
+          icon={<MenuOutlined />}
+          onClick={onMenuClick}
+          aria-label="Open navigation menu"
+          style={{ flexShrink: 0 }}
+        />
+      )}
+
       <div style={{ flexShrink: 0 }}>
         <JabaliTitle />
       </div>

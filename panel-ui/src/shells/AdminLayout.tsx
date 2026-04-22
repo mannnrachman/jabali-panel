@@ -1,11 +1,11 @@
 // AdminLayout.tsx — chrome for the admin shell.
 //
-// Full-width Header on top (brand + search + user menu), Sider + Content
-// below. AntD's stock <Layout> + <Sider> + <Header> + <Content> + <Footer>
-// composed directly.
-import { useState } from "react";
+// Full-width Header on top (brand + search + user menu), then either
+// a persistent <Sider> (≥lg / 992px) or an off-canvas <Drawer> (<lg)
+// that the header's hamburger button opens. See ADR-0046.
+import { useEffect, useState } from "react";
 import { LeftOutlined, RightOutlined } from "@ant-design/icons";
-import { Layout, Menu, theme } from "antd";
+import { Drawer, Grid, Layout, Menu, theme } from "antd";
 import { Outlet, useLocation, useNavigate } from "react-router";
 
 import { JabaliFooter } from "../components/JabaliFooter";
@@ -17,17 +17,16 @@ const { Sider, Content } = Layout;
 
 export function AdminLayout() {
   const [collapsed, setCollapsed] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const { mode } = useThemeMode();
   const { token } = theme.useToken();
-
-  const items = adminNav.map((n) => ({
-    key: n.key,
-    icon: n.icon,
-    label: n.label,
-    onClick: () => navigate(n.path),
-  }));
+  const screens = Grid.useBreakpoint();
+  // lg is explicitly nullable (false | undefined) — fall back to desktop
+  // layout on first render before breakpoints resolve to avoid a drawer
+  // flash for users who actually sit on lg+.
+  const isDesktop = screens.lg !== false;
 
   const selected = selectedNavKey(adminNav, location.pathname);
 
@@ -38,47 +37,79 @@ export function AdminLayout() {
   // algorithm-derived itemSelectedBg).
   const siderBg = mode === "dark" ? token.colorBgLayout : "#f9fafb";
 
+  // Single source of truth for the menu items — used by both <Sider>
+  // and <Drawer> so the two shell variants stay in lock-step.
+  const menu = (
+    <Menu
+      mode="inline"
+      theme={mode}
+      selectedKeys={selected ? [selected] : []}
+      style={{ border: "none", background: siderBg }}
+      items={adminNav.map((n) => ({
+        key: n.key,
+        icon: n.icon,
+        label: n.label,
+        onClick: () => {
+          navigate(n.path);
+          setDrawerOpen(false);
+        },
+      }))}
+    />
+  );
+
+  // Close the drawer on every route change — covers not just menu
+  // clicks but also back-button / programmatic navigation.
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [location.pathname]);
+
   return (
     <Layout style={{ minHeight: "100vh" }}>
-      <JabaliHeader />
+      <JabaliHeader
+        showMenuButton={!isDesktop}
+        onMenuClick={() => setDrawerOpen(true)}
+      />
       <Layout>
-        <Sider
-          theme={mode}
-          width={256}
-          breakpoint="lg"
-          collapsedWidth="64"
-          collapsible
-          collapsed={collapsed}
-          onCollapse={setCollapsed}
-          // Replace AntD's built-in trigger bar (which paints a navy or
-          // white strip regardless of algorithm) with a bare chevron
-          // icon — triggerBg: transparent alone isn't enough once a
-          // border-top rule sneaks in.
-          trigger={
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: token.colorTextSecondary,
-                background: "transparent",
-              }}
-            >
-              {collapsed ? <RightOutlined /> : <LeftOutlined />}
-            </span>
-          }
-          style={{ background: siderBg, paddingTop: 16, paddingInline: 8 }}
-        >
-          <Menu
-            mode="inline"
+        {isDesktop ? (
+          <Sider
             theme={mode}
-            selectedKeys={selected ? [selected] : []}
-            items={items}
-            style={{ border: "none", background: siderBg }}
-          />
-        </Sider>
+            width={256}
+            breakpoint="lg"
+            collapsedWidth="64"
+            collapsible
+            collapsed={collapsed}
+            onCollapse={setCollapsed}
+            trigger={
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: token.colorTextSecondary,
+                  background: "transparent",
+                }}
+              >
+                {collapsed ? <RightOutlined /> : <LeftOutlined />}
+              </span>
+            }
+            style={{ background: siderBg, paddingTop: 16, paddingInline: 8 }}
+          >
+            {menu}
+          </Sider>
+        ) : (
+          <Drawer
+            open={drawerOpen}
+            onClose={() => setDrawerOpen(false)}
+            placement="left"
+            width={256}
+            closable={false}
+            styles={{ body: { padding: 8, background: siderBg } }}
+          >
+            {menu}
+          </Drawer>
+        )}
         <Layout>
-          <Content style={{ padding: 24 }}>
+          <Content style={{ padding: screens.md ? 24 : 12 }}>
             <Outlet />
           </Content>
           <JabaliFooter />

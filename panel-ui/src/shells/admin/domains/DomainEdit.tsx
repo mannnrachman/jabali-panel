@@ -20,6 +20,7 @@ import { useNavigate, useParams } from "react-router";
 import { useOneQuery, useUpdateMutation } from "../../../hooks/useQueries";
 import type { Domain } from "./DomainList";
 import { DomainEmailSection } from "./DomainEmailSection";
+import { DomainListenIPSection } from "./DomainListenIPSection";
 import { DomainMailboxesSection } from "./DomainMailboxesSection";
 import { DomainSSLSection } from "./DomainSSLSection";
 
@@ -137,6 +138,15 @@ export const DomainEdit = () => {
               // the toggle immediately.
               qc.invalidateQueries({ queryKey: ["one", "domains", id] })
             }
+          />
+
+          <Divider>Listen IPs</Divider>
+          <DomainListenIPSection
+            domainId={domain.id}
+            listenIPv4ID={domain.listen_ipv4_id ?? null}
+            listenIPv6ID={domain.listen_ipv6_id ?? null}
+            listenIPv4={domain.listen_ipv4 ?? null}
+            listenIPv6={domain.listen_ipv6 ?? null}
           />
 
           <Divider>Email</Divider>

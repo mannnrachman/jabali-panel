@@ -85,6 +85,13 @@ export type Domain = {
     | "php_only"
     | "full"
     | null;
+  // M24: nullable per-family binding to a managed_ips row. NULL ⇒ use
+  // server default. listen_ipv4 / listen_ipv6 are the denormalized
+  // {id,address} blob the list/get handler computes server-side.
+  listen_ipv4_id?: number | null;
+  listen_ipv6_id?: number | null;
+  listen_ipv4?: { id: number; address: string } | null;
+  listen_ipv6?: { id: number; address: string } | null;
   created_at: string;
   updated_at: string;
 };

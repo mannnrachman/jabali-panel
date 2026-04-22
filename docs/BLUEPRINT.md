@@ -996,6 +996,24 @@ M6.2 (webmail SSO — unchanged), M6.3 (self-zone local-resolvable).
 **Depends on:** M20 (Kratos identity — supersedes Refine's `authProvider` role so removing it doesn't lose functionality).
 **Related:** ADR-0037 (design rationale, rollback note, outcome), `plans/m21-drop-refine.md` (five-wave blueprint).
 
+### M24: IP address manager (SHIPPED — branch)
+
+**Status:** All 10 steps committed to branch `m24/ip-manager` 2026-04-22 in 5 waves (A schema → B agent+API → C wire-contract domain/nginx/DNS → D admin+picker UI → E docs/E2E). ADR-0049 accepted; runbook at `plans/m24-ip-manager-runbook.md`. Awaits VM verification + merge to main.
+
+**Goal:** First-class managed IP pool so the operator can host customer-isolated domains on dedicated IPs without forking the codebase. Each domain gets nullable `listen_ipv4_id` / `listen_ipv6_id` FKs; NULL ⇒ "use family default". Reconciler converges nginx (`listen <ip>:80`) and DNS apex `@` A/AAAA in the same pass — change reflected ≤ 60s after admin saves.
+
+**Strategy:**
+- `managed_ips` table seeded with the existing `server_settings.public_ipv4` / `public_ipv6` as defaults — pre-M24 installs map seamlessly.
+- jabali binds addresses ephemerally via agent `ip.bind` (`ip addr add`); persistence is operator-owned via netplan/provider config (out of scope, runbook documents).
+- Connectivity probe after every bind catches firewall misconfig before the operator deploys a domain.
+- `is_user_selectable` gates the user-shell picker (curated subset).
+- Out-of-scope services (Stalwart mail, Bulwark webmail, SFTP, PowerDNS, panel-api itself) keep their server-wide bindings — runbook table makes this explicit.
+
+**Depends on:** None (composes existing reconciler + agent RPC + AntD UI).
+**Related:** ADR-0049 (architecture + threat model), `plans/m24-ip-manager.md` (10-step blueprint), `plans/m24-ip-manager-runbook.md` (day-2 ops).
+
+---
+
 ### M23: Responsive panel UI (SHIPPED — branch)
 
 **Status:** All 9 steps committed to branch `m23/responsive` 2026-04-22. Awaits merge to main. ADR-0046 accepted. Runbook at `docs/runbooks/m23-responsive.md`.
@@ -1185,7 +1203,8 @@ Use this table to navigate the codebase when adding a new capability:
 | M20: Kratos identity migration (all 9 steps + legacy removal) | 2026-04-20 | ADR-0034; runbook at `plans/m20-kratos-runbook.md`; Waves A–E on `main`; legacy JWT stack + M5c panel-side 2FA + `kratos-migrate` tool all deleted in the same batch — no dual-mode, no rollback flag |
 | Infra: Gitea CI + branch protection | 2026-04-20 | `.gitea/workflows/ci.yml` (3 parallel jobs), self-hosted `act_runner` in host-mode (no Docker/Podman), loose branch protection on `main`. Also fixed pre-existing data race in `TestApplications_CreateWordPress_HappyPath` (`applications_service.go`) that CI's `-race` flag caught. Commits `b181c74` (workflow), `5d1f9a7` (race fix). |
 | M21: Drop Refine (all 5 waves) | 2026-04-21 | ADR-0037; blueprint at `plans/m21-drop-refine.md`; Waves A–E on `m21/drop-refine`; 4 `@refinedev/*` packages removed; production JS −606 kB (−27.6%) / gzip −193 kB; `@ant-design/icons` promoted to direct dep; `useTableURL` + `useQueries` + `AuthContext` now power every list/form/whoami call |
+| M24: IP address manager (all 10 steps) | 2026-04-22 | ADR-0049; blueprint at `plans/m24-ip-manager.md`; runbook at `plans/m24-ip-manager-runbook.md`; Waves A–E on `m24/ip-manager` (`0948a9a` → branch tip); migrations 000057 + 000058; agent commands `ip.list`/`ip.bind`/`ip.unbind`; reconciler converges per-domain nginx listen + DNS apex A/AAAA every tick; admin UI `/jabali-admin/ips` + per-domain picker on DomainEdit |
 
 ---
 
-**Last updated:** 2026-04-20
+**Last updated:** 2026-04-22

@@ -47,23 +47,36 @@ if (filemtime(__FILE__) + __JABALI_TTL_SECONDS__ < time()) {
     exit;
 }
 
-// 4. Bootstrap Joomla. JPATH_BASE must be defined before framework.php
-//    pulls in the rest. The agent bakes the install root in at write
-//    time so the constants are absolute.
+// 4. Bootstrap Joomla as the ADMIN application. Joomla-5 segregates
+//    the site session ('session.web.site') from the admin session
+//    ('session.web.administrator'); a user written to the site session
+//    is NOT authenticated against /administrator/. Since the operator's
+//    target is the admin dashboard, bootstrap the admin app here so
+//    setting the session below puts the user where they need to be.
+//
+//    JPATH_BASE points at /administrator (admin app's includes/) but
+//    framework.php still loads the site-wide vendor + container config.
+//    The session-service aliases below are copied verbatim from
+//    administrator/includes/app.php — they're what registers
+//    Joomla\Session\SessionInterface against the admin session backend.
+//    Without them, $container->get(AdministratorApplication::class)
+//    fatals with "Resource SessionInterface has not been registered".
 define('_JEXEC', 1);
-define('JPATH_BASE', __JABALI_INSTALL_PATH__);
+define('JPATH_BASE', __JABALI_INSTALL_PATH__ . '/administrator');
 
 try {
     require_once JPATH_BASE . '/includes/defines.php';
     require_once JPATH_BASE . '/includes/framework.php';
 
-    // Joomla-5 container path. Factory::getApplication('site') works in
-    // J3/J4 but has been flaky in J5 outside index.php — it expects
-    // request/router state that only /index.php sets up. The DI
-    // container returns a fully-wired SiteApplication without needing
-    // the router to resolve the SSO URL to a component.
     $container = \Joomla\CMS\Factory::getContainer();
-    $app       = $container->get(\Joomla\CMS\Application\SiteApplication::class);
+    $container->alias('session.web', 'session.web.administrator')
+        ->alias('session', 'session.web.administrator')
+        ->alias('JSession', 'session.web.administrator')
+        ->alias(\Joomla\CMS\Session\Session::class, 'session.web.administrator')
+        ->alias(\Joomla\Session\Session::class, 'session.web.administrator')
+        ->alias(\Joomla\Session\SessionInterface::class, 'session.web.administrator');
+
+    $app = $container->get(\Joomla\CMS\Application\AdministratorApplication::class);
     \Joomla\CMS\Factory::$application = $app;
 } catch (\Throwable $e) {
     error_log('jabali-sso joomla bootstrap failed install __JABALI_INSTALL_ID__: ' . $e->getMessage() . ' at ' . $e->getFile() . ':' . $e->getLine());
@@ -118,7 +131,14 @@ try {
     $session->set('session.timer.start', time());
     $session->set('session.timer.last', time());
     $session->set('session.timer.now', time());
-    $session->save();
+    // Joomla 5's CMS\Session\Session has no save() method; close()
+    // flushes data + releases the lock so /administrator/ on the next
+    // request reads the freshly-written user. PHP shutdown would do
+    // the same but explicit close means the cookie's Set-Cookie has
+    // already been emitted by the time we send Location: below.
+    if (method_exists($session, 'close')) {
+        $session->close();
+    }
 } catch (\Throwable $e) {
     error_log('jabali-sso joomla session write failed install __JABALI_INSTALL_ID__: ' . $e->getMessage() . ' at ' . $e->getFile() . ':' . $e->getLine());
     http_response_code(500);

@@ -23,14 +23,6 @@ const useMuiTheme = (mode: ThemeMode): ConfigProviderProps =>
           // Every size-derived token (fontSizeSM, fontSizeLG, heading
           // sizes, line heights, control heights) scales off this.
           fontSize: 15,
-          // Admin-shell primary color is red — matches the sidebar
-          // "Users / Packages / …" active row. Primary buttons (Create,
-          // Save, row-actions), pagination-active pills, spinners, and
-          // every other component that reads `colorPrimary` flip to the
-          // same red so the shell reads as one palette. The user shell
-          // rewrites this token to blue via a nested ConfigProvider in
-          // UserLayout.tsx (ADR-0046 companion).
-          colorPrimary: mode === "dark" ? "#ef4444" : "#dc2626",
         },
         components: {
           // The Sider's collapse trigger bar at the bottom otherwise

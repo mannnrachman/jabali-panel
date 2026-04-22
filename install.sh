@@ -1684,9 +1684,22 @@ write_agent_systemd_unit() {
   # creates /run/jabali owned root:jabali 0750, and the agent itself
   # chowns its socket to root:jabali 0660 so only the panel (jabali group)
   # can connect. Hardening knobs that make sense for a root daemon:
-  #   - ProtectHome/ProtectKernel* keep the agent out of bystander state
+  #   - ProtectKernel*/RestrictSUIDSGID/LockPersonality keep the agent
+  #     out of kernel and exec-mode bystander state
   #   - NoNewPrivileges stays false because future commands may need
   #     capabilities-aware subprocess spawns (package install etc).
+  #
+  # ProtectSystem= and ProtectHome= are INTENTIONALLY NOT SET. The agent
+  # writes to /etc (nginx confs, /etc/passwd via useradd, /etc/php,
+  # /etc/jabali-panel/dkim, /etc/letsencrypt), /home (user web roots,
+  # WordPress, ~/.my.cnf), /var (jabali spool dirs, cron), and /opt
+  # (phpMyAdmin, wp-cli). ProtectSystem=strict + ProtectHome=yes (as
+  # previously configured) silently turned every such write into EROFS
+  # and made domain.create, user.create, domain.email_enable,
+  # webmail.vhost_apply, php.pool.apply and the nginx-ratelimits
+  # reconciler all fail on a fresh install. Filesystem sandboxing
+  # fundamentally doesn't fit a daemon whose job IS OS mutation; our
+  # access-control boundary is the Unix socket, not the FS namespace.
   local jabali_gid
   jabali_gid="$(getent group "$SERVICE_USER" | cut -d: -f3)"
   [[ -n "$jabali_gid" ]] || _die "can't resolve gid of $SERVICE_USER"
@@ -1717,9 +1730,8 @@ TimeoutStopSec=10
 
 # Hardening for a root daemon. We can't NoNewPrivileges because future
 # commands may need to re-exec tooling that escalates (chpasswd, useradd
-# etc).
-ProtectSystem=strict
-ProtectHome=yes
+# etc). See the comment block above the cat << for why ProtectSystem=
+# and ProtectHome= are deliberately omitted.
 PrivateTmp=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes

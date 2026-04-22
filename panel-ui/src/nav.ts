@@ -16,10 +16,10 @@ import {
   AppstoreOutlined,
   ClockCircleOutlined,
   CloudServerOutlined,
-  DashboardOutlined,
   DatabaseOutlined,
   FolderOutlined,
   GlobalOutlined,
+  HomeOutlined,
   KeyOutlined,
   MailOutlined,
   SafetyCertificateOutlined,
@@ -40,7 +40,7 @@ export const adminNav: NavItem[] = [
   {
     key: "dashboard",
     label: "Dashboard",
-    icon: createElement(DashboardOutlined),
+    icon: createElement(HomeOutlined),
     path: "/jabali-admin/dashboard",
   },
   {
@@ -97,7 +97,7 @@ export const userNav: NavItem[] = [
   {
     key: "dashboard",
     label: "Dashboard",
-    icon: createElement(DashboardOutlined),
+    icon: createElement(HomeOutlined),
     path: "/jabali-panel/dashboard",
   },
   {

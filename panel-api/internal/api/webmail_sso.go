@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
@@ -20,6 +21,44 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
+
+// bulwarkBridgeTmpl writes Bulwark's zustand-persist auth-storage key to
+// localStorage, then navigates to `/`. Without this, Bulwark 1.4.14's
+// client-side checkAuth() sees empty localStorage (even with a valid
+// session cookie), defaults to unauthenticated, and redirects to
+// /en/login — masking our successful server-side handoff.
+//
+// Shape pinned to bulwark 1.4.14 stores/auth-store.ts:partialize (the
+// zustand persist middleware's default version is 0 when no `version`
+// or `migrate` is configured, which 1.4.14 doesn't set). The embedded
+// JSON `authStorage` value below mirrors that partialize output for a
+// rememberMe:true basic-auth login, which is what our SSO flow is
+// equivalent to.
+//
+// WARNING — BULWARK VERSION COUPLING: if the Bulwark pin in install.sh
+// bumps, re-verify that stores/auth-store.ts:partialize and its persist
+// config still match the shape below (name: "auth-storage", no version
+// override, same field set). A silent drift here would land users back
+// at /en/login on every SSO click, same as before M6.2. The test
+// TestWebmailSSOBridgePage_PersistsAuthStorage asserts the wire shape.
+var bulwarkBridgeTmpl = template.Must(template.New("bridge").Parse(`<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Signing in…</title>
+<meta http-equiv="refresh" content="0;url=/">
+</head><body>
+<p>Signing you in…</p>
+<script>
+(function () {
+  try {
+    localStorage.setItem('auth-storage', {{.AuthStorageJSON}});
+  } catch (e) { /* private mode etc — fall through to redirect */ }
+  window.location.replace('/');
+})();
+</script>
+<noscript><p>JavaScript is required. <a href="/">Continue to webmail</a>.</p></noscript>
+</body></html>
+`))
 
 // WebmailSSOHandlerConfig wires the landing endpoint that the
 // mint-SSO-URL flow lands the user on. The endpoint is served under
@@ -164,8 +203,8 @@ func (h *webmailSSOHandler) land(c *gin.Context) {
 
 	// Forward Bulwark's Set-Cookie headers onto our response. Bulwark
 	// sets an httpOnly session cookie; we want the browser to receive
-	// it under the same origin (mail.<domain>) so the subsequent 302
-	// lands with the user authenticated.
+	// it under the same origin (mail.<domain>) so the subsequent
+	// navigation to `/` lands with the user authenticated.
 	setCount := 0
 	for _, sc := range resp.Header.Values("Set-Cookie") {
 		c.Writer.Header().Add("Set-Cookie", sc)
@@ -177,9 +216,44 @@ func (h *webmailSSOHandler) land(c *gin.Context) {
 		return
 	}
 
-	// 303 See Other — explicit "make the next request GET /" so
-	// browsers don't replay the POST-ish semantics of the landing.
-	c.Redirect(http.StatusSeeOther, "/")
+	// Render a bridge page that writes Bulwark's zustand auth-storage
+	// localStorage key before navigating to `/`. The plain 303 we used
+	// before M6.2 set the session cookie correctly but Bulwark's
+	// client-side checkAuth() still bounced to /en/login because it
+	// keys its "am I logged in?" decision off localStorage, not the
+	// cookie. See bulwarkBridgeTmpl for the exact shape + version pin.
+	authStorageBytes, mErr := json.Marshal(map[string]any{
+		"state": map[string]any{
+			"serverUrl":        serverURL,
+			"username":         mb.EmailCached,
+			"authMode":         "basic",
+			"isAuthenticated":  true,
+			"rememberMe":       true,
+			"activeAccountId":  nil,
+		},
+		"version": 0,
+	})
+	if mErr != nil {
+		h.logErr("webmail sso: marshal auth-storage", mErr)
+		c.String(http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	c.Status(http.StatusOK)
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.Header("Cache-Control", "no-store")
+	// html/template's context-aware escaping handles the script tag
+	// correctly: `template.JS` wrapping would inline the JSON raw, but
+	// string context inside a script auto-escapes dangerous sequences
+	// like `</script>`. We want the JSON string *as a quoted JS string*
+	// so localStorage.setItem receives a single argument — hence
+	// embedding `{{.AuthStorageJSON}}` as a string field and letting
+	// template escape it into a JS string literal.
+	if err := bulwarkBridgeTmpl.Execute(c.Writer, map[string]any{
+		"AuthStorageJSON": string(authStorageBytes),
+	}); err != nil {
+		h.logErr("webmail sso: render bridge", err)
+	}
 }
 
 func (h *webmailSSOHandler) bulwarkBase() string {

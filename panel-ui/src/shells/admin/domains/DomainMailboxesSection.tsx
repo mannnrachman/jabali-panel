@@ -16,6 +16,7 @@ import {
   Modal,
   Popconfirm,
   Progress,
+  Select,
   Skeleton,
   Space,
   Table,
@@ -45,6 +46,17 @@ import {
 
 type Props = {
   domainId: string;
+  // domainOptions — when provided, the Create dialog renders a Domain
+  // selector seeded with these choices. Callers pass the list of
+  // email-enabled domains the user owns so they can create a mailbox on
+  // any of them without first switching the page's top-level selector.
+  // When omitted (e.g. admin DomainEdit, which is intentionally scoped
+  // to a single domain), the dialog keeps its single-domain behaviour.
+  domainOptions?: Array<{ id: string; name: string }>;
+  // onDomainCreated — called after a successful create to let the host
+  // page refocus on the newly-used domain (e.g. switch its top-level
+  // selector so the operator lands on the list containing the new row).
+  onDomainCreated?: (domainId: string) => void;
 };
 
 // Quota presets in bytes — 1 GiB default matches the DB column default;
@@ -67,7 +79,11 @@ function parseQuotaInput(v: number | string | null | undefined): number | undefi
   return Math.floor(n * 1024 * 1024); // UI unit is MiB, wire unit is bytes
 }
 
-export const DomainMailboxesSection = ({ domainId }: Props) => {
+export const DomainMailboxesSection = ({
+  domainId,
+  domainOptions,
+  onDomainCreated,
+}: Props) => {
   const email = useDomainEmail(domainId);
   const enabled = email.data?.email_enabled ?? false;
 
@@ -92,10 +108,27 @@ export const DomainMailboxesSection = ({ domainId }: Props) => {
   } | null>(null);
   const [rotatingId, setRotatingId] = useState<string | null>(null);
   const [form] = Form.useForm<{
+    domain_id: string;
     local_part: string;
     password?: string;
     quota_mib?: number;
   }>();
+
+  // Only render the in-dialog domain picker when the caller actually
+  // supplied options AND there's a real choice to make. A list of one
+  // collapses to the same single-domain UX as before.
+  const showDomainPicker = (domainOptions?.length ?? 0) > 1;
+
+  // The form's `domain_id` field is seeded to the section's domainId
+  // each time the dialog opens. When showDomainPicker is false the
+  // field is never rendered; we still use this value on submit so the
+  // create call always has a target domain.
+  const currentFormDomainId =
+    Form.useWatch("domain_id", form) ?? domainId;
+  const currentDomainName =
+    domainOptions?.find((d) => d.id === currentFormDomainId)?.name ??
+    email.data?.domain_name ??
+    "";
 
   if (email.isLoading) {
     return <Skeleton active paragraph={{ rows: 2 }} />;
@@ -176,9 +209,12 @@ export const DomainMailboxesSection = ({ domainId }: Props) => {
 
   const onCreate = async () => {
     const values = await form.validateFields();
+    // Fall back to the section's bound domain when the picker wasn't
+    // shown (single-domain contexts like admin DomainEdit).
+    const targetDomainId = values.domain_id || domainId;
     try {
       const resp = await createMutation.mutateAsync({
-        domainId,
+        domainId: targetDomainId,
         input: {
           local_part: values.local_part,
           password: values.password || undefined,
@@ -187,6 +223,12 @@ export const DomainMailboxesSection = ({ domainId }: Props) => {
       });
       setCreateOpen(false);
       form.resetFields();
+      // If the operator created on a domain different from the one
+      // currently in view, let the host page switch to it so the
+      // freshly-created row is visible in the table below.
+      if (targetDomainId !== domainId) {
+        onDomainCreated?.(targetDomainId);
+      }
       if (resp.password) {
         setPasswordModal({
           email: resp.email,
@@ -215,7 +257,10 @@ export const DomainMailboxesSection = ({ domainId }: Props) => {
           type="primary"
           icon={<PlusOutlined />}
           onClick={() => {
+            // Seed the form including the current domain so the picker
+            // (if rendered) defaults to the domain the user's looking at.
             form.resetFields();
+            form.setFieldsValue({ domain_id: domainId });
             setCreateOpen(true);
           }}
         >
@@ -340,6 +385,24 @@ export const DomainMailboxesSection = ({ domainId }: Props) => {
         destroyOnClose
       >
         <Form form={form} layout="vertical">
+          {showDomainPicker && (
+            <Form.Item
+              label="Domain"
+              name="domain_id"
+              rules={[{ required: true, message: "Pick a domain" }]}
+              tooltip="Only domains with email enabled appear here."
+            >
+              <Select
+                showSearch
+                optionFilterProp="label"
+                options={(domainOptions ?? []).map((d) => ({
+                  value: d.id,
+                  label: d.name,
+                }))}
+                placeholder="Pick a domain"
+              />
+            </Form.Item>
+          )}
           <Form.Item
             label="Local part"
             name="local_part"
@@ -351,12 +414,12 @@ export const DomainMailboxesSection = ({ domainId }: Props) => {
               },
               { max: 64, message: "64 characters max" },
             ]}
-            tooltip={`Full address will be <local>@${email.data?.domain_name ?? ""}`}
+            tooltip={`Full address will be <local>@${currentDomainName}`}
           >
             <Input
               placeholder="alice"
               autoComplete="off"
-              addonAfter={`@${email.data?.domain_name ?? ""}`}
+              addonAfter={`@${currentDomainName}`}
             />
           </Form.Item>
 

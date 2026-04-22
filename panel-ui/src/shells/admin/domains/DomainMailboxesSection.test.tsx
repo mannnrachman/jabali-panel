@@ -39,13 +39,23 @@ const mocked = apiClient as unknown as {
   delete: ReturnType<typeof vi.fn>;
 };
 
-function renderSection(domainId = "dom1"): { root: ReactNode } {
+function renderSection(
+  domainId = "dom1",
+  opts: {
+    domainOptions?: Array<{ id: string; name: string }>;
+    onDomainCreated?: (id: string) => void;
+  } = {},
+): { root: ReactNode } {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   const root = (
     <QueryClientProvider client={qc}>
-      <DomainMailboxesSection domainId={domainId} />
+      <DomainMailboxesSection
+        domainId={domainId}
+        domainOptions={opts.domainOptions}
+        onDomainCreated={opts.onDomainCreated}
+      />
     </QueryClientProvider>
   );
   render(root);
@@ -201,5 +211,92 @@ describe("DomainMailboxesSection — quota progress bar", () => {
       expect(progressEl).not.toBeNull();
       expect(progressEl?.className).not.toContain("ant-progress-status-exception");
     });
+  });
+});
+
+describe("DomainMailboxesSection — in-dialog domain picker", () => {
+  it("does NOT render the picker when domainOptions is omitted (single-domain contexts)", async () => {
+    mockInitialFetches({ emailEnabled: true, mailboxes: [] });
+    renderSection();
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /create mailbox/i })).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /create mailbox/i }));
+
+    // Local part field is in the dialog; Domain field is not.
+    await screen.findByLabelText(/local part/i);
+    expect(screen.queryByLabelText(/^Domain$/i)).toBeNull();
+  });
+
+  it("does NOT render the picker when only one domain is in domainOptions", async () => {
+    mockInitialFetches({ emailEnabled: true, mailboxes: [] });
+    renderSection("dom1", {
+      domainOptions: [{ id: "dom1", name: "example.com" }],
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /create mailbox/i })).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /create mailbox/i }));
+
+    await screen.findByLabelText(/local part/i);
+    // No Select — user only has one domain to pick from, collapses
+    // back to the pre-picker UX.
+    expect(screen.queryByLabelText(/^Domain$/i)).toBeNull();
+  });
+
+  it("renders the picker and routes create to the chosen domain when user picks a different one", async () => {
+    mockInitialFetches({ emailEnabled: true, mailboxes: [] });
+    mocked.post.mockResolvedValueOnce({
+      data: {
+        id: "mb42",
+        email: "alice@other.test",
+        quota_bytes: 1 << 30,
+        password: "GEN-OTHER-PWD",
+      },
+    });
+    const onDomainCreated = vi.fn();
+    renderSection("dom1", {
+      domainOptions: [
+        { id: "dom1", name: "example.com" },
+        { id: "dom2", name: "other.test" },
+      ],
+      onDomainCreated,
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /create mailbox/i })).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /create mailbox/i }));
+
+    // Picker is present, defaulting to the section's current domain.
+    const picker = await screen.findByLabelText(/^Domain$/i);
+    expect(picker).toBeInTheDocument();
+
+    // Type a local part.
+    fireEvent.change(screen.getByLabelText(/local part/i), { target: { value: "alice" } });
+
+    // Switch the picker to dom2 via AntD's keyboard-friendly flow:
+    // open the dropdown, then click the other.test option. AntD
+    // renders the actual options in a portal attached to body.
+    fireEvent.mouseDown(picker);
+    const option = await screen.findByText(/^other\.test$/);
+    fireEvent.click(option);
+
+    fireEvent.click(screen.getByRole("button", { name: /^create$/i }));
+
+    // The POST must be routed to the chosen domain, not the section's
+    // initial domainId.
+    await waitFor(() =>
+      expect(mocked.post).toHaveBeenCalledWith(
+        expect.stringContaining("/domains/dom2/mailboxes"),
+        expect.any(Object),
+      ),
+    );
+
+    // onDomainCreated fires with the new domain so the host page can
+    // pivot its top-level selector onto it.
+    await waitFor(() => expect(onDomainCreated).toHaveBeenCalledWith("dom2"));
   });
 });

@@ -98,7 +98,13 @@ export const UserMailboxesPage = () => {
 
       {selected && (
         <Card title={`Mailboxes — ${selected.name}`}>
-          <DomainMailboxesSection domainId={selected.id} />
+          <DomainMailboxesSection
+            domainId={selected.id}
+            domainOptions={domains
+              .filter((d) => d.email_enabled)
+              .map((d) => ({ id: d.id, name: d.name }))}
+            onDomainCreated={(id) => setSelectedId(id)}
+          />
         </Card>
       )}
     </Space>

@@ -136,14 +136,18 @@ _spin() {
 
   "$@" >"$log" 2>&1 &
   local pid=$!
-  local spinners='|/-\'
+  # Braille spinner — each frame is two glyphs wide. Array form is
+  # required: bash's ${var:i:1} does BYTE slicing, which shreds
+  # multi-byte UTF-8. Frames chosen for a smooth left-to-right sweep.
+  local -a spinners=('⢎ ' '⠎⠁' '⠊⠑' '⠈⠱' ' ⡱' '⢀⡰' '⢄⡠' '⢆⡀')
+  local n=${#spinners[@]}
   local i=0
   local start; start=$(date +%s)
   while kill -0 "$pid" 2>/dev/null; do
     local elapsed=$(( $(date +%s) - start ))
     printf '\r\033[K  \033[1;36m%s\033[0m  %s  (%ds)' \
-      "${spinners:i++%4:1}" "$label" "$elapsed"
-    sleep 0.2
+      "${spinners[i++ % n]}" "$label" "$elapsed"
+    sleep 0.1
   done
   wait "$pid"; local rc=$?
   printf '\r\033[K'

@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/dnscompile"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
@@ -20,10 +21,11 @@ type DNSScheduler interface {
 }
 
 type DNSHandlerConfig struct {
-	Domains    repository.DomainRepository
-	Zones      repository.DNSZoneRepository
-	Records    repository.DNSRecordRepository
-	Reconciler DNSScheduler
+	Domains        repository.DomainRepository
+	Zones          repository.DNSZoneRepository
+	Records        repository.DNSRecordRepository
+	ServerSettings repository.ServerSettingsRepository
+	Reconciler     DNSScheduler
 }
 
 func RegisterDNSRoutes(g *gin.RouterGroup, cfg DNSHandlerConfig) {
@@ -35,6 +37,10 @@ func RegisterDNSRoutes(g *gin.RouterGroup, cfg DNSHandlerConfig) {
 	d.PATCH("/zone", h.updateZone)
 	d.GET("/records", h.listRecords)
 	d.POST("/records", h.createRecord)
+	// SOA + NS are auto-generated at compile time (never stored in
+	// dns_records). Expose them read-only so operators can verify the
+	// zone-level bits without reaching for `dig`.
+	d.GET("/system-records", h.listSystemRecords)
 
 	// Record-level operations don't need the domain id in the path
 	rec := g.Group("/dns/records")
@@ -248,6 +254,47 @@ func (h *dnsHandler) listRecords(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"records": records})
+}
+
+// listSystemRecords returns the SOA + NS rows that dnscompile.Compile
+// injects automatically. They never appear in dns_records and are
+// regenerated from server_settings + zone scalars on every push; the
+// UI shows them read-only so operators can verify what pdns serves
+// without a shell `dig`. Auth mirrors listRecords — domain-scoped,
+// owner or admin only.
+func (h *dnsHandler) listSystemRecords(c *gin.Context) {
+	domainID := c.Param("id")
+
+	if h.loadDomainOwned(c, domainID) == nil {
+		return
+	}
+
+	zone, err := h.cfg.Zones.FindByDomainID(c.Request.Context(), domainID)
+	if err != nil {
+		if isNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error":  "zone_not_provisioned",
+				"detail": "DNS zone not yet provisioned. The reconciler will create it on next sync.",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+
+	// ServerSettings is optional — fresh installs before first seed
+	// return ErrNotFound. dnscompile.SystemRecords handles srv=nil by
+	// falling back to "zone apex acts as its own NS"; the UI will
+	// surface that accurately.
+	var srv *models.ServerSettings
+	if h.cfg.ServerSettings != nil {
+		if s, err := h.cfg.ServerSettings.Get(c.Request.Context()); err == nil {
+			srv = s
+		}
+	}
+
+	system := dnscompile.SystemRecords(zone, srv)
+	c.JSON(http.StatusOK, gin.H{"system_records": system})
 }
 
 func (h *dnsHandler) createRecord(c *gin.Context) {

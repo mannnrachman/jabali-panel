@@ -273,10 +273,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		}
 		if deps.Domains != nil && deps.DNSZones != nil && deps.DNSRecords != nil {
 			api.RegisterDNSRoutes(v1, api.DNSHandlerConfig{
-				Domains:    deps.Domains,
-				Zones:      deps.DNSZones,
-				Records:    deps.DNSRecords,
-				Reconciler: deps.Reconciler,
+				Domains:        deps.Domains,
+				Zones:          deps.DNSZones,
+				Records:        deps.DNSRecords,
+				ServerSettings: deps.ServerSettings,
+				Reconciler:     deps.Reconciler,
 			})
 		}
 		if deps.Domains != nil && deps.SSLCerts != nil {

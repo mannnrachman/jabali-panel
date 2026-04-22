@@ -22,10 +22,17 @@ type Record struct {
 	Disabled bool   `json:"disabled"`
 }
 
-// Compile flattens the zone into the wire format. Serial is derived
-// from UpdatedAt — bumping it on every push is PowerDNS convention.
-func Compile(zone *models.DNSZone, records []models.DNSRecord, srv *models.ServerSettings) []Record {
-	out := make([]Record, 0, len(records)+8)
+// SystemRecords returns the auto-generated SOA + NS records that
+// Compile injects at the top of every rendered zone. Split out so the
+// HTTP surface can expose them as a read-only block to the UI without
+// returning operator-editable rows mixed in. Deterministic output
+// given a (zone, srv) pair EXCEPT for SOA.Content's serial, which is
+// wall-clock time — callers comparing two SystemRecords results
+// across time should diff every field except that one.
+func SystemRecords(zone *models.DNSZone, srv *models.ServerSettings) []Record {
+	if zone == nil {
+		return nil
+	}
 	zoneName := strings.TrimSuffix(zone.Name, ".")
 
 	// SOA is generated from server_settings + zone scalars, never from
@@ -43,14 +50,14 @@ func Compile(zone *models.DNSZone, records []models.DNSRecord, srv *models.Serve
 	if srv != nil && srv.AdminEmail != "" {
 		hostmaster = emailToSOAHostmaster(srv.AdminEmail)
 	}
-	out = append(out, Record{
-		Name:    zoneName,
-		Type:    "SOA",
+	out := []Record{{
+		Name: zoneName,
+		Type: "SOA",
 		Content: fmt.Sprintf("%s %s %d %d %d %d %d",
 			primaryNS, hostmaster, serial,
 			zone.RefreshSeconds, zone.RetrySeconds, zone.ExpireSeconds, zone.MinimumTTL),
 		TTL: zone.MinimumTTL,
-	})
+	}}
 
 	// NS records — one per configured nameserver. Without server_settings
 	// we still emit the zone apex as its own NS so PowerDNS accepts the
@@ -63,6 +70,14 @@ func Compile(zone *models.DNSZone, records []models.DNSRecord, srv *models.Serve
 			out = append(out, Record{Name: zoneName, Type: "NS", Content: srv.NS2Name, TTL: zone.MinimumTTL})
 		}
 	}
+	return out
+}
+
+// Compile flattens the zone into the wire format. Serial is derived
+// from UpdatedAt — bumping it on every push is PowerDNS convention.
+func Compile(zone *models.DNSZone, records []models.DNSRecord, srv *models.ServerSettings) []Record {
+	zoneName := strings.TrimSuffix(zone.Name, ".")
+	out := SystemRecords(zone, srv)
 
 	// Operator-editable records.
 	for _, r := range records {

@@ -904,3 +904,127 @@ func TestAdminCanAccessAnyDomain(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(&resp)
 	assert.NotNil(t, resp["zone"])
 }
+
+// --- GET /domains/:id/dns/system-records -------------------------------
+
+// fakeSettingsRepo is a minimal ServerSettingsRepository stub used only
+// in the system-records tests below. The rest of the DNS test suite
+// runs without settings (nil repo), so we keep the fake isolated to
+// avoid coupling unrelated tests to a concrete settings shape.
+type fakeSettingsRepo struct {
+	s *models.ServerSettings
+}
+
+func (f *fakeSettingsRepo) Get(ctx context.Context) (*models.ServerSettings, error) {
+	if f.s == nil {
+		return nil, repository.ErrNotFound
+	}
+	return f.s, nil
+}
+func (f *fakeSettingsRepo) Upsert(ctx context.Context, s *models.ServerSettings) error {
+	f.s = s
+	return nil
+}
+
+func dnsRouterWithSettings(userID string, isAdmin bool, s *models.ServerSettings) (*gin.Engine, *mockDomainRepo, *mockDNSZoneRepo) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	v1 := r.Group("/api/v1")
+	if userID != "" {
+		v1.Use(func(c *gin.Context) {
+			ginctx.SetClaims(c, &auth.AccessClaims{UserID: userID, IsAdmin: isAdmin})
+			c.Next()
+		})
+	}
+	domainRepo := newMockDomainRepo()
+	zoneRepo := newMockDNSZoneRepo()
+	recordRepo := newMockDNSRecordRepo()
+	RegisterDNSRoutes(v1, DNSHandlerConfig{
+		Domains:        domainRepo,
+		Zones:          zoneRepo,
+		Records:        recordRepo,
+		ServerSettings: &fakeSettingsRepo{s: s},
+		Reconciler:     &mockDNSReconciler{},
+	})
+	return r, domainRepo, zoneRepo
+}
+
+func TestSystemRecords_ReturnsSOAAndNSFromSettings(t *testing.T) {
+	r, domainRepo, zoneRepo := dnsRouterWithSettings("user1", false, &models.ServerSettings{
+		NS1Name:    "ns1.jabali.test",
+		NS2Name:    "ns2.jabali.test",
+		AdminEmail: "ops@example.com",
+	})
+	domainRepo.Create(context.Background(), &models.Domain{
+		ID: "dom1", UserID: "user1", Name: "example.com",
+	})
+	zoneRepo.Create(context.Background(), &models.DNSZone{
+		ID:         "zone1",
+		DomainID:   "dom1",
+		Name:       "example.com",
+		MinimumTTL: 3600,
+		IsEnabled:  true,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/domains/dom1/dns/system-records", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		SystemRecords []struct {
+			Name    string `json:"name"`
+			Type    string `json:"type"`
+			Content string `json:"content"`
+			TTL     int    `json:"ttl"`
+		} `json:"system_records"`
+	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.Len(t, resp.SystemRecords, 3) // SOA + 2 NS
+
+	// SOA first, primary NS = ns1, hostmaster = ops.example.com.
+	require.Equal(t, "SOA", resp.SystemRecords[0].Type)
+	assert.Contains(t, resp.SystemRecords[0].Content, "ns1.jabali.test")
+	assert.Contains(t, resp.SystemRecords[0].Content, "ops.example.com")
+
+	// Two NS records — ns1 and ns2.
+	nsContents := []string{resp.SystemRecords[1].Content, resp.SystemRecords[2].Content}
+	assert.ElementsMatch(t, []string{"ns1.jabali.test", "ns2.jabali.test"}, nsContents)
+}
+
+func TestSystemRecords_ZoneNotProvisionedReturns404(t *testing.T) {
+	r, domainRepo, _ := dnsRouterWithSettings("user1", false, &models.ServerSettings{})
+	domainRepo.Create(context.Background(), &models.Domain{
+		ID: "dom1", UserID: "user1", Name: "example.com",
+	})
+	// No zone.
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/domains/dom1/dns/system-records", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusNotFound, w.Code)
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	assert.Equal(t, "zone_not_provisioned", resp["error"])
+}
+
+func TestSystemRecords_NonOwnerForbidden(t *testing.T) {
+	r, domainRepo, zoneRepo := dnsRouterWithSettings("other-user", false, &models.ServerSettings{
+		NS1Name: "ns1.jabali.test",
+	})
+	domainRepo.Create(context.Background(), &models.Domain{
+		ID: "dom1", UserID: "user1", Name: "example.com", // owned by user1
+	})
+	zoneRepo.Create(context.Background(), &models.DNSZone{
+		ID: "zone1", DomainID: "dom1", Name: "example.com", MinimumTTL: 3600, IsEnabled: true,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/domains/dom1/dns/system-records", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+}

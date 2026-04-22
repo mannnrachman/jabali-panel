@@ -101,6 +101,17 @@ interface DNSRecord {
   updated_at: string;
 }
 
+// SystemRecord is the shape the panel-api returns from
+// GET /domains/:id/dns/system-records — the SOA + NS rows that
+// dnscompile.Compile injects at render time. Lives server-side,
+// never in dns_records; read-only in the UI.
+interface SystemRecord {
+  name: string;
+  type: "SOA" | "NS";
+  content: string;
+  ttl: number;
+}
+
 interface Domain {
   id: string;
   name: string;
@@ -165,6 +176,7 @@ export const DNSRecordsPage = () => {
   const [domain, setDomain] = useState<Domain | null>(null);
   const [zone, setZone] = useState<DNSZone | null>(null);
   const [records, setRecords] = useState<DNSRecord[]>([]);
+  const [systemRecords, setSystemRecords] = useState<SystemRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [zoneNotProvisioned, setZoneNotProvisioned] = useState(false);
   const [savingZone, setSavingZone] = useState(false);
@@ -236,6 +248,19 @@ export const DNSRecordsPage = () => {
           `/domains/${domainId}/dns/records`
         );
         setRecords(recordsRes.data.records);
+
+        // Load system records (SOA + NS, read-only). Non-fatal: a
+        // fresh install before server_settings is seeded returns an
+        // empty-ish zone and that's fine — the panel just shows
+        // whatever dnscompile.SystemRecords returns for a nil srv.
+        try {
+          const sysRes = await apiClient.get(
+            `/domains/${domainId}/dns/system-records`
+          );
+          setSystemRecords(sysRes.data.system_records ?? []);
+        } catch {
+          setSystemRecords([]);
+        }
       } catch (err) {
         const e = err as {
           response?: { data?: { detail?: string } };
@@ -616,6 +641,64 @@ export const DNSRecordsPage = () => {
             },
           ]}
         />
+      )}
+
+      {/* System Records — auto-generated SOA + NS that pdns serves
+          but are never stored in dns_records. Read-only; editable
+          only by changing server-wide nameserver / admin-email
+          settings on the Server Settings page. */}
+      {systemRecords.length > 0 && (
+        <Card
+          title="System Records"
+          style={{ marginBottom: 24 }}
+          extra={
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Auto-generated — change via Server Settings
+            </Typography.Text>
+          }
+        >
+          <Table<SystemRecord>
+            dataSource={systemRecords}
+            rowKey={(r) => `${r.type}-${r.name}-${r.content}`}
+            pagination={false}
+            size="small"
+            scroll={{ x: "max-content" }}
+            columns={[
+              {
+                title: "Name",
+                dataIndex: "name",
+                key: "name",
+                width: "25%",
+                render: (text: string) => text || "@",
+              },
+              {
+                title: "Type",
+                dataIndex: "type",
+                key: "type",
+                width: "10%",
+                render: (t: string) => (
+                  <Tag color={t === "NS" ? "magenta" : "default"}>{t}</Tag>
+                ),
+              },
+              {
+                title: "Content",
+                dataIndex: "content",
+                key: "content",
+                render: (text: string) => (
+                  <Typography.Text style={{ fontFamily: "monospace" }}>
+                    {text}
+                  </Typography.Text>
+                ),
+              },
+              {
+                title: "TTL",
+                dataIndex: "ttl",
+                key: "ttl",
+                width: "10%",
+              },
+            ]}
+          />
+        </Card>
       )}
 
       {/* Records Table */}

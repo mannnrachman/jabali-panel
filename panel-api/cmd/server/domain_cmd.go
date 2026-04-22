@@ -79,10 +79,13 @@ func newDomainCreateCmd() *cobra.Command {
 		Use:   "create",
 		Short: "Create a new domain (direct DB; bypasses HTTP auth — M20-safe)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			// 30s — the inline auto-enable step makes an agent round trip
+			// (DKIM keypair gen + Stalwart register) on top of the DB
+			// insert. 10s would be tight if the agent is slow to respond.
+			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 			defer cancel()
 
-			d, err := createDomainDirect(ctx, cliDomainInput{
+			d, warnings, err := createDomainDirect(ctx, cliDomainInput{
 				Name:    name,
 				UserID:  userID,
 				DocRoot: docRoot,
@@ -92,9 +95,22 @@ func newDomainCreateCmd() *cobra.Command {
 			}
 
 			if jsonOutput {
-				return printJSON(d)
+				return printJSON(map[string]any{
+					"domain":   d,
+					"warnings": warnings,
+				})
 			}
 			fmt.Printf("Domain created: %s (ID: %s)\n", d.Name, d.ID)
+			if d.EmailEnabled {
+				selector := ""
+				if d.DkimSelector != nil {
+					selector = *d.DkimSelector
+				}
+				fmt.Printf("Email enabled automatically (DKIM selector: %s).\n", selector)
+			}
+			for _, w := range warnings {
+				fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+			}
 			fmt.Printf("Note: reconciler will materialise the nginx vhost within %s.\n",
 				sharedCfg.Agent.ReconcilerInterval)
 			return nil

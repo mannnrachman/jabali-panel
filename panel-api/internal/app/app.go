@@ -224,6 +224,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Agent:      deps.Agent,
 				Reconciler: deps.Reconciler,
 				SSLCerts:   deps.SSLCerts,
+				// DNS repos feed the auto-enable-email path in create.
+				// Panel profiles without PowerDNS leave these nil and
+				// create still works — auto-enable is skipped cleanly.
+				DNSZones:   deps.DNSZones,
+				DNSRecords: deps.DNSRecords,
 			})
 		}
 		if deps.Databases != nil && deps.DatabaseUsers != nil {

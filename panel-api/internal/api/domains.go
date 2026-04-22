@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -26,6 +27,14 @@ type DomainHandlerConfig struct {
 	Packages   repository.PackageRepository
 	Agent      agent.AgentInterface
 	Reconciler *reconciler.Reconciler
+	// DNSZones + DNSRecords feed the auto-enable-email path on create.
+	// Both optional — when unset, create proceeds without flipping email
+	// on (matches the pre-auto-enable behaviour). The explicit
+	// /domains/:id/email endpoint is wired via DomainEmailHandlerConfig
+	// separately and is the retry path for domains that skip auto-enable
+	// or hit an error during create.
+	DNSZones   repository.DNSZoneRepository
+	DNSRecords repository.DNSRecordRepository
 }
 
 const (
@@ -280,6 +289,29 @@ func (h *domainHandler) create(c *gin.Context) {
 		cancel()
 	}
 
+	// Auto-enable email. Best-effort per ADR-0013: a failure here (agent
+	// down, Stalwart refuses the name, DNS sync hiccup) degrades back to
+	// the pre-auto-enable model — email_enabled stays 0 and the operator
+	// sees the UI's "Enable email" retry switch on the domain's Email
+	// tab. DNS-autoconfig warnings aren't returned in the create
+	// response (that would change the wire shape); they're surfaced to
+	// the operator on the next GET /domains/:id/email poll, which
+	// computes live DNS status anyway. Hard errors go to slog.
+	if h.cfg.Agent != nil && h.cfg.DNSZones != nil && h.cfg.DNSRecords != nil {
+		if _, _, warnings, err := EnableDomainEmailInline(ctx, enableDomainEmailDeps{
+			Agent:      h.cfg.Agent,
+			Domains:    h.cfg.Domains,
+			DNSZones:   h.cfg.DNSZones,
+			DNSRecords: h.cfg.DNSRecords,
+		}, domain); err != nil {
+			slog.Warn("auto-enable email failed during domain.create (operator can retry from UI)",
+				"domain_id", domain.ID, "domain", domain.Name, "err", err)
+		} else if len(warnings) > 0 {
+			slog.Info("auto-enable email DNS autoconfig warnings",
+				"domain_id", domain.ID, "domain", domain.Name, "warnings", warnings)
+		}
+	}
+
 	// Schedule reconciliation. The reconciler will converge the domain's
 	// OS-level state (nginx vhost, PHP pool, etc.) with the DB state.
 	// This is non-blocking and out-of-band.
@@ -287,6 +319,8 @@ func (h *domainHandler) create(c *gin.Context) {
 		h.cfg.Reconciler.Schedule(domain.ID)
 	}
 
+	// EnableDomainEmailInline mutated domain in place on success so the
+	// response already carries email_enabled=true, dkim_selector, etc.
 	c.JSON(http.StatusCreated, domain)
 }
 

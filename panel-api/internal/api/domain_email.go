@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -16,6 +18,93 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
+
+// enableDomainEmailDeps is the set of collaborators the shared enable
+// helper needs. Passed as a struct so both the explicit /domains/:id/email
+// handler (via DomainEmailHandlerConfig) and the auto-enable path in
+// domain.create (via DomainHandlerConfig) can funnel into one codepath.
+type enableDomainEmailDeps struct {
+	Agent      agent.AgentInterface
+	Domains    repository.DomainRepository
+	DNSZones   repository.DNSZoneRepository
+	DNSRecords repository.DNSRecordRepository
+}
+
+// Sentinel errors so callers can distinguish HTTP status classes when
+// translating the helper's failure back to a response. The helper wraps
+// these with %w so callers use errors.Is.
+var (
+	errAgentUnconfigured = errors.New("agent unconfigured")
+	errAgentFailed       = errors.New("agent call failed")
+	errAgentBadResponse  = errors.New("agent returned bad response")
+)
+
+// EnableDomainEmailInline runs the shared "flip email on for this domain"
+// flow: invokes domain.email_enable on the agent (which generates the
+// Ed25519 DKIM keypair and registers the domain in Stalwart), persists
+// the new state via UpdateEmailState, and best-effort-syncs the M6
+// DNS records. On nil err, the passed dom struct is mutated to reflect
+// the new state so the caller can echo it back in its response without
+// re-fetching the row.
+//
+// Returns selector, public key, accumulated DNS warnings, and error.
+// On non-nil err, nothing has been written to the DB. Wrapped errors
+// come from errAgent{Unconfigured,Failed,BadResponse} so HTTP callers
+// can map them to 5xx vs 502 via errors.Is.
+func EnableDomainEmailInline(
+	ctx context.Context,
+	deps enableDomainEmailDeps,
+	dom *models.Domain,
+) (selector, pubKey string, warnings []string, err error) {
+	if deps.Agent == nil {
+		return "", "", nil, errAgentUnconfigured
+	}
+	agentCtx, cancel := context.WithTimeout(ctx, domainEmailAgentTimeout)
+	defer cancel()
+	raw, err := deps.Agent.Call(agentCtx, "domain.email_enable", map[string]any{
+		"domain_id":   dom.ID,
+		"domain_name": dom.Name,
+	})
+	if err != nil {
+		return "", "", nil, fmt.Errorf("%w: %v", errAgentFailed, err)
+	}
+	var resp struct {
+		Ok            bool   `json:"ok"`
+		DKIMSelector  string `json:"dkim_selector"`
+		DKIMPublicKey string `json:"dkim_public_key"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return "", "", nil, fmt.Errorf("%w: unmarshal: %v", errAgentBadResponse, err)
+	}
+	if !resp.Ok || resp.DKIMSelector == "" || resp.DKIMPublicKey == "" {
+		return "", "", nil, fmt.Errorf("%w: ok=%v selector=%q pubkey-len=%d",
+			errAgentBadResponse, resp.Ok, resp.DKIMSelector, len(resp.DKIMPublicKey))
+	}
+
+	selector, pubKey = resp.DKIMSelector, resp.DKIMPublicKey
+	now := time.Now().UTC()
+	if err := deps.Domains.UpdateEmailState(ctx, dom.ID, repository.DomainEmailState{
+		Enabled:        true,
+		DkimSelector:   &selector,
+		DkimPublicKey:  &pubKey,
+		EmailEnabledAt: &now,
+	}); err != nil {
+		return "", "", nil, fmt.Errorf("update email_enabled row: %w", err)
+	}
+
+	// DNS sync is best-effort. Warnings flow back to caller; a DNS-side
+	// failure does NOT roll back the email_enabled flip (the mailbox
+	// system still works without the convenience records).
+	warnings = syncEmailDNSOnEnableInline(ctx, deps.DNSZones, deps.DNSRecords, dom.ID, selector, pubKey)
+
+	// Mutate caller's Domain struct so the response reflects new state.
+	dom.EmailEnabled = true
+	dom.DkimSelector = &selector
+	dom.DkimPublicKey = &pubKey
+	dom.EmailEnabledAt = &now
+
+	return selector, pubKey, warnings, nil
+}
 
 // DomainEmailHandlerConfig wires the email-on-domain endpoints.
 type DomainEmailHandlerConfig struct {
@@ -151,62 +240,27 @@ func (h *domainEmailHandler) enable(c *gin.Context) {
 		return
 	}
 
-	// Agent generates the DKIM keypair + registers the domain in
-	// Stalwart; response carries selector + public key so we can
-	// mirror it back to DNS. Idempotent on the agent side — calling
-	// it twice just re-reads the on-disk key.
-	if h.cfg.Agent == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "agent_unconfigured"})
-		return
-	}
-	agentCtx, cancel := context.WithTimeout(ctx, domainEmailAgentTimeout)
-	defer cancel()
-	raw, err := h.cfg.Agent.Call(agentCtx, "domain.email_enable", map[string]any{
-		"domain_id":   dom.ID,
-		"domain_name": dom.Name,
-	})
+	selector, pubKey, warnings, err := EnableDomainEmailInline(ctx, enableDomainEmailDeps{
+		Agent:      h.cfg.Agent,
+		Domains:    h.cfg.Domains,
+		DNSZones:   h.cfg.DNSZones,
+		DNSRecords: h.cfg.DNSRecords,
+	}, dom)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
+		// Translate helper error categories back to HTTP responses.
+		switch {
+		case errors.Is(err, errAgentUnconfigured):
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "agent_unconfigured"})
+		case errors.Is(err, errAgentBadResponse):
+			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_bad_response", "detail": err.Error()})
+		case errors.Is(err, errAgentFailed):
+			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		}
 		return
 	}
 
-	var resp struct {
-		Ok            bool   `json:"ok"`
-		DKIMSelector  string `json:"dkim_selector"`
-		DKIMPublicKey string `json:"dkim_public_key"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_bad_response", "detail": err.Error()})
-		return
-	}
-	if !resp.Ok || resp.DKIMSelector == "" || resp.DKIMPublicKey == "" {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_bad_response"})
-		return
-	}
-
-	now := time.Now().UTC()
-	selector, pubKey := resp.DKIMSelector, resp.DKIMPublicKey
-	if err := h.cfg.Domains.UpdateEmailState(ctx, dom.ID, repository.DomainEmailState{
-		Enabled:        true,
-		DkimSelector:   &selector,
-		DkimPublicKey:  &pubKey,
-		EmailEnabledAt: &now,
-	}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-
-	// Inject M6 DNS records (DKIM + autoconfig + autodiscover) into the
-	// domain's zone. Best-effort — a DNS-side failure doesn't roll back
-	// the email_enable flip (the mailbox system is still usable without
-	// the convenience records). Warnings from this step flow back to
-	// the UI so the operator sees conflicts / missing-zone issues.
-	warnings := h.syncEmailDNSOnEnable(ctx, dom.ID, selector, pubKey)
-
-	dom.EmailEnabled = true
-	dom.DkimSelector = &selector
-	dom.DkimPublicKey = &pubKey
-	dom.EmailEnabledAt = &now
 	hints, statusWarnings := h.buildHintsWithStatus(ctx, dom.ID, dom.Name, selector, pubKey)
 	c.JSON(http.StatusOK, domainEmailResponse{
 		DomainID:       dom.ID,
@@ -214,7 +268,7 @@ func (h *domainEmailHandler) enable(c *gin.Context) {
 		EmailEnabled:   true,
 		DkimSelector:   selector,
 		DkimPublicKey:  pubKey,
-		EmailEnabledAt: &now,
+		EmailEnabledAt: dom.EmailEnabledAt,
 		Records:        hints,
 		Warnings:       append(warnings, statusWarnings...),
 	})
@@ -280,21 +334,26 @@ func (h *domainEmailHandler) disable(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// syncEmailDNSOnEnable inserts the three M6-managed records into the
-// domain's zone, skipping rows where a non-managed (user-edited)
-// record already occupies the (name, type) slot. Returns a slice of
-// human-readable warning messages for each conflict or hard error so
-// the UI can surface them. Best-effort: the email_enable flip has
-// already succeeded by the time we get here, so errors are
-// accumulated into warnings rather than failing the request.
-func (h *domainEmailHandler) syncEmailDNSOnEnable(ctx context.Context, domainID, selector, dkimPub string) []string {
-	if h.cfg.DNSZones == nil || h.cfg.DNSRecords == nil {
+// syncEmailDNSOnEnableInline is the free-function form of the M6 DNS
+// sync. Shared by the email-enable HTTP handler and the auto-enable
+// path in domain.create. Best-effort: returns a slice of human-
+// readable warning messages (conflicts, hard errors) for the UI to
+// surface. Never returns an error — the email_enable flip has already
+// succeeded by the time we get here, and the mailbox system stays
+// usable without the convenience records.
+func syncEmailDNSOnEnableInline(
+	ctx context.Context,
+	dnsZones repository.DNSZoneRepository,
+	dnsRecords repository.DNSRecordRepository,
+	domainID, selector, dkimPub string,
+) []string {
+	if dnsZones == nil || dnsRecords == nil {
 		// DNS repos not wired — panel running in a config without
 		// PowerDNS integration. Caller (the UI) will show the hint
 		// list with empty status; no warning, no error.
 		return nil
 	}
-	zone, err := h.cfg.DNSZones.FindByDomainID(ctx, domainID)
+	zone, err := dnsZones.FindByDomainID(ctx, domainID)
 	if err != nil {
 		if isNotFound(err) {
 			return []string{"DNS autoconfig skipped: no zone on file for this domain."}
@@ -303,7 +362,7 @@ func (h *domainEmailHandler) syncEmailDNSOnEnable(ctx context.Context, domainID,
 		return []string{"DNS autoconfig failed to read the domain's zone."}
 	}
 
-	existing, err := h.cfg.DNSRecords.ListByZoneID(ctx, zone.ID)
+	existing, err := dnsRecords.ListByZoneID(ctx, zone.ID)
 	if err != nil {
 		slog.Error("m6 dns: list records", "zone_id", zone.ID, "err", err)
 		return []string{"DNS autoconfig couldn't read existing records."}
@@ -324,12 +383,18 @@ func (h *domainEmailHandler) syncEmailDNSOnEnable(ctx context.Context, domainID,
 			continue
 		}
 		r := rec
-		if err := h.cfg.DNSRecords.Create(ctx, &r); err != nil {
+		if err := dnsRecords.Create(ctx, &r); err != nil {
 			slog.Error("m6 dns: create record", "zone_id", zone.ID, "name", rec.Name, "type", rec.Type, "err", err)
 			warnings = append(warnings, "Failed to publish "+rec.Type+" record at "+rec.Name+".")
 		}
 	}
 	return warnings
+}
+
+// syncEmailDNSOnEnable is the method-form thin wrapper kept for callers
+// still using the handler receiver (disable path's sibling + tests).
+func (h *domainEmailHandler) syncEmailDNSOnEnable(ctx context.Context, domainID, selector, dkimPub string) []string {
+	return syncEmailDNSOnEnableInline(ctx, h.cfg.DNSZones, h.cfg.DNSRecords, domainID, selector, dkimPub)
 }
 
 // deleteEmailDNSOnDisable removes M6-managed records (by managed_by

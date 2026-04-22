@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -403,6 +404,227 @@ func TestDomainEmail_Enable_Idempotent(t *testing.T) {
 		}
 	}
 	require.Equal(t, 3, m6Count, "re-enable must not duplicate rows")
+}
+
+// TestEnableDomainEmailInline_HappyPath exercises the shared helper
+// directly (same entry point used by both the explicit POST /domains/:id/
+// email handler and the auto-enable path in domain.create). Verifies the
+// domain struct is mutated in place, DB row is flipped, and DNS records
+// are written.
+func TestEnableDomainEmailInline_HappyPath(t *testing.T) {
+	ma := &mockAgent{callFn: func(ctx context.Context, cmd string, params any) (json.RawMessage, error) {
+		if cmd != "domain.email_enable" {
+			t.Fatalf("unexpected agent command: %s", cmd)
+		}
+		return json.RawMessage(`{"ok":true,"dkim_selector":"jabali","dkim_public_key":"v=DKIM1; k=ed25519; p=AAA"}`), nil
+	}}
+	domains := newMockDomainRepo()
+	dom := &models.Domain{ID: "dom1", UserID: "user1", Name: "example.com"}
+	domains.domains["dom1"] = dom
+	zones := newMockDNSZoneRepo()
+	zones.zones["zone1"] = &models.DNSZone{ID: "zone1", DomainID: "dom1", Name: "example.com"}
+	records := newMockDNSRecordRepo()
+
+	sel, pub, warnings, err := EnableDomainEmailInline(context.Background(), enableDomainEmailDeps{
+		Agent:      ma,
+		Domains:    domains,
+		DNSZones:   zones,
+		DNSRecords: records,
+	}, dom)
+	require.NoError(t, err)
+	require.Equal(t, "jabali", sel)
+	require.Equal(t, "v=DKIM1; k=ed25519; p=AAA", pub)
+	require.Empty(t, warnings, "no conflicts expected on a clean zone")
+
+	require.True(t, dom.EmailEnabled, "helper must mutate caller's Domain struct")
+	require.NotNil(t, dom.DkimSelector)
+	require.Equal(t, "jabali", *dom.DkimSelector)
+
+	// DB row flipped too.
+	require.True(t, domains.domains["dom1"].EmailEnabled)
+
+	// DNS records inserted (MX, DKIM, autoconfig — the M6 set).
+	var m6Count int
+	for _, r := range records.records {
+		if r.ManagedBy != nil && *r.ManagedBy == "m6" {
+			m6Count++
+		}
+	}
+	require.GreaterOrEqual(t, m6Count, 1, "at least one m6-managed DNS record expected")
+}
+
+// TestEnableDomainEmailInline_AgentErrors verifies the sentinel-error
+// taxonomy. Callers use errors.Is to pick the right HTTP status without
+// string-matching the message body.
+func TestEnableDomainEmailInline_AgentErrors(t *testing.T) {
+	t.Run("agent nil → errAgentUnconfigured", func(t *testing.T) {
+		dom := &models.Domain{ID: "dom1", Name: "example.com"}
+		_, _, _, err := EnableDomainEmailInline(context.Background(), enableDomainEmailDeps{
+			Agent:   nil,
+			Domains: newMockDomainRepo(),
+		}, dom)
+		require.ErrorIs(t, err, errAgentUnconfigured)
+		require.False(t, dom.EmailEnabled, "no DB state on agent-nil error")
+	})
+
+	t.Run("agent call error → errAgentFailed", func(t *testing.T) {
+		ma := &mockAgent{callErr: errors.New("dial: connection refused")}
+		dom := &models.Domain{ID: "dom1", Name: "example.com"}
+		_, _, _, err := EnableDomainEmailInline(context.Background(), enableDomainEmailDeps{
+			Agent:   ma,
+			Domains: newMockDomainRepo(),
+		}, dom)
+		require.ErrorIs(t, err, errAgentFailed)
+		require.Contains(t, err.Error(), "connection refused")
+	})
+
+	t.Run("agent returns ok=false → errAgentBadResponse", func(t *testing.T) {
+		ma := &mockAgent{callFn: func(ctx context.Context, cmd string, params any) (json.RawMessage, error) {
+			return json.RawMessage(`{"ok":false,"dkim_selector":"","dkim_public_key":""}`), nil
+		}}
+		dom := &models.Domain{ID: "dom1", Name: "example.com"}
+		_, _, _, err := EnableDomainEmailInline(context.Background(), enableDomainEmailDeps{
+			Agent:   ma,
+			Domains: newMockDomainRepo(),
+		}, dom)
+		require.ErrorIs(t, err, errAgentBadResponse)
+	})
+
+	t.Run("agent returns malformed JSON → errAgentBadResponse", func(t *testing.T) {
+		ma := &mockAgent{callFn: func(ctx context.Context, cmd string, params any) (json.RawMessage, error) {
+			return json.RawMessage(`not-json`), nil
+		}}
+		dom := &models.Domain{ID: "dom1", Name: "example.com"}
+		_, _, _, err := EnableDomainEmailInline(context.Background(), enableDomainEmailDeps{
+			Agent:   ma,
+			Domains: newMockDomainRepo(),
+		}, dom)
+		require.ErrorIs(t, err, errAgentBadResponse)
+	})
+}
+
+// TestEnableDomainEmailInline_DNSWarningsFlowThrough — a zone-missing
+// scenario (DNSZones wired but FindByDomainID returns not-found) still
+// produces a successful enable, with a single human-readable warning.
+// This is what domain.create's best-effort auto-enable surfaces to the
+// operator when a domain is created before its DNS zone.
+func TestEnableDomainEmailInline_DNSWarningsFlowThrough(t *testing.T) {
+	ma := &mockAgent{callFn: func(ctx context.Context, cmd string, params any) (json.RawMessage, error) {
+		return json.RawMessage(`{"ok":true,"dkim_selector":"jabali","dkim_public_key":"v=DKIM1; k=ed25519; p=AAA"}`), nil
+	}}
+	domains := newMockDomainRepo()
+	dom := &models.Domain{ID: "dom1", Name: "example.com"}
+	domains.domains["dom1"] = dom
+	// DNSZones configured but with no zone for this domain — must not
+	// panic and must not fail the enable; it emits a warning instead.
+	zones := newMockDNSZoneRepo()
+	records := newMockDNSRecordRepo()
+
+	_, _, warnings, err := EnableDomainEmailInline(context.Background(), enableDomainEmailDeps{
+		Agent:      ma,
+		Domains:    domains,
+		DNSZones:   zones,
+		DNSRecords: records,
+	}, dom)
+	require.NoError(t, err, "zone-missing must NOT fail the enable")
+	require.True(t, dom.EmailEnabled, "DB flip still happens even without a zone")
+	require.Len(t, warnings, 1)
+	require.Contains(t, warnings[0], "no zone on file")
+}
+
+// TestDomains_Create_AutoEnablesEmail verifies the wired-up create
+// endpoint auto-enables email on a freshly-created domain. Exercises
+// the path in domainHandler.create via its public HTTP surface.
+func TestDomains_Create_AutoEnablesEmail(t *testing.T) {
+	ma := &mockAgent{callFn: func(ctx context.Context, cmd string, params any) (json.RawMessage, error) {
+		require.Equal(t, "domain.email_enable", cmd, "create should call domain.email_enable inline")
+		return json.RawMessage(`{"ok":true,"dkim_selector":"jabali","dkim_public_key":"v=DKIM1; k=ed25519; p=AAA"}`), nil
+	}}
+	domains := newMockDomainRepo()
+	zones := newMockDNSZoneRepo()
+	zones.zones["zone1"] = &models.DNSZone{ID: "zone1", DomainID: "any", Name: "autoenable.test"}
+	records := newMockDNSRecordRepo()
+	users := &mockUserRepo{
+		users: map[string]*models.User{
+			"user1": {
+				ID:       "user1",
+				Email:    "user1@example.com",
+				Username: strPtr("user1"),
+				IsAdmin:  false,
+			},
+		},
+	}
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	v1 := r.Group("/api/v1")
+	v1.Use(func(c *gin.Context) {
+		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "user1", IsAdmin: true})
+		c.Next()
+	})
+	RegisterDomainRoutes(v1, DomainHandlerConfig{
+		Domains:    domains,
+		Users:      users,
+		Agent:      ma,
+		DNSZones:   zones,
+		DNSRecords: records,
+	})
+
+	body := `{"name":"autoenable.test","user_id":"user1"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/domains", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+
+	var resp models.Domain
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.True(t, resp.EmailEnabled, "response must reflect email_enabled=1 from auto-enable")
+	require.NotNil(t, resp.DkimSelector)
+	require.Equal(t, "jabali", *resp.DkimSelector)
+	require.Equal(t, 1, ma.callCount, "exactly one agent call (domain.email_enable) expected")
+}
+
+// TestDomains_Create_AutoEnableFailureStillReturns201 verifies the
+// best-effort semantic: agent down at create time must NOT fail the
+// domain.create call. The row is inserted; email_enabled stays 0 (or
+// the operator retries from the Email tab).
+func TestDomains_Create_AutoEnableFailureStillReturns201(t *testing.T) {
+	ma := &mockAgent{callErr: errors.New("agent: dial: connection refused")}
+	domains := newMockDomainRepo()
+	zones := newMockDNSZoneRepo()
+	records := newMockDNSRecordRepo()
+	users := &mockUserRepo{
+		users: map[string]*models.User{
+			"user1": {
+				ID: "user1", Email: "user1@example.com",
+				Username: strPtr("user1"), IsAdmin: false,
+			},
+		},
+	}
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	v1 := r.Group("/api/v1")
+	v1.Use(func(c *gin.Context) {
+		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "user1", IsAdmin: true})
+		c.Next()
+	})
+	RegisterDomainRoutes(v1, DomainHandlerConfig{
+		Domains: domains, Users: users, Agent: ma,
+		DNSZones: zones, DNSRecords: records,
+	})
+
+	body := `{"name":"agentdown.test","user_id":"user1"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/domains", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code, "agent failure must not block create; body: %s", w.Body.String())
+
+	var resp models.Domain
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.False(t, resp.EmailEnabled, "email_enabled stays 0 when auto-enable failed")
 }
 
 

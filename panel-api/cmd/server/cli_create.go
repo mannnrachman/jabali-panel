@@ -155,16 +155,21 @@ type cliDomainInput struct {
 // create handler: owner must exist + be non-admin + have a username + pass
 // package quota. On success the caller should trigger a reconcile tick so
 // the nginx vhost materialises.
-func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain, error) {
+//
+// Second return is a slice of soft warnings (DNS autoconfig conflicts, the
+// agent being unavailable so email couldn't auto-enable, etc.) that the CLI
+// front-end prints to stderr. The domain itself is created regardless; only
+// hard errors (row insert conflict, bad input) return err != nil.
+func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain, []string, error) {
 	if err := initConfig(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := initDB(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if in.Name == "" || in.UserID == "" {
-		return nil, fmt.Errorf("--name and --user-id are required")
+		return nil, nil, fmt.Errorf("--name and --user-id are required")
 	}
 
 	users := userRepo()
@@ -174,26 +179,26 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 	owner, err := users.FindByID(ctx, in.UserID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return nil, fmt.Errorf("user %q not found", in.UserID)
+			return nil, nil, fmt.Errorf("user %q not found", in.UserID)
 		}
-		return nil, fmt.Errorf("lookup user: %w", err)
+		return nil, nil, fmt.Errorf("lookup user: %w", err)
 	}
 	if owner.IsAdmin {
-		return nil, fmt.Errorf("admin users cannot host domains — create a regular user")
+		return nil, nil, fmt.Errorf("admin users cannot host domains — create a regular user")
 	}
 	if owner.Username == nil || *owner.Username == "" {
-		return nil, fmt.Errorf("user %q has no username — inconsistent state", in.UserID)
+		return nil, nil, fmt.Errorf("user %q has no username — inconsistent state", in.UserID)
 	}
 
 	// Package-quota check — matches the HTTP handler (409 domain_quota_exceeded).
 	if owner.PackageID != nil && *owner.PackageID != "" {
 		count, err := domains.CountByUserID(ctx, in.UserID)
 		if err != nil {
-			return nil, fmt.Errorf("count existing domains: %w", err)
+			return nil, nil, fmt.Errorf("count existing domains: %w", err)
 		}
 		pkg, err := packages.FindByID(ctx, *owner.PackageID)
 		if err == nil && pkg.MaxDomains > 0 && count >= int64(pkg.MaxDomains) {
-			return nil, fmt.Errorf("package quota exceeded: %d/%d domains", count, pkg.MaxDomains)
+			return nil, nil, fmt.Errorf("package quota exceeded: %d/%d domains", count, pkg.MaxDomains)
 		}
 	}
 
@@ -215,15 +220,33 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 	}
 	if err := domains.Create(ctx, d); err != nil {
 		if errors.Is(err, repository.ErrConflict) {
-			return nil, fmt.Errorf("domain %q already exists", in.Name)
+			return nil, nil, fmt.Errorf("domain %q already exists", in.Name)
 		}
-		return nil, fmt.Errorf("create domain row: %w", err)
+		return nil, nil, fmt.Errorf("create domain row: %w", err)
+	}
+
+	// Auto-enable email. Best-effort — if the agent's down or Stalwart
+	// refuses the domain name, we record the reason as a soft warning
+	// and the operator can retry via `jabali domain email-enable <name>`
+	// or the Email tab in the UI.
+	var warnings []string
+	if err := initAgent(); err != nil {
+		warnings = append(warnings, fmt.Sprintf("email auto-enable skipped: agent unavailable (%v)", err))
+	} else {
+		deps := newDomainEmailDepsFromGlobals()
+		_, dnsWarnings, err := enableDomainEmailDirect(ctx, deps, d)
+		if err != nil {
+			warnings = append(warnings,
+				fmt.Sprintf("email auto-enable failed (can retry with `jabali domain email-enable %s`): %v", d.Name, err))
+		} else {
+			warnings = append(warnings, dnsWarnings...)
+		}
 	}
 
 	// The reconciler picks up the new row within 60s (default interval). No
 	// inline nginx call — matches the HTTP handler, keeps ADR-0013's inline
 	// best-effort pattern confined to users.
-	return d, nil
+	return d, warnings, nil
 }
 
 // ---------- local username helpers (duplicated from internal/api to avoid exporting) ----------

@@ -970,9 +970,9 @@ auth flow).
 **Depends on:** M20 (Kratos identity — supersedes Refine's `authProvider` role so removing it doesn't lose functionality).
 **Related:** ADR-0037 (design rationale, rollback note, outcome), `plans/m21-drop-refine.md` (five-wave blueprint).
 
-### M23: Responsive panel UI (IN PROGRESS)
+### M23: Responsive panel UI (SHIPPED — branch)
 
-**Status:** Blueprint registered 2026-04-22 at `plans/m23-responsive.md` on branch `m23/responsive`; ADR-0046 accepted. 9-step plan, Opus-reviewed (3 CRITICAL + 6 HIGH folded).
+**Status:** All 9 steps committed to branch `m23/responsive` 2026-04-22. Awaits merge to main. ADR-0046 accepted. Runbook at `docs/runbooks/m23-responsive.md`.
 
 **Goal:** Every page renders and works correctly on phone, tablet, and desktop viewports without horizontal viewport scroll, clipped content, or broken interactions.
 

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -449,6 +450,13 @@ func (h *domainHandler) delete(c *gin.Context) {
 	// ReconcileDeleted which targets the agent-side teardown directly.
 	name := domain.Name
 	if err := h.cfg.Domains.Delete(ctx, domain.ID); err != nil {
+		// M6.4 (ADR-0048): the panel-primary row is delete-protected at
+		// the repo layer. Translate to 403 with a specific error code
+		// so the panel UI can render a tooltip instead of a generic 500.
+		if errors.Is(err, repository.ErrCannotDeletePanelPrimary) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "panel_primary_protected"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}

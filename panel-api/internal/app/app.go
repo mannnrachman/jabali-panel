@@ -300,6 +300,13 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Log:   deps.Log,
 			})
 		}
+		// M6.4 Settings → Email: read-only panel-primary domain card.
+		if deps.Domains != nil {
+			api.RegisterSettingsEmailRoutes(v1, api.SettingsEmailHandlerConfig{
+				Domains: deps.Domains,
+				Log:     deps.Log,
+			})
+		}
 		if deps.ManagedIPs != nil {
 			// AgentIPCommandsEnabled stays false here. Step 4 flips it
 			// once panel-api ↔ agent ip.bind/ip.unbind contract is wired.

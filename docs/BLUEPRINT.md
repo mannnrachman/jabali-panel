@@ -245,37 +245,6 @@ and stopgap `ssl.self_sign` agent command for emergency fallback.
 - **Evidence:** Commits `ba54273`, `66ae6d2`, `34379db`, `786079a`, `fc8ff7d`
 - **Related ADRs:** ADR-0017 (try-ACME-then-selfsigned-with-backoff)
 
-### 4.8 Authentication & Authorization — Phase 2 (M5a/b)
-
-**Shipped:** Admin impersonation (one-shot login URL model — admin generates a temporary login link that opens in a new tab with no persistent session), 
-break-glass CLI login (`jabali-panel admin login` and `jabali-panel user login` CLI subcommands that mint short-lived login URLs), 
-sessionStorage-based impersonation (survives page reload within the tab but dies when browser session closes).
-
-**M5a: Admin Impersonation (refactored)**
-- `POST /admin/users/:id/impersonate` returns `{ "login_url": "<url>" }` with 5-minute JWT (purpose=cli_login, impersonated_by set)
-- Admin's browser opens the login URL in a new tab via `window.open(login_url, '_blank')`
-- New tab auto-redeems via `POST /auth/cli-login`, sets `sessionStorage.no_refresh=1` and in-memory access token (1h TTL)
-- Impersonation tab has no refresh cookie — session dies cleanly when access token expires
-- No impersonation banner; impersonation tab looks like a normal user session
-- Exit = close the tab. No separate exit endpoint.
-- Nested impersonation not supported (cannot impersonate an admin, cannot impersonate while already impersonating)
-
-**M5b: Break-Glass CLI Login (refactored)**
-- `jabali-panel admin login [--email <e>]` mints 15-minute JWT with purpose="cli_login" (no impersonated_by)
-- `jabali-panel user login <email-or-id>` mints 5-minute JWT with purpose="cli_login" and impersonated_by="cli" (rejects admins)
-- Both print redeemable login URLs with embedded JWT as `?cli_token=...`
-- `POST /auth/cli-login` endpoint validates JWT: if impersonated_by is set, returns access-only (no refresh); otherwise returns access + refresh (full admin session)
-- Audit logging for all CLI-initiated logins
-
-- **Files:** `panel-api/internal/api/auth.go`, `panel-api/internal/api/auth_cli_login.go`, `panel-api/cmd/server/admin_login.go`, `panel-api/cmd/server/user_login.go`, `panel-api/internal/auth/service.go`
-- **Migrations:** `000016_add_impersonated_by_to_refresh_tokens.sql`
-- **API:** `/admin/users/{id}/impersonate` (POST, returns login_url), `/auth/cli-login` (POST, takes cli_token)
-- **CLI commands:** `jabali-panel admin login [--email]`, `jabali-panel user login <email-or-id>`
-- **UI:** UserImpersonateAction button in admin users list; calls impersonate endpoint and opens login_url in new tab
-- **Frontend:** Login.tsx auto-redeems cli_token and sets sessionStorage.no_refresh flag for impersonation tabs
-- **Evidence:** Commits `5324198`, `25435a7`, `623a99f`, `5241f02`, `a1817c1`
-- **Related ADRs:** ADR-0015 (admin-impersonation-jwt-claim), ADR-0016 (break-glass-cli-admin-login)
-
 ### 4.9 Reconciler
 
 **Shipped:** In-process goroutine inside panel-api that listens for domain DB changes,
@@ -327,8 +296,7 @@ guards (checks for existing config files before overwriting).
 13. `000013_create_dns_tables.sql` — dns_zones, dns_records, dns_axfr_allow_list tables
 14. `000014_add_ssl_enabled_to_domains.sql` — ssl_enabled boolean field on domains
 15. `000015_create_ssl_certificates.sql` — ssl_certificates table (cert_path, key_path, issued_at, expires_at, status, last_error, renewal_count, staging, created_at, updated_at)
-16. `000016_add_impersonated_by_to_refresh_tokens.sql` — impersonated_by FK (tracks admin impersonation trail)
-17. `000017_ssl_enabled_default_true.sql` — SSL enabled by default (=1) on new domains
+16. `000017_ssl_enabled_default_true.sql` — SSL enabled by default (=1) on new domains
 18. `000018_add_next_retry_at_to_ssl_certificates.sql` — next_retry_at timestamp + retry_count INT for exponential backoff retry scheduling
 19. `000028_create_php_pools.sql`, `000029_create_php_pool_ini_overrides.sql`, `000030_add_php_pool_id_to_domains.sql` — M9 PHP/FPM pool manager tables + domain FK
 
@@ -564,44 +532,9 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Depends on:** M2 (domains must exist)
 
-### M5a: Admin Impersonation (SHIPPED)
-
-**Goal:** Admins can generate temporary login links to access a user's panel without knowing their password.
-
-**Deliverables:**
-- `POST /admin/users/{id}/impersonate` endpoint — returns `{ "login_url": "<url>" }` with 5-minute JWT (purpose=cli_login, impersonated_by set)
-- Admin's browser opens the login URL in new tab via `window.open(login_url, '_blank')` — original tab untouched
-- Impersonation tab auto-redeems JWT via `POST /auth/cli-login`, sets `sessionStorage.no_refresh=1` for reload resilience
-- Impersonation session is 1h access-token-only (no refresh cookie) — dies cleanly on expiry
-- No UI banner; impersonation tab looks identical to a normal user session
-- Exit = close the tab (no separate exit endpoint)
-- Single impersonation per link; cannot nest further
-
-**Status:** Shipped (commits `5324198`, `25435a7`, `5241f02`, `a1817c1`)
-
-**Depends on:** M1 (auth infrastructure)
-
-### M5b: Break-Glass CLI Login (SHIPPED)
-
-**Goal:** Provide emergency admin access and secure user impersonation from the command line.
-
-**Deliverables:**
-- `jabali-panel admin login [--email <e>]` CLI subcommand — mints 15-minute JWT (purpose=cli_login, no impersonated_by), prints login URL
-- `jabali-panel user login <email-or-id>` CLI subcommand — accepts email or ULID, rejects admins, mints 5-minute JWT (purpose=cli_login, impersonated_by=cli), prints login URL
-- `POST /auth/cli-login` endpoint — validates JWT, branches on impersonated_by: if set → access-token-only (1h, no refresh); if empty → full session (access + refresh cookie)
-- `Purpose` claim validation: middleware rejects any token with Purpose field set when used as normal Bearer token (prevents cli_login tokens from accessing protected routes directly)
-- Audit logging for all CLI-initiated logins
-- No environment variables (CLI_LOGIN_SECRET removed)
-
-**Status:** Shipped (commits `c587144`, `25435a7`, `623a99f`, `5241f02`)
-
-**Depends on:** M1 (auth infrastructure)
-
-**Related ADR:** ADR-0016 (break-glass-cli-admin-login.md)
-
 ### M5c: Two-factor authentication (TOTP + backup codes) (SHIPPED)
 
-**Goal:** Password + TOTP (RFC 6238) for every login, 10 single-use bcrypt-hashed backup codes per user, admin-only break-glass CLI escape hatch.
+**Goal:** Password + TOTP (RFC 6238) for every login, 10 single-use bcrypt-hashed backup codes per user, admin-only CLI disable-2FA escape hatch.
 
 **Deliverables:**
 - Migration `000041_add_2fa_totp`: `users.totp_{secret_encrypted,enabled,enabled_at}` + `totp_backup_codes` table
@@ -615,9 +548,9 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Status:** Shipped (7 commits on `feat-2fa-totp`: `0b68048`, `afc3839`, `009ccf5`, `e2c1f62`, `65536ce`, `27059b1`, `7b1ac16`)
 
-**Depends on:** M1 (auth), M5a (impersonation pattern reused for 2fa_pending JWT Purpose), M5b (CLI admin harness reused for disable-2fa command)
+**Depends on:** M1 (auth)
 
-**Out-of-scope (phase 2):** WebAuthn, SMS, push-based 2FA. Impersonation and `jabali admin login` intentionally bypass 2FA — they are the escape valves.
+**Out-of-scope (phase 2):** WebAuthn, SMS, push-based 2FA.
 
 ### M6: Email (Stalwart integration) (SHIPPED)
 
@@ -979,8 +912,6 @@ until NS delegation propagates. `/etc/hosts` has been the stopgap.
 
 **Dropped (intentionally):**
 
-- **M5a admin impersonation** — Kratos 1.3.1 OSS doesn't expose an admin-session-minting endpoint. Replaced by Kratos recovery-code flow: admin generates a recovery URL via `/admin/recovery/code`, sends to user, user resets password, admin signs in as them with the temp password, helps, user resets to permanent.
-- **M5b break-glass CLI (`jabali admin-login`)** — Operators use `kratos identities list/patch` + `/admin/recovery/code` directly. If Kratos itself is down, restore `jabali_kratos` from `mysqldump`.
 - **M5c panel-side 2FA (`/auth/2fa/*`, TOTP secret storage in panel DB, backup codes)** — 2FA now lives entirely in Kratos; users manage TOTP via `/.ory/self-service/settings/browser`.
 - **Legacy JWT auth (`/api/v1/auth/{login,refresh,logout}`, `auth.JWTIssuer`, `middleware.RequireAuth`, refresh-token table)** — removed wholesale. No `auth.provider` flag, no `jwt_secret` config, no dual-mode middleware.
 - **`jabali kratos-migrate`** — one-shot migration tool dropped after use; fresh installs have no legacy rows to backfill.
@@ -1182,8 +1113,6 @@ Use this table to navigate the codebase when adding a new capability:
 | M3: Server Settings + Hostname + IPs | 2026-03-XX | `6b5dea4`, `ab47b7d` |
 | M4: DNS zones + records + Secondary NS | 2026-04-16 | `f7464a2`, `4b87395` |
 | M5: SSL / Let's Encrypt (core + resilient ACME) | 2026-04-17 | `ba54273`, `66ae6d2`, `34379db`, `786079a`, `fc8ff7d` |
-| M5a: Admin Impersonation | 2026-04-17 | `7bc292f`, `5b14b4c` |
-| M5b: Break-Glass CLI Login | 2026-04-17 | `c587144` |
 | M5c: Two-factor authentication (TOTP + backup codes) | 2026-04-19 | `0b68048` through `7b1ac16` on `feat-2fa-totp` |
 | M6: Email (Stalwart + Bulwark webmail + mailbox SSO) | 2026-04-22 | `caa6e16` through `fc73da4` on `m6/email-stalwart` (ADRs 0041-0045) |
 | M7: Databases (MariaDB) | 2026-04-17 | ADRs 0018-0022 |
@@ -1200,8 +1129,6 @@ Use this table to navigate the codebase when adding a new capability:
 | M17: Diagnostic reports | Planned | — |
 | M18: Per-user resource limits | 2026-04-19 | Waves A-G on `main` (`caebe7b` → `aaa6bd0`); ADR-0032; runbook at `plans/m18-resource-limits-runbook.md`; host validation complete 2026-04-21 (4 bugs fixed incl. rate-limit zone ordering in `45a0ea6`) |
 | M19: Applications Framework (all 8 steps) | 2026-04-19 | `m19/*` branch stack `733d6b8` → MediaWiki commit; ADR-0033; runbook at `docs/runbooks/applications.md`; DokuWiki + MediaWiki SHA-256 tarball pins captured 2026-04-21 |
-| M5a: Admin Impersonation (DROPPED) | 2026-04-20 | Removed by M20 step 6 — replacement via Kratos `/admin/recovery/code` |
-| M5b: Break-Glass CLI Login (DROPPED) | 2026-04-20 | Removed by M20 step 7 — replacement via `kratos identities` + `/admin/recovery/code` |
 | M20: Kratos identity migration (all 9 steps + legacy removal) | 2026-04-20 | ADR-0034; runbook at `plans/m20-kratos-runbook.md`; Waves A–E on `main`; legacy JWT stack + M5c panel-side 2FA + `kratos-migrate` tool all deleted in the same batch — no dual-mode, no rollback flag |
 | Infra: Gitea CI + branch protection | 2026-04-20 | `.gitea/workflows/ci.yml` (3 parallel jobs), self-hosted `act_runner` in host-mode (no Docker/Podman), loose branch protection on `main`. Also fixed pre-existing data race in `TestApplications_CreateWordPress_HappyPath` (`applications_service.go`) that CI's `-race` flag caught. Commits `b181c74` (workflow), `5d1f9a7` (race fix). |
 | M21: Drop Refine (all 5 waves) | 2026-04-21 | ADR-0037; blueprint at `plans/m21-drop-refine.md`; Waves A–E on `m21/drop-refine`; 4 `@refinedev/*` packages removed; production JS −606 kB (−27.6%) / gzip −193 kB; `@ant-design/icons` promoted to direct dep; `useTableURL` + `useQueries` + `AuthContext` now power every list/form/whoami call |

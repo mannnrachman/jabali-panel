@@ -15,6 +15,7 @@ import { useNavigate } from "react-router";
 
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useListQuery } from "../../../hooks/useQueries";
+import { useSelectQuery } from "../../../hooks/useSelectQuery";
 import { useTableURL } from "../../../hooks/useTableURL";
 import { UserDeleteAction } from "./UserDeleteAction";
 import { UserSliceStatus } from "./UserSliceStatus";
@@ -27,8 +28,12 @@ type User = {
   name_first: string;
   name_last: string;
   is_admin: boolean;
+  // Hosting package the user is provisioned against; NULL for admins.
+  package_id?: string | null;
   created_at: string;
 };
+
+type HostingPackage = { id: string; name: string };
 
 const renderName = (_: unknown, r: User) =>
   [r.name_first, r.name_last].filter(Boolean).join(" ");
@@ -74,6 +79,20 @@ function UsersShellTable({
     defaultOrder: "desc",
     extraParams: { is_admin: String(isAdmin) },
   });
+  // Package lookup — single /packages list, reused across both tabs
+  // via TanStack Query's cache. Admins don't have packages so the
+  // column is only meaningful on the users tab, but keeping the call
+  // here keeps the render paths identical. Skip the fetch on the
+  // admins tab.
+  const packagesQ = useSelectQuery<HostingPackage>({
+    resource: "packages",
+    labelField: "name",
+    valueField: "id",
+    enabled: !isAdmin,
+  });
+  const packageNameById = new Map(
+    packagesQ.options.map((o) => [o.value, o.label]),
+  );
 
   // AntD Table's onChange emits the current pagination + sorter;
   // project that back into useTableURL's params so the URL stays
@@ -195,6 +214,23 @@ function UsersShellTable({
           </div>
         )}
       />
+      {!isAdmin && (
+        <Table.Column<User>
+          title="Package"
+          dataIndex="package_id"
+          render={(pid: string | null | undefined) => {
+            if (!pid) return <Typography.Text type="secondary">—</Typography.Text>;
+            const name = packageNameById.get(pid);
+            return name ? (
+              <Tag>{name}</Tag>
+            ) : (
+              <Typography.Text type="secondary">
+                {pid.substring(0, 8)}…
+              </Typography.Text>
+            );
+          }}
+        />
+      )}
       <Table.Column
         dataIndex="created_at"
         title="Created"

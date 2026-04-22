@@ -972,12 +972,16 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 // resolveListenIPAddress returns the kernel address string for a
 // domain's per-family listen binding. When the explicit binding is
 // missing (NULL or the row was somehow deleted), falls back to the
-// family default. Returns "" when no default exists either — the
-// agent's vhost template treats "" as "use all-interfaces fallback".
+// family default. Returns "" when no default exists either, OR when
+// the IP-pool repo isn't wired (older deployments / test profiles) —
+// the agent's vhost template treats "" as "use all-interfaces fallback".
 //
 // Short timeouts because the call sits inside the per-domain reconcile
 // hot path; an IP-pool DB stall must NOT block nginx convergence.
 func (r *Reconciler) resolveListenIPAddress(ctx context.Context, id *uint64, family string) string {
+	if r.managedIPs == nil {
+		return ""
+	}
 	lookupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if id != nil {
@@ -1069,6 +1073,13 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 	// list records for compile. Safe to call every tick: idempotent by
 	// design (re-running finds no rows matching the sentinel content).
 	r.migrateBootstrapShape(ctx, zone, srv)
+
+	// M24: converge the apex A/AAAA records to the domain's effective
+	// listen IP. Idempotent — only writes when content drifts from the
+	// effective binding, never touches user-edited rows. Runs every
+	// reconcile pass so a binding change surfaces in DNS within one
+	// reconcile cycle (≤60s default) per Step 7 exit criteria.
+	r.convergeApexAddrRecords(ctx, zone, domain)
 
 	records, err := r.dnsRecords.ListByZoneID(ctx, zone.ID)
 	if err != nil {
@@ -1537,6 +1548,106 @@ func indexByte(s string, b byte) int {
 //
 // Idempotent: once the new shape is in place, subsequent calls find
 // nothing to do (no legacy A rows, no legacy SPF content).
+// convergeApexAddrRecords upserts the `@` A and `@` AAAA records to
+// match the domain's effective listen IP. Only touches rows flagged
+// Managed=true AND ManagedBy IS NULL (the bootstrap-owned apex addrs);
+// user-edited rows (Managed=false) and M6-owned rows (ManagedBy="m6")
+// are left untouched. Missing rows are created — solves the pre-M24
+// bootstrap case where no v6 was configured at zone-create but the
+// admin later adds one to the pool.
+//
+// Uses `mail` to check presence — the MX host's A/AAAA stay pinned to
+// the server primary because the MTA listens there, regardless of where
+// the tenant's vhost binds. The `mail` reconcile is out of scope for
+// Step 7 (no bug reported, no plan task) — if we ever want it, it needs
+// its own sentinel logic.
+func (r *Reconciler) convergeApexAddrRecords(ctx context.Context, zone *models.DNSZone, domain *models.Domain) {
+	if r.dnsRecords == nil || zone == nil || domain == nil {
+		return
+	}
+	// Without the IP pool we have no source of truth for what the
+	// effective addresses should be. Skipping is safe because the
+	// pre-M24 BootstrapRecords already wrote the server-primary
+	// addresses on zone create.
+	if r.managedIPs == nil {
+		return
+	}
+	v4 := r.resolveListenIPAddress(ctx, domain.ListenIPv4ID, "ipv4")
+	v6 := r.resolveListenIPAddress(ctx, domain.ListenIPv6ID, "ipv6")
+
+	existing, err := r.dnsRecords.ListByZoneID(ctx, zone.ID)
+	if err != nil {
+		r.log.Error("converge apex addrs: list records failed", "zone", zone.Name, "err", err)
+		return
+	}
+	r.ensureApexAddrRow(ctx, zone.ID, existing, "A", v4)
+	r.ensureApexAddrRow(ctx, zone.ID, existing, "AAAA", v6)
+}
+
+// ensureApexAddrRow finds the `@` record of the given type in the
+// existing slice. Three outcomes:
+//   - Row exists, Managed=true, ManagedBy=NULL, content already correct: no-op.
+//   - Row exists, Managed=true, ManagedBy=NULL, content drifts: UPDATE.
+//   - Row exists, Managed=false OR ManagedBy!=NULL: skip (operator edit / M6).
+//   - No row exists, content non-empty: INSERT (system bootstrap of newly-added family).
+//
+// Content="" means no effective IP for that family (e.g. server has no
+// v6 configured and no v6 binding). In that case we DON'T create a row
+// and DON'T blank an existing managed row — the operator may intend to
+// add v6 later; clobbering the row would drop a working record.
+func (r *Reconciler) ensureApexAddrRow(ctx context.Context, zoneID string, existing []models.DNSRecord, recType, content string) {
+	var existingRow *models.DNSRecord
+	for i := range existing {
+		if existing[i].Name == "@" && existing[i].Type == recType {
+			existingRow = &existing[i]
+			break
+		}
+	}
+	if existingRow != nil {
+		if !existingRow.Managed || existingRow.ManagedBy != nil {
+			return
+		}
+		if existingRow.Content == content {
+			return
+		}
+		if content == "" {
+			// No effective IP for this family — leave the existing
+			// row alone. See method doc for rationale.
+			return
+		}
+		existingRow.Content = content
+		existingRow.UpdatedAt = time.Now().UTC()
+		if err := r.dnsRecords.Update(ctx, existingRow); err != nil {
+			r.log.Error("converge apex addrs: update failed",
+				"zone_id", zoneID, "type", recType, "err", err)
+			return
+		}
+		r.log.Info("converge apex addrs: updated", "zone_id", zoneID, "type", recType, "content", content)
+		return
+	}
+	if content == "" {
+		return
+	}
+	rec := &models.DNSRecord{
+		ID:        ids.NewULID(),
+		ZoneID:    zoneID,
+		Name:      "@",
+		Type:      recType,
+		Content:   content,
+		TTL:       3600,
+		Managed:   true,
+		IsEnabled: true,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	if err := r.dnsRecords.Create(ctx, rec); err != nil {
+		r.log.Error("converge apex addrs: create failed",
+			"zone_id", zoneID, "type", recType, "err", err)
+		return
+	}
+	r.log.Info("converge apex addrs: created", "zone_id", zoneID, "type", recType, "content", content)
+}
+
 func (r *Reconciler) migrateBootstrapShape(ctx context.Context, zone *models.DNSZone, srv *models.ServerSettings) {
 	if r.dnsRecords == nil || srv == nil || zone == nil {
 		return

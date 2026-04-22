@@ -58,8 +58,14 @@ type Options struct {
 	Clock func() time.Time
 	// FileMode for the forwards file; default 0640.
 	FileMode os.FileMode
-	// Owner as "user:group" for chown; empty disables chown. Default
-	// "root:pdns-recursor". Tests set "" to skip chown in tmpdir.
+	// Owner as "user:group" for chown; empty disables chown.
+	//
+	// Production wiring passes empty (see commands/pdns_recursor.go),
+	// leaving the file at whatever ownership install.sh seeded — which
+	// is `root:pdns` on Debian. pdns-recursor and pdns-server both run
+	// as the `pdns` account (the pdns-recursor package does NOT create
+	// its own `pdns-recursor` user/group, contra an earlier comment on
+	// this field). Tests set "" to skip chown in tmpdir.
 	Owner string
 }
 

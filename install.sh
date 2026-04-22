@@ -654,15 +654,17 @@ POLICYEOF
     mv "${policy_rc}.jabali-bak" "$policy_rc"
   fi
 
-  # M6.3: pdns-recursor's postinst creates the pdns-recursor group. Hard-fail
-  # here if the group is missing — later in install_pdns_recursor we chown
-  # recursor.forwards to root:pdns-recursor, and without the group that chown
-  # would fail with a cryptic "invalid group" error. policy-rc.d above gates
-  # service start but NOT user/group creation, so the group MUST exist after
-  # apt has run. If it doesn't, the package postinst failed and apt-get
-  # install -f is the operator's recovery path.
-  if ! getent group pdns-recursor >/dev/null; then
-    _die "pdns-recursor group missing after apt-install — package postinst failed; run 'apt-get install -f' and re-run install.sh"
+  # M6.3 Debian packaging fact-check (2026-04-22): pdns-server and
+  # pdns-recursor both run as `pdns:pdns` on Debian — the recursor
+  # package does NOT create its own `pdns-recursor` user/group. Our
+  # recursor.conf below sets `setuid=pdns setgid=pdns` to match, and
+  # recursor.forwards is chowned root:pdns so the daemon can read it.
+  # The earlier hard-fail check against a `pdns-recursor` group was
+  # wrong — it killed every clean install because the group never
+  # existed. `pdns` group is guaranteed by pdns-server's postinst
+  # (pdns-server is in the same apt batch above).
+  if ! getent group pdns >/dev/null; then
+    _die "pdns group missing after apt-install — pdns-server postinst failed; run 'apt-get install -f' and re-run install.sh"
   fi
 
   # Make systemd-resolved actually usable by the panel's DNS Resolvers
@@ -1575,9 +1577,13 @@ RECCONF
   fi
 
   # --- recursor.forwards (seed empty; reconciler owns content) ------
+  # Group `pdns` (not `pdns-recursor`) — the recursor process runs as
+  # `pdns:pdns` per setuid/setgid in recursor.conf above, matching the
+  # Debian package's user model (pdns-server and pdns-recursor share
+  # the `pdns` account — pdns-recursor does NOT create its own user).
   local rec_forwards=/etc/powerdns/recursor.forwards
   if [[ ! -f "$rec_forwards" ]]; then
-    install -m 0640 -o root -g pdns-recursor /dev/null "$rec_forwards"
+    install -m 0640 -o root -g pdns /dev/null "$rec_forwards"
     _log "seeded empty /etc/powerdns/recursor.forwards (reconciler populates)"
   fi
 

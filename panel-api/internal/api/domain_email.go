@@ -433,7 +433,7 @@ func syncEmailDNSOnEnableInline(
 		slog.Error("m6 dns: list records", "zone_id", zone.ID, "err", err)
 		return []string{"DNS autoconfig couldn't read existing records."}
 	}
-	intended := dnscompile.BuildEmailRecords(zone.ID, selector, dkimPub, ids.NewULID, time.Now().UTC())
+	intended := dnscompile.BuildEmailRecords(zone.ID, zone.Name, selector, dkimPub, ids.NewULID, time.Now().UTC())
 
 	var warnings []string
 	for _, rec := range intended {

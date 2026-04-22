@@ -1739,4 +1739,38 @@ func (r *Reconciler) migrateBootstrapShape(ctx context.Context, zone *models.DNS
 		}
 		break // only one apex SPF row, stop scanning
 	}
+
+	// ---------- legacy MX short-label → FQDN ------------------------
+	//
+	// Pre-fix BootstrapRecords wrote MX content as the bare label
+	// "mail". PDNS serves content verbatim — the wire answer "mail."
+	// is a root-relative name that resolvers treat as a TLD lookup and
+	// fail. Rewrite to "mail.<zone>" so the paired apex mail A/AAAA
+	// row is actually reachable.
+	//
+	// Same eligibility as the SPF rewrite: Managed=true AND
+	// ManagedBy=nil. Operator-edited (Managed=false) and feature-owned
+	// (e.g. M6 email) rows are left alone.
+	if zone.Name != "" {
+		wantMX := "mail." + zone.Name
+		for i := range existing {
+			rec := existing[i]
+			if rec.Name != "@" || rec.Type != "MX" || !rec.Managed || rec.ManagedBy != nil {
+				continue
+			}
+			if rec.Content != "mail" {
+				continue // operator-edited, or already migrated, or points elsewhere
+			}
+			rec.Content = wantMX
+			rec.UpdatedAt = time.Now().UTC()
+			if err := r.dnsRecords.Update(ctx, &rec); err != nil {
+				r.log.Error("migrate bootstrap: update MX failed",
+					"zone", zone.Name, "err", err)
+			} else {
+				r.log.Info("migrated MX to FQDN shape",
+					"zone", zone.Name, "new_content", rec.Content)
+			}
+			break // only one apex MX row, stop scanning
+		}
+	}
 }

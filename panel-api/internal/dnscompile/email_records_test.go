@@ -23,6 +23,7 @@ func TestBuildEmailRecords_ShapeAndContent(t *testing.T) {
 	now := time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC)
 	recs := BuildEmailRecords(
 		"zone1",
+		"example.com",
 		"jabali",
 		"v=DKIM1; k=ed25519; p=AAAA",
 		idCounter(),
@@ -36,15 +37,18 @@ func TestBuildEmailRecords_ShapeAndContent(t *testing.T) {
 	require.Equal(t, "TXT", recs[0].Type)
 	require.Equal(t, `"v=DKIM1; k=ed25519; p=AAAA"`, recs[0].Content)
 
-	// Record 1 — autoconfig CNAME with short target.
+	// Record 1 — autoconfig CNAME. Target is the FQDN so PDNS serves
+	// a resolvable answer (short labels would be served verbatim as a
+	// root-relative name and fail).
 	require.Equal(t, "autoconfig", recs[1].Name)
 	require.Equal(t, "CNAME", recs[1].Type)
-	require.Equal(t, "mail", recs[1].Content)
+	require.Equal(t, "mail.example.com", recs[1].Content)
 
-	// Record 2 — _autodiscover._tcp SRV per RFC 2782.
+	// Record 2 — _autodiscover._tcp SRV per RFC 2782. Target FQDN for
+	// the same reason as the CNAME above.
 	require.Equal(t, "_autodiscover._tcp", recs[2].Name)
 	require.Equal(t, "SRV", recs[2].Type)
-	require.Equal(t, "0 0 443 mail", recs[2].Content)
+	require.Equal(t, "0 0 443 mail.example.com", recs[2].Content)
 
 	// All three must be flagged Managed + ManagedBy="m6" so the
 	// delete-on-disable WHERE clause can find them without touching
@@ -64,7 +68,7 @@ func TestBuildEmailRecords_ShapeAndContent(t *testing.T) {
 // rotation lands, the handler will pass the rotated selector through.
 func TestBuildEmailRecords_HonorsSelector(t *testing.T) {
 	recs := BuildEmailRecords(
-		"z", "rotated-20260101", "dummy-pub", idCounter(), time.Now(),
+		"z", "example.com", "rotated-20260101", "dummy-pub", idCounter(), time.Now(),
 	)
 	require.Equal(t, "rotated-20260101._domainkey", recs[0].Name)
 }
@@ -73,7 +77,7 @@ func TestBuildEmailRecords_HonorsSelector(t *testing.T) {
 // refactor that accidentally reuses ids across records (which would
 // violate the PK and blow up Create).
 func TestBuildEmailRecords_IDGeneratorCalledOncePerRecord(t *testing.T) {
-	recs := BuildEmailRecords("z", "s", "p", idCounter(), time.Now())
+	recs := BuildEmailRecords("z", "example.com", "s", "p", idCounter(), time.Now())
 	seen := map[string]bool{}
 	for _, r := range recs {
 		require.False(t, seen[r.ID], "duplicate id %q", r.ID)

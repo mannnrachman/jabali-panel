@@ -74,9 +74,15 @@ func BootstrapRecords(zoneID, zoneName string, srv *models.ServerSettings, idNew
 		out = append(out, mk("www", "CNAME", zoneName, 0))
 	}
 
-	// MX target is the short label "mail"; pdns stores+serves it verbatim.
-	// This record is paired with the mail A/AAAA above.
-	out = append(out, mk("@", "MX", "mail", 10))
+	// MX target is the FQDN "mail.<zone>". PowerDNS serves record
+	// content verbatim — a short-label "mail" would be sent on wire as
+	// a root-relative "mail." that clients interpret as a TLD, failing
+	// to resolve. Same convention as the www CNAME above. Skip the row
+	// entirely if we don't know the zone name rather than write broken
+	// content.
+	if zoneName != "" {
+		out = append(out, mk("@", "MX", "mail."+zoneName, 10))
+	}
 
 	out = append(out, mk("@", "TXT", BuildSPFString(srv), 0))
 

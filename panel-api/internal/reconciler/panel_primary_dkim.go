@@ -138,7 +138,7 @@ func (r *Reconciler) syncPanelPrimaryEmailDNS(ctx context.Context, domainID, sel
 			"zone_id", zone.ID, "err", err)
 		return
 	}
-	intended := dnscompile.BuildEmailRecords(zone.ID, selector, pubKey, ids.NewULID, time.Now().UTC())
+	intended := dnscompile.BuildEmailRecords(zone.ID, zone.Name, selector, pubKey, ids.NewULID, time.Now().UTC())
 	for i := range intended {
 		rec := intended[i]
 		if hasExistingM6DNSRecord(existing, rec.Name, rec.Type) {

@@ -78,6 +78,43 @@ func TestBootstrapRecords_MailStaysA_NotCNAME(t *testing.T) {
 	}
 }
 
+func TestBootstrapRecords_MXTargetIsFQDN(t *testing.T) {
+	// Regression: MX target was the short label "mail", which PowerDNS
+	// serves verbatim (does NOT auto-append the zone). Clients saw a
+	// root-relative "mail." — a TLD lookup that fails. Target must be
+	// the zone-qualified FQDN so resolvers reach the mail host.
+	recs := BootstrapRecords(
+		"zone1",
+		"example.com",
+		&models.ServerSettings{PublicIPv4: "192.0.2.1"},
+		bootIDCounter(),
+	)
+	mx := findRec(t, recs, "@", "MX")
+	if mx.Content != "mail.example.com" {
+		t.Errorf("MX content must be FQDN, got %q (want %q)", mx.Content, "mail.example.com")
+	}
+	if mx.Priority != 10 {
+		t.Errorf("MX priority must be 10, got %d", mx.Priority)
+	}
+}
+
+func TestBootstrapRecords_MXSkippedWhenZoneNameEmpty(t *testing.T) {
+	// Mirror of the www-CNAME safety: if zoneName is absent we can't
+	// build an FQDN target, so skip emitting a broken MX row rather
+	// than fall back to a short-label content that fails resolution.
+	recs := BootstrapRecords(
+		"zone1",
+		"",
+		&models.ServerSettings{PublicIPv4: "192.0.2.1"},
+		bootIDCounter(),
+	)
+	for _, r := range recs {
+		if r.Type == "MX" {
+			t.Fatalf("MX record must not be emitted when zoneName is empty; got %+v", r)
+		}
+	}
+}
+
 func TestBootstrapRecords_SPFIncludesIP4AndIP6(t *testing.T) {
 	tests := []struct {
 		name   string

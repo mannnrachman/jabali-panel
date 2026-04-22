@@ -47,16 +47,16 @@ const EmailRecordsSelector = "jabali"
 // them — not the email-enable handler, which has a narrower remit.
 //
 // Contract notes:
-//   - CNAME content uses the short label "mail"; the dnscompile pass
-//     (compile.go) expands it to "mail.<zone>." at render time, matching
-//     the MX record's "mail" style from BootstrapRecords.
+//   - CNAME content is the FQDN "mail.<zone>". PowerDNS serves record
+//     content verbatim — a short label "mail" would be sent as a
+//     root-relative "mail." that clients can't resolve. Matches the
+//     www-CNAME-to-apex convention established in BootstrapRecords.
 //   - SRV content is "priority weight port target" per RFC 2782.
-//     Target is "mail" (short label) for the same expand-at-render
-//     reason as CNAME.
+//     Target is the FQDN "mail.<zone>" for the same reason.
 //   - TXT content is double-quoted to match BootstrapRecords' format so
 //     a textual diff between the two won't flap on reconciliation.
 func BuildEmailRecords(
-	zoneID, selector, dkimPublicKey string,
+	zoneID, zoneName, selector, dkimPublicKey string,
 	idNew func() string,
 	now time.Time,
 ) []models.DNSRecord {
@@ -77,9 +77,10 @@ func BuildEmailRecords(
 			UpdatedAt: now,
 		}
 	}
+	mailTarget := "mail." + zoneName
 	return []models.DNSRecord{
 		mk(selector+"._domainkey", "TXT", `"`+dkimPublicKey+`"`, 0),
-		mk("autoconfig", "CNAME", "mail", 0),
-		mk("_autodiscover._tcp", "SRV", "0 0 443 mail", 0),
+		mk("autoconfig", "CNAME", mailTarget, 0),
+		mk("_autodiscover._tcp", "SRV", "0 0 443 "+mailTarget, 0),
 	}
 }

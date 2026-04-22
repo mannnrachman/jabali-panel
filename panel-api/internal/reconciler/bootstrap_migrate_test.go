@@ -179,6 +179,79 @@ func TestMigrate_SPF_UntouchedWhenOperatorEdited(t *testing.T) {
 	}
 }
 
+func TestMigrate_LegacyMX_BecomesFQDN(t *testing.T) {
+	// Pre-fix BootstrapRecords wrote MX content as the short label
+	// "mail". PDNS serves content verbatim — the wire answer "mail."
+	// is a broken root-relative name. Migrate to "mail.<zone>".
+	ctx := context.Background()
+	r, rec, zr := newMigrator(t)
+	z := seedZone(t, zr, "zone1", "example.com")
+
+	mx := managedBootstrap("mx", z.ID, "@", "MX", "mail")
+	mx.Priority = 10
+	rec.records["mx"] = mx
+
+	r.migrateBootstrapShape(ctx, z, &models.ServerSettings{PublicIPv4: "192.0.2.1"})
+
+	require.Equal(t, "mail.example.com", rec.records["mx"].Content,
+		"legacy MX short-label must be rewritten to the FQDN")
+	require.Equal(t, 10, rec.records["mx"].Priority, "priority must be preserved")
+}
+
+func TestMigrate_MX_UntouchedWhenOperatorEdited(t *testing.T) {
+	// Operator pointed MX at an external relay — Managed=false is the
+	// marker. Migration must not touch it.
+	ctx := context.Background()
+	r, rec, zr := newMigrator(t)
+	z := seedZone(t, zr, "zone1", "example.com")
+
+	mx := managedBootstrap("mx", z.ID, "@", "MX", "mail")
+	mx.Managed = false
+	mx.Content = "relay.example.net"
+	rec.records["mx"] = mx
+
+	r.migrateBootstrapShape(ctx, z, &models.ServerSettings{PublicIPv4: "192.0.2.1"})
+
+	require.Equal(t, "relay.example.net", rec.records["mx"].Content)
+}
+
+func TestMigrate_MX_UntouchedWhenManagedBySet(t *testing.T) {
+	// ManagedBy != nil means the row belongs to a feature (e.g. M6).
+	// Migration must never rewrite those.
+	ctx := context.Background()
+	r, rec, zr := newMigrator(t)
+	z := seedZone(t, zr, "zone1", "example.com")
+
+	m6 := "m6"
+	mx := managedBootstrap("mx", z.ID, "@", "MX", "mail")
+	mx.ManagedBy = &m6
+	rec.records["mx"] = mx
+
+	r.migrateBootstrapShape(ctx, z, &models.ServerSettings{PublicIPv4: "192.0.2.1"})
+
+	require.Equal(t, "mail", rec.records["mx"].Content,
+		"ManagedBy-tagged MX must survive migration untouched")
+}
+
+func TestMigrate_MX_UntouchedWhenAlreadyFQDN(t *testing.T) {
+	// Fresh installs land with the correct FQDN already — migration
+	// must be a no-op. Idempotency guard: avoid spurious UPDATEs that
+	// would bump UpdatedAt and churn PDNS serials.
+	ctx := context.Background()
+	r, rec, zr := newMigrator(t)
+	z := seedZone(t, zr, "zone1", "example.com")
+
+	mx := managedBootstrap("mx", z.ID, "@", "MX", "mail.example.com")
+	rec.records["mx"] = mx
+	originalUpdatedAt := mx.UpdatedAt
+
+	r.migrateBootstrapShape(ctx, z, &models.ServerSettings{PublicIPv4: "192.0.2.1"})
+
+	require.Equal(t, "mail.example.com", rec.records["mx"].Content)
+	require.Equal(t, originalUpdatedAt, rec.records["mx"].UpdatedAt,
+		"UpdatedAt must not churn when no migration is needed")
+}
+
 func TestMigrate_Idempotent(t *testing.T) {
 	ctx := context.Background()
 	r, rec, zr := newMigrator(t)

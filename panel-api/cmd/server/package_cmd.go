@@ -90,9 +90,6 @@ func newPackageCreateCmd() *cobra.Command {
 		Use:   "create",
 		Short: "Create a hosting package (direct DB — M20-safe)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if name == "" {
-				return fmt.Errorf("--name is required")
-			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 			if err := initConfig(); err != nil {
@@ -139,6 +136,7 @@ func newPackageCreateCmd() *cobra.Command {
 	cmd.Flags().Uint32Var(&ftp, "ftp", 0, "max FTP accounts (0=unlimited)")
 	cmd.Flags().BoolVar(&sshEnabled, "ssh", false, "enable SSH access")
 	cmd.Flags().BoolVar(&cgiEnabled, "cgi", false, "enable CGI")
+	_ = cmd.MarkFlagRequired("name")
 	return cmd
 }
 

@@ -48,9 +48,6 @@ func newMailboxListCmd() *cobra.Command {
 		Short:   "List mailboxes in a domain",
 		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if domainSpec == "" {
-				return fmt.Errorf("--domain is required")
-			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
@@ -92,6 +89,7 @@ func newMailboxListCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&domainSpec, "domain", "", "Domain name or ID (required)")
+	_ = cmd.MarkFlagRequired("domain")
 	return cmd
 }
 
@@ -112,12 +110,6 @@ strong one generated and printed once — it is NOT stored in plaintext
 and cannot be recovered.`,
 		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if domainSpec == "" {
-				return fmt.Errorf("--domain is required")
-			}
-			if localPart == "" {
-				return fmt.Errorf("--local is required")
-			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 			defer cancel()
 
@@ -151,6 +143,8 @@ and cannot be recovered.`,
 	cmd.Flags().StringVar(&localPart, "local", "", "Local part, e.g. \"alice\" (required)")
 	cmd.Flags().StringVar(&password, "password", "", "Explicit password (omit to auto-generate)")
 	cmd.Flags().Uint64Var(&quotaMB, "quota-mb", 0, "Disk quota in MiB (default 1024)")
+	_ = cmd.MarkFlagRequired("domain")
+	_ = cmd.MarkFlagRequired("local")
 	return cmd
 }
 

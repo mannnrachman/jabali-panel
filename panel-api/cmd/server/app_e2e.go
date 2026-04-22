@@ -60,10 +60,6 @@ For each registered app_type:
 Final output is a matrix. Useful for catching upstream URL drift,
 missing system packages, and per-app extraction quirks in one run.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if domainID == "" {
-				return fmt.Errorf("--domain-id is required (the domain everything installs under)")
-			}
-
 			ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Hour)
 			defer cancel()
 
@@ -103,6 +99,7 @@ missing system packages, and per-app extraction quirks in one run.`,
 	cmd.Flags().BoolVar(&keep, "keep", false, "Don't delete installs after the run (debug)")
 	cmd.Flags().IntVar(&waitSec, "wait-timeout", 600, "Per-app install timeout in seconds")
 	cmd.Flags().BoolVar(&stopOnFail, "stop-on-fail", false, "Stop the sweep after the first failure")
+	_ = cmd.MarkFlagRequired("domain-id")
 	return cmd
 }
 

@@ -226,13 +226,6 @@ func newAppInstallCmd() *cobra.Command {
 		Use:   "install",
 		Short: "Install an app on a domain (direct service — M20-safe)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if appType == "" {
-				return fmt.Errorf("--app-type is required")
-			}
-			if domainID == "" {
-				return fmt.Errorf("--domain-id is required")
-			}
-
 			parsed, err := parseParamFlags(params)
 			if err != nil {
 				return fmt.Errorf("--param: %w", err)
@@ -294,6 +287,8 @@ func newAppInstallCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&params, "param", nil, "Per-app param: --param key=value (value is JSON; repeat for multiple)")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Poll until status is ready or failed")
 	cmd.Flags().IntVar(&waitSec, "wait-timeout", 600, "Seconds to wait when --wait is set")
+	_ = cmd.MarkFlagRequired("app-type")
+	_ = cmd.MarkFlagRequired("domain-id")
 	return cmd
 }
 

@@ -36,9 +36,16 @@ func newRootCmd() *cobra.Command {
 		Use:   "jabali",
 		Short: "Jabali Panel — web hosting control panel",
 		Long:  "Jabali Panel CLI. Use subcommands to manage users, view system status, or start the panel server.",
-		// Silence usage on error — cobra prints usage by default which is
-		// noisy for operational commands.
-		SilenceUsage: true,
+		// Usage is shown on error by default. This matters most when a
+		// caller forgets a required flag (e.g. `jabali app install`):
+		// Cobra emits "Error: required flag(s) not set" AND the command's
+		// full usage, so the operator sees which flags to add without a
+		// second invocation. Operational errors (server down, 500 from
+		// panel) show usage too — slightly noisier, but the usage output
+		// is never misleading, and for a CLI this size the extra context
+		// is worth it. Individual commands can set SilenceUsage=true
+		// locally if their error paths are already self-explanatory.
+		SilenceUsage: false,
 	}
 
 	cmd.PersistentFlags().StringVar(&cfgPath, "config", "", "config file path (default: /etc/jabali/config.toml)")

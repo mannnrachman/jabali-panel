@@ -3469,10 +3469,18 @@ main() {
   write_systemd_unit
   start_and_verify_agent
   start_and_verify
+  # First-phase Stalwart bootstrap (binary download, service user,
+  # stalwart-cli, admin token, MariaDB password file, apply plan render,
+  # unit file install). Safe to run after start_and_verify — doesn't
+  # depend on the panel being up, just on the repo being cloned.
+  install_stalwart
   # Second-phase Stalwart bootstrap: needs jabali_panel.{mailboxes,domains}
   # to exist, which the panel service creates via migration 000054 on its
   # first start (inside start_and_verify). Must run after, never before.
   install_stalwart_apply
+  # Bulwark webmail. Depends on Stalwart being live (JMAP backend) so it
+  # runs after install_stalwart_apply.
+  install_bulwark
   seed_last_built_sha
   _ok "jabali-panel + jabali-agent installed. Status:"
   _ok "  systemctl status $AGENT_SERVICE_NAME"

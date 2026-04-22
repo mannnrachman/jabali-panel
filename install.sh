@@ -1609,6 +1609,46 @@ AFTEREOF
     _log "wrote pdns-recursor.service.d/10-jabali-after.conf"
   fi
 
+  # --- ExecStart override for --enable-old-settings ---------------
+  # PowerDNS Recursor 5.2 (Debian 13 trixie ships 5.2.8) flipped the
+  # config-file default from old-style `key=value` to YAML. Our
+  # recursor.conf above is still key=value, and without this flag the
+  # daemon dies at startup with:
+  #   error="invalid type: string \"local-address=127.0.0.1, ::1
+  #   local-port=53\", expected struct Recursorsettings at line 3"
+  #   Old-style settings syntax not enabled by default anymore.
+  #   Use YAML or enable with --enable-old-settings on the command line
+  # systemd then auto-restarts forever (restart_counter climbs into
+  # the thousands), and `systemctl restart` blocks on stabilisation.
+  # The flag is the official escape hatch until we do the YAML
+  # conversion (tracked as an M6.3 follow-up).
+  #
+  # Approach: drop-in that blanks + replaces ExecStart (first `=`
+  # empties the directive, second `=` sets the replacement — standard
+  # systemd override idiom). Source ExecStart copied verbatim from
+  # upstream's /usr/lib/systemd/system/pdns-recursor.service plus
+  # `--enable-old-settings`.
+  local rec_exec_dropin=/etc/systemd/system/pdns-recursor.service.d/20-jabali-old-settings.conf
+  local rec_exec_dropin_new="${rec_exec_dropin}.new"
+  cat > "$rec_exec_dropin_new" <<'EXECEOF'
+# Managed by jabali-panel install.sh (M6.3). pdns-recursor 5.2 made
+# YAML the default config format; we still emit old-style key=value
+# in /etc/powerdns/recursor.conf. --enable-old-settings keeps the
+# old parser until a later M6.3.x converts our config to YAML. See
+# docs/adr/0047-pdns-recursor-local-self-resolution.md for context.
+[Service]
+ExecStart=
+ExecStart=/usr/sbin/pdns_recursor --daemon=no --write-pid=no --disable-syslog --log-timestamp=no --enable-old-settings
+EXECEOF
+  if [[ -f "$rec_exec_dropin" ]] && cmp -s "$rec_exec_dropin" "$rec_exec_dropin_new"; then
+    rm -f "$rec_exec_dropin_new"
+  else
+    mv "$rec_exec_dropin_new" "$rec_exec_dropin"
+    chmod 0644 "$rec_exec_dropin"
+    recursor_changed=1
+    _log "wrote pdns-recursor.service.d/20-jabali-old-settings.conf"
+  fi
+
   # --- zz-jabali-recursor.conf drop-in for systemd-resolved --------
   #
   # Alphabetically AFTER the panel-UI-managed jabali.conf. Per
@@ -1679,24 +1719,39 @@ RESAFTEREOF
   # --- start + restart sequence ------------------------------------
   # Order: recursor FIRST (so resolved has something to forward to).
   # Use restart-if-changed / start-if-inactive, never a blind restart.
-  systemctl enable pdns-recursor >/dev/null 2>&1 || true
+  #
+  # Every systemctl call below is wrapped in `timeout 30` — bare
+  # systemctl restart BLOCKS until the unit stabilises, which means a
+  # bad config + Restart=on-failure loop (as happened with the 5.2
+  # YAML-default incident) hangs the install script indefinitely
+  # instead of surfacing the error. 30s is well above any legitimate
+  # start time for these units; if we hit it, something is wrong and
+  # we dump the journal + _die so the operator sees the real cause.
+  timeout 30 systemctl enable pdns-recursor >/dev/null 2>&1 || true
   if [[ "$recursor_changed" == "1" ]]; then
     _log "restarting pdns-recursor (config changed)"
-    systemctl restart pdns-recursor
+    timeout 30 systemctl restart pdns-recursor \
+      || { journalctl -u pdns-recursor --no-pager -n 50 >&2
+           _die "pdns-recursor restart failed or timed out (30s); see journal above"; }
   elif ! systemctl is-active --quiet pdns-recursor; then
     _log "starting pdns-recursor (was inactive)"
-    systemctl start pdns-recursor
+    timeout 30 systemctl start pdns-recursor \
+      || { journalctl -u pdns-recursor --no-pager -n 50 >&2
+           _die "pdns-recursor start failed or timed out (30s); see journal above"; }
   fi
   sleep 1
   systemctl is-active --quiet pdns-recursor \
-    || { journalctl -u pdns-recursor --no-pager -n 50; _die "pdns-recursor failed to start; see journal above"; }
+    || { journalctl -u pdns-recursor --no-pager -n 50 >&2; _die "pdns-recursor failed to start; see journal above"; }
 
   if [[ "$resolved_changed" == "1" ]]; then
     _log "restarting systemd-resolved (drop-in changed)"
-    systemctl restart systemd-resolved
+    timeout 30 systemctl restart systemd-resolved \
+      || { journalctl -u systemd-resolved --no-pager -n 50 >&2
+           _die "systemd-resolved restart failed or timed out (30s); see journal above"; }
     sleep 1
     systemctl is-active --quiet systemd-resolved \
-      || _die "systemd-resolved failed to restart; see 'journalctl -u systemd-resolved'"
+      || { journalctl -u systemd-resolved --no-pager -n 50 >&2
+           _die "systemd-resolved failed to restart; see journal above"; }
   fi
 
   # --- post-install probe matrix -----------------------------------

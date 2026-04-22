@@ -52,7 +52,11 @@ INSERT INTO managed_ips (address, family, label, is_default, is_bound, is_user_s
 -- IPv6 is OPTIONAL — many panel hosts run IPv4-only. WHERE filter skips
 -- the row entirely when @v6 is NULL/empty; INSERT IGNORE absorbs the
 -- unique-conflict on re-runs.
+--
+-- Note: derived-table alias is `seed1`, NOT `dual` — `dual` became a
+-- reserved word in MariaDB 11.4+ and using it as an identifier raises
+-- ER_PARSE_ERROR on fresh installs against current MariaDB.
 INSERT IGNORE INTO managed_ips (address, family, label, is_default, is_bound, is_user_selectable)
   SELECT @v6, 'ipv6', 'server primary (v6)', TRUE, FALSE, FALSE
-    FROM (SELECT 1) AS dual
+    FROM (SELECT 1) AS seed1
    WHERE @v6 IS NOT NULL;

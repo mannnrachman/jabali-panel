@@ -41,16 +41,45 @@ func NewRunner() *Runner {
 }
 
 // Issue runs certbot to issue a new certificate.
-func (r *Runner) Issue(domain, webroot, email string, staging bool) (*Result, error) {
+//
+// extraHostnames adds extra SANs beyond the primary domain. Added as
+// repeated -d flags after the primary domain. Duplicates (including the
+// primary domain) are skipped.
+//
+// When an existing cert at LERoot/live/<domain> already covers a strict
+// subset of the requested SAN set, Issue adds --expand so certbot
+// re-issues a superset cert. Without --expand, --keep-until-expiring
+// would silently reuse the narrower existing cert and the new
+// hostnames would never appear on the wire.
+func (r *Runner) Issue(domain, webroot, email string, staging bool, extraHostnames []string) (*Result, error) {
 	args := []string{
 		"certonly",
 		"--webroot",
 		"-w", webroot,
 		"-d", domain,
+	}
+	seen := map[string]struct{}{domain: {}}
+	requested := []string{domain}
+	for _, h := range extraHostnames {
+		if _, dup := seen[h]; dup {
+			continue
+		}
+		seen[h] = struct{}{}
+		requested = append(requested, h)
+		args = append(args, "-d", h)
+	}
+	args = append(args,
 		"-m", email,
 		"--agree-tos",
 		"--non-interactive",
 		"--keep-until-expiring",
+	)
+
+	// Expand-if-needed: when the existing cert's SAN set doesn't cover
+	// everything in `requested`, add --expand so certbot issues a
+	// superset. No-op when no existing cert yet (first issuance).
+	if existingCertMissingAny(fmt.Sprintf("%s/live/%s/fullchain.pem", r.LERoot, domain), requested) {
+		args = append(args, "--expand")
 	}
 
 	if staging {
@@ -268,6 +297,32 @@ func parsePEM(pemBytes []byte) (*x509.Certificate, error) {
 	}
 
 	return cert, nil
+}
+
+// existingCertMissingAny reads the cert at certPath (if any) and returns
+// true iff its DNSNames don't cover every entry in `want`. When no cert
+// exists (first issuance) or the cert is unparseable, returns false
+// — there's nothing to expand. The intent is narrow: decide whether
+// certbot needs --expand, never to block issuance on cert-read errors.
+func existingCertMissingAny(certPath string, want []string) bool {
+	pemBytes, err := exec.Command("cat", certPath).Output()
+	if err != nil {
+		return false
+	}
+	cert, err := parsePEM(pemBytes)
+	if err != nil {
+		return false
+	}
+	have := make(map[string]struct{}, len(cert.DNSNames))
+	for _, n := range cert.DNSNames {
+		have[n] = struct{}{}
+	}
+	for _, w := range want {
+		if _, ok := have[w]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 // classifyStderr maps certbot errors to reason codes.

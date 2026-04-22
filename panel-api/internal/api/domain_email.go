@@ -23,11 +23,20 @@ import (
 // helper needs. Passed as a struct so both the explicit /domains/:id/email
 // handler (via DomainEmailHandlerConfig) and the auto-enable path in
 // domain.create (via DomainHandlerConfig) can funnel into one codepath.
+//
+// SSLCerts and SSLReconciler are optional — when both are set, enabling
+// email on a domain flips any existing issued/self-signed cert row to
+// status="renewing" so the next reconciler tick re-issues the cert with
+// mail.<domain> + autoconfig.<domain> added to its SANs (M6.1). When
+// they're nil, the helper skips the flip (call sites that don't wire
+// SSL, like some unit tests, still work).
 type enableDomainEmailDeps struct {
-	Agent      agent.AgentInterface
-	Domains    repository.DomainRepository
-	DNSZones   repository.DNSZoneRepository
-	DNSRecords repository.DNSRecordRepository
+	Agent         agent.AgentInterface
+	Domains       repository.DomainRepository
+	DNSZones      repository.DNSZoneRepository
+	DNSRecords    repository.DNSRecordRepository
+	SSLCerts      repository.SSLCertificateRepository
+	SSLReconciler SSLScheduler
 }
 
 // Sentinel errors so callers can distinguish HTTP status classes when
@@ -103,15 +112,70 @@ func EnableDomainEmailInline(
 	dom.DkimPublicKey = &pubKey
 	dom.EmailEnabledAt = &now
 
+	// M6.1: trigger SSL re-issuance so mail.<domain> + autoconfig.<domain>
+	// land on the cert. Best-effort — any failure here is logged and
+	// added to warnings, never blocks the email_enabled flip.
+	if msg := triggerSSLSANExpansion(ctx, deps, dom); msg != "" {
+		warnings = append(warnings, msg)
+	}
+
 	return selector, pubKey, warnings, nil
 }
 
+// triggerSSLSANExpansion flips the existing SSL cert row for this domain
+// to status="renewing" so the reconciler re-issues with the new SANs on
+// its next tick. Returns a human-readable warning string on any
+// non-fatal failure (repo missing, cert not found, update failed); empty
+// string on success or when nothing to do.
+//
+// Only `issued` and `self_signed` certs are flipped. Other statuses
+// (pending, renewing, pending_acme_retry, failed, revoked) are left
+// alone — they're either already converging or in a state the operator
+// must resolve manually.
+func triggerSSLSANExpansion(ctx context.Context, deps enableDomainEmailDeps, dom *models.Domain) string {
+	if deps.SSLCerts == nil {
+		// SSL not wired (e.g. unit-test path). Log but don't warn the
+		// operator — reconciler is disabled in this path by design.
+		slog.Info("email_enable: SSL reconciliation skipped (SSLCerts not wired)", "domain", dom.Name)
+		return ""
+	}
+	cert, err := deps.SSLCerts.FindByDomainID(ctx, dom.ID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			// No cert yet — the normal ssl_enabled=true flow will
+			// issue one; it'll pick up sanHostnamesForDomain on first
+			// issuance.
+			return ""
+		}
+		slog.Warn("email_enable: lookup SSL cert failed", "domain", dom.Name, "err", err)
+		return "SSL cert lookup failed; retry ssl reconcile manually"
+	}
+	if cert.Status != models.SSLStatusIssued && cert.Status != models.SSLStatusSelfSigned {
+		// Already in a transitional state — reconciler will handle it.
+		return ""
+	}
+	if err := deps.SSLCerts.UpdateStatus(ctx, cert.ID, models.SSLStatusRenewing, nil); err != nil {
+		slog.Warn("email_enable: flip cert to renewing failed", "domain", dom.Name, "err", err)
+		return "SSL cert flip-to-renewing failed; mail.<domain> may be missing from cert until manual renewal"
+	}
+	if deps.SSLReconciler != nil {
+		deps.SSLReconciler.Schedule(dom.ID)
+	}
+	slog.Info("email_enable: SSL cert flipped to renewing for SAN expansion", "domain", dom.Name)
+	return ""
+}
+
 // DomainEmailHandlerConfig wires the email-on-domain endpoints.
+//
+// SSLCerts + SSLReconciler are optional — when both are wired, enabling
+// email on a domain triggers SSL SAN expansion via the reconciler.
 type DomainEmailHandlerConfig struct {
-	Domains    repository.DomainRepository
-	Agent      agent.AgentInterface
-	DNSZones   repository.DNSZoneRepository
-	DNSRecords repository.DNSRecordRepository
+	Domains       repository.DomainRepository
+	Agent         agent.AgentInterface
+	DNSZones      repository.DNSZoneRepository
+	DNSRecords    repository.DNSRecordRepository
+	SSLCerts      repository.SSLCertificateRepository
+	SSLReconciler SSLScheduler
 }
 
 const (
@@ -241,10 +305,12 @@ func (h *domainEmailHandler) enable(c *gin.Context) {
 	}
 
 	selector, pubKey, warnings, err := EnableDomainEmailInline(ctx, enableDomainEmailDeps{
-		Agent:      h.cfg.Agent,
-		Domains:    h.cfg.Domains,
-		DNSZones:   h.cfg.DNSZones,
-		DNSRecords: h.cfg.DNSRecords,
+		Agent:         h.cfg.Agent,
+		Domains:       h.cfg.Domains,
+		DNSZones:      h.cfg.DNSZones,
+		DNSRecords:    h.cfg.DNSRecords,
+		SSLCerts:      h.cfg.SSLCerts,
+		SSLReconciler: h.cfg.SSLReconciler,
 	}, dom)
 	if err != nil {
 		// Translate helper error categories back to HTTP responses.

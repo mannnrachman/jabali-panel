@@ -167,10 +167,27 @@ Operator notes:
 - Bulwark's own `SESSION_SECRET` is never exposed to the panel —
   Bulwark signs the cookie itself. A full panel-DB compromise cannot
   forge arbitrary webmail sessions.
-- Dev VMs with self-signed certs need `NODE_TLS_REJECT_UNAUTHORIZED=0`
-  added to `/etc/jabali-panel/bulwark.env` so Bulwark's own JMAP-verify
-  step trusts the loopback cert. Production Let's Encrypt certs
-  validate natively; don't set this on production hosts.
+- **M6.1 SAN expansion:** enabling email on a domain flips the SSL cert
+  row to `renewing`; the reconciler re-issues the cert with
+  `mail.<domain>` + `autoconfig.<domain>` added to its SANs (certbot
+  `--expand` handles existing certs, self-signed regens in place). The
+  cert on disk therefore covers the hostname Bulwark's server-side JMAP
+  verify fetches, so the previous `NODE_TLS_REJECT_UNAUTHORIZED=0`
+  workaround is no longer needed.
+- **Dev-host trust store:** self-signed installs need the panel's local
+  CA imported into the OS trust store (`/usr/local/share/ca-certificates/`
+  + `update-ca-certificates`) AND into the browser's trust store. Two
+  reasons the browser trust matters: (1) Chrome refuses to save
+  Bulwark's `Secure` session cookies on pages it marks "Not secure,"
+  so without trust the SSO redirect succeeds but the cookie is silently
+  dropped and the user lands back at `/en/login`. (2) Service workers
+  won't register without a valid chain. Production Let's Encrypt certs
+  pass both checks natively.
+- **Dev-host /etc/hosts:** the VM's `/etc/hosts` must map
+  `mail.<domain>` and `autoconfig.<domain>` to `127.0.0.1` (or the
+  panel's bound IP). Bulwark's server-side verify fetch uses the OS
+  resolver; without a hosts override it goes to public DNS and lands
+  on whoever happens to own the parent domain.
 
 ## DKIM rotation (manual, v1)
 
@@ -313,10 +330,18 @@ curl -fsSI --resolve mail.<domain>:443:127.0.0.1 https://mail.<domain>/ -k
 ```
 
 Common causes:
-- `Failed to verify JMAP session` → Bulwark can't verify TLS to
-  `https://mail.<domain>`. On dev VMs add `NODE_TLS_REJECT_UNAUTHORIZED=0`
-  to `/etc/jabali-panel/bulwark.env` and restart. On production check
-  LE cert validity + `mail.<domain>` SAN coverage.
+- `Failed to verify JMAP session` → Bulwark's server-side fetch to
+  `https://mail.<domain>/.well-known/jmap` failed. Check, in order:
+  (1) `getent hosts mail.<domain>` resolves to the panel host (add
+  to `/etc/hosts` on dev VMs — see §Webmail SSO);
+  (2) the cert at `/etc/ssl/jabali-selfsigned/<domain>/fullchain.pem`
+  (or the LE `live/` path) has `mail.<domain>` in its SAN list —
+  `openssl x509 -in <path> -noout -text | grep DNS:` should show it.
+  If it's missing, the M6.1 SAN-expansion trigger didn't fire; poke
+  the reconciler with `POST /api/v1/domains/:id/ssl/renew` or wait
+  for the next tick;
+  (3) the local CA is trusted by the OS (`update-ca-certificates`
+  after copying the self-signed CA into `/usr/local/share/ca-certificates/`).
 - `500 Internal Server Error` from the root `/` path → the nginx vhost
   is sending `X-Forwarded-Proto: https` to the Bulwark location,
   tripping the Next.js middleware-rewrite self-proxy bug. Our vhost

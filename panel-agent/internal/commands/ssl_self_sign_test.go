@@ -240,6 +240,158 @@ func TestSSLSelfSign_ReusesValidCert(t *testing.T) {
 	}
 }
 
+func TestSSLSelfSign_ExtraHostnamesIncludedInSANs(t *testing.T) {
+	tempDir := t.TempDir()
+	oldBaseSelfSignDir := baseSelfSignDir
+	baseSelfSignDir = tempDir
+	t.Cleanup(func() { baseSelfSignDir = oldBaseSelfSignDir })
+
+	params := sslSelfSignParams{
+		Domain:    "example.com",
+		Days:      365,
+		Hostnames: []string{"mail.example.com", "autoconfig.example.com"},
+	}
+	paramsJSON, _ := json.Marshal(params)
+	result, err := sslSelfSignHandler(context.Background(), paramsJSON)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	resp := result.(sslSelfSignResponse)
+
+	certBytes, _ := os.ReadFile(resp.CertPath)
+	block, _ := pem.Decode(certBytes)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse cert: %v", err)
+	}
+
+	want := []string{"example.com", "www.example.com", "mail.example.com", "autoconfig.example.com"}
+	if len(cert.DNSNames) != len(want) {
+		t.Fatalf("DNSNames len: got %d (%v), want %d (%v)", len(cert.DNSNames), cert.DNSNames, len(want), want)
+	}
+	for i, w := range want {
+		if cert.DNSNames[i] != w {
+			t.Errorf("DNSNames[%d]: got %q, want %q", i, cert.DNSNames[i], w)
+		}
+	}
+}
+
+func TestSSLSelfSign_RegeneratesOnSANExpansion(t *testing.T) {
+	// Covers the M6.1 cache-invalidation bug: a still-valid cert with
+	// an outdated SAN set (e.g. issued before email_enable added
+	// mail.<domain>) must be regenerated, not reused.
+	tempDir := t.TempDir()
+	oldBaseSelfSignDir := baseSelfSignDir
+	baseSelfSignDir = tempDir
+	t.Cleanup(func() { baseSelfSignDir = oldBaseSelfSignDir })
+
+	// First issuance: no extras.
+	p1, _ := json.Marshal(sslSelfSignParams{Domain: "example.com", Days: 365})
+	r1, err := sslSelfSignHandler(context.Background(), p1)
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	cert1Bytes, _ := os.ReadFile(r1.(sslSelfSignResponse).CertPath)
+
+	// Second issuance: SAN set grows. Must regenerate.
+	p2, _ := json.Marshal(sslSelfSignParams{
+		Domain:    "example.com",
+		Days:      365,
+		Hostnames: []string{"mail.example.com"},
+	})
+	r2, err := sslSelfSignHandler(context.Background(), p2)
+	if err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+	cert2Bytes, _ := os.ReadFile(r2.(sslSelfSignResponse).CertPath)
+
+	if string(cert1Bytes) == string(cert2Bytes) {
+		t.Fatal("cert was reused but SAN set grew; should have regenerated")
+	}
+
+	block, _ := pem.Decode(cert2Bytes)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse regen cert: %v", err)
+	}
+	found := false
+	for _, n := range cert.DNSNames {
+		if n == "mail.example.com" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("regenerated cert missing mail.example.com; got %v", cert.DNSNames)
+	}
+}
+
+func TestSSLSelfSign_ReusesWhenSANSubsetIsSame(t *testing.T) {
+	// Same-SAN-set second call still hits the reuse path.
+	tempDir := t.TempDir()
+	oldBaseSelfSignDir := baseSelfSignDir
+	baseSelfSignDir = tempDir
+	t.Cleanup(func() { baseSelfSignDir = oldBaseSelfSignDir })
+
+	params := sslSelfSignParams{
+		Domain:    "example.com",
+		Days:      365,
+		Hostnames: []string{"mail.example.com"},
+	}
+	pJSON, _ := json.Marshal(params)
+
+	r1, err := sslSelfSignHandler(context.Background(), pJSON)
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	c1, _ := os.ReadFile(r1.(sslSelfSignResponse).CertPath)
+
+	r2, err := sslSelfSignHandler(context.Background(), pJSON)
+	if err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+	c2, _ := os.ReadFile(r2.(sslSelfSignResponse).CertPath)
+
+	if string(c1) != string(c2) {
+		t.Error("cert should have been reused (same SAN set, not expired)")
+	}
+}
+
+func TestSSLSelfSign_InvalidHostname(t *testing.T) {
+	tempDir := t.TempDir()
+	oldBaseSelfSignDir := baseSelfSignDir
+	baseSelfSignDir = tempDir
+	t.Cleanup(func() { baseSelfSignDir = oldBaseSelfSignDir })
+
+	params := sslSelfSignParams{
+		Domain:    "example.com",
+		Days:      365,
+		Hostnames: []string{"bad_underscore"},
+	}
+	pJSON, _ := json.Marshal(params)
+	_, err := sslSelfSignHandler(context.Background(), pJSON)
+	if err == nil {
+		t.Fatal("expected error for invalid hostname in hostnames[]")
+	}
+	agentErr, ok := err.(*agentwire.AgentError)
+	if !ok || agentErr.Code != agentwire.CodeInvalidArgument {
+		t.Fatalf("expected CodeInvalidArgument, got %+v", err)
+	}
+}
+
+func TestBuildSelfSignSANs(t *testing.T) {
+	got := buildSelfSignSANs("example.com", []string{"mail.example.com", "example.com", "autoconfig.example.com", "www.example.com"})
+	want := []string{"example.com", "www.example.com", "mail.example.com", "autoconfig.example.com"}
+	if len(got) != len(want) {
+		t.Fatalf("dedup len: got %v, want %v", got, want)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("order: got[%d]=%q want %q (full: %v)", i, got[i], w, got)
+		}
+	}
+}
+
 func TestSSLSelfSignCommandRegistered(t *testing.T) {
 	handlers := Default.Commands()
 	found := false

@@ -1832,3 +1832,33 @@ func TestReconcileMysqlAdminShadow_BatchLimitOf50(t *testing.T) {
 	require.Equal(t, 50, len(sso.ensureShadowCalls))
 }
 
+
+// TestSANHostnamesForDomain covers the M6.1 helper: email-enabled
+// domains advertise mail.<d> + autoconfig.<d> as extra SANs; others
+// return nil (base [domain, www.domain] set handled by the cert gen).
+func TestSANHostnamesForDomain(t *testing.T) {
+	t.Run("nil domain", func(t *testing.T) {
+		if got := sanHostnamesForDomain(nil); got != nil {
+			t.Errorf("got %v, want nil", got)
+		}
+	})
+	t.Run("email disabled", func(t *testing.T) {
+		d := &models.Domain{Name: "example.com", EmailEnabled: false}
+		if got := sanHostnamesForDomain(d); got != nil {
+			t.Errorf("got %v, want nil", got)
+		}
+	})
+	t.Run("email enabled", func(t *testing.T) {
+		d := &models.Domain{Name: "example.com", EmailEnabled: true}
+		got := sanHostnamesForDomain(d)
+		want := []string{"mail.example.com", "autoconfig.example.com"}
+		if len(got) != len(want) {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+		for i, w := range want {
+			if got[i] != w {
+				t.Errorf("[%d]: got %q, want %q", i, got[i], w)
+			}
+		}
+	})
+}

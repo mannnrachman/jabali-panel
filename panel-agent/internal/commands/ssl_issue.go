@@ -12,11 +12,17 @@ import (
 )
 
 // sslIssueParams is the input shape for ssl.issue.
+//
+// Hostnames lists extra SANs beyond the primary Domain — used by M6.1
+// to include mail.<domain> + autoconfig.<domain> when email is enabled.
+// Empty slice = single-SAN cert (legacy behavior). Each hostname is
+// validated against sslDomainRegex.
 type sslIssueParams struct {
-	Domain  string `json:"domain"`
-	Webroot string `json:"webroot"`
-	Email   string `json:"email"`
-	Staging bool   `json:"staging"`
+	Domain    string   `json:"domain"`
+	Webroot   string   `json:"webroot"`
+	Email     string   `json:"email"`
+	Staging   bool     `json:"staging"`
+	Hostnames []string `json:"hostnames,omitempty"`
 }
 
 // sslIssueResponse is the output shape for ssl.issue.
@@ -67,9 +73,19 @@ func sslIssueHandler(ctx context.Context, params json.RawMessage) (any, error) {
 		}
 	}
 
+	// Validate each extra hostname with the same regex as the primary domain.
+	for _, h := range p.Hostnames {
+		if !sslDomainRegex.MatchString(h) {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInvalidArgument,
+				Message: fmt.Sprintf("invalid hostname %q in hostnames[]", h),
+			}
+		}
+	}
+
 	// Run certbot
 	runner := certbot.NewRunner()
-	result, err := runner.Issue(p.Domain, p.Webroot, p.Email, p.Staging)
+	result, err := runner.Issue(p.Domain, p.Webroot, p.Email, p.Staging, p.Hostnames)
 
 	if err != nil {
 		details, _ := json.Marshal(map[string]any{

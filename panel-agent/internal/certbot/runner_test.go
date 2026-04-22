@@ -21,7 +21,7 @@ func TestIssueHappyPath(t *testing.T) {
 	tmp := t.TempDir()
 	runner := setupFakeCertbot(t, tmp, "success")
 
-	result, err := runner.Issue("example.com", "/var/www/example", "admin@example.com", false)
+	result, err := runner.Issue("example.com", "/var/www/example", "admin@example.com", false, nil)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -48,7 +48,7 @@ func TestIssueWithStaging(t *testing.T) {
 	tmp := t.TempDir()
 	runner := setupFakeCertbot(t, tmp, "success")
 
-	result, err := runner.Issue("example.com", "/var/www/example", "admin@example.com", true)
+	result, err := runner.Issue("example.com", "/var/www/example", "admin@example.com", true, nil)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -191,6 +191,220 @@ func TestParseCertValidity(t *testing.T) {
 	}
 }
 
+// setupArgCapturingCertbot installs a fake certbot that captures its argv
+// into tmp/args.log on every invocation and writes a valid cert to
+// LERoot/live/<domain>/. Used by SAN-expansion tests to assert the exact
+// -d / --expand flags the runner emits.
+func setupArgCapturingCertbot(t *testing.T, tmp string) *Runner {
+	certbotPath := filepath.Join(tmp, "certbot")
+	argsLog := filepath.Join(tmp, "args.log")
+
+	// The script dumps all positional args (one per line) then creates
+	// the expected cert files so the runner's post-issue read succeeds.
+	script := fmt.Sprintf(`#!/bin/bash
+for a in "$@"; do echo "$a" >> %q; done
+echo "----" >> %q
+# Figure out the cert-name: for certonly, it's the first -d value.
+# For renew, it's the --cert-name value.
+action=$1
+cert_name=""
+if [[ "$action" == "certonly" ]]; then
+  i=1
+  for a in "$@"; do
+    if [[ "$a" == "-d" ]]; then
+      cert_name="${@:$((i+1)):1}"
+      break
+    fi
+    i=$((i+1))
+  done
+elif [[ "$action" == "renew" ]]; then
+  i=1
+  for a in "$@"; do
+    if [[ "$a" == "--cert-name" ]]; then
+      cert_name="${@:$((i+1)):1}"
+      break
+    fi
+    i=$((i+1))
+  done
+fi
+if [[ -n "$cert_name" ]]; then
+  mkdir -p "%s/letsencrypt/live/$cert_name"
+  cat > "%s/letsencrypt/live/$cert_name/fullchain.pem" <<'EOF'
+%s
+EOF
+fi
+exit 0
+`, argsLog, argsLog, tmp, tmp, string(createTestCertPEM(t)))
+
+	if err := os.WriteFile(certbotPath, []byte(script), 0755); err != nil {
+		t.Fatalf("create fake certbot: %v", err)
+	}
+	r := NewRunner()
+	r.Binary = certbotPath
+	r.LERoot = filepath.Join(tmp, "letsencrypt")
+	return r
+}
+
+// readCapturedArgs returns every argv batch recorded by
+// setupArgCapturingCertbot. Each entry is one invocation's args in order.
+func readCapturedArgs(t *testing.T, tmp string) [][]string {
+	bs, err := os.ReadFile(filepath.Join(tmp, "args.log"))
+	if err != nil {
+		t.Fatalf("read args.log: %v", err)
+	}
+	lines := strings.Split(string(bs), "\n")
+	var batches [][]string
+	var cur []string
+	for _, l := range lines {
+		if l == "----" {
+			if cur != nil {
+				batches = append(batches, cur)
+				cur = nil
+			}
+			continue
+		}
+		if l == "" {
+			continue
+		}
+		cur = append(cur, l)
+	}
+	return batches
+}
+
+// TestIssueExtraHostnamesAreAddedAsDashD asserts every extra hostname is
+// passed as a separate -d flag after the primary domain's -d, preserving
+// input order and deduping.
+func TestIssueExtraHostnamesAreAddedAsDashD(t *testing.T) {
+	tmp := t.TempDir()
+	r := setupArgCapturingCertbot(t, tmp)
+
+	_, err := r.Issue("example.com", "/var/www/example", "a@b.com", false,
+		[]string{"mail.example.com", "example.com", "autoconfig.example.com"}) // dup included to test dedup
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+
+	batches := readCapturedArgs(t, tmp)
+	if len(batches) != 1 {
+		t.Fatalf("expected 1 certbot invocation, got %d", len(batches))
+	}
+	args := batches[0]
+
+	// Collect -d values in order.
+	var gotD []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-d" && i+1 < len(args) {
+			gotD = append(gotD, args[i+1])
+		}
+	}
+	wantD := []string{"example.com", "mail.example.com", "autoconfig.example.com"}
+	if len(gotD) != len(wantD) {
+		t.Fatalf("-d values: got %v, want %v", gotD, wantD)
+	}
+	for i, w := range wantD {
+		if gotD[i] != w {
+			t.Errorf("-d[%d]: got %q, want %q", i, gotD[i], w)
+		}
+	}
+
+	// No existing cert → --expand should NOT be present.
+	for _, a := range args {
+		if a == "--expand" {
+			t.Error("--expand should not be set on first issuance (no existing cert)")
+		}
+	}
+}
+
+// TestIssueAddsExpandWhenExistingCertMissesSAN asserts --expand is added
+// iff the existing cert at LERoot/live/<domain>/fullchain.pem doesn't
+// cover every requested SAN.
+func TestIssueAddsExpandWhenExistingCertMissesSAN(t *testing.T) {
+	tmp := t.TempDir()
+	r := setupArgCapturingCertbot(t, tmp)
+
+	// Pre-populate an existing cert that only covers example.com (via
+	// createTestCertPEM which sets DNSNames: []string{"example.com"}).
+	certDir := filepath.Join(tmp, "letsencrypt", "live", "example.com")
+	if err := os.MkdirAll(certDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(certDir, "fullchain.pem"), createTestCertPEM(t), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := r.Issue("example.com", "/var/www/example", "a@b.com", false,
+		[]string{"mail.example.com"})
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+
+	batches := readCapturedArgs(t, tmp)
+	args := batches[0]
+	foundExpand := false
+	for _, a := range args {
+		if a == "--expand" {
+			foundExpand = true
+			break
+		}
+	}
+	if !foundExpand {
+		t.Errorf("--expand expected (existing cert lacks mail.example.com); args=%v", args)
+	}
+}
+
+// TestIssueSkipsExpandWhenExistingCertCovers asserts --expand is not
+// added when the existing cert already covers every requested SAN.
+func TestIssueSkipsExpandWhenExistingCertCovers(t *testing.T) {
+	tmp := t.TempDir()
+	r := setupArgCapturingCertbot(t, tmp)
+
+	// Pre-populate a cert covering example.com + mail.example.com.
+	certPEM := createTestCertWithSANs(t, []string{"example.com", "mail.example.com"})
+	certDir := filepath.Join(tmp, "letsencrypt", "live", "example.com")
+	if err := os.MkdirAll(certDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(certDir, "fullchain.pem"), certPEM, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := r.Issue("example.com", "/var/www/example", "a@b.com", false,
+		[]string{"mail.example.com"})
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+
+	args := readCapturedArgs(t, tmp)[0]
+	for _, a := range args {
+		if a == "--expand" {
+			t.Errorf("--expand should NOT be set when existing cert covers all SANs; args=%v", args)
+		}
+	}
+}
+
+// createTestCertWithSANs builds a test PEM with the given DNSNames.
+// Kept out of setupFakeCertbot's default helper because the SAN
+// expansion tests need to control the cert's DNSNames explicitly.
+func createTestCertWithSANs(t *testing.T, sans []string) []byte {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("gen key: %v", err)
+	}
+	now := time.Now()
+	tmpl := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: sans[0]},
+		NotBefore:    now,
+		NotAfter:     now.Add(90 * 24 * time.Hour),
+		DNSNames:     sans,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("create cert: %v", err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
 // setupFakeCertbot creates a fake certbot binary and configures the runner.
 func setupFakeCertbot(t *testing.T, tmp string, mode string) *Runner {
 	certbotPath := filepath.Join(tmp, "certbot")
@@ -290,7 +504,7 @@ func TestIssueError_Failure(t *testing.T) {
 	runner := NewRunner()
 	runner.Binary = "/nonexistent/certbot"
 
-	result, err := runner.Issue("example.com", "/var/www/example", "admin@example.com", false)
+	result, err := runner.Issue("example.com", "/var/www/example", "admin@example.com", false, nil)
 
 	if err == nil {
 		t.Fatal("expected error when certbot binary doesn't exist")

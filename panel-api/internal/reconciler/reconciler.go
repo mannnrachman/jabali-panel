@@ -1047,6 +1047,18 @@ type sslSelfSignResult struct {
 	ExpiresAt string `json:"expires_at"`
 }
 
+// sanHostnamesForDomain returns the extra SANs the cert for this
+// domain should cover beyond [domain, www.domain]. M6.1 adds
+// `mail.<domain>` + `autoconfig.<domain>` once email is enabled so
+// Bulwark's server-side JMAP verify fetch and email-client autoconfig
+// probes hit a trusted cert. Empty slice for domains without email.
+func sanHostnamesForDomain(d *models.Domain) []string {
+	if d == nil || !d.EmailEnabled {
+		return nil
+	}
+	return []string{"mail." + d.Name, "autoconfig." + d.Name}
+}
+
 // acmeRetryInterval is how long to wait between ACME (Let's Encrypt) attempts
 // after a failure. Flat 3 hours per the panel's "always-recovering SSL" policy:
 // every domain gets a self-signed cert immediately on first ACME failure (so
@@ -1156,6 +1168,9 @@ func (r *Reconciler) tryACMEOrFallback(ctx context.Context, domain *models.Domai
 		"email":   srv.AdminEmail,
 		"staging": staging,
 	}
+	if extras := sanHostnamesForDomain(domain); len(extras) > 0 {
+		params["hostnames"] = extras
+	}
 
 	raw, err := r.agent.Call(issueCtx, "ssl.issue", params)
 	if err == nil {
@@ -1201,10 +1216,14 @@ func (r *Reconciler) fallbackToSelfSignAndRetry(ctx context.Context, domain *mod
 		selfSignCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 
-		raw, sErr := r.agent.Call(selfSignCtx, "ssl.self_sign", map[string]any{
+		ssParams := map[string]any{
 			"domain": domain.Name,
 			"days":   365,
-		})
+		}
+		if extras := sanHostnamesForDomain(domain); len(extras) > 0 {
+			ssParams["hostnames"] = extras
+		}
+		raw, sErr := r.agent.Call(selfSignCtx, "ssl.self_sign", ssParams)
 		if sErr != nil {
 			r.log.Warn("ssl: self_sign fallback failed", "domain", domain.Name, "err", sErr)
 		} else {
@@ -1229,7 +1248,16 @@ func (r *Reconciler) fallbackToSelfSignAndRetry(ctx context.Context, domain *mod
 }
 
 // sslRenewForDomain runs an ACME renewal and updates the cert row on success.
+//
+// Email-enabled domains short-circuit to tryACMEOrFallback: ssl.renew
+// only refreshes the existing SAN set, but M6.1 may need to grow SANs
+// (e.g., email just got enabled → mail.<domain> must land on the cert).
+// tryACMEOrFallback calls ssl.issue which uses --expand when needed.
 func (r *Reconciler) sslRenewForDomain(ctx context.Context, domain *models.Domain, cert *models.SSLCertificate) {
+	if len(sanHostnamesForDomain(domain)) > 0 {
+		r.tryACMEOrFallback(ctx, domain, cert)
+		return
+	}
 	raw, err := r.agent.Call(ctx, "ssl.renew", map[string]any{"domain": domain.Name})
 	if err != nil {
 		msg := firstLine(err.Error())

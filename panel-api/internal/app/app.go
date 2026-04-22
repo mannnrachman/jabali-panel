@@ -263,10 +263,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		}
 		if deps.Domains != nil {
 			api.RegisterDomainEmailRoutes(v1, api.DomainEmailHandlerConfig{
-				Domains:    deps.Domains,
-				Agent:      deps.Agent,
-				DNSZones:   deps.DNSZones,
-				DNSRecords: deps.DNSRecords,
+				Domains:       deps.Domains,
+				Agent:         deps.Agent,
+				DNSZones:      deps.DNSZones,
+				DNSRecords:    deps.DNSRecords,
+				SSLCerts:      deps.SSLCerts,
+				SSLReconciler: deps.Reconciler,
 			})
 		}
 		if deps.Domains != nil && deps.DNSZones != nil && deps.DNSRecords != nil {

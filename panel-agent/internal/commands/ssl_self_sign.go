@@ -18,9 +18,15 @@ import (
 )
 
 // sslSelfSignParams is the input shape for ssl.self_sign.
+//
+// Hostnames lists extra SANs to include beyond the default
+// [domain, www.domain] pair — used by M6.1 to add mail.<domain> +
+// autoconfig.<domain> when email is enabled. Empty slice = legacy
+// two-SAN behavior. Each hostname is validated against sslDomainRegex.
 type sslSelfSignParams struct {
-	Domain string `json:"domain"`
-	Days   int    `json:"days"`
+	Domain    string   `json:"domain"`
+	Days      int      `json:"days"`
+	Hostnames []string `json:"hostnames,omitempty"`
 }
 
 // sslSelfSignResponse is the output shape for ssl.self_sign.
@@ -49,6 +55,14 @@ func sslSelfSignHandler(ctx context.Context, params json.RawMessage) (any, error
 			Message: fmt.Sprintf("invalid domain %q: must match ^[a-zA-Z0-9][a-zA-Z0-9.-]{1,253}$", p.Domain),
 		}
 	}
+	for _, h := range p.Hostnames {
+		if !sslDomainRegex.MatchString(h) {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInvalidArgument,
+				Message: fmt.Sprintf("invalid hostname %q in hostnames[]", h),
+			}
+		}
+	}
 
 	// Default to 365 days if not specified or invalid
 	days := p.Days
@@ -68,8 +82,15 @@ func sslSelfSignHandler(ctx context.Context, params json.RawMessage) (any, error
 	certPath := filepath.Join(certDir, "fullchain.pem")
 	keyPath := filepath.Join(certDir, "privkey.pem")
 
-	// Check if cert + key already exist and are not expired
-	if certExists, expiresAt := checkExistingCert(certPath); certExists && expiresAt.After(time.Now()) {
+	// Final SAN set: [domain, www.domain, ...hostnames], deduped, stable order.
+	wantSANs := buildSelfSignSANs(p.Domain, p.Hostnames)
+
+	// Reuse existing cert only when it's unexpired AND already covers the
+	// full requested SAN set. Plain expiry wasn't enough before M6.1:
+	// enabling email after issuance required adding mail/autoconfig SANs,
+	// so a still-valid cert with the old two-SAN set would silently
+	// miss the new hostnames if we kept the old "expiry-only" cache rule.
+	if certExists, expiresAt, dnsNames := inspectExistingCert(certPath); certExists && expiresAt.After(time.Now()) && sansCoverRequested(dnsNames, wantSANs) {
 		// Return existing cert info
 		return sslSelfSignResponse{
 			CertPath:  certPath,
@@ -79,7 +100,7 @@ func sslSelfSignHandler(ctx context.Context, params json.RawMessage) (any, error
 	}
 
 	// Generate new self-signed cert
-	expiresAt, err := generateSelfSignedCert(p.Domain, days, certPath, keyPath)
+	expiresAt, err := generateSelfSignedCert(p.Domain, days, certPath, keyPath, wantSANs)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
@@ -94,29 +115,72 @@ func sslSelfSignHandler(ctx context.Context, params json.RawMessage) (any, error
 	}, nil
 }
 
-// checkExistingCert checks if cert and key exist and returns the expiry time.
-// Returns (true, expiryTime) if cert exists, (false, zero) otherwise.
-func checkExistingCert(certPath string) (bool, time.Time) {
+// buildSelfSignSANs builds the final DNSNames list for a self-signed
+// cert: [domain, www.domain, ...hostnames], deduped, in a stable order
+// (domain first, then www, then hostnames in the order given).
+func buildSelfSignSANs(domain string, extras []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, 2+len(extras))
+	add := func(s string) {
+		if s == "" {
+			return
+		}
+		if _, ok := seen[s]; ok {
+			return
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	add(domain)
+	add("www." + domain)
+	for _, h := range extras {
+		add(h)
+	}
+	return out
+}
+
+// sansCoverRequested returns true when every name in `want` appears
+// somewhere in `have`. Used to decide whether an existing cert on disk
+// covers the full SAN set or needs regeneration.
+func sansCoverRequested(have, want []string) bool {
+	set := make(map[string]struct{}, len(have))
+	for _, h := range have {
+		set[h] = struct{}{}
+	}
+	for _, w := range want {
+		if _, ok := set[w]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// inspectExistingCert reads the cert at certPath and returns whether it
+// exists, its expiry, and the DNSNames it covers. Returns (false, zero,
+// nil) on any parse failure (treated as "regenerate").
+func inspectExistingCert(certPath string) (bool, time.Time, []string) {
 	certBytes, err := os.ReadFile(certPath)
 	if err != nil {
-		return false, time.Time{}
+		return false, time.Time{}, nil
 	}
 
 	block, _ := pem.Decode(certBytes)
 	if block == nil {
-		return false, time.Time{}
+		return false, time.Time{}, nil
 	}
 
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return false, time.Time{}
+		return false, time.Time{}, nil
 	}
 
-	return true, cert.NotAfter
+	return true, cert.NotAfter, cert.DNSNames
 }
 
-// generateSelfSignedCert creates an RSA-2048 self-signed certificate.
-func generateSelfSignedCert(domain string, days int, certPath, keyPath string) (time.Time, error) {
+// generateSelfSignedCert creates an RSA-2048 self-signed certificate
+// with the given DNS names. The first entry of `sans` is used as the
+// Subject CN for operator readability in openssl/cert-inspection tools.
+func generateSelfSignedCert(domain string, days int, certPath, keyPath string, sans []string) (time.Time, error) {
 	// Generate RSA private key
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -132,6 +196,9 @@ func generateSelfSignedCert(domain string, days int, certPath, keyPath string) (
 		return time.Time{}, fmt.Errorf("failed to generate serial number: %w", err)
 	}
 
+	if len(sans) == 0 {
+		sans = []string{domain, "www." + domain}
+	}
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
@@ -143,7 +210,7 @@ func generateSelfSignedCert(domain string, days int, certPath, keyPath string) (
 		ExtKeyUsage: []x509.ExtKeyUsage{
 			x509.ExtKeyUsageServerAuth,
 		},
-		DNSNames: []string{domain, "www." + domain},
+		DNSNames: sans,
 	}
 
 	// Create certificate

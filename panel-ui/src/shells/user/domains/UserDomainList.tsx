@@ -64,6 +64,7 @@ export type Domain = {
     | "full"
     | null;
   ssl_state?: string;
+  email_enabled?: boolean;
   created_at: string;
   updated_at: string;
 };

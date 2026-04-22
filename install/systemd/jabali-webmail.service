@@ -1,0 +1,43 @@
+[Unit]
+Description=Jabali Webmail (Bulwark, Next.js)
+Documentation=https://github.com/bulwarkmail/webmail
+After=network-online.target jabali-stalwart.service
+Wants=network-online.target
+PartOf=jabali.slice
+
+[Service]
+Type=simple
+User=jabali-webmail
+Group=jabali-webmail
+Slice=jabali.slice
+
+WorkingDirectory=/opt/jabali-webmail
+# Bulwark ships a Next.js standalone build — server.js is the entry
+# point and reads HOSTNAME + PORT from env. Loopback-only by default;
+# the panel's nginx vhost fronts it at /webmail/ with Kratos SSO.
+Environment=HOSTNAME=127.0.0.1
+Environment=PORT=3000
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node /opt/jabali-webmail/server.js
+# bulwark.env is provisioned in Step 8 of the M6 plan. Optional at
+# install time so the unit survives `install -> systemctl enable` runs
+# before Step 8 has created it; runtime settings (JMAP_SERVER_URL etc.)
+# land there.
+EnvironmentFile=-/etc/jabali-panel/bulwark.env
+
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/jabali-webmail /opt/jabali-webmail/.next/cache
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+# Intentionally NOT enabled — see jabali-stalwart.service.
+WantedBy=multi-user.target

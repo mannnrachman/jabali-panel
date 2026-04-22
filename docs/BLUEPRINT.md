@@ -619,26 +619,66 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 
 **Out-of-scope (phase 2):** WebAuthn, SMS, push-based 2FA. Impersonation and `jabali admin login` intentionally bypass 2FA — they are the escape valves.
 
-### M6: Email (Stalwart integration) (PLANNED)
+### M6: Email (Stalwart integration) (SHIPPED)
 
-**Goal:** Admins and users can create mailboxes, configure forwarders, and set per-domain
-  DKIM keys.
+**Goal:** Admins and users can enable email per-domain, create mailboxes
+  with per-mailbox quotas, and open Bulwark webmail already logged in
+  with one click. Automatic DKIM key generation; MX/SPF/DMARC/DKIM/
+  autoconfig DNS records injected on enable.
 
-**Deliverables:**
-- New migrations: `create_mailboxes.sql`, `create_forwarders.sql`, `create_dkim_keys.sql`
-- Mailbox CRUD (email, password, quota)
-- Forwarder CRUD (source email, destination list)
-- Catch-all per domain (fallback to mailbox or forwarder)
-- Per-domain DKIM key generation + rotation
-- Stalwart SQL config generation from DB (virtualusers, virtual_domains, etc.)
-- Agent commands: `email.mailbox.create`, `email.mailbox.delete`, `email.mailbox.password`,
-  `email.forwarder.create`, `email.forwarder.delete`, `email.dkim.regenerate`
-- API: `/api/v1/mailboxes`, `/api/v1/forwarders`, `/api/v1/dkim`
-- UI: user mailbox list/create, forwarder list/create; admin view across users
+**Deliverables (v1 scope — ADR-0041 through ADR-0045):**
 
-**Status:** Planned
+- Storage: Stalwart v0.16 with RocksDB mail storage (ADR-0041) + MariaDB
+  SqlDirectory (ADR-0042) — panel owns `jabali_panel.mailboxes`,
+  Stalwart re-reads on every auth (ADR-0045, no cache TTL).
+- Migrations:
+  - `000054_create_mailboxes` — `mailboxes` table + BEFORE INSERT/UPDATE
+    trigger maintaining `email_cached = local_part || '@' || domain.name`.
+  - `000055_dns_records_add_managed_by` — `dns_records.managed_by` column
+    so `domain.email_disable` only tears down M6-owned rows, leaving
+    M4 bootstrap + user-edited records alone.
+  - `000056_mailbox_sso` — `mailboxes.password_enc` VARBINARY(512) +
+    `mailbox_sso_tokens` table for one-shot webmail SSO.
+- Per-domain lifecycle: `jabali domain email-enable <domain>` (Ed25519
+  DKIM keypair under `/etc/jabali-panel/dkim/`, DKIM+autoconfig+
+  autodiscover DNS rows, Stalwart reload) and `jabali domain email-disable`
+  (reload Stalwart, delete M6 DNS rows, keep DKIM key per ADR-0043).
+- Mailbox CRUD: `jabali mailbox {list,create,delete,set-quota,passwd}`
+  — bcrypt hash for Stalwart auth + ssokey-sealed plaintext for webmail
+  SSO, both written atomically.
+- Panel-API: `GET/POST/DELETE /domains/:id/email`, `GET/POST /domains/:id/mailboxes`,
+  `PATCH/DELETE /mailboxes/:id`, `POST /mailboxes/:id/rotate-password`,
+  `POST /mailboxes/:id/sso` (mint) + `GET /sso/webmail?token=…` (landing).
+- Agent commands: `mailbox.{create,delete,set_quota,set_password,usage}`,
+  `domain.email_{enable,disable}`, `webmail.vhost_{apply,remove}`.
+- Webmail: Bulwark v1.4.14 (Next.js standalone, JMAP-native) behind
+  per-domain `mail.<domain>` nginx vhost. Reconciler toggles the
+  vhost based on `domains.email_enabled`. Browser-perspective JMAP
+  travels `/jmap` same-origin; Bulwark proxies Stalwart admin via
+  `STALWART_API_URL=http://127.0.0.1:8446` internally.
+- Per-mailbox SSO: "Webmail" action on every mailbox row mints a
+  single-use SHA-256-hashed token (5-minute TTL), landing endpoint
+  on `mail.<domain>/sso/webmail` decrypts `password_enc` via
+  `sso.key`, POSTs Bulwark `/api/auth/session`, forwards the session
+  cookie onto its own 303 to `/`.
+- UI: Email tab on DomainEdit with live DNS-record status tags (ok /
+  missing / conflict), Mailboxes tab under DomainEdit (admin) +
+  dedicated `/jabali-panel/mailboxes` page (user shell).
 
-**Depends on:** M4 (DNS MX records)
+**Out of scope (deferred):**
+- Per-user Sieve rules UI (M6.1)
+- CalDAV/CardDAV (separate milestone)
+- Catch-all + forwarder management (no `mail_forwarders` table yet)
+- Cluster mode / secondary MX failover
+- Automatic DKIM rotation (M6.1)
+- ACME `mail.<domain>` SAN expansion (M6.1; v1 reuses main domain cert)
+- IMAP migration importer (deferred to M15 per ADR-0044)
+
+**Status:** Shipped — ADRs 0041-0045 on `m6/email-stalwart` branch.
+
+**Depends on:** M4 (DNS zones for autoconfig), M7 (shadow-password
+pattern + `sso.key` reused for mailbox SSO), M20 (Kratos for panel
+auth flow).
 
 ### M7: Databases (MariaDB) (SHIPPED)
 
@@ -1084,7 +1124,7 @@ Use this table to navigate the codebase when adding a new capability:
 | M5a: Admin Impersonation | 2026-04-17 | `7bc292f`, `5b14b4c` |
 | M5b: Break-Glass CLI Login | 2026-04-17 | `c587144` |
 | M5c: Two-factor authentication (TOTP + backup codes) | 2026-04-19 | `0b68048` through `7b1ac16` on `feat-2fa-totp` |
-| M6: Email (Stalwart) | Planned | — |
+| M6: Email (Stalwart + Bulwark webmail + mailbox SSO) | 2026-04-22 | `caa6e16` through `fc73da4` on `m6/email-stalwart` (ADRs 0041-0045) |
 | M7: Databases (MariaDB) | 2026-04-17 | ADRs 0018-0022 |
 | M8: Cron (SHIPPED) | 2026-04-18 | ADR-0029 |
 | M9: PHP/FPM pools | 2026-04-17 | 1aaa507 (ADR), 5dbf471 (shipped) |

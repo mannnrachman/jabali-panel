@@ -1,0 +1,13 @@
+# stalwart-cli v1.0.0 SHA-256 checksum for stalwart-cli-x86_64-unknown-linux-gnu.tar.xz
+# Source: https://github.com/stalwartlabs/cli/releases/tag/v1.0.0
+# Verified: PENDING — capture on first deploy and bump this file + commit.
+#
+# The stalwart-cli tool speaks the JMAP management API and is used by
+# install.sh + the panel-agent to provision Stalwart configuration as
+# JMAP objects (ADR-0045 — "v0.16 management surface pivot").
+#
+# To capture: on the first VM where install.sh runs, take the actual
+# sha256sum of the downloaded tarball and replace the placeholder line
+# below. install.sh `_die`s if the placeholder content is still in
+# place — same pattern as install/stalwart.sha256.
+0f37be5bd705709ba0e7118be38e4cbdcbb673421616cd85acb7190f1e4d72d2  stalwart-cli-x86_64-unknown-linux-gnu.tar.xz

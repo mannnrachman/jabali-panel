@@ -141,6 +141,23 @@ func (f *fakeDomainRepo) UpdatePHPSettings(ctx context.Context, id string, setti
 	return &notFoundErr{}
 }
 
+func (f *fakeDomainRepo) UpdateEmailState(ctx context.Context, id string, state repository.DomainEmailState) error {
+	for i, d := range f.domains {
+		if d.ID == id {
+			f.domains[i].EmailEnabled = state.Enabled
+			f.domains[i].EmailEnabledAt = state.EmailEnabledAt
+			if state.DkimSelector != nil {
+				f.domains[i].DkimSelector = state.DkimSelector
+			}
+			if state.DkimPublicKey != nil {
+				f.domains[i].DkimPublicKey = state.DkimPublicKey
+			}
+			return nil
+		}
+	}
+	return &notFoundErr{}
+}
+
 type notFoundErr struct{}
 
 func (e *notFoundErr) Error() string { return "not found" }
@@ -236,6 +253,19 @@ func (f *fakeDNSRecordRepo) DeleteByZoneID(ctx context.Context, zoneID string) e
 		if r.ZoneID == zoneID {
 			delete(f.records, id)
 		}
+	}
+	return nil
+}
+
+func (f *fakeDNSRecordRepo) DeleteByZoneIDAndManagedBy(ctx context.Context, zoneID, managedBy string) error {
+	for id, r := range f.records {
+		if r.ZoneID != zoneID {
+			continue
+		}
+		if r.ManagedBy == nil || *r.ManagedBy != managedBy {
+			continue
+		}
+		delete(f.records, id)
 	}
 	return nil
 }

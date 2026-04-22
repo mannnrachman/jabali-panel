@@ -19,6 +19,8 @@ import { useNavigate, useParams } from "react-router";
 
 import { useOneQuery, useUpdateMutation } from "../../../hooks/useQueries";
 import type { Domain } from "./DomainList";
+import { DomainEmailSection } from "./DomainEmailSection";
+import { DomainMailboxesSection } from "./DomainMailboxesSection";
 import { DomainSSLSection } from "./DomainSSLSection";
 
 export type DomainEditInput = {
@@ -136,6 +138,12 @@ export const DomainEdit = () => {
               qc.invalidateQueries({ queryKey: ["one", "domains", id] })
             }
           />
+
+          <Divider>Email</Divider>
+          <DomainEmailSection domainId={domain.id} />
+
+          <Divider>Mailboxes</Divider>
+          <DomainMailboxesSection domainId={domain.id} />
         </>
       )}
     </Card>

@@ -1102,7 +1102,7 @@ provision_mariadb() {
     CREATE USER IF NOT EXISTS '${db_user}'@'localhost' IDENTIFIED BY '${db_pass}';
     ALTER USER '${db_user}'@'localhost' IDENTIFIED BY '${db_pass}';
     GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER,
-          REFERENCES, LOCK TABLES
+          REFERENCES, LOCK TABLES, TRIGGER
       ON \`${db_name}\`.* TO '${db_user}'@'localhost';
     FLUSH PRIVILEGES;
   "
@@ -1496,6 +1496,14 @@ build_frontend() {
     HOME="$REPO_DIR" \
     PATH="/usr/bin:/bin" \
     bash -c "cd '$REPO_DIR/panel-ui' && npm ci --no-audit --no-fund --prefer-offline"
+
+  # Wipe Vite's dep pre-bundling cache. When a previous install/update
+  # left a node_modules/.vite dir, its cached resolutions for packages
+  # like react-dom can point at paths invalidated by the fresh npm ci,
+  # and vite build fails with "Failed to resolve entry for package X".
+  # Cheap to regenerate (seconds).
+  rm -rf "$REPO_DIR/panel-ui/node_modules/.vite"
+
   sudo -u "$SERVICE_USER" -H env \
     HOME="$REPO_DIR" \
     PATH="/usr/bin:/bin" \
@@ -2525,6 +2533,642 @@ install_sso_reaper_timer() {
   _ok "sso reaper timer enabled (every 30s)"
 }
 
+# ---------- step 8b: Stalwart Mail Server + Bulwark webmail (M6) -------------
+#
+# Two functions, one tool each. Both are disabled-by-default — systemd units
+# are installed but the services are enabled on first panel
+# domain.email_enable call (from the agent). install.sh re-runs are
+# idempotent: binaries are re-downloaded only on version bump, service-
+# account users + data dirs + secrets are preserved across runs.
+#
+# Layout established here (plan §1 Step 1, ADR-0041):
+#   /opt/stalwart/                      — extracted Stalwart binary
+#   /usr/local/bin/stalwart             — symlink
+#   /var/lib/stalwart/                  — RocksDB mail storage (jabali-mail:jabali-mail, 0750)
+#   /etc/stalwart/config.toml           — rendered skeleton (Step 2 fills directory block)
+#   /etc/jabali-panel/dkim/             — Ed25519 DKIM keys (jabali:jabali, 0750)
+#   /etc/jabali-panel/stalwart-admin.token — JMAP admin bearer (jabali:jabali-mail, 0640)
+#   /opt/jabali-webmail/                — Bulwark Next.js source + build output
+#   /var/lib/jabali-webmail/settings/   — Bulwark settings-sync data dir
+#   /etc/jabali-panel/bulwark.env       — Bulwark runtime env (jabali-webmail:jabali-webmail, 0640)
+#   /etc/jabali-panel/bulwark-session.key — Bulwark SESSION_SECRET (jabali-webmail:jabali-webmail, 0640)
+
+install_stalwart() {
+  local stalwart_version="0.16.0"
+  _log "installing Stalwart Mail Server (v${stalwart_version})"
+
+  # Ensure service user + group exist. Supplementary group `jabali` lets
+  # Stalwart read /etc/jabali-panel/stalwart-admin.token (0640 jabali:jabali-mail).
+  if ! getent passwd jabali-mail >/dev/null 2>&1; then
+    _log "creating jabali-mail service user"
+    useradd --system --no-create-home --shell /usr/sbin/nologin \
+      --user-group jabali-mail
+    usermod -a -G "$SERVICE_USER" jabali-mail
+  fi
+
+  # Data + config dirs.
+  install -d -m 0750 -o jabali-mail -g jabali-mail /var/lib/stalwart
+  install -d -m 0750 -o jabali-mail -g jabali-mail /etc/stalwart
+  install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" /etc/jabali-panel/dkim
+
+  local stalwart_binary="/usr/local/bin/stalwart"
+  local stalwart_install_dir="/opt/stalwart"
+
+  # Idempotence: skip re-download if the installed binary reports the
+  # target version. Stalwart's version command output format is stable
+  # across 0.14.x-0.16.x ("Stalwart Mail Server v0.16.0").
+  if [[ -x "$stalwart_binary" ]]; then
+    local installed_version
+    installed_version=$("$stalwart_binary" --version 2>&1 | grep -oP 'v\K[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || echo "unknown")
+    if [[ "$installed_version" == "$stalwart_version" ]]; then
+      _ok "Stalwart $stalwart_version already installed"
+    else
+      _warn "upgrading Stalwart $installed_version -> $stalwart_version"
+      _install_stalwart_binary "$stalwart_version"
+    fi
+  else
+    _install_stalwart_binary "$stalwart_version"
+  fi
+
+  # stalwart-cli is the v0.16 management surface (ADR-0045). Install
+  # alongside the server so apply-plan.json can be provisioned during
+  # the bootstrap step (follow-up commit). Version-pin independently of
+  # the server binary.
+  _install_stalwart_cli
+
+  # JMAP admin token — used later for panel <-> Stalwart management auth
+  # (JMAP basic auth with stored credential). Generated once + preserved
+  # across re-runs so a re-install doesn't break the panel-agent's auth.
+  local admin_token_file="/etc/jabali-panel/stalwart-admin.token"
+  if [[ ! -f "$admin_token_file" ]]; then
+    _log "generating Stalwart admin token -> $admin_token_file"
+    umask 077
+    openssl rand -base64 32 >"$admin_token_file"
+    chmod 0640 "$admin_token_file"
+    chown "$SERVICE_USER":jabali-mail "$admin_token_file"
+  else
+    _ok "Stalwart admin token already present"
+  fi
+
+  # MariaDB read-only password for Stalwart's SQL directory lookups.
+  # Generated here (needed for config.json template rendering below), but
+  # the actual CREATE USER + GRANT happens in install_stalwart_apply after
+  # start_and_verify — migration 000054 creates the mailboxes table and
+  # GRANT SELECT on a non-existent table is a fatal error (ERROR 1146).
+  local stalwart_db_pw_file="/etc/jabali-panel/stalwart-mariadb.password"
+  if [[ ! -f "$stalwart_db_pw_file" ]]; then
+    _log "generating Stalwart MariaDB password -> $stalwart_db_pw_file"
+    umask 077
+    openssl rand -hex 32 >"$stalwart_db_pw_file"
+    chmod 0640 "$stalwart_db_pw_file"
+    chown root:jabali-mail "$stalwart_db_pw_file"
+  fi
+  local stalwart_db_pass
+  stalwart_db_pass="$(cat "$stalwart_db_pw_file")"
+
+  # Render /etc/stalwart/config.json from template. v0.16's config.json
+  # is just a single tagged-enum `DataStore` descriptor for the REGISTRY
+  # store (ADR-0045); it holds settings, directories, listeners, DKIM
+  # etc. All mail storage / SQL directory backends are JMAP objects
+  # inside that registry, applied via `stalwart-cli apply`. Template
+  # therefore has no mustaches — but install.sh still runs the mustache
+  # sanity check to protect against future template drift.
+  local stalwart_config="/etc/stalwart/config.json"
+  if [[ ! -f "${REPO_DIR}/install/stalwart/config.json.tmpl" ]]; then
+    _die "Stalwart config template not found at ${REPO_DIR}/install/stalwart/config.json.tmpl"
+  fi
+  install -m 0640 -o jabali-mail -g jabali-mail \
+    "${REPO_DIR}/install/stalwart/config.json.tmpl" "$stalwart_config"
+
+  if grep -q '{{\..*}}' "$stalwart_config"; then
+    _die "unsubstituted mustaches in $stalwart_config — template drift?"
+  fi
+  _ok "Stalwart datastore config at $stalwart_config"
+
+  # stalwart.env — systemd EnvironmentFile. Populated with
+  # STALWART_RECOVERY_ADMIN=admin:<stalwart-admin.token> so Stalwart
+  # accepts Basic-auth calls from the panel-agent (ADR-0045 §Bootstrap).
+  # Written/rewritten on every install run so a rotated admin token
+  # propagates into the unit after a `jabali update`.
+  local stalwart_env="/etc/jabali-panel/stalwart.env"
+  local stalwart_admin_token
+  stalwart_admin_token="$(cat "$admin_token_file")"
+  cat >"$stalwart_env" <<EOF
+# Stalwart Mail Server — systemd EnvironmentFile.
+# Managed by install.sh. Do NOT hand-edit.
+# STALWART_RECOVERY_ADMIN seeds an admin principal Stalwart accepts for
+# HTTP Basic auth against /jmap; paired with the token at
+# ${admin_token_file} the panel-agent uses for every management call.
+STALWART_RECOVERY_ADMIN=admin:${stalwart_admin_token}
+EOF
+  chmod 0640 "$stalwart_env"
+  chown root:jabali-mail "$stalwart_env"
+  _ok "Stalwart env written (admin seed) at $stalwart_env"
+
+  # Render /etc/jabali-panel/stalwart-apply-plan.json from template.
+  # This is the JMAP declarative plan (ADR-0045) that seeds the
+  # SqlDirectory + listeners + Authentication pointer. Rendered every
+  # run; stalwart-cli apply is idempotent against already-applied state.
+  local stalwart_apply_plan="/etc/jabali-panel/stalwart-apply-plan.json"
+  if [[ ! -f "${REPO_DIR}/install/stalwart/apply-plan.json.tmpl" ]]; then
+    _die "Stalwart apply plan template not found at ${REPO_DIR}/install/stalwart/apply-plan.json.tmpl"
+  fi
+  sed -e "s|{{\.MariaDBPassword}}|${stalwart_db_pass}|g" \
+    "${REPO_DIR}/install/stalwart/apply-plan.json.tmpl" >"$stalwart_apply_plan"
+  chown root:jabali-mail "$stalwart_apply_plan"
+  chmod 0640 "$stalwart_apply_plan"
+  if grep -q '{{\..*}}' "$stalwart_apply_plan"; then
+    _die "unsubstituted mustaches in $stalwart_apply_plan — template drift?"
+  fi
+  _ok "Stalwart apply plan at $stalwart_apply_plan"
+
+  # Systemd unit — installed then started + applied. We start on install
+  # (not lazy on first domain.email_enable) because applying the plan
+  # requires a running /jmap endpoint; the bootstrap sequence is:
+  #
+  #   1. install/update the unit
+  #   2. systemctl daemon-reload
+  #   3. systemctl enable --now jabali-stalwart
+  #   4. poll 127.0.0.1:8446/jmap/session until 2xx/4xx (ready)
+  #   5. stalwart-cli apply --file <plan>
+  #
+  # Ports 25/465/587/993 will bind on step 3. On a host with no
+  # email-enabled domains this is an idle listener — Stalwart 550s
+  # any inbound recipient until a Domain object exists in the registry
+  # (which domain.email_enable creates via JMAP on first enable).
+  if [[ ! -f "${REPO_DIR}/install/systemd/jabali-stalwart.service" ]]; then
+    _die "Stalwart systemd unit not found at ${REPO_DIR}/install/systemd/jabali-stalwart.service"
+  fi
+  install -m 0644 -o root -g root "${REPO_DIR}/install/systemd/jabali-stalwart.service" \
+    /etc/systemd/system/jabali-stalwart.service
+  systemctl daemon-reload
+  _ok "jabali-stalwart.service installed (apply deferred to install_stalwart_apply)"
+}
+
+# install_stalwart_apply — second phase of Stalwart bootstrap. Runs AFTER
+# start_and_verify so that jabali-panel.service has applied migration
+# 000054 (which creates jabali_panel.mailboxes + jabali_panel.domains).
+# This phase:
+#   1. Creates the jabali-stalwart-ro MariaDB user + SELECT grants
+#   2. Enables + starts jabali-stalwart.service
+#   3. Polls /jmap until ready
+#   4. Runs stalwart-cli apply against the rendered plan
+#
+# Split out from install_stalwart (ADR-0045 bootstrap flow) because step 1
+# requires the mailboxes table to already exist — migrations run inside
+# the panel service on first start, not up-front in install.sh.
+install_stalwart_apply() {
+  _log "provisioning Stalwart MariaDB user + applying JMAP plan"
+
+  local stalwart_db_user="jabali-stalwart-ro"
+  local stalwart_db_pw_file="/etc/jabali-panel/stalwart-mariadb.password"
+  if [[ ! -f "$stalwart_db_pw_file" ]]; then
+    _die "Stalwart MariaDB password file missing at $stalwart_db_pw_file (install_stalwart must run first)"
+  fi
+  local stalwart_db_pass
+  stalwart_db_pass="$(cat "$stalwart_db_pw_file")"
+
+  # SELECT-only grant. Stalwart never writes to the source-of-truth
+  # directory; on-every-auth `synchronize_account` writes into its own
+  # registry (ADR-0045 §"Cache/invalidation model").
+  mariadb -e "
+    CREATE USER IF NOT EXISTS '${stalwart_db_user}'@'localhost' IDENTIFIED BY '${stalwart_db_pass}';
+    ALTER USER '${stalwart_db_user}'@'localhost' IDENTIFIED BY '${stalwart_db_pass}';
+    GRANT SELECT ON jabali_panel.mailboxes  TO '${stalwart_db_user}'@'localhost';
+    GRANT SELECT ON jabali_panel.domains    TO '${stalwart_db_user}'@'localhost';
+    FLUSH PRIVILEGES;
+  "
+  _ok "Stalwart MariaDB user provisioned: ${stalwart_db_user} (SELECT on mailboxes, domains)"
+
+  local admin_token_file="/etc/jabali-panel/stalwart-admin.token"
+  if [[ ! -f "$admin_token_file" ]]; then
+    _die "Stalwart admin token missing at $admin_token_file (install_stalwart must run first)"
+  fi
+  local stalwart_admin_token
+  stalwart_admin_token="$(cat "$admin_token_file")"
+
+  local stalwart_apply_plan="/etc/jabali-panel/stalwart-apply-plan.json"
+  if [[ ! -f "$stalwart_apply_plan" ]]; then
+    _die "Stalwart apply plan missing at $stalwart_apply_plan (install_stalwart must run first)"
+  fi
+
+  _install_stalwart_apply_plan "$stalwart_apply_plan" "$stalwart_admin_token"
+  _ok "jabali-stalwart.service started + plan applied"
+}
+
+# _install_stalwart_apply_plan starts Stalwart (if not already running),
+# waits for /jmap to be reachable, then runs stalwart-cli apply against
+# the rendered plan. Idempotent: on re-runs where Stalwart is already
+# up, the start is a no-op and the apply converges any drift.
+_install_stalwart_apply_plan() {
+  local plan_file="$1"
+  local admin_token="$2"
+
+  if ! systemctl is-enabled --quiet jabali-stalwart.service 2>/dev/null; then
+    _log "enabling + starting jabali-stalwart.service"
+    systemctl enable --now jabali-stalwart.service
+  elif ! systemctl is-active --quiet jabali-stalwart.service; then
+    _log "starting jabali-stalwart.service"
+    systemctl start jabali-stalwart.service
+  fi
+
+  # Poll /jmap/session until Stalwart is serving HTTP. A 401 counts as
+  # "ready" — it means the HTTP layer is up and rejecting our missing
+  # Authorization header, which is exactly what we want before we try
+  # to run an authenticated apply. Only 2xx/3xx/4xx are accepted; 5xx
+  # means "server exists but is broken" and we keep polling. 000 means
+  # curl couldn't connect (daemon not listening yet).
+  #
+  # Port probing: on first run the apply-plan has NOT created the
+  # `jmap-loopback` NetworkListener yet, so Stalwart falls back to its
+  # built-in default HTTP port 8080. On every subsequent run the
+  # registry holds the plan's `127.0.0.1:8446` listener, so 8446 is the
+  # management port. We probe both and apply against whichever answers.
+  local jmap_port=""
+  local jmap_status=""
+  local waited=0
+  local max_wait=30
+  while (( waited < max_wait )); do
+    for p in 8446 8080; do
+      local status
+      # `|| true` is load-bearing: curl exits 7 on "connection refused"
+      # which is expected while Stalwart is still binding its listeners.
+      # Under `set -euo pipefail`, the bare assignment would abort the
+      # script on the first refused port before we ever get to try :8080.
+      status="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 -m 3 \
+        "http://127.0.0.1:${p}/jmap/session" 2>/dev/null || true)"
+      status="${status:-000}"
+      if [[ "$status" =~ ^[234][0-9][0-9]$ ]]; then
+        jmap_port="$p"
+        jmap_status="$status"
+        break 2
+      fi
+    done
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if [[ -z "$jmap_port" ]]; then
+    _err "Stalwart /jmap did not come up on 8446 or 8080 within ${max_wait}s — check 'journalctl -u jabali-stalwart'"
+    _die "Stalwart bootstrap timed out"
+  fi
+  _ok "Stalwart /jmap ready on :${jmap_port} (HTTP ${jmap_status}) after ${waited}s"
+
+  # If Stalwart is serving on :8446 we know the plan is already applied
+  # (that's the whole point of the 8080→restart→8446 dance below). Re-
+  # running `stalwart-cli apply` against an already-applied plan fails
+  # with primaryKeyViolation on the NetworkListener create steps because
+  # the plan uses `@type: create`, not an upsert action — stalwart-cli
+  # has no first-class "apply or update" verb. Skipping a no-op apply is
+  # the right call here; reconciler-driven drift correction is out of
+  # scope for install.sh.
+  if [[ "$jmap_port" == "8446" ]]; then
+    _ok "Stalwart plan already applied (serving on :8446) — skipping re-apply"
+    return
+  fi
+
+  _log "applying plan via stalwart-cli against :${jmap_port}"
+  if ! STALWART_URL="http://127.0.0.1:${jmap_port}" \
+       STALWART_USER="admin" \
+       STALWART_PASSWORD="$admin_token" \
+       /usr/local/bin/stalwart-cli apply --file "$plan_file"; then
+    _err "stalwart-cli apply failed — the plan's object shapes may have drifted from the v0.16 schema"
+    _err "inspect the plan at $plan_file; re-verify against the upstream schema (ADR-0045 §Schema-pull)"
+    _die "Stalwart apply failed"
+  fi
+  _ok "Stalwart plan applied (SqlDirectory + listeners + Authentication)"
+
+  # Always reached via :8080 here — the :8446 branch above already
+  # returned. Restart Stalwart so it rebinds to the newly-created
+  # NetworkListener objects (including 127.0.0.1:8446).
+  if [[ "$jmap_port" == "8080" ]]; then
+    _log "restarting jabali-stalwart to pick up plan-defined listeners"
+    systemctl restart jabali-stalwart.service
+    waited=0
+    while (( waited < 15 )); do
+      local s
+      # Same `|| true` rationale as the pre-apply probe loop above:
+      # curl exits 7 on "connection refused" while Stalwart re-binds,
+      # which would abort the script under `set -euo pipefail`.
+      s="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 -m 3 \
+        http://127.0.0.1:8446/jmap/session 2>/dev/null || true)"
+      s="${s:-000}"
+      if [[ "$s" =~ ^[234][0-9][0-9]$ ]]; then
+        _ok "Stalwart now serving plan-defined listener on :8446 (HTTP $s)"
+        return
+      fi
+      sleep 1
+      waited=$((waited + 1))
+    done
+    _warn "Stalwart did not come up on :8446 after apply — plan may be missing the jmap-loopback NetworkListener; check 'journalctl -u jabali-stalwart'"
+  fi
+}
+
+# _install_stalwart_binary is a private helper: download the release
+# tarball, verify SHA-256 against install/stalwart.sha256, extract, symlink.
+_install_stalwart_binary() {
+  local version="$1"
+  local arch="x86_64-unknown-linux-gnu"
+  local tarball="stalwart-${arch}.tar.gz"
+  local tarball_path="/tmp/${tarball}"
+  local url="https://github.com/stalwartlabs/stalwart/releases/download/v${version}/${tarball}"
+  local sha_file="${REPO_DIR}/install/stalwart.sha256"
+
+  _log "downloading Stalwart $version from GitHub"
+  if ! curl -fsSL "$url" -o "$tarball_path"; then
+    _die "failed to download Stalwart from $url"
+  fi
+
+  if [[ ! -f "$sha_file" ]]; then
+    _die "Stalwart SHA-256 checksum file not found at $sha_file"
+  fi
+
+  local expected_sha
+  expected_sha="$(awk '/^[[:space:]]*#/ || NF==0 { next } { print $1; exit }' "$sha_file")"
+  if [[ -z "$expected_sha" ]]; then
+    _die "no checksum line found in $sha_file (comments only?)"
+  fi
+  if [[ "$expected_sha" == "PLACEHOLDER_CAPTURE_ON_FIRST_DEPLOY" ]]; then
+    _die "Stalwart SHA-256 placeholder in $sha_file — capture the real checksum on first deploy and bump the file (see file header)"
+  fi
+
+  local actual_sha
+  actual_sha="$(sha256sum "$tarball_path" | awk '{print $1}')"
+  if [[ "$expected_sha" != "$actual_sha" ]]; then
+    _die "Stalwart SHA-256 mismatch. Expected: $expected_sha, got: $actual_sha"
+  fi
+
+  # Atomic swap: extract to a sibling dir, rename, clean up.
+  local new_dir="/opt/stalwart.new"
+  rm -rf "$new_dir"
+  install -d -m 0755 -o root -g root "$new_dir"
+  tar -xzf "$tarball_path" -C "$new_dir" --strip-components=0
+  rm -f "$tarball_path"
+
+  # Stalwart tarball layout: top-level `stalwart` binary. v0.16.0 ships
+  # it mode 0644 (no exec bit) — the installer must chmod it +x before
+  # use. Defensive find in case upstream nests the binary in a future
+  # release.
+  local bin_in_tar
+  bin_in_tar="$(find "$new_dir" -maxdepth 2 -type f -name stalwart | head -n1)"
+  if [[ -z "$bin_in_tar" ]]; then
+    rm -rf "$new_dir"
+    _die "Stalwart binary not found in tarball at $new_dir"
+  fi
+  chmod 0755 "$bin_in_tar"
+
+  rm -rf /opt/stalwart.prev
+  if [[ -d /opt/stalwart ]]; then
+    mv /opt/stalwart /opt/stalwart.prev
+  fi
+  mv "$new_dir" /opt/stalwart
+  # Recompute the path under its final location — $bin_in_tar still
+  # points at the old /opt/stalwart.new tree.
+  bin_in_tar="$(find /opt/stalwart -maxdepth 2 -type f -name stalwart | head -n1)"
+  ln -sfn "$bin_in_tar" /usr/local/bin/stalwart
+  rm -rf /opt/stalwart.prev
+  _ok "Stalwart $version installed at /opt/stalwart (symlinked to /usr/local/bin/stalwart)"
+}
+
+# _install_stalwart_cli downloads + verifies the stalwart-cli release
+# tarball (separate repo github.com/stalwartlabs/cli) and drops the binary
+# at /usr/local/bin/stalwart-cli. ADR-0045 explains the role: the CLI
+# speaks the v0.16 JMAP management API, used by install.sh bootstrap and
+# the reconciler. Idempotent against version reported by --version.
+_install_stalwart_cli() {
+  local cli_version="1.0.0"
+  local cli_binary="/usr/local/bin/stalwart-cli"
+  local arch="x86_64-unknown-linux-gnu"
+  local tarball="stalwart-cli-${arch}.tar.xz"
+  local tarball_path="/tmp/${tarball}"
+  local url="https://github.com/stalwartlabs/cli/releases/download/v${cli_version}/${tarball}"
+  local sha_file="${REPO_DIR}/install/stalwart-cli.sha256"
+
+  if [[ -x "$cli_binary" ]]; then
+    local installed_version
+    installed_version="$("$cli_binary" --version 2>&1 | grep -oP 'v?\K[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || echo unknown)"
+    if [[ "$installed_version" == "$cli_version" ]]; then
+      _ok "stalwart-cli $cli_version already installed"
+      return 0
+    fi
+    _warn "upgrading stalwart-cli $installed_version -> $cli_version"
+  fi
+
+  _log "downloading stalwart-cli $cli_version"
+  if ! curl -fsSL "$url" -o "$tarball_path"; then
+    _die "failed to download stalwart-cli from $url"
+  fi
+
+  if [[ ! -f "$sha_file" ]]; then
+    _die "stalwart-cli SHA-256 checksum file not found at $sha_file"
+  fi
+  local expected_sha
+  expected_sha="$(awk '/^[[:space:]]*#/ || NF==0 { next } { print $1; exit }' "$sha_file")"
+  if [[ -z "$expected_sha" ]]; then
+    _die "no checksum line found in $sha_file (comments only?)"
+  fi
+  if [[ "$expected_sha" == "PLACEHOLDER_CAPTURE_ON_FIRST_DEPLOY" ]]; then
+    _die "stalwart-cli SHA-256 placeholder in $sha_file — capture the real checksum on first deploy and bump the file"
+  fi
+  local actual_sha
+  actual_sha="$(sha256sum "$tarball_path" | awk '{print $1}')"
+  if [[ "$expected_sha" != "$actual_sha" ]]; then
+    _die "stalwart-cli SHA-256 mismatch. Expected: $expected_sha, got: $actual_sha"
+  fi
+
+  # .tar.xz — extract to a tmp dir, find the binary, atomic swap.
+  local new_dir="/tmp/stalwart-cli.new"
+  rm -rf "$new_dir"
+  install -d -m 0755 -o root -g root "$new_dir"
+  tar -xJf "$tarball_path" -C "$new_dir"
+  rm -f "$tarball_path"
+
+  local bin_in_tar
+  bin_in_tar="$(find "$new_dir" -maxdepth 3 -type f -name stalwart-cli -perm -u+x | head -n1)"
+  if [[ -z "$bin_in_tar" ]]; then
+    rm -rf "$new_dir"
+    _die "stalwart-cli binary not found in tarball"
+  fi
+
+  install -m 0755 -o root -g root "$bin_in_tar" "$cli_binary"
+  rm -rf "$new_dir"
+  _ok "stalwart-cli $cli_version installed at $cli_binary"
+}
+
+install_bulwark() {
+  local bulwark_version="1.4.14"
+  local arch="linux-amd64"
+  local tarball="bulwark-standalone-${bulwark_version}-${arch}.tar.gz"
+  local url="https://github.com/bulwarkmail/webmail/releases/download/${bulwark_version}/${tarball}"
+  _log "installing Bulwark webmail (standalone tarball ${bulwark_version})"
+
+  if ! getent passwd jabali-webmail >/dev/null 2>&1; then
+    _log "creating jabali-webmail service user"
+    useradd --system --no-create-home --shell /usr/sbin/nologin \
+      --user-group jabali-webmail
+    usermod -a -G "$SERVICE_USER" jabali-webmail
+  fi
+
+  install -d -m 0755 -o jabali-webmail -g jabali-webmail /opt/jabali-webmail
+  install -d -m 0750 -o jabali-webmail -g jabali-webmail /var/lib/jabali-webmail
+  install -d -m 0750 -o jabali-webmail -g jabali-webmail /var/lib/jabali-webmail/settings
+  # jabali-webmail.service lists /opt/jabali-webmail/.next/cache in its
+  # ReadWritePaths. systemd refuses to enter mount namespacing when a
+  # ReadWritePaths entry doesn't exist yet, so Bulwark fails to start on
+  # a fresh install until Next.js first writes to its own cache dir —
+  # a chicken-and-egg. Pre-create the dir so systemd is happy. The
+  # tarball ships .next/ without the cache subdir.
+  install -d -m 0755 -o jabali-webmail -g jabali-webmail /opt/jabali-webmail/.next/cache
+
+  # SESSION_SECRET — generate once, preserve across re-runs (rotating it
+  # would invalidate every existing "remember me" cookie).
+  local session_key_file="/etc/jabali-panel/bulwark-session.key"
+  if [[ ! -f "$session_key_file" ]]; then
+    _log "generating Bulwark SESSION_SECRET -> $session_key_file"
+    umask 077
+    openssl rand -base64 32 >"$session_key_file"
+    chmod 0640 "$session_key_file"
+    chown jabali-webmail:jabali-webmail "$session_key_file"
+  else
+    _ok "Bulwark SESSION_SECRET already present"
+  fi
+
+  # Idempotence: skip re-download if VERSION file already matches target.
+  local version_file="/opt/jabali-webmail/VERSION"
+  if [[ -f "$version_file" ]] && [[ "$(cat "$version_file")" == "$bulwark_version" ]]; then
+    _ok "Bulwark $bulwark_version already installed"
+    _install_bulwark_systemd
+    return
+  fi
+
+  # Pinned SHA of the release tarball (not a git commit — v1.4.14 ships
+  # a prebuilt standalone Next.js bundle).
+  local sha_file="${REPO_DIR}/install/bulwark.sha256"
+  if [[ ! -f "$sha_file" ]]; then
+    _die "Bulwark SHA-256 checksum file not found at $sha_file"
+  fi
+  local expected_sha
+  expected_sha="$(awk '/^[[:space:]]*#/ || NF==0 { next } { print $1; exit }' "$sha_file")"
+  if [[ -z "$expected_sha" ]]; then
+    _die "no checksum line found in $sha_file (comments only?)"
+  fi
+  if [[ "$expected_sha" == "PLACEHOLDER_CAPTURE_ON_FIRST_DEPLOY" ]]; then
+    _die "Bulwark SHA-256 placeholder in $sha_file — capture with: curl -sSL $url | sha256sum, then bump the file"
+  fi
+
+  local tarball_path="/tmp/${tarball}"
+  _log "downloading $tarball"
+  if ! curl -fsSL "$url" -o "$tarball_path"; then
+    _die "failed to download Bulwark from $url"
+  fi
+
+  local actual_sha
+  actual_sha="$(sha256sum "$tarball_path" | awk '{print $1}')"
+  if [[ "$expected_sha" != "$actual_sha" ]]; then
+    rm -f "$tarball_path"
+    _die "Bulwark SHA-256 mismatch. Expected: $expected_sha, got: $actual_sha"
+  fi
+
+  # Extract into a sibling directory, then atomic swap. The tarball's
+  # top-level dir is `bulwark-standalone/`, so we extract into a staging
+  # parent and then move the inner dir into place.
+  local stage="/opt/jabali-webmail.stage"
+  rm -rf "$stage"
+  install -d -m 0755 -o jabali-webmail -g jabali-webmail "$stage"
+  tar -xzf "$tarball_path" -C "$stage"
+  rm -f "$tarball_path"
+
+  local inner_dir="$stage/bulwark-standalone"
+  if [[ ! -d "$inner_dir" ]]; then
+    rm -rf "$stage"
+    _die "Bulwark tarball did not contain bulwark-standalone/ directory"
+  fi
+  if [[ ! -f "$inner_dir/server.js" ]]; then
+    rm -rf "$stage"
+    _die "Bulwark tarball missing server.js entry — layout may have changed in a newer release"
+  fi
+
+  echo "$bulwark_version" >"$inner_dir/VERSION"
+  chown -R jabali-webmail:jabali-webmail "$inner_dir"
+
+  # Atomic swap.
+  rm -rf /opt/jabali-webmail.prev
+  if [[ -d /opt/jabali-webmail ]] && [[ "$(ls -A /opt/jabali-webmail 2>/dev/null)" ]]; then
+    mv /opt/jabali-webmail /opt/jabali-webmail.prev
+  else
+    rmdir /opt/jabali-webmail 2>/dev/null || rm -rf /opt/jabali-webmail
+  fi
+  mv "$inner_dir" /opt/jabali-webmail
+  rm -rf "$stage" /opt/jabali-webmail.prev
+
+  _ok "Bulwark $bulwark_version installed at /opt/jabali-webmail"
+
+  _install_bulwark_systemd
+}
+
+# _install_bulwark_systemd installs the unit file. Env file is rendered
+# separately by _install_bulwark_env; the nginx per-domain vhost is
+# written by the panel-agent's webmail.vhost_apply command, driven by
+# the reconciler once a domain flips email_enabled=1.
+_install_bulwark_systemd() {
+  if [[ ! -f "${REPO_DIR}/install/systemd/jabali-webmail.service" ]]; then
+    _die "Bulwark systemd unit not found at ${REPO_DIR}/install/systemd/jabali-webmail.service"
+  fi
+  install -m 0644 -o root -g root "${REPO_DIR}/install/systemd/jabali-webmail.service" \
+    /etc/systemd/system/jabali-webmail.service
+  systemctl daemon-reload
+  _ok "jabali-webmail.service installed (disabled — starts on first domain.email_enable)"
+  _install_bulwark_env
+}
+
+# _install_bulwark_env renders install/bulwark/bulwark.env.tmpl into
+# /etc/jabali-panel/bulwark.env. Idempotent: writes only when the
+# rendered content's SHA-256 differs from the on-disk file. Template
+# variable is $JABALI_HOSTNAME (captured by the install.sh preamble).
+# Invoked unconditionally from _install_bulwark_systemd so that even
+# on a second run that skips the tarball re-download, the env file
+# is kept in sync with the template (the one Bulwark actually reads
+# at every service start).
+_install_bulwark_env() {
+  local src="${REPO_DIR}/install/bulwark/bulwark.env.tmpl"
+  local dst="/etc/jabali-panel/bulwark.env"
+  if [[ ! -f "$src" ]]; then
+    _die "Bulwark env template not found at $src"
+  fi
+  if [[ -z "${JABALI_HOSTNAME:-}" ]]; then
+    _die "JABALI_HOSTNAME is unset; cannot render Bulwark env"
+  fi
+
+  # Render into a tmpfile first so we can diff by hash before writing.
+  # Using envsubst would pull in gettext as a dep; sed is enough for
+  # the two variables this template uses.
+  local tmp
+  tmp=$(mktemp)
+  # shellcheck disable=SC2016
+  sed "s|\${JABALI_SERVER_HOSTNAME}|${JABALI_HOSTNAME}|g" "$src" >"$tmp"
+
+  local new_sha old_sha=""
+  new_sha=$(sha256sum "$tmp" | awk '{print $1}')
+  if [[ -f "$dst" ]]; then
+    old_sha=$(sha256sum "$dst" | awk '{print $1}')
+  fi
+  if [[ "$new_sha" == "$old_sha" ]]; then
+    rm -f "$tmp"
+    _ok "Bulwark env ($dst) already up to date"
+    return
+  fi
+
+  install -m 0640 -o jabali-webmail -g jabali-webmail "$tmp" "$dst"
+  rm -f "$tmp"
+  _ok "Bulwark env rendered -> $dst"
+
+  # Soft reload: if the service is already running, restart so the new
+  # env takes effect. If it's inactive, the next reconciler-triggered
+  # start will pick up the file.
+  if systemctl is-active jabali-webmail >/dev/null 2>&1; then
+    systemctl restart jabali-webmail || _warn "failed to restart jabali-webmail after env update"
+  fi
+}
+
 # ---------- step 8: Kratos identity provider (M20) ---------------------------
 
 install_kratos() {
@@ -2813,6 +3457,10 @@ main() {
   write_systemd_unit
   start_and_verify_agent
   start_and_verify
+  # Second-phase Stalwart bootstrap: needs jabali_panel.{mailboxes,domains}
+  # to exist, which the panel service creates via migration 000054 on its
+  # first start (inside start_and_verify). Must run after, never before.
+  install_stalwart_apply
   seed_last_built_sha
   _ok "jabali-panel + jabali-agent installed. Status:"
   _ok "  systemctl status $AGENT_SERVICE_NAME"

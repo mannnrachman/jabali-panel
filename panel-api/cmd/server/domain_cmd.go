@@ -23,6 +23,8 @@ func newDomainCmd() *cobra.Command {
 		newDomainDisableCmd(),
 		newDomainDeleteCmd(),
 	)
+	// M6 email-* leaves live in their own file (domain_email_cmd.go).
+	cmd.AddCommand(domainEmailSubcommands()...)
 	return cmd
 }
 

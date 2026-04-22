@@ -85,6 +85,22 @@ func (m *mockDomainRepo) UpdatePHPSettings(ctx context.Context, id string, setti
 	return nil
 }
 
+func (m *mockDomainRepo) UpdateEmailState(ctx context.Context, id string, state repository.DomainEmailState) error {
+	d, ok := m.domains[id]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	d.EmailEnabled = state.Enabled
+	d.EmailEnabledAt = state.EmailEnabledAt
+	if state.DkimSelector != nil {
+		d.DkimSelector = state.DkimSelector
+	}
+	if state.DkimPublicKey != nil {
+		d.DkimPublicKey = state.DkimPublicKey
+	}
+	return nil
+}
+
 type mockDNSZoneRepo struct {
 	zones map[string]*models.DNSZone
 }
@@ -186,6 +202,19 @@ func (m *mockDNSRecordRepo) DeleteByZoneID(ctx context.Context, zoneID string) e
 		if r.ZoneID == zoneID {
 			delete(m.records, id)
 		}
+	}
+	return nil
+}
+
+func (m *mockDNSRecordRepo) DeleteByZoneIDAndManagedBy(ctx context.Context, zoneID, managedBy string) error {
+	for id, r := range m.records {
+		if r.ZoneID != zoneID {
+			continue
+		}
+		if r.ManagedBy == nil || *r.ManagedBy != managedBy {
+			continue
+		}
+		delete(m.records, id)
 	}
 	return nil
 }

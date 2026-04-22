@@ -31,6 +31,12 @@ type DNSRecordRepository interface {
 	FindByID(ctx context.Context, id string) (*models.DNSRecord, error)
 	ListByZoneID(ctx context.Context, zoneID string) ([]models.DNSRecord, error)
 	DeleteByZoneID(ctx context.Context, zoneID string) error
+	// DeleteByZoneIDAndManagedBy removes every row in the given zone
+	// whose managed_by column matches exactly — NULL values are never
+	// touched. Used by M6 on domain.email_disable to clean up the
+	// email-specific records (DKIM, autoconfig, autodiscover) without
+	// disturbing M4 bootstrap records or user-edited rows.
+	DeleteByZoneIDAndManagedBy(ctx context.Context, zoneID, managedBy string) error
 }
 
 type dnsZoneRepo struct{ db *gorm.DB }
@@ -140,5 +146,11 @@ func (r *dnsRecordRepo) ListByZoneID(ctx context.Context, zoneID string) ([]mode
 func (r *dnsRecordRepo) DeleteByZoneID(ctx context.Context, zoneID string) error {
 	return r.db.WithContext(ctx).
 		Where("zone_id = ?", zoneID).
+		Delete(&models.DNSRecord{}).Error
+}
+
+func (r *dnsRecordRepo) DeleteByZoneIDAndManagedBy(ctx context.Context, zoneID, managedBy string) error {
+	return r.db.WithContext(ctx).
+		Where("zone_id = ? AND managed_by = ?", zoneID, managedBy).
 		Delete(&models.DNSRecord{}).Error
 }

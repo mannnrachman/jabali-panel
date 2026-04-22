@@ -34,6 +34,8 @@ type Deps struct {
 	Databases           repository.DatabaseRepository
 	DatabaseUsers       repository.DatabaseUserRepository
 	DatabaseUserGrants  repository.DatabaseUserGrantRepository
+	Mailboxes           repository.MailboxRepository
+	MailboxSSOTokens    repository.MailboxSSOTokenRepository
 	PhpMyAdminSSOTokens repository.PhpMyAdminSSOTokenRepository
 	Agent               agent.AgentInterface
 	Reconciler          *reconciler.Reconciler
@@ -146,6 +148,21 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		api.RegisterAgentHealthRoute(r, deps.Agent)
 	}
 
+	// Webmail SSO landing (M6 Step 8 Phase B). Lives at /sso/webmail on
+	// the engine root, not /api/v1, because it's served from
+	// mail.<domain> (via nginx location /sso) where the SPA + Kratos
+	// prefix doesn't apply. Handler does its own token auth (consume +
+	// hash match) so no Kratos cookie is required.
+	if deps.Mailboxes != nil && deps.Domains != nil && deps.SSOKey != nil && deps.MailboxSSOTokens != nil {
+		api.RegisterWebmailSSORoutes(r, api.WebmailSSOHandlerConfig{
+			Mailboxes: deps.Mailboxes,
+			Domains:   deps.Domains,
+			SSOKey:    deps.SSOKey,
+			SSOTokens: deps.MailboxSSOTokens,
+			Log:       deps.Log,
+		})
+	}
+
 	// Instantiate Kratos client + same-origin reverse proxy for /.ory/*.
 	// The SPA fetches relative Kratos self-service endpoints and panel-api
 	// binds :8443 directly (no nginx in front on that port), so we proxy
@@ -228,6 +245,23 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Users:          deps.Users,
 				Packages:       deps.Packages,
 				Agent:          deps.Agent,
+			})
+		}
+		if deps.Mailboxes != nil && deps.Domains != nil {
+			api.RegisterMailboxRoutes(v1, api.MailboxHandlerConfig{
+				Mailboxes: deps.Mailboxes,
+				Domains:   deps.Domains,
+				Agent:     deps.Agent,
+				SSOKey:    deps.SSOKey,
+				SSOTokens: deps.MailboxSSOTokens,
+			})
+		}
+		if deps.Domains != nil {
+			api.RegisterDomainEmailRoutes(v1, api.DomainEmailHandlerConfig{
+				Domains:    deps.Domains,
+				Agent:      deps.Agent,
+				DNSZones:   deps.DNSZones,
+				DNSRecords: deps.DNSRecords,
 			})
 		}
 		if deps.Domains != nil && deps.DNSZones != nil && deps.DNSRecords != nil {

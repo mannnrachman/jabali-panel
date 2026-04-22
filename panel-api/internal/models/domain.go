@@ -204,6 +204,19 @@ type Domain struct {
 	RateLimitRPS    uint32 `gorm:"type:int unsigned;not null;default:0" json:"rate_limit_rps"`
 	ConnectionLimit uint32 `gorm:"type:int unsigned;not null;default:0" json:"connection_limit"`
 
+	// M6 email state (migration 000054). EmailEnabled drives whether the
+	// reconciler sets up MX/SPF/DMARC zone records and whether the API
+	// accepts mailbox creates. DkimSelector + DkimPublicKey mirror the
+	// DNS TXT value published by the agent's domain.email_enable; the
+	// private key stays on disk at /etc/jabali-panel/dkim/<name>.key
+	// (ADR-0043). EmailEnabledAt is the last transition-to-enabled
+	// timestamp — useful for operator audit and the reconciler to
+	// re-publish DNS after a backup restore.
+	EmailEnabled    bool       `gorm:"type:tinyint(1);not null;default:0" json:"email_enabled"`
+	DkimSelector    *string    `gorm:"type:varchar(64)" json:"dkim_selector,omitempty"`
+	DkimPublicKey   *string    `gorm:"type:text" json:"dkim_public_key,omitempty"`
+	EmailEnabledAt  *time.Time `gorm:"type:datetime(6)" json:"email_enabled_at,omitempty"`
+
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }

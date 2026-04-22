@@ -5,7 +5,7 @@
 // sidebar here.
 import { useEffect, useState } from "react";
 import { LeftOutlined, RightOutlined } from "@ant-design/icons";
-import { Drawer, Grid, Layout, Menu, theme } from "antd";
+import { ConfigProvider, Drawer, Grid, Layout, Menu, theme } from "antd";
 import { Outlet, useLocation, useNavigate } from "react-router";
 
 import { JabaliFooter } from "../components/JabaliFooter";
@@ -29,22 +29,48 @@ export function UserLayout() {
 
   const siderBg = mode === "dark" ? token.colorBgLayout : "#f9fafb";
 
+  // User panel takes the AntD-default blue accent on the selected menu
+  // row; admin keeps red (set globally in muiTheme.ts). The nested
+  // ConfigProvider overlays the Menu tokens for this shell only —
+  // header, footer, tabs, and buttons still read the red accent from
+  // the top-level provider because they inherit outside this wrap.
   const menu = (
-    <Menu
-      mode="inline"
-      theme={mode}
-      selectedKeys={selected ? [selected] : []}
-      style={{ border: "none", background: siderBg }}
-      items={userNav.map((n) => ({
-        key: n.key,
-        icon: n.icon,
-        label: n.label,
-        onClick: () => {
-          navigate(n.path);
-          setDrawerOpen(false);
+    <ConfigProvider
+      theme={{
+        components: {
+          Menu:
+            mode === "dark"
+              ? {
+                  darkItemSelectedBg: "#1f1f1f",
+                  darkItemSelectedColor: "#4096ff",
+                  darkItemHoverBg: "#1a1a1a",
+                  darkItemHoverColor: "rgba(255, 255, 255, 0.85)",
+                }
+              : {
+                  itemSelectedBg: "#f3f4f6",
+                  itemSelectedColor: "#1677ff",
+                  itemHoverBg: "#f9fafb",
+                  itemHoverColor: "rgba(0, 0, 0, 0.88)",
+                },
         },
-      }))}
-    />
+      }}
+    >
+      <Menu
+        mode="inline"
+        theme={mode}
+        selectedKeys={selected ? [selected] : []}
+        style={{ border: "none", background: siderBg }}
+        items={userNav.map((n) => ({
+          key: n.key,
+          icon: n.icon,
+          label: n.label,
+          onClick: () => {
+            navigate(n.path);
+            setDrawerOpen(false);
+          },
+        }))}
+      />
+    </ConfigProvider>
   );
 
   useEffect(() => {

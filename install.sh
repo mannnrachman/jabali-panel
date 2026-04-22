@@ -82,6 +82,8 @@ ENV_FILE="/etc/jabali/panel.env"
 _cli_hostname=""
 _cli_token=""
 _cli_debug=""
+_cli_uninstall=""
+_cli_yes=""
 _positional=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -90,6 +92,8 @@ while [[ $# -gt 0 ]]; do
     --token=*)    _cli_token="${1#*=}"; shift ;;
     --token)      _cli_token="${2:-}"; shift 2 ;;
     --debug)      _cli_debug=1; shift ;;
+    --uninstall)  _cli_uninstall=1; shift ;;
+    --yes|-y)     _cli_yes=1; shift ;;
     --)           shift; while [[ $# -gt 0 ]]; do _positional+=("$1"); shift; done ;;
     --*)          printf 'install.sh: unknown flag: %s\n' "$1" >&2; exit 64 ;;
     *)            _positional+=("$1"); shift ;;
@@ -4050,4 +4054,252 @@ main() {
   fi
 }
 
-main "$@"
+# ---------- uninstall flow --------------------------------------------------
+# `install.sh --uninstall` tears down everything the installer creates, in
+# roughly the reverse order of main(). Best-effort: every step uses `|| true`
+# so a partial install (install failed mid-way) can still be cleaned up.
+# Leaves apt-installed OS packages (nginx, mariadb, pdns, php, …) INSTALLED —
+# they are shared with the rest of the OS and re-running install.sh will
+# reconfigure them. Destructive prompts (drop databases, remove /home users)
+# ask for explicit confirmation unless --yes is given.
+uninstall() {
+  [[ $EUID -eq 0 ]] || { printf 'install.sh --uninstall: must run as root\n' >&2; exit 1; }
+
+  cat <<'EOF'
+
+============================================================
+  JABALI UNINSTALL
+============================================================
+This will remove:
+  • jabali-* systemd units and their drop-ins
+  • /usr/local/bin/{jabali,jabali-panel,jabali-agent,kratos,stalwart,stalwart-cli}
+  • /etc/jabali-panel/, /etc/jabali/
+  • /var/lib/jabali-*, /var/lib/stalwart, /run/jabali*
+  • /opt/jabali-panel, /opt/jabali-webmail, /opt/stalwart, /opt/phpmyadmin
+  • systemd-resolved + pdns-recursor jabali drop-ins
+  • /etc/ssh/sshd_config.d/jabali-sftp.conf
+  • jabali PHP-FPM pools
+  • system accounts: jabali, jabali-mail, jabali-webmail, stalwart
+  • system groups:  jabali, jabali-mail, jabali-webmail, jabali-sftp
+
+Will ASK before:
+  • dropping MariaDB databases (jabali_panel, jabali_pdns, jabali_kratos, stalwart_smtp)
+  • removing user home directories under /home/
+
+Will NOT remove apt packages (nginx, mariadb-server, pdns, php, node, …).
+
+EOF
+
+  if [[ "${_cli_yes:-}" != "1" ]]; then
+    read -rp "Proceed with uninstall? [y/N]: " ans
+    [[ "${ans:-}" =~ ^[yY] ]] || { _log "cancelled"; exit 0; }
+  fi
+
+  _log "stopping jabali services"
+  local svc
+  for svc in \
+    jabali-panel.service \
+    jabali-agent.service \
+    jabali-kratos.service \
+    jabali-stalwart.service \
+    jabali-webmail.service \
+    jabali-sso-reaper.timer \
+    jabali-sso-reaper.service; do
+    systemctl stop    "$svc" 2>/dev/null || true
+    systemctl disable "$svc" 2>/dev/null || true
+  done
+
+  # All jabali-fpm@<user>.service instances (per-user slices).
+  local unit
+  while read -r unit; do
+    [[ -n "$unit" ]] || continue
+    systemctl stop    "$unit" 2>/dev/null || true
+    systemctl disable "$unit" 2>/dev/null || true
+  done < <(systemctl list-units --type=service --all --no-legend 'jabali-fpm@*.service' 2>/dev/null | awk '{print $1}')
+
+  _log "removing jabali systemd unit files + drop-ins"
+  rm -f  /etc/systemd/system/jabali-panel.service
+  rm -f  /etc/systemd/system/jabali-agent.service
+  rm -f  /etc/systemd/system/jabali-kratos.service
+  rm -f  /etc/systemd/system/jabali-stalwart.service
+  rm -f  /etc/systemd/system/jabali-webmail.service
+  rm -f  /etc/systemd/system/jabali-sso-reaper.service
+  rm -f  /etc/systemd/system/jabali-sso-reaper.timer
+  rm -f  /etc/systemd/system/jabali-fpm@.service
+  rm -f  /etc/systemd/system/jabali.slice
+  rm -f  /etc/systemd/system/jabali-user.slice
+  rm -rf /etc/systemd/system/jabali-fpm@*
+  rm -rf /etc/systemd/system/jabali-panel.service.d
+  rm -rf /etc/systemd/system/jabali-agent.service.d
+
+  # Drop-ins on shared system services — remove only the files WE wrote.
+  rm -f /etc/systemd/system/pdns-recursor.service.d/10-jabali-after.conf
+  rm -f /etc/systemd/system/pdns-recursor.service.d/20-jabali-old-settings.conf
+  rmdir --ignore-fail-on-non-empty /etc/systemd/system/pdns-recursor.service.d 2>/dev/null || true
+  rm -f /etc/systemd/system/systemd-resolved.service.d/10-jabali-after.conf
+  rmdir --ignore-fail-on-non-empty /etc/systemd/system/systemd-resolved.service.d 2>/dev/null || true
+  rm -f /etc/systemd/resolved.conf.d/jabali.conf
+  rm -f /etc/systemd/resolved.conf.d/zz-jabali-recursor.conf
+
+  systemctl daemon-reload 2>/dev/null || true
+
+  # Restart shared services so they re-read without jabali drop-ins.
+  systemctl restart systemd-resolved 2>/dev/null || true
+  systemctl restart pdns-recursor    2>/dev/null || true
+
+  _log "removing binaries"
+  rm -f /usr/local/bin/jabali \
+        /usr/local/bin/jabali-panel \
+        /usr/local/bin/jabali-agent \
+        /usr/local/bin/kratos \
+        /usr/local/bin/stalwart \
+        /usr/local/bin/stalwart-cli
+
+  _log "removing config files"
+  rm -rf /etc/jabali-panel
+  rm -rf /etc/jabali
+  rm -f  /etc/nginx/conf.d/jabali-pma-logformat.conf
+  rm -f  /etc/ssh/sshd_config.d/jabali-sftp.conf
+  # Validate sshd now that our drop-in is gone — best-effort.
+  sshd -t 2>/dev/null && systemctl reload ssh 2>/dev/null || true
+
+  _log "removing PHP-FPM jabali pools"
+  local pdir poolf
+  for pdir in /etc/php/*/fpm/pool.d; do
+    [[ -d "$pdir" ]] || continue
+    for poolf in "$pdir"/jabali-*.conf "$pdir"/_jabali-*.conf; do
+      [[ -f "$poolf" ]] && rm -f "$poolf"
+    done
+  done
+  # Restart PHP-FPM so the per-version daemons drop the now-missing pool refs.
+  local fpm
+  for fpm in /etc/init.d/php*-fpm; do
+    [[ -x "$fpm" ]] && systemctl restart "$(basename "$fpm")" 2>/dev/null || true
+  done
+
+  _log "removing state + install directories"
+  rm -rf /var/lib/jabali        \
+         /var/lib/jabali-panel  \
+         /var/lib/jabali-webmail \
+         /var/lib/stalwart       \
+         /run/jabali             \
+         /run/jabali-panel       \
+         /opt/jabali-panel       \
+         /opt/jabali-webmail     \
+         /opt/jabali-webmail.stage \
+         /opt/jabali-webmail.prev  \
+         /opt/stalwart            \
+         /opt/stalwart.new        \
+         /opt/stalwart.prev       \
+         /opt/phpmyadmin          \
+         /var/www/jabali-disabled
+
+  # MariaDB: drop jabali databases + users. Try socket-auth first; if that
+  # fails (root password set), ask for a password once.
+  local mysql_root_cmd=""
+  if mariadb -u root -e 'SELECT 1' >/dev/null 2>&1; then
+    mysql_root_cmd="mariadb -u root"
+  elif mysql -u root -e 'SELECT 1' >/dev/null 2>&1; then
+    mysql_root_cmd="mysql -u root"
+  fi
+
+  if [[ -z "$mysql_root_cmd" ]]; then
+    _warn "MariaDB root login (socket auth) not available — skipping database drop"
+    _warn "Drop manually: DROP DATABASE jabali_panel; DROP DATABASE jabali_pdns; DROP DATABASE jabali_kratos;"
+  else
+    local drop_db="n"
+    if [[ "${_cli_yes:-}" == "1" ]]; then
+      drop_db="y"
+    else
+      read -rp "Drop jabali MariaDB databases + users (jabali_panel, jabali_pdns, jabali_kratos, stalwart_smtp)? [y/N]: " drop_db
+    fi
+    if [[ "${drop_db:-}" =~ ^[yY] ]]; then
+      _log "dropping jabali databases"
+      $mysql_root_cmd <<'SQL' 2>/dev/null || _warn "some DROP statements failed (may already be gone)"
+DROP DATABASE IF EXISTS jabali_panel;
+DROP DATABASE IF EXISTS jabali_pdns;
+DROP DATABASE IF EXISTS jabali_kratos;
+DROP DATABASE IF EXISTS stalwart_smtp;
+DROP USER IF EXISTS 'jabali_panel_app'@'localhost';
+DROP USER IF EXISTS 'jabali_pdns'@'localhost';
+DROP USER IF EXISTS 'jabali_kratos'@'localhost';
+DROP USER IF EXISTS 'stalwart_smtp'@'localhost';
+FLUSH PRIVILEGES;
+SQL
+    else
+      _log "skipping database drop (user declined)"
+    fi
+  fi
+
+  _log "removing jabali system accounts"
+  local u
+  for u in jabali-webmail jabali-mail stalwart jabali; do
+    if id "$u" >/dev/null 2>&1; then
+      # userdel -r would remove home; we pass --force for idempotence but NOT -r
+      # because jabali's home is /opt/jabali-panel which we already rm -rf'd.
+      userdel --force "$u" 2>/dev/null && _log "removed user $u" || _warn "could not remove user $u"
+    fi
+  done
+  # Groups (may remain if --user-group flag wasn't used, or if the user was
+  # removed but the group lingered).
+  local g
+  for g in jabali-sftp jabali-webmail jabali-mail jabali; do
+    getent group "$g" >/dev/null 2>&1 && { groupdel "$g" 2>/dev/null && _log "removed group $g" || true; }
+  done
+
+  # Interactive: /home/ user cleanup. Jabali provisions end-user accounts
+  # with home dirs under /home/<user>/. We can't distinguish jabali-created
+  # accounts from pre-existing ones with certainty, so we list every
+  # non-system /home entry and prompt per user.
+  _log "enumerating /home/ users"
+  local home_users=()
+  while IFS=: read -r uname _ uid _ _ udir _; do
+    [[ -d "$udir" ]] || continue
+    [[ "$udir" == /home/* ]] || continue
+    (( uid >= 1000 )) || continue
+    home_users+=("$uname")
+  done < /etc/passwd
+
+  if [[ ${#home_users[@]} -eq 0 ]]; then
+    _log "no /home/ users found"
+  else
+    printf '\nFound %d user(s) with home directories under /home/:\n' "${#home_users[@]}"
+    printf '  %s\n' "${home_users[@]}"
+    echo
+    if [[ "${_cli_yes:-}" == "1" ]]; then
+      _warn "--yes given: NOT removing /home users automatically (too destructive for auto-mode)."
+      _warn "Remove manually if desired: userdel -r <user>"
+    else
+      local rm_all
+      read -rp "Remove ALL listed users + their /home directories? [y/N/each]: " rm_all
+      case "${rm_all:-}" in
+        [yY]*)
+          for u in "${home_users[@]}"; do
+            userdel -r "$u" 2>/dev/null && _log "removed user $u + /home/$u" || _warn "userdel -r $u failed"
+          done
+          ;;
+        each|EACH|e|E)
+          for u in "${home_users[@]}"; do
+            local ans2
+            read -rp "  remove user '$u' (+ /home/$u)? [y/N]: " ans2
+            if [[ "${ans2:-}" =~ ^[yY] ]]; then
+              userdel -r "$u" 2>/dev/null && _log "removed $u" || _warn "userdel -r $u failed"
+            fi
+          done
+          ;;
+        *)
+          _log "keeping all /home users"
+          ;;
+      esac
+    fi
+  fi
+
+  _ok "jabali uninstall complete"
+  _ok "OS packages (nginx, mariadb, pdns, php, node, …) left INSTALLED — remove with apt if desired"
+}
+
+if [[ -n "${_cli_uninstall:-}" ]]; then
+  uninstall
+else
+  main "$@"
+fi

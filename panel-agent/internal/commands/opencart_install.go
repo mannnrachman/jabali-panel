@@ -252,6 +252,15 @@ func runOpenCartCLIInstaller(ctx context.Context, req opencartInstallReq, instal
 	if err != nil {
 		return fmt.Errorf("install/cli_install.php install: %w (output: %s)", err, truncateStr(string(out), 1024))
 	}
+	// cli_install.php prints "ERROR: ..." and exits 0 on validation
+	// failures (password length, missing PHP extension, unwritable
+	// config, etc.). Exit code alone can't distinguish success from a
+	// silent failure, so scan stdout for ERROR: and success for the
+	// known happy-path string.
+	outStr := string(out)
+	if strings.Contains(outStr, "ERROR:") || !strings.Contains(outStr, "SUCCESS") {
+		return fmt.Errorf("install/cli_install.php rejected: %s", truncateStr(outStr, 1024))
+	}
 	return nil
 }
 

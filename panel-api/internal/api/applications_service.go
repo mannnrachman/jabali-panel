@@ -367,7 +367,13 @@ func dispatchInstallKicker(ctx context.Context, appName string, k kickContext, d
 	case "opencart":
 		opencartPass := paramOr(k.Params, "admin_password", "")
 		if opencartPass == "" {
-			opencartPass = ids.NewULID()
+			// OpenCart's install/cli_install.php enforces 5-20 chars
+			// and — critically — PRINTS the error + exits 0 on failure,
+			// so passing the 26-char ULID caused silent install failures
+			// (empty config.php, no schema, install/ still deleted).
+			// Truncate to 20 = 100 bits of base32 entropy, well above
+			// WP's default bcrypt work.
+			opencartPass = ids.NewULID()[:20]
 		}
 		go createOpenCartInstallAndKickAgent(ctx, opencartKickArgs{
 			InstallID:    k.InstallID,

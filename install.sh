@@ -324,12 +324,6 @@ prompt_server_settings() {
     input_fd=""
   fi
 
-  echo ""
-  echo "=============================================================="
-  echo "  Jabali Panel — Server Settings"
-  echo "=============================================================="
-  echo ""
-
   local inp_hostname inp_ipv4 inp_ipv6 inp_ns1_name inp_ns1_ip inp_ns2_name inp_ns2_ip
 
   # IPs always come from detection / env override — never prompted.
@@ -356,10 +350,43 @@ prompt_server_settings() {
       _die "no TTY and no --hostname given (detected: '$inp_hostname')"
     fi
   else
-    echo "Just one thing — your server's hostname. Press Enter to keep"
-    echo "the current value, or type a new one. You can change it later"
-    echo "from the admin panel."
-    echo ""
+    # Structured preamble so the operator knows exactly what this
+    # hostname controls before typing it. Printed to /dev/tty along
+    # with the prompt itself so bash's stderr buffering (an issue
+    # under `curl | bash`) can't swallow any of it. Falls back to
+    # stdout if /dev/tty is unavailable (shouldn't happen since we
+    # already proved we have a TTY via exec 3</dev/tty above, but
+    # the guard is cheap).
+    {
+      printf '\n'
+      printf '\033[1m==============================================================\033[0m\n'
+      printf '\033[1m  Jabali Panel — Server Configuration\033[0m\n'
+      printf '\033[1m==============================================================\033[0m\n'
+      printf '\n'
+      printf 'Enter the fully qualified domain name (FQDN) for this server.\n'
+      printf 'This name will be used for:\n'
+      printf '  - System hostname (hostnamectl set-hostname)\n'
+      printf '  - Panel URL (https://<hostname>:8443)\n'
+      printf '  - Mail server config (stalwart + per-domain vhosts)\n'
+      printf '  - Nameserver records (ns1.<hostname>, ns2.<hostname>)\n'
+      printf '\n'
+      printf 'Current hostname: \033[1m%s\033[0m\n' "$sys_hostname"
+      printf 'Server IPv4:      \033[1m%s\033[0m\n' "$inp_ipv4"
+      if [[ -n "$inp_ipv6" ]]; then
+        printf 'Server IPv6:      \033[1m%s\033[0m\n' "$inp_ipv6"
+      fi
+      printf '\n'
+    } > /dev/tty 2>/dev/null || {
+      printf '\n'
+      printf '==============================================================\n'
+      printf '  Jabali Panel — Server Configuration\n'
+      printf '==============================================================\n'
+      printf '\n'
+      printf 'Current hostname: %s\n' "$sys_hostname"
+      printf 'Server IPv4:      %s\n' "$inp_ipv4"
+      [[ -n "$inp_ipv6" ]] && printf 'Server IPv6:      %s\n' "$inp_ipv6"
+      printf '\n'
+    }
 
     while true; do
       # Write the prompt directly to /dev/tty, bypassing stdout/stderr
@@ -368,8 +395,8 @@ prompt_server_settings() {
       # block-buffering of stderr when the parent pipe (curl) is still
       # live. Writing to /dev/tty hits the same device the user is
       # looking at with zero intermediaries.
-      printf "Enter your hostname [%s]: " "$sys_hostname" > /dev/tty 2>/dev/null \
-        || printf "Enter your hostname [%s]: " "$sys_hostname"
+      printf "Enter hostname [%s]: " "$sys_hostname" > /dev/tty 2>/dev/null \
+        || printf "Enter hostname [%s]: " "$sys_hostname"
       read -r -u "$input_fd" inp_hostname || true
       inp_hostname="${inp_hostname:-$sys_hostname}"
       [[ "$inp_hostname" =~ $_hostname_regex ]] && break

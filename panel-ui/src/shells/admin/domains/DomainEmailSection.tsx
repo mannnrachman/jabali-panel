@@ -124,6 +124,7 @@ export const DomainEmailSection = ({ domainId }: Props) => {
             size="small"
             pagination={false}
             dataSource={data.records}
+            scroll={{ x: "max-content" }}
             rowKey={(r) => `${r.type}:${r.name}`}
             columns={[
               {

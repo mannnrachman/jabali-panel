@@ -261,6 +261,7 @@ export const PHPPoolEdit = () => {
           loading={overridesQ.isLoading}
           rowKey="id"
           pagination={false}
+          scroll={{ x: "max-content" }}
         />
 
         <Modal

@@ -269,6 +269,7 @@ export const UserSSHKeysPage = () => {
           loading={isLoading || deletingId !== null}
           rowKey="id"
           pagination={false}
+          scroll={{ x: "max-content" }}
           columns={[
             {
               title: "Name",

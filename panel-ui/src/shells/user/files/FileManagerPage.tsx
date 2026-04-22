@@ -1142,6 +1142,7 @@ export const FileManagerPage = () => {
               dataSource={entries}
               columns={columns as never}
               pagination={false}
+              scroll={{ x: "max-content" }}
               locale={{ emptyText: <Empty description="Empty directory" /> }}
               // Row drag-to-move: any row is draggable; folders are drop
               // targets. `dragPathMime` carries the list of paths being

@@ -181,6 +181,7 @@ export const UserCronList = () => {
         loading={isLoading_}
         rowKey="id"
         pagination={false}
+        scroll={{ x: "max-content" }}
         columns={[
           {
             title: "Name",

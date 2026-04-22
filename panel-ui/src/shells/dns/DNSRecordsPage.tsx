@@ -711,6 +711,7 @@ export const DNSRecordsPage = () => {
               dataSource={displayRecords}
               rowKey="id"
               pagination={false}
+              scroll={{ x: "max-content" }}
               columns={[
                 {
                   title: "Name",

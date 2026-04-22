@@ -179,6 +179,7 @@ export const PHPExtensionsTab = () => {
           loading={loadingExtensions}
           pagination={false}
           size="middle"
+          scroll={{ x: "max-content" }}
         >
           <Table.Column<ExtensionState>
             dataIndex="name"

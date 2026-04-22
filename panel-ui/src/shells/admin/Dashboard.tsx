@@ -300,6 +300,7 @@ export function Dashboard() {
                 dataSource={info.partitions}
                 rowKey="mount_point"
                 pagination={false}
+                scroll={{ x: "max-content" }}
               >
                 <Table.Column
                   dataIndex="mount_point"
@@ -343,6 +344,7 @@ export function Dashboard() {
           dataSource={services}
           rowKey="name"
           pagination={false}
+          scroll={{ x: "max-content" }}
         >
           <Table.Column<ServiceStatus>
             title="Service"

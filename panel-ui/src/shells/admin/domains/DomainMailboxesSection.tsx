@@ -299,6 +299,7 @@ export const DomainMailboxesSection = ({
           rowKey="id"
           loading={list.isLoading}
           dataSource={list.items}
+          scroll={{ x: "max-content" }}
           pagination={{
             current: page,
             pageSize,

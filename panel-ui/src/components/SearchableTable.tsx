@@ -37,6 +37,18 @@ export function SearchableTableStringQ<T extends object>({
   const [query, setQuery] = useState(initialSearch);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Default scroll.x = "max-content" so wide tables scroll horizontally
+  // inside the Card on narrow viewports instead of clipping at the
+  // viewport edge. Merge property-by-property so a caller that passes
+  // scroll={{ y: 300 }} (virtual table) keeps that value — naive
+  // spread would replace the whole scroll object and lose y. See
+  // ADR-0046.
+  const { scroll: callerScroll, ...restTableProps } = tableProps;
+  const scroll = {
+    x: "max-content" as const,
+    ...(callerScroll ?? {}),
+  };
+
   useEffect(() => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
@@ -67,7 +79,9 @@ export function SearchableTableStringQ<T extends object>({
         }}
         style={{ maxWidth: 360 }}
       />
-      <Table<T> {...tableProps}>{tableProps.children}</Table>
+      <Table<T> {...restTableProps} scroll={scroll}>
+        {restTableProps.children}
+      </Table>
     </Space>
   );
 }

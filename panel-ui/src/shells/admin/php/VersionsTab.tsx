@@ -181,6 +181,7 @@ export const VersionsTab = () => {
         rowKey="version"
         loading={loading}
         pagination={false}
+        scroll={{ x: "max-content" }}
       >
         <Table.Column<PHPVersionStatus>
           dataIndex="version"

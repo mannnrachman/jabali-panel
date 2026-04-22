@@ -92,6 +92,7 @@ export const UserDNSZonesOverviewPage = () => {
             rowKey="id"
             loading={query.isLoading}
             dataSource={query.items}
+            scroll={{ x: "max-content" }}
             pagination={{
               current: query.params.page,
               pageSize: query.params.pageSize,

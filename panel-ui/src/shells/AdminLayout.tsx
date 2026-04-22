@@ -109,7 +109,14 @@ export function AdminLayout() {
           </Drawer>
         )}
         <Layout>
-          <Content style={{ padding: screens.md ? 24 : 12 }}>
+          <Content
+            style={{
+              // Extra top gap so the page heading breathes away from
+              // the header's bottom border. Horizontal + bottom stay
+              // at the baseline gutter.
+              padding: screens.md ? "32px 24px 24px" : "20px 12px 12px",
+            }}
+          >
             <Outlet />
           </Content>
           <JabaliFooter />

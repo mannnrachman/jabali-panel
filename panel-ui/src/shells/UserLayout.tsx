@@ -123,7 +123,11 @@ export function UserLayout() {
           </Drawer>
         )}
         <Layout>
-          <Content style={{ padding: screens.md ? 24 : 12 }}>
+          <Content
+            style={{
+              padding: screens.md ? "32px 24px 24px" : "20px 12px 12px",
+            }}
+          >
             <Outlet />
           </Content>
           <JabaliFooter />

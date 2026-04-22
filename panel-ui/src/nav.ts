@@ -91,6 +91,12 @@ export const adminNav: NavItem[] = [
     icon: createElement(AppstoreAddOutlined),
     path: "/jabali-admin/applications",
   },
+  {
+    key: "ips",
+    label: "IP Addresses",
+    icon: createElement(GlobalOutlined),
+    path: "/jabali-admin/ips",
+  },
 ];
 
 export const userNav: NavItem[] = [

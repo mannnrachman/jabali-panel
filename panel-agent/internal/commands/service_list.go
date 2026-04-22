@@ -45,7 +45,15 @@ var BaseAllowedServices = []string{
 	"nginx",
 	"mariadb",
 	"redis-server",
-	"stalwart-mail",
+	// Mail stack (M6). The jabali-branded names are what install.sh
+	// actually creates — the upstream's own "stalwart-mail.service" is
+	// never used; we ship a vendored unit at
+	// install/systemd/jabali-stalwart.service so rollback + upgrade
+	// remain under the panel's control. Same for the Bulwark webmail.
+	"jabali-stalwart",
+	"jabali-webmail",
+	// Identity (M20).
+	"jabali-kratos",
 	"pdns", // PowerDNS, not BIND — see ADR-0003
 	"jabali-panel",
 	"jabali-agent",

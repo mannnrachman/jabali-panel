@@ -26,6 +26,8 @@ import {
   DatabaseOutlined,
   ThunderboltOutlined,
   MailOutlined,
+  InboxOutlined,
+  SafetyOutlined,
   ApiOutlined,
   AppstoreOutlined,
   SettingOutlined,
@@ -86,10 +88,20 @@ const serviceDisplay: Record<
     subtitle: "Cache Server",
     icon: <ThunderboltOutlined style={{ color: "#389e0d" }} />,
   },
-  "stalwart-mail": {
+  "jabali-stalwart": {
     label: "Stalwart",
     subtitle: "Mail Server",
     icon: <MailOutlined style={{ color: "#389e0d" }} />,
+  },
+  "jabali-webmail": {
+    label: "Bulwark",
+    subtitle: "Webmail",
+    icon: <InboxOutlined style={{ color: "#389e0d" }} />,
+  },
+  "jabali-kratos": {
+    label: "Kratos",
+    subtitle: "Identity Provider",
+    icon: <SafetyOutlined style={{ color: "#389e0d" }} />,
   },
   pdns: {
     label: "PowerDNS",

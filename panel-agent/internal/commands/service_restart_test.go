@@ -29,16 +29,16 @@ func TestServiceRestart_OK(t *testing.T) {
 
 // TestServiceRestart_RejectsMasked — masked units cannot be restarted;
 // surface FailedPrecondition so the API can render a helpful message.
-// We use stalwart-mail as the test subject: it's in the allow-list, so
+// We use jabali-stalwart as the test subject: it's in the allow-list, so
 // the handler gets past the allow-list gate and reaches the mask check.
 // (Global php<v>-fpm was removed from the allow-list per ADR-0025 —
 // those are always masked and never restartable by design.)
 func TestServiceRestart_RejectsMasked(t *testing.T) {
 	installFakeSystemctl(t, map[string]fakeServiceState{
-		"stalwart-mail": {active: "inactive", loadState: "masked"},
+		"jabali-stalwart": {active: "inactive", loadState: "masked"},
 	})
 
-	params, _ := json.Marshal(serviceRestartParams{Name: "stalwart-mail"})
+	params, _ := json.Marshal(serviceRestartParams{Name: "jabali-stalwart"})
 	_, err := serviceRestartHandler(context.Background(), params)
 
 	require.Error(t, err)

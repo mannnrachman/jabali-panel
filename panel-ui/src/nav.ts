@@ -156,7 +156,7 @@ export const userNav: NavItem[] = [
   },
   {
     key: "mailboxes",
-    label: "Mailboxes",
+    label: "Email",
     icon: createElement(MailOutlined),
     path: "/jabali-panel/mailboxes",
   },

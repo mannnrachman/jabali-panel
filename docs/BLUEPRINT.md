@@ -970,6 +970,25 @@ auth flow).
 **Depends on:** M20 (Kratos identity — supersedes Refine's `authProvider` role so removing it doesn't lose functionality).
 **Related:** ADR-0037 (design rationale, rollback note, outcome), `plans/m21-drop-refine.md` (five-wave blueprint).
 
+### M23: Responsive panel UI (IN PROGRESS)
+
+**Status:** Blueprint registered 2026-04-22 at `plans/m23-responsive.md` on branch `m23/responsive`; ADR-0046 accepted. 9-step plan, Opus-reviewed (3 CRITICAL + 6 HIGH folded).
+
+**Goal:** Every page renders and works correctly on phone, tablet, and desktop viewports without horizontal viewport scroll, clipped content, or broken interactions.
+
+**Driving evidence:** At 442×915 (Samsung Android portrait) the admin Dashboard "Disk" table's `Usage` column was clipped off-screen because no `<Table>` in `panel-ui/src` sets `scroll={{ x: … }}`. The `<Sider>` at 64px collapsed has no reachable re-open trigger on touch (chevron sits below the fold).
+
+**Strategy:**
+- `<Drawer>` sidebar below lg (<992px), persistent `<Sider>` at ≥lg (tablets 768–992px keep the sider).
+- `scroll={{ x: "max-content" }}` as a default merged into `SearchableTableStringQ`; standalone `<Table>` usages add it inline.
+- No custom CSS media queries in component files — use AntD `Col xs/sm/md/lg` and `Grid.useBreakpoint()` only.
+- New Playwright mobile project (iPhone 13 / Pixel 5 / iPad Mini) runs alongside existing desktop E2E.
+
+**Depends on:** None (purely UI).
+**Related:** ADR-0046 (responsive strategy), `plans/m23-responsive.md`.
+
+---
+
 ### M22: Magic-link → self-deleting SSO file (REWORK SHIPPED 2026-04-21)
 
 **Status:** Rework shipped (all 8 steps merged to main 2026-04-21 in 4 waves). ADR-0040 accepted; ADR-0039 superseded. Operator runbook at `plans/m22-sso-file-runbook.md`; existing test VM (10.0.3.13) cleaned up via `plans/m22-rework-vm-teardown.md`.

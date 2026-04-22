@@ -524,7 +524,7 @@ POLICYEOF
       nginx \
       certbot python3-certbot-nginx \
       nodejs \
-      pdns-server pdns-backend-mysql \
+      pdns-server pdns-backend-mysql pdns-recursor \
       "${php_extensions[@]}"
 
   # Undo the policy-rc.d trap regardless of exit path above (set -e would
@@ -533,6 +533,17 @@ POLICYEOF
   rm -f "$policy_rc"
   if [[ "$policy_rc_preexisted" == "1" ]]; then
     mv "${policy_rc}.jabali-bak" "$policy_rc"
+  fi
+
+  # M6.3: pdns-recursor's postinst creates the pdns-recursor group. Hard-fail
+  # here if the group is missing — later in install_pdns_recursor we chown
+  # recursor.forwards to root:pdns-recursor, and without the group that chown
+  # would fail with a cryptic "invalid group" error. policy-rc.d above gates
+  # service start but NOT user/group creation, so the group MUST exist after
+  # apt has run. If it doesn't, the package postinst failed and apt-get
+  # install -f is the operator's recovery path.
+  if ! getent group pdns-recursor >/dev/null; then
+    _die "pdns-recursor group missing after apt-install — package postinst failed; run 'apt-get install -f' and re-run install.sh"
   fi
 
   # Make systemd-resolved actually usable by the panel's DNS Resolvers
@@ -1246,9 +1257,15 @@ SQL
     _log "PowerDNS schema already present in jabali_pdns — skipping reload"
   fi
 
-  # Write pdns.conf. Single file, minimal surface. Port 53 UDP+TCP.
+  # Write pdns.conf. Single file, minimal surface.
+  #
+  # Idempotency (M6.3): render to $pdns_conf.new first; if byte-identical
+  # to the live file, skip the write + service restart. This keeps a
+  # re-run of install.sh on an already-converged host silent (no DNS
+  # service bounce, no config rewrite, journal clean).
   local pdns_conf=/etc/powerdns/pdns.d/01-jabali-mysql.conf
-  cat > "$pdns_conf" <<PDNSCONF
+  local pdns_conf_new="${pdns_conf}.new"
+  cat > "$pdns_conf_new" <<PDNSCONF
 # Managed by Jabali Panel install.sh. Hand edits will be overwritten
 # the next time install.sh runs.
 launch=gmysql
@@ -1258,18 +1275,23 @@ gmysql-dbname=jabali_pdns
 gmysql-user=jabali_pdns
 gmysql-password=${pdns_password}
 
-# Bind to the host's public IP + 127.0.0.1 explicitly. We deliberately
-# do NOT bind 0.0.0.0 because systemd-resolved (enabled earlier in
-# install_base_packages for the panel's DNS Resolvers feature) is
-# already listening on 127.0.0.53:53 as a stub. A 0.0.0.0:53 bind
-# wildcards over every local IP — including 127.0.0.53 — and fails
-# with EADDRINUSE, which surfaces as "Job for pdns.service failed"
-# during install. Binding to the specific public IP + localhost avoids
-# the overlap while keeping \`dig @localhost\` + \`dig @<panel-ip>\`
-# both working from the host itself and from the internet.
-# Operator can widen this via /etc/powerdns/pdns.conf if they add more
-# IPs, but they must not re-add 0.0.0.0 while systemd-resolved runs.
-local-address=127.0.0.1, ${JABALI_SRV_IPV4}, ::1
+# Split-port binding (M6.3, ADR-0047): port 53 on the host's public IP
+# keeps serving authoritative queries from the open internet, while
+# loopback moves to port 5300 — reserved for pdns-recursor to forward
+# local queries into. pdns-recursor owns 127.0.0.1:53 + [::1]:53, which
+# is what systemd-resolved points at via zz-jabali-recursor.conf.
+#
+# Every entry lists port explicitly. pdns-server defaults local-port to
+# 53 when unspecified — DO NOT rely on that default here; a future
+# port flip would otherwise break silently on only part of the binds.
+# Syntax pinned to pdns-server 4.9+ (Debian 13 default package).
+#
+# We deliberately do NOT bind 0.0.0.0: systemd-resolved's stub listens
+# on 127.0.0.53:53 and recursor listens on 127.0.0.1:53, so any
+# wildcard bind would collide with one of them (EADDRINUSE). Operator
+# who adds more public IPs widens this via a drop-in; they must not
+# re-add 0.0.0.0 while systemd-resolved + pdns-recursor run.
+local-address=${JABALI_SRV_IPV4}:53, 127.0.0.1:5300, [::1]:5300
 
 # socket-dir is intentionally not set — Debian's pdns.service has
 # RuntimeDirectory=powerdns which auto-creates /run/powerdns with the
@@ -1282,21 +1304,312 @@ local-address=127.0.0.1, ${JABALI_SRV_IPV4}, ::1
 # default, and per-zone metadata takes precedence.
 disable-axfr-rectify=no
 PDNSCONF
-  chmod 0640 "$pdns_conf"
-  chown root:pdns "$pdns_conf" 2>/dev/null || true
 
-  _log "restarting pdns"
-  systemctl enable pdns >/dev/null 2>&1 || true
-  systemctl restart pdns
-
-  # Quick sanity probe — if pdns isn't running after restart something is
-  # broken and install.sh should fail fast rather than continue past it.
-  sleep 2
-  if ! systemctl is-active --quiet pdns; then
-    systemctl status pdns --no-pager || true
-    _die "pdns failed to start; check 'journalctl -u pdns' for details"
+  # Idempotency: if .new matches live, skip write + restart.
+  local pdns_changed=0
+  if [[ -f "$pdns_conf" ]] && cmp -s "$pdns_conf" "$pdns_conf_new"; then
+    rm -f "$pdns_conf_new"
+    _log "pdns.conf already current; skipping write + restart"
+  else
+    mv "$pdns_conf_new" "$pdns_conf"
+    chmod 0640 "$pdns_conf"
+    chown root:pdns "$pdns_conf" 2>/dev/null || true
+    pdns_changed=1
   fi
-  _ok "PowerDNS running on port 53"
+
+  systemctl enable pdns >/dev/null 2>&1 || true
+  if [[ "$pdns_changed" == "1" ]]; then
+    _log "restarting pdns (config changed)"
+    systemctl restart pdns
+    # Quick sanity probe — if pdns isn't running after restart something
+    # is broken and install.sh should fail fast rather than continue past it.
+    sleep 2
+    if ! systemctl is-active --quiet pdns; then
+      systemctl status pdns --no-pager || true
+      _die "pdns failed to start; check 'journalctl -u pdns' for details"
+    fi
+  elif ! systemctl is-active --quiet pdns; then
+    # Unchanged config but service isn't running (crashed, disabled, etc.).
+    # Start it without a restart so we don't bounce a working service, but
+    # do converge the "service should be active" invariant.
+    _log "pdns config unchanged but service inactive — starting"
+    systemctl start pdns
+    sleep 2
+    systemctl is-active --quiet pdns \
+      || _die "pdns failed to start; check 'journalctl -u pdns' for details"
+  fi
+  _ok "PowerDNS running on ${JABALI_SRV_IPV4}:53 (authoritative) + 127.0.0.1:5300 (recursor forward target)"
+}
+
+# ---------- step 2.6c: pdns-recursor for local self-resolution (M6.3) -------
+#
+# pdns-recursor owns loopback :53 (both v4+v6). It forwards authoritative
+# zones that the panel owns into pdns-server at 127.0.0.1:5300 via
+# /etc/powerdns/recursor.forwards (one line per zone, reconciler-owned),
+# and recurses everything else to public upstream (1.1.1.1, 9.9.9.9).
+#
+# systemd-resolved's stub at 127.0.0.53:53 forwards into this recursor via
+# the zz-jabali-recursor.conf drop-in (written below). Net effect: every
+# /etc/resolv.conf-based resolver call (glibc NSS, every app) goes
+# stub → recursor → either authoritative (for panel zones) or public
+# (for everything else).
+#
+# Security: allow-from is explicitly loopback-only. Debian's package
+# default (127.0.0.0/8 + RFC1918) would open the resolver to every
+# container on an LXC bridge. install.sh hard-fails if the rendered
+# local-address or allow-from drift away from loopback.
+#
+# See docs/adr/0047-pdns-recursor-local-self-resolution.md for the full
+# decision record and plans/m6.3-pdns-recursor.md for the plan.
+install_pdns_recursor() {
+  _log "configuring pdns-recursor"
+
+  # Package must already be installed via install_base_packages' apt batch.
+  # (The getent-group hard-fail earlier catches postinst failures.)
+  if ! dpkg -s pdns-recursor >/dev/null 2>&1; then
+    _die "pdns-recursor not installed — install_base_packages should have installed it"
+  fi
+
+  # --- recursor.conf ------------------------------------------------
+  local rec_conf=/etc/powerdns/recursor.conf
+  local rec_conf_new="${rec_conf}.new"
+
+  # Managed-header in line 1 is the "did install.sh write this?" marker
+  # downstream idempotency guards test against.
+  cat > "$rec_conf_new" <<'RECCONF'
+# Managed by jabali-panel install.sh (M6.3). Hand edits will be overwritten
+# on the next install.sh run. See docs/adr/0047-pdns-recursor-local-self-resolution.md
+local-address=127.0.0.1, ::1
+local-port=53
+
+# Amplification defense (ADR-0047): loopback-only. NARROWER than the
+# Debian package default (127.0.0.0/8 + RFC1918) because LXC bridge
+# interfaces live in RFC1918 ranges and the default would expose the
+# resolver to every co-tenant container.
+allow-from=127.0.0.0/8, ::1/128
+
+# Per-zone forward-to-authoritative file. One line per zone, format:
+#   <zone>=127.0.0.1:5300
+# Reconciler-owned via panel-agent's pdns.recursor_add_zone /
+# pdns.recursor_remove_zone commands (atomic write + strict validator
+# + rec_control reload-zones + SOA post-probe + rollback-on-fail).
+# Never hand-edit on a live host; use `jabali pdns backfill --yes`
+# if a stale state needs reconverging.
+forward-zones-file=/etc/powerdns/recursor.forwards
+
+# Everything else recurses through public upstream. We DO NOT chain
+# through jabali.conf's DNS= — that config lives in systemd-resolved
+# and is only consulted by the stub, not by the recursor.
+forward-zones-recurse=.=1.1.1.1;9.9.9.9
+
+# DNSSEC: off. systemd-resolved validates DNSSEC upstream already.
+# Doubling up costs CPU per query for no security benefit on a
+# single-host panel.
+dnssec=off
+
+# Conservative defaults for a single-tenant panel. max-cache-entries
+# tuned to 50000 to hold a few thousand domains' worth of NXDOMAIN
+# + short-TTL answers without thrashing.
+threads=2
+max-cache-entries=50000
+quiet=yes
+loglevel=4
+setuid=pdns
+setgid=pdns
+RECCONF
+
+  # Pre-install validator (hard-fail): confirm the just-rendered
+  # local-address + allow-from are loopback-only. This is a defense
+  # against someone (operator, future install.sh edit, merge accident)
+  # widening the bind without realizing the blast radius.
+  local rec_local_address rec_allow_from
+  rec_local_address="$(awk -F= '/^local-address=/{print $2; exit}' "$rec_conf_new" | tr -d '[:space:]')"
+  rec_allow_from="$(awk -F= '/^allow-from=/{print $2; exit}' "$rec_conf_new" | tr -d '[:space:]')"
+  # Split on commas and verify every entry.
+  local IFS_save="$IFS"
+  IFS=','
+  local addr
+  for addr in $rec_local_address; do
+    case "$addr" in
+      127.0.0.1|::1) : ;;
+      *) IFS="$IFS_save"; _die "recursor.conf local-address contains non-loopback '$addr' — would expose open resolver publicly" ;;
+    esac
+  done
+  for addr in $rec_allow_from; do
+    case "$addr" in
+      127.0.0.0/8|"::1/128") : ;;
+      *) IFS="$IFS_save"; _die "recursor.conf allow-from contains non-loopback CIDR '$addr' — amplification defense breach" ;;
+    esac
+  done
+  IFS="$IFS_save"
+
+  # Idempotency: skip rewrite + restart if live file is byte-identical.
+  local recursor_changed=0
+  if [[ -f "$rec_conf" ]] && cmp -s "$rec_conf" "$rec_conf_new"; then
+    rm -f "$rec_conf_new"
+    _log "recursor.conf already current; skipping write + restart"
+  else
+    mv "$rec_conf_new" "$rec_conf"
+    chmod 0644 "$rec_conf"
+    chown root:root "$rec_conf"
+    recursor_changed=1
+  fi
+
+  # --- recursor.forwards (seed empty; reconciler owns content) ------
+  local rec_forwards=/etc/powerdns/recursor.forwards
+  if [[ ! -f "$rec_forwards" ]]; then
+    install -m 0640 -o root -g pdns-recursor /dev/null "$rec_forwards"
+    _log "seeded empty /etc/powerdns/recursor.forwards (reconciler populates)"
+  fi
+
+  # --- systemd ordering drop-in: pdns-recursor After=pdns ----------
+  install -d -m 0755 /etc/systemd/system/pdns-recursor.service.d
+  local rec_after_dropin=/etc/systemd/system/pdns-recursor.service.d/10-jabali-after.conf
+  local rec_after_dropin_new="${rec_after_dropin}.new"
+  cat > "$rec_after_dropin_new" <<'AFTEREOF'
+# Managed by jabali-panel install.sh (M6.3, ADR-0047). Ensures
+# pdns-recursor doesn't start before pdns-server — recursor forwards
+# authoritative zones into pdns:5300, so starting recursor first would
+# hit connection-refused until pdns comes up.
+[Unit]
+After=pdns.service
+Wants=pdns.service
+AFTEREOF
+  if [[ -f "$rec_after_dropin" ]] && cmp -s "$rec_after_dropin" "$rec_after_dropin_new"; then
+    rm -f "$rec_after_dropin_new"
+  else
+    mv "$rec_after_dropin_new" "$rec_after_dropin"
+    chmod 0644 "$rec_after_dropin"
+    recursor_changed=1
+    _log "wrote pdns-recursor.service.d/10-jabali-after.conf"
+  fi
+
+  # --- zz-jabali-recursor.conf drop-in for systemd-resolved --------
+  #
+  # Alphabetically AFTER the panel-UI-managed jabali.conf. Per
+  # systemd-resolved.conf(5): "Setting this variable to an empty list
+  # (as in DNS=) resets the list of servers to the empty list, all prior
+  # assignments will be cleared." So `DNS=` (reset) + `DNS=127.0.0.1`
+  # makes 127.0.0.1 the only resolver, regardless of what jabali.conf
+  # contributed. install.sh gates on resolvectl showing DNS Servers:
+  # 127.0.0.1 only — if the merge semantics differ, install fails
+  # loudly so the fallback (consolidate into jabali.conf) can be
+  # invoked per the M6.3 plan.
+  install -d -m 0755 /etc/systemd/resolved.conf.d
+  local resolved_dropin=/etc/systemd/resolved.conf.d/zz-jabali-recursor.conf
+  local resolved_dropin_new="${resolved_dropin}.new"
+  cat > "$resolved_dropin_new" <<'RESOLVEDEOF'
+# Managed by jabali-panel install.sh (M6.3, ADR-0047). Do not hand-edit:
+# the panel DNS Resolvers UI continues to manage
+# /etc/systemd/resolved.conf.d/jabali.conf (admin upstream DNS); this
+# file layers on top alphabetically-last to force every /etc/resolv.conf
+# query through the local pdns-recursor at 127.0.0.1, which forwards
+# panel-authoritative zones to pdns-server:5300 and recurses everything
+# else to public upstream.
+[Resolve]
+DNS=
+DNS=127.0.0.1
+FallbackDNS=1.1.1.1 9.9.9.9
+DNSSEC=no
+RESOLVEDEOF
+
+  local resolved_changed=0
+  if [[ -f "$resolved_dropin" ]] && cmp -s "$resolved_dropin" "$resolved_dropin_new"; then
+    rm -f "$resolved_dropin_new"
+  else
+    mv "$resolved_dropin_new" "$resolved_dropin"
+    chmod 0644 "$resolved_dropin"
+    chown root:root "$resolved_dropin"
+    resolved_changed=1
+    _log "wrote resolved.conf.d/zz-jabali-recursor.conf"
+  fi
+
+  # --- systemd-resolved After=pdns-recursor drop-in ----------------
+  install -d -m 0755 /etc/systemd/system/systemd-resolved.service.d
+  local resolved_after_dropin=/etc/systemd/system/systemd-resolved.service.d/10-jabali-after.conf
+  local resolved_after_dropin_new="${resolved_after_dropin}.new"
+  cat > "$resolved_after_dropin_new" <<'RESAFTEREOF'
+# Managed by jabali-panel install.sh (M6.3, ADR-0047). Ensures
+# systemd-resolved doesn't start before pdns-recursor — the stub
+# at 127.0.0.53 forwards to 127.0.0.1:53 (recursor), so a live stub
+# with a dead recursor means every DNS query SERVFAILs.
+[Unit]
+After=pdns-recursor.service
+Wants=pdns-recursor.service
+RESAFTEREOF
+  if [[ -f "$resolved_after_dropin" ]] && cmp -s "$resolved_after_dropin" "$resolved_after_dropin_new"; then
+    rm -f "$resolved_after_dropin_new"
+  else
+    mv "$resolved_after_dropin_new" "$resolved_after_dropin"
+    chmod 0644 "$resolved_after_dropin"
+    resolved_changed=1
+    _log "wrote systemd-resolved.service.d/10-jabali-after.conf"
+  fi
+
+  # --- daemon-reload only if ordering drop-ins changed --------------
+  if [[ "$recursor_changed" == "1" || "$resolved_changed" == "1" ]]; then
+    systemctl daemon-reload
+  fi
+
+  # --- start + restart sequence ------------------------------------
+  # Order: recursor FIRST (so resolved has something to forward to).
+  # Use restart-if-changed / start-if-inactive, never a blind restart.
+  systemctl enable pdns-recursor >/dev/null 2>&1 || true
+  if [[ "$recursor_changed" == "1" ]]; then
+    _log "restarting pdns-recursor (config changed)"
+    systemctl restart pdns-recursor
+  elif ! systemctl is-active --quiet pdns-recursor; then
+    _log "starting pdns-recursor (was inactive)"
+    systemctl start pdns-recursor
+  fi
+  sleep 1
+  systemctl is-active --quiet pdns-recursor \
+    || { journalctl -u pdns-recursor --no-pager -n 50; _die "pdns-recursor failed to start; see journal above"; }
+
+  if [[ "$resolved_changed" == "1" ]]; then
+    _log "restarting systemd-resolved (drop-in changed)"
+    systemctl restart systemd-resolved
+    sleep 1
+    systemctl is-active --quiet systemd-resolved \
+      || _die "systemd-resolved failed to restart; see 'journalctl -u systemd-resolved'"
+  fi
+
+  # --- post-install probe matrix -----------------------------------
+  # Fail the install rather than shipping a half-working DNS chain.
+
+  # Probe 1: stub → recursor → public. Proves the full chain end-to-end.
+  if ! dig +short +timeout=3 +tries=1 @127.0.0.53 deb.debian.org 2>/dev/null | grep -qE '^[0-9.]+$'; then
+    _die "resolved→recursor→public chain broken (dig @127.0.0.53 deb.debian.org failed). Check 'journalctl -u pdns-recursor -u systemd-resolved'."
+  fi
+
+  # Probe 2: recursor → public directly. Isolates recursor from stub.
+  if ! dig +short +timeout=3 +tries=1 @127.0.0.1 deb.debian.org 2>/dev/null | grep -qE '^[0-9.]+$'; then
+    _die "recursor→public chain broken (dig @127.0.0.1 deb.debian.org failed). Check recursor logs."
+  fi
+
+  # Probe 3: drop-in merge sanity. resolvectl MUST show DNS Servers:
+  # with 127.0.0.1 only. If jabali.conf's DNS=1.1.1.1 9.9.9.9 bleeds
+  # through, the man-page claim about DNS= reset semantics doesn't hold
+  # on this system — abort so the operator can switch to the fallback
+  # (consolidate jabali.conf into zz-jabali-recursor.conf) per the
+  # M6.3 plan.
+  local dns_servers
+  dns_servers="$(resolvectl status 2>/dev/null | awk '/^ *DNS Servers:/{sub(/^ *DNS Servers: */,""); print; exit}')"
+  if [[ -z "$dns_servers" ]]; then
+    # Older systemd: "Current DNS Server:" one-liner, or global-only view.
+    # Fall back to `resolvectl dns` which returns the merged list.
+    dns_servers="$(resolvectl dns 2>/dev/null | awk '/^Global:/{print $2; exit}')"
+  fi
+  # Accept "127.0.0.1" exactly, OR "127.0.0.1 127.0.0.1" (some systemd
+  # versions list per-interface views that repeat the loopback line).
+  # Reject anything else — any 1.1.1.1 / 9.9.9.9 / interface-upstream
+  # in the DNS Servers line means our reset didn't take globally.
+  case "$dns_servers" in
+    "127.0.0.1"|"127.0.0.1 127.0.0.1") : ;;
+    *) _die "resolvectl shows DNS Servers='$dns_servers' — expected '127.0.0.1' only. zz-jabali-recursor.conf merge isn't producing the expected state; see plans/m6.3-pdns-recursor.md §Step 2 fallback (consolidate jabali.conf into zz-jabali-recursor.conf; panel UI edits FallbackDNS= instead of DNS=)." ;;
+  esac
+
+  _ok "pdns-recursor running on 127.0.0.1:53 — stub + recursor + public chain verified"
 }
 
 # ---------- step 2.6b: bootstrap the panel's own hostname zone --------------
@@ -3478,6 +3791,12 @@ main() {
   provision_mariadb
   install_powerdns
   bootstrap_pdns_self_zone
+  # M6.3: recursor owns loopback :53 and forwards panel-authoritative zones
+  # into pdns-server at :5300. Must run AFTER bootstrap_pdns_self_zone (the
+  # self-zone has to exist in pdns before the recursor's post-install probe
+  # tries to resolve it) and BEFORE setup_certbot (certbot's HTTP-01 flow
+  # needs the panel's own hostname to resolve locally).
+  install_pdns_recursor
   setup_certbot
   clone_or_update_repo
   install_jabali_slices

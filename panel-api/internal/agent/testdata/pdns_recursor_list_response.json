@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "zone": "example.com",
+      "addr": "127.0.0.1",
+      "port": 5300
+    },
+    {
+      "zone": "panel.local",
+      "addr": "127.0.0.1",
+      "port": 5300
+    }
+  ]
+}

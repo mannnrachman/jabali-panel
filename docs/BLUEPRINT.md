@@ -680,43 +680,47 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 pattern + `sso.key` reused for mailbox SSO), M20 (Kratos for panel
 auth flow).
 
-### M6.3: pdns-recursor local self-resolution (IN PROGRESS)
+### M6.3: pdns-recursor local self-resolution (SHIPPED — branch)
 
-**Status:** Blueprint queued on branch `m6.3/pdns-recursor-integration`.
-7-step plan at `plans/m6.3-pdns-recursor.md`, architect-reviewed
-(CRITICAL+HIGH+MEDIUM folded). ADR-0047 accepted. Sub-branches land into
-the integration branch; only Step 7 merges to `main`.
+**Status:** All 7 steps committed on branch `m6.3/pdns-recursor-integration`.
+Awaits VM smoke + merge to `main`. Plan at `plans/m6.3-pdns-recursor.md`
+(7-step blueprint, architect-reviewed — CRITICAL+HIGH+MEDIUM folded).
+ADR-0047 accepted. Runbook at `plans/m6.3-pdns-recursor-runbook.md`.
 
-**Goal:** The panel host resolves its own authoritative zones (`<domain>`,
-`mail.<domain>`, `autoconfig.<domain>`) via a local `pdns-recursor`,
-eliminating `/etc/hosts` workarounds and unblocking M6 SSO ergonomics
-(Bulwark → Stalwart `/.well-known/jmap`) and ACME HTTP-01 pre-flight on
-every install.
+**Goal:** The panel host resolves its own authoritative zones
+(`<domain>`, `mail.<domain>`, `autoconfig.<domain>`) via a local
+`pdns-recursor`, eliminating `/etc/hosts` workarounds and unblocking
+M6 SSO ergonomics (Bulwark → Stalwart `/.well-known/jmap`) and ACME
+HTTP-01 pre-flight on every install.
 
 **Driving evidence:** Fresh M6-enabled installs needed
 `NODE_TLS_REJECT_UNAUTHORIZED=0` (M6.2, commit `3219428`) to survive
-Bulwark verifying the JMAP endpoint. That fixed the cert-trust leg but
-left the DNS leg: `mail.<domain>` resolves via the upstream public
-resolver which has no data about a just-created panel zone until NS
-delegation propagates. `/etc/hosts` has been the stopgap.
+Bulwark verifying the JMAP endpoint. That fixed the cert-trust leg
+but left the DNS leg: `mail.<domain>` resolves via upstream public
+recursion, which has no data about a freshly-created panel zone
+until NS delegation propagates. `/etc/hosts` has been the stopgap.
 
 **Strategy (ADR-0047):**
 - `pdns-server` keeps `${JABALI_SRV_IPV4}:53` for external authoritative.
   Loopback moves to `:5300`.
 - `pdns-recursor` owns loopback `:53` (both v4+v6), `allow-from=127.0.0.0/8,
-  ::1/128` (loopback-only — narrower than Debian default).
+  ::1/128` (narrower than Debian default — LXC bridges live in
+  RFC1918 and the default would expose an open resolver to
+  co-tenants).
 - `/etc/powerdns/recursor.forwards` is reconciler-owned; agent commands
-  (`pdns.recursor_add_zone` / `remove_zone`) wrap atomic write + strict
-  validator + `rec_control reload-zones` + SOA post-probe + rollback.
+  (`pdns.recursor_add_zone` / `remove_zone` / `list`) wrap atomic write
+  + strict validator + `rec_control reload-zones` + NS post-probe +
+  rollback.
 - systemd-resolved points at `127.0.0.1` via alphabetical-last drop-in
-  `zz-jabali-recursor.conf` with explicit `DNS=` reset. Install gates on
-  `resolvectl status` showing loopback-only.
+  `zz-jabali-recursor.conf` with explicit `DNS=` reset. Install gates
+  on `resolvectl status` showing loopback-only.
 - Backfill CLI (`jabali pdns backfill [--dry-run|--yes]`) converges
   existing hosts after upgrade.
 
 **Depends on:** M6 (the problem M6.3 unblocks).
 **Related:** ADR-0047 (pdns-recursor design + alternatives + failure modes),
-`plans/m6.3-pdns-recursor.md` (7-step blueprint).
+`plans/m6.3-pdns-recursor.md` (7-step blueprint),
+`plans/m6.3-pdns-recursor-runbook.md` (operator runbook).
 
 ### M7: Databases (MariaDB) (SHIPPED)
 

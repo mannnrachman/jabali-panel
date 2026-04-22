@@ -49,6 +49,14 @@ type domainCreateParams struct {
 	DomainID        string `json:"domain_id,omitempty"`
 	RateLimitRPS    uint32 `json:"rate_limit_rps,omitempty"`
 	ConnectionLimit uint32 `json:"connection_limit,omitempty"`
+	// M24 per-domain listen IPs. Empty string ⇒ "all interfaces" (the
+	// pre-M24 listen 80 / listen [::]:80 behaviour). When set, the
+	// renderer emits explicit listen <ipv4>:80; / listen [<ipv6>]:80;
+	// directives. The vhost template guards each line with an explicit
+	// if/else so an unset IPv6 still renders `listen [::]:80;` rather
+	// than the invalid `listen []:80;`.
+	ListenIPv4 string `json:"listen_ipv4,omitempty"`
+	ListenIPv6 string `json:"listen_ipv6,omitempty"`
 }
 
 // domainCreateResponse is the output shape for domain.create.
@@ -63,19 +71,29 @@ type domainCreateResponse struct {
 var domainRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
 
 // vhostTemplate is the nginx vhost configuration template.
+//
+// Listen-IP rendering note (M24): each `listen` line uses an explicit
+// `{{if .X}}...{{else}}...{{end}}`. The naive `listen {{if .X}}{{.X}}:{{end}}80;`
+// shape renders the invalid `listen :80;` when X is empty, so we keep
+// the bracketed [::] / bare 80 fallbacks separately. See plans/m24-ip-manager.md
+// review F-H-3.
 const vhostTemplate = `server {
-    listen 80;
-    listen [::]:80;
-    server_name {{.Domain}} www.{{.Domain}};
+{{ if .ListenIPv4 }}    listen {{.ListenIPv4}}:80;
+{{ else }}    listen 80;
+{{ end }}{{ if .ListenIPv6 }}    listen [{{.ListenIPv6}}]:80;
+{{ else }}    listen [::]:80;
+{{ end }}    server_name {{.Domain}} www.{{.Domain}};
 {{ if .SSLCertPath }}
     # Redirect HTTP to HTTPS when SSL is configured
     return 301 https://$host$request_uri;
 }
 
 server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
+{{ if .ListenIPv4 }}    listen {{.ListenIPv4}}:443 ssl;
+{{ else }}    listen 443 ssl;
+{{ end }}{{ if .ListenIPv6 }}    listen [{{.ListenIPv6}}]:443 ssl;
+{{ else }}    listen [::]:443 ssl;
+{{ end }}    http2 on;
     server_name {{.Domain}} www.{{.Domain}};
     ssl_certificate {{.SSLCertPath}};
     ssl_certificate_key {{.SSLKeyPath}};
@@ -153,6 +171,11 @@ type vhostData struct {
 	// user-controllable data — both the rps value and the zone name
 	// (which embeds the ULID) are panel-controlled.
 	RateLimitDirectives  string
+	// M24 listen IPs. Empty string = all-interfaces fallback handled by
+	// the template's explicit if/else. Plain string (validated by
+	// panel-api before reaching the agent) so the template stays simple.
+	ListenIPv4 string
+	ListenIPv6 string
 }
 
 // indexDirectiveFor maps the panel's index_priority enum to the concrete
@@ -228,7 +251,7 @@ func buildPHPValueParam(memLimit, uploadMax, postMax string, maxInputVars, maxEx
 // writeVhost generates and writes the nginx vhost configuration, then tests and reloads nginx.
 // This is the core logic shared by domain.create and domain.enable/disable.
 // If the config content is unchanged, nginx reload is skipped for efficiency.
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string) (string, error) {
 	// Generate vhost configuration
 	tmpl, err := template.New("vhost").Parse(vhostTemplate)
 	if err != nil {
@@ -256,6 +279,8 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		PHPMaxExecutionTime: phpMaxExecTime,
 		PHPMaxInputTime:    phpMaxInputTime,
 		PHPValueParam:      buildPHPValueParam(phpMemLimit, phpUploadMax, phpPostMax, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime),
+		ListenIPv4:         listenIPv4,
+		ListenIPv6:         listenIPv6,
 	}
 
 	var vhostConfig bytes.Buffer
@@ -396,7 +421,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 	}
 
 	rateLimitDirectives := BuildRateLimitDirectives(p.DomainID, p.RateLimitRPS, p.ConnectionLimit)
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

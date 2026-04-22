@@ -924,6 +924,21 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 
 	params["index_priority"] = domain.IndexPriority
 
+	// M24 listen IPs: resolve FK → address string. Empty string ⇒ the
+	// agent renders the all-interfaces fallback. We deliberately omit
+	// the params keys when ManagedIPs isn't wired so older code paths
+	// (tests, profiles without an IP pool) keep their pre-M24 behaviour
+	// unchanged. ResolveListenIP also handles the "binding deleted out
+	// from under us" case by falling back to the family default.
+	if r.managedIPs != nil {
+		if v4 := r.resolveListenIPAddress(ctx, domain.ListenIPv4ID, "ipv4"); v4 != "" {
+			params["listen_ipv4"] = v4
+		}
+		if v6 := r.resolveListenIPAddress(ctx, domain.ListenIPv6ID, "ipv6"); v6 != "" {
+			params["listen_ipv6"] = v6
+		}
+	}
+
 	// Fetch SSL certificate paths for the vhost. We serve any cert whose
 	// files exist on disk regardless of issuance status — that includes
 	// 'issued' (Let's Encrypt success), 'self_signed' (operator-set), and
@@ -954,6 +969,33 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 			"err", err)
 	}
 }
+// resolveListenIPAddress returns the kernel address string for a
+// domain's per-family listen binding. When the explicit binding is
+// missing (NULL or the row was somehow deleted), falls back to the
+// family default. Returns "" when no default exists either — the
+// agent's vhost template treats "" as "use all-interfaces fallback".
+//
+// Short timeouts because the call sits inside the per-domain reconcile
+// hot path; an IP-pool DB stall must NOT block nginx convergence.
+func (r *Reconciler) resolveListenIPAddress(ctx context.Context, id *uint64, family string) string {
+	lookupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if id != nil {
+		row, err := r.managedIPs.FindByID(lookupCtx, *id)
+		if err == nil {
+			return row.Address
+		}
+		// Fall through to default — IP row missing despite FK RESTRICT
+		// is a corruption signal, but converging the vhost is more
+		// important than crashing the reconciler.
+	}
+	row, err := r.managedIPs.FindDefaultByFamily(lookupCtx, family)
+	if err != nil {
+		return ""
+	}
+	return row.Address
+}
+
 // been removed. Called by the DELETE handler after it deletes the row,
 // because once the row is gone ReconcileOne(id) can no longer find it
 // and orphan detection in ReconcileAll is intentionally conservative

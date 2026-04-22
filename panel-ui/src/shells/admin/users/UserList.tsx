@@ -9,6 +9,7 @@
 // total stays correct per tab.
 import { useState } from "react";
 import { Button, Card, Space, Table, Tag, Typography } from "antd";
+import { SafetyOutlined, TeamOutlined } from "@ant-design/icons";
 import type { SorterResult } from "antd/es/table/interface";
 import { useNavigate } from "react-router";
 
@@ -188,18 +189,20 @@ export const UserList = () => {
           {
             key: "users",
             tab: (
-              <Space>
+              <Space size={8}>
+                <TeamOutlined />
                 Users
-                <Tag>{usersCountQ.total}</Tag>
+                <Tag color="red" bordered={false}>{usersCountQ.total}</Tag>
               </Space>
             ),
           },
           {
             key: "admins",
             tab: (
-              <Space>
+              <Space size={8}>
+                <SafetyOutlined />
                 Administrators
-                <Tag>{adminsCountQ.total}</Tag>
+                <Tag color="red" bordered={false}>{adminsCountQ.total}</Tag>
               </Space>
             ),
           },

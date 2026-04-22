@@ -19,3 +19,31 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04),
     0 4px 12px rgba(0, 0, 0, 0.06);
 }
+
+/* Pill-style tabs: no ink bar, no bottom-border strip, and a soft
+ * rounded bg on the active tab. Applied globally because the Tabs
+ * component's tokens don't expose a selected-tab background —
+ * itemSelectedColor / inkBarColor are the only knobs ConfigProvider
+ * gives us for line-type tabs. Works for both bare <Tabs> and the
+ * Tabs that <Card tabList={...}> renders internally. */
+.ant-tabs-top > .ant-tabs-nav::before,
+.ant-tabs-top > div > .ant-tabs-nav::before,
+.ant-tabs-bottom > .ant-tabs-nav::before,
+.ant-tabs-bottom > div > .ant-tabs-nav::before {
+  border-bottom: none;
+}
+.ant-tabs .ant-tabs-ink-bar {
+  display: none;
+}
+.ant-tabs .ant-tabs-tab {
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 0 4px 0 0 !important;
+  transition: background 0.2s;
+}
+.ant-tabs .ant-tabs-tab-active {
+  background: #f3f4f6;
+}
+html[data-theme="dark"] .ant-tabs .ant-tabs-tab-active {
+  background: #1f1f1f;
+}

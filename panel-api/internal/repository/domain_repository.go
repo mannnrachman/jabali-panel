@@ -43,6 +43,15 @@ type DomainRepository interface {
 	// dkim_public_key so DNS re-publication after a later re-enable doesn't
 	// re-roll the key per ADR-0043.
 	UpdateEmailState(ctx context.Context, id string, state DomainEmailState) error
+	// FindPanelPrimary returns the single is_panel_primary=1 row, or
+	// ErrPanelPrimaryNotFound if no such row exists. ADR-0048.
+	FindPanelPrimary(ctx context.Context) (*models.Domain, error)
+	// MarkPanelPrimary sets is_panel_primary=1 on the target row and
+	// clears it on any other row in a single transaction, so the "at
+	// most one" invariant holds without a SQL UNIQUE constraint.
+	// Idempotent — re-running on an already-marked row is a no-op.
+	// ADR-0048.
+	MarkPanelPrimary(ctx context.Context, id string) error
 }
 
 // DomainEmailState is the bundle of columns written together by
@@ -177,6 +186,21 @@ func (r *domainRepo) Update(ctx context.Context, d *models.Domain) error {
 }
 
 func (r *domainRepo) Delete(ctx context.Context, id string) error {
+	// Guard: refuse to delete the panel-primary row. Load first so we
+	// can distinguish "missing" from "protected"; this is cheap (index
+	// lookup on PK) and avoids silently eating a protected row when
+	// RowsAffected == 0.
+	var existing models.Domain
+	if err := r.db.WithContext(ctx).Select("id", "is_panel_primary").Where("id = ?", id).First(&existing).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if existing.IsPanelPrimary {
+		return ErrCannotDeletePanelPrimary
+	}
+
 	res := r.db.WithContext(ctx).Delete(&models.Domain{}, "id = ?", id)
 	if res.Error != nil {
 		return res.Error
@@ -185,6 +209,47 @@ func (r *domainRepo) Delete(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// FindPanelPrimary — see interface doc.
+func (r *domainRepo) FindPanelPrimary(ctx context.Context) (*models.Domain, error) {
+	var d models.Domain
+	if err := r.db.WithContext(ctx).Where("is_panel_primary = ?", true).First(&d).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrPanelPrimaryNotFound
+		}
+		return nil, err
+	}
+	return &d, nil
+}
+
+// MarkPanelPrimary — see interface doc.
+func (r *domainRepo) MarkPanelPrimary(ctx context.Context, id string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Verify target exists — fail with ErrNotFound rather than silently
+		// leaving the invariant partially applied.
+		var exists int64
+		if err := tx.Model(&models.Domain{}).Where("id = ?", id).Count(&exists).Error; err != nil {
+			return err
+		}
+		if exists == 0 {
+			return ErrNotFound
+		}
+		// Clear any other panel-primary marker. Scoped to id != target so
+		// an idempotent re-run on the already-marked row is a no-op.
+		if err := tx.Model(&models.Domain{}).
+			Where("is_panel_primary = ? AND id != ?", true, id).
+			Update("is_panel_primary", false).Error; err != nil {
+			return err
+		}
+		// Set target.
+		if err := tx.Model(&models.Domain{}).
+			Where("id = ?", id).
+			Update("is_panel_primary", true).Error; err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (r *domainRepo) CountByUserID(ctx context.Context, userID string) (int64, error) {

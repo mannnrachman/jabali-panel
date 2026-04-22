@@ -197,6 +197,19 @@ func (m *MockDomainRepository) Delete(ctx context.Context, id string) error {
 	return args.Error(0)
 }
 
+func (m *MockDomainRepository) FindPanelPrimary(ctx context.Context) (*models.Domain, error) {
+	args := m.Called(ctx)
+	if d, ok := args.Get(0).(*models.Domain); ok {
+		return d, args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
+func (m *MockDomainRepository) MarkPanelPrimary(ctx context.Context, id string) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
 // TestListAllSSL_Success tests GET /admin/ssl-certificates returns all certificates
 func TestListAllSSL_Success(t *testing.T) {
 	mockSSLCerts := new(MockSSLCertificateRepository)

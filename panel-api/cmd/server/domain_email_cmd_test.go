@@ -89,6 +89,10 @@ func (*fakeDomainRepo) SetPHPPoolID(context.Context, string, *string) error { re
 func (*fakeDomainRepo) UpdatePHPSettings(context.Context, string, repository.DomainPHPSettings) error {
 	return nil
 }
+func (*fakeDomainRepo) FindPanelPrimary(context.Context) (*models.Domain, error) {
+	return nil, repository.ErrPanelPrimaryNotFound
+}
+func (*fakeDomainRepo) MarkPanelPrimary(context.Context, string) error { return nil }
 
 // fakeDNSZoneRepo / fakeDNSRecordRepo are minimal — enableDomainEmail
 // only calls FindByDomainID + ListByZoneID + Create, and disable only

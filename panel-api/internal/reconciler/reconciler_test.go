@@ -158,6 +158,30 @@ func (f *fakeDomainRepo) UpdateEmailState(ctx context.Context, id string, state 
 	return &notFoundErr{}
 }
 
+func (f *fakeDomainRepo) FindPanelPrimary(ctx context.Context) (*models.Domain, error) {
+	for _, d := range f.domains {
+		if d.IsPanelPrimary {
+			return d, nil
+		}
+	}
+	return nil, repository.ErrPanelPrimaryNotFound
+}
+
+func (f *fakeDomainRepo) MarkPanelPrimary(ctx context.Context, id string) error {
+	target, ok := f.domains[id]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	for otherID, d := range f.domains {
+		if otherID == id {
+			continue
+		}
+		d.IsPanelPrimary = false
+	}
+	target.IsPanelPrimary = true
+	return nil
+}
+
 type notFoundErr struct{}
 
 func (e *notFoundErr) Error() string { return "not found" }

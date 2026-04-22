@@ -226,6 +226,13 @@ type Domain struct {
 	DkimPublicKey   *string    `gorm:"type:text" json:"dkim_public_key,omitempty"`
 	EmailEnabledAt  *time.Time `gorm:"type:datetime(6)" json:"email_enabled_at,omitempty"`
 
+	// IsPanelPrimary marks the single domain row auto-registered for the
+	// panel hostname (ADR-0048). Delete-protected at the repo and API
+	// layer; surfaced in Settings → Email. At-most-one is enforced in
+	// the Go repo layer (MarkPanelPrimary transaction) — NOT a SQL
+	// UNIQUE (see migration 000057 for the reasoning).
+	IsPanelPrimary bool `gorm:"type:tinyint(1);not null;default:0;index:ix_domains_panel_primary" json:"is_panel_primary"`
+
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }

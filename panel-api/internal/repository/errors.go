@@ -24,3 +24,15 @@ var ErrLocked = errors.New("repository: locked")
 // ErrAlreadyUsed is returned when a token has already been consumed (UsedAt is not nil).
 // This prevents single-use enforcement from being bypassed.
 var ErrAlreadyUsed = errors.New("repository: already used")
+
+// ErrPanelPrimaryNotFound is returned by DomainRepository.FindPanelPrimary
+// when no row has is_panel_primary=1. Distinct from ErrNotFound so the
+// Settings → Email endpoint can differentiate "row missing, return 202
+// initializing" from "unrelated lookup failed". See ADR-0048.
+var ErrPanelPrimaryNotFound = errors.New("repository: panel primary domain not found")
+
+// ErrCannotDeletePanelPrimary is returned by DomainRepository.Delete when
+// the caller tries to delete a row with is_panel_primary=1. Translated
+// to HTTP 403 with code "panel_primary_protected" at the handler layer.
+// See ADR-0048.
+var ErrCannotDeletePanelPrimary = errors.New("repository: cannot delete panel primary domain")

@@ -101,6 +101,29 @@ func (m *mockDomainRepo) UpdateEmailState(ctx context.Context, id string, state 
 	return nil
 }
 
+func (m *mockDomainRepo) FindPanelPrimary(ctx context.Context) (*models.Domain, error) {
+	for _, d := range m.domains {
+		if d.IsPanelPrimary {
+			return d, nil
+		}
+	}
+	return nil, repository.ErrPanelPrimaryNotFound
+}
+
+func (m *mockDomainRepo) MarkPanelPrimary(ctx context.Context, id string) error {
+	if _, ok := m.domains[id]; !ok {
+		return repository.ErrNotFound
+	}
+	for otherID, d := range m.domains {
+		if otherID == id {
+			continue
+		}
+		d.IsPanelPrimary = false
+	}
+	m.domains[id].IsPanelPrimary = true
+	return nil
+}
+
 type mockDNSZoneRepo struct {
 	zones map[string]*models.DNSZone
 }

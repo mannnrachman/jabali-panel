@@ -134,8 +134,6 @@ _spin() {
     return 0
   fi
 
-  "$@" >"$log" 2>&1 &
-  local pid=$!
   # Braille spinner — each frame is two glyphs wide. Array form is
   # required: bash's ${var:i:1} does BYTE slicing, which shreds
   # multi-byte UTF-8. Frames chosen for a smooth left-to-right sweep.
@@ -143,14 +141,25 @@ _spin() {
   local n=${#spinners[@]}
   local i=0
   local start; start=$(date +%s)
+
+  # Paint the first frame BEFORE forking the command. Sub-100ms commands
+  # (warm apt cache, already-installed packages) would otherwise exit
+  # before the loop's first `kill -0` check and the user would see only
+  # the final [✓] line with no spinner at all. This guarantees at least
+  # one spinner frame prints for every _spin call.
+  #
+  # Bracketed spinner mirrors the [✓]/[i]/[!]/[✗] column the logger uses
+  # — when the process finishes, _ok overwrites the same column with
+  # [✓], so the eye tracks the status glyph in one fixed place.
+  printf '\033[1;36m[%s]\033[0m %s (0s)' "${spinners[i++ % n]}" "$label"
+
+  "$@" >"$log" 2>&1 &
+  local pid=$!
   while kill -0 "$pid" 2>/dev/null; do
+    sleep 0.1
     local elapsed=$(( $(date +%s) - start ))
-    # Bracketed spinner mirrors the [✓]/[i]/[!]/[✗] column the logger
-    # uses — when the process finishes, _ok overwrites the same column
-    # with [✓], so the eye tracks the status glyph in one fixed place.
     printf '\r\033[K\033[1;36m[%s]\033[0m %s (%ds)' \
       "${spinners[i++ % n]}" "$label" "$elapsed"
-    sleep 0.1
   done
   wait "$pid"; local rc=$?
   printf '\r\033[K'

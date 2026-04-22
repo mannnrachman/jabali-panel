@@ -23,6 +23,7 @@ import {
   Button,
   Dropdown,
   Grid,
+  Input,
   Layout,
   Modal,
   Space,
@@ -311,13 +312,21 @@ export function JabaliHeader({ showMenuButton = false, onMenuClick }: JabaliHead
           submitQuery(query);
         }
       }}
-      placeholder="Search users, domains… (/)"
-      allowClear
       style={{ width: "100%", maxWidth: isWide ? 400 : undefined }}
       popupMatchSelectWidth={false}
       filterOption={false}
       autoFocus={!isWide && searchModalOpen}
-    />
+    >
+      {/* Child <Input> lets us attach a prefix icon; AutoComplete's
+          own `prefix` prop doesn't exist, but passing an Input as
+          child routes value + onChange through the outer AutoComplete
+          automatically. */}
+      <Input
+        prefix={<SearchOutlined style={{ color: token.colorTextSecondary }} />}
+        placeholder="Search users, domains…"
+        allowClear
+      />
+    </AutoComplete>
   );
 
   return (

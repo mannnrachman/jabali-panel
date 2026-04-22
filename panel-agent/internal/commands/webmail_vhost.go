@@ -33,7 +33,8 @@ const mailVhostTemplate = `# Rendered by panel-agent webmail.vhost_apply (M6 Ste
 # DO NOT EDIT — changes belong in install/nginx/jabali-mail-vhost.conf.tmpl.
 
 server {
-  listen 443 ssl http2;
+  listen 443 ssl;
+  http2 on;
   server_name mail.{{.DomainName}};
 
   ssl_certificate {{.SSLCertPath}};

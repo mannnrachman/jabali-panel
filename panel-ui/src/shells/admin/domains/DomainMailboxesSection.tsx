@@ -32,6 +32,7 @@ import {
 } from "@ant-design/icons";
 
 import { DatabaseUserPasswordModal } from "../../../components/DatabaseUserPasswordModal";
+import { PasswordInput } from "../../../components/PasswordInput";
 import {
   useCreateMailbox,
   useDeleteMailbox,
@@ -367,7 +368,7 @@ export const DomainMailboxesSection = ({ domainId }: Props) => {
               { min: 8, message: "8 characters minimum" },
             ]}
           >
-            <Input.Password autoComplete="new-password" placeholder="(auto-generate)" />
+            <PasswordInput autoComplete="new-password" placeholder="(auto-generate)" />
           </Form.Item>
 
           <Form.Item

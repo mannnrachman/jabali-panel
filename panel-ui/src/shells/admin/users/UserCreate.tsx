@@ -6,6 +6,7 @@ import { Button, Card, Form, Input, Select, Switch, Typography, message } from "
 import { CheckOutlined, CloseOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router";
 
+import { PasswordInput } from "../../../components/PasswordInput";
 import { useCreateMutation } from "../../../hooks/useQueries";
 import { useSelectQuery } from "../../../hooks/useSelectQuery";
 
@@ -87,7 +88,7 @@ export const UserCreate = () => {
             { min: 10, message: "Password must be at least 10 characters" },
           ]}
         >
-          <Input.Password autoComplete="new-password" />
+          <PasswordInput autoComplete="new-password" />
         </Form.Item>
 
         <Form.Item label="First name" name="name_first">

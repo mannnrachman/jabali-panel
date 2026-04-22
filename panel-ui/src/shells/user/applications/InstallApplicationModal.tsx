@@ -29,6 +29,7 @@ import {
 import { AppstoreOutlined, CheckCircleTwoTone, CheckOutlined, CloseOutlined, CopyOutlined } from "@ant-design/icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../../../apiClient";
+import { PasswordInput } from "../../../components/PasswordInput";
 
 type Domain = { id: string; name: string };
 
@@ -244,7 +245,7 @@ function renderParamField(
               : "Leave blank to have us generate a strong random password.")
           }
         >
-          <Input.Password
+          <PasswordInput
             autoComplete="new-password"
             placeholder={required ? undefined : "(auto-generated)"}
           />

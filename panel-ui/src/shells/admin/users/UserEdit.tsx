@@ -12,6 +12,7 @@ import { Button, Card, Form, Input, Select, Spin, Switch, Typography, message } 
 import { CheckOutlined, CloseOutlined } from "@ant-design/icons";
 import { useNavigate, useParams } from "react-router";
 
+import { PasswordInput } from "../../../components/PasswordInput";
 import {
   useOneQuery,
   useUpdateMutation,
@@ -138,7 +139,7 @@ export const UserEdit = () => {
           tooltip="Leave blank to keep current password."
           rules={[{ min: 10, message: "At least 10 characters" }]}
         >
-          <Input.Password autoComplete="new-password" />
+          <PasswordInput autoComplete="new-password" />
         </Form.Item>
 
         <Form.Item>

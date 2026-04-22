@@ -25,32 +25,21 @@
  * component's tokens don't expose a selected-tab background —
  * itemSelectedColor / inkBarColor are the only knobs ConfigProvider
  * gives us for line-type tabs. Works for both bare <Tabs> and the
- * Tabs that <Card tabList={...}> renders internally, where the nav
- * sits inside .ant-card-head — whose own bottom border also has to
- * go so the tab strip floats on the card body. */
-.ant-tabs > .ant-tabs-nav::before,
-.ant-tabs > div > .ant-tabs-nav::before {
-  display: none;
+ * Tabs that <Card tabList={...}> renders internally. */
+.ant-tabs-top > .ant-tabs-nav::before,
+.ant-tabs-top > div > .ant-tabs-nav::before,
+.ant-tabs-bottom > .ant-tabs-nav::before,
+.ant-tabs-bottom > div > .ant-tabs-nav::before {
+  border-bottom: none;
 }
 .ant-tabs .ant-tabs-ink-bar {
   display: none;
 }
-.ant-card > .ant-card-head {
-  border-bottom: none;
-}
 .ant-tabs .ant-tabs-tab {
   border-radius: 8px;
-  padding: 6px 12px;
+  padding: 8px 12px;
   margin: 0 4px 0 0 !important;
-  border: none !important;
   transition: background 0.2s;
-}
-.ant-tabs .ant-tabs-tab:focus,
-.ant-tabs .ant-tabs-tab:focus-visible,
-.ant-tabs .ant-tabs-tab-btn:focus,
-.ant-tabs .ant-tabs-tab-btn:focus-visible {
-  outline: none;
-  box-shadow: none;
 }
 .ant-tabs .ant-tabs-tab-active {
   background: #f3f4f6;

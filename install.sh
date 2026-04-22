@@ -1914,6 +1914,50 @@ SQL
   _ok "self-zone '$hostname' created in jabali_pdns"
 }
 
+# install_panel_primary_domain auto-registers the panel hostname as a
+# first-class email-enabled domain so `/webmail` bounces to a working
+# Bulwark instance on fresh installs and `admin@<hostname>` is a viable
+# mailbox. The real work — idempotent INSERT/UPDATE/no-op decision tree,
+# ULID generation, at-most-one enforcement — is in the Go CLI
+# (`jabali-panel panel-primary ensure`). install.sh only has to:
+#   1. Verify hostname is set (fatal if not — no working mail without it).
+#   2. Verify the pdns self-zone exists (FK assertion — reconciler later
+#      writes DNS records scoped to this zone).
+#   3. Invoke the CLI.
+#
+# See ADR-0048 for the design rationale and plans/m6.4-panel-hostname-
+# mail-domain.md Step 3 for the full task list.
+install_panel_primary_domain() {
+  if [[ -z "${JABALI_SRV_HOSTNAME:-}" ]]; then
+    _die "JABALI_SRV_HOSTNAME not set — cannot configure panel primary mail domain"
+  fi
+
+  # Self-zone FK assertion. `install_panel_primary_domain` inserts rows
+  # into jabali_panel.domains, and the reconciler will later insert DNS
+  # records into jabali_pdns that reference a zone keyed by hostname.
+  # If bootstrap_pdns_self_zone hasn't run, those later inserts fail at
+  # reconciler tick time with FK violations. Catch it here, not there.
+  local pdns_zone_id
+  pdns_zone_id="$(mariadb -uroot -Ns jabali_pdns -e \
+    "SELECT id FROM domains WHERE name = '$(_sql_escape "$JABALI_SRV_HOSTNAME")';" 2>/dev/null || true)"
+  if [[ -z "$pdns_zone_id" ]]; then
+    _die "pdns self-zone '$JABALI_SRV_HOSTNAME' not found — bootstrap_pdns_self_zone must run before install_panel_primary_domain; check main() ordering"
+  fi
+
+  _log "ensuring panel-primary domain row for $JABALI_SRV_HOSTNAME"
+  if "$BIN_PATH" panel-primary ensure --hostname "$JABALI_SRV_HOSTNAME"; then
+    _ok "panel-primary domain ensured for $JABALI_SRV_HOSTNAME"
+  else
+    # Non-fatal — the CLI may defer when no admin user exists yet. That
+    # message is already logged by the CLI. On next install.sh run (e.g.
+    # after the operator completes admin bootstrap), the CLI will INSERT
+    # the row. A hard failure (DB down, config missing) would have
+    # returned non-zero; we do NOT _die because defer-on-no-admin is
+    # a valid path.
+    _warn "panel-primary ensure reported non-success; review output above"
+  fi
+}
+
 # Minimal SQL string escaper: replaces ' with '' and strips backslashes
 # that MariaDB would otherwise interpret in string literals. Not a
 # general-purpose escaper — adequate for hostname / IPv4 / IPv6 values
@@ -2116,20 +2160,48 @@ provision_tls_cert() {
   local cert_file="$cert_dir/panel.crt"
   local key_file="$cert_dir/panel.key"
 
+  # Grab the machine's hostname and first non-loopback IP for SANs.
+  local cn
+  cn="$(hostname -f 2>/dev/null || hostname)"
+  local ip
+  ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+
+  # M6.4 (ADR-0048): detect hostname drift between a prior install's cert
+  # and the current $JABALI_SRV_HOSTNAME / `hostname -f`. If the cert's
+  # CN no longer matches, force regeneration — otherwise the admin lands
+  # on a cert for the OLD hostname, which every browser will reject.
+  # Also detect missing mail.<hostname> SAN on an existing cert (common
+  # on upgrade from pre-M6.4 installs).
+  local need_regen=0
+  if [[ -f "$cert_file" ]]; then
+    local cert_cn=""
+    cert_cn="$(openssl x509 -in "$cert_file" -noout -subject 2>/dev/null \
+      | sed -n 's/.*CN *= *\([^,/]*\).*/\1/p' | tr -d ' ')"
+    if [[ -n "$cert_cn" && "$cert_cn" != "$cn" ]]; then
+      _warn "panel cert CN=$cert_cn != current hostname $cn — hostname drift, regenerating"
+      need_regen=1
+    elif ! openssl x509 -in "$cert_file" -noout -ext subjectAltName 2>/dev/null \
+        | grep -qE "DNS:mail\.${cn}(,|$)"; then
+      _log "panel cert missing mail.${cn} SAN — regenerating"
+      need_regen=1
+    fi
+    if (( need_regen == 1 )); then
+      rm -f "$cert_file" "$key_file"
+    fi
+  fi
+
   if [[ -f "$cert_file" && -f "$key_file" ]]; then
-    _ok "TLS cert exists: $cert_file"
+    _ok "TLS cert exists with mail.${cn} SAN: $cert_file"
   else
     _log "generating self-signed TLS certificate"
     # Dir traversable by www-data so nginx can open the key file below.
     install -d -m 0755 -o root -g root "$cert_dir"
 
-    # Grab the machine's hostname and first non-loopback IP for SANs.
-    local cn
-    cn="$(hostname -f 2>/dev/null || hostname)"
-    local ip
-    ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
-
-    local san="DNS:${cn},DNS:localhost,IP:127.0.0.1"
+    # M6.4: include mail.<hostname> so the panel-primary domain's
+    # Bulwark vhost (served on mail.<panel-hostname>) presents a cert
+    # Firefox accepts. Other per-tenant mail vhosts have their own
+    # LE cert (M6.1); this SAN is panel-hostname-only.
+    local san="DNS:${cn},DNS:mail.${cn},DNS:localhost,IP:127.0.0.1"
     [[ -n "$ip" ]] && san+=",IP:${ip}"
 
     openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
@@ -2139,7 +2211,22 @@ provision_tls_cert() {
       -addext "subjectAltName=${san}" \
       2>/dev/null
 
-    _ok "self-signed TLS cert created ($cert_file)"
+    _ok "self-signed TLS cert created ($cert_file) with SAN ${san}"
+
+    # M6.4: nginx re-reads the cert on next handshake via reload; panel-api
+    # is a Go HTTP server that caches the cert in memory at startup and
+    # does NOT SIGHUP-reread — full restart required. try-reload-or-restart
+    # is the wrong signal for Go servers because reload silently succeeds
+    # as a no-op, masking that the cert wasn't rotated. Accept the ~100ms
+    # TLS downtime as the cost of cert rotation.
+    systemctl reload nginx 2>/dev/null \
+      || _warn "nginx reload failed; check 'journalctl -u nginx'"
+    # Skip if jabali-panel isn't installed yet (first-time install: cert
+    # runs before start_and_verify).
+    if systemctl list-unit-files "${SERVICE_NAME}.service" >/dev/null 2>&1; then
+      systemctl restart "$SERVICE_NAME" 2>/dev/null \
+        || _warn "$SERVICE_NAME restart failed; check 'systemctl status $SERVICE_NAME'"
+    fi
   fi
 
   # Always enforce ownership+mode (even on existing certs, in case an
@@ -4025,6 +4112,13 @@ main() {
   # to exist, which the panel service creates via migration 000054 on its
   # first start (inside start_and_verify). Must run after, never before.
   install_stalwart_apply
+  # M6.4 (ADR-0048): auto-register the panel hostname as an email-enabled
+  # domain. Ordering: after start_and_verify (admin user exists via
+  # BootstrapAdmin) AND after bootstrap_pdns_self_zone (pdns zone row
+  # exists — FK-asserted inside install_panel_primary_domain) AND after
+  # install_stalwart_apply (Stalwart ready to accept the domain-add
+  # command the reconciler will fire).
+  install_panel_primary_domain
   # Bulwark webmail. Depends on Stalwart being live (JMAP backend) so it
   # runs after install_stalwart_apply.
   install_bulwark

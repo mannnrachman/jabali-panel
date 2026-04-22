@@ -8,7 +8,8 @@
 // the ?is_admin filter is applied before search/sort so the paginated
 // total stays correct per tab.
 import { useState } from "react";
-import { Button, Card, Space, Table, Tag, Typography } from "antd";
+import { Button, Card, Input, Space, Table, Tag, Typography } from "antd";
+import { SearchOutlined } from "@ant-design/icons";
 import type { SorterResult } from "antd/es/table/interface";
 import { useNavigate } from "react-router";
 
@@ -116,8 +117,49 @@ function UsersShellTable({
         title="Email"
         key="email"
         sorter={{ multiple: 1 }}
+        filterIcon={() => (
+          <SearchOutlined
+            style={{ color: query.params.q ? "#ef4444" : undefined }}
+          />
+        )}
+        filterDropdown={({ confirm, close }) => (
+          <div style={{ padding: 8, minWidth: 240 }}>
+            <Input.Search
+              placeholder={searchPlaceholder}
+              allowClear
+              defaultValue={query.params.q}
+              onSearch={(value) => {
+                query.setParams({ q: value.trim(), page: 1 });
+                confirm({ closeDropdown: false });
+                close();
+              }}
+            />
+          </div>
+        )}
       />
-      <Table.Column title="Name" render={renderName} />
+      <Table.Column
+        title="Name"
+        render={renderName}
+        filterIcon={() => (
+          <SearchOutlined
+            style={{ color: query.params.q ? "#ef4444" : undefined }}
+          />
+        )}
+        filterDropdown={({ confirm, close }) => (
+          <div style={{ padding: 8, minWidth: 240 }}>
+            <Input.Search
+              placeholder={searchPlaceholder}
+              allowClear
+              defaultValue={query.params.q}
+              onSearch={(value) => {
+                query.setParams({ q: value.trim(), page: 1 });
+                confirm({ closeDropdown: false });
+                close();
+              }}
+            />
+          </div>
+        )}
+      />
       <Table.Column
         dataIndex="created_at"
         title="Created"

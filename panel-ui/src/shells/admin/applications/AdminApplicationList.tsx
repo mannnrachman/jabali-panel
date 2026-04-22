@@ -9,6 +9,7 @@ import { useEffect } from "react";
 import {
   Button,
   Card,
+  Input,
   Space,
   Table,
   Tag,
@@ -21,6 +22,7 @@ import {
   CheckCircleOutlined,
   ExclamationCircleOutlined,
   LoginOutlined,
+  SearchOutlined,
 } from "@ant-design/icons";
 import type { SorterResult } from "antd/es/table/interface";
 
@@ -188,6 +190,25 @@ export const AdminApplicationList = () => {
             key="domain_name"
             sorter={{ multiple: 1 }}
             defaultSortOrder="ascend"
+            filterIcon={() => (
+              <SearchOutlined
+                style={{ color: query.params.q ? "#ef4444" : undefined }}
+              />
+            )}
+            filterDropdown={({ confirm, close }) => (
+              <div style={{ padding: 8, minWidth: 240 }}>
+                <Input.Search
+                  placeholder="Search by domain or user"
+                  allowClear
+                  defaultValue={query.params.q}
+                  onSearch={(value) => {
+                    query.setParams({ q: value.trim(), page: 1 });
+                    confirm({ closeDropdown: false });
+                    close();
+                  }}
+                />
+              </div>
+            )}
             render={(domainName: string, record) => {
               const base = domainName || record.domain_id;
               const path = record.subdirectory
@@ -219,6 +240,25 @@ export const AdminApplicationList = () => {
           <Table.Column<ApplicationInstall>
             dataIndex="admin_email"
             title="User"
+            filterIcon={() => (
+              <SearchOutlined
+                style={{ color: query.params.q ? "#ef4444" : undefined }}
+              />
+            )}
+            filterDropdown={({ confirm, close }) => (
+              <div style={{ padding: 8, minWidth: 240 }}>
+                <Input.Search
+                  placeholder="Search by domain or user"
+                  allowClear
+                  defaultValue={query.params.q}
+                  onSearch={(value) => {
+                    query.setParams({ q: value.trim(), page: 1 });
+                    confirm({ closeDropdown: false });
+                    close();
+                  }}
+                />
+              </div>
+            )}
             render={(email: string) => <span>{email}</span>}
           />
           <Table.Column<ApplicationInstall>

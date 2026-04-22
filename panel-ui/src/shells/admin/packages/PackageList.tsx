@@ -2,7 +2,8 @@
 // Post-M21: useTable → useTableURL, <CreateButton>/<EditButton>/
 // <DeleteButton> replaced with plain react-router <Button>s + a
 // RowDeleteButton wired to useDeleteMutation.
-import { Button, Card, Space, Table, Tag, Typography } from "antd";
+import { Button, Card, Input, Space, Table, Tag, Typography } from "antd";
+import { SearchOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router";
 import type { SorterResult } from "antd/es/table/interface";
 
@@ -100,6 +101,25 @@ export const PackageList = () => {
             key="name"
             sorter={{ multiple: 1 }}
             defaultSortOrder="ascend"
+            filterIcon={() => (
+              <SearchOutlined
+                style={{ color: query.params.q ? "#ef4444" : undefined }}
+              />
+            )}
+            filterDropdown={({ confirm, close }) => (
+              <div style={{ padding: 8, minWidth: 240 }}>
+                <Input.Search
+                  placeholder="Search by package name"
+                  allowClear
+                  defaultValue={query.params.q}
+                  onSearch={(value) => {
+                    query.setParams({ q: value.trim(), page: 1 });
+                    confirm({ closeDropdown: false });
+                    close();
+                  }}
+                />
+              </div>
+            )}
           />
           <Table.Column
             dataIndex="disk_quota_mb"

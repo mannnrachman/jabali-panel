@@ -1774,12 +1774,20 @@ RESAFTEREOF
   # on this system — abort so the operator can switch to the fallback
   # (consolidate jabali.conf into zz-jabali-recursor.conf) per the
   # M6.3 plan.
+  # The `|| true` suffixes below defend against a set -e + pipefail + SIGPIPE
+  # interaction: awk's `exit` closes stdout before resolvectl finishes writing
+  # its multi-line status block, resolvectl is SIGPIPE'd (exit 141), pipefail
+  # surfaces 141, and — because these are bare assignments, not `local var=…`
+  # which would mask the command-substitution exit — set -e kills the script
+  # silently (no _die, no _ok, no trap output). Saw it on 10.0.3.13 with
+  # systemd 257 / resolvectl ~258.3. The `|| true` keeps the assignment
+  # happy; the subsequent `case` on $dns_servers is the real gate.
   local dns_servers
-  dns_servers="$(resolvectl status 2>/dev/null | awk '/^ *DNS Servers:/{sub(/^ *DNS Servers: */,""); print; exit}')"
+  dns_servers="$(resolvectl status 2>/dev/null | awk '/^ *DNS Servers:/{sub(/^ *DNS Servers: */,""); print; exit}')" || true
   if [[ -z "$dns_servers" ]]; then
     # Older systemd: "Current DNS Server:" one-liner, or global-only view.
     # Fall back to `resolvectl dns` which returns the merged list.
-    dns_servers="$(resolvectl dns 2>/dev/null | awk '/^Global:/{print $2; exit}')"
+    dns_servers="$(resolvectl dns 2>/dev/null | awk '/^Global:/{print $2; exit}')" || true
   fi
   # Accept "127.0.0.1" exactly, OR "127.0.0.1 127.0.0.1" (some systemd
   # versions list per-interface views that repeat the loopback line).

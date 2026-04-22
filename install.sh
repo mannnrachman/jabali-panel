@@ -644,6 +644,7 @@ POLICYEOF
       certbot python3-certbot-nginx \
       nodejs \
       pdns-server pdns-backend-mysql pdns-recursor \
+      bind9-dnsutils \
       "${php_extensions[@]}"
 
   # Undo the policy-rc.d trap regardless of exit path above (set -e would

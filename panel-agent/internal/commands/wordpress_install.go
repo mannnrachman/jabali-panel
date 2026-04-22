@@ -247,16 +247,21 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 	installPath := req.Docroot
 	if req.Subdirectory != "" {
 		installPath = filepath.Join(req.Docroot, req.Subdirectory)
-		// Create the subdirectory if it doesn't exist
-		mkdirCmd := buildSystemdRunCmd(ctx,
-			req.OSUser,
-			"mkdir", "-p", installPath,
-		)
-		if err := mkdirCmd.Run(); err != nil {
-			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeInternal,
-				Message: fmt.Sprintf("failed to create subdirectory: %v", err),
-			}
+	}
+	// Always ensure installPath exists before handing off to wp-cli.
+	// For subdir installs the subdir definitely doesn't exist on first
+	// install. For root installs the docroot itself may not yet exist
+	// if domain.create is still finishing — the panel kicks both
+	// commands async, and a fast wp.install can beat the docroot mkdir
+	// (observed: domain row inserted t=0, wp.install started t+376ms,
+	// wp.install failed t+598ms because is_writable(dirname(docroot))
+	// returned false, docroot finally created t+3641ms). mkdir -p is
+	// idempotent so always calling it is safe.
+	mkdirCmd := buildSystemdRunCmd(ctx, req.OSUser, "mkdir", "-p", installPath)
+	if err := mkdirCmd.Run(); err != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("failed to create install directory %s: %v", installPath, err),
 		}
 	}
 

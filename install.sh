@@ -2042,6 +2042,74 @@ ensure_user_and_dirs() {
   install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali/restore
 }
 
+# ---------- M25 step 1: jabali-sockets group --------------------------------
+#
+# `jabali-sockets` is the cross-service group that gates connect(2) on every
+# Unix-domain backend socket M25 introduces (Kratos admin, Kratos public,
+# panel-api, Bulwark webmail). nginx (running as www-data) is a member so it
+# can reach those sockets; the panel and webmail service users are members so
+# the sockets they create end up in the right group.
+#
+# `jabali-mail` is intentionally NOT a member. Stalwart talks to its own ports
+# (SMTP, IMAP, JMAP) — it doesn't consume our internal HTTP sockets, and the
+# group should only carry users that genuinely need socket reach. See
+# install/scripts/socket-helpers.sh for the RuntimeDirectory + ExecStartPost
+# pattern Steps 2–5 layer on top.
+#
+# Idempotent: re-running on an existing install is a no-op (group already
+# exists; usermod -aG silently no-ops when the user is already a member).
+# Members not yet created (e.g. jabali-webmail before install_bulwark) are
+# skipped this pass; the function is called again later — see main().
+ensure_jabali_sockets_group() {
+  if ! getent group jabali-sockets >/dev/null 2>&1; then
+    _log "creating jabali-sockets system group"
+    groupadd --system jabali-sockets
+    _ok "jabali-sockets group created"
+  fi
+
+  local user added=0
+  for user in "$SERVICE_USER" www-data jabali-webmail; do
+    if ! getent passwd "$user" >/dev/null 2>&1; then
+      # User not provisioned yet — a later main()-flow call picks it up.
+      continue
+    fi
+    if id -nG "$user" | tr ' ' '\n' | grep -qx jabali-sockets; then
+      continue
+    fi
+    usermod -aG jabali-sockets "$user"
+    _ok "added $user to jabali-sockets"
+    added=$((added + 1))
+  done
+
+  if (( added == 0 )); then
+    _log "jabali-sockets membership already current"
+  fi
+}
+
+# ---------- M25 step 1: LLMNR disable ---------------------------------------
+#
+# LLMNR (Link-Local Multicast Name Resolution) listens on UDP+TCP :5355 and
+# is enabled by default on systemd-resolved. We don't use it — datacenter
+# DNS resolution flows through pdns-recursor (M6.3) — and it's another
+# unauthenticated wire-protocol surface on every interface. Disable via a
+# drop-in so operators on LAN-heavy environments can override by writing
+# a higher-numbered drop-in (e.g. 99-operator-keep-llmnr.conf).
+disable_llmnr() {
+  local conf=/etc/systemd/resolved.conf.d/10-jabali-disable-llmnr.conf
+  install -d -m 0755 /etc/systemd/resolved.conf.d
+  cat >"$conf" <<'EOF'
+# Managed by jabali install.sh (M25). Override by adding a higher-numbered
+# drop-in like /etc/systemd/resolved.conf.d/99-operator-keep-llmnr.conf
+# with [Resolve]\nLLMNR=yes\n if you genuinely need LLMNR on this host.
+[Resolve]
+LLMNR=no
+EOF
+  chmod 0644 "$conf"
+  systemctl reload-or-restart systemd-resolved 2>/dev/null \
+    || _warn "systemd-resolved reload failed; LLMNR config will take effect on next restart"
+  _ok "LLMNR disabled via $conf"
+}
+
 # ---------- step 4: clone / update repo -------------------------------------
 
 clone_or_update_repo() {
@@ -4065,6 +4133,9 @@ main() {
   preflight
   prompt_server_settings
   install_base_packages
+  # M25 step 1: kill the LLMNR :5355 listener once systemd-resolved is on
+  # the host. Drop-in only — operator can override later.
+  disable_llmnr
   # M18 — resource-limits prerequisites. cgroups v2 probe FIRST (fails
   # loud if misconfigured; every subsequent slice we ever emit depends
   # on unified hierarchy). Disk quota and /tmp tmpfs are both
@@ -4095,6 +4166,18 @@ main() {
   install_pdns_recursor
   setup_certbot
   clone_or_update_repo
+  # M25: source the socket-helper definitions now that the repo's install/
+  # tree is on disk. Steps 2–5 will call verify_socket_perms /
+  # verify_no_all_interface_binds after each service-bind change. Sourced
+  # here (not earlier) because under `curl | bash` the install/scripts/
+  # tree doesn't exist until clone_or_update_repo populates $REPO_DIR.
+  # shellcheck source=install/scripts/socket-helpers.sh
+  source "$REPO_DIR/install/scripts/socket-helpers.sh"
+  # M25: bring the jabali-sockets group into existence. SERVICE_USER and
+  # www-data already exist by now; jabali-webmail is created later by
+  # install_bulwark — a second call after that picks it up. The function
+  # is idempotent so repeating it is cheap.
+  ensure_jabali_sockets_group
   install_jabali_slices
   install_kratos
   install_php_pool_template
@@ -4138,6 +4221,10 @@ main() {
   # Bulwark webmail. Depends on Stalwart being live (JMAP backend) so it
   # runs after install_stalwart_apply.
   install_bulwark
+  # M25: jabali-webmail user now exists; second pass over the socket group
+  # picks it up. Idempotent for SERVICE_USER + www-data which were added
+  # earlier (post clone_or_update_repo).
+  ensure_jabali_sockets_group
   seed_last_built_sha
   _ok "jabali-panel + jabali-agent installed. Status:"
   _ok "  systemctl status $AGENT_SERVICE_NAME"

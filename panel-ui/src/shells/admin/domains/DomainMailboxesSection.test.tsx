@@ -111,16 +111,23 @@ beforeEach(() => {
 });
 
 describe("DomainMailboxesSection — guard", () => {
-  it("shows enable-first hint when email is disabled on the domain", async () => {
+  it("shows enable-first hint + retry button when email is disabled on the domain", async () => {
     mockInitialFetches({ emailEnabled: false });
     renderSection();
 
     await waitFor(() =>
-      expect(screen.getByText(/Enable email first/i)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/Email isn't enabled on this domain/i),
+      ).toBeInTheDocument(),
     );
     // Create button must not be reachable while email is off — users
     // who bypass the guard would hit a 409 with no useful recovery.
     expect(screen.queryByRole("button", { name: /create mailbox/i })).toBeNull();
+    // The retry affordance IS reachable so the operator can recover
+    // from an auto-enable failure without leaving this page.
+    expect(
+      screen.getByRole("button", { name: /^enable email$/i }),
+    ).toBeInTheDocument();
   });
 });
 

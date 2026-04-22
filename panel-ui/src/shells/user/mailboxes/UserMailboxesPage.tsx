@@ -1,17 +1,17 @@
 // UserMailboxesPage — tenant-scoped mailbox management.
 //
-// Lets a user enable email and create mailboxes on any domain they
-// own, without needing admin access. Shows a selector when they have
-// more than one domain, and delegates the actual UI to the same
-// DomainEmailSection + DomainMailboxesSection the admin shell uses
-// (API endpoints are claim-aware — the panel-API enforces
-// "owner or admin" on every read and write).
+// Lets a user create and manage mailboxes on any domain they own,
+// without needing admin access. Email is auto-enabled on domain
+// creation (see feat/email-on-by-default) so we no longer surface the
+// "enable email + publish DNS records" card here — operators who need
+// to see the DNS checklist or disable email entirely manage that from
+// the admin Domains → Edit → Email tab. API endpoints are claim-aware
+// (panel-API enforces "owner or admin" on every read and write).
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Card, Empty, Select, Skeleton, Space, Typography } from "antd";
+import { Card, Empty, Select, Skeleton, Space, Typography } from "antd";
 import { MailOutlined } from "@ant-design/icons";
 
 import { useListQuery } from "../../../hooks/useQueries";
-import { DomainEmailSection } from "../../admin/domains/DomainEmailSection";
 import { DomainMailboxesSection } from "../../admin/domains/DomainMailboxesSection";
 import type { Domain } from "../domains/UserDomainList";
 
@@ -79,22 +79,8 @@ export const UserMailboxesPage = () => {
               }))}
             />
           )}
-          {selected && !selected.email_enabled && (
-            <Alert
-              type="info"
-              showIcon
-              message="Enable email to create mailboxes"
-              description="Flip the switch below to turn on incoming and outgoing mail for this domain. You'll see DNS records to publish afterwards."
-            />
-          )}
         </Space>
       </Card>
-
-      {selected && (
-        <Card title={`Email — ${selected.name}`}>
-          <DomainEmailSection domainId={selected.id} />
-        </Card>
-      )}
 
       {selected && (
         <Card title={`Mailboxes — ${selected.name}`}>

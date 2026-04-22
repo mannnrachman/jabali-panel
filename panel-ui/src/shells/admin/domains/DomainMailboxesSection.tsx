@@ -38,6 +38,7 @@ import {
   useCreateMailbox,
   useDeleteMailbox,
   useDomainEmail,
+  useEnableDomainEmail,
   useMailboxes,
   useMintMailboxSSO,
   useRotateMailboxPassword,
@@ -99,6 +100,11 @@ export const DomainMailboxesSection = ({
   const deleteMutation = useDeleteMailbox();
   const rotateMutation = useRotateMailboxPassword();
   const ssoMutation = useMintMailboxSSO();
+  // enableMutation is only used when the section lands in the
+  // disabled state (auto-enable failed at domain.create time, or an
+  // operator explicitly turned email off). In the happy path — email
+  // auto-enabled on domain create — the button never mounts.
+  const enableMutation = useEnableDomainEmail();
 
   const [createOpen, setCreateOpen] = useState(false);
   const [passwordModal, setPasswordModal] = useState<{
@@ -135,12 +141,32 @@ export const DomainMailboxesSection = ({
   }
 
   if (!enabled) {
+    const onEnable = async () => {
+      try {
+        await enableMutation.mutateAsync({ domainId });
+        message.success("Email enabled");
+      } catch (err) {
+        const resp = (err as { response?: { data?: { error?: string; detail?: string } } })
+          ?.response?.data;
+        message.error(resp?.detail ?? resp?.error ?? "Failed to enable email");
+      }
+    };
     return (
       <Alert
         type="info"
         showIcon
-        message="Enable email first"
-        description="Mailboxes can only be created once email is enabled on this domain. Flip the switch in the Email section above."
+        message="Email isn't enabled on this domain"
+        description="Mailboxes can only be created once email is enabled. Usually this happens automatically when the domain is created — click below to retry."
+        action={
+          <Button
+            type="primary"
+            size="small"
+            onClick={onEnable}
+            loading={enableMutation.isPending}
+          >
+            Enable email
+          </Button>
+        }
       />
     );
   }

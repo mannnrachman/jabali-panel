@@ -5,6 +5,7 @@ import { Button, Card, Space, Table, Tag, Typography } from "antd";
 import { useNavigate } from "react-router";
 import type { SorterResult } from "antd/es/table/interface";
 
+import { columnSearchProps } from "../../../components/columnSearch";
 import { RowDeleteButton } from "../../../components/RowDeleteButton";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useDeleteMutation } from "../../../hooks/useQueries";
@@ -95,6 +96,11 @@ export const DatabaseList = () => {
             key="name"
             sorter={{ multiple: 1 }}
             defaultSortOrder="ascend"
+            {...columnSearchProps<Database>({
+              placeholder: "Search by database name",
+              currentQ: query.params.q,
+              onSearch: (v) => query.setParams({ q: v, page: 1 }),
+            })}
           />
           <Table.Column<Database>
             dataIndex="user_id"

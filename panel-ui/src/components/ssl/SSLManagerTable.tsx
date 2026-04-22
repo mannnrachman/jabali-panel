@@ -1,3 +1,4 @@
+import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Table,
@@ -12,6 +13,7 @@ import {
 } from "antd";
 import { ReloadOutlined, DeleteOutlined, SyncOutlined, WarningOutlined, RedoOutlined } from "@ant-design/icons";
 import { apiClient } from "../../apiClient";
+import { columnSearchProps } from "../columnSearch";
 
 interface SSLCertificate {
   id: string;
@@ -114,6 +116,10 @@ export const SSLManagerTable = ({
 }: SSLManagerTableProps) => {
   const queryClient = useQueryClient();
 
+  // Client-side search over the fetched rows — SSL list is small
+  // enough that we don't need server-side ?q filtering.
+  const [search, setSearch] = useState("");
+
   // Fetch SSL certificates
   const { data, isLoading, error } = useQuery({
     queryKey: ["ssl-manager", endpoint],
@@ -122,6 +128,16 @@ export const SSLManagerTable = ({
       return response.data.items as SSLCertificate[];
     },
   });
+
+  const filteredData = useMemo(() => {
+    if (!data || !search) return data;
+    const needle = search.toLowerCase();
+    return data.filter(
+      (row) =>
+        row.domain_name.toLowerCase().includes(needle) ||
+        (row.user_username ?? "").toLowerCase().includes(needle),
+    );
+  }, [data, search]);
 
   // Renew certificate mutation
   const renewMutation = useMutation({
@@ -184,6 +200,11 @@ export const SSLManagerTable = ({
       title: "Domain",
       dataIndex: "domain_name",
       key: "domain_name",
+      ...columnSearchProps<SSLCertificate>({
+        placeholder: "Search by domain or owner",
+        currentQ: search,
+        onSearch: (v) => setSearch(v),
+      }),
       render: (text: string) => (
         <span style={{ fontFamily: "monospace" }}>
           {text}
@@ -196,6 +217,11 @@ export const SSLManagerTable = ({
             title: "Owner",
             dataIndex: "user_username",
             key: "user_username",
+            ...columnSearchProps<SSLCertificate>({
+              placeholder: "Search by domain or owner",
+              currentQ: search,
+              onSearch: (v) => setSearch(v),
+            }),
           },
         ]
       : []),
@@ -321,7 +347,7 @@ export const SSLManagerTable = ({
         />
       ) : (
         <Table
-          dataSource={data}
+          dataSource={filteredData}
           columns={columns}
           rowKey="id"
           loading={isLoading}

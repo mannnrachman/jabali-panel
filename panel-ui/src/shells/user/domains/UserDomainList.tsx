@@ -7,6 +7,7 @@ import { Button, Card, Space, Table, Tag, Typography } from "antd";
 import { useNavigate } from "react-router";
 import type { SorterResult } from "antd/es/table/interface";
 
+import { columnSearchProps } from "../../../components/columnSearch";
 import { RowDeleteButton } from "../../../components/RowDeleteButton";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useDeleteMutation } from "../../../hooks/useQueries";
@@ -141,6 +142,11 @@ export const UserDomainList = () => {
             key="name"
             sorter={{ multiple: 1 }}
             defaultSortOrder="ascend"
+            {...columnSearchProps<Domain>({
+              placeholder: "Search by domain name",
+              currentQ: query.params.q,
+              onSearch: (v) => query.setParams({ q: v, page: 1 }),
+            })}
             render={(name: string, record: Domain) =>
               renderDomainCell(name, record.doc_root)
             }

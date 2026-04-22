@@ -15,6 +15,7 @@ import type { SorterResult } from "antd/es/table/interface";
 
 import { ssoPhpMyAdmin } from "../../../apiClient";
 import { RowDeleteButton } from "../../../components/RowDeleteButton";
+import { columnSearchProps } from "../../../components/columnSearch";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useDeleteMutation } from "../../../hooks/useQueries";
 import { useTableURL } from "../../../hooks/useTableURL";
@@ -183,6 +184,11 @@ export const UserDatabaseList = () => {
             key="name"
             sorter={{ multiple: 1 }}
             defaultSortOrder="ascend"
+            {...columnSearchProps<Database>({
+              placeholder: "Search by database name",
+              currentQ: query.params.q,
+              onSearch: (v) => query.setParams({ q: v, page: 1 }),
+            })}
           />
           <Table.Column<Database>
             dataIndex="engine"

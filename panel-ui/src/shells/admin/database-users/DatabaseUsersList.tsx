@@ -15,6 +15,7 @@ import { apiClient } from "../../../apiClient";
 import { AddGrantModal } from "../../../components/AddGrantModal";
 import { DatabaseUserPasswordModal } from "../../../components/DatabaseUserPasswordModal";
 import { RowDeleteButton } from "../../../components/RowDeleteButton";
+import { columnSearchProps } from "../../../components/columnSearch";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useDeleteMutation } from "../../../hooks/useQueries";
 import { useTableURL } from "../../../hooks/useTableURL";
@@ -168,6 +169,11 @@ export const DatabaseUsersList = () => {
             title="User"
             sorter={{ multiple: 1 }}
             defaultSortOrder="ascend"
+            {...columnSearchProps<DatabaseUser>({
+              placeholder: "Search by database user",
+              currentQ: query.params.q,
+              onSearch: (v) => query.setParams({ q: v, page: 1 }),
+            })}
             render={(username: string) => (
               <Space>
                 <UserOutlined />

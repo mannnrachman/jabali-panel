@@ -6,6 +6,7 @@ import { Alert, Button, Card, Empty, Spin, Table, Tag, Typography } from "antd";
 import { useNavigate } from "react-router";
 
 import { apiClient } from "../../../apiClient";
+import { columnSearchProps } from "../../../components/columnSearch";
 import { useTableURL } from "../../../hooks/useTableURL";
 
 interface Domain {
@@ -100,7 +101,15 @@ export const UserDNSZonesOverviewPage = () => {
               onChange: (page, pageSize) => query.setParams({ page, pageSize }),
             }}
           >
-            <Table.Column<Domain> dataIndex="name" title="Domain Name" />
+            <Table.Column<Domain>
+              dataIndex="name"
+              title="Domain Name"
+              {...columnSearchProps<Domain>({
+                placeholder: "Search by domain name",
+                currentQ: query.params.q,
+                onSearch: (v) => query.setParams({ q: v, page: 1 }),
+              })}
+            />
             <Table.Column<Domain>
               title="Zone Status"
               render={(_, record) => getZoneStatusTag(record.id)}

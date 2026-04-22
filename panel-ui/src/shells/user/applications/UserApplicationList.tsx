@@ -27,6 +27,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import type { SorterResult } from "antd/es/table/interface";
 
+import { columnSearchProps } from "../../../components/columnSearch";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { apiClient } from "../../../apiClient";
 import { useAuth } from "../../../auth/AuthContext";
@@ -295,6 +296,11 @@ export const UserApplicationList = () => {
             key="domain_name"
             sorter={{ multiple: 1 }}
             defaultSortOrder="ascend"
+            {...columnSearchProps<ApplicationInstall>({
+              placeholder: "Search by domain",
+              currentQ: tableQuery.params.q,
+              onSearch: (v) => tableQuery.setParams({ q: v, page: 1 }),
+            })}
             render={(domainName: string, record) => {
               const base = domainName || record.domain_id;
               const path = record.subdirectory

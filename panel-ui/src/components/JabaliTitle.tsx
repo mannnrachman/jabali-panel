@@ -10,9 +10,17 @@ import { useThemeMode } from "../theme/ThemeModeContext";
 interface JabaliTitleProps {
   collapsed?: boolean;
   text?: string;
+  /** Show the "Jabali" wordmark next to the logo. Defaults to true.
+   * JabaliHeader passes false below sm so the logo alone keeps the
+   * header readable on xs phones. */
+  showWordmark?: boolean;
 }
 
-export function JabaliTitle({ collapsed = false, text = "Jabali" }: JabaliTitleProps) {
+export function JabaliTitle({
+  collapsed = false,
+  text = "Jabali",
+  showWordmark = true,
+}: JabaliTitleProps) {
   const { mode } = useThemeMode();
   const src = mode === "dark" ? "/images/jabali_logo_dark.svg" : "/images/jabali_logo.svg";
 
@@ -23,7 +31,7 @@ export function JabaliTitle({ collapsed = false, text = "Jabali" }: JabaliTitleP
         alt="Jabali"
         style={{ height: 32, width: "auto", flexShrink: 0 }}
       />
-      {!collapsed && (
+      {!collapsed && showWordmark && (
         <Typography.Title level={2} style={{ margin: 0 }}>
           {text}
         </Typography.Title>

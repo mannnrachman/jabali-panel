@@ -11,13 +11,20 @@
 // selection falls back to the list-page filter navigation so the
 // search box is still useful when the right row isn't in the top-5.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LogoutOutlined, MenuOutlined, UserOutlined } from "@ant-design/icons";
+import {
+  LogoutOutlined,
+  MenuOutlined,
+  SearchOutlined,
+  UserOutlined,
+} from "@ant-design/icons";
 import {
   AutoComplete,
   Avatar,
   Button,
   Dropdown,
+  Grid,
   Layout,
+  Modal,
   Space,
   theme,
 } from "antd";
@@ -65,9 +72,17 @@ export function JabaliHeader({ showMenuButton = false, onMenuClick }: JabaliHead
   const { token } = theme.useToken();
   const [query, setQuery] = useState("");
   const [groups, setGroups] = useState<OptionGroup[]>([]);
+  const [searchModalOpen, setSearchModalOpen] = useState(false);
   const inputRef = useRef<BaseSelectRef | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
+  const screens = Grid.useBreakpoint();
+  // `sm` also covers everything wider (md, lg, …) because AntD
+  // breakpoints are cumulative. Below sm (i.e. xs) we collapse the
+  // inline search into a button that opens a full-width modal, hide
+  // the wordmark next to the logo, and drop the email text in the
+  // user-dropdown button.
+  const isWide = screens.sm !== false;
 
   const email = user?.email ?? "";
   const isAdminShell = location.pathname.startsWith("/jabali-admin/");
@@ -86,12 +101,18 @@ export function JabaliHeader({ showMenuButton = false, onMenuClick }: JabaliHead
       }
       if (e.key === "/") {
         e.preventDefault();
-        inputRef.current?.focus();
+        if (isWide) {
+          inputRef.current?.focus();
+        } else {
+          // On xs the AutoComplete lives in a Modal; open it and let
+          // Modal's autoFocus+focusTriggerAfterClose handle focus.
+          setSearchModalOpen(true);
+        }
       }
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [isWide]);
 
   // The "Pages" group is always present so clicking the input (like
   // the AntD docs example for AutoComplete) shows every destination
@@ -199,6 +220,7 @@ export function JabaliHeader({ showMenuButton = false, onMenuClick }: JabaliHead
     setQuery("");
     setGroups([]);
     inputRef.current?.blur();
+    setSearchModalOpen(false);
   };
 
   const handleSelect = (value: string) => {
@@ -226,6 +248,7 @@ export function JabaliHeader({ showMenuButton = false, onMenuClick }: JabaliHead
     setQuery("");
     setGroups([]);
     inputRef.current?.blur();
+    setSearchModalOpen(false);
   };
 
   const handleLogout = async () => {
@@ -266,16 +289,47 @@ export function JabaliHeader({ showMenuButton = false, onMenuClick }: JabaliHead
   // hasn't changed so the dropdown doesn't flicker.
   const options = useMemo(() => groups, [groups]);
 
+  // The search input is one element used in two slots: inline in the
+  // header on sm+ or inside a Modal on xs. Rendering a single JSX
+  // avoids handler drift between the two instances.
+  const searchInput = (
+    <AutoComplete
+      ref={inputRef}
+      value={query}
+      options={options}
+      onChange={setQuery}
+      onSelect={handleSelect}
+      // Pressing Enter or clicking a suggestion triggers `onSelect`.
+      // When the user types and hits Enter without a highlighted
+      // option, the outer Input's onPressEnter catches it and we
+      // fall back to the filtered-list navigation.
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          // If a dropdown item is highlighted AntD fires onSelect
+          // before this handler; once that ran, query is empty
+          // and the fallback below is a no-op.
+          submitQuery(query);
+        }
+      }}
+      placeholder="Search users, domains… (/)"
+      allowClear
+      style={{ width: "100%", maxWidth: isWide ? 400 : undefined }}
+      popupMatchSelectWidth={false}
+      filterOption={false}
+      autoFocus={!isWide && searchModalOpen}
+    />
+  );
+
   return (
     <Header
       style={{
         backgroundColor: token.colorBgElevated,
         height: 64,
         lineHeight: "normal",
-        padding: "0 24px",
+        padding: isWide ? "0 24px" : "0 12px",
         display: "flex",
         alignItems: "center",
-        gap: 16,
+        gap: isWide ? 16 : 8,
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
       }}
     >
@@ -291,52 +345,54 @@ export function JabaliHeader({ showMenuButton = false, onMenuClick }: JabaliHead
       )}
 
       <div style={{ flexShrink: 0 }}>
-        <JabaliTitle />
+        <JabaliTitle showWordmark={isWide} />
       </div>
 
       {/* Middle column: flex:1 lets it absorb the slack between the
           logo and the right-side actions, and justifyContent:center
           keeps the capped-width AutoComplete visually centered even
-          on ultra-wide displays. */}
+          on ultra-wide displays. On xs the inline slot collapses to
+          a search-icon button; the AutoComplete itself is reparented
+          into a full-width Modal below. */}
       <div
         style={{
           flex: 1,
           display: "flex",
-          justifyContent: "center",
+          justifyContent: isWide ? "center" : "flex-end",
           minWidth: 0,
         }}
       >
-        <AutoComplete
-          ref={inputRef}
-          value={query}
-          options={options}
-          onChange={setQuery}
-          onSelect={handleSelect}
-          // Pressing Enter or clicking a suggestion triggers `onSelect`.
-          // When the user types and hits Enter without a highlighted
-          // option, the outer Input's onPressEnter catches it and we
-          // fall back to the filtered-list navigation.
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              // If a dropdown item is highlighted AntD fires onSelect
-              // before this handler; once that ran, query is empty
-              // and the fallback below is a no-op.
-              submitQuery(query);
-            }
-          }}
-          placeholder="Search users, domains… (/)"
-          allowClear
-          style={{ width: "100%", maxWidth: 400 }}
-          popupMatchSelectWidth={false}
-          filterOption={false}
-        />
+        {isWide ? (
+          searchInput
+        ) : (
+          <Button
+            type="text"
+            icon={<SearchOutlined />}
+            aria-label="Open search"
+            onClick={() => setSearchModalOpen(true)}
+          />
+        )}
       </div>
+
+      {!isWide && (
+        <Modal
+          open={searchModalOpen}
+          onCancel={() => setSearchModalOpen(false)}
+          footer={null}
+          title="Search"
+          width="100%"
+          style={{ top: 16 }}
+          destroyOnClose={false}
+        >
+          {searchInput}
+        </Modal>
+      )}
 
       <Space size={4}>
         <ThemeToggle />
         <Dropdown menu={{ items: userMenu }} placement="bottomRight">
           <Button type="text" icon={<Avatar icon={<UserOutlined />} />}>
-            &nbsp;{email || "…"}
+            {isWide ? <>&nbsp;{email || "…"}</> : null}
           </Button>
         </Dropdown>
       </Space>

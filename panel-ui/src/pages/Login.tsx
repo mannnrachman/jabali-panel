@@ -140,10 +140,11 @@ export const LoginPage = () => {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
+        padding: 16,
         background: token.colorBgLayout,
       }}
     >
-      <Card style={{ width: 420 }}>
+      <Card style={{ width: "100%", maxWidth: 420 }}>
         <Space orientation="vertical" size="large" style={{ width: "100%" }}>
           <div
             style={{

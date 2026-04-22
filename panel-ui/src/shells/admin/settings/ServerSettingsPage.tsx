@@ -167,7 +167,7 @@ const GeneralSettingsTab = () => {
 
       <Card title="Identity" style={{ marginBottom: 16 }}>
         <Row gutter={16}>
-          <Col span={12}>
+          <Col xs={24} md={12}>
             <Form.Item
               label="Hostname"
               name="hostname"
@@ -184,7 +184,7 @@ const GeneralSettingsTab = () => {
               <Input placeholder="panel.example.com" />
             </Form.Item>
           </Col>
-          <Col span={12}>
+          <Col xs={24} md={12}>
             <Form.Item
               label="Admin email"
               name="admin_email"
@@ -197,7 +197,7 @@ const GeneralSettingsTab = () => {
         </Row>
 
         <Row gutter={16}>
-          <Col span={12}>
+          <Col xs={24} md={12}>
             <Form.Item
               label="Public IPv4"
               name="public_ipv4"
@@ -212,7 +212,7 @@ const GeneralSettingsTab = () => {
               <Input placeholder="203.0.113.5" />
             </Form.Item>
           </Col>
-          <Col span={12}>
+          <Col xs={24} md={12}>
             <Form.Item
               label="Public IPv6 (optional)"
               name="public_ipv6"
@@ -279,7 +279,7 @@ const GeneralSettingsTab = () => {
           </Col>
         </Row>
         <Row gutter={16}>
-          <Col span={12}>
+          <Col xs={24} md={12}>
             <div style={{ marginBottom: 24 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                 <Form.Item name="ssh_password_auth" valuePropName="checked" noStyle>
@@ -292,7 +292,7 @@ const GeneralSettingsTab = () => {
               </Typography.Text>
             </div>
           </Col>
-          <Col span={12}>
+          <Col xs={24} md={12}>
             <div style={{ marginBottom: 24 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                 <Form.Item name="ssh_user_password_auth" valuePropName="checked" noStyle>
@@ -434,12 +434,12 @@ const DNSSettingsTab = () => {
         </Typography.Paragraph>
 
         <Row gutter={16}>
-          <Col span={12}>
+          <Col xs={24} md={12}>
             <Form.Item label="ns1 hostname" name="ns1_name">
               <Input placeholder="ns1.panel.example.com" />
             </Form.Item>
           </Col>
-          <Col span={12}>
+          <Col xs={24} md={12}>
             <Form.Item label="ns1 IPv4" name="ns1_ipv4">
               <Input placeholder="203.0.113.5" />
             </Form.Item>
@@ -451,12 +451,12 @@ const DNSSettingsTab = () => {
         </Divider>
 
         <Row gutter={16}>
-          <Col span={12}>
+          <Col xs={24} md={12}>
             <Form.Item label="ns2 hostname" name="ns2_name">
               <Input placeholder="ns2.panel.example.com" />
             </Form.Item>
           </Col>
-          <Col span={12}>
+          <Col xs={24} md={12}>
             <Form.Item label="ns2 IPv4" name="ns2_ipv4">
               <Input placeholder="" />
             </Form.Item>

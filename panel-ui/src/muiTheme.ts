@@ -17,6 +17,13 @@ const useMuiTheme = (mode: ThemeMode): ConfigProviderProps =>
       theme: {
         algorithm:
           mode === "dark" ? theme.darkAlgorithm : theme.defaultAlgorithm,
+        token: {
+          // Bump the base font size from AntD's 14 to 15 so body copy,
+          // table cells, labels and menu items all read a shade larger.
+          // Every size-derived token (fontSizeSM, fontSizeLG, heading
+          // sizes, line heights, control heights) scales off this.
+          fontSize: 15,
+        },
         components: {
           // The Sider's collapse trigger bar at the bottom otherwise
           // paints its own hardcoded color (navy in dark, white in

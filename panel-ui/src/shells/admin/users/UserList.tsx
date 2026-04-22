@@ -22,6 +22,8 @@ import { UserSliceStatus } from "./UserSliceStatus";
 type User = {
   id: string;
   email: string;
+  // POSIX account name for regular users; NULL/absent for admins.
+  username?: string | null;
   name_first: string;
   name_last: string;
   is_admin: boolean;
@@ -117,6 +119,39 @@ function UsersShellTable({
         title="Email"
         key="email"
         sorter={{ multiple: 1 }}
+        filterIcon={() => (
+          <SearchOutlined
+            style={{ color: query.params.q ? "#ef4444" : undefined }}
+          />
+        )}
+        filterDropdown={({ confirm, close }) => (
+          <div style={{ padding: 8, minWidth: 240 }}>
+            <Input.Search
+              placeholder={searchPlaceholder}
+              allowClear
+              defaultValue={query.params.q}
+              onSearch={(value) => {
+                query.setParams({ q: value.trim(), page: 1 });
+                confirm({ closeDropdown: false });
+                close();
+              }}
+            />
+          </div>
+        )}
+      />
+      <Table.Column<User>
+        dataIndex="username"
+        title="Username"
+        key="username"
+        render={(v: string | null | undefined) =>
+          v ? (
+            <Typography.Text style={{ fontFamily: "monospace" }}>
+              {v}
+            </Typography.Text>
+          ) : (
+            <Typography.Text type="secondary">—</Typography.Text>
+          )
+        }
         filterIcon={() => (
           <SearchOutlined
             style={{ color: query.params.q ? "#ef4444" : undefined }}

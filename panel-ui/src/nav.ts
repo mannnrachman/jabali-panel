@@ -21,8 +21,8 @@ import {
   GlobalOutlined,
   HomeOutlined,
   KeyOutlined,
+  LockOutlined,
   MailOutlined,
-  SafetyCertificateOutlined,
   SettingOutlined,
   TeamOutlined,
   ThunderboltOutlined,
@@ -69,8 +69,8 @@ export const adminNav: NavItem[] = [
   },
   {
     key: "ssl",
-    label: "SSL",
-    icon: createElement(SafetyCertificateOutlined),
+    label: "SSL Manager",
+    icon: createElement(LockOutlined),
     path: "/jabali-admin/ssl",
   },
   {
@@ -114,8 +114,8 @@ export const userNav: NavItem[] = [
   },
   {
     key: "ssl",
-    label: "SSL",
-    icon: createElement(SafetyCertificateOutlined),
+    label: "SSL Manager",
+    icon: createElement(LockOutlined),
     path: "/jabali-panel/ssl",
   },
   {

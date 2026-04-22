@@ -99,14 +99,14 @@ GITEA_TOKEN="${_cli_token:-${JABALI_GITEA_TOKEN:-${_positional[0]:-}}}"
 
 # ---------- tiny logger -----------------------------------------------------
 
-_log()  { printf '\033[1;34m[jabali-install]\033[0m %s\n' "$*"; }
-_ok()   { printf '\033[1;32m[jabali-install]\033[0m %s\n' "$*"; }
-_warn() { printf '\033[1;33m[jabali-install]\033[0m %s\n' "$*" >&2; }
+_log()  { printf '\033[1;34m[i]\033[0m %s\n' "$*"; }
+_ok()   { printf '\033[1;32m[✓]\033[0m %s\n' "$*"; }
+_warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*" >&2; }
 # _err prints in red on stderr — callers still control exit behavior.
 # M18's configure_disk_quota relied on this silently; define it once
 # so any future caller has a matching pair to _warn.
-_err()  { printf '\033[1;31m[jabali-install]\033[0m %s\n' "$*" >&2; }
-_die()  { printf '\033[1;31m[jabali-install]\033[0m %s\n' "$*" >&2; exit 1; }
+_err()  { printf '\033[1;31m[✗]\033[0m %s\n' "$*" >&2; }
+_die()  { printf '\033[1;31m[✗]\033[0m %s\n' "$*" >&2; exit 1; }
 
 # _spin runs the given command with stdout+stderr captured to a temp log
 # and a live spinner + elapsed counter on the terminal. On success, the
@@ -145,7 +145,10 @@ _spin() {
   local start; start=$(date +%s)
   while kill -0 "$pid" 2>/dev/null; do
     local elapsed=$(( $(date +%s) - start ))
-    printf '\r\033[K  \033[1;36m%s\033[0m  %s  (%ds)' \
+    # Bracketed spinner mirrors the [✓]/[i]/[!]/[✗] column the logger
+    # uses — when the process finishes, _ok overwrites the same column
+    # with [✓], so the eye tracks the status glyph in one fixed place.
+    printf '\r\033[K\033[1;36m[%s]\033[0m %s (%ds)' \
       "${spinners[i++ % n]}" "$label" "$elapsed"
     sleep 0.1
   done
@@ -359,10 +362,6 @@ prompt_server_settings() {
     # the guard is cheap).
     {
       printf '\n'
-      printf '\033[1m==============================================================\033[0m\n'
-      printf '\033[1m  Jabali Panel — Server Configuration\033[0m\n'
-      printf '\033[1m==============================================================\033[0m\n'
-      printf '\n'
       printf 'Enter the fully qualified domain name (FQDN) for this server.\n'
       printf 'This name will be used for:\n'
       printf '  - System hostname (hostnamectl set-hostname)\n'
@@ -377,10 +376,6 @@ prompt_server_settings() {
       fi
       printf '\n'
     } > /dev/tty 2>/dev/null || {
-      printf '\n'
-      printf '==============================================================\n'
-      printf '  Jabali Panel — Server Configuration\n'
-      printf '==============================================================\n'
       printf '\n'
       printf 'Current hostname: %s\n' "$sys_hostname"
       printf 'Server IPv4:      %s\n' "$inp_ipv4"

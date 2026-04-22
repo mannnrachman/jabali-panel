@@ -295,6 +295,12 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 		}
 	}
 
+	// M6.3: make sure the panel's self-zone is forwardable through the
+	// local recursor. The zone is bootstrapped by install.sh (not a DB
+	// row), so it's not covered by the enabledDomains loop below.
+	// Idempotent on the agent side.
+	r.reconcileRecursorSelfZone(ctx)
+
 	// Convergence:
 	// 1. Every enabled DB domain gets a domain.create every pass. The
 	// agent's writeVhost is content-hash gated — it re-renders the vhost,
@@ -331,6 +337,9 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 		// pool; this associates it with pre-existing unbound domains.
 		r.ensureDomainPHPBinding(ctx, domain)
 		r.createDomainOnAgent(ctx, domain)
+		// M6.3: ensure the recursor has a forwarder for this zone so
+		// local resolution hits pdns-server on loopback :5300. Idempotent.
+		r.reconcileRecursorForward(ctx, name)
 	}
 
 	// 2. Disabled DB domain that IS in agent set -> call domain.create with is_enabled=false
@@ -360,6 +369,13 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 			if _, found := disabledDomains[site]; !found {
 				r.log.Warn("reconcile: orphan site found in agent, no DB row", "site", site,
 					"detail", "manual cleanup may be needed")
+				// M6.3: also drop the recursor forwarder — idempotent, so
+				// safe even if it was never added. Keeps the forwards file
+				// from accumulating stale zones when a domain gets deleted
+				// from the DB out-of-band. If the operator re-creates the
+				// domain, the next tick re-adds the forwarder via the
+				// enabledDomains loop.
+				r.reconcileRecursorForwardRemove(ctx, site)
 			}
 		}
 	}

@@ -1136,8 +1136,11 @@ func TestReconcile_BootstrapsAndPushesZone(t *testing.T) {
 	// Verify that bootstrap records were created
 	records, err := dnsRecordRepo.ListByZoneID(ctx, zone.ID)
 	require.NoError(t, err)
-	// Bootstrap: A/@, A/www, A/mail, AAAA/@, AAAA/www, AAAA/mail, MX, SPF, DMARC = 9 records
-	require.Len(t, records, 9)
+	// Bootstrap: A/@, A/mail, AAAA/@, AAAA/mail, CNAME/www,
+	// MX, SPF, DMARC = 8 records. www was A (×2 with v6) before the
+	// CNAME-to-apex change; mail stays A because MX targets can't be
+	// CNAMEs (RFC 2181 §10.3).
+	require.Len(t, records, 8)
 }
 
 func TestReconcile_PassesAXFRToAgent(t *testing.T) {

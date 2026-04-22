@@ -192,6 +192,11 @@ func (m *MockDomainRepository) UpdateEmailState(ctx context.Context, id string, 
 	return args.Error(0)
 }
 
+func (m *MockDomainRepository) SetListenIPs(ctx context.Context, id string, upd repository.DomainListenIPs) error {
+	args := m.Called(ctx, id, upd)
+	return args.Error(0)
+}
+
 func (m *MockDomainRepository) Delete(ctx context.Context, id string) error {
 	args := m.Called(ctx, id)
 	return args.Error(0)

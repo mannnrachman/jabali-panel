@@ -93,6 +93,9 @@ func (*fakeDomainRepo) FindPanelPrimary(context.Context) (*models.Domain, error)
 	return nil, repository.ErrPanelPrimaryNotFound
 }
 func (*fakeDomainRepo) MarkPanelPrimary(context.Context, string) error { return nil }
+func (*fakeDomainRepo) SetListenIPs(context.Context, string, repository.DomainListenIPs) error {
+	return nil
+}
 
 // fakeDNSZoneRepo / fakeDNSRecordRepo are minimal — enableDomainEmail
 // only calls FindByDomainID + ListByZoneID + Create, and disable only

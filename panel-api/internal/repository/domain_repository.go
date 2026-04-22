@@ -52,6 +52,24 @@ type DomainRepository interface {
 	// Idempotent — re-running on an already-marked row is a no-op.
 	// ADR-0048.
 	MarkPanelPrimary(ctx context.Context, id string) error
+	// SetListenIPs writes the M24 per-domain IP binding columns
+	// (listen_ipv4_id, listen_ipv6_id). Only families flagged ChangeIPv4
+	// / ChangeIPv6 are written — others are left untouched, so a PATCH
+	// that only mentions one family doesn't accidentally clear the
+	// other. Nil pointers map to SQL NULL ("use server default per
+	// family"). Dedicated method because the columns are not in
+	// Update()'s allowlist on purpose.
+	SetListenIPs(ctx context.Context, id string, upd DomainListenIPs) error
+}
+
+// DomainListenIPs is the bundle of optional column writes for
+// SetListenIPs. ChangeIPv4 / ChangeIPv6 disambiguate "absent in PATCH"
+// from "explicitly set to null" — only the flagged family is touched.
+type DomainListenIPs struct {
+	ChangeIPv4 bool
+	IPv4ID     *uint64
+	ChangeIPv6 bool
+	IPv6ID     *uint64
 }
 
 // DomainEmailState is the bundle of columns written together by
@@ -317,6 +335,29 @@ func (r *domainRepo) UpdateEmailState(ctx context.Context, id string, state Doma
 	res := r.db.WithContext(ctx).Model(&models.Domain{}).
 		Where("id = ?", id).
 		Updates(updates)
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *domainRepo) SetListenIPs(ctx context.Context, id string, upd DomainListenIPs) error {
+	cols := make(map[string]interface{}, 2)
+	if upd.ChangeIPv4 {
+		cols["listen_ipv4_id"] = upd.IPv4ID
+	}
+	if upd.ChangeIPv6 {
+		cols["listen_ipv6_id"] = upd.IPv6ID
+	}
+	if len(cols) == 0 {
+		return nil
+	}
+	res := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Where("id = ?", id).
+		Updates(cols)
 	if res.Error != nil {
 		return translate(res.Error)
 	}

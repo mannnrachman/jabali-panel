@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -36,6 +37,11 @@ type DomainHandlerConfig struct {
 	// or hit an error during create.
 	DNSZones   repository.DNSZoneRepository
 	DNSRecords repository.DNSRecordRepository
+	// ManagedIPs is the M24 IP-pool repo. Optional: when nil, the
+	// listen_ipv*_id PATCH path is rejected with 503 (the pool is the
+	// source of truth) and GET responses skip the denormalized
+	// listen_ipv4 / listen_ipv6 nested objects.
+	ManagedIPs repository.ManagedIPRepository
 }
 
 const (
@@ -69,6 +75,38 @@ type updateDomainRequest struct {
 	PageRedirects         *models.PageRedirects `json:"page_redirects,omitempty"`
 	NginxRules            *models.NginxRules    `json:"nginx_rules,omitempty"`
 	IndexPriority         *string               `json:"index_priority,omitempty"`
+	// M24: per-domain IP binding. nullableUint64 distinguishes
+	// "absent in PATCH" (don't touch the column) from "explicitly null"
+	// (clear binding → fall back to server default for the family) from
+	// "set to ID" (rebind). PATCH `{}`-only callers retain prior
+	// behaviour exactly.
+	ListenIPv4ID nullableUint64 `json:"listen_ipv4_id,omitempty"`
+	ListenIPv6ID nullableUint64 `json:"listen_ipv6_id,omitempty"`
+}
+
+// nullableUint64 is the M24 wrapper that lets a PATCH body distinguish
+// "field absent" from "field explicitly null". Gin's binding only invokes
+// UnmarshalJSON when the key is present in the body, so Set stays false
+// for absent fields. JSON null unmarshals to Set=true, Value=nil. JSON
+// number unmarshals to Set=true, Value=&n. Any other JSON shape returns
+// an error so the handler can 422.
+type nullableUint64 struct {
+	Set   bool
+	Value *uint64
+}
+
+func (n *nullableUint64) UnmarshalJSON(data []byte) error {
+	n.Set = true
+	if string(data) == "null" {
+		n.Value = nil
+		return nil
+	}
+	var v uint64
+	if err := json.Unmarshal(data, &v); err != nil {
+		return fmt.Errorf("listen_ipv*_id must be a positive integer or null: %w", err)
+	}
+	n.Value = &v
+	return nil
 }
 
 // sslBadge is the nested SSL-cert summary embedded in domain list rows so
@@ -85,6 +123,21 @@ type sslBadge struct {
 type domainListRow struct {
 	models.Domain
 	SSL *sslBadge `json:"ssl,omitempty"`
+	// Denormalized listen-IP summaries — UI shows the address string
+	// without a second roundtrip per row. Always populated when
+	// ManagedIPs is wired: explicit binding ⇒ that row's address; null
+	// binding ⇒ family default address. nil only when the family default
+	// itself is missing (fresh install before a v6 was added etc.).
+	ListenIPv4 *ipSummary `json:"listen_ipv4,omitempty"`
+	ListenIPv6 *ipSummary `json:"listen_ipv6,omitempty"`
+}
+
+// ipSummary is the denormalized {id, address} blob the UI consumes for
+// the per-domain listen IP. id may be 0 when this is a fall-through
+// "use server default" case where no managed_ip row exists for the family.
+type ipSummary struct {
+	ID      uint64 `json:"id"`
+	Address string `json:"address"`
 }
 
 func (h *domainHandler) list(c *gin.Context) {
@@ -140,12 +193,101 @@ func (h *domainHandler) list(c *gin.Context) {
 		// still ships flat domain data rather than 500ing.
 	}
 
+	// M24: denormalize listen_ipv4 / listen_ipv6 onto each row. Pool is
+	// capped at 100 (Step 2), so a single ListAll is cheaper than N
+	// FindByID calls. Errors silently drop the field rather than 500;
+	// the UI's per-IP page is the recovery path.
+	if h.cfg.ManagedIPs != nil && len(domains) > 0 {
+		ips, ipErr := h.cfg.ManagedIPs.ListAll(c.Request.Context())
+		if ipErr == nil {
+			ipByID := make(map[uint64]*models.ManagedIP, len(ips))
+			var defaultV4, defaultV6 *models.ManagedIP
+			for i := range ips {
+				ipByID[ips[i].ID] = &ips[i]
+				if ips[i].IsDefault {
+					switch ips[i].Family {
+					case "ipv4":
+						defaultV4 = &ips[i]
+					case "ipv6":
+						defaultV6 = &ips[i]
+					}
+				}
+			}
+			for i := range rows {
+				rows[i].ListenIPv4 = pickListenSummary(rows[i].ListenIPv4ID, ipByID, defaultV4)
+				rows[i].ListenIPv6 = pickListenSummary(rows[i].ListenIPv6ID, ipByID, defaultV6)
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"data":      rows,
 		"total":     total,
 		"page":      page,
 		"page_size": pageSize,
 	})
+}
+
+// pickListenSummary resolves a domain row's listen_ipv*_id to the
+// denormalized {id,address} blob using the prefetched batch maps.
+// Falls back to the family default when the binding is null; returns
+// nil only when no default is seeded for that family.
+func pickListenSummary(id *uint64, byID map[uint64]*models.ManagedIP, def *models.ManagedIP) *ipSummary {
+	if id != nil {
+		if row, ok := byID[*id]; ok {
+			return &ipSummary{ID: row.ID, Address: row.Address}
+		}
+	}
+	if def != nil {
+		return &ipSummary{ID: def.ID, Address: def.Address}
+	}
+	return nil
+}
+
+// enrichDomainResponse returns a domainListRow with the SSL badge and
+// listen-IP denormalization filled in for a single Domain — used by GET
+// /domains/:id and the PATCH response. The list path inlines its own
+// loop that batches IP lookups.
+func (h *domainHandler) enrichDomainResponse(ctx context.Context, d models.Domain) domainListRow {
+	row := domainListRow{Domain: d}
+	if h.cfg.SSLCerts != nil {
+		certs, err := h.cfg.SSLCerts.FindByDomainIDs(ctx, []string{d.ID})
+		if err == nil {
+			for i := range certs {
+				if certs[i].DomainID == d.ID {
+					row.SSL = sslBadgeFromCert(&certs[i])
+					break
+				}
+			}
+		}
+	}
+	if h.cfg.ManagedIPs != nil {
+		row.ListenIPv4 = h.resolveListenSummary(ctx, d.ListenIPv4ID, "ipv4")
+		row.ListenIPv6 = h.resolveListenSummary(ctx, d.ListenIPv6ID, "ipv6")
+	}
+	return row
+}
+
+// resolveListenSummary fetches the {id,address} blob for a domain's
+// listen_ipv*_id binding. Explicit binding ⇒ the bound row; nil binding
+// ⇒ the family default. Returns nil only when neither resolves (e.g.
+// the operator never seeded a v6 default).
+func (h *domainHandler) resolveListenSummary(ctx context.Context, id *uint64, family string) *ipSummary {
+	if id != nil {
+		row, err := h.cfg.ManagedIPs.FindByID(ctx, *id)
+		if err == nil {
+			return &ipSummary{ID: row.ID, Address: row.Address}
+		}
+		// Per F-H-2: FK RESTRICT means this should be unreachable, but
+		// if it does happen we fall through to default rather than emit
+		// a null. The operator UI surfaces a separate "missing IP"
+		// warning via the IP manager pages, not the per-domain GET.
+	}
+	row, err := h.cfg.ManagedIPs.FindDefaultByFamily(ctx, family)
+	if err != nil {
+		return nil
+	}
+	return &ipSummary{ID: row.ID, Address: row.Address}
 }
 
 // sslBadgeFromCert maps a cert row to the nested badge, filling Issuer
@@ -186,7 +328,7 @@ func (h *domainHandler) get(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
-	c.JSON(http.StatusOK, domain)
+	c.JSON(http.StatusOK, h.enrichDomainResponse(c.Request.Context(), *domain))
 }
 
 func (h *domainHandler) create(c *gin.Context) {
@@ -410,10 +552,35 @@ func (h *domainHandler) update(c *gin.Context) {
 		domain.IndexPriority = p
 	}
 
+	// M24: per-domain IP binding — validate FK + family + (for non-admin)
+	// is_user_selectable. We resolve and validate before issuing any DB
+	// write so a bad ipv4 doesn't half-succeed against ipv6.
+	listenUpd, ipErr := h.resolveListenIPUpdate(ctx, claims.IsAdmin, req.ListenIPv4ID, req.ListenIPv6ID)
+	if ipErr != nil {
+		c.JSON(ipErr.Status, gin.H{"error": ipErr.Code, "detail": ipErr.Detail})
+		return
+	}
+
 	domain.UpdatedAt = time.Now().UTC()
 	if err := h.cfg.Domains.Update(ctx, domain); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
+	}
+
+	// Listen IPs are written via dedicated repo method — Domain.Update's
+	// allowlist intentionally excludes listen_ipv*_id. Mirror the in-memory
+	// struct so the response reflects the new binding.
+	if listenUpd.ChangeIPv4 || listenUpd.ChangeIPv6 {
+		if err := h.cfg.Domains.SetListenIPs(ctx, domain.ID, listenUpd); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		if listenUpd.ChangeIPv4 {
+			domain.ListenIPv4ID = listenUpd.IPv4ID
+		}
+		if listenUpd.ChangeIPv6 {
+			domain.ListenIPv6ID = listenUpd.IPv6ID
+		}
 	}
 
 	// Schedule reconciliation to sync the domain state with the agent.
@@ -421,7 +588,86 @@ func (h *domainHandler) update(c *gin.Context) {
 		h.cfg.Reconciler.Schedule(domain.ID)
 	}
 
-	c.JSON(http.StatusOK, domain)
+	c.JSON(http.StatusOK, h.enrichDomainResponse(ctx, *domain))
+}
+
+// listenIPError carries the (status, code, detail) tuple from
+// resolveListenIPUpdate so the caller can emit the right JSON shape
+// without resorting to multi-error sentinel checks.
+type listenIPError struct {
+	Status int
+	Code   string
+	Detail string
+}
+
+// resolveListenIPUpdate validates the listen_ipv*_id PATCH fields and
+// builds the repository.DomainListenIPs payload. Returns ChangeIPv4 /
+// ChangeIPv6 only for fields that were actually present in the request.
+//
+// Rules:
+//   - ManagedIPs repo not wired → 503 (the FK target table is the
+//     authoritative source; we won't accept blind writes).
+//   - IPv4 field carries an IPv6 address (or vice-versa) → 400.
+//   - Referenced row missing → 404.
+//   - Non-admin caller picking a row with is_user_selectable=false → 403.
+//   - Explicit null → unbind (fall back to server default at render time).
+func (h *domainHandler) resolveListenIPUpdate(ctx context.Context, isAdmin bool, v4, v6 nullableUint64) (repository.DomainListenIPs, *listenIPError) {
+	upd := repository.DomainListenIPs{}
+	if !v4.Set && !v6.Set {
+		return upd, nil
+	}
+	if h.cfg.ManagedIPs == nil {
+		return upd, &listenIPError{
+			Status: http.StatusServiceUnavailable,
+			Code:   "ip_pool_unavailable",
+			Detail: "managed IP pool is not configured on this server",
+		}
+	}
+	if v4.Set {
+		if v4.Value == nil {
+			upd.ChangeIPv4 = true
+			upd.IPv4ID = nil
+		} else {
+			row, err := h.cfg.ManagedIPs.FindByID(ctx, *v4.Value)
+			if err != nil {
+				if errors.Is(err, repository.ErrNotFound) {
+					return upd, &listenIPError{Status: http.StatusNotFound, Code: "listen_ipv4_not_found"}
+				}
+				return upd, &listenIPError{Status: http.StatusInternalServerError, Code: "internal"}
+			}
+			if row.Family != "ipv4" {
+				return upd, &listenIPError{Status: http.StatusBadRequest, Code: "listen_ipv4_family_mismatch", Detail: "managed_ip " + strconv.FormatUint(row.ID, 10) + " is not an IPv4 address"}
+			}
+			if !isAdmin && !row.IsUserSelectable {
+				return upd, &listenIPError{Status: http.StatusForbidden, Code: "listen_ipv4_not_user_selectable", Detail: "this IPv4 is not enabled for user selection — ask an administrator"}
+			}
+			upd.ChangeIPv4 = true
+			upd.IPv4ID = &row.ID
+		}
+	}
+	if v6.Set {
+		if v6.Value == nil {
+			upd.ChangeIPv6 = true
+			upd.IPv6ID = nil
+		} else {
+			row, err := h.cfg.ManagedIPs.FindByID(ctx, *v6.Value)
+			if err != nil {
+				if errors.Is(err, repository.ErrNotFound) {
+					return upd, &listenIPError{Status: http.StatusNotFound, Code: "listen_ipv6_not_found"}
+				}
+				return upd, &listenIPError{Status: http.StatusInternalServerError, Code: "internal"}
+			}
+			if row.Family != "ipv6" {
+				return upd, &listenIPError{Status: http.StatusBadRequest, Code: "listen_ipv6_family_mismatch", Detail: "managed_ip " + strconv.FormatUint(row.ID, 10) + " is not an IPv6 address"}
+			}
+			if !isAdmin && !row.IsUserSelectable {
+				return upd, &listenIPError{Status: http.StatusForbidden, Code: "listen_ipv6_not_user_selectable", Detail: "this IPv6 is not enabled for user selection — ask an administrator"}
+			}
+			upd.ChangeIPv6 = true
+			upd.IPv6ID = &row.ID
+		}
+	}
+	return upd, nil
 }
 
 func (h *domainHandler) delete(c *gin.Context) {

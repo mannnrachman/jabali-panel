@@ -233,6 +233,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				// create still works — auto-enable is skipped cleanly.
 				DNSZones:   deps.DNSZones,
 				DNSRecords: deps.DNSRecords,
+				// M24: lets PATCH listen_ipv*_id resolve FK + family + the
+				// is_user_selectable check, and lets GET denormalize
+				// listen_ipv4 / listen_ipv6 onto each row. Optional —
+				// when unset, the listen-IP fields are 503 on PATCH and
+				// dropped from GET.
+				ManagedIPs: deps.ManagedIPs,
 			})
 		}
 		if deps.Databases != nil && deps.DatabaseUsers != nil {

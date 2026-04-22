@@ -182,6 +182,20 @@ func (f *fakeDomainRepo) MarkPanelPrimary(ctx context.Context, id string) error 
 	return nil
 }
 
+func (f *fakeDomainRepo) SetListenIPs(ctx context.Context, id string, upd repository.DomainListenIPs) error {
+	d, ok := f.domains[id]
+	if !ok {
+		return &notFoundErr{}
+	}
+	if upd.ChangeIPv4 {
+		d.ListenIPv4ID = upd.IPv4ID
+	}
+	if upd.ChangeIPv6 {
+		d.ListenIPv6ID = upd.IPv6ID
+	}
+	return nil
+}
+
 type notFoundErr struct{}
 
 func (e *notFoundErr) Error() string { return "not found" }

@@ -124,6 +124,20 @@ func (m *mockDomainRepo) MarkPanelPrimary(ctx context.Context, id string) error 
 	return nil
 }
 
+func (m *mockDomainRepo) SetListenIPs(ctx context.Context, id string, upd repository.DomainListenIPs) error {
+	d, ok := m.domains[id]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	if upd.ChangeIPv4 {
+		d.ListenIPv4ID = upd.IPv4ID
+	}
+	if upd.ChangeIPv6 {
+		d.ListenIPv6ID = upd.IPv6ID
+	}
+	return nil
+}
+
 type mockDNSZoneRepo struct {
 	zones map[string]*models.DNSZone
 }

@@ -295,6 +295,23 @@ func runServe(cmd *cobra.Command, args []string) error {
 			} else {
 				log.Info("merged missing server_settings fields from config.toml", "hostname", row.Hostname)
 			}
+
+			// M24 first-boot seed: materialise the is_default managed_ips
+			// row(s) from the freshly-populated server_settings. Migration
+			// 000057 can't do this because it runs (via db.Migrate above)
+			// BEFORE this seed goroutine executes — install.sh populates
+			// server_settings via cfg, not a direct DB write. Keeping the
+			// seed here means the default row always lives alongside the
+			// server_settings row it mirrors, and neither migration 57
+			// nor install.sh needs to know about the other.
+			if managedIPRepo != nil {
+				if err := managedIPRepo.EnsureDefault(seedCtx, row.PublicIPv4, "ipv4"); err != nil {
+					log.Error("failed to seed default managed_ips ipv4 row", "err", err)
+				}
+				if err := managedIPRepo.EnsureDefault(seedCtx, row.PublicIPv6, "ipv6"); err != nil {
+					log.Error("failed to seed default managed_ips ipv6 row", "err", err)
+				}
+			}
 		}()
 	}
 

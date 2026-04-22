@@ -40,6 +40,14 @@ type ManagedIPRepository interface {
 	// given family ("ipv4"/"ipv6"), or ErrNotFound. Used by the API to
 	// resolve "use server default" when a domain's listen_ipv*_id is NULL.
 	FindDefaultByFamily(ctx context.Context, family string) (*models.ManagedIP, error)
+
+	// EnsureDefault creates the is_default row for the given family if
+	// none exists. Idempotent: no-op if a default for the family already
+	// exists, no-op if address is empty. Used by panel-api's first-boot
+	// seed (serve.go) to materialise the default IP row *after*
+	// server_settings has been populated — migration 000057 can't do it
+	// because it runs before install.sh gives panel-api the IP value.
+	EnsureDefault(ctx context.Context, address, family string) error
 }
 
 type managedIPRepo struct{ db *gorm.DB }
@@ -129,6 +137,61 @@ func (r *managedIPRepo) FindDefaultByFamily(ctx context.Context, family string) 
 		return nil, err
 	}
 	return &row, nil
+}
+
+func (r *managedIPRepo) EnsureDefault(ctx context.Context, address, family string) error {
+	if address == "" {
+		return nil
+	}
+	if family != "ipv4" && family != "ipv6" {
+		return errors.New("ensure default: family must be ipv4 or ipv6")
+	}
+	// Existing is_default row for this family? Nothing to do.
+	if _, err := r.FindDefaultByFamily(ctx, family); err == nil {
+		return nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	// Someone may have already created a row for this address with
+	// is_default=false (e.g. pre-bound externally via the admin API
+	// before first boot completed). Flip it to default rather than
+	// failing on the unique-address constraint.
+	if existing, err := r.FindByAddress(ctx, address); err == nil {
+		if !existing.IsDefault {
+			existing.IsDefault = true
+			if existing.Label == "" {
+				existing.Label = "server primary (" + shortFamily(family) + ")"
+			}
+			return r.Update(ctx, existing)
+		}
+		return nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	row := &models.ManagedIP{
+		Address:          address,
+		Family:           family,
+		Label:            "server primary (" + shortFamily(family) + ")",
+		IsDefault:        true,
+		IsBound:          false,
+		IsUserSelectable: false,
+	}
+	if err := r.Create(ctx, row); err != nil {
+		// Race with a concurrent seed — someone beat us to the insert.
+		// Treat as success; the default row exists now.
+		if errors.Is(err, ErrConflict) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func shortFamily(f string) string {
+	if f == "ipv4" {
+		return "v4"
+	}
+	return "v6"
 }
 
 // isDuplicateKey returns true when err is a MariaDB duplicate-entry

@@ -70,6 +70,10 @@ func (f *fakeManagedIPsForDomain) FindDefaultByFamily(ctx context.Context, famil
 	return nil, repository.ErrNotFound
 }
 
+func (f *fakeManagedIPsForDomain) EnsureDefault(ctx context.Context, address, family string) error {
+	return nil
+}
+
 // setupDomainListenIPHarness builds a router with a fake domain repo, a
 // fake managed-IP repo, and the requested claims so each test can hit
 // PATCH/GET without re-wiring middleware.

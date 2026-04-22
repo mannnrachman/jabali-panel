@@ -68,6 +68,10 @@ func (f *fakeManagedIPs) FindDefaultByFamily(ctx context.Context, family string)
 	return nil, repository.ErrNotFound
 }
 
+func (f *fakeManagedIPs) EnsureDefault(ctx context.Context, address, family string) error {
+	return nil
+}
+
 // stubAgent records calls and returns canned responses. We keep it in
 // this _test.go file (rather than share the one in api/) because the
 // reconciler package doesn't import api/.

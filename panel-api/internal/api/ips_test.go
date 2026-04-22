@@ -127,6 +127,10 @@ func (r *fakeIPRepo) FindDefaultByFamily(ctx context.Context, family string) (*m
 	return nil, repository.ErrNotFound
 }
 
+func (r *fakeIPRepo) EnsureDefault(ctx context.Context, address, family string) error {
+	return nil
+}
+
 // newIPRouter builds a Gin engine wired to the IP handler. Injects
 // admin claims via the same pattern server_settings_test uses, so the
 // real RequireAdmin middleware passes without us having to mock auth.

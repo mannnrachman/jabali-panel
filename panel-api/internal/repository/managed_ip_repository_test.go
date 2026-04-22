@@ -231,3 +231,83 @@ func TestManagedIPRepository_FindDefaultByFamily_NotFound(t *testing.T) {
 	require.True(t, errors.Is(err, ErrNotFound))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestManagedIPRepository_EnsureDefault_EmptyAddressIsNoop(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+	repo := NewManagedIPRepository(db)
+	require.NoError(t, repo.EnsureDefault(context.Background(), "", "ipv4"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestManagedIPRepository_EnsureDefault_InvalidFamily(t *testing.T) {
+	db, _, raw := newMockDB(t)
+	defer raw.Close()
+	repo := NewManagedIPRepository(db)
+	err := repo.EnsureDefault(context.Background(), "203.0.113.1", "ipvx")
+	require.Error(t, err)
+}
+
+func TestManagedIPRepository_EnsureDefault_ExistingDefaultIsNoop(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+	repo := NewManagedIPRepository(db)
+
+	now := time.Now()
+	mock.ExpectQuery("SELECT .* FROM `managed_ips` WHERE family = \\? AND is_default = \\?.*LIMIT").
+		WithArgs("ipv4", true, 1).
+		WillReturnRows(sqlmock.NewRows(managedIPCols()).AddRow(
+			uint64(1), "203.0.113.1", "ipv4", "server primary (v4)",
+			true, false, false, false, now, now,
+		))
+	require.NoError(t, repo.EnsureDefault(context.Background(), "203.0.113.1", "ipv4"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestManagedIPRepository_EnsureDefault_PromotesExistingNonDefault(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+	repo := NewManagedIPRepository(db)
+
+	now := time.Now()
+	mock.ExpectQuery("SELECT .* FROM `managed_ips` WHERE family = \\? AND is_default = \\?.*LIMIT").
+		WithArgs("ipv4", true, 1).
+		WillReturnRows(sqlmock.NewRows(managedIPCols()))
+	mock.ExpectQuery("SELECT .* FROM `managed_ips` WHERE address = \\?.*LIMIT").
+		WithArgs("203.0.113.1", 1).
+		WillReturnRows(sqlmock.NewRows(managedIPCols()).AddRow(
+			uint64(7), "203.0.113.1", "ipv4", "pre-bound",
+			false, true, false, false, now, now,
+		))
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `managed_ips` SET .*").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	require.NoError(t, repo.EnsureDefault(context.Background(), "203.0.113.1", "ipv4"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestManagedIPRepository_EnsureDefault_InsertsNewRow(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+	repo := NewManagedIPRepository(db)
+
+	now := time.Now().UTC()
+	mock.ExpectQuery("SELECT .* FROM `managed_ips` WHERE family = \\? AND is_default = \\?.*LIMIT").
+		WithArgs("ipv4", true, 1).
+		WillReturnRows(sqlmock.NewRows(managedIPCols()))
+	mock.ExpectQuery("SELECT .* FROM `managed_ips` WHERE address = \\?.*LIMIT").
+		WithArgs("203.0.113.1", 1).
+		WillReturnRows(sqlmock.NewRows(managedIPCols()))
+	// GORM on MariaDB uses the RETURNING extension — Create() is a Query,
+	// not an Exec (see TestManagedIPRepository_Create for the pattern).
+	mock.ExpectBegin()
+	mock.ExpectQuery("INSERT INTO `managed_ips`.*RETURNING `id`,`created_at`,`updated_at`").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at", "updated_at"}).
+			AddRow(uint64(42), now, now))
+	mock.ExpectCommit()
+
+	require.NoError(t, repo.EnsureDefault(context.Background(), "203.0.113.1", "ipv4"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}

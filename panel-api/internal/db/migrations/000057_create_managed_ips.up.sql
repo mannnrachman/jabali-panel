@@ -1,14 +1,30 @@
--- M24 Step 1: managed_ips pool table.
+-- M24 Step 1: managed_ips pool table (schema only).
 --
 -- managed_ips is the admin-curated pool of IP addresses that can be
 -- bound to a domain via domains.listen_ipv4_id / listen_ipv6_id
--- (added in 000058). Server primary IPv4/IPv6 from server_settings
--- are seeded as is_default rows below.
+-- (added in 000058). The default row for each family (is_default=TRUE,
+-- sourced from server_settings.public_ipv4/public_ipv6) is seeded by
+-- panel-api at first boot — NOT in this migration.
 --
--- Why a single migration owns both schema + seed: the 'degraded' column
--- is included here even though it's only set/read in Step 4 — keeping
--- every M24 schema change in one atomic wave (review finding F-H-5)
--- lets us roll back the whole feature with `migrate down 2`.
+-- Why the seed is NOT here (history of a real footgun):
+-- An earlier version of this migration seeded the default row by
+-- SELECTing from server_settings. On fresh installs that broke:
+-- install.sh runs migrations (via `jabali-panel serve` → db.Migrate)
+-- BEFORE the server_settings row is populated (the first-boot seed in
+-- serve.go runs AFTER migrations complete). Migration 57 would crash
+-- with ER_BAD_NULL_ERROR, get marked dirty, and every subsequent
+-- restart crash-looped with "Dirty database version 57. Fix and force
+-- version." — bricking every fresh install.
+--
+-- Clean separation: migrations shape the DB; the application seeds
+-- data. `managedIPRepo.EnsureDefault(ctx, addr, family)` is called
+-- from serve.go right after server_settings.Upsert, so the default
+-- row appears exactly once on first boot and no-ops on re-runs.
+--
+-- The 'degraded' column is included here even though it's only set
+-- and read by Step 4's rebind-on-start loop — keeping every M24
+-- schema change in one atomic migration (review finding F-H-5) lets
+-- us roll back the whole feature with `migrate down 2`.
 CREATE TABLE managed_ips (
   id                 BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   address            VARCHAR(45)  NOT NULL,
@@ -33,30 +49,3 @@ CREATE TABLE managed_ips (
   UNIQUE KEY uq_managed_ips_address (address),
   KEY idx_managed_ips_family (family)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- Seed from server_settings. NULLIF treats empty string as missing.
-SET @v4 := NULLIF((SELECT public_ipv4 FROM server_settings WHERE id = 1), '');
-SET @v6 := NULLIF((SELECT public_ipv6 FROM server_settings WHERE id = 1), '');
-
--- IPv4 is REQUIRED (per M3, every panel host has a public IPv4). Plain
--- INSERT — not IGNORE — so a NULL @v4 raises ER_BAD_NULL_ERROR and the
--- migration aborts with "Column 'address' cannot be null", forcing the
--- operator to populate server_settings.public_ipv4 before retrying.
--- ON DUPLICATE KEY UPDATE makes re-runs a no-op (same address already
--- seeded), without needing INSERT IGNORE which would mask the NULL
--- failure under non-strict SQL modes (review finding F-C-1).
-INSERT INTO managed_ips (address, family, label, is_default, is_bound, is_user_selectable)
-  VALUES (@v4, 'ipv4', 'server primary (v4)', TRUE, FALSE, FALSE)
-  ON DUPLICATE KEY UPDATE address = address;
-
--- IPv6 is OPTIONAL — many panel hosts run IPv4-only. WHERE filter skips
--- the row entirely when @v6 is NULL/empty; INSERT IGNORE absorbs the
--- unique-conflict on re-runs.
---
--- Note: derived-table alias is `seed1`, NOT `dual` — `dual` became a
--- reserved word in MariaDB 11.4+ and using it as an identifier raises
--- ER_PARSE_ERROR on fresh installs against current MariaDB.
-INSERT IGNORE INTO managed_ips (address, family, label, is_default, is_bound, is_user_selectable)
-  SELECT @v6, 'ipv6', 'server primary (v6)', TRUE, FALSE, FALSE
-    FROM (SELECT 1) AS seed1
-   WHERE @v6 IS NOT NULL;

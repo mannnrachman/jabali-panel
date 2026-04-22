@@ -318,6 +318,25 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 			r.log.Info("reconcile: creating missing domain", "domain", name)
 		}
 		r.reconcileDNSZone(ctx, domain)
+
+		// M6.4 (ADR-0048): is_panel_primary rows are mail-only. They
+		// have no public docroot, no PHP, no per-tenant SSL cert (the
+		// self-signed panel cert already covers mail.<hostname> via its
+		// SAN). The HTTP-vhost path would fail anyway: admin owners have
+		// no Linux username, doc_root is empty ("must start with /home/"
+		// per the agent validator), and creating a server_name=<host>
+		// vhost would hijack /webmail from the default vhost. Skip SSL,
+		// PHP, and domain.create for these rows; the shared
+		// reconcileWebmailVhosts sweep (lower in ReconcileAll) still
+		// applies mail.<host>, and ensurePanelPrimaryDKIM below handles
+		// DKIM/Stalwart/DNS provisioning that the HTTP email-enable
+		// handler would normally run.
+		if domain.IsPanelPrimary {
+			r.reconcileRecursorForward(ctx, name)
+			r.ensurePanelPrimaryDKIM(ctx, domain)
+			continue
+		}
+
 		// Converge SSL state BEFORE the agent RPC. createDomainOnAgent
 		// renders the vhost using the cert paths the ssl_certificates row
 		// points at, so a fresh-issued cert must land in the DB before the

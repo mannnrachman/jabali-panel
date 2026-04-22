@@ -26,6 +26,13 @@
 #                      to setting JABALI_HOSTNAME. --hostname=<fqdn> also works.
 #   --token <gitea>    Private-repo access token. Equivalent to
 #                      setting JABALI_GITEA_TOKEN.
+#   --debug            Verbose mode: disable the _spin progress spinner
+#                      (stream every wrapped command's stdout+stderr live
+#                      so you can see exactly where apt / systemctl / curl
+#                      is stalled), and enable `set -x` with a line-tagged
+#                      PS4 so every shell command is traced. Equivalent to
+#                      setting JABALI_DEBUG=1. Use when install.sh appears
+#                      to hang — the last xtrace line names the stalled cmd.
 #
 # Examples:
 #   curl -fsSL <...>/install.sh | bash -s -- --hostname=panel.example.com
@@ -74,6 +81,7 @@ ENV_FILE="/etc/jabali/panel.env"
 
 _cli_hostname=""
 _cli_token=""
+_cli_debug=""
 _positional=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -81,6 +89,7 @@ while [[ $# -gt 0 ]]; do
     --hostname)   _cli_hostname="${2:-}"; shift 2 ;;
     --token=*)    _cli_token="${1#*=}"; shift ;;
     --token)      _cli_token="${2:-}"; shift 2 ;;
+    --debug)      _cli_debug=1; shift ;;
     --)           shift; while [[ $# -gt 0 ]]; do _positional+=("$1"); shift; done ;;
     --*)          printf 'install.sh: unknown flag: %s\n' "$1" >&2; exit 64 ;;
     *)            _positional+=("$1"); shift ;;
@@ -97,21 +106,93 @@ fi
 # --token precedence: CLI flag > JABALI_GITEA_TOKEN env > legacy positional.
 GITEA_TOKEN="${_cli_token:-${JABALI_GITEA_TOKEN:-${_positional[0]:-}}}"
 
+# --debug: CLI flag > JABALI_DEBUG env. Exported so any sub-shell scripts
+# this installer invokes can honour it too. When set, _spin below skips
+# the spinner + log-capture and streams stdout+stderr live, AND we enable
+# `set -x` with a PS4 that tags every trace line with the source file +
+# line number + function so the last trace line before a stall names
+# exactly what command is waiting.
+JABALI_DEBUG="${_cli_debug:-${JABALI_DEBUG:-}}"
+export JABALI_DEBUG
+
+# Per-run log file — always on, independent of --debug. Captures every
+# _log/_ok/_warn/_err/_die line AND every _spin wrapped command's output,
+# so a post-mortem after install stalls or errors doesn't depend on
+# scrollback. Filename is timestamped so reruns don't clobber. Lives in
+# /root because install.sh already requires root (preflight() asserts
+# EUID==0); if touch fails (fallback for weird jails / testing) we try
+# /tmp and emit a warning later. Mode 0600 — the log may echo hostnames,
+# IPs, and package lists but never secrets (we redact/avoid passwords).
+LOG_FILE="/root/jabali_install-$(date +%Y-%m-%d_%H-%M-%S).log"
+if ! touch "$LOG_FILE" 2>/dev/null; then
+  LOG_FILE="/tmp/jabali_install-$(date +%Y-%m-%d_%H-%M-%S).log"
+  touch "$LOG_FILE" 2>/dev/null || LOG_FILE=""
+fi
+if [[ -n "$LOG_FILE" ]]; then
+  chmod 0600 "$LOG_FILE" 2>/dev/null || true
+fi
+
+if [[ -n "$JABALI_DEBUG" ]]; then
+  # Dim + line-tagged so xtrace output is visually distinct from the
+  # _log/_ok/etc. column. ${FUNCNAME[0]} names the caller function;
+  # 'main' when xtrace fires at top level.
+  export PS4='\033[2m+ ${BASH_SOURCE##*/}:${LINENO}:${FUNCNAME[0]:-main}() \033[0m'
+  # When a log file is open, tee xtrace to both terminal-stderr AND the
+  # file so hangs are diagnosable post-mortem. BASH_XTRACEFD accepts a
+  # single fd; process-sub gives us both destinations via tee.
+  if [[ -n "$LOG_FILE" ]]; then
+    exec {_XTRACE_FD}> >(tee -a "$LOG_FILE" >&2)
+    export BASH_XTRACEFD=$_XTRACE_FD
+  fi
+  set -x
+fi
+
 # ---------- tiny logger -----------------------------------------------------
 
-_log()  { printf '\033[1;34m[i]\033[0m %s\n' "$*"; }
-_ok()   { printf '\033[1;32m[✓]\033[0m %s\n' "$*"; }
-_warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*" >&2; }
+# _log_to_file mirrors every logger line into $LOG_FILE with an ISO
+# timestamp prefix — so a grep through the log after an install can
+# reconstruct the timing. No-op when LOG_FILE is empty (touch failed
+# during early bootstrap on a non-root/weird jail). Uses plain echo
+# redirection rather than `tee` to avoid spawning per-line.
+_log_to_file() {
+  [[ -n "${LOG_FILE:-}" ]] || return 0
+  printf '%s %s\n' "$(date -Iseconds)" "$*" >> "$LOG_FILE" 2>/dev/null || true
+}
+_log()  { printf '\033[1;34m[i]\033[0m %s\n' "$*"; _log_to_file "[i] $*"; }
+_ok()   { printf '\033[1;32m[✓]\033[0m %s\n' "$*"; _log_to_file "[✓] $*"; }
+_warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*" >&2; _log_to_file "[!] $*"; }
 # _err prints in red on stderr — callers still control exit behavior.
 # M18's configure_disk_quota relied on this silently; define it once
 # so any future caller has a matching pair to _warn.
-_err()  { printf '\033[1;31m[✗]\033[0m %s\n' "$*" >&2; }
-_die()  { printf '\033[1;31m[✗]\033[0m %s\n' "$*" >&2; exit 1; }
+_err()  { printf '\033[1;31m[✗]\033[0m %s\n' "$*" >&2; _log_to_file "[✗] $*"; }
+_die()  { printf '\033[1;31m[✗]\033[0m %s\n' "$*" >&2; _log_to_file "[✗] $*"; exit 1; }
+
+# Announce where logs are going so the operator can tail -f in another
+# shell if the install stalls. Printed via _log so it's itself captured.
+if [[ -n "${LOG_FILE:-}" ]]; then
+  _log "install log: $LOG_FILE (includes every step + wrapped command output)"
+else
+  _warn "could not open install log file — post-mortem only via scrollback"
+fi
+
+# _flush_spin_log appends a wrapped command's captured output into the
+# main $LOG_FILE with a header so the post-mortem log reads top-to-bottom
+# as a sequence of {step, output} blocks. No-op when LOG_FILE is empty
+# or when the captured log has nothing to show.
+_flush_spin_log() {
+  local label="$1" log="$2"
+  [[ -n "${LOG_FILE:-}" && -s "$log" ]] || return 0
+  {
+    printf '\n### %s ###\n' "$label"
+    cat "$log"
+  } >> "$LOG_FILE" 2>/dev/null || true
+}
 
 # _spin runs the given command with stdout+stderr captured to a temp log
 # and a live spinner + elapsed counter on the terminal. On success, the
-# log is discarded and an _ok line prints. On failure, the last 60 log
-# lines dump to stderr so diagnostics aren't lost — then the original
+# captured output is flushed into $LOG_FILE for post-mortem diagnostics
+# and an _ok line prints. On failure, the last 60 captured lines dump to
+# stderr too so the operator sees them in scrollback, then the original
 # exit code propagates. Usage: _spin "label" cmd args…
 #
 # Non-TTY stdout (CI, tee'd logs) falls back to a simple start/end pair
@@ -120,15 +201,43 @@ _spin() {
   local label="$1"; shift
   local log; log="$(mktemp /tmp/jabali-spin.XXXXXX.log)"
 
+  # --debug / JABALI_DEBUG: skip the spinner, stream child output live so
+  # hangs surface immediately (the default path swallows stdout+stderr
+  # into $log and only reveals them on failure — perfect for clean
+  # installs, useless when apt/systemctl/curl is stalled mid-run and
+  # you want to watch the last line the stuck child printed). `tee -a`
+  # mirrors the live stream into $LOG_FILE so the post-mortem still has
+  # everything even though no separate capture happens. `|| true` lets
+  # us read PIPESTATUS[0] past `set -e + pipefail`.
+  if [[ -n "${JABALI_DEBUG:-}" ]]; then
+    _log "$label…"
+    if [[ -n "${LOG_FILE:-}" ]]; then
+      "$@" 2>&1 | tee -a "$LOG_FILE" || true
+    else
+      "$@" || true
+    fi
+    local rc=${PIPESTATUS[0]}
+    if [[ $rc -ne 0 ]]; then
+      _err "$label FAILED (exit $rc)"
+      rm -f "$log"
+      exit "$rc"
+    fi
+    _ok "$label"
+    rm -f "$log"
+    return 0
+  fi
+
   if [[ ! -t 1 ]]; then
     _log "$label…"
     if ! "$@" >"$log" 2>&1; then
       local rc=$?
       _err "$label FAILED (exit $rc) — tail of log:"
       tail -n 60 "$log" >&2
+      _flush_spin_log "$label" "$log"
       rm -f "$log"
       exit "$rc"
     fi
+    _flush_spin_log "$label" "$log"
     _ok "$label"
     rm -f "$log"
     return 0
@@ -167,9 +276,11 @@ _spin() {
   if [[ $rc -ne 0 ]]; then
     _err "$label FAILED (exit $rc) — tail of log:"
     tail -n 60 "$log" >&2
+    _flush_spin_log "$label" "$log"
     rm -f "$log"
     exit "$rc"
   fi
+  _flush_spin_log "$label" "$log"
   _ok "$label"
   rm -f "$log"
 }

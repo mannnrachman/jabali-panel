@@ -6,7 +6,7 @@
 // The version string is imported from panel-ui/package.json at build
 // time so bumping the SPA version there propagates automatically.
 import { GithubOutlined } from "@ant-design/icons";
-import { Layout, Space, theme, Typography } from "antd";
+import { Grid, Layout, Space, theme, Typography } from "antd";
 
 import { useThemeMode } from "../theme/ThemeModeContext";
 import pkg from "../../package.json";
@@ -19,6 +19,8 @@ const WEBSITE_URL = "https://jabali-panel.com/";
 export function JabaliFooter() {
   const { mode } = useThemeMode();
   const { token } = theme.useToken();
+  const screens = Grid.useBreakpoint();
+  const isWide = screens.sm !== false;
   const logoSrc =
     mode === "dark" ? "/images/jabali_logo_dark.svg" : "/images/jabali_logo.svg";
   // Match the Layout body color (gray-50 light / colorBgLayout dark) so
@@ -31,13 +33,15 @@ export function JabaliFooter() {
     <Layout.Footer
       style={{
         display: "flex",
-        alignItems: "center",
+        flexDirection: isWide ? "row" : "column",
+        alignItems: isWide ? "center" : "flex-start",
         justifyContent: "space-between",
-        gap: 16,
+        gap: isWide ? 16 : 8,
         // AntD's Footer default padding is 24px 50px — the 24 top/bottom
         // leaves a visible gap above the logo on short list views. Tight
-        // to 8px vertical; keep 24px horizontal to match Content padding.
-        padding: "8px 24px",
+        // to 8px vertical; keep 24px horizontal on sm+ to match Content
+        // padding, 12 on xs for the narrower content gutter.
+        padding: isWide ? "8px 24px" : "8px 12px",
         background: footerBg,
       }}
     >
@@ -58,9 +62,11 @@ export function JabaliFooter() {
               Jabali Panel
             </a>
           </Typography.Text>
-          <Typography.Text type="secondary">
-            Web Hosting Control Panel
-          </Typography.Text>
+          {isWide && (
+            <Typography.Text type="secondary">
+              Web Hosting Control Panel
+            </Typography.Text>
+          )}
         </div>
       </Space>
 
@@ -74,17 +80,21 @@ export function JabaliFooter() {
         >
           <GithubOutlined style={{ fontSize: 18 }} />
         </a>
-        <Typography.Text type="secondary">·</Typography.Text>
-        <Typography.Text type="secondary">
-          <a
-            href="https://www.gnu.org/licenses/agpl-3.0.html"
-            target="_blank"
-            rel="noreferrer"
-            style={{ color: "inherit" }}
-          >
-            AGPL-3.0
-          </a>
-        </Typography.Text>
+        {isWide && (
+          <>
+            <Typography.Text type="secondary">·</Typography.Text>
+            <Typography.Text type="secondary">
+              <a
+                href="https://www.gnu.org/licenses/agpl-3.0.html"
+                target="_blank"
+                rel="noreferrer"
+                style={{ color: "inherit" }}
+              >
+                AGPL-3.0
+              </a>
+            </Typography.Text>
+          </>
+        )}
         <Typography.Text strong>v{pkg.version}</Typography.Text>
       </Space>
     </Layout.Footer>

@@ -84,21 +84,33 @@ if (!$account || !$account->isActive()) {
 //    same function core's password-reset flow uses; the hash is bound to
 //    the user's current password hash + last-login-time, so it becomes
 //    invalid as soon as the operator logs in (effectively single-use).
+//
+//    DO NOT use Url::fromRoute here. Drupal's UrlGenerator derives URLs
+//    from the *current* request's script-path; for the SSO request that
+//    script-path is "/<subdir>/jabali-sso-<nonce>.php", so the generated
+//    URL becomes "/<subdir>/jabali-sso-<nonce>.php/user/reset/..." and
+//    the browser hits 404 because the SSO file has already been
+//    unlinked. Construct the path by hand against $_SERVER['SCRIPT_NAME']
+//    instead — the route shape (/user/reset/<uid>/<ts>/<hash>/login)
+//    has been stable across every supported Drupal version.
 try {
     $timestamp = \Drupal::time()->getRequestTime();
     $hash      = user_pass_rehash($account, $timestamp);
-    $loginUrl  = \Drupal\Core\Url::fromRoute(
-        'user.reset.login',
-        [
-            'uid'       => $account->id(),
-            'timestamp' => $timestamp,
-            'hash'      => $hash,
-        ],
-        [
-            'absolute' => false,
-            'query'    => ['destination' => '/admin'],
-        ]
-    )->toString();
+
+    $subdir = rtrim(dirname($_SERVER['SCRIPT_NAME'] ?? '/'), '/\\');
+    if ($subdir === '\\' || $subdir === '/') {
+        $subdir = '';
+    }
+
+    $destination = ($subdir === '' ? '' : $subdir) . '/admin';
+    $loginUrl    = sprintf(
+        '%s/user/reset/%s/%d/%s/login?destination=%s',
+        $subdir,
+        rawurlencode((string) $account->id()),
+        $timestamp,
+        rawurlencode($hash),
+        rawurlencode($destination)
+    );
 } catch (\Throwable $e) {
     error_log('jabali-sso drupal URL build failed install __JABALI_INSTALL_ID__: ' . $e->getMessage() . ' at ' . $e->getFile() . ':' . $e->getLine());
     http_response_code(500);

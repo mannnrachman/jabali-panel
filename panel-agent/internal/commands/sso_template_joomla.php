@@ -132,17 +132,15 @@ header('Referrer-Policy: no-referrer');
 // 8. Unlink LAST.
 @unlink(__FILE__);
 
-// 9. Redirect into administrator/. Uri::base(true) gives the correct
-//    subdir-aware path (e.g. "/j" for a /j/ install, "" at docroot).
-try {
-    if (class_exists('Joomla\\CMS\\Uri\\Uri')) {
-        $base = rtrim(\Joomla\CMS\Uri\Uri::base(true), '/');
-        header('Location: ' . $base . '/administrator/');
-    } else {
-        header('Location: administrator/');
-    }
-} catch (\Throwable $e) {
-    error_log('jabali-sso joomla Uri::base failed install __JABALI_INSTALL_ID__: ' . $e->getMessage());
-    header('Location: administrator/');
+// 9. Redirect into administrator/. Compute the base path directly from
+//    SCRIPT_NAME — Joomla's Uri::base(true) derives from the current
+//    request URL and (like Drupal's UrlGenerator) ends up including the
+//    SSO PHP filename in the path under some nginx setups, leaving the
+//    browser at "/<subdir>/jabali-sso-XXX.php/administrator/" → 404
+//    because the SSO file is already unlinked.
+$subdir = rtrim(dirname($_SERVER['SCRIPT_NAME'] ?? '/'), '/\\');
+if ($subdir === '\\' || $subdir === '/') {
+    $subdir = '';
 }
+header('Location: ' . $subdir . '/administrator/');
 exit;

@@ -46,6 +46,10 @@ type Deps struct {
 	PHPPools            repository.PHPPoolRepository
 	PHPPoolIniOverrides repository.PHPPoolIniOverrideRepository
 	WordPressInstalls   repository.WordPressInstallRepository
+	// ManagedIPs is the M24 IP-pool repo. NewWithDeps registers
+	// /admin/ips + /user/ips + /internal/agent/managed-ips when set;
+	// nil keeps the routes off (lets existing test harnesses pass).
+	ManagedIPs          repository.ManagedIPRepository
 	// Apps is the M19 application registry — descriptors for every
 	// installable app (WordPress, future DokuWiki, etc.). Step 3 will
 	// hand this to the generic /applications handlers. NewWithDeps
@@ -294,6 +298,19 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Repo:  deps.ServerSettings,
 				Agent: deps.Agent,
 				Log:   deps.Log,
+			})
+		}
+		if deps.ManagedIPs != nil {
+			// AgentIPCommandsEnabled stays false here. Step 4 flips it
+			// once panel-api ↔ agent ip.bind/ip.unbind contract is wired.
+			// Until then the CRUD writes the DB rows but the agent never
+			// sees them — operators must pre-bind via netplan etc.
+			api.RegisterIPRoutes(v1, api.IPHandlerConfig{
+				Repo:                   deps.ManagedIPs,
+				Domains:                deps.Domains,
+				Agent:                  deps.Agent,
+				AgentIPCommandsEnabled: false,
+				Log:                    deps.Log,
 			})
 		}
 		if deps.Agent != nil {

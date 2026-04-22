@@ -134,9 +134,17 @@ fi
 
 if [[ -n "$JABALI_DEBUG" ]]; then
   # Dim + line-tagged so xtrace output is visually distinct from the
-  # _log/_ok/etc. column. ${FUNCNAME[0]} names the caller function;
+  # _log/_ok/etc. column. ${FUNCNAME[0]:-main} names the caller function;
   # 'main' when xtrace fires at top level.
-  export PS4='\033[2m+ ${BASH_SOURCE##*/}:${LINENO}:${FUNCNAME[0]:-main}() \033[0m'
+  #
+  # Script name is hardcoded "install.sh" rather than
+  # ${BASH_SOURCE##*/} because under `curl | bash`, BASH_SOURCE is
+  # unset (bash reads the script from stdin, no filename), and pattern-
+  # substitution on an unset array under `set -u` errors mid-xtrace
+  # with "BASH_SOURCE: unbound variable" on the NEXT statement after
+  # `set -x`. The `${VAR:-default}` trick doesn't help here because
+  # `##*/` and `:-` can't compose in one expansion.
+  export PS4='\033[2m+ install.sh:${LINENO}:${FUNCNAME[0]:-main}() \033[0m'
   # When a log file is open, tee xtrace to both terminal-stderr AND the
   # file so hangs are diagnosable post-mortem. BASH_XTRACEFD accepts a
   # single fd; process-sub gives us both destinations via tee.

@@ -19,7 +19,7 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
+import { DeleteOutlined, PlusOutlined } from "@icons";
 import { useQueries } from "@tanstack/react-query";
 
 import { apiClient } from "../../../../apiClient";

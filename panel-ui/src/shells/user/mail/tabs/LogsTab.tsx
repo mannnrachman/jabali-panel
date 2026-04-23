@@ -10,7 +10,7 @@ import {
   Table,
   Typography,
 } from "antd";
-import { ReloadOutlined } from "@ant-design/icons";
+import { ReloadOutlined } from "@icons";
 import type { Dayjs } from "dayjs";
 
 import { useMailLogs } from "../../../../hooks/useMailLogs";

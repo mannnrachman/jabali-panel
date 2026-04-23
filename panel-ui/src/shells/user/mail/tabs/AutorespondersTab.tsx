@@ -23,7 +23,7 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { DeleteOutlined, EditOutlined, PlusOutlined } from "@ant-design/icons";
+import { DeleteOutlined, EditOutlined, PlusOutlined } from "@icons";
 import { useQueries } from "@tanstack/react-query";
 import dayjs, { type Dayjs } from "dayjs";
 

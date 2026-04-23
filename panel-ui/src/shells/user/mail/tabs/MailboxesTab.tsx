@@ -21,7 +21,7 @@ import {
   DeleteOutlined,
   KeyOutlined,
   MailOutlined,
-} from "@ant-design/icons";
+} from "@icons";
 import { useQueries } from "@tanstack/react-query";
 
 import { apiClient } from "../../../../apiClient";

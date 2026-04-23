@@ -18,7 +18,7 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { EditOutlined, FileTextOutlined } from "@ant-design/icons";
+import { EditOutlined, FileTextOutlined } from "@icons";
 import { useQueries } from "@tanstack/react-query";
 
 import { apiClient } from "../../../../apiClient";

@@ -2,7 +2,7 @@
 // M6.5 Step 1: tab shell with placeholders.
 // Tab implementations filled in by parallel Waves B/C/D.
 import { Button, Space, Tabs, type TabsProps } from "antd";
-import { PlusOutlined } from "@ant-design/icons";
+import { PlusOutlined } from "@icons";
 import { useState } from "react";
 
 import { MailboxesTab } from "./tabs/MailboxesTab";

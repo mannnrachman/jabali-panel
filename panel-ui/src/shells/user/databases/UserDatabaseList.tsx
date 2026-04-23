@@ -140,7 +140,7 @@ export const UserDatabaseList = () => {
         <Typography.Title level={3} style={{ margin: 0 }}>
           My Databases
         </Typography.Title>
-        <Space>
+        <Space wrap>
           <Button
             icon={<ThunderboltOutlined />}
             onClick={() => setQuickSetupOpen(true)}

@@ -115,7 +115,7 @@ Stalwart connects to MariaDB as a new user `jabali-stalwart-ro` (created by `ins
 
 ## Amendment 2026-04-21: explicit-null optional queries (live-test)
 
-Live IMAP-LOGIN validation on VM 10.0.3.13 surfaced a trap. Stalwart
+Live IMAP-LOGIN validation on VM 192.168.100.13 surfaced a trap. Stalwart
 v0.16's `x:Directory` schema defaults `queryMemberOf` and
 `queryEmailAliases` to **PostgreSQL-style** placeholder syntax:
 

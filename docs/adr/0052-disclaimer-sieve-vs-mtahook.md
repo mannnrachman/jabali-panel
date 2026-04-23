@@ -36,7 +36,7 @@ outbound mail by envelope-from domain, iterates every MIME part, and appends
 the disclaimer to `text/plain` parts only. The implementation lives in
 `panel-agent/internal/commands/domain_disclaimer_apply.go:renderDisclaimerSieve`.
 
-**Defer HTML coverage + final decision pending two live spikes on 10.0.3.13:**
+**Defer HTML coverage + final decision pending two live spikes on 192.168.100.13:**
 
 - **Spike A**: can sieve `replace` modify an HTML body part?
 - **Spike B** (only if A fails): does `x:MtaHook` accept `unix://` URLs? If

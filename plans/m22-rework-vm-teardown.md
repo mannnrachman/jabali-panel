@@ -1,4 +1,4 @@
-# M22 Rework — Test VM Teardown (10.0.3.13)
+# M22 Rework — Test VM Teardown (192.168.100.13)
 
 **Status**: Cleanup runbook for the existing test VM that ran the original M22 magic-link design.
 **Applies to**: any host that had M22 (mu-plugin + HMAC-callback) deployed before the 2026-04-21 rework.
@@ -15,7 +15,7 @@ Steps below are ordered: deploy → migrate (automatic via golden migration on d
 ### 1. Deploy the rework
 
 ```bash
-ssh root@10.0.3.13
+ssh -p 2222 root@192.168.100.13
 cd /usr/local/lib/jabali  # or wherever the install lives
 jabali update
 ```
@@ -100,7 +100,7 @@ In the panel UI:
 After ~90s, verify the file is gone:
 
 ```bash
-ssh root@10.0.3.13
+ssh -p 2222 root@192.168.100.13
 find /home -name 'jabali-sso-*.php' -mmin +2
 ```
 
@@ -121,7 +121,7 @@ The mu-plugin source + key are still on disk if you didn't run steps 3–5 yet �
 
 ## Post-teardown state
 
-After all 8 steps complete on `10.0.3.13`:
+After all 8 steps complete on `192.168.100.13`:
 
 - `/etc/jabali-panel/magic-link.key` does not exist.
 - `/usr/local/lib/jabali/wp-mu-plugins/` does not exist.

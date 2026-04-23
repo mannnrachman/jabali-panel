@@ -64,7 +64,7 @@ We own auth (panel JWT + RBAC), scope (shared validator), UID execution (root ag
 
 ### 3.1 Execution model
 
-Agent runs as root. For every write op (upload, mkdir, rename), agent performs the op then `chown <user>:www-data`, `chmod 0640` (files) / `0750` (dirs). This matches the deployed per-user model verified on 10.0.3.13 (2026-04-19): PHP-FPM pool at `/etc/php/8.5/fpm/pool.d/jabali-<user>.conf` runs as `<user>:<user>` (full isolation — PHP reads user files via UID), while docroot + parents are `<user>:www-data` mode 0750 so nginx (worker as www-data) can read static assets via group-read, and OTHER users on the same box cannot read via shell (no "other" bits). Do NOT set files world-readable (0644) — that breaks cross-user isolation; user B on the box could shell-read user A's files. Do NOT set 02775 setgid — the deployed model uses plain 0750. Sensitive files like `wp-config.php` may use `<user>:<user>` 0600 (caller's decision, not filesafe's default). No `setresuid`, no per-user helper daemon. Scope-clamp is enforced in the shared validator, called in BOTH panel-api AND panel-agent (defense in depth — same pattern as M8 cron).
+Agent runs as root. For every write op (upload, mkdir, rename), agent performs the op then `chown <user>:www-data`, `chmod 0640` (files) / `0750` (dirs). This matches the deployed per-user model verified on 192.168.100.13 (2026-04-19): PHP-FPM pool at `/etc/php/8.5/fpm/pool.d/jabali-<user>.conf` runs as `<user>:<user>` (full isolation — PHP reads user files via UID), while docroot + parents are `<user>:www-data` mode 0750 so nginx (worker as www-data) can read static assets via group-read, and OTHER users on the same box cannot read via shell (no "other" bits). Do NOT set files world-readable (0644) — that breaks cross-user isolation; user B on the box could shell-read user A's files. Do NOT set 02775 setgid — the deployed model uses plain 0750. Sensitive files like `wp-config.php` may use `<user>:<user>` 0600 (caller's decision, not filesafe's default). No `setresuid`, no per-user helper daemon. Scope-clamp is enforced in the shared validator, called in BOTH panel-api AND panel-agent (defense in depth — same pattern as M8 cron).
 
 ### 3.2 Scope
 
@@ -347,7 +347,7 @@ cd panel-ui && npm run build && npm test -- files
 
 1. Every `files.*` agent command calls `filesafe.ValidatePath` before any `os.*` syscall (grep).
 2. Every write op (`files.write`, `files.mkdir`, `files.rename`) calls chown before returning success.
-3. Ownership is `<user>:www-data`, mode `0640` files / `0750` dirs (never root:root, never world-readable). Matches deployed per-user model verified on 10.0.3.13: nginx (www-data group) reads static via group-read; cross-user shell reads blocked by no-other-bits.
+3. Ownership is `<user>:www-data`, mode `0640` files / `0750` dirs (never root:root, never world-readable). Matches deployed per-user model verified on 192.168.100.13: nginx (www-data group) reads static via group-read; cross-user shell reads blocked by no-other-bits.
 4. `files.list` responses contain no paths outside user scope (unit test).
 5. 100MB cap enforced at middleware AND `io.LimitReader` in `files.write` (two layers).
 6. Preview endpoint sets `X-Content-Type-Options: nosniff` + `Content-Disposition: attachment` for non-text MIME.

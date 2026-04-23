@@ -19,7 +19,7 @@ LISTEN  *:80                            nginx
 LISTEN  *:8443                          nginx           # M25 Step 4 — terminates TLS for panel
 # MariaDB no longer binds TCP — skip-networking (see 99-jabali-skip-networking.cnf); socket at /var/run/mysqld/mysqld.sock
 LISTEN  127.0.0.1:53                    pdns_recursor   # M6.3
-LISTEN  10.0.3.13:53                    pdns_server     # public DNS
+LISTEN  192.168.100.13:53                    pdns_server     # public DNS
 LISTEN  127.0.0.1:5300                  pdns_server     # M6.3 split-port
 ```
 
@@ -240,8 +240,8 @@ Higher-numbered drop-in wins. The jabali drop-in stays in place; operator overri
 
 ## M25.1 — shipped
 
-- **Kratos DSN flip to socket** — commit `67bcc9a feat(m25.1): flip Kratos DSN to unix socket`. Verified on 10.0.3.13.
-- **phpMyAdmin SSO socket-awareness + MariaDB `skip-networking`** — commit `f04d4f2 feat(m25.1): phpMyAdmin → unix socket + MariaDB skip-networking`. `sso_phpmyadmin_validate.go` returns a `socket` field; `sso.php` forwards it via `PMA_single_signon` as `connect_type=socket`. `install.sh` writes `/etc/mysql/mariadb.conf.d/99-jabali-skip-networking.cnf` and asserts `ss -tln` shows no `:3306`. Verified on 10.0.3.13: no TCP listener; processlist shows `jabali_panel_app` + `jabali_kratos` + `jabali_pdns` all via socket.
+- **Kratos DSN flip to socket** — commit `67bcc9a feat(m25.1): flip Kratos DSN to unix socket`. Verified on 192.168.100.13.
+- **phpMyAdmin SSO socket-awareness + MariaDB `skip-networking`** — commit `f04d4f2 feat(m25.1): phpMyAdmin → unix socket + MariaDB skip-networking`. `sso_phpmyadmin_validate.go` returns a `socket` field; `sso.php` forwards it via `PMA_single_signon` as `connect_type=socket`. `install.sh` writes `/etc/mysql/mariadb.conf.d/99-jabali-skip-networking.cnf` and asserts `ss -tln` shows no `:3306`. Verified on 192.168.100.13: no TCP listener; processlist shows `jabali_panel_app` + `jabali_kratos` + `jabali_pdns` all via socket.
 
 Rollback (single host): remove `/etc/mysql/mariadb.conf.d/99-jabali-skip-networking.cnf` and `systemctl restart mariadb` — restores `127.0.0.1:3306` and TCP loopback for clients that haven't been socket-flipped.
 

@@ -1,7 +1,7 @@
 # ADR-0050: M25 — Localhost Backend Hardening via Unix Sockets
 
 **Status:** Accepted (2026-04-23)
-**Driven by:** Plan `plans/m25-unix-sockets.md` (8 steps, 4 waves), Opus adversarial review (3 CRITICAL + 5 HIGH folded), pre-dispatch investigations I1 (Stalwart port ownership) + I2 (nginx Unix-socket proxy_pass syntax) on live VM 10.0.3.13 + Debian trixie nginx 1.26.3.
+**Driven by:** Plan `plans/m25-unix-sockets.md` (8 steps, 4 waves), Opus adversarial review (3 CRITICAL + 5 HIGH folded), pre-dispatch investigations I1 (Stalwart port ownership) + I2 (nginx Unix-socket proxy_pass syntax) on live VM 192.168.100.13 + Debian trixie nginx 1.26.3.
 
 ## Context
 

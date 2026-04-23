@@ -397,7 +397,7 @@ Before merging a wave's branches into `m24/ip-manager`:
 1. `go test ./...` in both panel-api and panel-agent.
 2. `npm run build` + `npm run test` in panel-ui.
 3. `go vet ./...` + `golangci-lint run` — must be clean.
-4. Fresh install on a clean VM (10.0.3.13): `./install.sh --debug` must succeed end-to-end.
+4. Fresh install on a clean VM (192.168.100.13): `./install.sh --debug` must succeed end-to-end.
 5. `mcp__gitnexus__detect_changes` to confirm the change set matches the step's declared scope.
 
 ## Open questions — decisions locked-in post-review

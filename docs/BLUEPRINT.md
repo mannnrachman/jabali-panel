@@ -668,7 +668,7 @@ self-signed cert covers `mail.<panel-hostname>`, and
 `{panel-hostname}/webmail` redirects to the Bulwark webmail at
 `https://mail.<panel-hostname>/`.
 
-**Driving evidence:** On 10.0.3.13 fresh reinstall, browsing to
+**Driving evidence:** On 192.168.100.13 fresh reinstall, browsing to
 `mail.jabali-panel.local` returned `SEC_ERROR_INADEQUATE_CERT_TYPE` —
 the panel's self-signed cert covers only the apex hostname, no `mail.`
 SAN. Separately, there's no nginx vhost for the panel hostname's
@@ -749,7 +749,7 @@ Logs — as tabs alongside the existing Mailboxes tab.
 **Known limitations:**
 - Disclaimer covers `text/plain` body parts only in first ship. HTML
   body coverage deferred pending live Spike A (sieve on HTML) and
-  Spike B (MtaHook unix:// support) on 10.0.3.13 — see ADR-0052.
+  Spike B (MtaHook unix:// support) on 192.168.100.13 — see ADR-0052.
 - Logs tab does not yet support trace event drilldown. Deferred to M6.6.
 
 **Depends on:** M6, M6.1, M6.2, M6.3, M6.4, M25.
@@ -847,7 +847,7 @@ ADR-0052 (disclaimer sieve vs MtaHook decision matrix),
 - 8 REST endpoints under `/api/v1/files`: `GET /`, `GET /tree`, `GET /home`, `GET /download`, `GET /preview`, `POST /upload`, `POST /mkdir`, `POST /rename`, `DELETE /`
 - Wire-shape drift guard: `panel-api/internal/api/files_wire_test.go` asserts JSON tags match the agent
 - UI: `FileManagerPage.tsx` at `/jabali-panel/files` — Breadcrumb + toolbar top, Tree left, Table right; Upload/NewFolder/Rename/Delete/Preview/Download
-- Ownership model: operations run as root in the agent, results `chown`ed to `<user>:www-data` with mode 0640 (files) / 0750 (dirs) — matches deployed per-user FPM model verified on 10.0.3.13
+- Ownership model: operations run as root in the agent, results `chown`ed to `<user>:www-data` with mode 0640 (files) / 0750 (dirs) — matches deployed per-user FPM model verified on 192.168.100.13
 
 **Phase-2 backlog (out of scope for v1):** drag-and-drop upload, multi-select, image preview, chmod UI, editor (Monaco), zip/unzip, binary-safe read/write (current content is UTF-8 string over JSON), domain-docroot scope (`/var/www/*` alongside `$HOME`), chunked upload above 100 MB.
 
@@ -1074,7 +1074,7 @@ Both deferred together because skip-networking breaks Kratos otherwise. Step 6 s
 
 ### M24: IP address manager (SHIPPED)
 
-**Status:** All 10 steps merged to `main` 2026-04-22 in 5 waves (A schema → B agent+API → C wire-contract domain/nginx/DNS → D admin+picker UI → E docs/E2E). ADR-0049 accepted; runbook at `plans/m24-ip-manager-runbook.md`. VM host-validation on 10.0.3.13 is an operator follow-up (unreachable at merge time).
+**Status:** All 10 steps merged to `main` 2026-04-22 in 5 waves (A schema → B agent+API → C wire-contract domain/nginx/DNS → D admin+picker UI → E docs/E2E). ADR-0049 accepted; runbook at `plans/m24-ip-manager-runbook.md`. VM host-validation on 192.168.100.13 is an operator follow-up (unreachable at merge time).
 
 **Goal:** First-class managed IP pool so the operator can host customer-isolated domains on dedicated IPs without forking the codebase. Each domain gets nullable `listen_ipv4_id` / `listen_ipv6_id` FKs; NULL ⇒ "use family default". Reconciler converges nginx (`listen <ip>:80`) and DNS apex `@` A/AAAA in the same pass — change reflected ≤ 60s after admin saves.
 
@@ -1111,11 +1111,11 @@ Both deferred together because skip-networking breaks Kratos otherwise. Step 6 s
 
 ### M22: Magic-link → self-deleting SSO file (REWORK SHIPPED 2026-04-21)
 
-**Status:** Rework shipped (all 8 steps merged to main 2026-04-21 in 4 waves). ADR-0040 accepted; ADR-0039 superseded. Operator runbook at `plans/m22-sso-file-runbook.md`; existing test VM (10.0.3.13) cleaned up via `plans/m22-rework-vm-teardown.md`.
+**Status:** Rework shipped (all 8 steps merged to main 2026-04-21 in 4 waves). ADR-0040 accepted; ADR-0039 superseded. Operator runbook at `plans/m22-sso-file-runbook.md`; existing test VM (192.168.100.13) cleaned up via `plans/m22-rework-vm-teardown.md`.
 
 **Goal:** One-click admin login from the panel to any managed WordPress install. Operator clicks "Log in to admin" on an Applications row → new tab opens → lands signed in to `/wp-admin` as the install's admin user.
 
-**Why the rework:** The original magic-link design (ADR-0039) shipped end-to-end and was verified on test VM 10.0.3.13 the same day. Verification surfaced 5 connectivity / lifecycle gaps all caused by the same root pattern: persistent panel-side WordPress mu-plugin + HTTPS callback from WP back to the panel. (1) Plugin's "did sed run?" guard self-mutates and silently no-ops; (2) `update.go` doesn't sync the canonical mu-plugin source; (3) existing pre-M22 installs never get the per-install plugin copy; (4) nginx default vhost has no `/applications/.../validate` proxy → 444 silent drop; (5) panel self-signed cert isn't in OS CA bundle → `wp_remote_post sslverify=true` fails. All five disappear if there's no persistent WP-side code and no callback.
+**Why the rework:** The original magic-link design (ADR-0039) shipped end-to-end and was verified on test VM 192.168.100.13 the same day. Verification surfaced 5 connectivity / lifecycle gaps all caused by the same root pattern: persistent panel-side WordPress mu-plugin + HTTPS callback from WP back to the panel. (1) Plugin's "did sed run?" guard self-mutates and silently no-ops; (2) `update.go` doesn't sync the canonical mu-plugin source; (3) existing pre-M22 installs never get the per-install plugin copy; (4) nginx default vhost has no `/applications/.../validate` proxy → 444 silent drop; (5) panel self-signed cert isn't in OS CA bundle → `wp_remote_post sslverify=true` fails. All five disappear if there's no persistent WP-side code and no callback.
 
 **New design (ADR-0040):** Self-deleting `jabali-sso-<43chars>.php` file written per login to the WP webroot — the Installatron / Softaculous pattern that has run at scale for ~15 years. Filename embeds a 256-bit `crypto/rand` nonce (the filename **is** the capability — no HMAC, no signing key, no DB row). Single-use via `flock(LOCK_EX|LOCK_NB)` + `unlink(__FILE__)`. TTL via systemd reaper sweeping every 30s. Wire contract `{url, expires_in}` preserved — only the URL shape changes from `?jabali_admin_login=<token>` to `/jabali-sso-<nonce>.php`. Eliminates the entire 5-item M22 follow-up list (placeholder guard fix, update.go sync, reconciler ensure, nginx proxy, OS CA trust) — none apply once there's no panel-side WP code or callback.
 
@@ -1279,7 +1279,7 @@ Use this table to navigate the codebase when adding a new capability:
 | M20: Kratos identity migration (all 9 steps + legacy removal) | 2026-04-20 | ADR-0034; runbook at `plans/m20-kratos-runbook.md`; Waves A–E on `main`; legacy JWT stack + M5c panel-side 2FA + `kratos-migrate` tool all deleted in the same batch — no dual-mode, no rollback flag |
 | Infra: Gitea CI + branch protection | 2026-04-20 | `.gitea/workflows/ci.yml` (3 parallel jobs), self-hosted `act_runner` in host-mode (no Docker/Podman), loose branch protection on `main`. Also fixed pre-existing data race in `TestApplications_CreateWordPress_HappyPath` (`applications_service.go`) that CI's `-race` flag caught. Commits `b181c74` (workflow), `5d1f9a7` (race fix). |
 | M21: Drop Refine (all 5 waves) | 2026-04-21 | ADR-0037; blueprint at `plans/m21-drop-refine.md`; Waves A–E on `m21/drop-refine`; 4 `@refinedev/*` packages removed; production JS −606 kB (−27.6%) / gzip −193 kB; `@ant-design/icons` promoted to direct dep; `useTableURL` + `useQueries` + `AuthContext` now power every list/form/whoami call |
-| M24: IP address manager (all 10 steps) | 2026-04-22 | ADR-0049; blueprint at `plans/m24-ip-manager.md`; runbook at `plans/m24-ip-manager-runbook.md`; Waves A–E on `main` (`0948a9a` → `7a8a1ff`); migrations 000057 + 000058 (MariaDB 11.4+ reserved-word fix in `7a8a1ff`); agent commands `ip.list`/`ip.bind`/`ip.unbind`; reconciler converges per-domain nginx listen + DNS apex A/AAAA every tick; admin UI `/jabali-admin/ips` + per-domain picker on DomainEdit; host-validation on 10.0.3.13 is operator follow-up |
+| M24: IP address manager (all 10 steps) | 2026-04-22 | ADR-0049; blueprint at `plans/m24-ip-manager.md`; runbook at `plans/m24-ip-manager-runbook.md`; Waves A–E on `main` (`0948a9a` → `7a8a1ff`); migrations 000057 + 000058 (MariaDB 11.4+ reserved-word fix in `7a8a1ff`); agent commands `ip.list`/`ip.bind`/`ip.unbind`; reconciler converges per-domain nginx listen + DNS apex A/AAAA every tick; admin UI `/jabali-admin/ips` + per-domain picker on DomainEdit; host-validation on 192.168.100.13 is operator follow-up |
 | M25: Localhost backend hardening via Unix sockets (all 8 steps) | 2026-04-23 | ADR-0050; blueprint at `plans/m25-unix-sockets.md`; runbook at `plans/m25-unix-sockets-runbook.md`; Waves A–D on `m25/unix-sockets` branch; new `jabali-sockets` group + `verify_socket_perms`/`verify_no_all_interface_binds` helpers; Kratos admin+public on `/run/jabali-kratos/*.sock`; panel-api on `/run/jabali-panel/api.sock` + nginx TLS terminator on :8443; Bulwark on `/run/jabali-bulwark/bulwark.sock` via custom `server-unix.js`; Stalwart admin-http pinned `127.0.0.1:8080` + ephemeral `:35181` → pinned `127.0.0.1:18181`; LLMNR drop-in disable. **M25.1 deferred:** MariaDB `skip-networking` + Kratos DSN flip (both gated on live-VM verification) |
 
 ---

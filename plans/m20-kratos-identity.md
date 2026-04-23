@@ -197,7 +197,7 @@ _All CRITICAL + HIGH findings closed. MEDIUM findings 8-11 folded. LOW findings 
 
 ## 7. Spike findings (2026-04-19)
 
-Ran Kratos 1.3.1 binary against a throwaway MariaDB schema on 10.0.3.13 (teardown afterwards). Tested the three Opus-review claims before dispatch.
+Ran Kratos 1.3.1 binary against a throwaway MariaDB schema on 192.168.100.13 (teardown afterwards). Tested the three Opus-review claims before dispatch.
 
 ### Validated
 

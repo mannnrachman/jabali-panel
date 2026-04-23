@@ -10,7 +10,7 @@
 
 ## Why a rework
 
-M22 magic-link shipped end-to-end 2026-04-21 (Steps 9–11 on `main`). Verification on test VM `10.0.3.13` exposed five separate connectivity / lifecycle gaps that all stem from the **same root cause**: the design requires a persistent panel-side WordPress plugin and a callback over HTTPS from WP back to the panel.
+M22 magic-link shipped end-to-end 2026-04-21 (Steps 9–11 on `main`). Verification on test VM `192.168.100.13` exposed five separate connectivity / lifecycle gaps that all stem from the **same root cause**: the design requires a persistent panel-side WordPress plugin and a callback over HTTPS from WP back to the panel.
 
 Five gaps surfaced in one validation session:
 
@@ -654,10 +654,10 @@ test -f install/systemd/jabali-sso-reaper.service
 test -f install/systemd/jabali-sso-reaper.timer
 
 # On the test VM:
-ssh root@10.0.3.13 'systemctl status jabali-sso-reaper.timer'
+ssh -p 2222 root@192.168.100.13 'systemctl status jabali-sso-reaper.timer'
 # expected: active (waiting)
 
-ssh root@10.0.3.13 'journalctl -u jabali-sso-reaper.service --since "2 min ago" | grep -c "reaper"'
+ssh -p 2222 root@192.168.100.13 'journalctl -u jabali-sso-reaper.service --since "2 min ago" | grep -c "reaper"'
 # expected: > 0
 ```
 
@@ -699,7 +699,7 @@ The runbook documents:
 - Troubleshooting: what to do if the file doesn't get cleaned up; what to do if mint fails; how to spot suspicious activity in panel logs.
 - Rollback procedure (revert all 8 steps in reverse order; the down migration recreates the table but the system still won't work without a Step 4 revert).
 
-The VM teardown doc covers the existing `10.0.3.13` test VM. Order matters (adversarial review finding #9 — deploy first, then clean up orphaned files):
+The VM teardown doc covers the existing `192.168.100.13` test VM. Order matters (adversarial review finding #9 — deploy first, then clean up orphaned files):
 
 1. **Deploy first**: `jabali update` on the VM. This pulls the post-rework binaries (no magiclink package, no boot-time key load) and runs migration 000053 which drops the `magic_link_tokens` table. The new panel-api works fine whether the table is present or absent.
 2. After the deploy completes, verify boot logs show no errors related to magic-link or sso: `journalctl -u jabali-panel --since "5 min ago" | grep -iE 'magic.link|sso' | head`.
@@ -717,7 +717,7 @@ The VM teardown doc covers the existing `10.0.3.13` test VM. Order matters (adve
 - Assert HTTP redirect (3xx) to `/wp-admin`.
 - Assert the `wordpress_logged_in_*` cookie is set after the redirect.
 - Assert a request to `/wp-admin` returns the dashboard (200, contains "Dashboard" string or admin nav markup).
-- E2E setup note: requires a running panel-api + a ready WordPress install. Local devs can use the test VM (10.0.3.13) once teardown is complete; CI uses the existing Docker fixture (cross-reference `.gitea/workflows/ci.yml` for the WP+panel container setup).
+- E2E setup note: requires a running panel-api + a ready WordPress install. Local devs can use the test VM (192.168.100.13) once teardown is complete; CI uses the existing Docker fixture (cross-reference `.gitea/workflows/ci.yml` for the WP+panel container setup).
 
 ### Tasks
 
@@ -805,7 +805,7 @@ Revert the test + doc edits. The hook itself didn't change.
 7. `panel-api` boot logs contain no "magic-link key load failed" messages.
 8. ADR-0040 is `accepted`; ADR-0039 is `superseded by 0040`.
 9. `BLUEPRINT.md` says M22 is SHIPPED-AS-SSO-FILE (or similar status indicating the rework completed).
-10. Existing test VM (`10.0.3.13`) has the old M22 artefacts cleaned up per the teardown doc.
+10. Existing test VM (`192.168.100.13`) has the old M22 artefacts cleaned up per the teardown doc.
 
 ---
 

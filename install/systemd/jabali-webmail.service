@@ -8,17 +8,30 @@ PartOf=jabali.slice
 [Service]
 Type=simple
 User=jabali-webmail
-Group=jabali-webmail
+# M25 Step 5: jabali-sockets so the listen socket inside
+# /run/jabali-bulwark/ is reachable by nginx (also a jabali-sockets
+# member). User= stays jabali-webmail; only Group= flips.
+Group=jabali-sockets
 Slice=jabali.slice
 
 WorkingDirectory=/opt/jabali-webmail
-# Bulwark ships a Next.js standalone build — server.js is the entry
-# point and reads HOSTNAME + PORT from env. Loopback-only by default;
-# the panel's nginx vhost fronts it at /webmail/ with Kratos SSO.
-Environment=HOSTNAME=127.0.0.1
-Environment=PORT=3000
+# M25 Step 5: the stock Bulwark server.js binds TCP HOSTNAME:PORT and
+# can't be reconfigured to a Unix socket without modifying generated
+# Next.js code. We ship a thin wrapper at /opt/jabali-webmail/server-unix.js
+# (~30 lines) that imports the same Next.js handler and listens on
+# SOCKET_PATH. systemd executes the wrapper instead of server.js;
+# bulwark updates that overwrite server.js leave server-unix.js alone.
+Environment=SOCKET_PATH=/run/jabali-bulwark/bulwark.sock
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/node /opt/jabali-webmail/server.js
+ExecStart=/usr/bin/node /opt/jabali-webmail/server-unix.js
+
+# RuntimeDirectory creates /run/jabali-bulwark on every start, owned
+# jabali-webmail:jabali-sockets 0750. The wrapper drops the socket
+# file inside and chmods it 0660 after net.Server.listen() returns.
+RuntimeDirectory=jabali-bulwark
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=no
+
 # bulwark.env is provisioned in Step 8 of the M6 plan. Optional at
 # install time so the unit survives `install -> systemctl enable` runs
 # before Step 8 has created it; runtime settings (JMAP_SERVER_URL etc.)
@@ -33,7 +46,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/jabali-webmail /opt/jabali-webmail/.next/cache
+ReadWritePaths=/var/lib/jabali-webmail /opt/jabali-webmail/.next/cache /run/jabali-bulwark
 
 StandardOutput=journal
 StandardError=journal

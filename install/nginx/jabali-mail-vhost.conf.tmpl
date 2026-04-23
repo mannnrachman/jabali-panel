@@ -19,25 +19,22 @@ server {
   ssl_certificate ${SSL_CERT_PATH};
   ssl_certificate_key ${SSL_KEY_PATH};
 
-  # Bulwark webmail (Next.js standalone on 127.0.0.1:3000). Proxy /
-  # catches everything not explicitly routed below. WebSocket upgrade
-  # is needed for JMAP push; long read timeout keeps idle polls alive.
-  # Bulwark (Next.js) location. IMPORTANT: we intentionally DO NOT
-  # send X-Forwarded-Proto to this upstream.
+  # M25 Step 5: Bulwark moved off TCP 127.0.0.1:3000 onto a Unix socket
+  # at /run/jabali-bulwark/bulwark.sock. Form D upstream — declared in
+  # /etc/nginx/sites-available/jabali-bulwark.conf, reused here.
   #
-  # Next.js's middleware-rewrite internal proxy (next/dist/server/lib/
-  # router-utils/proxy-request.js) honours X-Forwarded-Proto when
-  # constructing the rewrite target URL. With `X-Forwarded-Proto: https`
-  # and a same-process rewrite (e.g. next-intl `/` → `/en`), the target
-  # becomes `https://127.0.0.1:3000/en` — but Bulwark listens on plain
-  # HTTP, so the internal proxy gets a TLS handshake error and returns
-  # 500. Omitting the header keeps the rewrite target as `http://…`,
-  # which Next.js handles correctly. Users still see HTTPS (nginx
-  # terminates TLS); the only cost is Bulwark not setting the Secure
-  # flag on its own cookies — acceptable since mail.<domain> never
-  # serves HTTP-plaintext thanks to the 80→443 redirect below.
+  # IMPORTANT (preserved from the TCP era): we intentionally DO NOT send
+  # X-Forwarded-Proto to this upstream. Next.js's middleware-rewrite
+  # internal proxy honours X-Forwarded-Proto when constructing rewrite
+  # target URLs; with "https" and a same-process rewrite (e.g. next-intl
+  # `/` → `/en`), the target becomes `https://...` but the upstream is
+  # plain HTTP — TLS handshake error → 500. Omitting the header keeps
+  # the rewrite target on http://. Users still see HTTPS (nginx terminates
+  # it); the only cost is Bulwark not setting the Secure flag on its
+  # own cookies — acceptable since mail.<domain> never serves
+  # HTTP-plaintext (80→443 redirect below).
   location / {
-    proxy_pass http://127.0.0.1:3000;
+    proxy_pass http://jabali_bulwark/;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

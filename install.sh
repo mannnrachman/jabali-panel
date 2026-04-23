@@ -3916,6 +3916,38 @@ _install_bulwark_systemd() {
   fi
   install -m 0644 -o root -g root "${REPO_DIR}/install/systemd/jabali-webmail.service" \
     /etc/systemd/system/jabali-webmail.service
+
+  # M25 Step 5: deploy the unix-socket wrapper alongside Bulwark's stock
+  # server.js. The systemd unit runs node /opt/jabali-webmail/server-unix.js
+  # which loads Next.js's request handler and binds SOCKET_PATH instead of
+  # TCP HOSTNAME:PORT. Re-deploy unconditionally so future bulwark-update
+  # runs that re-extract a tarball over /opt/jabali-webmail (which would
+  # remove our wrapper) restore it on the next install.sh.
+  local wrapper_src="${REPO_DIR}/install/jabali-webmail/server-unix.js"
+  if [[ ! -f "$wrapper_src" ]]; then
+    _die "Bulwark unix wrapper not found at $wrapper_src"
+  fi
+  install -m 0644 -o jabali-webmail -g jabali-webmail "$wrapper_src" \
+    /opt/jabali-webmail/server-unix.js
+
+  # M25 Step 5: drop the http{}-level upstream declaration into
+  # /etc/nginx/conf.d/. The per-domain mail vhosts reference it by name
+  # via proxy_pass http://jabali_bulwark/;. Conf.d is loaded by Debian's
+  # default nginx.conf at the http{} scope — which is where named
+  # upstreams must live.
+  local upstream_src="${REPO_DIR}/install/nginx/jabali-bulwark-upstream.conf"
+  if [[ ! -f "$upstream_src" ]]; then
+    _die "Bulwark upstream snippet not found at $upstream_src"
+  fi
+  install -m 0644 -o root -g root "$upstream_src" \
+    /etc/nginx/conf.d/jabali-bulwark-upstream.conf
+  if nginx -t >/dev/null 2>&1; then
+    systemctl reload nginx 2>/dev/null || true
+    _ok "Bulwark upstream wired into nginx (jabali_bulwark)"
+  else
+    _warn "nginx -t failed after dropping jabali-bulwark-upstream.conf — leaving in place but not reloading"
+  fi
+
   systemctl daemon-reload
   _ok "jabali-webmail.service installed (disabled — starts on first domain.email_enable)"
   _install_bulwark_env

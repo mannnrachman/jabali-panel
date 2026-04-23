@@ -82,8 +82,10 @@ func TestWebmailVhostApply_WritesAndReloads(t *testing.T) {
 	if !strings.Contains(string(b), "/etc/letsencrypt/live/example.com/fullchain.pem") {
 		t.Errorf("vhost missing cert path substitution: %s", string(b))
 	}
-	if !strings.Contains(string(b), "proxy_pass http://127.0.0.1:3000") {
-		t.Error("vhost missing Bulwark proxy_pass")
+	// M25 Step 5: Bulwark moved off TCP 127.0.0.1:3000 onto a Unix
+	// socket fronted by the named upstream `jabali_bulwark`.
+	if !strings.Contains(string(b), "proxy_pass http://jabali_bulwark/") {
+		t.Error("vhost missing Bulwark proxy_pass to jabali_bulwark upstream")
 	}
 	if !strings.Contains(string(b), "proxy_pass http://127.0.0.1:8446") {
 		t.Error("vhost missing Stalwart proxy_pass")

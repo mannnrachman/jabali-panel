@@ -44,8 +44,11 @@ server {
   # middleware-rewrite uses it to build internal proxy URLs, and with
   # "https" would try to TLS-connect to Bulwark's plain-HTTP upstream.
   # See the source-of-truth template in install/nginx/jabali-mail-vhost.conf.tmpl.
+  #
+  # M25 Step 5: Bulwark on Unix socket via the jabali_bulwark upstream
+  # declared in /etc/nginx/sites-available/jabali-bulwark.conf.
   location / {
-    proxy_pass http://127.0.0.1:3000;
+    proxy_pass http://jabali_bulwark/;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

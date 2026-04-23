@@ -30,8 +30,26 @@ serve:
       max_age: 120
 
   admin:
-    base_url: "http://127.0.0.1:4434"
+    # M25 Step 2: admin API listens on a Unix-domain socket instead of
+    # the default all-interfaces TCP bind. Kratos v26.2.0 verification
+    # gate (run 2026-04-23 against scratch MariaDB + a real Kratos
+    # binary) confirmed: `host: "unix:..."` + `socket.{mode,group}` are
+    # honored. The socket file ends up owned by jabali (the User= in
+    # the systemd unit) and group jabali-sockets (set via `socket.group`
+    # below). Mode 0660 means the panel-api process — running as jabali
+    # so already in the group — can connect; nothing else on the host
+    # has reach. The 127.0.0.1:4434 default is GONE (was an
+    # unauthenticated admin-takeover surface on hosts without an
+    # external firewall, per M25 motivation).
+    #
+    # Rollback to TCP: comment out `host` + `socket`, set
+    # `host: "127.0.0.1"`, daemon-reload, restart. systemd drop-in
+    # template shipped in plans/m25-unix-sockets-runbook.md.
+    host: "unix:/run/jabali-kratos/admin.sock"
     port: 4434
+    socket:
+      mode: 0660
+      group: "jabali-sockets"
 
 selfservice:
   default_browser_return_url: "https://{{.PanelHostname}}:8443/dashboard"

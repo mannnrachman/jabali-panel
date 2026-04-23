@@ -8,10 +8,35 @@ PartOf=jabali.slice
 [Service]
 Type=simple
 User=jabali
-Group=jabali
+# M25 Step 2: Group is jabali-sockets so the admin socket created at
+# /run/jabali-kratos/admin.sock lands in a group panel-api (also a member
+# of jabali-sockets) can connect to. The jabali user remains the owner;
+# the group switch is purely about who else can reach the socket.
+Group=jabali-sockets
 Slice=jabali.slice
 
+# RuntimeDirectory creates /run/jabali-kratos/ as jabali:jabali-sockets 0750
+# before ExecStart, with RuntimeDirectoryPreserve=no so the directory is
+# torn down on stop. Kratos creates the admin.sock file inside on listen()
+# — but the FILE's mode + group are set by Kratos itself via socket.{mode,
+# group} in /etc/jabali-panel/kratos.yml, NOT by RuntimeDirectory (which
+# only governs the parent dir). Both are pinned for defense in depth.
+RuntimeDirectory=jabali-kratos
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=no
+
 ExecStart=/usr/local/bin/kratos serve -c /etc/jabali-panel/kratos.yml
+
+# ExecStartPost belt-and-braces (M25 review F-C-3, see install/scripts/
+# socket-helpers.sh top comment). Kratos's own socket.{mode,group} config
+# is the primary mechanism, but if Kratos is ever upgraded to a version
+# that drops or renames those fields, the post-start chmod + chgrp keep
+# panel-api → Kratos working until the operator notices the verify_socket_perms
+# check shouting in install.sh output. Idempotent: chmod/chgrp on the
+# already-correct values is a no-op.
+ExecStartPost=/bin/sh -c 'until [ -S /run/jabali-kratos/admin.sock ]; do sleep 0.1; done'
+ExecStartPost=/bin/chgrp jabali-sockets /run/jabali-kratos/admin.sock
+ExecStartPost=/bin/chmod 0660 /run/jabali-kratos/admin.sock
 
 Restart=on-failure
 RestartSec=5s
@@ -21,7 +46,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/etc/jabali-panel /run/jabali
+ReadWritePaths=/etc/jabali-panel /run/jabali /run/jabali-kratos
 
 StandardOutput=journal
 StandardError=journal

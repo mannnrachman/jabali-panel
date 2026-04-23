@@ -33,14 +33,58 @@ type Client struct {
 }
 
 // NewClient returns a Kratos client targeting the given public and admin URLs.
-// publicURL and adminURL should be complete base URLs (e.g., "http://localhost:4433").
+//
+// Each URL is one of two forms:
+//   - HTTP/HTTPS base URL: "http://localhost:4433" or "https://auth.example.com"
+//   - Unix-socket: "unix:/run/jabali-kratos/admin.sock" (M25 Step 2+)
+//
+// The unix: form installs a custom http.Transport whose DialContext routes by
+// hostname to the configured socket path. Both forms are supported on the
+// same client — a panel that's been partially migrated (e.g. admin on unix,
+// public still on TCP because nginx fronts it) keeps working transparently.
 func NewClient(publicURL, adminURL string) *Client {
+	publicURL = strings.TrimSuffix(publicURL, "/")
+	adminURL = strings.TrimSuffix(adminURL, "/")
+
+	const reqTimeout = 5 * time.Second
+
+	// Funnel both URLs through the unix-rewrite step. Non-unix URLs pass
+	// through unchanged; unix URLs become http://<synthetic-host> + a
+	// hostname → socket-path entry in `sockets`.
+	sockets := make(map[string]string, 2)
+	publicURL = rewriteForUnix(publicURL, sockets)
+	adminURL = rewriteForUnix(adminURL, sockets)
+
 	return &Client{
-		publicURL:  strings.TrimSuffix(publicURL, "/"),
-		adminURL:   strings.TrimSuffix(adminURL, "/"),
-		httpClient: &http.Client{Timeout: 5 * time.Second},
-		cache:      NewCache(10000, 10*time.Second),
+		publicURL: publicURL,
+		adminURL:  adminURL,
+		httpClient: &http.Client{
+			Timeout:   reqTimeout,
+			Transport: newKratosTransport(sockets, reqTimeout),
+		},
+		cache: NewCache(10000, 10*time.Second),
 	}
+}
+
+// AdminReady checks the Kratos admin /admin/health/ready endpoint and returns nil
+// on a 2xx response. Used by the boot-order race-mitigation poll in cmd/server
+// (M20 race: panel-api can beat Kratos to binding the admin port on slow boots
+// and crash its first BootstrapAdmin call). Goes through the same transport
+// the rest of the client uses, so unix-socket setups Just Work.
+func (c *Client) AdminReady(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.adminURL+"/admin/health/ready", nil)
+	if err != nil {
+		return fmt.Errorf("ready: request: %w", err)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("ready: do: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("ready: status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // Whoami validates a Kratos session cookie and returns the authenticated identity.

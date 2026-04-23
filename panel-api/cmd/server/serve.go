@@ -211,8 +211,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// Kratos is healthy — crashing the panel here would be worse.
 		var bootstrapKratos auth.KratosIdentityWriter
 		if cfg.Auth.Kratos.PublicURL != "" {
-			if waitForKratosReady(cfg.Auth.Kratos.AdminURL, 60*time.Second, log) {
-				bootstrapKratos = kratosclient.NewClient(cfg.Auth.Kratos.PublicURL, cfg.Auth.Kratos.AdminURL)
+			// Build the client first so the readiness poll inherits the
+			// configured transport (unix-socket dialer for M25 admin
+			// endpoints). Reusing the bootstrap client also halves the
+			// transport count in the steady state.
+			candidate := kratosclient.NewClient(cfg.Auth.Kratos.PublicURL, cfg.Auth.Kratos.AdminURL)
+			if waitForKratosReady(candidate, 60*time.Second, log) {
+				bootstrapKratos = candidate
 			} else {
 				log.Warn("Kratos not ready after 60s — bootstrapping admin in panel DB only",
 					"admin_url", cfg.Auth.Kratos.AdminURL,

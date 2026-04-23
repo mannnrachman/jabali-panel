@@ -48,7 +48,12 @@ public_url = "http://127.0.0.1:4433"
 
 # Admin URL of Kratos instance (reachable from panel-api only — never
 # exposed externally). Set via env KRATOS_ADMIN_URL.
-admin_url = "http://127.0.0.1:4434"
+#
+# As of M25 Step 2 the admin endpoint binds a Unix-domain socket instead
+# of an all-interfaces TCP port. Use `unix:/run/jabali-kratos/admin.sock`
+# to dial it. The http://127.0.0.1:4434 form still works if you've
+# overridden the systemd unit + kratos.yml back to TCP for some reason.
+admin_url = "unix:/run/jabali-kratos/admin.sock"
 
 [agent]
 # Path to the jabali-agent Unix socket. The panel user (jabali group) needs

@@ -3,8 +3,9 @@ package main
 import (
 	"context"
 	"log/slog"
-	"net/http"
 	"time"
+
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
 )
 
 // waitForKratosReady polls Kratos's /admin/health/ready endpoint until it
@@ -15,15 +16,21 @@ import (
 // build_backend + start_and_verify, so systemctl starts jabali-kratos
 // seconds before jabali-panel. On a slow host (or one where Kratos restarts
 // post-migration for any reason), jabali-panel can beat Kratos to binding
-// the admin port and crash its first BootstrapAdmin call with a raw
+// the admin endpoint and crash its first BootstrapAdmin call with a raw
 // "connection refused", triggering a systemd restart loop that never
 // recovers because every restart loses to the same race.
+//
+// Takes a *kratosclient.Client rather than a raw URL so the poll uses the
+// same transport everything else does — critical for M25 Step 2+, where
+// the admin endpoint is a Unix socket that needs the client's custom
+// DialContext to reach. Building a fresh http.Client here would silently
+// fall back to TCP and timeout.
 //
 // A single poll loop before the first Kratos RPC — with a hard timeout
 // so an operator who broke Kratos entirely still sees the panel come up
 // (legacy fallback) rather than a panel in crash-loop forever.
-func waitForKratosReady(adminURL string, timeout time.Duration, log *slog.Logger) bool {
-	if adminURL == "" {
+func waitForKratosReady(client *kratosclient.Client, timeout time.Duration, log *slog.Logger) bool {
+	if client == nil {
 		return false
 	}
 	// Sub-second initial interval so healthy hosts don't pay a noticeable
@@ -32,28 +39,16 @@ func waitForKratosReady(adminURL string, timeout time.Duration, log *slog.Logger
 	interval := 200 * time.Millisecond
 	deadline := time.Now().Add(timeout)
 	attempt := 0
-	url := adminURL + "/admin/health/ready"
-	// Short per-request timeout — we care about liveness not latency;
-	// if the TCP connect takes more than a second, it's not ready.
-	client := &http.Client{Timeout: 2 * time.Second}
 	for time.Now().Before(deadline) {
 		attempt++
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			cancel()
-			return false // malformed URL — fail fast
-		}
-		resp, err := client.Do(req)
+		err := client.AdminReady(ctx)
 		cancel()
 		if err == nil {
-			_ = resp.Body.Close()
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				if attempt > 1 && log != nil {
-					log.Info("Kratos became ready", "attempts", attempt, "url", url)
-				}
-				return true
+			if attempt > 1 && log != nil {
+				log.Info("Kratos became ready", "attempts", attempt)
 			}
+			return true
 		}
 		time.Sleep(interval)
 		if interval < 2*time.Second {

@@ -2493,6 +2493,13 @@ User=$SERVICE_USER
 # The User= stays jabali (privileged ops happen via the agent's separate
 # socket); only the Group= flips to expose the listen socket to nginx.
 Group=jabali-sockets
+# When Group= is set explicitly alongside User=, systemd replaces the
+# primary GID and does NOT inherit the user's /etc/passwd primary group
+# as supplementary. Without this line panel-api runs as
+# jabali:jabali-sockets with no \`jabali\` supplementary, and can't read
+# its own EnvironmentFile ($ENV_FILE, root:jabali 0640). See
+# install/systemd/jabali-kratos.service for the identical fix reasoning.
+SupplementaryGroups=$SERVICE_USER
 # /run/jabali-panel — systemd creates owned $SERVICE_USER:$SERVICE_USER 0755
 # on service start and tears down on stop. The SSO UDS listener binds
 # \${runtime}/sso.sock here; unlike /run/jabali (owned by root, used by

@@ -13,6 +13,16 @@ User=jabali
 # of jabali-sockets) can connect to. The jabali user remains the owner;
 # the group switch is purely about who else can reach the socket.
 Group=jabali-sockets
+# When Group= is set explicitly alongside User=, systemd replaces the
+# process's primary GID with the value here AND does NOT inherit the
+# user's /etc/passwd primary group as a supplementary (because being
+# the user's primary group does not list the user in /etc/group's
+# member list). Without this line, Kratos runs as jabali:jabali-sockets
+# with no `jabali` supplementary — and can't read
+# /etc/jabali-panel/kratos.yml (root:jabali 0640), dying at startup
+# with "permission denied". Mirror pattern already used by
+# jabali-stalwart.service for the same reason.
+SupplementaryGroups=jabali
 Slice=jabali.slice
 
 # RuntimeDirectory creates /run/jabali-kratos/ as jabali:jabali-sockets 0750

@@ -60,7 +60,10 @@ func registerCatchAllRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
 
 // Wave C: disclaimer.
 func registerDisclaimerRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
-	// Implementation lives in panel-api/internal/api/domain_disclaimer.go (Step 6).
+	RegisterDomainDisclaimerRoutes(g, DomainDisclaimerHandlerConfig{
+		Domains: deps.Domains,
+		Agent:   deps.Agent,
+	})
 }
 
 // Wave B: shared folders.

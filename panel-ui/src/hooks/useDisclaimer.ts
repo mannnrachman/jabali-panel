@@ -1,125 +1,57 @@
-// useDisclaimer.ts — M6.5 domain-level disclaimer hooks.
-//
-// M6.5 Step 1: Stub placeholder.
-// Implementation: Wave C (m65/domain-disclaimer).
-//
-// TODO: Implement hooks for:
-//   - GET    /domains/:id/disclaimer            → useDomainDisclaimer
-//   - POST   /domains/:id/disclaimer            → useCreateDomainDisclaimer
-//   - DELETE /domains/:id/disclaimer            → useDeleteDomainDisclaimer
-//   - PATCH  /domains/:id/disclaimer            → useUpdateDomainDisclaimer
+// useDisclaimer.ts — M6.5 Step 6 per-domain disclaimer hooks.
 
-import { type UseQueryResult, type UseMutationResult } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "../apiClient";
 
-interface DomainDisclaimer {
-  id: string
-  domainID: string
-  text: string
-  enabled: boolean
-  createdAt: string
-  updatedAt: string
+export interface Disclaimer {
+  domain_id: string;
+  domain_name: string;
+  enabled: boolean;
+  text: string;
+  updated_at: string;
 }
 
-export function useDomainDisclaimer(): UseQueryResult<
-  DomainDisclaimer | null,
-  Error
-> {
-  // TODO: Implement after Wave C lands
-  return {
-    data: undefined,
-    error: null,
-    isLoading: true,
-    isError: false,
-    isSuccess: false,
-    status: "pending",
-    dataUpdatedAt: 0,
-    errorUpdatedAt: 0,
-    failureCount: 0,
-    failureReason: null,
-    isFetched: false,
-    isFetchedAfterMount: false,
-    isFetching: false,
-    isInitialLoading: true,
-    isPaused: false,
-    isPending: true,
-    isPlaceholderData: false,
-    isRefetching: false,
-    isStale: true,
-    refetch: async () => ({} as any),
-  } as any
+const QK = (domainID: string) => ["disclaimer", domainID];
+
+export function useDisclaimer(domainID: string) {
+  return useQuery({
+    queryKey: QK(domainID),
+    queryFn: async () => {
+      const { data } = await apiClient.get<Disclaimer>(`/domains/${domainID}/disclaimer`);
+      return data;
+    },
+    enabled: !!domainID,
+  });
 }
 
-export function useCreateDomainDisclaimer(): UseMutationResult<
-  DomainDisclaimer,
-  Error,
-  { domainID: string; text: string; enabled?: boolean },
-  unknown
-> {
-  // TODO: Implement after Wave C lands
-  return {
-    mutate: () => {},
-    mutateAsync: async () => ({} as any),
-    isPending: false,
-    isError: false,
-    isSuccess: false,
-    isIdle: true,
-    data: undefined,
-    error: null,
-    status: "idle",
-    failureCount: 0,
-    failureReason: null,
-    reset: () => {},
-    context: undefined,
-    variables: undefined,
-  } as any
+export function useUpdateDisclaimer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      domainID,
+      enabled,
+      text,
+    }: {
+      domainID: string;
+      enabled: boolean;
+      text: string;
+    }) => {
+      const { data } = await apiClient.put<Disclaimer>(
+        `/domains/${domainID}/disclaimer`,
+        { enabled, text },
+      );
+      return data;
+    },
+    onSuccess: (data) => qc.invalidateQueries({ queryKey: QK(data.domain_id) }),
+  });
 }
 
-export function useDeleteDomainDisclaimer(): UseMutationResult<
-  void,
-  Error,
-  string,
-  unknown
-> {
-  // TODO: Implement after Wave C lands
-  return {
-    mutate: () => {},
-    mutateAsync: async () => {},
-    isPending: false,
-    isError: false,
-    isSuccess: false,
-    isIdle: true,
-    data: undefined,
-    error: null,
-    status: "idle",
-    failureCount: 0,
-    failureReason: null,
-    reset: () => {},
-    context: undefined,
-    variables: undefined,
-  } as any
-}
-
-export function useUpdateDomainDisclaimer(): UseMutationResult<
-  DomainDisclaimer,
-  Error,
-  { domainID: string; text?: string; enabled?: boolean },
-  unknown
-> {
-  // TODO: Implement after Wave C lands
-  return {
-    mutate: () => {},
-    mutateAsync: async () => ({} as any),
-    isPending: false,
-    isError: false,
-    isSuccess: false,
-    isIdle: true,
-    data: undefined,
-    error: null,
-    status: "idle",
-    failureCount: 0,
-    failureReason: null,
-    reset: () => {},
-    context: undefined,
-    variables: undefined,
-  } as any
+export function useDeleteDisclaimer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (domainID: string) => {
+      await apiClient.delete(`/domains/${domainID}/disclaimer`);
+    },
+    onSuccess: (_v, id) => qc.invalidateQueries({ queryKey: QK(id) }),
+  });
 }

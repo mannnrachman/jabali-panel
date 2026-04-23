@@ -147,6 +147,16 @@ func (m *mockDomainRepo) UpdateCatchallTarget(ctx context.Context, id string, ta
 	return nil
 }
 
+func (m *mockDomainRepo) UpdateDisclaimer(ctx context.Context, id string, enabled bool, text *string) error {
+	d, ok := m.domains[id]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	d.DisclaimerEnabled = enabled
+	d.DisclaimerText = text
+	return nil
+}
+
 type mockDNSZoneRepo struct {
 	zones map[string]*models.DNSZone
 }

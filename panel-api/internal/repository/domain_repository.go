@@ -64,6 +64,9 @@ type DomainRepository interface {
 	// Nil target clears the catch-all (sets to NULL). Dedicated method
 	// because the column is not in Update()'s allowlist.
 	UpdateCatchallTarget(ctx context.Context, id string, target *string) error
+	// UpdateDisclaimer writes disclaimer_enabled + disclaimer_text.
+	// M6.5 Step 6 ADR-0052; reconciler pushes to Stalwart sieve.
+	UpdateDisclaimer(ctx context.Context, id string, enabled bool, text *string) error
 }
 
 // DomainListenIPs is the bundle of optional column writes for
@@ -376,6 +379,22 @@ func (r *domainRepo) UpdateCatchallTarget(ctx context.Context, id string, target
 	res := r.db.WithContext(ctx).Model(&models.Domain{}).
 		Where("id = ?", id).
 		Update("catchall_target", target)
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *domainRepo) UpdateDisclaimer(ctx context.Context, id string, enabled bool, text *string) error {
+	res := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"disclaimer_enabled": enabled,
+			"disclaimer_text":    text,
+		})
 	if res.Error != nil {
 		return translate(res.Error)
 	}

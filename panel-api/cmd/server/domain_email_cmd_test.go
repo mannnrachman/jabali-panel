@@ -101,6 +101,10 @@ func (*fakeDomainRepo) UpdateCatchallTarget(context.Context, string, *string) er
 	return nil
 }
 
+func (*fakeDomainRepo) UpdateDisclaimer(context.Context, string, bool, *string) error {
+	return nil
+}
+
 // fakeDNSZoneRepo / fakeDNSRecordRepo are minimal — enableDomainEmail
 // only calls FindByDomainID + ListByZoneID + Create, and disable only
 // calls FindByDomainID + DeleteByZoneIDAndManagedBy. Everything else

@@ -205,6 +205,16 @@ func (f *fakeDomainRepo) UpdateCatchallTarget(ctx context.Context, id string, ta
 	return nil
 }
 
+func (f *fakeDomainRepo) UpdateDisclaimer(ctx context.Context, id string, enabled bool, text *string) error {
+	d, ok := f.domains[id]
+	if !ok {
+		return &notFoundErr{}
+	}
+	d.DisclaimerEnabled = enabled
+	d.DisclaimerText = text
+	return nil
+}
+
 type notFoundErr struct{}
 
 func (e *notFoundErr) Error() string { return "not found" }

@@ -1078,7 +1078,7 @@ export const FileManagerPage = () => {
         placement="left"
         width={280}
         title="Folders"
-        styles={{ body: { padding: 8, background: "transparent" } }}
+        styles={{ body: { padding: 8, background: token.colorBgContainer } }}
       >
         <Tree
           treeData={treeData}

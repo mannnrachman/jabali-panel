@@ -3549,6 +3549,18 @@ EOF
 install_stalwart_apply() {
   _log "provisioning Stalwart MariaDB user + applying JMAP plan"
 
+  # M25 Step 7 prep: pre-existing installs may have Stalwart's default
+  # admin-http listener bound to 0.0.0.0:8080 because the apply-plan
+  # didn't override it (pre-dispatch I1 finding on VM 10.0.3.13). The
+  # plan now declares an #admin-http-loopback NetworkListener and an
+  # #internal-loopback for the :35181 ephemeral, but stalwart-cli's
+  # `apply` is `create`-only and a re-apply against an already-applied
+  # plan no-ops. To converge an existing install onto the new pinned
+  # binds, we rely on the post-apply restart already in
+  # _install_stalwart_apply_plan + the operator running install.sh
+  # after a Stalwart-data wipe. Documented in the runbook.
+  : "M25 Step 7 prep complete (no in-place mutation; plan covers fresh installs)"
+
   local stalwart_db_user="jabali-stalwart-ro"
   local stalwart_db_pw_file="/etc/jabali-panel/stalwart-mariadb.password"
   if [[ ! -f "$stalwart_db_pw_file" ]]; then
@@ -3583,6 +3595,31 @@ install_stalwart_apply() {
 
   _install_stalwart_apply_plan "$stalwart_apply_plan" "$stalwart_admin_token"
   _ok "jabali-stalwart.service started + plan applied"
+
+  # M25 Step 7 verification: post-apply, Stalwart's localhost-only
+  # listeners (admin-http on 8080, JMAP on 8446, internal/training on
+  # 18181) MUST NOT be bound to 0.0.0.0 or [::]. The public listeners
+  # (smtp 25/465/587, imap 993) are intentionally wildcard and skipped.
+  # Each verify_no_all_interface_binds returns 0 if no listener exists
+  # OR all listeners are loopback — a freshly-restarted Stalwart that
+  # hasn't bound 8080 yet still passes (because the helper is "no
+  # wildcard binds", not "must be present").
+  _log "verifying Stalwart bind state (M25 Step 7)"
+  if ! verify_no_all_interface_binds 8080; then
+    _die "Stalwart admin-http on :8080 is still bound 0.0.0.0/[::] — apply-plan listener missing or rolled back"
+  fi
+  if ! verify_no_all_interface_binds 8446; then
+    _die "Stalwart JMAP on :8446 is bound 0.0.0.0/[::] — apply-plan listener corrupt"
+  fi
+  if ! verify_no_all_interface_binds 18181; then
+    _die "Stalwart internal listener on :18181 is bound 0.0.0.0/[::] — apply-plan listener corrupt"
+  fi
+  # Belt-and-braces: if the legacy ephemeral :35181 is still up (an
+  # operator who hasn't restarted Stalwart since install) flag it as
+  # WARN, not DIE. The runbook tells them to restart jabali-stalwart.
+  if ss -lntp 2>/dev/null | grep -qE '(\*|0\.0\.0\.0|\[::\]):35181'; then
+    _warn "Stalwart's legacy ephemeral :35181 is still bound on a wildcard — restart jabali-stalwart to pick up the M25 Step 7 #internal-loopback listener"
+  fi
 }
 
 # _install_stalwart_apply_plan starts Stalwart (if not already running),

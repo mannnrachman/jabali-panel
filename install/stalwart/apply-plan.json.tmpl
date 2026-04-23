@@ -94,6 +94,28 @@
         "socketReuseAddress": true,
         "socketReusePort": false,
         "socketNoDelay": true
+      },
+      "#admin-http-loopback": {
+        "name": "admin-http-loopback",
+        "comment": "M25 Step 7 (pre-dispatch I1): Stalwart's default admin/management HTTP listener binds 0.0.0.0:8080 implicitly when no NetworkListener overrides it. Pinning to 127.0.0.1:8080 closes the all-interfaces leak that was equivalent to the Kratos :::4434 admin-takeover surface (Step 2 motivation). Same protocol+TLS shape as #jmap-loopback because the admin endpoint speaks HTTP (auth-redirect to /login on probe).",
+        "bind": {"127.0.0.1:8080": true},
+        "protocol": "http",
+        "useTls": false,
+        "tlsImplicit": false,
+        "socketReuseAddress": true,
+        "socketReusePort": false,
+        "socketNoDelay": true
+      },
+      "#internal-loopback": {
+        "name": "internal-loopback",
+        "comment": "M25 Step 7 (pre-dispatch I1): Stalwart at v0.16.0 sometimes opens an ephemeral listener (observed as :::35181 on 10.0.3.13) for internal classifier/IPC traffic when no explicit listener owns the role. Pinning to 127.0.0.1:18181 makes the bind deterministic and reachable only on loopback. Port 18181 picked for memorability — high, unreserved, non-conflicting on every distro we ship.",
+        "bind": {"127.0.0.1:18181": true},
+        "protocol": "http",
+        "useTls": false,
+        "tlsImplicit": false,
+        "socketReuseAddress": true,
+        "socketReusePort": false,
+        "socketNoDelay": true
       }
     }
   }

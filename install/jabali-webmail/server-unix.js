@@ -4,9 +4,14 @@
 //
 // Decision (per plan task 1, option a): we wrap rather than fork Bulwark's
 // stock /opt/jabali-webmail/server.js because the next bulwark update will
-// overwrite server.js but leave server-unix.js alone. This wrapper is ~30
-// lines, has no Bulwark-internal coupling, and reuses the same Next.js
-// request handler via `next({})`.
+// overwrite server.js but leave server-unix.js alone. This wrapper reuses
+// the same Next.js request handler via `next({})` — the documented
+// custom-server pattern — with one extra step: priming
+// __NEXT_PRIVATE_STANDALONE_CONFIG from the stock server.js so Next skips
+// the loadWebpackHook step that throws in standalone bundles (the tarball
+// strips node_modules/next/dist/compiled/webpack/, which loadWebpackHook
+// eagerly require.resolves; config.js catches the throw ONLY when the
+// standalone-config env var is set, otherwise rethrows → crash loop).
 //
 // Why a wrapper at all (and not, say, a `socat` UNIX↔TCP bridge): keeping
 // Node single-process means we don't pay an extra hop on every request
@@ -14,16 +19,10 @@
 // fine in development; in production the systemd-managed Node process is
 // the only thing in the box.
 //
-// Process model + ordering match Next.js's documented custom-server pattern
-// (https://nextjs.org/docs/pages/building-your-application/configuring/custom-server).
-// That pattern is the only blessed way to run a Unix-socket-bound Next.js
-// app — anything cleverer drifts into bug-for-bug compat with Bulwark's
-// internal middleware.
-//
 // Env contract:
 //   SOCKET_PATH — absolute path to the unix socket. Required.
-//   NODE_ENV    — must be "production" (Next.js prepares the production
-//                 server when dev=false; not enforced here, just noted).
+//   NODE_ENV    — set to "production" below to match stock server.js
+//                 semantics (Next prepares the production server).
 //
 // Permissions: systemd creates /run/jabali-bulwark with mode 0750
 // (RuntimeDirectory). Node's net.Server.listen uses the process umask
@@ -33,13 +32,35 @@
 
 const fs = require('fs');
 const http = require('http');
-const next = require('next');
+const path = require('path');
 
 const socketPath = process.env.SOCKET_PATH;
 if (!socketPath) {
   console.error('[server-unix] SOCKET_PATH env var is required');
   process.exit(1);
 }
+
+// --- Prime standalone config BEFORE requiring next ---
+// Stock server.js embeds the full resolved Next config as a JS object
+// literal. We parse it out and re-publish it via the private env var
+// Next reads at config-load time. Must happen before require('next').
+const stockServerJsPath = path.join(__dirname, 'server.js');
+try {
+  const stockSrc = fs.readFileSync(stockServerJsPath, 'utf8');
+  const match = stockSrc.match(/const\s+nextConfig\s*=\s*(\{[\s\S]*?\})\s*\n\s*process\.env\.__NEXT_PRIVATE_STANDALONE_CONFIG/);
+  if (!match) {
+    throw new Error('could not locate nextConfig literal in stock server.js');
+  }
+  // eslint-disable-next-line no-new-func
+  const nextConfig = JSON.parse(match[1]);
+  process.env.__NEXT_PRIVATE_STANDALONE_CONFIG = JSON.stringify(nextConfig);
+} catch (err) {
+  console.error(`[server-unix] failed to prime standalone config from ${stockServerJsPath}:`, err);
+  process.exit(1);
+}
+process.env.NODE_ENV = 'production';
+
+const next = require('next');
 
 // Stale-socket cleanup. systemd's RuntimeDirectoryPreserve=no should
 // already wipe /run/jabali-bulwark/ on stop, but defensive: if the unit

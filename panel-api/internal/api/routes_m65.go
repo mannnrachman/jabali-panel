@@ -78,5 +78,8 @@ func registerSharedFolderRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
 
 // Wave C: mail logs.
 func registerMailLogRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
-	// Implementation lives in panel-api/internal/api/mail_logs.go (Step 7).
+	RegisterMailLogsRoutes(g, MailLogsHandlerConfig{
+		Domains: deps.Domains,
+		Agent:   deps.Agent,
+	})
 }

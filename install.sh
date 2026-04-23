@@ -3585,17 +3585,11 @@ EOF
 install_stalwart_apply() {
   _log "provisioning Stalwart MariaDB user + applying JMAP plan"
 
-  # M25 Step 7 prep: pre-existing installs may have Stalwart's default
-  # admin-http listener bound to 0.0.0.0:8080 because the apply-plan
-  # didn't override it (pre-dispatch I1 finding on VM 10.0.3.13). The
-  # plan now declares an #admin-http-loopback NetworkListener and an
-  # #internal-loopback for the :35181 ephemeral, but stalwart-cli's
-  # `apply` is `create`-only and a re-apply against an already-applied
-  # plan no-ops. To converge an existing install onto the new pinned
-  # binds, we rely on the post-apply restart already in
-  # _install_stalwart_apply_plan + the operator running install.sh
-  # after a Stalwart-data wipe. Documented in the runbook.
-  : "M25 Step 7 prep complete (no in-place mutation; plan covers fresh installs)"
+  # M25 Step 7: Stalwart seeds factory NetworkListeners into RocksDB on
+  # first start (http at [::]:8080, https at [::]:443). stalwart-cli
+  # apply is create-only and cannot remove them. _install_stalwart_apply_plan
+  # calls _delete_stalwart_factory_listeners to remove them via the API
+  # before restarting. See ADR-0050 §"Factory listener problem".
 
   local stalwart_db_user="jabali-stalwart-ro"
   local stalwart_db_pw_file="/etc/jabali-panel/stalwart-mariadb.password"
@@ -3642,7 +3636,7 @@ install_stalwart_apply() {
   # wildcard binds", not "must be present").
   _log "verifying Stalwart bind state (M25 Step 7)"
   if ! verify_no_all_interface_binds 8080; then
-    _die "Stalwart admin-http on :8080 is still bound 0.0.0.0/[::] — apply-plan listener missing or rolled back"
+    _die "Stalwart factory http listener still bound on :8080 — _delete_stalwart_factory_listeners may have failed; check 'journalctl -u jabali-stalwart'"
   fi
   if ! verify_no_all_interface_binds 8446; then
     _die "Stalwart JMAP on :8446 is bound 0.0.0.0/[::] — apply-plan listener corrupt"
@@ -3658,10 +3652,53 @@ install_stalwart_apply() {
   fi
 }
 
+# _delete_stalwart_factory_listeners removes Stalwart's built-in factory
+# NetworkListeners that bind to [::] (all interfaces). Stalwart seeds
+# these into RocksDB on first start; stalwart-cli apply is create-only
+# and cannot delete or replace them. We explicitly delete them before
+# restarting so Stalwart does not rebind to all-interface ports we don't
+# want (e.g. [::]:8080 web UI, [::]:443 HTTPS web UI).
+#
+# Arguments: $1 = jmap_port (8080 or 8446), $2 = admin_token
+#
+# Factory listeners removed: http ([::]:8080), https ([::]:443)
+_delete_stalwart_factory_listeners() {
+  local jmap_port="$1"
+  local admin_token="$2"
+  local -a factory_names=("http" "https")
+  for fname in "${factory_names[@]}"; do
+    local query_out id=""
+    query_out="$(STALWART_URL="http://127.0.0.1:${jmap_port}" \
+      STALWART_USER="admin" \
+      STALWART_PASSWORD="$admin_token" \
+      /usr/local/bin/stalwart-cli query x:NetworkListener \
+        --where "name=${fname}" --json 2>/dev/null || true)"
+    id="$(printf '%s\n' "$query_out" \
+      | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d[0]["id"]) if isinstance(d,list) and d else None' \
+      2>/dev/null || true)"
+    if [[ -z "$id" ]] || [[ "$id" == "None" ]]; then
+      _log "factory NetworkListener '${fname}' not found — already removed"
+      continue
+    fi
+    _log "deleting factory NetworkListener '${fname}' (id=${id})"
+    local del_rc=0
+    STALWART_URL="http://127.0.0.1:${jmap_port}" \
+      STALWART_USER="admin" \
+      STALWART_PASSWORD="$admin_token" \
+      /usr/local/bin/stalwart-cli delete x:NetworkListener --ids "$id" 2>/dev/null || del_rc=$?
+    if (( del_rc == 0 )); then
+      _ok "factory NetworkListener '${fname}' (id=${id}) deleted"
+    else
+      _warn "stalwart-cli delete x:NetworkListener --ids '${id}' failed (rc=${del_rc})"
+    fi
+  done
+}
+
 # _install_stalwart_apply_plan starts Stalwart (if not already running),
-# waits for /jmap to be reachable, then runs stalwart-cli apply against
-# the rendered plan. Idempotent: on re-runs where Stalwart is already
-# up, the start is a no-op and the apply converges any drift.
+# waits for /jmap to be reachable, runs stalwart-cli apply against the
+# rendered plan, then deletes factory listeners and restarts. Idempotent:
+# on re-runs where Stalwart is already on :8446, apply is skipped but
+# factory listener deletion and the restart still run to converge state.
 _install_stalwart_apply_plan() {
   local plan_file="$1"
   local admin_token="$2"
@@ -3723,11 +3760,13 @@ _install_stalwart_apply_plan() {
   # has no first-class "apply or update" verb. Skipping a no-op apply is
   # the right call here; reconciler-driven drift correction is out of
   # scope for install.sh.
+  local skip_apply=0
   if [[ "$jmap_port" == "8446" ]]; then
     _ok "Stalwart plan already applied (serving on :8446) — skipping re-apply"
-    return
+    skip_apply=1
   fi
 
+  if (( skip_apply == 0 )); then
   # Idempotent apply: stalwart-cli apply uses @type: create for every
   # NetworkListener, which fails primaryKeyViolation on re-run because
   # there's no first-class upsert verb. Two re-run scenarios cause this:
@@ -3781,31 +3820,37 @@ _install_stalwart_apply_plan() {
   else
     _ok "Stalwart plan applied (SqlDirectory + listeners + Authentication)"
   fi
+  fi # end: if (( skip_apply == 0 ))
 
-  # Always reached via :8080 here — the :8446 branch above already
-  # returned. Restart Stalwart so it rebinds to the newly-created
-  # NetworkListener objects (including 127.0.0.1:8446).
-  if [[ "$jmap_port" == "8080" ]]; then
-    _log "restarting jabali-stalwart to pick up plan-defined listeners"
-    systemctl restart jabali-stalwart.service
-    waited=0
-    while (( waited < 15 )); do
-      local s
-      # Same `|| true` rationale as the pre-apply probe loop above:
-      # curl exits 7 on "connection refused" while Stalwart re-binds,
-      # which would abort the script under `set -euo pipefail`.
-      s="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 -m 3 \
-        http://127.0.0.1:8446/jmap/session 2>/dev/null || true)"
-      s="${s:-000}"
-      if [[ "$s" =~ ^[234][0-9][0-9]$ ]]; then
-        _ok "Stalwart now serving plan-defined listener on :8446 (HTTP $s)"
-        return
-      fi
-      sleep 1
-      waited=$((waited + 1))
-    done
-    _warn "Stalwart did not come up on :8446 after apply — plan may be missing the jmap-loopback NetworkListener; check 'journalctl -u jabali-stalwart'"
-  fi
+  # Delete factory NetworkListeners ([::]:8080, [::]:443) before restart.
+  # stalwart-cli apply is create-only; only an explicit API delete removes
+  # factory-seeded objects from RocksDB. Must happen while Stalwart is
+  # still up so the delete API call succeeds.
+  _delete_stalwart_factory_listeners "$jmap_port" "$admin_token"
+
+  # Restart so Stalwart rebinds to plan-defined listeners and drops any
+  # factory [::] binds just removed. Required on both paths:
+  #   8080 (fresh install) — activate newly-created plan listeners
+  #   8446 (jabali-update) — drop stale factory binds
+  _log "restarting jabali-stalwart to activate plan listeners and drop factory binds"
+  systemctl restart jabali-stalwart.service
+  waited=0
+  while (( waited < 15 )); do
+    local s
+    # Same `|| true` rationale as the pre-apply probe loop above:
+    # curl exits 7 on "connection refused" while Stalwart re-binds,
+    # which would abort the script under `set -euo pipefail`.
+    s="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 -m 3 \
+      http://127.0.0.1:8446/jmap/session 2>/dev/null || true)"
+    s="${s:-000}"
+    if [[ "$s" =~ ^[234][0-9][0-9]$ ]]; then
+      _ok "Stalwart now serving plan-defined listener on :8446 (HTTP $s)"
+      return
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  _die "Stalwart did not come up on :8446 after restart — check 'journalctl -u jabali-stalwart'"
 }
 
 # _install_stalwart_binary is a private helper: download the release

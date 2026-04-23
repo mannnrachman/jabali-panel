@@ -192,16 +192,18 @@ export const UserDomainList = () => {
             dataIndex="actions"
             render={(_, r) => (
               <>
+                <Space>
+                <Button
+                  type="text"
+                  icon={<GlobalOutlined />}
+                  onClick={() => navigate(`/jabali-panel/domains/${r.id}/dns`)}
+                >
+                  DNS
+                </Button>
                 <Dropdown
                   trigger={["click"]}
                   menu={{
                     items: [
-                      {
-                        key: "dns",
-                        label: "DNS",
-                        icon: <GlobalOutlined />,
-                        onClick: () => navigate(`/jabali-panel/domains/${r.id}/dns`),
-                      },
                       {
                         key: "redirects",
                         label: "Redirects",
@@ -268,6 +270,7 @@ export const UserDomainList = () => {
                 >
                   <Button type="text" icon={<MoreOutlined />} />
                 </Dropdown>
+                </Space>
                 {activeModal?.domainId === r.id && activeModal.type === "redirects" && (
                   <DomainRedirectsButton
                     domain={r}

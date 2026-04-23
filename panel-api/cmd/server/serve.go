@@ -171,6 +171,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// it ships; Autoresponders ships in Step 3, Forwarders in Step 5,
 		// MailboxShares in Step 4. Until each lands, nil + handler guards.
 		deps.Autoresponders = repository.NewEmailAutoresponderRepository(sharedDB)
+		deps.MailboxShares = repository.NewMailboxShareRepository(sharedDB)
 		deps.PhpMyAdminSSOTokens = phpMyAdminSSOTokenRepo
 		deps.PHPPools = phpPoolRepo
 		deps.PHPPoolIniOverrides = phpPoolIniOverrideRepo

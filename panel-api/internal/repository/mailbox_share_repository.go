@@ -2,6 +2,10 @@ package repository
 
 import (
 	"context"
+	"errors"
+	"time"
+
+	"gorm.io/gorm"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 )
@@ -13,9 +17,95 @@ type MailboxShareRepository interface {
 	FindByID(ctx context.Context, id string) (*models.MailboxShare, error)
 	FindByOwnerID(ctx context.Context, ownerMailboxID string, opts ListOptions) ([]models.MailboxShare, int64, error)
 	FindBySharedWithID(ctx context.Context, sharedWithMailboxID string, opts ListOptions) ([]models.MailboxShare, int64, error)
+	ListAll(ctx context.Context, opts ListOptions) ([]models.MailboxShare, int64, error)
 	Create(ctx context.Context, share *models.MailboxShare) error
 	Update(ctx context.Context, share *models.MailboxShare) error
 	Delete(ctx context.Context, id string) error
 }
 
-// TODO: Implement mailboxShareRepo with concrete CRUD methods in Step 5.
+type mailboxShareRepo struct {
+	db *gorm.DB
+}
+
+func NewMailboxShareRepository(db *gorm.DB) MailboxShareRepository {
+	return &mailboxShareRepo{db: db}
+}
+
+func (r *mailboxShareRepo) FindByID(ctx context.Context, id string) (*models.MailboxShare, error) {
+	var s models.MailboxShare
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&s).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &s, nil
+}
+
+func (r *mailboxShareRepo) listByField(ctx context.Context, field, value string, opts ListOptions) ([]models.MailboxShare, int64, error) {
+	var shares []models.MailboxShare
+	var total int64
+	q := r.db.WithContext(ctx).Model(&models.MailboxShare{}).Where(field+" = ?", value)
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	tx := q.Order("created_at DESC")
+	if opts.Limit > 0 {
+		tx = tx.Limit(opts.Limit)
+	}
+	if opts.Offset > 0 {
+		tx = tx.Offset(opts.Offset)
+	}
+	if err := tx.Find(&shares).Error; err != nil {
+		return nil, 0, err
+	}
+	return shares, total, nil
+}
+
+func (r *mailboxShareRepo) FindByOwnerID(ctx context.Context, ownerMailboxID string, opts ListOptions) ([]models.MailboxShare, int64, error) {
+	return r.listByField(ctx, "owner_mailbox_id", ownerMailboxID, opts)
+}
+
+func (r *mailboxShareRepo) FindBySharedWithID(ctx context.Context, sharedWithMailboxID string, opts ListOptions) ([]models.MailboxShare, int64, error) {
+	return r.listByField(ctx, "shared_with_mailbox_id", sharedWithMailboxID, opts)
+}
+
+func (r *mailboxShareRepo) ListAll(ctx context.Context, opts ListOptions) ([]models.MailboxShare, int64, error) {
+	var shares []models.MailboxShare
+	var total int64
+	q := r.db.WithContext(ctx).Model(&models.MailboxShare{})
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	tx := q.Order("created_at DESC")
+	if opts.Limit > 0 {
+		tx = tx.Limit(opts.Limit)
+	}
+	if opts.Offset > 0 {
+		tx = tx.Offset(opts.Offset)
+	}
+	if err := tx.Find(&shares).Error; err != nil {
+		return nil, 0, err
+	}
+	return shares, total, nil
+}
+
+func (r *mailboxShareRepo) Create(ctx context.Context, share *models.MailboxShare) error {
+	share.CreatedAt = time.Now().UTC()
+	return r.db.WithContext(ctx).Create(share).Error
+}
+
+func (r *mailboxShareRepo) Update(ctx context.Context, share *models.MailboxShare) error {
+	return r.db.WithContext(ctx).Save(share).Error
+}
+
+func (r *mailboxShareRepo) Delete(ctx context.Context, id string) error {
+	res := r.db.WithContext(ctx).Delete(&models.MailboxShare{}, "id = ?", id)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

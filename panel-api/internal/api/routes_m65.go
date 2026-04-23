@@ -60,7 +60,12 @@ func registerDisclaimerRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
 
 // Wave B: shared folders.
 func registerSharedFolderRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
-	// Implementation lives in panel-api/internal/api/mailbox_share.go (Step 4).
+	RegisterMailboxShareRoutes(g, MailboxShareHandlerConfig{
+		Mailboxes:     deps.Mailboxes,
+		Domains:       deps.Domains,
+		MailboxShares: deps.MailboxShares,
+		Agent:         deps.Agent,
+	})
 }
 
 // Wave C: mail logs.

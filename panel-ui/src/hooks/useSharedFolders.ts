@@ -1,125 +1,75 @@
-// useSharedFolders.ts — M6.5 mailbox sharing / shared folders hooks.
-//
-// M6.5 Step 1: Stub placeholder.
-// Implementation: Wave C (m65/mailbox-shares).
-//
-// TODO: Implement hooks for:
-//   - GET    /mailboxes/:id/shares?page=…      → useMailboxShares
-//   - POST   /mailboxes/:id/shares             → useCreateMailboxShare
-//   - DELETE /shares/:id                       → useDeleteMailboxShare
-//   - PATCH  /shares/:id                       → useUpdateMailboxShare
+// useSharedFolders.ts — M6.5 Step 4 mailbox share hooks.
 
-import { type UseQueryResult, type UseMutationResult } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "../apiClient";
 
-interface MailboxShare {
-  id: string
-  ownerMailboxID: string
-  sharedWithMailboxID: string
-  rights: string // JSON-encoded ACL rights
-  createdAt: string
-  updatedAt: string
+export interface Rights {
+  mayRead?: boolean;
+  mayAddItems?: boolean;
+  mayRemoveItems?: boolean;
+  mayCreateChild?: boolean;
+  mayRename?: boolean;
+  mayDelete?: boolean;
+  mayAdmin?: boolean;
+  maySubmit?: boolean;
 }
 
-export function useMailboxShares(): UseQueryResult<
-  { items: MailboxShare[]; total: number },
-  Error
-> {
-  // TODO: Implement after Wave C lands
-  return {
-    data: undefined,
-    error: null,
-    isLoading: true,
-    isError: false,
-    isSuccess: false,
-    status: "pending",
-    dataUpdatedAt: 0,
-    errorUpdatedAt: 0,
-    failureCount: 0,
-    failureReason: null,
-    isFetched: false,
-    isFetchedAfterMount: false,
-    isFetching: false,
-    isInitialLoading: true,
-    isPaused: false,
-    isPending: true,
-    isPlaceholderData: false,
-    isRefetching: false,
-    isStale: true,
-    refetch: async () => ({} as any),
-  } as any
+export interface MailboxShare {
+  id: string;
+  owner_mailbox_id: string;
+  owner_mailbox_email?: string;
+  shared_with_mailbox_id: string;
+  shared_with_mailbox_email?: string;
+  rights: Rights;
+  created_at: string;
 }
 
-export function useCreateMailboxShare(): UseMutationResult<
-  MailboxShare,
-  Error,
-  { ownerMailboxID: string; sharedWithMailboxID: string; rights?: string },
-  unknown
-> {
-  // TODO: Implement after Wave C lands
-  return {
-    mutate: () => {},
-    mutateAsync: async () => ({} as any),
-    isPending: false,
-    isError: false,
-    isSuccess: false,
-    isIdle: true,
-    data: undefined,
-    error: null,
-    status: "idle",
-    failureCount: 0,
-    failureReason: null,
-    reset: () => {},
-    context: undefined,
-    variables: undefined,
-  } as any
+const QK_ALL = ["mail_shares", "all"];
+
+export function useAllShares() {
+  return useQuery({
+    queryKey: QK_ALL,
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ data: MailboxShare[]; total: number }>("/mail/shares");
+      return data.data ?? [];
+    },
+  });
 }
 
-export function useDeleteMailboxShare(): UseMutationResult<
-  void,
-  Error,
-  string,
-  unknown
-> {
-  // TODO: Implement after Wave C lands
-  return {
-    mutate: () => {},
-    mutateAsync: async () => {},
-    isPending: false,
-    isError: false,
-    isSuccess: false,
-    isIdle: true,
-    data: undefined,
-    error: null,
-    status: "idle",
-    failureCount: 0,
-    failureReason: null,
-    reset: () => {},
-    context: undefined,
-    variables: undefined,
-  } as any
+export function useCreateShare() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      ownerMailboxID,
+      sharedWithMailboxID,
+      rights,
+    }: {
+      ownerMailboxID: string;
+      sharedWithMailboxID: string;
+      rights: Rights;
+    }) => {
+      const { data } = await apiClient.post<MailboxShare>(
+        `/mailboxes/${ownerMailboxID}/shares`,
+        { shared_with_mailbox_id: sharedWithMailboxID, rights },
+      );
+      return data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: QK_ALL }),
+  });
 }
 
-export function useUpdateMailboxShare(): UseMutationResult<
-  MailboxShare,
-  Error,
-  { id: string; rights?: string },
-  unknown
-> {
-  // TODO: Implement after Wave C lands
-  return {
-    mutate: () => {},
-    mutateAsync: async () => ({} as any),
-    isPending: false,
-    isError: false,
-    isSuccess: false,
-    isIdle: true,
-    data: undefined,
-    error: null,
-    status: "idle",
-    failureCount: 0,
-    failureReason: null,
-    reset: () => {},
-    context: undefined,
-    variables: undefined,
-  } as any
+export function useDeleteShare() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      ownerMailboxID,
+      shareID,
+    }: {
+      ownerMailboxID: string;
+      shareID: string;
+    }) => {
+      await apiClient.delete(`/mailboxes/${ownerMailboxID}/shares/${shareID}`);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: QK_ALL }),
+  });
 }

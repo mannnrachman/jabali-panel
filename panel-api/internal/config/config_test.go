@@ -170,6 +170,38 @@ func TestValidate_RejectsBadAddr(t *testing.T) {
 	require.Error(t, cfg.Validate())
 }
 
+// M25 Step 4 added unix-socket listen support in cmd/server/listener.go
+// but initially missed this validator. Guard the contract so a future
+// refactor can't silently regress it back to [host]:port-only.
+func TestValidate_AcceptsUnixSocketAddr(t *testing.T) {
+	cases := []struct {
+		name string
+		addr string
+		ok   bool
+	}{
+		{"unix-prefix-abs-path", "unix:/run/jabali-panel/api.sock", true},
+		{"tcp-loopback", "127.0.0.1:8443", true},
+		{"tcp-all-interfaces", "0.0.0.0:8443", true},
+		{"tcp-port-only", ":8443", true},
+		{"unix-prefix-no-path", "unix:", false},
+		{"unix-prefix-relative", "unix:relative/path", false},
+		{"bare-abs-path", "/run/jabali-panel/api.sock", false}, // require explicit unix: marker
+		{"garbage", "not-a-host-or-port", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Defaults()
+			cfg.Server.Addr = tc.addr
+			err := cfg.Validate()
+			if tc.ok {
+				require.NoError(t, err, "addr %q should validate", tc.addr)
+			} else {
+				require.Error(t, err, "addr %q should be rejected", tc.addr)
+			}
+		})
+	}
+}
+
 func TestValidate_RejectsBadLogLevel(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Log.Level = "shouty"

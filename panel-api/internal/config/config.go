@@ -323,12 +323,29 @@ func applyEnv(cfg *Config) error {
 // addrPattern accepts :PORT or HOST:PORT with a limited charset.
 var addrPattern = regexp.MustCompile(`^([A-Za-z0-9.\-]+)?:[0-9]{1,5}$`)
 
+// isValidServerAddr accepts the two forms listenAndPrepare (cmd/server/
+// listener.go) knows how to open:
+//   - unix:/<abs-path>  → Unix-domain socket
+//   - [host]:port       → TCP
+//
+// M25 Step 4 added the unix: form at the listener but missed extending
+// the Validate hook here, so a config.toml with
+// addr = "unix:/run/jabali-panel/api.sock" failed pre-flight with
+// "expected [host]:port" before the listener ever got a chance.
+func isValidServerAddr(addr string) bool {
+	if strings.HasPrefix(addr, "unix:") {
+		path := strings.TrimPrefix(addr, "unix:")
+		return strings.HasPrefix(path, "/") && len(path) > 1
+	}
+	return addrPattern.MatchString(addr)
+}
+
 // Validate returns nil when cfg is usable; otherwise an error naming the
 // specific field that's wrong. Production is strictly validated; development
 // is permissive so contributors can boot without a full config.
 func (c *Config) Validate() error {
-	if !addrPattern.MatchString(c.Server.Addr) {
-		return fmt.Errorf("server.addr %q: expected [host]:port", c.Server.Addr)
+	if !isValidServerAddr(c.Server.Addr) {
+		return fmt.Errorf("server.addr %q: expected [host]:port or unix:/abs/path", c.Server.Addr)
 	}
 	if c.Server.Env != EnvDevelopment && c.Server.Env != EnvProduction {
 		return fmt.Errorf("server.env %q: must be %s or %s",

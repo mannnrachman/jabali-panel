@@ -1295,13 +1295,11 @@ provision_mariadb() {
   # rejects parens in host). Existing dsn.go ToDriverDSN passes native
   # form through unchanged.
   #
-  # `skip-networking` (the my.cnf knob that closes 3306 entirely) is
-  # NOT enabled yet — phpMyAdmin's PMA_single_signon plumbing still
-  # dials TCP. That's the remaining M25.1 follow-up; the Kratos DSN
-  # flip already shipped (see install/kratos.yml.tmpl, live-verified
-  # on 10.0.3.13 against unix socket). Until phpMyAdmin flips too,
-  # MariaDB still LISTENs on 3306 but our own panel-api + kratos +
-  # pdns dials all use the socket.
+  # `skip-networking` now drops in via install_mariadb_skip_networking()
+  # below — every MariaDB consumer on this host (panel-api, Kratos,
+  # pdns, phpMyAdmin SSO) has been flipped to /var/run/mysqld/mysqld.sock.
+  # The my.cnf knob closes TCP :3306 entirely; the unix socket remains
+  # the sole ingress. Rollback: remove the drop-in file and restart.
   local dsn="${db_user}:${db_pass}@unix(/var/run/mysqld/mysqld.sock)/${db_name}?parseTime=true&charset=utf8mb4&loc=UTC"
 
   # Rewrite the line without sed (DSNs contain `&` which sed would expand
@@ -1315,6 +1313,61 @@ provision_mariadb() {
   rm -f "$tmp"
 
   _ok "MariaDB provisioned: DB=${db_name}, user=${db_user}"
+}
+
+# ---------- step 2.5b: MariaDB skip-networking (M25.1) ----------------------
+#
+# Drops a tiny drop-in conf that tells mariadbd NOT to bind TCP :3306.
+# Everything on this host — panel-api, Kratos, pdns, phpMyAdmin SSO —
+# already connects via /var/run/mysqld/mysqld.sock. Closing the TCP
+# listener shrinks the attack surface to the unix socket's POSIX ACL.
+#
+# Why a drop-in under mariadb.conf.d/ rather than editing 50-server.cnf:
+# 50-server.cnf is package-owned. Every apt upgrade that ships a new
+# 50-server.cnf would either clobber our edit or prompt dpkg for
+# manual resolution. Drop-ins survive upgrades unchanged.
+#
+# Rollback (if some future service needs TCP again): `trash
+# /etc/mysql/mariadb.conf.d/99-jabali-skip-networking.cnf && systemctl
+# restart mariadb`. That re-opens :3306 without touching the
+# package-owned config.
+install_mariadb_skip_networking() {
+  local dropin="/etc/mysql/mariadb.conf.d/99-jabali-skip-networking.cnf"
+  local desired=$'# Managed by jabali install.sh — M25.1. Do NOT hand-edit.\n# Closes MariaDB TCP :3306; every consumer on this host reaches MariaDB\n# via /var/run/mysqld/mysqld.sock. Removing this file re-opens TCP.\n[mysqld]\nskip-networking\n'
+
+  if [[ -f "$dropin" ]] && cmp -s <(printf '%s' "$desired") "$dropin"; then
+    _log "MariaDB skip-networking drop-in already current"
+    return
+  fi
+
+  _log "installing MariaDB skip-networking drop-in → $dropin"
+  local tmp
+  tmp="$(mktemp --tmpdir jabali-mariadb-dropin.XXXXXX)"
+  printf '%s' "$desired" >"$tmp"
+  install -m 0644 -o root -g root "$tmp" "$dropin"
+  rm -f "$tmp"
+
+  systemctl restart mariadb
+
+  # Wait for socket to come back up before returning — downstream
+  # steps (kratos migrations, pdns start) will fail if we race the
+  # restart.
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if mariadb -e 'SELECT 1' >/dev/null 2>&1; then break; fi
+    sleep 1
+  done
+  if ! mariadb -e 'SELECT 1' >/dev/null 2>&1; then
+    _die "MariaDB did not come back up after skip-networking drop-in; rollback: trash $dropin && systemctl restart mariadb"
+  fi
+
+  # Defensive: verify :3306 is actually gone. If mariadb ignored the
+  # drop-in (wrong path, syntax error), fail loud rather than silently
+  # leaving an open TCP port.
+  if ss -tlnH 'sport = :3306' | grep -q LISTEN; then
+    _die "MariaDB still LISTENs on :3306 after drop-in — skip-networking did not take effect"
+  fi
+  _ok "MariaDB TCP :3306 closed (skip-networking active)"
 }
 
 # ---------- step 2.6: PowerDNS authoritative nameserver ----------------------
@@ -3129,9 +3182,15 @@ $cfg['Servers'][1]['SignonLogoutURL'] = '/logout';
 // MySQL connection details
 // Note: sso.php will override these with the per-user values from the panel API.
 // These defaults are NOT used for authentication; they're fallbacks.
+// M25.1: default to Unix socket so that even without SSO (e.g. a direct
+// /phpmyadmin/index.php visit) phpMyAdmin's connect path matches what
+// skip-networking in my.cnf permits. Port kept for wire-level
+// compatibility with older signon plugins; with connect_type=socket
+// phpMyAdmin ignores it.
 $cfg['Servers'][1]['host'] = 'localhost';
 $cfg['Servers'][1]['port'] = 3306;
-$cfg['Servers'][1]['connect_type'] = 'tcp';
+$cfg['Servers'][1]['connect_type'] = 'socket';
+$cfg['Servers'][1]['socket'] = '/var/run/mysqld/mysqld.sock';
 $cfg['Servers'][1]['compress'] = false;
 
 // No control connection. phpMyAdmin uses the "controluser" for its
@@ -4505,6 +4564,7 @@ main() {
   # would leave a fresh install with only the DB URL and no server config.
   write_env_file
   provision_mariadb
+  install_mariadb_skip_networking
   install_powerdns
   bootstrap_pdns_self_zone
   # M6.3: recursor owns loopback :53 and forwards panel-authoritative zones

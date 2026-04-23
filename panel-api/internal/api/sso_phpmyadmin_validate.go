@@ -45,9 +45,19 @@ type ssoValidateResponse struct {
 	Password string `json:"password,omitempty"`
 	Host     string `json:"host,omitempty"`
 	Port     int    `json:"port,omitempty"`
-	OnlyDB   string `json:"only_db,omitempty"`
-	DB       string `json:"db,omitempty"`
+	// Socket is the MariaDB unix socket path; non-empty means sso.php
+	// must connect via socket (connect_type=socket in phpMyAdmin's
+	// cfgupdate) rather than TCP. M25.1: once `skip-networking` lands
+	// in my.cnf, Host/Port become advisory only.
+	Socket string `json:"socket,omitempty"`
+	OnlyDB string `json:"only_db,omitempty"`
+	DB     string `json:"db,omitempty"`
 }
+
+// mariaDBSocketPath is the Debian/MariaDB default and what install.sh
+// provisions. Duplicated from panel-api/internal/db/dsn.go so the
+// validator response doesn't import a heavier package.
+const mariaDBSocketPath = "/var/run/mysqld/mysqld.sock"
 
 type ssoErrorResponse struct {
 	Error string `json:"error"`
@@ -144,8 +154,9 @@ func (h *ssoPhpMyAdminValidateHandler) validate(c *gin.Context) {
 	resp := ssoValidateResponse{
 		User:     *user.MysqladminUsername,
 		Password: string(plaintextBytes),
-		Host:     "127.0.0.1",
+		Host:     "localhost",
 		Port:     3306,
+		Socket:   mariaDBSocketPath,
 		OnlyDB:   db.Name,
 		DB:       db.Name,
 	}

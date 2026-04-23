@@ -107,8 +107,9 @@ func TestValidate_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "testuser_mysqladmin", resp.User)
 	assert.Equal(t, "secret123", resp.Password)
-	assert.Equal(t, "127.0.0.1", resp.Host)
+	assert.Equal(t, "localhost", resp.Host)
 	assert.Equal(t, 3306, resp.Port)
+	assert.Equal(t, "/var/run/mysqld/mysqld.sock", resp.Socket)
 	assert.Equal(t, "testdb", resp.OnlyDB)
 	assert.Equal(t, "testdb", resp.DB)
 }

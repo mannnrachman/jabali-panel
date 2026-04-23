@@ -113,6 +113,18 @@ if (!is_string($resp['user']) || !is_string($resp['password']) ||
     jabali_sso_fail('validator payload type mismatch');
 }
 
+// M25.1: validator may include `socket` (MariaDB unix socket path). When
+// present, phpMyAdmin connects via the socket instead of TCP — `skip-
+// networking` in my.cnf then closes 3306 entirely. Absent `socket`, we
+// fall back to the original tcp host/port contract.
+$resp_socket = '';
+if (isset($resp['socket'])) {
+    if (!is_string($resp['socket'])) {
+        jabali_sso_fail('validator socket type mismatch');
+    }
+    $resp_socket = $resp['socket'];
+}
+
 // Set secure session cookie parameters BEFORE session_start. The `path`
 // must match $cfg['CookiePath'] in /opt/phpmyadmin/current/config.inc.php
 // (currently '/phpmyadmin/'). If they differ, the browser stores two
@@ -155,10 +167,19 @@ $_SESSION['PMA_single_signon_host']     = $resp['host'];
 $_SESSION['PMA_single_signon_port']     = (string) $resp['port'];
 // cfgupdate lets signon override per-request cfg values; we scope the
 // visible database list to the one the user is SSOing into so the user
-// cannot browse sibling databases they do not own.
-$_SESSION['PMA_single_signon_cfgupdate'] = [
+// cannot browse sibling databases they do not own. When the validator
+// ships a socket path (M25.1), also pin connect_type/socket here so
+// phpMyAdmin's mysqli_real_connect uses the UDS regardless of what
+// config.inc.php set as its default — the cfgupdate path is the only
+// one phpMyAdmin honors with per-SSO values.
+$cfgupdate = [
     'only_db' => $resp['only_db'],
 ];
+if ($resp_socket !== '') {
+    $cfgupdate['connect_type'] = 'socket';
+    $cfgupdate['socket']       = $resp_socket;
+}
+$_SESSION['PMA_single_signon_cfgupdate'] = $cfgupdate;
 
 // Redirect to phpMyAdmin with the database pre-selected.
 // urlencode ensures the DB name is safe in the Location header.

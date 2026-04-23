@@ -17,6 +17,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/nginxrules"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/redirects"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler/phases"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/sso"
 )
@@ -378,6 +379,16 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 		// M6.3: ensure the recursor has a forwarder for this zone so
 		// local resolution hits pdns-server on loopback :5300. Idempotent.
 		r.reconcileRecursorForward(ctx, name)
+
+		// M6.5: Email features (forwarders, autoresponders, catch-all, disclaimer,
+		// shared folders, logs). Each feature is registered as a Phase during init(),
+		// enabling parallel Wave development without file collisions (ADR-0051).
+		// This is a no-op until Wave B/C populate the phase implementations.
+		// Domain-level phases called with nil context; mailbox phases deferred to Wave B+.
+		if err := phases.ReconcileDomainAll(ctx, domain, nil); err != nil {
+			r.log.Error("reconcile: M6.5 phase domain reconciliation failed", "domain", name, "err", err)
+			// Log error but continue — one phase failure doesn't abort the entire domain.
+		}
 	}
 
 	// 2. Disabled DB domain that IS in agent set -> call domain.create with is_enabled=false

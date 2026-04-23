@@ -281,6 +281,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				SSLReconciler: deps.Reconciler,
 			})
 		}
+		// M6.5 Email features: forwarders, autoresponders, catch-all, disclaimer,
+		// shared folders, logs. All sub-routes live in routes_m65.go and are
+		// filled in by parallel Wave B/C steps (ADR-0051).
+		api.RegisterM65Routes(v1)
 		if deps.Domains != nil && deps.DNSZones != nil && deps.DNSRecords != nil {
 			api.RegisterDNSRoutes(v1, api.DNSHandlerConfig{
 				Domains:        deps.Domains,

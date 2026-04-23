@@ -233,6 +233,16 @@ type Domain struct {
 	// UNIQUE (see migration 000057 for the reasoning).
 	IsPanelPrimary bool `gorm:"type:tinyint(1);not null;default:0;index:ix_domains_panel_primary" json:"is_panel_primary"`
 
+	// M6.5 Email Features: Catch-All, Disclaimer (per-domain fields).
+	// CatchallTarget is the email address that receives unmatched domain mail.
+	// Stalwart integration: x:Domain.catchAllAddress (ADR-0051).
+	CatchallTarget *string `gorm:"type:varchar(255)" json:"catchall_target,omitempty"`
+
+	// DisclaimerEnabled controls whether to append a text disclaimer to
+	// outbound mail from this domain. DisclaimerText holds the text.
+	// Stalwart integration: x:SieveSystemScript (ADR-0051).
+	DisclaimerEnabled bool    `gorm:"type:tinyint(1);not null;default:0" json:"disclaimer_enabled"`
+	DisclaimerText    *string `gorm:"type:text" json:"disclaimer_text,omitempty"`
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }

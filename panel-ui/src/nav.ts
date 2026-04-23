@@ -171,10 +171,10 @@ export const userNav: NavItem[] = [
     path: "/jabali-panel/cron",
   },
   {
-    key: "mailboxes",
-    label: "Email",
+    key: "mail",
+    label: "Mail",
     icon: navIcon(MailOutlined),
-    path: "/jabali-panel/mailboxes",
+    path: "/jabali-panel/mail/mailboxes",
   },
 ];
 

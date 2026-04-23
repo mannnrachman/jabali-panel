@@ -64,12 +64,48 @@ func ensurePanelPrimary(ctx context.Context, hostname string) error {
 	domains := domainRepoFromDB()
 	users := userRepo()
 
+	// RFC 6761 reserved TLDs cannot accept real mail — Stalwart refuses
+	// `Domain/set` with invalidPatch when given a .local / .test / etc.
+	// name, so the reconciler's ensurePanelPrimaryDKIM loop crash-spins
+	// forever. Create the row with email_enabled=0 on reserved TLDs and
+	// log a hint; the operator flips email on manually (or re-runs
+	// install.sh after setting a routable hostname).
+	mailOK := hostnameIsMailRoutable(hostname)
+
 	// Find the existing panel-primary row, if any.
 	existing, err := domains.FindPanelPrimary(ctx)
 	switch {
 	case err == nil:
-		// Row exists. Same hostname → no-op. Different → update name.
+		// Row exists. Same hostname → check email_enabled matches
+		// routability; if mismatch (e.g. old install created
+		// email_enabled=1 on a .local hostname before the guard
+		// landed), reconcile to the correct state.
 		if existing.Name == hostname {
+			if existing.EmailEnabled != mailOK {
+				updates := map[string]interface{}{
+					"email_enabled": mailOK,
+					"updated_at":    time.Now(),
+				}
+				if !mailOK {
+					// Flipping OFF: clear any DKIM state the reconciler
+					// may have partially persisted, so a future flip
+					// back ON re-provisions fresh DKIM.
+					updates["dkim_selector"] = nil
+					updates["dkim_public_key"] = nil
+					updates["email_enabled_at"] = nil
+				}
+				if err := sharedDB.WithContext(ctx).
+					Model(&models.Domain{}).
+					Where("id = ?", existing.ID).
+					Updates(updates).Error; err != nil {
+					return fmt.Errorf("update panel-primary email_enabled: %w", err)
+				}
+				fmt.Printf("panel-primary domain row email_enabled reconciled: %v -> %v (id=%s, name=%s)\n", existing.EmailEnabled, mailOK, existing.ID, existing.Name)
+				if !mailOK {
+					fmt.Printf("NOTE: %q uses a reserved TLD (RFC 6761); email disabled. Set a routable hostname and re-run to activate mail.\n", hostname)
+				}
+				return nil
+			}
 			fmt.Printf("panel-primary domain row already present (id=%s, name=%s)\n", existing.ID, existing.Name)
 			return nil
 		}
@@ -78,19 +114,36 @@ func ensurePanelPrimary(ctx context.Context, hostname string) error {
 		// every field we might need here (it DOES include name, but we're
 		// bypassing the UpdatedAt-bump allowlist anyway by going through
 		// the db directly — simpler than plumbing a new repo method for
-		// a rare case).
+		// a rare case). Also flip email_enabled to match the new
+		// hostname's routability: routable→reserved clears DKIM and
+		// disables mail (reconciler stops crash-spinning); reserved→
+		// routable re-enables, reconciler provisions fresh DKIM next
+		// tick.
 		oldName := existing.Name
+		updates := map[string]interface{}{
+			"name":          hostname,
+			"email_enabled": mailOK,
+			"updated_at":    time.Now(),
+		}
+		if !mailOK {
+			// Clear stale DKIM material so UI shows "not published" and
+			// the reconciler's idempotent DKIM-exists guard doesn't skip
+			// a future re-enable when hostname flips back to routable.
+			updates["dkim_selector"] = nil
+			updates["dkim_public_key"] = nil
+			updates["email_enabled_at"] = nil
+		}
 		if err := sharedDB.WithContext(ctx).
 			Model(&models.Domain{}).
 			Where("id = ?", existing.ID).
-			Updates(map[string]interface{}{
-				"name":       hostname,
-				"updated_at": time.Now(),
-			}).Error; err != nil {
+			Updates(updates).Error; err != nil {
 			return fmt.Errorf("update panel-primary hostname: %w", err)
 		}
-		fmt.Printf("panel-primary domain row hostname updated: %q -> %q (id=%s)\n", oldName, hostname, existing.ID)
+		fmt.Printf("panel-primary domain row hostname updated: %q -> %q (id=%s, email_enabled=%v)\n", oldName, hostname, existing.ID, mailOK)
 		fmt.Printf("NOTE: old self-zone and DKIM key for %q are orphaned; see runbook for manual cleanup.\n", oldName)
+		if !mailOK {
+			fmt.Printf("NOTE: %q uses a reserved TLD (RFC 6761); email disabled. Set a routable hostname and re-run to activate mail.\n", hostname)
+		}
 		return nil
 
 	case errors.Is(err, repository.ErrPanelPrimaryNotFound):
@@ -109,9 +162,13 @@ func ensurePanelPrimary(ctx context.Context, hostname string) error {
 			return nil
 		}
 
-		// INSERT. is_panel_primary=true, email_enabled=true — reconciler
-		// picks it up on next tick and provisions DKIM + Stalwart + nginx
-		// mail vhost + MX/SPF/DMARC.
+		// INSERT. is_panel_primary=true. email_enabled depends on whether
+		// the hostname's TLD is mail-routable: Stalwart rejects RFC 6761
+		// reserved TLDs (.local, .test, etc.) at Domain/set, so we must
+		// NOT ask the reconciler to provision DKIM/Stalwart/vhost for
+		// those. The row still exists (delete-protected, visible in
+		// Settings → Email with a hint) so the operator sees what's
+		// happening.
 		now := time.Now()
 		d := &models.Domain{
 			ID:             ids.NewULID(),
@@ -120,7 +177,7 @@ func ensurePanelPrimary(ctx context.Context, hostname string) error {
 			DocRoot:        "", // panel-primary has no public_html (mail-only).
 			IsEnabled:      true,
 			IsPanelPrimary: true,
-			EmailEnabled:   true,
+			EmailEnabled:   mailOK,
 			SSLEnabled:     true,
 			IndexPriority:  "html_first",
 			CreatedAt:      now,
@@ -139,11 +196,37 @@ func ensurePanelPrimary(ctx context.Context, hostname string) error {
 			return fmt.Errorf("mark panel-primary: %w", err)
 		}
 		fmt.Printf("panel-primary domain row created (id=%s, name=%s)\n", d.ID, hostname)
+		if !mailOK {
+			fmt.Printf("NOTE: %q uses a reserved TLD (RFC 6761); email_enabled=0. Set a routable hostname and re-run install.sh to activate mail.\n", hostname)
+		}
 		return nil
 
 	default:
 		return fmt.Errorf("find panel-primary: %w", err)
 	}
+}
+
+// hostnameIsMailRoutable rejects RFC 6761 reserved TLDs where Stalwart's
+// Domain/set would refuse with invalidPatch. Matches on the final label
+// (case-insensitive). Empty hostname → false (defensive; the caller
+// already validates emptiness earlier).
+func hostnameIsMailRoutable(hostname string) bool {
+	host := strings.ToLower(strings.TrimRight(strings.TrimSpace(hostname), "."))
+	if host == "" {
+		return false
+	}
+	lastDot := strings.LastIndex(host, ".")
+	var tld string
+	if lastDot < 0 {
+		tld = host
+	} else {
+		tld = host[lastDot+1:]
+	}
+	switch tld {
+	case "local", "localhost", "invalid", "test", "example":
+		return false
+	}
+	return true
 }
 
 // findFirstAdminID scans up to 100 users looking for the first admin.

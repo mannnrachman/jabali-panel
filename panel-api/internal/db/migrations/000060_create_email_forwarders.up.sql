@@ -17,11 +17,17 @@ CREATE TABLE email_forwarders (
   CONSTRAINT fk_fwd_mailbox FOREIGN KEY (mailbox_id) REFERENCES mailboxes(id) ON DELETE CASCADE,
   CONSTRAINT fk_fwd_domain FOREIGN KEY (domain_id) REFERENCES domains(id) ON DELETE CASCADE,
 
-  -- Alias local-part must be unique per domain across ALL mailboxes (Stalwart rejects duplicates)
-  -- Generated column so MariaDB can enforce uniqueness only for aliases
-  alias_key VARCHAR(320) AS (CASE WHEN type='alias' THEN CONCAT(domain_id, '::', local_part) ELSE NULL END) STORED UNIQUE,
+  -- Aliases: (domain_id, local_part) uniqueness. External forwards leave local_part
+  -- NULL and MariaDB treats multiple NULLs as distinct in UNIQUE keys — so external
+  -- rows do NOT collide here. Stalwart independently rejects cross-mailbox alias
+  -- collisions at the JMAP layer if anything slips past the app check.
+  --
+  -- (MariaDB 1901 rejects the generated-column CASE pattern originally tried for
+  -- NULL-aware uniqueness; composite unique key delivers the same constraint for
+  -- our use case.)
+  UNIQUE KEY uq_alias_local (domain_id, local_part),
 
-  -- For external forwards: prevent duplicate (mailbox_id, type, target) pairs
+  -- External forwards: prevent duplicate (mailbox_id, type, target) pairs
   UNIQUE KEY uq_external_forward (mailbox_id, type, target),
 
   KEY idx_domain (domain_id),

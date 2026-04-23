@@ -213,7 +213,7 @@ export const UserMailboxesPage = () => {
           style={{ width: "100%", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", rowGap: 8 }}
         >
           <Typography.Title level={3} style={{ margin: 0 }}>
-            <MailOutlined /> Mailboxes
+            Mailboxes
           </Typography.Title>
           <Tooltip
             title={
@@ -247,7 +247,7 @@ export const UserMailboxesPage = () => {
           loading={anyMailboxLoading && rows.length === 0}
           dataSource={filteredRows}
           pagination={{ pageSize: 20, showSizeChanger: true }}
-          locale={{ emptyText: <Empty description="No mailboxes yet" /> }}
+          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No mailboxes yet" /> }}
           columns={[
             {
               title: "Email",

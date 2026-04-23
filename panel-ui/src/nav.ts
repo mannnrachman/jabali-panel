@@ -16,6 +16,7 @@ import {
   AppstoreOutlined,
   ClockCircleOutlined,
   CloudServerOutlined,
+  CodeOutlined,
   DatabaseOutlined,
   FolderOutlined,
   GlobalOutlined,
@@ -137,7 +138,7 @@ export const userNav: NavItem[] = [
   {
     key: "php-settings",
     label: "PHP Settings",
-    icon: navIcon(ThunderboltOutlined),
+    icon: navIcon(CodeOutlined),
     path: "/jabali-panel/php-settings",
   },
   {

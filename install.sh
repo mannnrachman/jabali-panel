@@ -4156,8 +4156,20 @@ _install_bulwark_env() {
   if [[ ! -f "$src" ]]; then
     _die "Bulwark env template not found at $src"
   fi
-  if [[ -z "${JABALI_HOSTNAME:-}" ]]; then
-    _die "JABALI_HOSTNAME is unset; cannot render Bulwark env"
+
+  # Resolve hostname: fresh install → JABALI_SRV_HOSTNAME; re-run →
+  # parse config.toml; last resort → hostname -f. Mirrors the pattern
+  # used by install_kratos so this works on jabali-update too.
+  local _bwrk_host="${JABALI_SRV_HOSTNAME:-}"
+  if [[ -z "$_bwrk_host" && -f /etc/jabali-panel/config.toml ]]; then
+    _bwrk_host="$(awk -F'[= "]+' '/^[[:space:]]*hostname[[:space:]]*=/{print $2; exit}' \
+      /etc/jabali-panel/config.toml)"
+  fi
+  if [[ -z "$_bwrk_host" ]]; then
+    _bwrk_host="$(hostname -f 2>/dev/null || hostname 2>/dev/null || true)"
+  fi
+  if [[ -z "$_bwrk_host" ]]; then
+    _die "cannot resolve panel hostname for Bulwark env — pass --hostname or ensure config.toml has 'hostname'"
   fi
 
   # Render into a tmpfile first so we can diff by hash before writing.
@@ -4166,7 +4178,7 @@ _install_bulwark_env() {
   local tmp
   tmp=$(mktemp)
   # shellcheck disable=SC2016
-  sed "s|\${JABALI_SERVER_HOSTNAME}|${JABALI_HOSTNAME}|g" "$src" >"$tmp"
+  sed "s|\${JABALI_SERVER_HOSTNAME}|${_bwrk_host}|g" "$src" >"$tmp"
 
   local new_sha old_sha=""
   new_sha=$(sha256sum "$tmp" | awk '{print $1}')

@@ -65,7 +65,15 @@ SERVICE_NAME="${JABALI_SERVICE_NAME:-jabali-panel}"
 # testing we want the panel reachable over the LAN without needing nginx.
 # In production, flip this to 127.0.0.1:8443 and put nginx in front so TLS
 # termination and rate limiting happen at the proxy (blueprint §5.1).
-PANEL_ADDR="${JABALI_PANEL_ADDR:-0.0.0.0:8443}"
+# M25 Step 4: default bind is the Unix socket. nginx terminates TLS on
+# :8443 and proxies to /run/jabali-panel/api.sock (see
+# install/nginx/jabali-panel-vhost.conf.tmpl + ADR-0050). Pre-M25 the
+# default was 0.0.0.0:8443 — leaving that default here meant fresh
+# installs seeded config.toml + the env file with a TCP bind, and the
+# Step 4 in-place migration had to sweep it back out. Keeping the
+# override so operators who really need TCP (debug, split-host) can
+# still set JABALI_PANEL_ADDR=127.0.0.1:8443 explicitly.
+PANEL_ADDR="${JABALI_PANEL_ADDR:-unix:/run/jabali-panel/api.sock}"
 BIN_PATH="/usr/local/bin/jabali-panel"
 AGENT_BIN_PATH="/usr/local/bin/jabali-agent"
 AGENT_SOCKET="/run/jabali/agent.sock"
@@ -2634,13 +2642,20 @@ start_and_verify() {
     _die "panel-api still bound on TCP :8443 — config didn't apply or rolled back to TCP"
   fi
 
-  # In-place migration: rewrite an existing config.toml's addr from the
-  # legacy TCP form to the unix form. Same rationale as the kratos
-  # admin/public migrations in install_kratos.
+  # In-place migration: rewrite an existing config.toml's addr from any
+  # TCP form (127.0.0.1:8443, 0.0.0.0:8443, [::]:8443, :8443) to the unix
+  # form. The legacy PANEL_ADDR default was 0.0.0.0:8443, so installs
+  # seeded before M25 have that — the narrower 127.0.0.1-only match
+  # (M25 ship 2026-04-23) missed them and panel-api crash-looped on :8443
+  # EADDRINUSE (each restart raced its predecessor's TIME_WAIT close).
+  # Guarded by "is currently TCP AND not already unix:" so rerunning on
+  # a migrated box is a no-op.
   local panel_config="/etc/jabali-panel/config.toml"
-  if [[ -f "$panel_config" ]] && grep -qE '^\s*addr\s*=\s*"127\.0\.0\.1:8443"' "$panel_config"; then
+  if [[ -f "$panel_config" ]] \
+     && grep -qE '^\s*addr\s*=\s*"[^"]*:8443"' "$panel_config" \
+     && ! grep -qE '^\s*addr\s*=\s*"unix:' "$panel_config"; then
     _log "migrating config.toml addr from TCP to unix socket (M25 Step 4)"
-    sed -i 's|^\(\s*addr\s*=\s*\)"127\.0\.0\.1:8443"|\1"unix:/run/jabali-panel/api.sock"|' "$panel_config"
+    sed -i -E 's|^(\s*addr\s*=\s*)"[^"]*:8443"|\1"unix:/run/jabali-panel/api.sock"|' "$panel_config"
     _ok "config.toml addr migrated"
     _log "restarting $SERVICE_NAME after addr migration"
     systemctl restart "$SERVICE_NAME"

@@ -12,8 +12,8 @@
 import type { ReactNode } from "react";
 
 import {
-  AppstoreAddOutlined,
-  ClockCircleOutlined,
+  AppstoreOutlined,
+  CalendarCheckOutlined,
   CloudServerOutlined,
   CodeOutlined,
   DatabaseOutlined,
@@ -21,10 +21,10 @@ import {
   GlobalOutlined,
   HomeOutlined,
   KeyOutlined,
-  LockOutlined,
   MailOutlined,
   PackageOpenOutlined,
   SettingOutlined,
+  ShieldCheckOutlined,
   TeamOutlined,
   ThunderboltOutlined,
 } from "@icons";
@@ -81,7 +81,7 @@ export const adminNav: NavItem[] = [
   {
     key: "ssl",
     label: "SSL Manager",
-    icon: navIcon(LockOutlined),
+    icon: navIcon(ShieldCheckOutlined),
     path: "/jabali-admin/ssl",
   },
   {
@@ -99,7 +99,7 @@ export const adminNav: NavItem[] = [
   {
     key: "applications",
     label: "Applications",
-    icon: navIcon(AppstoreAddOutlined),
+    icon: navIcon(AppstoreOutlined),
     path: "/jabali-admin/applications",
   },
   {
@@ -132,7 +132,7 @@ export const userNav: NavItem[] = [
   {
     key: "ssl",
     label: "SSL Manager",
-    icon: navIcon(LockOutlined),
+    icon: navIcon(ShieldCheckOutlined),
     path: "/jabali-panel/ssl",
   },
   {
@@ -156,7 +156,7 @@ export const userNav: NavItem[] = [
   {
     key: "applications",
     label: "Applications",
-    icon: navIcon(AppstoreAddOutlined),
+    icon: navIcon(AppstoreOutlined),
     path: "/jabali-panel/applications",
   },
   {
@@ -168,7 +168,7 @@ export const userNav: NavItem[] = [
   {
     key: "cron",
     label: "Cron",
-    icon: navIcon(ClockCircleOutlined),
+    icon: navIcon(CalendarCheckOutlined),
     path: "/jabali-panel/cron",
   },
   {

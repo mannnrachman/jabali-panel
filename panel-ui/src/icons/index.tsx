@@ -15,6 +15,7 @@ import {
   ArrowLeft,
   ArrowLeftRight,
   Book,
+  CalendarCheck,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -170,6 +171,8 @@ export const MenuOutlined = shim(Menu);
 export const MoreOutlined = shim(MoreHorizontal);
 export const PoweroffOutlined = shim(Power);
 export const SafetyOutlined = shim(ShieldCheck);
+export const ShieldCheckOutlined = shim(ShieldCheck);
+export const CalendarCheckOutlined = shim(CalendarCheck);
 export const SwapOutlined = shim(ArrowLeftRight);
 export const ToolOutlined = shim(Wrench);
 export const AppstoreLayoutOutlined = shim(Grip);

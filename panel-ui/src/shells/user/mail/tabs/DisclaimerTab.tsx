@@ -96,8 +96,8 @@ export const DisclaimerTab = () => {
           Disclaimer
         </Typography.Title>
         <Typography.Paragraph type="secondary">
-          Append disclaimer text to outbound mail from a domain. Applied at the mail server; text/plain parts
-          only (HTML body coverage pending — see ADR-0052).
+          Append disclaimer text to outbound mail from a domain. Applied at the mail server to both
+          plain-text and HTML body parts.
         </Typography.Paragraph>
 
         <Table

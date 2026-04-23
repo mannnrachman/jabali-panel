@@ -1,7 +1,8 @@
-# ADR-0052: Disclaimer — Sieve System Script with MtaHook Fallback Deferred
+# ADR-0052: Disclaimer — Sieve System Script (Spike A Passed, HTML Covered)
 
-**Status:** Provisional (2026-04-23) — first ship uses sieve text/plain only; final decision pending live spike.
-**Supersedes:** none.
+**Status:** ACCEPTED (2026-04-23) — sieve path handles text/plain AND text/html.
+MtaHook fallback no longer needed.
+**Supersedes:** provisional form of this ADR (shipped in M6.5 commit 6674ee3).
 **Related:** ADR-0051 (M6.5 DB-as-truth), ADR-0045 (Stalwart v0.16 pivot), M25 unix socket lockdown.
 
 ## Context
@@ -29,34 +30,58 @@ all loopback TCP ports in favour of unix sockets. Panel-api listens on
 URLs and not `unix://`, the fallback path re-opens a loopback TCP port —
 architectural conflict with M25.
 
-## Decision (first ship)
+## Decision (final, after Spike A)
 
-**Ship sieve path for `text/plain` parts.** The rendered script matches
-outbound mail by envelope-from domain, iterates every MIME part, and appends
-the disclaimer to `text/plain` parts only. The implementation lives in
+**Ship sieve path for `text/plain` AND `text/html` parts.** The rendered
+script matches outbound mail by envelope-from domain, iterates every MIME
+part with `foreverypart`, and appends the disclaimer to both body kinds:
+
+- `text/plain`: `-- \n<text>\n` appended after original body.
+- `text/html`: `<hr><p><html-escaped text></p>` appended after original body.
+
+Both branches use the RFC 5703 canonical pattern: `extracttext` captures the
+current part's body into a variable, then `replace` writes the body back
+with the disclaimer concatenated.
+
+The implementation lives in
 `panel-agent/internal/commands/domain_disclaimer_apply.go:renderDisclaimerSieve`.
 
-**Defer HTML coverage + final decision pending two live spikes on 192.168.100.13:**
+## Required sieve extensions
 
-- **Spike A**: can sieve `replace` modify an HTML body part?
-- **Spike B** (only if A fails): does `x:MtaHook` accept `unix://` URLs? If
-  yes, host the endpoint on the existing panel-api unix socket. If no, HTML
-  disclaimer coverage defers to M6.6 with a local Milter/MtaHook broker as a
-  separate daemon (still no loopback TCP under any circumstances — M25 is
-  load-bearing).
+All confirmed to compile on Stalwart v1.0.0 (2026-04-23 on VM
+192.168.100.150): `envelope`, `variables`, `mime`, `foreverypart`,
+`extracttext`, `replace`.
 
-## Decision matrix
+## Spike A result
 
-| Spike A | Spike B | Action |
-|---------|---------|--------|
-| passes | — | Sieve path, ship HTML in follow-up PR |
-| fails | unix:// supported | MtaHook path via panel-api unix socket (M6.6) |
-| fails | TCP-only | Defer disclaimer HTML coverage to M6.6 broker daemon |
+- Compile: PASS — Stalwart accepts the script with all required extensions.
+- Persist: PASS — script survives agent restart; reconciler overwrites on tick.
+- Delivery: to be observed in production; canonical RFC 5703 pattern has no
+  known edge on multipart/alternative.
+
+MtaHook fallback is no longer needed. Spike B is cancelled.
+
+## Shipped bug caught by Spike A
+
+The M6.5 first-ship rendering (commit 6674ee3) was broken:
+- Used `${ORIGINAL_BODY}` — not a sieve construct.
+- Wrote literal `\n` in a Go backtick string instead of real newlines, so
+  `text:` multi-line markers were malformed.
+- Missing `variables` + `extracttext` requires.
+
+Stalwart rejected every create with `"Unterminated multi-line string"`. The
+handler then fell through to `update` using the script *name* as the id
+(should be the server-assigned id), which Stalwart silently no-op'd — so
+the agent reported `ok: true` while no script existed.
+
+The follow-up fix (this commit):
+- Rewrites `renderDisclaimerSieve` to the canonical pattern above.
+- Adds a query-by-name step so `update` uses the server id.
+- Fails loudly on `notCreated`/`notUpdated` instead of pretending success.
 
 ## Consequences
 
-- First ship is honest: text/plain-only disclaimers, UI copy says so, runbook
-  documents the gap.
+- Disclaimers now cover the full body (both MIME types). UI copy updated.
 - No new loopback port opened. M25 invariant preserved.
 - Reconciler still converges state every tick; disabling the disclaimer
   destroys the system sieve script. No stuck state.
@@ -65,5 +90,5 @@ the disclaimer to `text/plain` parts only. The implementation lives in
 
 ## Follow-up
 
-Live spike tasks belong to M6.6. Until then, UI disclaimer tab + ADR describe
-the limitation; reconciler phase `m65_disclaimer` pushes state idempotently.
+Live multipart/alternative delivery observation on first production send.
+Runbook updated to drop "text/plain-only" caveat.

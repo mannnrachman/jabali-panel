@@ -296,6 +296,7 @@ export const FileManagerPage = () => {
   const [renameNewName, setRenameNewName] = useState("");
   const renameSubmitting = useRef(false);
 
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; entry: FileEntry } | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [previewContent, setPreviewContent] = useState("");
@@ -836,6 +837,53 @@ export const FileManagerPage = () => {
     return items;
   }, [currentPath, rootPath]);
 
+  const buildRowMenuItems = (entry: FileEntry) => [
+    ...(!entry.is_dir
+      ? [
+          {
+            key: "download",
+            icon: <DownloadOutlined />,
+            label: "Download",
+            onClick: () => handleDownload(entry),
+          },
+          {
+            key: "preview",
+            icon: <EyeOutlined />,
+            label: "Preview",
+            onClick: () => void handlePreview(entry),
+          },
+        ]
+      : []),
+    ...(isTextEditable(entry)
+      ? [
+          {
+            key: "edit",
+            icon: <EditOutlined />,
+            label: "Edit",
+            onClick: () => void openEditor(entry),
+          },
+        ]
+      : []),
+    {
+      key: "rename",
+      icon: <EditOutlined />,
+      label: "Rename",
+      onClick: () => openRename(entry),
+    },
+    {
+      key: "permissions",
+      icon: <LockOutlined />,
+      label: "Permissions",
+      onClick: () => openSingleChmod(entry),
+    },
+    {
+      key: "delete",
+      danger: true,
+      label: "Delete",
+      onClick: () => confirmDelete(entry),
+    },
+  ];
+
   // --- table columns ---
   const columns = [
     {
@@ -893,59 +941,11 @@ export const FileManagerPage = () => {
       title: "",
       key: "actions",
       width: 60,
-      render: (_: unknown, entry: FileEntry) => {
-        const items = [
-          ...(!entry.is_dir
-            ? [
-                {
-                  key: "download",
-                  icon: <DownloadOutlined />,
-                  label: "Download",
-                  onClick: () => handleDownload(entry),
-                },
-                {
-                  key: "preview",
-                  icon: <EyeOutlined />,
-                  label: "Preview",
-                  onClick: () => void handlePreview(entry),
-                },
-              ]
-            : []),
-          ...(isTextEditable(entry)
-            ? [
-                {
-                  key: "edit",
-                  icon: <EditOutlined />,
-                  label: "Edit",
-                  onClick: () => void openEditor(entry),
-                },
-              ]
-            : []),
-          {
-            key: "rename",
-            icon: <EditOutlined />,
-            label: "Rename",
-            onClick: () => openRename(entry),
-          },
-          {
-            key: "permissions",
-            icon: <LockOutlined />,
-            label: "Permissions",
-            onClick: () => openSingleChmod(entry),
-          },
-          {
-            key: "delete",
-            danger: true,
-            label: "Delete",
-            onClick: () => confirmDelete(entry),
-          },
-        ];
-        return (
-          <Dropdown trigger={["click"]} menu={{ items }}>
-            <Button type="text" icon={<MoreOutlined />} />
-          </Dropdown>
-        );
-      },
+      render: (_: unknown, entry: FileEntry) => (
+        <Dropdown trigger={["click"]} menu={{ items: buildRowMenuItems(entry) }}>
+          <Button type="text" icon={<MoreOutlined />} />
+        </Dropdown>
+      ),
     },
   ];
 
@@ -1207,6 +1207,10 @@ export const FileManagerPage = () => {
               }}
               onRow={(entry) => ({
                 draggable: true,
+                onContextMenu: (e) => {
+                  e.preventDefault();
+                  setCtxMenu({ x: e.clientX, y: e.clientY, entry });
+                },
                 onDragStart: (e) => {
                   if (!currentPath) return;
                   const p = joinPath(currentPath, entry.name);
@@ -1249,6 +1253,29 @@ export const FileManagerPage = () => {
           </Spin>
         </div>
       </div>
+
+      {ctxMenu && (
+        <Dropdown
+          open
+          trigger={["contextMenu"]}
+          menu={{
+            items: buildRowMenuItems(ctxMenu.entry),
+            onClick: () => setCtxMenu(null),
+          }}
+          onOpenChange={(o) => { if (!o) setCtxMenu(null); }}
+        >
+          <div
+            style={{
+              position: "fixed",
+              left: ctxMenu.x,
+              top: ctxMenu.y,
+              width: 1,
+              height: 1,
+              pointerEvents: "none",
+            }}
+          />
+        </Dropdown>
+      )}
 
       <Modal
         title="New Folder"

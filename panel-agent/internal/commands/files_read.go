@@ -2,11 +2,13 @@ package commands
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strings"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/filesafe"
@@ -21,11 +23,16 @@ type filesReadParams struct {
 }
 
 // filesReadResponse is the output shape for files.read.
+// For text files, Content holds UTF-8 text. For binary (image/octet-stream),
+// ContentB64 holds base64 of the raw bytes — a plain string cast would mangle
+// binary through JSON's UTF-8 validation.
 type filesReadResponse struct {
-	Path      string `json:"path"`
-	Content   string `json:"content"`
-	Truncated bool   `json:"truncated,omitempty"`
-	MimeType  string `json:"mime_type,omitempty"`
+	Path       string `json:"path"`
+	Content    string `json:"content,omitempty"`
+	ContentB64 string `json:"content_b64,omitempty"`
+	IsBinary   bool   `json:"is_binary,omitempty"`
+	Truncated  bool   `json:"truncated,omitempty"`
+	MimeType   string `json:"mime_type,omitempty"`
 }
 
 func filesReadHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -108,13 +115,23 @@ func filesReadHandler(ctx context.Context, params json.RawMessage) (any, error) 
 
 	// MIME-sniff first 512 bytes
 	mimeType := http.DetectContentType(content)
+	isBinary := !strings.HasPrefix(mimeType, "text/") &&
+		!strings.Contains(mimeType, "json") &&
+		!strings.Contains(mimeType, "xml") &&
+		!strings.Contains(mimeType, "javascript")
 
-	return &filesReadResponse{
+	resp := &filesReadResponse{
 		Path:      resolvedPath,
-		Content:   string(content),
 		Truncated: truncated,
 		MimeType:  mimeType,
-	}, nil
+		IsBinary:  isBinary,
+	}
+	if isBinary {
+		resp.ContentB64 = base64.StdEncoding.EncodeToString(content)
+	} else {
+		resp.Content = string(content)
+	}
+	return resp, nil
 }
 
 func init() {

@@ -5,11 +5,13 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -219,11 +221,13 @@ type filesListAgentResult struct {
 }
 
 type filesReadAgentResult struct {
-	Path      string `json:"path"`
-	Content   string `json:"content"`
-	Size      int64  `json:"size"`
-	Truncated bool   `json:"truncated"`
-	MimeType  string `json:"mime_type"`
+	Path       string `json:"path"`
+	Content    string `json:"content"`
+	ContentB64 string `json:"content_b64"`
+	IsBinary   bool   `json:"is_binary"`
+	Size       int64  `json:"size"`
+	Truncated  bool   `json:"truncated"`
+	MimeType   string `json:"mime_type"`
 }
 
 // ---- helpers ----
@@ -389,11 +393,45 @@ func (h *filesHandler) download(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": "bad agent response"})
 		return
 	}
+
+	var body []byte
+	if result.IsBinary {
+		decoded, err := base64.StdEncoding.DecodeString(result.ContentB64)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": "bad agent response"})
+			return
+		}
+		body = decoded
+	} else {
+		body = []byte(result.Content)
+	}
+
 	filename := filepath.Base(p)
-	c.Header("Content-Type", "application/octet-stream")
-	c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
+	ct := result.MimeType
+	if ct == "" {
+		if byExt := mime.TypeByExtension(strings.ToLower(filepath.Ext(filename))); byExt != "" {
+			ct = byExt
+		} else {
+			ct = "application/octet-stream"
+		}
+	}
+
+	// Render inline for types browsers can display natively — images, pdf,
+	// text, json. Everything else forces a download.
+	inline := strings.HasPrefix(ct, "image/") ||
+		strings.HasPrefix(ct, "text/") ||
+		ct == "application/pdf" ||
+		strings.Contains(ct, "json") ||
+		strings.Contains(ct, "xml")
+	disposition := `attachment; filename="` + filename + `"`
+	if inline {
+		disposition = `inline; filename="` + filename + `"`
+	}
+
+	c.Header("Content-Type", ct)
+	c.Header("Content-Disposition", disposition)
 	c.Header("X-Content-Type-Options", "nosniff")
-	c.String(http.StatusOK, result.Content)
+	c.Data(http.StatusOK, ct, body)
 }
 
 // preview returns text content capped at 1 MiB as a JSON envelope.

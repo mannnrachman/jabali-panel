@@ -2153,6 +2153,18 @@ clone_or_update_repo() {
 
   if [[ -d "$REPO_DIR/.git" ]]; then
     _log "pulling latest $REPO_BRANCH into $REPO_DIR"
+    # Self-heal for a classic footgun: operator (or a prior debug
+    # session) ran `git fetch`/`git pull` as root inside the repo,
+    # silently re-chowning .git/FETCH_HEAD and friends to root. The
+    # next install.sh fetch (run as $SERVICE_USER) then dies with
+    # "cannot open '.git/FETCH_HEAD': Permission denied". Mirror the
+    # fix already in panel-api update.go — re-chown the .git dir
+    # before pulling so the install self-heals instead of leaving a
+    # half-installed host needing a magic chown from the operator.
+    # Scope intentionally narrow: just .git/, so node_modules or
+    # other trees that may legitimately be group-owned differently
+    # don't get clobbered.
+    chown -R "$SERVICE_USER:$SERVICE_USER" "$REPO_DIR/.git"
     sudo -u "$SERVICE_USER" -H git "${git_args[@]}" -C "$REPO_DIR" fetch --quiet origin "$REPO_BRANCH"
     sudo -u "$SERVICE_USER" -H git -C "$REPO_DIR" reset --hard "origin/$REPO_BRANCH"
   else

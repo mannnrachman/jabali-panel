@@ -1296,11 +1296,12 @@ provision_mariadb() {
   # form through unchanged.
   #
   # `skip-networking` (the my.cnf knob that closes 3306 entirely) is
-  # NOT enabled in Step 6 — phpMyAdmin's PMA_single_signon plumbing
-  # still dials TCP, and the Kratos DSN flip needs a live-VM
-  # verification gate (plan task 2). Both are M25.1 follow-ups; until
-  # then MariaDB still LISTENs on 3306 but our own panel-api dial
-  # uses the socket.
+  # NOT enabled yet — phpMyAdmin's PMA_single_signon plumbing still
+  # dials TCP. That's the remaining M25.1 follow-up; the Kratos DSN
+  # flip already shipped (see install/kratos.yml.tmpl, live-verified
+  # on 10.0.3.13 against unix socket). Until phpMyAdmin flips too,
+  # MariaDB still LISTENs on 3306 but our own panel-api + kratos +
+  # pdns dials all use the socket.
   local dsn="${db_user}:${db_pass}@unix(/var/run/mysqld/mysqld.sock)/${db_name}?parseTime=true&charset=utf8mb4&loc=UTC"
 
   # Rewrite the line without sed (DSNs contain `&` which sed would expand

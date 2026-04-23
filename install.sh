@@ -3716,36 +3716,53 @@ _install_stalwart_apply_plan() {
     return
   fi
 
-  # Partial-apply detection: when a prior install run's apply succeeded
-  # but the post-apply `systemctl restart jabali-stalwart` didn't land
-  # (VM reboot, operator Ctrl-C, crash in a later install step), Stalwart
-  # keeps running on its bootstrap :8080 listener even though RocksDB
-  # holds all the plan-defined NetworkListener objects. Re-running apply
-  # in that state fails primaryKeyViolation for every NetworkListener.
-  # Detect it by querying the registry for a sentinel listener name
-  # before apply; if present, skip the apply and fall through to the
-  # restart block below, which rebinds the existing listeners.
-  local need_apply=1
-  local existing_listeners=""
-  existing_listeners="$(STALWART_URL="http://127.0.0.1:${jmap_port}" \
+  # Idempotent apply: stalwart-cli apply uses @type: create for every
+  # NetworkListener, which fails primaryKeyViolation on re-run because
+  # there's no first-class upsert verb. Two re-run scenarios cause this:
+  #
+  #   (a) Full re-apply: every object in RocksDB from a prior successful
+  #       apply. Every create step reports primaryKeyViolation. No harm
+  #       done — nothing to converge.
+  #
+  #   (b) Partial re-apply: a subset of objects in RocksDB from a prior
+  #       apply that completed some creates before being interrupted
+  #       (operator Ctrl-C, VM reboot, crash in a later install step).
+  #       Re-running MUST succeed for the missing objects OR we ship an
+  #       incomplete config to the host (e.g. M25 Step 7 adding new
+  #       listeners to a plan whose older siblings are already applied).
+  #
+  # Use --continue-on-error so apply reports every failure at the end
+  # but keeps going through the rest. Then filter the failure lines: if
+  # every failure is primaryKeyViolation (pre-existing object), treat
+  # as idempotent success; anything else is a real error (schema drift,
+  # auth failure, RocksDB corruption) and we _die.
+  _log "applying plan via stalwart-cli against :${jmap_port} (--continue-on-error; primaryKeyViolation on pre-existing objects is idempotent)"
+  local apply_out apply_rc=0
+  apply_out="$(STALWART_URL="http://127.0.0.1:${jmap_port}" \
     STALWART_USER="admin" \
     STALWART_PASSWORD="$admin_token" \
-    /usr/local/bin/stalwart-cli query NetworkListener 2>/dev/null || true)"
-  if grep -qE '(^|[[:space:]])jmap-loopback([[:space:]]|$)' <<<"$existing_listeners"; then
-    _ok "Stalwart plan already in RocksDB (jmap-loopback listener present) — partial-apply state; skipping re-apply"
-    need_apply=0
-  fi
+    /usr/local/bin/stalwart-cli apply --continue-on-error --file "$plan_file" 2>&1)" || apply_rc=$?
 
-  if (( need_apply )); then
-    _log "applying plan via stalwart-cli against :${jmap_port}"
-    if ! STALWART_URL="http://127.0.0.1:${jmap_port}" \
-         STALWART_USER="admin" \
-         STALWART_PASSWORD="$admin_token" \
-         /usr/local/bin/stalwart-cli apply --file "$plan_file"; then
-      _err "stalwart-cli apply failed — the plan's object shapes may have drifted from the v0.16 schema"
+  # Print the CLI's summary to the install log so operators can see what
+  # was created vs already-existed in a single line. Trim to last 20
+  # lines to keep the install transcript readable on large plans.
+  printf '%s\n' "$apply_out" | tail -20
+
+  if (( apply_rc != 0 )); then
+    # Grep every failure signature; strip the ones we consider idempotent
+    # (primaryKeyViolation only). If anything else remains, it's fatal.
+    local non_idempotent_errs
+    non_idempotent_errs="$(printf '%s\n' "$apply_out" \
+      | grep -E '^(✗|error:)' \
+      | grep -v 'primaryKeyViolation' || true)"
+    if [[ -n "$non_idempotent_errs" ]]; then
+      _err "stalwart-cli apply reported non-idempotent failures:"
+      printf '  %s\n' "$non_idempotent_errs" >&2
       _err "inspect the plan at $plan_file; re-verify against the upstream schema (ADR-0045 §Schema-pull)"
       _die "Stalwart apply failed"
     fi
+    _ok "Stalwart apply: only primaryKeyViolation errors (pre-existing objects) — idempotent success"
+  else
     _ok "Stalwart plan applied (SqlDirectory + listeners + Authentication)"
   fi
 

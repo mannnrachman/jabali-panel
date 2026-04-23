@@ -32,7 +32,12 @@ func RegisterM65Routes(g *gin.RouterGroup, deps M65RouteDeps) {
 
 // Wave B: forwarders.
 func registerForwarderRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
-	// Implementation lives in panel-api/internal/api/mailbox_forwarder.go (Step 5).
+	RegisterMailboxForwarderRoutes(g, MailboxForwarderHandlerConfig{
+		Mailboxes:  deps.Mailboxes,
+		Domains:    deps.Domains,
+		Forwarders: deps.Forwarders,
+		Agent:      deps.Agent,
+	})
 }
 
 // Wave B: autoresponders.

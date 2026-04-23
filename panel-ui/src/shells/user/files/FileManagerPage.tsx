@@ -1087,7 +1087,9 @@ export const FileManagerPage = () => {
           selectedKeys={[currentPath]}
           loadData={(node) => loadTreeChildren(node as TreeNode)}
           showLine
-          switcherIcon={<DownOutlined />}
+          switcherIcon={({ expanded }: { expanded?: boolean }) => (
+            <DownOutlined rotate={expanded ? 0 : -90} />
+          )}
           onSelect={(keys) => {
             if (keys.length > 0) {
               setCurrentPath(keys[0] as string);
@@ -1123,7 +1125,9 @@ export const FileManagerPage = () => {
             // rotates based on expansion state automatically, so a single
             // DownOutlined serves both open and closed.
             showLine
-            switcherIcon={<DownOutlined />}
+            switcherIcon={({ expanded }: { expanded?: boolean }) => (
+            <DownOutlined rotate={expanded ? 0 : -90} />
+          )}
             onSelect={(keys) => {
               if (keys.length > 0) setCurrentPath(keys[0] as string);
             }}
@@ -1348,7 +1352,9 @@ export const FileManagerPage = () => {
             selectedKeys={bulkMoveDest ? [bulkMoveDest] : []}
             loadData={(node) => loadTreeChildren(node as TreeNode)}
             showLine
-            switcherIcon={<DownOutlined />}
+            switcherIcon={({ expanded }: { expanded?: boolean }) => (
+            <DownOutlined rotate={expanded ? 0 : -90} />
+          )}
             onSelect={(keys) => {
               if (keys.length > 0) setBulkMoveDest(keys[0] as string);
             }}

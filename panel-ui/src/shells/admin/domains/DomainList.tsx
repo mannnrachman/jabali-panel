@@ -1,20 +1,33 @@
 // DomainList — admin domains grid. Post-M21 the row action strip
 // stays the same (DNS/Redirects/Index/Settings/Toggle/Edit/Delete);
 // only the hook and the two Refine action buttons change.
-import { Button, Card, Dropdown, Space, Table, Tag, Typography } from "antd";
-import { DownOutlined, EditOutlined, GlobalOutlined } from "@ant-design/icons";
+import { useState } from "react";
+import { Button, Card, Dropdown, Modal, Space, Table, Tag, Typography, notification } from "antd";
+import {
+  DeleteOutlined,
+  DownOutlined,
+  EditOutlined,
+  FileTextOutlined,
+  GlobalOutlined,
+  PauseCircleOutlined,
+  PlayCircleOutlined,
+  SettingOutlined,
+  SwapOutlined,
+} from "@ant-design/icons";
 import { useNavigate } from "react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import type { SorterResult } from "antd/es/table/interface";
 
+import { apiClient } from "../../../apiClient";
 import { columnSearchProps } from "../../../components/columnSearch";
-import { RowDeleteButton } from "../../../components/RowDeleteButton";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useDeleteMutation } from "../../../hooks/useQueries";
 import { useTableURL } from "../../../hooks/useTableURL";
-import { DomainToggleButton } from "../../DomainToggleButton";
 import { DomainSettingsButton } from "../../DomainSettingsButton";
 import { DomainRedirectsButton } from "../../DomainRedirectsButton";
 import { DomainIndexButton } from "../../DomainIndexButton";
+
+type ActiveModal = { domain: Domain; type: "redirects" | "index" | "settings" } | null;
 
 const stripHomePrefix = (path: string): string => {
   if (path.startsWith("/home/")) {
@@ -98,12 +111,29 @@ export type Domain = {
 
 export const DomainList = () => {
   const navigate = useNavigate();
+  const qc = useQueryClient();
+  const [activeModal, setActiveModal] = useState<ActiveModal>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
   const query = useTableURL<Domain>({
     resource: "domains",
     defaultSort: "name",
     defaultOrder: "asc",
   });
   const deleteMutation = useDeleteMutation({ resource: "domains" });
+
+  const handleToggle = async (r: Domain) => {
+    setTogglingId(r.id);
+    try {
+      await apiClient.patch(`/domains/${r.id}`, { is_enabled: !r.is_enabled });
+      notification.success({ message: r.is_enabled ? "Domain disabled" : "Domain enabled" });
+      qc.invalidateQueries({ queryKey: ["list", "domains"] });
+      qc.invalidateQueries({ queryKey: ["one", "domains", r.id] });
+    } catch (err) {
+      notification.error({ message: "Failed to toggle", description: (err as Error).message });
+    } finally {
+      setTogglingId(null);
+    }
+  };
 
   const handleTableChange: React.ComponentProps<typeof Table<Domain>>["onChange"] = (
     pagination,
@@ -206,53 +236,56 @@ export const DomainList = () => {
                 <Button
                   type="text"
                   icon={<EditOutlined />}
-                  onClick={() =>
-                    navigate(`/jabali-admin/domains/edit/${r.id}`)
-                  }
+                  onClick={() => navigate(`/jabali-admin/domains/edit/${r.id}`)}
                 >
                   Edit
                 </Button>
-                {/* Secondary actions live behind a "More" menu — the
-                    existing self-contained button components (each owns
-                    its own modal state) render as menu-item labels so
-                    clicking fires their modal without any rewiring. */}
                 <Dropdown
                   menu={{
                     items: [
                       {
                         key: "redirects",
-                        label: <DomainRedirectsButton domain={r} />,
+                        icon: <SwapOutlined />,
+                        label: "Redirects",
+                        onClick: () => setActiveModal({ domain: r, type: "redirects" }),
                       },
                       {
                         key: "index",
-                        label: <DomainIndexButton domain={r} />,
+                        icon: <FileTextOutlined />,
+                        label: "Index Files",
+                        onClick: () => setActiveModal({ domain: r, type: "index" }),
                       },
                       {
                         key: "settings",
-                        label: <DomainSettingsButton domain={r} />,
+                        icon: <SettingOutlined />,
+                        label: "Nginx Settings",
+                        onClick: () => setActiveModal({ domain: r, type: "settings" }),
                       },
                       {
                         key: "toggle",
-                        label: <DomainToggleButton domain={r} />,
+                        icon: r.is_enabled ? <PauseCircleOutlined /> : <PlayCircleOutlined />,
+                        label: r.is_enabled ? "Disable" : "Enable",
+                        disabled: togglingId === r.id,
+                        onClick: () => handleToggle(r),
                       },
-                      // M6.4 (ADR-0048): hide Delete on the panel-primary
-                      // row. The API would return 403 panel_primary_protected
-                      // anyway; omitting the menu items keeps the UI
-                      // honest about what's allowed.
                       ...(r.is_panel_primary
                         ? []
                         : [
                             { type: "divider" as const },
                             {
                               key: "delete",
-                              label: (
-                                <RowDeleteButton
-                                  confirmTitle={`Delete domain "${r.name}"?`}
-                                  onConfirm={async () => {
+                              icon: <DeleteOutlined />,
+                              label: "Delete",
+                              danger: true,
+                              onClick: () =>
+                                Modal.confirm({
+                                  title: `Delete domain "${r.name}"?`,
+                                  okText: "Delete",
+                                  okButtonProps: { danger: true },
+                                  onOk: async () => {
                                     await deleteMutation.mutateAsync({ id: r.id });
-                                  }}
-                                />
-                              ),
+                                  },
+                                }),
                             },
                           ]),
                     ],
@@ -262,6 +295,27 @@ export const DomainList = () => {
                     More <DownOutlined />
                   </Button>
                 </Dropdown>
+                {activeModal?.domain.id === r.id && activeModal.type === "redirects" && (
+                  <DomainRedirectsButton
+                    domain={r}
+                    open={true}
+                    onClose={() => setActiveModal(null)}
+                  />
+                )}
+                {activeModal?.domain.id === r.id && activeModal.type === "index" && (
+                  <DomainIndexButton
+                    domain={r}
+                    open={true}
+                    onClose={() => setActiveModal(null)}
+                  />
+                )}
+                {activeModal?.domain.id === r.id && activeModal.type === "settings" && (
+                  <DomainSettingsButton
+                    domain={r}
+                    open={true}
+                    onClose={() => setActiveModal(null)}
+                  />
+                )}
               </Space>
             )}
           />

@@ -17,7 +17,7 @@ LISTEN  127.0.0.1:18181                 stalwart-mail   # internal/training (M25
 LISTEN  *:443                           nginx
 LISTEN  *:80                            nginx
 LISTEN  *:8443                          nginx           # M25 Step 4 — terminates TLS for panel
-LISTEN  127.0.0.1:3306                  mariadbd        # until M25.1 (skip-networking)
+# MariaDB no longer binds TCP — skip-networking (see 99-jabali-skip-networking.cnf); socket at /var/run/mysqld/mysqld.sock
 LISTEN  127.0.0.1:53                    pdns_recursor   # M6.3
 LISTEN  10.0.3.13:53                    pdns_server     # public DNS
 LISTEN  127.0.0.1:5300                  pdns_server     # M6.3 split-port
@@ -238,12 +238,12 @@ sudo systemctl restart systemd-resolved
 
 Higher-numbered drop-in wins. The jabali drop-in stays in place; operator overrides cleanly.
 
-## What's deferred to M25.1
+## M25.1 — shipped
 
-- **MariaDB `skip-networking`** — closes 3306 entirely. Blocked on phpMyAdmin SSO socket awareness (`install/phpmyadmin/sso.php` + the panel-api `/api/v1/sso/phpmyadmin` response shape).
-- **Kratos DSN flip to socket** — needs a live-VM verification gate (`kratos migrate sql -e --config <test>`) that we can't run from a dev session.
+- **Kratos DSN flip to socket** — commit `67bcc9a feat(m25.1): flip Kratos DSN to unix socket`. Verified on 10.0.3.13.
+- **phpMyAdmin SSO socket-awareness + MariaDB `skip-networking`** — commit `f04d4f2 feat(m25.1): phpMyAdmin → unix socket + MariaDB skip-networking`. `sso_phpmyadmin_validate.go` returns a `socket` field; `sso.php` forwards it via `PMA_single_signon` as `connect_type=socket`. `install.sh` writes `/etc/mysql/mariadb.conf.d/99-jabali-skip-networking.cnf` and asserts `ss -tln` shows no `:3306`. Verified on 10.0.3.13: no TCP listener; processlist shows `jabali_panel_app` + `jabali_kratos` + `jabali_pdns` all via socket.
 
-Both ship as M25.1 in one cycle (they're coupled — skip-networking breaks Kratos otherwise). Until M25.1, MariaDB still listens on 3306 + Kratos still dials TCP. Lower marginal security than the M25 design intends, but no functional regression.
+Rollback (single host): remove `/etc/mysql/mariadb.conf.d/99-jabali-skip-networking.cnf` and `systemctl restart mariadb` — restores `127.0.0.1:3306` and TCP loopback for clients that haven't been socket-flipped.
 
 ## What's out of scope (won't be re-litigated)
 

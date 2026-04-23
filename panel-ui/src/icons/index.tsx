@@ -69,6 +69,7 @@ import {
   Upload,
   User,
   Users,
+  Waypoints,
   Wrench,
   X,
   Zap,
@@ -142,7 +143,8 @@ export const ClockCircleOutlined = shim(Clock);
 export const MailOutlined = shim(Mail);
 export const SettingOutlined = shim(Settings);
 export const TeamOutlined = shim(Users);
-export const CloudServerOutlined = shim(Server);
+export const CloudServerOutlined = shim(Waypoints);
+export const ServerOutlined = shim(Server);
 export const ThunderboltOutlined = shim(Zap);
 
 // --- Actions ---

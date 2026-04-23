@@ -2340,7 +2340,12 @@ write_config_file() {
   [[ "${JABALI_DEV:-0}" == "1" ]] && srv_env="development"
   {
     printf '\n[server]\n'
-    printf 'addr        = "127.0.0.1:8443"\n'
+    # M25 Step 4: panel-api listens on a Unix-domain socket. nginx
+    # terminates TLS upstream of us via the jabali-panel-vhost (port
+    # 8443). Operators can flip back to TCP by editing this line to
+    # `127.0.0.1:8443` and dropping the unit-file Group=jabali-sockets;
+    # see plans/m25-unix-sockets-runbook.md for the exact rollback.
+    printf 'addr        = "unix:/run/jabali-panel/api.sock"\n'
     printf 'env         = "%s"\n' "$srv_env"
     if [[ "${JABALI_SERVER_CONFIGURED:-1}" == "0" ]]; then
       printf 'hostname    = "%s"\n' "${JABALI_SRV_HOSTNAME}"
@@ -2455,14 +2460,22 @@ Requires=${AGENT_SERVICE_NAME}.service
 [Service]
 Type=simple
 User=$SERVICE_USER
-Group=$SERVICE_USER
+# M25 Step 4: panel-api listens on /run/jabali-panel/api.sock owned
+# jabali:jabali-sockets so nginx (member of jabali-sockets) can connect.
+# The User= stays jabali (privileged ops happen via the agent's separate
+# socket); only the Group= flips to expose the listen socket to nginx.
+Group=jabali-sockets
 # /run/jabali-panel — systemd creates owned $SERVICE_USER:$SERVICE_USER 0755
 # on service start and tears down on stop. The SSO UDS listener binds
 # \${runtime}/sso.sock here; unlike /run/jabali (owned by root, used by
 # the privileged agent), /run/jabali-panel is safe for the unprivileged
 # panel to write to.
 RuntimeDirectory=jabali-panel
-RuntimeDirectoryMode=0755
+# M25 Step 4: 0750 (down from 0755) so non-jabali-sockets users can't list
+# /run/jabali-panel/. nginx (www-data) is in jabali-sockets and can still
+# traverse via group permission. The api.sock file inside is mode 0660,
+# pinned by the panel-api listener helper after net.Listen() returns.
+RuntimeDirectoryMode=0750
 EnvironmentFile=$ENV_FILE
 ExecStart=$BIN_PATH serve
 Restart=on-failure
@@ -2552,22 +2565,17 @@ start_and_verify() {
   systemctl restart "$SERVICE_NAME"
 
   _log "waiting for /health"
-  local host="${PANEL_ADDR%:*}"
-  local port="${PANEL_ADDR##*:}"
-  [[ "$host" == "$PANEL_ADDR" || -z "$host" ]] && host="127.0.0.1"
-
-  # Use HTTPS if TLS is configured, with -k for self-signed cert.
-  local scheme="http"
-  if grep -q '^TLS_CERT=' "$ENV_FILE" 2>/dev/null; then
-    scheme="https"
-  fi
-
+  # M25 Step 4: panel-api now listens on /run/jabali-panel/api.sock.
+  # curl --unix-socket reaches it directly; nginx-via-:8443 also works
+  # but adds nothing for a localhost smoke. The socket path matches the
+  # config seed in write_config_file().
+  #
   # First-run migrations can take a while on a fresh InnoDB (45s+
   # observed). Give the service up to 120s before declaring defeat.
   local ok=0
   local deadline=$((SECONDS + 120))
   while (( SECONDS < deadline )); do
-    if curl -fsSk -m 2 "${scheme}://${host}:${port}/health" >/tmp/jabali-health.json 2>/dev/null; then
+    if curl -fsS -m 2 --unix-socket /run/jabali-panel/api.sock http://panel/health >/tmp/jabali-health.json 2>/dev/null; then
       ok=1; break
     fi
     sleep 1
@@ -2581,6 +2589,27 @@ start_and_verify() {
 
   _ok "health OK: $(cat /tmp/jabali-health.json)"
   rm -f /tmp/jabali-health.json
+
+  # M25 Step 4 verification: socket must be jabali:jabali-sockets 0660,
+  # and nothing must still be listening on the legacy TCP port 8443.
+  if ! verify_socket_perms /run/jabali-panel/api.sock jabali jabali-sockets 660; then
+    _die "panel-api socket has wrong perms — see message above"
+  fi
+  if ! verify_no_all_interface_binds 8443; then
+    _die "panel-api still bound on TCP :8443 — config didn't apply or rolled back to TCP"
+  fi
+
+  # In-place migration: rewrite an existing config.toml's addr from the
+  # legacy TCP form to the unix form. Same rationale as the kratos
+  # admin/public migrations in install_kratos.
+  local panel_config="/etc/jabali-panel/config.toml"
+  if [[ -f "$panel_config" ]] && grep -qE '^\s*addr\s*=\s*"127\.0\.0\.1:8443"' "$panel_config"; then
+    _log "migrating config.toml addr from TCP to unix socket (M25 Step 4)"
+    sed -i 's|^\(\s*addr\s*=\s*\)"127\.0\.0\.1:8443"|\1"unix:/run/jabali-panel/api.sock"|' "$panel_config"
+    _ok "config.toml addr migrated"
+    _log "restarting $SERVICE_NAME after addr migration"
+    systemctl restart "$SERVICE_NAME"
+  fi
 }
 
 # ---------- step: seed last-built-sha --------------------------------------
@@ -2605,6 +2634,54 @@ seed_last_built_sha() {
 
 # ---------- step: SSO key generation ----------------------------------------
 
+
+# ---------- M25 Step 4: nginx panel vhost (TLS terminator on :8443) -----
+
+install_nginx_panel_vhost() {
+  _log "installing nginx panel vhost (M25 Step 4 — TLS terminator on :8443)"
+
+  local nginx_sites_dir="/etc/nginx/sites-available"
+  local nginx_enabled_dir="/etc/nginx/sites-enabled"
+  local panel_vhost_file="${nginx_sites_dir}/jabali-panel.conf"
+  local tmpl="${REPO_DIR}/install/nginx/jabali-panel-vhost.conf.tmpl"
+  local tls_cert="/etc/jabali/tls/panel.crt"
+  local tls_key="/etc/jabali/tls/panel.key"
+
+  if [[ ! -f "$tmpl" ]]; then
+    _die "panel vhost template not found at $tmpl"
+  fi
+  if [[ ! -f "$tls_cert" || ! -f "$tls_key" ]]; then
+    _die "TLS cert missing at $tls_cert — provision_tls_cert must run first"
+  fi
+
+  # Render the template by substituting ${SSL_CERT_PATH} + ${SSL_KEY_PATH}
+  # via sed. envsubst would be cleaner but isn't a dependency we want to
+  # add solely for two substitutions.
+  sed \
+    -e "s|\${SSL_CERT_PATH}|${tls_cert}|g" \
+    -e "s|\${SSL_KEY_PATH}|${tls_key}|g" \
+    "$tmpl" > "$panel_vhost_file"
+
+  if grep -q '\${' "$panel_vhost_file"; then
+    _die "unsubstituted \${VAR} placeholders left in $panel_vhost_file — template drift?"
+  fi
+
+  ln -sf "$panel_vhost_file" "${nginx_enabled_dir}/jabali-panel.conf"
+
+  _log "testing nginx configuration"
+  if ! nginx -t 2>&1 | grep -q "successful"; then
+    nginx -t 2>&1 >&2 || true
+    _die "nginx configuration test failed (panel vhost)"
+  fi
+
+  _log "reloading nginx"
+  systemctl reload nginx || {
+    _warn "nginx reload failed; trying restart"
+    systemctl restart nginx
+  }
+
+  _ok "panel nginx vhost installed: ${panel_vhost_file}"
+}
 
 # ---------- step 6.4: nginx default vhost for phpMyAdmin SSO -----
 
@@ -4236,6 +4313,12 @@ main() {
   install_sftp_group
   install_sftp_sshd_config
   install_nginx_default_vhost
+  # M25 Step 4: install the nginx vhost on :8443 that terminates TLS and
+  # proxies to the panel-api Unix socket. Runs AFTER install_nginx_default_vhost
+  # so the http{} context (defined by Debian's stock nginx.conf) and the
+  # default vhost are already in place; runs BEFORE write_systemd_unit so
+  # nginx -t doesn't have to wait on panel-api startup.
+  install_nginx_panel_vhost
   write_agent_systemd_unit
   write_systemd_unit
   start_and_verify_agent

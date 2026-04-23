@@ -1,0 +1,64 @@
+# Jabali Panel HTTPS vhost (M25 Step 4).
+#
+# Rendered by install.sh install_nginx_panel_vhost(). Substitutes:
+#   ${SSL_CERT_PATH}     — path to the panel TLS certificate
+#   ${SSL_KEY_PATH}      — path to the panel TLS key
+#
+# Until M25 Step 4, panel-api terminated TLS itself on 127.0.0.1:8443.
+# The TLS-strip-and-front-with-nginx pivot moved TLS termination here so
+# the panel-api process can listen on a Unix-domain socket. nginx is the
+# only thing on :8443 now; everything else flows through the Form D
+# upstream below.
+#
+# Form D (per pre-dispatch I2): named upstream + plain proxy_pass — swap
+# unix↔TCP in one line without touching any proxy_pass directive. Matches
+# the same pattern adopted in install/nginx/.ory-location.conf and
+# install/nginx/jabali-mail-vhost.conf.tmpl.
+
+upstream jabali_panel_api {
+  # M25 Step 4: panel-api listens on this socket (mode 0660,
+  # group jabali-sockets — nginx as www-data is in that group).
+  # Rollback: replace with `server 127.0.0.1:8443;` and restart nginx.
+  server unix:/run/jabali-panel/api.sock;
+}
+
+server {
+  listen 8443 ssl;
+  listen [::]:8443 ssl;
+  http2 on;
+  server_name _;
+
+  ssl_certificate     ${SSL_CERT_PATH};
+  ssl_certificate_key ${SSL_KEY_PATH};
+  ssl_protocols       TLSv1.2 TLSv1.3;
+  ssl_ciphers         HIGH:!aNULL:!MD5;
+  ssl_prefer_server_ciphers on;
+
+  # Browser uploads: WordPress imports, file-manager uploads, and the
+  # nginx default of 1MB are all on the same scale here. 100M matches
+  # the panel-agent's own write-side limit so requests aren't truncated
+  # at the edge with no operator hint.
+  client_max_body_size 100M;
+
+  access_log /var/log/nginx/jabali-panel.access.log;
+  error_log  /var/log/nginx/jabali-panel.error.log;
+
+  # /.ory/* is handled by panel-api itself (in-process reverse proxy
+  # to the Kratos public socket). nginx just forwards to the panel
+  # upstream — no special-case for /.ory/.
+  location / {
+    proxy_pass http://jabali_panel_api/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_http_version 1.1;
+    # No WebSocket endpoints today — keep Connection close so we don't
+    # have to add a `map $http_upgrade $connection_upgrade` block to the
+    # http{} context. When SSE/WS lands in panel-api, swap this for
+    # the Upgrade/Connection-upgrade pair (matches mail vhost pattern).
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+  }
+}

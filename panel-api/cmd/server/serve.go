@@ -322,7 +322,22 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// ---- HTTP(S) ----
 	handler := app.NewWithDeps(cfg, deps)
-	useTLS := cfg.Server.TLSCert != "" && cfg.Server.TLSKey != ""
+
+	// M25 Step 4: open the listener up front so we know whether we got a
+	// TCP socket (TLS branch still applies) or a Unix socket (TLS is
+	// stripped — nginx terminates real TLS upstream of us). Stale-socket
+	// cleanup, chmod 0660, and chgrp jabali-sockets all happen inside
+	// listenAndPrepare so the fragile bits live in one tested place.
+	listener, isUnix, err := listenAndPrepare(cfg.Server.Addr)
+	if err != nil {
+		return err
+	}
+	useTLS := !isUnix && cfg.Server.TLSCert != "" && cfg.Server.TLSKey != ""
+	if isUnix && (cfg.Server.TLSCert != "" || cfg.Server.TLSKey != "") {
+		log.Warn("TLS configured but listening on Unix socket — TLS keys ignored",
+			"addr", cfg.Server.Addr,
+			"hint", "nginx terminates TLS; remove tls_cert/tls_key from config to silence this warning")
+	}
 
 	srv := &http.Server{
 		Addr:              cfg.Server.Addr,
@@ -357,13 +372,17 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 	serveErr := make(chan error, 1)
-	if useTLS {
-		log.Info("TLS enabled", "cert", cfg.Server.TLSCert, "key", cfg.Server.TLSKey)
-		go func() { serveErr <- srv.ListenAndServeTLS(cfg.Server.TLSCert, cfg.Server.TLSKey) }()
+	switch {
+	case useTLS:
+		log.Info("TLS enabled", "cert", cfg.Server.TLSCert, "key", cfg.Server.TLSKey, "addr", cfg.Server.Addr)
+		go func() { serveErr <- srv.ServeTLS(listener, cfg.Server.TLSCert, cfg.Server.TLSKey) }()
 		go startHTTPRedirect(cfg.Server.Addr, log)
-	} else {
-		log.Warn("TLS not configured — serving plain HTTP")
-		go func() { serveErr <- srv.ListenAndServe() }()
+	case isUnix:
+		log.Info("listening on Unix socket — nginx terminates TLS upstream", "addr", cfg.Server.Addr)
+		go func() { serveErr <- srv.Serve(listener) }()
+	default:
+		log.Warn("TLS not configured — serving plain HTTP", "addr", cfg.Server.Addr)
+		go func() { serveErr <- srv.Serve(listener) }()
 	}
 
 	stop := make(chan os.Signal, 1)

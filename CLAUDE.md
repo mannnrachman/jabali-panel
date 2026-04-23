@@ -1,77 +1,56 @@
-<!-- gitnexus:start -->
-# GitNexus — Code Intelligence
+<!-- cbm:start -->
+# codebase-memory-mcp — Code Intelligence
 
-This project is indexed by GitNexus as **jabali2** (10073 symbols, 21244 relationships, 299 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by **codebase-memory-mcp** as project ID `home-shuki-projects-jabali2` (9,272 nodes / 25,192 edges at last full index). Use its MCP tools for code discovery, impact analysis, and navigation instead of grep/find/Read when looking up code structure.
 
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+## Shared index across worktrees
+
+Every worktree under `/home/shuki/projects/jabali2*` (main, wt-a, wt-b, wt-c) uses the **same** project ID `home-shuki-projects-jabali2`. Pass that literal string as `project` to every `mcp__codebase-memory-mcp__*` call, regardless of which worktree the session is in. The graph reflects `main` (or the last branch that was full-indexed); it will NOT reflect uncommitted edits in wt-a/b/c. Re-run `index_repository` only when a worktree's branch has substantive diff from main AND you need graph queries against that diff.
 
 ## Always Do
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+- **Use MCP graph tools first for code discovery.** `search_graph` / `trace_path` / `get_code_snippet` / `query_graph` / `get_architecture` — these short-circuit the grep→read→read→read loop for symbol lookup.
+- **Run `detect_changes` before committing** to verify your edits touched the symbols you intended. Flag any surprise scope.
+- **For renames**, prefer semantic rename patterns (Cypher query for `MATCH (n)-[:CALLS|REFERENCES]->(target)` + rewrite call sites as a unit) — naïve find-and-replace misses call-graph linkages.
 
 ## Never Do
 
-- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
-- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+- NEVER grep the codebase for a symbol name when `search_graph({project: "home-shuki-projects-jabali2", query: "…"})` would answer.
+- NEVER assume a file is isolated. Every edit has upstream callers. Use `query_graph` (Cypher) for "who calls X" when unsure.
+- NEVER commit without running `detect_changes` if the edit crossed package boundaries.
 
-## Resources
+## Tools (load schemas via ToolSearch before first use)
 
-| Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/jabali2/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/jabali2/clusters` | All functional areas |
-| `gitnexus://repo/jabali2/processes` | All execution flows |
-| `gitnexus://repo/jabali2/process/{name}` | Step-by-step execution trace |
+| Tool | Use for |
+|------|---------|
+| `mcp__codebase-memory-mcp__search_graph` | Find functions, classes, routes by name / pattern / natural-language query |
+| `mcp__codebase-memory-mcp__trace_path` | Call chains, data flow, cross-service HTTP links |
+| `mcp__codebase-memory-mcp__get_code_snippet` | Read source of a specific symbol (use instead of Read for code) |
+| `mcp__codebase-memory-mcp__query_graph` | Raw Cypher queries against the knowledge graph |
+| `mcp__codebase-memory-mcp__get_architecture` | High-level structure — packages, layers, services |
+| `mcp__codebase-memory-mcp__search_code` | Graph-augmented text search (grep-like fallback) |
+| `mcp__codebase-memory-mcp__index_repository` | Build/refresh index for a given `repo_path` |
+| `mcp__codebase-memory-mcp__index_status` | Check index age + node/edge counts |
+| `mcp__codebase-memory-mcp__detect_changes` | Diff affected symbols vs last index (pre-commit gate) |
+| `mcp__codebase-memory-mcp__manage_adr` | Read/write ADRs into the graph |
 
-## CLI
+## Reindex cadence
 
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+Full reindex on main after merging substantive structural changes (new package, deleted file, renamed type). The index does NOT auto-refresh — call `index_repository({repo_path: "/home/shuki/projects/jabali2"})` explicitly.
 
-<!-- gitnexus:end -->
-
-<!-- ⚠️ The block above may use simplified tool names. The ACTUAL MCP tool
-     identifiers are prefixed `mcp__gitnexus__`. Use the names in this
-     section when calling tools. -->
-
-## Actual tool names (use these — the `gitnexus_*` above are shorthand)
-
-| Shorthand in docs | Real MCP tool name |
-|---|---|
-| `gitnexus_impact` | `mcp__gitnexus__impact` |
-| `gitnexus_context` | `mcp__gitnexus__context` |
-| `gitnexus_query` | `mcp__gitnexus__query` |
-| `gitnexus_detect_changes` | `mcp__gitnexus__detect_changes` |
-| `gitnexus_rename` | `mcp__gitnexus__rename` |
-| Graph-augmented search | `mcp__gitnexus__cypher` (raw Cypher), `mcp__gitnexus__route_map`, `mcp__gitnexus__tool_map` |
-| Multi-repo / groups | `mcp__gitnexus__group_*`, `mcp__gitnexus__list_repos` |
-
-Tool schemas are deferred. If you need one, load it first:
-`ToolSearch("select:mcp__gitnexus__impact,mcp__gitnexus__context,mcp__gitnexus__query,mcp__gitnexus__detect_changes")`.
+<!-- cbm:end -->
 
 ## Sub-agent mandate (applies to every agent spawned in this project)
 
 Any agent launched via the `Agent` tool in the jabali2 worktree MUST:
 
-1. **Before first edit** to any `.go`, `.tsx`, `.ts` or migration file — call `mcp__gitnexus__impact` on the target symbol (function/struct/handler) and include the returned blast radius in its reasoning. If `impact` reports HIGH or CRITICAL risk, stop and report to the dispatcher BEFORE editing.
+1. **Before first edit** to any `.go`, `.tsx`, `.ts` or migration file — call `mcp__codebase-memory-mcp__search_graph` and `mcp__codebase-memory-mcp__trace_path` on the target symbol (project=`home-shuki-projects-jabali2`) and include the blast radius (direct callers + call chain depth) in its reasoning. If the target is a widely-called function (>10 callers, or touched by an HTTP route), stop and report to the dispatcher BEFORE editing.
 
-2. **Before committing** — call `mcp__gitnexus__detect_changes` and verify affected symbols match the intended scope. If the change set includes unexpected symbols, pause and report.
+2. **Before committing** — call `mcp__codebase-memory-mcp__detect_changes` (project=`home-shuki-projects-jabali2`) and verify affected symbols match the intended scope. If the change set includes unexpected symbols, pause and report.
 
-3. **For unfamiliar code exploration** (any "how does X work?" type question) — prefer `mcp__gitnexus__query` or `mcp__gitnexus__context` over `Grep`/`Read`. Text search is the fallback, not the default.
+3. **For unfamiliar code exploration** (any "how does X work?" type question) — prefer `mcp__codebase-memory-mcp__search_graph` / `query_graph` / `get_code_snippet` over `Grep`/`Read`. Text search is the fallback, not the default.
 
-4. **For renames** — use `mcp__gitnexus__rename`, never find-and-replace across files.
+4. **For renames** — use semantic-rename pattern via `query_graph` (Cypher lookup of all call sites, then Edit each) rather than find-and-replace across files.
 
 5. **Agents commit to branches, never to `main`. Agents never `git push`.**
    - Before your first commit, create a feature branch: `git checkout -b <wave-or-task-slug>` (e.g. `wave-c-http-handlers`, `fix-ssl-badge`, `fix-impersonate-port`, `chore-update-deps`). Use a short, descriptive slug — no ticket numbers required.
@@ -89,4 +68,4 @@ Any agent launched via the `Agent` tool in the jabali2 worktree MUST:
 
 This applies to planner, coder, backend-dev, security-architect, Explore, and every other sub-agent type. When a wave brief asks you to modify a symbol, the dispatcher assumes you've run impact analysis first AND your work lives on a feature branch. Acknowledge both in your summary output.
 
-If the gitnexus index is missing or stale, run `npx gitnexus analyze` once in the repo root and retry. Never skip the step silently.
+If the codebase-memory-mcp index is missing or stale for `home-shuki-projects-jabali2`, call `mcp__codebase-memory-mcp__index_repository({repo_path: "/home/shuki/projects/jabali2"})` once and retry. Never skip the step silently.

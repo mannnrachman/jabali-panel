@@ -1280,7 +1280,20 @@ provision_mariadb() {
   "
 
   # Expose the DSN via /etc/jabali/panel.env so the service picks it up.
-  local dsn="mysql://${db_user}:${db_pass}@127.0.0.1:3306/${db_name}?parseTime=true&charset=utf8mb4&loc=UTC"
+  # M25 Step 6: switch from TCP loopback (127.0.0.1:3306) to MariaDB's
+  # Debian-default Unix socket /var/run/mysqld/mysqld.sock. The
+  # @unix(...) form is the native go-sql-driver/mysql syntax — no
+  # mysql:// URL prefix needed (and prefix would break: net/url.Parse
+  # rejects parens in host). Existing dsn.go ToDriverDSN passes native
+  # form through unchanged.
+  #
+  # `skip-networking` (the my.cnf knob that closes 3306 entirely) is
+  # NOT enabled in Step 6 — phpMyAdmin's PMA_single_signon plumbing
+  # still dials TCP, and the Kratos DSN flip needs a live-VM
+  # verification gate (plan task 2). Both are M25.1 follow-ups; until
+  # then MariaDB still LISTENs on 3306 but our own panel-api dial
+  # uses the socket.
+  local dsn="${db_user}:${db_pass}@unix(/var/run/mysqld/mysqld.sock)/${db_name}?parseTime=true&charset=utf8mb4&loc=UTC"
 
   # Rewrite the line without sed (DSNs contain `&` which sed would expand
   # as the matched text). We strip any existing DATABASE_URL line and
@@ -1395,8 +1408,13 @@ SQL
 # Managed by Jabali Panel install.sh. Hand edits will be overwritten
 # the next time install.sh runs.
 launch=gmysql
-gmysql-host=127.0.0.1
-gmysql-port=3306
+# M25 Step 6: dial MariaDB over its Debian-default Unix socket. PDNS's
+# gmysql backend honors gmysql-socket for client-mode connections; when
+# set, host/port are ignored. Lower latency than TCP loopback and
+# (post-skip-networking, M25.1) the only available path. Keeping
+# host/port out entirely is intentional — having both sometimes confuses
+# packagings that don't try the socket first.
+gmysql-socket=/var/run/mysqld/mysqld.sock
 gmysql-dbname=jabali_pdns
 gmysql-user=jabali_pdns
 gmysql-password=${pdns_password}
@@ -2322,6 +2340,16 @@ write_config_file() {
   local dest="$(dirname "$ENV_FILE")/config.toml"
   local src="$REPO_DIR/config.example.toml"
   if [[ -f "$dest" ]]; then
+    # M25 Step 6: in-place migrate the [pdns] dsn from TCP to socket on
+    # an existing install. (Step 4 already migrated the panel addr; this
+    # block is the analogue for pdns.) Idempotent — if the file already
+    # has the unix form (or any other custom value), the grep misses
+    # and nothing happens.
+    if grep -qE '^\s*dsn\s*=\s*"[^"]*@tcp\(127\.0\.0\.1:3306\)/jabali_pdns' "$dest"; then
+      _log "migrating config.toml [pdns] dsn from TCP to unix socket (M25 Step 6)"
+      sed -i 's|@tcp(127\.0\.0\.1:3306)/jabali_pdns|@unix(/var/run/mysqld/mysqld.sock)/jabali_pdns|' "$dest"
+      _ok "config.toml [pdns] dsn migrated"
+    fi
     _ok "config file exists: $dest (not overwriting)"
     return
   fi
@@ -2371,7 +2399,7 @@ write_config_file() {
 # MySQL DSN for the PowerDNS backend database. Reconciler opens a
 # direct connection here to push zones/records in the same transaction
 # as the NOTIFY signal.
-dsn = "${PDNS_DB_USER}:${PDNS_DB_PASSWORD}@tcp(127.0.0.1:3306)/${PDNS_DB_NAME}?charset=utf8mb4&parseTime=true"
+dsn = "${PDNS_DB_USER}:${PDNS_DB_PASSWORD}@unix(/var/run/mysqld/mysqld.sock)/${PDNS_DB_NAME}?charset=utf8mb4&parseTime=true"
 EOF
     _ok "seeded [pdns] block in $dest"
   fi

@@ -38,6 +38,10 @@ format = "text"
 [database]
 # MariaDB DSN. Unused in Phase 2; required in production from Phase 3.
 # Example:
+# M25 Step 6 default: dial MariaDB over its Debian-default Unix socket
+# (lower latency than TCP loopback; required after the M25.1 follow-up
+# enables `skip-networking`). TCP form remains supported.
+# url = "jabali_panel:CHANGE_ME@unix(/var/run/mysqld/mysqld.sock)/jabali_panel?parseTime=true&charset=utf8mb4&loc=UTC"
 # url = "mysql://jabali_panel:CHANGE_ME@tcp(127.0.0.1:3306)/jabali_panel?parseTime=true&charset=utf8mb4&loc=UTC"
 url = ""
 

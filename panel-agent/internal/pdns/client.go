@@ -67,7 +67,12 @@ func ReadEnvAndConnect() (*Client, error) {
 	if name == "" || user == "" || pass == "" {
 		return nil, fmt.Errorf("%s missing PDNS_DB_NAME/USER/PASSWORD", envPath)
 	}
-	dsn := fmt.Sprintf("%s:%s@tcp(127.0.0.1:3306)/%s?parseTime=true&charset=utf8mb4",
+	// M25 Step 6: dial MariaDB over its Debian-default Unix socket. The
+	// agent already runs on the same host as MariaDB by definition (it's
+	// the host-mutation daemon); a TCP loopback round-trip was overhead
+	// rather than capability. Format is the native go-sql-driver/mysql
+	// `user:pass@unix(/path)/db?...` form.
+	dsn := fmt.Sprintf("%s:%s@unix(/var/run/mysqld/mysqld.sock)/%s?parseTime=true&charset=utf8mb4",
 		user, pass, name)
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {

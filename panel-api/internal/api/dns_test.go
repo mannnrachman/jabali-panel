@@ -138,6 +138,15 @@ func (m *mockDomainRepo) SetListenIPs(ctx context.Context, id string, upd reposi
 	return nil
 }
 
+func (m *mockDomainRepo) UpdateCatchallTarget(ctx context.Context, id string, target *string) error {
+	d, ok := m.domains[id]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	d.CatchallTarget = target
+	return nil
+}
+
 type mockDNSZoneRepo struct {
 	zones map[string]*models.DNSZone
 }

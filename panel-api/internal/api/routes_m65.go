@@ -1,52 +1,64 @@
 package api
 
-import "github.com/gin-gonic/gin"
+import (
+	"github.com/gin-gonic/gin"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+)
+
+// M65RouteDeps holds every repository + client any M6.5 feature needs.
+// One struct for all sub-routes so parallel feature steps don't collide
+// on the registration signature.
+type M65RouteDeps struct {
+	Agent          agent.AgentInterface
+	Domains        repository.DomainRepository
+	Mailboxes      repository.MailboxRepository
+	Autoresponders repository.EmailAutoresponderRepository
+	Forwarders     repository.EmailForwarderRepository
+	MailboxShares  repository.MailboxShareRepository
+}
 
 // RegisterM65Routes registers all M6.5 email feature routes.
-// Called once from router.go; each sub-registration (forwarders, autoresponders, etc.)
-// lives in its own Wave, preventing file collisions.
-// Enables parallel Wave B/C development per ADR-0051.
-func RegisterM65Routes(g *gin.RouterGroup) {
-	registerForwarderRoutes(g)
-	registerAutoresponderRoutes(g)
-	registerCatchAllRoutes(g)
-	registerDisclaimerRoutes(g)
-	registerSharedFolderRoutes(g)
-	registerMailLogRoutes(g)
+// Called once from app.go; each sub-registration lives in its own Wave file,
+// preventing file collisions. Enables parallel Wave B/C development (ADR-0051).
+func RegisterM65Routes(g *gin.RouterGroup, deps M65RouteDeps) {
+	registerForwarderRoutes(g, deps)
+	registerAutoresponderRoutes(g, deps)
+	registerCatchAllRoutes(g, deps)
+	registerDisclaimerRoutes(g, deps)
+	registerSharedFolderRoutes(g, deps)
+	registerMailLogRoutes(g, deps)
 }
 
-// registerForwarderRoutes registers email forwarder (alias + external) endpoints.
-// Implementation: Wave B (m65/email-forwarders).
-func registerForwarderRoutes(g *gin.RouterGroup) {
-	// TODO: Implement forwarder routes in Wave B.
+// Wave B: forwarders.
+func registerForwarderRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
+	// Implementation lives in panel-api/internal/api/mailbox_forwarder.go (Step 5).
 }
 
-// registerAutoresponderRoutes registers autoresponse/vacation endpoints.
-// Implementation: Wave B (m65/email-autoresponders).
-func registerAutoresponderRoutes(g *gin.RouterGroup) {
-	// TODO: Implement autoresponder routes in Wave B.
+// Wave B: autoresponders.
+func registerAutoresponderRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
+	// Implementation lives in panel-api/internal/api/mailbox_autoresponder.go (Step 3).
 }
 
-// registerCatchAllRoutes registers domain-level catch-all endpoints.
-// Implementation: Wave C (m65/domain-catchall).
-func registerCatchAllRoutes(g *gin.RouterGroup) {
-	// TODO: Implement catch-all routes in Wave C.
+// Wave B: catch-all.
+func registerCatchAllRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
+	RegisterDomainCatchallRoutes(g, DomainCatchallHandlerConfig{
+		Agent:   deps.Agent,
+		Domains: deps.Domains,
+	})
 }
 
-// registerDisclaimerRoutes registers domain-level disclaimer endpoints.
-// Implementation: Wave C (m65/domain-disclaimer).
-func registerDisclaimerRoutes(g *gin.RouterGroup) {
-	// TODO: Implement disclaimer routes in Wave C.
+// Wave C: disclaimer.
+func registerDisclaimerRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
+	// Implementation lives in panel-api/internal/api/domain_disclaimer.go (Step 6).
 }
 
-// registerSharedFolderRoutes registers mailbox share (ACL) endpoints.
-// Implementation: Wave C (m65/mailbox-shares).
-func registerSharedFolderRoutes(g *gin.RouterGroup) {
-	// TODO: Implement shared folder routes in Wave C.
+// Wave B: shared folders.
+func registerSharedFolderRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
+	// Implementation lives in panel-api/internal/api/mailbox_share.go (Step 4).
 }
 
-// registerMailLogRoutes registers audit log endpoints.
-// Implementation: Wave D (m65/mail-logs).
-func registerMailLogRoutes(g *gin.RouterGroup) {
-	// TODO: Implement mail log routes in Wave D.
+// Wave C: mail logs.
+func registerMailLogRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
+	// Implementation lives in panel-api/internal/api/mail_logs.go (Step 7).
 }

@@ -1,125 +1,57 @@
 // useCatchAll.ts — M6.5 domain-level catch-all hooks.
 //
-// M6.5 Step 1: Stub placeholder.
-// Implementation: Wave C (m65/domain-catchall).
-//
-// TODO: Implement hooks for:
-//   - GET    /domains/:id/catch-all             → useDomainCatchAll
-//   - POST   /domains/:id/catch-all             → useCreateDomainCatchAll
-//   - DELETE /domains/:id/catch-all             → useDeleteDomainCatchAll
-//   - PATCH  /domains/:id/catch-all             → useUpdateDomainCatchAll
+// Wire contract: GET/PUT/DELETE /domains/:id/catchall → {domain_id, domain_name, target, updated_at}
+// Verified against panel-api/internal/api/domain_catchall.go (ADR-0051, DB-as-truth).
 
-import { type UseQueryResult, type UseMutationResult } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "../apiClient";
 
-interface DomainCatchAll {
-  id: string
-  domainID: string
-  targetMailboxID: string
-  enabled: boolean
-  createdAt: string
-  updatedAt: string
+export interface DomainCatchAll {
+  domain_id: string;
+  domain_name: string;
+  target: string | null;
+  updated_at: string;
 }
 
-export function useDomainCatchAll(): UseQueryResult<
-  DomainCatchAll | null,
-  Error
-> {
-  // TODO: Implement after Wave C lands
-  return {
-    data: undefined,
-    error: null,
-    isLoading: true,
-    isError: false,
-    isSuccess: false,
-    status: "pending",
-    dataUpdatedAt: 0,
-    errorUpdatedAt: 0,
-    failureCount: 0,
-    failureReason: null,
-    isFetched: false,
-    isFetchedAfterMount: false,
-    isFetching: false,
-    isInitialLoading: true,
-    isPaused: false,
-    isPending: true,
-    isPlaceholderData: false,
-    isRefetching: false,
-    isStale: true,
-    refetch: async () => ({} as any),
-  } as any
+const QK = (domainID: string) => ["catchall", domainID];
+
+export function useDomainCatchAll(domainID: string) {
+  return useQuery({
+    queryKey: QK(domainID),
+    queryFn: async () => {
+      const { data } = await apiClient.get<DomainCatchAll>(
+        `/domains/${domainID}/catchall`,
+      );
+      return data;
+    },
+    enabled: !!domainID,
+  });
 }
 
-export function useCreateDomainCatchAll(): UseMutationResult<
-  DomainCatchAll,
-  Error,
-  { domainID: string; targetMailboxID: string; enabled?: boolean },
-  unknown
-> {
-  // TODO: Implement after Wave C lands
-  return {
-    mutate: () => {},
-    mutateAsync: async () => ({} as any),
-    isPending: false,
-    isError: false,
-    isSuccess: false,
-    isIdle: true,
-    data: undefined,
-    error: null,
-    status: "idle",
-    failureCount: 0,
-    failureReason: null,
-    reset: () => {},
-    context: undefined,
-    variables: undefined,
-  } as any
+export function useUpdateDomainCatchAll() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ domainID, target }: { domainID: string; target: string }) => {
+      const { data } = await apiClient.put<DomainCatchAll>(
+        `/domains/${domainID}/catchall`,
+        { target },
+      );
+      return data;
+    },
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: QK(data.domain_id) });
+    },
+  });
 }
 
-export function useDeleteDomainCatchAll(): UseMutationResult<
-  void,
-  Error,
-  string,
-  unknown
-> {
-  // TODO: Implement after Wave C lands
-  return {
-    mutate: () => {},
-    mutateAsync: async () => {},
-    isPending: false,
-    isError: false,
-    isSuccess: false,
-    isIdle: true,
-    data: undefined,
-    error: null,
-    status: "idle",
-    failureCount: 0,
-    failureReason: null,
-    reset: () => {},
-    context: undefined,
-    variables: undefined,
-  } as any
-}
-
-export function useUpdateDomainCatchAll(): UseMutationResult<
-  DomainCatchAll,
-  Error,
-  { domainID: string; targetMailboxID?: string; enabled?: boolean },
-  unknown
-> {
-  // TODO: Implement after Wave C lands
-  return {
-    mutate: () => {},
-    mutateAsync: async () => ({} as any),
-    isPending: false,
-    isError: false,
-    isSuccess: false,
-    isIdle: true,
-    data: undefined,
-    error: null,
-    status: "idle",
-    failureCount: 0,
-    failureReason: null,
-    reset: () => {},
-    context: undefined,
-    variables: undefined,
-  } as any
+export function useDeleteDomainCatchAll() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (domainID: string) => {
+      await apiClient.delete(`/domains/${domainID}/catchall`);
+    },
+    onSuccess: (_void, domainID) => {
+      qc.invalidateQueries({ queryKey: QK(domainID) });
+    },
+  });
 }

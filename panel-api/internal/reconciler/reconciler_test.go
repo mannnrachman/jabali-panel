@@ -196,6 +196,15 @@ func (f *fakeDomainRepo) SetListenIPs(ctx context.Context, id string, upd reposi
 	return nil
 }
 
+func (f *fakeDomainRepo) UpdateCatchallTarget(ctx context.Context, id string, target *string) error {
+	d, ok := f.domains[id]
+	if !ok {
+		return &notFoundErr{}
+	}
+	d.CatchallTarget = target
+	return nil
+}
+
 type notFoundErr struct{}
 
 func (e *notFoundErr) Error() string { return "not found" }

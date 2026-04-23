@@ -60,6 +60,10 @@ type DomainRepository interface {
 	// family"). Dedicated method because the columns are not in
 	// Update()'s allowlist on purpose.
 	SetListenIPs(ctx context.Context, id string, upd DomainListenIPs) error
+	// UpdateCatchallTarget writes the catchall_target column for a domain.
+	// Nil target clears the catch-all (sets to NULL). Dedicated method
+	// because the column is not in Update()'s allowlist.
+	UpdateCatchallTarget(ctx context.Context, id string, target *string) error
 }
 
 // DomainListenIPs is the bundle of optional column writes for
@@ -358,6 +362,20 @@ func (r *domainRepo) SetListenIPs(ctx context.Context, id string, upd DomainList
 	res := r.db.WithContext(ctx).Model(&models.Domain{}).
 		Where("id = ?", id).
 		Updates(cols)
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateCatchallTarget — see interface doc.
+func (r *domainRepo) UpdateCatchallTarget(ctx context.Context, id string, target *string) error {
+	res := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Where("id = ?", id).
+		Update("catchall_target", target)
 	if res.Error != nil {
 		return translate(res.Error)
 	}

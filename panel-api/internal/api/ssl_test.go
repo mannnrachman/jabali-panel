@@ -215,6 +215,11 @@ func (m *MockDomainRepository) MarkPanelPrimary(ctx context.Context, id string) 
 	return args.Error(0)
 }
 
+func (m *MockDomainRepository) UpdateCatchallTarget(ctx context.Context, id string, target *string) error {
+	args := m.Called(ctx, id, target)
+	return args.Error(0)
+}
+
 // TestListAllSSL_Success tests GET /admin/ssl-certificates returns all certificates
 func TestListAllSSL_Success(t *testing.T) {
 	mockSSLCerts := new(MockSSLCertificateRepository)

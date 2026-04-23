@@ -60,6 +60,11 @@ type Deps struct {
 	CronJobs            repository.CronJobRepository
 	SSHKeys             repository.SSHKeyRepository
 	LimitOverrides      repository.UserLimitOverrideRepository
+	// M6.5 email feature repositories. Autoresponders/Forwarders/MailboxShares
+	// reconcile jabali intent → Stalwart via the phase registry (ADR-0051).
+	Autoresponders      repository.EmailAutoresponderRepository
+	Forwarders          repository.EmailForwarderRepository
+	MailboxShares       repository.MailboxShareRepository
 	// QuotaMount is the filesystem mount path /home lives on — passed
 	// on every M18 user.limits.{apply,clear,report} agent call so the
 	// agent can resolve `setquota -u <user> ... <mount>` without ever
@@ -283,8 +288,15 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		}
 		// M6.5 Email features: forwarders, autoresponders, catch-all, disclaimer,
 		// shared folders, logs. All sub-routes live in routes_m65.go and are
-		// filled in by parallel Wave B/C steps (ADR-0051).
-		api.RegisterM65Routes(v1)
+		// filled in by Wave B/C steps (ADR-0051).
+		api.RegisterM65Routes(v1, api.M65RouteDeps{
+			Agent:          deps.Agent,
+			Domains:        deps.Domains,
+			Mailboxes:      deps.Mailboxes,
+			Autoresponders: deps.Autoresponders,
+			Forwarders:     deps.Forwarders,
+			MailboxShares:  deps.MailboxShares,
+		})
 		if deps.Domains != nil && deps.DNSZones != nil && deps.DNSRecords != nil {
 			api.RegisterDNSRoutes(v1, api.DNSHandlerConfig{
 				Domains:        deps.Domains,

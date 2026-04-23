@@ -2633,13 +2633,15 @@ start_and_verify() {
   _ok "health OK: $(cat /tmp/jabali-health.json)"
   rm -f /tmp/jabali-health.json
 
-  # M25 Step 4 verification: socket must be jabali:jabali-sockets 0660,
-  # and nothing must still be listening on the legacy TCP port 8443.
+  # M25 Step 4 verification: socket must be jabali:jabali-sockets 0660.
+  # (Pre-M25 we also asserted no all-interface bind on :8443 — that check
+  # was correct when panel-api itself terminated TLS on :8443. Post-M25,
+  # nginx owns :8443 as the public-facing TLS terminator and must bind
+  # 0.0.0.0 + [::]: by design. panel-api not being on :8443 is implied
+  # by it having successfully bound the unix socket above; asserting
+  # nothing-on-8443 would fail on every correct install.)
   if ! verify_socket_perms /run/jabali-panel/api.sock jabali jabali-sockets 660; then
     _die "panel-api socket has wrong perms — see message above"
-  fi
-  if ! verify_no_all_interface_binds 8443; then
-    _die "panel-api still bound on TCP :8443 — config didn't apply or rolled back to TCP"
   fi
 
   # In-place migration: rewrite an existing config.toml's addr from any

@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   App,
   Button,
   Card,
+  Input,
   Popconfirm,
   Space,
   Switch,
@@ -72,6 +73,17 @@ export const UserCronList = () => {
   });
 
   const jobs = listResponse.items || [];
+  const [search, setSearch] = useState("");
+  const filteredJobs = useMemo(() => {
+    if (!search) return jobs;
+    const needle = search.toLowerCase();
+    return jobs.filter(
+      (j) =>
+        j.name.toLowerCase().includes(needle) ||
+        j.command.toLowerCase().includes(needle) ||
+        j.schedule.toLowerCase().includes(needle),
+    );
+  }, [jobs, search]);
 
   const handleOpenCreateModal = () => {
     setEditingJob(null);
@@ -176,8 +188,17 @@ export const UserCronList = () => {
       </Space>
 
       <Card>
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Input.Search
+          placeholder="Search by name, command, or schedule"
+          allowClear
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onSearch={(value) => setSearch(value.trim())}
+          style={{ maxWidth: 360 }}
+        />
         <Table<CronJob>
-        dataSource={jobs}
+        dataSource={filteredJobs}
         loading={isLoading_}
         rowKey="id"
         pagination={false}
@@ -295,6 +316,7 @@ export const UserCronList = () => {
           },
         ]}
         />
+        </Space>
       </Card>
 
       <CreateCronModal

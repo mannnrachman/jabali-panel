@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Alert,
   Button,
@@ -66,6 +66,16 @@ export const UserSSHKeysPage = () => {
   });
 
   const keys = listResponse.items || [];
+  const [search, setSearch] = useState("");
+  const filteredKeys = useMemo(() => {
+    if (!search) return keys;
+    const needle = search.toLowerCase();
+    return keys.filter(
+      (k: SSHKey) =>
+        k.name.toLowerCase().includes(needle) ||
+        k.fingerprint.toLowerCase().includes(needle),
+    );
+  }, [keys, search]);
 
   // Connection details — separate query so a 409 "no_linux_account" (admins
   // without a shell user) just hides the card instead of blocking the page.
@@ -264,8 +274,16 @@ export const UserSSHKeysPage = () => {
       )}
 
       <Card>
+        <Input.Search
+          placeholder="Search by name or fingerprint"
+          allowClear
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onSearch={(value) => setSearch(value.trim())}
+          style={{ maxWidth: 360, marginBottom: 12 }}
+        />
         <Table<SSHKey>
-          dataSource={keys}
+          dataSource={filteredKeys}
           loading={isLoading || deletingId !== null}
           rowKey="id"
           pagination={false}

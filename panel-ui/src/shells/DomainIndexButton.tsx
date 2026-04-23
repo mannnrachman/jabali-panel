@@ -31,21 +31,39 @@ const options: { value: IndexPriority; label: string }[] = [
   { value: "full", label: "PHP, HTML, HTM (full support)" },
 ];
 
-export const DomainIndexButton = ({ domain }: { domain: DomainIndexTarget }) => {
-  const [open, setOpen] = useState(false);
+export const DomainIndexButton = ({
+  domain,
+  open: controlledOpen,
+  onClose,
+}: {
+  domain: DomainIndexTarget;
+  open?: boolean;
+  onClose?: () => void;
+}) => {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const effectiveOpen = controlledOpen ?? internalOpen;
   const [saving, setSaving] = useState(false);
   const [value, setValue] = useState<IndexPriority>(
     (domain.index_priority as IndexPriority) || "html_first",
   );
   const qc = useQueryClient();
 
+  const handleClose = () => {
+    if (onClose) {
+      onClose();
+    } else {
+      setInternalOpen(false);
+    }
+  };
+
   // Re-sync from prop each time the modal opens so another user's
   // concurrent edit doesn't get silently clobbered.
   useEffect(() => {
-    if (open) {
+    if (effectiveOpen) {
       setValue((domain.index_priority as IndexPriority) || "html_first");
     }
-  }, [open, domain.index_priority]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveOpen, domain.index_priority]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -56,7 +74,7 @@ export const DomainIndexButton = ({ domain }: { domain: DomainIndexTarget }) => 
       notification.success({ message: "Index priority saved" });
       qc.invalidateQueries({ queryKey: ["list", "domains"] });
       qc.invalidateQueries({ queryKey: ["one", "domains", domain.id] });
-      setOpen(false);
+      handleClose();
     } catch (err) {
       const e = err as {
         response?: { data?: { detail?: string } };
@@ -73,20 +91,22 @@ export const DomainIndexButton = ({ domain }: { domain: DomainIndexTarget }) => 
 
   return (
     <>
-      <Button
-        type="text"
-        icon={<FileTextOutlined />}
-        onClick={() => setOpen(true)}
-      >
-        Index
-      </Button>
+      {controlledOpen === undefined && (
+        <Button
+          type="text"
+          icon={<FileTextOutlined />}
+          onClick={() => setInternalOpen(true)}
+        >
+          Index
+        </Button>
+      )}
       <Modal
         title={`Index Manager for ${domain.name}`}
-        open={open}
-        onCancel={() => setOpen(false)}
+        open={effectiveOpen}
+        onCancel={handleClose}
         width={560}
         footer={[
-          <Button key="cancel" onClick={() => setOpen(false)}>
+          <Button key="cancel" onClick={handleClose}>
             Cancel
           </Button>,
           <Button

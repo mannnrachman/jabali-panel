@@ -1,7 +1,7 @@
 // Shared settings modal for nginx custom directives used by both admin and user domain lists.
 // Opens a modal with tabs: "Rule Builder" and "Raw Directives" (functional textarea).
 // The Rule Builder tab allows building 6 types of typed nginx rules with drag-reorder.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   SettingOutlined,
   ToolOutlined,
@@ -655,17 +655,38 @@ const RuleBuilder = ({
 
 export const DomainSettingsButton = ({
   domain,
+  open: controlledOpen,
+  onClose,
 }: {
   domain: DomainSettingsTarget;
+  open?: boolean;
+  onClose?: () => void;
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const handleCloseModal = () => setIsModalOpen(false);
+  const effectiveOpen = controlledOpen ?? isModalOpen;
+
+  const handleCloseModal = () => {
+    if (onClose) {
+      onClose();
+    } else {
+      setIsModalOpen(false);
+    }
+  };
+
   const [directivesValue, setDirectivesValue] = useState(
     domain.nginx_custom_directives ?? ""
   );
   const [rules, setRules] = useState<NginxRule[]>(domain.nginx_rules ?? []);
   const [isSaving, setIsSaving] = useState(false);
   const qc = useQueryClient();
+
+  useEffect(() => {
+    if (controlledOpen) {
+      setDirectivesValue(domain.nginx_custom_directives ?? "");
+      setRules(domain.nginx_rules ?? []);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [controlledOpen]);
 
   const handleOpenModal = async () => {
     // Re-sync from prop in case the values were updated elsewhere
@@ -685,7 +706,7 @@ export const DomainSettingsButton = ({
       notification.success({ message: "Nginx config saved" });
       qc.invalidateQueries({ queryKey: ["list", "domains"] });
       qc.invalidateQueries({ queryKey: ["one", "domains", domain.id] });
-      setIsModalOpen(false);
+      handleCloseModal();
     } catch (err) {
       const e = err as {
         response?: { data?: { detail?: string } };
@@ -702,17 +723,19 @@ export const DomainSettingsButton = ({
 
   return (
     <>
-      <Button
-        type="text"
-        icon={<SettingOutlined />}
-        onClick={handleOpenModal}
-      >
-        Nginx Directives
-      </Button>
+      {controlledOpen === undefined && (
+        <Button
+          type="text"
+          icon={<SettingOutlined />}
+          onClick={handleOpenModal}
+        >
+          Nginx Directives
+        </Button>
+      )}
 
       <Modal
         title={`Nginx Directives for ${domain.name}`}
-        open={isModalOpen}
+        open={effectiveOpen}
         onCancel={handleCloseModal}
         width={720}
         footer={[

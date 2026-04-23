@@ -28,6 +28,7 @@ import {
   ThunderboltOutlined,
 } from "@ant-design/icons";
 import { createElement } from "react";
+import type { ComponentType } from "react";
 
 export type NavItem = {
   key: string;
@@ -36,59 +37,68 @@ export type NavItem = {
   path: string;
 };
 
+// All sidebar icons render a shade larger than AntD's default (14px
+// inherited from fontSize). 20px reads comfortably without crowding the
+// label and keeps the collapsed-sider footprint tidy. Change here and
+// every entry picks it up.
+const NAV_ICON_SIZE = 20;
+
+const navIcon = (Icon: ComponentType<{ style?: React.CSSProperties }>) =>
+  createElement(Icon, { style: { fontSize: NAV_ICON_SIZE } });
+
 export const adminNav: NavItem[] = [
   {
     key: "dashboard",
     label: "Dashboard",
-    icon: createElement(HomeOutlined),
+    icon: navIcon(HomeOutlined),
     path: "/jabali-admin/dashboard",
   },
   {
     key: "users",
     label: "Users",
-    icon: createElement(TeamOutlined),
+    icon: navIcon(TeamOutlined),
     path: "/jabali-admin/users",
   },
   {
     key: "packages",
     label: "Packages",
-    icon: createElement(AppstoreOutlined),
+    icon: navIcon(AppstoreOutlined),
     path: "/jabali-admin/packages",
   },
   {
     key: "domains",
     label: "Domains",
-    icon: createElement(GlobalOutlined),
+    icon: navIcon(GlobalOutlined),
     path: "/jabali-admin/domains",
   },
   {
     key: "dns",
     label: "DNS",
-    icon: createElement(CloudServerOutlined),
+    icon: navIcon(CloudServerOutlined),
     path: "/jabali-admin/dns",
   },
   {
     key: "ssl",
     label: "SSL Manager",
-    icon: createElement(LockOutlined),
+    icon: navIcon(LockOutlined),
     path: "/jabali-admin/ssl",
   },
   {
     key: "settings",
     label: "Server Settings",
-    icon: createElement(SettingOutlined),
+    icon: navIcon(SettingOutlined),
     path: "/jabali-admin/settings",
   },
   {
     key: "php-pools",
     label: "PHP Manager",
-    icon: createElement(ThunderboltOutlined),
+    icon: navIcon(ThunderboltOutlined),
     path: "/jabali-admin/php-pools",
   },
   {
     key: "applications",
     label: "Applications",
-    icon: createElement(AppstoreAddOutlined),
+    icon: navIcon(AppstoreAddOutlined),
     path: "/jabali-admin/applications",
   },
   {
@@ -103,67 +113,67 @@ export const userNav: NavItem[] = [
   {
     key: "dashboard",
     label: "Dashboard",
-    icon: createElement(HomeOutlined),
+    icon: navIcon(HomeOutlined),
     path: "/jabali-panel/dashboard",
   },
   {
     key: "domains",
     label: "Domains",
-    icon: createElement(GlobalOutlined),
+    icon: navIcon(GlobalOutlined),
     path: "/jabali-panel/domains",
   },
   {
     key: "dns",
     label: "DNS",
-    icon: createElement(CloudServerOutlined),
+    icon: navIcon(CloudServerOutlined),
     path: "/jabali-panel/dns",
   },
   {
     key: "ssl",
     label: "SSL Manager",
-    icon: createElement(LockOutlined),
+    icon: navIcon(LockOutlined),
     path: "/jabali-panel/ssl",
   },
   {
     key: "php-settings",
     label: "PHP Settings",
-    icon: createElement(ThunderboltOutlined),
+    icon: navIcon(ThunderboltOutlined),
     path: "/jabali-panel/php-settings",
   },
   {
     key: "databases",
     label: "Databases",
-    icon: createElement(DatabaseOutlined),
+    icon: navIcon(DatabaseOutlined),
     path: "/jabali-panel/databases",
   },
   {
     key: "files",
     label: "Files",
-    icon: createElement(FolderOutlined),
+    icon: navIcon(FolderOutlined),
     path: "/jabali-panel/files",
   },
   {
     key: "applications",
     label: "Applications",
-    icon: createElement(AppstoreAddOutlined),
+    icon: navIcon(AppstoreAddOutlined),
     path: "/jabali-panel/applications",
   },
   {
     key: "ssh-keys",
     label: "SSH Keys",
-    icon: createElement(KeyOutlined),
+    icon: navIcon(KeyOutlined),
     path: "/jabali-panel/ssh-keys",
   },
   {
     key: "cron",
     label: "Cron",
-    icon: createElement(ClockCircleOutlined),
+    icon: navIcon(ClockCircleOutlined),
     path: "/jabali-panel/cron",
   },
   {
     key: "mailboxes",
     label: "Email",
-    icon: createElement(MailOutlined),
+    icon: navIcon(MailOutlined),
     path: "/jabali-panel/mailboxes",
   },
 ];

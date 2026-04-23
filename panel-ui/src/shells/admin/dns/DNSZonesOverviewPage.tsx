@@ -9,6 +9,7 @@ import { useNavigate } from "react-router";
 
 import { apiClient } from "../../../apiClient";
 import { columnSearchProps } from "../../../components/columnSearch";
+import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useTableURL } from "../../../hooks/useTableURL";
 
 interface Domain {
@@ -98,11 +99,13 @@ export const DNSZonesOverviewPage = () => {
         ) : query.items.length === 0 ? (
           <Empty description="No domains found" />
         ) : (
-          <Table<Domain>
+          <SearchableTableStringQ<Domain>
           rowKey="id"
           loading={query.isLoading}
           dataSource={query.items}
-          scroll={{ x: "max-content" }}
+          initialSearch={query.params.q}
+          searchPlaceholder="Search by domain name"
+          onSearchChange={(q) => query.setParams({ q, page: 1 })}
           pagination={{
             current: query.params.page,
             pageSize: query.params.pageSize,
@@ -141,7 +144,7 @@ export const DNSZonesOverviewPage = () => {
               </Button>
             )}
           />
-          </Table>
+          </SearchableTableStringQ>
         )}
       </Card>
     </div>

@@ -133,6 +133,8 @@ export const UserDatabaseList = () => {
           marginBottom: 16,
           width: "100%",
           justifyContent: "space-between",
+          flexWrap: "wrap",
+          rowGap: 8,
         }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>

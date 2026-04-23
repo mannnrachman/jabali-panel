@@ -17,6 +17,7 @@ import {
   Button,
   Card,
   Empty,
+  Input,
   Popconfirm,
   Progress,
   Skeleton,
@@ -101,6 +102,17 @@ export const UserMailboxesPage = () => {
     }
     return out;
   }, [mailboxResults]);
+
+  const [search, setSearch] = useState("");
+  const filteredRows = useMemo(() => {
+    if (!search) return rows;
+    const needle = search.toLowerCase();
+    return rows.filter(
+      (row) =>
+        row.email.toLowerCase().includes(needle) ||
+        row.domain_name.toLowerCase().includes(needle),
+    );
+  }, [rows, search]);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [passwordModal, setPasswordModal] = useState<{
@@ -198,7 +210,7 @@ export const UserMailboxesPage = () => {
     <>
       <Card>
         <Space
-          style={{ width: "100%", justifyContent: "space-between", marginBottom: 12 }}
+          style={{ width: "100%", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", rowGap: 8 }}
         >
           <Typography.Title level={3} style={{ margin: 0 }}>
             <MailOutlined /> Mailboxes
@@ -221,10 +233,19 @@ export const UserMailboxesPage = () => {
           </Tooltip>
         </Space>
 
+        <Input.Search
+          placeholder="Search by email or domain"
+          allowClear
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onSearch={(value) => setSearch(value.trim())}
+          style={{ maxWidth: 360, marginBottom: 12 }}
+        />
+
         <Table<MailboxRow>
           rowKey="id"
           loading={anyMailboxLoading && rows.length === 0}
-          dataSource={rows}
+          dataSource={filteredRows}
           pagination={{ pageSize: 20, showSizeChanger: true }}
           locale={{ emptyText: <Empty description="No mailboxes yet" /> }}
           columns={[

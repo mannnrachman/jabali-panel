@@ -2,7 +2,7 @@
 // Opens a modal with two sections:
 // 1. Whole-domain redirect toggle + URL + type selector
 // 2. Page-level redirects list with add/delete controls (v2: drag-reorder, active toggle, wildcard)
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   SwapOutlined,
   CheckOutlined,
@@ -205,10 +205,15 @@ const SortableCard = ({
 
 export const DomainRedirectsButton = ({
   domain,
+  open: controlledOpen,
+  onClose,
 }: {
   domain: DomainRedirectsTarget;
+  open?: boolean;
+  onClose?: () => void;
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const effectiveOpen = controlledOpen ?? isModalOpen;
   const [wholeToggle, setWholeToggle] = useState(!!domain.redirect_all_to);
   const [wholeUrl, setWholeUrl] = useState(domain.redirect_all_to ?? "");
   const [wholeType, setWholeType] = useState(domain.redirect_all_type ?? "301");
@@ -224,6 +229,16 @@ export const DomainRedirectsButton = ({
       coordinateGetter: sortableKeyboardCoordinates,
     })
   );
+
+  useEffect(() => {
+    if (controlledOpen) {
+      setWholeToggle(!!domain.redirect_all_to);
+      setWholeUrl(domain.redirect_all_to ?? "");
+      setWholeType(domain.redirect_all_type ?? "301");
+      setPageRedirects(domain.page_redirects ?? []);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [controlledOpen]);
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -245,7 +260,11 @@ export const DomainRedirectsButton = ({
   };
 
   const handleCloseModal = () => {
-    setIsModalOpen(false);
+    if (onClose) {
+      onClose();
+    } else {
+      setIsModalOpen(false);
+    }
   };
 
   const addPageRedirect = () => {
@@ -302,7 +321,7 @@ export const DomainRedirectsButton = ({
       notification.success({ message: "Redirects saved" });
       qc.invalidateQueries({ queryKey: ["list", "domains"] });
       qc.invalidateQueries({ queryKey: ["one", "domains", domain.id] });
-      setIsModalOpen(false);
+      handleCloseModal();
     } catch (err) {
       const e = err as {
         response?: { data?: { detail?: string } };
@@ -319,17 +338,19 @@ export const DomainRedirectsButton = ({
 
   return (
     <>
-      <Button
-        type="text"
-        icon={<SwapOutlined />}
-        onClick={handleOpenModal}
-      >
-        Redirects
-      </Button>
+      {controlledOpen === undefined && (
+        <Button
+          type="text"
+          icon={<SwapOutlined />}
+          onClick={handleOpenModal}
+        >
+          Redirects
+        </Button>
+      )}
 
       <Modal
         title={`Redirects for ${domain.name}`}
-        open={isModalOpen}
+        open={effectiveOpen}
         onCancel={handleCloseModal}
         width={720}
         footer={[

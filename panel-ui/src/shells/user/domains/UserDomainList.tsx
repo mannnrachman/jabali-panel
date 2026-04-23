@@ -2,17 +2,28 @@
 // strip as the admin list (DNS/Redirects/Index/Settings/Toggle/Delete)
 // minus the Edit button (users edit per-domain config via the row
 // buttons rather than a full edit page).
-import { PlusSquareOutlined, GlobalOutlined } from "@ant-design/icons";
-import { Button, Card, Space, Table, Tag, Typography } from "antd";
+import {
+  PlusSquareOutlined,
+  GlobalOutlined,
+  MoreOutlined,
+  SwapOutlined,
+  FileTextOutlined,
+  SettingOutlined,
+  PauseCircleOutlined,
+  PlayCircleOutlined,
+  DeleteOutlined,
+} from "@ant-design/icons";
+import { Button, Card, Dropdown, Modal, Space, Table, Tag, Typography, notification } from "antd";
+import { useState } from "react";
 import { useNavigate } from "react-router";
 import type { SorterResult } from "antd/es/table/interface";
+import { useQueryClient } from "@tanstack/react-query";
 
+import { apiClient } from "../../../apiClient";
 import { columnSearchProps } from "../../../components/columnSearch";
-import { RowDeleteButton } from "../../../components/RowDeleteButton";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useDeleteMutation } from "../../../hooks/useQueries";
 import { useTableURL } from "../../../hooks/useTableURL";
-import { DomainToggleButton } from "../../DomainToggleButton";
 import { DomainSettingsButton } from "../../DomainSettingsButton";
 import { DomainRedirectsButton } from "../../DomainRedirectsButton";
 import { DomainIndexButton } from "../../DomainIndexButton";
@@ -70,8 +81,13 @@ export type Domain = {
   updated_at: string;
 };
 
+type ActiveModal = { domainId: string; type: "redirects" | "index" | "settings" } | null;
+
 export const UserDomainList = () => {
   const navigate = useNavigate();
+  const qc = useQueryClient();
+  const [activeModal, setActiveModal] = useState<ActiveModal>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
   const query = useTableURL<Domain>({
     resource: "domains",
     defaultSort: "name",
@@ -107,6 +123,8 @@ export const UserDomainList = () => {
           marginBottom: 16,
           width: "100%",
           justifyContent: "space-between",
+          flexWrap: "wrap",
+          rowGap: 8,
         }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
@@ -173,27 +191,105 @@ export const UserDomainList = () => {
             title="Actions"
             dataIndex="actions"
             render={(_, r) => (
-              <Space>
-                <Button
-                  type="text"
-                  icon={<GlobalOutlined />}
-                  onClick={() =>
-                    navigate(`/jabali-panel/domains/${r.id}/dns`)
-                  }
-                >
-                  DNS
-                </Button>
-                <DomainRedirectsButton domain={r} />
-                <DomainIndexButton domain={r} />
-                <DomainSettingsButton domain={r} />
-                <DomainToggleButton domain={r} />
-                <RowDeleteButton
-                  confirmTitle={`Delete domain "${r.name}"?`}
-                  onConfirm={async () => {
-                    await deleteMutation.mutateAsync({ id: r.id });
+              <>
+                <Dropdown
+                  trigger={["click"]}
+                  menu={{
+                    items: [
+                      {
+                        key: "dns",
+                        label: "DNS",
+                        icon: <GlobalOutlined />,
+                        onClick: () => navigate(`/jabali-panel/domains/${r.id}/dns`),
+                      },
+                      {
+                        key: "redirects",
+                        label: "Redirects",
+                        icon: <SwapOutlined />,
+                        onClick: () => setActiveModal({ domainId: r.id, type: "redirects" }),
+                      },
+                      {
+                        key: "index",
+                        label: "Index",
+                        icon: <FileTextOutlined />,
+                        onClick: () => setActiveModal({ domainId: r.id, type: "index" }),
+                      },
+                      {
+                        key: "settings",
+                        label: "Nginx Directives",
+                        icon: <SettingOutlined />,
+                        onClick: () => setActiveModal({ domainId: r.id, type: "settings" }),
+                      },
+                      {
+                        key: "toggle",
+                        label: r.is_enabled ? "Disable" : "Enable",
+                        icon: r.is_enabled ? <PauseCircleOutlined /> : <PlayCircleOutlined />,
+                        disabled: togglingId === r.id,
+                        onClick: async () => {
+                          setTogglingId(r.id);
+                          try {
+                            await apiClient.patch(`/domains/${r.id}`, {
+                              is_enabled: !r.is_enabled,
+                            });
+                            notification.success({
+                              message: r.is_enabled ? "Domain disabled" : "Domain enabled",
+                            });
+                            qc.invalidateQueries({ queryKey: ["list", "domains"] });
+                            qc.invalidateQueries({ queryKey: ["one", "domains", r.id] });
+                          } catch (err) {
+                            notification.error({
+                              message: "Failed to toggle",
+                              description: (err as Error).message,
+                            });
+                          } finally {
+                            setTogglingId(null);
+                          }
+                        },
+                      },
+                      { type: "divider" },
+                      {
+                        key: "delete",
+                        label: "Delete",
+                        icon: <DeleteOutlined />,
+                        danger: true,
+                        onClick: () =>
+                          Modal.confirm({
+                            title: `Delete domain "${r.name}"?`,
+                            content: "This cannot be undone.",
+                            okText: "Delete",
+                            okType: "danger",
+                            onOk: async () => {
+                              await deleteMutation.mutateAsync({ id: r.id });
+                            },
+                          }),
+                      },
+                    ],
                   }}
-                />
-              </Space>
+                >
+                  <Button type="text" icon={<MoreOutlined />} />
+                </Dropdown>
+                {activeModal?.domainId === r.id && activeModal.type === "redirects" && (
+                  <DomainRedirectsButton
+                    domain={r}
+                    open={true}
+                    onClose={() => setActiveModal(null)}
+                  />
+                )}
+                {activeModal?.domainId === r.id && activeModal.type === "index" && (
+                  <DomainIndexButton
+                    domain={r}
+                    open={true}
+                    onClose={() => setActiveModal(null)}
+                  />
+                )}
+                {activeModal?.domainId === r.id && activeModal.type === "settings" && (
+                  <DomainSettingsButton
+                    domain={r}
+                    open={true}
+                    onClose={() => setActiveModal(null)}
+                  />
+                )}
+              </>
             )}
           />
         </SearchableTableStringQ>

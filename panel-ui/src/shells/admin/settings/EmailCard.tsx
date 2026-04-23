@@ -67,7 +67,7 @@ export const EmailCard = () => {
 
   return (
     <Card title={<CardTitle />}>
-      <Descriptions column={1} size="middle" layout="horizontal">
+      <Descriptions column={1} size="middle" layout="vertical">
         <Descriptions.Item label="Primary mail domain">
           <Typography.Text code>{data.primaryDomainName}</Typography.Text>
         </Descriptions.Item>

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  Input,
   Table,
   Tag,
   Button,
@@ -346,14 +347,24 @@ export const SSLManagerTable = ({
           style={{ marginTop: 48 }}
         />
       ) : (
-        <Table
-          dataSource={filteredData}
-          columns={columns}
-          rowKey="id"
-          loading={isLoading}
-          pagination={{ pageSize: 25, showSizeChanger: true }}
-          scroll={{ x: "max-content" }}
-        />
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Input.Search
+            placeholder={showOwner ? "Search by domain or owner" : "Search by domain"}
+            allowClear
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onSearch={(value) => setSearch(value.trim())}
+            style={{ maxWidth: 360 }}
+          />
+          <Table
+            dataSource={filteredData}
+            columns={columns}
+            rowKey="id"
+            loading={isLoading}
+            pagination={{ pageSize: 25, showSizeChanger: true }}
+            scroll={{ x: "max-content" }}
+          />
+        </Space>
       )}
     </>
   );

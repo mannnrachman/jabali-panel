@@ -3716,16 +3716,38 @@ _install_stalwart_apply_plan() {
     return
   fi
 
-  _log "applying plan via stalwart-cli against :${jmap_port}"
-  if ! STALWART_URL="http://127.0.0.1:${jmap_port}" \
-       STALWART_USER="admin" \
-       STALWART_PASSWORD="$admin_token" \
-       /usr/local/bin/stalwart-cli apply --file "$plan_file"; then
-    _err "stalwart-cli apply failed — the plan's object shapes may have drifted from the v0.16 schema"
-    _err "inspect the plan at $plan_file; re-verify against the upstream schema (ADR-0045 §Schema-pull)"
-    _die "Stalwart apply failed"
+  # Partial-apply detection: when a prior install run's apply succeeded
+  # but the post-apply `systemctl restart jabali-stalwart` didn't land
+  # (VM reboot, operator Ctrl-C, crash in a later install step), Stalwart
+  # keeps running on its bootstrap :8080 listener even though RocksDB
+  # holds all the plan-defined NetworkListener objects. Re-running apply
+  # in that state fails primaryKeyViolation for every NetworkListener.
+  # Detect it by querying the registry for a sentinel listener name
+  # before apply; if present, skip the apply and fall through to the
+  # restart block below, which rebinds the existing listeners.
+  local need_apply=1
+  local existing_listeners=""
+  existing_listeners="$(STALWART_URL="http://127.0.0.1:${jmap_port}" \
+    STALWART_USER="admin" \
+    STALWART_PASSWORD="$admin_token" \
+    /usr/local/bin/stalwart-cli query NetworkListener 2>/dev/null || true)"
+  if grep -qE '(^|[[:space:]])jmap-loopback([[:space:]]|$)' <<<"$existing_listeners"; then
+    _ok "Stalwart plan already in RocksDB (jmap-loopback listener present) — partial-apply state; skipping re-apply"
+    need_apply=0
   fi
-  _ok "Stalwart plan applied (SqlDirectory + listeners + Authentication)"
+
+  if (( need_apply )); then
+    _log "applying plan via stalwart-cli against :${jmap_port}"
+    if ! STALWART_URL="http://127.0.0.1:${jmap_port}" \
+         STALWART_USER="admin" \
+         STALWART_PASSWORD="$admin_token" \
+         /usr/local/bin/stalwart-cli apply --file "$plan_file"; then
+      _err "stalwart-cli apply failed — the plan's object shapes may have drifted from the v0.16 schema"
+      _err "inspect the plan at $plan_file; re-verify against the upstream schema (ADR-0045 §Schema-pull)"
+      _die "Stalwart apply failed"
+    fi
+    _ok "Stalwart plan applied (SqlDirectory + listeners + Authentication)"
+  fi
 
   # Always reached via :8080 here — the :8446 branch above already
   # returned. Restart Stalwart so it rebinds to the newly-created

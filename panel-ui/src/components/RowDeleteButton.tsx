@@ -12,7 +12,7 @@
 // row should rely on row-level scoping (getByRole("row", { name:
 // /email/ }).getByRole("button", ...)) rather than encoding the row
 // identity into the button label.
-import { DeleteOutlined } from "@ant-design/icons";
+import { DeleteOutlined } from "@icons";
 import { Button, Popconfirm, message } from "antd";
 
 interface RowDeleteButtonProps {

@@ -5,7 +5,7 @@
 //
 // The version string is imported from panel-ui/package.json at build
 // time so bumping the SPA version there propagates automatically.
-import { GithubOutlined } from "@ant-design/icons";
+import { GithubOutlined } from "@icons";
 import { Grid, Layout, Space, theme, Typography } from "antd";
 
 import { useThemeMode } from "../theme/ThemeModeContext";

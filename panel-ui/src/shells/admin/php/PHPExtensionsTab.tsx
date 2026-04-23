@@ -12,7 +12,7 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { ApiOutlined, DownloadOutlined, SearchOutlined } from "@ant-design/icons";
+import { ApiOutlined, DownloadOutlined, SearchOutlined } from "@icons";
 import { apiClient } from "../../../apiClient";
 
 // Shape mirrors the contract locked in panel-api/internal/agent/php_ext_contract_test.go.

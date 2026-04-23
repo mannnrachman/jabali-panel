@@ -1,5 +1,5 @@
 // ThemeToggle — one-click sun/moon switch used in both shell headers.
-import { MoonOutlined, SunOutlined } from "@ant-design/icons";
+import { MoonOutlined, SunOutlined } from "@icons";
 import { Button, Tooltip } from "antd";
 
 import { useThemeMode } from "../theme/ThemeModeContext";

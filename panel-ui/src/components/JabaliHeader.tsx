@@ -16,7 +16,7 @@ import {
   MenuOutlined,
   SearchOutlined,
   UserOutlined,
-} from "@ant-design/icons";
+} from "@icons";
 import {
   AutoComplete,
   Avatar,

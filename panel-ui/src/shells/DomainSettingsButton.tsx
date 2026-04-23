@@ -14,7 +14,7 @@ import {
   DeleteOutlined,
   MenuOutlined,
   UpOutlined,
-} from "@ant-design/icons";
+} from "@icons";
 import {
   Button,
   Modal,

@@ -1,6 +1,6 @@
 import { SiWordpress, SiWikipedia, SiDrupal, SiJoomla, SiPhpbb, SiPrestashop } from "react-icons/si";
 import { FaOpencart } from "react-icons/fa6";
-import { BookOutlined } from "@ant-design/icons";
+import { BookOutlined } from "@icons";
 import type { CSSProperties } from "react";
 
 interface CmsIconProps {

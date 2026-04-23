@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckOutlined, CloseOutlined, SaveOutlined, WarningOutlined } from "@ant-design/icons";
+import { CheckOutlined, CloseOutlined, SaveOutlined, WarningOutlined } from "@icons";
 import {
   Alert,
   Button,

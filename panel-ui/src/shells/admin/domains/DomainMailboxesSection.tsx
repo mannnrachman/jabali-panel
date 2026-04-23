@@ -30,7 +30,7 @@ import {
   KeyOutlined,
   MailOutlined,
   PlusOutlined,
-} from "@ant-design/icons";
+} from "@icons";
 
 import { DatabaseUserPasswordModal } from "../../../components/DatabaseUserPasswordModal";
 import { PasswordInput } from "../../../components/PasswordInput";

@@ -8,7 +8,7 @@
 // is a UX affordance — not per-column exclusive filtering. The icon
 // turns red while `q` is non-empty so it doubles as a "filter active"
 // cue.
-import { SearchOutlined } from "@ant-design/icons";
+import { SearchOutlined } from "@icons";
 import { Input } from "antd";
 import type { ColumnType } from "antd/es/table";
 

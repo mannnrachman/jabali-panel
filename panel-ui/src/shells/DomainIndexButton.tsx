@@ -2,7 +2,7 @@
 // directory index. Values are an enum the agent maps to concrete
 // `index ...;` directives; see indexDirectiveFor() in the agent.
 import { useEffect, useState } from "react";
-import { FileTextOutlined, CheckOutlined } from "@ant-design/icons";
+import { FileTextOutlined, CheckOutlined } from "@icons";
 import { Button, Modal, Radio, Typography, notification } from "antd";
 import { useQueryClient } from "@tanstack/react-query";
 

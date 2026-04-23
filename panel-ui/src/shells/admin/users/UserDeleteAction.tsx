@@ -4,7 +4,7 @@
 // needs to see the difference before committing.
 import { useState } from "react";
 import { Button, Modal, Checkbox, Space, message } from "antd";
-import { DeleteOutlined } from "@ant-design/icons";
+import { DeleteOutlined } from "@icons";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";

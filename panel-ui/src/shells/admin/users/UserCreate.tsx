@@ -3,7 +3,7 @@
 // the server's (email format + password min=10) so the form can
 // reject early without a round-trip.
 import { Button, Card, Form, Input, Select, Switch, Typography, message } from "antd";
-import { CheckOutlined, CloseOutlined } from "@ant-design/icons";
+import { CheckOutlined, CloseOutlined } from "@icons";
 import { useNavigate } from "react-router";
 
 import { PasswordInput } from "../../../components/PasswordInput";

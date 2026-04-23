@@ -7,7 +7,7 @@
 // (drops the whole user, cascading all grants).
 import { useState } from "react";
 import { Button, Card, Space, Table, Tag, Tooltip, Typography, message } from "antd";
-import { KeyOutlined, PlusOutlined, UserOutlined } from "@ant-design/icons";
+import { KeyOutlined, PlusOutlined, UserOutlined } from "@icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 

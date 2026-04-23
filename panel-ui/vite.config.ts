@@ -20,6 +20,11 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    resolve: {
+      alias: {
+        "@icons": "/src/icons",
+      },
+    },
     server: {
       // Bind to 0.0.0.0 so a dev running inside a VM can be reached from
       // the host; harmless on a laptop because OSX/Linux firewalls gate it.

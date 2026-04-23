@@ -6,7 +6,7 @@
 // No edit affordance; the hostname comes from JABALI_SRV_HOSTNAME at
 // install time and isn't editable from the panel UI.
 
-import { MailOutlined, ReloadOutlined } from "@ant-design/icons";
+import { MailOutlined, ReloadOutlined } from "@icons";
 import { Alert, Badge, Button, Card, Descriptions, Skeleton, Space, Typography } from "antd";
 
 import { useSettingsEmail } from "../../../hooks/useSettingsEmail";

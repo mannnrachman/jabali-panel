@@ -13,7 +13,7 @@ import {
   PlayCircleOutlined,
   SettingOutlined,
   SwapOutlined,
-} from "@ant-design/icons";
+} from "@icons";
 import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import type { SorterResult } from "antd/es/table/interface";

@@ -20,7 +20,7 @@ import {
   CopyOutlined,
   DownloadOutlined,
   CodeOutlined,
-} from "@ant-design/icons";
+} from "@icons";
 import { getKeys as getEd25519SSHKeys } from "micro-key-producer/ssh.js";
 import {
   listSSHKeys,

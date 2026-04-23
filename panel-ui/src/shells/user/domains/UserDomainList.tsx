@@ -12,7 +12,7 @@ import {
   PauseCircleOutlined,
   PlayCircleOutlined,
   DeleteOutlined,
-} from "@ant-design/icons";
+} from "@icons";
 import { Button, Card, Dropdown, Modal, Space, Table, Tag, Typography, notification } from "antd";
 import { useState } from "react";
 import { useNavigate } from "react-router";

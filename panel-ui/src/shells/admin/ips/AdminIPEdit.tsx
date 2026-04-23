@@ -12,7 +12,7 @@ import {
   Typography,
   message,
 } from "antd";
-import { CheckOutlined, CloseOutlined } from "@ant-design/icons";
+import { CheckOutlined, CloseOutlined } from "@icons";
 import { useNavigate, useParams } from "react-router";
 
 import { useOneQuery, useUpdateMutation } from "../../../hooks/useQueries";

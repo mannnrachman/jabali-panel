@@ -9,7 +9,7 @@
 // Password is optional on edit — a blank field means "keep current".
 import { useEffect } from "react";
 import { Button, Card, Form, Input, Select, Spin, Switch, Typography, message } from "antd";
-import { CheckOutlined, CloseOutlined } from "@ant-design/icons";
+import { CheckOutlined, CloseOutlined } from "@icons";
 import { useNavigate, useParams } from "react-router";
 
 import { PasswordInput } from "../../../components/PasswordInput";

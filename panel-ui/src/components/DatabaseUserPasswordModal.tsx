@@ -5,7 +5,7 @@
 // "save it now" framing, a copy-to-clipboard action, and a masked
 // fallback so the password isn't casually left on screen.
 import { useState } from "react";
-import { CopyOutlined, EyeInvisibleOutlined, EyeOutlined } from "@ant-design/icons";
+import { CopyOutlined, EyeInvisibleOutlined, EyeOutlined } from "@icons";
 import { Alert, Button, Input, Modal, Space, Typography, message } from "antd";
 
 interface DatabaseUserPasswordModalProps {

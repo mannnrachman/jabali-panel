@@ -9,7 +9,7 @@ import {
   LinkOutlined,
   PlusSquareOutlined,
   ThunderboltOutlined,
-} from "@ant-design/icons";
+} from "@icons";
 import { useNavigate } from "react-router";
 import type { SorterResult } from "antd/es/table/interface";
 

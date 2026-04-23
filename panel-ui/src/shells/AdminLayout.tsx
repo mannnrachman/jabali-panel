@@ -4,7 +4,7 @@
 // a persistent <Sider> (≥lg / 992px) or an off-canvas <Drawer> (<lg)
 // that the header's hamburger button opens. See ADR-0046.
 import { useEffect, useState } from "react";
-import { LeftOutlined, RightOutlined } from "@ant-design/icons";
+import { LeftOutlined, RightOutlined } from "@icons";
 import { Drawer, Grid, Layout, Menu, theme } from "antd";
 import { Outlet, useLocation, useNavigate } from "react-router";
 

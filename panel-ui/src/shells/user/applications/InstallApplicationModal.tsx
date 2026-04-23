@@ -26,7 +26,7 @@ import {
   Tooltip,
   Switch,
 } from "antd";
-import { AppstoreOutlined, CheckCircleTwoTone, CheckOutlined, CloseOutlined, CopyOutlined } from "@ant-design/icons";
+import { AppstoreOutlined, CheckCircleTwoTone, CheckOutlined, CloseOutlined, CopyOutlined } from "@icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../../../apiClient";
 import { PasswordInput } from "../../../components/PasswordInput";

@@ -9,7 +9,7 @@
 // total stays correct per tab.
 import { useState } from "react";
 import { Button, Card, Input, Space, Table, Tag, Typography } from "antd";
-import { SearchOutlined } from "@ant-design/icons";
+import { SearchOutlined } from "@icons";
 import type { SorterResult } from "antd/es/table/interface";
 import { useNavigate } from "react-router";
 

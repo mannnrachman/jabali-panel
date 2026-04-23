@@ -6,7 +6,7 @@ import {
   LockOutlined,
   CheckOutlined,
   CloseOutlined,
-} from "@ant-design/icons";
+} from "@icons";
 import {
   Button,
   Space,

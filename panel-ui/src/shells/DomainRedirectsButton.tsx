@@ -10,7 +10,7 @@ import {
   DeleteOutlined,
   PlusOutlined,
   DragOutlined,
-} from "@ant-design/icons";
+} from "@icons";
 import {
   Button,
   Modal,

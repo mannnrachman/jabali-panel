@@ -4,7 +4,7 @@ import {
   CheckCircleOutlined,
   DownloadOutlined,
   ReloadOutlined,
-} from "@ant-design/icons";
+} from "@icons";
 import { apiClient } from "../../../apiClient";
 
 interface PHPVersionStatus {

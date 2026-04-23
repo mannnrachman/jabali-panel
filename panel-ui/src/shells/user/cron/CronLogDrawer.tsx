@@ -11,7 +11,7 @@ import {
 import {
   CopyOutlined,
   ReloadOutlined,
-} from "@ant-design/icons";
+} from "@icons";
 import { useQuery } from "@tanstack/react-query";
 import { getCronJobLog } from "../../../apiClient";
 

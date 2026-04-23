@@ -3,7 +3,7 @@
 // it and schedules the reconciler, which re-renders the vhost to serve the
 // disabled page (or the tenant's docroot) as appropriate.
 import { useState } from "react";
-import { PauseCircleOutlined, PlayCircleOutlined } from "@ant-design/icons";
+import { PauseCircleOutlined, PlayCircleOutlined } from "@icons";
 import { Button, notification } from "antd";
 import { useQueryClient } from "@tanstack/react-query";
 

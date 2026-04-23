@@ -20,7 +20,7 @@ import {
   Typography,
   message,
 } from "antd";
-import { CopyOutlined } from "@ant-design/icons";
+import { CopyOutlined } from "@icons";
 
 import {
   useDisableDomainEmail,

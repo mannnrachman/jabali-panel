@@ -23,7 +23,7 @@ import {
   DeleteOutlined,
   CopyOutlined,
   LoginOutlined,
-} from "@ant-design/icons";
+} from "@icons";
 import { useQueryClient } from "@tanstack/react-query";
 import type { SorterResult } from "antd/es/table/interface";
 

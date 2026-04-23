@@ -12,7 +12,7 @@ import {
   Typography,
   notification,
 } from "antd";
-import { SaveOutlined } from "@ant-design/icons";
+import { SaveOutlined } from "@icons";
 
 import { apiClient } from "../../../apiClient";
 

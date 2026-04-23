@@ -15,7 +15,7 @@ import {
   Typography,
   message,
 } from "antd";
-import { CheckOutlined, CloseOutlined } from "@ant-design/icons";
+import { CheckOutlined, CloseOutlined } from "@icons";
 import { useNavigate } from "react-router";
 
 import { useCreateMutation } from "../../../hooks/useQueries";

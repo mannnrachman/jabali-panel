@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Skeleton, Space, Switch, Tag, Tooltip, message } from "antd";
-import { CheckOutlined, CloseOutlined, ReloadOutlined } from "@ant-design/icons";
+import { CheckOutlined, CloseOutlined, ReloadOutlined } from "@icons";
 import { Link } from "react-router";
 
 import { apiClient } from "../../../apiClient";

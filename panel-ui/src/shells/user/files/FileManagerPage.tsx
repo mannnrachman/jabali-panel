@@ -51,7 +51,7 @@ import {
   PlusOutlined,
   ReloadOutlined,
   UploadOutlined,
-} from "@ant-design/icons";
+} from "@icons";
 import { AxiosError } from "axios";
 
 import type { FileEntry } from "./filesApi";

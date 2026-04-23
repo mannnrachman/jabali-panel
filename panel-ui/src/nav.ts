@@ -27,7 +27,7 @@ import {
   SettingOutlined,
   TeamOutlined,
   ThunderboltOutlined,
-} from "@ant-design/icons";
+} from "@icons";
 import { createElement } from "react";
 import type { ComponentType } from "react";
 

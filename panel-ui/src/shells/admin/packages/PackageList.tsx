@@ -3,7 +3,7 @@
 // <DeleteButton> replaced with plain react-router <Button>s + a
 // RowDeleteButton wired to useDeleteMutation.
 import { Button, Card, Input, Space, Table, Tag, Typography } from "antd";
-import { SearchOutlined } from "@ant-design/icons";
+import { SearchOutlined } from "@icons";
 import { useNavigate } from "react-router";
 import type { SorterResult } from "antd/es/table/interface";
 

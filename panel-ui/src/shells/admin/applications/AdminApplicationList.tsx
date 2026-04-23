@@ -23,7 +23,7 @@ import {
   ExclamationCircleOutlined,
   LoginOutlined,
   SearchOutlined,
-} from "@ant-design/icons";
+} from "@icons";
 import type { SorterResult } from "antd/es/table/interface";
 
 import { SearchableTableStringQ } from "../../../components/SearchableTable";

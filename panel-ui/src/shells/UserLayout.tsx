@@ -4,7 +4,7 @@
 // driven by `userNav` so an admin-only entry can never leak into the
 // sidebar here.
 import { useEffect, useState } from "react";
-import { LeftOutlined, RightOutlined } from "@ant-design/icons";
+import { LeftOutlined, RightOutlined } from "@icons";
 import { ConfigProvider, Drawer, Grid, Layout, Menu, theme } from "antd";
 import { Outlet, useLocation, useNavigate } from "react-router";
 

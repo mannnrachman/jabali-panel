@@ -3,7 +3,7 @@
 // Two warning banners reflect non-jabali responsibilities (persistence
 // and host firewall) per ADR-0048 / plans/m24-ip-manager.md F-H.
 import { Alert, Button, Card, Form, Input, Switch, Typography, message } from "antd";
-import { CheckOutlined, CloseOutlined } from "@ant-design/icons";
+import { CheckOutlined, CloseOutlined } from "@icons";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 

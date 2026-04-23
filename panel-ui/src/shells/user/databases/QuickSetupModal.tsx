@@ -23,7 +23,7 @@ import {
   Alert,
   Tooltip,
 } from "antd";
-import { CopyOutlined, CheckCircleTwoTone } from "@ant-design/icons";
+import { CopyOutlined, CheckCircleTwoTone } from "@icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../../../apiClient";
 

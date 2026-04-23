@@ -37,7 +37,12 @@ func registerForwarderRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
 
 // Wave B: autoresponders.
 func registerAutoresponderRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
-	// Implementation lives in panel-api/internal/api/mailbox_autoresponder.go (Step 3).
+	RegisterMailboxAutoresponderRoutes(g, MailboxAutoresponderHandlerConfig{
+		Mailboxes:      deps.Mailboxes,
+		Domains:        deps.Domains,
+		Autoresponders: deps.Autoresponders,
+		Agent:          deps.Agent,
+	})
 }
 
 // Wave B: catch-all.

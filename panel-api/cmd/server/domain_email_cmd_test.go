@@ -97,6 +97,10 @@ func (*fakeDomainRepo) SetListenIPs(context.Context, string, repository.DomainLi
 	return nil
 }
 
+func (*fakeDomainRepo) UpdateCatchallTarget(context.Context, string, *string) error {
+	return nil
+}
+
 // fakeDNSZoneRepo / fakeDNSRecordRepo are minimal — enableDomainEmail
 // only calls FindByDomainID + ListByZoneID + Create, and disable only
 // calls FindByDomainID + DeleteByZoneIDAndManagedBy. Everything else

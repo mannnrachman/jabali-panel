@@ -167,10 +167,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.DatabaseUserGrants = databaseUserGrantRepo
 		deps.Mailboxes = mailboxRepo
 		deps.MailboxSSOTokens = mailboxSSOTokenRepo
-		// M6.5 repos. Each step's wave fills its concrete constructor; for
-		// now the interfaces live in repository/ and the concrete impls
-		// land with their feature (Steps 3, 4, 5). Until then, nil is
-		// expected and each handler guards it.
+		// M6.5 repos. Each step's wave adds the concrete constructor as
+		// it ships; Autoresponders ships in Step 3, Forwarders in Step 5,
+		// MailboxShares in Step 4. Until each lands, nil + handler guards.
+		deps.Autoresponders = repository.NewEmailAutoresponderRepository(sharedDB)
 		deps.PhpMyAdminSSOTokens = phpMyAdminSSOTokenRepo
 		deps.PHPPools = phpPoolRepo
 		deps.PHPPoolIniOverrides = phpPoolIniOverrideRepo

@@ -2,6 +2,7 @@ package kratosclient
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -123,4 +124,30 @@ func rewriteForUnix(rawURL string, sockets map[string]string) string {
 	}
 	sockets[host] = sock
 	return "http://" + host
+}
+
+// NewReverseProxyTransport is the public adapter used by the panel-api
+// /.ory/* same-origin reverse proxy (panel-api/internal/app/kratos_proxy.go).
+// It accepts an upstream URL — either http(s):// or unix:/abs/path — and
+// returns a (rewritten URL, http.RoundTripper) pair the caller hands to
+// httputil.NewSingleHostReverseProxy.
+//
+// For HTTP/HTTPS URLs the rewritten URL is the input untouched and the
+// transport is a fresh default http.Transport (never net/http.DefaultTransport
+// — sharing it across two packages would let one's Close() yank the other's
+// idle conns). For unix:/path URLs the rewritten URL becomes
+// http://<synthetic-host> so net/url.Parse and the reverse proxy's
+// host-rewriting code keep working unchanged, and the transport routes that
+// host to the configured socket via DialContext.
+//
+// Returns an error only when the input URL is malformed enough that the
+// synthetic-host derivation can't proceed — http(s):// inputs always succeed.
+func NewReverseProxyTransport(upstream string) (rewritten string, transport http.RoundTripper, err error) {
+	const dialTimeout = 5 * time.Second
+	sockets := make(map[string]string, 1)
+	rewritten = rewriteForUnix(upstream, sockets)
+	if rewritten == "" {
+		return "", nil, fmt.Errorf("kratosclient: empty upstream URL")
+	}
+	return rewritten, newKratosTransport(sockets, dialTimeout), nil
 }

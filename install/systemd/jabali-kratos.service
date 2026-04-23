@@ -34,9 +34,11 @@ ExecStart=/usr/local/bin/kratos serve -c /etc/jabali-panel/kratos.yml
 # panel-api → Kratos working until the operator notices the verify_socket_perms
 # check shouting in install.sh output. Idempotent: chmod/chgrp on the
 # already-correct values is a no-op.
-ExecStartPost=/bin/sh -c 'until [ -S /run/jabali-kratos/admin.sock ]; do sleep 0.1; done'
+ExecStartPost=/bin/sh -c 'until [ -S /run/jabali-kratos/admin.sock ] && [ -S /run/jabali-kratos/public.sock ]; do sleep 0.1; done'
 ExecStartPost=/bin/chgrp jabali-sockets /run/jabali-kratos/admin.sock
 ExecStartPost=/bin/chmod 0660 /run/jabali-kratos/admin.sock
+ExecStartPost=/bin/chgrp jabali-sockets /run/jabali-kratos/public.sock
+ExecStartPost=/bin/chmod 0660 /run/jabali-kratos/public.sock
 
 Restart=on-failure
 RestartSec=5s

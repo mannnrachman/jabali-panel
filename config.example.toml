@@ -40,11 +40,18 @@ url = ""
 # Kratos identity provider — the only auth source since M20.
 # Fresh-install defaults point at loopback Kratos provisioned by install.sh.
 [auth.kratos]
-# Public URL of Kratos instance (reachable from browser + panel-api).
-# Loopback by default because the panel reverse-proxies /.ory/* to this
-# port. Operators fronting Kratos on a separate hostname can set e.g.
-# "https://auth.example.com". Set via env KRATOS_PUBLIC_URL.
-public_url = "http://127.0.0.1:4433"
+# Public URL of Kratos instance. The panel-api reverse-proxies /.ory/*
+# through this URL on behalf of the browser — the browser itself never
+# touches Kratos directly (cookies + same-origin design from M20). Set
+# via env KRATOS_PUBLIC_URL.
+#
+# As of M25 Step 3 the public endpoint binds a Unix-domain socket. Use
+# `unix:/run/jabali-kratos/public.sock` to dial it from panel-api; the
+# http://127.0.0.1:4433 form still works if you've reverted Kratos to
+# TCP. For setups that front Kratos on a separate public hostname (rare),
+# set "https://auth.example.com" — the proxy code path supports any
+# http(s) URL.
+public_url = "unix:/run/jabali-kratos/public.sock"
 
 # Admin URL of Kratos instance (reachable from panel-api only — never
 # exposed externally). Set via env KRATOS_ADMIN_URL.

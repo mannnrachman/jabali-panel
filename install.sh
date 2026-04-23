@@ -4103,14 +4103,13 @@ install_kratos() {
     _die "jabali-kratos did not start — fix /etc/jabali-panel/kratos.yml and re-run install.sh"
   fi
 
-  # Poll for readiness. Kratos exposes /health/ready on the public port (4433).
-  # Use `waited=$((waited+1))` rather than `((waited++))` — the post-increment
-  # form evaluates to the OLD value (0 on first iter), which `set -e` treats
-  # as a failed command and silently kills the installer.
+  # Poll for readiness. M25 Step 3: Kratos's public endpoint is now a Unix
+  # socket; curl --unix-socket talks to it via /admin/health/ready (any
+  # path works; we want a 2xx). Same set-e-safe arithmetic as before.
   _log "waiting for Kratos to be ready (max 30s)"
   local waited=0
   while [[ $waited -lt 30 ]]; do
-    if curl -sf http://127.0.0.1:4433/health/ready >/dev/null 2>&1; then
+    if curl -sf --unix-socket /run/jabali-kratos/public.sock http://kratos/health/ready >/dev/null 2>&1; then
       _ok "Kratos is ready"
       break
     fi
@@ -4122,24 +4121,30 @@ install_kratos() {
     _warn "Kratos did not become ready within 30s. Check: systemctl status jabali-kratos"
   fi
 
-  # M25 Step 2 verification: admin endpoint must be a unix socket at
-  # /run/jabali-kratos/admin.sock with mode 0660 jabali:jabali-sockets,
-  # AND the legacy TCP listener on 4434 must be gone. verify_socket_perms
-  # + verify_no_all_interface_binds were sourced from
-  # install/scripts/socket-helpers.sh near the top of main(). If either
+  # M25 Step 2+3 verification: both endpoints must be Unix sockets at
+  # /run/jabali-kratos/{admin,public}.sock with mode 0660 jabali:jabali-sockets,
+  # AND the legacy TCP listeners on 4433 + 4434 must be gone. The
+  # verify_socket_perms + verify_no_all_interface_binds helpers were sourced
+  # from install/scripts/socket-helpers.sh at the top of main(). If any
   # check fails the installer aborts loudly so the operator doesn't
   # discover a 502 from panel-api → Kratos in production.
   if ! verify_socket_perms /run/jabali-kratos/admin.sock jabali jabali-sockets 660; then
     _die "Kratos admin socket has wrong perms — see message above"
   fi
+  if ! verify_socket_perms /run/jabali-kratos/public.sock jabali jabali-sockets 660; then
+    _die "Kratos public socket has wrong perms — see message above"
+  fi
   if ! verify_no_all_interface_binds 4434; then
     _die "Kratos admin still bound on TCP :4434 — kratos.yml didn't apply or rolled back to TCP"
   fi
+  if ! verify_no_all_interface_binds 4433; then
+    _die "Kratos public still bound on TCP :4433 — kratos.yml didn't apply or rolled back to TCP"
+  fi
 
   # Migrate an existing /etc/jabali-panel/config.toml from the legacy TCP
-  # admin URL to the unix-socket form. Idempotent: a config that already
-  # has the unix URL (or any other custom value) is left untouched.
-  # This lives in install.sh — not in a separate cutover CLI — because
+  # URLs to the unix-socket forms. Idempotent: a config that already has
+  # the unix URLs (or any other custom value) is left untouched. This
+  # lives in install.sh — not in a separate cutover CLI — because
   # `jabali update` re-runs install.sh on the operator's host; a separate
   # script would never run on managed boxes (per "install.sh is truth"
   # memory).
@@ -4148,6 +4153,11 @@ install_kratos() {
     _log "migrating config.toml admin_url from TCP to unix socket (M25 Step 2)"
     sed -i 's|^\(\s*admin_url\s*=\s*\)"http://127\.0\.0\.1:4434"|\1"unix:/run/jabali-kratos/admin.sock"|' "$panel_config"
     _ok "config.toml admin_url migrated"
+  fi
+  if [[ -f "$panel_config" ]] && grep -qE '^\s*public_url\s*=\s*"http://127\.0\.0\.1:4433"' "$panel_config"; then
+    _log "migrating config.toml public_url from TCP to unix socket (M25 Step 3)"
+    sed -i 's|^\(\s*public_url\s*=\s*\)"http://127\.0\.0\.1:4433"|\1"unix:/run/jabali-kratos/public.sock"|' "$panel_config"
+    _ok "config.toml public_url migrated"
   fi
 
   _ok "Kratos identity provider installed and running"

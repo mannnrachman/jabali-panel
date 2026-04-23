@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
 )
 
 // RegisterKratosProxy wires a same-origin reverse proxy at /.ory/* that
@@ -26,11 +28,20 @@ import (
 // Path is preserved as-is (Kratos expects `/self-service/login/browser`,
 // so we strip the `/.ory` prefix on the way through).
 //
-// upstream must be a complete URL (e.g. http://127.0.0.1:4433). Returns
-// an error only if upstream is unparseable — panics should stay out of
-// the web request path.
+// upstream is either a complete HTTP/HTTPS URL (http://127.0.0.1:4433) OR
+// the M25-style unix-socket form (unix:/run/jabali-kratos/public.sock).
+// kratosclient.NewReverseProxyTransport handles the rewrite either way:
+// for unix URLs it returns a synthetic http://<host> URL that drives the
+// reverse-proxy's Director correctly, plus a Transport whose DialContext
+// dials the configured socket. For HTTP/HTTPS URLs it returns the input
+// unchanged plus a fresh default transport. Returns an error only if
+// upstream is unparseable — panics stay out of the web request path.
 func RegisterKratosProxy(r *gin.Engine, upstream string) error {
-	target, err := url.Parse(upstream)
+	rewritten, transport, err := kratosclient.NewReverseProxyTransport(upstream)
+	if err != nil {
+		return err
+	}
+	target, err := url.Parse(rewritten)
 	if err != nil {
 		return err
 	}
@@ -40,6 +51,9 @@ func RegisterKratosProxy(r *gin.Engine, upstream string) error {
 	// top so we can trim the `/.ory` prefix from the path — without this,
 	// Kratos would see /.ory/self-service/login/browser and 404.
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	// Override the default transport so unix-socket upstreams actually dial
+	// their socket instead of attempting a TCP connect to the synthetic host.
+	proxy.Transport = transport
 	origDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		origDirector(req)

@@ -2,10 +2,13 @@ package app
 
 import (
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -86,5 +89,54 @@ func TestRegisterKratosProxy_RejectsBadURL(t *testing.T) {
 	err := RegisterKratosProxy(r, "http://\x00bad")
 	if err == nil {
 		t.Fatal("expected error for malformed upstream URL, got nil")
+	}
+}
+
+// M25 Step 3: verify the proxy works against a Unix-socket-bound upstream
+// (the `unix:/abs/path` form). Boots a tiny HTTP server on a unix socket,
+// registers the proxy with `unix:<sock>`, hits it through gin, and checks
+// the path is stripped + the response comes back. End-to-end coverage for
+// the parse → rewrite → custom-transport chain.
+func TestRegisterKratosProxy_UnixSocketUpstream(t *testing.T) {
+	dir := t.TempDir()
+	sockPath := filepath.Join(dir, "kratos-public.sock")
+
+	listener, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	defer listener.Close()
+
+	mux := http.NewServeMux()
+	var gotPath string
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	})
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 2 * time.Second}
+	go func() { _ = srv.Serve(listener) }()
+	defer srv.Close()
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	if err := RegisterKratosProxy(r, "unix:"+sockPath); err != nil {
+		t.Fatalf("RegisterKratosProxy: %v", err)
+	}
+
+	front := httptest.NewServer(r)
+	defer front.Close()
+
+	resp, err := http.Get(front.URL + "/.ory/self-service/login/browser")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("status=%d, want 200", resp.StatusCode)
+	}
+	if gotPath != "/self-service/login/browser" {
+		t.Errorf("upstream path=%q, want /self-service/login/browser (prefix must be stripped)", gotPath)
 	}
 }

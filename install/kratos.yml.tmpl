@@ -9,7 +9,23 @@ dsn: "mysql://{{.KratosDatabaseUser}}:{{.KratosDatabasePassword}}@tcp(127.0.0.1:
 serve:
   public:
     base_url: "https://{{.PanelHostname}}:8443/.ory/"
+    # M25 Step 3: public API listens on a Unix-domain socket. panel-api
+    # reverse-proxies /.ory/* through this socket via the in-process
+    # kratosclient.NewReverseProxyTransport (panel-api/internal/app/
+    # kratos_proxy.go). Browser-facing — but the browser never touches
+    # this socket directly, only the panel hostname:8443 vhost served
+    # by panel-api. Same-origin design from M20 means there's no need
+    # for a separate nginx upstream.
+    #
+    # Rollback to TCP: comment out `host` + `socket`, set
+    # `host: "127.0.0.1"`, daemon-reload, restart. The kratos client +
+    # reverse proxy keep working with http://127.0.0.1:4433 unchanged
+    # (back-compat is intentional).
+    host: "unix:/run/jabali-kratos/public.sock"
     port: 4433
+    socket:
+      mode: 0660
+      group: "jabali-sockets"
     cors:
       enabled: true
       allowed_origins:

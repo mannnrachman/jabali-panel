@@ -13,7 +13,6 @@ import type { ReactNode } from "react";
 
 import {
   AppstoreAddOutlined,
-  AppstoreOutlined,
   ClockCircleOutlined,
   CloudServerOutlined,
   CodeOutlined,
@@ -24,6 +23,7 @@ import {
   KeyOutlined,
   LockOutlined,
   MailOutlined,
+  PackageOpenOutlined,
   SettingOutlined,
   TeamOutlined,
   ThunderboltOutlined,
@@ -63,7 +63,7 @@ export const adminNav: NavItem[] = [
   {
     key: "packages",
     label: "Packages",
-    icon: navIcon(AppstoreOutlined),
+    icon: navIcon(PackageOpenOutlined),
     path: "/jabali-admin/packages",
   },
   {

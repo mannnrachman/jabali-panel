@@ -48,6 +48,7 @@ import {
   Moon,
   MoreHorizontal,
   Move,
+  PackageOpen,
   PauseCircle,
   Pencil,
   PlayCircle,
@@ -134,6 +135,7 @@ export const CodeOutlined = shim(Code);
 export const DatabaseOutlined = shim(Database);
 export const FolderOutlined = shim(Folder);
 export const AppstoreOutlined = shim(LayoutGrid);
+export const PackageOpenOutlined = shim(PackageOpen);
 export const AppstoreAddOutlined = shim(SquarePlus);
 export const KeyOutlined = shim(Key);
 export const ClockCircleOutlined = shim(Clock);

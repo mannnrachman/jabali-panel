@@ -708,6 +708,56 @@ M6.2 (webmail SSO — unchanged), M6.3 (self-zone local-resolvable).
 **Related:** ADR-0048 (panel-primary domain marker + hostname-change +
 /webmail fallback), `plans/m6.4-panel-hostname-mail-domain.md`.
 
+
+### M6.5: Email features expansion (SHIPPED — branch)
+
+**Goal:** Add six native-Stalwart-backed features to the user Mail page
+— Forwarders, Autoresponders, Catch-All, Disclaimer, Shared Folders,
+Logs — as tabs alongside the existing Mailboxes tab.
+
+**Deliverables:**
+- Migrations: `000060_create_email_forwarders.sql`,
+  `000061_create_email_autoresponders.sql`,
+  `000062_domains_add_catchall_and_disclaimer.sql`,
+  `000063_create_mailbox_shares.sql`.
+- Reconciler phase registry at `panel-api/internal/reconciler/phases/`
+  (one file per feature; `init()` registers).
+- Route registry `panel-api/internal/api/routes_m65.go` with per-feature
+  `register*Routes` stubs — parallel steps edit only their stub body.
+- panel-agent commands: `domain.catchall_set/clear`, `autoresponder.set`,
+  `mailbox.share_set`, `forwarder.apply`, `domain.disclaimer_apply`,
+  `mail.logs_query`.
+- panel-api handlers: `/domains/:id/catchall`, `/domains/:id/disclaimer`,
+  `/mailboxes/:mbid/autoresponder`, `/mailboxes/:mbid/shares` +
+  `/mail/shares`, `/mailboxes/:mbid/forwarders` + `/mail/forwarders`,
+  `/mail/logs`.
+- panel-ui tabs under `/jabali-panel/mail/`: MailboxesTab (extracted
+  from existing UserMailboxesPage), CatchAllTab, AutorespondersTab,
+  SharedFoldersTab, ForwardersTab, DisclaimerTab, LogsTab. Legacy URL
+  `/jabali-panel/mailboxes` redirects to `/jabali-panel/mail/mailboxes`.
+
+**Architecture:**
+- DB-as-truth per ADR-0002 + ADR-0051; reconciler converges jabali
+  state to Stalwart every tick. Operator edits via Stalwart admin
+  console are drift — overwritten next tick.
+- Stalwart surfaces per feature: `x:Domain.catchAllAddress`,
+  `VacationResponse` (RFC 8621 §8), `Mailbox.shareWith`,
+  `x:UserAccount.aliases` + `x:SieveUserScript`, `x:SieveSystemScript`,
+  `x:Trace/query` + `x:Trace/get`.
+- Cross-domain tables: every tab lists across all email-enabled domains.
+
+**Known limitations:**
+- Disclaimer covers `text/plain` body parts only in first ship. HTML
+  body coverage deferred pending live Spike A (sieve on HTML) and
+  Spike B (MtaHook unix:// support) on 10.0.3.13 — see ADR-0052.
+- Logs tab does not yet support trace event drilldown. Deferred to M6.6.
+
+**Depends on:** M6, M6.1, M6.2, M6.3, M6.4, M25.
+**Related:** ADR-0051 (DB-as-truth for M6.5, M6 pattern continued),
+ADR-0052 (disclaimer sieve vs MtaHook decision matrix),
+`plans/m6.5-email-features.md`, `plans/m6.5-email-features-runbook.md`,
+`plans/m6.5-email-features-research.md`.
+
 ### M7: Databases (MariaDB) (SHIPPED)
 
 **Goal:** Users can create and manage databases + database users with grant tables.

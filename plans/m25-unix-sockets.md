@@ -2,7 +2,8 @@
 
 **Branch:** `m25/unix-sockets`
 **Target:** 8 PR-sized steps across 4 waves.
-**Status:** Dispatch-ready (2026-04-23). Opus adversarial review complete (3 CRITICAL + 5 HIGH folded in). Pre-dispatch investigations I1 + I2 resolved on live VM 10.0.3.13 + Debian trixie nginx 1.26.3.
+**Status:** **SHIPPED on branch (2026-04-23)** — all 8 steps committed; awaits live-VM smoke + merge to main. ADR-0050 accepted; runbook at `plans/m25-unix-sockets-runbook.md`. M25.1 follow-up tracks the two deferred items: MariaDB `skip-networking` (blocked on phpMyAdmin SSO socket awareness) and Kratos DSN flip (blocked on live-VM `kratos migrate sql` verification).
+**Originally:** Dispatch-ready. Opus adversarial review complete (3 CRITICAL + 5 HIGH folded in). Pre-dispatch investigations I1 + I2 resolved on live VM 10.0.3.13 + Debian trixie nginx 1.26.3.
 
 ## Goal
 

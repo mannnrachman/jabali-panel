@@ -996,6 +996,32 @@ M6.2 (webmail SSO — unchanged), M6.3 (self-zone local-resolvable).
 **Depends on:** M20 (Kratos identity — supersedes Refine's `authProvider` role so removing it doesn't lose functionality).
 **Related:** ADR-0037 (design rationale, rollback note, outcome), `plans/m21-drop-refine.md` (five-wave blueprint).
 
+### M25: Localhost backend hardening via Unix sockets (SHIPPED — branch)
+
+**Status:** All 8 steps committed to branch `m25/unix-sockets` 2026-04-23 in 4 waves (A foundation → B Kratos → C panel-api+Bulwark+MariaDB → D Stalwart audit + ship). ADR-0050 accepted; runbook at `plans/m25-unix-sockets-runbook.md`. M25.1 follow-up tracked separately (skip-networking + Kratos DSN flip — both gated on live-VM verification).
+
+**Goal:** Every localhost-only HTTP backend becomes a Unix-domain socket with filesystem permissions; every `:::`-bound TCP service that doesn't support sockets gets an explicit `127.0.0.1` bind. The Kratos admin API — currently reachable on all interfaces with zero auth on prod VMs without an external firewall — stops being a takeover surface.
+
+**Strategy:**
+- New `jabali-sockets` system group (members: `jabali`, `www-data`, `jabali-webmail` — NOT `jabali-mail`); socket files mode `0660`. Connecting process needs both group membership AND `connect(2)` write — mode `0640` would silently break nginx (review F-H-2).
+- nginx Form D upstream: `upstream u { server unix:/path; } ... proxy_pass http://u/;`. Roll back to TCP is a one-line edit (`server unix:...;` → `server 127.0.0.1:<port>;`) without touching any `proxy_pass` directive.
+- panel-api strips self-TLS; nginx terminates real Let's Encrypt cert at the edge (port 8443 via new `install/nginx/jabali-panel-vhost.conf.tmpl`). Internal HTTP no longer pays per-request TLS handshake cost.
+- Bulwark wrapped via `install/jabali-webmail/server-unix.js` (~80 lines) — Next.js custom-server pattern; install.sh re-deploys on every run so a Bulwark-tarball update doesn't strand us.
+- Stalwart admin-http (`:::8080`) + ephemeral `:::35181` pinned to `127.0.0.1:8080` + `127.0.0.1:18181` via two new `NetworkListener` entries in `install/stalwart/apply-plan.json.tmpl`.
+- LLMNR disabled via `/etc/systemd/resolved.conf.d/10-jabali-disable-llmnr.conf` drop-in.
+- install.sh post-start verification: `verify_socket_perms` + `verify_no_all_interface_binds` after every service restart. Wrong perms or a leaked TCP bind → installer aborts loud rather than letting the operator discover a 502 in production.
+
+**Scope reduction (M25.1):**
+- MariaDB `skip-networking` — needs phpMyAdmin SSO to dial via socket first (sso.php + panel-api response shape).
+- Kratos DSN flip from TCP to socket — needs a live-VM `kratos migrate sql` verification gate.
+
+Both deferred together because skip-networking breaks Kratos otherwise. Step 6 ships the panel-api + PDNS DSN moves to socket (no functional change without skip-networking, but the dial-path plumbing is now in place).
+
+**Depends on:** None (pure infrastructure hardening; composes existing systemd + nginx + Go + Node).
+**Related:** ADR-0050 (architecture + threat model), `plans/m25-unix-sockets.md` (8-step blueprint), `plans/m25-unix-sockets-runbook.md` (day-2 ops + per-service rollback drop-ins).
+
+---
+
 ### M24: IP address manager (SHIPPED)
 
 **Status:** All 10 steps merged to `main` 2026-04-22 in 5 waves (A schema → B agent+API → C wire-contract domain/nginx/DNS → D admin+picker UI → E docs/E2E). ADR-0049 accepted; runbook at `plans/m24-ip-manager-runbook.md`. VM host-validation on 10.0.3.13 is an operator follow-up (unreachable at merge time).
@@ -1204,7 +1230,8 @@ Use this table to navigate the codebase when adding a new capability:
 | Infra: Gitea CI + branch protection | 2026-04-20 | `.gitea/workflows/ci.yml` (3 parallel jobs), self-hosted `act_runner` in host-mode (no Docker/Podman), loose branch protection on `main`. Also fixed pre-existing data race in `TestApplications_CreateWordPress_HappyPath` (`applications_service.go`) that CI's `-race` flag caught. Commits `b181c74` (workflow), `5d1f9a7` (race fix). |
 | M21: Drop Refine (all 5 waves) | 2026-04-21 | ADR-0037; blueprint at `plans/m21-drop-refine.md`; Waves A–E on `m21/drop-refine`; 4 `@refinedev/*` packages removed; production JS −606 kB (−27.6%) / gzip −193 kB; `@ant-design/icons` promoted to direct dep; `useTableURL` + `useQueries` + `AuthContext` now power every list/form/whoami call |
 | M24: IP address manager (all 10 steps) | 2026-04-22 | ADR-0049; blueprint at `plans/m24-ip-manager.md`; runbook at `plans/m24-ip-manager-runbook.md`; Waves A–E on `main` (`0948a9a` → `7a8a1ff`); migrations 000057 + 000058 (MariaDB 11.4+ reserved-word fix in `7a8a1ff`); agent commands `ip.list`/`ip.bind`/`ip.unbind`; reconciler converges per-domain nginx listen + DNS apex A/AAAA every tick; admin UI `/jabali-admin/ips` + per-domain picker on DomainEdit; host-validation on 10.0.3.13 is operator follow-up |
+| M25: Localhost backend hardening via Unix sockets (all 8 steps) | 2026-04-23 | ADR-0050; blueprint at `plans/m25-unix-sockets.md`; runbook at `plans/m25-unix-sockets-runbook.md`; Waves A–D on `m25/unix-sockets` branch; new `jabali-sockets` group + `verify_socket_perms`/`verify_no_all_interface_binds` helpers; Kratos admin+public on `/run/jabali-kratos/*.sock`; panel-api on `/run/jabali-panel/api.sock` + nginx TLS terminator on :8443; Bulwark on `/run/jabali-bulwark/bulwark.sock` via custom `server-unix.js`; Stalwart admin-http pinned `127.0.0.1:8080` + ephemeral `:35181` → pinned `127.0.0.1:18181`; LLMNR drop-in disable. **M25.1 deferred:** MariaDB `skip-networking` + Kratos DSN flip (both gated on live-VM verification) |
 
 ---
 
-**Last updated:** 2026-04-22
+**Last updated:** 2026-04-23

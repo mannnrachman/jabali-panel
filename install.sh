@@ -3761,11 +3761,15 @@ _install_stalwart_apply_plan() {
   printf '%s\n' "$apply_out" | tail -20
 
   if (( apply_rc != 0 )); then
-    # Grep every failure signature; strip the ones we consider idempotent
-    # (primaryKeyViolation only). If anything else remains, it's fatal.
+    # Inspect every per-operation failure line (starts with ✗) and
+    # categorize: primaryKeyViolation = idempotent (object already
+    # exists from a prior apply), anything else = real error. Ignore
+    # the trailing `error: apply completed with N failed operation(s)`
+    # summary — it's just a restatement of rc!=0 and tells us nothing
+    # about whether the underlying failures are idempotent.
     local non_idempotent_errs
     non_idempotent_errs="$(printf '%s\n' "$apply_out" \
-      | grep -E '^(✗|error:)' \
+      | grep '^✗' \
       | grep -v 'primaryKeyViolation' || true)"
     if [[ -n "$non_idempotent_errs" ]]; then
       _err "stalwart-cli apply reported non-idempotent failures:"

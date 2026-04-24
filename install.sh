@@ -1444,21 +1444,22 @@ install_redis() {
   # group stays `redis` for AOF file permissions).
   install -d -m 0755 -o root -g root /etc/systemd/system/redis-server.service.d
   local unit_dropin="/etc/systemd/system/redis-server.service.d/10-jabali-socket.conf"
-  # Debian's stock redis-server.service hardens the service two ways
-  # that block our ExecStartPost:
-  #   1. NoExecPaths=/ + ExecPaths=/usr/bin/redis-server /usr/lib /lib
-  #      blocks any binary we shell out to (code=203/EXEC on run).
-  #   2. SystemCallFilter=~ @privileged @resources denies chown() so
-  #      chgrp gets killed with SIGSYS (signal 31) before it can
-  #      touch the socket.
-  # The drop-in therefore:
-  #   - extends ExecPaths= to cover chgrp + chmod,
-  #   - re-allows @chown (positive filter wins over the stock
-  #     ~@privileged per systemd.exec(5)),
-  #   - skips the /bin/sh wait-loop: Type=notify fires ExecStartPost
-  #     only after redis sent sd_notify(READY=1), so the socket is
-  #     guaranteed to exist already.
-  local unit_desired=$'# Managed by jabali install.sh — M14 / ADR-0059. Do NOT hand-edit.\n[Service]\nRuntimeDirectory=redis\nRuntimeDirectoryMode=0750\nSupplementaryGroups=jabali-sockets\nExecPaths=/usr/bin/chgrp /usr/bin/chmod\nSystemCallFilter=@chown\nExecStartPost=/usr/bin/chgrp jabali-sockets /run/redis/redis.sock\nExecStartPost=/usr/bin/chmod 0660 /run/redis/redis.sock\n'
+  # Debian's stock redis-server.service stacks hardening that blocks
+  # any ExecStartPost trying to adjust /run/redis/redis.sock ownership:
+  #   - NoExecPaths=/ + ExecPaths=... blocks the binary lookup (203/EXEC).
+  #   - SystemCallFilter=~ @privileged denies chown() (SIGSYS/31).
+  #   - CapabilityBoundingSet= (empty) drops CAP_CHOWN.
+  #   - User=redis + PrivateUsers=true runs in a user namespace where
+  #     jabali-sockets's GID doesn't translate → chown returns EINVAL.
+  # The `+` prefix on ExecStartPost= runs with full privileges bypassing
+  # User/Group/Caps/PrivateUsers/ExecPaths/SystemCallFilter in one
+  # shot, so chgrp + chmod work trivially. Documented in
+  # systemd.exec(5) under EXECUTABLE PREFIXES.
+  #
+  # We still keep the /bin/sh wait-loop out: Type=notify fires
+  # ExecStartPost after redis sent sd_notify(READY=1), so the socket
+  # is guaranteed to exist already.
+  local unit_desired=$'# Managed by jabali install.sh — M14 / ADR-0059. Do NOT hand-edit.\n[Service]\nRuntimeDirectory=redis\nRuntimeDirectoryMode=0750\nSupplementaryGroups=jabali-sockets\nExecStartPost=+/usr/bin/chgrp jabali-sockets /run/redis/redis.sock\nExecStartPost=+/usr/bin/chmod 0660 /run/redis/redis.sock\n'
 
   if [[ ! -f "$unit_dropin" ]] || ! cmp -s <(printf '%s' "$unit_desired") "$unit_dropin"; then
     _log "installing Redis systemd drop-in → $unit_dropin"

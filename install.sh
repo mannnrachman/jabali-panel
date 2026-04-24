@@ -1444,29 +1444,25 @@ install_redis() {
   # group stays `redis` for AOF file permissions).
   install -d -m 0755 -o root -g root /etc/systemd/system/redis-server.service.d
   local unit_dropin="/etc/systemd/system/redis-server.service.d/10-jabali-socket.conf"
-  # Debian's stock redis-server.service stacks hardening that blocks
-  # any ExecStartPost trying to adjust /run/redis/redis.sock ownership:
-  #   - NoExecPaths=/ + ExecPaths=... blocks the binary lookup (203/EXEC).
-  #   - SystemCallFilter=~ @privileged denies chown() (SIGSYS/31).
-  #   - CapabilityBoundingSet= (empty) drops CAP_CHOWN.
-  #   - User=redis + PrivateUsers=true runs in a user namespace where
-  #     jabali-sockets's GID doesn't translate → chown returns EINVAL.
-  # The `+` prefix on ExecStartPost= runs with full privileges bypassing
-  # User/Group/Caps/PrivateUsers/ExecPaths/SystemCallFilter in one
-  # shot, so chgrp + chmod work trivially. Documented in
-  # systemd.exec(5) under EXECUTABLE PREFIXES.
-  #
-  # We still keep the /bin/sh wait-loop out: Type=notify fires
-  # ExecStartPost after redis sent sd_notify(READY=1), so the socket
-  # is guaranteed to exist already.
-  #
-  # /run/redis directory itself also gets chgrp'd to jabali-sockets
-  # (mode 0750): panel-api runs as jabali:jabali-sockets and must be
-  # able to TRAVERSE the directory to reach the socket inside. The
-  # stock RuntimeDirectory= creates /run/redis owned redis:redis
-  # which blocks any non-redis user at the dir level even if the
-  # socket itself is group-readable.
-  local unit_desired=$'# Managed by jabali install.sh — M14 / ADR-0059. Do NOT hand-edit.\n[Service]\nRuntimeDirectory=redis\nRuntimeDirectoryMode=0750\nSupplementaryGroups=jabali-sockets\nExecStartPost=+/usr/bin/chgrp jabali-sockets /run/redis\nExecStartPost=+/usr/bin/chgrp jabali-sockets /run/redis/redis.sock\nExecStartPost=+/usr/bin/chmod 0660 /run/redis/redis.sock\n'
+  # Flip the service's primary Group= from stock `redis` to
+  # `jabali-sockets`. This cascades cleanly:
+  #   - systemd creates /run/redis as redis:jabali-sockets (matching the
+  #     service's User:Group), mode 0750 → redis owner rwx, jabali-
+  #     sockets members rx (traverse), others blocked. panel-api (uid
+  #     jabali, gid jabali-sockets) can open the dir.
+  #   - redis process egid = jabali-sockets → the socket it creates
+  #     inherits group = jabali-sockets automatically. `unixsocketperm 660`
+  #     in the conf drop-in sets the mode. No ExecStartPost chgrp/chmod
+  #     dance needed.
+  #   - redis still owns /var/lib/redis and /var/log/redis by UID, so
+  #     flipping the primary group doesn't break its data-dir access
+  #     (file access on owner-match ignores egid).
+  # Earlier iterations tried ExecStartPost chgrp with the `+` prefix but
+  # systemd re-asserts RuntimeDirectory ownership after the hook runs,
+  # so the dir reverted to redis:redis every restart. Setting Group=
+  # at the service level makes the systemd-managed ownership correct
+  # on its own.
+  local unit_desired=$'# Managed by jabali install.sh — M14 / ADR-0059. Do NOT hand-edit.\n[Service]\nGroup=jabali-sockets\nRuntimeDirectory=redis\nRuntimeDirectoryMode=0750\n'
 
   if [[ ! -f "$unit_dropin" ]] || ! cmp -s <(printf '%s' "$unit_desired") "$unit_dropin"; then
     _log "installing Redis systemd drop-in → $unit_dropin"

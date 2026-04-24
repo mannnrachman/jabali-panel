@@ -3859,10 +3859,16 @@ install_crowdsec_appsec() {
 
   # 3. AppSec acquisition — listener on 127.0.0.1:7422 (the CrowdSec
   #    convention; bouncer talks to it over loopback).
+  #    Use crowdsecurity/virtual-patching config — it references only
+  #    vpatch-* rules that ship with the appsec-virtual-patching
+  #    collection. The fuller crowdsecurity/appsec-default config
+  #    references experimental-* outofband rules that aren't bundled
+  #    on fresh hosts, which makes crowdsec refuse to start citing
+  #    "no appsec-rules found for pattern crowdsecurity/experimental-*".
   local acquis_dir="/etc/crowdsec/acquis.d"
   install -d -m 0755 "$acquis_dir"
   local acquis_file="$acquis_dir/jabali-appsec.yaml"
-  local desired_acquis=$'# Managed by jabali install.sh — M26 AppSec geoblock.\n# TCP loopback listener. crowdsec-nginx-bouncer dials this via\n# APPSEC_URL=http://127.0.0.1:7422. Not exposed outside the host.\nappsec_config: crowdsecurity/appsec-default\nlabels:\n  type: appsec\nlisten_addr: 127.0.0.1:7422\nsource: appsec\n'
+  local desired_acquis=$'# Managed by jabali install.sh — M26 AppSec geoblock.\n# TCP loopback listener. crowdsec-nginx-bouncer dials this via\n# APPSEC_URL=http://127.0.0.1:7422. Not exposed outside the host.\nappsec_config: crowdsecurity/virtual-patching\nlabels:\n  type: appsec\nlisten_addr: 127.0.0.1:7422\nsource: appsec\n'
   if [[ ! -f "$acquis_file" ]] || ! cmp -s <(printf '%s' "$desired_acquis") "$acquis_file"; then
     _log "writing $acquis_file"
     local tmp

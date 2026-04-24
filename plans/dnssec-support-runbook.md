@@ -101,7 +101,7 @@ independent of publication at the registrar.
 
 ## Files
 
-- Migration: `panel-api/internal/db/migrations/000069_*.sql`
+- Migration: `panel-api/internal/db/migrations/000070_*.sql`
 - Models: `panel-api/internal/models/domain_dnssec_key.go` + field additions in `domain.go`
 - API: `panel-api/internal/api/domain_dnssec.go`
 - Agent: `panel-agent/internal/commands/dns_dnssec_*.go`, `panel-agent/internal/pdns/dnssec.go`

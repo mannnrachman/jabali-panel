@@ -110,6 +110,12 @@ example.com. IN DS 34567 13 4 cafe89
 
 const exportZoneDSEmpty = ``
 
+// pdns 4.9 pads each DS with a human-readable comment after the digest.
+// parseExportZoneDS must ignore everything after the final hex field.
+const exportZoneDSWithComment = `example.com. IN DS 15302 13 2 60aa84326b445e424310ca91080070cb7a32cd3fcbb3c17801637f060ecdcb7f ; ( SHA256 digest )
+example.com. IN DS 15302 13 4 57deb6fae48268678d382d372fe0d2201eb520bda313e73e977b78564550c4c120e176b671d489052104b338c4c13caa ; ( SHA-384 digest )
+`
+
 func TestParseExportZoneDS_Single(t *testing.T) {
 	records := parseExportZoneDS(exportZoneDSSingle)
 	if len(records) != 1 {
@@ -141,5 +147,22 @@ func TestParseExportZoneDS_Empty(t *testing.T) {
 	records := parseExportZoneDS(exportZoneDSEmpty)
 	if len(records) != 0 {
 		t.Fatalf("empty output must yield 0 records, got %d", len(records))
+	}
+}
+
+func TestParseExportZoneDS_WithComment(t *testing.T) {
+	records := parseExportZoneDS(exportZoneDSWithComment)
+	if len(records) != 2 {
+		t.Fatalf("want 2 DS records, got %d", len(records))
+	}
+	if records[0].KeyTag != 15302 || records[0].DigestType != 2 {
+		t.Errorf("record[0] unexpected: %+v", records[0])
+	}
+	if records[1].DigestType != 4 {
+		t.Errorf("record[1] should be SHA-384 (dt=4), got %+v", records[1])
+	}
+	const wantDigest0 = "60aa84326b445e424310ca91080070cb7a32cd3fcbb3c17801637f060ecdcb7f"
+	if records[0].Digest != wantDigest0 {
+		t.Errorf("record[0].Digest=%q want %q", records[0].Digest, wantDigest0)
 	}
 }

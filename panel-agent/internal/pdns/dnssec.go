@@ -134,7 +134,10 @@ var (
 	showZoneAlgo     = regexp.MustCompile(`algo\s*=\s*(\d+)`)
 	showZoneActive   = regexp.MustCompile(`Active:\s*(\d+)`)
 	dsLinePublicKey  = regexp.MustCompile(`DNSKEY\s*=\s*(.+?)\s*;`)
-	exportZoneDSLine = regexp.MustCompile(`^\S+\s+IN\s+DS\s+(\d+)\s+(\d+)\s+(\d+)\s+([0-9A-Fa-f]+)\s*$`)
+	// PowerDNS 4.9 writes each line as:
+	//   zone. IN DS <tag> <algo> <digesttype> <hex> ; ( SHA… digest )
+	// The trailing "; (…)" is a human-readable comment we must tolerate.
+	exportZoneDSLine = regexp.MustCompile(`^\S+\s+IN\s+DS\s+(\d+)\s+(\d+)\s+(\d+)\s+([0-9A-Fa-f]+)(?:\s*;.*)?\s*$`)
 )
 
 // parseShowZone extracts one DNSSECKey per ID line. The format across PDNS

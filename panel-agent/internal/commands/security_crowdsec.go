@@ -1177,31 +1177,42 @@ type csConsoleOption struct {
 	Description string `json:"description"`
 }
 
+// consoleOptionDescriptions mirrors the description column from the
+// human-formatted `cscli console status` table. cscli's JSON output
+// returns a flat {option: bool} map with no descriptions; we carry
+// the labels here so the UI can render them without a second call.
+var consoleOptionDescriptions = map[string]string{
+	"custom":             "Forward alerts from custom scenarios to the console",
+	"manual":             "Forward manual decisions to the console",
+	"tainted":            "Forward alerts from tainted scenarios to the console",
+	"context":            "Forward context with alerts to the console",
+	"console_management": "Receive decisions from console",
+}
+
 func csConsoleStatusHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 	out, err := runCscliJSON(ctx, "console", "status")
 	if err != nil {
 		return nil, csInternal("cscli console status", err)
 	}
-	// Upstream JSON is a map[string]{enabled:bool,description:string}.
-	var raw map[string]struct {
-		Enabled     *bool  `json:"enabled"`
-		Description string `json:"description"`
-	}
+	// v1.7.x ships {option: bool} — flat map. Descriptions only appear
+	// in the human-formatted table, so we emit them from our own
+	// constant lookup.
+	var raw map[string]bool
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, csInternal("parse console status", err)
 	}
 	names := []string{"custom", "manual", "tainted", "context", "console_management"}
 	items := make([]csConsoleOption, 0, len(names))
 	for _, n := range names {
-		v, ok := raw[n]
+		enabled, ok := raw[n]
 		if !ok {
 			continue
 		}
-		enabled := false
-		if v.Enabled != nil {
-			enabled = *v.Enabled
-		}
-		items = append(items, csConsoleOption{Name: n, Enabled: enabled, Description: v.Description})
+		items = append(items, csConsoleOption{
+			Name:        n,
+			Enabled:     enabled,
+			Description: consoleOptionDescriptions[n],
+		})
 	}
 	return map[string]any{"items": items}, nil
 }

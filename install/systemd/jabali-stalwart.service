@@ -37,7 +37,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/stalwart /etc/stalwart /etc/jabali-panel /run/jabali
+ReadWritePaths=/var/lib/stalwart /etc/stalwart /etc/jabali-panel
 
 # Stalwart binds to ports 25, 465, 587, 993 (external mail protocols) and
 # 8446 (loopback JMAP). Only the loopback binding requires no capability;

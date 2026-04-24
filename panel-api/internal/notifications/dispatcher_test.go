@@ -144,6 +144,12 @@ func (f *fakeHistory) FindByID(ctx context.Context, id string) (*models.Notifica
 func (f *fakeHistory) ListForUser(ctx context.Context, u string, opts repository.ListOptions) ([]models.NotificationHistory, int64, error) {
 	return nil, 0, nil
 }
+func (f *fakeHistory) ListForAdminInbox(ctx context.Context, u string, opts repository.ListOptions) ([]models.NotificationHistory, int64, error) {
+	return nil, 0, nil
+}
+func (f *fakeHistory) CountUnreadForAdminInbox(ctx context.Context, u string) (int64, error) {
+	return 0, nil
+}
 func (f *fakeHistory) CountUnreadForUser(ctx context.Context, u string) (int64, error) {
 	return 0, nil
 }

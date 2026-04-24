@@ -371,6 +371,32 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Log:                    deps.Log,
 			})
 		}
+
+		// M14 Step 5 — admin channel CRUD + broadcast/test.
+		if deps.NotificationChannels != nil {
+			api.RegisterNotificationsChannelsRoutes(v1, api.NotificationsChannelsHandlerConfig{
+				Channels:        deps.NotificationChannels,
+				Webhooks:        deps.WebhookEndpoints,
+				Queue:           deps.NotificationQueue,
+				Log:             deps.Log,
+				StrictRateLimit: rl.Strict(),
+			})
+		}
+		// M14 Step 5 — authenticated-user bell dropdown.
+		if deps.NotificationHistory != nil {
+			api.RegisterNotificationsInboxRoutes(v1, api.NotificationsInboxHandlerConfig{
+				History: deps.NotificationHistory,
+				Log:     deps.Log,
+			})
+		}
+		// M14 Step 5 — Web Push enrolment.
+		if deps.WebPushSubs != nil && deps.ServerSettings != nil {
+			api.RegisterNotificationsWebPushRoutes(v1, api.NotificationsWebPushHandlerConfig{
+				ServerSettings: deps.ServerSettings,
+				Subs:           deps.WebPushSubs,
+				Log:            deps.Log,
+			})
+		}
 		if deps.Agent != nil {
 			api.RegisterSystemRoutes(v1, deps.Agent)
 			api.RegisterPHPVersionRoutes(v1, deps.Agent)

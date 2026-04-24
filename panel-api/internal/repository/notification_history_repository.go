@@ -38,6 +38,16 @@ type NotificationHistoryRepository interface {
 	// is created_at DESC so the newest notifications surface first.
 	ListForUser(ctx context.Context, userID string, opts ListOptions) ([]models.NotificationHistory, int64, error)
 
+	// ListForAdminInbox returns rows targeted at the admin user plus
+	// broadcast rows (user_id IS NULL). Used by the admin's bell
+	// dropdown so system-wide events (disk full, service down) surface
+	// alongside personalised ones without the UI making two calls.
+	ListForAdminInbox(ctx context.Context, adminUserID string, opts ListOptions) ([]models.NotificationHistory, int64, error)
+
+	// CountUnreadForAdminInbox mirrors ListForAdminInbox's row set for
+	// the badge count.
+	CountUnreadForAdminInbox(ctx context.Context, adminUserID string) (int64, error)
+
 	// CountUnreadForUser is the bell-icon badge count. Uses the
 	// idx_notification_history_user_read composite index.
 	CountUnreadForUser(ctx context.Context, userID string) (int64, error)
@@ -143,6 +153,37 @@ func (r *notificationHistoryRepo) ListForUser(ctx context.Context, userID string
 		return nil, 0, err
 	}
 	return rows, total, nil
+}
+
+func (r *notificationHistoryRepo) ListForAdminInbox(ctx context.Context, adminUserID string, opts ListOptions) ([]models.NotificationHistory, int64, error) {
+	var rows []models.NotificationHistory
+	var total int64
+	base := r.db.WithContext(ctx).
+		Model(&models.NotificationHistory{}).
+		Where("user_id = ? OR user_id IS NULL", adminUserID)
+	if err := base.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	q := base.Order("created_at DESC")
+	if opts.Limit > 0 {
+		q = q.Limit(opts.Limit)
+	}
+	if opts.Offset > 0 {
+		q = q.Offset(opts.Offset)
+	}
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
+}
+
+func (r *notificationHistoryRepo) CountUnreadForAdminInbox(ctx context.Context, adminUserID string) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&models.NotificationHistory{}).
+		Where("(user_id = ? OR user_id IS NULL) AND read_at IS NULL", adminUserID).
+		Count(&count).Error
+	return count, err
 }
 
 func (r *notificationHistoryRepo) CountUnreadForUser(ctx context.Context, userID string) (int64, error) {

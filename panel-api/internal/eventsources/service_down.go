@@ -23,10 +23,10 @@ var jabaliUnits = []string{
 	"jabali-panel.service",
 	"jabali-agent.service",
 	"jabali-kratos.service",
-	"jabali-bulwark.service",
+	"jabali-webmail.service",
 	"jabali-stalwart.service",
-	"jabali-pdns.service",
-	"jabali-pdns-recursor.service",
+	"pdns.service",
+	"pdns-recursor.service",
 }
 
 // runServiceDown polls systemctl is-active for each configured

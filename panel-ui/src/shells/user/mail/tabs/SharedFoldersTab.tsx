@@ -114,7 +114,7 @@ export const SharedFoldersTab = () => {
   }
 
   if (mailboxes.length === 0) {
-    return <Empty description="Create mailboxes first" />;
+    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Create mailboxes first" />;
   }
 
   return (

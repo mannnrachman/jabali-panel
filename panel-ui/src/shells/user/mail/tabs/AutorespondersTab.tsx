@@ -181,7 +181,7 @@ export const AutorespondersTab = () => {
   }
 
   if (emailEnabledDomains.length === 0 || mailboxes.length === 0) {
-    return <Empty description="Create a mailbox first to set an autoresponder" />;
+    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Create a mailbox first to set an autoresponder" />;
   }
 
   return (

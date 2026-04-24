@@ -103,7 +103,7 @@ export const ForwardersTab = () => {
     return <Skeleton active paragraph={{ rows: 4 }} />;
   }
   if (mailboxes.length === 0) {
-    return <Empty description="Create mailboxes first" />;
+    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Create mailboxes first" />;
   }
 
   return (

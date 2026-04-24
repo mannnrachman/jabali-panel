@@ -82,7 +82,7 @@ export const DisclaimerTab = () => {
 
   if (loadingDomains && domains.length === 0) return <Skeleton active paragraph={{ rows: 4 }} />;
   if (emailEnabled.length === 0) {
-    return <Empty description="No email-enabled domains" />;
+    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No email-enabled domains" />;
   }
 
   return (

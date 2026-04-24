@@ -144,13 +144,7 @@ export const MailboxesTab = () => {
   }
 
   if (rows.length === 0) {
-    return (
-      <Empty
-        image={<MailOutlined style={{ fontSize: 48, color: "#bbb" }} />}
-        description="No mailboxes yet"
-        style={{ marginTop: 48 }}
-      />
-    );
+    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No mailboxes yet" />;
   }
 
   return (

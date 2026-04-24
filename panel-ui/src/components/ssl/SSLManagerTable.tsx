@@ -190,8 +190,8 @@ export const SSLManagerTable = ({
   if (error) {
     return (
       <Empty
+        image={Empty.PRESENTED_IMAGE_SIMPLE}
         description="Failed to load SSL certificates"
-        style={{ marginTop: 48 }}
       />
     );
   }
@@ -343,8 +343,8 @@ export const SSLManagerTable = ({
     <>
       {!data || data.length === 0 ? (
         <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
           description="No SSL certificates yet"
-          style={{ marginTop: 48 }}
         />
       ) : (
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>

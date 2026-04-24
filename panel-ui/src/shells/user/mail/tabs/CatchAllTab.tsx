@@ -108,7 +108,7 @@ export const CatchAllTab = () => {
   }
 
   if (emailEnabledDomains.length === 0) {
-    return <Empty description="No email-enabled domains yet" />;
+    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No email-enabled domains yet" />;
   }
 
   return (

@@ -97,7 +97,7 @@ export const DNSZonesOverviewPage = () => {
         {query.isLoading ? (
           <Spin />
         ) : query.items.length === 0 ? (
-          <Empty description="No domains found" />
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No domains found" />
         ) : (
           <SearchableTableStringQ<Domain>
           rowKey="id"

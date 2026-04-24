@@ -704,7 +704,7 @@ export const DNSRecordsPage = () => {
       {/* Records Table */}
       {displayRecords.length === 0 ? (
         <Card style={{ marginBottom: 24 }}>
-          <Empty description="No DNS records yet" />
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No DNS records yet" />
         </Card>
       ) : (
         <Card style={{ marginBottom: 24 }}>

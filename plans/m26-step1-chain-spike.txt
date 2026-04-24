@@ -1,0 +1,640 @@
+# M26 Step 1 — UFW + CrowdSec firewall chain layout spike
+
+Captured on test VM 192.168.100.13:2222 (Debian trixie, x86_64) after
+fresh 'bash install.sh' run with M26 install_crowdsec + install_modsecurity
++ install_ufw landed.
+
+## Invariant (ADR-0053 + ADR-0054)
+
+- UFW INPUT chain numbered positions 1..6 (ufw-before-* / ufw-after-* /
+  ufw-reject-* / ufw-track-*) — the panel's M26 Step 2 rule add/delete
+  surface must rely on this numbering being stable.
+- CrowdSec firewall-bouncer (nftables variant on trixie) installs its OWN
+  chains ('crowdsec-chain-input', 'crowdsec-chain-forward', 'crowdsec6-*').
+- CrowdSec does NOT insert rules into 'ufw-user-input' or any UFW chain.
+
+Both invariants verified by the artefact below.
+
+===============================================================
+# iptables -L -v --line-numbers (legacy iptables view)
+===============================================================
+Chain INPUT (policy DROP 0 packets, 0 bytes)
+num   pkts bytes target     prot opt in     out     source               destination         
+1     113K  213M ufw-before-logging-input  all  --  any    any     anywhere             anywhere            
+2     113K  213M ufw-before-input  all  --  any    any     anywhere             anywhere            
+3       25  5177 ufw-after-input  all  --  any    any     anywhere             anywhere            
+4       25  5177 ufw-after-logging-input  all  --  any    any     anywhere             anywhere            
+5       25  5177 ufw-reject-input  all  --  any    any     anywhere             anywhere            
+6       25  5177 ufw-track-input  all  --  any    any     anywhere             anywhere            
+
+Chain FORWARD (policy DROP 0 packets, 0 bytes)
+num   pkts bytes target     prot opt in     out     source               destination         
+1        0     0 ufw-before-logging-forward  all  --  any    any     anywhere             anywhere            
+2        0     0 ufw-before-forward  all  --  any    any     anywhere             anywhere            
+3        0     0 ufw-after-forward  all  --  any    any     anywhere             anywhere            
+4        0     0 ufw-after-logging-forward  all  --  any    any     anywhere             anywhere            
+5        0     0 ufw-reject-forward  all  --  any    any     anywhere             anywhere            
+6        0     0 ufw-track-forward  all  --  any    any     anywhere             anywhere            
+
+Chain OUTPUT (policy ACCEPT 0 packets, 0 bytes)
+num   pkts bytes target     prot opt in     out     source               destination         
+1    89395 5824K ufw-before-logging-output  all  --  any    any     anywhere             anywhere            
+2    89395 5824K ufw-before-output  all  --  any    any     anywhere             anywhere            
+3      145 13869 ufw-after-output  all  --  any    any     anywhere             anywhere            
+4      145 13869 ufw-after-logging-output  all  --  any    any     anywhere             anywhere            
+5      145 13869 ufw-reject-output  all  --  any    any     anywhere             anywhere            
+6      145 13869 ufw-track-output  all  --  any    any     anywhere             anywhere            
+
+Chain ufw-after-forward (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+
+Chain ufw-after-input (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+1        0     0 ufw-skip-to-policy-input  udp  --  any    any     anywhere             anywhere             udp dpt:netbios-ns
+2        0     0 ufw-skip-to-policy-input  udp  --  any    any     anywhere             anywhere             udp dpt:netbios-dgm
+3        0     0 ufw-skip-to-policy-input  tcp  --  any    any     anywhere             anywhere             tcp dpt:netbios-ssn
+4        0     0 ufw-skip-to-policy-input  tcp  --  any    any     anywhere             anywhere             tcp dpt:microsoft-ds
+5        0     0 ufw-skip-to-policy-input  udp  --  any    any     anywhere             anywhere             udp dpt:bootps
+6        0     0 ufw-skip-to-policy-input  udp  --  any    any     anywhere             anywhere             udp dpt:bootpc
+7        0     0 ufw-skip-to-policy-input  all  --  any    any     anywhere             anywhere             ADDRTYPE match dst-type BROADCAST
+
+Chain ufw-after-logging-forward (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+1        0     0 LOG        all  --  any    any     anywhere             anywhere             limit: avg 3/min burst 10 LOG level warn prefix "[UFW BLOCK] "
+
+Chain ufw-after-logging-input (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+1        0     0 LOG        all  --  any    any     anywhere             anywhere             limit: avg 3/min burst 10 LOG level warn prefix "[UFW BLOCK] "
+
+Chain ufw-after-logging-output (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+
+Chain ufw-after-output (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+
+Chain ufw-before-forward (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+1        0     0 ACCEPT     all  --  any    any     anywhere             anywhere             ctstate RELATED,ESTABLISHED
+2        0     0 ACCEPT     icmp --  any    any     anywhere             anywhere             icmp destination-unreachable
+3        0     0 ACCEPT     icmp --  any    any     anywhere             anywhere             icmp time-exceeded
+4        0     0 ACCEPT     icmp --  any    any     anywhere             anywhere             icmp parameter-problem
+5        0     0 ACCEPT     icmp --  any    any     anywhere             anywhere             icmp echo-request
+6        0     0 ufw-user-forward  all  --  any    any     anywhere             anywhere            
+
+Chain ufw-before-input (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+1      155 29983 ACCEPT     all  --  lo     any     anywhere             anywhere            
+2    52144   97M ACCEPT     all  --  any    any     anywhere             anywhere             ctstate RELATED,ESTABLISHED
+3        0     0 ufw-logging-deny  all  --  any    any     anywhere             anywhere             ctstate INVALID
+4        0     0 DROP       all  --  any    any     anywhere             anywhere             ctstate INVALID
+5        0     0 ACCEPT     icmp --  any    any     anywhere             anywhere             icmp destination-unreachable
+6        0     0 ACCEPT     icmp --  any    any     anywhere             anywhere             icmp time-exceeded
+7        0     0 ACCEPT     icmp --  any    any     anywhere             anywhere             icmp parameter-problem
+8        0     0 ACCEPT     icmp --  any    any     anywhere             anywhere             icmp echo-request
+9        0     0 ACCEPT     udp  --  any    any     anywhere             anywhere             udp spt:bootps dpt:bootpc
+10      13   780 ufw-not-local  all  --  any    any     anywhere             anywhere            
+11       0     0 ACCEPT     udp  --  any    any     anywhere             mdns.mcast.net       udp dpt:mdns
+12       0     0 ACCEPT     udp  --  any    any     anywhere             239.255.255.250      udp dpt:1900
+13      13   780 ufw-user-input  all  --  any    any     anywhere             anywhere            
+
+Chain ufw-before-logging-forward (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+
+Chain ufw-before-logging-input (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+
+Chain ufw-before-logging-output (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+
+Chain ufw-before-output (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+1      155 29983 ACCEPT     all  --  any    lo      anywhere             anywhere            
+2    41536 2538K ACCEPT     all  --  any    any     anywhere             anywhere             ctstate RELATED,ESTABLISHED
+3       23  1510 ufw-user-output  all  --  any    any     anywhere             anywhere            
+
+Chain ufw-logging-allow (0 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+1        0     0 LOG        all  --  any    any     anywhere             anywhere             limit: avg 3/min burst 10 LOG level warn prefix "[UFW ALLOW] "
+
+Chain ufw-logging-deny (2 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+1        0     0 RETURN     all  --  any    any     anywhere             anywhere             ctstate INVALID limit: avg 3/min burst 10
+2        0     0 LOG        all  --  any    any     anywhere             anywhere             limit: avg 3/min burst 10 LOG level warn prefix "[UFW BLOCK] "
+
+Chain ufw-not-local (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+1       13   780 RETURN     all  --  any    any     anywhere             anywhere             ADDRTYPE match dst-type LOCAL
+2        0     0 RETURN     all  --  any    any     anywhere             anywhere             ADDRTYPE match dst-type MULTICAST
+3        0     0 RETURN     all  --  any    any     anywhere             anywhere             ADDRTYPE match dst-type BROADCAST
+4        0     0 ufw-logging-deny  all  --  any    any     anywhere             anywhere             limit: avg 3/min burst 10
+5        0     0 DROP       all  --  any    any     anywhere             anywhere            
+
+Chain ufw-reject-forward (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+
+Chain ufw-reject-input (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+
+Chain ufw-reject-output (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+
+Chain ufw-skip-to-policy-forward (0 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+1        0     0 DROP       all  --  any    any     anywhere             anywhere            
+
+Chain ufw-skip-to-policy-input (7 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+1        0     0 DROP       all  --  any    any     anywhere             anywhere            
+
+Chain ufw-skip-to-policy-output (0 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+1        0     0 ACCEPT     all  --  any    any     anywhere             anywhere            
+
+Chain ufw-track-forward (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+
+Chain ufw-track-input (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+
+Chain ufw-track-output (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+1        7   420 ACCEPT     tcp  --  any    any     anywhere             anywhere             ctstate NEW
+2       16  1090 ACCEPT     udp  --  any    any     anywhere             anywhere             ctstate NEW
+
+Chain ufw-user-forward (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+
+Chain ufw-user-input (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+1        7   420 ACCEPT     tcp  --  any    any     anywhere             anywhere             tcp dpt:ssh
+2        0     0 ACCEPT     tcp  --  any    any     anywhere             anywhere             tcp dpt:http
+3        0     0 ACCEPT     tcp  --  any    any     anywhere             anywhere             tcp dpt:https
+4        6   360 ACCEPT     tcp  --  any    any     anywhere             anywhere             tcp dpt:8443
+5        0     0 ACCEPT     tcp  --  any    any     anywhere             anywhere             tcp dpt:smtp
+6        0     0 ACCEPT     tcp  --  any    any     anywhere             anywhere             tcp dpt:submissions
+7        0     0 ACCEPT     tcp  --  any    any     anywhere             anywhere             tcp dpt:submission
+8        0     0 ACCEPT     tcp  --  any    any     anywhere             anywhere             tcp dpt:imaps
+9        0     0 ACCEPT     tcp  --  any    any     anywhere             anywhere             tcp dpt:pop3s
+10       0     0 ACCEPT     tcp  --  any    any     anywhere             anywhere             tcp dpt:sieve
+
+Chain ufw-user-limit (0 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+1        0     0 LOG        all  --  any    any     anywhere             anywhere             limit: avg 3/min burst 5 LOG level warn prefix "[UFW LIMIT BLOCK] "
+2        0     0 REJECT     all  --  any    any     anywhere             anywhere             reject-with icmp-port-unreachable
+
+Chain ufw-user-limit-accept (0 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+1        0     0 ACCEPT     all  --  any    any     anywhere             anywhere            
+
+Chain ufw-user-logging-forward (0 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+
+Chain ufw-user-logging-input (0 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+
+Chain ufw-user-logging-output (0 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+
+Chain ufw-user-output (1 references)
+num   pkts bytes target     prot opt in     out     source               destination         
+
+===============================================================
+# nft list ruleset (active nftables backend on trixie)
+===============================================================
+table ip crowdsec {
+	counter processed {
+		packets 113510 bytes 213518989
+	}
+
+	chain crowdsec-chain-input {
+		type filter hook input priority filter - 10; policy accept;
+		counter name "processed"
+	}
+
+	chain crowdsec-chain-forward {
+		type filter hook forward priority filter - 10; policy accept;
+		counter name "processed"
+	}
+}
+table ip6 crowdsec6 {
+	counter processed {
+		packets 6 bytes 408
+	}
+
+	chain crowdsec6-chain-input {
+		type filter hook input priority filter - 10; policy accept;
+		counter name "processed"
+	}
+
+	chain crowdsec6-chain-forward {
+		type filter hook forward priority filter - 10; policy accept;
+		counter name "processed"
+	}
+}
+# Warning: table ip filter is managed by iptables-nft, do not touch!
+table ip filter {
+	chain ufw-before-logging-input {
+	}
+
+	chain ufw-before-logging-output {
+	}
+
+	chain ufw-before-logging-forward {
+	}
+
+	chain ufw-before-input {
+		iifname "lo" counter packets 163 bytes 30817 accept
+		ct state related,established counter packets 52149 bytes 97468416 accept
+		ct state invalid counter packets 0 bytes 0 jump ufw-logging-deny
+		ct state invalid counter packets 0 bytes 0 drop
+		ip protocol icmp icmp type destination-unreachable counter packets 0 bytes 0 accept
+		ip protocol icmp icmp type time-exceeded counter packets 0 bytes 0 accept
+		ip protocol icmp icmp type parameter-problem counter packets 0 bytes 0 accept
+		ip protocol icmp icmp type echo-request counter packets 0 bytes 0 accept
+		udp sport 67 udp dport 68 counter packets 0 bytes 0 accept
+		counter packets 13 bytes 780 jump ufw-not-local
+		ip daddr 224.0.0.251 udp dport 5353 counter packets 0 bytes 0 accept
+		ip daddr 239.255.255.250 udp dport 1900 counter packets 0 bytes 0 accept
+		counter packets 13 bytes 780 jump ufw-user-input
+	}
+
+	chain ufw-before-output {
+		oifname "lo" counter packets 163 bytes 30817 accept
+		ct state related,established counter packets 41536 bytes 2537888 accept
+		counter packets 27 bytes 1820 jump ufw-user-output
+	}
+
+	chain ufw-before-forward {
+		ct state related,established counter packets 0 bytes 0 accept
+		ip protocol icmp icmp type destination-unreachable counter packets 0 bytes 0 accept
+		ip protocol icmp icmp type time-exceeded counter packets 0 bytes 0 accept
+		ip protocol icmp icmp type parameter-problem counter packets 0 bytes 0 accept
+		ip protocol icmp icmp type echo-request counter packets 0 bytes 0 accept
+		counter packets 0 bytes 0 jump ufw-user-forward
+	}
+
+	chain ufw-after-input {
+		udp dport 137 counter packets 0 bytes 0 jump ufw-skip-to-policy-input
+		udp dport 138 counter packets 0 bytes 0 jump ufw-skip-to-policy-input
+		tcp dport 139 counter packets 0 bytes 0 jump ufw-skip-to-policy-input
+		tcp dport 445 counter packets 0 bytes 0 jump ufw-skip-to-policy-input
+		udp dport 67 counter packets 0 bytes 0 jump ufw-skip-to-policy-input
+		udp dport 68 counter packets 0 bytes 0 jump ufw-skip-to-policy-input
+		fib daddr type broadcast counter packets 0 bytes 0 jump ufw-skip-to-policy-input
+	}
+
+	chain ufw-after-output {
+	}
+
+	chain ufw-after-forward {
+	}
+
+	chain ufw-after-logging-input {
+		limit rate 3/minute burst 10 packets counter packets 0 bytes 0 log prefix "[UFW BLOCK] "
+	}
+
+	chain ufw-after-logging-output {
+	}
+
+	chain ufw-after-logging-forward {
+		limit rate 3/minute burst 10 packets counter packets 0 bytes 0 log prefix "[UFW BLOCK] "
+	}
+
+	chain ufw-reject-input {
+	}
+
+	chain ufw-reject-output {
+	}
+
+	chain ufw-reject-forward {
+	}
+
+	chain ufw-track-input {
+	}
+
+	chain ufw-track-output {
+		ip protocol tcp ct state new counter packets 7 bytes 420 accept
+		ip protocol udp ct state new counter packets 20 bytes 1400 accept
+	}
+
+	chain ufw-track-forward {
+	}
+
+	chain INPUT {
+		type filter hook input priority filter; policy drop;
+		counter packets 113432 bytes 213499869 jump ufw-before-logging-input
+		counter packets 113432 bytes 213499869 jump ufw-before-input
+		counter packets 25 bytes 5177 jump ufw-after-input
+		counter packets 25 bytes 5177 jump ufw-after-logging-input
+		counter packets 25 bytes 5177 jump ufw-reject-input
+		counter packets 25 bytes 5177 jump ufw-track-input
+	}
+
+	chain OUTPUT {
+		type filter hook output priority filter; policy accept;
+		counter packets 89407 bytes 5824782 jump ufw-before-logging-output
+		counter packets 89407 bytes 5824782 jump ufw-before-output
+		counter packets 149 bytes 14179 jump ufw-after-output
+		counter packets 149 bytes 14179 jump ufw-after-logging-output
+		counter packets 149 bytes 14179 jump ufw-reject-output
+		counter packets 149 bytes 14179 jump ufw-track-output
+	}
+
+	chain FORWARD {
+		type filter hook forward priority filter; policy drop;
+		counter packets 0 bytes 0 jump ufw-before-logging-forward
+		counter packets 0 bytes 0 jump ufw-before-forward
+		counter packets 0 bytes 0 jump ufw-after-forward
+		counter packets 0 bytes 0 jump ufw-after-logging-forward
+		counter packets 0 bytes 0 jump ufw-reject-forward
+		counter packets 0 bytes 0 jump ufw-track-forward
+	}
+
+	chain ufw-logging-deny {
+		ct state invalid limit rate 3/minute burst 10 packets counter packets 0 bytes 0 return
+		limit rate 3/minute burst 10 packets counter packets 0 bytes 0 log prefix "[UFW BLOCK] "
+	}
+
+	chain ufw-logging-allow {
+		limit rate 3/minute burst 10 packets counter packets 0 bytes 0 log prefix "[UFW ALLOW] "
+	}
+
+	chain ufw-skip-to-policy-input {
+		counter packets 0 bytes 0 drop
+	}
+
+	chain ufw-skip-to-policy-output {
+		counter packets 0 bytes 0 accept
+	}
+
+	chain ufw-skip-to-policy-forward {
+		counter packets 0 bytes 0 drop
+	}
+
+	chain ufw-not-local {
+		fib daddr type local counter packets 13 bytes 780 return
+		fib daddr type multicast counter packets 0 bytes 0 return
+		fib daddr type broadcast counter packets 0 bytes 0 return
+		limit rate 3/minute burst 10 packets counter packets 0 bytes 0 jump ufw-logging-deny
+		counter packets 0 bytes 0 drop
+	}
+
+	chain ufw-user-input {
+		tcp dport 22 counter packets 7 bytes 420 accept
+		tcp dport 80 counter packets 0 bytes 0 accept
+		tcp dport 443 counter packets 0 bytes 0 accept
+		tcp dport 8443 counter packets 6 bytes 360 accept
+		tcp dport 25 counter packets 0 bytes 0 accept
+		tcp dport 465 counter packets 0 bytes 0 accept
+		tcp dport 587 counter packets 0 bytes 0 accept
+		tcp dport 993 counter packets 0 bytes 0 accept
+		tcp dport 995 counter packets 0 bytes 0 accept
+		tcp dport 4190 counter packets 0 bytes 0 accept
+	}
+
+	chain ufw-user-output {
+	}
+
+	chain ufw-user-forward {
+	}
+
+	chain ufw-user-logging-input {
+	}
+
+	chain ufw-user-logging-output {
+	}
+
+	chain ufw-user-logging-forward {
+	}
+
+	chain ufw-user-limit {
+		limit rate 3/minute burst 5 packets counter packets 0 bytes 0 log prefix "[UFW LIMIT BLOCK] "
+		counter packets 0 bytes 0 reject
+	}
+
+	chain ufw-user-limit-accept {
+		counter packets 0 bytes 0 accept
+	}
+}
+# Warning: table ip6 filter is managed by iptables-nft, do not touch!
+table ip6 filter {
+	chain ufw6-before-logging-input {
+	}
+
+	chain ufw6-before-logging-output {
+	}
+
+	chain ufw6-before-logging-forward {
+	}
+
+	chain ufw6-before-input {
+		iifname "lo" counter packets 0 bytes 0 accept
+		rt type 0 counter packets 0 bytes 0 drop
+		ct state related,established counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type echo-reply counter packets 0 bytes 0 accept
+		ct state invalid counter packets 0 bytes 0 jump ufw6-logging-deny
+		ct state invalid counter packets 0 bytes 0 drop
+		meta l4proto ipv6-icmp icmpv6 type destination-unreachable counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type packet-too-big counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type time-exceeded counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type parameter-problem counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type echo-request counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type nd-router-solicit ip6 hoplimit 255 counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type nd-router-advert ip6 hoplimit 255 counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type nd-neighbor-solicit ip6 hoplimit 255 counter packets 2 bytes 144 accept
+		meta l4proto ipv6-icmp icmpv6 type nd-neighbor-advert ip6 hoplimit 255 counter packets 2 bytes 128 accept
+		meta l4proto ipv6-icmp xt match "icmp6" ip6 hoplimit 255 counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp xt match "icmp6" ip6 hoplimit 255 counter packets 0 bytes 0 accept
+		ip6 saddr fe80::/10 meta l4proto ipv6-icmp icmpv6 type mld-listener-query counter packets 0 bytes 0 accept
+		ip6 saddr fe80::/10 meta l4proto ipv6-icmp icmpv6 type mld-listener-report counter packets 0 bytes 0 accept
+		ip6 saddr fe80::/10 meta l4proto ipv6-icmp icmpv6 type mld-listener-done counter packets 0 bytes 0 accept
+		ip6 saddr fe80::/10 meta l4proto ipv6-icmp xt match "icmp6" counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp xt match "icmp6" ip6 hoplimit 255 counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp xt match "icmp6" ip6 hoplimit 255 counter packets 0 bytes 0 accept
+		ip6 saddr fe80::/10 meta l4proto ipv6-icmp xt match "icmp6" ip6 hoplimit 1 counter packets 0 bytes 0 accept
+		ip6 saddr fe80::/10 meta l4proto ipv6-icmp xt match "icmp6" ip6 hoplimit 1 counter packets 0 bytes 0 accept
+		ip6 saddr fe80::/10 meta l4proto ipv6-icmp xt match "icmp6" ip6 hoplimit 1 counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp xt match "icmp6" counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp xt match "icmp6" counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp xt match "icmp6" counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp xt match "icmp6" counter packets 0 bytes 0 accept
+		ip6 saddr fe80::/10 ip6 daddr fe80::/10 udp sport 547 udp dport 546 counter packets 0 bytes 0 accept
+		ip6 daddr ff02::fb udp dport 5353 counter packets 0 bytes 0 accept
+		ip6 daddr ff02::f udp dport 1900 counter packets 0 bytes 0 accept
+		counter packets 0 bytes 0 jump ufw6-user-input
+	}
+
+	chain ufw6-before-output {
+		oifname "lo" counter packets 0 bytes 0 accept
+		rt type 0 counter packets 0 bytes 0 drop
+		ct state related,established counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type destination-unreachable counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type packet-too-big counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type time-exceeded counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type parameter-problem counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type echo-request counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type echo-reply counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type nd-router-solicit ip6 hoplimit 255 counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type nd-neighbor-advert ip6 hoplimit 255 counter packets 2 bytes 128 accept
+		meta l4proto ipv6-icmp icmpv6 type nd-neighbor-solicit ip6 hoplimit 255 counter packets 2 bytes 144 accept
+		meta l4proto ipv6-icmp icmpv6 type nd-router-advert ip6 hoplimit 255 counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp xt match "icmp6" ip6 hoplimit 255 counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp xt match "icmp6" ip6 hoplimit 255 counter packets 0 bytes 0 accept
+		ip6 saddr fe80::/10 meta l4proto ipv6-icmp icmpv6 type mld-listener-query counter packets 0 bytes 0 accept
+		ip6 saddr fe80::/10 meta l4proto ipv6-icmp icmpv6 type mld-listener-report counter packets 0 bytes 0 accept
+		ip6 saddr fe80::/10 meta l4proto ipv6-icmp icmpv6 type mld-listener-done counter packets 0 bytes 0 accept
+		ip6 saddr fe80::/10 meta l4proto ipv6-icmp xt match "icmp6" counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp xt match "icmp6" ip6 hoplimit 255 counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp xt match "icmp6" ip6 hoplimit 255 counter packets 0 bytes 0 accept
+		ip6 saddr fe80::/10 meta l4proto ipv6-icmp xt match "icmp6" ip6 hoplimit 1 counter packets 0 bytes 0 accept
+		ip6 saddr fe80::/10 meta l4proto ipv6-icmp xt match "icmp6" ip6 hoplimit 1 counter packets 0 bytes 0 accept
+		ip6 saddr fe80::/10 meta l4proto ipv6-icmp xt match "icmp6" ip6 hoplimit 1 counter packets 0 bytes 0 accept
+		counter packets 2 bytes 405 jump ufw6-user-output
+	}
+
+	chain ufw6-before-forward {
+		rt type 0 counter packets 0 bytes 0 drop
+		ct state related,established counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type destination-unreachable counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type packet-too-big counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type time-exceeded counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type parameter-problem counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type echo-request counter packets 0 bytes 0 accept
+		meta l4proto ipv6-icmp icmpv6 type echo-reply counter packets 0 bytes 0 accept
+		counter packets 0 bytes 0 jump ufw6-user-forward
+	}
+
+	chain ufw6-after-input {
+		udp dport 137 counter packets 0 bytes 0 jump ufw6-skip-to-policy-input
+		udp dport 138 counter packets 0 bytes 0 jump ufw6-skip-to-policy-input
+		tcp dport 139 counter packets 0 bytes 0 jump ufw6-skip-to-policy-input
+		tcp dport 445 counter packets 0 bytes 0 jump ufw6-skip-to-policy-input
+		udp dport 546 counter packets 0 bytes 0 jump ufw6-skip-to-policy-input
+		udp dport 547 counter packets 0 bytes 0 jump ufw6-skip-to-policy-input
+	}
+
+	chain ufw6-after-output {
+	}
+
+	chain ufw6-after-forward {
+	}
+
+	chain ufw6-after-logging-input {
+		limit rate 3/minute burst 10 packets counter packets 0 bytes 0 log prefix "[UFW BLOCK] "
+	}
+
+	chain ufw6-after-logging-output {
+	}
+
+	chain ufw6-after-logging-forward {
+		limit rate 3/minute burst 10 packets counter packets 0 bytes 0 log prefix "[UFW BLOCK] "
+	}
+
+	chain ufw6-reject-input {
+	}
+
+	chain ufw6-reject-output {
+	}
+
+	chain ufw6-reject-forward {
+	}
+
+	chain ufw6-track-input {
+	}
+
+	chain ufw6-track-output {
+		meta l4proto tcp ct state new counter packets 1 bytes 80 accept
+		meta l4proto udp ct state new counter packets 1 bytes 325 accept
+	}
+
+	chain ufw6-track-forward {
+	}
+
+	chain INPUT {
+		type filter hook input priority filter; policy drop;
+		counter packets 6 bytes 408 jump ufw6-before-logging-input
+		counter packets 6 bytes 408 jump ufw6-before-input
+		counter packets 0 bytes 0 jump ufw6-after-input
+		counter packets 0 bytes 0 jump ufw6-after-logging-input
+		counter packets 0 bytes 0 jump ufw6-reject-input
+		counter packets 0 bytes 0 jump ufw6-track-input
+	}
+
+	chain OUTPUT {
+		type filter hook output priority filter; policy accept;
+		counter packets 10 bytes 1218 jump ufw6-before-logging-output
+		counter packets 10 bytes 1218 jump ufw6-before-output
+		counter packets 4 bytes 810 jump ufw6-after-output
+		counter packets 4 bytes 810 jump ufw6-after-logging-output
+		counter packets 4 bytes 810 jump ufw6-reject-output
+		counter packets 4 bytes 810 jump ufw6-track-output
+	}
+
+	chain FORWARD {
+		type filter hook forward priority filter; policy drop;
+		counter packets 0 bytes 0 jump ufw6-before-logging-forward
+		counter packets 0 bytes 0 jump ufw6-before-forward
+		counter packets 0 bytes 0 jump ufw6-after-forward
+		counter packets 0 bytes 0 jump ufw6-after-logging-forward
+		counter packets 0 bytes 0 jump ufw6-reject-forward
+		counter packets 0 bytes 0 jump ufw6-track-forward
+	}
+
+	chain ufw6-logging-deny {
+		ct state invalid limit rate 3/minute burst 10 packets counter packets 0 bytes 0 return
+		limit rate 3/minute burst 10 packets counter packets 0 bytes 0 log prefix "[UFW BLOCK] "
+	}
+
+	chain ufw6-logging-allow {
+		limit rate 3/minute burst 10 packets counter packets 0 bytes 0 log prefix "[UFW ALLOW] "
+	}
+
+	chain ufw6-skip-to-policy-input {
+		counter packets 0 bytes 0 drop
+	}
+
+	chain ufw6-skip-to-policy-output {
+		counter packets 0 bytes 0 accept
+	}
+
+	chain ufw6-skip-to-policy-forward {
+		counter packets 0 bytes 0 drop
+	}
+
+	chain ufw6-user-input {
+		tcp dport 22 counter packets 0 bytes 0 accept
+		tcp dport 80 counter packets 0 bytes 0 accept
+		tcp dport 443 counter packets 0 bytes 0 accept
+		tcp dport 8443 counter packets 0 bytes 0 accept
+		tcp dport 25 counter packets 0 bytes 0 accept
+		tcp dport 465 counter packets 0 bytes 0 accept
+		tcp dport 587 counter packets 0 bytes 0 accept
+		tcp dport 993 counter packets 0 bytes 0 accept
+		tcp dport 995 counter packets 0 bytes 0 accept
+		tcp dport 4190 counter packets 0 bytes 0 accept
+	}
+
+	chain ufw6-user-output {
+	}
+
+	chain ufw6-user-forward {
+	}
+
+	chain ufw6-user-logging-input {
+	}
+
+	chain ufw6-user-logging-output {
+	}
+
+	chain ufw6-user-logging-forward {
+	}
+
+	chain ufw6-user-limit {
+		limit rate 3/minute burst 5 packets counter packets 0 bytes 0 log prefix "[UFW LIMIT BLOCK] "
+		counter packets 0 bytes 0 reject
+	}
+
+	chain ufw6-user-limit-accept {
+		counter packets 0 bytes 0 accept
+	}
+}

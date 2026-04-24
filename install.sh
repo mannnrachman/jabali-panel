@@ -4260,8 +4260,15 @@ install_ufw() {
 
   # Verify the allow-list landed and SSH is still in it. If SSH dropped
   # off, the next reboot would lock the operator out — fail the install.
-  if ! ufw status verbose 2>/dev/null | grep -qE '^22/tcp[[:space:]]+ALLOW'; then
-    _die "UFW allow rule for 22/tcp missing after install — refusing to leave operator at risk of SSH lockout"
+  # Grep is lenient across UFW versions: rule line may render as
+  # "22/tcp ALLOW ...", "22 (v6) ALLOW ...", or "22 ALLOW ..." on Debian
+  # 13's ufw 0.36.x. Anchor on "ALLOW" and require a 22 token on the
+  # To-column rather than relying on a specific /tcp suffix.
+  if ! ufw status verbose 2>/dev/null \
+       | awk '/ALLOW/ && ($1 == "22" || $1 == "22/tcp" || $1 ~ /^22\/tcp/)' \
+       | grep -q .; then
+    ufw status verbose 2>&1 >&2 || true
+    _die "UFW allow rule for port 22 missing after install — refusing to leave operator at risk of SSH lockout (status dumped above)"
   fi
   _ok "UFW active; default-deny incoming with allow-list (22, 80, 443, 8443, 25, 465, 587, 993, 995, 4190)"
 }

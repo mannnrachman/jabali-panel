@@ -37,16 +37,30 @@ System events that fan out to notifications:
 
 | ADR  | Title                                                      | Decision                                                                                                   |
 | ---- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| 0056 | Notification dispatcher: in-process goroutine + in-memory buffered channel | No Redis/AMQP dep; in-flight envelopes lost on restart; dispatcher re-queues pending history rows on boot |
+| 0056 | Notification dispatcher: Redis Streams + consumer group    | Restart-safe FIFO; pending-entry-list tracks in-flight work; XCLAIM handles stuck consumers; DLQ stream for permanent failures |
 | 0057 | Web Push via VAPID, keys in server_settings                | W3C Push API + VAPID; SherClockHolmes/webpush-go as signing lib; keys regenerate only on explicit reset    |
 | 0058 | ntfy.sh: POST topic URL, optional bearer + priority + tags | No vendor SDK; plain HTTP POST; self-hosted or public; channel config stores full topic URL + optional bearer |
+| 0059 | Redis as shared local cache/queue                          | Unix socket at `/run/redis/redis.sock`, mode 0660 group `jabali-sockets` (ADR-0050); skip-networking enabled; shared by dispatcher (db 0) and future WordPress object-cache (db 1) |
 
 ---
 
-## Step 1 — DB schema + VAPID bootstrap + ADR 0056/0057/0058
+## Step 1 — DB schema + Redis install + VAPID bootstrap + ADR 0056/0057/0058/0059
 
 ### Context brief
-Four new tables; ServerSetting rows for VAPID keypair seeded on first boot by repository code (not migration — per `feedback_migration_data_seed_ordering`).
+Four new tables; ServerSetting rows for VAPID keypair seeded on first boot by repository code (not migration — per `feedback_migration_data_seed_ordering`). Plus Redis server installed with unix-socket-only listener (no TCP) per ADR-0050, shared for dispatcher queue (db 0) today and WordPress object-cache (db 1) later.
+
+**Redis install requirements:**
+- Package: `redis-server` (Debian default; 7.x on trixie, 7.x on bookworm)
+- `/etc/redis/redis.conf` patched (via `sed`/drop-in conf.d):
+  - `port 0` (disable TCP listener)
+  - `unixsocket /run/redis/redis.sock`
+  - `unixsocketperm 660`
+  - `bind 127.0.0.1 -::1` kept commented — no TCP at all
+- systemd drop-in `/etc/systemd/system/redis-server.service.d/10-jabali-socket.conf` with `RuntimeDirectory=redis`, `RuntimeDirectoryMode=0750`, `Group=jabali-sockets`, `ExecStartPost=/bin/chmod 0660 /run/redis/redis.sock`, `ExecStartPost=/bin/chgrp jabali-sockets /run/redis/redis.sock` (belt-and-suspenders per ADR-0050 F-C-3).
+- `panel-api`, `jabali` user groups include `jabali-sockets` (already set up by M25 install). Verify — no new group membership needed.
+- `maxmemory 128mb` + `maxmemory-policy allkeys-lru` — dispatcher queue is small; WordPress cache will push the needle later but LRU eviction is safe.
+- `appendonly yes` — AOF persistence. Panel notifications queue must survive `systemctl restart redis-server`.
+- Verify: `redis-cli -s /run/redis/redis.sock ping` → `PONG`.
 
 Tables:
 
@@ -100,18 +114,33 @@ ServerSettings seeded at boot:
 - `vapid_subject` — `mailto:admin@<panel_hostname>` from existing config
 
 ### Tasks
-1. Write ADRs 0056 / 0057 / 0058, accepted status. Update `docs/adr/README.md`.
+1. Write ADRs 0056 / 0057 / 0058 / 0059, accepted status. Update `docs/adr/README.md`.
 2. Migration `000064_create_notifications.up.sql` + `.down.sql`. Schema only. (Original draft said 000059; repo landed M6.x migrations between drafting and execution — 000063 is the current highest, 000064 is next free.)
 3. Go models in `panel-api/internal/models/` — NotificationChannel, WebhookEndpoint (extend or fold), NotificationHistory, WebPushSubscription.
 4. Repository interfaces + GORM impls in `panel-api/internal/repository/`.
 5. Seed VAPID keypair in `ServerSettingRepository.EnsureDefault` called from `serve.go` first-boot init (mirror how ManagedIP default row seeds).
-6. `go.mod`: add `github.com/SherClockHolmes/webpush-go`.
+6. `go.mod`: add `github.com/SherClockHolmes/webpush-go` + `github.com/redis/go-redis/v9`.
+7. **Redis install function** `install_redis()` in `install.sh`, wired between `provision_mariadb` and Stalwart install:
+   - `apt install redis-server`
+   - Write drop-in `/etc/redis/redis.conf.d/10-jabali-socket.conf` (Debian's redis honours `include /etc/redis/redis.conf.d/*.conf` when added to main conf; if not present, patch main conf with `yq`/`sed` — verify Debian 12/13 behaviour on test VM).
+   - systemd drop-in for RuntimeDirectory + socket chmod/chgrp.
+   - Add `redis-server` to install.sh deps list.
+   - Idempotent: second run is a no-op.
+8. **Panel-api Redis client wiring** in `serve.go` — one shared `*redis.Client` from `go-redis/v9` using `Options{Network: "unix", Addr: "/run/redis/redis.sock", DB: 0}`. Expose via app-context so Step 2 dispatcher + future WP cache can share. Ping on boot; fail-closed if Redis unreachable (dispatcher depends on it).
+9. Add `redis_url` to config schema (panel-api) so operators can point at an external Redis later (default: `unix:///run/redis/redis.sock?db=0`).
 
 ### Verify
 ```bash
 go test ./panel-api/internal/repository/... -run Notification -count=1
 mariadb jabali_panel -e "DESCRIBE notification_channels; DESCRIBE notification_history; DESCRIBE webpush_subscriptions"
 mariadb jabali_panel -e "SELECT key_name FROM server_settings WHERE key_name LIKE 'vapid%'"  # 3 rows
+# Redis:
+systemctl is-active redis-server           # active
+ls -la /run/redis/redis.sock                # srw-rw---- redis jabali-sockets
+redis-cli -s /run/redis/redis.sock ping     # PONG
+ss -tlnp | grep ':6379'                     # empty — no TCP listener
+# Panel-api can reach Redis:
+journalctl -u jabali-panel --since "2 min ago" | grep -i redis   # "connected" / no errors
 ```
 
 ### Branch
@@ -119,15 +148,38 @@ mariadb jabali_panel -e "SELECT key_name FROM server_settings WHERE key_name LIK
 
 ---
 
-## Step 2 — Dispatcher + channel sender registry
+## Step 2 — Dispatcher (Redis Streams consumer) + channel sender registry
 
 ### Context brief
-In-process notification dispatcher: single goroutine per panel-api process. Receives `NotificationEnvelope{EventKind, Severity, Title, Body, Deeplink}` on a buffered channel, fans out to every enabled matching channel, writes `notification_history` row per channel with outcome.
+Dispatcher uses **Redis Streams** for a restart-safe queue (ADR-0056 + ADR-0059):
 
-Retry: exponential backoff (1m, 5m, 30m, 2h, 8h), max 5 attempts. On every attempt fill `error_message`, increment `retry_count`, update `notification_history.outcome`. Final failure flips channel's `consecutive_failures += 1`, sets `backoff_until`. Three consecutive failures → channel auto-disabled + one in-app-bell critical notification.
+- Stream key: `jabali:notifications:queue`
+- Consumer group: `dispatcher` (single group, single consumer per panel-api instance; names `panel-api-<hostname>-<pid>`)
+- Dead-letter stream: `jabali:notifications:dlq`
+
+Producer path (every `/broadcast`, every event source, every agent `notifications.send`):
+```go
+rdb.XAdd(ctx, &redis.XAddArgs{
+  Stream: "jabali:notifications:queue",
+  Values: map[string]any{
+    "event_kind": e.EventKind, "severity": e.Severity,
+    "title": e.Title, "body": e.Body, "deeplink": e.Deeplink,
+    "channel_ids": strings.Join(e.ChannelIDs, ","),  // optional target subset; empty = broadcast to all enabled
+  },
+})
+```
+
+Consumer goroutine loop (`XREADGROUP`):
+1. `XREADGROUP GROUP dispatcher <consumer> BLOCK 5000 STREAMS jabali:notifications:queue >`
+2. For each entry: write `notification_history` rows in `pending` state (one per target channel), call each `ChannelSender.Send`, update history row to `sent` / `failed`.
+3. On any per-channel failure: leave the stream entry in the Pending-Entries-List (PEL); exponential-backoff retry via a reclaim loop below.
+4. On all-channels-success OR all-channels-permanent-failure: `XACK` + `XDEL`.
+
+Reclaim loop (separate goroutine, every 30s):
+- `XPENDING jabali:notifications:queue dispatcher IDLE 60000 - + 100` — find entries idle ≥60s still held by any consumer.
+- For each, check `retry_count` in notification_history. If `< max_retries` (5): `XCLAIM` back to self, increment retry counter, bump history row. If `>= max_retries`: `XADD` to DLQ stream, `XACK` + `XDEL` from main stream, mark history rows `failed`.
 
 Channel sender registry (go interface):
-
 ```go
 type ChannelSender interface {
     Kind() string
@@ -137,22 +189,29 @@ type ChannelSender interface {
 
 One sender per kind. Registered at startup. Dispatcher looks up by `channel.kind`.
 
+Channel circuit breaker: each channel tracks `consecutive_failures`. After 3 in a row → auto-disable (`enabled=false`) + fire a critical in-app-bell notification with channel name.
+
 ### Tasks
 1. Create `panel-api/internal/notifications/` package with:
-   - `dispatcher.go` — goroutine, retry, history writes
+   - `dispatcher.go` — XREADGROUP loop + reclaim loop
    - `sender.go` — interface + registry
-   - `envelope.go` — struct types
-2. Unit tests with fake sender — assert retry count, backoff timing (use injected clock), auto-disable after N failures.
-3. Queue buffer size 256; on full → drop oldest + log WARN. Document in ADR-0056.
-4. Start dispatcher in `serve.go` after repos + agent init; `context.Background()` with a cancel on shutdown.
+   - `envelope.go` — struct types + MarshalForStream / UnmarshalFromStream helpers
+   - `redis.go` — thin wrapper around `*redis.Client` with typed XAdd/XAck helpers
+2. Boot-time: `XGROUP CREATE jabali:notifications:queue dispatcher $ MKSTREAM` (idempotent: BUSYGROUP error ignored).
+3. Unit tests with `testcontainers-go/redis` or the in-process `miniredis` fake — assert retry count, DLQ transition, circuit breaker auto-disable.
+4. Dispatcher starts in `serve.go` after repos + agent + Redis client init; `context.Background()` with a cancel on shutdown. On SIGTERM: wait for current in-flight entry to `XACK` before exit (up to 10s).
 
 ### Verify
 ```bash
 go test ./panel-api/internal/notifications/... -count=1 -race
+# smoke on VM:
+redis-cli -s /run/redis/redis.sock xinfo stream jabali:notifications:queue
+redis-cli -s /run/redis/redis.sock xinfo groups jabali:notifications:queue
+# kill panel-api mid-delivery, restart, observe pending entry reclaimed and redelivered.
 ```
 
 ### Branch
-`feat/m14-dispatcher`
+`feat/m14-dispatcher-redis`
 
 ---
 
@@ -432,7 +491,9 @@ Parallel windows:
 |------|----------|------------|
 | Web Push fails silently on some browsers | HIGH | Step 8 matrix smoke; log endpoint-host prefix; show UI warning when subscribe rejects |
 | VAPID key rotation invalidates all subscriptions | HIGH | Document in runbook; add a "Rotate keys" button that also truncates `webpush_subscriptions`; warn before confirm |
-| Dispatcher goroutine deadlock on full queue | MEDIUM | Buffer 256; drop-oldest + WARN log; health endpoint exposes queue depth |
+| Redis down → dispatcher blocks | HIGH | Panel-api fails closed on Redis disconnect; systemd `Requires=redis-server.service` + `After=redis-server.service` in jabali-panel.service; health endpoint reports Redis state |
+| Redis AOF disk-full | MEDIUM | `maxmemory 128mb` + `allkeys-lru`; monitoring event source (disk full) covers `/var/lib/redis` |
+| Stream entry poison pill (parse failure) | MEDIUM | Parse errors → XACK + XADD to DLQ with raw entry + error; no infinite-redeliver loop |
 | Generic-webhook HMAC secret leaks via env var | MEDIUM | Stored in DB only, never logged; test-send response does not echo secret |
 | Broadcast floods channels on bug | MEDIUM | Rate limit per admin; circuit-breaker (channel auto-disables after 3 consecutive failures) |
 | Domain-expiry daily timer drifts on reboot | LOW | Uses `time.AfterFunc` anchored to midnight UTC; re-arms on panel start |

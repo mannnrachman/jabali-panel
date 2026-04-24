@@ -117,9 +117,13 @@ const shim = (Icon: LucideIcon, defaults?: { spin?: boolean }) => {
       ...(spin ?? defaults?.spin ? spinStyle : null),
       ...rotationStyle(rotate),
     };
+    // Add the `anticon` class so AntD component-local CSS selectors
+    // (Tag icon+text gap, Button icon+text gap, etc.) match. Without
+    // it, the shimmed lucide <svg> sits flush against adjacent text.
+    const mergedClass = className ? `anticon ${className}` : "anticon";
     return (
       <Icon
-        className={className}
+        className={mergedClass}
         style={mergedStyle}
         onClick={onClick as never}
         strokeWidth={1}

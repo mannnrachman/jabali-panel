@@ -107,8 +107,9 @@ func (h *domainCatchallHandler) update(c *gin.Context) {
 		agentCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 		_, err := h.cfg.Agent.Call(agentCtx, "domain.catchall_set", map[string]any{
-			"domain_id": domID,
-			"target":    req.Target,
+			"domain_id":   domID,
+			"domain_name": dom.Name,
+			"target":      req.Target,
 		})
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "details": err.Error()})
@@ -164,7 +165,8 @@ func (h *domainCatchallHandler) delete(c *gin.Context) {
 		agentCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 		_, err := h.cfg.Agent.Call(agentCtx, "domain.catchall_clear", map[string]any{
-			"domain_id": domID,
+			"domain_id":   domID,
+			"domain_name": dom.Name,
 		})
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "details": err.Error()})

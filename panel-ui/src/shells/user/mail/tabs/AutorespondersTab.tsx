@@ -38,7 +38,7 @@ import type { Domain } from "../../domains/UserDomainList";
 
 interface Mailbox {
   id: string;
-  email_cached: string;
+  email: string;
   domain_id: string;
   local_part: string;
 }
@@ -102,7 +102,7 @@ export const AutorespondersTab = () => {
         );
         return {
           ...data,
-          mailbox_email: mb.email_cached,
+          mailbox_email: mb.email,
           domain_name: dom.name,
         } as ARRow;
       },
@@ -110,7 +110,17 @@ export const AutorespondersTab = () => {
   });
 
   const anyLoading = mailboxResults.some((r) => r.isLoading) || arResults.some((r) => r.isLoading);
-  const rows = useMemo(() => arResults.filter((r) => r.data).map((r) => r.data as ARRow), [arResults]);
+  // Autoresponder GET returns a default {enabled:false, updated_at:0001-01-01}
+  // shape when nothing has ever been saved for a mailbox. Filter those out so
+  // each mailbox only surfaces when an autoresponder actually exists.
+  const rows = useMemo(
+    () =>
+      arResults
+        .filter((r) => r.data)
+        .map((r) => r.data as ARRow)
+        .filter((row) => row.enabled || (row.updated_at && !row.updated_at.startsWith("0001-01-01"))),
+    [arResults],
+  );
 
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<ARRow | null>(null);
@@ -291,7 +301,7 @@ export const AutorespondersTab = () => {
               disabled={!!editing}
               showSearch
               optionFilterProp="label"
-              options={mailboxes.map(({ mb }) => ({ label: mb.email_cached, value: mb.id }))}
+              options={mailboxes.map(({ mb }) => ({ label: mb.email, value: mb.id }))}
             />
           </Form.Item>
           <Form.Item name="enabled" label="Enabled" valuePropName="checked">

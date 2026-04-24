@@ -42,8 +42,9 @@ func (p *catchallPhase) ReconcileDomain(ctx context.Context, domain *models.Doma
 	defer cancel()
 
 	raw, err := p.agent.Call(agentCtx, "domain.catchall_set", map[string]any{
-		"domain_id": domain.ID,
-		"target":    targetValue,
+		"domain_id":   domain.ID,
+		"domain_name": domain.Name,
+		"target":      targetValue,
 	})
 	if err != nil {
 		return fmt.Errorf("agent domain.catchall_set failed: %w", err)

@@ -13,7 +13,8 @@ import (
 // Clears the catch-all address for a domain by setting catchAllAddress
 // to null via x:Domain/set.
 type domainCatchallClearParams struct {
-	DomainID string `json:"domain_id"`
+	DomainID   string `json:"domain_id"`
+	DomainName string `json:"domain_name"`
 }
 
 func domainCatchallClearHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -24,12 +25,21 @@ func domainCatchallClearHandler(ctx context.Context, params json.RawMessage) (an
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("parse params: %v", err)}
 	}
-	if p.DomainID == "" {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "domain_id required"}
+	if p.DomainName == "" {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "domain_name required"}
+	}
+
+	stalwartID, err := domainIDByName(ctx, p.DomainName)
+	if err != nil {
+		return nil, err
+	}
+	if stalwartID == "" {
+		// Nothing to clear — treat as success (idempotent).
+		return okBody{Ok: true}, nil
 	}
 
 	// Clear the domain's catchAllAddress by setting it to null
-	if err := updateDomainCatchall(ctx, p.DomainID, ""); err != nil {
+	if err := updateDomainCatchall(ctx, stalwartID, ""); err != nil {
 		return nil, err
 	}
 

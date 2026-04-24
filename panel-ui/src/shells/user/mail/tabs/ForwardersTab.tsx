@@ -33,7 +33,7 @@ import type { Domain } from "../../domains/UserDomainList";
 
 interface Mailbox {
   id: string;
-  email_cached: string;
+  email: string;
   domain_id: string;
 }
 
@@ -218,7 +218,7 @@ export const ForwardersTab = () => {
               placeholder="Select mailbox"
               showSearch
               optionFilterProp="label"
-              options={mailboxes.map((m) => ({ label: m.email_cached, value: m.id }))}
+              options={mailboxes.map((m) => ({ label: m.email, value: m.id }))}
             />
           </Form.Item>
 

@@ -13,9 +13,16 @@ import (
 // Sets the catch-all address for a domain via x:Domain/set with a
 // catchAllAddress patch. Stalwart delivers mail to non-existent
 // recipients at the domain to this email address.
+//
+// DomainName is authoritative — the agent resolves it to Stalwart's
+// server-assigned Domain id. DomainID is accepted for backward-compat
+// with the M6.5 first-ship callers but is ignored: the jabali DB ULID
+// is not Stalwart's id, and passing it as-is made every /set call fail
+// with "domain not found".
 type domainCatchallSetParams struct {
-	DomainID string `json:"domain_id"`
-	Target   string `json:"target"` // email address or empty to clear
+	DomainID   string `json:"domain_id"`
+	DomainName string `json:"domain_name"`
+	Target     string `json:"target"` // email address or empty to clear
 }
 
 // domainCatchallSetResponse echoes the new target so the panel can log
@@ -33,8 +40,8 @@ func domainCatchallSetHandler(ctx context.Context, params json.RawMessage) (any,
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("parse params: %v", err)}
 	}
-	if p.DomainID == "" {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "domain_id required"}
+	if p.DomainName == "" {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "domain_name required"}
 	}
 
 	// Validate target if provided — must be a valid email or empty (to clear)
@@ -44,8 +51,19 @@ func domainCatchallSetHandler(ctx context.Context, params json.RawMessage) (any,
 		}
 	}
 
+	stalwartID, err := domainIDByName(ctx, p.DomainName)
+	if err != nil {
+		return nil, err
+	}
+	if stalwartID == "" {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeNotFound,
+			Message: fmt.Sprintf("stalwart has no Domain with name %q — is email_enabled for this domain?", p.DomainName),
+		}
+	}
+
 	// Patch the domain's catchAllAddress via JMAP x:Domain/set
-	if err := updateDomainCatchall(ctx, p.DomainID, p.Target); err != nil {
+	if err := updateDomainCatchall(ctx, stalwartID, p.Target); err != nil {
 		return nil, err
 	}
 

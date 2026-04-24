@@ -4249,9 +4249,15 @@ install_ufw() {
 
   # Idempotent enable: bare `ufw --force enable` reloads the firewall
   # mid-install which can race in-flight TCP (apt mirror reuse, the
-  # Stalwart bind that happens later in this same script). Guard with
-  # `is-active` so re-runs are a no-op.
-  if ! systemctl is-active --quiet ufw; then
+  # Stalwart bind that happens later in this same script). Guard on
+  # `ufw status` reporting the firewall as actually active — NOT on
+  # `systemctl is-active ufw`, because the ufw.service unit can be
+  # reported active by systemd while the firewall itself is Status:
+  # inactive (the service only loads rules at boot; a fresh host where
+  # ufw was never enabled has the unit "active" but no rules applied).
+  # Observed on Debian 13 minimal where the rules-sync block above
+  # appended to user.rules while iptables stayed empty.
+  if ! ufw status 2>/dev/null | grep -q '^Status: active'; then
     _log "enabling UFW for the first time"
     ufw --force enable >/dev/null
   else

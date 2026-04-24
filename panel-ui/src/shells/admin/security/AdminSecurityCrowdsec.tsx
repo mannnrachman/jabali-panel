@@ -43,14 +43,17 @@ import {
   useCrowdsecDecisions,
   useCrowdsecHub,
   useCrowdsecMetrics,
+  useCrowdsecCaptcha,
   useCrowdsecStatus,
   useDeleteCrowdsecDecision,
   useEnrollCrowdsecConsole,
   useRemoveCrowdsecAllowlist,
   useUpdateAppSecGeoblock,
+  useUpdateCrowdsecCaptcha,
   type AppSecGeoblockMode,
   type CrowdsecAlert,
   type CrowdsecAllowlistEntry,
+  type CrowdsecCaptchaProvider,
   type CrowdsecDecision,
   type CrowdsecScope,
 } from "../../../hooks/useSecurityCrowdsec";
@@ -247,6 +250,8 @@ export const AdminSecurityCrowdsec = () => {
       <AlertsCard />
 
       <ConsoleCard />
+
+      <CaptchaRemediationCard />
 
       <AppSecGeoblockCard />
 
@@ -921,6 +926,147 @@ const ConsoleCard = () => {
           </Space>
         </Form>
       </Space>
+    </Card>
+  );
+};
+
+// CaptchaRemediationCard — hCaptcha / reCAPTCHA / Turnstile credentials
+// for crowdsec-nginx-bouncer (M27 Step 5). Secret is write-only —
+// GET never returns it; empty secret on PUT means "keep existing."
+type CaptchaFormValues = {
+  enabled: boolean;
+  provider: CrowdsecCaptchaProvider;
+  site_key: string;
+  secret_key: string;
+};
+
+const PROVIDER_OPTIONS = [
+  { value: "hcaptcha", label: "hCaptcha" },
+  { value: "recaptcha", label: "reCAPTCHA v2" },
+  { value: "turnstile", label: "Cloudflare Turnstile" },
+];
+
+const CaptchaRemediationCard = () => {
+  const captcha = useCrowdsecCaptcha();
+  const update = useUpdateCrowdsecCaptcha();
+  const [form] = Form.useForm<CaptchaFormValues>();
+
+  useEffect(() => {
+    if (captcha.data) {
+      form.setFieldsValue({
+        enabled: captcha.data.enabled,
+        provider: captcha.data.provider || "hcaptcha",
+        site_key: captcha.data.site_key,
+        secret_key: "",
+      });
+    }
+  }, [captcha.data, form]);
+
+  const onSubmit = async (values: CaptchaFormValues) => {
+    try {
+      await update.mutateAsync({
+        enabled: values.enabled,
+        provider: values.enabled ? values.provider : "",
+        site_key: values.site_key,
+        secret_key: values.secret_key, // "" = keep existing
+      });
+      form.setFieldValue("secret_key", "");
+      message.success("Captcha settings saved");
+    } catch (e: unknown) {
+      message.error(e instanceof Error ? e.message : "Save failed");
+    }
+  };
+
+  return (
+    <Card
+      size="small"
+      title="Captcha remediation"
+      loading={captcha.isLoading}
+      extra={
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          Requires nginx-bouncer (installed with CrowdSec)
+        </Typography.Text>
+      }
+    >
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 12 }}
+        message="When enabled, CrowdSec scenarios flagged for captcha serve a challenge page instead of a 403."
+        description="Create an hCaptcha / reCAPTCHA / Turnstile site at the provider, paste the keys below. Secret is stored server-side and never returned."
+      />
+      <Form<CaptchaFormValues>
+        form={form}
+        layout="vertical"
+        onFinish={onSubmit}
+        initialValues={{ enabled: false, provider: "hcaptcha", site_key: "", secret_key: "" }}
+      >
+        <Form.Item name="enabled" label="Enabled" valuePropName="checked">
+          <Radio.Group
+            options={[
+              { value: false, label: "Off" },
+              { value: true, label: "On" },
+            ]}
+            optionType="button"
+          />
+        </Form.Item>
+        <Form.Item
+          noStyle
+          shouldUpdate={(prev, next) => prev.enabled !== next.enabled}
+        >
+          {({ getFieldValue }) => {
+            const enabled = getFieldValue("enabled") as boolean;
+            return (
+              <>
+                <Form.Item
+                  name="provider"
+                  label="Provider"
+                  rules={enabled ? [{ required: true, message: "Provider required" }] : []}
+                >
+                  <Select disabled={!enabled} options={PROVIDER_OPTIONS} />
+                </Form.Item>
+                <Form.Item
+                  name="site_key"
+                  label="Site key (public)"
+                  rules={
+                    enabled
+                      ? [{ required: true, message: "Site key required" }, { max: 512 }]
+                      : []
+                  }
+                >
+                  <Input disabled={!enabled} placeholder="publishable site key" />
+                </Form.Item>
+                <Form.Item
+                  name="secret_key"
+                  label="Secret key (write-only)"
+                  tooltip="Leave blank to keep the stored secret unchanged."
+                  rules={[{ max: 512 }]}
+                >
+                  <Input.Password
+                    disabled={!enabled}
+                    placeholder={captcha.data?.enabled ? "(unchanged)" : "secret key"}
+                    autoComplete="off"
+                    visibilityToggle={false}
+                  />
+                </Form.Item>
+              </>
+            );
+          }}
+        </Form.Item>
+        <Space>
+          <Popconfirm
+            title="Apply captcha settings?"
+            description="This rewrites /etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf and reloads nginx."
+            okText="Apply"
+            cancelText="Cancel"
+            onConfirm={() => form.submit()}
+          >
+            <Button type="primary" loading={update.isPending}>
+              Save
+            </Button>
+          </Popconfirm>
+        </Space>
+      </Form>
     </Card>
   );
 };

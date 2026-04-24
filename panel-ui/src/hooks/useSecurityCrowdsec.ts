@@ -300,3 +300,41 @@ export function useEnrollCrowdsecConsole() {
     },
   });
 }
+
+// Captcha remediation (M27 step 5). Server-settings DB is truth for the
+// toggle + creds; agent rewrites bouncer conf on every Save. Secret is
+// write-only (never returned by GET).
+export type CrowdsecCaptchaProvider = "" | "hcaptcha" | "recaptcha" | "turnstile";
+
+export type CrowdsecCaptchaConfig = {
+  enabled: boolean;
+  provider: CrowdsecCaptchaProvider;
+  site_key: string;
+};
+
+export type UpdateCrowdsecCaptchaInput = CrowdsecCaptchaConfig & {
+  secret_key: string; // empty string = don't change
+};
+
+export function useCrowdsecCaptcha() {
+  return useQuery({
+    queryKey: ["security", "crowdsec", "captcha"],
+    queryFn: async () => {
+      const { data } = await apiClient.get<CrowdsecCaptchaConfig>(`${BASE}/captcha`);
+      return data;
+    },
+  });
+}
+
+export function useUpdateCrowdsecCaptcha() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: UpdateCrowdsecCaptchaInput) => {
+      const { data } = await apiClient.put<CrowdsecCaptchaConfig>(`${BASE}/captcha`, input);
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["security", "crowdsec", "captcha"] });
+    },
+  });
+}

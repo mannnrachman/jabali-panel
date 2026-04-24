@@ -832,6 +832,121 @@ func csAlertsInspectHandler(ctx context.Context, params json.RawMessage) (any, e
 	return map[string]any{"alert": raw}, nil
 }
 
+// ---- M27 Step 5: security.crowdsec.captcha.apply -------------------------
+
+const bouncerConfPath = "/etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf"
+
+type csCaptchaApplyParams struct {
+	Enabled   bool   `json:"enabled"`
+	Provider  string `json:"provider"`
+	SiteKey   string `json:"site_key"`
+	SecretKey string `json:"secret_key"`
+}
+
+var validCaptchaProviders = map[string]bool{
+	"":          true, // empty when disabled
+	"hcaptcha":  true,
+	"recaptcha": true,
+	"turnstile": true,
+}
+
+// rewriteBouncerConfKeys updates specific KEY=value lines in the bouncer
+// conf WITHOUT rewriting the whole file — the file was authored by
+// install_crowdsec_nginx_bouncer (M26) with AppSec settings that must
+// survive. Each key in `updates` replaces the existing line; missing
+// keys are appended.
+func rewriteBouncerConfKeys(path string, updates map[string]string) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	lines := strings.Split(string(raw), "\n")
+	seen := make(map[string]bool, len(updates))
+	for i, line := range lines {
+		for key, val := range updates {
+			prefix := key + "="
+			if strings.HasPrefix(line, prefix) {
+				lines[i] = prefix + val
+				seen[key] = true
+			}
+		}
+	}
+	for key, val := range updates {
+		if !seen[key] {
+			lines = append(lines, key+"="+val)
+		}
+	}
+	out := strings.Join(lines, "\n")
+	tmp, err := os.CreateTemp("", "bouncer-conf-*.tmp")
+	if err != nil {
+		return fmt.Errorf("mktemp: %w", err)
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString(out); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write tmp: %w", err)
+	}
+	tmp.Close()
+	if err := os.Chmod(tmp.Name(), 0o600); err != nil {
+		return fmt.Errorf("chmod tmp: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("rename: %w", err)
+	}
+	return nil
+}
+
+func csCaptchaApplyHandler(ctx context.Context, params json.RawMessage) (any, error) {
+	var p csCaptchaApplyParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, csInvalidArg(fmt.Sprintf("parse params: %v", err))
+	}
+	if !validCaptchaProviders[p.Provider] {
+		return nil, csInvalidArg("provider must be hcaptcha|recaptcha|turnstile")
+	}
+	// When disabling, clear provider + set fallback back to ban.
+	updates := map[string]string{}
+	if p.Enabled {
+		if p.Provider == "" {
+			return nil, csInvalidArg("provider required when enabled")
+		}
+		if len(p.SiteKey) == 0 || len(p.SiteKey) > 512 {
+			return nil, csInvalidArg("site_key length must be 1..512")
+		}
+		if len(p.SecretKey) == 0 || len(p.SecretKey) > 512 {
+			return nil, csInvalidArg("secret_key required when enabling")
+		}
+		updates["CAPTCHA_PROVIDER"] = p.Provider
+		updates["SITE_KEY"] = p.SiteKey
+		updates["SECRET_KEY"] = p.SecretKey
+		updates["FALLBACK_REMEDIATION"] = "captcha"
+	} else {
+		updates["CAPTCHA_PROVIDER"] = ""
+		updates["SITE_KEY"] = ""
+		updates["SECRET_KEY"] = ""
+		updates["FALLBACK_REMEDIATION"] = "ban"
+	}
+	// Back up to .bak; restore on nginx-t failure.
+	bakPath := bouncerConfPath + ".bak"
+	if existing, err := os.ReadFile(bouncerConfPath); err == nil {
+		_ = os.WriteFile(bakPath, existing, 0o600)
+	}
+	if err := rewriteBouncerConfKeys(bouncerConfPath, updates); err != nil {
+		return nil, csInternal("rewrite bouncer conf", err)
+	}
+	if err := exec.CommandContext(ctx, "nginx", "-t").Run(); err != nil {
+		// Restore from bak + surface the error to the operator.
+		if bak, rerr := os.ReadFile(bakPath); rerr == nil {
+			_ = os.WriteFile(bouncerConfPath, bak, 0o600)
+		}
+		return nil, csInternal("nginx -t failed after bouncer conf rewrite", err)
+	}
+	if err := exec.CommandContext(ctx, "systemctl", "reload", "nginx").Run(); err != nil {
+		return nil, csInternal("systemctl reload nginx", err)
+	}
+	return map[string]any{"enabled": p.Enabled}, nil
+}
+
 // ---- M27 Step 4: security.crowdsec.console.enroll ------------------------
 
 var consoleKeyRE = regexp.MustCompile(`^[A-Za-z0-9-]{16,128}$`)
@@ -885,4 +1000,5 @@ func init() {
 	Default.Register("security.crowdsec.alerts.list", csAlertsListHandler)
 	Default.Register("security.crowdsec.alerts.inspect", csAlertsInspectHandler)
 	Default.Register("security.crowdsec.console.enroll", csConsoleEnrollHandler)
+	Default.Register("security.crowdsec.captcha.apply", csCaptchaApplyHandler)
 }

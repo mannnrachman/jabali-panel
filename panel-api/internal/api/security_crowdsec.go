@@ -29,7 +29,9 @@ var validCrowdSecScopes = map[string]bool{
 }
 
 // RegisterSecurityCrowdSecRoutes mounts admin-only CrowdSec endpoints.
-func RegisterSecurityCrowdSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterface) {
+// `settings` may be nil for tests that stub the agent without the full
+// repo graph — captcha + profiles routes are skipped in that case.
+func RegisterSecurityCrowdSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterface, settings repository.ServerSettingsRepository) {
 	g := rg.Group("/admin/security/crowdsec", middleware.RequireAdmin())
 
 	g.GET("/status", agentPassthrough(cli, "security.crowdsec.status", nil, csCallTimeout))
@@ -223,6 +225,88 @@ func RegisterSecurityCrowdSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterfac
 		}
 		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
 	})
+
+	// M27 Step 5 — captcha remediation. DB is truth for the toggle +
+	// creds (secret NEVER returned). Agent rewrites the four bouncer-
+	// conf keys (CAPTCHA_PROVIDER/SITE_KEY/SECRET_KEY/FALLBACK_REMEDIATION)
+	// via rewriteBouncerConfKeys so the M26-written AppSec lines survive.
+	if settings != nil {
+		g.GET("/captcha", func(c *gin.Context) {
+			s, err := settings.Get(c.Request.Context())
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"status": "error", "error": "settings_read", "detail": err.Error(),
+				})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"enabled":   s.CrowdSecCaptchaEnabled,
+				"provider":  s.CrowdSecCaptchaProvider,
+				"site_key":  s.CrowdSecCaptchaSiteKey,
+				// secret_key deliberately omitted (write-only)
+			})
+		})
+
+		g.PUT("/captcha", func(c *gin.Context) {
+			var body struct {
+				Enabled   bool   `json:"enabled"`
+				Provider  string `json:"provider"`
+				SiteKey   string `json:"site_key"`
+				SecretKey string `json:"secret_key"`
+			}
+			if err := c.ShouldBindJSON(&body); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_json"})
+				return
+			}
+			// Merge semantics: empty secret = "keep existing"
+			current, err := settings.Get(c.Request.Context())
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"status": "error", "error": "settings_read", "detail": err.Error(),
+				})
+				return
+			}
+			merged := *current
+			merged.CrowdSecCaptchaEnabled = body.Enabled
+			merged.CrowdSecCaptchaProvider = strings.TrimSpace(body.Provider)
+			merged.CrowdSecCaptchaSiteKey = strings.TrimSpace(body.SiteKey)
+			if s := strings.TrimSpace(body.SecretKey); s != "" {
+				merged.CrowdSecCaptchaSecretKey = s
+			}
+			if body.Enabled && merged.CrowdSecCaptchaSecretKey == "" {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"status": "error", "error": "secret_required",
+					"detail": "secret_key required when enabling",
+				})
+				return
+			}
+			if err := settings.Upsert(c.Request.Context(), &merged); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"status": "error", "error": "settings_save", "detail": err.Error(),
+				})
+				return
+			}
+			// Push to bouncer conf via agent.
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+			defer cancel()
+			_, err = cli.Call(ctx, "security.crowdsec.captcha.apply", map[string]any{
+				"enabled":    merged.CrowdSecCaptchaEnabled,
+				"provider":   merged.CrowdSecCaptchaProvider,
+				"site_key":   merged.CrowdSecCaptchaSiteKey,
+				"secret_key": merged.CrowdSecCaptchaSecretKey,
+			})
+			if err != nil {
+				status, ebody := translateAgentError(err)
+				c.JSON(status, ebody)
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"enabled":  merged.CrowdSecCaptchaEnabled,
+				"provider": merged.CrowdSecCaptchaProvider,
+				"site_key": merged.CrowdSecCaptchaSiteKey,
+			})
+		})
+	}
 }
 
 // RegisterSecurityAppSecRoutes mounts the admin AppSec-geoblock surface.

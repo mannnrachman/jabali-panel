@@ -85,6 +85,15 @@ type ServerSettings struct {
 	AppSecGeoblockMode      string `gorm:"column:appsec_geoblock_mode;type:varchar(10);not null;default:'off'"    json:"appsec_geoblock_mode"`
 	AppSecGeoblockCountries string `gorm:"column:appsec_geoblock_countries;type:varchar(1000);not null;default:''" json:"appsec_geoblock_countries"`
 
+	// M27 Step 5 — captcha remediation for crowdsec-nginx-bouncer.
+	// Secret is plaintext-at-rest (convention matches kratos_admin_secret,
+	// vapid_private_key, smtp_relay_password) but WRITE-ONLY at the API
+	// edge — GET responses NEVER include the secret.
+	CrowdSecCaptchaEnabled   bool   `gorm:"column:crowdsec_captcha_enabled;type:boolean;not null;default:false"       json:"crowdsec_captcha_enabled"`
+	CrowdSecCaptchaProvider  string `gorm:"column:crowdsec_captcha_provider;type:varchar(32);not null;default:''"     json:"crowdsec_captcha_provider"`
+	CrowdSecCaptchaSiteKey   string `gorm:"column:crowdsec_captcha_site_key;type:varchar(512);not null;default:''"    json:"crowdsec_captcha_site_key"`
+	CrowdSecCaptchaSecretKey string `gorm:"column:crowdsec_captcha_secret_key;type:varchar(512);not null;default:''"  json:"-"`
+
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 

@@ -727,6 +727,44 @@ POLICYEOF
     fi
   fi
 
+  # Pre-seed the panel DNS drop-in when the host has no upstream
+  # configured via /etc/resolv.conf AND no upstream advertised on any
+  # link in resolvectl. Happens on Debian 13 minimal where resolv.conf
+  # ships pre-symlinked to the stub but no link ever pushes DNS (static
+  # IP install, or the QEMU/LXC DHCP dropped the DNS option). Without
+  # this, any resolved restart later in install.sh (disable_llmnr does
+  # one) exposes the "stub with zero upstream" state and every curl in
+  # the rest of the script SERVFAILs.
+  #
+  # Only seeds when jabali.conf is missing — if the admin already wrote
+  # one via the panel UI we do not clobber it.
+  if systemctl is-active --quiet systemd-resolved.service; then
+    local panel_dropin_early="/etc/systemd/resolved.conf.d/jabali.conf"
+    if [[ ! -f "$panel_dropin_early" ]]; then
+      local link_has_dns=""
+      if command -v resolvectl >/dev/null 2>&1; then
+        # resolvectl status exit is 0 even when no upstream exists; look
+        # for 'DNS Servers:' lines with at least one non-empty entry.
+        link_has_dns="$(resolvectl status 2>/dev/null \
+          | awk '/^[[:space:]]*DNS Servers:/{sub(/^[[:space:]]*DNS Servers:[[:space:]]*/,""); if ($0 != "") print}')"
+      fi
+      if [[ -z "$link_has_dns" ]]; then
+        _warn "no upstream DNS on any link — seeding ${panel_dropin_early} with Cloudflare + Quad9 (override via Admin → DNS)"
+        install -d -m 0755 /etc/systemd/resolved.conf.d
+        cat > "$panel_dropin_early" <<'EARLYDNS'
+# Managed by jabali-panel — edits via /jabali-admin/settings → DNS.
+# install.sh found no upstream DNS on any systemd-resolved link and
+# seeded these public defaults so curl/apt steps later in install.sh
+# don't SERVFAIL after a resolved restart.
+[Resolve]
+DNS=1.1.1.1 9.9.9.9
+EARLYDNS
+        chmod 0644 "$panel_dropin_early"
+        systemctl restart systemd-resolved.service 2>/dev/null || true
+      fi
+    fi
+  fi
+
   # Hand /etc/resolv.conf over to systemd-resolved's stub so queries
   # actually traverse the drop-in the panel writes. Gated on:
   #   1. resolv.conf is a plain file (not already a symlink — symlink

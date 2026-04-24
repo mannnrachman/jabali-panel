@@ -48,8 +48,15 @@ export interface WebPushState {
 
 export function useWebPushSubscription(): WebPushState {
   const supported = useMemo(() => {
+    // Chrome refuses to register a ServiceWorker on an origin that
+    // isn't a secure context — and an origin served with a self-signed
+    // or cert-error TLS session is NOT a secure context even after the
+    // user clicks through the warning page. Skip registration entirely
+    // so the console doesn't fill with SecurityError stack traces and
+    // the bell's downgrade UI kicks in cleanly.
+    if (typeof window === "undefined") return false;
+    if (!window.isSecureContext) return false;
     return (
-      typeof window !== "undefined" &&
       "serviceWorker" in navigator &&
       "PushManager" in window &&
       "Notification" in window

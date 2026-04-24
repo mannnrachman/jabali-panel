@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
 
@@ -87,11 +88,35 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Use a pointer to allow hot-reloading on SIGHUP.
 	ssoKeyPtr := loadSSOKey(cfg.SSO.KeyPath, log)
 
+	// ---- Redis ----
+	// ADR-0056 dispatcher + ADR-0059 shared cache client. Parse the URL
+	// (unix:// or redis://), open a single connection pool, ping with a
+	// short timeout to fail-fast if Redis is unreachable. Missing Redis
+	// is fatal in production — the notification dispatcher must have
+	// its queue — but configurable-out so tests can run without Redis.
+	var redisClient *redis.Client
+	if cfg.Redis.URL != "" {
+		opts, err := redis.ParseURL(cfg.Redis.URL)
+		if err != nil {
+			return fmt.Errorf("parse redis url %q: %w", cfg.Redis.URL, err)
+		}
+		redisClient = redis.NewClient(opts)
+		pingCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := redisClient.Ping(pingCtx).Err(); err != nil {
+			return fmt.Errorf("redis ping %q: %w (is redis-server up? install_redis() sets up /run/redis/redis.sock)", cfg.Redis.URL, err)
+		}
+		log.Info("redis connected", "url", cfg.Redis.URL)
+	} else {
+		log.Warn("redis URL not set; notification dispatcher will be disabled")
+	}
+
 	// ---- auth + deps ----
 	var deps app.Deps
 	deps.Agent = sharedAgent
 	deps.Log = log
 	deps.SSOKey = ssoKeyPtr
+	deps.Redis = redisClient
 	if sharedDB != nil {
 		userRepo := repository.NewUserRepository(sharedDB)
 		packageRepo := repository.NewPackageRepository(sharedDB)

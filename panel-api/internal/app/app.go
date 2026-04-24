@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/time/rate"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
@@ -75,6 +76,12 @@ type Deps struct {
 	SSO                 *sso.Service
 	SSOKey              *ssokey.Key
 	Log                 *slog.Logger
+	// Redis is the shared *redis.Client for the notification dispatcher
+	// (ADR-0056) and future WordPress object-cache (ADR-0059). Wired in
+	// serve.go against cfg.Redis.URL; nil when Redis is disabled (tests,
+	// or an operator who set Redis.URL=""). Handlers that need it must
+	// guard for nil and return 503 rather than panic.
+	Redis               *redis.Client
 }
 
 // Default tier: chosen so a reasonable SPA (polling, a few concurrent

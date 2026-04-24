@@ -42,6 +42,7 @@ type Config struct {
 	ACME      ACMEConfig      `toml:"acme"`
 	SSO       SSOConfig       `toml:"sso"`
 	WordPress WordPressConfig `toml:"wordpress"`
+	Redis     RedisConfig     `toml:"redis"`
 }
 
 // ServerConfig controls HTTP listener and runtime mode.
@@ -125,6 +126,17 @@ type PDNSConfig struct {
 	DSN string `toml:"dsn"`
 }
 
+// RedisConfig holds the Redis connection DSN for the notification
+// dispatcher (ADR-0056) and future WordPress object-cache (ADR-0059).
+type RedisConfig struct {
+	// URL is a redis:// or unix:// DSN consumed by github.com/redis/go-redis/v9
+	// via redis.ParseURL. Default on a freshly-installed host is
+	// "unix:///run/redis/redis.sock?db=0" — the install.sh helper
+	// install_redis writes the socket and the panel-api first-boot
+	// config-seed step fills this field.
+	URL string `toml:"url"`
+}
+
 // ACMEConfig holds Let's Encrypt / ACME certificate configuration.
 type ACMEConfig struct {
 	// StagingOnly, when true, uses Let's Encrypt's staging environment
@@ -198,6 +210,12 @@ func Defaults() *Config {
 			CloneTimeout:   30 * time.Minute,
 			DeleteTimeout:  5 * time.Minute,
 			ProbeBatch:     100,
+		},
+		Redis: RedisConfig{
+			// unix:// DSN maps to Network:"unix" + Addr path in
+			// redis.ParseURL. db=0 is the dispatcher's keyspace;
+			// WordPress object-cache will use db=1 when it lands.
+			URL: "unix:///run/redis/redis.sock?db=0",
 		},
 	}
 }

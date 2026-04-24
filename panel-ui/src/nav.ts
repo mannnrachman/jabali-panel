@@ -28,7 +28,6 @@ import {
   SettingOutlined,
   ShieldCheckOutlined,
   TeamOutlined,
-  ThunderboltOutlined,
 } from "@icons";
 import { createElement } from "react";
 import type { ComponentType } from "react";
@@ -95,7 +94,7 @@ export const adminNav: NavItem[] = [
   {
     key: "php-pools",
     label: "PHP Manager",
-    icon: navIcon(ThunderboltOutlined),
+    icon: navIcon(CodeOutlined),
     path: "/jabali-admin/php-pools",
   },
   {

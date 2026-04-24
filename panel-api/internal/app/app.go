@@ -16,6 +16,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/sso"
@@ -89,6 +90,11 @@ type Deps struct {
 	NotificationHistory  repository.NotificationHistoryRepository
 	WebhookEndpoints     repository.WebhookEndpointRepository
 	WebPushSubs          repository.WebPushSubscriptionRepository
+	// NotificationQueue is the dispatcher's publish end — the internal
+	// enqueue endpoint (RequireLocalhost) and in-process event sources
+	// write to this Queue. Nil when Redis is not configured; handlers
+	// must 503 rather than panic.
+	NotificationQueue *notifications.Queue
 }
 
 // Default tier: chosen so a reasonable SPA (polling, a few concurrent
@@ -170,6 +176,14 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 	if deps.Agent != nil {
 		api.RegisterAgentHealthRoute(r, deps.Agent)
 	}
+
+	// M14 internal enqueue — /api/v1/internal/notifications/enqueue
+	// bypasses the Kratos authMiddleware because the caller is the
+	// agent (or an in-process event source) talking to us over the M25
+	// loopback socket. RequireLocalhost inside the route is the sole
+	// gate. Registered off the root router (not v1) so it doesn't pick
+	// up RequireKratosSession.
+	api.RegisterNotificationsInternalRoutes(r.Group("/api/v1"), deps.NotificationQueue)
 
 	// Webmail SSO landing (M6 Step 8 Phase B). Lives at /sso/webmail on
 	// the engine root, not /api/v1, because it's served from

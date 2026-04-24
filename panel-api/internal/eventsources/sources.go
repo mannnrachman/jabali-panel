@@ -1,0 +1,121 @@
+// Package eventsources wires the in-process producers that fan system
+// events into the M14 notification pipeline. Each source is a small
+// goroutine that observes some piece of system state on a cadence and
+// publishes envelopes on the dispatcher's Queue — senders never talk
+// to the kernel or shell; that job belongs here.
+//
+// All envelopes funnel through Publisher.Publish. Sources share the
+// Deduper helper so the same transient state (85% disk, failing
+// service) doesn't fire every tick.
+package eventsources
+
+import (
+	"context"
+	"log/slog"
+	"time"
+
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/notifications"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+)
+
+// Publisher is the write end of the notification pipeline. Matches
+// notifications.Queue.Publish; defined here as an interface so tests
+// can supply a capturing fake without pulling in Redis.
+type Publisher interface {
+	Publish(ctx context.Context, env notifications.Envelope) (string, error)
+}
+
+// Clock returns the current time. Tests inject a fake clock.
+type Clock func() time.Time
+
+// SSLCertLister is the narrow read-only slice cert_renew needs. Keeps
+// the eventsources package decoupled from the full SSL repo surface
+// (and lets tests supply a tiny fake).
+type SSLCertLister interface {
+	ListAll(ctx context.Context) ([]repository.SSLCertificateWithDomain, error)
+}
+
+// HistoryLookup is the narrow surface dedupe needs. Kept separate so a
+// future in-memory dedupe implementation can be slotted in without
+// touching the full repo.
+type HistoryLookup interface {
+	ListRecentByEvent(ctx context.Context, kind string, since time.Time) ([]models.NotificationHistory, error)
+}
+
+// Deps bundles the collaborators every source needs. Zero-valued fields
+// are legal — sources check and skip themselves when a dependency is
+// missing rather than panicking, so on a minimal install (no SSL certs
+// table, no CrowdSec) the remaining sources still run.
+type Deps struct {
+	Queue       Publisher
+	History     HistoryLookup
+	SSLCerts    SSLCertLister
+	Log         *slog.Logger
+	Now         Clock
+	CrowdSecBin string // path to cscli; empty → disable the crowdsec source
+}
+
+// Start boots every configured source in its own goroutine. Each
+// source respects ctx.Done and returns cleanly on cancellation so
+// serve.go's dispatcher shutdown drags them along.
+func Start(ctx context.Context, d Deps) {
+	if d.Log == nil {
+		d.Log = slog.Default()
+	}
+	if d.Now == nil {
+		d.Now = time.Now
+	}
+	if d.Queue == nil {
+		d.Log.Warn("eventsources: no publisher; not starting any source")
+		return
+	}
+	go runCertRenew(ctx, d)
+	go runDiskFull(ctx, d)
+	go runServiceDown(ctx, d)
+	go runCrowdSec(ctx, d)
+	// domain_expiry + backup_fail are stubs — see the stub files in
+	// this package.
+}
+
+// shouldFire returns true when no history row for eventKind with the
+// given dedupe key exists newer than `cooldown`. Keeps the stream from
+// growing unbounded on a stuck failure state.
+func shouldFire(ctx context.Context, d Deps, eventKind, dedupeTag string, cooldown time.Duration) bool {
+	if d.History == nil {
+		return true
+	}
+	rows, err := d.History.ListRecentByEvent(ctx, eventKind, d.Now().Add(-cooldown))
+	if err != nil {
+		// Querying failed — log once, don't block the fire. Worst case
+		// we get a duplicate notification, which beats silencing a real
+		// incident.
+		d.Log.Warn("eventsources: history dedupe lookup failed", "event_kind", eventKind, "err", err)
+		return true
+	}
+	for _, row := range rows {
+		// Dedupe key is stashed in the body for now — ADR-0056 doesn't
+		// have a dedicated column. Matching on substring is cheap and
+		// good enough: if the body doesn't contain the tag, it's a
+		// different incident and should fire again.
+		if dedupeTag == "" || contains(row.Body, dedupeTag) {
+			return false
+		}
+	}
+	return true
+}
+
+// contains is strings.Contains without the strings import in the hot
+// path — trivial inline to keep imports lean.
+func contains(haystack, needle string) bool {
+	n := len(needle)
+	if n == 0 {
+		return true
+	}
+	for i := 0; i+n <= len(haystack); i++ {
+		if haystack[i:i+n] == needle {
+			return true
+		}
+	}
+	return false
+}

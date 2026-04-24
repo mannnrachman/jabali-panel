@@ -20,6 +20,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/app"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/db"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/eventsources"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/notifications"
@@ -168,6 +169,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.NotificationHistory = repository.NewNotificationHistoryRepository(sharedDB)
 		deps.WebhookEndpoints = repository.NewWebhookEndpointRepository(sharedDB)
 		deps.WebPushSubs = repository.NewWebPushSubscriptionRepository(sharedDB)
+		if redisClient != nil {
+			// NotificationQueue is the publish end. RegisterNotificationsInternalRoutes
+			// takes this same pointer so the agent's notifications.send
+			// command and in-process event sources (Step 4 below) write to
+			// the identical Redis stream the dispatcher drains.
+			deps.NotificationQueue = notifications.NewQueue(redisClient)
+		}
 
 		// Reconciler: database as source of truth, agent state as derived state.
 		rec := reconciler.New(
@@ -422,6 +430,20 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// than silently dropping events.
 	dispatcherDone, dispatcherStop := startNotificationDispatcher(ctx, deps, log)
 
+	// M14 Step 4 event sources. These are cheap goroutines that poll
+	// system state (SSL certs, disk usage, systemd units, CrowdSec
+	// decisions) and publish envelopes on the same Queue the internal
+	// enqueue endpoint + agent use. All respect ctx.Done, so SIGTERM
+	// stops them alongside the dispatcher.
+	if deps.NotificationQueue != nil {
+		eventsources.Start(ctx, eventsources.Deps{
+			Queue:    deps.NotificationQueue,
+			History:  deps.NotificationHistory,
+			SSLCerts: deps.SSLCerts,
+			Log:      log,
+		})
+	}
+
 
 	var ssoUDSShutdown func(context.Context) error
 	if ssoKeyPtr != nil && cfg.SSO.SocketPath != "" {
@@ -555,7 +577,10 @@ func startNotificationDispatcher(parent context.Context, deps app.Deps, log *slo
 	} else {
 		log.Warn("notifications dispatcher: webpush sender skipped — server_settings or webpush_subscriptions repo missing")
 	}
-	queue := notifications.NewQueue(deps.Redis)
+	queue := deps.NotificationQueue
+	if queue == nil {
+		queue = notifications.NewQueue(deps.Redis)
+	}
 	d, err := notifications.NewDispatcher(
 		queue, registry,
 		deps.NotificationChannels, deps.NotificationHistory, deps.WebhookEndpoints,

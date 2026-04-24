@@ -1459,7 +1459,14 @@ install_redis() {
   # We still keep the /bin/sh wait-loop out: Type=notify fires
   # ExecStartPost after redis sent sd_notify(READY=1), so the socket
   # is guaranteed to exist already.
-  local unit_desired=$'# Managed by jabali install.sh — M14 / ADR-0059. Do NOT hand-edit.\n[Service]\nRuntimeDirectory=redis\nRuntimeDirectoryMode=0750\nSupplementaryGroups=jabali-sockets\nExecStartPost=+/usr/bin/chgrp jabali-sockets /run/redis/redis.sock\nExecStartPost=+/usr/bin/chmod 0660 /run/redis/redis.sock\n'
+  #
+  # /run/redis directory itself also gets chgrp'd to jabali-sockets
+  # (mode 0750): panel-api runs as jabali:jabali-sockets and must be
+  # able to TRAVERSE the directory to reach the socket inside. The
+  # stock RuntimeDirectory= creates /run/redis owned redis:redis
+  # which blocks any non-redis user at the dir level even if the
+  # socket itself is group-readable.
+  local unit_desired=$'# Managed by jabali install.sh — M14 / ADR-0059. Do NOT hand-edit.\n[Service]\nRuntimeDirectory=redis\nRuntimeDirectoryMode=0750\nSupplementaryGroups=jabali-sockets\nExecStartPost=+/usr/bin/chgrp jabali-sockets /run/redis\nExecStartPost=+/usr/bin/chgrp jabali-sockets /run/redis/redis.sock\nExecStartPost=+/usr/bin/chmod 0660 /run/redis/redis.sock\n'
 
   if [[ ! -f "$unit_dropin" ]] || ! cmp -s <(printf '%s' "$unit_desired") "$unit_dropin"; then
     _log "installing Redis systemd drop-in → $unit_dropin"

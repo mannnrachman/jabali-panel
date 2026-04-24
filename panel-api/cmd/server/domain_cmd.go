@@ -126,13 +126,18 @@ func newDomainCreateCmd() *cobra.Command {
 
 func newDomainEnableCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "enable <domain-id>",
+		Use:   "enable <domain-name|domain-id>",
 		Short: "Enable a domain (direct DB — M20-safe)",
 		Args:  cobra.ExactArgs(1),
+		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
-			d, err := setDomainEnabledDirect(ctx, args[0], true)
+			target, err := resolveDomainSpec(ctx, domainRepoFromDB(), args[0])
+			if err != nil {
+				return err
+			}
+			d, err := setDomainEnabledDirect(ctx, target.ID, true)
 			if err != nil {
 				return err
 			}
@@ -146,13 +151,18 @@ func newDomainEnableCmd() *cobra.Command {
 
 func newDomainDisableCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "disable <domain-id>",
+		Use:   "disable <domain-name|domain-id>",
 		Short: "Disable a domain (direct DB — M20-safe)",
 		Args:  cobra.ExactArgs(1),
+		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
-			d, err := setDomainEnabledDirect(ctx, args[0], false)
+			target, err := resolveDomainSpec(ctx, domainRepoFromDB(), args[0])
+			if err != nil {
+				return err
+			}
+			d, err := setDomainEnabledDirect(ctx, target.ID, false)
 			if err != nil {
 				return err
 			}
@@ -167,7 +177,7 @@ func newDomainDisableCmd() *cobra.Command {
 func newDomainDeleteCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
-		Use:   "delete <domain-id>",
+		Use:   "delete <domain-name|domain-id>",
 		Short: "Delete a domain (direct DB; reconciler tears down nginx — M20-safe)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -182,9 +192,9 @@ func newDomainDeleteCmd() *cobra.Command {
 			if err := initDB(); err != nil {
 				return err
 			}
-			d, err := domainRepoFromDB().FindByID(ctx, args[0])
+			d, err := resolveDomainSpec(ctx, domainRepoFromDB(), args[0])
 			if err != nil {
-				return fmt.Errorf("fetch domain: %w", err)
+				return err
 			}
 
 			if !force {
@@ -197,7 +207,7 @@ func newDomainDeleteCmd() *cobra.Command {
 				}
 			}
 
-			if _, err := deleteDomainDirect(ctx, args[0]); err != nil {
+			if _, err := deleteDomainDirect(ctx, d.ID); err != nil {
 				return err
 			}
 			fmt.Printf("Domain %s deleted (reconciler will tear down nginx vhost within %s)\n",

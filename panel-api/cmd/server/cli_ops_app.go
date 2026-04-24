@@ -70,6 +70,49 @@ func getAppDirect(ctx context.Context, installID string) (*models.ApplicationIns
 	return install, nil
 }
 
+// resolveAppSpec accepts either an install ULID or a domain name (which
+// resolves to the single install at that domain's root). Domain-name form
+// is the common CLI UX: `jabali app delete example.com` reads better than
+// pasting an opaque install ID. If the domain name matches multiple
+// installs (subdirectory installs), callers should pass the ULID instead.
+func resolveAppSpec(ctx context.Context, spec string) (*models.ApplicationInstall, error) {
+	if spec == "" {
+		return nil, fmt.Errorf("application spec is empty")
+	}
+	if err := initConfig(); err != nil {
+		return nil, err
+	}
+	if err := initDB(); err != nil {
+		return nil, err
+	}
+	installs := repository.NewApplicationInstallRepository(sharedDB)
+
+	// ULIDs are exactly 26 chars of Crockford base32; bare domain names
+	// never look like that. Try ID first so we don't punish script-driven
+	// callers with an extra round-trip.
+	if len(spec) == 26 {
+		if inst, err := installs.FindByID(ctx, spec); err == nil {
+			return inst, nil
+		} else if !errors.Is(err, repository.ErrNotFound) {
+			return nil, fmt.Errorf("lookup application by id: %w", err)
+		}
+	}
+
+	// Domain-name fallback: resolve domain → find install at that domain.
+	dom, err := resolveDomainSpec(ctx, domainRepoFromDB(), spec)
+	if err != nil {
+		return nil, fmt.Errorf("no application found for %q: %w", spec, err)
+	}
+	inst, err := installs.FindByDomainID(ctx, dom.ID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, fmt.Errorf("no application installed on domain %q", dom.Name)
+		}
+		return nil, fmt.Errorf("lookup application by domain: %w", err)
+	}
+	return inst, nil
+}
+
 // deleteAppDirect mirrors the side effects of api.createDeleteAndKickAgent
 // (panel-api/internal/api/wordpress.go). Order matters because the
 // fk_wpinstalls_db FK is RESTRICT — see the comments in the HTTP path

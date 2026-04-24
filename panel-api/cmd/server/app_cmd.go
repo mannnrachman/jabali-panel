@@ -161,14 +161,14 @@ func newAppListCmd() *cobra.Command {
 
 func newAppGetCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "get <install-id>",
+		Use:   "get <install-id|domain-name>",
 		Short: "Show one installed app (direct DB — M20-safe)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
-			install, err := getAppDirect(ctx, args[0])
+			install, err := resolveAppSpec(ctx, args[0])
 			if err != nil {
 				return err
 			}
@@ -342,12 +342,10 @@ func newAppDeleteCmd() *cobra.Command {
 	var force bool
 
 	cmd := &cobra.Command{
-		Use:   "delete <install-id>",
+		Use:   "delete <install-id|domain-name>",
 		Short: "Delete an installed app (direct DB + agent teardown — M20-safe)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id := args[0]
-
 			// Wider timeout than read commands because the agent has to
 			// rm the docroot, drop the database, and restore the nginx
 			// placeholder — all serial. Matches the HTTP path's 5-min
@@ -355,11 +353,13 @@ func newAppDeleteCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 6*time.Minute)
 			defer cancel()
 
+			preview, err := resolveAppSpec(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			id := preview.ID
+
 			if !force {
-				preview, err := getAppDirect(ctx, id)
-				if err != nil {
-					return fmt.Errorf("fetch application: %w", err)
-				}
 				appType := preview.AppType
 				if appType == "" {
 					appType = "wordpress"

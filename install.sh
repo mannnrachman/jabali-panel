@@ -3536,6 +3536,29 @@ install_crowdsec() {
     _die "cscli missing after upstream crowdsec install"
   fi
 
+  # If a previous install left the package in `unpacked` state (postinst
+  # never finished because an earlier drop-in pinned a config field the
+  # stale 1.4.x agent couldn't parse), reconfigure now. Otherwise the
+  # next systemctl restart fails before our drop-in even loads.
+  local pkg_status
+  pkg_status="$(dpkg-query -W -f='${Status}' crowdsec 2>/dev/null || true)"
+  if [[ "$pkg_status" != *"installed"* ]]; then
+    _log "crowdsec package status is '$pkg_status' — running dpkg --configure to finish postinst"
+    dpkg --configure crowdsec || _warn "dpkg --configure crowdsec returned non-zero; continuing"
+  fi
+
+  # The hub index (/var/lib/crowdsec/hub/.index.json) must exist before
+  # the agent starts — without it crowdsec FATALs with "invalid hub
+  # index: unable to read index file". The package postinst tries to
+  # download it but only on a successful first start; since our drop-in
+  # may cause a chicken-and-egg restart loop, fetch the index explicitly
+  # here. `cscli hub update` is idempotent — re-runs are a no-op when
+  # the index is fresh.
+  if [[ ! -f /var/lib/crowdsec/hub/.index.json ]]; then
+    _log "downloading CrowdSec hub index (first install)"
+    cscli hub update --error 2>&1 | sed 's/^/    /' || _warn "cscli hub update non-zero — surface via 'cscli hub update' for details"
+  fi
+
   # Pick the firewall bouncer matching the kernel backend. Trixie+
   # defaults to nftables; bookworm uses iptables. apt-cache check guards
   # against packaging drift (both variants exist in upstream repo).
@@ -3572,13 +3595,30 @@ install_crowdsec() {
     _log "$cs_cfg already pinned to socket $socket_path"
   fi
 
+  # cscli + the in-process watcher both read
+  # /etc/crowdsec/local_api_credentials.yaml for the LAPI endpoint. The
+  # base package writes `url: http://127.0.0.1:8080`. Must be patched
+  # to the socket path BEFORE the systemd restart — otherwise the
+  # crowdsec agent (which dials its own LAPI on startup) tries TCP
+  # 127.0.0.1:8080 (Stalwart's port), gets connection-refused, and
+  # exits FATAL before the LAPI server even binds the socket.
+  local creds="/etc/crowdsec/local_api_credentials.yaml"
+  if [[ -f "$creds" ]]; then
+    local current_url
+    current_url="$(yq -r '.url // ""' "$creds" 2>/dev/null || echo "")"
+    if [[ "$current_url" != "$socket_path" ]]; then
+      _log "patching $creds: url = $socket_path"
+      yq -y -i ".url = \"$socket_path\"" "$creds"
+    fi
+  fi
+
   # systemd drop-in: RuntimeDirectory creates /run/crowdsec (cleared on
   # stop), Group=jabali so panel-api (group jabali) can talk to LAPI
   # via cscli. Mode 0750 on the runtime dir + service-managed socket
   # mode (CrowdSec sets 0660 on the socket itself).
   local dropin_dir="/etc/systemd/system/crowdsec.service.d"
   local dropin="$dropin_dir/10-jabali-socket.conf"
-  local desired_dropin=$'# Managed by jabali install.sh — M26. Do NOT hand-edit.\n# Pins CrowdSec LAPI to /run/crowdsec/api.sock so panel-api (group\n# jabali) can reach it via cscli without TCP loopback (ADR-0050).\n[Service]\nRuntimeDirectory=crowdsec\nRuntimeDirectoryMode=0750\nGroup=jabali\n'
+  local desired_dropin=$'# Managed by jabali install.sh — M26. Do NOT hand-edit.\n# Pins CrowdSec LAPI to /run/crowdsec/api.sock so panel-api (group\n# jabali) can reach it via cscli without TCP loopback (ADR-0050).\n# ExecStartPost pins the socket to 0660 jabali (CrowdSec creates it\n# at 0755 by default which leaks connect(2) reach to any local user).\n[Service]\nRuntimeDirectory=crowdsec\nRuntimeDirectoryMode=0750\nGroup=jabali\nExecStartPost=/bin/sh -c \'until [ -S /run/crowdsec/api.sock ]; do sleep 0.1; done\'\nExecStartPost=/bin/chmod 0660 /run/crowdsec/api.sock\nExecStartPost=/bin/chgrp jabali /run/crowdsec/api.sock\n'
   install -d -m 0755 "$dropin_dir"
   if [[ ! -f "$dropin" ]] || ! cmp -s <(printf '%s' "$desired_dropin") "$dropin"; then
     _log "writing $dropin"
@@ -3605,19 +3645,6 @@ install_crowdsec() {
   done
   if [[ ! -S "$socket_path" ]]; then
     _die "$socket_path did not appear after CrowdSec restart; check journalctl -u crowdsec"
-  fi
-
-  # cscli reads /etc/crowdsec/local_api_credentials.yaml for the LAPI
-  # endpoint. The base package may have written `url: http://127.0.0.1:8080`
-  # — patch to the socket so cscli works without operator intervention.
-  local creds="/etc/crowdsec/local_api_credentials.yaml"
-  if [[ -f "$creds" ]]; then
-    local current_url
-    current_url="$(yq -r '.url // ""' "$creds" 2>/dev/null || echo "")"
-    if [[ "$current_url" != "$socket_path" ]]; then
-      _log "patching $creds: url = $socket_path"
-      yq -y -i ".url = \"$socket_path\"" "$creds"
-    fi
   fi
 
   if cscli lapi status >/dev/null 2>&1; then

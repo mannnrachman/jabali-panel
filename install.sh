@@ -657,6 +657,7 @@ POLICYEOF
       nodejs \
       pdns-server pdns-backend-mysql pdns-recursor \
       bind9-dnsutils \
+      crowdsec libnginx-mod-http-modsecurity modsecurity-crs ufw yq \
       "${php_extensions[@]}"
 
   # Undo the policy-rc.d trap regardless of exit path above (set -e would
@@ -3458,6 +3459,221 @@ install_sso_reaper_timer() {
   _ok "sso reaper timer enabled (every 30s)"
 }
 
+# ---------- step 8a: M26 security foundation (CrowdSec + ModSecurity + UFW) --
+#
+# Three idempotent installs that land BEFORE Stalwart so:
+#   - CrowdSec LAPI binds on /run/crowdsec/api.sock (NOT 127.0.0.1:8080,
+#     which Stalwart owns per ADR-0050).
+#   - UFW is `enable`d ONCE (idempotent guard) before Stalwart's first
+#     bind so the iptables/nftables reload cannot race Stalwart startup.
+#   - ModSecurity nginx module is loaded with a stock include set but
+#     `SecRuleEngine Off` — global toggle flips in M26 Step 4.
+#
+# All three are wired into main() between install_pdns_recursor and
+# install_stalwart. Apt packages (crowdsec, libnginx-mod-http-modsecurity,
+# modsecurity-crs, ufw, yq) are in the install_base_packages batch; the
+# CrowdSec firewall bouncer is detected + installed at runtime here
+# because the package name varies by Debian release (nftables on trixie,
+# iptables on bookworm) and apt-cache fallback is the safer model.
+
+install_crowdsec() {
+  _log "configuring CrowdSec (package installed in base batch)"
+
+  if ! command -v cscli >/dev/null 2>&1; then
+    _die "cscli missing after apt install — CrowdSec base package failed; check install_base_packages output"
+  fi
+
+  # Pick the firewall bouncer package matching the Debian backend. Trixie+
+  # defaults to nftables; bookworm uses iptables. apt-cache check guards
+  # against packaging drift.
+  local debian_rel bouncer_pkg
+  debian_rel="$(lsb_release -rs 2>/dev/null | cut -d. -f1)"
+  if [[ "$debian_rel" -ge 13 ]] && apt-cache show crowdsec-firewall-bouncer-nftables >/dev/null 2>&1; then
+    bouncer_pkg="crowdsec-firewall-bouncer-nftables"
+  else
+    bouncer_pkg="crowdsec-firewall-bouncer-iptables"
+  fi
+  if ! dpkg -s "$bouncer_pkg" >/dev/null 2>&1; then
+    _spin "apt install $bouncer_pkg" \
+      apt-get install -y -qq --no-install-recommends "$bouncer_pkg"
+  else
+    _log "$bouncer_pkg already installed"
+  fi
+
+  # Patch /etc/crowdsec/config.yaml so LAPI binds on a Unix socket
+  # (ADR-0050) at /run/crowdsec/api.sock instead of 127.0.0.1:8080
+  # (which conflicts with Stalwart admin-http per ADR-0050). yq is the
+  # Python jq-wrapper flavor (kislyuk/yq) on Debian — `-y -i` for
+  # in-place YAML output.
+  local cs_cfg="/etc/crowdsec/config.yaml"
+  if [[ ! -f "$cs_cfg" ]]; then
+    _die "crowdsec base package did not write $cs_cfg — abort before patching"
+  fi
+  local socket_path="/run/crowdsec/api.sock"
+  local current_socket
+  current_socket="$(yq -r '.api.server.listen_socket // ""' "$cs_cfg" 2>/dev/null || echo "")"
+  if [[ "$current_socket" != "$socket_path" ]]; then
+    _log "patching $cs_cfg: api.server.listen_socket = $socket_path"
+    yq -y -i ".api.server.listen_socket = \"$socket_path\" | .api.server.listen_uri = \"\"" "$cs_cfg"
+  else
+    _log "$cs_cfg already pinned to socket $socket_path"
+  fi
+
+  # systemd drop-in: RuntimeDirectory creates /run/crowdsec (cleared on
+  # stop), Group=jabali so panel-api (group jabali) can talk to LAPI
+  # via cscli. Mode 0750 on the runtime dir + service-managed socket
+  # mode (CrowdSec sets 0660 on the socket itself).
+  local dropin_dir="/etc/systemd/system/crowdsec.service.d"
+  local dropin="$dropin_dir/10-jabali-socket.conf"
+  local desired_dropin=$'# Managed by jabali install.sh — M26. Do NOT hand-edit.\n# Pins CrowdSec LAPI to /run/crowdsec/api.sock so panel-api (group\n# jabali) can reach it via cscli without TCP loopback (ADR-0050).\n[Service]\nRuntimeDirectory=crowdsec\nRuntimeDirectoryMode=0750\nGroup=jabali\n'
+  install -d -m 0755 "$dropin_dir"
+  if [[ ! -f "$dropin" ]] || ! cmp -s <(printf '%s' "$desired_dropin") "$dropin"; then
+    _log "writing $dropin"
+    local tmp
+    tmp="$(mktemp --tmpdir jabali-cs-dropin.XXXXXX)"
+    printf '%s' "$desired_dropin" >"$tmp"
+    install -m 0644 -o root -g root "$tmp" "$dropin"
+    rm -f "$tmp"
+    systemctl daemon-reload
+    systemctl restart crowdsec
+  elif ! systemctl is-active --quiet crowdsec; then
+    systemctl start crowdsec
+  else
+    _log "crowdsec drop-in already current — no restart needed"
+  fi
+
+  # Wait for the LAPI socket to come up. crowdsec.service reports active
+  # the moment the systemd cgroup spawns; the LAPI socket appears a beat
+  # later as the agent goroutine binds.
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if [[ -S "$socket_path" ]]; then break; fi
+    sleep 1
+  done
+  if [[ ! -S "$socket_path" ]]; then
+    _die "$socket_path did not appear after CrowdSec restart; check journalctl -u crowdsec"
+  fi
+
+  # cscli reads /etc/crowdsec/local_api_credentials.yaml for the LAPI
+  # endpoint. The base package may have written `url: http://127.0.0.1:8080`
+  # — patch to the socket so cscli works without operator intervention.
+  local creds="/etc/crowdsec/local_api_credentials.yaml"
+  if [[ -f "$creds" ]]; then
+    local current_url
+    current_url="$(yq -r '.url // ""' "$creds" 2>/dev/null || echo "")"
+    if [[ "$current_url" != "$socket_path" ]]; then
+      _log "patching $creds: url = $socket_path"
+      yq -y -i ".url = \"$socket_path\"" "$creds"
+    fi
+  fi
+
+  if cscli lapi status >/dev/null 2>&1; then
+    _ok "CrowdSec LAPI live at $socket_path"
+  else
+    _warn "cscli lapi status non-zero — surface via 'cscli lapi status' for details"
+  fi
+}
+
+install_modsecurity() {
+  _log "configuring ModSecurity-nginx (packages installed in base batch)"
+
+  # The libnginx-mod-http-modsecurity package drops a symlink in
+  # /etc/nginx/modules-enabled/ that nginx loads via the stock
+  # /etc/nginx/nginx.conf `include modules-enabled/*.conf;`. Verify.
+  if ! ls /etc/nginx/modules-enabled/*modsecurity* >/dev/null 2>&1; then
+    _warn "no modsecurity module symlink in /etc/nginx/modules-enabled/ — nginx will not load the module until reinstall"
+  fi
+
+  # Ensure /etc/nginx/modsec/ exists and write the M26 main include. This
+  # file is REFERENCED by the per-vhost `modsecurity_rules_file` directive
+  # added in M26 Step 5 (per-domain enable). Step 1 lands the include
+  # set so vhost work in later steps doesn't have to bootstrap it.
+  install -d -m 0755 /etc/nginx/modsec
+  local main_conf="/etc/nginx/modsec/main.conf"
+  local desired_main=$'# Managed by jabali install.sh — M26 Step 1.\n# Per-vhost `modsecurity_rules_file /etc/nginx/modsec/main.conf;` pulls\n# in the stock OWASP CRS rule set. Do NOT add custom rules here — Step 5\n# of M26 lands a per-domain override mechanism.\nInclude /etc/modsecurity/modsecurity.conf\nInclude /usr/share/modsecurity-crs/crs-setup.conf\nInclude /usr/share/modsecurity-crs/rules/*.conf\n'
+  if [[ ! -f "$main_conf" ]] || ! cmp -s <(printf '%s' "$desired_main") "$main_conf"; then
+    _log "writing $main_conf"
+    local tmp
+    tmp="$(mktemp --tmpdir jabali-modsec-main.XXXXXX)"
+    printf '%s' "$desired_main" >"$tmp"
+    install -m 0644 -o root -g root "$tmp" "$main_conf"
+    rm -f "$tmp"
+  else
+    _log "$main_conf already current"
+  fi
+
+  # The stock /etc/modsecurity/modsecurity.conf is shipped with
+  # `SecRuleEngine DetectionOnly`. M26 Step 1 keeps the engine OFF
+  # (no inspection) — Step 4 lands the global toggle that flips this
+  # to On via the admin Security tab + agent command. Default Off so
+  # Step 1 ships a safe no-op WAF that doesn't touch tenant traffic.
+  local stock_conf="/etc/modsecurity/modsecurity.conf"
+  if [[ -f "$stock_conf" ]]; then
+    if grep -qE '^SecRuleEngine[[:space:]]+(DetectionOnly|On)' "$stock_conf"; then
+      _log "setting SecRuleEngine Off in $stock_conf (M26 Step 1 default)"
+      sed -i -E 's/^SecRuleEngine[[:space:]]+(DetectionOnly|On)/SecRuleEngine Off/' "$stock_conf"
+    fi
+  else
+    _warn "$stock_conf missing — modsecurity package install incomplete?"
+  fi
+
+  # Validate nginx config picks up the new module + main.conf without
+  # complaining; reload only if nginx is already running so a fresh
+  # install (where install_nginx_default_vhost reloads later) doesn't
+  # double-restart.
+  if nginx -t >/dev/null 2>&1; then
+    if systemctl is-active --quiet nginx; then
+      systemctl reload nginx
+    fi
+    _ok "ModSecurity module loaded; engine Off (Step 1 default)"
+  else
+    _warn "nginx -t failed after modsecurity install — first relevant error:"
+    nginx -t 2>&1 | head -10 >&2
+  fi
+}
+
+install_ufw() {
+  _log "configuring UFW (package installed in base batch)"
+
+  if ! command -v ufw >/dev/null 2>&1; then
+    _die "ufw missing after apt install — install_base_packages did not install it"
+  fi
+
+  # Default policies. `ufw default <verb>` is idempotent — re-running a
+  # second time prints "Default incoming policy changed to 'deny'" only
+  # on actual change.
+  ufw default deny incoming >/dev/null
+  ufw default allow outgoing >/dev/null
+
+  # Allow-list: SSH, web (panel + nginx), mail (Stalwart). MUST be in
+  # place BEFORE `ufw enable` runs in the same install — otherwise
+  # default-deny locks out SSH the moment the firewall activates.
+  local port
+  for port in 22 80 443 8443 25 465 587 993 995 4190; do
+    # `ufw allow N/tcp` is idempotent — second invocation prints
+    # "Skipping adding existing rule" but exits 0.
+    ufw allow "${port}/tcp" >/dev/null
+  done
+
+  # Idempotent enable: bare `ufw --force enable` reloads the firewall
+  # mid-install which can race in-flight TCP (apt mirror reuse, the
+  # Stalwart bind that happens later in this same script). Guard with
+  # `is-active` so re-runs are a no-op.
+  if ! systemctl is-active --quiet ufw; then
+    _log "enabling UFW for the first time"
+    ufw --force enable >/dev/null
+  else
+    _log "UFW already active — skipping enable (rules synced above)"
+  fi
+
+  # Verify the allow-list landed and SSH is still in it. If SSH dropped
+  # off, the next reboot would lock the operator out — fail the install.
+  if ! ufw status verbose 2>/dev/null | grep -qE '^22/tcp[[:space:]]+ALLOW'; then
+    _die "UFW allow rule for 22/tcp missing after install — refusing to leave operator at risk of SSH lockout"
+  fi
+  _ok "UFW active; default-deny incoming with allow-list (22, 80, 443, 8443, 25, 465, 587, 993, 995, 4190)"
+}
+
 # ---------- step 8b: Stalwart Mail Server + Bulwark webmail (M6) -------------
 #
 # Two functions, one tool each. Both are disabled-by-default — systemd units
@@ -4617,6 +4833,15 @@ main() {
   write_systemd_unit
   start_and_verify_agent
   start_and_verify
+  # M26 Step 1 — security foundation. CrowdSec LAPI binds on a Unix
+  # socket (ADR-0050) so it doesn't conflict with Stalwart's
+  # 127.0.0.1:8080 admin-http. ModSecurity ships in a default-Off state
+  # (Step 4 lands the global toggle). UFW activates with the SSH +
+  # panel + nginx + mail allow-list before Stalwart binds (preventing
+  # the documented iptables-reload race).
+  install_crowdsec
+  install_modsecurity
+  install_ufw
   # First-phase Stalwart bootstrap (binary download, service user,
   # stalwart-cli, admin token, MariaDB password file, apply plan render,
   # unit file install). Safe to run after start_and_verify — doesn't

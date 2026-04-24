@@ -39,6 +39,7 @@ import { UserList } from "./shells/admin/users/UserList";
 import { AdminIPCreate } from "./shells/admin/ips/AdminIPCreate";
 import { AdminIPEdit } from "./shells/admin/ips/AdminIPEdit";
 import { AdminIPList } from "./shells/admin/ips/AdminIPList";
+import { AdminSecurityPage } from "./shells/admin/security/AdminSecurityPage";
 import { PackageCreate } from "./shells/admin/packages/PackageCreate";
 import { PackageEdit } from "./shells/admin/packages/PackageEdit";
 import { PackageList } from "./shells/admin/packages/PackageList";
@@ -145,6 +146,7 @@ const ThemedApp = () => {
               <Route path="create" element={<AdminIPCreate />} />
               <Route path="edit/:id" element={<AdminIPEdit />} />
             </Route>
+            <Route path="security" element={<AdminSecurityPage />} />
           </Route>
 
           {/* ---------------- user shell ----------------- */}

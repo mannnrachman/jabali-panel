@@ -23,6 +23,7 @@ import {
   KeyOutlined,
   MailOutlined,
   PackageOpenOutlined,
+  SafetyOutlined,
   SettingOutlined,
   ShieldCheckOutlined,
   TeamOutlined,
@@ -107,6 +108,12 @@ export const adminNav: NavItem[] = [
     label: "IP Addresses",
     icon: navIcon(GlobalOutlined),
     path: "/jabali-admin/ips",
+  },
+  {
+    key: "security",
+    label: "Security",
+    icon: navIcon(SafetyOutlined),
+    path: "/jabali-admin/security",
   },
 ];
 

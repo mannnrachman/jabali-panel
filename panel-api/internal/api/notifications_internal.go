@@ -71,6 +71,7 @@ var enqueueAllowedEventKinds = map[string]struct{}{
 	"service.down":        {},
 	"crowdsec.ban.spike":  {},
 	"backup.fail":         {},
+	"admin.login":         {},
 	// Additional events that Step 2+ already emits from panel-api
 	// itself land via direct Queue.Publish — not this handler — but
 	// keep the list aligned with history.event_kind values so the

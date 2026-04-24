@@ -220,6 +220,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// ownership check in the API expects.
 		authMiddleware := middleware.RequireKratosSession(deps.KratosClient, deps.Users)
 		v1 := r.Group("/api/v1", authMiddleware)
+		// M14 — fire one admin.login envelope per Kratos session.
+		// Redis SETNX dedupes; downgrades to no-op without Redis/queue.
+		v1.Use(middleware.TrackAdminLogin(deps.Redis, deps.NotificationQueue, deps.Log))
 		api.RegisterMeRoutes(v1, api.MeHandlerConfig{
 			Users:          deps.Users,
 			ServerSettings: deps.ServerSettings,

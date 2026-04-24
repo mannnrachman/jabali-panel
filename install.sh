@@ -2275,6 +2275,12 @@ ensure_user_and_dirs() {
   install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$(dirname "$ENV_FILE")"
   install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali/backups
   install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali/restore
+  # M28 — operator-uploaded panel logos. Owned by the service user so
+  # the POST /admin/settings/branding/logo handler can mkdir + atomic
+  # rename on upload. 0755 so nginx (proxied GET falls back to panel-
+  # api anyway, but keep it world-readable for future direct serving).
+  install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali-panel
+  install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali-panel/branding
 }
 
 # ---------- M25 step 1: jabali-sockets group --------------------------------
@@ -2903,8 +2909,14 @@ seed_last_built_sha() {
     _warn "could not resolve HEAD in $REPO_DIR; skipping last-built-sha seed"
     return 0
   fi
-  install -d -m 0755 -o root -g root /var/lib/jabali-panel
+  # M28 aligned: panel-api writes operator logos into
+  # /var/lib/jabali-panel/branding as $SERVICE_USER, so the parent
+  # must be owned by $SERVICE_USER too. install -d on an existing
+  # dir still applies -o/-g/-m, so this converges whichever of the
+  # two install.sh steps runs last.
+  install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali-panel
   printf '%s\n' "$sha" >/var/lib/jabali-panel/last-built-sha
+  chown "$SERVICE_USER:$SERVICE_USER" /var/lib/jabali-panel/last-built-sha
   chmod 0644 /var/lib/jabali-panel/last-built-sha
   _ok "last-built-sha seeded to ${sha:0:7}"
 }

@@ -113,12 +113,14 @@ ServerSettings seeded at boot:
 - `vapid_private_key` (base64-url) — generated via `github.com/SherClockHolmes/webpush-go`
 - `vapid_subject` — `mailto:admin@<panel_hostname>` from existing config
 
+**Schema note (locked 2026-04-24):** `server_settings` in this repo is a typed single-row table (not a key-value store), so these three values are three new nullable columns on that table — NOT rows in a `key_name`/`value` shape. Migration adds the columns; seed logic in `serve.go` checks `vapid_public_key IS NULL` and Upserts on boot. Verify with `SELECT vapid_public_key IS NOT NULL FROM server_settings WHERE id=1;`.
+
 ### Tasks
 1. Write ADRs 0056 / 0057 / 0058 / 0059, accepted status. Update `docs/adr/README.md`.
 2. Migration `000064_create_notifications.up.sql` + `.down.sql`. Schema only. (Original draft said 000059; repo landed M6.x migrations between drafting and execution — 000063 is the current highest, 000064 is next free.)
 3. Go models in `panel-api/internal/models/` — NotificationChannel, WebhookEndpoint (extend or fold), NotificationHistory, WebPushSubscription.
 4. Repository interfaces + GORM impls in `panel-api/internal/repository/`.
-5. Seed VAPID keypair in `ServerSettingRepository.EnsureDefault` called from `serve.go` first-boot init (mirror how ManagedIP default row seeds).
+5. Add migration `000065_server_settings_add_vapid.up.sql` + `.down.sql` adding three nullable VARCHAR columns to server_settings: `vapid_public_key(200)`, `vapid_private_key(200)`, `vapid_subject(255)`. Schema only. Extend `ServerSettings` model struct. Seed VAPID keypair in `serve.go` first-boot init: `SELECT vapid_public_key FROM server_settings WHERE id=1` — if NULL, generate keypair via `webpush.GenerateVAPIDKeys()` + Upsert.
 6. `go.mod`: add `github.com/SherClockHolmes/webpush-go` + `github.com/redis/go-redis/v9`.
 7. **Redis install function** `install_redis()` in `install.sh`, wired between `provision_mariadb` and Stalwart install:
    - `apt install redis-server`
@@ -133,7 +135,7 @@ ServerSettings seeded at boot:
 ```bash
 go test ./panel-api/internal/repository/... -run Notification -count=1
 mariadb jabali_panel -e "DESCRIBE notification_channels; DESCRIBE notification_history; DESCRIBE webpush_subscriptions"
-mariadb jabali_panel -e "SELECT key_name FROM server_settings WHERE key_name LIKE 'vapid%'"  # 3 rows
+mariadb jabali_panel -e "SELECT vapid_public_key IS NOT NULL AS pub_set, vapid_private_key IS NOT NULL AS priv_set, vapid_subject FROM server_settings WHERE id=1"
 # Redis:
 systemctl is-active redis-server           # active
 ls -la /run/redis/redis.sock                # srw-rw---- redis jabali-sockets

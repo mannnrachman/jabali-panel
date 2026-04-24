@@ -44,6 +44,10 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0053](0053-crowdsec-over-fail2ban.md) | CrowdSec over fail2ban for behaviour-based IP blocking | Accepted |
 | [0054](0054-ufw-over-iptables.md) | UFW over raw iptables/nftables for the host firewall | Accepted |
 | [0055](0055-modsecurity-per-domain.md) | ModSecurity-nginx + OWASP CRS, per-domain toggle | Accepted |
+| [0056](0056-notification-dispatcher-redis-streams.md) | M14 Notification dispatcher via Redis Streams + consumer group | Accepted |
+| [0057](0057-webpush-vapid.md) | M14 Web Push via VAPID, keypair in server_settings | Accepted |
+| [0058](0058-ntfy-channel.md) | M14 ntfy.sh channel: plain HTTP POST + optional bearer + priority + tags | Accepted |
+| [0059](0059-redis-shared-cache.md) | Redis as shared local cache/queue (unix socket, jabali-sockets group) | Accepted |
 
 ## Decision Categories
 

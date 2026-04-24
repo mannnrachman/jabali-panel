@@ -1,3 +1,16 @@
+# Coding conventions
+
+Repo-wide patterns (route families, SearchableTable, Drawer for create+edit,
+icon shim, list envelope, rate limits, etc.) live in
+[docs/CONVENTIONS.md](docs/CONVENTIONS.md). **Read it before writing a new
+handler, page, or hook** — every worktree and agent follows the same
+patterns so merges across `main` / `wt-a` / `wt-b` / `wt-c` stay clean.
+
+Anti-patterns already learnt the hard way are listed at the bottom of
+CONVENTIONS.md; they're the quick way to avoid reopening a closed regression.
+
+---
+
 <!-- cbm:start -->
 # codebase-memory-mcp — Code Intelligence
 

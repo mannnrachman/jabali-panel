@@ -3,6 +3,9 @@
 Guide for working on the Jabali Panel codebase. The [BLUEPRINT](BLUEPRINT.md)
 is the map of *what* ships; this file is the map of *how* to ship it.
 
+Coding/UI/route patterns live in [CONVENTIONS.md](CONVENTIONS.md) — every
+new worktree branch or agent starts there before touching code.
+
 ## Prerequisites
 
 | Tool | Version | Notes |

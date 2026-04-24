@@ -323,6 +323,22 @@ func runServe(cmd *cobra.Command, args []string) error {
 					log.Error("failed to seed default managed_ips ipv6 row", "err", err)
 				}
 			}
+
+			// M14 first-boot seed: generate the installation-global
+			// VAPID keypair if not yet present (ADR-0057). Reuses the
+			// same seed goroutine as managed_ips because it has the
+			// same ordering constraint — migration 000065 added the
+			// columns but can't populate them (per
+			// feedback_migration_data_seed_ordering); the keys exist
+			// only after this runs. Non-fatal on error: the Web Push
+			// sender will skip channels when the keypair is missing,
+			// which surfaces as a clear log event rather than
+			// crash-looping the whole panel.
+			if generated, err := serverSettingsRepo.EnsureVAPID(seedCtx, row.Hostname); err != nil {
+				log.Error("failed to seed VAPID keypair", "err", err)
+			} else if generated {
+				log.Info("generated VAPID keypair for Web Push", "subject_host", row.Hostname)
+			}
 		}()
 	}
 

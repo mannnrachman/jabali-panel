@@ -3,8 +3,10 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
+	webpush "github.com/SherClockHolmes/webpush-go"
 	"gorm.io/gorm"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
@@ -16,6 +18,23 @@ import (
 type ServerSettingsRepository interface {
 	Get(ctx context.Context) (*models.ServerSettings, error)
 	Upsert(ctx context.Context, s *models.ServerSettings) error
+
+	// EnsureVAPID is the first-boot VAPID keypair seed. Generates a
+	// P-256 keypair via webpush.GenerateVAPIDKeys if vapid_public_key
+	// is currently NULL on the settings row, then writes the public/
+	// private/subject trio in a single UPDATE.
+	//
+	// Idempotent: a non-NULL public_key on entry skips generation and
+	// returns generated=false. Partial state (public_key NULL while
+	// private_key or subject is set) is treated as corruption and
+	// returned as error — operator must intervene rather than have us
+	// silently regenerate into a half-written row.
+	//
+	// hostname is the installation's canonical hostname used to build
+	// the mailto: subject (e.g. "mailto:admin@panel.example.com").
+	// Empty hostname falls back to "mailto:admin@localhost" so first
+	// boot on a not-yet-configured host still succeeds.
+	EnsureVAPID(ctx context.Context, hostname string) (generated bool, err error)
 }
 
 type serverSettingsRepo struct{ db *gorm.DB }
@@ -60,4 +79,58 @@ func (r *serverSettingsRepo) Upsert(ctx context.Context, s *models.ServerSetting
 	// admin_email to "") gets the clear persisted. Omit("id") keeps
 	// the primary key out of the SET clause.
 	return r.db.WithContext(ctx).Model(&existing).Select("*").Omit("id").Updates(s).Error
+}
+
+func (r *serverSettingsRepo) EnsureVAPID(ctx context.Context, hostname string) (bool, error) {
+	var existing models.ServerSettings
+	err := r.db.WithContext(ctx).First(&existing, 1).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, ErrNotFound
+		}
+		return false, err
+	}
+
+	// Already seeded — caller is idempotent.
+	if existing.VAPIDPublicKey != nil && *existing.VAPIDPublicKey != "" {
+		return false, nil
+	}
+
+	// Partial state guard — the only safe way to have the other two
+	// set is a half-run of a previous EnsureVAPID. Refuse to
+	// regenerate blindly; let the operator decide (the docs runbook
+	// walks through the recovery: NULL-out all three, restart).
+	if (existing.VAPIDPrivateKey != nil && *existing.VAPIDPrivateKey != "") ||
+		(existing.VAPIDSubject != nil && *existing.VAPIDSubject != "") {
+		return false, errors.New("server_settings: partial VAPID state — public_key NULL but private_key or subject set; operator must NULL all three before retry")
+	}
+
+	priv, pub, err := webpush.GenerateVAPIDKeys()
+	if err != nil {
+		return false, fmt.Errorf("generate VAPID keys: %w", err)
+	}
+
+	subjectHost := hostname
+	if subjectHost == "" {
+		subjectHost = "localhost"
+	}
+	subject := "mailto:admin@" + subjectHost
+
+	now := time.Now().UTC()
+	res := r.db.WithContext(ctx).
+		Model(&models.ServerSettings{}).
+		Where("id = ?", 1).
+		Updates(map[string]any{
+			"vapid_public_key":  pub,
+			"vapid_private_key": priv,
+			"vapid_subject":     subject,
+			"updated_at":        now,
+		})
+	if res.Error != nil {
+		return false, fmt.Errorf("persist VAPID keys: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return false, ErrNotFound
+	}
+	return true, nil
 }

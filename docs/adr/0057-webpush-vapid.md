@@ -20,15 +20,29 @@ The W3C Push API requires VAPID (Voluntary Application Server Identification) ke
 
 ### Key format + storage
 
-Three rows in `server_settings`:
+Three nullable columns on the existing `server_settings` row (migration
+`000065_server_settings_add_vapid.up.sql`):
 
-| `key_name`           | Value                                                                          |
-| -------------------- | ------------------------------------------------------------------------------ |
-| `vapid_public_key`   | base64-url-encoded uncompressed P-256 point (65 bytes → 87-char key)           |
-| `vapid_private_key`  | base64-url-encoded 32-byte scalar                                              |
-| `vapid_subject`      | `mailto:admin@<panel_hostname>` (hostname from existing config)                |
+| Column              | Value                                                                          |
+| ------------------- | ------------------------------------------------------------------------------ |
+| `vapid_public_key`  | base64-url-encoded uncompressed P-256 point (65 bytes → 87-char key)           |
+| `vapid_private_key` | base64-url-encoded 32-byte scalar                                              |
+| `vapid_subject`     | `mailto:admin@<panel_hostname>` (hostname from existing `hostname` column)     |
 
-Key generation is `webpush.GenerateVAPIDKeys()` from the library. Seed runs inside `ServerSettingRepository.EnsureDefault`, idempotent: only generates if all three rows are absent. Partial state (one key present, one missing) is a fatal boot error — we don't try to regenerate a mismatched half-keypair, the operator has to intervene (documented in the runbook).
+`server_settings` is the typed single-row table that already holds
+installation-global values (hostname, public IPs, admin email). Adding
+three columns stayed consistent with that model rather than introducing
+a parallel key-value store for one feature.
+
+Key generation is `webpush.GenerateVAPIDKeys()` from the library.
+Seeding happens in `ServerSettingsRepository.EnsureVAPID`, called from
+the first-boot seed goroutine in `panel-api/cmd/server/serve.go`
+alongside the managed_ips default-row seed. Idempotent: only generates
+if `vapid_public_key IS NULL`. Partial state (public key NULL while
+private key or subject is set) is a fatal error returned to the caller
+— we do not regenerate over a half-written row; the operator has to
+explicitly NULL all three columns before retry (documented in the
+runbook).
 
 ### Per-user subscription storage
 
@@ -67,6 +81,7 @@ Explicit operator-triggered reset. Post-M14 this will likely be an admin UI acti
 - Library pins us to VAPID v1 (the only VAPID spec that's final). Any future v2 spec shift would require switching libraries.
 - `vapid_private_key` is readable by any process that can read `server_settings` via panel-api (i.e. panel-api itself + `mariadb` CLI as the `jabali-panel` user). The threat model is "root on the panel host owns the panel anyway" — the same model as the DB password. No dedicated secrets manager for one row.
 - Rotating VAPID invalidates every enrolment. Operator has to communicate before rotating; UX for re-enrolment banner is Step 7 scope.
+- The `json:"-"` tag on all three VAPID fields keeps the raw values out of the generic `/api/v1/admin/settings` GET response. Step 5 adds a dedicated `/api/v1/admin/vapid/public` endpoint that returns only `vapid_public_key` so the SPA service worker can register push; the private key and full subject stay out of the API surface.
 
 ## Related
 

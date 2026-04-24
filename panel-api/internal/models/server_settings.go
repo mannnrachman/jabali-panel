@@ -36,6 +36,25 @@ type ServerSettings struct {
 	// hosting users land in SFTP, not a shell — per-package shell access
 	// is a separate, future feature.
 	SSHUserPasswordAuth bool   `gorm:"type:tinyint(1);not null;default:0"     json:"ssh_user_password_auth"`
+
+	// VAPIDPublicKey / VAPIDPrivateKey / VAPIDSubject hold the Web Push
+	// keypair + subject mint. See ADR-0057. Generated on first boot by
+	// ServerSettingsRepository.EnsureVAPID (called from serve.go seed
+	// goroutine), NOT by the migration — per
+	// feedback_migration_data_seed_ordering. All three columns are
+	// nullable to represent "not yet seeded" on fresh boot; once
+	// populated they remain stable until an explicit operator rotation
+	// (deferred to a future milestone).
+	//
+	// json:"-" keeps the private_key out of the server_settings GET
+	// response served to the admin UI. The public_key and subject are
+	// exposed through a dedicated /api/v1/admin/vapid/public endpoint
+	// in Step 5 (so the SPA can register the service worker) rather
+	// than leaking through the generic settings endpoint.
+	VAPIDPublicKey  *string `gorm:"type:varchar(128);column:vapid_public_key"  json:"-"`
+	VAPIDPrivateKey *string `gorm:"type:varchar(64);column:vapid_private_key"  json:"-"`
+	VAPIDSubject    *string `gorm:"type:varchar(320);column:vapid_subject"     json:"-"`
+
 	UpdatedAt          time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 

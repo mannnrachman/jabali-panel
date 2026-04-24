@@ -981,6 +981,9 @@ func (f *fakeSettingsRepo) Upsert(ctx context.Context, s *models.ServerSettings)
 	f.s = s
 	return nil
 }
+func (f *fakeSettingsRepo) EnsureVAPID(ctx context.Context, hostname string) (bool, error) {
+	return false, nil
+}
 
 func dnsRouterWithSettings(userID string, isAdmin bool, s *models.ServerSettings) (*gin.Engine, *mockDomainRepo, *mockDNSZoneRepo) {
 	gin.SetMode(gin.TestMode)

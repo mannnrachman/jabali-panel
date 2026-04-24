@@ -354,6 +354,13 @@ func (f *fakeServerSettingsRepo) Upsert(ctx context.Context, settings *models.Se
 	return nil
 }
 
+// EnsureVAPID is a no-op for reconciler tests — the reconciler path
+// doesn't touch VAPID, this stub only exists so the fake satisfies
+// the repository.ServerSettingsRepository interface (ADR-0057).
+func (f *fakeServerSettingsRepo) EnsureVAPID(ctx context.Context, hostname string) (bool, error) {
+	return false, nil
+}
+
 // fakeUserRepo mocks the user repository.
 type fakeUserRepo struct {
 	users map[string]*models.User

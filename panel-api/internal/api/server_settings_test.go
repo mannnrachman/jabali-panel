@@ -43,6 +43,10 @@ func (m *mockServerSettingsRepo) Upsert(ctx context.Context, s *models.ServerSet
 	return nil
 }
 
+func (m *mockServerSettingsRepo) EnsureVAPID(ctx context.Context, hostname string) (bool, error) {
+	return false, nil
+}
+
 // settingsRouter returns a Gin engine with server settings routes mounted and
 // optional admin claims injected. If adminMode is true, RequireAdmin passes.
 // If adminMode is false, claims are omitted entirely (no auth).

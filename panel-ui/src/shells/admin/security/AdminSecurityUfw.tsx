@@ -1,12 +1,19 @@
 // AdminSecurityUfw — M26 Step 8. Status banner, rules table (hidden
-// when firewall disabled), add-rule form, enable/disable buttons with
-// typed-YES gate.
+// when firewall disabled), add-rule Drawer, enable/disable buttons with
+// typed-YES Modal gate.
+//
+// Conventions: Drawer (not Modal) for create per CONVENTIONS.md.
+// Tables consume <Table.Column> children. Modal.confirm stays for the
+// enable/disable typed-YES gate — that's a destructive confirmation,
+// not a create form, so it's the right antd primitive.
 import {
   Alert,
   Button,
   Card,
+  Drawer,
   Empty,
   Form,
+  Grid,
   Input,
   message,
   Modal,
@@ -17,6 +24,8 @@ import {
   Tag,
   Typography,
 } from "antd";
+import { useState } from "react";
+
 import {
   useAddUfwRule,
   useDeleteUfwRule,
@@ -51,13 +60,26 @@ type AddRuleFormValues = {
   from?: string;
 };
 
+const renderActionTag = (a: string) => {
+  const lower = a.toLowerCase();
+  const color = lower.includes("allow")
+    ? "green"
+    : lower.includes("deny")
+      ? "red"
+      : "orange";
+  return <Tag color={color}>{a}</Tag>;
+};
+
 export const AdminSecurityUfw = () => {
   const status = useUfwStatus();
   const addRule = useAddUfwRule();
   const deleteRule = useDeleteUfwRule();
   const toggle = useUfwToggle();
 
+  const [addOpen, setAddOpen] = useState(false);
   const [addForm] = Form.useForm<AddRuleFormValues>();
+  const screens = Grid.useBreakpoint();
+  const isDesktop = screens.lg !== false;
 
   const submitAdd = async (values: AddRuleFormValues) => {
     try {
@@ -67,8 +89,9 @@ export const AdminSecurityUfw = () => {
         proto: values.proto,
         from: values.from || undefined,
       });
-      message.success(`Rule added`);
+      message.success("Rule added");
       addForm.resetFields();
+      setAddOpen(false);
     } catch (e: unknown) {
       message.error(e instanceof Error ? e.message : "Failed to add rule");
     }
@@ -132,47 +155,6 @@ export const AdminSecurityUfw = () => {
     });
   };
 
-  const ruleColumns = [
-    { title: "#", dataIndex: "num", key: "num", width: 60 },
-    {
-      title: "Action",
-      dataIndex: "action",
-      key: "action",
-      width: 120,
-      render: (a: string) => {
-        const lower = a.toLowerCase();
-        const color = lower.includes("allow")
-          ? "green"
-          : lower.includes("deny")
-            ? "red"
-            : "orange";
-        return <Tag color={color}>{a}</Tag>;
-      },
-    },
-    { title: "To", dataIndex: "to", key: "to" },
-    { title: "From", dataIndex: "from", key: "from" },
-    { title: "Proto", dataIndex: "proto", key: "proto", width: 80 },
-    {
-      title: "",
-      key: "delete",
-      width: 90,
-      render: (_: unknown, row: UfwRule) => (
-        <Popconfirm
-          title="Delete rule"
-          description={`Delete rule #${row.num} (${row.action} ${row.to})? Existing connections continue; new ones are subject to the next-matching rule.`}
-          okText="Delete"
-          okButtonProps={{ danger: true }}
-          cancelText="Cancel"
-          onConfirm={() => onDelete(row)}
-        >
-          <Button danger size="small">
-            Delete
-          </Button>
-        </Popconfirm>
-      ),
-    },
-  ];
-
   const active = status.data?.active ?? false;
 
   return (
@@ -225,17 +207,55 @@ export const AdminSecurityUfw = () => {
       </Card>
 
       {active ? (
-        <Card size="small" title="Rules">
+        <Card
+          size="small"
+          title="Rules"
+          extra={
+            <Button type="primary" size="small" onClick={() => setAddOpen(true)}>
+              Add rule
+            </Button>
+          }
+        >
           <Table<UfwRule>
             rowKey="num"
             dataSource={status.data?.rules ?? []}
-            columns={ruleColumns}
             loading={status.isLoading}
             pagination={false}
             size="small"
             locale={{ emptyText: <Empty description="No rules" /> }}
             scroll={{ x: "max-content" }}
-          />
+          >
+            <Table.Column<UfwRule> dataIndex="num" title="#" key="num" width={60} />
+            <Table.Column<UfwRule>
+              dataIndex="action"
+              title="Action"
+              key="action"
+              width={120}
+              render={renderActionTag}
+            />
+            <Table.Column<UfwRule> dataIndex="to" title="To" key="to" />
+            <Table.Column<UfwRule> dataIndex="from" title="From" key="from" />
+            <Table.Column<UfwRule> dataIndex="proto" title="Proto" key="proto" width={80} />
+            <Table.Column<UfwRule>
+              title=""
+              key="delete"
+              width={90}
+              render={(_, row) => (
+                <Popconfirm
+                  title="Delete rule"
+                  description={`Delete rule #${row.num} (${row.action} ${row.to})? Existing connections continue; new ones are subject to the next-matching rule.`}
+                  okText="Delete"
+                  okButtonProps={{ danger: true }}
+                  cancelText="Cancel"
+                  onConfirm={() => onDelete(row)}
+                >
+                  <Button danger type="text" size="small">
+                    Delete
+                  </Button>
+                </Popconfirm>
+              )}
+            />
+          </Table>
         </Card>
       ) : (
         <Alert
@@ -246,15 +266,30 @@ export const AdminSecurityUfw = () => {
         />
       )}
 
-      <Card size="small" title="Add rule">
-        <Form
+      <Drawer
+        title="Add UFW rule"
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        width={isDesktop ? 520 : undefined}
+        placement="right"
+        destroyOnClose
+        extra={
+          <Space>
+            <Button onClick={() => setAddOpen(false)}>Cancel</Button>
+            <Button type="primary" loading={addRule.isPending} onClick={() => addForm.submit()}>
+              Add rule
+            </Button>
+          </Space>
+        }
+      >
+        <Form<AddRuleFormValues>
           form={addForm}
-          layout="inline"
+          layout="vertical"
           onFinish={submitAdd}
           initialValues={{ action: "allow", proto: "tcp" }}
         >
-          <Form.Item name="action" rules={[{ required: true }]}>
-            <Select options={ACTION_OPTIONS} style={{ minWidth: 100 }} />
+          <Form.Item name="action" label="Action" rules={[{ required: true }]}>
+            <Select options={ACTION_OPTIONS} />
           </Form.Item>
           <Form.Item
             name="port"
@@ -266,8 +301,8 @@ export const AdminSecurityUfw = () => {
           >
             <Input placeholder="9999 or 1000:2000" autoComplete="off" />
           </Form.Item>
-          <Form.Item name="proto" rules={[{ required: true }]}>
-            <Select options={PROTO_OPTIONS} style={{ minWidth: 80 }} />
+          <Form.Item name="proto" label="Protocol" rules={[{ required: true }]}>
+            <Select options={PROTO_OPTIONS} />
           </Form.Item>
           <Form.Item
             name="from"
@@ -276,13 +311,8 @@ export const AdminSecurityUfw = () => {
           >
             <Input placeholder="203.0.113.0/24" autoComplete="off" />
           </Form.Item>
-          <Form.Item>
-            <Button type="primary" htmlType="submit" loading={addRule.isPending}>
-              Add rule
-            </Button>
-          </Form.Item>
         </Form>
-      </Card>
+      </Drawer>
     </Space>
   );
 };

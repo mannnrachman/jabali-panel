@@ -1,5 +1,13 @@
 // AdminSecurityModsec — M26 Step 8. Three cards: global engine + paranoia,
-// per-domain toggles (paginated), audit-log tail (auto-refresh 30s).
+// per-domain toggles (paginated via useTableURL — URL-backed page+
+// pageSize, same as every other admin list per CONVENTIONS), audit-log
+// tail (auto-refresh 30s).
+//
+// Tables consume <Table.Column> children, not a columns prop. The
+// per-domain table uses SearchableTableStringQ so it gets the
+// debounced search bar + scroll={{ x: "max-content" }} for free; the
+// audit-log table is a raw <Table> because it has no search box and
+// streams a fixed-size tail.
 import {
   Alert,
   Button,
@@ -16,16 +24,17 @@ import {
 } from "antd";
 import { useState } from "react";
 
+import { SearchableTableStringQ } from "../../../components/SearchableTable";
+import { useUpdateMutation } from "../../../hooks/useQueries";
 import {
   useModsecAudit,
-  useModsecDomains,
   useModsecGlobal,
-  useUpdateModsecDomain,
   useUpdateModsecGlobal,
   type ModsecAuditEntry,
   type ModsecDomainRow,
   type ModsecEngineMode,
 } from "../../../hooks/useSecurityModsec";
+import { useTableURL } from "../../../hooks/useTableURL";
 
 const ENGINE_LABEL: Record<ModsecEngineMode, string> = {
   Off: "Off (no inspection)",
@@ -33,14 +42,22 @@ const ENGINE_LABEL: Record<ModsecEngineMode, string> = {
   On: "On (inspect + block)",
 };
 
+const DOMAINS_RESOURCE = "admin/security/modsec/domains";
+
+const fmtTime = (s?: string): string => (s ? new Date(s).toLocaleString() : "—");
+
 export const AdminSecurityModsec = () => {
   const global = useModsecGlobal();
   const updateGlobal = useUpdateModsecGlobal();
-  const updateDomain = useUpdateModsecDomain();
 
-  const [page, setPage] = useState(1);
-  const pageSize = 20;
-  const domains = useModsecDomains(page, pageSize);
+  const domains = useTableURL<ModsecDomainRow>({
+    resource: DOMAINS_RESOURCE,
+    defaultSort: "name",
+    defaultOrder: "asc",
+  });
+  const updateDomain = useUpdateMutation<ModsecDomainRow, { modsec_enabled: boolean }>({
+    resource: DOMAINS_RESOURCE,
+  });
 
   const audit = useModsecAudit(50);
 
@@ -72,56 +89,12 @@ export const AdminSecurityModsec = () => {
 
   const onToggleDomain = async (row: ModsecDomainRow, enabled: boolean) => {
     try {
-      await updateDomain.mutateAsync({ id: row.id, modsec_enabled: enabled });
+      await updateDomain.mutateAsync({ id: row.id, input: { modsec_enabled: enabled } });
       message.success(`${enabled ? "Enabled" : "Disabled"} ModSec on ${row.name}`);
     } catch (e: unknown) {
       message.error(e instanceof Error ? e.message : "Failed to toggle");
     }
   };
-
-  const domainColumns = [
-    { title: "Domain", dataIndex: "name", key: "name" },
-    {
-      title: "ModSec",
-      dataIndex: "modsec_enabled",
-      key: "modsec_enabled",
-      width: 120,
-      render: (enabled: boolean, row: ModsecDomainRow) => (
-        <Switch
-          checked={enabled}
-          loading={updateDomain.isPending}
-          onChange={(checked) => onToggleDomain(row, checked)}
-        />
-      ),
-    },
-  ];
-
-  const auditColumns = [
-    {
-      title: "When",
-      dataIndex: "ts",
-      key: "ts",
-      width: 200,
-      render: (s?: string) => (s ? new Date(s).toLocaleString() : "—"),
-    },
-    { title: "Client", dataIndex: "client", key: "client", width: 140 },
-    { title: "URI", dataIndex: "uri", key: "uri", ellipsis: true },
-    {
-      title: "Rules",
-      dataIndex: "rule_ids",
-      key: "rule_ids",
-      width: 220,
-      render: (ids?: string[]) =>
-        ids && ids.length > 0 ? ids.map((id) => <Tag key={id}>{id}</Tag>) : "—",
-    },
-    {
-      title: "Sev",
-      dataIndex: "severity",
-      key: "severity",
-      width: 80,
-      render: (s?: string) => s ?? "—",
-    },
-  ];
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
@@ -189,28 +162,43 @@ export const AdminSecurityModsec = () => {
       </Card>
 
       <Card size="small" title="Per-domain enable">
-        <Table<ModsecDomainRow>
+        <SearchableTableStringQ<ModsecDomainRow>
           rowKey="id"
-          dataSource={domains.data?.data ?? []}
-          columns={domainColumns}
           loading={domains.isLoading}
+          dataSource={domains.items}
+          initialSearch={domains.params.q}
+          searchPlaceholder="Search domains"
+          onSearchChange={(q) => domains.setParams({ q, page: 1 })}
           pagination={{
-            current: page,
-            pageSize,
-            total: domains.data?.total ?? 0,
+            current: domains.params.page,
+            pageSize: domains.params.pageSize,
+            total: domains.total,
             showSizeChanger: false,
-            onChange: (p) => setPage(p),
+            onChange: (p) => domains.setParams({ page: p }),
           }}
           locale={{ emptyText: <Empty description="No domains" /> }}
-          scroll={{ x: "max-content" }}
-        />
+        >
+          <Table.Column<ModsecDomainRow> dataIndex="name" title="Domain" key="name" />
+          <Table.Column<ModsecDomainRow>
+            dataIndex="modsec_enabled"
+            title="ModSec"
+            key="modsec_enabled"
+            width={120}
+            render={(enabled: boolean, row) => (
+              <Switch
+                checked={enabled}
+                loading={updateDomain.isPending}
+                onChange={(checked) => onToggleDomain(row, checked)}
+              />
+            )}
+          />
+        </SearchableTableStringQ>
       </Card>
 
       <Card size="small" title="Audit log (last 50 events)">
         <Table<ModsecAuditEntry>
           rowKey={(_, idx) => String(idx)}
           dataSource={audit.data ?? []}
-          columns={auditColumns}
           loading={audit.isLoading}
           pagination={false}
           size="small"
@@ -220,7 +208,33 @@ export const AdminSecurityModsec = () => {
             ),
           }}
           scroll={{ x: "max-content", y: 360 }}
-        />
+        >
+          <Table.Column<ModsecAuditEntry>
+            dataIndex="ts"
+            title="When"
+            key="ts"
+            width={200}
+            render={(s?: string) => fmtTime(s)}
+          />
+          <Table.Column<ModsecAuditEntry> dataIndex="client" title="Client" key="client" width={140} />
+          <Table.Column<ModsecAuditEntry> dataIndex="uri" title="URI" key="uri" ellipsis />
+          <Table.Column<ModsecAuditEntry>
+            dataIndex="rule_ids"
+            title="Rules"
+            key="rule_ids"
+            width={220}
+            render={(ids?: string[]) =>
+              ids && ids.length > 0 ? ids.map((id) => <Tag key={id}>{id}</Tag>) : "—"
+            }
+          />
+          <Table.Column<ModsecAuditEntry>
+            dataIndex="severity"
+            title="Sev"
+            key="severity"
+            width={80}
+            render={(s?: string) => s ?? "—"}
+          />
+        </Table>
       </Card>
     </Space>
   );

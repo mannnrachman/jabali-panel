@@ -1636,6 +1636,12 @@ gmysql-dbname=jabali_pdns
 gmysql-user=jabali_pdns
 gmysql-password=${pdns_password}
 
+# DNSSEC (M15, ADR-0057): enable the gmysql-backed DNSSEC data path.
+# Without this, pdnsutil secure-zone errors out with "no DNSSEC capable
+# backends". The schema already provisions cryptokeys / tsigkeys /
+# domainmetadata tables for exactly this path.
+gmysql-dnssec=yes
+
 # Split-port binding (M6.3, ADR-0047): port 53 on the host's public IP
 # keeps serving authoritative queries from the open internet, while
 # loopback moves to port 5300 — reserved for pdns-recursor to forward

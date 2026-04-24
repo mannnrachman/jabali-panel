@@ -1440,7 +1440,14 @@ install_redis() {
   # group stays `redis` for AOF file permissions).
   install -d -m 0755 -o root -g root /etc/systemd/system/redis-server.service.d
   local unit_dropin="/etc/systemd/system/redis-server.service.d/10-jabali-socket.conf"
-  local unit_desired=$'# Managed by jabali install.sh — M14 / ADR-0059. Do NOT hand-edit.\n[Service]\nRuntimeDirectory=redis\nRuntimeDirectoryMode=0750\nSupplementaryGroups=jabali-sockets\nExecStartPost=/bin/sh -c \'i=0; while [ ! -S /run/redis/redis.sock ] && [ $i -lt 20 ]; do sleep 0.1; i=$((i+1)); done; chgrp jabali-sockets /run/redis/redis.sock && chmod 0660 /run/redis/redis.sock\'\n'
+  # Debian's stock redis-server.service hardens exec to
+  # `NoExecPaths=/` + `ExecPaths=/usr/bin/redis-server /usr/lib /lib`,
+  # so any ExecStartPost that calls /bin/sh, /usr/bin/chgrp, or
+  # /usr/bin/chmod fails with code=203/EXEC. The drop-in must extend
+  # ExecPaths= to include the binaries we invoke. We also drop the
+  # /bin/sh wait-loop: Type=notify means ExecStartPost fires after
+  # redis sent sd_notify(READY=1), so the socket already exists.
+  local unit_desired=$'# Managed by jabali install.sh — M14 / ADR-0059. Do NOT hand-edit.\n[Service]\nRuntimeDirectory=redis\nRuntimeDirectoryMode=0750\nSupplementaryGroups=jabali-sockets\nExecPaths=/usr/bin/chgrp /usr/bin/chmod\nExecStartPost=/usr/bin/chgrp jabali-sockets /run/redis/redis.sock\nExecStartPost=/usr/bin/chmod 0660 /run/redis/redis.sock\n'
 
   if [[ ! -f "$unit_dropin" ]] || ! cmp -s <(printf '%s' "$unit_desired") "$unit_dropin"; then
     _log "installing Redis systemd drop-in → $unit_dropin"

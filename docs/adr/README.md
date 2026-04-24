@@ -41,6 +41,9 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0027](0027-m11-filebrowser-integration.md) | M11 File manager via filebrowser + proxy auth | Accepted |
 | [0028](0028-m12-sftp-integration.md) | M12 SFTP via openssh group-based Match (no chroot) | Accepted |
 | [0029](0029-m8-cron-systemd-user-timers.md) | M8 Cron via systemd-user timers with closed-set allowlist | Accepted |
+| [0053](0053-crowdsec-over-fail2ban.md) | CrowdSec over fail2ban for behaviour-based IP blocking | Accepted |
+| [0054](0054-ufw-over-iptables.md) | UFW over raw iptables/nftables for the host firewall | Accepted |
+| [0055](0055-modsecurity-per-domain.md) | ModSecurity-nginx + OWASP CRS, per-domain toggle | Accepted |
 
 ## Decision Categories
 

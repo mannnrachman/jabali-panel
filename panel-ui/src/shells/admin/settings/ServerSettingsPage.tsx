@@ -37,8 +37,10 @@ function useNotify() {
 }
 
 import { apiClient } from "../../../apiClient";
+import { BrandingCard } from "./BrandingCard";
 import { DNSResolversCard } from "./DNSResolversCard";
 import { EmailCard } from "./EmailCard";
+import { PageTemplatesCard } from "./PageTemplatesCard";
 
 type ServerSettings = {
   id: number;
@@ -480,8 +482,17 @@ const DNSSettingsTab = () => {
   );
 };
 
+type SettingsTabKey = "general" | "dns" | "email" | "branding";
+
+const BrandingSettingsTab = () => (
+  <>
+    <BrandingCard />
+    <PageTemplatesCard />
+  </>
+);
+
 export const ServerSettingsPage = () => {
-  const [activeTab, setActiveTab] = useState<"general" | "dns" | "email">("general");
+  const [activeTab, setActiveTab] = useState<SettingsTabKey>("general");
 
   return (
     <div style={{ maxWidth: 960 }}>
@@ -489,7 +500,7 @@ export const ServerSettingsPage = () => {
         Server Settings
       </Typography.Title>
       <Typography.Paragraph type="secondary">
-        Server identity, DNS nameserver names, and administrative contact info.
+        Server identity, DNS nameserver names, branding, and page templates.
       </Typography.Paragraph>
 
       {/* Card.tabList renders the tab strip attached to the card body —
@@ -500,13 +511,15 @@ export const ServerSettingsPage = () => {
           { key: "general", tab: "General" },
           { key: "dns", tab: "DNS" },
           { key: "email", tab: "Email" },
+          { key: "branding", tab: "Branding" },
         ]}
         activeTabKey={activeTab}
-        onTabChange={(k) => setActiveTab(k as "general" | "dns" | "email")}
+        onTabChange={(k) => setActiveTab(k as SettingsTabKey)}
       >
         {activeTab === "general" && <GeneralSettingsTab />}
         {activeTab === "dns" && <DNSSettingsTab />}
         {activeTab === "email" && <EmailCard />}
+        {activeTab === "branding" && <BrandingSettingsTab />}
       </Card>
     </div>
   );

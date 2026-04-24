@@ -40,6 +40,7 @@ import { AdminIPCreate } from "./shells/admin/ips/AdminIPCreate";
 import { AdminIPEdit } from "./shells/admin/ips/AdminIPEdit";
 import { AdminIPList } from "./shells/admin/ips/AdminIPList";
 import { NotificationsTabsPage } from "./shells/admin/notifications/NotificationsTabsPage";
+import { useApplyBrandingToTitle } from "./hooks/useBranding";
 import { AdminSecurityPage } from "./shells/admin/security/AdminSecurityPage";
 import { PackageCreate } from "./shells/admin/packages/PackageCreate";
 import { PackageEdit } from "./shells/admin/packages/PackageEdit";
@@ -99,6 +100,11 @@ function PublicOnly({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+const BrandingTitleApplier = () => {
+  useApplyBrandingToTitle();
+  return null;
+};
+
 const ThemedApp = () => {
   const { mode } = useThemeMode();
   const muiConfig = useMuiTheme(mode);
@@ -109,6 +115,7 @@ const ThemedApp = () => {
         {...muiConfig}
         renderEmpty={() => <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />}
       >
+        <BrandingTitleApplier />
         <Routes>
           {/* ---------------- admin shell ---------------- */}
           <Route

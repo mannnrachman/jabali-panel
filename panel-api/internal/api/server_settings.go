@@ -88,6 +88,7 @@ type updateServerSettingsRequest struct {
 	SSHPort             *uint16 `json:"ssh_port,omitempty"`
 	SSHPasswordAuth     *bool   `json:"ssh_password_auth,omitempty"`
 	SSHUserPasswordAuth *bool   `json:"ssh_user_password_auth,omitempty"`
+	PanelBrandText      *string `json:"panel_brand_text,omitempty"`
 }
 
 func (h *serverSettingsHandler) update(c *gin.Context) {
@@ -155,6 +156,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.SSHUserPasswordAuth != nil {
 		current.SSHUserPasswordAuth = *req.SSHUserPasswordAuth
+	}
+	if req.PanelBrandText != nil {
+		current.PanelBrandText = strings.TrimSpace(*req.PanelBrandText)
 	}
 
 	// Validate — reject obviously bad input so we don't persist garbage.
@@ -264,6 +268,10 @@ func validateServerSettings(s *models.ServerSettings) error {
 	// SSH port
 	if s.SSHPort < 1 || s.SSHPort > 65535 {
 		return fmt.Errorf("ssh_port: must be between 1 and 65535")
+	}
+	// Panel brand text: free-form but capped at 60 chars.
+	if len(s.PanelBrandText) > 60 {
+		return fmt.Errorf("panel_brand_text: must be <= 60 chars")
 	}
 	return nil
 }

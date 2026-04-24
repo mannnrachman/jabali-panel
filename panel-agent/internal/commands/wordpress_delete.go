@@ -109,7 +109,7 @@ func wordpressDeleteHandler(ctx context.Context, params json.RawMessage) (any, e
 		if _, err := os.Stat(indexPath); os.IsNotExist(err) {
 			// Best-effort: a failed restore leaves the docroot empty
 			// (visible 403) — annoying but not data-destroying.
-			_ = writeDefaultIndex(ctx, indexPath, req.OSUser, req.Domain, req.Docroot)
+			_ = writeDefaultIndex(ctx, indexPath, req.OSUser, req.Domain, req.Docroot, "")
 		}
 	}
 

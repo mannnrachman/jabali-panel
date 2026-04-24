@@ -64,6 +64,11 @@ type domainCreateParams struct {
 	// false → vhost stays modsec-free.
 	ModSecEnabled        bool `json:"modsec_enabled,omitempty"`
 	ModSecGlobalEnabled  bool `json:"modsec_global_enabled,omitempty"`
+
+	// M28 — operator-editable default index body. Empty string falls
+	// back to defaultIndexTemplate below. Go text/template syntax with
+	// {{.Domain}}, {{.Username}}, {{.DocRoot}} placeholders.
+	DefaultIndexTemplate string `json:"default_index_template,omitempty"`
 }
 
 // domainCreateResponse is the output shape for domain.create.
@@ -427,7 +432,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 	_, htmlErr := os.Stat(indexPath)
 	_, phpErr := os.Stat(indexPHPPath)
 	if os.IsNotExist(htmlErr) && os.IsNotExist(phpErr) {
-		if werr := writeDefaultIndex(ctx, indexPath, p.Username, p.Domain, p.DocRoot); werr != nil {
+		if werr := writeDefaultIndex(ctx, indexPath, p.Username, p.Domain, p.DocRoot, p.DefaultIndexTemplate); werr != nil {
 			// non-fatal — the vhost still works, it'll just 403 until
 			// the user uploads content.
 			log.Printf("domain.create: failed to write default index.html for %s: %v", p.Domain, werr)
@@ -456,8 +461,8 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 	}, nil
 }
 
-func writeDefaultIndex(ctx context.Context, path, username, domain, docRoot string) error {
-	const tmpl = `<!DOCTYPE html>
+func writeDefaultIndex(ctx context.Context, path, username, domain, docRoot, customTmpl string) error {
+	const builtin = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -483,9 +488,19 @@ func writeDefaultIndex(ctx context.Context, path, username, domain, docRoot stri
 </html>
 `
 
-	t, err := template.New("index").Parse(tmpl)
+	tmplBody := builtin
+	if strings.TrimSpace(customTmpl) != "" {
+		tmplBody = customTmpl
+	}
+	t, err := template.New("index").Parse(tmplBody)
 	if err != nil {
-		return fmt.Errorf("parse template: %w", err)
+		// Malformed operator template — don't crash domain.create;
+		// fall back to the built-in so the docroot still serves
+		// something. Logged at the caller.
+		t, err = template.New("index").Parse(builtin)
+		if err != nil {
+			return fmt.Errorf("parse template: %w", err)
+		}
 	}
 
 	// Write to a temp file first, then rename — avoids a half-written

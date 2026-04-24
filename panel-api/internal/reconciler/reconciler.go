@@ -59,6 +59,19 @@ type Reconciler struct {
 	// rebind pass is skipped entirely (lets existing test harnesses
 	// pass without touching the new repo).
 	managedIPs repository.ManagedIPRepository
+	// M28 — operator-editable page templates. Used only to pipe the
+	// domain_default_index body into the agent's domain.create call
+	// so a fresh docroot gets the customised welcome page rather than
+	// the agent's baked-in default.
+	pageTemplates repository.PageTemplateRepository
+}
+
+// WithPageTemplates injects the M28 page template repo. When nil (the
+// default in tests), domain.create params don't include the body and
+// the agent falls back to its compiled-in template.
+func (r *Reconciler) WithPageTemplates(repo repository.PageTemplateRepository) *Reconciler {
+	r.pageTemplates = repo
+	return r
 }
 
 // WithSSLCerts adds SSL certificate repository support to the reconciler.
@@ -962,6 +975,17 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 			params["modsec_global_enabled"] = s.ModSecGlobalEnabled
 		}
 		settingsCancel()
+	}
+
+	// M28 — operator-editable default index body. Handed to the agent
+	// verbatim as a Go text/template string; empty means "use agent's
+	// baked-in default". Safe when pageTemplates isn't wired (tests).
+	if r.pageTemplates != nil {
+		tplCtx, tplCancel := context.WithTimeout(ctx, 5*time.Second)
+		if row, err := r.pageTemplates.Get(tplCtx, models.PageTemplateDomainDefaultIndex); err == nil && row != nil {
+			params["default_index_template"] = row.Content
+		}
+		tplCancel()
 	}
 
 	// Fetch SSL certificate paths for the vhost. We serve any cert whose

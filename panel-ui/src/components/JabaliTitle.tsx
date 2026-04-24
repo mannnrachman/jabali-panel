@@ -1,16 +1,17 @@
 // JabaliTitle — brand lockup (SVG logo + wordmark) at the top of the Sider.
 //
 // The SVG swaps between light/dark variants to stay legible against the
-// current sider background. The wordmark uses plain AntD Typography.Title
-// defaults (no hand-picked font size, weight, letter-spacing, or color).
-// When the Sider collapses we render only the logo.
+// current sider background. Operator branding (M28) overrides both the
+// logo source and the wordmark text via useBranding; empty brand text
+// falls back to "Jabali".
 import { Typography } from "antd";
 import { useThemeMode } from "../theme/ThemeModeContext";
+import { logoURL, useBranding } from "../hooks/useBranding";
 
 interface JabaliTitleProps {
   collapsed?: boolean;
   text?: string;
-  /** Show the "Jabali" wordmark next to the logo. Defaults to true.
+  /** Show the wordmark next to the logo. Defaults to true.
    * JabaliHeader passes false below sm so the logo alone keeps the
    * header readable on xs phones. */
   showWordmark?: boolean;
@@ -18,22 +19,25 @@ interface JabaliTitleProps {
 
 export function JabaliTitle({
   collapsed = false,
-  text = "Jabali",
+  text,
   showWordmark = true,
 }: JabaliTitleProps) {
   const { mode } = useThemeMode();
-  const src = mode === "dark" ? "/images/jabali_logo_dark.svg" : "/images/jabali_logo.svg";
+  const { brandText, hasLogoLight, hasLogoDark } = useBranding();
+  const variant: "light" | "dark" = mode === "dark" ? "dark" : "light";
+  const src = logoURL(variant, variant === "dark" ? hasLogoDark : hasLogoLight);
+  const label = text ?? brandText ?? "Jabali";
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
       <img
         src={src}
-        alt="Jabali"
+        alt={label || "Jabali"}
         style={{ height: 32, width: "auto", flexShrink: 0 }}
       />
       {!collapsed && showWordmark && (
         <Typography.Title level={2} style={{ margin: 0 }}>
-          {text}
+          {label || "Jabali"}
         </Typography.Title>
       )}
     </div>

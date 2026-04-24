@@ -65,6 +65,15 @@ type ServerSettings struct {
 	ModSecGlobalEnabled bool  `gorm:"column:modsec_global_enabled;type:tinyint(1);not null;default:0"        json:"modsec_global_enabled"`
 	ModSecParanoiaLevel uint8 `gorm:"column:modsec_paranoia_level;type:tinyint unsigned;not null;default:1"  json:"modsec_paranoia_level"`
 
+	// M28 Panel Branding. PanelBrandText is the short label next to
+	// the logo and in the browser title. LogoLightPath / LogoDarkPath
+	// hold absolute on-disk paths to operator-uploaded logo files
+	// under /var/lib/jabali-panel/branding/; empty string means "no
+	// logo uploaded — fall back to the built-in default".
+	PanelBrandText string `gorm:"column:panel_brand_text;type:varchar(60);not null;default:''" json:"panel_brand_text"`
+	LogoLightPath  string `gorm:"column:logo_light_path;type:varchar(255);not null;default:''" json:"logo_light_path"`
+	LogoDarkPath   string `gorm:"column:logo_dark_path;type:varchar(255);not null;default:''"  json:"logo_dark_path"`
+
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 

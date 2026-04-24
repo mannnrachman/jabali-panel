@@ -141,6 +141,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		limitOverridesRepo := repository.NewUserLimitOverrideRepository(sharedDB)
 
 		serverSettingsRepo := repository.NewServerSettingsRepository(sharedDB)
+		pageTemplateRepo := repository.NewPageTemplateRepository(sharedDB)
 
 		// SSO service for phpMyAdmin
 		ssoService := sso.NewService(
@@ -157,6 +158,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.SSO = ssoService
 
 		deps.ServerSettings = serverSettingsRepo
+		deps.PageTemplates = pageTemplateRepo
 		sshKeyRepo := repository.NewSSHKeyRepository(sharedDB)
 		deps.SSHKeys = sshKeyRepo
 
@@ -202,6 +204,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		rec.WithLimitOverrides(limitOverridesRepo)
 		managedIPRepo := repository.NewManagedIPRepository(sharedDB)
 		rec.WithManagedIPs(managedIPRepo)
+		rec.WithPageTemplates(pageTemplateRepo)
 		deps.ManagedIPs = managedIPRepo
 		deps.Reconciler = rec
 		deps.DNSZones = dnsZoneRepo
@@ -383,6 +386,19 @@ func runServe(cmd *cobra.Command, args []string) error {
 				log.Error("failed to seed VAPID keypair", "err", err)
 			} else if generated {
 				log.Info("generated VAPID keypair for Web Push", "subject_host", row.Hostname)
+			}
+
+			// M28 first-boot seed: populate page_templates with the
+			// baked-in default bodies for keys operators can later
+			// override (domain default index, error pages). Migration
+			// 000068 only creates the table; rows live here per
+			// feedback_migration_data_seed_ordering.
+			if pageTemplateRepo != nil {
+				if seeded, err := pageTemplateRepo.EnsureDefaults(seedCtx); err != nil {
+					log.Error("failed to seed page_templates defaults", "err", err)
+				} else if seeded > 0 {
+					log.Info("seeded default page_templates", "count", seeded)
+				}
 			}
 		}()
 	}

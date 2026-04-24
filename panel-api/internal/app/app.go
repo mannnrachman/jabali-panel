@@ -42,6 +42,7 @@ type Deps struct {
 	Agent               agent.AgentInterface
 	Reconciler          *reconciler.Reconciler
 	ServerSettings      repository.ServerSettingsRepository
+	PageTemplates       repository.PageTemplateRepository
 	DNSZones            repository.DNSZoneRepository
 	DNSRecords          repository.DNSRecordRepository
 	SSLCerts            repository.SSLCertificateRepository
@@ -184,6 +185,16 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 	// gate. Registered off the root router (not v1) so it doesn't pick
 	// up RequireKratosSession.
 	api.RegisterNotificationsInternalRoutes(r.Group("/api/v1"), deps.NotificationQueue)
+
+	// M28 — public branding endpoints (logo file + brand text). Lives
+	// off the root API group with NO auth so the pre-login page can
+	// render the operator's logo + brand text.
+	if deps.ServerSettings != nil {
+		api.RegisterPublicBrandingRoutes(r.Group("/api/v1"), api.BrandingHandlerConfig{
+			Repo: deps.ServerSettings,
+			Log:  deps.Log,
+		})
+	}
 
 	// Webmail SSO landing (M6 Step 8 Phase B). Lives at /sso/webmail on
 	// the engine root, not /api/v1, because it's served from
@@ -351,6 +362,18 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Repo:  deps.ServerSettings,
 				Agent: deps.Agent,
 				Log:   deps.Log,
+			})
+			// M28 — admin logo upload/delete. Public GET lives on the
+			// root router above so it's reachable pre-auth.
+			api.RegisterBrandingRoutes(v1, api.BrandingHandlerConfig{
+				Repo: deps.ServerSettings,
+				Log:  deps.Log,
+			})
+		}
+		if deps.PageTemplates != nil {
+			api.RegisterPageTemplatesRoutes(v1, api.PageTemplatesHandlerConfig{
+				Repo: deps.PageTemplates,
+				Log:  deps.Log,
 			})
 		}
 		// M6.4 Settings → Email: read-only panel-primary domain card.

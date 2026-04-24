@@ -91,7 +91,7 @@ func drupalDeleteHandler(ctx context.Context, params json.RawMessage) (any, erro
 	if req.Subdirectory == "" && req.Domain != "" {
 		indexPath := filepath.Join(req.Docroot, "index.html")
 		if _, err := os.Stat(indexPath); os.IsNotExist(err) {
-			_ = writeDefaultIndex(ctx, indexPath, req.OSUser, req.Domain, req.Docroot)
+			_ = writeDefaultIndex(ctx, indexPath, req.OSUser, req.Domain, req.Docroot, "")
 		}
 	}
 

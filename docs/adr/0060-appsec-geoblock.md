@@ -86,20 +86,43 @@ Three-state enum: `off`, `allow`, `deny`.
 ### Enforcement path
 
 `install.sh install_crowdsec_appsec` drops the AppSec acquisition
-config + base collection + initial off-mode rule. This runs the engine
-but does not block any traffic yet — nginx has to proxy to the AppSec
-endpoint for enforcement.
+config + base collection + initial off-mode rule. The engine listens
+on TCP `127.0.0.1:7422` (loopback only — no public bind).
 
-Nginx wiring ships in the runbook rather than install.sh to give
-operators control of rollout. Two options:
+`install.sh install_crowdsec_nginx_bouncer` installs the upstream
+`crowdsec-nginx-bouncer` package and registers a pinned bouncer named
+`jabali-nginx`. The bouncer hooks nginx's `access_by_lua` phase, so
+every vhost is protected with no per-server snippet. Config:
 
-1. **Global**: add the `auth_request` snippet to `http {}` → every vhost
-   enforces. Simplest for "server-wide" policy.
-2. **Per-vhost**: include the snippet inside specific `server {}` blocks.
-   Useful when one vhost has different tolerance.
+```
+ENABLED=true
+API_URL=              # empty — LAPI stays socket-only via firewall-bouncer
+API_KEY=<generated>
+APPSEC_URL=http://127.0.0.1:7422
+APPSEC_FAILURE_ACTION=passthrough
+ALWAYS_SEND_TO_APPSEC=true
+SSL_VERIFY=false
+```
 
-Runbook documents the `/etc/nginx/snippets/jabali-appsec.conf` snippet
-and how to include it.
+### Why TCP loopback, not unix socket
+
+The bouncer's Lua HTTP client (`lua-resty-http request_uri`) speaks TCP
+only — no unix socket support. We considered keeping AppSec on a unix
+socket + a custom `auth_request` proxy shim (nginx can speak unix
+sockets), but that sacrifices the upstream-maintained Lua bouncer for
+a hand-rolled wiring we own. TCP loopback on `127.0.0.1:7422` keeps
+the official bouncer path while staying consistent with ADR-0050's
+"no public ports" principle — the listener is reachable only from the
+host itself.
+
+### Why `API_URL=` (empty)
+
+The nginx-bouncer can both fetch LAPI decisions *and* forward requests
+to AppSec. We only want AppSec — LAPI enforcement already happens at
+L3/L4 via `crowdsec-firewall-bouncer`, and duplicating it at L7 would
+double-query LAPI on every request. Empty `API_URL` + populated
+`APPSEC_URL` tells the bouncer to skip LAPI and run AppSec-only, which
+is exactly the split we want.
 
 ### Data model
 
@@ -132,12 +155,18 @@ dropping the LAPI socket. Fall back to `restart` if reload fails
   whether the ban is transient or permanent)
 - Single YAML rule = easy to inspect + grep from the host
 - DB-as-truth stays intact (per ADR-0002)
+- Upstream-maintained nginx bouncer: protection applies to every vhost
+  automatically, no per-server snippet to maintain, no risk of operator
+  forgetting to include it on a new site
 
 ### Neutral
 
-- Requires nginx `auth_request` wiring — operator configures per runbook
-- AppSec evaluation adds a subrequest per request — measurable latency
-  on high-RPS hosts. Mitigation: operator selects vhosts where it applies
+- AppSec evaluation adds a Lua HTTP round-trip per request — measurable
+  latency on high-RPS hosts. `APPSEC_FAILURE_ACTION=passthrough` means
+  bouncer-↔-engine connectivity failures fail open (availability over
+  strictness).
+- TCP loopback listener on `127.0.0.1:7422` — not publicly bound but
+  adds one more local port. Acceptable per ADR-0050 (loopback ≠ public).
 
 ### Risks
 
@@ -159,5 +188,9 @@ dropping the LAPI socket. Fall back to `restart` if reload fails
 - Panel-api `GET/PUT /admin/security/crowdsec/appsec/geoblock`
   via `RegisterSecurityAppSecRoutes`
 - UI card `AppSecGeoblockCard` on the CrowdSec tab
-- install.sh helper `install_crowdsec_appsec` drops acquis + initial rule
-- Runbook section on nginx enforcement wiring
+- install.sh helpers:
+  - `install_crowdsec_appsec` — AppSec engine on `127.0.0.1:7422` +
+    acquisition config + base collection + initial off-mode rule
+  - `install_crowdsec_nginx_bouncer` — upstream bouncer package +
+    pinned `jabali-nginx` bouncer + AppSec-only config
+- Runbook section on admin UI usage + verification commands

@@ -134,42 +134,19 @@ Three modes:
   so private IPs + unresolvable geo still work)
 - **Deny-list** — requests from listed countries → 403
 
-Engine side runs as soon as `install_crowdsec_appsec` has finished
-(acquis socket + base collection + rule file). **Nginx enforcement is
-opt-in.** AppSec only acts on requests that nginx proxies into it;
-apply the snippet below to either `http {}` (global) or specific
-`server {}` blocks (per-vhost).
+Enforcement runs automatically. `install_crowdsec_appsec` starts the
+AppSec engine on `127.0.0.1:7422`; `install_crowdsec_nginx_bouncer`
+installs the upstream `crowdsec-nginx-bouncer` package, registers a
+pinned bouncer named `jabali-nginx`, and writes
+`/etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf` with
+`APPSEC_URL=http://127.0.0.1:7422` + `ALWAYS_SEND_TO_APPSEC=true` +
+`APPSEC_FAILURE_ACTION=passthrough`. The bouncer hooks nginx's
+`access_by_lua` phase, so every vhost is protected with no per-server
+wiring.
 
-Snippet — save as `/etc/nginx/snippets/jabali-appsec.conf`:
-
-```nginx
-# CrowdSec AppSec — forward every request to the AppSec engine for
-# pre-evaluation. 200 = allow, 403 = drop with reason from the rule.
-location = /jabali-appsec-check {
-    internal;
-    proxy_pass http://unix:/run/crowdsec/appsec.sock:/;
-    proxy_set_header X-Crowdsec-Appsec-Ip            $remote_addr;
-    proxy_set_header X-Crowdsec-Appsec-Host          $host;
-    proxy_set_header X-Crowdsec-Appsec-Verb          $request_method;
-    proxy_set_header X-Crowdsec-Appsec-Uri           $request_uri;
-    proxy_set_header X-Crowdsec-Appsec-User-Agent    $http_user_agent;
-    proxy_pass_request_body off;
-    proxy_set_header Content-Length "";
-}
-```
-
-Then on each protected `server {}`:
-
-```nginx
-auth_request /jabali-appsec-check;
-error_page 403 = @appsec_forbidden;
-location @appsec_forbidden {
-    return 403 "Forbidden by AppSec geoblock policy.\n";
-}
-include snippets/jabali-appsec.conf;
-```
-
-After editing: `nginx -t && systemctl reload nginx`.
+`API_URL=` (empty) — LAPI stays socket-only through the firewall-bouncer.
+The nginx-bouncer talks AppSec-only over the loopback TCP port. No
+public port is opened; port 7422 is localhost-bound.
 
 To verify a country ban is taking effect:
 
@@ -191,9 +168,15 @@ cscli metrics show appsec
 - Requests pass that shouldn't → check
   `cscli parsers list | grep geoip-enrich` — enricher must be installed
   (install.sh does this, but a manual `cscli parsers remove …` regresses).
-- `nginx: [error] auth_request: access denied` on every request → probably
-  the AppSec socket isn't there. `ls -l /run/crowdsec/appsec.sock` and
-  `journalctl -u crowdsec -n 50`.
+- All traffic 403 / nginx error log shows bouncer connect failures →
+  verify AppSec is listening: `ss -lnt 'sport = :7422'` and
+  `journalctl -u crowdsec -n 50`. `APPSEC_FAILURE_ACTION=passthrough`
+  means bouncer-↔-engine connectivity failures fail open, so 403s on
+  every request mean the rule is evaluating and denying — check
+  `cscli metrics show appsec` for drop counts.
+- Bouncer not enforcing at all → `cscli bouncers list` should show
+  `jabali-nginx`; `nginx -T | grep -i crowdsec` should show the Lua
+  access hook active.
 - Allow-list locked you out → edit
   `/etc/crowdsec/appsec-rules/jabali-geoblock.yaml` on the host, set
   `# jabali-mode: off` in the header, wipe the `pre_eval:` block, then

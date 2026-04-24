@@ -3820,14 +3820,16 @@ install_crowdsec_appsec() {
   #   1. geoip-enrich parser so the runtime has Country.IsoCode
   #   2. appsec-virtual-patching collection (AppSec engine base rules)
   #   3. /etc/crowdsec/acquis.d/jabali-appsec.yaml — AppSec HTTP
-  #      listener on /run/crowdsec/appsec.sock
-  #   4. /etc/crowdsec/appsec-configs/jabali-appsec.yaml — config
-  #      referencing our rule + the vendor ruleset
-  #   5. /etc/crowdsec/appsec-rules/jabali-geoblock.yaml — initial
+  #      listener on 127.0.0.1:7422 (TCP loopback, same posture as
+  #      Stalwart admin-http 127.0.0.1:8080). Unix socket would be
+  #      stricter but the upstream crowdsec-nginx-bouncer's Lua HTTP
+  #      client (lua-resty-http request_uri) doesn't speak unix.
+  #      Loopback-only = not internet-reachable, acceptable per ADR-0050.
+  #   4. /etc/crowdsec/appsec-rules/jabali-geoblock.yaml — initial
   #      mode=off (agent rewrites on every admin Apply)
-  # Nginx-side enforcement (`auth_request` to the AppSec endpoint)
-  # is documented in plans/m26-security-tab-runbook.md — operator
-  # opts in per-vhost.
+  # Nginx enforcement ships via install_crowdsec_nginx_bouncer below
+  # (the upstream crowdsec-nginx-bouncer package). Every vhost gets
+  # AppSec evaluation automatically — no per-vhost snippet required.
   _log "configuring CrowdSec AppSec (server-wide geoblock rule)"
 
   # 1. GeoIP enricher — prereq for GeoIPEnrich expr.
@@ -3843,13 +3845,12 @@ install_crowdsec_appsec() {
       cscli collections install crowdsecurity/appsec-virtual-patching
   fi
 
-  # 3. AppSec acquisition — listener on a unix socket so the nginx side
-  #    can proxy_pass to http://unix:/run/crowdsec/appsec.sock without
-  #    opening a TCP port (ADR-0050).
+  # 3. AppSec acquisition — listener on 127.0.0.1:7422 (the CrowdSec
+  #    convention; bouncer talks to it over loopback).
   local acquis_dir="/etc/crowdsec/acquis.d"
   install -d -m 0755 "$acquis_dir"
   local acquis_file="$acquis_dir/jabali-appsec.yaml"
-  local desired_acquis=$'# Managed by jabali install.sh — M26 AppSec geoblock.\n# AppSec HTTP listener on unix socket. Nginx proxies into here via\n# auth_request (runbook documents the per-vhost snippet).\nappsec_config: crowdsecurity/appsec-default\nlabels:\n  type: appsec\nlisten_addr: /run/crowdsec/appsec.sock\nsource: appsec\n'
+  local desired_acquis=$'# Managed by jabali install.sh — M26 AppSec geoblock.\n# TCP loopback listener. crowdsec-nginx-bouncer dials this via\n# APPSEC_URL=http://127.0.0.1:7422. Not exposed outside the host.\nappsec_config: crowdsecurity/appsec-default\nlabels:\n  type: appsec\nlisten_addr: 127.0.0.1:7422\nsource: appsec\n'
   if [[ ! -f "$acquis_file" ]] || ! cmp -s <(printf '%s' "$desired_acquis") "$acquis_file"; then
     _log "writing $acquis_file"
     local tmp
@@ -3857,6 +3858,16 @@ install_crowdsec_appsec() {
     printf '%s' "$desired_acquis" >"$tmp"
     install -m 0644 -o root -g root "$tmp" "$acquis_file"
     rm -f "$tmp"
+  fi
+
+  # Remove legacy appsec.sock ExecStartPost lines if the previous
+  # socket-based install left them — they'd block startup now that
+  # AppSec binds TCP (the `until [ -S ... ]` loop would never fire).
+  local dropin="/etc/systemd/system/crowdsec.service.d/10-jabali-socket.conf"
+  if [[ -f "$dropin" ]] && grep -q 'appsec.sock' "$dropin"; then
+    _log "purging legacy appsec.sock ExecStartPost from $dropin"
+    sed -i '/appsec\.sock/d' "$dropin"
+    systemctl daemon-reload
   fi
 
   # 4. Initial rule file — mode=off so a first install doesn't block
@@ -3875,37 +3886,126 @@ install_crowdsec_appsec() {
     rm -f "$tmp"
   fi
 
-  # 5. Socket dir — crowdsec writes /run/crowdsec/appsec.sock under
-  #    the same RuntimeDirectory=crowdsec the LAPI drop-in sets, so no
-  #    extra drop-in needed. Permissions handled by the same chmod/chgrp
-  #    as the LAPI socket via an extended ExecStartPost block.
-  local dropin="/etc/systemd/system/crowdsec.service.d/10-jabali-socket.conf"
-  if [[ -f "$dropin" ]] && ! grep -q 'appsec.sock' "$dropin"; then
-    _log "extending crowdsec drop-in with appsec.sock perms"
-    # Append the two extra ExecStartPost lines (chmod + chgrp for the
-    # AppSec socket). We append rather than rewrite to preserve the
-    # LAPI socket lines already present.
-    cat >>"$dropin" <<'APPSEC_DROPIN'
-ExecStartPost=/bin/sh -c 'until [ -S /run/crowdsec/appsec.sock ]; do sleep 0.1; done'
-ExecStartPost=/bin/chmod 0660 /run/crowdsec/appsec.sock
-ExecStartPost=/bin/chgrp jabali /run/crowdsec/appsec.sock
-APPSEC_DROPIN
-    systemctl daemon-reload
-    systemctl restart crowdsec
-  else
-    systemctl reload crowdsec 2>/dev/null || systemctl restart crowdsec
-  fi
+  # Reload or restart to pick up acquis + rule changes.
+  systemctl reload crowdsec 2>/dev/null || systemctl restart crowdsec
 
-  # Wait for the AppSec socket — appears a beat after crowdsec is active.
+  # Wait for AppSec TCP listener to come up — `ss -lnt sport = :7422`
+  # is the signal the goroutine bound. Cap at 10s.
   local i
   for i in 1 2 3 4 5 6 7 8 9 10; do
-    if [[ -S /run/crowdsec/appsec.sock ]]; then break; fi
+    if ss -lnt 'sport = :7422' 2>/dev/null | grep -q 127.0.0.1; then break; fi
     sleep 1
   done
-  if [[ -S /run/crowdsec/appsec.sock ]]; then
-    _ok "CrowdSec AppSec live at /run/crowdsec/appsec.sock"
+  if ss -lnt 'sport = :7422' 2>/dev/null | grep -q 127.0.0.1; then
+    _ok "CrowdSec AppSec live at 127.0.0.1:7422"
   else
-    _warn "CrowdSec AppSec socket did not appear — check 'cscli metrics' + journalctl -u crowdsec"
+    _warn "CrowdSec AppSec listener did not appear on :7422 — check journalctl -u crowdsec"
+  fi
+}
+
+install_crowdsec_nginx_bouncer() {
+  # Upstream crowdsec-nginx-bouncer (Lua-based access_by_lua_block)
+  # wires every HTTP request into the AppSec engine automatically —
+  # no per-vhost auth_request snippet needed. See ADR-0060.
+  #
+  # Configuration uses `API_URL=""` + `APPSEC_URL=http://127.0.0.1:7422`
+  # so the bouncer is AppSec-only. LAPI-sourced L3/L4 decisions stay
+  # the province of crowdsec-firewall-bouncer-nftables (installed in
+  # install_crowdsec) — running nginx-bouncer alongside firewall-
+  # bouncer for LAPI decisions would double-enforce with no added
+  # benefit.
+  _log "configuring crowdsec-nginx-bouncer (AppSec enforcement)"
+
+  if ! dpkg -s crowdsec-nginx-bouncer >/dev/null 2>&1; then
+    _spin "apt install crowdsec-nginx-bouncer" \
+      apt-get install -y -qq --no-install-recommends crowdsec-nginx-bouncer
+  else
+    _log "crowdsec-nginx-bouncer already installed"
+  fi
+
+  local bouncer_conf="/etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf"
+  if [[ ! -f "$bouncer_conf" ]]; then
+    _warn "$bouncer_conf missing after package install — bouncer postinst may have failed"
+    return
+  fi
+
+  # Mint an API key via cscli if one isn't already registered for us.
+  # Bouncer name pinned (not SUFFIX-randomised) so repeated install
+  # runs don't accumulate stale bouncers.
+  local bouncer_name="jabali-nginx"
+  local api_key
+  if cscli bouncers list -o json 2>/dev/null | python3 -c "import json,sys; [sys.exit(0) for b in json.load(sys.stdin) if b.get('name')=='$bouncer_name'] or sys.exit(1)" 2>/dev/null; then
+    # Bouncer exists — reuse the key already in the config file (the
+    # package postinst or our previous run set it).
+    api_key="$(awk -F= '/^API_KEY=/{print $2; exit}' "$bouncer_conf" | tr -d '[:space:]')"
+    if [[ -z "$api_key" ]]; then
+      _log "bouncer '$bouncer_name' exists but API_KEY missing in conf — rotating"
+      cscli bouncers delete "$bouncer_name" >/dev/null 2>&1 || true
+      api_key="$(cscli bouncers add "$bouncer_name" -o raw 2>/dev/null)"
+    fi
+  else
+    _log "registering '$bouncer_name' bouncer with LAPI"
+    api_key="$(cscli bouncers add "$bouncer_name" -o raw 2>/dev/null)"
+  fi
+  if [[ -z "$api_key" ]]; then
+    _warn "cscli bouncers add failed — $bouncer_conf left unmanaged"
+    return
+  fi
+
+  # Rewrite bouncer config. API_URL empty = skip LAPI polling;
+  # APPSEC_URL + ALWAYS_SEND_TO_APPSEC=true = every request goes
+  # through AppSec pre_eval. APPSEC_FAILURE_ACTION=passthrough means
+  # an AppSec outage doesn't 403 every request.
+  local desired_conf
+  desired_conf=$(cat <<EOF
+# Managed by jabali install.sh — M26 AppSec enforcement.
+# DO NOT hand-edit. Re-run install.sh to rotate API_KEY.
+ENABLED=true
+API_URL=
+API_KEY=$api_key
+USE_TLS_AUTH=false
+CACHE_EXPIRATION=1
+BOUNCING_ON_TYPE=all
+FALLBACK_REMEDIATION=ban
+REQUEST_TIMEOUT=3000
+UPDATE_FREQUENCY=10
+ENABLE_INTERNAL=false
+MODE=live
+EXCLUDE_LOCATION=
+BAN_TEMPLATE_PATH=/var/lib/crowdsec/lua/templates/ban.html
+REDIRECT_LOCATION=
+RET_CODE=
+CAPTCHA_PROVIDER=
+SECRET_KEY=
+SITE_KEY=
+CAPTCHA_TEMPLATE_PATH=/var/lib/crowdsec/lua/templates/captcha.html
+CAPTCHA_EXPIRATION=3600
+APPSEC_URL=http://127.0.0.1:7422
+APPSEC_FAILURE_ACTION=passthrough
+APPSEC_CONNECT_TIMEOUT=1000
+APPSEC_SEND_TIMEOUT=1000
+APPSEC_PROCESS_TIMEOUT=2000
+ALWAYS_SEND_TO_APPSEC=true
+SSL_VERIFY=false
+EOF
+  )
+  local tmp
+  tmp="$(mktemp --tmpdir jabali-nginx-bouncer.XXXXXX)"
+  printf '%s\n' "$desired_conf" >"$tmp"
+  if ! cmp -s "$tmp" "$bouncer_conf"; then
+    _log "writing $bouncer_conf"
+    install -m 0600 -o root -g root "$tmp" "$bouncer_conf"
+  fi
+  rm -f "$tmp"
+
+  # Validate + reload nginx. The bouncer package drops
+  # /etc/nginx/conf.d/crowdsec_nginx.conf; nginx-t catches any
+  # postinst that didn't run (Debian quirk after kernel update).
+  if nginx -t >/dev/null 2>&1; then
+    systemctl reload nginx || _warn "nginx reload failed — check 'systemctl status nginx'"
+    _ok "crowdsec-nginx-bouncer configured (AppSec enforcement on every vhost)"
+  else
+    _warn "nginx -t failed after bouncer install — surface via 'nginx -t'"
   fi
 }
 
@@ -5148,6 +5248,7 @@ main() {
   #     Off` (Step 4 lands the global toggle).
   install_crowdsec
   install_crowdsec_appsec
+  install_crowdsec_nginx_bouncer
   install_modsecurity
   install_ufw
   clone_or_update_repo

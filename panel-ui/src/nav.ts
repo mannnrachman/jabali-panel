@@ -13,6 +13,7 @@ import type { ReactNode } from "react";
 
 import {
   AppstoreOutlined,
+  BellOutlined,
   CalendarCheckOutlined,
   CloudServerOutlined,
   CodeOutlined,
@@ -114,6 +115,12 @@ export const adminNav: NavItem[] = [
     label: "Security",
     icon: navIcon(SafetyOutlined),
     path: "/jabali-admin/security",
+  },
+  {
+    key: "notifications",
+    label: "Notifications",
+    icon: navIcon(BellOutlined),
+    path: "/jabali-admin/notifications/channels",
   },
 ];
 

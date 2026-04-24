@@ -37,6 +37,7 @@ import {
   Grip,
   Home,
   Inbox,
+  Bell,
   Key,
   LayoutGrid,
   Link as LinkIcon,
@@ -61,6 +62,7 @@ import {
   RotateCw,
   Save,
   Search,
+  Send,
   Server,
   Settings,
   ShieldCheck,
@@ -141,6 +143,8 @@ export const PackageOpenOutlined = shim(PackageOpen);
 export const AppstoreAddOutlined = shim(SquarePlus);
 export const KeyOutlined = shim(Key);
 export const ClockCircleOutlined = shim(Clock);
+export const BellOutlined = shim(Bell);
+export const SendOutlined = shim(Send);
 export const MailOutlined = shim(Mail);
 export const SettingOutlined = shim(Settings);
 export const TeamOutlined = shim(Users);

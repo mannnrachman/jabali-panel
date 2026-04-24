@@ -1,0 +1,211 @@
+// AdminChannelDrawer — create + edit drawer for notification channels.
+// Kind-specific fields are sourced from channelKindConfig so adding a
+// new channel type is a single-file diff.
+import { useEffect, useMemo } from "react";
+import {
+  Alert,
+  Drawer,
+  Form,
+  Grid,
+  Input,
+  InputNumber,
+  Select,
+  Space,
+  Switch,
+  Tag,
+  message,
+} from "antd";
+
+import { apiClient } from "../../../apiClient";
+import { useCreateMutation, useUpdateMutation } from "../../../hooks/useQueries";
+
+import {
+  CHANNEL_KINDS,
+  kindColors,
+  kindFields,
+  kindLabels,
+  type ChannelFormConfig,
+  type ChannelKind,
+} from "./channelKindConfig";
+
+export type NotificationChannel = {
+  id: string;
+  name: string;
+  kind: ChannelKind;
+  config: ChannelFormConfig;
+  enabled: boolean;
+  created_at?: string;
+  updated_at?: string;
+};
+
+type FormValues = {
+  name: string;
+  kind: ChannelKind;
+  enabled: boolean;
+  config: ChannelFormConfig;
+};
+
+export interface AdminChannelDrawerProps {
+  open: boolean;
+  onClose: () => void;
+  // existing row for edit mode, undefined for create
+  existing?: NotificationChannel;
+}
+
+const RESOURCE = "admin/notifications/channels";
+
+export function AdminChannelDrawer({ open, onClose, existing }: AdminChannelDrawerProps) {
+  const [form] = Form.useForm<FormValues>();
+  const screens = Grid.useBreakpoint();
+  const isDesktop = screens.lg !== false;
+  const create = useCreateMutation<NotificationChannel, Partial<FormValues>>({ resource: RESOURCE });
+  const update = useUpdateMutation<NotificationChannel, Partial<FormValues>>({ resource: RESOURCE });
+  const isEdit = Boolean(existing);
+
+  useEffect(() => {
+    if (!open) return;
+    form.resetFields();
+    form.setFieldsValue({
+      name: existing?.name ?? "",
+      kind: existing?.kind ?? "slack",
+      enabled: existing?.enabled ?? true,
+      config: existing?.config ?? {},
+    });
+  }, [open, existing, form]);
+
+  const watchedKind = Form.useWatch<ChannelKind | undefined>("kind", form) ?? existing?.kind ?? "slack";
+  const fields = useMemo(() => kindFields[watchedKind] ?? [], [watchedKind]);
+
+  const handleSubmit = async (values: FormValues) => {
+    try {
+      if (isEdit && existing) {
+        await update.mutateAsync({ id: existing.id, input: values });
+        message.success(`Channel "${values.name}" updated`);
+      } else {
+        await create.mutateAsync(values);
+        message.success(`Channel "${values.name}" created`);
+      }
+      onClose();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Save failed";
+      message.error(msg);
+    }
+  };
+
+  const handleSendTest = async () => {
+    if (!existing) return;
+    try {
+      await apiClient.post(`/${RESOURCE}/${existing.id}/test`);
+      message.success(`Test envelope fired for "${existing.name}"`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Test failed";
+      message.error(msg);
+    }
+  };
+
+  return (
+    <Drawer
+      title={isEdit ? `Edit ${existing?.name ?? "channel"}` : "Add channel"}
+      open={open}
+      onClose={onClose}
+      width={isDesktop ? 520 : undefined}
+      placement="right"
+      destroyOnClose
+      extra={
+        isEdit ? (
+          <Space>
+            <a onClick={handleSendTest}>Send test</a>
+          </Space>
+        ) : null
+      }
+    >
+      <Form<FormValues>
+        form={form}
+        layout="vertical"
+        onFinish={handleSubmit}
+        initialValues={{ kind: "slack", enabled: true, config: {} }}
+      >
+        <Form.Item
+          name="name"
+          label="Name"
+          rules={[
+            { required: true, message: "Name required" },
+            { max: 120, message: "Max 120 chars" },
+          ]}
+        >
+          <Input placeholder="Ops Slack" />
+        </Form.Item>
+
+        <Form.Item
+          name="kind"
+          label="Kind"
+          rules={[{ required: true }]}
+          extra={
+            <Tag color={kindColors[watchedKind]} style={{ marginTop: 4 }}>
+              {kindLabels[watchedKind]}
+            </Tag>
+          }
+        >
+          <Select
+            disabled={isEdit}
+            options={CHANNEL_KINDS.map((k) => ({ value: k, label: kindLabels[k] }))}
+          />
+        </Form.Item>
+
+        <Form.Item name="enabled" label="Enabled" valuePropName="checked">
+          <Switch />
+        </Form.Item>
+
+        {watchedKind === "webpush" ? (
+          <Alert
+            type="info"
+            showIcon
+            message="Web Push has no admin-configured fields"
+            description="Subscriptions are created per-browser from the user bell. VAPID keys live in server settings."
+          />
+        ) : null}
+
+        {fields.map((f) => {
+          const rules: { required?: boolean; message: string }[] = [];
+          if (f.required) rules.push({ required: true, message: `${f.label} required` });
+          const input = (() => {
+            if (f.type === "number") return <InputNumber min={1} max={5} style={{ width: "100%" }} />;
+            if (f.type === "password") return <Input.Password placeholder={f.placeholder} />;
+            if (f.type === "tags") {
+              return (
+                <Select mode="tags" tokenSeparators={[",", " "]} placeholder="tag1,tag2" />
+              );
+            }
+            return <Input placeholder={f.placeholder} />;
+          })();
+          return (
+            <Form.Item
+              key={String(f.name)}
+              name={["config", f.name]}
+              label={f.label}
+              rules={rules}
+              extra={f.help}
+            >
+              {input}
+            </Form.Item>
+          );
+        })}
+
+        <Form.Item>
+          <Space>
+            <button
+              type="submit"
+              className="ant-btn ant-btn-primary"
+              disabled={create.isPending || update.isPending}
+            >
+              {isEdit ? "Save" : "Create"}
+            </button>
+            <button type="button" className="ant-btn" onClick={onClose}>
+              Cancel
+            </button>
+          </Space>
+        </Form.Item>
+      </Form>
+    </Drawer>
+  );
+}

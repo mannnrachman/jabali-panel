@@ -40,18 +40,22 @@
 #
 # Legacy: `bash -s -- <GITEA_TOKEN>` (positional token) still works.
 
-set -euo pipefail
-
-# ---------- locale: pin to C.UTF-8 ----------------------------------------
+# ---------- locale: pin to C.UTF-8 (MUST run before anything else) --------
 # Operators SSH in with their own LANG (often a locale not yet generated on
 # the target host — e.g. LANG=he_IL.UTF-8). Perl-using apt postinst scripts
 # then spam "Setting locale failed" warnings and fall back to "C", which is
 # fine behaviourally but noisy. C.UTF-8 is always available on glibc (no
-# locale-gen needed) and gives UTF-8 I/O. Unset LANGUAGE so perl doesn't
-# retry the un-generated locale chain.
+# locale-gen needed) and gives UTF-8 I/O. Unset every LC_* variant so perl
+# doesn't retry the un-generated locale chain. Run this BEFORE `set -e` so
+# a hostile env var (e.g. LC_ALL unset to empty) can't trip the script on
+# its first line.
+unset LANGUAGE LC_CTYPE LC_NUMERIC LC_COLLATE LC_TIME LC_MESSAGES LC_MONETARY LC_ADDRESS LC_IDENTIFICATION LC_MEASUREMENT LC_PAPER LC_TELEPHONE LC_NAME
 export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
-unset LANGUAGE
+# Keep apt from prompting for debconf mid-run.
+export DEBIAN_FRONTEND=noninteractive
+
+set -euo pipefail
 
 # ---------- fail-loud: ERR trap -------------------------------------------
 # set -e exits on the first non-zero command. The default behavior prints

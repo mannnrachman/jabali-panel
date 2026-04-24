@@ -2416,6 +2416,34 @@ EOF
 # ---------- step 4: clone / update repo -------------------------------------
 
 clone_or_update_repo() {
+  # Re-verify DNS before reaching for a git remote. Earlier steps in the
+  # install (ufw activate, systemd-resolved restart during install_kratos'
+  # config flip, crowdsec profile reload) have been observed to drop the
+  # recursor → public chain on fresh installs — git clone then SERVFAILs
+  # with "Could not resolve host" and under `set -e` aborts silently.
+  # Probe the full chain one more time with the same 8×2s retry logic as
+  # the post-recursor-install probe so transient restarts don't brick the
+  # install.
+  local _clone_dns_ok=0
+  local attempt
+  for attempt in 1 2 3 4 5 6 7 8; do
+    if getent hosts "${REPO_HOST:-git.linux-hosting.co.il}" >/dev/null 2>&1; then
+      _clone_dns_ok=1
+      break
+    fi
+    sleep 2
+  done
+  if [[ "$_clone_dns_ok" != "1" ]]; then
+    _warn "DNS not resolving for the git remote host — restarting pdns-recursor + systemd-resolved and retrying"
+    systemctl restart pdns-recursor 2>/dev/null || true
+    sleep 1
+    systemctl restart systemd-resolved 2>/dev/null || true
+    sleep 2
+    if ! getent hosts "${REPO_HOST:-git.linux-hosting.co.il}" >/dev/null 2>&1; then
+      _die "cannot resolve $REPO_URL — check 'systemctl status pdns-recursor systemd-resolved' and 'dig @127.0.0.1 <host>'"
+    fi
+  fi
+
   # For both clone and fetch, pass the token via a transient credential
   # helper instead of baking it into the saved remote URL. That keeps
   # `git remote -v` and `.git/config` free of secrets.
@@ -2442,12 +2470,18 @@ clone_or_update_repo() {
     # other trees that may legitimately be group-owned differently
     # don't get clobbered.
     chown -R "$SERVICE_USER:$SERVICE_USER" "$REPO_DIR/.git"
-    sudo -u "$SERVICE_USER" -H git "${git_args[@]}" -C "$REPO_DIR" fetch --quiet origin "$REPO_BRANCH"
-    sudo -u "$SERVICE_USER" -H git -C "$REPO_DIR" reset --hard "origin/$REPO_BRANCH"
+    # No --quiet: under `set -e` a failed fetch/clone aborts install.sh
+    # without any output because --quiet suppresses git's stderr, leaving
+    # the operator with a silent exit. Let git's error reach the trace.
+    sudo -u "$SERVICE_USER" -H git "${git_args[@]}" -C "$REPO_DIR" fetch origin "$REPO_BRANCH" \
+      || _die "git fetch origin $REPO_BRANCH failed (run manually as $SERVICE_USER to see full error)"
+    sudo -u "$SERVICE_USER" -H git -C "$REPO_DIR" reset --hard "origin/$REPO_BRANCH" \
+      || _die "git reset --hard origin/$REPO_BRANCH failed"
   else
     _log "cloning $REPO_URL into $REPO_DIR"
-    sudo -u "$SERVICE_USER" -H git "${git_args[@]}" clone --quiet --branch "$REPO_BRANCH" \
-      "$REPO_URL" "$REPO_DIR"
+    sudo -u "$SERVICE_USER" -H git "${git_args[@]}" clone --branch "$REPO_BRANCH" \
+      "$REPO_URL" "$REPO_DIR" \
+      || _die "git clone $REPO_URL failed (check connectivity, cert trust, and that $REPO_DIR is writable by $SERVICE_USER)"
   fi
   _ok "repo at $(sudo -u "$SERVICE_USER" -H git -C "$REPO_DIR" rev-parse --short HEAD)"
 }

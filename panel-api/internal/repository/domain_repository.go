@@ -17,6 +17,10 @@ type DomainRepository interface {
 	FindByID(ctx context.Context, id string) (*models.Domain, error)
 	FindByName(ctx context.Context, name string) (*models.Domain, error)
 	List(ctx context.Context, opts ListOptions) ([]models.Domain, int64, error)
+	// SetModSecEnabled flips the per-domain ModSecurity toggle (M26).
+	// Narrow updater because modsec_enabled is intentionally not in
+	// Update()'s allowlist.
+	SetModSecEnabled(ctx context.Context, id string, enabled bool) error
 	ListByUserID(ctx context.Context, userID string, opts ListOptions) ([]models.Domain, int64, error)
 	Update(ctx context.Context, d *models.Domain) error
 	Delete(ctx context.Context, id string) error
@@ -283,6 +287,24 @@ func (r *domainRepo) CountByUserID(ctx context.Context, userID string) (int64, e
 		return 0, err
 	}
 	return count, nil
+}
+
+// SetModSecEnabled flips the per-domain ModSecurity toggle. Narrow
+// updater (the column is intentionally NOT in Update()'s allowlist) so
+// the admin Security tab can patch it without going through the
+// generic domain update path. The reconciler picks up the change on
+// next pass — see domain.create vhost render in panel-agent.
+func (r *domainRepo) SetModSecEnabled(ctx context.Context, id string, enabled bool) error {
+	res := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Where("id = ?", id).
+		Update("modsec_enabled", enabled)
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (r *domainRepo) SetPHPPoolID(ctx context.Context, id string, poolID *string) error {

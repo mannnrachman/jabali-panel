@@ -177,6 +177,10 @@ func (m *MockDomainRepository) SetPHPPoolID(ctx context.Context, id string, pool
 	return nil
 }
 
+func (m *MockDomainRepository) SetModSecEnabled(ctx context.Context, id string, enabled bool) error {
+	return nil
+}
+
 func (m *MockDomainRepository) CountByPHPPoolID(ctx context.Context, poolID string) (int64, error) {
 	args := m.Called(ctx, poolID)
 	return args.Get(0).(int64), args.Error(1)

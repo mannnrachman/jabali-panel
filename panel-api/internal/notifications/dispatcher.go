@@ -1,0 +1,386 @@
+package notifications
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/oklog/ulid/v2"
+	"github.com/redis/go-redis/v9"
+
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+)
+
+// Config tunes the dispatcher's loop behaviours. Zero values pick
+// sensible production defaults; tests poke smaller values to finish
+// quickly.
+type Config struct {
+	BatchSize           int           // XREADGROUP COUNT. Default 16.
+	ReadBlock           time.Duration // XREADGROUP BLOCK. Default 5s. Tests poke smaller.
+	ReclaimInterval     time.Duration // How often the reclaim loop runs. Default 30s.
+	ReclaimMinIdle      time.Duration // Entry must be idle this long to reclaim. Default 60s.
+	MaxRetries          int           // History rows past this go to DLQ. Default 5.
+	CircuitBreakerLimit int           // Consecutive failures before auto-disable. Default 3.
+	ShutdownGrace       time.Duration // Max wait for in-flight entry on stop. Default 10s.
+}
+
+func (c Config) withDefaults() Config {
+	if c.BatchSize <= 0 {
+		c.BatchSize = 16
+	}
+	if c.ReadBlock <= 0 {
+		c.ReadBlock = 5 * time.Second
+	}
+	if c.ReclaimInterval <= 0 {
+		c.ReclaimInterval = 30 * time.Second
+	}
+	if c.ReclaimMinIdle <= 0 {
+		c.ReclaimMinIdle = 60 * time.Second
+	}
+	if c.MaxRetries <= 0 {
+		c.MaxRetries = defaultRetries
+	}
+	if c.CircuitBreakerLimit <= 0 {
+		c.CircuitBreakerLimit = 3
+	}
+	if c.ShutdownGrace <= 0 {
+		c.ShutdownGrace = 10 * time.Second
+	}
+	return c
+}
+
+// Dispatcher drives the XREADGROUP loop + reclaim loop. Construct via
+// NewDispatcher; Start runs the loops in background goroutines until
+// the context passed to Start is cancelled.
+type Dispatcher struct {
+	cfg         Config
+	queue       *Queue
+	registry    *Registry
+	channels    repository.NotificationChannelRepository
+	history     repository.NotificationHistoryRepository
+	webhookRepo repository.WebhookEndpointRepository
+	log         *slog.Logger
+	consumer    string
+
+	wg      sync.WaitGroup
+	stopped chan struct{}
+}
+
+// NewDispatcher wires a dispatcher. All collaborators are required —
+// nil passes turn into runtime panics on first event, so fail at
+// construction time instead.
+func NewDispatcher(
+	q *Queue,
+	reg *Registry,
+	channels repository.NotificationChannelRepository,
+	history repository.NotificationHistoryRepository,
+	webhookRepo repository.WebhookEndpointRepository,
+	log *slog.Logger,
+	cfg Config,
+) (*Dispatcher, error) {
+	if q == nil || reg == nil || channels == nil || history == nil || webhookRepo == nil {
+		return nil, errors.New("dispatcher: all collaborators required (queue/registry/channels/history/webhookRepo)")
+	}
+	if log == nil {
+		log = slog.Default()
+	}
+	if len(reg.Kinds()) == 0 {
+		return nil, errors.New("dispatcher: empty sender registry; refuse to start with no way to deliver")
+	}
+	host, _ := os.Hostname()
+	if host == "" {
+		host = "panel"
+	}
+	consumer := fmt.Sprintf("panel-api-%s-%d", host, os.Getpid())
+	return &Dispatcher{
+		cfg:         cfg.withDefaults(),
+		queue:       q,
+		registry:    reg,
+		channels:    channels,
+		history:     history,
+		webhookRepo: webhookRepo,
+		log:         log,
+		consumer:    consumer,
+		stopped:     make(chan struct{}),
+	}, nil
+}
+
+// Start runs the dispatch + reclaim goroutines. Blocks until ctx is
+// cancelled, then waits up to cfg.ShutdownGrace for in-flight work to
+// drain. Callers typically do:
+//
+//	go func() { _ = dispatcher.Start(ctx) }()
+//
+// and cancel ctx on SIGTERM from the outer runServe.
+func (d *Dispatcher) Start(ctx context.Context) error {
+	if err := d.queue.EnsureGroup(ctx); err != nil {
+		return fmt.Errorf("ensure consumer group: %w", err)
+	}
+	d.log.Info("notifications dispatcher starting",
+		"consumer", d.consumer,
+		"kinds", strings.Join(d.registry.Kinds(), ","))
+	d.wg.Add(2)
+	go func() { defer d.wg.Done(); d.runConsumer(ctx) }()
+	go func() { defer d.wg.Done(); d.runReclaim(ctx) }()
+
+	<-ctx.Done()
+	d.log.Info("notifications dispatcher stopping; draining in-flight", "grace", d.cfg.ShutdownGrace)
+	done := make(chan struct{})
+	go func() { d.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(d.cfg.ShutdownGrace):
+		d.log.Warn("notifications dispatcher drain timeout; some entries may redeliver on next start")
+	}
+	close(d.stopped)
+	return nil
+}
+
+// Stopped returns a channel that closes after Start returns. Useful
+// for tests that want to assert clean shutdown.
+func (d *Dispatcher) Stopped() <-chan struct{} { return d.stopped }
+
+// runConsumer reads new + pending entries and processes each.
+func (d *Dispatcher) runConsumer(ctx context.Context) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		streams, err := d.queue.Read(ctx, d.consumer, d.cfg.BatchSize, d.cfg.ReadBlock)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return
+			}
+			d.log.Error("xreadgroup failed", "err", err)
+			// Short sleep so we don't spin on a Redis outage. The
+			// systemd Requires= keeps us co-terminus with Redis
+			// anyway, but defensive.
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(2 * time.Second):
+			}
+			continue
+		}
+		for _, s := range streams {
+			for _, msg := range s.Messages {
+				d.process(ctx, msg)
+			}
+		}
+	}
+}
+
+func (d *Dispatcher) runReclaim(ctx context.Context) {
+	t := time.NewTicker(d.cfg.ReclaimInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			d.reclaim(ctx)
+		}
+	}
+}
+
+func (d *Dispatcher) reclaim(ctx context.Context) {
+	pending, err := d.queue.Pending(ctx, d.cfg.ReclaimMinIdle, 100)
+	if err != nil {
+		d.log.Error("xpending failed", "err", err)
+		return
+	}
+	for _, p := range pending {
+		if int(p.RetryCount) >= d.cfg.MaxRetries {
+			// Retry budget exhausted. Move to DLQ with a reason.
+			if err := d.queue.ToDLQ(ctx, p.ID, "max_retries_exceeded", nil); err != nil {
+				d.log.Error("move to dlq failed", "id", p.ID, "err", err)
+			} else {
+				d.log.Warn("dispatched to DLQ", "id", p.ID, "owner", p.Consumer, "retries", p.RetryCount)
+			}
+			continue
+		}
+		// Re-claim to ourselves. On success the entry lands in our
+		// next XREADGROUP cycle.
+		if _, err := d.queue.Claim(ctx, d.consumer, d.cfg.ReclaimMinIdle, p.ID); err != nil {
+			d.log.Error("xclaim failed", "id", p.ID, "err", err)
+		} else {
+			d.log.Info("reclaimed stale entry", "id", p.ID, "owner", p.Consumer, "retries", p.RetryCount)
+		}
+	}
+}
+
+// process handles one stream message end-to-end: parse, resolve target
+// channels, fan out to senders, write history rows, finalise.
+func (d *Dispatcher) process(ctx context.Context, msg redis.XMessage) {
+	env, err := envelopeFromStream(msg.Values)
+	if err != nil {
+		// Malformed — straight to DLQ. No history row to write (we
+		// don't know which event it was).
+		d.log.Error("envelope parse failed; routing to DLQ", "id", msg.ID, "err", err)
+		if dlqErr := d.queue.ToDLQ(ctx, msg.ID, "parse_error: "+err.Error(), msg.Values); dlqErr != nil {
+			d.log.Error("move to dlq failed", "id", msg.ID, "err", dlqErr)
+		}
+		return
+	}
+
+	targets, err := d.resolveTargets(ctx, env)
+	if err != nil {
+		d.log.Error("resolve targets failed", "id", msg.ID, "err", err)
+		// Leave in PEL — reclaim loop will retry (db error is
+		// treated as transient).
+		return
+	}
+	if len(targets) == 0 {
+		// No enabled channel matched this event. Ack + delete so
+		// the queue doesn't grow on a misconfigured install.
+		d.log.Info("no target channels for event; acking", "event", env.EventKind)
+		if err := d.queue.AckAndDelete(ctx, msg.ID); err != nil {
+			d.log.Error("ack failed on no-target path", "id", msg.ID, "err", err)
+		}
+		return
+	}
+
+	anyFailed := false
+	for _, ch := range targets {
+		if err := d.sendOne(ctx, ch, env); err != nil {
+			anyFailed = true
+			d.log.Warn("send failed", "channel_id", ch.ID, "kind", ch.Kind, "err", err)
+		}
+	}
+	// All-succeed → ACK. Any-fail: leave in PEL for reclaim. Permanent
+	// failures already marked via history row; the reclaim path will
+	// eventually push them to DLQ if they stay stuck.
+	if !anyFailed {
+		if err := d.queue.AckAndDelete(ctx, msg.ID); err != nil {
+			d.log.Error("ack failed after successful fanout", "id", msg.ID, "err", err)
+		}
+	}
+}
+
+// resolveTargets returns the channels the envelope should fan out to.
+// Explicit ChannelIDs → load each by id. Empty → every enabled channel.
+func (d *Dispatcher) resolveTargets(ctx context.Context, env Envelope) ([]models.NotificationChannel, error) {
+	if len(env.ChannelIDs) == 0 {
+		return d.channels.FindEnabledAll(ctx)
+	}
+	out := make([]models.NotificationChannel, 0, len(env.ChannelIDs))
+	for _, id := range env.ChannelIDs {
+		ch, err := d.channels.FindByID(ctx, id)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				// Channel deleted between publish and consume —
+				// skip, not an error.
+				continue
+			}
+			return nil, err
+		}
+		if !ch.Enabled {
+			continue
+		}
+		out = append(out, *ch)
+	}
+	return out, nil
+}
+
+// sendOne runs the sender for one channel, writes the history row,
+// updates the webhook_endpoints retry state, and trips the circuit
+// breaker when consecutive failures reach the limit.
+func (d *Dispatcher) sendOne(ctx context.Context, ch models.NotificationChannel, env Envelope) error {
+	hist := &models.NotificationHistory{
+		ID:        ulid.Make().String(),
+		ChannelID: strPtr(ch.ID),
+		EventKind: env.EventKind,
+		Severity:  env.Severity,
+		Title:     env.Title,
+		Body:      env.Body,
+		Deeplink:  env.Deeplink,
+		Outcome:   models.NotificationOutcomePending,
+	}
+	if env.UserID != "" {
+		hist.UserID = strPtr(env.UserID)
+	}
+	if err := d.history.Create(ctx, hist); err != nil {
+		return fmt.Errorf("create history row: %w", err)
+	}
+
+	sender, err := d.registry.Lookup(ch.Kind)
+	if err != nil {
+		// Unknown kind → mark history skipped, record webhook error,
+		// don't count toward circuit breaker (this is a config bug,
+		// not a transport fault).
+		_ = d.history.UpdateOutcome(ctx, hist.ID, models.NotificationOutcomeSkipped, err.Error(), 0)
+		return err
+	}
+
+	sendErr := sender.Send(ctx, ch, env)
+	if sendErr == nil {
+		_ = d.history.UpdateOutcome(ctx, hist.ID, models.NotificationOutcomeSent, "", 0)
+		_ = d.webhookRepo.RecordSuccess(ctx, ch.ID)
+		return nil
+	}
+
+	// Failure path.
+	permanent := errors.Is(sendErr, ErrPermanent)
+	outcome := models.NotificationOutcomeFailed
+	backoff := nextBackoff(ctx)
+	_ = d.history.UpdateOutcome(ctx, hist.ID, outcome, sendErr.Error(), 1)
+	_ = d.webhookRepo.RecordFailure(ctx, ch.ID, sendErr.Error(), backoff)
+
+	// Circuit breaker — look at the updated failure count from the
+	// repo and disable the channel if it crossed the threshold.
+	if endpoint, lookupErr := d.webhookRepo.FindByChannelID(ctx, ch.ID); lookupErr == nil {
+		if endpoint.ConsecutiveFailures >= d.cfg.CircuitBreakerLimit {
+			d.tripBreaker(ctx, ch, endpoint.ConsecutiveFailures)
+		}
+	}
+	if permanent {
+		// Don't rethrow — permanent is a per-channel outcome. The
+		// stream entry can still ACK when every target resolves to
+		// sent-or-permanent; the caller handles that.
+		return nil
+	}
+	return sendErr
+}
+
+// tripBreaker disables the channel + fires a critical in-app-bell
+// event naming it so the admin can re-enable after fixing config.
+// Errors here are logged, not returned — the calling sendOne already
+// has its own error surface and the breaker is a best-effort alarm.
+func (d *Dispatcher) tripBreaker(ctx context.Context, ch models.NotificationChannel, failures int) {
+	ch.Enabled = false
+	if err := d.channels.Update(ctx, &ch); err != nil {
+		d.log.Error("circuit breaker: update channel failed", "id", ch.ID, "err", err)
+		return
+	}
+	d.log.Warn("circuit breaker tripped: channel auto-disabled",
+		"id", ch.ID, "name", ch.Name, "kind", ch.Kind, "failures", failures)
+	alarm := &models.NotificationHistory{
+		ID:        ulid.Make().String(),
+		EventKind: "notifications.channel.auto_disabled",
+		Severity:  models.NotificationSeverityCritical,
+		Title:     "Notification channel auto-disabled",
+		Body:      fmt.Sprintf("Channel %q (kind %s) exceeded %d consecutive failures and was disabled. Inspect config and re-enable from Admin → Channels.", ch.Name, ch.Kind, failures),
+		Outcome:   models.NotificationOutcomeSent,
+	}
+	if err := d.history.Create(ctx, alarm); err != nil {
+		d.log.Error("circuit breaker: alarm history write failed", "err", err)
+	}
+}
+
+// nextBackoff returns a pointer to a "try again after N" timestamp
+// for the webhook_endpoints row. 5 minutes is the production default;
+// we don't yet tier backoff by retry count (consecutive_failures
+// lives on the same row, so callers can compute their own cadence
+// from it if needed).
+func nextBackoff(_ context.Context) *time.Time {
+	t := time.Now().UTC().Add(5 * time.Minute)
+	return &t
+}
+
+func strPtr(s string) *string { return &s }

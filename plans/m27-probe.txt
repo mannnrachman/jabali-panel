@@ -1,0 +1,87 @@
+M27 pre-flight probe — CrowdSec CLI surface on test VM
+Host: ssh -p 2222 root@192.168.100.13
+Date: 2026-04-24
+Version: v1.7.7-debian-pragmatic-amd64-027974f2 (BuildDate 2026-03-30)
+
+========================================================================
+FINDINGS + PLAN IMPACT
+========================================================================
+
+1. cscli allowlists — shape MATCHES plan nominal:
+   - create <name> -d "<desc>"
+   - add <name> <value...> -d "<comment>"       (note: -d for comment, not --reason)
+   - remove <name> <value>
+   - inspect <name> -o json
+   - list -o json
+   - delete <name>
+
+   PLAN IMPACT: agent handlers use `-d` flag for comment. Param key `reason` in
+   the wire contract maps to `-d` on the CLI.
+
+2. cscli alerts — shape MATCHES plan nominal:
+   - list --since 24h --limit 100 -o json
+   - inspect <id> -o json
+   - Default limit is 50; plan uses 100.
+
+   PLAN IMPACT: none.
+
+3. cscli console — SHAPE DIVERGES from plan:
+   Available: disable, enable, enroll, status
+   MISSING: disenroll
+   status output is a TABLE of console-options (custom/manual/tainted/context/
+   console_management), NOT enrollment boolean.
+
+   PLAN IMPACT (load-bearing — rewrite Step 4):
+   - Drop "disenroll" from the UI + API. CrowdSec has no clean disenroll verb;
+     operator disenrolls via app.crowdsec.net (remove instance there).
+   - Drop "status=enrolled?" detection. Show enrollment key input + Enroll
+     button. After successful enroll: info Alert pointing operator to
+     app.crowdsec.net to accept the pending instance.
+   - New Step 4 scope: enroll-only. One-shot form, no status polling.
+
+4. crowdsec -t — EXISTS, exits 0 on valid config. No output on success.
+
+   PLAN IMPACT: Step 6 uses `crowdsec -t` as pre-flight before reload.
+   `.bak` restore stays as safety net.
+
+5. /etc/crowdsec/profiles.yaml — ships with upstream `crowdsec` package (1452
+   bytes). Multi-doc YAML with `---` separator. Five default profiles:
+   default_ip_remediation, default_range_remediation, default_captcha_remediation,
+   default_ip_ipv4_remediation... (varies by version).
+
+   PLAN IMPACT: Step 6 marker block goes at TOP of file (before upstream
+   defaults) so jabali overrides evaluate first. `install_crowdsec_profiles`
+   helper from Step 1 is a no-op when file exists — defensive only.
+
+6. Scenarios JSON shape: wraps list under `scenarios:` key (not `items:`).
+   Each entry: {name, description, status, local_version, local_path,
+   utf8_status}.
+
+   PLAN IMPACT: agent `csScenariosListHandler` parses `.scenarios[]` and
+   re-projects to `{items: [{name, description}]}` for the wire contract.
+
+7. /etc/crowdsec/online_api_credentials.yaml — always present post-install.
+   Contains {url, login, password}. Enrolled vs not-enrolled is NOT
+   distinguishable from this file alone (CAPI baseline registration also
+   populates it).
+
+   PLAN IMPACT: reinforces #3 above — no server-side enrollment-state
+   detection. Trust the operator.
+
+========================================================================
+SECRET STORAGE CONVENTION CHECK
+========================================================================
+
+Grep of server_settings migrations + model:
+  VARCHAR(512) DEFAULT '' used for kratos_admin_secret_key
+  VARCHAR(512) DEFAULT '' used for vapid_private_key
+  VARCHAR(255) DEFAULT '' used for smtp_relay_password
+
+All plaintext in server_settings. M27 captcha secret follows this pattern
+(VARCHAR(512) NOT NULL DEFAULT '').
+
+========================================================================
+RAW TRANSCRIPTS
+========================================================================
+
+See git log for this commit; transcripts inlined above as findings.

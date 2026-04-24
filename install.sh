@@ -4007,6 +4007,44 @@ EOF
   else
     _warn "nginx -t failed after bouncer install — surface via 'nginx -t'"
   fi
+
+  # M27 — captcha template sanity check. crowdsec-nginx-bouncer ships
+  # ban.html + captcha.html in /var/lib/crowdsec/lua/templates/.
+  # If they're missing the Step 5 captcha toggle still writes the
+  # bouncer conf but remediation would render blank; surface as warn
+  # rather than fail (package regression is upstream's problem).
+  local tmpl_dir="/var/lib/crowdsec/lua/templates"
+  for tmpl in ban.html captcha.html; do
+    if [[ ! -f "$tmpl_dir/$tmpl" ]]; then
+      _warn "$tmpl_dir/$tmpl missing — captcha remediation will render empty until reinstalled"
+    fi
+  done
+}
+
+install_crowdsec_profiles() {
+  # M27 — defensive stub. The crowdsec Debian package ships
+  # /etc/crowdsec/profiles.yaml with five upstream default profiles
+  # (default_ip_remediation, default_range_remediation, etc.). If
+  # it's missing we seed a minimal ban-all profile so Step 6's
+  # marker-bounded rewrite always has a base file to slot into.
+  # Idempotent — no-op when file exists.
+  local profiles=/etc/crowdsec/profiles.yaml
+  if [[ -f "$profiles" ]]; then return 0; fi
+  _warn "$profiles missing after crowdsec package install — seeding minimal fallback"
+  local tmp
+  tmp="$(mktemp --tmpdir jabali-profiles.XXXXXX)"
+  cat >"$tmp" <<'EOF'
+name: default_ip_remediation
+filters:
+ - Alert.Remediation == true && Alert.GetScope() == "Ip"
+decisions:
+ - type: ban
+   duration: 4h
+on_success: break
+EOF
+  install -m 0644 -o root -g root "$tmp" "$profiles"
+  rm -f "$tmp"
+  systemctl reload crowdsec 2>/dev/null || true
 }
 
 install_modsecurity() {
@@ -5249,6 +5287,7 @@ main() {
   install_crowdsec
   install_crowdsec_appsec
   install_crowdsec_nginx_bouncer
+  install_crowdsec_profiles
   install_modsecurity
   install_ufw
   clone_or_update_repo

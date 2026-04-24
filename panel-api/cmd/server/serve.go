@@ -23,6 +23,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/notifications"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/notifications/senders"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssokey"
@@ -540,12 +541,19 @@ func startNotificationDispatcher(parent context.Context, deps app.Deps, log *slo
 		return nil, nil
 	}
 	registry := notifications.NewRegistry()
-	// Step 3 will register concrete senders here (slack, ntfy, webhook,
-	// webpush, email). Until then the registry is empty and we skip
-	// Start rather than constructing a dispatcher that would refuse.
-	if len(registry.Kinds()) == 0 {
-		log.Warn("notifications dispatcher: not starting — no ChannelSenders registered yet (Step 3 wires them)")
-		return nil, nil
+	registry.Register(senders.NewSlack())
+	registry.Register(senders.NewDiscord())
+	registry.Register(senders.NewNtfy())
+	registry.Register(senders.NewWebhook())
+	registry.Register(senders.NewEmail("127.0.0.1:587"))
+	// WebPush reads VAPID keys from server_settings on every send; if
+	// the keypair is absent (EnsureVAPID hasn't run) Send returns
+	// ErrPermanent and the envelope lands in the DLQ — surfaces as a
+	// clear operator signal instead of silently dropping.
+	if deps.ServerSettings != nil && deps.WebPushSubs != nil {
+		registry.Register(senders.NewWebPush(deps.ServerSettings, deps.WebPushSubs, log))
+	} else {
+		log.Warn("notifications dispatcher: webpush sender skipped — server_settings or webpush_subscriptions repo missing")
 	}
 	queue := notifications.NewQueue(deps.Redis)
 	d, err := notifications.NewDispatcher(

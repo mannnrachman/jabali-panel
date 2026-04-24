@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -245,6 +246,94 @@ func RegisterSecurityCrowdSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterfac
 				"site_key":  s.CrowdSecCaptchaSiteKey,
 				// secret_key deliberately omitted (write-only)
 			})
+		})
+
+		// M27 Step 6 — per-scenario remediation override. GET merges
+		// scenario list + current overrides + captcha_enabled so the UI
+		// can grey out the captcha option when captcha isn't configured.
+		g.GET("/profiles", func(c *gin.Context) {
+			s, err := settings.Get(c.Request.Context())
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"status": "error", "error": "settings_read", "detail": err.Error(),
+				})
+				return
+			}
+			ctx, cancel := context.WithTimeout(c.Request.Context(), csCallTimeout)
+			defer cancel()
+			scenRaw, err := cli.Call(ctx, "security.crowdsec.scenarios.list", nil)
+			if err != nil {
+				status, ebody := translateAgentError(err)
+				c.JSON(status, ebody)
+				return
+			}
+			profRaw, err := cli.Call(ctx, "security.crowdsec.profiles.get", nil)
+			if err != nil {
+				status, ebody := translateAgentError(err)
+				c.JSON(status, ebody)
+				return
+			}
+			// Merge into one JSON response. Parse + re-emit.
+			var scens struct {
+				Items []map[string]any `json:"items"`
+			}
+			var profs struct {
+				Overrides []map[string]any `json:"overrides"`
+			}
+			_ = json.Unmarshal(scenRaw, &scens)
+			_ = json.Unmarshal(profRaw, &profs)
+			c.JSON(http.StatusOK, gin.H{
+				"scenarios":       scens.Items,
+				"overrides":       profs.Overrides,
+				"captcha_enabled": s.CrowdSecCaptchaEnabled,
+			})
+		})
+
+		g.PUT("/profiles", func(c *gin.Context) {
+			var body struct {
+				Overrides []struct {
+					Scenario string `json:"scenario"`
+					Action   string `json:"action"`
+				} `json:"overrides"`
+			}
+			if err := c.ShouldBindJSON(&body); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_json"})
+				return
+			}
+			s, err := settings.Get(c.Request.Context())
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"status": "error", "error": "settings_read", "detail": err.Error(),
+				})
+				return
+			}
+			for _, o := range body.Overrides {
+				if o.Action != "captcha" && o.Action != "off" {
+					c.JSON(http.StatusBadRequest, gin.H{
+						"status": "error", "error": "invalid_action",
+						"detail": `action must be "captcha" or "off"`,
+					})
+					return
+				}
+				if o.Action == "captcha" && !s.CrowdSecCaptchaEnabled {
+					c.JSON(http.StatusBadRequest, gin.H{
+						"status": "error", "error": "captcha_disabled",
+						"detail": "enable captcha remediation before selecting captcha as an override",
+					})
+					return
+				}
+			}
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+			defer cancel()
+			raw, err := cli.Call(ctx, "security.crowdsec.profiles.set", map[string]any{
+				"overrides": body.Overrides,
+			})
+			if err != nil {
+				status, ebody := translateAgentError(err)
+				c.JSON(status, ebody)
+				return
+			}
+			c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
 		})
 
 		g.PUT("/captcha", func(c *gin.Context) {

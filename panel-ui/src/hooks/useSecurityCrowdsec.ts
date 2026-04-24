@@ -338,3 +338,48 @@ export function useUpdateCrowdsecCaptcha() {
     },
   });
 }
+
+// Per-scenario remediation override (M27 step 6, ADR-0063). Rewrites
+// the jabali marker-bounded block in /etc/crowdsec/profiles.yaml.
+// captcha_enabled from server_settings (Step 5) gates the captcha option.
+export type CrowdsecScenarioItem = {
+  name: string;
+  description: string;
+};
+
+export type CrowdsecProfileOverride = {
+  scenario: string;
+  action: "captcha" | "off";
+};
+
+export type CrowdsecProfilesView = {
+  scenarios: CrowdsecScenarioItem[];
+  overrides: CrowdsecProfileOverride[];
+  captcha_enabled: boolean;
+};
+
+export function useCrowdsecProfiles() {
+  return useQuery({
+    queryKey: ["security", "crowdsec", "profiles"],
+    queryFn: async () => {
+      const { data } = await apiClient.get<CrowdsecProfilesView>(`${BASE}/profiles`);
+      return data;
+    },
+  });
+}
+
+export function useUpdateCrowdsecProfiles() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (overrides: CrowdsecProfileOverride[]) => {
+      const { data } = await apiClient.put<{ overrides: CrowdsecProfileOverride[] }>(
+        `${BASE}/profiles`,
+        { overrides },
+      );
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["security", "crowdsec", "profiles"] });
+    },
+  });
+}

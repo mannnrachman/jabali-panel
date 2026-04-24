@@ -44,17 +44,21 @@ import {
   useCrowdsecHub,
   useCrowdsecMetrics,
   useCrowdsecCaptcha,
+  useCrowdsecProfiles,
   useCrowdsecStatus,
   useDeleteCrowdsecDecision,
   useEnrollCrowdsecConsole,
   useRemoveCrowdsecAllowlist,
   useUpdateAppSecGeoblock,
   useUpdateCrowdsecCaptcha,
+  useUpdateCrowdsecProfiles,
   type AppSecGeoblockMode,
   type CrowdsecAlert,
   type CrowdsecAllowlistEntry,
   type CrowdsecCaptchaProvider,
   type CrowdsecDecision,
+  type CrowdsecProfileOverride,
+  type CrowdsecScenarioItem,
   type CrowdsecScope,
 } from "../../../hooks/useSecurityCrowdsec";
 
@@ -252,6 +256,8 @@ export const AdminSecurityCrowdsec = () => {
       <ConsoleCard />
 
       <CaptchaRemediationCard />
+
+      <ProfilesCard />
 
       <AppSecGeoblockCard />
 
@@ -1067,6 +1073,118 @@ const CaptchaRemediationCard = () => {
           </Popconfirm>
         </Space>
       </Form>
+    </Card>
+  );
+};
+
+// ProfilesCard — per-scenario remediation override (M27 Step 6, ADR-0063).
+// Row-per-scenario; inline Select for default/captcha/off. Captcha option
+// greyed out when captcha_enabled=false (requires Step 5 configured).
+type ProfileRow = CrowdsecScenarioItem & {
+  override: "default" | "captcha" | "off";
+};
+
+const ProfilesCard = () => {
+  const profiles = useCrowdsecProfiles();
+  const update = useUpdateCrowdsecProfiles();
+  const [draft, setDraft] = useState<Record<string, "default" | "captcha" | "off">>({});
+
+  const rows: ProfileRow[] = (profiles.data?.scenarios ?? []).map((s) => {
+    const existing = (profiles.data?.overrides ?? []).find((o) => o.scenario === s.name);
+    const fromServer = (existing?.action ?? "default") as ProfileRow["override"];
+    const override = draft[s.name] ?? fromServer;
+    return { ...s, override };
+  });
+
+  const dirty = rows.some((r) => {
+    const existing = (profiles.data?.overrides ?? []).find((o) => o.scenario === r.name);
+    const fromServer = (existing?.action ?? "default") as ProfileRow["override"];
+    return r.override !== fromServer;
+  });
+
+  const captchaEnabled = profiles.data?.captcha_enabled ?? false;
+
+  const onApply = async () => {
+    const overrides: CrowdsecProfileOverride[] = rows
+      .filter((r) => r.override !== "default")
+      .map((r) => ({ scenario: r.name, action: r.override as "captcha" | "off" }));
+    try {
+      await update.mutateAsync(overrides);
+      setDraft({});
+      message.success("Profiles saved — crowdsec reloaded");
+    } catch (e: unknown) {
+      message.error(e instanceof Error ? e.message : "Save failed");
+    }
+  };
+
+  return (
+    <Card
+      size="small"
+      title="Per-scenario remediation override"
+      loading={profiles.isLoading}
+      extra={
+        <Space>
+          {dirty && (
+            <Button onClick={() => setDraft({})}>
+              Reset
+            </Button>
+          )}
+          <Popconfirm
+            title="Apply overrides?"
+            description="Rewrites /etc/crowdsec/profiles.yaml (marker-bounded) and reloads crowdsec."
+            okText="Apply"
+            cancelText="Cancel"
+            onConfirm={onApply}
+            disabled={!dirty}
+          >
+            <Button type="primary" disabled={!dirty} loading={update.isPending}>
+              Apply
+            </Button>
+          </Popconfirm>
+        </Space>
+      }
+    >
+      {!captchaEnabled && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="Captcha action requires the Captcha remediation card above to be enabled."
+        />
+      )}
+      <Table<ProfileRow>
+        rowKey="name"
+        dataSource={rows}
+        pagination={{ pageSize: 20, showSizeChanger: false }}
+        locale={{ emptyText: <Empty description="No scenarios installed" /> }}
+        scroll={{ x: "max-content" }}
+      >
+        <Table.Column<ProfileRow>
+          dataIndex="name"
+          title="Scenario"
+          key="name"
+          render={(v: string) => <Typography.Text code>{v}</Typography.Text>}
+        />
+        <Table.Column<ProfileRow> dataIndex="description" title="Description" key="description" />
+        <Table.Column<ProfileRow>
+          title="Override"
+          key="override"
+          width={200}
+          render={(_, row) => (
+            <Select
+              size="small"
+              style={{ width: 170 }}
+              value={row.override}
+              onChange={(v) => setDraft((d) => ({ ...d, [row.name]: v }))}
+              options={[
+                { value: "default", label: "Default (ban)" },
+                { value: "captcha", label: "Captcha", disabled: !captchaEnabled },
+                { value: "off", label: "Off (bypass)" },
+              ]}
+            />
+          )}
+        />
+      </Table>
     </Card>
   );
 };

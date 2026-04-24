@@ -832,6 +832,190 @@ func csAlertsInspectHandler(ctx context.Context, params json.RawMessage) (any, e
 	return map[string]any{"alert": raw}, nil
 }
 
+// ---- M27 Step 6: security.crowdsec.scenarios.list + profiles.{get,set} ----
+
+const (
+	profilesPath       = "/etc/crowdsec/profiles.yaml"
+	profilesBeginMark  = "# jabali-begin-overrides"
+	profilesEndMark    = "# jabali-end-overrides"
+	profilesWarningCmt = "# DO NOT HAND-EDIT — rewritten by jabali on Save. Edits inside these markers are lost.\n# To add manual profiles, place them AFTER the jabali-end-overrides line below."
+)
+
+type rawScenarioEntry struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Status      string `json:"status"`
+}
+
+type csScenarioWire struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+func csScenariosListHandler(ctx context.Context, _ json.RawMessage) (any, error) {
+	out, err := runCscliJSON(ctx, "scenarios", "list")
+	if err != nil {
+		return nil, csInternal("cscli scenarios list", err)
+	}
+	var wrap struct {
+		Scenarios []rawScenarioEntry `json:"scenarios"`
+	}
+	if err := json.Unmarshal(out, &wrap); err != nil {
+		return nil, csInternal("parse scenarios", err)
+	}
+	items := make([]csScenarioWire, 0, len(wrap.Scenarios))
+	for _, s := range wrap.Scenarios {
+		items = append(items, csScenarioWire{Name: s.Name, Description: s.Description})
+	}
+	return map[string]any{"items": items}, nil
+}
+
+type csProfileOverride struct {
+	Scenario string `json:"scenario"`
+	Action   string `json:"action"` // captcha | off
+}
+
+// scanOverridesFromProfiles parses the jabali marker-bounded block and
+// returns the overrides previously persisted. Everything outside the
+// markers is ignored.
+func scanOverridesFromProfiles() ([]csProfileOverride, error) {
+	raw, err := os.ReadFile(profilesPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []csProfileOverride{}, nil
+		}
+		return nil, err
+	}
+	text := string(raw)
+	start := strings.Index(text, profilesBeginMark)
+	end := strings.Index(text, profilesEndMark)
+	if start < 0 || end < 0 || end < start {
+		return []csProfileOverride{}, nil
+	}
+	block := text[start:end]
+	// Minimal parse: find scenario filter + decision type per doc.
+	// Format produced by renderOverrides is deterministic so we can
+	// scan for `GetScenario() == "<name>"` + `type: <action>`.
+	scenRE := regexp.MustCompile(`GetScenario\(\) == "([^"]+)"`)
+	typeRE := regexp.MustCompile(`type:\s*(captcha|bypass)`)
+	scens := scenRE.FindAllStringSubmatch(block, -1)
+	types := typeRE.FindAllStringSubmatch(block, -1)
+	out := make([]csProfileOverride, 0, len(scens))
+	for i, s := range scens {
+		if i >= len(types) {
+			break
+		}
+		action := "off"
+		if types[i][1] == "captcha" {
+			action = "captcha"
+		}
+		out = append(out, csProfileOverride{Scenario: s[1], Action: action})
+	}
+	return out, nil
+}
+
+func csProfilesGetHandler(_ context.Context, _ json.RawMessage) (any, error) {
+	overrides, err := scanOverridesFromProfiles()
+	if err != nil {
+		return nil, csInternal("read profiles", err)
+	}
+	return map[string]any{"overrides": overrides}, nil
+}
+
+// renderOverridesBlock produces the jabali-managed marker block. Each
+// override becomes one profile doc. "off" uses decision type=bypass
+// (CrowdSec's built-in "skip this alert" remediation).
+func renderOverridesBlock(overrides []csProfileOverride) string {
+	if len(overrides) == 0 {
+		return fmt.Sprintf("%s\n%s\n%s\n", profilesBeginMark, profilesWarningCmt, profilesEndMark)
+	}
+	var b strings.Builder
+	b.WriteString(profilesBeginMark)
+	b.WriteString("\n")
+	b.WriteString(profilesWarningCmt)
+	b.WriteString("\n---\n")
+	for i, o := range overrides {
+		action := "captcha"
+		if o.Action == "off" {
+			action = "bypass"
+		}
+		// Sanitize scenario name for the profile `name:` field — alnum
+		// + dashes + slashes stay; everything else → '-'.
+		safe := regexp.MustCompile(`[^A-Za-z0-9_/.-]`).ReplaceAllString(o.Scenario, "-")
+		b.WriteString(fmt.Sprintf("name: jabali-override-%s\n", safe))
+		b.WriteString(fmt.Sprintf("filters:\n - Alert.Remediation == true && Alert.GetScenario() == %q\n", o.Scenario))
+		b.WriteString(fmt.Sprintf("decisions:\n - type: %s\n   duration: 4h\n", action))
+		b.WriteString("on_success: break\n")
+		if i < len(overrides)-1 {
+			b.WriteString("---\n")
+		}
+	}
+	b.WriteString("\n")
+	b.WriteString(profilesEndMark)
+	b.WriteString("\n")
+	return b.String()
+}
+
+type csProfilesSetParams struct {
+	Overrides []csProfileOverride `json:"overrides"`
+}
+
+func csProfilesSetHandler(ctx context.Context, params json.RawMessage) (any, error) {
+	var p csProfilesSetParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, csInvalidArg(fmt.Sprintf("parse params: %v", err))
+	}
+	for _, o := range p.Overrides {
+		if o.Action != "captcha" && o.Action != "off" {
+			return nil, csInvalidArg(`action must be "captcha" or "off"`)
+		}
+		if o.Scenario == "" {
+			return nil, csInvalidArg("scenario name required")
+		}
+	}
+	raw, err := os.ReadFile(profilesPath)
+	if err != nil {
+		return nil, csInternal("read profiles.yaml", err)
+	}
+	text := string(raw)
+	newBlock := renderOverridesBlock(p.Overrides)
+
+	// Strip any existing jabali block (marker-bounded).
+	startIdx := strings.Index(text, profilesBeginMark)
+	endIdx := strings.Index(text, profilesEndMark)
+	if startIdx >= 0 && endIdx >= 0 && endIdx > startIdx {
+		// Include trailing newline after endMark if present.
+		endOfLine := strings.Index(text[endIdx:], "\n")
+		if endOfLine >= 0 {
+			endIdx = endIdx + endOfLine + 1
+		} else {
+			endIdx = endIdx + len(profilesEndMark)
+		}
+		text = text[:startIdx] + text[endIdx:]
+	}
+	// Insert new block at the very top so jabali profiles evaluate first.
+	text = newBlock + "---\n" + strings.TrimLeft(text, "\n")
+
+	bak := profilesPath + ".bak"
+	_ = os.WriteFile(bak, raw, 0o644)
+	if err := os.WriteFile(profilesPath, []byte(text), 0o644); err != nil {
+		return nil, csInternal("write profiles.yaml", err)
+	}
+
+	// Pre-flight: `crowdsec -t` (exists in v1.7.x per probe).
+	if out, terr := exec.CommandContext(ctx, "crowdsec", "-t").CombinedOutput(); terr != nil {
+		// Restore backup + surface error.
+		_ = os.WriteFile(profilesPath, raw, 0o644)
+		return nil, csInternal(fmt.Sprintf("crowdsec -t: %s", strings.TrimSpace(string(out))), terr)
+	}
+	if err := exec.CommandContext(ctx, "systemctl", "reload", "crowdsec").Run(); err != nil {
+		_ = os.WriteFile(profilesPath, raw, 0o644)
+		_ = exec.CommandContext(ctx, "systemctl", "reload", "crowdsec").Run()
+		return nil, csInternal("systemctl reload crowdsec after write", err)
+	}
+	return map[string]any{"overrides": p.Overrides}, nil
+}
+
 // ---- M27 Step 5: security.crowdsec.captcha.apply -------------------------
 
 const bouncerConfPath = "/etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf"
@@ -1001,4 +1185,7 @@ func init() {
 	Default.Register("security.crowdsec.alerts.inspect", csAlertsInspectHandler)
 	Default.Register("security.crowdsec.console.enroll", csConsoleEnrollHandler)
 	Default.Register("security.crowdsec.captcha.apply", csCaptchaApplyHandler)
+	Default.Register("security.crowdsec.scenarios.list", csScenariosListHandler)
+	Default.Register("security.crowdsec.profiles.get", csProfilesGetHandler)
+	Default.Register("security.crowdsec.profiles.set", csProfilesSetHandler)
 }

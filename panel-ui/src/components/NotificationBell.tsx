@@ -1,15 +1,27 @@
 // NotificationBell — topbar unread-count bell + dropdown for M14
 // Step 7. Uses TanStack Query polling (30s) so the bell updates even
 // when Web Push isn't subscribed (belt + braces per the plan).
-import { Badge, Button, Card, Dropdown, Empty, List, Popconfirm, Space, Tag, Typography, message } from "antd";
+//
+// Dropdown chrome mirrors the AntD `custom-dropdown` demo: pass
+// `menu={{ items }}` so each notification row renders as a real
+// Menu.Item (AntD-native hover + padding + focus ring), then wrap
+// the menu in `dropdownRender` with a header Space of buttons and
+// a footer Space for the push toggle. Container uses theme tokens
+// (colorBgElevated / borderRadiusLG / boxShadowSecondary) so the
+// popup is visually identical to every other AntD dropdown.
+import { Badge, Button, Divider, Dropdown, Empty, Popconfirm, Space, Tag, Typography, message, theme } from "antd";
+import type { MenuProps } from "antd";
+import type { CSSProperties, ReactElement } from "react";
+import { cloneElement, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
 import { useNavigate } from "react-router";
 
 import { BellOutlined } from "@icons";
 
 import { apiClient } from "../apiClient";
 import { useWebPushSubscription } from "../hooks/useWebPushSubscription";
+
+const { useToken } = theme;
 
 type NotificationRow = {
   id: string;
@@ -59,6 +71,7 @@ export function NotificationBell() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const webpush = useWebPushSubscription();
+  const { token } = useToken();
 
   const inbox = useQuery<InboxResponse>({
     queryKey: INBOX_KEY,
@@ -68,19 +81,11 @@ export function NotificationBell() {
       );
       return data;
     },
-    // 10s poll is our fallback; the service-worker postMessage below
-    // drives instant updates when Web Push is active, and
-    // refetchOnWindowFocus picks up anything missed while the tab
-    // was backgrounded.
     refetchInterval: 10_000,
     staleTime: 5_000,
     refetchOnWindowFocus: true,
   });
 
-  // Service worker → client bridge: when a Web Push payload arrives
-  // (sw-push.js push handler), it posts a `jabali/notification`
-  // message to every open tab. Invalidating both the bell query and
-  // the admin History tab's query key keeps every surface current.
   useEffect(() => {
     if (typeof navigator === "undefined" || !navigator.serviceWorker) return;
     const onMessage = (event: MessageEvent) => {
@@ -120,7 +125,7 @@ export function NotificationBell() {
     try {
       if (!row.read_at) {
         await apiClient.post(`/notifications/inbox/${row.id}/read`);
-        qc.invalidateQueries({ queryKey: INBOX_KEY });
+        qc.invalidateQueries({ queryKey: ["notifications"] });
       }
     } catch {
       // Silent — clicking through shouldn't block navigation.
@@ -132,111 +137,135 @@ export function NotificationBell() {
 
   const pushToggle = (() => {
     if (!webpush.supported) {
-      return (
-        <Typography.Text type="secondary">Browser push not supported</Typography.Text>
-      );
+      return <Typography.Text type="secondary">Browser push not supported</Typography.Text>;
     }
     if (webpush.permission === "denied") {
       return (
-        <Typography.Text type="secondary">
-          Push blocked — enable in your browser settings
-        </Typography.Text>
+        <Typography.Text type="secondary">Push blocked — enable in your browser</Typography.Text>
       );
     }
     if (webpush.subscribed) {
       return (
-        <Button size="small" onClick={() => void webpush.unsubscribe()} loading={webpush.loading}>
+        <Button onClick={() => void webpush.unsubscribe()} loading={webpush.loading}>
           Disable browser push
         </Button>
       );
     }
     return (
-      <Button size="small" type="primary" onClick={() => void webpush.subscribe()} loading={webpush.loading}>
+      <Button type="primary" onClick={() => void webpush.subscribe()} loading={webpush.loading}>
         Enable browser push
       </Button>
     );
   })();
 
-  const content = (
-    <Card
-      title={
-        <Space size={6}>
-          <BellOutlined />
-          <Typography.Text strong>Notifications</Typography.Text>
-          {unread > 0 && <Badge count={unread} size="small" />}
-        </Space>
-      }
-      extra={
-        <Space size={4}>
-          <Button size="small" onClick={markAllRead} disabled={unread === 0}>
-            Mark all read
-          </Button>
-          <Popconfirm
-            title="Clear all notifications?"
-            description="This deletes every notification in your inbox."
-            onConfirm={clearAll}
-            okText="Clear"
-            okButtonProps={{ danger: true }}
-          >
-            <Button size="small" danger disabled={rows.length === 0}>
-              Clear
-            </Button>
-          </Popconfirm>
-        </Space>
-      }
-      actions={[pushToggle]}
-      styles={{ body: { padding: 0, maxHeight: 420, overflowY: "auto" } }}
-      style={{ width: 380, maxWidth: "100vw" }}
-    >
-      {rows.length === 0 ? (
-        <Empty
-          description={inbox.isLoading ? "Loading…" : "No notifications"}
-          image={Empty.PRESENTED_IMAGE_SIMPLE}
-          style={{ padding: 24 }}
-        />
-      ) : (
-        <List<NotificationRow>
-          itemLayout="horizontal"
-          dataSource={rows}
-          renderItem={(row) => (
-            <List.Item
-              onClick={() => handleItemClick(row)}
-              style={{
-                padding: "12px 16px",
-                cursor: row.deeplink ? "pointer" : "default",
-                background: row.read_at ? undefined : "var(--ant-color-primary-bg, rgba(22,119,255,0.06))",
-              }}
-            >
-              <List.Item.Meta
-                avatar={<Tag color={severityColor[row.severity] ?? "default"} style={{ marginInlineEnd: 0 }}>{row.severity}</Tag>}
-                title={<Typography.Text strong>{row.title}</Typography.Text>}
-                description={
-                  <Space direction="vertical" size={2} style={{ width: "100%" }}>
-                    <Typography.Paragraph
-                      type="secondary"
-                      style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 12 }}
-                      ellipsis={{ rows: 2 }}
-                    >
-                      {row.body}
-                    </Typography.Paragraph>
-                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                      {relativeTime(row.created_at)}
-                    </Typography.Text>
-                  </Space>
-                }
+  // Menu items — one Menu.Item per notification. label is a compact
+  // two-line block (title + body-preview + timestamp) so the row
+  // keeps AntD's native hover tint without us re-rolling padding.
+  // The severity Tag lives in `icon` (left gutter) so it aligns
+  // with the Menu.Item.icon slot used by AntD's own menus.
+  const items: MenuProps["items"] =
+    rows.length === 0
+      ? [
+          {
+            key: "empty",
+            disabled: true,
+            label: (
+              <Empty
+                description={inbox.isLoading ? "Loading…" : "No notifications"}
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                style={{ padding: token.paddingSM }}
               />
-            </List.Item>
-          )}
-        />
-      )}
-    </Card>
-  );
+            ),
+          },
+        ]
+      : rows.map((row) => ({
+          key: row.id,
+          onClick: () => void handleItemClick(row),
+          style: {
+            height: "auto",
+            padding: `${token.paddingXS}px ${token.padding}px`,
+            background: row.read_at ? undefined : token.colorPrimaryBg,
+          },
+          icon: (
+            <Tag color={severityColor[row.severity] ?? "default"} style={{ marginInlineEnd: 0 }}>
+              {row.severity}
+            </Tag>
+          ),
+          label: (
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <Typography.Text strong style={{ lineHeight: 1.3 }}>
+                {row.title}
+              </Typography.Text>
+              <Typography.Paragraph
+                type="secondary"
+                style={{ margin: 0, fontSize: token.fontSizeSM, whiteSpace: "pre-wrap" }}
+                ellipsis={{ rows: 2 }}
+              >
+                {row.body}
+              </Typography.Paragraph>
+              <Typography.Text type="secondary" style={{ fontSize: token.fontSizeSM }}>
+                {relativeTime(row.created_at)}
+              </Typography.Text>
+            </div>
+          ),
+        }));
+
+  const contentStyle: CSSProperties = {
+    width: 380,
+    maxWidth: "100vw",
+    backgroundColor: token.colorBgElevated,
+    borderRadius: token.borderRadiusLG,
+    boxShadow: token.boxShadowSecondary,
+  };
+
+  const rowStyle: CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: `${token.paddingSM}px ${token.padding}px`,
+  };
 
   return (
     <Dropdown
-      dropdownRender={() => content}
+      menu={{ items }}
       trigger={["click"]}
       placement="bottomRight"
+      dropdownRender={(menu) => (
+        <div style={contentStyle}>
+          <div style={rowStyle}>
+            <Space size={token.marginXS}>
+              <BellOutlined />
+              <Typography.Text strong>Notifications</Typography.Text>
+              {unread > 0 && <Badge count={unread} size="small" />}
+            </Space>
+            <Space size={token.marginXS}>
+              <Button type="primary" onClick={markAllRead} disabled={unread === 0}>
+                Mark all read
+              </Button>
+              <Popconfirm
+                title="Clear all notifications?"
+                description="This deletes every notification in your inbox."
+                onConfirm={clearAll}
+                okText="Clear"
+                okButtonProps={{ danger: true }}
+              >
+                <Button danger disabled={rows.length === 0}>
+                  Clear
+                </Button>
+              </Popconfirm>
+            </Space>
+          </div>
+          <Divider style={{ margin: 0 }} />
+          <div style={{ maxHeight: 420, overflowY: "auto" }}>
+            {cloneElement(
+              menu as ReactElement<{ style: CSSProperties }>,
+              { style: { boxShadow: "none", background: "transparent" } },
+            )}
+          </div>
+          <Divider style={{ margin: 0 }} />
+          <div style={rowStyle}>{pushToggle}</div>
+        </div>
+      )}
     >
       <Button type="text" aria-label="Notifications">
         <Badge count={unread} size="small" overflowCount={99}>

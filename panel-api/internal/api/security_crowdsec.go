@@ -179,6 +179,28 @@ func RegisterSecurityCrowdSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterfac
 		}
 		c.Status(http.StatusNoContent)
 	})
+
+	// M27 Step 3 — alerts view (read-only). Alerts = scenario fires,
+	// decisions = active enforcement. Both overlap but alerts show the
+	// signal path (scenario hit → maybe decision → maybe expired).
+	g.GET("/alerts", agentPassthrough(cli, "security.crowdsec.alerts.list", nil, csCallTimeout))
+
+	g.GET("/alerts/:id", func(c *gin.Context) {
+		id, err := strconv.Atoi(c.Param("id"))
+		if err != nil || id <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_id"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), csCallTimeout)
+		defer cancel()
+		raw, err := cli.Call(ctx, "security.crowdsec.alerts.inspect", map[string]any{"id": id})
+		if err != nil {
+			status, ebody := translateAgentError(err)
+			c.JSON(status, ebody)
+			return
+		}
+		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
+	})
 }
 
 // RegisterSecurityAppSecRoutes mounts the admin AppSec-geoblock surface.

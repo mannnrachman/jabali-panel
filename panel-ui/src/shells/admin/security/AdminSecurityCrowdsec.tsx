@@ -36,6 +36,8 @@ import {
   useAddCrowdsecAllowlist,
   useAddCrowdsecDecision,
   useAppSecGeoblock,
+  useCrowdsecAlert,
+  useCrowdsecAlerts,
   useCrowdsecAllowlists,
   useCrowdsecBouncers,
   useCrowdsecDecisions,
@@ -46,6 +48,7 @@ import {
   useRemoveCrowdsecAllowlist,
   useUpdateAppSecGeoblock,
   type AppSecGeoblockMode,
+  type CrowdsecAlert,
   type CrowdsecAllowlistEntry,
   type CrowdsecDecision,
   type CrowdsecScope,
@@ -239,6 +242,8 @@ export const AdminSecurityCrowdsec = () => {
       </Card>
 
       <AllowlistsCard />
+
+      <AlertsCard />
 
       <AppSecGeoblockCard />
 
@@ -678,6 +683,141 @@ const AllowlistsCard = () => {
             <Input placeholder="e.g. office LAN, CI runner" />
           </Form.Item>
         </Form>
+      </Drawer>
+    </>
+  );
+};
+
+// AlertsCard — read-only list of CrowdSec scenario fires. Row click
+// opens a Drawer with the full alert detail (events + decisions). No
+// mutations; upstream caps to 100/24h server-side (M27 Step 3).
+type AlertDetail = {
+  id?: number;
+  scenario?: string;
+  source?: { ip?: string; scope?: string; value?: string; cn?: string; as_name?: string };
+  events?: Array<{ timestamp?: string; meta?: Array<{ key: string; value: string }> }>;
+  decisions?: Array<{ type?: string; value?: string; duration?: string; scenario?: string }>;
+  start_at?: string;
+  stop_at?: string;
+  events_count?: number;
+  machine_id?: string;
+};
+
+const AlertsCard = () => {
+  const alerts = useCrowdsecAlerts();
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const detail = useCrowdsecAlert(selectedId);
+  const alert = detail.data as AlertDetail | undefined;
+
+  return (
+    <>
+      <Card size="small" title="Alerts (last 24h)">
+        <Table<CrowdsecAlert>
+          rowKey="id"
+          dataSource={alerts.data ?? []}
+          loading={alerts.isLoading}
+          pagination={{ pageSize: 20, showSizeChanger: false }}
+          locale={{ emptyText: <Empty description="No alerts in the last 24h" /> }}
+          scroll={{ x: "max-content" }}
+          onRow={(row) => ({
+            onClick: () => setSelectedId(row.id),
+            style: { cursor: "pointer" },
+          })}
+        >
+          <Table.Column<CrowdsecAlert> dataIndex="scenario" title="Scenario" key="scenario" />
+          <Table.Column<CrowdsecAlert>
+            title="Source"
+            key="source"
+            render={(_, row) => (
+              <Space size="small">
+                <Typography.Text code>{row.source_ip || row.source_value || "—"}</Typography.Text>
+                {row.source_scope && <Tag>{row.source_scope}</Tag>}
+              </Space>
+            )}
+          />
+          <Table.Column<CrowdsecAlert>
+            dataIndex="events_count"
+            title="Events"
+            key="events_count"
+            width={100}
+          />
+          <Table.Column<CrowdsecAlert>
+            dataIndex="decisions_count"
+            title="Decisions"
+            key="decisions_count"
+            width={110}
+          />
+          <Table.Column<CrowdsecAlert>
+            dataIndex="started_at"
+            title="Started"
+            key="started_at"
+            render={(s: string) => fmtTime(s)}
+          />
+          <Table.Column<CrowdsecAlert>
+            dataIndex="machine_id"
+            title="Machine"
+            key="machine_id"
+            render={(s: string) => <Typography.Text type="secondary">{s || "—"}</Typography.Text>}
+          />
+        </Table>
+      </Card>
+
+      <Drawer
+        title={alert?.scenario ? `Alert: ${alert.scenario}` : "Alert detail"}
+        open={selectedId !== null}
+        onClose={() => setSelectedId(null)}
+        width={720}
+        placement="right"
+        destroyOnClose
+      >
+        {detail.isLoading ? (
+          <Typography.Text type="secondary">Loading…</Typography.Text>
+        ) : alert ? (
+          <Space direction="vertical" size="large" style={{ width: "100%" }}>
+            <Descriptions
+              column={1}
+              size="small"
+              items={[
+                { key: "scenario", label: "Scenario", children: alert.scenario ?? "—" },
+                {
+                  key: "source",
+                  label: "Source",
+                  children: (
+                    <Space size="small" wrap>
+                      <Typography.Text code>{alert.source?.ip ?? alert.source?.value ?? "—"}</Typography.Text>
+                      {alert.source?.scope && <Tag>{alert.source.scope}</Tag>}
+                      {alert.source?.cn && <Tag color="blue">{alert.source.cn}</Tag>}
+                    </Space>
+                  ),
+                },
+                { key: "events", label: "Events count", children: String(alert.events_count ?? 0) },
+                { key: "start", label: "Started", children: fmtTime(alert.start_at) },
+                { key: "stop", label: "Stopped", children: fmtTime(alert.stop_at) },
+                { key: "machine", label: "Machine", children: alert.machine_id ?? "—" },
+              ]}
+            />
+
+            <Card size="small" title="Decisions issued">
+              {(alert.decisions ?? []).length === 0 ? (
+                <Empty description="No decisions issued" />
+              ) : (
+                <Table
+                  rowKey={(_, idx) => `d-${idx}`}
+                  dataSource={alert.decisions}
+                  pagination={false}
+                  size="small"
+                  scroll={{ x: "max-content" }}
+                >
+                  <Table.Column dataIndex="type" title="Type" key="type" />
+                  <Table.Column dataIndex="value" title="Value" key="value" />
+                  <Table.Column dataIndex="duration" title="Duration" key="duration" />
+                </Table>
+              )}
+            </Card>
+          </Space>
+        ) : (
+          <Empty description="Alert not found" />
+        )}
       </Drawer>
     </>
   );

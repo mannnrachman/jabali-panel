@@ -750,6 +750,88 @@ func csAllowlistsRemoveHandler(ctx context.Context, params json.RawMessage) (any
 	return map[string]any{}, nil
 }
 
+// ---- M27 Step 3: security.crowdsec.alerts.{list,inspect} -----------------
+
+type csAlertWire struct {
+	ID             int    `json:"id"`
+	Scenario       string `json:"scenario"`
+	SourceIP       string `json:"source_ip"`
+	SourceScope    string `json:"source_scope"`
+	SourceValue    string `json:"source_value"`
+	EventsCount    int    `json:"events_count"`
+	DecisionsCount int    `json:"decisions_count"`
+	StartedAt      string `json:"started_at"`
+	StoppedAt      string `json:"stopped_at"`
+	MachineID      string `json:"machine_id"`
+}
+
+type rawAlertEntry struct {
+	ID          int    `json:"id"`
+	Scenario    string `json:"scenario"`
+	MachineID   string `json:"machine_id"`
+	StartAt     string `json:"start_at"`
+	StopAt      string `json:"stop_at"`
+	EventsCount int    `json:"events_count"`
+	Source      struct {
+		IP    string `json:"ip"`
+		Scope string `json:"scope"`
+		Value string `json:"value"`
+	} `json:"source"`
+	Decisions []json.RawMessage `json:"decisions"`
+}
+
+func csAlertsListHandler(ctx context.Context, _ json.RawMessage) (any, error) {
+	// Cap to 100 alerts within the last 24h. Server-chosen to avoid
+	// OOMing the panel on a busy host; operator can still `cscli alerts
+	// list --all` from the host if they need more.
+	out, err := runCscliJSON(ctx, "alerts", "list", "--since", "24h", "--limit", "100")
+	if err != nil {
+		return nil, csInternal("cscli alerts list", err)
+	}
+	var raw []rawAlertEntry
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, csInternal("parse cscli alerts list", err)
+	}
+	items := make([]csAlertWire, 0, len(raw))
+	for _, a := range raw {
+		items = append(items, csAlertWire{
+			ID:             a.ID,
+			Scenario:       a.Scenario,
+			SourceIP:       a.Source.IP,
+			SourceScope:    a.Source.Scope,
+			SourceValue:    a.Source.Value,
+			EventsCount:    a.EventsCount,
+			DecisionsCount: len(a.Decisions),
+			StartedAt:      a.StartAt,
+			StoppedAt:      a.StopAt,
+			MachineID:      a.MachineID,
+		})
+	}
+	return map[string]any{"items": items}, nil
+}
+
+type csAlertsInspectParams struct {
+	ID int `json:"id"`
+}
+
+func csAlertsInspectHandler(ctx context.Context, params json.RawMessage) (any, error) {
+	var p csAlertsInspectParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, csInvalidArg(fmt.Sprintf("parse params: %v", err))
+	}
+	if p.ID <= 0 {
+		return nil, csInvalidArg("id must be a positive integer")
+	}
+	out, err := runCscliJSON(ctx, "alerts", "inspect", strconv.Itoa(p.ID), "--details")
+	if err != nil {
+		return nil, csInternal("cscli alerts inspect", err)
+	}
+	// Passthrough — the detail shape is rich (meta + events + decisions)
+	// and the UI renders it via Descriptions + nested Table.
+	var raw json.RawMessage = out
+	return map[string]any{"alert": raw}, nil
+}
+
 func init() {
 	Default.Register("security.crowdsec.status", csStatusHandler)
 	Default.Register("security.crowdsec.decisions.list", csDecisionsListHandler)
@@ -763,4 +845,6 @@ func init() {
 	Default.Register("security.crowdsec.allowlists.list", csAllowlistsListHandler)
 	Default.Register("security.crowdsec.allowlists.add", csAllowlistsAddHandler)
 	Default.Register("security.crowdsec.allowlists.remove", csAllowlistsRemoveHandler)
+	Default.Register("security.crowdsec.alerts.list", csAlertsListHandler)
+	Default.Register("security.crowdsec.alerts.inspect", csAlertsInspectHandler)
 }

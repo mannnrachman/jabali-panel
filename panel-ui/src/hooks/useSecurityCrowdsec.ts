@@ -236,3 +236,47 @@ export function useRemoveCrowdsecAllowlist() {
     },
   });
 }
+
+// Alerts (M27 step 3) — read-only. Alerts = scenario fires; decisions =
+// active enforcement. Upstream caps the list at 100 entries/24h server-side.
+export type CrowdsecAlert = {
+  id: number;
+  scenario: string;
+  source_ip: string;
+  source_scope: string;
+  source_value: string;
+  events_count: number;
+  decisions_count: number;
+  started_at: string;
+  stopped_at: string;
+  machine_id: string;
+};
+
+export function useCrowdsecAlerts() {
+  return useQuery({
+    queryKey: ["security", "crowdsec", "alerts"],
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ items: CrowdsecAlert[] }>(
+        `${BASE}/alerts`,
+      );
+      return data.items ?? [];
+    },
+    refetchInterval: 60_000,
+  });
+}
+
+// Alert detail shape is deliberately loose — cscli inspect returns a rich
+// tree (meta + events + decisions + source) that the UI renders via
+// nested tables. Keep as `unknown` and let the component narrow.
+export function useCrowdsecAlert(id: number | null) {
+  return useQuery({
+    queryKey: ["security", "crowdsec", "alerts", id],
+    enabled: id !== null && id > 0,
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ alert: unknown }>(
+        `${BASE}/alerts/${id}`,
+      );
+      return data.alert;
+    },
+  });
+}

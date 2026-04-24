@@ -168,7 +168,7 @@ export function NotificationBell() {
       }
       extra={
         <Space size={4}>
-          <Button type="link" size="small" onClick={markAllRead} disabled={unread === 0}>
+          <Button size="small" onClick={markAllRead} disabled={unread === 0}>
             Mark all read
           </Button>
           <Popconfirm
@@ -178,7 +178,7 @@ export function NotificationBell() {
             okText="Clear"
             okButtonProps={{ danger: true }}
           >
-            <Button type="link" size="small" danger disabled={rows.length === 0}>
+            <Button size="small" danger disabled={rows.length === 0}>
               Clear
             </Button>
           </Popconfirm>

@@ -42,6 +42,17 @@
 
 set -euo pipefail
 
+# ---------- locale: pin to C.UTF-8 ----------------------------------------
+# Operators SSH in with their own LANG (often a locale not yet generated on
+# the target host — e.g. LANG=he_IL.UTF-8). Perl-using apt postinst scripts
+# then spam "Setting locale failed" warnings and fall back to "C", which is
+# fine behaviourally but noisy. C.UTF-8 is always available on glibc (no
+# locale-gen needed) and gives UTF-8 I/O. Unset LANGUAGE so perl doesn't
+# retry the un-generated locale chain.
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
+unset LANGUAGE
+
 # ---------- fail-loud: ERR trap -------------------------------------------
 # set -e exits on the first non-zero command. The default behavior prints
 # nothing — whatever step failed looks identical to a clean exit, and the

@@ -894,17 +894,32 @@ ADR-0052 (disclaimer sieve vs MtaHook decision matrix),
 
 ### M14: Notifications (PLANNED)
 
-**Goal:** Admins can configure and receive alerts via email, Slack, Discord, webhook.
+**Goal:** Admins can configure and receive alerts via multiple out-of-band channels AND see in-app notifications via a bell dropdown that also delivers Web Push when the panel tab is closed.
+
+**Channels:**
+- Email (via Stalwart — shipped in M6)
+- Slack (incoming webhook)
+- Discord (incoming webhook)
+- ntfy.sh (self-hostable or public; POST to topic URL, optional bearer token + priority + tags)
+- Generic webhook (arbitrary URL, JSON body, HMAC signature)
+- Web Push (W3C Push API + VAPID, service-worker-backed, fires even when panel tab is closed)
+
+**In-app surface:**
+- Notification bell dropdown in the admin topbar (AntD `Dropdown` + `Badge` for unread count)
+- Lists the last N notifications with: timestamp, severity, title, link to the related resource (domain, cert, service)
+- Mark-as-read + Mark-all-as-read; persisted in `notification_history`
+- Same dropdown registers + manages Web Push subscription for the signed-in admin (enable/disable toggle + permission prompt). VAPID keys auto-generated at first install and stored in `server_settings`.
 
 **Deliverables:**
-- New migrations: `create_notification_channels.sql`, `create_webhook_endpoints.sql`, `create_notification_history.sql`
-- Notification channel CRUD (email, Slack, Discord, webhook)
-- Admin broadcast notification (system events: domain expiry, certificate renewal, disk full)
-- Per-channel template customization
-- Notification history log (audit trail)
-- Agent command: `notifications.send` (if needed for system-level alerts)
-- API: `/api/v1/notification-channels`, `/api/v1/notifications/broadcast`
-- UI: admin notification channel config; notification center
+- New migrations: `create_notification_channels.sql`, `create_webhook_endpoints.sql`, `create_notification_history.sql`, `create_webpush_subscriptions.sql`
+- Notification channel CRUD (email, Slack, Discord, ntfy, generic webhook, web push)
+- Admin broadcast notification (system events: domain expiry, certificate renewal, disk full, service down, backup fail, CrowdSec ban-rate spike)
+- Per-channel template customization + test-send button
+- Notification history log (audit trail of every delivery: channel, outcome, retry count)
+- Agent command: `notifications.send` (for system-level alerts originating from the agent root scope)
+- Service worker `panel-ui/public/sw-push.js` handling `push` + `notificationclick` events
+- API: `/api/v1/notification-channels`, `/api/v1/notifications/broadcast`, `/api/v1/notifications/inbox`, `/api/v1/notifications/webpush/subscribe`, `/api/v1/notifications/webpush/vapid-public-key`
+- UI: admin Notification Channels config page + topbar bell dropdown + Web Push enablement flow
 
 **Status:** Planned
 

@@ -309,6 +309,20 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 				"rm -rf node_modules && npm ci --no-audit --no-fund")
 		}},
 		{"build frontend", func() error {
+			// vite's emptyDir unlinks every file under dist/ before
+			// writing the new bundle. If any prior build left root-owned
+			// artifacts there (e.g. a legacy update ran as root, or an
+			// operator ran `npm run build` from a root shell), the
+			// jabali-owned build here hits EACCES on unlink and aborts.
+			// chown the tree to the service user each run — cheap,
+			// idempotent, and immune to however dist got into that state.
+			distDir := repoDir + "/panel-ui/dist"
+			if _, err := os.Stat(distDir); err == nil {
+				if err := run("", "chown", "-R",
+					serviceUser+":"+serviceUser, distDir); err != nil {
+					return err
+				}
+			}
 			return asUser(repoDir+"/panel-ui", "npm", "run", "build")
 		}},
 		{"build panel-api", func() error {

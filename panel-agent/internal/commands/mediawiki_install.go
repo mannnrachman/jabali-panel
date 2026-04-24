@@ -306,19 +306,11 @@ func mediawikiInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 
 	removePlaceholderIndex(ctx, installPath)
 
-	tmpDir, err := os.MkdirTemp("", "mediawiki-")
+	tmpDir, err := stagingMkdirTemp("mediawiki-")
 	if err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mktemp: %v", err)}
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("staging mktemp: %v", err)}
 	}
 	defer os.RemoveAll(tmpDir)
-	// MkdirTemp creates the dir 0700 root:root. The systemd-run-as-user
-	// `tar` below can't traverse it to reach the tarball file inside.
-	// Widen to 0755 so the per-domain user can chdir/open the file (the
-	// file itself is chmod'd 0644 below). The tarball contains no
-	// secrets — just the upstream MediaWiki source.
-	if err := os.Chmod(tmpDir, 0o755); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("chmod tmpdir: %v", err)}
-	}
 	tarballPath := filepath.Join(tmpDir, "mediawiki.tar.gz")
 
 	dlCtx, dlCancel := context.WithTimeout(ctx, 10*time.Minute)

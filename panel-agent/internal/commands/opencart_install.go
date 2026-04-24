@@ -321,14 +321,11 @@ func opencartInstallHandler(ctx context.Context, params json.RawMessage) (any, e
 
 	removePlaceholderIndex(ctx, installPath)
 
-	tmpDir, err := os.MkdirTemp("", "opencart-")
+	tmpDir, err := stagingMkdirTemp("opencart-")
 	if err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mktemp: %v", err)}
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("staging mktemp: %v", err)}
 	}
 	defer os.RemoveAll(tmpDir)
-	if err := os.Chmod(tmpDir, 0o755); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("chmod tmpdir: %v", err)}
-	}
 	zipPath := filepath.Join(tmpDir, "opencart.zip")
 
 	dlCtx, dlCancel := context.WithTimeout(ctx, 10*time.Minute)

@@ -6,6 +6,26 @@ If this file and a matching ADR disagree, the ADR wins — but open a PR to fix 
 
 ---
 
+## Security over functionality — non-negotiable
+
+Security hardening is never sacrificed to make a feature work. If a sandbox, drop-privilege, or namespace-isolation directive is blocking a workflow, **change the workflow**, do not loosen the hardening.
+
+Concrete rules every contributor follows:
+
+- **Do not remove `PrivateTmp=`, `ProtectSystem=`, `ProtectKernelTunables=`, `NoNewPrivileges=`, `CapabilityBoundingSet=`, `AmbientCapabilities=`, or any other systemd hardening already present on a unit** to unblock a feature. If a command inside the service can't reach a path that's sandboxed (most often `/tmp` via `PrivateTmp=yes`), move the staging location outside the sandbox — e.g., `/var/lib/jabali-agent-staging/` for agent-side tarballs — rather than dropping the isolation.
+- **Do not widen a file's mode (0755 on a dir that should be 0700, `chmod a+r` on root-owned state) to let a handler work.** Re-evaluate who should own it and use the privilege-drop path (e.g. `systemd-run --uid=<user>`) with appropriately-scoped paths.
+- **Do not add `-k`/`--insecure` to curl, `InsecureSkipVerify: true` to Go HTTP clients, or disable a firewall rule** "just to test". Production code ships with the production defaults.
+- **Do not bypass install.sh's validator hard-fails** (`recursor.conf` loopback-only check, `pdns` bind addresses, UFW post-install SSH rule, etc.). If a validator fails legitimately, fix the *config* — the validator exists because we've been burnt by that configuration drifting.
+
+When a hardening setting legitimately has to go, it requires:
+1. An ADR explaining the threat model delta + mitigation,
+2. A matching comment at the edit site pointing at that ADR,
+3. Reviewer sign-off.
+
+Scar story behind this rule: M11/agent-install workflow first "fixed" Drupal/Joomla tarball-extract failures by dropping `PrivateTmp=yes` from `jabali-agent.service`. That trivially opens the agent to `/tmp` symlink races from tenant users. The correct fix was to stage tarballs outside `/tmp` (see `panel-agent/internal/commands/staging_tmp.go`) and keep `PrivateTmp=yes`. Always pick the longer path over the unsafe shortcut.
+
+---
+
 ## Repository layout
 
 ```

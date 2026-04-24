@@ -347,17 +347,15 @@ func drupalInstallHandler(ctx context.Context, params json.RawMessage) (any, err
 
 	removePlaceholderIndex(ctx, installPath)
 
-	tmpDir, err := os.MkdirTemp("", "drupal-")
+	// Stage outside /tmp so the agent's PrivateTmp sandbox doesn't hide
+	// the tarball from the per-user systemd-run extract unit. See
+	// staging_tmp.go for the full rationale. stagingMkdirTemp already
+	// ensures 0755 on the random dir.
+	tmpDir, err := stagingMkdirTemp("drupal-")
 	if err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mktemp: %v", err)}
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("staging mktemp: %v", err)}
 	}
 	defer os.RemoveAll(tmpDir)
-	// Same 0700 → 0755 widen as DokuWiki/MediaWiki — systemd-run-as-user
-	// tar can't traverse the agent-owned 0700 default. Tarball has no
-	// secrets — just upstream Drupal source.
-	if err := os.Chmod(tmpDir, 0o755); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("chmod tmpdir: %v", err)}
-	}
 	tarballPath := filepath.Join(tmpDir, "drupal.tar.gz")
 
 	dlCtx, dlCancel := context.WithTimeout(ctx, 10*time.Minute)

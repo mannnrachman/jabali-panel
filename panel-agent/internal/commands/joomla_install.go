@@ -262,14 +262,11 @@ func joomlaInstallHandler(ctx context.Context, params json.RawMessage) (any, err
 
 	removePlaceholderIndex(ctx, installPath)
 
-	tmpDir, err := os.MkdirTemp("", "joomla-")
+	tmpDir, err := stagingMkdirTemp("joomla-")
 	if err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mktemp: %v", err)}
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("staging mktemp: %v", err)}
 	}
 	defer os.RemoveAll(tmpDir)
-	if err := os.Chmod(tmpDir, 0o755); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("chmod tmpdir: %v", err)}
-	}
 	tarballPath := filepath.Join(tmpDir, "joomla.tar.gz")
 
 	dlCtx, dlCancel := context.WithTimeout(ctx, 10*time.Minute)

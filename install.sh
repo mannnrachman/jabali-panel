@@ -2792,17 +2792,7 @@ TimeoutStopSec=10
 # commands may need to re-exec tooling that escalates (chpasswd, useradd
 # etc). See the comment block above the cat << for why ProtectSystem=
 # and ProtectHome= are deliberately omitted.
-#
-# PrivateTmp is NOT set: the app-install commands (drupal, joomla,
-# mediawiki, dokuwiki) stage upstream tarballs under /tmp and then
-# extract them via `systemd-run --uid=<user>`. systemd-run creates a
-# transient unit under PID 1's mount namespace — the real host /tmp,
-# not the agent's private one — so a PrivateTmp'd agent would write
-# the tarball to its own isolated /tmp and the per-user extract unit
-# would see no such file. Keeping /tmp shared across the agent and its
-# spawned transients is required for correctness. The agent already
-# has full root on this host, so isolating /tmp buys no meaningful
-# additional containment.
+PrivateTmp=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes

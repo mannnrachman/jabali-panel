@@ -142,6 +142,73 @@ if (SKIP_REASON) {
       // the runner over SSH risks locking the runner out for the rest
       // of the suite. Operators verify this manually with the runbook.
     });
+
+    // ---- M27 smoke tests -------------------------------------------------
+
+    test("M27 Allowlist: add IP → row visible → remove → gone", async ({ page }) => {
+      await login(page);
+      await page.goto("/jabali-admin/security?tab=crowdsec");
+      await page.waitForLoadState("networkidle");
+      await expect(page.getByText(/Allowlist \(never ban\)/i)).toBeVisible();
+
+      const ip = `198.51.100.${Math.floor(Math.random() * 200) + 10}`;
+      await page.getByRole("button", { name: /Add to allowlist/i }).click();
+      await page.getByLabel("IP or CIDR").fill(ip);
+      await page.getByLabel("Reason").fill("e2e-smoke");
+      await page.getByRole("button", { name: /^Add$/ }).click();
+
+      await expect(page.locator("tr", { hasText: ip })).toBeVisible({ timeout: 15_000 });
+
+      const row = page.locator("tr", { hasText: ip }).first();
+      await row.getByRole("button", { name: /Remove/i }).click();
+      await page.getByRole("button", { name: /^Remove$/ }).click(); // popconfirm
+      await expect(page.locator("tr", { hasText: ip })).toHaveCount(0, { timeout: 15_000 });
+    });
+
+    test("M27 Alerts view: table renders", async ({ page }) => {
+      await login(page);
+      await page.goto("/jabali-admin/security?tab=crowdsec");
+      await page.waitForLoadState("networkidle");
+      await expect(page.getByText(/Alerts \(last 24h\)/i)).toBeVisible();
+      const emptyOrRow = page
+        .getByText(/No alerts in the last 24h/i)
+        .or(page.locator("tr.ant-table-row").first());
+      await expect(emptyOrRow).toBeVisible();
+    });
+
+    test("M27 Console card: validation blocks short keys", async ({ page }) => {
+      await login(page);
+      await page.goto("/jabali-admin/security?tab=crowdsec");
+      await page.waitForLoadState("networkidle");
+      await expect(page.getByText(/CrowdSec Console \(optional\)/i)).toBeVisible();
+      await page.getByLabel(/Enrollment key/i).fill("too-short");
+      await page.getByRole("button", { name: /^Enroll$/ }).click();
+      await expect(page.getByText(/16-128 alnum \+ dash chars/i)).toBeVisible();
+    });
+
+    test("M27 Captcha: enabling reveals key inputs", async ({ page }) => {
+      await login(page);
+      await page.goto("/jabali-admin/security?tab=crowdsec");
+      await page.waitForLoadState("networkidle");
+      await expect(page.getByText(/^Captcha remediation$/i)).toBeVisible();
+      const onButton = page.getByRole("radio", { name: "On" });
+      if (await onButton.isVisible()) {
+        await onButton.click();
+        await expect(page.getByLabel("Site key (public)")).toBeEnabled();
+        await page.getByRole("radio", { name: "Off" }).click();
+      }
+    });
+
+    test("M27 Profiles: scenarios table renders", async ({ page }) => {
+      await login(page);
+      await page.goto("/jabali-admin/security?tab=crowdsec");
+      await page.waitForLoadState("networkidle");
+      await expect(page.getByText(/Per-scenario remediation override/i)).toBeVisible();
+      const emptyOrRow = page
+        .getByText(/No scenarios installed/i)
+        .or(page.locator("tr.ant-table-row").first());
+      await expect(emptyOrRow).toBeVisible({ timeout: 15_000 });
+    });
   });
 }
 

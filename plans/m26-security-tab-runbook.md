@@ -182,18 +182,71 @@ cscli metrics show appsec
   `# jabali-mode: off` in the header, wipe the `pre_eval:` block, then
   `systemctl reload crowdsec`. UI then shows off-mode.
 
-### Enrolling in CrowdSec Console (optional)
+### Enrolling in CrowdSec Console (optional) — M27
 
-CrowdSec Console gives you a hosted dashboard + crowd-sourced threat
-intel feeds. Free tier exists. Optional — out of the box CrowdSec
+CrowdSec Console gives you a hosted dashboard + CTI community
+blocklists. Free tier exists. Optional — out of the box CrowdSec
 runs fully self-contained.
 
-```bash
-# Get an enrollment token from console.crowdsec.net
-sudo cscli console enroll <token>
-# Approve from the Console web UI
-sudo systemctl restart crowdsec
+**From the admin UI** (M27 Step 4, ADR-0062):
+1. Create a free account at https://app.crowdsec.net, grab the enrollment key
+2. Open the "CrowdSec Console" card on the CrowdSec tab, paste key, click Enroll
+3. Accept the pending instance in the Console web UI
+4. Sharing preferences (custom / manual / tainted / context / console_management)
+   are controlled via the Console web UI
+
+Disenroll is managed in app.crowdsec.net (remove instance). CrowdSec
+CLI has no `disenroll` verb — if you need to burn the link manually,
+`cscli capi register` re-registers this machine with fresh anonymous
+credentials and orphans the Console-side association.
+
+### M27 — Allowlists, Alerts, Captcha, Per-scenario overrides
+
+The CrowdSec tab gained four cards beyond M26's status/metrics/decisions:
+
+**Allowlist (never ban)** — ADR-0061. Server-wide IP/CIDR list. jabali
+maintains one allowlist named `jabali-admin-allowlist` via `cscli
+allowlists`; LAPI is truth. Use it to add your office IP, home CIDR,
+or CI runner range so no scenario or AppSec rule can ever 403 you.
+Allowlists evaluate BEFORE scenarios AND before the AppSec geoblock.
+
+**Alerts view** — read-only list of `cscli alerts list --since 24h
+--limit 100`. Row click opens a Drawer with source + events + any
+decisions issued. Alerts = scenario fires; Decisions = active bans.
+A scenario can fire without producing a decision (logged-only
+profile) and a decision can outlive the alert that caused it.
+
+**Captcha remediation** — M27 Step 5. Toggle + provider (hCaptcha /
+reCAPTCHA v2 / Cloudflare Turnstile) + site key + secret key.
+The secret is WRITE-ONLY: GET /api/v1/admin/security/crowdsec/captcha
+never returns it. Empty secret on PUT means "keep existing". When
+enabled, the agent rewrites FOUR keys in
+`/etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf`
+(`CAPTCHA_PROVIDER`, `SITE_KEY`, `SECRET_KEY`, `FALLBACK_REMEDIATION`)
+and reloads nginx. The rest of the conf (M26-written AppSec settings)
+is preserved byte-for-byte.
+
+Provider site keys — 10000000-ffff-ffff-ffff-000000000001 is
+hCaptcha's public test site key (always passes); useful for smoke-
+testing the integration before plugging in production keys.
+
+**Per-scenario remediation override** — ADR-0063. Table listing every
+installed scenario with an inline Select: Default (ban) / Captcha /
+Off (bypass). Saves rewrite a marker-bounded block at the TOP of
+`/etc/crowdsec/profiles.yaml`:
+
 ```
+# jabali-begin-overrides
+# DO NOT HAND-EDIT — rewritten by jabali on Save. ...
+# jabali-end-overrides
+```
+
+Everything below the end marker is preserved. Pre-flight
+`crowdsec -t` before reload; on failure the `.bak` is restored. The
+Captcha option is greyed out when Captcha remediation (above) is
+disabled.
+
+To roll back the override layer: `sed -i '/# jabali-begin-overrides/,/# jabali-end-overrides/d' /etc/crowdsec/profiles.yaml && systemctl reload crowdsec`.
 
 ## Troubleshooting
 

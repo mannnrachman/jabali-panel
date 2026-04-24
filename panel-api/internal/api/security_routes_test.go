@@ -27,7 +27,7 @@ func securityAdminRouter(cli agent.AgentInterface) *gin.Engine {
 		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "test-admin", IsAdmin: true})
 		c.Next()
 	})
-	api.RegisterSecurityCrowdSecRoutes(v1, cli)
+	api.RegisterSecurityCrowdSecRoutes(v1, cli, nil)
 	api.RegisterSecurityUFWRoutes(v1, cli)
 	return r
 }
@@ -40,7 +40,7 @@ func securityUserRouter(cli agent.AgentInterface) *gin.Engine {
 		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "test-user", IsAdmin: false})
 		c.Next()
 	})
-	api.RegisterSecurityCrowdSecRoutes(v1, cli)
+	api.RegisterSecurityCrowdSecRoutes(v1, cli, nil)
 	api.RegisterSecurityUFWRoutes(v1, cli)
 	return r
 }

@@ -16,7 +16,7 @@ import { cloneElement, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 
-import { BellOutlined } from "@icons";
+import { BellOutlined, CheckOutlined, DeleteOutlined } from "@icons";
 
 import { apiClient } from "../apiClient";
 import { useWebPushSubscription } from "../hooks/useWebPushSubscription";
@@ -146,13 +146,18 @@ export function NotificationBell() {
     }
     if (webpush.subscribed) {
       return (
-        <Button onClick={() => void webpush.unsubscribe()} loading={webpush.loading}>
+        <Button size="small" onClick={() => void webpush.unsubscribe()} loading={webpush.loading}>
           Disable browser push
         </Button>
       );
     }
     return (
-      <Button type="primary" onClick={() => void webpush.subscribe()} loading={webpush.loading}>
+      <Button
+        size="small"
+        type="primary"
+        onClick={() => void webpush.subscribe()}
+        loading={webpush.loading}
+      >
         Enable browser push
       </Button>
     );
@@ -239,7 +244,12 @@ export function NotificationBell() {
               {unread > 0 && <Badge count={unread} size="small" />}
             </Space>
             <Space size={token.marginXS}>
-              <Button type="primary" onClick={markAllRead} disabled={unread === 0}>
+              <Button
+                size="small"
+                icon={<CheckOutlined />}
+                onClick={markAllRead}
+                disabled={unread === 0}
+              >
                 Mark all read
               </Button>
               <Popconfirm
@@ -249,7 +259,12 @@ export function NotificationBell() {
                 okText="Clear"
                 okButtonProps={{ danger: true }}
               >
-                <Button danger disabled={rows.length === 0}>
+                <Button
+                  size="small"
+                  danger
+                  icon={<DeleteOutlined />}
+                  disabled={rows.length === 0}
+                >
                   Clear
                 </Button>
               </Popconfirm>

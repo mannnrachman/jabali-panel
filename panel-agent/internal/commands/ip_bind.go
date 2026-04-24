@@ -14,9 +14,13 @@ import (
 )
 
 // ipBindReq — the primary input is the address. Prefixlen is optional;
-// defaults to /32 for v4, /128 for v6 (a single host address). Interface
-// is also optional; when omitted the agent picks the interface that owns
-// the default route — the safe choice when the host has multiple NICs.
+// when omitted the agent inherits the selected interface's existing
+// primary prefix (typical hosting panel behaviour — secondary IP shares
+// the primary's subnet so `ifconfig` renders it and arping works). When
+// no existing address of the right family is present on the interface,
+// the fallback is /32 for v4 / /128 for v6. Interface is also optional;
+// when omitted the agent picks the interface that owns the default
+// route — the safe choice when the host has multiple NICs.
 type ipBindReq struct {
 	Address   string `json:"address"`
 	Prefixlen *int   `json:"prefixlen,omitempty"`
@@ -55,21 +59,18 @@ func ipBindHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	}
 
 	// Family-derived prefix default; also validates a caller-supplied
-	// prefix stays inside the per-family range.
+	// prefix stays inside the per-family range. Prefix defaulting is
+	// deferred until after we've chosen the interface below, so we can
+	// inherit the interface's existing primary prefix.
 	isV4 := strings.Contains(req.Address, ".") && !strings.Contains(req.Address, ":")
-	prefix := 0
 	if req.Prefixlen != nil {
-		prefix = *req.Prefixlen
-	} else if isV4 {
-		prefix = 32
-	} else {
-		prefix = 128
-	}
-	if isV4 && (prefix < 1 || prefix > 32) {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "prefixlen out of IPv4 range"}
-	}
-	if !isV4 && (prefix < 1 || prefix > 128) {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "prefixlen out of IPv6 range"}
+		p := *req.Prefixlen
+		if isV4 && (p < 1 || p > 32) {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "prefixlen out of IPv4 range"}
+		}
+		if !isV4 && (p < 1 || p > 128) {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "prefixlen out of IPv6 range"}
+		}
 	}
 
 	// Preflight: if the address is already on any interface, short-circuit
@@ -109,11 +110,23 @@ func ipBindHandler(ctx context.Context, params json.RawMessage) (any, error) {
 			Message: "refusing to bind on loopback interface",
 		}
 	}
-	if _, err := net.InterfaceByName(iface); err != nil {
+	nic, err := net.InterfaceByName(iface)
+	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
 			Message: fmt.Sprintf("interface %q does not exist: %v", iface, err),
 		}
+	}
+
+	// Resolve the final prefix: caller-supplied wins; otherwise inherit
+	// the interface's primary prefix (so secondary IPs share the
+	// primary's subnet — cPanel/Plesk convention). Fall back to /32 or
+	// /128 when the interface has no addresses of the right family.
+	prefix := 0
+	if req.Prefixlen != nil {
+		prefix = *req.Prefixlen
+	} else {
+		prefix = interfacePrimaryPrefix(nic, isV4)
 	}
 
 	cidr := fmt.Sprintf("%s/%d", req.Address, prefix)
@@ -244,6 +257,39 @@ func runCaptureStderr(cmd *exec.Cmd) (string, error) {
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	return strings.TrimSpace(stderr.String()), err
+}
+
+// interfacePrimaryPrefix returns the prefix length of the first address
+// of the requested family already bound to the interface. Fallback is
+// /32 for v4, /128 for v6 when the interface has no such address — keeps
+// the function total and never errors callers who want a "best effort"
+// default.
+func interfacePrimaryPrefix(nic *net.Interface, isV4 bool) int {
+	addrs, err := nic.Addrs()
+	if err != nil {
+		if isV4 {
+			return 32
+		}
+		return 128
+	}
+	for _, a := range addrs {
+		ipNet, ok := a.(*net.IPNet)
+		if !ok || ipNet.IP == nil {
+			continue
+		}
+		is4 := ipNet.IP.To4() != nil
+		if is4 != isV4 {
+			continue
+		}
+		ones, _ := ipNet.Mask.Size()
+		if ones > 0 {
+			return ones
+		}
+	}
+	if isV4 {
+		return 32
+	}
+	return 128
 }
 
 func init() {

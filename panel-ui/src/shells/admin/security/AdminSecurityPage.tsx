@@ -4,7 +4,7 @@
 // Card.tabList pattern (same as MailTabsPage / NotificationsTabsPage)
 // so the tab strip is attached to a card body rather than floating
 // above the page.
-import { Card, Typography } from "antd";
+import { Card, Tabs, Typography } from "antd";
 import { useSearchParams } from "react-router";
 
 import { AdminSecurityCrowdsec } from "./AdminSecurityCrowdsec";
@@ -53,12 +53,17 @@ export const AdminSecurityPage = () => {
       <Typography.Title level={3} style={{ marginTop: 0 }}>
         Security
       </Typography.Title>
-      <Card
-        tabList={TAB_KEYS.map((k) => ({ key: k, tab: TAB_LABELS[k] }))}
-        activeTabKey={activeTab}
-        onTabChange={onChange}
-      >
-        {renderTab()}
+      <Card styles={{ body: { padding: 16 } }}>
+        <Tabs
+          activeKey={activeTab}
+          onChange={onChange}
+          style={{ marginTop: -8 }}
+          items={TAB_KEYS.map((k) => ({
+            key: k,
+            label: TAB_LABELS[k],
+            children: activeTab === k ? renderTab() : null,
+          }))}
+        />
       </Card>
     </div>
   );

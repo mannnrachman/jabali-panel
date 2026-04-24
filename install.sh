@@ -3670,7 +3670,12 @@ install_modsecurity() {
   # set so vhost work in later steps doesn't have to bootstrap it.
   install -d -m 0755 /etc/nginx/modsec
   local main_conf="/etc/nginx/modsec/main.conf"
-  local desired_main=$'# Managed by jabali install.sh — M26 Step 1.\n# Per-vhost `modsecurity_rules_file /etc/nginx/modsec/main.conf;` pulls\n# in the stock OWASP CRS rule set. Do NOT add custom rules here — Step 5\n# of M26 lands a per-domain override mechanism.\nInclude /etc/modsecurity/modsecurity.conf\nInclude /usr/share/modsecurity-crs/crs-setup.conf\nInclude /usr/share/modsecurity-crs/rules/*.conf\n'
+  # Debian's libnginx-mod-http-modsecurity ships the core config at
+  # /etc/nginx/modsecurity.conf (NOT /etc/modsecurity/modsecurity.conf
+  # — that's the upstream-tarball path). Debian's modsecurity-crs ships
+  # crs-setup.conf under /etc/modsecurity/crs/ and rules under
+  # /usr/share/modsecurity-crs/rules/.
+  local desired_main=$'# Managed by jabali install.sh — M26 Step 1.\n# Per-vhost `modsecurity_rules_file /etc/nginx/modsec/main.conf;` pulls\n# in the stock OWASP CRS rule set. Do NOT add custom rules here — Step 5\n# of M26 lands a per-domain override mechanism.\nInclude /etc/nginx/modsecurity.conf\nInclude /etc/modsecurity/crs/crs-setup.conf\nInclude /usr/share/modsecurity-crs/rules/*.conf\n'
   if [[ ! -f "$main_conf" ]] || ! cmp -s <(printf '%s' "$desired_main") "$main_conf"; then
     _log "writing $main_conf"
     local tmp
@@ -3682,12 +3687,12 @@ install_modsecurity() {
     _log "$main_conf already current"
   fi
 
-  # The stock /etc/modsecurity/modsecurity.conf is shipped with
+  # The Debian-stock /etc/nginx/modsecurity.conf is shipped with
   # `SecRuleEngine DetectionOnly`. M26 Step 1 keeps the engine OFF
   # (no inspection) — Step 4 lands the global toggle that flips this
   # to On via the admin Security tab + agent command. Default Off so
   # Step 1 ships a safe no-op WAF that doesn't touch tenant traffic.
-  local stock_conf="/etc/modsecurity/modsecurity.conf"
+  local stock_conf="/etc/nginx/modsecurity.conf"
   if [[ -f "$stock_conf" ]]; then
     if grep -qE '^SecRuleEngine[[:space:]]+(DetectionOnly|On)' "$stock_conf"; then
       _log "setting SecRuleEngine Off in $stock_conf (M26 Step 1 default)"

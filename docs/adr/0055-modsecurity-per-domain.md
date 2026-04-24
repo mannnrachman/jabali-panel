@@ -21,11 +21,12 @@ Install:
 1. `apt install libnginx-mod-http-modsecurity modsecurity-crs`.
 2. Write `/etc/nginx/modsec/main.conf`:
    ```
-   Include /etc/modsecurity/modsecurity.conf
-   Include /usr/share/modsecurity-crs/crs-setup.conf
+   Include /etc/nginx/modsecurity.conf
+   Include /etc/modsecurity/crs/crs-setup.conf
    Include /usr/share/modsecurity-crs/rules/*.conf
    ```
-3. The `libnginx-mod-http-modsecurity` package's stock `/etc/modsecurity/modsecurity.conf` ships with `SecRuleEngine DetectionOnly`. Install.sh edits it to `SecRuleEngine Off` (Step 1 default — visible globally but blocks nothing). The global toggle flips to `On` in M26 Step 4 (admin Security tab).
+   Paths match Debian packaging (`/etc/nginx/modsecurity.conf`, `/etc/modsecurity/crs/crs-setup.conf`). Upstream-tarball paths (`/etc/modsecurity/modsecurity.conf`, `/usr/share/modsecurity-crs/crs-setup.conf`) do NOT match what Debian ships — confirmed by VM smoke on 192.168.100.13.
+3. The `libnginx-mod-http-modsecurity` package's stock `/etc/nginx/modsecurity.conf` ships with `SecRuleEngine DetectionOnly`. Install.sh edits it to `SecRuleEngine Off` (Step 1 default — visible globally but blocks nothing). The global toggle flips to `On` in M26 Step 4 (admin Security tab).
 4. `modules-enabled/50-mod-http-modsecurity.conf` is a stock symlink (apt creates it). Install.sh leaves it alone.
 
 No `modsecurity on;` directive is added to any nginx vhost in Step 1. Per-vhost wiring lands in Step 5 — the existing nginx vhost template gets a conditional `modsecurity on; modsecurity_rules_file /etc/nginx/modsec/main.conf;` block emitted only when `domains.modsec_enabled = true`. The reconciler regenerates vhosts on flag change (per ADR-0009 + ADR-0004).

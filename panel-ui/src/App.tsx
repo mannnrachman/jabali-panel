@@ -42,6 +42,8 @@ import { AdminIPList } from "./shells/admin/ips/AdminIPList";
 import { NotificationsTabsPage } from "./shells/admin/notifications/NotificationsTabsPage";
 import { useApplyBrandingToTitle } from "./hooks/useBranding";
 import { AdminSecurityPage } from "./shells/admin/security/AdminSecurityPage";
+import { AdminDNSSECPage } from "./shells/admin/dnssec/AdminDNSSECPage";
+import { UserDNSSECPage } from "./shells/user/dnssec/UserDNSSECPage";
 import { PackageCreate } from "./shells/admin/packages/PackageCreate";
 import { PackageEdit } from "./shells/admin/packages/PackageEdit";
 import { PackageList } from "./shells/admin/packages/PackageList";
@@ -158,6 +160,7 @@ const ThemedApp = () => {
               <Route path="edit/:id" element={<AdminIPEdit />} />
             </Route>
             <Route path="security" element={<AdminSecurityPage />} />
+            <Route path="dnssec" element={<AdminDNSSECPage />} />
             <Route path="notifications">
               <Route index element={<Navigate to="channels" replace />} />
               <Route path=":tab" element={<NotificationsTabsPage />} />
@@ -192,6 +195,7 @@ const ThemedApp = () => {
             </Route>
             <Route path="dns" element={<UserDNSZonesOverviewPage />} />
             <Route path="ssl" element={<UserSSLManagerPage />} />
+            <Route path="dnssec" element={<UserDNSSECPage />} />
             <Route path="php-settings" element={<UserPHPSettingsPage />} />
             <Route path="files" element={<FileManagerPage />} />
             <Route path="applications" element={<UserApplicationList />} />

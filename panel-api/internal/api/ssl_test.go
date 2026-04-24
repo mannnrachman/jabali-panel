@@ -229,6 +229,11 @@ func (m *MockDomainRepository) UpdateDisclaimer(ctx context.Context, id string, 
 	return args.Error(0)
 }
 
+func (m *MockDomainRepository) UpdateDNSSECEnabled(ctx context.Context, id string, enabled bool) error {
+	args := m.Called(ctx, id, enabled)
+	return args.Error(0)
+}
+
 // TestListAllSSL_Success tests GET /admin/ssl-certificates returns all certificates
 func TestListAllSSL_Success(t *testing.T) {
 	mockSSLCerts := new(MockSSLCertificateRepository)

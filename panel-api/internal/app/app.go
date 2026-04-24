@@ -68,6 +68,8 @@ type Deps struct {
 	Autoresponders      repository.EmailAutoresponderRepository
 	Forwarders          repository.EmailForwarderRepository
 	MailboxShares       repository.MailboxShareRepository
+	// DNSSECKeys caches DNSSEC public-key metadata (ADR-0057).
+	DNSSECKeys          repository.DNSSECKeyRepository
 	// QuotaMount is the filesystem mount path /home lives on — passed
 	// on every M18 user.limits.{apply,clear,report} agent call so the
 	// agent can resolve `setquota -u <user> ... <mount>` without ever
@@ -338,6 +340,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			Autoresponders: deps.Autoresponders,
 			Forwarders:     deps.Forwarders,
 			MailboxShares:  deps.MailboxShares,
+		})
+		// DNSSEC per-domain (ADR-0057). Standalone mount; not part of M6.5.
+		api.RegisterDomainDNSSECRoutes(v1, api.DomainDNSSECHandlerConfig{
+			Agent:   deps.Agent,
+			Domains: deps.Domains,
+			Keys:    deps.DNSSECKeys,
 		})
 		if deps.Domains != nil && deps.DNSZones != nil && deps.DNSRecords != nil {
 			api.RegisterDNSRoutes(v1, api.DNSHandlerConfig{

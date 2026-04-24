@@ -161,6 +161,15 @@ func (m *mockDomainRepo) UpdateDisclaimer(ctx context.Context, id string, enable
 	return nil
 }
 
+func (m *mockDomainRepo) UpdateDNSSECEnabled(ctx context.Context, id string, enabled bool) error {
+	d, ok := m.domains[id]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	d.DNSSECEnabled = enabled
+	return nil
+}
+
 type mockDNSZoneRepo struct {
 	zones map[string]*models.DNSZone
 }

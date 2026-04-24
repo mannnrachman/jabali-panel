@@ -222,6 +222,15 @@ func (f *fakeDomainRepo) UpdateDisclaimer(ctx context.Context, id string, enable
 	return nil
 }
 
+func (f *fakeDomainRepo) UpdateDNSSECEnabled(ctx context.Context, id string, enabled bool) error {
+	d, ok := f.domains[id]
+	if !ok {
+		return &notFoundErr{}
+	}
+	d.DNSSECEnabled = enabled
+	return nil
+}
+
 type notFoundErr struct{}
 
 func (e *notFoundErr) Error() string { return "not found" }

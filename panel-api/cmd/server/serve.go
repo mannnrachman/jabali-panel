@@ -221,6 +221,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.Autoresponders = repository.NewEmailAutoresponderRepository(sharedDB)
 		deps.MailboxShares = repository.NewMailboxShareRepository(sharedDB)
 		deps.Forwarders = repository.NewEmailForwarderRepository(sharedDB)
+		deps.DNSSECKeys = repository.NewDNSSECKeyRepository(sharedDB)
 		deps.PhpMyAdminSSOTokens = phpMyAdminSSOTokenRepo
 		deps.PHPPools = phpPoolRepo
 		deps.PHPPoolIniOverrides = phpPoolIniOverrideRepo

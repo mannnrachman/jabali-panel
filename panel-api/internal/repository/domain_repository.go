@@ -71,6 +71,11 @@ type DomainRepository interface {
 	// UpdateDisclaimer writes disclaimer_enabled + disclaimer_text.
 	// M6.5 Step 6 ADR-0052; reconciler pushes to Stalwart sieve.
 	UpdateDisclaimer(ctx context.Context, id string, enabled bool, text *string) error
+	// UpdateDNSSECEnabled writes dnssec_enabled + dnssec_enabled_at.
+	// ADR-0057. Dedicated method because neither column is in Update()'s
+	// allowlist; enabling without a timestamp or disabling without clearing
+	// the timestamp is a bug waiting to happen.
+	UpdateDNSSECEnabled(ctx context.Context, id string, enabled bool) error
 }
 
 // DomainListenIPs is the bundle of optional column writes for
@@ -417,6 +422,27 @@ func (r *domainRepo) UpdateDisclaimer(ctx context.Context, id string, enabled bo
 			"disclaimer_enabled": enabled,
 			"disclaimer_text":    text,
 		})
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateDNSSECEnabled writes dnssec_enabled + dnssec_enabled_at in lockstep.
+// Enabling stamps now(); disabling clears the timestamp.
+func (r *domainRepo) UpdateDNSSECEnabled(ctx context.Context, id string, enabled bool) error {
+	updates := map[string]any{"dnssec_enabled": enabled}
+	if enabled {
+		updates["dnssec_enabled_at"] = time.Now().UTC()
+	} else {
+		updates["dnssec_enabled_at"] = nil
+	}
+	res := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Where("id = ?", id).
+		Updates(updates)
 	if res.Error != nil {
 		return translate(res.Error)
 	}

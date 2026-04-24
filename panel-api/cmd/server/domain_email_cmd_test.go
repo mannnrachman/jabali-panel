@@ -106,6 +106,10 @@ func (*fakeDomainRepo) UpdateDisclaimer(context.Context, string, bool, *string) 
 	return nil
 }
 
+func (*fakeDomainRepo) UpdateDNSSECEnabled(context.Context, string, bool) error {
+	return nil
+}
+
 // fakeDNSZoneRepo / fakeDNSRecordRepo are minimal — enableDomainEmail
 // only calls FindByDomainID + ListByZoneID + Create, and disable only
 // calls FindByDomainID + DeleteByZoneIDAndManagedBy. Everything else

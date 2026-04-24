@@ -741,30 +741,27 @@ POLICYEOF
   if systemctl is-active --quiet systemd-resolved.service; then
     local panel_dropin_early="/etc/systemd/resolved.conf.d/jabali.conf"
     if [[ ! -f "$panel_dropin_early" ]]; then
-      local link_has_dns=""
-      if command -v resolvectl >/dev/null 2>&1; then
-        # resolvectl status exit is 0 even when no upstream exists; look
-        # for 'DNS Servers:' lines with at least one non-empty entry.
-        # `|| true` at the end: resolvectl/awk can exit non-zero under
-        # `set -euo pipefail` (resolvectl returns non-zero when no link
-        # has any DNS config, which is the case we're trying to detect).
-        # We only care about the captured string, not the pipe's exit.
-        link_has_dns="$( { resolvectl status 2>/dev/null \
-          | awk '/^[[:space:]]*DNS Servers:/{sub(/^[[:space:]]*DNS Servers:[[:space:]]*/,""); if ($0 != "") print}'; } || true)"
-      fi
-      if [[ -z "$link_has_dns" ]]; then
-        _warn "no upstream DNS on any link — seeding ${panel_dropin_early} with Cloudflare + Quad9 (override via Admin → DNS)"
+      # Active-resolution probe: does a well-known hostname actually
+      # resolve right now? Cheaper + more reliable than parsing
+      # `resolvectl status` (which has exit-code + output-format quirks
+      # across systemd versions and can kill the script under
+      # `set -euo pipefail`). If getent fails, we know any curl later
+      # in install.sh will also fail — seed the fallback drop-in.
+      if ! getent hosts deb.debian.org >/dev/null 2>&1; then
+        _warn "no upstream DNS resolves (deb.debian.org lookup failed) — seeding ${panel_dropin_early} with Cloudflare + Quad9 (override via Admin → DNS)"
         install -d -m 0755 /etc/systemd/resolved.conf.d
         cat > "$panel_dropin_early" <<'EARLYDNS'
 # Managed by jabali-panel — edits via /jabali-admin/settings → DNS.
-# install.sh found no upstream DNS on any systemd-resolved link and
-# seeded these public defaults so curl/apt steps later in install.sh
-# don't SERVFAIL after a resolved restart.
+# install.sh found no working upstream DNS and seeded these public
+# defaults so curl/apt steps later in install.sh don't SERVFAIL.
 [Resolve]
 DNS=1.1.1.1 9.9.9.9
 EARLYDNS
         chmod 0644 "$panel_dropin_early"
         systemctl restart systemd-resolved.service 2>/dev/null || true
+        # Give resolved a beat to accept the drop-in before the next
+        # step hits the network.
+        sleep 1
       fi
     fi
   fi

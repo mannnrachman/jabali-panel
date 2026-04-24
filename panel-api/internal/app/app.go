@@ -82,6 +82,13 @@ type Deps struct {
 	// or an operator who set Redis.URL=""). Handlers that need it must
 	// guard for nil and return 503 rather than panic.
 	Redis               *redis.Client
+	// M14 notification repos. Wired by serve.go when sharedDB is set;
+	// used by both the /admin/notifications admin API (added later) and
+	// the dispatcher goroutine that drains the Redis stream.
+	NotificationChannels repository.NotificationChannelRepository
+	NotificationHistory  repository.NotificationHistoryRepository
+	WebhookEndpoints     repository.WebhookEndpointRepository
+	WebPushSubs          repository.WebPushSubscriptionRepository
 }
 
 // Default tier: chosen so a reasonable SPA (polling, a few concurrent

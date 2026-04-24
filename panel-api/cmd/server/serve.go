@@ -22,6 +22,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/db"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssokey"
@@ -156,6 +157,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.ServerSettings = serverSettingsRepo
 		sshKeyRepo := repository.NewSSHKeyRepository(sharedDB)
 		deps.SSHKeys = sshKeyRepo
+
+		// M14 notification repos. Populated whenever sharedDB is up;
+		// the admin API (later) and dispatcher goroutine both read them
+		// from deps. Dispatcher only starts when cfg.Redis.URL resolved
+		// and at least one ChannelSender is registered (Step 3 adds the
+		// concrete senders — slack, ntfy, webhook, webpush, email).
+		deps.NotificationChannels = repository.NewNotificationChannelRepository(sharedDB)
+		deps.NotificationHistory = repository.NewNotificationHistoryRepository(sharedDB)
+		deps.WebhookEndpoints = repository.NewWebhookEndpointRepository(sharedDB)
+		deps.WebPushSubs = repository.NewWebPushSubscriptionRepository(sharedDB)
 
 		// Reconciler: database as source of truth, agent state as derived state.
 		rec := reconciler.New(
@@ -402,6 +413,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 		go deps.Reconciler.Start(ctx)
 	}
 
+	// M14 notification dispatcher. Starts iff we have Redis + all
+	// notification repos + at least one ChannelSender registered.
+	// Step 3 (senders) lands slack/ntfy/webhook/webpush/email — until
+	// then the registry is empty and we skip startup with a loud log,
+	// keeping the pipeline in an observable "inactive" state rather
+	// than silently dropping events.
+	dispatcherDone, dispatcherStop := startNotificationDispatcher(ctx, deps, log)
+
 
 	var ssoUDSShutdown func(context.Context) error
 	if ssoKeyPtr != nil && cfg.SSO.SocketPath != "" {
@@ -458,6 +477,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 			log.Info("shutdown signal", "signal", sig.String())
 			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 			defer shutdownCancel()
+			// Stop the notification dispatcher before HTTP so new
+			// publishes funnel through while in-flight XACKs drain.
+			if dispatcherStop != nil {
+				dispatcherStop()
+			}
 			if ssoUDSShutdown != nil {
 				if err := ssoUDSShutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 					log.Error("UDS server shutdown error", "err", err)
@@ -465,6 +489,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 			}
 			if err := srv.Shutdown(shutdownCtx); err != nil {
 				return err
+			}
+			// Wait for the dispatcher's drain to finish (or the grace
+			// window to close) — guarantees we don't exit while
+			// XREADGROUP still holds entries in its PEL.
+			if dispatcherDone != nil {
+				select {
+				case <-dispatcherDone:
+				case <-shutdownCtx.Done():
+				}
 			}
 			log.Info("jabali-panel stopped")
 			return nil
@@ -489,6 +522,50 @@ func loadSSOKey(keyPath string, log *slog.Logger) *ssokey.Key {
 	}
 	log.Error("failed to load SSO key", "path", keyPath, "err", err)
 	return nil
+}
+
+// startNotificationDispatcher wires the M14 Redis Streams consumer. It
+// returns a done channel that closes once Start() returns, and a stop
+// function the shutdown path calls to cancel the dispatcher context.
+// Both are nil when the dispatcher is not started (no Redis, no repos,
+// or no registered ChannelSenders — the registry is empty until Step 3
+// wires the concrete senders).
+func startNotificationDispatcher(parent context.Context, deps app.Deps, log *slog.Logger) (done <-chan struct{}, stop func()) {
+	if deps.Redis == nil {
+		log.Warn("notifications dispatcher: not starting — Redis not configured")
+		return nil, nil
+	}
+	if deps.NotificationChannels == nil || deps.NotificationHistory == nil || deps.WebhookEndpoints == nil {
+		log.Warn("notifications dispatcher: not starting — notification repos missing")
+		return nil, nil
+	}
+	registry := notifications.NewRegistry()
+	// Step 3 will register concrete senders here (slack, ntfy, webhook,
+	// webpush, email). Until then the registry is empty and we skip
+	// Start rather than constructing a dispatcher that would refuse.
+	if len(registry.Kinds()) == 0 {
+		log.Warn("notifications dispatcher: not starting — no ChannelSenders registered yet (Step 3 wires them)")
+		return nil, nil
+	}
+	queue := notifications.NewQueue(deps.Redis)
+	d, err := notifications.NewDispatcher(
+		queue, registry,
+		deps.NotificationChannels, deps.NotificationHistory, deps.WebhookEndpoints,
+		log, notifications.Config{},
+	)
+	if err != nil {
+		log.Error("notifications dispatcher: construction failed", "err", err)
+		return nil, nil
+	}
+	dispatchCtx, dispatchCancel := context.WithCancel(parent)
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		if err := d.Start(dispatchCtx); err != nil {
+			log.Error("notifications dispatcher: start failed", "err", err)
+		}
+	}()
+	return doneCh, dispatchCancel
 }
 
 func startHTTPRedirect(httpsAddr string, log interface{ Debug(string, ...any) }) {

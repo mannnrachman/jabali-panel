@@ -658,6 +658,7 @@ POLICYEOF
       pdns-server pdns-backend-mysql pdns-recursor \
       bind9-dnsutils \
       libnginx-mod-http-modsecurity modsecurity-crs ufw yq \
+      redis-server redis-tools \
       "${php_extensions[@]}"
 
   # Undo the policy-rc.d trap regardless of exit path above (set -e would
@@ -1369,6 +1370,126 @@ install_mariadb_skip_networking() {
     _die "MariaDB still LISTENs on :3306 after drop-in — skip-networking did not take effect"
   fi
   _ok "MariaDB TCP :3306 closed (skip-networking active)"
+}
+
+# ---------- step 2.5: Redis (notification dispatcher + future WP cache) ------
+#
+# ADR-0056 + ADR-0059. Unix-socket-only Redis at /run/redis/redis.sock,
+# mode 0660, group jabali-sockets (same pattern as every other service
+# under ADR-0050). AOF on (dispatcher queue survives restart).
+# 128 MB maxmemory with allkeys-lru (safe for both dispatcher queue
+# and future WP object-cache).
+#
+# db 0 → panel-api notification dispatcher
+# db 1 → reserved for future WordPress object-cache
+#
+# Package redis-server is installed in install_base_packages' one-shot
+# apt batch; this runs post-install config only.
+install_redis() {
+  _log "configuring Redis (package installed in base batch; this runs post-install config)"
+
+  if ! command -v redis-cli >/dev/null 2>&1; then
+    _die "redis-cli binary not found — install_base_packages should have installed redis-server + redis-tools"
+  fi
+
+  # Debian's /etc/redis/redis.conf ends with `include /etc/redis/redis.conf.d/*.conf`
+  # from redis 7.x. Verify presence + patch once if the distro variant
+  # doesn't ship that include — defensive rather than clever.
+  local main_conf="/etc/redis/redis.conf"
+  if [[ ! -f "$main_conf" ]]; then
+    _die "$main_conf missing — redis-server install did not create the config"
+  fi
+  if ! grep -qE '^[[:space:]]*include[[:space:]]+/etc/redis/redis\.conf\.d/\*\.conf' "$main_conf"; then
+    _log "patching $main_conf to include /etc/redis/redis.conf.d/*.conf"
+    printf '\n# Added by jabali install.sh — load drop-ins.\ninclude /etc/redis/redis.conf.d/*.conf\n' >> "$main_conf"
+  fi
+
+  install -d -m 0755 -o root -g root /etc/redis/redis.conf.d
+
+  local dropin="/etc/redis/redis.conf.d/10-jabali-socket.conf"
+  local desired=$'# Managed by jabali install.sh — M14 / ADR-0059. Do NOT hand-edit.\n# Unix socket only; no TCP listener (port 0 disables TCP). Mode 0660 with\n# group jabali-sockets lets panel-api + future WP-cache clients\n# connect while keeping the socket out of reach of unrelated users.\nport 0\nunixsocket /run/redis/redis.sock\nunixsocketperm 660\n\n# Persistence: AOF on with everysec fsync. Lets the notification\n# dispatcher queue survive systemctl restart redis-server.\nappendonly yes\nappendfsync everysec\n\n# Bounded memory with safe eviction. 128MB is the starting floor; WP\n# cache load may warrant a higher-numbered drop-in later.\nmaxmemory 128mb\nmaxmemory-policy allkeys-lru\n'
+
+  local restart_needed=0
+  if [[ ! -f "$dropin" ]] || ! cmp -s <(printf '%s' "$desired") "$dropin"; then
+    _log "installing Redis drop-in → $dropin"
+    local tmp
+    tmp="$(mktemp --tmpdir jabali-redis-dropin.XXXXXX)"
+    printf '%s' "$desired" >"$tmp"
+    install -m 0644 -o root -g root "$tmp" "$dropin"
+    rm -f "$tmp"
+    restart_needed=1
+  else
+    _log "Redis drop-in already current"
+  fi
+
+  # systemd drop-in: RuntimeDirectory=redis gives Redis its own
+  # /run/redis/ on every boot. Belt-and-suspenders chmod/chgrp match
+  # ADR-0050 F-C-3. SupplementaryGroups=jabali-sockets so Redis can
+  # set group-write on the socket file when it creates it (primary
+  # group stays `redis` for AOF file permissions).
+  install -d -m 0755 -o root -g root /etc/systemd/system/redis-server.service.d
+  local unit_dropin="/etc/systemd/system/redis-server.service.d/10-jabali-socket.conf"
+  local unit_desired=$'# Managed by jabali install.sh — M14 / ADR-0059. Do NOT hand-edit.\n[Service]\nRuntimeDirectory=redis\nRuntimeDirectoryMode=0750\nSupplementaryGroups=jabali-sockets\nExecStartPost=/bin/sh -c \'i=0; while [ ! -S /run/redis/redis.sock ] && [ $i -lt 20 ]; do sleep 0.1; i=$((i+1)); done; chgrp jabali-sockets /run/redis/redis.sock && chmod 0660 /run/redis/redis.sock\'\n'
+
+  if [[ ! -f "$unit_dropin" ]] || ! cmp -s <(printf '%s' "$unit_desired") "$unit_dropin"; then
+    _log "installing Redis systemd drop-in → $unit_dropin"
+    local tmp
+    tmp="$(mktemp --tmpdir jabali-redis-unit.XXXXXX)"
+    printf '%s' "$unit_desired" >"$tmp"
+    install -m 0644 -o root -g root "$tmp" "$unit_dropin"
+    rm -f "$tmp"
+    systemctl daemon-reload
+    restart_needed=1
+  else
+    _log "Redis systemd drop-in already current"
+  fi
+
+  # Make sure the jabali-sockets group exists (M25 install creates it,
+  # but we may run before that wave on fresh installs if ordering
+  # changes in the future). Idempotent.
+  if ! getent group jabali-sockets >/dev/null; then
+    _log "creating jabali-sockets system group (M25 boundary; ADR-0050)"
+    groupadd --system jabali-sockets
+  fi
+
+  systemctl enable redis-server >/dev/null 2>&1 || true
+  if [[ "$restart_needed" == "1" ]]; then
+    systemctl restart redis-server
+  else
+    systemctl start redis-server
+  fi
+
+  # Ping via the socket; fail loud if Redis didn't actually come up on
+  # the expected path (wrong config, SELinux, etc.).
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if redis-cli -s /run/redis/redis.sock ping 2>/dev/null | grep -q PONG; then
+      break
+    fi
+    sleep 1
+  done
+  if ! redis-cli -s /run/redis/redis.sock ping 2>/dev/null | grep -q PONG; then
+    _die "Redis did not respond to PING on /run/redis/redis.sock — check 'journalctl -u redis-server'"
+  fi
+
+  # Verify no TCP listener. Same invariant check as MariaDB's
+  # skip-networking step — config ingest errors are easier to catch
+  # here than debug at runtime.
+  if ss -tlnH 'sport = :6379' | grep -q LISTEN; then
+    _die "Redis still LISTENs on :6379 — port 0 directive didn't take effect"
+  fi
+
+  # Verify socket permissions match ADR-0059 contract.
+  local mode owner group
+  read -r mode owner group < <(stat -c '%a %U %G' /run/redis/redis.sock)
+  if [[ "$mode" != "660" ]]; then
+    _warn "Redis socket mode is $mode (expected 660) — ExecStartPost hook may have raced; fix with 'chmod 0660 /run/redis/redis.sock'"
+  fi
+  if [[ "$group" != "jabali-sockets" ]]; then
+    _die "Redis socket group is $group (expected jabali-sockets) — ExecStartPost chgrp did not run"
+  fi
+
+  _ok "Redis listening on unix socket /run/redis/redis.sock mode 0660 ${owner}:${group}"
 }
 
 # ---------- step 2.6: PowerDNS authoritative nameserver ----------------------
@@ -2553,12 +2674,16 @@ write_systemd_unit() {
   cat >"/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
 [Unit]
 Description=Jabali Panel API
-After=network-online.target ${AGENT_SERVICE_NAME}.service
+After=network-online.target ${AGENT_SERVICE_NAME}.service redis-server.service
 Wants=network-online.target
 # Panel hard-requires the agent at boot; without the socket we can't do
 # privileged ops. If the agent crashes post-boot the panel stays up —
 # individual handlers will return 503 with agent:unavailable.
-Requires=${AGENT_SERVICE_NAME}.service
+#
+# Redis is a hard dep too (M14 / ADR-0056): the notification dispatcher
+# can't run without its stream. systemd will restart panel-api if
+# redis-server stops, so the ordering is symmetric with mariadb's.
+Requires=${AGENT_SERVICE_NAME}.service redis-server.service
 
 [Service]
 Type=simple
@@ -4866,6 +4991,7 @@ main() {
   write_env_file
   provision_mariadb
   install_mariadb_skip_networking
+  install_redis
   install_powerdns
   bootstrap_pdns_self_zone
   # M6.3: recursor owns loopback :53 and forwards panel-authoritative zones

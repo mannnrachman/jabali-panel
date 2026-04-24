@@ -37,7 +37,7 @@ System events that fan out to notifications:
 
 | ADR  | Title                                                      | Decision                                                                                                   |
 | ---- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| 0056 | Notification dispatcher: in-process goroutine + BoltDB queue | Single-process queue survives restarts; no Redis/AMQP dep                                                  |
+| 0056 | Notification dispatcher: in-process goroutine + in-memory buffered channel | No Redis/AMQP dep; in-flight envelopes lost on restart; dispatcher re-queues pending history rows on boot |
 | 0057 | Web Push via VAPID, keys in server_settings                | W3C Push API + VAPID; SherClockHolmes/webpush-go as signing lib; keys regenerate only on explicit reset    |
 | 0058 | ntfy.sh: POST topic URL, optional bearer + priority + tags | No vendor SDK; plain HTTP POST; self-hosted or public; channel config stores full topic URL + optional bearer |
 
@@ -101,7 +101,7 @@ ServerSettings seeded at boot:
 
 ### Tasks
 1. Write ADRs 0056 / 0057 / 0058, accepted status. Update `docs/adr/README.md`.
-2. Migration `000059_create_notifications.up.sql` + `.down.sql`. Schema only.
+2. Migration `000064_create_notifications.up.sql` + `.down.sql`. Schema only. (Original draft said 000059; repo landed M6.x migrations between drafting and execution — 000063 is the current highest, 000064 is next free.)
 3. Go models in `panel-api/internal/models/` — NotificationChannel, WebhookEndpoint (extend or fold), NotificationHistory, WebPushSubscription.
 4. Repository interfaces + GORM impls in `panel-api/internal/repository/`.
 5. Seed VAPID keypair in `ServerSettingRepository.EnsureDefault` called from `serve.go` first-boot init (mirror how ManagedIP default row seeds).

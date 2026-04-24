@@ -950,6 +950,20 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 		}
 	}
 
+	// M26 ModSecurity (ADR-0055). Per-domain modsec_enabled flag plus
+	// the server-wide modsec_global_enabled — the agent template emits
+	// the modsecurity directives only when BOTH are true. Global
+	// engine-mode/paranoia rewrite happens out-of-band via
+	// security.modsec.global.set; per-vhost is just the on/off include.
+	params["modsec_enabled"] = domain.ModSecEnabled
+	if r.serverSettings != nil {
+		settingsCtx, settingsCancel := context.WithTimeout(ctx, 5*time.Second)
+		if s, err := r.serverSettings.Get(settingsCtx); err == nil && s != nil {
+			params["modsec_global_enabled"] = s.ModSecGlobalEnabled
+		}
+		settingsCancel()
+	}
+
 	// Fetch SSL certificate paths for the vhost. We serve any cert whose
 	// files exist on disk regardless of issuance status — that includes
 	// 'issued' (Let's Encrypt success), 'self_signed' (operator-set), and

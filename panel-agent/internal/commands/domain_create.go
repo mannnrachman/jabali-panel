@@ -57,6 +57,13 @@ type domainCreateParams struct {
 	// than the invalid `listen []:80;`.
 	ListenIPv4 string `json:"listen_ipv4,omitempty"`
 	ListenIPv6 string `json:"listen_ipv6,omitempty"`
+
+	// M26 ModSecurity wiring (ADR-0055). The vhost template emits the
+	// `modsecurity on; modsecurity_rules_file ...` block ONLY when both
+	// the per-domain flag AND the global engine flag are true. Either
+	// false → vhost stays modsec-free.
+	ModSecEnabled        bool `json:"modsec_enabled,omitempty"`
+	ModSecGlobalEnabled  bool `json:"modsec_global_enabled,omitempty"`
 }
 
 // domainCreateResponse is the output shape for domain.create.
@@ -97,6 +104,11 @@ server {
     server_name {{.Domain}} www.{{.Domain}};
     ssl_certificate {{.SSLCertPath}};
     ssl_certificate_key {{.SSLKeyPath}};
+{{ end }}
+{{ if and .ModSecEnabled .ModSecGlobalEnabled }}
+    # M26 ModSecurity (ADR-0055). Per-domain flag + global engine flag both true.
+    modsecurity on;
+    modsecurity_rules_file /etc/nginx/modsec/main.conf;
 {{ end }}
 {{ if .IsEnabled }}
     root {{.DocRoot}};
@@ -176,6 +188,12 @@ type vhostData struct {
 	// panel-api before reaching the agent) so the template stays simple.
 	ListenIPv4 string
 	ListenIPv6 string
+	// M26 ModSec wiring. The template's conditional emits the
+	// modsecurity directives only when ModSecEnabled AND ModSecGlobalEnabled
+	// are both true (ADR-0055 — global master switch wins). The path
+	// /etc/nginx/modsec/main.conf is a Step-1-owned constant.
+	ModSecEnabled       bool
+	ModSecGlobalEnabled bool
 }
 
 // indexDirectiveFor maps the panel's index_priority enum to the concrete
@@ -251,7 +269,7 @@ func buildPHPValueParam(memLimit, uploadMax, postMax string, maxInputVars, maxEx
 // writeVhost generates and writes the nginx vhost configuration, then tests and reloads nginx.
 // This is the core logic shared by domain.create and domain.enable/disable.
 // If the config content is unchanged, nginx reload is skipped for efficiency.
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string, modsecEnabled, modsecGlobalEnabled bool) (string, error) {
 	// Generate vhost configuration
 	tmpl, err := template.New("vhost").Parse(vhostTemplate)
 	if err != nil {
@@ -281,6 +299,8 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		PHPValueParam:      buildPHPValueParam(phpMemLimit, phpUploadMax, phpPostMax, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime),
 		ListenIPv4:         listenIPv4,
 		ListenIPv6:         listenIPv6,
+		ModSecEnabled:       modsecEnabled,
+		ModSecGlobalEnabled: modsecGlobalEnabled,
 	}
 
 	var vhostConfig bytes.Buffer
@@ -421,7 +441,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 	}
 
 	rateLimitDirectives := BuildRateLimitDirectives(p.DomainID, p.RateLimitRPS, p.ConnectionLimit)
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6, p.ModSecEnabled, p.ModSecGlobalEnabled)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

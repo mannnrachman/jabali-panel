@@ -197,6 +197,58 @@ func (c *Client) CreateRecoveryCode(ctx context.Context, identityID, expiresIn s
 	return &result, nil
 }
 
+// SetPassword replaces the password credential on an existing identity via
+// PATCH /admin/identities/{id} with an RFC 6902 JSON patch. Used by `jabali
+// user password <id>` (operator-initiated reset).
+//
+// passwordHash MUST be a full bcrypt digest (60 chars, $2a$/$2b$/$2y$). The
+// JSON patch op is "add" because it creates the `password` credential block
+// when the identity was provisioned without one (Kratos drops empty credential
+// objects on create) — per RFC 6902, `add` also replaces an existing member
+// at that path, which is exactly the reset semantics we want here.
+func (c *Client) SetPassword(ctx context.Context, identityID, passwordHash string) error {
+	if identityID == "" {
+		return fmt.Errorf("setpassword: identityID is empty")
+	}
+	if len(passwordHash) < 59 {
+		return fmt.Errorf("setpassword: bcrypt hash looks invalid (got %d chars, want 60)", len(passwordHash))
+	}
+
+	patch := []map[string]any{
+		{
+			"op":   "add",
+			"path": "/credentials/password/config/hashed_password",
+			"value": passwordHash,
+		},
+	}
+	body, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("setpassword: marshal: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPatch,
+		c.adminURL+"/admin/identities/"+url.PathEscape(identityID), bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("setpassword: request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json-patch+json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("setpassword: do: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrIdentityNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		errBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("setpassword: status %d: %s", resp.StatusCode, string(errBody))
+	}
+	return nil
+}
+
 // DeleteIdentity removes an identity by ID. 404 is treated as success because
 // a missing identity is the desired end state; this keeps the delete idempotent
 // during unwind/cleanup paths where we may race with a concurrent delete.

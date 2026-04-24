@@ -3,6 +3,7 @@ package kratosclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -129,6 +130,79 @@ func TestCreateIdentityWithPassword_EmptyIDIsError(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("expected error on empty id")
+	}
+}
+
+func TestSetPassword_SendsJSONPatch(t *testing.T) {
+	t.Parallel()
+	var capturedBody []byte
+	var capturedCT string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch || r.URL.Path != "/admin/identities/abc-123" {
+			t.Errorf("wrong request: %s %s", r.Method, r.URL.Path)
+			http.Error(w, "wrong endpoint", http.StatusMethodNotAllowed)
+			return
+		}
+		capturedBody, _ = io.ReadAll(r.Body)
+		capturedCT = r.Header.Get("Content-Type")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"abc-123","traits":{"email":"u@x","is_admin":false}}`))
+	}))
+	defer srv.Close()
+
+	c := newAdminClient(srv)
+	err := c.SetPassword(context.Background(), "abc-123",
+		"$2a$12$F1rL1qVOFx9r1z4L5QhqQOqzxN3V5K9X2Y8Z1A2B3C4D5E6F7G8H9I")
+	if err != nil {
+		t.Fatalf("SetPassword: %v", err)
+	}
+	if capturedCT != "application/json-patch+json" {
+		t.Errorf("Content-Type = %q, want application/json-patch+json", capturedCT)
+	}
+	var patch []map[string]any
+	if err := json.Unmarshal(capturedBody, &patch); err != nil {
+		t.Fatalf("patch body not valid JSON: %v (%s)", err, capturedBody)
+	}
+	if len(patch) != 1 {
+		t.Fatalf("patch length = %d, want 1", len(patch))
+	}
+	if patch[0]["op"] != "add" || patch[0]["path"] != "/credentials/password/config/hashed_password" {
+		t.Errorf("patch op/path wrong: %+v", patch[0])
+	}
+}
+
+func TestSetPassword_NotFoundReturnsSentinel(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := newAdminClient(srv)
+	err := c.SetPassword(context.Background(), "missing",
+		"$2a$12$F1rL1qVOFx9r1z4L5QhqQOqzxN3V5K9X2Y8Z1A2B3C4D5E6F7G8H9I")
+	if err == nil {
+		t.Fatal("expected error on 404")
+	}
+	if !errors.Is(err, ErrIdentityNotFound) {
+		t.Errorf("expected ErrIdentityNotFound, got %v", err)
+	}
+}
+
+func TestSetPassword_RejectsEmptyIDAndShortHash(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("server must not be hit — local validation should reject first")
+	}))
+	defer srv.Close()
+	c := newAdminClient(srv)
+
+	if err := c.SetPassword(context.Background(), "", "$2a$12$F1rL1qVOFx9r1z4L5QhqQOqzxN3V5K9X2Y8Z1A2B3C4D5E6F7G8H9I"); err == nil {
+		t.Error("expected error on empty id")
+	}
+	if err := c.SetPassword(context.Background(), "abc-123", "too-short"); err == nil {
+		t.Error("expected error on short hash")
 	}
 }
 

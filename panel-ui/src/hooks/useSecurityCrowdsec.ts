@@ -143,3 +143,40 @@ export function useDeleteCrowdsecDecision() {
     },
   });
 }
+
+// AppSec geoblock — server-wide country allow/deny list applied by
+// CrowdSec's AppSec engine (L7, pre-evaluation hook). Server-side
+// authoritative state lives in server_settings; the agent mirrors it
+// into /etc/crowdsec/appsec-rules/jabali-geoblock.yaml on every set.
+export type AppSecGeoblockMode = "off" | "allow" | "deny";
+
+export type AppSecGeoblock = {
+  mode: AppSecGeoblockMode;
+  countries: string[];
+};
+
+export function useAppSecGeoblock() {
+  return useQuery({
+    queryKey: ["security", "crowdsec", "appsec", "geoblock"],
+    queryFn: async () => {
+      const { data } = await apiClient.get<AppSecGeoblock>(`${BASE}/appsec/geoblock`);
+      return data;
+    },
+  });
+}
+
+export function useUpdateAppSecGeoblock() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: AppSecGeoblock) => {
+      const { data } = await apiClient.put<AppSecGeoblock>(
+        `${BASE}/appsec/geoblock`,
+        input,
+      );
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["security", "crowdsec", "appsec", "geoblock"] });
+    },
+  });
+}

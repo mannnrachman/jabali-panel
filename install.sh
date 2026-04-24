@@ -3812,6 +3812,103 @@ install_crowdsec() {
   fi
 }
 
+install_crowdsec_appsec() {
+  # Optional AppSec layer — lets the admin Security tab push a
+  # server-wide country allow/deny list enforced at L7. See
+  # https://doc.crowdsec.net/docs/next/appsec/rules_examples/#5-geoblocking.
+  # Install side:
+  #   1. geoip-enrich parser so the runtime has Country.IsoCode
+  #   2. appsec-virtual-patching collection (AppSec engine base rules)
+  #   3. /etc/crowdsec/acquis.d/jabali-appsec.yaml — AppSec HTTP
+  #      listener on /run/crowdsec/appsec.sock
+  #   4. /etc/crowdsec/appsec-configs/jabali-appsec.yaml — config
+  #      referencing our rule + the vendor ruleset
+  #   5. /etc/crowdsec/appsec-rules/jabali-geoblock.yaml — initial
+  #      mode=off (agent rewrites on every admin Apply)
+  # Nginx-side enforcement (`auth_request` to the AppSec endpoint)
+  # is documented in plans/m26-security-tab-runbook.md — operator
+  # opts in per-vhost.
+  _log "configuring CrowdSec AppSec (server-wide geoblock rule)"
+
+  # 1. GeoIP enricher — prereq for GeoIPEnrich expr.
+  if ! cscli parsers list 2>/dev/null | grep -q 'crowdsecurity/geoip-enrich'; then
+    _spin "cscli parsers install geoip-enrich" \
+      cscli parsers install crowdsecurity/geoip-enrich
+  fi
+
+  # 2. AppSec base collection (virtual-patching gives us AppSec rules
+  #    context + inband/outofband plumbing).
+  if ! cscli collections list 2>/dev/null | grep -q 'crowdsecurity/appsec-virtual-patching'; then
+    _spin "cscli collections install appsec-virtual-patching" \
+      cscli collections install crowdsecurity/appsec-virtual-patching
+  fi
+
+  # 3. AppSec acquisition — listener on a unix socket so the nginx side
+  #    can proxy_pass to http://unix:/run/crowdsec/appsec.sock without
+  #    opening a TCP port (ADR-0050).
+  local acquis_dir="/etc/crowdsec/acquis.d"
+  install -d -m 0755 "$acquis_dir"
+  local acquis_file="$acquis_dir/jabali-appsec.yaml"
+  local desired_acquis=$'# Managed by jabali install.sh — M26 AppSec geoblock.\n# AppSec HTTP listener on unix socket. Nginx proxies into here via\n# auth_request (runbook documents the per-vhost snippet).\nappsec_config: crowdsecurity/appsec-default\nlabels:\n  type: appsec\nlisten_addr: /run/crowdsec/appsec.sock\nsource: appsec\n'
+  if [[ ! -f "$acquis_file" ]] || ! cmp -s <(printf '%s' "$desired_acquis") "$acquis_file"; then
+    _log "writing $acquis_file"
+    local tmp
+    tmp="$(mktemp --tmpdir jabali-appsec-acquis.XXXXXX)"
+    printf '%s' "$desired_acquis" >"$tmp"
+    install -m 0644 -o root -g root "$tmp" "$acquis_file"
+    rm -f "$tmp"
+  fi
+
+  # 4. Initial rule file — mode=off so a first install doesn't block
+  #    any traffic. The agent's security.crowdsec.appsec.geoblock.set
+  #    overwrites it when the admin applies a real mode.
+  local rules_dir="/etc/crowdsec/appsec-rules"
+  install -d -m 0755 "$rules_dir"
+  local rule_file="$rules_dir/jabali-geoblock.yaml"
+  if [[ ! -f "$rule_file" ]]; then
+    local desired_rule=$'# Managed by jabali — M26 AppSec geoblock rule.\n# DO NOT hand-edit. Set via the admin Security \xe2\x86\x92 CrowdSec tab OR\n# POST /api/v1/admin/security/crowdsec/appsec/geoblock.\n# jabali-mode: off\n# jabali-countries:\nname: jabali/appsec-geoblock\ndescription: Server-wide AppSec geoblock (currently OFF).\n'
+    _log "seeding $rule_file (mode=off)"
+    local tmp
+    tmp="$(mktemp --tmpdir jabali-appsec-rule.XXXXXX)"
+    printf '%s' "$desired_rule" >"$tmp"
+    install -m 0644 -o root -g root "$tmp" "$rule_file"
+    rm -f "$tmp"
+  fi
+
+  # 5. Socket dir — crowdsec writes /run/crowdsec/appsec.sock under
+  #    the same RuntimeDirectory=crowdsec the LAPI drop-in sets, so no
+  #    extra drop-in needed. Permissions handled by the same chmod/chgrp
+  #    as the LAPI socket via an extended ExecStartPost block.
+  local dropin="/etc/systemd/system/crowdsec.service.d/10-jabali-socket.conf"
+  if [[ -f "$dropin" ]] && ! grep -q 'appsec.sock' "$dropin"; then
+    _log "extending crowdsec drop-in with appsec.sock perms"
+    # Append the two extra ExecStartPost lines (chmod + chgrp for the
+    # AppSec socket). We append rather than rewrite to preserve the
+    # LAPI socket lines already present.
+    cat >>"$dropin" <<'APPSEC_DROPIN'
+ExecStartPost=/bin/sh -c 'until [ -S /run/crowdsec/appsec.sock ]; do sleep 0.1; done'
+ExecStartPost=/bin/chmod 0660 /run/crowdsec/appsec.sock
+ExecStartPost=/bin/chgrp jabali /run/crowdsec/appsec.sock
+APPSEC_DROPIN
+    systemctl daemon-reload
+    systemctl restart crowdsec
+  else
+    systemctl reload crowdsec 2>/dev/null || systemctl restart crowdsec
+  fi
+
+  # Wait for the AppSec socket — appears a beat after crowdsec is active.
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if [[ -S /run/crowdsec/appsec.sock ]]; then break; fi
+    sleep 1
+  done
+  if [[ -S /run/crowdsec/appsec.sock ]]; then
+    _ok "CrowdSec AppSec live at /run/crowdsec/appsec.sock"
+  else
+    _warn "CrowdSec AppSec socket did not appear — check 'cscli metrics' + journalctl -u crowdsec"
+  fi
+}
+
 install_modsecurity() {
   _log "configuring ModSecurity-nginx (packages installed in base batch)"
 
@@ -5050,6 +5147,7 @@ main() {
   #   - ModSecurity nginx module ships installed but `SecRuleEngine
   #     Off` (Step 4 lands the global toggle).
   install_crowdsec
+  install_crowdsec_appsec
   install_modsecurity
   install_ufw
   clone_or_update_repo

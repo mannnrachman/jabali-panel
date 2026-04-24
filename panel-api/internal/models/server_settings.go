@@ -74,6 +74,17 @@ type ServerSettings struct {
 	LogoLightPath  string `gorm:"column:logo_light_path;type:varchar(255);not null;default:''" json:"logo_light_path"`
 	LogoDarkPath   string `gorm:"column:logo_dark_path;type:varchar(255);not null;default:''"  json:"logo_dark_path"`
 
+	// M26 AppSec geoblock (migration 000067). Server-wide rule applied
+	// by crowdsec AppSec. Mode ∈ {"off", "allow", "deny"}:
+	//   off   — rule file written with no filter; all traffic passes
+	//   allow — requests from listed countries pass; everything else 403
+	//   deny  — requests from listed countries 403; everything else passes
+	// Countries is a comma-separated list of ISO 3166-1 alpha-2 codes.
+	// "off" + empty is the default; toggling needs nginx AppSec wiring
+	// (see plans/m26-security-tab-runbook.md).
+	AppSecGeoblockMode      string `gorm:"column:appsec_geoblock_mode;type:varchar(10);not null;default:'off'"    json:"appsec_geoblock_mode"`
+	AppSecGeoblockCountries string `gorm:"column:appsec_geoblock_countries;type:varchar(1000);not null;default:''" json:"appsec_geoblock_countries"`
+
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 

@@ -9,6 +9,7 @@
 // these endpoints are not the standard {data,total,page,page_size}
 // list shape; they're agent passthroughs.
 import {
+  Alert,
   Button,
   Card,
   Col,
@@ -20,6 +21,7 @@ import {
   Input,
   message,
   Popconfirm,
+  Radio,
   Row,
   Select,
   Space,
@@ -28,16 +30,19 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   useAddCrowdsecDecision,
+  useAppSecGeoblock,
   useCrowdsecBouncers,
   useCrowdsecDecisions,
   useCrowdsecHub,
   useCrowdsecMetrics,
   useCrowdsecStatus,
   useDeleteCrowdsecDecision,
+  useUpdateAppSecGeoblock,
+  type AppSecGeoblockMode,
   type CrowdsecDecision,
   type CrowdsecScope,
 } from "../../../hooks/useSecurityCrowdsec";
@@ -229,6 +234,8 @@ export const AdminSecurityCrowdsec = () => {
         </Table>
       </Card>
 
+      <AppSecGeoblockCard />
+
       <Card size="small" title="Bouncers">
         <Table
           rowKey="name"
@@ -397,5 +404,127 @@ export const AdminSecurityCrowdsec = () => {
         </Form>
       </Drawer>
     </Space>
+  );
+};
+
+// AppSecGeoblockCard — server-wide L7 country allow/deny list applied
+// by CrowdSec AppSec's pre-evaluation hook (GeoIPEnrich(...).IsoCode).
+// See https://doc.crowdsec.net/docs/next/appsec/rules_examples/#5-geoblocking.
+// Unlike decisions (L3/L4 firewall-bouncer), this operates on HTTP
+// requests reaching nginx + gets a 403 with a DropRequest("Forbidden
+// Country") reason. Operator must wire nginx to CrowdSec's AppSec
+// endpoint for enforcement — see plans/m26-security-tab-runbook.md.
+const AppSecGeoblockCard = () => {
+  const geoblock = useAppSecGeoblock();
+  const updateGeoblock = useUpdateAppSecGeoblock();
+
+  const [mode, setMode] = useState<AppSecGeoblockMode>("off");
+  const [countries, setCountries] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (geoblock.data) {
+      setMode(geoblock.data.mode);
+      setCountries(geoblock.data.countries);
+    }
+  }, [geoblock.data]);
+
+  const dirty =
+    geoblock.data !== undefined &&
+    (mode !== geoblock.data.mode ||
+      countries.join(",") !== geoblock.data.countries.join(","));
+
+  const apply = async () => {
+    try {
+      await updateGeoblock.mutateAsync({ mode, countries });
+      message.success("AppSec geoblock updated and crowdsec reloaded");
+    } catch (e: unknown) {
+      message.error(e instanceof Error ? e.message : "Failed to apply geoblock");
+    }
+  };
+
+  return (
+    <Card size="small" title="AppSec geoblock (server-wide)" loading={geoblock.isLoading}>
+      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          HTTP-layer country filter applied by CrowdSec AppSec. Blocks with
+          403 at the nginx edge; complementary to IP/range bans (L3). Needs
+          the GeoIP enricher and nginx → AppSec wiring — see runbook.
+        </Typography.Paragraph>
+        <div>
+          <Typography.Text strong>Mode: </Typography.Text>
+          <Radio.Group value={mode} onChange={(e) => setMode(e.target.value)}>
+            <Radio.Button value="off">Off</Radio.Button>
+            <Radio.Button value="allow">Allow-list</Radio.Button>
+            <Radio.Button value="deny">Deny-list</Radio.Button>
+          </Radio.Group>
+        </div>
+        {mode !== "off" && (
+          <div>
+            <Typography.Text strong>Countries: </Typography.Text>
+            <Select
+              mode="tags"
+              style={{ minWidth: 360, width: "100%", maxWidth: 720 }}
+              placeholder="Add ISO 3166-1 alpha-2 codes (RU, CN, IR, …)"
+              value={countries}
+              onChange={(next) =>
+                setCountries(
+                  next.map((c) => c.toUpperCase().trim()).filter((c) => /^[A-Z]{2}$/.test(c)),
+                )
+              }
+              tokenSeparators={[",", " "]}
+            />
+          </div>
+        )}
+        {mode === "allow" && countries.length === 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            message="Allow-list with no countries blocks every request — add at least one before applying."
+          />
+        )}
+        {mode === "deny" && countries.length === 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            message="Deny-list with no countries has no effect — add at least one before applying."
+          />
+        )}
+        <Space>
+          <Popconfirm
+            title="Apply AppSec geoblock"
+            description={
+              mode === "off"
+                ? "Disables the server-wide country filter. Requests from any country pass AppSec."
+                : `${mode === "allow" ? "Allow-list" : "Deny-list"} mode with ${countries.length} ${
+                    countries.length === 1 ? "country" : "countries"
+                  }. CrowdSec is reloaded (SIGHUP) — no traffic drops.`
+            }
+            okText="Apply"
+            onConfirm={apply}
+            disabled={!dirty || updateGeoblock.isPending}
+          >
+            <Button
+              type="primary"
+              disabled={!dirty}
+              loading={updateGeoblock.isPending}
+            >
+              Apply
+            </Button>
+          </Popconfirm>
+          {dirty && (
+            <Button
+              onClick={() => {
+                if (geoblock.data) {
+                  setMode(geoblock.data.mode);
+                  setCountries(geoblock.data.countries);
+                }
+              }}
+            >
+              Reset
+            </Button>
+          )}
+        </Space>
+      </Space>
+    </Card>
   );
 };

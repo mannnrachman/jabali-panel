@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -453,6 +454,178 @@ func csHubListHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	return resp, nil
 }
 
+// ---- security.crowdsec.appsec.geoblock.{get,set} --------------------------
+
+// appsecRulePath is where our single server-wide geoblock rule lives.
+// Written by appsecGeoblockSetHandler, read by appsecGeoblockGetHandler.
+// install.sh `install_crowdsec_appsec` seeds the file at mode=off so
+// crowdsec can parse the collection on first boot.
+const appsecRulePath = "/etc/crowdsec/appsec-rules/jabali-geoblock.yaml"
+
+type csAppSecGeoblockGetResponse struct {
+	Mode      string   `json:"mode"`
+	Countries []string `json:"countries"`
+}
+
+type csAppSecGeoblockSetParams struct {
+	Mode      string   `json:"mode"`
+	Countries []string `json:"countries"`
+}
+
+// csAppSecGeoblockModes is the closed enum the UI + panel-api + agent
+// all share. Keep in sync with the ADR.
+var csAppSecGeoblockModes = map[string]struct{}{
+	"off":   {},
+	"allow": {},
+	"deny":  {},
+}
+
+// csCountryCodeRE pins 2-letter ISO 3166-1 alpha-2. CrowdSec's
+// GeoIPEnrich returns ISO codes in this shape; anything else fails the
+// `not in [...]` filter silently.
+var csCountryCodeRE = regexp.MustCompile(`^[A-Z]{2}$`)
+
+func csAppSecGeoblockGetHandler(_ context.Context, _ json.RawMessage) (any, error) {
+	resp := csAppSecGeoblockGetResponse{Mode: "off", Countries: []string{}}
+	body, err := os.ReadFile(appsecRulePath)
+	if err != nil {
+		// Missing rule file → mode off. install.sh seeds it, so this
+		// only fires on systems that predate M26 AppSec or that the
+		// operator has hand-deleted.
+		if os.IsNotExist(err) {
+			return resp, nil
+		}
+		return nil, csInternal("read appsec rule", err)
+	}
+	// The rule file carries `# jabali-mode: <mode>` and
+	// `# jabali-countries: <csv>` as comment markers so we don't
+	// roundtrip through a full YAML parser for the readback.
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "# jabali-mode:"):
+			resp.Mode = strings.TrimSpace(strings.TrimPrefix(line, "# jabali-mode:"))
+		case strings.HasPrefix(line, "# jabali-countries:"):
+			csv := strings.TrimSpace(strings.TrimPrefix(line, "# jabali-countries:"))
+			if csv != "" {
+				resp.Countries = strings.Split(csv, ",")
+			}
+		}
+	}
+	if _, ok := csAppSecGeoblockModes[resp.Mode]; !ok {
+		resp.Mode = "off"
+	}
+	return resp, nil
+}
+
+func csAppSecGeoblockSetHandler(ctx context.Context, params json.RawMessage) (any, error) {
+	var p csAppSecGeoblockSetParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, csInvalidArg(fmt.Sprintf("parse params: %v", err))
+	}
+	if _, ok := csAppSecGeoblockModes[p.Mode]; !ok {
+		return nil, csInvalidArg("mode must be off|allow|deny")
+	}
+	// Uppercase + dedupe + validate country codes.
+	seen := map[string]struct{}{}
+	cleaned := make([]string, 0, len(p.Countries))
+	for _, c := range p.Countries {
+		code := strings.ToUpper(strings.TrimSpace(c))
+		if code == "" {
+			continue
+		}
+		if !csCountryCodeRE.MatchString(code) {
+			return nil, csInvalidArg(fmt.Sprintf("country %q must be a 2-letter ISO 3166-1 code", c))
+		}
+		if _, dup := seen[code]; dup {
+			continue
+		}
+		seen[code] = struct{}{}
+		cleaned = append(cleaned, code)
+	}
+	if (p.Mode == "allow" || p.Mode == "deny") && len(cleaned) == 0 {
+		return nil, csInvalidArg("mode " + p.Mode + " requires at least one country")
+	}
+	body := renderAppSecGeoblockRule(p.Mode, cleaned)
+	if err := os.MkdirAll("/etc/crowdsec/appsec-rules", 0o755); err != nil {
+		return nil, csInternal("mkdir appsec-rules", err)
+	}
+	tmp := appsecRulePath + ".tmp"
+	if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil {
+		return nil, csInternal("write appsec rule tmp", err)
+	}
+	if err := os.Rename(tmp, appsecRulePath); err != nil {
+		return nil, csInternal("rename appsec rule", err)
+	}
+	// Reload — SIGHUP re-reads rules without dropping the LAPI socket.
+	// `systemctl reload crowdsec` sends SIGHUP when ExecReload is set
+	// (crowdsec.service ships that). If reload is not wired (older
+	// packaging) fall back to restart.
+	if out, err := exec.CommandContext(ctx, "systemctl", "reload", "crowdsec").CombinedOutput(); err != nil {
+		if out2, err2 := exec.CommandContext(ctx, "systemctl", "restart", "crowdsec").CombinedOutput(); err2 != nil {
+			return nil, csInternal("systemctl reload/restart crowdsec",
+				fmt.Errorf("reload: %v %s; restart: %v %s", err, out, err2, out2))
+		}
+	}
+	return csAppSecGeoblockGetResponse{Mode: p.Mode, Countries: cleaned}, nil
+}
+
+// renderAppSecGeoblockRule emits the YAML rule body. The filter uses
+// CrowdSec's expr syntax with GeoIPEnrich — see
+// https://doc.crowdsec.net/docs/next/appsec/rules_examples/#5-geoblocking.
+// The two `# jabali-...` markers at the top let the get handler parse
+// (mode, countries) back out without a YAML round-trip.
+func renderAppSecGeoblockRule(mode string, countries []string) string {
+	// Empty-string tolerance in the list is intentional: GeoIPEnrich
+	// returns "" for private IPs (RFC 1918, loopback). Without "" in
+	// the list, operators who turn on "allow [FR]" would immediately
+	// lock out their own health checks from localhost.
+	csv := strings.Join(countries, ",")
+	// Build the expr list — quote each code; always append "".
+	exprList := `""`
+	if len(countries) > 0 {
+		quoted := make([]string, len(countries))
+		for i, c := range countries {
+			quoted[i] = `"` + c + `"`
+		}
+		exprList = strings.Join(quoted, ", ") + `, ""`
+	}
+
+	header := `# Managed by jabali — M26 AppSec geoblock rule.
+# DO NOT hand-edit. Set via the admin Security → CrowdSec tab OR
+# POST /api/v1/admin/security/crowdsec/appsec/geoblock.
+# jabali-mode: ` + mode + `
+# jabali-countries: ` + csv + `
+`
+
+	switch mode {
+	case "off":
+		// A valid rule file with no filter hooks — crowdsec parses
+		// it clean and does nothing. Keeps the file present (and
+		// parseable) so the get handler can still read the markers.
+		return header + `name: jabali/appsec-geoblock
+description: Server-wide AppSec geoblock (currently OFF).
+`
+	case "allow":
+		return header + `name: jabali/appsec-geoblock
+description: Server-wide AppSec geoblock — allow-list mode.
+pre_eval:
+  - filter: IsInBand == true && GeoIPEnrich(req.RemoteAddr)?.Country.IsoCode not in [` + exprList + `]
+    apply:
+      - DropRequest("Forbidden Country (jabali allow-list)")
+`
+	case "deny":
+		return header + `name: jabali/appsec-geoblock
+description: Server-wide AppSec geoblock — deny-list mode.
+pre_eval:
+  - filter: IsInBand == true && GeoIPEnrich(req.RemoteAddr)?.Country.IsoCode in [` + exprList + `]
+    apply:
+      - DropRequest("Forbidden Country (jabali deny-list)")
+`
+	}
+	return header
+}
+
 func init() {
 	Default.Register("security.crowdsec.status", csStatusHandler)
 	Default.Register("security.crowdsec.decisions.list", csDecisionsListHandler)
@@ -461,4 +634,6 @@ func init() {
 	Default.Register("security.crowdsec.bouncers.list", csBouncersListHandler)
 	Default.Register("security.crowdsec.metrics", csMetricsHandler)
 	Default.Register("security.crowdsec.hub.list", csHubListHandler)
+	Default.Register("security.crowdsec.appsec.geoblock.get", csAppSecGeoblockGetHandler)
+	Default.Register("security.crowdsec.appsec.geoblock.set", csAppSecGeoblockSetHandler)
 }

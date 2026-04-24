@@ -431,6 +431,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			// per-domain toggle list + Reconciler to schedule a re-render
 			// after the toggle flips.
 			api.RegisterSecurityCrowdSecRoutes(v1, deps.Agent)
+			api.RegisterSecurityAppSecRoutes(v1, deps.Agent, deps.ServerSettings)
 			api.RegisterSecurityUFWRoutes(v1, deps.Agent)
 			if deps.Domains != nil {
 				api.RegisterSecurityModsecRoutes(v1, api.SecurityModsecHandlerConfig{

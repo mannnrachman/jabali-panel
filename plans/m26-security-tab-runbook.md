@@ -123,6 +123,82 @@ supports them (the default `crowdsec-firewall-bouncer` does).
 Removing: click **Delete** on the decision row → confirm. Same as
 `cscli decisions delete --id <id>` from the host.
 
+### AppSec geoblock — server-wide country filter (ADR-0060)
+
+Admin UI card on the CrowdSec tab writes
+`/etc/crowdsec/appsec-rules/jabali-geoblock.yaml` + reloads crowdsec.
+Three modes:
+
+- **Off** — rule loaded but inert
+- **Allow-list** — only requests from listed countries pass (plus empty,
+  so private IPs + unresolvable geo still work)
+- **Deny-list** — requests from listed countries → 403
+
+Engine side runs as soon as `install_crowdsec_appsec` has finished
+(acquis socket + base collection + rule file). **Nginx enforcement is
+opt-in.** AppSec only acts on requests that nginx proxies into it;
+apply the snippet below to either `http {}` (global) or specific
+`server {}` blocks (per-vhost).
+
+Snippet — save as `/etc/nginx/snippets/jabali-appsec.conf`:
+
+```nginx
+# CrowdSec AppSec — forward every request to the AppSec engine for
+# pre-evaluation. 200 = allow, 403 = drop with reason from the rule.
+location = /jabali-appsec-check {
+    internal;
+    proxy_pass http://unix:/run/crowdsec/appsec.sock:/;
+    proxy_set_header X-Crowdsec-Appsec-Ip            $remote_addr;
+    proxy_set_header X-Crowdsec-Appsec-Host          $host;
+    proxy_set_header X-Crowdsec-Appsec-Verb          $request_method;
+    proxy_set_header X-Crowdsec-Appsec-Uri           $request_uri;
+    proxy_set_header X-Crowdsec-Appsec-User-Agent    $http_user_agent;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+}
+```
+
+Then on each protected `server {}`:
+
+```nginx
+auth_request /jabali-appsec-check;
+error_page 403 = @appsec_forbidden;
+location @appsec_forbidden {
+    return 403 "Forbidden by AppSec geoblock policy.\n";
+}
+include snippets/jabali-appsec.conf;
+```
+
+After editing: `nginx -t && systemctl reload nginx`.
+
+To verify a country ban is taking effect:
+
+```bash
+# Resolve an IP in the blocked country via a public GeoIP source.
+# Then from a host in that country (or via a proxy):
+curl -I https://your-panel.example.com/
+# Expect: HTTP/2 403
+```
+
+CrowdSec AppSec metrics expose hit counts:
+
+```bash
+cscli metrics show appsec
+```
+
+**Troubleshooting:**
+
+- Requests pass that shouldn't → check
+  `cscli parsers list | grep geoip-enrich` — enricher must be installed
+  (install.sh does this, but a manual `cscli parsers remove …` regresses).
+- `nginx: [error] auth_request: access denied` on every request → probably
+  the AppSec socket isn't there. `ls -l /run/crowdsec/appsec.sock` and
+  `journalctl -u crowdsec -n 50`.
+- Allow-list locked you out → edit
+  `/etc/crowdsec/appsec-rules/jabali-geoblock.yaml` on the host, set
+  `# jabali-mode: off` in the header, wipe the `pre_eval:` block, then
+  `systemctl reload crowdsec`. UI then shows off-mode.
+
 ### Enrolling in CrowdSec Console (optional)
 
 CrowdSec Console gives you a hosted dashboard + crowd-sourced threat

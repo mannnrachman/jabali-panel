@@ -1,7 +1,7 @@
 // NotificationBell — topbar unread-count bell + dropdown for M14
 // Step 7. Uses TanStack Query polling (30s) so the bell updates even
 // when Web Push isn't subscribed (belt + braces per the plan).
-import { Badge, Button, Dropdown, Empty, List, Tag, Typography, message } from "antd";
+import { Badge, Button, Card, Dropdown, Empty, List, Space, Tag, Typography, message } from "antd";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 
@@ -100,14 +100,12 @@ export function NotificationBell() {
   const pushToggle = (() => {
     if (!webpush.supported) {
       return (
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          Browser push not supported
-        </Typography.Text>
+        <Typography.Text type="secondary">Browser push not supported</Typography.Text>
       );
     }
     if (webpush.permission === "denied") {
       return (
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        <Typography.Text type="secondary">
           Push blocked — enable in your browser settings
         </Typography.Text>
       );
@@ -127,86 +125,59 @@ export function NotificationBell() {
   })();
 
   const content = (
-    <div
-      style={{
-        width: 360,
-        maxWidth: "100vw",
-        background: "var(--ant-color-bg-container, #fff)",
-        border: "1px solid var(--ant-color-border-secondary, #f0f0f0)",
-        borderRadius: 8,
-        boxShadow: "0 6px 16px rgba(0,0,0,0.12)",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "10px 14px",
-          borderBottom: "1px solid var(--ant-color-border-secondary, #f0f0f0)",
-        }}
-      >
-        <Typography.Text strong>Notifications</Typography.Text>
+    <Card
+      size="small"
+      title="Notifications"
+      extra={
         <Button type="link" size="small" onClick={markAllRead} disabled={unread === 0}>
           Mark all read
         </Button>
-      </div>
-
+      }
+      actions={[pushToggle]}
+      styles={{ body: { padding: 0, maxHeight: 400, overflowY: "auto" } }}
+      style={{ width: 360, maxWidth: "100vw" }}
+    >
       {rows.length === 0 ? (
         <Empty
           description={inbox.isLoading ? "Loading…" : "No notifications"}
-          style={{ padding: 24 }}
           image={Empty.PRESENTED_IMAGE_SIMPLE}
         />
       ) : (
-        <List
+        <List<NotificationRow>
           itemLayout="horizontal"
           dataSource={rows}
-          style={{ maxHeight: 400, overflowY: "auto" }}
           renderItem={(row) => (
-            <List.Item
-              onClick={() => handleItemClick(row)}
-              style={{
-                padding: "10px 14px",
-                cursor: row.deeplink ? "pointer" : "default",
-                background: row.read_at ? undefined : "rgba(24,144,255,0.04)",
-              }}
-            >
+            <List.Item onClick={() => handleItemClick(row)}>
               <List.Item.Meta
+                style={{ padding: "0 16px" }}
                 title={
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                    <span>{row.title}</span>
-                    <Tag color={severityColor[row.severity] ?? "default"} style={{ marginRight: 0 }}>
+                  <Space style={{ width: "100%", justifyContent: "space-between" }}>
+                    <Typography.Text>{row.title}</Typography.Text>
+                    <Tag color={severityColor[row.severity] ?? "default"}>
                       {row.severity}
                     </Tag>
-                  </div>
+                  </Space>
                 }
                 description={
-                  <div>
-                    <div style={{ fontSize: 12, whiteSpace: "pre-wrap" }}>{row.body}</div>
-                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                  <Space direction="vertical" size={0} style={{ width: "100%" }}>
+                    <Typography.Paragraph
+                      type="secondary"
+                      style={{ margin: 0, whiteSpace: "pre-wrap" }}
+                      ellipsis={{ rows: 2 }}
+                    >
+                      {row.body}
+                    </Typography.Paragraph>
+                    <Typography.Text type="secondary">
                       {relativeTime(row.created_at)}
                     </Typography.Text>
-                  </div>
+                  </Space>
                 }
               />
             </List.Item>
           )}
         />
       )}
-
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "10px 14px",
-          borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)",
-        }}
-      >
-        {pushToggle}
-      </div>
-    </div>
+    </Card>
   );
 
   return (

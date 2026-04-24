@@ -6,7 +6,7 @@
 import { useMemo, useState } from "react";
 import {
   Button,
-  Card,
+  
   DatePicker,
   Empty,
   Form,
@@ -181,16 +181,12 @@ export const AutorespondersTab = () => {
   }
 
   if (emailEnabledDomains.length === 0 || mailboxes.length === 0) {
-    return (
-      <Card>
-        <Empty description="Create a mailbox first to set an autoresponder" />
-      </Card>
-    );
+    return <Empty description="Create a mailbox first to set an autoresponder" />;
   }
 
   return (
     <>
-      <Card>
+      <div>
         <Space
           style={{
             width: "100%",
@@ -278,7 +274,7 @@ export const AutorespondersTab = () => {
             },
           ]}
         />
-      </Card>
+      </div>
 
       <Modal
         open={editOpen}

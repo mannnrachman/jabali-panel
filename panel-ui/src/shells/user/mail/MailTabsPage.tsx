@@ -1,7 +1,7 @@
 // MailTabsPage — unified mail management with tabs for mailboxes, forwarders, etc.
-// M6.5 Step 1: tab shell with placeholders.
-// Tab implementations filled in by parallel Waves B/C/D.
-import { Button, Space, Tabs, type TabsProps } from "antd";
+// Uses Card.tabList so the active-tab strip attaches to the card body (matches
+// admin UserList styling).
+import { Button, Card, Space, Typography } from "antd";
 import { PlusOutlined } from "@icons";
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router";
@@ -21,6 +21,16 @@ const TAB_KEYS = ["mailboxes", "forwarders", "autoresponders", "catchall", "disc
 type TabKey = (typeof TAB_KEYS)[number];
 const DEFAULT_TAB: TabKey = "mailboxes";
 
+const TAB_LABELS: Record<TabKey, string> = {
+  mailboxes: "Mailboxes",
+  forwarders: "Forwarders",
+  autoresponders: "Autoresponders",
+  catchall: "Catch-All",
+  disclaimer: "Disclaimer",
+  shared: "Shared Folders",
+  logs: "Logs",
+};
+
 export const MailTabsPage = () => {
   const [showCreateMailbox, setShowCreateMailbox] = useState(false);
   const { tab } = useParams<{ tab?: string }>();
@@ -36,64 +46,50 @@ export const MailTabsPage = () => {
     [allDomains],
   );
 
-  const tabs: TabsProps["items"] = [
-    {
-      key: "mailboxes",
-      label: "Mailboxes",
-      children: <MailboxesTab />,
-    },
-    {
-      key: "forwarders",
-      label: "Forwarders",
-      children: <ForwardersTab />,
-    },
-    {
-      key: "autoresponders",
-      label: "Autoresponders",
-      children: <AutorespondersTab />,
-    },
-    {
-      key: "catchall",
-      label: "Catch-All",
-      children: <CatchAllTab />,
-    },
-    {
-      key: "disclaimer",
-      label: "Disclaimer",
-      children: <DisclaimerTab />,
-    },
-    {
-      key: "shared",
-      label: "Shared Folders",
-      children: <SharedFoldersTab />,
-    },
-    {
-      key: "logs",
-      label: "Logs",
-      children: <LogsTab />,
-    },
-  ];
+  const renderTab = () => {
+    switch (activeKey) {
+      case "mailboxes":
+        return <MailboxesTab />;
+      case "forwarders":
+        return <ForwardersTab />;
+      case "autoresponders":
+        return <AutorespondersTab />;
+      case "catchall":
+        return <CatchAllTab />;
+      case "disclaimer":
+        return <DisclaimerTab />;
+      case "shared":
+        return <SharedFoldersTab />;
+      case "logs":
+        return <LogsTab />;
+    }
+  };
 
   return (
     <div style={{ padding: "20px" }}>
-      <div style={{ marginBottom: "16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h2 style={{ margin: 0 }}>Mail</h2>
-        <Space>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => setShowCreateMailbox(true)}
-          >
-            New Mailbox
-          </Button>
-        </Space>
-      </div>
+      <Space
+        align="center"
+        style={{ marginBottom: 16, width: "100%", justifyContent: "space-between" }}
+      >
+        <Typography.Title level={3} style={{ margin: 0 }}>
+          Mail
+        </Typography.Title>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={() => setShowCreateMailbox(true)}
+        >
+          New Mailbox
+        </Button>
+      </Space>
 
-      <Tabs
-        items={tabs}
-        activeKey={activeKey}
-        onChange={(key) => navigate(`/jabali-panel/mail/${key}`)}
-      />
+      <Card
+        tabList={TAB_KEYS.map((k) => ({ key: k, tab: TAB_LABELS[k] }))}
+        activeTabKey={activeKey}
+        onTabChange={(k) => navigate(`/jabali-panel/mail/${k}`)}
+      >
+        {renderTab()}
+      </Card>
 
       {showCreateMailbox && (
         <CreateMailboxWizardModal

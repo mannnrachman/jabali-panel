@@ -4,7 +4,7 @@
 import { useMemo, useState } from "react";
 import {
   Button,
-  Card,
+  
   Empty,
   Form,
   Input,
@@ -82,16 +82,12 @@ export const DisclaimerTab = () => {
 
   if (loadingDomains && domains.length === 0) return <Skeleton active paragraph={{ rows: 4 }} />;
   if (emailEnabled.length === 0) {
-    return (
-      <Card>
-        <Empty description="No email-enabled domains" />
-      </Card>
-    );
+    return <Empty description="No email-enabled domains" />;
   }
 
   return (
     <>
-      <Card>
+      <div>
         <Typography.Title level={3} style={{ marginTop: 0 }}>
           Disclaimer
         </Typography.Title>
@@ -139,7 +135,7 @@ export const DisclaimerTab = () => {
             },
           ]}
         />
-      </Card>
+      </div>
 
       <Modal
         open={open}

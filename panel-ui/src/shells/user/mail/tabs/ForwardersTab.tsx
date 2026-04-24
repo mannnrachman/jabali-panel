@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import {
   Button,
-  Card,
+  
   Empty,
   Form,
   Input,
@@ -103,16 +103,12 @@ export const ForwardersTab = () => {
     return <Skeleton active paragraph={{ rows: 4 }} />;
   }
   if (mailboxes.length === 0) {
-    return (
-      <Card>
-        <Empty description="Create mailboxes first" />
-      </Card>
-    );
+    return <Empty description="Create mailboxes first" />;
   }
 
   return (
     <>
-      <Card>
+      <div>
         <Space
           style={{
             width: "100%",
@@ -184,7 +180,7 @@ export const ForwardersTab = () => {
             },
           ]}
         />
-      </Card>
+      </div>
 
       <Modal
         open={open}

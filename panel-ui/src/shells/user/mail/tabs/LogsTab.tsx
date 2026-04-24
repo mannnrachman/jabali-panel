@@ -3,7 +3,7 @@
 import { useState } from "react";
 import {
   Alert,
-  Card,
+  
   DatePicker,
   Input,
   Space,
@@ -40,7 +40,7 @@ export const LogsTab = () => {
   const total = data?.total ?? 0;
 
   return (
-    <Card>
+    <div>
       <Space style={{ width: "100%", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", rowGap: 8 }}>
         <Typography.Title level={3} style={{ margin: 0 }}>
           Mail Logs
@@ -136,6 +136,6 @@ export const LogsTab = () => {
           },
         ]}
       />
-    </Card>
+    </div>
   );
 };

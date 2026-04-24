@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import {
   Button,
-  Card,
+  
   Checkbox,
   Empty,
   Form,
@@ -114,16 +114,12 @@ export const SharedFoldersTab = () => {
   }
 
   if (mailboxes.length === 0) {
-    return (
-      <Card>
-        <Empty description="Create mailboxes first" />
-      </Card>
-    );
+    return <Empty description="Create mailboxes first" />;
   }
 
   return (
     <>
-      <Card>
+      <div>
         <Space
           style={{
             width: "100%",
@@ -202,7 +198,7 @@ export const SharedFoldersTab = () => {
             },
           ]}
         />
-      </Card>
+      </div>
 
       <Modal
         open={open}

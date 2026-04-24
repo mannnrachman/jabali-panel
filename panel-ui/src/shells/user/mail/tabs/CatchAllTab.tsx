@@ -6,7 +6,7 @@
 import { useMemo, useState } from "react";
 import {
   Button,
-  Card,
+  
   Empty,
   Form,
   Input,
@@ -108,16 +108,12 @@ export const CatchAllTab = () => {
   }
 
   if (emailEnabledDomains.length === 0) {
-    return (
-      <Card>
-        <Empty description="No email-enabled domains yet" />
-      </Card>
-    );
+    return <Empty description="No email-enabled domains yet" />;
   }
 
   return (
     <>
-      <Card>
+      <div>
         <Space
           style={{
             width: "100%",
@@ -199,7 +195,7 @@ export const CatchAllTab = () => {
             },
           ]}
         />
-      </Card>
+      </div>
 
       <Modal
         open={editOpen}

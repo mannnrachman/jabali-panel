@@ -657,7 +657,7 @@ POLICYEOF
       nodejs \
       pdns-server pdns-backend-mysql pdns-recursor \
       bind9-dnsutils \
-      crowdsec libnginx-mod-http-modsecurity modsecurity-crs ufw yq \
+      libnginx-mod-http-modsecurity modsecurity-crs ufw yq \
       "${php_extensions[@]}"
 
   # Undo the policy-rc.d trap regardless of exit path above (set -e would
@@ -3476,16 +3476,69 @@ install_sso_reaper_timer() {
 # because the package name varies by Debian release (nftables on trixie,
 # iptables on bookworm) and apt-cache fallback is the safer model.
 
-install_crowdsec() {
-  _log "configuring CrowdSec (package installed in base batch)"
+add_crowdsec_apt_source() {
+  # CrowdSec upstream apt source. Debian-stock crowdsec on trixie is
+  # 1.4.6 — too old to support `api.server.listen_socket` (added in
+  # CrowdSec 1.5.x; ADR-0050 requires socket binding). Upstream repo
+  # ships current 1.7.x with socket support PLUS both bouncer variants
+  # (crowdsec-firewall-bouncer-{iptables,nftables}) which Debian's
+  # repo does not provide. See ADR-0053 for rationale.
+  local key_url="https://packagecloud.io/crowdsec/crowdsec/gpgkey"
+  local keyring="/etc/apt/keyrings/crowdsec.gpg"
+  local sources_file="/etc/apt/sources.list.d/crowdsec.list"
+  local source_line='deb [signed-by=/etc/apt/keyrings/crowdsec.gpg] https://packagecloud.io/crowdsec/crowdsec/any/ any main'
 
-  if ! command -v cscli >/dev/null 2>&1; then
-    _die "cscli missing after apt install — CrowdSec base package failed; check install_base_packages output"
+  install -d -m 0755 /etc/apt/keyrings
+
+  if [[ ! -s "$keyring" ]]; then
+    _log "fetching CrowdSec upstream signing key → $keyring"
+    local tmp_key
+    tmp_key="$(mktemp --tmpdir jabali-cs-key.XXXXXX)"
+    if ! curl -fsSL --connect-timeout 10 -o "$tmp_key" "$key_url"; then
+      rm -f "$tmp_key"
+      _die "failed to fetch CrowdSec signing key from $key_url"
+    fi
+    gpg --batch --yes --dearmor -o "$keyring" "$tmp_key"
+    rm -f "$tmp_key"
+    chmod 0644 "$keyring"
   fi
 
-  # Pick the firewall bouncer package matching the Debian backend. Trixie+
+  if [[ ! -f "$sources_file" ]] || ! grep -qF "$source_line" "$sources_file"; then
+    _log "writing $sources_file"
+    printf '%s\n' "$source_line" > "$sources_file"
+    apt-get update -qq
+  fi
+}
+
+install_crowdsec() {
+  _log "configuring CrowdSec (upstream apt source for socket support, ADR-0053)"
+
+  add_crowdsec_apt_source
+
+  # If Debian-stock 1.4.x crowdsec was installed by an older install.sh
+  # run (the previous deps batch listed `crowdsec` directly), upgrade to
+  # the upstream version. apt-get install with the upstream repo enabled
+  # picks the candidate from packagecloud automatically.
+  if ! dpkg -s crowdsec >/dev/null 2>&1; then
+    _spin "apt install crowdsec (upstream)" \
+      apt-get install -y -qq --no-install-recommends crowdsec
+  else
+    local installed
+    installed="$(dpkg-query -W -f='${Version}\n' crowdsec 2>/dev/null)"
+    if [[ "$installed" == 1.4.* ]] || [[ "$installed" == 1.3.* ]]; then
+      _log "upgrading crowdsec from $installed (Debian-stock) → upstream"
+      _spin "apt upgrade crowdsec" \
+        apt-get install -y -qq --only-upgrade crowdsec
+    fi
+  fi
+
+  if ! command -v cscli >/dev/null 2>&1; then
+    _die "cscli missing after upstream crowdsec install"
+  fi
+
+  # Pick the firewall bouncer matching the kernel backend. Trixie+
   # defaults to nftables; bookworm uses iptables. apt-cache check guards
-  # against packaging drift.
+  # against packaging drift (both variants exist in upstream repo).
   local debian_rel bouncer_pkg
   debian_rel="$(lsb_release -rs 2>/dev/null | cut -d. -f1)"
   if [[ "$debian_rel" -ge 13 ]] && apt-cache show crowdsec-firewall-bouncer-nftables >/dev/null 2>&1; then
@@ -4790,6 +4843,24 @@ main() {
   # needs the panel's own hostname to resolve locally).
   install_pdns_recursor
   setup_certbot
+  # M26 Step 1 — security foundation. Wired here (after pdns/certbot,
+  # before clone_or_update_repo and the long build_frontend / npm steps)
+  # because:
+  #   - All apt packages (crowdsec, libnginx-mod-http-modsecurity,
+  #     modsecurity-crs, ufw, yq) land in the install_base_packages
+  #     batch above; the firewall bouncer is detected at runtime here.
+  #   - CrowdSec LAPI binds on a Unix socket (ADR-0050) — must be
+  #     configured BEFORE install_stalwart so it doesn't race Stalwart
+  #     pinning 127.0.0.1:8080.
+  #   - UFW activates with the SSH + panel + nginx + mail allow-list
+  #     BEFORE Stalwart's first bind (avoids documented iptables-reload
+  #     race) AND BEFORE build_frontend (so an interrupted build
+  #     doesn't strand the host without a firewall).
+  #   - ModSecurity nginx module ships installed but `SecRuleEngine
+  #     Off` (Step 4 lands the global toggle).
+  install_crowdsec
+  install_modsecurity
+  install_ufw
   clone_or_update_repo
   # M25: source the socket-helper definitions now that the repo's install/
   # tree is on disk. Steps 2–5 will call verify_socket_perms /
@@ -4833,15 +4904,6 @@ main() {
   write_systemd_unit
   start_and_verify_agent
   start_and_verify
-  # M26 Step 1 — security foundation. CrowdSec LAPI binds on a Unix
-  # socket (ADR-0050) so it doesn't conflict with Stalwart's
-  # 127.0.0.1:8080 admin-http. ModSecurity ships in a default-Off state
-  # (Step 4 lands the global toggle). UFW activates with the SSH +
-  # panel + nginx + mail allow-list before Stalwart binds (preventing
-  # the documented iptables-reload race).
-  install_crowdsec
-  install_modsecurity
-  install_ufw
   # First-phase Stalwart bootstrap (binary download, service user,
   # stalwart-cli, admin token, MariaDB password file, apply plan render,
   # unit file install). Safe to run after start_and_verify — doesn't

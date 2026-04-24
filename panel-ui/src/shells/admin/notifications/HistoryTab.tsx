@@ -4,7 +4,7 @@
 // own per-user deliveries AND system-wide broadcast rows (user_id IS
 // NULL) via ListForAdminInbox on the backend. Click a row to mark it
 // read and (if a deeplink exists) navigate there.
-import { Button, Space, Table, Tag, Tooltip, Typography, message } from "antd";
+import { Button, Popconfirm, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate } from "react-router";
@@ -88,6 +88,16 @@ export const HistoryTab = () => {
     }
   };
 
+  const clearAll = async () => {
+    try {
+      await apiClient.delete("/notifications/inbox");
+      qc.invalidateQueries({ queryKey: ["notifications"] });
+      message.success("All notifications cleared");
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "Clear failed");
+    }
+  };
+
   const markRead = async (row: NotificationHistoryRow) => {
     if (row.read_at) return;
     try {
@@ -111,9 +121,22 @@ export const HistoryTab = () => {
         <Typography.Text type="secondary">
           {total} total · {unread} unread
         </Typography.Text>
-        <Button onClick={markAllRead} disabled={unread === 0}>
-          Mark all as read
-        </Button>
+        <Space>
+          <Button onClick={markAllRead} disabled={unread === 0}>
+            Mark all as read
+          </Button>
+          <Popconfirm
+            title="Clear all notifications?"
+            description="This permanently deletes every row in your inbox."
+            onConfirm={clearAll}
+            okText="Clear"
+            okButtonProps={{ danger: true }}
+          >
+            <Button danger disabled={total === 0}>
+              Clear all
+            </Button>
+          </Popconfirm>
+        </Space>
       </Space>
 
       <Table<NotificationHistoryRow>

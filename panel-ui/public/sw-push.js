@@ -29,7 +29,21 @@ self.addEventListener("push", (event) => {
       severity: payload.severity || "info",
     },
   };
-  event.waitUntil(self.registration.showNotification(title, options));
+  event.waitUntil(
+    Promise.all([
+      self.registration.showNotification(title, options),
+      // Notify any open panel tabs so the in-app bell can
+      // invalidate its inbox query immediately rather than waiting
+      // for the 30s poll to catch up.
+      self.clients
+        .matchAll({ type: "window", includeUncontrolled: true })
+        .then((list) => {
+          for (const c of list) {
+            c.postMessage({ type: "jabali/notification", payload });
+          }
+        }),
+    ]),
+  );
 });
 
 self.addEventListener("notificationclick", (event) => {

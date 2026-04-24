@@ -54,6 +54,9 @@ func (f *fakeHistoryRepo) MarkAllReadForUser(_ context.Context, _ string) (int64
 	f.markAll++
 	return 7, nil
 }
+func (f *fakeHistoryRepo) DeleteAllForUser(_ context.Context, _ string, _ bool) (int64, error) {
+	return 0, nil
+}
 func (f *fakeHistoryRepo) FindByID(_ context.Context, id string) (*models.NotificationHistory, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

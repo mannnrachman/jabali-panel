@@ -132,6 +132,9 @@ func (f *fakeHistory) UpdateOutcome(ctx context.Context, id, outcome, errMsg str
 }
 func (f *fakeHistory) MarkRead(ctx context.Context, id string) error              { return nil }
 func (f *fakeHistory) MarkAllReadForUser(ctx context.Context, u string) (int64, error) { return 0, nil }
+func (f *fakeHistory) DeleteAllForUser(ctx context.Context, u string, b bool) (int64, error) {
+	return 0, nil
+}
 func (f *fakeHistory) FindByID(ctx context.Context, id string) (*models.NotificationHistory, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

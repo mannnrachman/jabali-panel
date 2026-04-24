@@ -1,8 +1,9 @@
 // NotificationBell — topbar unread-count bell + dropdown for M14
 // Step 7. Uses TanStack Query polling (30s) so the bell updates even
 // when Web Push isn't subscribed (belt + braces per the plan).
-import { Badge, Button, Card, Dropdown, Empty, List, Space, Tag, Typography, message } from "antd";
+import { Badge, Button, Card, Dropdown, Empty, List, Popconfirm, Space, Tag, Typography, message } from "antd";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { useNavigate } from "react-router";
 
 import { BellOutlined } from "@icons";
@@ -67,9 +68,31 @@ export function NotificationBell() {
       );
       return data;
     },
-    refetchInterval: 30_000,
-    staleTime: 10_000,
+    // 10s poll is our fallback; the service-worker postMessage below
+    // drives instant updates when Web Push is active, and
+    // refetchOnWindowFocus picks up anything missed while the tab
+    // was backgrounded.
+    refetchInterval: 10_000,
+    staleTime: 5_000,
+    refetchOnWindowFocus: true,
   });
+
+  // Service worker → client bridge: when a Web Push payload arrives
+  // (sw-push.js push handler), it posts a `jabali/notification`
+  // message to every open tab. Invalidating both the bell query and
+  // the admin History tab's query key keeps every surface current.
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.serviceWorker) return;
+    const onMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === "jabali/notification") {
+        qc.invalidateQueries({ queryKey: ["notifications"] });
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    return () => {
+      navigator.serviceWorker.removeEventListener("message", onMessage);
+    };
+  }, [qc]);
 
   const unread = inbox.data?.unread ?? 0;
   const rows = inbox.data?.data ?? [];
@@ -77,9 +100,19 @@ export function NotificationBell() {
   const markAllRead = async () => {
     try {
       await apiClient.post("/notifications/inbox/read-all");
-      qc.invalidateQueries({ queryKey: INBOX_KEY });
+      qc.invalidateQueries({ queryKey: ["notifications"] });
     } catch (err) {
       message.error(err instanceof Error ? err.message : "Mark all failed");
+    }
+  };
+
+  const clearAll = async () => {
+    try {
+      await apiClient.delete("/notifications/inbox");
+      qc.invalidateQueries({ queryKey: ["notifications"] });
+      message.success("All notifications cleared");
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "Clear failed");
     }
   };
 
@@ -129,9 +162,22 @@ export function NotificationBell() {
       size="small"
       title="Notifications"
       extra={
-        <Button type="link" size="small" onClick={markAllRead} disabled={unread === 0}>
-          Mark all read
-        </Button>
+        <Space size={0}>
+          <Button type="link" size="small" onClick={markAllRead} disabled={unread === 0}>
+            Mark all read
+          </Button>
+          <Popconfirm
+            title="Clear all notifications?"
+            description="This deletes every notification in your inbox."
+            onConfirm={clearAll}
+            okText="Clear"
+            okButtonProps={{ danger: true }}
+          >
+            <Button type="link" size="small" danger disabled={rows.length === 0}>
+              Clear all
+            </Button>
+          </Popconfirm>
+        </Space>
       }
       actions={[pushToggle]}
       styles={{ body: { padding: 0, maxHeight: 400, overflowY: "auto" } }}

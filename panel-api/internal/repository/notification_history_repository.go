@@ -32,6 +32,12 @@ type NotificationHistoryRepository interface {
 	// updated so the UI can update its unread-badge count.
 	MarkAllReadForUser(ctx context.Context, userID string) (int64, error)
 
+	// DeleteAllForUser removes rows for the "Clear all" UI action.
+	// Regular user: only rows where user_id = userID. Admin
+	// (includeBroadcast=true): also removes user_id IS NULL broadcast
+	// rows so system-wide events can be cleared from the admin inbox.
+	DeleteAllForUser(ctx context.Context, userID string, includeBroadcast bool) (int64, error)
+
 	FindByID(ctx context.Context, id string) (*models.NotificationHistory, error)
 
 	// ListForUser returns recent rows for a user (bell dropdown). Order
@@ -119,6 +125,15 @@ func (r *notificationHistoryRepo) MarkAllReadForUser(ctx context.Context, userID
 		Model(&models.NotificationHistory{}).
 		Where("user_id = ? AND read_at IS NULL", userID).
 		Update("read_at", now)
+	return res.RowsAffected, res.Error
+}
+
+func (r *notificationHistoryRepo) DeleteAllForUser(ctx context.Context, userID string, includeBroadcast bool) (int64, error) {
+	q := r.db.WithContext(ctx).Where("user_id = ?", userID)
+	if includeBroadcast {
+		q = r.db.WithContext(ctx).Where("user_id = ? OR user_id IS NULL", userID)
+	}
+	res := q.Delete(&models.NotificationHistory{})
 	return res.RowsAffected, res.Error
 }
 

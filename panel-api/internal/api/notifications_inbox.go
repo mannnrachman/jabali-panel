@@ -41,6 +41,7 @@ func RegisterNotificationsInboxRoutes(g *gin.RouterGroup, cfg NotificationsInbox
 	g.GET("/notifications/inbox", h.list)
 	g.POST("/notifications/inbox/:id/read", h.markRead)
 	g.POST("/notifications/inbox/read-all", h.readAll)
+	g.DELETE("/notifications/inbox", h.clearAll)
 }
 
 type inboxHandler struct{ cfg NotificationsInboxHandlerConfig }
@@ -152,4 +153,19 @@ func (h *inboxHandler) readAll(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"updated": n})
+}
+
+func (h *inboxHandler) clearAll(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil || claims.UserID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	n, err := h.cfg.History.DeleteAllForUser(c.Request.Context(), claims.UserID, claims.IsAdmin)
+	if err != nil {
+		h.cfg.Log.Error("clear all failed", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "clear failed"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": n})
 }

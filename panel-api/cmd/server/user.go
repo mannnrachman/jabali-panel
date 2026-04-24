@@ -156,11 +156,14 @@ func newUserDeleteCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "delete <user-id>",
+		Use:   "delete <email|username|user-id>",
 		Short: "Delete a user (direct DB + cascade domains + Kratos identity + OS teardown — M20-safe)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			userID := args[0]
+			lookup := strings.TrimSpace(args[0])
+			if lookup == "" {
+				return fmt.Errorf("user identifier is required")
+			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
 			defer cancel()
@@ -171,13 +174,11 @@ func newUserDeleteCmd() *cobra.Command {
 			if err := initDB(); err != nil {
 				return err
 			}
-			target, err := userRepo().FindByID(ctx, userID)
+			target, err := resolveUser(ctx, lookup)
 			if err != nil {
-				if errors.Is(err, repository.ErrNotFound) {
-					return fmt.Errorf("user %q not found", userID)
-				}
-				return fmt.Errorf("lookup user: %w", err)
+				return err
 			}
+			userID := target.ID
 
 			if !force {
 				msg := fmt.Sprintf("Delete user %s (%s)?", target.ID, target.Email)

@@ -250,9 +250,20 @@ func newAppInstallCmd() *cobra.Command {
 				return err
 			}
 
+			// Accept email / username / ULID for --user-id. Empty stays
+			// empty — the handler then defaults to the domain owner.
+			resolvedUserID := ""
+			if userID != "" {
+				owner, err := resolveUser(ctx, userID)
+				if err != nil {
+					return err
+				}
+				resolvedUserID = owner.ID
+			}
+
 			res, err := installAppDirect(ctx, api.InstallParams{
 				AppType:      appType,
-				UserID:       userID,
+				UserID:       resolvedUserID,
 				DomainID:     dom.ID,
 				Subdirectory: subdir,
 				UseWWW:       useWWW,
@@ -297,7 +308,7 @@ func newAppInstallCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&appType, "app-type", "", "App descriptor name (see `jabali app registry`)")
 	cmd.Flags().StringVar(&domainSpec, "domain", "", "Target domain name or ULID (e.g. example.com or 01KPR…)")
-	cmd.Flags().StringVar(&userID, "user-id", "", "Owner user ID (default: domain owner)")
+	cmd.Flags().StringVar(&userID, "user-id", "", "Owner user (email, username, or ULID; default: domain owner)")
 	cmd.Flags().StringVar(&subdir, "subdir", "", "Subdirectory under docroot (empty = site root)")
 	cmd.Flags().BoolVar(&useWWW, "use-www", false, "Reachable at www.<domain> too")
 	cmd.Flags().StringArrayVar(&params, "param", nil, "Per-app param: --param key=value (value is JSON; repeat for multiple)")

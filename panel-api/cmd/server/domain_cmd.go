@@ -117,7 +117,7 @@ func newDomainCreateCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "Domain name (required)")
-	cmd.Flags().StringVar(&userID, "user-id", "", "User ID (required)")
+	cmd.Flags().StringVar(&userID, "user-id", "", "User email, username, or ULID (required)")
 	cmd.Flags().StringVar(&docRoot, "doc-root", "", "Document root (optional, auto-generated if not provided)")
 	return cmd
 }

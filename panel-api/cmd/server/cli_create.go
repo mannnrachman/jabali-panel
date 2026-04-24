@@ -172,27 +172,30 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 		return nil, nil, fmt.Errorf("--name and --user-id are required")
 	}
 
-	users := userRepo()
 	domains := domainRepoFromDB()
 	packages := packageRepoFromDB()
 
-	owner, err := users.FindByID(ctx, in.UserID)
+	// Accept email / username / ULID — same resolver as the other user-
+	// facing CLIs so operators don't have to copy-paste ULIDs.
+	owner, err := resolveUser(ctx, in.UserID)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return nil, nil, fmt.Errorf("user %q not found", in.UserID)
-		}
-		return nil, nil, fmt.Errorf("lookup user: %w", err)
+		return nil, nil, err
 	}
 	if owner.IsAdmin {
 		return nil, nil, fmt.Errorf("admin users cannot host domains — create a regular user")
 	}
 	if owner.Username == nil || *owner.Username == "" {
-		return nil, nil, fmt.Errorf("user %q has no username — inconsistent state", in.UserID)
+		return nil, nil, fmt.Errorf("user %q has no username — inconsistent state", owner.ID)
 	}
+
+	// All subsequent DB ops use the resolved ULID, not the free-form
+	// spec the operator passed — email / username lookups land here via
+	// resolveUser and d.UserID must always be the real ID.
+	ownerID := owner.ID
 
 	// Package-quota check — matches the HTTP handler (409 domain_quota_exceeded).
 	if owner.PackageID != nil && *owner.PackageID != "" {
-		count, err := domains.CountByUserID(ctx, in.UserID)
+		count, err := domains.CountByUserID(ctx, ownerID)
 		if err != nil {
 			return nil, nil, fmt.Errorf("count existing domains: %w", err)
 		}
@@ -210,7 +213,7 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 	now := time.Now().UTC()
 	d := &models.Domain{
 		ID:         ids.NewULID(),
-		UserID:     in.UserID,
+		UserID:     ownerID,
 		Name:       in.Name,
 		DocRoot:    docRoot,
 		IsEnabled:  true,

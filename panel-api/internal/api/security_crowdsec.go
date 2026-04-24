@@ -67,7 +67,8 @@ func RegisterSecurityCrowdSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterfac
 
 	g.POST("/decisions", func(c *gin.Context) {
 		var body struct {
-			IP       string `json:"ip"`
+			Scope    string `json:"scope"`
+			Value    string `json:"value"`
 			Duration string `json:"duration"`
 			Reason   string `json:"reason"`
 		}
@@ -78,7 +79,10 @@ func RegisterSecurityCrowdSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterfac
 		ctx, cancel := context.WithTimeout(c.Request.Context(), csCallTimeout)
 		defer cancel()
 		raw, err := cli.Call(ctx, "security.crowdsec.decisions.add", map[string]any{
-			"ip": body.IP, "duration": body.Duration, "reason": body.Reason,
+			"scope":    body.Scope,
+			"value":    body.Value,
+			"duration": body.Duration,
+			"reason":   body.Reason,
 		})
 		if err != nil {
 			status, body := translateAgentError(err)

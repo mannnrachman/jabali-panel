@@ -97,17 +97,31 @@ no legitimate-traffic hits.
 4. Watch the audit-log tail for 24-48h.
 5. Flip global engine to `On` once the audit shows no legitimate hits.
 
-### Banning an IP in CrowdSec
+### Banning in CrowdSec — IP, range, country, AS
 
-Two routes:
+The "Add decision" Drawer on the CrowdSec tab supports all four scopes
+CrowdSec exposes. Pick a scope, enter the value, set duration + reason.
 
-| Source | Effect |
-|--------|--------|
-| UI: Add decision modal on the CrowdSec tab | Calls `cscli decisions add` via the agent — picked up by every bouncer on next pull (~30s with default config) |
-| CLI: `sudo cscli decisions add --ip 1.2.3.4 --duration 4h --reason manual` | Same effect — UI is the audited path |
+| Scope | Example value | cscli equivalent |
+|-------|---------------|------------------|
+| IP | `203.0.113.7` | `cscli decisions add --scope Ip --value 203.0.113.7 --duration 4h --reason manual` |
+| Range (CIDR) | `203.0.113.0/24` | `cscli decisions add --scope Range --value 203.0.113.0/24 --duration 4h --reason manual` |
+| Country | `RU` (ISO 3166-1 alpha-2) | `cscli decisions add --scope Country --value RU --duration 24h --reason geo-block` |
+| AS (ASN) | `AS64500` or `64500` | `cscli decisions add --scope AS --value 64500 --duration 24h --reason asn-block` |
+
+Country + AS bans require the GeoIP + ASN enrichers. Both are installed
+by default on fresh CrowdSec hosts via the `crowdsecurity/linux`
+collection. Verify with `cscli parsers list | grep -E 'geoip|asn'`. If
+missing: `cscli parsers install crowdsecurity/geoip-enrich` +
+`cscli parsers install crowdsecurity/asn-enrich` + `systemctl restart crowdsec`.
+
+Bouncers pick up new decisions on next LAPI pull (~30s with stock
+config). The firewall-bouncer translates IP/range decisions into
+iptables/nftables; country + AS decisions need a bouncer that
+supports them (the default `crowdsec-firewall-bouncer` does).
 
 Removing: click **Delete** on the decision row → confirm. Same as
-`cscli decisions delete --ip 1.2.3.4` from the host.
+`cscli decisions delete --id <id>` from the host.
 
 ### Enrolling in CrowdSec Console (optional)
 

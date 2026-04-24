@@ -50,13 +50,29 @@ const SCOPE_OPTIONS: Array<{ value: CrowdsecScope | "all"; label: string }> = [
   { value: "as", label: "AS" },
 ];
 
-// IPv4 / IPv4-CIDR / IPv6 / IPv6-CIDR — keep simple; agent does the
-// authoritative net.ParseIP / net.ParseCIDR validation.
+// Per-scope value-field validation. Server is authoritative (agent
+// does net.ParseIP / net.ParseCIDR / 2-letter country / ASN digits) —
+// these client-side patterns exist only to reject typos before a
+// round-trip. All four scopes ship with their own placeholder + help.
 const IP_OR_CIDR = /^[0-9a-fA-F:.]+(\/\d{1,3})?$/;
+const COUNTRY_CODE = /^[A-Za-z]{2}$/;
+const ASN_RE = /^(AS|as)?\d+$/;
 // CrowdSec accepts Go time.ParseDuration: 4h, 1h30m, 30m, 1d (custom).
 const DURATION = /^(\d+(\.\d+)?(ns|us|µs|ms|s|m|h|d))+$/;
 
-type AddDecisionFormValues = { ip: string; duration: string; reason: string };
+const ADD_SCOPE_OPTIONS: Array<{ value: CrowdsecScope; label: string }> = [
+  { value: "ip", label: "IP address" },
+  { value: "range", label: "Range (CIDR)" },
+  { value: "country", label: "Country (ISO 3166-1)" },
+  { value: "as", label: "AS (ASN)" },
+];
+
+type AddDecisionFormValues = {
+  scope: CrowdsecScope;
+  value: string;
+  duration: string;
+  reason: string;
+};
 
 const fmtTime = (s?: string): string => (s ? new Date(s).toLocaleString() : "—");
 
@@ -78,7 +94,7 @@ export const AdminSecurityCrowdsec = () => {
   const submitAdd = async (values: AddDecisionFormValues) => {
     try {
       await addDecision.mutateAsync(values);
-      message.success(`Decision added for ${values.ip}`);
+      message.success(`Decision added: ${values.scope}=${values.value}`);
       setAddOpen(false);
       addForm.resetFields();
     } catch (e: unknown) {
@@ -288,24 +304,79 @@ export const AdminSecurityCrowdsec = () => {
           </Space>
         }
       >
-        <Form<AddDecisionFormValues> form={addForm} layout="vertical" onFinish={submitAdd}>
+        <Form<AddDecisionFormValues>
+          form={addForm}
+          layout="vertical"
+          onFinish={submitAdd}
+          initialValues={{ scope: "ip" }}
+        >
           <Form.Item
-            name="ip"
-            label="IP or CIDR"
-            rules={[
-              { required: true, message: "IP or CIDR required" },
-              {
-                pattern: IP_OR_CIDR,
-                message:
-                  "Must be a valid IPv4/IPv6 address or CIDR (e.g. 203.0.113.7 or 203.0.113.0/24)",
-              },
-            ]}
+            name="scope"
+            label="Scope"
+            rules={[{ required: true, message: "Scope required" }]}
+            tooltip="Country bans rely on the GeoIP enricher; AS bans on the ASN enricher. Both are installed by default on fresh CrowdSec hosts."
           >
-            <Input placeholder="203.0.113.7" autoComplete="off" />
+            <Select options={ADD_SCOPE_OPTIONS} />
+          </Form.Item>
+          <Form.Item
+            noStyle
+            shouldUpdate={(prev, next) => prev.scope !== next.scope}
+          >
+            {({ getFieldValue }) => {
+              const s: CrowdsecScope = getFieldValue("scope") ?? "ip";
+              const config: Record<
+                CrowdsecScope,
+                { label: string; placeholder: string; help: string; pattern: RegExp; msg: string }
+              > = {
+                ip: {
+                  label: "IP address",
+                  placeholder: "203.0.113.7",
+                  help: "Single IPv4 or IPv6 address.",
+                  pattern: IP_OR_CIDR,
+                  msg: "Must be a valid IP address",
+                },
+                range: {
+                  label: "CIDR range",
+                  placeholder: "203.0.113.0/24",
+                  help: "CIDR block. /24 is 256 addresses; /32 matches a single IP.",
+                  pattern: IP_OR_CIDR,
+                  msg: "Must be a valid CIDR (e.g. 203.0.113.0/24)",
+                },
+                country: {
+                  label: "Country code",
+                  placeholder: "IL",
+                  help: "Two-letter ISO 3166-1 alpha-2 code (RU, CN, IR, …). Requires GeoIP enricher.",
+                  pattern: COUNTRY_CODE,
+                  msg: "Two-letter country code",
+                },
+                as: {
+                  label: "ASN",
+                  placeholder: "AS64500",
+                  help: "Autonomous System number, with or without the AS prefix.",
+                  pattern: ASN_RE,
+                  msg: "ASN number (e.g. 64500 or AS64500)",
+                },
+              };
+              const c = config[s];
+              return (
+                <Form.Item
+                  name="value"
+                  label={c.label}
+                  extra={c.help}
+                  rules={[
+                    { required: true, message: `${c.label} required` },
+                    { pattern: c.pattern, message: c.msg },
+                  ]}
+                >
+                  <Input placeholder={c.placeholder} autoComplete="off" />
+                </Form.Item>
+              );
+            }}
           </Form.Item>
           <Form.Item
             name="duration"
             label="Duration"
+            initialValue="4h"
             rules={[
               { required: true, message: "Duration required" },
               { pattern: DURATION, message: 'Use Go duration syntax: "30m", "4h", "1h30m"' },
@@ -321,7 +392,7 @@ export const AdminSecurityCrowdsec = () => {
               { min: 3, max: 200, message: "3..200 characters" },
             ]}
           >
-            <Input placeholder="manual ban — port-scan from this IP" autoComplete="off" />
+            <Input placeholder="manual ban — repeated login abuse" autoComplete="off" />
           </Form.Item>
         </Form>
       </Drawer>

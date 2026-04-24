@@ -107,10 +107,17 @@ export function useCrowdsecHub() {
   });
 }
 
+export type AddCrowdsecDecisionInput = {
+  scope: CrowdsecScope;
+  value: string;
+  duration: string;
+  reason: string;
+};
+
 export function useAddCrowdsecDecision() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { ip: string; duration: string; reason: string }) => {
+    mutationFn: async (input: AddCrowdsecDecisionInput) => {
       const { data } = await apiClient.post<{ id: number }>(
         `${BASE}/decisions`,
         input,

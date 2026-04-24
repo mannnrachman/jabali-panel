@@ -12,12 +12,26 @@ func TestCSDecisionsAdd_Validation(t *testing.T) {
 		payload string
 		wantMsg string
 	}{
-		{`{}`, "ip must be"},
-		{`{"ip":"garbage"}`, "ip must be"},
-		{`{"ip":"203.0.113.1"}`, "duration"},
-		{`{"ip":"203.0.113.1","duration":"forever"}`, "duration"},
-		{`{"ip":"203.0.113.1","duration":"1h","reason":"x"}`, "reason length"},
-		{`{"ip":"203.0.113.1","duration":"1h","reason":"` + strings.Repeat("a", 201) + `"}`, "reason length"},
+		// Empty + bogus scope
+		{`{}`, "scope must be"},
+		{`{"scope":"bogus"}`, "scope must be"},
+		// scope=ip: bad value
+		{`{"scope":"ip","value":"garbage"}`, "valid IP for scope=ip"},
+		// scope=range: bad value
+		{`{"scope":"range","value":"203.0.113.7"}`, "valid CIDR for scope=range"},
+		// scope=country: bad value — auto-uppercases, so only
+		// non-2-letter strings reject.
+		{`{"scope":"country","value":"XXX"}`, "ISO 3166-1 country code"},
+		{`{"scope":"country","value":"1A"}`, "ISO 3166-1 country code"},
+		{`{"scope":"country","value":""}`, "ISO 3166-1 country code"},
+		// scope=as: bad value
+		{`{"scope":"as","value":"NOTANUMBER"}`, "ASN number"},
+		// Valid scope+value, bad duration
+		{`{"scope":"ip","value":"203.0.113.1"}`, "duration"},
+		{`{"scope":"ip","value":"203.0.113.1","duration":"forever"}`, "duration"},
+		// Valid scope+value+duration, bad reason
+		{`{"scope":"ip","value":"203.0.113.1","duration":"1h","reason":"x"}`, "reason length"},
+		{`{"scope":"ip","value":"203.0.113.1","duration":"1h","reason":"` + strings.Repeat("a", 201) + `"}`, "reason length"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.payload[:min(40, len(tc.payload))], func(t *testing.T) {

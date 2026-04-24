@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -157,8 +158,21 @@ func csDecisionsListHandler(ctx context.Context, params json.RawMessage) (any, e
 
 // ---- security.crowdsec.decisions.add ---------------------------------------
 
+// csDecisionsAddParams covers all four CrowdSec decision scopes.
+//
+//	scope=ip      value=203.0.113.7           single address
+//	scope=range   value=203.0.113.0/24        CIDR block
+//	scope=country value=IL                    ISO 3166-1 alpha-2 code
+//	scope=as      value=AS64500 or value=64500 ASN, optional AS/as prefix
+//
+// Country bans rely on the GeoIP2 enricher (crowdsecurity/geoip-enrich)
+// which crowdsec installs by default on fresh hosts. If an operator
+// disabled it the decision still materialises but the bouncer has no
+// way to resolve country → IP, so the ban is inert. The UI leaves that
+// operational concern to the CrowdSec hub tab.
 type csDecisionsAddParams struct {
-	IP       string `json:"ip"`
+	Scope    string `json:"scope"`
+	Value    string `json:"value"`
 	Duration string `json:"duration"`
 	Reason   string `json:"reason"`
 }
@@ -167,14 +181,56 @@ type csDecisionsAddResponse struct {
 	ID int `json:"id"`
 }
 
+var csCountryRE = regexp.MustCompile(`^[A-Z]{2}$`)
+var csASNRE = regexp.MustCompile(`^\d+$`)
+
+// cscliScope maps our lowercase scope names to cscli's canonical
+// capitalisation. cscli accepts lowercase in most commands but the
+// `--scope` flag is case-sensitive for Country + AS in some 1.7.x
+// builds — keep the mapping explicit so we don't debug a regression
+// across upstream versions.
+var cscliScope = map[string]string{
+	"ip":      "Ip",
+	"range":   "Range",
+	"country": "Country",
+	"as":      "AS",
+}
+
+// normalizeASN strips a leading "AS"/"as" and returns the numeric
+// portion for validation + value passing.
+func normalizeASN(v string) string {
+	upper := strings.ToUpper(v)
+	return strings.TrimPrefix(upper, "AS")
+}
+
 func csDecisionsAddHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p csDecisionsAddParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, csInvalidArg(fmt.Sprintf("parse params: %v", err))
 	}
-	if _, _, err := net.ParseCIDR(p.IP); err != nil {
-		if ip := net.ParseIP(p.IP); ip == nil {
-			return nil, csInvalidArg("ip must be IP or CIDR")
+	canonical, ok := cscliScope[p.Scope]
+	if !ok {
+		return nil, csInvalidArg("scope must be ip|range|country|as")
+	}
+	value := strings.TrimSpace(p.Value)
+	switch p.Scope {
+	case "ip":
+		if ip := net.ParseIP(value); ip == nil {
+			return nil, csInvalidArg("value must be a valid IP for scope=ip")
+		}
+	case "range":
+		if _, _, err := net.ParseCIDR(value); err != nil {
+			return nil, csInvalidArg("value must be a valid CIDR for scope=range")
+		}
+	case "country":
+		value = strings.ToUpper(value)
+		if !csCountryRE.MatchString(value) {
+			return nil, csInvalidArg("value must be a 2-letter ISO 3166-1 country code for scope=country")
+		}
+	case "as":
+		value = normalizeASN(value)
+		if !csASNRE.MatchString(value) {
+			return nil, csInvalidArg("value must be an ASN number (e.g. 64500 or AS64500) for scope=as")
 		}
 	}
 	if _, err := time.ParseDuration(p.Duration); err != nil {
@@ -184,17 +240,18 @@ func csDecisionsAddHandler(ctx context.Context, params json.RawMessage) (any, er
 		return nil, csInvalidArg("reason length must be 3..200")
 	}
 	cmd := exec.CommandContext(ctx, "cscli", "decisions", "add",
-		"--ip", p.IP, "--duration", p.Duration, "--reason", p.Reason)
+		"--scope", canonical, "--value", value,
+		"--duration", p.Duration, "--reason", p.Reason)
 	if _, err := cmd.CombinedOutput(); err != nil {
 		return nil, csInternal("cscli decisions add", err)
 	}
-	// cscli decisions add doesn't return the new ID — we look it up by IP.
-	id := csLookupDecisionIDByIP(ctx, p.IP)
+	// cscli decisions add doesn't return the new ID — look up by (scope,value).
+	id := csLookupDecisionID(ctx, canonical, value)
 	return csDecisionsAddResponse{ID: id}, nil
 }
 
-func csLookupDecisionIDByIP(ctx context.Context, ip string) int {
-	out, err := runCscliJSON(ctx, "decisions", "list", "--ip", ip)
+func csLookupDecisionID(ctx context.Context, canonicalScope, value string) int {
+	out, err := runCscliJSON(ctx, "decisions", "list", "--scope", canonicalScope, "--value", value)
 	if err != nil {
 		return 0
 	}
@@ -204,7 +261,7 @@ func csLookupDecisionIDByIP(ctx context.Context, ip string) int {
 	}
 	for _, entry := range raw {
 		for _, d := range entry.Decisions {
-			if d.Value == ip {
+			if d.Value == value {
 				return d.ID
 			}
 		}

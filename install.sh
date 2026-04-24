@@ -2041,15 +2041,32 @@ RESAFTEREOF
 
   # --- post-install probe matrix -----------------------------------
   # Fail the install rather than shipping a half-working DNS chain.
+  #
+  # Probes retry with backoff: a freshly-restarted pdns-recursor's first
+  # recursive query can take several seconds (cold cache, root hint
+  # fetch, upstream round-trip to 1.1.1.1). A single 3s shot is brittle
+  # — legitimate cold starts were flunking the probe. 8 tries × 2s
+  # backoff covers ~15s of startup cost while still failing loud if
+  # the chain is genuinely broken.
+  _probe_dns() {
+    local addr="$1" host="$2" attempt
+    for attempt in 1 2 3 4 5 6 7 8; do
+      if dig +short +timeout=3 +tries=1 "@${addr}" "$host" 2>/dev/null | grep -qE '^[0-9.]+$'; then
+        return 0
+      fi
+      sleep 2
+    done
+    return 1
+  }
 
   # Probe 1: stub → recursor → public. Proves the full chain end-to-end.
-  if ! dig +short +timeout=3 +tries=1 @127.0.0.53 deb.debian.org 2>/dev/null | grep -qE '^[0-9.]+$'; then
-    _die "resolved→recursor→public chain broken (dig @127.0.0.53 deb.debian.org failed). Check 'journalctl -u pdns-recursor -u systemd-resolved'."
+  if ! _probe_dns 127.0.0.53 deb.debian.org; then
+    _die "resolved→recursor→public chain broken (dig @127.0.0.53 deb.debian.org failed after 8 retries). Check 'journalctl -u pdns-recursor -u systemd-resolved'."
   fi
 
   # Probe 2: recursor → public directly. Isolates recursor from stub.
-  if ! dig +short +timeout=3 +tries=1 @127.0.0.1 deb.debian.org 2>/dev/null | grep -qE '^[0-9.]+$'; then
-    _die "recursor→public chain broken (dig @127.0.0.1 deb.debian.org failed). Check recursor logs."
+  if ! _probe_dns 127.0.0.1 deb.debian.org; then
+    _die "recursor→public chain broken (dig @127.0.0.1 deb.debian.org failed after 8 retries). Check recursor logs."
   fi
 
   # Probe 3: drop-in merge sanity. resolvectl MUST show DNS Servers:

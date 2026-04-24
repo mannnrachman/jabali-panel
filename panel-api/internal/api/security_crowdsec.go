@@ -201,6 +201,28 @@ func RegisterSecurityCrowdSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterfac
 		}
 		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
 	})
+
+	// M27 Step 4 — Console enrollment (ADR-0062). Enroll-only; disenroll
+	// is managed in app.crowdsec.net (CrowdSec CLI has no disenroll verb).
+	g.POST("/console/enroll", func(c *gin.Context) {
+		var body struct {
+			Key  string `json:"key"`
+			Name string `json:"name"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_json"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+		defer cancel()
+		raw, err := cli.Call(ctx, "security.crowdsec.console.enroll", body)
+		if err != nil {
+			status, ebody := translateAgentError(err)
+			c.JSON(status, ebody)
+			return
+		}
+		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
+	})
 }
 
 // RegisterSecurityAppSecRoutes mounts the admin AppSec-geoblock surface.

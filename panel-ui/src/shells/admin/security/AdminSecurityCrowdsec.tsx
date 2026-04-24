@@ -45,6 +45,7 @@ import {
   useCrowdsecMetrics,
   useCrowdsecStatus,
   useDeleteCrowdsecDecision,
+  useEnrollCrowdsecConsole,
   useRemoveCrowdsecAllowlist,
   useUpdateAppSecGeoblock,
   type AppSecGeoblockMode,
@@ -244,6 +245,8 @@ export const AdminSecurityCrowdsec = () => {
       <AllowlistsCard />
 
       <AlertsCard />
+
+      <ConsoleCard />
 
       <AppSecGeoblockCard />
 
@@ -820,5 +823,104 @@ const AlertsCard = () => {
         )}
       </Drawer>
     </>
+  );
+};
+
+// ConsoleCard — CrowdSec Console enrollment (M27 Step 4, ADR-0062).
+// One-shot enroll form; no status polling, no disenroll. See ADR for
+// why — cscli has no disenroll verb and enrollment state isn't
+// distinguishable from config files.
+type ConsoleFormValues = {
+  key: string;
+  name?: string;
+};
+
+const ConsoleCard = () => {
+  const enroll = useEnrollCrowdsecConsole();
+  const [form] = Form.useForm<ConsoleFormValues>();
+  const [submittedAt, setSubmittedAt] = useState<number | null>(null);
+
+  const onSubmit = async (values: ConsoleFormValues) => {
+    try {
+      await enroll.mutateAsync(values);
+      setSubmittedAt(Date.now());
+      form.resetFields();
+      message.success("Enrollment sent — accept this instance at app.crowdsec.net");
+    } catch (e: unknown) {
+      message.error(e instanceof Error ? e.message : "Enrollment failed");
+    }
+  };
+
+  return (
+    <Card
+      size="small"
+      title="CrowdSec Console (optional)"
+      extra={
+        <Typography.Link href="https://app.crowdsec.net" target="_blank" rel="noopener noreferrer">
+          app.crowdsec.net
+        </Typography.Link>
+      }
+    >
+      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Alert
+          type="info"
+          showIcon
+          message="Enroll this instance to receive CTI community blocklists and a hosted dashboard."
+          description={
+            <>
+              Create an account at app.crowdsec.net, copy the enrollment key, paste it below, then
+              accept the pending instance in the web UI. Share settings and disenroll are managed in
+              the Console web UI.
+            </>
+          }
+        />
+
+        {submittedAt !== null && (
+          <Alert
+            type="success"
+            showIcon
+            message="Enrollment command sent"
+            description="Visit app.crowdsec.net and accept this instance. It can take up to a minute to appear."
+          />
+        )}
+
+        <Form<ConsoleFormValues> form={form} layout="vertical" onFinish={onSubmit}>
+          <Form.Item
+            name="key"
+            label="Enrollment key"
+            rules={[
+              { required: true, message: "Key required" },
+              { pattern: /^[A-Za-z0-9-]{16,128}$/, message: "16-128 alnum + dash chars" },
+            ]}
+          >
+            <Input.Password
+              placeholder="cskf-xxxxxxxxxxxxxxxxxxxx"
+              autoComplete="off"
+              visibilityToggle={false}
+            />
+          </Form.Item>
+          <Form.Item
+            name="name"
+            label="Instance name (optional)"
+            tooltip="Display name in the Console dashboard. Defaults to the server hostname."
+          >
+            <Input placeholder={`e.g. jabali-prod-${new Date().getFullYear()}`} maxLength={64} />
+          </Form.Item>
+          <Space>
+            <Popconfirm
+              title="Enroll this instance?"
+              description="Scenario fires, decisions, and alerts will be shared with CrowdSec Console per your sharing settings."
+              okText="Enroll"
+              cancelText="Cancel"
+              onConfirm={() => form.submit()}
+            >
+              <Button type="primary" loading={enroll.isPending}>
+                Enroll
+              </Button>
+            </Popconfirm>
+          </Space>
+        </Form>
+      </Space>
+    </Card>
   );
 };

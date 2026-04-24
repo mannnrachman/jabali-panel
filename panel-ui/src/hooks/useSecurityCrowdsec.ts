@@ -280,3 +280,23 @@ export function useCrowdsecAlert(id: number | null) {
     },
   });
 }
+
+// Console enrollment (M27 step 4, ADR-0062). Enroll-only; operator
+// disenrolls from app.crowdsec.net. No GET — state isn't reliably
+// distinguishable from /etc/crowdsec config files.
+export type EnrollCrowdsecConsoleInput = {
+  key: string;
+  name?: string;
+};
+
+export function useEnrollCrowdsecConsole() {
+  return useMutation({
+    mutationFn: async (input: EnrollCrowdsecConsoleInput) => {
+      const { data } = await apiClient.post<{ pending: boolean }>(
+        `${BASE}/console/enroll`,
+        input,
+      );
+      return data;
+    },
+  });
+}

@@ -832,6 +832,43 @@ func csAlertsInspectHandler(ctx context.Context, params json.RawMessage) (any, e
 	return map[string]any{"alert": raw}, nil
 }
 
+// ---- M27 Step 4: security.crowdsec.console.enroll ------------------------
+
+var consoleKeyRE = regexp.MustCompile(`^[A-Za-z0-9-]{16,128}$`)
+
+type csConsoleEnrollParams struct {
+	Key  string `json:"key"`
+	Name string `json:"name"`
+}
+
+func csConsoleEnrollHandler(ctx context.Context, params json.RawMessage) (any, error) {
+	var p csConsoleEnrollParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, csInvalidArg(fmt.Sprintf("parse params: %v", err))
+	}
+	key := strings.TrimSpace(p.Key)
+	if !consoleKeyRE.MatchString(key) {
+		return nil, csInvalidArg("key must be 16-128 alnum + dash chars")
+	}
+	args := []string{"console", "enroll"}
+	if n := strings.TrimSpace(p.Name); n != "" {
+		if len(n) > 64 {
+			return nil, csInvalidArg("name length must be <= 64")
+		}
+		args = append(args, "--name", n)
+	}
+	args = append(args, key)
+	cmd := exec.CommandContext(ctx, "cscli", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, csInternal(fmt.Sprintf("cscli console enroll: %s", strings.TrimSpace(string(out))), err)
+	}
+	// crowdsec restart picks up the new enrollment. Soft-fail if the
+	// service isn't under our init (dev containers).
+	_ = exec.CommandContext(ctx, "systemctl", "reload", "crowdsec").Run()
+	return map[string]any{"pending": true}, nil
+}
+
 func init() {
 	Default.Register("security.crowdsec.status", csStatusHandler)
 	Default.Register("security.crowdsec.decisions.list", csDecisionsListHandler)
@@ -847,4 +884,5 @@ func init() {
 	Default.Register("security.crowdsec.allowlists.remove", csAllowlistsRemoveHandler)
 	Default.Register("security.crowdsec.alerts.list", csAlertsListHandler)
 	Default.Register("security.crowdsec.alerts.inspect", csAlertsInspectHandler)
+	Default.Register("security.crowdsec.console.enroll", csConsoleEnrollHandler)
 }

@@ -255,8 +255,13 @@ type Domain struct {
 
 	// DNSSEC: operator intent + enable timestamp (ADR-0057). Actual signing
 	// state lives in PowerDNS; key cache in domain_dnssec_keys.
-	DNSSECEnabled   bool       `gorm:"type:tinyint(1);not null;default:0" json:"dnssec_enabled"`
-	DNSSECEnabledAt *time.Time `gorm:"type:datetime(6)" json:"dnssec_enabled_at,omitempty"`
+	// Pin the column names — GORM's default snake_case derivation turns
+	// DNSSECEnabled into `dns_sec_enabled` (splits on every uppercase run),
+	// but migration 000070 creates the column as `dnssec_enabled`. Without
+	// the explicit `column:` tag every INSERT fails with "Unknown column
+	// 'dns_sec_enabled'". Mirrors the M26 ModSec/CrowdSec pattern.
+	DNSSECEnabled   bool       `gorm:"column:dnssec_enabled;type:tinyint(1);not null;default:0" json:"dnssec_enabled"`
+	DNSSECEnabledAt *time.Time `gorm:"column:dnssec_enabled_at;type:datetime(6)" json:"dnssec_enabled_at,omitempty"`
 
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`

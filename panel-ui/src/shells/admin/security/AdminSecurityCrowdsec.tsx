@@ -27,10 +27,12 @@ import {
   Space,
   Statistic,
   Table,
+  Tabs,
   Tag,
   Typography,
 } from "antd";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router";
 
 import {
   useAddCrowdsecAllowlist,
@@ -131,7 +133,37 @@ export const AdminSecurityCrowdsec = () => {
     }
   };
 
-  return (
+  // Sub-tabs (one card per tab). URL-driven via ?sub= so a direct link
+  // deep-links to a specific sub-tab. Keep the Add-decision Drawer
+  // OUTSIDE the Tabs so it stays open across tab switches (rare, but
+  // the Drawer should not unmount mid-form-fill).
+  const [sp, setSp] = useSearchParams();
+  const subTabs = [
+    "overview",
+    "decisions",
+    "allowlist",
+    "alerts",
+    "console",
+    "captcha",
+    "profiles",
+    "appsec",
+    "bouncers",
+    "hub",
+  ] as const;
+  type SubTab = (typeof subTabs)[number];
+  const activeSub: SubTab = ((): SubTab => {
+    const s = sp.get("sub");
+    return (subTabs as readonly string[]).includes(s ?? "") ? (s as SubTab) : "overview";
+  })();
+  const onSubChange = (key: string) => {
+    setSp((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("sub", key);
+      return next;
+    });
+  };
+
+  const overviewPanel = (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       <Card size="small" title="CrowdSec status">
         <Descriptions
@@ -191,129 +223,144 @@ export const AdminSecurityCrowdsec = () => {
           </Row>
         )}
       </Card>
+    </Space>
+  );
 
-      <Card
-        size="small"
-        title="Active decisions"
-        extra={
-          <Space>
-            <Select
-              size="small"
-              value={scope}
-              style={{ minWidth: 160 }}
-              options={SCOPE_OPTIONS}
-              onChange={(v) => setScope(v)}
-            />
-            <Button type="primary" size="small" onClick={() => setAddOpen(true)}>
-              Add decision
-            </Button>
-          </Space>
-        }
+  const decisionsPanel = (
+    <Card
+      size="small"
+      title="Active decisions"
+      extra={
+        <Space>
+          <Select
+            size="small"
+            value={scope}
+            style={{ minWidth: 160 }}
+            options={SCOPE_OPTIONS}
+            onChange={(v) => setScope(v)}
+          />
+          <Button type="primary" size="small" onClick={() => setAddOpen(true)}>
+            Add decision
+          </Button>
+        </Space>
+      }
+    >
+      <Table<CrowdsecDecision>
+        rowKey="id"
+        dataSource={decisions.data ?? []}
+        loading={decisions.isLoading}
+        pagination={{ pageSize: 20, showSizeChanger: false }}
+        locale={{ emptyText: <Empty description="No active decisions" /> }}
+        scroll={{ x: "max-content" }}
       >
-        <Table<CrowdsecDecision>
-          rowKey="id"
-          dataSource={decisions.data ?? []}
-          loading={decisions.isLoading}
-          pagination={{ pageSize: 20, showSizeChanger: false }}
-          locale={{ emptyText: <Empty description="No active decisions" /> }}
-          scroll={{ x: "max-content" }}
-        >
-          <Table.Column<CrowdsecDecision> dataIndex="ip" title="IP" key="ip" />
-          <Table.Column<CrowdsecDecision> dataIndex="scenario" title="Scenario" key="scenario" />
-          <Table.Column<CrowdsecDecision> dataIndex="reason" title="Reason" key="reason" />
-          <Table.Column<CrowdsecDecision>
-            dataIndex="until"
-            title="Until"
-            key="until"
-            render={(s: string) => fmtTime(s)}
-          />
-          <Table.Column<CrowdsecDecision>
-            title=""
-            key="delete"
-            width={90}
-            render={(_, row) => (
-              <Popconfirm
-                title="Remove ban"
-                description={`Remove the ban on ${row.ip}? Traffic will resume immediately.`}
-                okText="Remove"
-                okButtonProps={{ danger: true }}
-                cancelText="Cancel"
-                onConfirm={() => onDeleteDecision(row)}
-              >
-                <Button danger type="text" size="small">
-                  Delete
-                </Button>
-              </Popconfirm>
-            )}
-          />
-        </Table>
-      </Card>
+        <Table.Column<CrowdsecDecision> dataIndex="ip" title="IP" key="ip" />
+        <Table.Column<CrowdsecDecision> dataIndex="scenario" title="Scenario" key="scenario" />
+        <Table.Column<CrowdsecDecision> dataIndex="reason" title="Reason" key="reason" />
+        <Table.Column<CrowdsecDecision>
+          dataIndex="until"
+          title="Until"
+          key="until"
+          render={(s: string) => fmtTime(s)}
+        />
+        <Table.Column<CrowdsecDecision>
+          title=""
+          key="delete"
+          width={90}
+          render={(_, row) => (
+            <Popconfirm
+              title="Remove ban"
+              description={`Remove the ban on ${row.ip}? Traffic will resume immediately.`}
+              okText="Remove"
+              okButtonProps={{ danger: true }}
+              cancelText="Cancel"
+              onConfirm={() => onDeleteDecision(row)}
+            >
+              <Button danger type="text" size="small">
+                Delete
+              </Button>
+            </Popconfirm>
+          )}
+        />
+      </Table>
+    </Card>
+  );
 
-      <AllowlistsCard />
+  const bouncersPanel = (
+    <Card size="small" title="Bouncers">
+      <Table
+        rowKey="name"
+        dataSource={bouncers.data ?? []}
+        loading={bouncers.isLoading}
+        pagination={false}
+        locale={{ emptyText: <Empty description="No bouncers registered" /> }}
+        scroll={{ x: "max-content" }}
+      >
+        <Table.Column dataIndex="name" title="Name" key="name" />
+        <Table.Column dataIndex="type" title="Type" key="type" />
+        <Table.Column
+          dataIndex="last_pull"
+          title="Last pull"
+          key="last_pull"
+          render={(s: string) => fmtTime(s)}
+        />
+        <Table.Column
+          dataIndex="revoked"
+          title="Status"
+          key="revoked"
+          render={(revoked: boolean) =>
+            revoked ? <Tag color="red">revoked</Tag> : <Tag color="green">active</Tag>
+          }
+        />
+      </Table>
+    </Card>
+  );
 
-      <AlertsCard />
+  const hubPanel = (
+    <Card size="small" title="Hub scenarios">
+      <Table
+        rowKey={(r: { type: string; name: string }) => `${r.type}:${r.name}`}
+        dataSource={hub.data ?? []}
+        loading={hub.isLoading}
+        pagination={{ pageSize: 20, showSizeChanger: false }}
+        locale={{ emptyText: <Empty description="No hub items" /> }}
+        scroll={{ x: "max-content" }}
+      >
+        <Table.Column dataIndex="name" title="Name" key="name" />
+        <Table.Column dataIndex="type" title="Type" key="type" />
+        <Table.Column
+          dataIndex="installed"
+          title="Installed"
+          key="installed"
+          render={(v: boolean) => (v ? <Tag color="blue">yes</Tag> : <Tag>no</Tag>)}
+        />
+        <Table.Column
+          dataIndex="enabled"
+          title="Enabled"
+          key="enabled"
+          render={(v: boolean) => (v ? <Tag color="green">yes</Tag> : <Tag>no</Tag>)}
+        />
+      </Table>
+    </Card>
+  );
 
-      <ConsoleCard />
-
-      <CaptchaRemediationCard />
-
-      <ProfilesCard />
-
-      <AppSecGeoblockCard />
-
-      <Card size="small" title="Bouncers">
-        <Table
-          rowKey="name"
-          dataSource={bouncers.data ?? []}
-          loading={bouncers.isLoading}
-          pagination={false}
-          locale={{ emptyText: <Empty description="No bouncers registered" /> }}
-          scroll={{ x: "max-content" }}
-        >
-          <Table.Column dataIndex="name" title="Name" key="name" />
-          <Table.Column dataIndex="type" title="Type" key="type" />
-          <Table.Column
-            dataIndex="last_pull"
-            title="Last pull"
-            key="last_pull"
-            render={(s: string) => fmtTime(s)}
-          />
-          <Table.Column
-            dataIndex="revoked"
-            title="Status"
-            key="revoked"
-            render={(revoked: boolean) =>
-              revoked ? <Tag color="red">revoked</Tag> : <Tag color="green">active</Tag>
-            }
-          />
-        </Table>
-      </Card>
-
-      <Card size="small" title="Hub scenarios">
-        <Table
-          rowKey={(r: { type: string; name: string }) => `${r.type}:${r.name}`}
-          dataSource={hub.data ?? []}
-          loading={hub.isLoading}
-          pagination={{ pageSize: 20, showSizeChanger: false }}
-          locale={{ emptyText: <Empty description="No hub items" /> }}
-          scroll={{ x: "max-content" }}
-        >
-          <Table.Column dataIndex="name" title="Name" key="name" />
-          <Table.Column dataIndex="type" title="Type" key="type" />
-          <Table.Column
-            dataIndex="installed"
-            title="Installed"
-            key="installed"
-            render={(v: boolean) => (v ? <Tag color="blue">yes</Tag> : <Tag>no</Tag>)}
-          />
-          <Table.Column
-            dataIndex="enabled"
-            title="Enabled"
-            key="enabled"
-            render={(v: boolean) => (v ? <Tag color="green">yes</Tag> : <Tag>no</Tag>)}
-          />
-        </Table>
-      </Card>
+  return (
+    <>
+      <Tabs
+        activeKey={activeSub}
+        onChange={onSubChange}
+        items={[
+          { key: "overview", label: "Overview", children: overviewPanel },
+          { key: "decisions", label: "Active decisions", children: decisionsPanel },
+          { key: "allowlist", label: "Allowlist", children: <AllowlistsCard /> },
+          { key: "alerts", label: "Alerts", children: <AlertsCard /> },
+          { key: "console", label: "Console", children: <ConsoleCard /> },
+          { key: "captcha", label: "Captcha", children: <CaptchaRemediationCard /> },
+          { key: "profiles", label: "Per-scenario", children: <ProfilesCard /> },
+          { key: "appsec", label: "AppSec geoblock", children: <AppSecGeoblockCard /> },
+          { key: "bouncers", label: "Bouncers", children: bouncersPanel },
+          { key: "hub", label: "Hub", children: hubPanel },
+        ]}
+      />
 
       <Drawer
         title="Add CrowdSec decision (manual ban)"
@@ -428,7 +475,7 @@ export const AdminSecurityCrowdsec = () => {
           </Form.Item>
         </Form>
       </Drawer>
-    </Space>
+    </>
   );
 };
 

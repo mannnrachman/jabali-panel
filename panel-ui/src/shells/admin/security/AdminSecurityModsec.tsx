@@ -19,10 +19,12 @@ import {
   Space,
   Switch,
   Table,
+  Tabs,
   Tag,
   Typography,
 } from "antd";
 import { useState } from "react";
+import { useSearchParams } from "react-router";
 
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useUpdateMutation } from "../../../hooks/useQueries";
@@ -96,8 +98,23 @@ export const AdminSecurityModsec = () => {
     }
   };
 
-  return (
-    <Space direction="vertical" size="large" style={{ width: "100%" }}>
+  const [sp, setSp] = useSearchParams();
+  const subTabs = ["global", "per-domain", "audit"] as const;
+  type SubTab = (typeof subTabs)[number];
+  const activeSub: SubTab = (() => {
+    const s = sp.get("sub");
+    return (subTabs as readonly string[]).includes(s ?? "") ? (s as SubTab) : "global";
+  })();
+  const onSubChange = (key: string) => {
+    setSp((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("sub", key);
+      return next;
+    });
+  };
+
+  const globalPanel = (
+    <>
       <Card size="small" title="Global engine">
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
           <div>
@@ -160,8 +177,11 @@ export const AdminSecurityModsec = () => {
           )}
         </Space>
       </Card>
+    </>
+  );
 
-      <Card size="small" title="Per-domain enable">
+  const perDomainPanel = (
+    <Card size="small" title="Per-domain enable">
         <SearchableTableStringQ<ModsecDomainRow>
           rowKey="id"
           loading={domains.isLoading}
@@ -194,8 +214,10 @@ export const AdminSecurityModsec = () => {
           />
         </SearchableTableStringQ>
       </Card>
+  );
 
-      <Card size="small" title="Audit log (last 50 events)">
+  const auditPanel = (
+    <Card size="small" title="Audit log (last 50 events)">
         <Table<ModsecAuditEntry>
           rowKey={(_, idx) => String(idx)}
           dataSource={audit.data ?? []}
@@ -236,6 +258,17 @@ export const AdminSecurityModsec = () => {
           />
         </Table>
       </Card>
-    </Space>
+  );
+
+  return (
+    <Tabs
+      activeKey={activeSub}
+      onChange={onSubChange}
+      items={[
+        { key: "global", label: "Global engine", children: globalPanel },
+        { key: "per-domain", label: "Per-domain", children: perDomainPanel },
+        { key: "audit", label: "Audit log", children: auditPanel },
+      ]}
+    />
   );
 };

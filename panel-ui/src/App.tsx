@@ -180,7 +180,8 @@ const ThemedApp = () => {
             <Route path="applications" element={<UserApplicationList />} />
             <Route path="ssh-keys" element={<UserSSHKeysPage />} />
             <Route path="cron" element={<UserCronList />} />
-            <Route path="mail" element={<MailTabsPage />} />
+            <Route path="mail" element={<Navigate to="/jabali-panel/mail/mailboxes" replace />} />
+            <Route path="mail/:tab" element={<MailTabsPage />} />
             <Route path="mailboxes" element={<Navigate to="/jabali-panel/mail/mailboxes" replace />} />
           </Route>
 

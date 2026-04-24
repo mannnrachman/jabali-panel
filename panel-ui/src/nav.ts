@@ -105,7 +105,7 @@ export const adminNav: NavItem[] = [
   {
     key: "ips",
     label: "IP Addresses",
-    icon: createElement(GlobalOutlined),
+    icon: navIcon(GlobalOutlined),
     path: "/jabali-admin/ips",
   },
 ];

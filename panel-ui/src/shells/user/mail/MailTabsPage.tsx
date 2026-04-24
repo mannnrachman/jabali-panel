@@ -4,6 +4,7 @@
 import { Button, Space, Tabs, type TabsProps } from "antd";
 import { PlusOutlined } from "@icons";
 import { useState } from "react";
+import { useNavigate, useParams } from "react-router";
 
 import { MailboxesTab } from "./tabs/MailboxesTab";
 import { ForwardersTab } from "./tabs/ForwardersTab";
@@ -14,8 +15,15 @@ import { SharedFoldersTab } from "./tabs/SharedFoldersTab";
 import { LogsTab } from "./tabs/LogsTab";
 import { CreateMailboxWizardModal } from "./CreateMailboxWizardModal";
 
+const TAB_KEYS = ["mailboxes", "forwarders", "autoresponders", "catchall", "disclaimer", "shared", "logs"] as const;
+type TabKey = (typeof TAB_KEYS)[number];
+const DEFAULT_TAB: TabKey = "mailboxes";
+
 export const MailTabsPage = () => {
   const [showCreateMailbox, setShowCreateMailbox] = useState(false);
+  const { tab } = useParams<{ tab?: string }>();
+  const navigate = useNavigate();
+  const activeKey: TabKey = (TAB_KEYS as readonly string[]).includes(tab ?? "") ? (tab as TabKey) : DEFAULT_TAB;
 
   const tabs: TabsProps["items"] = [
     {
@@ -70,7 +78,11 @@ export const MailTabsPage = () => {
         </Space>
       </div>
 
-      <Tabs items={tabs} />
+      <Tabs
+        items={tabs}
+        activeKey={activeKey}
+        onChange={(key) => navigate(`/jabali-panel/mail/${key}`)}
+      />
 
       {showCreateMailbox && (
         <CreateMailboxWizardModal

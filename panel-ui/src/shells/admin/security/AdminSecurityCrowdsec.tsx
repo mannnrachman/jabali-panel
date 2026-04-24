@@ -12,6 +12,7 @@ import {
   Button,
   Card,
   Col,
+  Descriptions,
   Drawer,
   Empty,
   Form,
@@ -97,51 +98,58 @@ export const AdminSecurityCrowdsec = () => {
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       <Card size="small" title="CrowdSec status">
-        <Row gutter={[32, 16]}>
-          <Col>
-            <Statistic
-              title="Service"
-              value={status.data?.running ? "running" : "down"}
-              valueStyle={{
-                color: status.data?.running ? "#3f8600" : "#cf1322",
-              }}
-            />
-          </Col>
-          <Col>
-            <Statistic
-              title="LAPI"
-              value={status.data?.lapi_reachable ? "reachable" : "unreachable"}
-              valueStyle={{
-                color: status.data?.lapi_reachable ? "#3f8600" : "#cf1322",
-              }}
-            />
-          </Col>
-          {status.data?.version && (
-            <Col>
-              <Statistic title="Version" value={status.data.version} />
-            </Col>
-          )}
-        </Row>
+        <Descriptions
+          column={{ xs: 1, sm: 2, md: 3 }}
+          items={[
+            {
+              key: "service",
+              label: "Service",
+              children: status.data?.running ? (
+                <Tag color="green">running</Tag>
+              ) : (
+                <Tag color="red">down</Tag>
+              ),
+            },
+            {
+              key: "lapi",
+              label: "LAPI",
+              children: status.data?.lapi_reachable ? (
+                <Tag color="green">reachable</Tag>
+              ) : (
+                <Tag color="red">unreachable</Tag>
+              ),
+            },
+            ...(status.data?.version
+              ? [
+                  {
+                    key: "version",
+                    label: "Version",
+                    children: <Typography.Text code>{status.data.version}</Typography.Text>,
+                  },
+                ]
+              : []),
+          ]}
+        />
       </Card>
 
       <Card size="small" title="Metrics">
         {metrics.isLoading ? (
           <Typography.Text type="secondary">Loading…</Typography.Text>
         ) : (
-          <Row gutter={[32, 16]}>
-            <Col>
+          <Row gutter={[16, 16]}>
+            <Col xs={24} sm={12} md={8} lg={6} xl={4}>
               <Statistic title="Parsed events" value={metrics.data?.parsed ?? 0} />
             </Col>
-            <Col>
+            <Col xs={24} sm={12} md={8} lg={6} xl={4}>
               <Statistic title="Unparsed" value={metrics.data?.unparsed ?? 0} />
             </Col>
-            <Col>
+            <Col xs={24} sm={12} md={8} lg={6} xl={4}>
               <Statistic title="Buckets fired" value={metrics.data?.buckets ?? 0} />
             </Col>
-            <Col>
+            <Col xs={24} sm={12} md={8} lg={6} xl={4}>
               <Statistic title="Active decisions" value={metrics.data?.decisions_active ?? 0} />
             </Col>
-            <Col>
+            <Col xs={24} sm={12} md={8} lg={6} xl={4}>
               <Statistic title="Total alerts" value={metrics.data?.alerts_total ?? 0} />
             </Col>
           </Row>

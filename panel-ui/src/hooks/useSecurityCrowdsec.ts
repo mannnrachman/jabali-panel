@@ -180,3 +180,59 @@ export function useUpdateAppSecGeoblock() {
     },
   });
 }
+
+// Allowlists (ADR-0061) — server-wide IP/CIDR never-ban list. Single
+// allowlist named "jabali-admin-allowlist" lives in LAPI; jabali shells
+// to cscli via the agent. LAPI is truth (not jabali DB).
+export type CrowdsecAllowlistEntry = {
+  value: string;
+  reason: string;
+  created_at: string;
+};
+
+export function useCrowdsecAllowlists() {
+  return useQuery({
+    queryKey: ["security", "crowdsec", "allowlists"],
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ items: CrowdsecAllowlistEntry[] }>(
+        `${BASE}/allowlists`,
+      );
+      return data.items ?? [];
+    },
+  });
+}
+
+export type AddCrowdsecAllowlistInput = {
+  value: string;
+  reason: string;
+};
+
+export function useAddCrowdsecAllowlist() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: AddCrowdsecAllowlistInput) => {
+      const { data } = await apiClient.post<{ value: string }>(
+        `${BASE}/allowlists`,
+        input,
+      );
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["security", "crowdsec", "allowlists"] });
+    },
+  });
+}
+
+export function useRemoveCrowdsecAllowlist() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (value: string) => {
+      await apiClient.delete(`${BASE}/allowlists`, {
+        params: { value },
+      });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["security", "crowdsec", "allowlists"] });
+    },
+  });
+}

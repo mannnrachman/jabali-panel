@@ -33,16 +33,20 @@ import {
 import { useEffect, useState } from "react";
 
 import {
+  useAddCrowdsecAllowlist,
   useAddCrowdsecDecision,
   useAppSecGeoblock,
+  useCrowdsecAllowlists,
   useCrowdsecBouncers,
   useCrowdsecDecisions,
   useCrowdsecHub,
   useCrowdsecMetrics,
   useCrowdsecStatus,
   useDeleteCrowdsecDecision,
+  useRemoveCrowdsecAllowlist,
   useUpdateAppSecGeoblock,
   type AppSecGeoblockMode,
+  type CrowdsecAllowlistEntry,
   type CrowdsecDecision,
   type CrowdsecScope,
 } from "../../../hooks/useSecurityCrowdsec";
@@ -233,6 +237,8 @@ export const AdminSecurityCrowdsec = () => {
           />
         </Table>
       </Card>
+
+      <AllowlistsCard />
 
       <AppSecGeoblockCard />
 
@@ -526,5 +532,153 @@ const AppSecGeoblockCard = () => {
         </Space>
       </Space>
     </Card>
+  );
+};
+
+// AllowlistsCard — server-wide IP/CIDR never-ban list (M27 Step 2,
+// ADR-0061). LAPI is truth; jabali shells to cscli via the agent. Table
+// + Drawer-for-add follows docs/CONVENTIONS.md — Drawer not Modal, `Table.Column`
+// children, `destroyOnClose`.
+type AllowlistFormValues = {
+  value: string;
+  reason: string;
+};
+
+const ALLOWLIST_IP_OR_CIDR = /^[0-9a-fA-F:.]+(\/\d{1,3})?$/;
+
+const AllowlistsCard = () => {
+  const allowlists = useCrowdsecAllowlists();
+  const addEntry = useAddCrowdsecAllowlist();
+  const removeEntry = useRemoveCrowdsecAllowlist();
+  const [addOpen, setAddOpen] = useState(false);
+  const [form] = Form.useForm<AllowlistFormValues>();
+  const screens = Grid.useBreakpoint();
+  const isDesktop = screens.lg !== false;
+
+  const onSubmit = async (values: AllowlistFormValues) => {
+    try {
+      await addEntry.mutateAsync(values);
+      message.success(`Allowlisted ${values.value}`);
+      setAddOpen(false);
+      form.resetFields();
+    } catch (e: unknown) {
+      message.error(e instanceof Error ? e.message : "Failed to allowlist");
+    }
+  };
+
+  const onRemove = async (row: CrowdsecAllowlistEntry) => {
+    try {
+      await removeEntry.mutateAsync(row.value);
+      message.success(`Removed ${row.value} from allowlist`);
+    } catch (e: unknown) {
+      message.error(e instanceof Error ? e.message : "Failed to remove");
+    }
+  };
+
+  return (
+    <>
+      <Card
+        size="small"
+        title="Allowlist (never ban)"
+        extra={
+          <Button type="primary" size="small" onClick={() => setAddOpen(true)}>
+            Add to allowlist
+          </Button>
+        }
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="Allowlisted IPs bypass every scenario, decision, and the AppSec geoblock. Use for your office, home IP, or CI runner CIDR."
+        />
+        <Table<CrowdsecAllowlistEntry>
+          rowKey="value"
+          dataSource={allowlists.data ?? []}
+          loading={allowlists.isLoading}
+          pagination={{ pageSize: 10, showSizeChanger: false }}
+          locale={{ emptyText: <Empty description="No allowlist entries" /> }}
+          scroll={{ x: "max-content" }}
+        >
+          <Table.Column<CrowdsecAllowlistEntry>
+            dataIndex="value"
+            title="IP or CIDR"
+            key="value"
+            render={(v: string) => <Typography.Text code>{v}</Typography.Text>}
+          />
+          <Table.Column<CrowdsecAllowlistEntry>
+            dataIndex="reason"
+            title="Reason"
+            key="reason"
+          />
+          <Table.Column<CrowdsecAllowlistEntry>
+            dataIndex="created_at"
+            title="Added"
+            key="created_at"
+            render={(s: string) => fmtTime(s)}
+          />
+          <Table.Column<CrowdsecAllowlistEntry>
+            title=""
+            key="delete"
+            width={90}
+            render={(_, row) => (
+              <Popconfirm
+                title="Remove from allowlist"
+                description={`${row.value} will be subject to scenarios and decisions again.`}
+                okText="Remove"
+                okButtonProps={{ danger: true }}
+                cancelText="Cancel"
+                onConfirm={() => onRemove(row)}
+              >
+                <Button danger type="text" size="small">
+                  Remove
+                </Button>
+              </Popconfirm>
+            )}
+          />
+        </Table>
+      </Card>
+
+      <Drawer
+        title="Add to allowlist"
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        width={isDesktop ? 520 : undefined}
+        placement="right"
+        destroyOnClose
+        extra={
+          <Space>
+            <Button onClick={() => setAddOpen(false)}>Cancel</Button>
+            <Button type="primary" loading={addEntry.isPending} onClick={() => form.submit()}>
+              Add
+            </Button>
+          </Space>
+        }
+      >
+        <Form<AllowlistFormValues> form={form} layout="vertical" onFinish={onSubmit}>
+          <Form.Item
+            name="value"
+            label="IP or CIDR"
+            rules={[
+              { required: true, message: "Value required" },
+              { pattern: ALLOWLIST_IP_OR_CIDR, message: "Must be a valid IP or CIDR" },
+            ]}
+            tooltip="Single IPv4/IPv6 address or CIDR block (e.g. 192.0.2.1 or 10.0.0.0/24)."
+          >
+            <Input placeholder="192.0.2.1 or 10.0.0.0/24" />
+          </Form.Item>
+          <Form.Item
+            name="reason"
+            label="Reason"
+            rules={[
+              { required: true, message: "Reason required" },
+              { min: 3, max: 200, message: "Reason must be 3..200 chars" },
+            ]}
+          >
+            <Input placeholder="e.g. office LAN, CI runner" />
+          </Form.Item>
+        </Form>
+      </Drawer>
+    </>
   );
 };

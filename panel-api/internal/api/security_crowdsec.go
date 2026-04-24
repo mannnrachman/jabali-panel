@@ -131,6 +131,54 @@ func RegisterSecurityCrowdSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterfac
 		}
 		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
 	})
+
+	// M27 Step 2 — allowlists (ADR-0061). Wire contract:
+	//   GET    /admin/security/crowdsec/allowlists           → {items}
+	//   POST   /admin/security/crowdsec/allowlists           {value, reason}
+	//   DELETE /admin/security/crowdsec/allowlists?value=... (query param; CIDR has `/` which :path would segment)
+	g.GET("/allowlists", agentPassthrough(cli, "security.crowdsec.allowlists.list", nil, csCallTimeout))
+
+	g.POST("/allowlists", func(c *gin.Context) {
+		var body struct {
+			Value  string `json:"value"`
+			Reason string `json:"reason"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_json"})
+			return
+		}
+		body.Value = strings.TrimSpace(body.Value)
+		if body.Value == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "value_required"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), csCallTimeout)
+		defer cancel()
+		raw, err := cli.Call(ctx, "security.crowdsec.allowlists.add", body)
+		if err != nil {
+			status, ebody := translateAgentError(err)
+			c.JSON(status, ebody)
+			return
+		}
+		c.Data(http.StatusCreated, "application/json; charset=utf-8", raw)
+	})
+
+	g.DELETE("/allowlists", func(c *gin.Context) {
+		value := strings.TrimSpace(c.Query("value"))
+		if value == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "value_required"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), csCallTimeout)
+		defer cancel()
+		_, err := cli.Call(ctx, "security.crowdsec.allowlists.remove", map[string]any{"value": value})
+		if err != nil {
+			status, ebody := translateAgentError(err)
+			c.JSON(status, ebody)
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
 }
 
 // RegisterSecurityAppSecRoutes mounts the admin AppSec-geoblock surface.

@@ -626,6 +626,130 @@ pre_eval:
 	return header
 }
 
+// ---- M27 Step 2: security.crowdsec.allowlists.{list,add,remove} -----------
+
+// jabaliAllowlistName is the single server-wide allowlist jabali manages
+// (ADR-0061). Pinned so repeated add/remove calls are idempotent.
+const jabaliAllowlistName = "jabali-admin-allowlist"
+
+type csAllowlistEntryWire struct {
+	Value     string `json:"value"`
+	Reason    string `json:"reason"`
+	CreatedAt string `json:"created_at"`
+}
+
+// cscli allowlists inspect payload (v1.7.x). Top-level includes name + items.
+type rawAllowlistInspect struct {
+	Items []struct {
+		Value       string `json:"value"`
+		Description string `json:"description"`
+		CreatedAt   string `json:"created_at"`
+	} `json:"items"`
+}
+
+func csAllowlistsListHandler(ctx context.Context, _ json.RawMessage) (any, error) {
+	out, err := runCscliJSON(ctx, "allowlists", "inspect", jabaliAllowlistName)
+	if err != nil {
+		// cscli exits nonzero when the allowlist doesn't exist. Surface
+		// as empty list — first list before first add is a normal state.
+		return map[string]any{"items": []csAllowlistEntryWire{}}, nil
+	}
+	var raw rawAllowlistInspect
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, csInternal("parse cscli allowlists inspect", err)
+	}
+	items := make([]csAllowlistEntryWire, 0, len(raw.Items))
+	for _, it := range raw.Items {
+		items = append(items, csAllowlistEntryWire{
+			Value:     it.Value,
+			Reason:    it.Description,
+			CreatedAt: it.CreatedAt,
+		})
+	}
+	return map[string]any{"items": items}, nil
+}
+
+type csAllowlistAddParams struct {
+	Value  string `json:"value"`
+	Reason string `json:"reason"`
+}
+
+// ensureJabaliAllowlist creates the named allowlist if missing. Idempotent:
+// if cscli reports "already exists" (nonzero exit + distinctive stderr)
+// we treat it as success. We don't rely on the exit code alone because
+// cscli versions differ.
+func ensureJabaliAllowlist(ctx context.Context) error {
+	check := exec.CommandContext(ctx, "cscli", "allowlists", "inspect", jabaliAllowlistName)
+	if err := check.Run(); err == nil {
+		return nil
+	}
+	create := exec.CommandContext(ctx, "cscli", "allowlists", "create",
+		jabaliAllowlistName, "-d", "jabali-managed admin allowlist")
+	out, err := create.CombinedOutput()
+	if err != nil {
+		if strings.Contains(strings.ToLower(string(out)), "already exists") {
+			return nil
+		}
+		return fmt.Errorf("cscli allowlists create: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func csAllowlistsAddHandler(ctx context.Context, params json.RawMessage) (any, error) {
+	var p csAllowlistAddParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, csInvalidArg(fmt.Sprintf("parse params: %v", err))
+	}
+	value := strings.TrimSpace(p.Value)
+	if value == "" {
+		return nil, csInvalidArg("value is required")
+	}
+	// Validate IP or CIDR. Reject everything else (country, ASN — those
+	// are decision scopes, not allowlist-value shapes).
+	if net.ParseIP(value) == nil {
+		if _, _, err := net.ParseCIDR(value); err != nil {
+			return nil, csInvalidArg("value must be an IP or CIDR")
+		}
+	}
+	if l := len(p.Reason); l < 3 || l > 200 {
+		return nil, csInvalidArg("reason length must be 3..200")
+	}
+	if err := ensureJabaliAllowlist(ctx); err != nil {
+		return nil, csInternal("ensure allowlist", err)
+	}
+	cmd := exec.CommandContext(ctx, "cscli", "allowlists", "add",
+		jabaliAllowlistName, value, "-d", p.Reason)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return nil, csInternal(fmt.Sprintf("cscli allowlists add: %s", strings.TrimSpace(string(out))), err)
+	}
+	return map[string]any{"value": value}, nil
+}
+
+type csAllowlistRemoveParams struct {
+	Value string `json:"value"`
+}
+
+func csAllowlistsRemoveHandler(ctx context.Context, params json.RawMessage) (any, error) {
+	var p csAllowlistRemoveParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, csInvalidArg(fmt.Sprintf("parse params: %v", err))
+	}
+	value := strings.TrimSpace(p.Value)
+	if value == "" {
+		return nil, csInvalidArg("value is required")
+	}
+	cmd := exec.CommandContext(ctx, "cscli", "allowlists", "remove",
+		jabaliAllowlistName, value)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		msg := strings.ToLower(string(out))
+		if strings.Contains(msg, "not found") || strings.Contains(msg, "no such") {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeNotFound, Message: "allowlist entry not found"}
+		}
+		return nil, csInternal(fmt.Sprintf("cscli allowlists remove: %s", strings.TrimSpace(string(out))), err)
+	}
+	return map[string]any{}, nil
+}
+
 func init() {
 	Default.Register("security.crowdsec.status", csStatusHandler)
 	Default.Register("security.crowdsec.decisions.list", csDecisionsListHandler)
@@ -636,4 +760,7 @@ func init() {
 	Default.Register("security.crowdsec.hub.list", csHubListHandler)
 	Default.Register("security.crowdsec.appsec.geoblock.get", csAppSecGeoblockGetHandler)
 	Default.Register("security.crowdsec.appsec.geoblock.set", csAppSecGeoblockSetHandler)
+	Default.Register("security.crowdsec.allowlists.list", csAllowlistsListHandler)
+	Default.Register("security.crowdsec.allowlists.add", csAllowlistsAddHandler)
+	Default.Register("security.crowdsec.allowlists.remove", csAllowlistsRemoveHandler)
 }

@@ -65,19 +65,33 @@ func RegisterIPRoutes(g *gin.RouterGroup, cfg IPHandlerConfig) {
 
 type ipHandler struct{ cfg IPHandlerConfig }
 
+// ipListRow is ManagedIP plus a transient KernelPresent flag sourced from
+// agent ip.list. Lets the UI distinguish "managed by jabali + on kernel"
+// (bound), "external, netplan/cloud-init owns it" (system), and "lost
+// from kernel" (degraded) without mutating the DB row's semantics — see
+// reconciler/managed_ips.go for the is_bound=FALSE ownership rule.
+//
+// KernelPresent is a pointer so a failed agent ip.list call omits the
+// field entirely (UI falls back to the is_bound-only view).
+type ipListRow struct {
+	models.ManagedIP
+	KernelPresent *bool `json:"kernel_present,omitempty"`
+}
+
 // listResponse mirrors the {data,total,page,page_size} envelope used by
 // /admin/packages, /admin/domains, etc. The IP pool is small (capped at
 // 100 by validation) so we don't paginate, but the envelope shape is
 // what the panel-ui hooks expect.
 type ipListResponse struct {
-	Data     []models.ManagedIP `json:"data"`
-	Total    int                `json:"total"`
-	Page     int                `json:"page"`
-	PageSize int                `json:"page_size"`
+	Data     []ipListRow `json:"data"`
+	Total    int         `json:"total"`
+	Page     int         `json:"page"`
+	PageSize int         `json:"page_size"`
 }
 
 func (h *ipHandler) list(c *gin.Context) {
-	rows, err := h.cfg.Repo.ListAll(c.Request.Context())
+	ctx := c.Request.Context()
+	rows, err := h.cfg.Repo.ListAll(ctx)
 	if err != nil {
 		h.cfg.Log.Error("ip list", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
@@ -94,12 +108,49 @@ func (h *ipHandler) list(c *gin.Context) {
 		}
 		rows = filtered
 	}
+
+	present := h.kernelPresentMap(ctx)
+	out := make([]ipListRow, len(rows))
+	for i := range rows {
+		out[i].ManagedIP = rows[i]
+		if present != nil {
+			v := present[rows[i].Address]
+			out[i].KernelPresent = &v
+		}
+	}
 	c.JSON(http.StatusOK, ipListResponse{
-		Data:     rows,
-		Total:    len(rows),
+		Data:     out,
+		Total:    len(out),
 		Page:     1,
-		PageSize: len(rows),
+		PageSize: len(out),
 	})
+}
+
+// kernelPresentMap calls agent ip.list and returns an address→present
+// map. Returns nil on any failure (agent down, parse error, flag off) so
+// the caller omits the kernel_present field — UI degrades to the
+// is_bound-only view.
+func (h *ipHandler) kernelPresentMap(ctx context.Context) map[string]bool {
+	if !h.cfg.AgentIPCommandsEnabled || h.cfg.Agent == nil {
+		return nil
+	}
+	raw, err := h.cfg.Agent.Call(ctx, "ip.list", nil)
+	if err != nil {
+		return nil
+	}
+	var resp struct {
+		Entries []struct {
+			Address string `json:"address"`
+		} `json:"entries"`
+	}
+	if jerr := json.Unmarshal(raw, &resp); jerr != nil {
+		return nil
+	}
+	m := make(map[string]bool, len(resp.Entries))
+	for _, e := range resp.Entries {
+		m[e.Address] = true
+	}
+	return m
 }
 
 // userList returns the subset of the IP pool the operator has flagged
@@ -110,7 +161,7 @@ func (h *ipHandler) userList(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	out := make([]models.ManagedIP, 0, len(rows))
+	out := make([]ipListRow, 0, len(rows))
 	for _, r := range rows {
 		if !r.IsUserSelectable {
 			continue
@@ -118,7 +169,7 @@ func (h *ipHandler) userList(c *gin.Context) {
 		if fam := c.Query("family"); fam != "" && r.Family != fam {
 			continue
 		}
-		out = append(out, r)
+		out = append(out, ipListRow{ManagedIP: r})
 	}
 	c.JSON(http.StatusOK, ipListResponse{
 		Data:     out,

@@ -20,8 +20,23 @@ type ManagedIP = {
   is_bound: boolean;
   is_user_selectable: boolean;
   degraded: boolean;
+  // kernel_present is populated from agent ip.list when the agent is
+  // reachable; omitted when the probe fails (UI falls back to the
+  // is_bound-only view).
+  kernel_present?: boolean;
   created_at: string;
   updated_at: string;
+};
+
+const renderBoundTag = (row: ManagedIP) => {
+  const { is_bound, kernel_present } = row;
+  if (kernel_present === undefined) {
+    return is_bound ? <Tag color="green">bound</Tag> : <Tag>unbound</Tag>;
+  }
+  if (is_bound && kernel_present) return <Tag color="green">bound</Tag>;
+  if (is_bound && !kernel_present) return <Tag color="red">lost</Tag>;
+  if (!is_bound && kernel_present) return <Tag color="blue">system</Tag>;
+  return <Tag>unbound</Tag>;
 };
 
 // affectedDomainsError is the body shape the API returns on 409
@@ -115,11 +130,9 @@ export const AdminIPList = () => {
             render={(v: boolean) => (v ? <Tag color="gold">default</Tag> : null)}
           />
           <Table.Column
-            dataIndex="is_bound"
             title="Bound"
-            render={(v: boolean) =>
-              v ? <Tag color="green">bound</Tag> : <Tag>unbound</Tag>
-            }
+            key="is_bound"
+            render={(_: unknown, row: ManagedIP) => renderBoundTag(row)}
           />
           <Table.Column
             dataIndex="is_user_selectable"

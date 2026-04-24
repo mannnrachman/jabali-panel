@@ -94,6 +94,18 @@ type ServerSettings struct {
 	CrowdSecCaptchaSiteKey   string `gorm:"column:crowdsec_captcha_site_key;type:varchar(512);not null;default:''"    json:"crowdsec_captcha_site_key"`
 	CrowdSecCaptchaSecretKey string `gorm:"column:crowdsec_captcha_secret_key;type:varchar(512);not null;default:''"  json:"-"`
 
+	// Global disk-quota toggle (migration 000071). When false (default),
+	// the reconciler does not apply POSIX user quota and the Packages UI
+	// disables the disk-quota fields. cgroups limits (cpu/memory/io/
+	// tasks) are independent of this flag and always apply.
+	//
+	// Operator must independently mount /home on its own filesystem with
+	// usrquota,grpquota options before flipping this true. install.sh
+	// refuses to enable quota when /home == / (M18); this DB flag is the
+	// runtime equivalent — flipping it true on an unprepared host means
+	// agent quota.apply will fail and the panel will surface the error.
+	DiskQuotaEnabled bool `gorm:"column:disk_quota_enabled;type:tinyint(1);not null;default:0" json:"disk_quota_enabled"`
+
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 

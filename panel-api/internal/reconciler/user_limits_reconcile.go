@@ -70,6 +70,18 @@ func (r *Reconciler) ReconcileUserLimits(ctx context.Context) {
 		return
 	}
 
+	// Read the global disk-quota toggle once per pass. When false we
+	// still apply cgroup limits (cpu/mem/io/tasks) but pass quota_mount=""
+	// to the agent so the setquota step short-circuits — matches the
+	// `QuotaMount empty skips setquota` convention used by user.limits.*.
+	// See server_settings.disk_quota_enabled (migration 000071).
+	quotaMount := r.quotaMount
+	if r.serverSettings != nil {
+		if s, sErr := r.serverSettings.Get(ctx); sErr == nil && s != nil && !s.DiskQuotaEnabled {
+			quotaMount = ""
+		}
+	}
+
 	// Batch-load overrides in one query to avoid N+1 lookups.
 	ovAll, err := r.limitOverrides.ListAll(ctx)
 	if err != nil {
@@ -129,7 +141,7 @@ func (r *Reconciler) ReconcileUserLimits(ctx context.Context) {
 			"io_read_mbps":      effective.IOReadMbps,
 			"io_write_mbps":     effective.IOWriteMbps,
 			"max_tasks":         effective.MaxTasks,
-			"quota_mount":       r.quotaMount,
+			"quota_mount":       quotaMount,
 		})
 		cancel()
 		if err != nil {

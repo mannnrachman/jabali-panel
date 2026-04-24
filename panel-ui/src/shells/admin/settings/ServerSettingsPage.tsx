@@ -56,6 +56,7 @@ type ServerSettings = {
   ssh_port: number;
   ssh_password_auth: boolean;
   ssh_user_password_auth: boolean;
+  disk_quota_enabled: boolean;
   updated_at: string;
 };
 
@@ -118,6 +119,7 @@ const GeneralSettingsTab = () => {
         ssh_port: values.ssh_port || 22,
         ssh_password_auth: values.ssh_password_auth || false,
         ssh_user_password_auth: values.ssh_user_password_auth || false,
+        disk_quota_enabled: values.disk_quota_enabled || false,
       });
       notify({ type: "success", message: "Settings saved" });
       form.setFieldsValue(resp.data);
@@ -306,6 +308,39 @@ const GeneralSettingsTab = () => {
               <Typography.Text type="secondary">
                 Allow hosting users (jabali-sftp group) to authenticate with a password. They are still SFTP-only — no shell.
               </Typography.Text>
+            </div>
+          </Col>
+        </Row>
+      </Card>
+
+      <Card title="Disk Quotas" style={{ marginBottom: 16 }}>
+        <Row gutter={16}>
+          <Col xs={24}>
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <Form.Item name="disk_quota_enabled" valuePropName="checked" noStyle>
+                  <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
+                </Form.Item>
+                <Typography.Text>POSIX Disk Quota Enforcement</Typography.Text>
+              </div>
+              <Typography.Text type="secondary">
+                When enabled, the reconciler applies per-user disk-quota limits from packages and overrides.
+                When disabled, disk-quota fields in Packages are read-only and only cgroup limits (cpu / memory / io / tasks) are enforced.
+              </Typography.Text>
+              <Alert
+                style={{ marginTop: 12 }}
+                type="warning"
+                showIcon
+                message="Requires /home on its own filesystem"
+                description={
+                  <>
+                    Quota enforcement requires <code>/home</code> to be mounted on a dedicated filesystem with
+                    <code> usrquota,grpquota</code> options. install.sh refuses to enable POSIX quota when
+                    <code> /home</code> shares the root filesystem. Verify with{" "}
+                    <code>mount | grep " on /home "</code> before flipping this on.
+                  </>
+                }
+              />
             </div>
           </Col>
         </Row>

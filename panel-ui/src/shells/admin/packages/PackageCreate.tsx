@@ -19,6 +19,7 @@ import { CheckOutlined, CloseOutlined } from "@icons";
 import { useNavigate } from "react-router";
 
 import { useCreateMutation } from "../../../hooks/useQueries";
+import { useDiskQuotaEnabled } from "../../../hooks/useDiskQuotaEnabled";
 
 type PackageCreateInput = {
   name: string;
@@ -42,6 +43,7 @@ type PackageCreated = { id: string };
 export const PackageCreate = () => {
   const navigate = useNavigate();
   const [form] = Form.useForm<PackageCreateInput>();
+  const { enabled: diskQuotaEnabled } = useDiskQuotaEnabled();
   const createMutation = useCreateMutation<PackageCreated, PackageCreateInput>({
     resource: "packages",
   });
@@ -103,9 +105,18 @@ export const PackageCreate = () => {
               label="Disk Quota (MB)"
               name="disk_quota_mb"
               rules={[{ required: true, message: "Disk quota is required" }]}
-              tooltip="Hard limit enforced via setquota(8). 0 = unlimited."
+              tooltip={
+                diskQuotaEnabled
+                  ? "Hard limit enforced via setquota(8). 0 = unlimited."
+                  : "Disabled — enable POSIX disk quotas in Server Settings → Disk Quotas first."
+              }
+              extra={
+                diskQuotaEnabled
+                  ? undefined
+                  : "Disabled until disk quotas are enabled in Server Settings."
+              }
             >
-              <InputNumber min={0} style={{ width: "100%" }} />
+              <InputNumber min={0} style={{ width: "100%" }} disabled={!diskQuotaEnabled} />
             </Form.Item>
           </Col>
           <Col xs={24} sm={12} md={8}>

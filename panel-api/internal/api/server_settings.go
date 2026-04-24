@@ -89,6 +89,7 @@ type updateServerSettingsRequest struct {
 	SSHPasswordAuth     *bool   `json:"ssh_password_auth,omitempty"`
 	SSHUserPasswordAuth *bool   `json:"ssh_user_password_auth,omitempty"`
 	PanelBrandText      *string `json:"panel_brand_text,omitempty"`
+	DiskQuotaEnabled    *bool   `json:"disk_quota_enabled,omitempty"`
 }
 
 func (h *serverSettingsHandler) update(c *gin.Context) {
@@ -159,6 +160,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.PanelBrandText != nil {
 		current.PanelBrandText = strings.TrimSpace(*req.PanelBrandText)
+	}
+	if req.DiskQuotaEnabled != nil {
+		current.DiskQuotaEnabled = *req.DiskQuotaEnabled
 	}
 
 	// Validate — reject obviously bad input so we don't persist garbage.

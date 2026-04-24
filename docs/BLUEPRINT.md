@@ -892,7 +892,7 @@ ADR-0052 (disclaimer sieve vs MtaHook decision matrix),
 
 **Depends on:** M2 (nginx vhosts)
 
-### M14: Notifications (PLANNED)
+### M14: Notifications (SHIPPED 2026-04-24)
 
 **Goal:** Admins can configure and receive alerts via multiple out-of-band channels AND see in-app notifications via a bell dropdown that also delivers Web Push when the panel tab is closed.
 
@@ -921,7 +921,14 @@ ADR-0052 (disclaimer sieve vs MtaHook decision matrix),
 - API: `/api/v1/notification-channels`, `/api/v1/notifications/broadcast`, `/api/v1/notifications/inbox`, `/api/v1/notifications/webpush/subscribe`, `/api/v1/notifications/webpush/vapid-public-key`
 - UI: admin Notification Channels config page + topbar bell dropdown + Web Push enablement flow
 
-**Status:** Planned
+**Status:** Shipped — 9 steps across `feat/m14-*` branches merged to `main` 2026-04-24. ADRs 0056–0059. Runbook: `plans/m14-notifications-runbook.md`.
+
+**Architecture delivered:**
+- Producers (admin API, agent `notifications.send`, in-process event sources) → Redis Stream `jabali:notifications:queue` → Dispatcher goroutine → bounded-parallel fanout (cap 4) → ChannelSender (slack | discord | ntfy | webhook | webpush | email)
+- DLQ `jabali:notifications:dlq` for parse errors + retries-exceeded
+- Circuit breaker: 3 consecutive failures auto-disable the channel and fire a critical alarm row
+- In-process event sources: cert_renew (7d/1d expiry + renewal fail), disk_full (85/95% on /, /var/www, /var/lib/mysql), service_down (jabali-* systemctl watchdog), crowdsec_spike (cscli decisions threshold)
+- Rate limits: IP-tier strict + per-admin 5/min token bucket on broadcast/test
 
 **Depends on:** M6 (email channel requires Stalwart)
 
@@ -1285,7 +1292,7 @@ Use this table to navigate the codebase when adding a new capability:
 | M11: File Manager (AntD-native, superseded filebrowser) | 2026-04-19 | ADR-0030, Waves A–E in `main` |
 | M12: SFTP via openssh | 2026-04-18 | `aaa0c82` through `0256773` |
 | M13: Stats & monitoring | Planned | — |
-| M14: Notifications | Planned | — |
+| M14: Notifications | 2026-04-24 | ADRs 0056-0059; runbook `plans/m14-notifications-runbook.md` |
 | M15: Migration importers | Planned | — |
 | M16: Automation API | Planned | — |
 | M17: Diagnostic reports | Planned | — |

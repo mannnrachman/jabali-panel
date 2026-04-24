@@ -3,9 +3,11 @@
 // Tab implementations filled in by parallel Waves B/C/D.
 import { Button, Space, Tabs, type TabsProps } from "antd";
 import { PlusOutlined } from "@icons";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
+import { useListQuery } from "../../../hooks/useQueries";
+import type { Domain } from "../domains/UserDomainList";
 import { MailboxesTab } from "./tabs/MailboxesTab";
 import { ForwardersTab } from "./tabs/ForwardersTab";
 import { AutorespondersTab } from "./tabs/AutorespondersTab";
@@ -24,6 +26,15 @@ export const MailTabsPage = () => {
   const { tab } = useParams<{ tab?: string }>();
   const navigate = useNavigate();
   const activeKey: TabKey = (TAB_KEYS as readonly string[]).includes(tab ?? "") ? (tab as TabKey) : DEFAULT_TAB;
+
+  const { items: allDomains } = useListQuery<Domain>({
+    resource: "domains",
+    params: { page: 1, pageSize: 200, sort: "name", order: "asc" },
+  });
+  const mailDomains = useMemo(
+    () => allDomains.filter((d) => d.email_enabled).map((d) => ({ id: d.id, name: d.name })),
+    [allDomains],
+  );
 
   const tabs: TabsProps["items"] = [
     {
@@ -87,7 +98,7 @@ export const MailTabsPage = () => {
       {showCreateMailbox && (
         <CreateMailboxWizardModal
           open={showCreateMailbox}
-          domains={[]}
+          domains={mailDomains}
           onCancel={() => setShowCreateMailbox(false)}
           onCreated={() => setShowCreateMailbox(false)}
         />

@@ -26,6 +26,7 @@ import {
   Select,
   Space,
   Statistic,
+  Switch,
   Table,
   Tabs,
   Tag,
@@ -46,11 +47,13 @@ import {
   useCrowdsecHub,
   useCrowdsecMetrics,
   useCrowdsecCaptcha,
+  useCrowdsecConsoleStatus,
   useCrowdsecProfiles,
   useCrowdsecStatus,
   useDeleteCrowdsecDecision,
   useEnrollCrowdsecConsole,
   useRemoveCrowdsecAllowlist,
+  useToggleCrowdsecConsoleOption,
   useUpdateAppSecGeoblock,
   useUpdateCrowdsecCaptcha,
   useUpdateCrowdsecProfiles,
@@ -58,6 +61,7 @@ import {
   type CrowdsecAlert,
   type CrowdsecAllowlistEntry,
   type CrowdsecCaptchaProvider,
+  type CrowdsecConsoleOption,
   type CrowdsecDecision,
   type CrowdsecProfileOverride,
   type CrowdsecScenarioItem,
@@ -893,8 +897,18 @@ type ConsoleFormValues = {
   name?: string;
 };
 
+const OPTION_LABEL: Record<string, string> = {
+  custom: "Custom scenarios",
+  manual: "Manual decisions",
+  tainted: "Tainted scenarios",
+  context: "Context with alerts",
+  console_management: "Console-managed decisions",
+};
+
 const ConsoleCard = () => {
   const enroll = useEnrollCrowdsecConsole();
+  const statusQ = useCrowdsecConsoleStatus();
+  const toggle = useToggleCrowdsecConsoleOption();
   const [form] = Form.useForm<ConsoleFormValues>();
   const [submittedAt, setSubmittedAt] = useState<number | null>(null);
 
@@ -906,6 +920,15 @@ const ConsoleCard = () => {
       message.success("Enrollment sent — accept this instance at app.crowdsec.net");
     } catch (e: unknown) {
       message.error(e instanceof Error ? e.message : "Enrollment failed");
+    }
+  };
+
+  const onToggleOption = async (opt: CrowdsecConsoleOption, enabled: boolean) => {
+    try {
+      await toggle.mutateAsync({ option: opt.name, enabled });
+      message.success(`${enabled ? "Enabled" : "Disabled"} ${OPTION_LABEL[opt.name] ?? opt.name}`);
+    } catch (e: unknown) {
+      message.error(e instanceof Error ? e.message : "Toggle failed");
     }
   };
 
@@ -978,6 +1001,48 @@ const ConsoleCard = () => {
             </Popconfirm>
           </Space>
         </Form>
+
+        <Typography.Title level={5} style={{ marginTop: 16, marginBottom: 8 }}>
+          Share preferences
+        </Typography.Title>
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
+          Controls which data the instance forwards to Console. Takes effect only after enrollment
+          is accepted at app.crowdsec.net.
+        </Typography.Paragraph>
+        <Table<CrowdsecConsoleOption>
+          rowKey="name"
+          dataSource={statusQ.data ?? []}
+          loading={statusQ.isLoading}
+          pagination={false}
+          size="small"
+          locale={{ emptyText: <Empty description="Console options unavailable" /> }}
+          scroll={{ x: "max-content" }}
+        >
+          <Table.Column<CrowdsecConsoleOption>
+            dataIndex="name"
+            title="Option"
+            key="name"
+            render={(n: string) => OPTION_LABEL[n] ?? n}
+          />
+          <Table.Column<CrowdsecConsoleOption>
+            dataIndex="description"
+            title="Description"
+            key="description"
+          />
+          <Table.Column<CrowdsecConsoleOption>
+            dataIndex="enabled"
+            title="Enabled"
+            key="enabled"
+            width={120}
+            render={(enabled: boolean, row) => (
+              <Switch
+                checked={enabled}
+                loading={toggle.isPending}
+                onChange={(checked) => onToggleOption(row, checked)}
+              />
+            )}
+          />
+        </Table>
       </Space>
     </Card>
   );

@@ -1,6 +1,7 @@
 # ADR-0062: CrowdSec Console enrollment — enroll-only, operator manages disenroll
 
 **Status:** Accepted — 2026-04-24
+**Amended:** 2026-04-25 — exposed `cscli console status/enable/disable` for share preferences (see Amendment section)
 **Related:** ADR-0002 (DB as truth for config), ADR-0053 (CrowdSec over fail2ban)
 
 ## Context
@@ -109,3 +110,33 @@ enrollment state in `/etc/crowdsec/online_api_credentials.yaml`.
 - Panel-api route `POST /admin/security/crowdsec/console/enroll`
 - UI card `ConsoleCard` on the CrowdSec tab — single Input + Button,
   with success Alert pointing to app.crowdsec.net
+
+## Amendment — 2026-04-25: expose share preferences
+
+Original scope shipped enroll-only. Operator feedback: "cscli has
+`status`/`enable`/`disable` for the five share options — why hide them
+in the UI when we already expose enroll?" Valid — the rest of the
+cscli console surface is just preference toggles, same DB-less
+passthrough as enroll.
+
+Added:
+- `security.crowdsec.console.status` — wraps `cscli console status -o json`;
+  returns `{items: [{name, enabled, description}]}` for the five options
+  (custom / manual / tainted / context / console_management).
+- `security.crowdsec.console.enable` — `cscli console enable <option>`.
+- `security.crowdsec.console.disable` — `cscli console disable <option>`.
+
+Panel-api routes:
+- `GET  /admin/security/crowdsec/console/status`
+- `POST /admin/security/crowdsec/console/options/:option/enable`
+- `POST /admin/security/crowdsec/console/options/:option/disable`
+
+UI `ConsoleCard` now includes a share-preferences Table below the
+enroll form with an inline Switch per option. Toggles apply
+immediately (no Apply button — per-row mutation same as the ModSec
+per-domain table).
+
+Core decision unchanged: no server-side enrollment-state detection,
+no disenroll verb. Share preferences function whether or not Console
+is enrolled (they gate local forwarding). Pre-enrollment they're
+effectively inert; post-enrollment they shape what reaches Console.

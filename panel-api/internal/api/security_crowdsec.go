@@ -205,8 +205,37 @@ func RegisterSecurityCrowdSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterfac
 		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
 	})
 
-	// M27 Step 4 — Console enrollment (ADR-0062). Enroll-only; disenroll
-	// is managed in app.crowdsec.net (CrowdSec CLI has no disenroll verb).
+	// M27 Step 4 — Console (ADR-0062). cscli surface exposed:
+	// enroll / status / enable / disable (one option at a time).
+	// Disenroll is managed in app.crowdsec.net (no cscli verb).
+	g.GET("/console/status", agentPassthrough(cli, "security.crowdsec.console.status", nil, csCallTimeout))
+
+	g.POST("/console/options/:option/enable", func(c *gin.Context) {
+		opt := c.Param("option")
+		ctx, cancel := context.WithTimeout(c.Request.Context(), csCallTimeout)
+		defer cancel()
+		raw, err := cli.Call(ctx, "security.crowdsec.console.enable", map[string]any{"option": opt})
+		if err != nil {
+			status, ebody := translateAgentError(err)
+			c.JSON(status, ebody)
+			return
+		}
+		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
+	})
+
+	g.POST("/console/options/:option/disable", func(c *gin.Context) {
+		opt := c.Param("option")
+		ctx, cancel := context.WithTimeout(c.Request.Context(), csCallTimeout)
+		defer cancel()
+		raw, err := cli.Call(ctx, "security.crowdsec.console.disable", map[string]any{"option": opt})
+		if err != nil {
+			status, ebody := translateAgentError(err)
+			c.JSON(status, ebody)
+			return
+		}
+		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
+	})
+
 	g.POST("/console/enroll", func(c *gin.Context) {
 		var body struct {
 			Key  string `json:"key"`

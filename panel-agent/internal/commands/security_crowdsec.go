@@ -1168,6 +1168,85 @@ func csConsoleEnrollHandler(ctx context.Context, params json.RawMessage) (any, e
 	return map[string]any{"pending": true}, nil
 }
 
+// csConsoleStatusHandler wraps `cscli console status -o json`.
+// Returns a list of {name, enabled, description} option entries.
+// Valid options (v1.7.x): custom, manual, tainted, context, console_management.
+type csConsoleOption struct {
+	Name        string `json:"name"`
+	Enabled     bool   `json:"enabled"`
+	Description string `json:"description"`
+}
+
+func csConsoleStatusHandler(ctx context.Context, _ json.RawMessage) (any, error) {
+	out, err := runCscliJSON(ctx, "console", "status")
+	if err != nil {
+		return nil, csInternal("cscli console status", err)
+	}
+	// Upstream JSON is a map[string]{enabled:bool,description:string}.
+	var raw map[string]struct {
+		Enabled     *bool  `json:"enabled"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, csInternal("parse console status", err)
+	}
+	names := []string{"custom", "manual", "tainted", "context", "console_management"}
+	items := make([]csConsoleOption, 0, len(names))
+	for _, n := range names {
+		v, ok := raw[n]
+		if !ok {
+			continue
+		}
+		enabled := false
+		if v.Enabled != nil {
+			enabled = *v.Enabled
+		}
+		items = append(items, csConsoleOption{Name: n, Enabled: enabled, Description: v.Description})
+	}
+	return map[string]any{"items": items}, nil
+}
+
+var validConsoleOptions = map[string]bool{
+	"custom": true, "manual": true, "tainted": true, "context": true,
+	"console_management": true, "all": true,
+}
+
+type csConsoleOptionParams struct {
+	Option string `json:"option"`
+}
+
+func csConsoleEnableHandler(ctx context.Context, params json.RawMessage) (any, error) {
+	var p csConsoleOptionParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, csInvalidArg(fmt.Sprintf("parse params: %v", err))
+	}
+	if !validConsoleOptions[p.Option] {
+		return nil, csInvalidArg("option must be custom|manual|tainted|context|console_management|all")
+	}
+	cmd := exec.CommandContext(ctx, "cscli", "console", "enable", p.Option)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return nil, csInternal(fmt.Sprintf("cscli console enable: %s", strings.TrimSpace(string(out))), err)
+	}
+	_ = exec.CommandContext(ctx, "systemctl", "reload", "crowdsec").Run()
+	return map[string]any{"option": p.Option, "enabled": true}, nil
+}
+
+func csConsoleDisableHandler(ctx context.Context, params json.RawMessage) (any, error) {
+	var p csConsoleOptionParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, csInvalidArg(fmt.Sprintf("parse params: %v", err))
+	}
+	if !validConsoleOptions[p.Option] {
+		return nil, csInvalidArg("option must be custom|manual|tainted|context|console_management|all")
+	}
+	cmd := exec.CommandContext(ctx, "cscli", "console", "disable", p.Option)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return nil, csInternal(fmt.Sprintf("cscli console disable: %s", strings.TrimSpace(string(out))), err)
+	}
+	_ = exec.CommandContext(ctx, "systemctl", "reload", "crowdsec").Run()
+	return map[string]any{"option": p.Option, "enabled": false}, nil
+}
+
 func init() {
 	Default.Register("security.crowdsec.status", csStatusHandler)
 	Default.Register("security.crowdsec.decisions.list", csDecisionsListHandler)
@@ -1184,6 +1263,9 @@ func init() {
 	Default.Register("security.crowdsec.alerts.list", csAlertsListHandler)
 	Default.Register("security.crowdsec.alerts.inspect", csAlertsInspectHandler)
 	Default.Register("security.crowdsec.console.enroll", csConsoleEnrollHandler)
+	Default.Register("security.crowdsec.console.status", csConsoleStatusHandler)
+	Default.Register("security.crowdsec.console.enable", csConsoleEnableHandler)
+	Default.Register("security.crowdsec.console.disable", csConsoleDisableHandler)
 	Default.Register("security.crowdsec.captcha.apply", csCaptchaApplyHandler)
 	Default.Register("security.crowdsec.scenarios.list", csScenariosListHandler)
 	Default.Register("security.crowdsec.profiles.get", csProfilesGetHandler)

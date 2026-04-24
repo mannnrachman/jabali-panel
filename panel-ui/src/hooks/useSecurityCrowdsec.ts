@@ -301,6 +301,43 @@ export function useEnrollCrowdsecConsole() {
   });
 }
 
+// Console share options. cscli has status / enable / disable for
+// five preferences controlling which data gets forwarded to Console:
+// custom / manual / tainted / context / console_management.
+export type CrowdsecConsoleOption = {
+  name: string;
+  enabled: boolean;
+  description: string;
+};
+
+export function useCrowdsecConsoleStatus() {
+  return useQuery({
+    queryKey: ["security", "crowdsec", "console", "status"],
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ items: CrowdsecConsoleOption[] }>(
+        `${BASE}/console/status`,
+      );
+      return data.items ?? [];
+    },
+  });
+}
+
+export function useToggleCrowdsecConsoleOption() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { option: string; enabled: boolean }) => {
+      const verb = input.enabled ? "enable" : "disable";
+      const { data } = await apiClient.post<{ option: string; enabled: boolean }>(
+        `${BASE}/console/options/${encodeURIComponent(input.option)}/${verb}`,
+      );
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["security", "crowdsec", "console", "status"] });
+    },
+  });
+}
+
 // Captcha remediation (M27 step 5). Server-settings DB is truth for the
 // toggle + creds; agent rewrites bouncer conf on every Save. Secret is
 // write-only (never returned by GET).

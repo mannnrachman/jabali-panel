@@ -73,13 +73,30 @@ func ipUnbindHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	}
 
 	cidr := fmt.Sprintf("%s/%d", req.Address, prefix)
-	cmd := exec.CommandContext(ctx, "ip", "addr", "del", cidr, "dev", iface)
-	stderr, err := runCaptureStderr(cmd)
+	stderr, err := runCaptureStderr(exec.CommandContext(ctx, "ip", "addr", "del", cidr, "dev", iface))
 	if err != nil {
-		s := strings.ToLower(stderr)
-		if strings.Contains(s, "cannot assign requested address") ||
-			strings.Contains(s, "cannot find device") ||
-			strings.Contains(s, "no such device") {
+		if isAddressMissing(stderr) {
+			// Operator-supplied interface didn't actually hold the
+			// address — could be DB drift (address rebound manually to
+			// another NIC after panel recorded the original binding).
+			// Fall back to a snapshot lookup so unbind still converges.
+			entries, sErr := snapshotAddresses(ctx)
+			if sErr == nil {
+				for _, e := range entries {
+					if e.Address == req.Address && e.Interface != iface {
+						iface = e.Interface
+						cidr = fmt.Sprintf("%s/%d", req.Address, prefix)
+						stderr, err = runCaptureStderr(exec.CommandContext(ctx, "ip", "addr", "del", cidr, "dev", iface))
+						break
+					}
+				}
+			}
+		}
+	}
+	if err != nil {
+		if isAddressMissing(stderr) {
+			// Address genuinely absent on every interface — unbind is a
+			// no-op, which is the caller's desired end state.
 			return ipUnbindResp{Unbound: true}, nil
 		}
 		return nil, &agentwire.AgentError{
@@ -88,6 +105,19 @@ func ipUnbindHandler(ctx context.Context, params json.RawMessage) (any, error) {
 		}
 	}
 	return ipUnbindResp{Unbound: true}, nil
+}
+
+// isAddressMissing matches every stderr variant Linux/iproute2 returns
+// when the address isn't bound where we expect it. Kernel wording has
+// drifted across versions (5.10: "Cannot assign requested address";
+// 6.x + newer iproute2: "Address not found"; some IPv6 paths return
+// "No such device"). Treat all as idempotent success signals.
+func isAddressMissing(stderr string) bool {
+	s := strings.ToLower(stderr)
+	return strings.Contains(s, "cannot assign requested address") ||
+		strings.Contains(s, "address not found") ||
+		strings.Contains(s, "cannot find device") ||
+		strings.Contains(s, "no such device")
 }
 
 func init() {

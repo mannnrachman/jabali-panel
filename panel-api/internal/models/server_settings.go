@@ -60,8 +60,10 @@ type ServerSettings struct {
 	// AND the on-disk /etc/nginx/modsecurity.conf SecRuleEngine
 	// directive in one transaction. Paranoia level is the OWASP CRS
 	// 1..4 scale; admin UI clamps to that range.
-	ModSecGlobalEnabled bool  `gorm:"type:tinyint(1);not null;default:0"        json:"modsec_global_enabled"`
-	ModSecParanoiaLevel uint8 `gorm:"type:tinyint unsigned;not null;default:1"  json:"modsec_paranoia_level"`
+	// Column names pinned explicitly — GORM's default snake_case on
+	// ModSec* would emit mod_sec_* which doesn't match migration 000066.
+	ModSecGlobalEnabled bool  `gorm:"column:modsec_global_enabled;type:tinyint(1);not null;default:0"        json:"modsec_global_enabled"`
+	ModSecParanoiaLevel uint8 `gorm:"column:modsec_paranoia_level;type:tinyint unsigned;not null;default:1"  json:"modsec_paranoia_level"`
 
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }

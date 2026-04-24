@@ -230,7 +230,10 @@ type Domain struct {
 	// When true, the per-vhost nginx template emits the modsecurity
 	// include block (M26 Step 5). When false, the vhost has no modsec
 	// directives and tenant traffic is not inspected. Default 0 — opt-in.
-	ModSecEnabled bool `gorm:"type:tinyint(1);not null;default:0" json:"modsec_enabled"`
+	// Column name pinned to `modsec_enabled` (migration 000066) — GORM's
+	// default snake_case for ModSecEnabled would emit `mod_sec_enabled`
+	// which doesn't exist in the schema.
+	ModSecEnabled bool `gorm:"column:modsec_enabled;type:tinyint(1);not null;default:0" json:"modsec_enabled"`
 
 	// IsPanelPrimary marks the single domain row auto-registered for the
 	// panel hostname (ADR-0048). Delete-protected at the repo and API

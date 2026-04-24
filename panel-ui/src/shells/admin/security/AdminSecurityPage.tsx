@@ -1,9 +1,10 @@
 // AdminSecurityPage — admin-only Security tab shell (M26 Step 6).
 //
-// Three sub-tabs, URL-driven via ?tab=crowdsec|modsec|ufw. Each tab's
-// content lives in a sibling component; this file is just the
-// chrome.
-import { Tabs, Typography } from "antd";
+// Three sub-tabs, URL-driven via ?tab=crowdsec|modsec|ufw. Uses the
+// Card.tabList pattern (same as MailTabsPage / NotificationsTabsPage)
+// so the tab strip is attached to a card body rather than floating
+// above the page.
+import { Card, Typography } from "antd";
 import { useSearchParams } from "react-router";
 
 import { AdminSecurityCrowdsec } from "./AdminSecurityCrowdsec";
@@ -12,6 +13,12 @@ import { AdminSecurityUfw } from "./AdminSecurityUfw";
 
 const TAB_KEYS = ["crowdsec", "modsec", "ufw"] as const;
 type TabKey = (typeof TAB_KEYS)[number];
+
+const TAB_LABELS: Record<TabKey, string> = {
+  crowdsec: "CrowdSec",
+  modsec: "ModSecurity",
+  ufw: "Firewall (UFW)",
+};
 
 const isTabKey = (s: string | null): s is TabKey =>
   s !== null && (TAB_KEYS as readonly string[]).includes(s);
@@ -30,20 +37,29 @@ export const AdminSecurityPage = () => {
     }
   };
 
+  const renderTab = () => {
+    switch (activeTab) {
+      case "crowdsec":
+        return <AdminSecurityCrowdsec />;
+      case "modsec":
+        return <AdminSecurityModsec />;
+      case "ufw":
+        return <AdminSecurityUfw />;
+    }
+  };
+
   return (
     <div>
       <Typography.Title level={3} style={{ marginTop: 0 }}>
         Security
       </Typography.Title>
-      <Tabs
-        activeKey={activeTab}
-        onChange={onChange}
-        items={[
-          { key: "crowdsec", label: "CrowdSec", children: <AdminSecurityCrowdsec /> },
-          { key: "modsec", label: "ModSecurity", children: <AdminSecurityModsec /> },
-          { key: "ufw", label: "Firewall (UFW)", children: <AdminSecurityUfw /> },
-        ]}
-      />
+      <Card
+        tabList={TAB_KEYS.map((k) => ({ key: k, tab: TAB_LABELS[k] }))}
+        activeTabKey={activeTab}
+        onTabChange={onChange}
+      >
+        {renderTab()}
+      </Card>
     </div>
   );
 };

@@ -28,6 +28,11 @@ type Config struct {
 	MaxRetries          int           // History rows past this go to DLQ. Default 5.
 	CircuitBreakerLimit int           // Consecutive failures before auto-disable. Default 3.
 	ShutdownGrace       time.Duration // Max wait for in-flight entry on stop. Default 10s.
+	// MaxConcurrentSenders bounds parallel outbound HTTP calls per
+	// envelope (Step 8). Caps the fanout so a broadcast to 10 channels
+	// doesn't burst 10 goroutines against 10 third parties at once.
+	// Default 4.
+	MaxConcurrentSenders int
 }
 
 func (c Config) withDefaults() Config {
@@ -51,6 +56,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.ShutdownGrace <= 0 {
 		c.ShutdownGrace = 10 * time.Second
+	}
+	if c.MaxConcurrentSenders <= 0 {
+		c.MaxConcurrentSenders = 4
 	}
 	return c
 }
@@ -246,13 +254,30 @@ func (d *Dispatcher) process(ctx context.Context, msg redis.XMessage) {
 		return
 	}
 
+	// Bounded-parallel fanout (Step 8). Cap at cfg.MaxConcurrentSenders
+	// so a broadcast to 10 channels doesn't open 10 simultaneous
+	// outbound TLS handshakes. Semaphore = buffered channel; each
+	// goroutine claims a slot before calling sendOne.
+	sem := make(chan struct{}, d.cfg.MaxConcurrentSenders)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
 	anyFailed := false
 	for _, ch := range targets {
-		if err := d.sendOne(ctx, ch, env); err != nil {
-			anyFailed = true
-			d.log.Warn("send failed", "channel_id", ch.ID, "kind", ch.Kind, "err", err)
-		}
+		ch := ch
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := d.sendOne(ctx, ch, env); err != nil {
+				mu.Lock()
+				anyFailed = true
+				mu.Unlock()
+				d.log.Warn("send failed", "channel_id", ch.ID, "kind", ch.Kind, "err", err)
+			}
+		}()
 	}
+	wg.Wait()
 	// All-succeed → ACK. Any-fail: leave in PEL for reclaim. Permanent
 	// failures already marked via history row; the reclaim path will
 	// eventually push them to DLQ if they stay stuck.

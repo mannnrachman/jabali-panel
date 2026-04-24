@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -56,7 +57,11 @@ func RegisterNotificationsChannelsRoutes(g *gin.RouterGroup, cfg NotificationsCh
 	admin.PATCH("/channels/:id", h.update)
 	admin.DELETE("/channels/:id", h.delete)
 
-	burst := []gin.HandlerFunc{}
+	// Per-admin token bucket — 5/min matches the plan. Shared across
+	// /test + /broadcast because both paths publish to the same Redis
+	// stream; a noisy admin spamming test-send is still abusive.
+	perAdmin := newBroadcastLimit(time.Minute, 5).middleware()
+	burst := []gin.HandlerFunc{perAdmin}
 	if cfg.StrictRateLimit != nil {
 		burst = append(burst, cfg.StrictRateLimit)
 	}

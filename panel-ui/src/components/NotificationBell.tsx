@@ -159,10 +159,15 @@ export function NotificationBell() {
 
   const content = (
     <Card
-      size="small"
-      title="Notifications"
+      title={
+        <Space size={6}>
+          <BellOutlined />
+          <Typography.Text strong>Notifications</Typography.Text>
+          {unread > 0 && <Badge count={unread} size="small" />}
+        </Space>
+      }
       extra={
-        <Space size={0}>
+        <Space size={4}>
           <Button type="link" size="small" onClick={markAllRead} disabled={unread === 0}>
             Mark all read
           </Button>
@@ -174,46 +179,47 @@ export function NotificationBell() {
             okButtonProps={{ danger: true }}
           >
             <Button type="link" size="small" danger disabled={rows.length === 0}>
-              Clear all
+              Clear
             </Button>
           </Popconfirm>
         </Space>
       }
       actions={[pushToggle]}
-      styles={{ body: { padding: 0, maxHeight: 400, overflowY: "auto" } }}
-      style={{ width: 360, maxWidth: "100vw" }}
+      styles={{ body: { padding: 0, maxHeight: 420, overflowY: "auto" } }}
+      style={{ width: 380, maxWidth: "100vw" }}
     >
       {rows.length === 0 ? (
         <Empty
           description={inbox.isLoading ? "Loading…" : "No notifications"}
           image={Empty.PRESENTED_IMAGE_SIMPLE}
+          style={{ padding: 24 }}
         />
       ) : (
         <List<NotificationRow>
           itemLayout="horizontal"
           dataSource={rows}
           renderItem={(row) => (
-            <List.Item onClick={() => handleItemClick(row)}>
+            <List.Item
+              onClick={() => handleItemClick(row)}
+              style={{
+                padding: "12px 16px",
+                cursor: row.deeplink ? "pointer" : "default",
+                background: row.read_at ? undefined : "var(--ant-color-primary-bg, rgba(22,119,255,0.06))",
+              }}
+            >
               <List.Item.Meta
-                style={{ padding: "0 16px" }}
-                title={
-                  <Space style={{ width: "100%", justifyContent: "space-between" }}>
-                    <Typography.Text>{row.title}</Typography.Text>
-                    <Tag color={severityColor[row.severity] ?? "default"}>
-                      {row.severity}
-                    </Tag>
-                  </Space>
-                }
+                avatar={<Tag color={severityColor[row.severity] ?? "default"} style={{ marginInlineEnd: 0 }}>{row.severity}</Tag>}
+                title={<Typography.Text strong>{row.title}</Typography.Text>}
                 description={
-                  <Space direction="vertical" size={0} style={{ width: "100%" }}>
+                  <Space direction="vertical" size={2} style={{ width: "100%" }}>
                     <Typography.Paragraph
                       type="secondary"
-                      style={{ margin: 0, whiteSpace: "pre-wrap" }}
+                      style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 12 }}
                       ellipsis={{ rows: 2 }}
                     >
                       {row.body}
                     </Typography.Paragraph>
-                    <Typography.Text type="secondary">
+                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
                       {relativeTime(row.created_at)}
                     </Typography.Text>
                   </Space>

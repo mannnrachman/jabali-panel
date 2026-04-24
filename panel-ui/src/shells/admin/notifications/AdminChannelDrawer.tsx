@@ -4,6 +4,7 @@
 import { useEffect, useMemo } from "react";
 import {
   Alert,
+  Button,
   Drawer,
   Form,
   Grid,
@@ -193,16 +194,14 @@ export function AdminChannelDrawer({ open, onClose, existing }: AdminChannelDraw
 
         <Form.Item>
           <Space>
-            <button
-              type="submit"
-              className="ant-btn ant-btn-primary"
-              disabled={create.isPending || update.isPending}
+            <Button
+              type="primary"
+              htmlType="submit"
+              loading={create.isPending || update.isPending}
             >
               {isEdit ? "Save" : "Create"}
-            </button>
-            <button type="button" className="ant-btn" onClick={onClose}>
-              Cancel
-            </button>
+            </Button>
+            <Button onClick={onClose}>Cancel</Button>
           </Space>
         </Form.Item>
       </Form>

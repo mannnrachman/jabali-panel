@@ -204,7 +204,7 @@ func newAppGetCmd() *cobra.Command {
 
 // newAppInstallCmd posts an install through the shared
 // api.InstallApplication service (same code path as the HTTP handler).
-// Owner is auto-resolved from the domain; --user-id is exposed for
+// Owner is auto-resolved from the domain; --user is exposed for
 // admin overrides only.
 //
 // --param k=v repeats; values are JSON-decoded so booleans/numbers/
@@ -250,7 +250,7 @@ func newAppInstallCmd() *cobra.Command {
 				return err
 			}
 
-			// Accept email / username / ULID for --user-id. Empty stays
+			// Accept email / username / ULID for --user. Empty stays
 			// empty — the handler then defaults to the domain owner.
 			resolvedUserID := ""
 			if userID != "" {
@@ -308,7 +308,7 @@ func newAppInstallCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&appType, "app-type", "", "App descriptor name (see `jabali app registry`)")
 	cmd.Flags().StringVar(&domainSpec, "domain", "", "Target domain name or ULID (e.g. example.com or 01KPR…)")
-	cmd.Flags().StringVar(&userID, "user-id", "", "Owner user (email, username, or ULID; default: domain owner)")
+	cmd.Flags().StringVar(&userID, "user", "", "Owner user (email, username, or ULID; default: domain owner)")
 	cmd.Flags().StringVar(&subdir, "subdir", "", "Subdirectory under docroot (empty = site root)")
 	cmd.Flags().BoolVar(&useWWW, "use-www", false, "Reachable at www.<domain> too")
 	cmd.Flags().StringArrayVar(&params, "param", nil, "Per-app param: --param key=value (value is JSON; repeat for multiple)")

@@ -169,7 +169,7 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 	}
 
 	if in.Name == "" || in.UserID == "" {
-		return nil, nil, fmt.Errorf("--name and --user-id are required")
+		return nil, nil, fmt.Errorf("--name and --user are required")
 	}
 
 	domains := domainRepoFromDB()

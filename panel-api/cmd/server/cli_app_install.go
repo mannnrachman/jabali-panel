@@ -39,7 +39,7 @@ func buildAppDeps() (api.ApplicationHandlerConfig, error) {
 }
 
 // installAppDirect resolves the domain owner so the operator never
-// has to pass --user-id, then calls the shared service. The CLI is
+// has to pass --user, then calls the shared service. The CLI is
 // always operator-as-root so IsAdminCall is true (matches the HTTP
 // handler's admin path: ownership mismatch returns "forbidden" not
 // "domain_not_found").
@@ -59,7 +59,7 @@ func installAppDirect(ctx context.Context, p api.InstallParams) (*api.InstallRes
 		return nil, err
 	}
 
-	// Operator didn't provide --user-id: fill from domain owner so the
+	// Operator didn't provide --user: fill from domain owner so the
 	// install is associated with the right tenant.
 	if p.UserID == "" {
 		domain, dErr := repository.NewDomainRepository(sharedDB).FindByID(ctx, p.DomainID)

@@ -55,7 +55,15 @@ type ServerSettings struct {
 	VAPIDPrivateKey *string `gorm:"type:varchar(64);column:vapid_private_key"  json:"-"`
 	VAPIDSubject    *string `gorm:"type:varchar(320);column:vapid_subject"     json:"-"`
 
-	UpdatedAt          time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
+	// M26 ModSecurity globals (migration 000066, ADR-0055). The agent
+	// command security.modsec.global.set rewrites both these columns
+	// AND the on-disk /etc/nginx/modsecurity.conf SecRuleEngine
+	// directive in one transaction. Paranoia level is the OWASP CRS
+	// 1..4 scale; admin UI clamps to that range.
+	ModSecGlobalEnabled bool  `gorm:"type:tinyint(1);not null;default:0"        json:"modsec_global_enabled"`
+	ModSecParanoiaLevel uint8 `gorm:"type:tinyint unsigned;not null;default:1"  json:"modsec_paranoia_level"`
+
+	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 
 func (ServerSettings) TableName() string { return "server_settings" }

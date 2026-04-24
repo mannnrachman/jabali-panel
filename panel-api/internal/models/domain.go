@@ -226,6 +226,12 @@ type Domain struct {
 	DkimPublicKey   *string    `gorm:"type:text" json:"dkim_public_key,omitempty"`
 	EmailEnabledAt  *time.Time `gorm:"type:datetime(6)" json:"email_enabled_at,omitempty"`
 
+	// M26 ModSecurity per-domain toggle (migration 000064, ADR-0055).
+	// When true, the per-vhost nginx template emits the modsecurity
+	// include block (M26 Step 5). When false, the vhost has no modsec
+	// directives and tenant traffic is not inspected. Default 0 — opt-in.
+	ModSecEnabled bool `gorm:"type:tinyint(1);not null;default:0" json:"modsec_enabled"`
+
 	// IsPanelPrimary marks the single domain row auto-registered for the
 	// panel hostname (ADR-0048). Delete-protected at the repo and API
 	// layer; surfaced in Settings → Email. At-most-one is enforced in

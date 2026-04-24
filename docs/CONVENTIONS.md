@@ -190,7 +190,7 @@ func init() {
 ### Framework stack (ADR-0037)
 
 - **React 18** + **Vite 6** + **TypeScript strict**
-- **AntD 5** for every primitive — never hand-roll a button/modal
+- **AntD 5** for every primitive — never hand-roll a button/modal. For authoritative component API + live demos use the `antd` skill or `mcp__antd__*` tools (`antd_doc`, `antd_demo`, `antd_list`, `antd_token`, `antd_semantic`, `antd_changelog`). Don't guess prop shapes from memory — AntD 5.x changes fast.
 - **TanStack Query v5** for server state (no Redux, no Zustand)
 - **react-router v6** — route tree in `App.tsx`
 - **lucide-react** icons via the `@icons` shim — **never import from `@ant-design/icons`**

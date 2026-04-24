@@ -745,8 +745,12 @@ POLICYEOF
       if command -v resolvectl >/dev/null 2>&1; then
         # resolvectl status exit is 0 even when no upstream exists; look
         # for 'DNS Servers:' lines with at least one non-empty entry.
-        link_has_dns="$(resolvectl status 2>/dev/null \
-          | awk '/^[[:space:]]*DNS Servers:/{sub(/^[[:space:]]*DNS Servers:[[:space:]]*/,""); if ($0 != "") print}')"
+        # `|| true` at the end: resolvectl/awk can exit non-zero under
+        # `set -euo pipefail` (resolvectl returns non-zero when no link
+        # has any DNS config, which is the case we're trying to detect).
+        # We only care about the captured string, not the pipe's exit.
+        link_has_dns="$( { resolvectl status 2>/dev/null \
+          | awk '/^[[:space:]]*DNS Servers:/{sub(/^[[:space:]]*DNS Servers:[[:space:]]*/,""); if ($0 != "") print}'; } || true)"
       fi
       if [[ -z "$link_has_dns" ]]; then
         _warn "no upstream DNS on any link — seeding ${panel_dropin_early} with Cloudflare + Quad9 (override via Admin → DNS)"

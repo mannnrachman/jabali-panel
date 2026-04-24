@@ -4279,6 +4279,97 @@ install_ufw() {
   _ok "UFW active; default-deny incoming with allow-list (22, 80, 443, 8443, 25, 465, 587, 993, 995, 4190)"
 }
 
+# ---------- step 8a.1: auto-restart drop-ins for critical services ----------
+#
+# Third-party packages ship with inconsistent Restart= defaults — some have
+# `Restart=on-failure`, some `on-abnormal` (mariadb: restarts only on crash
+# signals, NOT on non-zero exit), some omit it entirely. A stock Debian 13
+# install can leave nginx, pdns, pdns-recursor, redis-server, crowdsec, and
+# the crowdsec-firewall-bouncer with NO auto-restart at all, so a transient
+# crash (OOM, disk spike, config reload race) bricks the service until the
+# operator notices.
+#
+# Write a uniform drop-in that:
+#   - Restart=on-failure   → restart on non-zero exit, NOT on manual stop
+#   - RestartSec=5s        → short backoff, same as our jabali-* units
+#   - StartLimitBurst=10   → tolerate 10 failures in the burst window
+#                             (default 5 gave up too fast during a flap)
+#   - StartLimitIntervalSec=60s → reset counter after 60s of stability
+#
+# Drop-in only — does NOT overwrite the package unit, so apt upgrades keep
+# working. Idempotent: only daemon-reloads if the file content changed.
+#
+# sshd intentionally excluded — a bad sshd config shouldn't auto-retry
+# forever and trap the operator (who may have just pushed a broken
+# sshd_config.d drop-in). Manual restart is the correct failure mode there.
+install_restart_drop_ins() {
+  _log "installing Restart=on-failure drop-ins for critical services"
+
+  local units=(
+    nginx.service
+    mariadb.service
+    pdns.service
+    pdns-recursor.service
+    redis-server.service
+    crowdsec.service
+    systemd-resolved.service
+  )
+
+  # crowdsec-firewall-bouncer is package-variant-named. Pick whichever
+  # exists (iptables/nftables/pf variants ship as different unit names).
+  local cs_bouncer
+  for cs_bouncer in crowdsec-firewall-bouncer-iptables.service \
+                    crowdsec-firewall-bouncer-nftables.service \
+                    crowdsec-firewall-bouncer.service; do
+    if systemctl cat "$cs_bouncer" >/dev/null 2>&1; then
+      units+=("$cs_bouncer")
+      break
+    fi
+  done
+
+  local changed=0 unit dropin_dir dropin dropin_new
+  for unit in "${units[@]}"; do
+    # Skip units the host doesn't have (e.g. a fresh box where one of
+    # these wasn't installed for some reason — don't fail the install
+    # over an optional dependency).
+    if ! systemctl cat "$unit" >/dev/null 2>&1; then
+      _warn "unit $unit not present on host; skipping auto-restart drop-in"
+      continue
+    fi
+    dropin_dir="/etc/systemd/system/${unit}.d"
+    dropin="${dropin_dir}/10-jabali-restart.conf"
+    dropin_new="${dropin}.new"
+    install -d -m 0755 "$dropin_dir"
+    cat > "$dropin_new" <<'RESTARTCONF'
+# Managed by jabali-panel install.sh. Uniform auto-restart policy for
+# critical third-party services so a transient crash self-heals instead
+# of waiting for the operator to notice. See install_restart_drop_ins()
+# in install.sh for rationale. Hand edits will be overwritten on the
+# next install.sh / `jabali update` run.
+[Unit]
+StartLimitBurst=10
+StartLimitIntervalSec=60s
+
+[Service]
+Restart=on-failure
+RestartSec=5s
+RESTARTCONF
+    if [[ -f "$dropin" ]] && cmp -s "$dropin" "$dropin_new"; then
+      rm -f "$dropin_new"
+    else
+      mv "$dropin_new" "$dropin"
+      chmod 0644 "$dropin"
+      changed=1
+      _log "wrote ${dropin}"
+    fi
+  done
+
+  if [[ "$changed" == "1" ]]; then
+    systemctl daemon-reload
+  fi
+  _ok "auto-restart drop-ins installed for ${#units[@]} critical services"
+}
+
 # ---------- step 8b: Stalwart Mail Server + Bulwark webmail (M6) -------------
 #
 # Two functions, one tool each. Both are disabled-by-default — systemd units
@@ -5417,6 +5508,7 @@ main() {
   install_crowdsec_profiles
   install_modsecurity
   install_ufw
+  install_restart_drop_ins
   clone_or_update_repo
   # M25: source the socket-helper definitions now that the repo's install/
   # tree is on disk. Steps 2–5 will call verify_socket_perms /

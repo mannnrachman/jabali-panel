@@ -92,6 +92,7 @@ func Start(ctx context.Context, d Deps) {
 	go runLoadHigh(ctx, d)
 	go runSystemUpdate(ctx, d)
 	go runDiskQuota(ctx, d)
+	go runSSHLogin(ctx, d)
 	// domain_expiry + backup_fail are stubs — see the stub files in
 	// this package.
 }

@@ -18,12 +18,15 @@ const (
 	certRenewCoolOff = 24 * time.Hour
 )
 
-// runCertRenew fires two event families:
+// runCertRenew fires three event families:
 //
 //   - domain.expiry.7d / domain.expiry.1d — cert crosses into the
 //     pre-expiry window without a successful renewal bumping ExpiresAt
 //     outward.
 //   - cert.renew.fail — cert's Status is "failed" with a LastError.
+//   - cert.renew.ok — cert's LastRenewedAt landed within the last
+//     tick window and Status flipped to "active". Informational
+//     confirmation; off by default.
 //
 // Doesn't drive renewals itself — the SSL reconciler owns that. This
 // source only watches and reports.
@@ -32,6 +35,10 @@ func runCertRenew(ctx context.Context, d Deps) {
 		d.Log.Debug("eventsources: cert_renew disabled (no SSLCerts repo)")
 		return
 	}
+	// Fire a pass immediately so a freshly-restarted panel-api doesn't
+	// stay blind for an hour after a renewal that completed during the
+	// downtime.
+	certRenewPass(ctx, d)
 	tick := time.NewTicker(certRenewTick)
 	defer tick.Stop()
 	for {
@@ -63,6 +70,15 @@ func certRenewPass(ctx context.Context, d Deps) {
 		}
 		if r.Status == "failed" && r.LastError != nil && *r.LastError != "" {
 			fireRenewFail(ctx, d, r)
+		}
+		if r.Status == "active" && r.LastRenewedAt != nil {
+			// Window of one tick + a touch of slack covers the case where
+			// the renewer finished just before this pass. The dedupe tag
+			// embeds the timestamp so consecutive passes don't republish.
+			age := now.Sub(*r.LastRenewedAt)
+			if age >= 0 && age <= certRenewTick+5*time.Minute {
+				fireRenewOK(ctx, d, r)
+			}
 		}
 	}
 }
@@ -103,6 +119,30 @@ func fireRenewFail(ctx context.Context, d Deps, cert repository.SSLCertificateWi
 	})
 	if err != nil {
 		d.Log.Warn("eventsources: publish renew-fail failed", "err", err)
+	}
+}
+
+func fireRenewOK(ctx context.Context, d Deps, cert repository.SSLCertificateWithDomain) {
+	// Tag includes the renewal timestamp so each unique renewal fires
+	// at most once across passes — replays of an "active" row with the
+	// same LastRenewedAt are deduped.
+	tag := fmt.Sprintf("cert:%s:renewed_at:%s", cert.ID, cert.LastRenewedAt.UTC().Format(time.RFC3339))
+	if !shouldFire(ctx, d, "cert.renew.ok", tag, certRenewCoolOff) {
+		return
+	}
+	expiresStr := ""
+	if cert.ExpiresAt != nil {
+		expiresStr = cert.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	_, err := d.Queue.Publish(ctx, notifications.Envelope{
+		EventKind: "cert.renew.ok",
+		Severity:  models.NotificationSeverityInfo,
+		Title:     fmt.Sprintf("SSL cert renewed for %s", cert.DomainName),
+		Body:      fmt.Sprintf("Renewed at %s. New expiry %s. (%s)", cert.LastRenewedAt.UTC().Format(time.RFC3339), expiresStr, tag),
+		Deeplink:  "/admin/ssl",
+	})
+	if err != nil {
+		d.Log.Warn("eventsources: publish renew-ok failed", "err", err)
 	}
 }
 

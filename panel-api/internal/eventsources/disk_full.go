@@ -13,7 +13,10 @@ import (
 const (
 	diskFullTick     = 10 * time.Minute
 	diskFullCoolOff  = 30 * time.Minute
-	diskWarnPercent  = 85.0
+	// 80% / 95% match the seed metadata users see in the admin Events
+	// tab; an earlier pass had 85% here which surfaced as silent drift
+	// when the toggle copy promised 80%.
+	diskWarnPercent  = 80.0
 	diskCritPercent  = 95.0
 )
 
@@ -58,7 +61,10 @@ func diskFullPass(ctx context.Context, d Deps) {
 		pct := float64(used) / float64(total) * 100.0
 		switch {
 		case pct >= diskCritPercent:
-			fireDiskEvent(ctx, d, mount, pct, "disk.full.crit", models.NotificationSeverityError)
+			// Critical matches the seed kind metadata; "error" was a
+			// pre-Step-4 carryover that broke the severity colour in
+			// the admin UI.
+			fireDiskEvent(ctx, d, mount, pct, "disk.full.crit", models.NotificationSeverityCritical)
 		case pct >= diskWarnPercent:
 			fireDiskEvent(ctx, d, mount, pct, "disk.full.warn", models.NotificationSeverityWarning)
 		}

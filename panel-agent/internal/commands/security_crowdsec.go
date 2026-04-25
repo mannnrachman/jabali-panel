@@ -459,8 +459,13 @@ func csHubListHandler(ctx context.Context, params json.RawMessage) (any, error) 
 // appsecRulePath is where our single server-wide geoblock rule lives.
 // Written by appsecGeoblockSetHandler, read by appsecGeoblockGetHandler.
 // install.sh `install_crowdsec_appsec` seeds the file at mode=off so
-// crowdsec can parse the collection on first boot.
-const appsecRulePath = "/etc/crowdsec/appsec-rules/jabali-geoblock.yaml"
+// crowdsec can parse the appsec-config on first boot.
+//
+// M27 fix: pre_eval hooks live in appsec-CONFIG, not appsec-rules.
+// Earlier path /etc/crowdsec/appsec-rules/jabali-geoblock.yaml was
+// loaded as a rule but the pre_eval hook never fired (rules use a
+// different schema with `rules:` block, not `pre_eval:`).
+const appsecRulePath = "/etc/crowdsec/appsec-configs/jabali-appsec.yaml"
 
 type csAppSecGeoblockGetResponse struct {
 	Mode      string   `json:"mode"`
@@ -547,9 +552,11 @@ func csAppSecGeoblockSetHandler(ctx context.Context, params json.RawMessage) (an
 		return nil, csInvalidArg("mode " + p.Mode + " requires at least one country")
 	}
 	body := renderAppSecGeoblockRule(p.Mode, cleaned)
-	if err := os.MkdirAll("/etc/crowdsec/appsec-rules", 0o755); err != nil {
-		return nil, csInternal("mkdir appsec-rules", err)
+	if err := os.MkdirAll("/etc/crowdsec/appsec-configs", 0o755); err != nil {
+		return nil, csInternal("mkdir appsec-configs", err)
 	}
+	// Best-effort cleanup of pre-M27-fix path. Safe to leave if absent.
+	_ = os.Remove("/etc/crowdsec/appsec-rules/jabali-geoblock.yaml")
 	tmp := appsecRulePath + ".tmp"
 	if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil {
 		return nil, csInternal("write appsec rule tmp", err)
@@ -581,46 +588,50 @@ func renderAppSecGeoblockRule(mode string, countries []string) string {
 	// the list, operators who turn on "allow [FR]" would immediately
 	// lock out their own health checks from localhost.
 	csv := strings.Join(countries, ",")
-	// Build the expr list — quote each code; always append "".
-	exprList := `""`
+	// Build expr list per mode. Allow-mode appends "" so private IPs
+	// (RFC 1918, loopback — GeoIPEnrich returns "") still pass.
+	// Deny-mode does NOT append "" — we never want to deny unresolvable.
+	allowExpr := `""`
+	denyExpr := ""
 	if len(countries) > 0 {
 		quoted := make([]string, len(countries))
 		for i, c := range countries {
 			quoted[i] = `"` + c + `"`
 		}
-		exprList = strings.Join(quoted, ", ") + `, ""`
+		allowExpr = strings.Join(quoted, ", ") + `, ""`
+		denyExpr = strings.Join(quoted, ", ")
 	}
 
-	header := `# Managed by jabali — M26 AppSec geoblock rule.
+	// Common header + base appsec-config skeleton. inband_rules block
+	// loads the upstream vpatch-* CVE rules + base-config. pre_eval is
+	// appended below per-mode (off = no pre_eval).
+	header := `# Managed by jabali — M27 AppSec config.
 # DO NOT hand-edit. Set via the admin Security → CrowdSec tab OR
 # POST /api/v1/admin/security/crowdsec/appsec/geoblock.
 # jabali-mode: ` + mode + `
 # jabali-countries: ` + csv + `
+name: crowdsecurity/jabali-appsec
+default_remediation: ban
+inband_rules:
+ - crowdsecurity/base-config
+ - crowdsecurity/vpatch-*
 `
 
 	switch mode {
 	case "off":
-		// A valid rule file with no filter hooks — crowdsec parses
-		// it clean and does nothing. Keeps the file present (and
-		// parseable) so the get handler can still read the markers.
-		return header + `name: jabali/appsec-geoblock
-description: Server-wide AppSec geoblock (currently OFF).
-`
+		// No pre_eval block — vpatch rules still evaluate, geoblock inert.
+		return header
 	case "allow":
-		return header + `name: jabali/appsec-geoblock
-description: Server-wide AppSec geoblock — allow-list mode.
-pre_eval:
-  - filter: IsInBand == true && GeoIPEnrich(req.RemoteAddr)?.Country.IsoCode not in [` + exprList + `]
-    apply:
-      - DropRequest("Forbidden Country (jabali allow-list)")
+		return header + `pre_eval:
+ - filter: IsInBand == true && GeoIPEnrich(req.RemoteAddr)?.Country.IsoCode not in [` + allowExpr + `]
+   apply:
+    - DropRequest("Forbidden Country (jabali allow-list)")
 `
 	case "deny":
-		return header + `name: jabali/appsec-geoblock
-description: Server-wide AppSec geoblock — deny-list mode.
-pre_eval:
-  - filter: IsInBand == true && GeoIPEnrich(req.RemoteAddr)?.Country.IsoCode in [` + exprList + `]
-    apply:
-      - DropRequest("Forbidden Country (jabali deny-list)")
+		return header + `pre_eval:
+ - filter: IsInBand == true && GeoIPEnrich(req.RemoteAddr)?.Country.IsoCode in [` + denyExpr + `]
+   apply:
+    - DropRequest("Forbidden Country (jabali deny-list)")
 `
 	}
 	return header

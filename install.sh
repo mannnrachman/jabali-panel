@@ -3871,29 +3871,40 @@ install_crowdsec() {
     _die "crowdsec base package did not write $cs_cfg — abort before patching"
   fi
   local socket_path="/run/crowdsec/api.sock"
-  local current_socket
+  # M27 fix — LAPI must ALSO listen on TCP loopback. The AppSec engine
+  # authenticates incoming bouncer keys by calling LAPI itself via the
+  # client URL in local_api_credentials.yaml. CrowdSec's HTTP client
+  # doesn't parse a raw socket path as a URL — it concatenates as
+  # `<socket>v1/decisions/stream` and bombs out with "unsupported
+  # protocol scheme \"\"". Result: every nginx-bouncer → AppSec call
+  # 401's silently. Adding a TCP listener + pointing the client URL
+  # there fixes auth without removing the socket (cscli still works
+  # over TCP, panel-agent still uses cscli unchanged).
+  local lapi_tcp="127.0.0.1:8081"
+  local current_socket current_uri
   current_socket="$(yq -r '.api.server.listen_socket // ""' "$cs_cfg" 2>/dev/null || echo "")"
-  if [[ "$current_socket" != "$socket_path" ]]; then
-    _log "patching $cs_cfg: api.server.listen_socket = $socket_path"
-    yq -y -i ".api.server.listen_socket = \"$socket_path\" | .api.server.listen_uri = \"\"" "$cs_cfg"
+  current_uri="$(yq -r '.api.server.listen_uri // ""' "$cs_cfg" 2>/dev/null || echo "")"
+  if [[ "$current_socket" != "$socket_path" || "$current_uri" != "$lapi_tcp" ]]; then
+    _log "patching $cs_cfg: listen_socket=$socket_path + listen_uri=$lapi_tcp"
+    yq -y -i ".api.server.listen_socket = \"$socket_path\" | .api.server.listen_uri = \"$lapi_tcp\"" "$cs_cfg"
   else
-    _log "$cs_cfg already pinned to socket $socket_path"
+    _log "$cs_cfg already pinned to socket $socket_path + tcp $lapi_tcp"
   fi
 
   # cscli + the in-process watcher both read
   # /etc/crowdsec/local_api_credentials.yaml for the LAPI endpoint. The
-  # base package writes `url: http://127.0.0.1:8080`. Must be patched
-  # to the socket path BEFORE the systemd restart — otherwise the
-  # crowdsec agent (which dials its own LAPI on startup) tries TCP
-  # 127.0.0.1:8080 (Stalwart's port), gets connection-refused, and
-  # exits FATAL before the LAPI server even binds the socket.
+  # base package writes `url: http://127.0.0.1:8080` (Stalwart's port —
+  # would crash the agent). M27 fix: point at the TCP loopback above so
+  # the AppSec engine can parse it as a real URL. cscli works fine over
+  # TCP loopback (verified on VM 192.168.100.150).
   local creds="/etc/crowdsec/local_api_credentials.yaml"
+  local lapi_url="http://${lapi_tcp}/"
   if [[ -f "$creds" ]]; then
     local current_url
     current_url="$(yq -r '.url // ""' "$creds" 2>/dev/null || echo "")"
-    if [[ "$current_url" != "$socket_path" ]]; then
-      _log "patching $creds: url = $socket_path"
-      yq -y -i ".url = \"$socket_path\"" "$creds"
+    if [[ "$current_url" != "$lapi_url" ]]; then
+      _log "patching $creds: url = $lapi_url"
+      yq -y -i ".url = \"$lapi_url\"" "$creds"
     fi
   fi
 
@@ -3945,15 +3956,19 @@ install_crowdsec_appsec() {
   # https://doc.crowdsec.net/docs/next/appsec/rules_examples/#5-geoblocking.
   # Install side:
   #   1. geoip-enrich parser so the runtime has Country.IsoCode
-  #   2. appsec-virtual-patching collection (AppSec engine base rules)
-  #   3. /etc/crowdsec/acquis.d/jabali-appsec.yaml — AppSec HTTP
-  #      listener on 127.0.0.1:7422 (TCP loopback, same posture as
-  #      Stalwart admin-http 127.0.0.1:8080). Unix socket would be
-  #      stricter but the upstream crowdsec-nginx-bouncer's Lua HTTP
-  #      client (lua-resty-http request_uri) doesn't speak unix.
-  #      Loopback-only = not internet-reachable, acceptable per ADR-0050.
-  #   4. /etc/crowdsec/appsec-rules/jabali-geoblock.yaml — initial
-  #      mode=off (agent rewrites on every admin Apply)
+  #   2. appsec-virtual-patching collection (vpatch-* CVE rules + base-config)
+  #   3. /etc/crowdsec/appsec-configs/jabali-appsec.yaml — our own
+  #      appsec-CONFIG that loads vpatch-* AND carries the geoblock
+  #      pre_eval hook. M27 fix: pre_eval lives in appsec-CONFIG (not
+  #      appsec-rules) per upstream docs:
+  #      https://doc.crowdsec.net/docs/next/appsec/rules_examples/
+  #      Earlier shipped a /etc/crowdsec/appsec-rules/jabali-geoblock.yaml
+  #      with pre_eval — it loaded as a rule but the hook never fired
+  #      because rules use a different schema.
+  #   4. /etc/crowdsec/acquis.d/jabali-appsec.yaml — AppSec listener on
+  #      127.0.0.1:7422 (TCP loopback, same posture as Stalwart admin-http
+  #      127.0.0.1:8080). Unix socket would be stricter but the upstream
+  #      crowdsec-nginx-bouncer's Lua HTTP client doesn't speak unix.
   # Nginx enforcement ships via install_crowdsec_nginx_bouncer below
   # (the upstream crowdsec-nginx-bouncer package). Every vhost gets
   # AppSec evaluation automatically — no per-vhost snippet required.
@@ -3972,18 +3987,40 @@ install_crowdsec_appsec() {
       cscli collections install crowdsecurity/appsec-virtual-patching
   fi
 
-  # 3. AppSec acquisition — listener on 127.0.0.1:7422 (the CrowdSec
-  #    convention; bouncer talks to it over loopback).
-  #    Use crowdsecurity/virtual-patching config — it references only
-  #    vpatch-* rules that ship with the appsec-virtual-patching
-  #    collection. The fuller crowdsecurity/appsec-default config
-  #    references experimental-* outofband rules that aren't bundled
-  #    on fresh hosts, which makes crowdsec refuse to start citing
-  #    "no appsec-rules found for pattern crowdsecurity/experimental-*".
+  # 3. Jabali AppSec config — our own appsec-CONFIG file. Loads
+  #    base-config + vpatch-* plus carries the geoblock pre_eval hook.
+  #    The agent rewrites this file on every admin Apply (see
+  #    panel-agent's csAppSecGeoblockSetHandler). Shipped initial state
+  #    has NO pre_eval block (mode=off).
+  local configs_dir="/etc/crowdsec/appsec-configs"
+  install -d -m 0755 "$configs_dir"
+  local config_file="$configs_dir/jabali-appsec.yaml"
+  if [[ ! -f "$config_file" ]]; then
+    local desired_config=$'# Managed by jabali — M27 AppSec config.\n# DO NOT hand-edit. Set via the admin Security \xe2\x86\x92 CrowdSec tab OR\n# POST /api/v1/admin/security/crowdsec/appsec/geoblock.\n# jabali-mode: off\n# jabali-countries:\nname: crowdsecurity/jabali-appsec\ndefault_remediation: ban\ninband_rules:\n - crowdsecurity/base-config\n - crowdsecurity/vpatch-*\n'
+    _log "seeding $config_file (mode=off)"
+    local tmp
+    tmp="$(mktemp --tmpdir jabali-appsec-config.XXXXXX)"
+    printf '%s' "$desired_config" >"$tmp"
+    install -m 0644 -o root -g root "$tmp" "$config_file"
+    rm -f "$tmp"
+  fi
+
+  # Cleanup: M26-era /etc/crowdsec/appsec-rules/jabali-geoblock.yaml is
+  # superseded by the appsec-config above. Schema was wrong (pre_eval in
+  # a rule file is silently ignored).
+  if [[ -f /etc/crowdsec/appsec-rules/jabali-geoblock.yaml ]]; then
+    _log "removing legacy /etc/crowdsec/appsec-rules/jabali-geoblock.yaml"
+    rm -f /etc/crowdsec/appsec-rules/jabali-geoblock.yaml
+  fi
+
+  # 4. AppSec acquisition — listener on 127.0.0.1:7422 (the CrowdSec
+  #    convention; bouncer talks to it over loopback). Points at our
+  #    jabali-appsec config (NOT virtual-patching) so the agent can
+  #    inject the geoblock pre_eval hook.
   local acquis_dir="/etc/crowdsec/acquis.d"
   install -d -m 0755 "$acquis_dir"
   local acquis_file="$acquis_dir/jabali-appsec.yaml"
-  local desired_acquis=$'# Managed by jabali install.sh — M26 AppSec geoblock.\n# TCP loopback listener. crowdsec-nginx-bouncer dials this via\n# APPSEC_URL=http://127.0.0.1:7422. Not exposed outside the host.\nappsec_config: crowdsecurity/virtual-patching\nlabels:\n  type: appsec\nlisten_addr: 127.0.0.1:7422\nsource: appsec\n'
+  local desired_acquis=$'# Managed by jabali install.sh — M27 AppSec geoblock.\n# TCP loopback listener. crowdsec-nginx-bouncer dials this via\n# APPSEC_URL=http://127.0.0.1:7422. Not exposed outside the host.\nappsec_config: crowdsecurity/jabali-appsec\nlabels:\n  type: appsec\nlisten_addr: 127.0.0.1:7422\nsource: appsec\n'
   if [[ ! -f "$acquis_file" ]] || ! cmp -s <(printf '%s' "$desired_acquis") "$acquis_file"; then
     _log "writing $acquis_file"
     local tmp
@@ -4003,23 +4040,7 @@ install_crowdsec_appsec() {
     systemctl daemon-reload
   fi
 
-  # 4. Initial rule file — mode=off so a first install doesn't block
-  #    any traffic. The agent's security.crowdsec.appsec.geoblock.set
-  #    overwrites it when the admin applies a real mode.
-  local rules_dir="/etc/crowdsec/appsec-rules"
-  install -d -m 0755 "$rules_dir"
-  local rule_file="$rules_dir/jabali-geoblock.yaml"
-  if [[ ! -f "$rule_file" ]]; then
-    local desired_rule=$'# Managed by jabali — M26 AppSec geoblock rule.\n# DO NOT hand-edit. Set via the admin Security \xe2\x86\x92 CrowdSec tab OR\n# POST /api/v1/admin/security/crowdsec/appsec/geoblock.\n# jabali-mode: off\n# jabali-countries:\nname: jabali/appsec-geoblock\ndescription: Server-wide AppSec geoblock (currently OFF).\n'
-    _log "seeding $rule_file (mode=off)"
-    local tmp
-    tmp="$(mktemp --tmpdir jabali-appsec-rule.XXXXXX)"
-    printf '%s' "$desired_rule" >"$tmp"
-    install -m 0644 -o root -g root "$tmp" "$rule_file"
-    rm -f "$tmp"
-  fi
-
-  # Reload or restart to pick up acquis + rule changes.
+  # Reload or restart to pick up acquis + config changes.
   systemctl reload crowdsec 2>/dev/null || systemctl restart crowdsec
 
   # Wait for AppSec TCP listener to come up — `ss -lnt sport = :7422`

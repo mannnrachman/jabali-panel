@@ -88,11 +88,12 @@ func filesIngestHandler(ctx context.Context, params json.RawMessage) (any, error
 		if info != nil {
 			size = info.Size()
 		}
+		// Chown transfers the bytes onto the target uid's quota. If that
+		// uid is already over limit, the kernel returns EDQUOT — classify
+		// so panel-api can surface a clear 'quota exceeded' instead of 500.
 		if err := chownIngestFile(dst, p.Username); err != nil {
-			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeInternal,
-				Message: fmt.Sprintf("chown: %v", err),
-			}
+			_ = os.Remove(dst)
+			return nil, classifyFSWriteErr("chown_ingest", err)
 		}
 		_ = os.Chmod(dst, 0o644)
 		return &filesIngestResponse{DestPath: dst, Bytes: size}, nil
@@ -101,12 +102,12 @@ func filesIngestHandler(ctx context.Context, params json.RawMessage) (any, error
 	// Cross-filesystem fallback: copy the bytes, then unlink the source.
 	in, err := os.Open(p.TmpPath)
 	if err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("open tmp: %v", err)}
+		return nil, classifyFSWriteErr("open_tmp", err)
 	}
 	defer in.Close()
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("open dst: %v", err)}
+		return nil, classifyFSWriteErr("open_dst", err)
 	}
 	size, err := io.Copy(out, in)
 	if cerr := out.Close(); err == nil {
@@ -114,11 +115,12 @@ func filesIngestHandler(ctx context.Context, params json.RawMessage) (any, error
 	}
 	if err != nil {
 		_ = os.Remove(dst)
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("copy: %v", err)}
+		return nil, classifyFSWriteErr("copy_dst", err)
 	}
 	_ = os.Remove(p.TmpPath)
 	if err := chownIngestFile(dst, p.Username); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("chown: %v", err)}
+		_ = os.Remove(dst)
+		return nil, classifyFSWriteErr("chown_ingest", err)
 	}
 	return &filesIngestResponse{DestPath: dst, Bytes: size}, nil
 }

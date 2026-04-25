@@ -5,14 +5,50 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/user"
 	"strconv"
+	"syscall"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/filesafe"
 )
+
+// classifyFSWriteErr turns a low-level write/chown/rename error into an
+// agent error with a stable machine-readable code in the message prefix.
+// The panel-api router matches on these prefixes to return 507 (quota)
+// or 507 (disk full) instead of opaque 500s.
+//
+//   - EDQUOT  → "quota_exceeded: …"
+//   - ENOSPC  → "disk_full: …"
+//   - EACCES  → permission_denied code (most specific agentwire code)
+//   - default → CodeInternal with the raw syserror text
+func classifyFSWriteErr(stage string, err error) *agentwire.AgentError {
+	switch {
+	case errors.Is(err, syscall.EDQUOT):
+		return &agentwire.AgentError{
+			Code:    agentwire.CodeFailedPrecondition,
+			Message: fmt.Sprintf("quota_exceeded: %s: %v", stage, err),
+		}
+	case errors.Is(err, syscall.ENOSPC):
+		return &agentwire.AgentError{
+			Code:    agentwire.CodeFailedPrecondition,
+			Message: fmt.Sprintf("disk_full: %s: %v", stage, err),
+		}
+	case errors.Is(err, syscall.EACCES), errors.Is(err, syscall.EPERM):
+		return &agentwire.AgentError{
+			Code:    agentwire.CodePermissionDenied,
+			Message: fmt.Sprintf("%s: %v", stage, err),
+		}
+	default:
+		return &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("%s: %v", stage, err),
+		}
+	}
+}
 
 // filesWriteParams is the input shape for files.write.
 type filesWriteParams struct {
@@ -106,10 +142,7 @@ func filesWriteHandler(ctx context.Context, params json.RawMessage) (any, error)
 		// Create temp file with 0600 perms (read/write for owner only)
 		tmpFile, err := os.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if err != nil {
-			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeInternal,
-				Message: fmt.Sprintf("failed to create temp file: %v", err),
-			}
+			return nil, classifyFSWriteErr("create_tempfile", err)
 		}
 
 		// Write content
@@ -117,50 +150,39 @@ func filesWriteHandler(ctx context.Context, params json.RawMessage) (any, error)
 		if err != nil {
 			tmpFile.Close()
 			os.Remove(tmpName)
-			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeInternal,
-				Message: fmt.Sprintf("failed to write to temp file: %v", err),
-			}
+			return nil, classifyFSWriteErr("write_tempfile", err)
 		}
 
 		// Fsync to ensure data is written
 		if err := tmpFile.Sync(); err != nil {
 			tmpFile.Close()
 			os.Remove(tmpName)
-			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeInternal,
-				Message: fmt.Sprintf("failed to sync temp file: %v", err),
-			}
+			return nil, classifyFSWriteErr("sync_tempfile", err)
 		}
 
 		tmpFile.Close()
 
-		// Chown temp file to user:www-data
+		// Chown temp file to user:www-data. This is where EDQUOT
+		// typically surfaces on upload: agent wrote the bytes as root
+		// (unlimited quota), and the kernel re-charges the bytes to the
+		// target uid when ownership transfers. If the recipient is over
+		// quota, chown returns EDQUOT even though the write succeeded.
 		if err := os.Chown(tmpName, uid, gid); err != nil {
 			os.Remove(tmpName)
-			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeInternal,
-				Message: fmt.Sprintf("failed to chown temp file: %v", err),
-			}
+			return nil, classifyFSWriteErr("chown_tempfile", err)
 		}
 
 		// Chmod to 0640: owner rw, www-data group r (nginx static read),
 		// other none. Matches per-user FPM isolation; blocks cross-user shell reads.
 		if err := os.Chmod(tmpName, 0640); err != nil {
 			os.Remove(tmpName)
-			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeInternal,
-				Message: fmt.Sprintf("failed to chmod temp file: %v", err),
-			}
+			return nil, classifyFSWriteErr("chmod_tempfile", err)
 		}
 
 		// Atomic rename
 		if err := os.Rename(tmpName, resolvedPath); err != nil {
 			os.Remove(tmpName)
-			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeInternal,
-				Message: fmt.Sprintf("failed to rename temp file: %v", err),
-			}
+			return nil, classifyFSWriteErr("rename_tempfile", err)
 		}
 
 		return &filesWriteResponse{
@@ -172,20 +194,14 @@ func filesWriteHandler(ctx context.Context, params json.RawMessage) (any, error)
 	// Append mode: open existing file or create new one
 	file, err := scope.Open(resolvedPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0640)
 	if err != nil {
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("failed to open file: %v", err),
-		}
+		return nil, classifyFSWriteErr("open_append", err)
 	}
 	defer file.Close()
 
 	// Write content
 	n, err := file.WriteString(p.Content)
 	if err != nil {
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("failed to write file: %v", err),
-		}
+		return nil, classifyFSWriteErr("write_append", err)
 	}
 
 	return &filesWriteResponse{

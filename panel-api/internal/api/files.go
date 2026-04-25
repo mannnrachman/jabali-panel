@@ -272,13 +272,18 @@ func requirePath(c *gin.Context) (string, bool) {
 
 // agentErrorStatus maps panel-agent error text to HTTP status. The agent
 // returns structured errors via agentwire; match on well-known substrings
-// so we return 400/403/404 where appropriate rather than blanket 500.
+// so we return 400/403/404/507 where appropriate rather than blanket 500.
 func agentErrorStatus(err error) int {
 	if err == nil {
 		return http.StatusOK
 	}
 	msg := err.Error()
 	switch {
+	case strings.Contains(msg, "quota_exceeded"),
+		strings.Contains(msg, "disk_full"):
+		// 507 Insufficient Storage — semantically right for both EDQUOT
+		// (per-user quota) and ENOSPC (FS full). Clients key off this.
+		return http.StatusInsufficientStorage
 	case strings.Contains(msg, "not_in_scope"),
 		strings.Contains(msg, "symlink_escape"),
 		strings.Contains(msg, "path_traversal"):
@@ -297,8 +302,26 @@ func agentErrorStatus(err error) int {
 	}
 }
 
+// agentErrorCode returns a short machine-readable error key for the JSON
+// response body, so clients can render a localized message without
+// parsing the detail string.
+func agentErrorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "quota_exceeded"):
+		return "quota_exceeded"
+	case strings.Contains(msg, "disk_full"):
+		return "disk_full"
+	default:
+		return "agent_error"
+	}
+}
+
 func respondAgentError(c *gin.Context, err error) {
-	c.JSON(agentErrorStatus(err), gin.H{"error": "agent_error", "detail": err.Error()})
+	c.JSON(agentErrorStatus(err), gin.H{"error": agentErrorCode(err), "detail": err.Error()})
 }
 
 // ---- handlers ----

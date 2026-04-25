@@ -250,6 +250,16 @@ function sortEntries(entries: FileEntry[]): FileEntry[] {
 function errMessage(err: unknown): string {
   if (err instanceof AxiosError) {
     const data = err.response?.data as { detail?: string; error?: string } | undefined;
+    // 507 Insufficient Storage: agent returned EDQUOT (user over disk
+    // quota) or ENOSPC (filesystem full). Either way the user-facing
+    // message is the same thing: your disk is full — free space or ask
+    // admin for more quota. Don't leak the internal syscall text.
+    if (err.response?.status === 507 || data?.error === "quota_exceeded") {
+      return "Disk quota exceeded — free up space or ask your admin for more.";
+    }
+    if (data?.error === "disk_full") {
+      return "Server disk is full. Contact your admin.";
+    }
     return data?.detail || data?.error || err.message;
   }
   if (err instanceof Error) return err.message;

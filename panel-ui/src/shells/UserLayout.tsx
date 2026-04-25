@@ -43,13 +43,13 @@ export function UserLayout() {
               ? {
                   darkItemSelectedBg: "#1f1f1f",
                   darkItemSelectedColor: "#4096ff",
-                  darkItemHoverBg: "#1a1a1a",
+                  darkItemHoverBg: "#1f1f1f",
                   darkItemHoverColor: "rgba(255, 255, 255, 0.85)",
                 }
               : {
                   itemSelectedBg: "#f3f4f6",
                   itemSelectedColor: "#1677ff",
-                  itemHoverBg: "#f9fafb",
+                  itemHoverBg: "#f3f4f6",
                   itemHoverColor: "rgba(0, 0, 0, 0.88)",
                 },
         },

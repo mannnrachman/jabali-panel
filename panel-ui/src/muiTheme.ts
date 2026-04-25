@@ -51,18 +51,21 @@ const useMuiTheme = (mode: ThemeMode): ConfigProviderProps =>
           // so the item highlights without shouting. Same gray family
           // as the selected bg, one shade lighter so hover and selected
           // are still distinguishable.
+          // Hover bg matches selected bg per operator — same colour,
+          // hover keeps neutral text/icon while selected gets the red
+          // accent. Provides instant feedback without visual noise.
           Menu:
             mode === "dark"
               ? {
                   darkItemSelectedBg: "#1f1f1f",
                   darkItemSelectedColor: "#ef4444",
-                  darkItemHoverBg: "#1a1a1a",
+                  darkItemHoverBg: "#1f1f1f",
                   darkItemHoverColor: "rgba(255, 255, 255, 0.85)",
                 }
               : {
                   itemSelectedBg: "#f3f4f6",
                   itemSelectedColor: "#dc2626",
-                  itemHoverBg: "#f9fafb",
+                  itemHoverBg: "#f3f4f6",
                   itemHoverColor: "rgba(0, 0, 0, 0.88)",
                 },
           // Tabs pick up the same red accent the selected sidebar row

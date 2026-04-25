@@ -106,6 +106,12 @@ type ServerSettings struct {
 	// agent quota.apply will fail and the panel will surface the error.
 	DiskQuotaEnabled bool `gorm:"column:disk_quota_enabled;type:tinyint(1);not null;default:0" json:"disk_quota_enabled"`
 
+	// File-manager upload cap (MB). Enforced by panel-api at request
+	// time via http.MaxBytesReader; nginx vhost client_max_body_size
+	// is set to the static ceiling (1G) so this is the operator-tunable
+	// knob. Migration 000073. 0 falls back to the compile-time default.
+	UploadMaxSizeMB uint32 `gorm:"column:upload_max_size_mb;type:int unsigned;not null;default:1024" json:"upload_max_size_mb"`
+
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 

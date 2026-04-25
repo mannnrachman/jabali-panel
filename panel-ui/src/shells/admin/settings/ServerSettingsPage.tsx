@@ -57,6 +57,7 @@ type ServerSettings = {
   ssh_password_auth: boolean;
   ssh_user_password_auth: boolean;
   disk_quota_enabled: boolean;
+  upload_max_size_mb: number;
   updated_at: string;
 };
 
@@ -120,6 +121,7 @@ const GeneralSettingsTab = () => {
         ssh_password_auth: values.ssh_password_auth || false,
         ssh_user_password_auth: values.ssh_user_password_auth || false,
         disk_quota_enabled: values.disk_quota_enabled || false,
+        upload_max_size_mb: values.upload_max_size_mb || 1024,
       });
       notify({ type: "success", message: "Settings saved" });
       form.setFieldsValue(resp.data);
@@ -309,6 +311,35 @@ const GeneralSettingsTab = () => {
                 Allow hosting users (jabali-sftp group) to authenticate with a password. They are still SFTP-only — no shell.
               </Typography.Text>
             </div>
+          </Col>
+        </Row>
+      </Card>
+
+      <Card title="File Manager" style={{ marginBottom: 16 }}>
+        <Row gutter={16}>
+          <Col xs={24} md={12}>
+            <Form.Item
+              label="Maximum Upload Size (MB)"
+              name="upload_max_size_mb"
+              rules={[
+                { required: true, message: "Required" },
+                {
+                  type: "number",
+                  min: 1,
+                  max: 10240,
+                  message: "Between 1 and 10240 MB",
+                },
+              ]}
+              tooltip="Hard cap on a single file upload via the File Manager. Applies to both single-multipart and chunked paths. Defaults to 1024 MB (1 GB)."
+            >
+              <InputNumber
+                min={1}
+                max={10240}
+                step={64}
+                style={{ width: "100%" }}
+                addonAfter="MB"
+              />
+            </Form.Item>
           </Col>
         </Row>
       </Card>

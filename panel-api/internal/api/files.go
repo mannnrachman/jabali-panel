@@ -115,16 +115,34 @@ type filesStatAgentParams struct {
 
 // FilesHandlerConfig bundles dependencies for /api/v1/files.
 type FilesHandlerConfig struct {
-	Users   repository.UserRepository
-	Domains repository.DomainRepository
-	Agent   agent.AgentInterface
-	Log     *slog.Logger
+	Users          repository.UserRepository
+	Domains        repository.DomainRepository
+	Agent          agent.AgentInterface
+	Log            *slog.Logger
+	ServerSettings repository.ServerSettingsRepository // optional; nil → fall back to defaultMaxUploadBytes
 }
 
 const (
-	maxUploadBytes  int64 = 100 * 1024 * 1024
-	maxPreviewBytes int64 = 1 * 1024 * 1024
+	// Compile-time fallback if ServerSettings repo isn't wired or
+	// upload_max_size_mb is 0. Matches the historical hardcoded value.
+	defaultMaxUploadBytes int64 = 1024 * 1024 * 1024 // 1 GB
+	maxPreviewBytes       int64 = 1 * 1024 * 1024
 )
+
+// resolveMaxUploadBytes reads the admin-configured upload cap from
+// server_settings (cached to a few hundred ns by the underlying GORM
+// query plan; the row is tiny). Falls back to defaultMaxUploadBytes
+// when the repo isn't wired or the column is unset.
+func (h *filesHandler) resolveMaxUploadBytes(ctx context.Context) int64 {
+	if h.cfg.ServerSettings == nil {
+		return defaultMaxUploadBytes
+	}
+	s, err := h.cfg.ServerSettings.Get(ctx)
+	if err != nil || s == nil || s.UploadMaxSizeMB == 0 {
+		return defaultMaxUploadBytes
+	}
+	return int64(s.UploadMaxSizeMB) * 1024 * 1024
+}
 
 // RegisterFilesRoutes mounts /files under the given group (expected /api/v1).
 // All routes require an authenticated caller.
@@ -137,7 +155,9 @@ func RegisterFilesRoutes(g *gin.RouterGroup, cfg FilesHandlerConfig) {
 	grp.GET("/tree", h.tree)
 	grp.GET("/download", h.download)
 	grp.GET("/preview", h.preview)
-	grp.POST("/upload", filesUploadSizeLimit(maxUploadBytes), h.upload)
+	grp.POST("/upload", filesUploadSizeLimit(func(c *gin.Context) int64 {
+		return h.resolveMaxUploadBytes(c.Request.Context())
+	}), h.upload)
 	grp.POST("/mkdir", h.mkdir)
 	grp.POST("/rename", h.rename)
 	grp.POST("/move", h.move)
@@ -405,7 +425,7 @@ func (h *filesHandler) download(c *gin.Context) {
 		return
 	}
 	raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.read", filesReadAgentParams{
-		UserID: userID, Username: username, Path: p, Limit: maxUploadBytes,
+		UserID: userID, Username: username, Path: p, Limit: h.resolveMaxUploadBytes(c.Request.Context()),
 	})
 	if err != nil {
 		respondAgentError(c, err)
@@ -513,7 +533,8 @@ func (h *filesHandler) upload(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
 		return
 	}
-	if fileHeader.Size > maxUploadBytes {
+	maxBytes := h.resolveMaxUploadBytes(c.Request.Context())
+	if fileHeader.Size > maxBytes {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "file_too_large"})
 		return
 	}
@@ -528,12 +549,12 @@ func (h *filesHandler) upload(c *gin.Context) {
 		return
 	}
 	defer src.Close()
-	buf, err := io.ReadAll(io.LimitReader(src, maxUploadBytes+1))
+	buf, err := io.ReadAll(io.LimitReader(src, maxBytes+1))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
 		return
 	}
-	if int64(len(buf)) > maxUploadBytes {
+	if int64(len(buf)) > maxBytes {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "file_too_large"})
 		return
 	}

@@ -538,10 +538,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// File manager routes (M11)
 		if deps.Users != nil && deps.Agent != nil {
 			api.RegisterFilesRoutes(v1, api.FilesHandlerConfig{
-				Users:   deps.Users,
-				Domains: deps.Domains,
-				Agent:   deps.Agent,
-				Log:     deps.Log,
+				Users:          deps.Users,
+				Domains:        deps.Domains,
+				Agent:          deps.Agent,
+				Log:            deps.Log,
+				ServerSettings: deps.ServerSettings,
 			})
 		}
 

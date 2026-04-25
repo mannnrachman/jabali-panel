@@ -90,6 +90,7 @@ type updateServerSettingsRequest struct {
 	SSHUserPasswordAuth *bool   `json:"ssh_user_password_auth,omitempty"`
 	PanelBrandText      *string `json:"panel_brand_text,omitempty"`
 	DiskQuotaEnabled    *bool   `json:"disk_quota_enabled,omitempty"`
+	UploadMaxSizeMB     *uint32 `json:"upload_max_size_mb,omitempty"`
 }
 
 func (h *serverSettingsHandler) update(c *gin.Context) {
@@ -163,6 +164,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.DiskQuotaEnabled != nil {
 		current.DiskQuotaEnabled = *req.DiskQuotaEnabled
+	}
+	if req.UploadMaxSizeMB != nil {
+		current.UploadMaxSizeMB = *req.UploadMaxSizeMB
 	}
 
 	// Validate — reject obviously bad input so we don't persist garbage.
@@ -276,6 +280,13 @@ func validateServerSettings(s *models.ServerSettings) error {
 	// Panel brand text: free-form but capped at 60 chars.
 	if len(s.PanelBrandText) > 60 {
 		return fmt.Errorf("panel_brand_text: must be <= 60 chars")
+	}
+	// Upload cap. 0 == "use compile-time default (1 GB)"; otherwise
+	// 1 MB minimum and 10 GB ceiling (matches the practical browser-
+	// upload limit and the nginx vhost client_max_body_size; admins
+	// wanting bigger should use SFTP/SCP).
+	if s.UploadMaxSizeMB != 0 && (s.UploadMaxSizeMB < 1 || s.UploadMaxSizeMB > 10240) {
+		return fmt.Errorf("upload_max_size_mb: must be 0 or between 1 and 10240")
 	}
 	return nil
 }

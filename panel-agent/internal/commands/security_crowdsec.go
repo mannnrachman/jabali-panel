@@ -667,8 +667,10 @@ func renderAppSecGeoblockRule(mode string, countries []string) string {
 	}
 
 	// Common header + base appsec-config skeleton. inband_rules block
-	// loads the upstream vpatch-* CVE rules + base-config. pre_eval is
-	// appended below per-mode (off = no pre_eval).
+	// loads the upstream vpatch-* CVE rules, base-config, and generic-*
+	// CRS-style rules (SSTI / WordPress upload / no-user-agent — enabled
+	// by default 2026-04-26). pre_eval is appended below per-mode
+	// (off = no pre_eval).
 	header := `# Managed by jabali — M27 AppSec config.
 # DO NOT hand-edit. Set via the admin Security → CrowdSec tab OR
 # POST /api/v1/admin/security/crowdsec/appsec/geoblock.
@@ -679,6 +681,7 @@ default_remediation: ban
 inband_rules:
  - crowdsecurity/base-config
  - crowdsecurity/vpatch-*
+ - crowdsecurity/generic-*
 `
 
 	switch mode {
@@ -1292,6 +1295,56 @@ func csConsoleStatusHandler(ctx context.Context, _ json.RawMessage) (any, error)
 	return map[string]any{"items": items}, nil
 }
 
+// csConsoleEnrollmentHandler reports whether this engine has been
+// enrolled with the CrowdSec Console (https://app.crowdsec.net). Truth
+// is taken from /etc/crowdsec/online_api_credentials.yaml — populated
+// by `cscli console enroll <key>`. We also call `cscli capi status`
+// (silently) to confirm CAPI auth still works; an empty/missing creds
+// file or capi-auth failure → enrolled=false.
+type csConsoleEnrollmentResp struct {
+	Enrolled bool   `json:"enrolled"`
+	Login    string `json:"login,omitempty"`
+	URL      string `json:"url,omitempty"`
+	CAPIOK   bool   `json:"capi_ok"`
+}
+
+const onlineCredsPath = "/etc/crowdsec/online_api_credentials.yaml"
+
+func csConsoleEnrollmentHandler(ctx context.Context, _ json.RawMessage) (any, error) {
+	resp := csConsoleEnrollmentResp{}
+	body, err := os.ReadFile(onlineCredsPath)
+	if err != nil {
+		// File missing → not enrolled. Other I/O errors also report
+		// not-enrolled (best-effort, no need to surface the io error).
+		return resp, nil
+	}
+	// Parse minimal YAML: we want url + login. Avoid pulling a YAML
+	// dep just for two fields — split lines, strip whitespace.
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "url:") {
+			resp.URL = strings.TrimSpace(strings.TrimPrefix(line, "url:"))
+		}
+		if strings.HasPrefix(line, "login:") {
+			resp.Login = strings.TrimSpace(strings.TrimPrefix(line, "login:"))
+		}
+	}
+	if resp.Login == "" {
+		// File present but empty/malformed. Treat as not-enrolled so
+		// the UI shows the enroll form rather than a stale "enrolled".
+		return csConsoleEnrollmentResp{}, nil
+	}
+	resp.Enrolled = true
+	// Best-effort CAPI auth probe. cscli exits 0 when auth succeeds.
+	// Suppress combined output — UI only consumes the bool.
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := exec.CommandContext(probeCtx, "cscli", "capi", "status").Run(); err == nil {
+		resp.CAPIOK = true
+	}
+	return resp, nil
+}
+
 var validConsoleOptions = map[string]bool{
 	"custom": true, "manual": true, "tainted": true, "context": true,
 	"console_management": true, "all": true,
@@ -1352,6 +1405,7 @@ func init() {
 	Default.Register("security.crowdsec.alerts.inspect", csAlertsInspectHandler)
 	Default.Register("security.crowdsec.console.enroll", csConsoleEnrollHandler)
 	Default.Register("security.crowdsec.console.status", csConsoleStatusHandler)
+	Default.Register("security.crowdsec.console.enrollment", csConsoleEnrollmentHandler)
 	Default.Register("security.crowdsec.console.enable", csConsoleEnableHandler)
 	Default.Register("security.crowdsec.console.disable", csConsoleDisableHandler)
 	Default.Register("security.crowdsec.captcha.apply", csCaptchaApplyHandler)

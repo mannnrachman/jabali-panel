@@ -4051,29 +4051,47 @@ install_crowdsec_appsec() {
       cscli parsers install crowdsecurity/geoip-enrich
   fi
 
-  # 2. AppSec base collection (virtual-patching gives us AppSec rules
-  #    context + inband/outofband plumbing).
+  # 2. AppSec base collections — virtual-patching gives us vpatch-*
+  #    CVE rules + base-config plumbing; appsec-generic-rules adds CRS-style
+  #    SSTI / WordPress upload / no-user-agent detection (enabled by default
+  #    2026-04-26 — see plans/m27-crowdsec-extensions.md). Both are free
+  #    upstream collections.
   if ! cscli collections list 2>/dev/null | grep -q 'crowdsecurity/appsec-virtual-patching'; then
     _spin "cscli collections install appsec-virtual-patching" \
       cscli collections install crowdsecurity/appsec-virtual-patching
   fi
+  if ! cscli collections list 2>/dev/null | grep -q 'crowdsecurity/appsec-generic-rules'; then
+    _spin "cscli collections install appsec-generic-rules" \
+      cscli collections install crowdsecurity/appsec-generic-rules --force
+  fi
 
   # 3. Jabali AppSec config — our own appsec-CONFIG file. Loads
-  #    base-config + vpatch-* plus carries the geoblock pre_eval hook.
-  #    The agent rewrites this file on every admin Apply (see
-  #    panel-agent's csAppSecGeoblockSetHandler). Shipped initial state
-  #    has NO pre_eval block (mode=off).
+  #    base-config + vpatch-* + generic-* plus carries the geoblock
+  #    pre_eval hook. The agent rewrites this file on every admin Apply
+  #    (see panel-agent's csAppSecGeoblockSetHandler). Shipped initial
+  #    state has NO pre_eval block (mode=off — geoblock stays opt-in).
   local configs_dir="/etc/crowdsec/appsec-configs"
   install -d -m 0755 "$configs_dir"
   local config_file="$configs_dir/jabali-appsec.yaml"
+  local desired_config=$'# Managed by jabali — M27 AppSec config.\n# DO NOT hand-edit. Set via the admin Security \xe2\x86\x92 CrowdSec tab OR\n# POST /api/v1/admin/security/crowdsec/appsec/geoblock.\n# jabali-mode: off\n# jabali-countries:\nname: crowdsecurity/jabali-appsec\ndefault_remediation: ban\ninband_rules:\n - crowdsecurity/base-config\n - crowdsecurity/vpatch-*\n - crowdsecurity/generic-*\n'
   if [[ ! -f "$config_file" ]]; then
-    local desired_config=$'# Managed by jabali — M27 AppSec config.\n# DO NOT hand-edit. Set via the admin Security \xe2\x86\x92 CrowdSec tab OR\n# POST /api/v1/admin/security/crowdsec/appsec/geoblock.\n# jabali-mode: off\n# jabali-countries:\nname: crowdsecurity/jabali-appsec\ndefault_remediation: ban\ninband_rules:\n - crowdsecurity/base-config\n - crowdsecurity/vpatch-*\n'
     _log "seeding $config_file (mode=off)"
     local tmp
     tmp="$(mktemp --tmpdir jabali-appsec-config.XXXXXX)"
     printf '%s' "$desired_config" >"$tmp"
     install -m 0644 -o root -g root "$tmp" "$config_file"
     rm -f "$tmp"
+  elif ! grep -q 'crowdsecurity/generic-\*' "$config_file" && ! grep -q '# jabali-mode:' "$config_file"; then
+    : # operator-edited or already migrated; skip
+  elif ! grep -q 'crowdsecurity/generic-\*' "$config_file"; then
+    # Existing install: append generic-* to inband_rules without
+    # disturbing operator-set jabali-mode/countries header. Insert
+    # before the closing of inband_rules block — appended at end of
+    # the rule list (yaml parses fine either way).
+    if grep -qE '^[[:space:]]*-[[:space:]]+crowdsecurity/vpatch' "$config_file"; then
+      _log "appending crowdsecurity/generic-* to $config_file inband_rules"
+      sed -i '/^[[:space:]]*-[[:space:]]\+crowdsecurity\/vpatch-\*[[:space:]]*$/a\ - crowdsecurity/generic-*' "$config_file"
+    fi
   fi
 
   # Cleanup: M26-era /etc/crowdsec/appsec-rules/jabali-geoblock.yaml is

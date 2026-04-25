@@ -326,6 +326,7 @@ export type EnrollCrowdsecConsoleInput = {
 };
 
 export function useEnrollCrowdsecConsole() {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: EnrollCrowdsecConsoleInput) => {
       const { data } = await apiClient.post<{ pending: boolean }>(
@@ -333,6 +334,12 @@ export function useEnrollCrowdsecConsole() {
         input,
       );
       return data;
+    },
+    onSuccess: () => {
+      // Enrollment writes online_api_credentials.yaml — refetch state
+      // so the card flips from form view to enrolled view.
+      qc.invalidateQueries({ queryKey: ["security", "crowdsec", "console", "enrollment"] });
+      qc.invalidateQueries({ queryKey: ["security", "crowdsec", "console", "status"] });
     },
   });
 }
@@ -354,6 +361,25 @@ export function useCrowdsecConsoleStatus() {
         `${BASE}/console/status`,
       );
       return data.items ?? [];
+    },
+  });
+}
+
+export type CrowdsecConsoleEnrollment = {
+  enrolled: boolean;
+  login?: string;
+  url?: string;
+  capi_ok: boolean;
+};
+
+export function useCrowdsecConsoleEnrollment() {
+  return useQuery({
+    queryKey: ["security", "crowdsec", "console", "enrollment"],
+    queryFn: async () => {
+      const { data } = await apiClient.get<CrowdsecConsoleEnrollment>(
+        `${BASE}/console/enrollment`,
+      );
+      return data;
     },
   });
 }

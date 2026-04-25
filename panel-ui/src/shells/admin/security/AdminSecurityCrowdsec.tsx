@@ -49,6 +49,7 @@ import {
   useRemoveCrowdsecHubItem,
   useCrowdsecMetrics,
   useCrowdsecCaptcha,
+  useCrowdsecConsoleEnrollment,
   useCrowdsecConsoleStatus,
   useCrowdsecProfiles,
   useCrowdsecStatus,
@@ -919,10 +920,13 @@ const OPTION_LABEL: Record<string, string> = {
 
 const ConsoleCard = () => {
   const enroll = useEnrollCrowdsecConsole();
+  const enrollmentQ = useCrowdsecConsoleEnrollment();
   const statusQ = useCrowdsecConsoleStatus();
   const toggle = useToggleCrowdsecConsoleOption();
   const [form] = Form.useForm<ConsoleFormValues>();
   const [submittedAt, setSubmittedAt] = useState<number | null>(null);
+
+  const isEnrolled = enrollmentQ.data?.enrolled === true;
 
   const onSubmit = async (values: ConsoleFormValues) => {
     try {
@@ -950,81 +954,115 @@ const ConsoleCard = () => {
       title="CrowdSec Console (optional)"
       extra={
         <Typography.Link
-          href="https://app.crowdsec.net/security-engines?distribution=linux"
+          href={isEnrolled ? "https://app.crowdsec.net/security-engines" : "https://app.crowdsec.net/security-engines?distribution=linux"}
           target="_blank"
           rel="noopener noreferrer"
         >
-          Get enrollment key
+          {isEnrolled ? "Manage at app.crowdsec.net" : "Get enrollment key"}
         </Typography.Link>
       }
     >
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-        <Alert
-          type="info"
-          showIcon
-          message="Enroll this instance to receive CTI community blocklists and a hosted dashboard."
-          description={
-            <>
-              Open{" "}
-              <Typography.Link
-                href="https://app.crowdsec.net/security-engines?distribution=linux"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                app.crowdsec.net/security-engines
-              </Typography.Link>
-              , copy the <Typography.Text code>cscli console enroll &lt;key&gt;</Typography.Text>{" "}
-              command, paste the key below, then accept the pending instance in the Console.
-              Share settings and disenroll are managed in the Console web UI.
-            </>
-          }
-        />
-
-        {submittedAt !== null && (
+        {isEnrolled ? (
           <Alert
             type="success"
             showIcon
-            message="Enrollment command sent"
-            description="Visit app.crowdsec.net and accept this instance. It can take up to a minute to appear."
+            message={
+              <>
+                Enrolled as <Typography.Text code>{enrollmentQ.data?.login}</Typography.Text>
+                {enrollmentQ.data?.capi_ok === false && (
+                  <Tag color="orange" style={{ marginLeft: 8 }}>
+                    CAPI auth failing
+                  </Tag>
+                )}
+              </>
+            }
+            description={
+              <>
+                This engine is registered with the CrowdSec Console. CTI community blocklist pulls,
+                hosted dashboards, and remote management are active. Disenroll and share settings
+                are managed in the{" "}
+                <Typography.Link
+                  href="https://app.crowdsec.net/security-engines"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Console web UI
+                </Typography.Link>
+                .
+              </>
+            }
           />
-        )}
-
-        <Form<ConsoleFormValues> form={form} layout="vertical" onFinish={onSubmit}>
-          <Form.Item
-            name="key"
-            label="Enrollment key"
-            rules={[
-              { required: true, message: "Key required" },
-              { pattern: /^[A-Za-z0-9-]{16,128}$/, message: "16-128 alnum + dash chars" },
-            ]}
-          >
-            <Input.Password
-              placeholder="cskf-xxxxxxxxxxxxxxxxxxxx"
-              autoComplete="off"
-              visibilityToggle={false}
+        ) : (
+          <>
+            <Alert
+              type="info"
+              showIcon
+              message="Enroll this instance to receive CTI community blocklists and a hosted dashboard."
+              description={
+                <>
+                  Open{" "}
+                  <Typography.Link
+                    href="https://app.crowdsec.net/security-engines?distribution=linux"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    app.crowdsec.net/security-engines
+                  </Typography.Link>
+                  , copy the <Typography.Text code>cscli console enroll &lt;key&gt;</Typography.Text>{" "}
+                  command, paste the key below, then accept the pending instance in the Console.
+                  Share settings and disenroll are managed in the Console web UI.
+                </>
+              }
             />
-          </Form.Item>
-          <Form.Item
-            name="name"
-            label="Instance name (optional)"
-            tooltip="Display name in the Console dashboard. Defaults to the server hostname."
-          >
-            <Input placeholder={`e.g. jabali-prod-${new Date().getFullYear()}`} maxLength={64} />
-          </Form.Item>
-          <Space>
-            <Popconfirm
-              title="Enroll this instance?"
-              description="Scenario fires, decisions, and alerts will be shared with CrowdSec Console per your sharing settings."
-              okText="Enroll"
-              cancelText="Cancel"
-              onConfirm={() => form.submit()}
-            >
-              <Button type="primary" loading={enroll.isPending}>
-                Enroll
-              </Button>
-            </Popconfirm>
-          </Space>
-        </Form>
+
+            {submittedAt !== null && (
+              <Alert
+                type="success"
+                showIcon
+                message="Enrollment command sent"
+                description="Visit app.crowdsec.net and accept this instance. It can take up to a minute to appear."
+              />
+            )}
+
+            <Form<ConsoleFormValues> form={form} layout="vertical" onFinish={onSubmit}>
+              <Form.Item
+                name="key"
+                label="Enrollment key"
+                rules={[
+                  { required: true, message: "Key required" },
+                  { pattern: /^[A-Za-z0-9-]{16,128}$/, message: "16-128 alnum + dash chars" },
+                ]}
+              >
+                <Input.Password
+                  placeholder="cskf-xxxxxxxxxxxxxxxxxxxx"
+                  autoComplete="off"
+                  visibilityToggle={false}
+                />
+              </Form.Item>
+              <Form.Item
+                name="name"
+                label="Instance name (optional)"
+                tooltip="Display name in the Console dashboard. Defaults to the server hostname."
+              >
+                <Input placeholder={`e.g. jabali-prod-${new Date().getFullYear()}`} maxLength={64} />
+              </Form.Item>
+              <Space>
+                <Popconfirm
+                  title="Enroll this instance?"
+                  description="Scenario fires, decisions, and alerts will be shared with CrowdSec Console per your sharing settings."
+                  okText="Enroll"
+                  cancelText="Cancel"
+                  onConfirm={() => form.submit()}
+                >
+                  <Button type="primary" loading={enroll.isPending}>
+                    Enroll
+                  </Button>
+                </Popconfirm>
+              </Space>
+            </Form>
+          </>
+        )}
 
         <Typography.Title level={5} style={{ marginTop: 16, marginBottom: 8 }}>
           Share preferences

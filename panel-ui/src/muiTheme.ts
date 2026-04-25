@@ -63,6 +63,12 @@ const useMuiTheme = (mode: ThemeMode): ConfigProviderProps =>
           Menu:
             mode === "dark"
               ? {
+                  // Lift the resting (idle) item color above AntD's
+                  // default rgba(255,255,255,0.65) — Inter's denser
+                  // strokes make 0.65 read as bright text but dim
+                  // icons, so the two visually decouple. 0.85 keeps
+                  // them in lockstep.
+                  darkItemColor: "rgba(255, 255, 255, 0.85)",
                   darkItemSelectedBg: "#1f1f1f",
                   darkItemSelectedColor: "#ef4444",
                   darkItemHoverBg: "#1f1f1f",

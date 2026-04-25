@@ -242,16 +242,20 @@ _spin() {
   # installs, useless when apt/systemctl/curl is stalled mid-run and
   # you want to watch the last line the stuck child printed). `tee -a`
   # mirrors the live stream into $LOG_FILE so the post-mortem still has
-  # everything even though no separate capture happens. `|| true` lets
-  # us read PIPESTATUS[0] past `set -e + pipefail`.
+  # everything even though no separate capture happens.
+  #
+  # rc capture: `cmd | tee || true` would resolve `true` LAST and reset
+  # PIPESTATUS to (0) — masking apt failures. Capture inside the `||`
+  # clause where PIPESTATUS still reflects the failing pipeline, BEFORE
+  # any subsequent simple command can rewrite it.
   if [[ -n "${JABALI_DEBUG:-}" ]]; then
     _log "$label…"
+    local rc=0
     if [[ -n "${LOG_FILE:-}" ]]; then
-      "$@" 2>&1 | tee -a "$LOG_FILE" || true
+      "$@" 2>&1 | tee -a "$LOG_FILE" || rc="${PIPESTATUS[0]}"
     else
-      "$@" || true
+      "$@" || rc=$?
     fi
-    local rc=${PIPESTATUS[0]}
     if [[ $rc -ne 0 ]]; then
       _err "$label FAILED (exit $rc)"
       rm -f "$log"

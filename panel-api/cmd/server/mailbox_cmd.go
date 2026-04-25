@@ -35,6 +35,8 @@ for operators with access to the panel's config and UDS.`,
 		newMailboxDeleteCmd(),
 		newMailboxSetQuotaCmd(),
 		newMailboxPasswdCmd(),
+		newMailboxAutoresponderCmd(),
+		newMailboxForwarderCmd(),
 	)
 	return cmd
 }

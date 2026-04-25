@@ -34,11 +34,13 @@ server {
   ssl_ciphers         HIGH:!aNULL:!MD5;
   ssl_prefer_server_ciphers on;
 
-  # Browser uploads: WordPress imports, file-manager uploads, and the
-  # nginx default of 1MB are all on the same scale here. 100M matches
-  # the panel-agent's own write-side limit so requests aren't truncated
-  # at the edge with no operator hint.
-  client_max_body_size 100M;
+  # Browser uploads: WordPress imports, file-manager uploads, etc.
+  # 1G matches the file-manager UI's hard ceiling (FileManagerPage
+  # rejects > 1 GB client-side). Chunked uploads (>100 MB) split into
+  # 10 MB chunks each, but the single-multipart path is still in
+  # range up to 1 GB. The nginx default of 1 MB would 413 anything
+  # above that.
+  client_max_body_size 1G;
 
   access_log /var/log/nginx/jabali-panel.access.log;
   error_log  /var/log/nginx/jabali-panel.error.log;

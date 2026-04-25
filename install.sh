@@ -4962,10 +4962,19 @@ _install_stalwart_binary() {
   fi
 
   # Atomic swap: extract to a sibling dir, rename, clean up.
+  #
+  # --no-same-owner: tar by default preserves uid/gid from the archive
+  # (Stalwart's CI packages with uid 1001:1001), so without this flag
+  # the binary lands owned by whoever happens to have uid 1001 on the
+  # target host — typically the first hosting user. That uid then gets
+  # the 256 MB binary charged against its POSIX disk quota, immediately
+  # putting them over limit. Force root:root on extraction so the
+  # binary always lives outside any hosting user's quota scope.
   local new_dir="/opt/stalwart.new"
   rm -rf "$new_dir"
   install -d -m 0755 -o root -g root "$new_dir"
-  tar -xzf "$tarball_path" -C "$new_dir" --strip-components=0
+  tar -xzf "$tarball_path" -C "$new_dir" --strip-components=0 --no-same-owner
+  chown -R root:root "$new_dir"
   rm -f "$tarball_path"
 
   # Stalwart tarball layout: top-level `stalwart` binary. v0.16.0 ships

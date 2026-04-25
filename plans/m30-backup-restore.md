@@ -1,6 +1,11 @@
 # M30 — Backup & Restore (restic-backed)
 
-**Goal.** Per-account full backup + restore (cPanel/DA parity) with **restic** as the storage layer. Restic gives us native dedup, incremental snapshots, AES-256-GCM encryption, and pluggable backends (local fs / S3 / B2 / SFTP / REST server) for free — features the original tar.zst plan deferred to M30.1/M30.2.
+**Goal.** Two backup kinds, one restic backbone, full restore for both:
+
+1. **Account-full backup** — per-user (cPanel/DA parity). Bundle = home + DBs + mailboxes + DNS + cron + SSH + apps + PHP + manifest.
+2. **System backup** — entire Jabali panel state. Bundle = all panel/Kratos/PowerDNS DBs + every `/etc/jabali-panel/*` config + service drop-ins (`/etc/stalwart`, `/etc/powerdns`, `/etc/nginx/sites-*`, `/etc/php/*/fpm`, `/etc/systemd/system/jabali-*.service.d`) + Stalwart RocksDB (`/var/lib/stalwart`) + Let's Encrypt state (`/etc/letsencrypt`) + UFW + CrowdSec config + every account-full backup of every user, gathered under a single `job-id`. Restore-from-system on a clean OS produces a working panel byte-for-byte.
+
+Restic gives us native dedup, incremental snapshots, AES-256-GCM encryption, and pluggable backends (local fs / S3 / B2 / SFTP / REST server) for free — features the original tar.zst plan deferred to M30.1/M30.2.
 
 A single-account backup ingests the same logical content as before:
 
@@ -31,11 +36,15 @@ ADR target: **0065**. ADR `0064` reserved for M29.
 ## Constraints + invariants
 
 - **Single shared restic repo, server-managed password.** `/var/lib/jabali-backups/repo/` (root:jabali 0750). Password generated at install time, stored at `/etc/jabali-panel/restic-repo.password` (root:jabali 0600). Single repo because (a) hosting workloads dedup heavily across accounts (every WordPress install shares the core), and (b) operators are single-tenant — admin already has root, so per-user passwords add no isolation. Per-tenant repos can land later if multi-tenant ever happens.
-- **Snapshot tagging is the per-user partition.** Every snapshot tagged `user-id=<ULID>` plus `kind=account_full` plus per-stage tags (`stage=home`, `stage=db`, etc.). User backups list = `restic snapshots --tag user-id=<ULID> --json` — repo-wide listing filtered by tag, never visible across users in the UI.
+- **Snapshot tagging is the partition.** Every snapshot carries (a) `kind=<account_full|system>`, (b) `job-id=<ULID>` linking all stage-snapshots from one run, (c) `stage=<name>`, (d) `jabali` blanket. Account-full additionally carries `user-id=<ULID>`. System backups carry `system=<server-hostname>` so multi-host operators can disambiguate. UI lists filter on these tags server-side; users only ever see their own user-id's snapshots, system backups are admin-only.
 - **Long-running root op → systemd-run transient unit**, NOT an agent child. A 30-min backup running as a cgroup descendant of `jabali-agent.service` dies on every `jabali update`. Identical pattern to M29: `systemd-run --unit=jabali-backup-<job-id>.service /usr/local/bin/jabali-internal-backup-worker --params=/run/jabali/backup-<id>.json`. Status via `systemctl is-active` + `journalctl -u <unit>`.
 - **Disk-quota awareness.** Repo lives outside per-user quota. Restore-to-home is the only stage that hits quota; EDQUOT maps to 507/`quota_exceeded` per the M25.x path; restore stage records the failure but other stages still run (partial restore preferred over zero).
-- **One backup at a time per user.** Backend tracks single in-memory job slot per (kind, user-id); second call returns 409 with running `job_id`. Cross-user concurrency allowed.
-- **One restore at a time per host.** Two parallel restores would race on `/etc/nginx/sites-enabled` reloads, PowerDNS NOTIFY, Stalwart RocksDB. Single global flock at `/var/lib/jabali-backups/.restore.lock`.
+- **One backup at a time per (kind, user-id).** account_full backups for different users can run in parallel; only one per user. Only one system backup globally (it touches every account anyway, and overlaps with account_full would race on shared dump consistency). Backend tracks single in-memory job slots; second call returns 409 with running `job_id`.
+- **One restore at a time per host.** Two parallel restores would race on `/etc/nginx/sites-enabled` reloads, PowerDNS NOTIFY, Stalwart RocksDB, MariaDB DDL. Single global flock at `/var/lib/jabali-backups/.restore.lock` covers both restore-account and restore-system.
+- **System restore is a special boot path, not a normal flow.** A system restore on a live panel is dangerous (it's overwriting itself). Two modes:
+  1. **Bare-metal recovery.** Operator does fresh OS install → `bash <(curl install.sh)` → `jabali system restore --from-snapshot=<id> --remote-url=<repo>` (CLI only, no UI for this — UI requires a running panel which is what restore is recovering). Worker stops jabali-panel + jabali-agent first to remove the moving target, restores DBs and configs, then starts services.
+  2. **Migration to a new host.** Same flow on the destination: install fresh, then restore. The original host stays untouched.
+  Live in-place system restore on a running panel is INTENTIONALLY NOT EXPOSED via the UI in v1 — too easy to footgun. CLI `--force` flag for operators who know what they're doing.
 - **Mailbox export depends on Stalwart up.** If `jabali-stalwart.service` is inactive, mailbox stage skips with `manifest.warnings += ["mailbox_export_skipped:stalwart_down"]`. Backup still completes; restore detects missing mailbox tag and skips that stage too.
 - **Hard 50 GB account cap (logical content size, NOT repo size).** Above that, refuse with a clear error pointing the operator at SFTP+rsync. Logical size measured via pre-pass `du -sb` so we don't ingest then cancel.
 - **No symlink escapes during restore.** `restic restore` doesn't honor absolute symlinks anyway, but the post-restore `tar` for download uses `--no-same-owner --no-same-permissions` and re-chowns post-extract.
@@ -449,7 +458,7 @@ type backupRestoreParams struct {
 
 ---
 
-### Step 9 (Wave C): user-shell "Download my backup"
+### Step 9 (Wave C, account-full only): user-shell "Download my backup"
 
 **Files:**
 - `panel-ui/src/shells/user/MyProfileBackupCard.tsx`
@@ -468,11 +477,118 @@ Self-backup uses identical worker. Difference: Auth claim must match `target_use
 - Cross-user attempt: `alice` GET /me/backups/<bob's job-id> → 404.
 - Concurrency: two rapid clicks → first 200, second 409 with running job_id.
 
+**Exit criteria (account-full half of milestone):**
+- Steps 1-9 merged to main.
+- Playwright suites green (admin + user account-full flows).
+- Runbook covers account-full flow.
+
+---
+
+### Step 10 (Wave D, system): system-backup serializer + agent commands
+
+**Files:**
+- `panel-agent/internal/commands/backup_system.go` — `system.backup`, `system.backup_status`, `system.backup_cancel`
+- `panel-agent/internal/commands/backup_internal_system_worker.go`
+- `internal/backup/system_manifest.go` — system-manifest schema (separate from account manifest)
+- `internal/backup/system_manifest_test.go` — golden-file
+
+**Agent command:** `system.backup`
+
+**Params:**
+```go
+type systemBackupParams struct {
+  JobID       string `json:"job_id"`
+  IncludeAccounts bool `json:"include_accounts"` // when true, fan out to per-user account_full backups under same job-id
+}
+```
+
+**Stages (every snapshot tagged `kind=system stage=<n> job-id=<JobID> system=<hostname> jabali`):**
+
+1. **`stage=panel_db`** — mariadb-dump of `jabali_panel`, `jabali_kratos`, `jabali_pdns` (each as a separate stdin-piped restic snapshot).
+2. **`stage=panel_config`** — `/etc/jabali-panel/` whole tree EXCEPT `restic-repo.password` (a system restore on a different host needs a NEW repo password — operator supplies via CLI). Includes pdns.env, kratos.yml, panel.env, stalwart.env, stalwart-mariadb.password, stalwart-admin.token, backup-worker.secret, restic-remote.env if remote backend in use.
+3. **`stage=service_config`** — `/etc/stalwart/`, `/etc/powerdns/`, `/etc/nginx/sites-available/`, `/etc/nginx/sites-enabled/` (links!), `/etc/php/*/fpm/pool.d/`, `/etc/systemd/system/jabali-*.service.d/`, `/etc/systemd/resolved.conf.d/jabali*.conf`, `/etc/cron.d/jabali-*`.
+4. **`stage=mail_state`** — `/var/lib/stalwart/` (RocksDB). Big stage; restic dedups well across daily snapshots.
+5. **`stage=tls`** — `/etc/letsencrypt/`.
+6. **`stage=security`** — `/etc/crowdsec/`, `/etc/ufw/user.rules`, `/etc/ufw/user6.rules`, `/etc/modsecurity/`.
+7. **`stage=os_users`** — filtered `/etc/passwd` `/etc/shadow` `/etc/group` `/etc/gshadow` containing only Linux users with uid ≥ 1000 OR primary group `jabali`/`jabali-mail`/`jabali-sockets`/`pdns`. Restore re-adds them via `useradd`/`usermod` rather than overwriting `/etc/passwd` (avoids breaking root + system daemons).
+8. **`stage=manifest`** — system_manifest.json with snapshot IDs of every stage above, plus a `linked_account_jobs: [...]` list of account_full job-ids if `IncludeAccounts=true`.
+
+If `IncludeAccounts=true`, the system worker enqueues a `backup.create` for every user (parallel up to N=4 to avoid hammering disks) and waits for completion before sealing the manifest. All these account snapshots share the parent system job-id via tag.
+
+**Verification:**
+- Round-trip on a small panel: backup → list snapshots tagged with the job-id → expect 8 stage snapshots + N user manifest snapshots. system_manifest.json validates against schema_version=1.
+- Stalwart down → mail_state stage skipped with warning, manifest still written.
+- 30-min backup with mid-run `systemctl restart jabali-agent` → completes (transient unit, identical pattern to account_full).
+
+---
+
+### Step 11 (Wave D, system): system-restore worker + CLI
+
+**Files:**
+- `panel-agent/internal/commands/backup_system_restore.go` — `system.restore`, `system.restore_status`
+- `panel-agent/internal/commands/backup_internal_system_restore_worker.go`
+- `panel-api/cmd/server/system_restore_cmd.go` — `jabali system restore` CLI subcommand
+
+**CLI shape (operator-facing):**
+
+```
+jabali system restore \
+  --remote-url=<restic repo URL or local path> \
+  --password-file=<path to restic password file> \
+  --snapshot=<system-manifest snapshot ID, or 'latest'> \
+  --include-accounts \
+  --force
+```
+
+`--force` required because restore overwrites a running panel; refuses without it.
+
+**Worker behaviour:**
+- Acquires global flock.
+- Stops `jabali-panel.service`, `jabali-agent.service` (this last one means the worker MUST be a systemd-run transient unit that survives the agent stop — verified during Step 10 design).
+- Restores in this strict order (pre-flight stage failures abort everything; post-stage failures record + continue):
+  1. **panel_db** → `mysqladmin drop` then `mysqladmin create` for each panel db, then load the dumps. Refuses to drop if any has unexpected content (pre-flight: `SHOW TABLES` count must match what the source recorded in manifest).
+  2. **panel_config** → restore over `/etc/jabali-panel/` (EXCEPT `restic-repo.password` which stays from the new install).
+  3. **service_config** → restore the four config trees, then `systemctl daemon-reload`.
+  4. **tls** → restore `/etc/letsencrypt/`.
+  5. **security** → restore CrowdSec + UFW + ModSec configs.
+  6. **mail_state** → stop `jabali-stalwart.service`, restore `/var/lib/stalwart/`, then start it (so restore writes happen with no Stalwart writers contending).
+  7. **os_users** → for each entry in the filtered passwd: `useradd -u <uid> -g <gid> -G <supp-groups> -d <home> -s <shell> -p '*' <username>` if absent; `usermod` to align if present. Crypt(3) hashes from shadow are written via `chpasswd -e`.
+  8. **accounts** (if `--include-accounts`) → loop over linked_account_jobs, run the existing account-restore worker for each, in series.
+- Starts `jabali-agent.service`, then `jabali-panel.service`.
+- Verifies via `curl` to panel /api/v1/health.
+
+**Verification:**
+- Two-VM test: backup VM-A → restore on VM-B (clean OS + bash <(install.sh)) → log in with original credentials → list domains/users — every entity from VM-A is present, byte-identical config files, same TLS certs.
+- `--force` missing on a live host → CLI refuses with explanation.
+- Restic password mismatch → fail-fast at flock acquisition stage.
+
+---
+
+### Step 12 (Wave D, system): admin UI for system backups
+
+**Files:**
+- `panel-ui/src/shells/admin/backups/SystemBackupsTab.tsx`
+- `panel-ui/src/shells/admin/backups/AdminBackupsPage.tsx` — add tab between existing tabs
+- `panel-api/internal/api/system_backups.go` — `POST /admin/system/backups`, `GET /admin/system/backups`, `GET /admin/system/backups/:id/status`, `POST /admin/system/backups/:id/cancel`
+
+**UI shape:** new "System Backups" tab on `/jabali-admin/backups`:
+- "Create system backup" button → opens drawer with `Include all account backups` checkbox (default on).
+- List of system snapshots: created_at, size, status, included accounts count, actions (Cancel if running / Delete).
+- **No "Restore" button** in v1 — system restore is CLI-only per the bare-metal model. UI shows a tooltip explaining "to restore a system backup, run `jabali system restore` on a fresh host".
+- Shows the most recent successful system snapshot prominently with a "How to restore" expandable that prints the exact CLI command with the snapshot ID pre-filled.
+
+**Verification:**
+- Playwright admin test: create system backup with include-accounts → wait completion → assert manifest snapshot listed → assert linked account snapshots count ≥ 1.
+- Cancel mid-run → unit dead, partial snapshots get retention-pruned.
+
+---
+
 **Exit criteria for the whole milestone:**
-- All 9 steps merged to main.
+- All 12 steps merged to main.
 - `make test` green.
-- Playwright suites green (admin + user).
-- Runbook at `plans/m30-backup-restore-runbook.md` covers: how to read a manifest, how to restore via CLI without UI, how to point the repo at S3/SFTP via Server Settings, retention timer troubleshooting.
+- Playwright suites green (admin account + user account + admin system).
+- Two-VM bare-metal recovery test passes (Step 11 verification).
+- Runbook at `plans/m30-backup-restore-runbook.md` covers: account flow, system flow, two-VM bare-metal recovery script, how to read manifests, how to point the repo at S3/SFTP, retention timer troubleshooting, restic password loss recovery (= you don't recover; document it).
 - ADR-0065 marked `accepted`.
 
 ---
@@ -513,12 +629,18 @@ Step 1  ──┐
           │                    ├──> Step 4 (dbs)  ──┤
           │                    └──> Step 5 (mail) ──┴──> Step 6 (assemble) ──┬──> Step 8 (REST + admin UI) ──> Step 9 (user UI)
           │                                                                  │
-          │                                                                  └──> Step 7 (restore)
+          │                                                                  ├──> Step 7 (restore)
+          │                                                                  │
+          │                                                                  ├──> Step 10 (system backup)
+          │                                                                  │         │
+          │                                                                  │         ├──> Step 11 (system restore CLI)
+          │                                                                  │         │
+          │                                                                  │         └──> Step 12 (system backup admin UI)
           │
           (ADR-0065 + restic install + retention timer land here)
 ```
 
-Step 8 depends on Step 6 (admin can backup) AND Step 7 (admin can restore). Both must land before Step 8 ships to main. Step 9 is the user-side carbon-copy of Step 8.
+Wave D (Steps 10-12) reuses Step 6's orchestrator + worker primitives + Step 2's restic wrapper. System backup with `IncludeAccounts=true` literally fans out to per-user account_full backups under one shared job-id, so the per-user code path is the same. System restore is its own worker because it has a unique pre-flight (stop services) + post-flight (restart + health-check) shape.
 
 ---
 
@@ -526,4 +648,4 @@ Step 8 depends on Step 6 (admin can backup) AND Step 7 (admin can restore). Both
 
 Step 1 + Step 2 are dispatchable today. Steps 3-5 are parallel-dispatchable AFTER Step 2 lands. Steps 6-9 are sequential and must wait for their predecessors.
 
-Total estimated commits: ~25-30 (restic wrapper + tests, three parallel serializers, two workers, REST handlers, two UI pages, runbook).
+Total estimated commits: ~35-40 (restic wrapper + tests, three parallel account serializers, two account workers, system worker, system restore worker + CLI, REST handlers, three UI tabs, runbook with two-VM bare-metal recovery script).

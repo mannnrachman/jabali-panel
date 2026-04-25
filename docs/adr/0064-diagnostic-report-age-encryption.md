@@ -1,125 +1,132 @@
-# ADR-0064: Diagnostic report — age-encrypted, redacted
+# ADR-0064: Diagnostic report — enclosed.cc upload + ntfy delivery
 
-**Status:** ACCEPTED (2026-04-25)
+**Status:** ACCEPTED (2026-04-25, amended same-day to switch from age to enclosed).
 **Related:** M29 admin updates + support page.
 
 ## Context
 
-Operators reporting bugs need to share host state (service status, journal
-tails, package versions, network listeners) but must not paste raw logs in
-public. We want a one-click flow on `/jabali-admin/support` that produces a
-ciphertext blob the operator copies into a GitHub issue. Only the Jabali
-team can decrypt it.
+Operators reporting a bug need to share host state (service status,
+journal tails, package versions, network listeners) without pasting raw
+logs in public. We want a one-click flow on `/jabali-admin/support`
+that produces a shareable encrypted note + a one-click "send to support
+team" notification.
 
 ## Decisions
 
-### 1. Encrypt with `age`, not PGP
+### 1. Upload to a Jabali-team-controlled `enclosed.cc` instance
 
-- Single self-contained Go dependency (`filippo.io/age` v1.3.1).
-- No GnuPG keyring, agent, or web-of-trust on the operator host.
-- Text-armoured output is paste-friendly.
-- The recipient is a static team-owned X25519 pubkey baked into the agent
-  binary at build time. No per-install keys, no enrollment dance.
+Self-hosted at `https://enclosed.jabali-panel.com`. enclosed is end-to-
+end encrypted: the server only sees ciphertext, the password lives in
+the URL fragment, and the server never knows whether decryption
+succeeds. This sidesteps the trust model trap of the original ADR-0064
+plan (single static `age` recipient that, if compromised, retroactively
+exposes every past report).
 
-PGP rejected: GnuPG ships with too many sharp edges (keyserver lookups,
-trust DB, agent-socket leakage) and CI tooling for it is opaque.
+URL form (from `packages/lib/src/notes/notes.models.ts`):
 
-### 2. Redact BEFORE encrypting
+```
+https://enclosed.jabali-panel.com/<noteId>#pw:<base64url(baseKey)>
+```
 
-This is the load-bearing decision and the reason this ADR exists.
+The `pw:` prefix tells the JS client this note is password-protected; a
+human-typed password (returned to the operator alongside the URL) joins
+the baseKey in PBKDF2 to derive the AES-GCM master key.
 
-Encryption-to-team is not a license to ship raw secrets. The ciphertext
-lives forever in a GitHub issue: anyone who scrapes the public timeline
-keeps a copy. If the team's private key ever leaks (laptop loss, password
-manager compromise, employee turnover with key extraction), every past
-diagnostic report retroactively becomes a credential dump — DSN
-passwords, Kratos session tokens, Bearer headers, all back-readable.
+### 2. Re-implement the enclosed crypto pipeline in Go
 
-`internal/diagnostic/redact.go` runs every collected file through a
-deny-list of regexes BEFORE the bytes ever reach `age.Encrypt`. Patterns
-covered:
+`panel-agent/internal/enclosed/client.go` implements the same protocol
+the JS lib uses, end to end:
 
-- `password=…`, `--password=…`
-- `mysql|postgres|redis://user:PASSWORD@…` (keep user, strip pass)
-- `Authorization: …`, `Bearer …`, `Cookie: …`
-- `ory_kratos_session=…`
-- `(?i)token|secret|api_key|authorization` key-value forms
+- `baseKey` = 32 random bytes
+- `password` = 20 random bytes, base64url-encoded
+- `masterKey` = `pbkdf2(baseKey || password_utf8, salt=baseKey, 100_000, sha256, 32)`
+- `iv` = 12 random bytes
+- `ciphertext` = `AES-256-GCM(masterKey, iv, plaintext)` (auth tag concatenated)
+- `payload` = `base64url(iv) + ":" + base64url(ciphertext_with_tag)`
+- POST `{payload, deleteAfterReading: false, encryptionAlgorithm: "aes-256-gcm", serializationFormat: "cbor-array", isPublic: true, ttlInSeconds: 7*86400}` to `/api/notes`
+- response `{noteId}` → URL constructed as above
 
-The wire response includes a `redaction_count` so the operator sees how
-many secrets were stripped. If the count is zero on a populated install,
-that's a signal a new secret format slipped past — file a follow-up to
-extend the deny-list.
+The `cbor-array` serialization wraps the diagnostic tar as:
 
-Tradeoff: the redactor is a deny-list, not an allow-list. Unknown secret
-formats can leak. The alternative (allow-list) loses too much debug
-signal — most lines of journalctl are not credentials, and over-stripping
-makes reports useless. Lean toward "log enough to debug + know the deny
-list catches the common cases" and extend on demand.
+```
+encode([content_string, [[metadata_map, asset_bytes]]])
+```
 
-### 3. Hard-coded recipient public key, recompile to rotate
+Single asset: the redacted tar with metadata `{type: "file", name:
+<host>-<ts>.tar, fileType: "application/x-tar", size: N}`.
 
-The pubkey lives in `internal/diagnostic/recipient.go` as a `const`.
-Rotation requires:
+Source reference: `github.com/CorentinTh/enclosed/packages/{lib,crypto}`.
 
-1. Generate new X25519 identity (`age-keygen`) off-host. Store the new
-   private key in the team's password manager alongside any prior keys
-   (we keep all old privates so old reports stay decryptable).
-2. Bump the `RecipientPublicKey` constant.
-3. Cut a release; operators get the new pubkey via `jabali update`.
+### 3. Redaction is still mandatory
 
-The hot-fix window between "key compromised" and "all installs updated"
-is roughly the time it takes ops to run `jabali update` everywhere. For
-managed hosts that's hours, not days.
+Even though enclosed encrypts end-to-end, the team's static
+team-shared private key (well, the password the operator generates +
+team retrieves via ntfy) lives in chat logs and password managers
+forever. Defense in depth: strip credentials BEFORE encryption.
 
-### 4. Off-host private key custody
+`internal/diagnostic/redact.go` runs the bundle through a regex
+deny-list (passwords, Bearer tokens, Cookie headers, ory_kratos_session,
+DSN passwords, api_key/secret/token forms). The wire response includes
+a `redaction_count` so the operator sees how many secrets were stripped.
 
-The matching private key NEVER appears on:
+### 4. ntfy delivery for "the team needs to look at this now"
 
-- Any managed Jabali host
-- The build machine that compiles `jabali-agent`
-- Any CI runner
+The agent additionally exposes `system.diagnostic_notify` which posts
+the URL + password to `https://ntfy.jabali-panel.com/jabali-admin-alerts`
+when the operator clicks "Send via ntfy" in the modal. ntfy then pushes
+to every team-member device subscribed to the topic.
 
-It lives only in the team's password manager. To decrypt a reported
-ciphertext: paste it into `age -d -i ~/.jabali-team-priv.txt > bundle.tar`
-on a team laptop, then `tar -xf bundle.tar`.
+Why two-step (mint URL, then explicit click to send): the operator
+decides whether the case warrants a page. Auto-pushing on mint would
+spam the team for every "let me try the diagnostic button" moment.
 
-### 5. Fixed service collection list
+### 5. 7-day TTL on enclosed notes
 
-`servicesToCollect` in `diagnostic.go` enumerates the systemd units we
-journal-tail. Hard-coded so a malicious caller can't request `journalctl
--u arbitrary.service` through this path. To add a service: edit the
-list, ship via release.
+`ttlInSeconds: 7 * 86400`. Long enough for the team to read at their
+leisure; short enough that stale ciphertext (with stale credentials in
+the redacted-but-still-might-leak-something log lines) rotates out
+without manual cleanup.
 
-### 6. tar-then-encrypt, not file-by-file
+### 6. Hard-coded URLs, env override for dev
 
-Bundle is a single in-memory tar archive of redacted text files;
-encrypted as one stream. Operator gets one ciphertext, decrypts to one
-tar, untars to view. Simpler than N ciphertexts; smaller than N envelopes.
+`defaultEnclosedBaseURL = "https://enclosed.jabali-panel.com"` and
+`defaultNtfyBaseURL = "https://ntfy.jabali-panel.com"` are baked into
+the agent binary. Override via `JABALI_ENCLOSED_URL` /
+`JABALI_NTFY_URL` / `JABALI_NTFY_TOPIC` for development. Production
+hosts get the bundled defaults.
 
 ## Consequences
 
-- **Pro:** simple operator UX (click button, copy output, paste in GitHub).
-- **Pro:** no host-side credentials for diagnostics path.
-- **Pro:** redaction count visible to the operator builds trust.
-- **Con:** deny-list redactor will miss novel secret formats. Mitigation:
-  log every redaction count; investigate when a known-noisy install
-  reports zero.
-- **Con:** rotating the recipient requires a release. Acceptable — key
-  compromise is the only forcing function and an emergency release is
-  hours.
+- **Pro:** no shared static private key for the agent to hold. Every
+  diagnostic gets a fresh password; compromise of one report doesn't
+  compromise the others.
+- **Pro:** standard protocol means we can read reports via the
+  enclosed web UI in any browser — no `age` CLI required.
+- **Pro:** ntfy integration makes the "operator clicked send"
+  →"on-call team member sees it" path one click.
+- **Con:** end-to-end-encryption depends on the operator faithfully
+  forwarding the password. If they paste only the URL, decryption
+  fails. Modal copy buttons + the ntfy push include both fields to
+  reduce friction.
+- **Con:** trust shifts to the enclosed deployment. Server compromise
+  could replace the JS client with a key-stealer; at that point any
+  user pasting the URL+password into the page would leak both. Mitigated
+  by hosting enclosed on a controlled VPS with auto-updates + read-only
+  rootfs (out of scope for this ADR; tracked separately).
 
 ## Verification
 
-- `go test ./panel-agent/internal/diagnostic/...` covers redactor
-  patterns + age encrypt/decrypt round-trip.
-- Agent boot-time validation: `age.ParseX25519Recipient` is called on
-  every `system.diagnostic_report` invocation; a malformed constant
-  surfaces as a 502 immediately rather than silently producing
-  un-decryptable bundles.
+- `go test ./panel-agent/internal/enclosed/...` covers AES-GCM round-trip,
+  PBKDF2 derivation matching the JS formula, and CBOR shape.
+- `go test ./panel-agent/internal/diagnostic/...` covers redaction
+  patterns + tar packing.
+- Live VM verification: agent uploads a real bundle to
+  `https://enclosed.jabali-panel.com`, returns a URL that opens cleanly
+  in a browser when password is entered.
 
-## Open
+## Superseded
 
-- The placeholder recipient `age13trnrev8dmdva5tsjnhnmdrlpnukl5d47rjerv72jem90ucqtyasdzwts0`
-  is a freshly-generated test key. Before public release the team must
-  generate a long-lived recipient, custody the private half, and swap
-  the constant. Tracked in plans/m29-admin-updates-support-runbook.md.
+The original ADR-0064 (age-encrypted bundle to a static team recipient)
+is superseded. Code that referenced `RecipientPublicKey` or
+`filippo.io/age` was removed in the same commit that introduced the
+enclosed client.

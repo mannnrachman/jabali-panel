@@ -1,12 +1,31 @@
-// DiagnosticReportModal — fires the diagnostic-report mutation, shows
-// the resulting age ciphertext in a copyable textarea, and tells the
-// operator how to use it.
-import { useEffect } from "react";
-import { Alert, Button, Modal, Space, Spin, Tag, Typography, message } from "antd";
+// DiagnosticReportModal — runs the two-step diagnostic flow.
+//
+// Step 1 (auto): POST /admin/support/diagnostic uploads the redacted +
+// encrypted bundle to enclosed.jabali-panel.com. Modal shows the link
+// + password with copy buttons + an instruction to send via ntfy.
+//
+// Step 2 (operator click): POST /admin/support/diagnostic/notify pushes
+// {hostname, link, password} to ntfy.jabali-panel.com/jabali-admin-alerts
+// — the team gets a mobile notification with everything they need.
+import { useEffect, useState } from "react";
+import {
+  Alert,
+  Button,
+  Input,
+  Modal,
+  Space,
+  Spin,
+  Tag,
+  Typography,
+  message,
+} from "antd";
 
-import { CopyOutlined } from "@icons";
+import { CopyOutlined, ExportOutlined, SendOutlined } from "@icons";
 
-import { useDiagnosticReport } from "../../../hooks/useSupport";
+import {
+  useDiagnosticNotify,
+  useDiagnosticReport,
+} from "../../../hooks/useSupport";
 
 interface Props {
   open: boolean;
@@ -14,26 +33,44 @@ interface Props {
 }
 
 export function DiagnosticReportModal({ open, onClose }: Props) {
-  const mutation = useDiagnosticReport();
+  const report = useDiagnosticReport();
+  const notify = useDiagnosticNotify();
+  const [note, setNote] = useState("");
 
-  // Fire on open. Reset on close so a second open redoes the call.
+  // Fire on first open. Reset state on close so a second open redoes
+  // everything from scratch.
   useEffect(() => {
-    if (open && !mutation.isPending && !mutation.data && !mutation.error) {
-      mutation.mutate();
+    if (open && !report.isPending && !report.data && !report.error) {
+      report.mutate();
     }
     if (!open) {
-      mutation.reset();
+      report.reset();
+      notify.reset();
+      setNote("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const onCopy = async () => {
-    if (!mutation.data) return;
+  const copy = async (label: string, value: string) => {
     try {
-      await navigator.clipboard.writeText(mutation.data.ciphertext_b64);
-      message.success("Copied to clipboard");
+      await navigator.clipboard.writeText(value);
+      message.success(`${label} copied`);
     } catch (e: unknown) {
       message.error(e instanceof Error ? e.message : "copy failed");
+    }
+  };
+
+  const onSendNtfy = async () => {
+    if (!report.data) return;
+    try {
+      await notify.mutateAsync({
+        url: report.data.url,
+        password: report.data.password,
+        note: note.trim() || undefined,
+      });
+      message.success("Team notified via ntfy");
+    } catch (e: unknown) {
+      message.error(e instanceof Error ? e.message : "notify failed");
     }
   };
 
@@ -42,75 +79,116 @@ export function DiagnosticReportModal({ open, onClose }: Props) {
       open={open}
       onCancel={onClose}
       title="Diagnostic Report"
-      width={760}
+      width={780}
       footer={[
         <Button key="close" onClick={onClose}>
           Close
         </Button>,
-        <Button
-          key="copy"
-          type="primary"
-          icon={<CopyOutlined />}
-          disabled={!mutation.data}
-          onClick={onCopy}
-        >
-          Copy to clipboard
-        </Button>,
       ]}
     >
-      {mutation.isPending ? (
+      {report.isPending ? (
         <div style={{ padding: 32, textAlign: "center" }}>
-          <Spin tip="Collecting host state, redacting secrets, encrypting…" />
+          <Spin tip="Collecting host state, redacting secrets, uploading…" />
         </div>
       ) : null}
 
-      {mutation.error ? (
+      {report.error ? (
         <Alert
           type="error"
           showIcon
           message="Failed to generate report"
-          description={(mutation.error as Error).message}
+          description={(report.error as Error).message}
         />
       ) : null}
 
-      {mutation.data ? (
-        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+      {report.data ? (
+        <Space direction="vertical" size={16} style={{ width: "100%" }}>
           <Alert
             type="success"
             showIcon
-            message="Report ready"
+            message="Encrypted bundle uploaded"
             description={
               <Space size={4} wrap>
-                <Tag>{mutation.data.file_count} files</Tag>
-                <Tag color="blue">{mutation.data.redaction_count} redactions</Tag>
-                <Tag color="default">{mutation.data.byte_count.toLocaleString()} bytes</Tag>
+                <Tag>{report.data.file_count} files</Tag>
+                <Tag color="blue">{report.data.redaction_count} redactions</Tag>
+                <Tag>{report.data.byte_count.toLocaleString()} bytes</Tag>
+                <Tag color="default">7-day TTL</Tag>
               </Space>
             }
           />
-          <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
-            Paste this ciphertext in your GitHub issue. It is age-encrypted to
-            the Jabali team's static recipient — only the team can decrypt.
-            Sensitive strings (passwords, session tokens, Bearer headers) were
-            redacted before encryption.
-          </Typography.Paragraph>
-          <Typography.Text
-            code
-            copyable={{ text: mutation.data.ciphertext_b64 }}
-            style={{
-              display: "block",
-              maxHeight: 320,
-              overflow: "auto",
-              padding: 12,
-              background: "#0a0a0a",
-              color: "#d4d4d4",
-              borderRadius: 6,
-              fontSize: 11,
-              wordBreak: "break-all",
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            {mutation.data.ciphertext_b64}
-          </Typography.Text>
+
+          <div>
+            <Typography.Text strong>Link</Typography.Text>
+            <Space.Compact style={{ display: "flex", marginTop: 4 }}>
+              <Input value={report.data.url} readOnly />
+              <Button
+                icon={<CopyOutlined />}
+                onClick={() => copy("Link", report.data!.url)}
+              >
+                Copy
+              </Button>
+              <Button
+                icon={<ExportOutlined />}
+                href={report.data.url}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Open
+              </Button>
+            </Space.Compact>
+          </div>
+
+          <div>
+            <Typography.Text strong>Password</Typography.Text>
+            <Space.Compact style={{ display: "flex", marginTop: 4 }}>
+              <Input value={report.data.password} readOnly />
+              <Button
+                icon={<CopyOutlined />}
+                onClick={() => copy("Password", report.data!.password)}
+              >
+                Copy
+              </Button>
+            </Space.Compact>
+          </div>
+
+          <Alert
+            type="info"
+            showIcon
+            message="Send the link to the Jabali team"
+            description={
+              <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                <Typography.Paragraph style={{ margin: 0 }}>
+                  Click <b>Send via ntfy</b> below to push this link + password
+                  to the team's alert channel{" "}
+                  <Typography.Text code>{report.data.ntfy_topic}</Typography.Text>.
+                  They'll see it on their mobile clients within seconds.
+                </Typography.Paragraph>
+                <Input.TextArea
+                  rows={2}
+                  placeholder="Optional context (what's broken, what you've tried)"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  disabled={notify.isPending || notify.isSuccess}
+                />
+                <Space>
+                  <Button
+                    type="primary"
+                    icon={<SendOutlined />}
+                    loading={notify.isPending}
+                    disabled={notify.isSuccess}
+                    onClick={onSendNtfy}
+                  >
+                    {notify.isSuccess ? "Sent ✓" : "Send via ntfy"}
+                  </Button>
+                  {notify.isSuccess ? (
+                    <Typography.Text type="success">
+                      Team notified.
+                    </Typography.Text>
+                  ) : null}
+                </Space>
+              </Space>
+            }
+          />
         </Space>
       ) : null}
     </Modal>

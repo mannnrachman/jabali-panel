@@ -1,30 +1,29 @@
+// Package diagnostic collects host status, redacts secrets, and packs the
+// result as a tar archive. Encryption + delivery live in the `enclosed`
+// package — this file only knows how to gather + redact + tar.
 package diagnostic
 
 import (
 	"archive/tar"
 	"bytes"
 	"context"
-	"encoding/base64"
 	"fmt"
-	"io"
 	"os/exec"
 	"strings"
 	"time"
-
-	"filippo.io/age"
 )
 
-// Report is the wire-shape returned by system.diagnostic_report.
-type Report struct {
-	CiphertextB64   string `json:"ciphertext_b64"`
-	ByteCount       int    `json:"byte_count"`
-	GeneratedAt     string `json:"generated_at"`
-	RedactionCount  int    `json:"redaction_count"`
-	FileCount       int    `json:"file_count"`
+// Bundle is the redacted, ready-to-encrypt blob.
+type Bundle struct {
+	TarBytes       []byte
+	FileCount      int
+	RedactionCount int
+	GeneratedAt    time.Time
 }
 
 // servicesToCollect is the fixed list of systemd units we journal-tail
-// for every report. Adding a service here = automatic next-run pickup.
+// for every report. Hard-coded so a malicious request can't widen the
+// surface.
 var servicesToCollect = []string{
 	"jabali-panel.service",
 	"jabali-agent.service",
@@ -43,10 +42,40 @@ type collectedFile struct {
 	Body []byte
 }
 
-// Collect runs every host-info command and returns a list of named blobs.
-// Errors are recorded inline (one error file per failure) instead of
-// aborting — a failed `iptables -L` shouldn't kill the whole report.
-func Collect(ctx context.Context) []collectedFile {
+// Build runs the collector + redactor + tar packer.
+func Build(ctx context.Context) (Bundle, error) {
+	files := collect(ctx)
+	totalRedactions := 0
+	var tarBuf bytes.Buffer
+	tw := tar.NewWriter(&tarBuf)
+	for _, f := range files {
+		body, n := Redact(f.Body)
+		totalRedactions += n
+		hdr := &tar.Header{
+			Name:    f.Name,
+			Size:    int64(len(body)),
+			Mode:    0o644,
+			ModTime: time.Now().UTC(),
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return Bundle{}, fmt.Errorf("tar header %s: %w", f.Name, err)
+		}
+		if _, err := tw.Write(body); err != nil {
+			return Bundle{}, fmt.Errorf("tar body %s: %w", f.Name, err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return Bundle{}, fmt.Errorf("tar close: %w", err)
+	}
+	return Bundle{
+		TarBytes:       tarBuf.Bytes(),
+		FileCount:      len(files),
+		RedactionCount: totalRedactions,
+		GeneratedAt:    time.Now().UTC(),
+	}, nil
+}
+
+func collect(ctx context.Context) []collectedFile {
 	files := []collectedFile{
 		{"00-uname.txt", runOrErr(ctx, "uname", "-a")},
 		{"01-os-release.txt", catFileOrErr("/etc/os-release")},
@@ -94,58 +123,4 @@ func catFileOrErr(path string) []byte {
 		return []byte(fmt.Sprintf("ERROR reading %s: %v", path, err))
 	}
 	return out
-}
-
-// Encrypt redacts every collected file, packs the redacted set as a tar
-// archive in memory, then encrypts the whole thing to the given age
-// recipient. Returns the wire-ready Report. Caller controls the recipient
-// so tests can swap in a known keypair.
-func Encrypt(files []collectedFile, recipient string) (Report, error) {
-	r, err := age.ParseX25519Recipient(recipient)
-	if err != nil {
-		return Report{}, fmt.Errorf("parse recipient: %w", err)
-	}
-
-	totalRedactions := 0
-	var tarBuf bytes.Buffer
-	tw := tar.NewWriter(&tarBuf)
-	for _, f := range files {
-		body, n := Redact(f.Body)
-		totalRedactions += n
-		hdr := &tar.Header{
-			Name:    f.Name,
-			Size:    int64(len(body)),
-			Mode:    0o644,
-			ModTime: time.Now().UTC(),
-		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			return Report{}, fmt.Errorf("tar header %s: %w", f.Name, err)
-		}
-		if _, err := tw.Write(body); err != nil {
-			return Report{}, fmt.Errorf("tar body %s: %w", f.Name, err)
-		}
-	}
-	if err := tw.Close(); err != nil {
-		return Report{}, fmt.Errorf("tar close: %w", err)
-	}
-
-	var ciph bytes.Buffer
-	w, err := age.Encrypt(&ciph, r)
-	if err != nil {
-		return Report{}, fmt.Errorf("age encrypt init: %w", err)
-	}
-	if _, err := io.Copy(w, &tarBuf); err != nil {
-		return Report{}, fmt.Errorf("age write: %w", err)
-	}
-	if err := w.Close(); err != nil {
-		return Report{}, fmt.Errorf("age close: %w", err)
-	}
-
-	return Report{
-		CiphertextB64:  base64.StdEncoding.EncodeToString(ciph.Bytes()),
-		ByteCount:      ciph.Len(),
-		GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
-		RedactionCount: totalRedactions,
-		FileCount:      len(files),
-	}, nil
 }

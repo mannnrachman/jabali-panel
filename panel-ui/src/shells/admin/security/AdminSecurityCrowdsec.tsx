@@ -30,6 +30,7 @@ import {
   Table,
   Tabs,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
@@ -322,43 +323,7 @@ export const AdminSecurityCrowdsec = () => {
     </Card>
   );
 
-  const installedHub = (hub.data ?? []).filter((it) => it.installed);
-  const hubPanel = (
-    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-      <RecommendedHubCard hub={hub} />
-      <Card
-        size="small"
-        title="Installed hub items"
-        extra={
-          <Typography.Link
-            href="https://hub.crowdsec.net/"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Browse full Hub
-          </Typography.Link>
-        }
-      >
-        <Table
-          rowKey={(r: { type: string; name: string }) => `${r.type}:${r.name}`}
-          dataSource={installedHub}
-          loading={hub.isLoading}
-          pagination={installedHub.length > 20 ? { pageSize: 20, showSizeChanger: false } : false}
-          locale={{ emptyText: <Empty description="No hub items installed yet" /> }}
-          scroll={{ x: "max-content" }}
-        >
-          <Table.Column dataIndex="name" title="Name" key="name" />
-          <Table.Column dataIndex="type" title="Type" key="type" />
-          <Table.Column
-            dataIndex="enabled"
-            title="Enabled"
-            key="enabled"
-            render={(v: boolean) => (v ? <Tag color="green">yes</Tag> : <Tag>no</Tag>)}
-          />
-        </Table>
-      </Card>
-    </Space>
-  );
+  const hubPanel = <RecommendedHubCard hub={hub} />;
 
   return (
     <>
@@ -367,6 +332,7 @@ export const AdminSecurityCrowdsec = () => {
         onChange={onSubChange}
         items={[
           { key: "overview", label: "Overview", children: overviewPanel },
+          { key: "hub", label: "Hub", children: hubPanel },
           { key: "decisions", label: "Active decisions", children: decisionsPanel },
           { key: "allowlist", label: "Allowlist", children: <AllowlistsCard /> },
           { key: "alerts", label: "Alerts", children: <AlertsCard /> },
@@ -375,7 +341,6 @@ export const AdminSecurityCrowdsec = () => {
           { key: "profiles", label: "Per-scenario", children: <ProfilesCard /> },
           { key: "appsec", label: "AppSec geoblock", children: <AppSecGeoblockCard /> },
           { key: "bouncers", label: "Bouncers", children: bouncersPanel },
-          { key: "hub", label: "Hub", children: hubPanel },
         ]}
       />
 
@@ -1297,25 +1262,22 @@ const ProfilesCard = () => {
       title="Per-scenario remediation override"
       loading={profiles.isLoading}
       extra={
-        <Space>
-          {dirty && (
-            <Button onClick={() => setDraft({})}>
-              Reset
-            </Button>
-          )}
-          <Popconfirm
-            title="Apply overrides?"
-            description="Rewrites /etc/crowdsec/profiles.yaml (marker-bounded) and reloads crowdsec."
-            okText="Apply"
-            cancelText="Cancel"
-            onConfirm={onApply}
-            disabled={!dirty}
-          >
-            <Button type="primary" disabled={!dirty} loading={update.isPending}>
-              Apply
-            </Button>
-          </Popconfirm>
-        </Space>
+        dirty && (
+          <Space>
+            <Button onClick={() => setDraft({})}>Reset</Button>
+            <Popconfirm
+              title="Apply overrides?"
+              description="Rewrites /etc/crowdsec/profiles.yaml (marker-bounded) and reloads crowdsec."
+              okText="Apply"
+              cancelText="Cancel"
+              onConfirm={onApply}
+            >
+              <Button type="primary" loading={update.isPending}>
+                Apply
+              </Button>
+            </Popconfirm>
+          </Space>
+        )
       }
     >
       {!captchaEnabled && (
@@ -1331,15 +1293,26 @@ const ProfilesCard = () => {
         dataSource={rows}
         pagination={{ pageSize: 20, showSizeChanger: false }}
         locale={{ emptyText: <Empty description="No scenarios installed" /> }}
-        scroll={{ x: "max-content" }}
+        tableLayout="fixed"
       >
         <Table.Column<ProfileRow>
           dataIndex="name"
           title="Scenario"
           key="name"
+          width={320}
           render={(v: string) => <Typography.Text code>{v}</Typography.Text>}
         />
-        <Table.Column<ProfileRow> dataIndex="description" title="Description" key="description" />
+        <Table.Column<ProfileRow>
+          dataIndex="description"
+          title="Description"
+          key="description"
+          ellipsis={{ showTitle: false }}
+          render={(v: string) => (
+            <Tooltip title={v} placement="topLeft">
+              <span>{v}</span>
+            </Tooltip>
+          )}
+        />
         <Table.Column<ProfileRow>
           title="Override"
           key="override"
@@ -1550,7 +1523,12 @@ const RecommendedHubCard = ({
           title="Description"
           dataIndex="description"
           key="description"
-          render={(v: string) => <Typography.Text type="secondary">{v}</Typography.Text>}
+          ellipsis={{ showTitle: false }}
+          render={(v: string) => (
+            <Tooltip title={v} placement="topLeft">
+              <Typography.Text type="secondary">{v}</Typography.Text>
+            </Tooltip>
+          )}
         />
         <Table.Column<RecommendedItem>
           title=""

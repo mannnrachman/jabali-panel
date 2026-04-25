@@ -4065,6 +4065,16 @@ install_crowdsec_appsec() {
       cscli collections install crowdsecurity/appsec-generic-rules --force
   fi
 
+  # WordPress collection — wp-login brute force, xmlrpc abuse,
+  # plugin/theme CVE exploits. Installed by default since jabali ships
+  # WordPress as the primary 1-click app (M10) and ~80% of tenant sites
+  # are WP-based. Operators can remove via the Recommended hub picker
+  # if they don't run WP.
+  if ! cscli collections list 2>/dev/null | grep -q 'crowdsecurity/wordpress'; then
+    _spin "cscli collections install wordpress" \
+      cscli collections install crowdsecurity/wordpress --force
+  fi
+
   # 3. Jabali AppSec config — our own appsec-CONFIG file. Loads
   #    base-config + vpatch-* + generic-* plus carries the geoblock
   #    pre_eval hook. The agent rewrites this file on every admin Apply

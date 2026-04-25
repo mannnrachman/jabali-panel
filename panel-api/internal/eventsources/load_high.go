@@ -27,6 +27,9 @@ const (
 // loadHighRatio × runtime.NumCPU. 30-minute cooldown so a long
 // sustained spike doesn't flood the inbox.
 func runLoadHigh(ctx context.Context, d Deps) {
+	// Boot pass — same rationale as the other sources: a panel-api
+	// restart shouldn't blind us to a host that's already overloaded.
+	loadHighPass(ctx, d)
 	tick := time.NewTicker(loadHighTick)
 	defer tick.Stop()
 	for {

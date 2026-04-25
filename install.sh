@@ -999,35 +999,71 @@ configure_disk_quota() {
     }
     _ok "xfs user quota enabled on $home_mount"
   else
-    # ext2/ext3/ext4: external aquota.user / aquota.group files. The
-    # kernel's tune2fs -O quota path (hidden inodes) requires the FS to
-    # be unmounted, which we can't do for the root filesystem on a live
-    # host — kernel returns "The quota feature may only be changed when
-    # the filesystem is unmounted". External-file path works on a
-    # mounted FS via quotacheck -m (scans without remount-readonly).
+    # ext2/ext3/ext4.
     #
-    # The aquota.user file lands at $home_mount/aquota.user (e.g. /
-    # for /home==/), which is visible to root via `ls /` but is one
-    # file; cPanel/DA do the same.
-    local quota_file="$home_mount/aquota.user"
-    [[ "$home_mount" == "/" ]] && quota_file="/aquota.user"
-    if [[ ! -f "$quota_file" ]]; then
-      _log "building $quota_file via quotacheck -mcug (may take time on large filesystems)"
-      # -m: don't try remount r/o (we're on /, can't unmount)
-      # -c: create new files
-      # -u: user quotas
-      # -g: group quotas
-      # -F vfsv1: pin format so kernel accepts it without ambiguity
-      if ! quotacheck -mcugF vfsv1 "$home_mount"; then
-        _warn "quotacheck failed on $home_mount; quota plumbing left inactive (cgroups still enforce cpu/mem/io/tasks)"
+    # Two kernel paths:
+    #
+    # 1. Hidden-inode quota (modern, default on Debian 13 mkfs.ext4 since
+    #    enable_quota=true is the /etc/mke2fs.conf default). The `quota`
+    #    feature is baked into the superblock at format time, quota
+    #    inodes live at fixed reserved inode numbers, and the kernel
+    #    keeps accounting inline. No aquota.user file. No quotacheck
+    #    scan. `quotaon` simply flips enforcement on — works live on a
+    #    busy root filesystem.
+    #
+    # 2. External-file quota (legacy, pre-Debian-12 or custom mkfs). Uses
+    #    aquota.user / aquota.group at the mount root, rebuilt by
+    #    quotacheck. Fragile on a busy `/` because quotacheck wants to
+    #    scan every inode without concurrent writes; kernel refuses on
+    #    live root FS with certain version combos.
+    #
+    # Detection: tune2fs -l on the backing block device. If the
+    # Filesystem features list contains `quota`, use path 1; else
+    # fall back to path 2 (works on dedicated /home partitions).
+    local block_dev
+    block_dev="$(findmnt -no SOURCE "$home_mount" 2>/dev/null || true)"
+    local has_sb_quota=0
+    if [[ -n "$block_dev" ]] \
+        && tune2fs -l "$block_dev" 2>/dev/null \
+           | awk -F: '/^Filesystem features:/{print $2}' \
+           | tr ' ' '\n' | grep -qw 'quota'; then
+      has_sb_quota=1
+    fi
+
+    if (( has_sb_quota == 1 )); then
+      # Hidden-inode path. quotaon uses the SB feature directly — no
+      # aquota.user required. Works on a live `/` because the kernel
+      # has been tracking usage since mount time; quotaon just flips
+      # the enforce bit.
+      if ! quotaon -v "$home_mount" >/dev/null 2>&1; then
+        # quotaon returns non-zero when quota is already on some versions —
+        # probe to tell "already on" apart from "real failure".
+        if quotaon -pu "$home_mount" 2>/dev/null | grep -qi 'is on'; then
+          :
+        else
+          _warn "quotaon $home_mount failed despite SB quota feature; manual intervention required (try 'quotaon -vu $home_mount')"
+          return 0
+        fi
+      fi
+      _ok "POSIX user quota active on $home_mount (hidden inodes)"
+    else
+      # Legacy external-file path. Fragile on busy `/`; reliable on
+      # dedicated /home partitions.
+      local quota_file="$home_mount/aquota.user"
+      [[ "$home_mount" == "/" ]] && quota_file="/aquota.user"
+      if [[ ! -f "$quota_file" ]]; then
+        _log "building $quota_file via quotacheck -mcug (may take time on large filesystems)"
+        if ! quotacheck -mcugF vfsv1 "$home_mount"; then
+          _warn "quotacheck failed on $home_mount; quota plumbing left inactive (cgroups still enforce cpu/mem/io/tasks)"
+          return 0
+        fi
+      fi
+      if ! quotaon -v "$home_mount" >/dev/null 2>&1; then
+        _warn "quotaon $home_mount failed; quota plumbing left inactive"
         return 0
       fi
+      _ok "POSIX user quota active on $home_mount (external aquota.user)"
     fi
-    if ! quotaon -v "$home_mount" >/dev/null 2>&1; then
-      _warn "quotaon $home_mount failed; quota plumbing left inactive"
-      return 0
-    fi
-    _ok "POSIX user quota active on $home_mount"
   fi
 }
 

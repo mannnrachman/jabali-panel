@@ -321,26 +321,33 @@ export const AdminSecurityCrowdsec = () => {
     </Card>
   );
 
+  const installedHub = (hub.data ?? []).filter((it) => it.installed);
   const hubPanel = (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <RecommendedHubCard hub={hub} />
-      <Card size="small" title="All hub items">
+      <Card
+        size="small"
+        title="Installed hub items"
+        extra={
+          <Typography.Link
+            href="https://hub.crowdsec.net/"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Browse full Hub
+          </Typography.Link>
+        }
+      >
         <Table
           rowKey={(r: { type: string; name: string }) => `${r.type}:${r.name}`}
-          dataSource={hub.data ?? []}
+          dataSource={installedHub}
           loading={hub.isLoading}
-          pagination={{ pageSize: 20, showSizeChanger: false }}
-          locale={{ emptyText: <Empty description="No hub items" /> }}
+          pagination={installedHub.length > 20 ? { pageSize: 20, showSizeChanger: false } : false}
+          locale={{ emptyText: <Empty description="No hub items installed yet" /> }}
           scroll={{ x: "max-content" }}
         >
           <Table.Column dataIndex="name" title="Name" key="name" />
           <Table.Column dataIndex="type" title="Type" key="type" />
-          <Table.Column
-            dataIndex="installed"
-            title="Installed"
-            key="installed"
-            render={(v: boolean) => (v ? <Tag color="blue">yes</Tag> : <Tag>no</Tag>)}
-          />
           <Table.Column
             dataIndex="enabled"
             title="Enabled"

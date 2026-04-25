@@ -124,8 +124,13 @@ type journalEntry struct {
 
 // processSSHJournalEntry decodes a single journal record and fires a
 // ssh.login envelope for matching Accepted lines.
+//
+// Modern OpenSSH on Debian 13+ logs auth events from the per-session
+// worker (`_COMM=sshd-session`) rather than the listener; older Debians
+// still use `sshd`. Accept both, plus any sshd-* prefix to cover the
+// privsep variants without listing every name explicitly.
 func processSSHJournalEntry(ctx context.Context, d Deps, entry journalEntry) {
-	if entry.Comm != "sshd" {
+	if entry.Comm != "sshd" && !strings.HasPrefix(entry.Comm, "sshd-") {
 		return
 	}
 	if !strings.HasPrefix(entry.Message, "Accepted ") {

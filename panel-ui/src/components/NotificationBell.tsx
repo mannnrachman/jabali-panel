@@ -146,15 +146,15 @@ export function NotificationBell() {
     }
     if (webpush.subscribed) {
       return (
-        <Button size="small" onClick={() => void webpush.unsubscribe()} loading={webpush.loading}>
+        <Button type="text" size="small" onClick={() => void webpush.unsubscribe()} loading={webpush.loading}>
           Disable browser push
         </Button>
       );
     }
     return (
       <Button
+        type="text"
         size="small"
-        type="primary"
         onClick={() => void webpush.subscribe()}
         loading={webpush.loading}
       >
@@ -245,6 +245,7 @@ export function NotificationBell() {
             </Space>
             <Space size={token.marginXS}>
               <Button
+                type="text"
                 size="small"
                 icon={<CheckOutlined />}
                 onClick={markAllRead}
@@ -260,6 +261,7 @@ export function NotificationBell() {
                 okButtonProps={{ danger: true }}
               >
                 <Button
+                  type="text"
                   size="small"
                   danger
                   icon={<DeleteOutlined />}

@@ -40,6 +40,9 @@ func systemDiagnosticNotifyHandler(ctx context.Context, raw json.RawMessage) (an
 	}
 
 	client := ntfy.NewClient(ntfyBaseURL())
+	if token := os.Getenv("JABALI_NTFY_TOKEN"); token != "" {
+		client = client.WithToken(token)
+	}
 	// Priority 4 = "high" on ntfy clients — pops a notification the
 	// team will see promptly. Title surfaces in the push preview.
 	if err := client.Publish(ctx, ntfyTopic(),

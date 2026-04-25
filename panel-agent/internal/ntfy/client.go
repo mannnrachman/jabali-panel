@@ -18,6 +18,7 @@ import (
 
 type Client struct {
 	BaseURL    string
+	Token      string // optional. When set, sent as `Authorization: Bearer <token>`.
 	HTTPClient *http.Client
 }
 
@@ -30,6 +31,15 @@ func NewClient(baseURL string) *Client {
 	}
 }
 
+// WithToken returns a copy of c with Bearer auth set. ntfy access-control
+// commonly gates publishing on a token, so without one a 403 is the typical
+// response.
+func (c *Client) WithToken(token string) *Client {
+	cp := *c
+	cp.Token = token
+	return &cp
+}
+
 // Publish posts the body to <baseURL>/<topic>. title and priority are
 // optional; pass empty / 0 to skip. Returns nil on 200/202.
 func (c *Client) Publish(ctx context.Context, topic, title, body string, priority int) error {
@@ -39,6 +49,9 @@ func (c *Client) Publish(ctx context.Context, topic, title, body string, priorit
 		return fmt.Errorf("new request: %w", err)
 	}
 	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
 	if title != "" {
 		req.Header.Set("Title", title)
 	}

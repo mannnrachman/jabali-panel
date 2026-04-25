@@ -14,8 +14,9 @@
 
 import { useState, useEffect, useMemo } from "react";
 import {
-  Modal,
+  Drawer,
   Form,
+  Grid,
   Input,
   Button,
   Select,
@@ -329,6 +330,8 @@ export const InstallApplicationModal = ({
   const [loadingApps, setLoadingApps] = useState(false);
   const [result, setResult] = useState<CreatedResult | null>(null);
   const qc = useQueryClient();
+  const screens = Grid.useBreakpoint();
+  const isDesktop = screens.lg !== false;
 
   const selectedAppType = Form.useWatch("app_type", form) as string | undefined;
   const selectedDomainId = Form.useWatch("domain_id", form);
@@ -542,35 +545,35 @@ export const InstallApplicationModal = ({
   const availableDomains = domains;
 
   return (
-    <Modal
+    <Drawer
       title="Install application"
       open={open}
-      onCancel={handleClose}
+      onClose={handleClose}
       maskClosable={!submitting && !result}
-      width={560}
-      footer={
-        result
-          ? [
-              <Button key="done" type="primary" onClick={handleClose}>
-                Done
-              </Button>,
-            ]
-          : [
-              <Button key="cancel" onClick={handleClose} disabled={submitting}>
-                Cancel
-              </Button>,
-              <Button
-                key="submit"
-                type="primary"
-                loading={submitting}
-                onClick={handleSubmit}
-                disabled={availableDomains.length === 0 || apps.length === 0}
-              >
-                Install {selectedApp?.display_name ?? "application"}
-              </Button>,
-            ]
-      }
+      width={isDesktop ? 560 : undefined}
+      placement="right"
       destroyOnClose
+      extra={
+        result ? (
+          <Button type="primary" onClick={handleClose}>
+            Done
+          </Button>
+        ) : (
+          <Space>
+            <Button onClick={handleClose} disabled={submitting}>
+              Cancel
+            </Button>
+            <Button
+              type="primary"
+              loading={submitting}
+              onClick={handleSubmit}
+              disabled={availableDomains.length === 0 || apps.length === 0}
+            >
+              Install {selectedApp?.display_name ?? "application"}
+            </Button>
+          </Space>
+        )
+      }
     >
       {!result && (
         <>
@@ -742,6 +745,6 @@ export const InstallApplicationModal = ({
           </div>
         </Space>
       )}
-    </Modal>
+    </Drawer>
   );
 };

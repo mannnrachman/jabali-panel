@@ -3,6 +3,8 @@ import {
   Alert,
   Button,
   Card,
+  Drawer,
+  Grid,
   Space,
   Table,
   Typography,
@@ -58,6 +60,8 @@ export const UserSSHKeysPage = () => {
   const [generatedName, setGeneratedName] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const screens = Grid.useBreakpoint();
+  const isDesktop = screens.lg !== false;
 
   // Fetch SSH keys using react-query
   const { data: listResponse = { items: [] }, isLoading, refetch } = useQuery({
@@ -341,14 +345,16 @@ export const UserSSHKeysPage = () => {
         />
       </Card>
 
-      <Modal
+      <Drawer
         title="Add SSH Key"
         open={modalOpen}
-        onCancel={() => {
+        onClose={() => {
           setModalOpen(false);
           form.resetFields();
         }}
-        footer={null}
+        width={isDesktop ? 520 : undefined}
+        placement="right"
+        destroyOnClose
       >
         <Form
           form={form}
@@ -386,25 +392,37 @@ export const UserSSHKeysPage = () => {
           </Form.Item>
 
           <Form.Item>
-            <Button type="primary" htmlType="submit" loading={loading} block>
-              Add Key
-            </Button>
+            <Space>
+              <Button type="primary" htmlType="submit" loading={loading}>
+                Add Key
+              </Button>
+              <Button
+                onClick={() => {
+                  setModalOpen(false);
+                  form.resetFields();
+                }}
+              >
+                Cancel
+              </Button>
+            </Space>
           </Form.Item>
         </Form>
-      </Modal>
+      </Drawer>
 
       {/* Generate Key — collects a name + optional comment, then creates
           an ed25519 keypair entirely in the browser via micro-key-producer
           and POSTs only the public half. The private key is shown once
           in the result modal below. */}
-      <Modal
+      <Drawer
         title="Generate SSH Key"
         open={genOpen}
-        onCancel={() => {
+        onClose={() => {
           setGenOpen(false);
           genForm.resetFields();
         }}
-        footer={null}
+        width={isDesktop ? 520 : undefined}
+        placement="right"
+        destroyOnClose
       >
         <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
           Generates an Ed25519 keypair in your browser. The private key
@@ -430,18 +448,27 @@ export const UserSSHKeysPage = () => {
             <Input placeholder="user@host" />
           </Form.Item>
           <Form.Item>
-            <Button
-              type="primary"
-              icon={<KeyOutlined />}
-              htmlType="submit"
-              loading={generating}
-              block
-            >
-              Generate Keypair
-            </Button>
+            <Space>
+              <Button
+                type="primary"
+                icon={<KeyOutlined />}
+                htmlType="submit"
+                loading={generating}
+              >
+                Generate Keypair
+              </Button>
+              <Button
+                onClick={() => {
+                  setGenOpen(false);
+                  genForm.resetFields();
+                }}
+              >
+                Cancel
+              </Button>
+            </Space>
           </Form.Item>
         </Form>
-      </Modal>
+      </Drawer>
 
       {/* Result modal — shown immediately after a successful generate.
           Shows the private key once with copy + download. Dismissing

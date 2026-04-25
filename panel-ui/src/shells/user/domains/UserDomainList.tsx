@@ -27,6 +27,7 @@ import { useTableURL } from "../../../hooks/useTableURL";
 import { DomainSettingsButton } from "../../DomainSettingsButton";
 import { DomainRedirectsButton } from "../../DomainRedirectsButton";
 import { DomainIndexButton } from "../../DomainIndexButton";
+import { UserDomainDrawer } from "./UserDomainDrawer";
 
 const stripHomePrefix = (path: string): string => {
   if (path.startsWith("/home/")) {
@@ -88,6 +89,7 @@ export const UserDomainList = () => {
   const qc = useQueryClient();
   const [activeModal, setActiveModal] = useState<ActiveModal>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const query = useTableURL<Domain>({
     resource: "domains",
     defaultSort: "name",
@@ -133,7 +135,7 @@ export const UserDomainList = () => {
         <Button
           type="primary"
           icon={<PlusSquareOutlined />}
-          onClick={() => navigate("/jabali-panel/domains/create")}
+          onClick={() => setDrawerOpen(true)}
         >
           Add Domain
         </Button>
@@ -297,6 +299,7 @@ export const UserDomainList = () => {
           />
         </SearchableTableStringQ>
       </Card>
+      <UserDomainDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
     </div>
   );
 };

@@ -53,10 +53,7 @@ import { MyProfile } from "./shells/user/MyProfile";
 import { UserDashboard } from "./shells/user/UserDashboard";
 import { FileManagerPage } from "./shells/user/files/FileManagerPage";
 import { UserDomainList } from "./shells/user/domains/UserDomainList";
-import { UserDomainCreate } from "./shells/user/domains/UserDomainCreate";
 import { UserDatabasesPage } from "./shells/user/databases/UserDatabasesPage";
-import { UserDatabaseCreate } from "./shells/user/databases/UserDatabaseCreate";
-import { UserDatabaseUserCreate } from "./shells/user/database-users/UserDatabaseUserCreate";
 import { DNSRecordsPage } from "./shells/dns/DNSRecordsPage";
 import { DNSZonesOverviewPage } from "./shells/admin/dns/DNSZonesOverviewPage";
 import { UserDNSZonesOverviewPage } from "./shells/user/dns/UserDNSZonesOverviewPage";
@@ -185,15 +182,15 @@ const ThemedApp = () => {
             <Route path="profile" element={<MyProfile />} />
             <Route path="domains">
               <Route index element={<UserDomainList />} />
-              <Route path="create" element={<UserDomainCreate />} />
+              <Route path="create" element={<Navigate to="../domains" replace />} />
               <Route path=":id/dns" element={<DNSRecordsPage />} />
             </Route>
             <Route path="databases">
               <Route index element={<UserDatabasesPage />} />
-              <Route path="create" element={<UserDatabaseCreate />} />
+              <Route path="create" element={<Navigate to="../databases" replace />} />
             </Route>
             <Route path="database-users">
-              <Route path="create" element={<UserDatabaseUserCreate />} />
+              <Route path="create" element={<Navigate to="../databases" replace />} />
             </Route>
             <Route path="dns" element={<UserDNSZonesOverviewPage />} />
             <Route path="ssl" element={<UserSSLManagerPage />} />

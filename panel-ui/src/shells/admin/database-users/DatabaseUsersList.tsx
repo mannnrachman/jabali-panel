@@ -9,7 +9,6 @@ import { useState } from "react";
 import { Button, Card, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import { KeyOutlined, PlusOutlined, UserOutlined } from "@icons";
 import { useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router";
 
 import { apiClient } from "../../../apiClient";
 import { AddGrantModal } from "../../../components/AddGrantModal";
@@ -19,6 +18,7 @@ import { columnSearchProps } from "../../../components/columnSearch";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useDeleteMutation } from "../../../hooks/useQueries";
 import { useTableURL } from "../../../hooks/useTableURL";
+import { DatabaseUserDrawer } from "./DatabaseUserDrawer";
 
 export type Grant = {
   id: string;
@@ -68,7 +68,6 @@ function grantLabel(grant: Grant): string {
 }
 
 export const DatabaseUsersList = () => {
-  const navigate = useNavigate();
   const qc = useQueryClient();
   const query = useTableURL<DatabaseUser>({
     resource: "database-users",
@@ -85,6 +84,7 @@ export const DatabaseUsersList = () => {
   const [rotatingId, setRotatingId] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [grantTarget, setGrantTarget] = useState<DatabaseUser | null>(null);
+  const [createDrawerOpen, setCreateDrawerOpen] = useState(false);
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["list", "database-users"] });
@@ -144,7 +144,8 @@ export const DatabaseUsersList = () => {
         </Typography.Title>
         <Button
           type="primary"
-          onClick={() => navigate("/jabali-admin/database-users/create")}
+          icon={<PlusOutlined />}
+          onClick={() => setCreateDrawerOpen(true)}
         >
           Create User
         </Button>
@@ -277,6 +278,12 @@ export const DatabaseUsersList = () => {
         }
         onClose={() => setGrantTarget(null)}
         onSuccess={refresh}
+      />
+
+      <DatabaseUserDrawer
+        open={createDrawerOpen}
+        onClose={() => setCreateDrawerOpen(false)}
+        onCreated={refresh}
       />
     </div>
   );

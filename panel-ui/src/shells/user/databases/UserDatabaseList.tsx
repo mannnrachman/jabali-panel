@@ -10,7 +10,6 @@ import {
   PlusSquareOutlined,
   ThunderboltOutlined,
 } from "@icons";
-import { useNavigate } from "react-router";
 import type { SorterResult } from "antd/es/table/interface";
 
 import { ssoPhpMyAdmin } from "../../../apiClient";
@@ -20,6 +19,7 @@ import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useDeleteMutation } from "../../../hooks/useQueries";
 import { useTableURL } from "../../../hooks/useTableURL";
 import { QuickSetupModal } from "./QuickSetupModal";
+import { UserDatabaseDrawer } from "./UserDatabaseDrawer";
 
 export type Database = {
   id: string;
@@ -57,7 +57,6 @@ const formatBytes = (bytes: number | undefined): string => {
 };
 
 export const UserDatabaseList = () => {
-  const navigate = useNavigate();
   const qc = useQueryClient();
   const query = useTableURL<Database>({
     resource: "databases",
@@ -70,6 +69,7 @@ export const UserDatabaseList = () => {
     null,
   );
   const [quickSetupOpen, setQuickSetupOpen] = useState(false);
+  const [createDrawerOpen, setCreateDrawerOpen] = useState(false);
 
   const handleTableChange: React.ComponentProps<
     typeof Table<Database>
@@ -150,7 +150,7 @@ export const UserDatabaseList = () => {
           <Button
             type="primary"
             icon={<PlusSquareOutlined />}
-            onClick={() => navigate("/jabali-panel/databases/create")}
+            onClick={() => setCreateDrawerOpen(true)}
           >
             Create Database
           </Button>
@@ -163,6 +163,11 @@ export const UserDatabaseList = () => {
         onSuccess={() =>
           qc.invalidateQueries({ queryKey: ["list", "databases"] })
         }
+      />
+
+      <UserDatabaseDrawer
+        open={createDrawerOpen}
+        onClose={() => setCreateDrawerOpen(false)}
       />
 
       <Card>

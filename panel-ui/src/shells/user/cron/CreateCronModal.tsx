@@ -1,7 +1,8 @@
 import { useState } from "react";
 import {
-  Modal,
+  Drawer,
   Form,
+  Grid,
   Input,
   Radio,
   Button,
@@ -48,6 +49,8 @@ export const CreateCronModal = ({
       : ""
   );
   const { message: antMessage } = App.useApp();
+  const screens = Grid.useBreakpoint();
+  const isDesktop = screens.lg !== false;
 
   const isEditing = !!initial;
 
@@ -124,12 +127,13 @@ export const CreateCronModal = ({
   };
 
   return (
-    <Modal
+    <Drawer
       title={isEditing ? "Edit Cron Job" : "Create Cron Job"}
       open={open}
-      onCancel={handleModalClose}
-      footer={null}
-      width={600}
+      onClose={handleModalClose}
+      width={isDesktop ? 600 : undefined}
+      placement="right"
+      destroyOnClose
     >
       <Form
         form={form}
@@ -222,6 +226,6 @@ export const CreateCronModal = ({
           </Space>
         </Form.Item>
       </Form>
-    </Modal>
+    </Drawer>
   );
 };

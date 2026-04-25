@@ -10,7 +10,7 @@
 // The modal calls POST /domains/:id/mailboxes on submit and surfaces
 // the reveal-once password via the onCreated callback — the parent
 // page pops the DatabaseUserPasswordModal with it.
-import { Alert, Form, Input, InputNumber, Modal, Select } from "antd";
+import { Alert, Button, Drawer, Form, Grid, Input, InputNumber, Select, Space } from "antd";
 
 import { PasswordInput } from "../../../components/PasswordInput";
 import {
@@ -54,6 +54,8 @@ export const CreateMailboxWizardModal = ({
 }: Props) => {
   const [form] = Form.useForm<FormValues>();
   const createMutation = useCreateMailbox();
+  const screens = Grid.useBreakpoint();
+  const isDesktop = screens.lg !== false;
 
   // Watching domain_id is what drives step-2 reveal. Form.useWatch
   // returns undefined until the user opens the Select and picks a
@@ -107,17 +109,21 @@ export const CreateMailboxWizardModal = ({
   };
 
   return (
-    <Modal
+    <Drawer
       title="Create mailbox"
       open={open}
-      onCancel={onCancelInternal}
-      onOk={onOk}
-      okText="Create mailbox"
-      confirmLoading={createMutation.isPending}
-      // We don't hard-disable the OK button even when step-1 is
-      // incomplete — AntD's rule validation will surface "Required"
-      // inline, which is clearer than a silently-disabled button.
+      onClose={onCancelInternal}
+      width={isDesktop ? 520 : undefined}
+      placement="right"
       destroyOnClose
+      extra={
+        <Space>
+          <Button onClick={onCancelInternal}>Cancel</Button>
+          <Button type="primary" loading={createMutation.isPending} onClick={onOk}>
+            Create mailbox
+          </Button>
+        </Space>
+      }
     >
       <Form
         form={form}
@@ -198,6 +204,6 @@ export const CreateMailboxWizardModal = ({
           />
         )}
       </Form>
-    </Modal>
+    </Drawer>
   );
 };

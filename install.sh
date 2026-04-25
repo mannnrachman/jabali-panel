@@ -995,34 +995,35 @@ configure_disk_quota() {
     }
     _ok "xfs user quota enabled on $home_mount"
   else
-    # ext4: use hidden quota inodes via tune2fs -O quota (cleaner than
-    # external aquota.user files, especially when home_mount=/ where the
-    # external file would land at /aquota.user). tune2fs is online-safe
-    # since ext4 v3 quota (Linux 3.6+); idempotent — re-running is a no-op.
-    # ext2/ext3 fall back to the external-file path.
-    local backing_dev
-    backing_dev="$(findmnt -no SOURCE "$home_mount" 2>/dev/null || true)"
-    if [[ "$home_fs" == "ext4" && -n "$backing_dev" ]]; then
-      if ! tune2fs -l "$backing_dev" 2>/dev/null | grep -qE '^Filesystem features:.* quota\b'; then
-        _log "enabling ext4 hidden quota inodes on $backing_dev (tune2fs -O quota)"
-        tune2fs -O quota "$backing_dev" 2>&1 | grep -v "^tune2fs " || true
+    # ext2/ext3/ext4: external aquota.user / aquota.group files. The
+    # kernel's tune2fs -O quota path (hidden inodes) requires the FS to
+    # be unmounted, which we can't do for the root filesystem on a live
+    # host — kernel returns "The quota feature may only be changed when
+    # the filesystem is unmounted". External-file path works on a
+    # mounted FS via quotacheck -m (scans without remount-readonly).
+    #
+    # The aquota.user file lands at $home_mount/aquota.user (e.g. /
+    # for /home==/), which is visible to root via `ls /` but is one
+    # file; cPanel/DA do the same.
+    local quota_file="$home_mount/aquota.user"
+    [[ "$home_mount" == "/" ]] && quota_file="/aquota.user"
+    if [[ ! -f "$quota_file" ]]; then
+      _log "building $quota_file via quotacheck -mcug (may take time on large filesystems)"
+      # -m: don't try remount r/o (we're on /, can't unmount)
+      # -c: create new files
+      # -u: user quotas
+      # -g: group quotas
+      # -F vfsv1: pin format so kernel accepts it without ambiguity
+      if ! quotacheck -mcugF vfsv1 "$home_mount"; then
+        _warn "quotacheck failed on $home_mount; quota plumbing left inactive (cgroups still enforce cpu/mem/io/tasks)"
+        return 0
       fi
-      quotaon -v "$home_mount" >/dev/null 2>&1 || true
-      _ok "POSIX user quota active on $home_mount (ext4 hidden inodes)"
-    else
-      # ext2/ext3 / unknown ext: external aquota.user file path.
-      # quotacheck builds the file; quotaon enforces. -m allows scan
-      # while filesystem is mounted r/w.
-      if [[ ! -f "$home_mount/aquota.user" ]]; then
-        _log "running quotacheck (may take time on large /home)"
-        quotacheck -cugm "$home_mount" || {
-          _err "quotacheck failed"
-          exit 1
-        }
-      fi
-      quotaon -v "$home_mount" >/dev/null 2>&1 || true
-      _ok "POSIX user quota active on $home_mount"
     fi
+    if ! quotaon -v "$home_mount" >/dev/null 2>&1; then
+      _warn "quotaon $home_mount failed; quota plumbing left inactive"
+      return 0
+    fi
+    _ok "POSIX user quota active on $home_mount"
   fi
 }
 

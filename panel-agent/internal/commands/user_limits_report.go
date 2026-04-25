@@ -22,7 +22,7 @@ import (
 //   - reconciler drift detection (compare report vs DB-effective)
 //
 // Sources:
-//   - Disk: `quota -u <user> -p -w -f <mount>` parsed output
+//   - Disk: `quota -p -w -u <user>` parsed output
 //   - CPU/memory/IO/tasks: /sys/fs/cgroup/jabali.slice/jabali-user.slice/
 //     jabali-user-<u>.slice/{memory.current,memory.max,cpu.stat,io.stat,pids.current,pids.max}
 //
@@ -90,10 +90,13 @@ func userLimitsReportHandler(ctx context.Context, params json.RawMessage) (any, 
 
 	resp := &userLimitsReportResponse{Username: p.Username}
 
-	// Disk — `quota -u <user> -p -w -f <mount>` outputs machine-parseable
-	// header-less lines. Format (whitespace-separated):
-	//   <mount> <blocks> <quota-soft> <quota-hard> <grace> <files> ...
-	// We care about blocks (used in KB) and quota-hard (hard limit).
+	// Disk — `quota -p -w -u <user>` returns one record per filesystem
+	// the user has quota on. -p prints the raw 1-KB block counts (vs the
+	// human-friendly default). The header lines are skipped by
+	// parseQuotaLine via the numeric field check. Note: -u and -f are
+	// mutually exclusive in util-linux quota; pairing them turns the
+	// trailing username into a phantom mountpoint, which is why earlier
+	// builds always silently fell back to du and reported a zero limit.
 	//
 	// Fallback: if `quota` returns nothing (no aquota.user yet — e.g.
 	// quotacheck refused to run on a busy /) OR returns UsedKB == 0
@@ -102,7 +105,7 @@ func userLimitsReportHandler(ctx context.Context, params json.RawMessage) (any, 
 	// in-process for 60s so the 5s polling cadence doesn't fork-bomb
 	// the disk on a 50GB user.
 	if p.QuotaMount != "" {
-		stdout, _, err := runCmdFn(ctx, "quota", "-u", "-p", "-w", "-f", p.QuotaMount, p.Username)
+		stdout, _, err := runCmdFn(ctx, "quota", "-p", "-w", "-u", p.Username)
 		if err == nil {
 			if d := parseQuotaLine(string(stdout), p.QuotaMount); d != nil {
 				resp.Disk = d

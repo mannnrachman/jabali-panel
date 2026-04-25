@@ -71,20 +71,38 @@ export const adminNav: NavItem[] = [
     path: "/jabali-admin/users",
   },
   {
-    key: "packages",
-    label: "Packages",
-    icon: navIcon(PackageOpenOutlined),
-    path: "/jabali-admin/packages",
-  },
-  {
     key: "domains",
     label: "Domains",
     icon: navIcon(GlobalOutlined),
     path: "/jabali-admin/domains",
   },
   {
+    key: "packages",
+    label: "Hosting Packages",
+    icon: navIcon(PackageOpenOutlined),
+    path: "/jabali-admin/packages",
+  },
+  {
+    key: "settings",
+    label: "Server Settings",
+    icon: navIcon(SettingOutlined),
+    path: "/jabali-admin/settings",
+  },
+  {
+    key: "security",
+    label: "Security",
+    icon: navIcon(SafetyOutlined),
+    path: "/jabali-admin/security",
+  },
+  {
+    key: "php-pools",
+    label: "PHP Manager",
+    icon: navIcon(CodeOutlined),
+    path: "/jabali-admin/php-pools",
+  },
+  {
     key: "dns",
-    label: "DNS",
+    label: "DNS Zones",
     icon: navIcon(CloudServerOutlined),
     path: "/jabali-admin/dns",
   },
@@ -95,34 +113,19 @@ export const adminNav: NavItem[] = [
     path: "/jabali-admin/ssl",
   },
   {
-    key: "settings",
-    label: "Server Settings",
-    icon: navIcon(SettingOutlined),
-    path: "/jabali-admin/settings",
-  },
-  {
-    key: "php-pools",
-    label: "PHP Manager",
-    icon: navIcon(CodeOutlined),
-    path: "/jabali-admin/php-pools",
-  },
-  {
-    key: "applications",
-    label: "Applications",
-    icon: navIcon(AppstoreOutlined),
-    path: "/jabali-admin/applications",
-  },
-  {
     key: "ips",
     label: "IP Addresses",
     icon: navIcon(GlobalOutlined),
     path: "/jabali-admin/ips",
   },
+  // Below — items not in operator's primary order. Kept after the
+  // canonical 10 so they remain reachable until they get a final
+  // home or are folded into other tabs.
   {
-    key: "security",
-    label: "Security",
-    icon: navIcon(SafetyOutlined),
-    path: "/jabali-admin/security",
+    key: "applications",
+    label: "Applications",
+    icon: navIcon(AppstoreOutlined),
+    path: "/jabali-admin/applications",
   },
   {
     key: "dnssec",

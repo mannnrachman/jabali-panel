@@ -17,6 +17,8 @@ import {
   CalendarCheckOutlined,
   CloudServerOutlined,
   CodeOutlined,
+  DownloadOutlined,
+  LifeBuoyOutlined,
   DatabaseOutlined,
   FolderOutlined,
   GlobalOutlined,
@@ -126,6 +128,18 @@ export const adminNav: NavItem[] = [
     label: "Notifications",
     icon: navIcon(BellOutlined),
     path: "/jabali-admin/notifications/channels",
+  },
+  {
+    key: "updates",
+    label: "Updates",
+    icon: navIcon(DownloadOutlined),
+    path: "/jabali-admin/updates",
+  },
+  {
+    key: "support",
+    label: "Support",
+    icon: navIcon(LifeBuoyOutlined),
+    path: "/jabali-admin/support",
   },
 ];
 

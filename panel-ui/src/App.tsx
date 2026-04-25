@@ -44,6 +44,8 @@ import { useApplyBrandingToTitle } from "./hooks/useBranding";
 import { AdminSecurityPage } from "./shells/admin/security/AdminSecurityPage";
 import { AdminDNSSECPage } from "./shells/admin/dnssec/AdminDNSSECPage";
 import { UserDNSSECPage } from "./shells/user/dnssec/UserDNSSECPage";
+import { SystemUpdatesPage } from "./shells/admin/updates/SystemUpdatesPage";
+import { SupportPage } from "./shells/admin/support/SupportPage";
 import { PackageCreate } from "./shells/admin/packages/PackageCreate";
 import { PackageEdit } from "./shells/admin/packages/PackageEdit";
 import { PackageList } from "./shells/admin/packages/PackageList";
@@ -161,6 +163,8 @@ const ThemedApp = () => {
             </Route>
             <Route path="security" element={<AdminSecurityPage />} />
             <Route path="dnssec" element={<AdminDNSSECPage />} />
+            <Route path="updates" element={<SystemUpdatesPage />} />
+            <Route path="support" element={<SupportPage />} />
             <Route path="notifications">
               <Route index element={<Navigate to="channels" replace />} />
               <Route path=":tab" element={<NotificationsTabsPage />} />

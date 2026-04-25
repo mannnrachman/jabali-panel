@@ -348,6 +348,14 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			Domains: deps.Domains,
 			Keys:    deps.DNSSECKeys,
 		})
+		// Admin: System Updates (M29). Thin proxy to agent's system.* commands.
+		api.RegisterAdminUpdatesRoutes(v1, api.AdminUpdatesHandlerConfig{
+			Agent: deps.Agent,
+		})
+		// Admin: Support diagnostic report (M29, ADR-0064).
+		api.RegisterAdminSupportRoutes(v1, api.AdminSupportHandlerConfig{
+			Agent: deps.Agent,
+		})
 		if deps.Domains != nil && deps.DNSZones != nil && deps.DNSRecords != nil {
 			api.RegisterDNSRoutes(v1, api.DNSHandlerConfig{
 				Domains:        deps.Domains,

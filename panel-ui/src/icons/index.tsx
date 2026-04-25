@@ -15,6 +15,7 @@ import {
   ArrowLeft,
   ArrowLeftRight,
   Book,
+  Bug,
   CalendarCheck,
   Check,
   CheckCircle2,
@@ -28,6 +29,7 @@ import {
   Copy,
   Database,
   Download,
+  ExternalLink,
   Eye,
   EyeOff,
   File,
@@ -40,6 +42,7 @@ import {
   Bell,
   Key,
   LayoutGrid,
+  LifeBuoy,
   Link as LinkIcon,
   Loader2,
   Lock,
@@ -171,6 +174,8 @@ export const SyncOutlined = shim(RotateCw);
 export const RedoOutlined = shim(Redo2);
 export const ApiOutlined = shim(Plug);
 export const BookOutlined = shim(Book);
+export const BugOutlined = shim(Bug);
+export const LifeBuoyOutlined = shim(LifeBuoy);
 export const DragOutlined = shim(Move);
 export const LinkOutlined = shim(LinkIcon);
 export const LoginOutlined = shim(LogIn);
@@ -207,6 +212,7 @@ export const ArrowLeftOutlined = shim(ArrowLeft);
 // --- Files ---
 export const FileOutlined = shim(File);
 export const FileTextOutlined = shim(FileText);
+export const ExportOutlined = shim(ExternalLink);
 
 // --- Misc ---
 export const EyeOutlined = shim(Eye);

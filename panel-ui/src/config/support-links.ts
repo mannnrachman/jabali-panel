@@ -1,11 +1,11 @@
-// Support links — placeholders until product gives final URLs. When a
-// const is empty, SupportPage hides the corresponding CTA button rather
-// than ship a dead link.
+// Support links. SupportPage hides any CTA whose value is empty, so
+// removing one here gracefully degrades to a "Coming soon" tag rather
+// than a dead link.
 export const SUPPORT_LINKS = {
-  documentation: "https://docs.jabali-panel.io",
-  githubIssues: "https://github.com/jabali-team/jabali-panel/issues",
-  paidSupport: "https://jabali-panel.io/support",
-  emergency: "mailto:emergency@jabali-panel.io",
+  documentation: "https://docs.jabali-panel.com",
+  githubIssues: "https://github.com/jabali-panel/jabali/issues",
+  paidSupport: "https://jabali-panel.com/support",
+  emergency: "mailto:webmaster@jabali-panel.com?subject=URGENT%3A%20Jabali%20Panel%20incident",
 } as const;
 
 // Where the diagnostic-report email is addressed. Operator clicks

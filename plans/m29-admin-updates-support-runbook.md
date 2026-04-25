@@ -74,36 +74,34 @@ snapshot. The dist-upgrade may pull in libc, openssh, or mariadb minor
 bumps that touch on-disk format. The runbook says it; the UI Alert
 says it. Believe both.
 
-### Read a diagnostic ciphertext (Jabali team only)
+### Read a diagnostic report (Jabali team only)
 
-Operators paste the output into a GitHub issue. To decrypt:
+Operator emails `webmaster@jabali-panel.com` with the enclosed link
++ password. To decrypt:
 
-```bash
-# private key is in the team password manager, NOT on any managed host
-echo 'AGE-SECRET-KEY-…' > /tmp/jabali-team-priv.txt
-chmod 600 /tmp/jabali-team-priv.txt
-echo '<paste base64 ciphertext>' | base64 -d | age -d -i /tmp/jabali-team-priv.txt > /tmp/bundle.tar
-tar -tvf /tmp/bundle.tar    # view contents
-tar -xf /tmp/bundle.tar -C /tmp/diag/
-shred -u /tmp/jabali-team-priv.txt
-```
+1. Open the link in any browser. Page renders the enclosed UI.
+2. Paste the password into the prompt. Enclosed decrypts client-side.
+3. Download the `jabali-diagnostic-<host>-<ts>.tar` asset.
+4. `tar -xvf jabali-diagnostic-*.tar` — service journals, host info,
+   network listeners, package list. All entries are pre-redacted.
 
-### Rotate the diagnostic recipient
+No private key custody, no CLI tools. Runs on any device with a
+browser and the password.
 
-1. Generate a new keypair off-host: `age-keygen -o new-priv.txt`. The
-   pubkey is in the file header.
-2. Save `new-priv.txt` to the team password manager. KEEP THE OLD ONE
-   — old reports use the old key.
-3. Edit `panel-agent/internal/diagnostic/recipient.go`, bump the
-   `RecipientPublicKey` constant.
-4. Run the test: `go test ./panel-agent/internal/diagnostic/...` —
-   round-trip uses a generated identity, not the constant, so this
-   doesn't break.
-5. Cut a release; managed hosts pick up the new pubkey via
-   `jabali update`.
+### When the URL is missing or expired
 
-The placeholder pubkey shipped with M29 (`age13trnrev8dmdva5tsj…`) MUST
-be swapped before the public release. Tracked here.
+Notes have a 7-day TTL on the enclosed deployment. If the link 404s,
+ask the operator to re-run "Send Diagnostic Report" — fresh URL +
+password. No state needs to be cleaned on the panel side; old reports
+auto-rotate out of the enclosed store.
+
+### Anti-phishing reminder
+
+The enclosed URL is the only credential. Treat password leakage like
+any other secret: never share in screenshots, never copy-paste in
+public chat. The mail body is structured so the operator's mail
+client is the natural transport — direct to inbox, encrypted in
+transit by their MTA → ours.
 
 ## Troubleshooting
 

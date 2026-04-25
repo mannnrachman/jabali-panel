@@ -1,6 +1,11 @@
-# ADR-0064: Diagnostic report — enclosed.cc upload + ntfy delivery
+# ADR-0064: Diagnostic report — enclosed.cc upload + email delivery
 
-**Status:** ACCEPTED (2026-04-25, amended same-day to switch from age to enclosed).
+**Status:** ACCEPTED (2026-04-25). Amended same-day twice:
+1. Replaced age-encryption-to-static-recipient with enclosed.cc E2E upload.
+2. Replaced ntfy push delivery with mailto: hand-off
+   (ntfy required server-side Bearer-token plumbing; email is universal
+   and the operator-to-team channel everyone already has).
+
 **Related:** M29 admin updates + support page.
 
 ## Context
@@ -61,7 +66,7 @@ Source reference: `github.com/CorentinTh/enclosed/packages/{lib,crypto}`.
 
 Even though enclosed encrypts end-to-end, the team's static
 team-shared private key (well, the password the operator generates +
-team retrieves via ntfy) lives in chat logs and password managers
+team retrieves via email) lives in chat logs and password managers
 forever. Defense in depth: strip credentials BEFORE encryption.
 
 `internal/diagnostic/redact.go` runs the bundle through a regex
@@ -69,15 +74,22 @@ deny-list (passwords, Bearer tokens, Cookie headers, ory_kratos_session,
 DSN passwords, api_key/secret/token forms). The wire response includes
 a `redaction_count` so the operator sees how many secrets were stripped.
 
-### 4. ntfy delivery for "the team needs to look at this now"
+### 4. mailto: delivery for the operator → team hand-off
 
-The agent additionally exposes `system.diagnostic_notify` which posts
-the URL + password to `https://ntfy.jabali-panel.com/jabali-admin-alerts`
-when the operator clicks "Send via ntfy" in the modal. ntfy then pushes
-to every team-member device subscribed to the topic.
+The UI builds a `mailto:webmaster@jabali-panel.com` link client-side
+when the operator clicks "Send via email" in the modal. The mail body
+contains hostname, the enclosed link, the password, generation
+metadata, and any free-text note the operator typed. The operator's
+own mail client takes over the send.
+
+Why mailto over ntfy / a server-side webhook: every operator already
+has a configured mail client. ntfy gates publishing on a Bearer token
+that would have to be provisioned per-install via systemd drop-ins
+(operational overhead with no upside vs the universal "click button,
+review email, hit send" flow).
 
 Why two-step (mint URL, then explicit click to send): the operator
-decides whether the case warrants a page. Auto-pushing on mint would
+decides whether the case warrants a hand-off. Auto-sending on mint would
 spam the team for every "let me try the diagnostic button" moment.
 
 ### 5. 7-day TTL on enclosed notes
@@ -87,13 +99,13 @@ leisure; short enough that stale ciphertext (with stale credentials in
 the redacted-but-still-might-leak-something log lines) rotates out
 without manual cleanup.
 
-### 6. Hard-coded URLs, env override for dev
+### 6. Hard-coded URL, env override for dev
 
-`defaultEnclosedBaseURL = "https://enclosed.jabali-panel.com"` and
-`defaultNtfyBaseURL = "https://ntfy.jabali-panel.com"` are baked into
-the agent binary. Override via `JABALI_ENCLOSED_URL` /
-`JABALI_NTFY_URL` / `JABALI_NTFY_TOPIC` for development. Production
-hosts get the bundled defaults.
+`defaultEnclosedBaseURL = "https://enclosed.jabali-panel.com"` is baked
+into the agent binary. Override via `JABALI_ENCLOSED_URL` for dev. The
+mail recipient lives on the UI side as
+`DIAGNOSTIC_EMAIL_RECIPIENT = "webmaster@jabali-panel.com"` in
+`panel-ui/src/config/support-links.ts`.
 
 ## Consequences
 
@@ -102,12 +114,12 @@ hosts get the bundled defaults.
   compromise the others.
 - **Pro:** standard protocol means we can read reports via the
   enclosed web UI in any browser — no `age` CLI required.
-- **Pro:** ntfy integration makes the "operator clicked send"
-  →"on-call team member sees it" path one click.
+- **Pro:** mail hand-off uses a channel every operator already has
+  configured. No tokens, no per-host plumbing.
 - **Con:** end-to-end-encryption depends on the operator faithfully
   forwarding the password. If they paste only the URL, decryption
-  fails. Modal copy buttons + the ntfy push include both fields to
-  reduce friction.
+  fails. Modal copy buttons + the prefilled mailto: body include both
+  fields to reduce friction.
 - **Con:** trust shifts to the enclosed deployment. Server compromise
   could replace the JS client with a key-stealer; at that point any
   user pasting the URL+password into the page would leak both. Mitigated

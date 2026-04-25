@@ -17,6 +17,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"crypto/rand"
+	"encoding/hex"
+
 	"github.com/gin-gonic/gin"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
@@ -511,6 +514,15 @@ func (h *filesHandler) preview(c *gin.Context) {
 
 // upload accepts a single multipart file under the "file" field; directory
 // is taken from ?path=. Cap enforced at middleware (filesUploadSizeLimit).
+//
+// Path: stream the multipart part directly to /tmp/jabali-upload-<uuid>,
+// then call files.ingest. The earlier implementation buffered the whole
+// file into memory and JSON-encoded it as a Content string into
+// files.write — for any non-trivial size (>~10 MB) the resulting JSON
+// envelope blew past the agentwire UDS write window and the call died
+// with "broken pipe". The /tmp + ingest path keeps the binary on disk
+// and only sends paths over the wire, matching what the chunked
+// uploader does.
 func (h *filesHandler) upload(c *gin.Context) {
 	userID, username, ok := h.requireClaimsAndUsername(c)
 	if !ok {
@@ -538,7 +550,6 @@ func (h *filesHandler) upload(c *gin.Context) {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "file_too_large"})
 		return
 	}
-	// Reject filenames with path separators; upload target is a single-segment name.
 	if strings.ContainsAny(fileHeader.Filename, "/\\") || fileHeader.Filename == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_filename"})
 		return
@@ -549,30 +560,44 @@ func (h *filesHandler) upload(c *gin.Context) {
 		return
 	}
 	defer src.Close()
-	buf, err := io.ReadAll(io.LimitReader(src, maxBytes+1))
-	if err != nil {
+
+	// Mint a tmp path that matches the ingest tmpUploadPrefix gate.
+	idBytes := make([]byte, 16)
+	if _, err := rand.Read(idBytes); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
 		return
 	}
-	if int64(len(buf)) > maxBytes {
+	tmpPath := fmt.Sprintf("/tmp/jabali-upload-%s", hex.EncodeToString(idBytes))
+	tmpFile, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
+		return
+	}
+	written, copyErr := io.Copy(tmpFile, io.LimitReader(src, maxBytes+1))
+	if cerr := tmpFile.Close(); copyErr == nil {
+		copyErr = cerr
+	}
+	if copyErr != nil {
+		_ = os.Remove(tmpPath)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": copyErr.Error()})
+		return
+	}
+	if written > maxBytes {
+		_ = os.Remove(tmpPath)
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "file_too_large"})
 		return
 	}
-	targetPath := filepath.Join(dirPath, fileHeader.Filename)
 
-	raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.write", filesWriteAgentParams{
-		UserID: userID, Username: username, Path: targetPath, Content: string(buf),
+	destPath := filepath.Join(dirPath, fileHeader.Filename)
+	_, err = h.cfg.Agent.Call(c.Request.Context(), "files.ingest", filesIngestAgentParams{
+		UserID: userID, Username: username, TmpPath: tmpPath, DestPath: destPath,
 	})
 	if err != nil {
+		_ = os.Remove(tmpPath)
 		respondAgentError(c, err)
 		return
 	}
-	var result struct {
-		Path         string `json:"path"`
-		BytesWritten int64  `json:"bytes_written"`
-	}
-	_ = json.Unmarshal(raw, &result)
-	c.JSON(http.StatusOK, gin.H{"path": result.Path, "bytes_written": result.BytesWritten})
+	c.JSON(http.StatusOK, gin.H{"path": destPath, "bytes_written": written})
 }
 
 func (h *filesHandler) mkdir(c *gin.Context) {

@@ -33,11 +33,9 @@ import {
   Tag,
   Tree,
   Typography,
-  Upload,
   message,
   theme,
 } from "antd";
-import type { UploadProps } from "antd";
 import type { DataNode } from "antd/es/tree";
 import {
   DownloadOutlined,
@@ -68,10 +66,10 @@ import {
   filesPreview,
   filesRename,
   filesTree,
-  filesUpload,
-  filesUploadChunked,
   filesWrite,
 } from "./filesApi";
+import { UploadDrawer } from "./UploadDrawer";
+import type { UploadDrawerHandle } from "./UploadDrawer";
 // Monaco is ~500KB gzipped of the bundle; lazy-load it so the initial
 // files page doesn't pay that cost. The editor only mounts when the
 // user actually clicks Edit on a file. Suspense fallback below keeps
@@ -289,6 +287,8 @@ export const FileManagerPage = () => {
   // 280px pane plus a file list on phones.
   const inlineTree = screens.md !== false;
   const [treeDrawerOpen, setTreeDrawerOpen] = useState(false);
+  const [uploadDrawerOpen, setUploadDrawerOpen] = useState(false);
+  const uploadDrawerRef = useRef<UploadDrawerHandle | null>(null);
 
   const [rootPath, setRootPath] = useState<string | null>(null);
   const [currentPath, setCurrentPath] = useState<string | null>(null);
@@ -629,59 +629,13 @@ export const FileManagerPage = () => {
     }
   };
 
-  // --- upload via AntD Upload ---
-  // Two paths depending on size:
-  //  - ≤ 100 MB: single multipart POST (existing /files/upload).
-  //  - > 100 MB: chunked (/files/upload-chunk), 10 MB chunks, the
-  //    final chunk triggers agent-side ingest of the /tmp scratch
-  //    file into the user's scope.
-  // Hard ceiling at 1 GB to match the backend cap; above that the
-  // client stops before sending anything.
-  const handleUploadOne = useCallback(
-    async (file: File) => {
-      if (!currentPath) return;
-      if (file.size > 1024 * 1024 * 1024) {
-        message.error(`${file.name}: exceeds 1 GB limit`);
-        return;
-      }
-      try {
-        if (file.size <= 100 * 1024 * 1024) {
-          await filesUpload(currentPath, file);
-        } else {
-          const key = `upload-${file.name}`;
-          message.loading({ content: `Uploading ${file.name}…`, key, duration: 0 });
-          try {
-            await filesUploadChunked(currentPath, file, 10 * 1024 * 1024, (frac) => {
-              message.loading({
-                content: `Uploading ${file.name} — ${Math.round(frac * 100)}%`,
-                key,
-                duration: 0,
-              });
-            });
-          } finally {
-            message.destroy(key);
-          }
-        }
-        message.success(`Uploaded ${file.name}`);
-        void reloadList(currentPath);
-      } catch (err) {
-        message.error(`Upload failed (${file.name}): ${errMessage(err)}`);
-      }
-    },
-    [currentPath, reloadList],
-  );
-
-  const uploadProps: UploadProps = useMemo(
-    () => ({
-      multiple: true,
-      showUploadList: false,
-      beforeUpload: (file) => {
-        void handleUploadOne(file);
-        return false; // prevent AntD's default XHR; we already uploaded.
-      },
-    }),
-    [handleUploadOne],
-  );
+  // Upload entrypoint. Click "Upload" or drag OS files onto the table
+  // → enqueue into the UploadDrawer, which owns concurrency, per-file
+  // progress bars, and error reporting. The drawer auto-opens on the
+  // first enqueue.
+  const enqueueUpload = useCallback((file: File) => {
+    uploadDrawerRef.current?.enqueue(file);
+  }, []);
 
   // --- drag-to-move state ---
   // draggedPath is set on dragstart from a table row; consumed on drop
@@ -1004,9 +958,12 @@ export const FileManagerPage = () => {
               Paste ({clipboard.length})
             </Button>
           )}
-          <Upload {...uploadProps}>
-            <Button icon={<UploadOutlined />}>Upload</Button>
-          </Upload>
+          <Button
+            icon={<UploadOutlined />}
+            onClick={() => setUploadDrawerOpen(true)}
+          >
+            Upload
+          </Button>
           <Button icon={<PlusOutlined />} onClick={openMkdir}>
             New Folder
           </Button>
@@ -1081,6 +1038,17 @@ export const FileManagerPage = () => {
           Folders
         </Button>
       )}
+
+      <UploadDrawer
+        ref={uploadDrawerRef}
+        open={uploadDrawerOpen}
+        currentPath={currentPath ?? ""}
+        onClose={() => setUploadDrawerOpen(false)}
+        onOpenRequest={() => setUploadDrawerOpen(true)}
+        onUploaded={() => {
+          if (currentPath) void reloadList(currentPath);
+        }}
+      />
 
       <Drawer
         open={!inlineTree && treeDrawerOpen}
@@ -1196,7 +1164,7 @@ export const FileManagerPage = () => {
             e.preventDefault();
             if (!currentPath) return;
             for (const f of Array.from(e.dataTransfer.files)) {
-              void handleUploadOne(f);
+              enqueueUpload(f);
             }
           }}
         >

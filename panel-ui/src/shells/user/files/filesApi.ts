@@ -55,11 +55,20 @@ export function filesDownloadURL(path: string): string {
   return `/api/v1/files/download?path=${encodeURIComponent(path)}`;
 }
 
-export async function filesUpload(dirPath: string, file: File): Promise<void> {
+export async function filesUpload(
+  dirPath: string,
+  file: File,
+  onProgress?: (frac: number) => void,
+): Promise<void> {
   const fd = new FormData();
   fd.append("file", file);
   await apiClient.post(`/files/upload?path=${encodeURIComponent(dirPath)}`, fd, {
     headers: { "Content-Type": "multipart/form-data" },
+    onUploadProgress: (e) => {
+      if (!onProgress) return;
+      const total = e.total ?? file.size;
+      if (total > 0) onProgress(Math.min(1, e.loaded / total));
+    },
   });
 }
 

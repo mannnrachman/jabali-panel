@@ -37,6 +37,7 @@ import {
   Folder,
   Globe,
   Grip,
+  HardDrive,
   Home,
   Inbox,
   Bell,
@@ -54,6 +55,7 @@ import {
   MoreHorizontal,
   Move,
   PackageOpen,
+  Palette,
   PauseCircle,
   Pencil,
   PlayCircle,
@@ -144,6 +146,8 @@ export const GlobalOutlined = shim(Globe);
 export const LockOutlined = shim(Lock);
 export const CodeOutlined = shim(Code);
 export const DatabaseOutlined = shim(Database);
+export const HddOutlined = shim(HardDrive);
+export const BgColorsOutlined = shim(Palette);
 export const FolderOutlined = shim(Folder);
 export const AppstoreOutlined = shim(LayoutGrid);
 export const PackageOpenOutlined = shim(PackageOpen);

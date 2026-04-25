@@ -1,5 +1,15 @@
 import { useEffect, useState } from "react";
-import { CheckOutlined, CloseOutlined, SaveOutlined, WarningOutlined } from "@icons";
+import {
+  BgColorsOutlined,
+  CheckOutlined,
+  CloseOutlined,
+  GlobalOutlined,
+  HddOutlined,
+  MailOutlined,
+  SaveOutlined,
+  SettingOutlined,
+  WarningOutlined,
+} from "@icons";
 import {
   Alert,
   Button,
@@ -639,11 +649,51 @@ export const ServerSettingsPage = () => {
           inactive tab are lost on switch (mirrors the Users page pattern). */}
       <Card
         tabList={[
-          { key: "general", tab: "General" },
-          { key: "storage", tab: "Storage" },
-          { key: "dns", tab: "DNS" },
-          { key: "email", tab: "Email" },
-          { key: "branding", tab: "Branding" },
+          {
+            key: "general",
+            tab: (
+              <span>
+                <SettingOutlined style={{ marginRight: 8 }} />
+                General
+              </span>
+            ),
+          },
+          {
+            key: "storage",
+            tab: (
+              <span>
+                <HddOutlined style={{ marginRight: 8 }} />
+                Storage
+              </span>
+            ),
+          },
+          {
+            key: "dns",
+            tab: (
+              <span>
+                <GlobalOutlined style={{ marginRight: 8 }} />
+                DNS
+              </span>
+            ),
+          },
+          {
+            key: "email",
+            tab: (
+              <span>
+                <MailOutlined style={{ marginRight: 8 }} />
+                Email
+              </span>
+            ),
+          },
+          {
+            key: "branding",
+            tab: (
+              <span>
+                <BgColorsOutlined style={{ marginRight: 8 }} />
+                Branding
+              </span>
+            ),
+          },
         ]}
         activeTabKey={activeTab}
         onTabChange={(k) => setActiveTab(k as SettingsTabKey)}

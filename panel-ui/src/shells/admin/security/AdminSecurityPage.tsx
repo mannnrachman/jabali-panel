@@ -1,19 +1,25 @@
-// AdminSecurityPage — admin-only Security tab shell (M26 Step 6).
+// AdminSecurityPage — admin-only Security page (M26 Step 6).
 //
-// Two sub-tabs, URL-driven via ?tab=crowdsec|ufw. ModSecurity was
-// removed (2026-04-26) — CrowdSec AppSec covers the WAF role with no
-// duplicate inspection layer. See ADR-0055 (SUPERSEDED).
-import { Card, Tabs, Typography } from "antd";
-import { LockOutlined } from "@icons";
+// Two top tabs (CrowdSec, Firewall) on the Card.tabList pattern that
+// Mail and Notifications use, so the chrome matches the rest of the
+// panel. Sub-tabs and section cards live inside each tab's component
+// — those keep the existing Tabs / Card size="small" structure since
+// they're content groupings, not page chrome. ModSecurity was removed
+// (2026-04-26): CrowdSec AppSec covers the WAF role with no duplicate
+// inspection layer (ADR-0055 SUPERSEDED).
+import { Card, Space, Typography } from "antd";
+import { LockOutlined, SafetyOutlined } from "@icons";
 import type { ReactNode } from "react";
 import { useSearchParams } from "react-router";
 
 import crowdsecBrand from "../../../icons/brand/crowdsec.svg";
+
 import { AdminSecurityCrowdsec } from "./AdminSecurityCrowdsec";
 import { AdminSecurityUfw } from "./AdminSecurityUfw";
 
 const TAB_KEYS = ["crowdsec", "ufw"] as const;
 type TabKey = (typeof TAB_KEYS)[number];
+const DEFAULT_TAB: TabKey = "crowdsec";
 
 const TAB_LABELS: Record<TabKey, string> = {
   crowdsec: "CrowdSec",
@@ -42,20 +48,25 @@ const isTabKey = (s: string | null): s is TabKey =>
 
 export const AdminSecurityPage = () => {
   const [params, setParams] = useSearchParams();
-  const activeTab: TabKey = isTabKey(params.get("tab")) ? (params.get("tab") as TabKey) : "crowdsec";
+  const activeKey: TabKey = isTabKey(params.get("tab"))
+    ? (params.get("tab") as TabKey)
+    : DEFAULT_TAB;
 
   const onChange = (key: string) => {
-    if (isTabKey(key)) {
-      setParams((prev) => {
-        const next = new URLSearchParams(prev);
-        next.set("tab", key);
-        return next;
-      });
-    }
+    if (!isTabKey(key)) return;
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("tab", key);
+      // Drop the sub-tab key when the top tab changes — sub state is
+      // owned per-component and a stale ?sub= would point at a tab
+      // that doesn't exist in the new component.
+      next.delete("sub");
+      return next;
+    });
   };
 
   const renderTab = () => {
-    switch (activeTab) {
+    switch (activeKey) {
       case "crowdsec":
         return <AdminSecurityCrowdsec />;
       case "ufw":
@@ -64,22 +75,30 @@ export const AdminSecurityPage = () => {
   };
 
   return (
-    <div>
-      <Typography.Title level={3} style={{ marginTop: 0 }}>
-        Security
-      </Typography.Title>
-      <Card styles={{ body: { padding: 16 } }}>
-        <Tabs
-          activeKey={activeTab}
-          onChange={onChange}
-          style={{ marginTop: -8 }}
-          items={TAB_KEYS.map((k) => ({
-            key: k,
-            icon: TAB_ICONS[k],
-            label: TAB_LABELS[k],
-            children: activeTab === k ? renderTab() : null,
-          }))}
-        />
+    <div style={{ padding: 20 }}>
+      <Space
+        align="center"
+        style={{ marginBottom: 16, width: "100%", justifyContent: "space-between" }}
+      >
+        <Typography.Title level={3} style={{ margin: 0 }}>
+          <SafetyOutlined /> Security
+        </Typography.Title>
+      </Space>
+
+      <Card
+        tabList={TAB_KEYS.map((k) => ({
+          key: k,
+          tab: (
+            <Space size={6}>
+              {TAB_ICONS[k]}
+              {TAB_LABELS[k]}
+            </Space>
+          ),
+        }))}
+        activeTabKey={activeKey}
+        onTabChange={onChange}
+      >
+        {renderTab()}
       </Card>
     </div>
   );

@@ -47,8 +47,15 @@ export type NavItem = {
 // every entry picks it up.
 const NAV_ICON_SIZE = 20;
 
+// Tailwind gray-500 (#6b7280) keeps the inactive icon row muted while
+// the AntD-active item still gets its brand colour via the Menu's
+// itemSelectedColor theme token (which overrides this inline color
+// only for the selected key — `currentColor` inheritance kicks in
+// on selection).
+const NAV_ICON_COLOR = "#6b7280";
+
 const navIcon = (Icon: ComponentType<{ style?: React.CSSProperties }>) =>
-  createElement(Icon, { style: { fontSize: NAV_ICON_SIZE } });
+  createElement(Icon, { style: { fontSize: NAV_ICON_SIZE, color: NAV_ICON_COLOR } });
 
 export const adminNav: NavItem[] = [
   {

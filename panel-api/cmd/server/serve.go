@@ -142,6 +142,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 		serverSettingsRepo := repository.NewServerSettingsRepository(sharedDB)
 		pageTemplateRepo := repository.NewPageTemplateRepository(sharedDB)
+		notificationEventSettingRepo := repository.NewNotificationEventSettingRepository(sharedDB)
 
 		// SSO service for phpMyAdmin
 		ssoService := sso.NewService(
@@ -159,6 +160,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 		deps.ServerSettings = serverSettingsRepo
 		deps.PageTemplates = pageTemplateRepo
+		deps.NotificationEventSettings = notificationEventSettingRepo
 		sshKeyRepo := repository.NewSSHKeyRepository(sharedDB)
 		deps.SSHKeys = sshKeyRepo
 
@@ -393,6 +395,19 @@ func runServe(cmd *cobra.Command, args []string) error {
 					log.Info("seeded default page_templates", "count", seeded)
 				}
 			}
+
+			// M14.1 first-boot seed: per-event-kind enable toggles.
+			// Defaults defined in models.AllNotificationEventKinds —
+			// "important = on" (cert renewal failures, expiry, disk
+			// crit, service down, backup fail, channel auto-disabled),
+			// rest off.
+			if notificationEventSettingRepo != nil {
+				if seeded, err := notificationEventSettingRepo.EnsureDefaults(seedCtx); err != nil {
+					log.Error("failed to seed notification_event_settings defaults", "err", err)
+				} else if seeded > 0 {
+					log.Info("seeded default notification event toggles", "count", seeded)
+				}
+			}
 		}()
 	}
 
@@ -446,10 +461,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// stops them alongside the dispatcher.
 	if deps.NotificationQueue != nil {
 		eventsources.Start(ctx, eventsources.Deps{
-			Queue:    deps.NotificationQueue,
-			History:  deps.NotificationHistory,
-			SSLCerts: deps.SSLCerts,
-			Log:      log,
+			Queue:      deps.NotificationQueue,
+			History:    deps.NotificationHistory,
+			SSLCerts:   deps.SSLCerts,
+			Log:        log,
+			Users:      deps.Users,
+			Agent:      deps.Agent,
+			QuotaMount: deps.QuotaMount,
 		})
 	}
 
@@ -595,6 +613,9 @@ func startNotificationDispatcher(parent context.Context, deps app.Deps, log *slo
 		deps.NotificationChannels, deps.NotificationHistory, deps.WebhookEndpoints,
 		log, notifications.Config{},
 	)
+	if err == nil && deps.NotificationEventSettings != nil {
+		d.WithEventSettings(deps.NotificationEventSettings)
+	}
 	if err != nil {
 		log.Error("notifications dispatcher: construction failed", "err", err)
 		return nil, nil

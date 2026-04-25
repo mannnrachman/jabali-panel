@@ -43,6 +43,7 @@ type Deps struct {
 	Reconciler          *reconciler.Reconciler
 	ServerSettings      repository.ServerSettingsRepository
 	PageTemplates       repository.PageTemplateRepository
+	NotificationEventSettings repository.NotificationEventSettingRepository
 	DNSZones            repository.DNSZoneRepository
 	DNSRecords          repository.DNSRecordRepository
 	SSLCerts            repository.SSLCertificateRepository
@@ -381,6 +382,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		if deps.PageTemplates != nil {
 			api.RegisterPageTemplatesRoutes(v1, api.PageTemplatesHandlerConfig{
 				Repo: deps.PageTemplates,
+				Log:  deps.Log,
+			})
+		}
+		if deps.NotificationEventSettings != nil {
+			api.RegisterNotificationEventSettingsRoutes(v1, api.NotificationEventSettingsHandlerConfig{
+				Repo: deps.NotificationEventSettings,
 				Log:  deps.Log,
 			})
 		}

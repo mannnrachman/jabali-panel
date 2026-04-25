@@ -73,11 +73,22 @@ type Dispatcher struct {
 	channels    repository.NotificationChannelRepository
 	history     repository.NotificationHistoryRepository
 	webhookRepo repository.WebhookEndpointRepository
-	log         *slog.Logger
-	consumer    string
+	// eventSettings gates per-kind enable. Optional — when nil, every
+	// envelope passes (matches pre-M14.1 behaviour for tests + first
+	// boot before the table is seeded).
+	eventSettings repository.NotificationEventSettingRepository
+	log           *slog.Logger
+	consumer      string
 
 	wg      sync.WaitGroup
 	stopped chan struct{}
+}
+
+// WithEventSettings injects the per-event-kind toggle repo so the
+// consumer can ack+drop disabled kinds before fanout.
+func (d *Dispatcher) WithEventSettings(r repository.NotificationEventSettingRepository) *Dispatcher {
+	d.eventSettings = r
+	return d
 }
 
 // NewDispatcher wires a dispatcher. All collaborators are required —
@@ -235,6 +246,22 @@ func (d *Dispatcher) process(ctx context.Context, msg redis.XMessage) {
 			d.log.Error("move to dlq failed", "id", msg.ID, "err", dlqErr)
 		}
 		return
+	}
+
+	// Operator toggle: per-event-kind enable. Disabled kinds get
+	// ack+delete with no fanout and no inbox/history row. Repo cache
+	// has 30s TTL so flipping a switch propagates within that window.
+	if d.eventSettings != nil {
+		enabled, evtErr := d.eventSettings.IsEnabled(ctx, env.EventKind)
+		if evtErr != nil {
+			d.log.Warn("event settings lookup failed; allowing through", "event", env.EventKind, "err", evtErr)
+		} else if !enabled {
+			d.log.Debug("event kind disabled; dropping", "event", env.EventKind, "id", msg.ID)
+			if ackErr := d.queue.AckAndDelete(ctx, msg.ID); ackErr != nil {
+				d.log.Error("ack failed on disabled-event drop", "id", msg.ID, "err", ackErr)
+			}
+			return
+		}
 	}
 
 	targets, err := d.resolveTargets(ctx, env)

@@ -6,14 +6,16 @@ import { useNavigate, useParams } from "react-router";
 import { BellOutlined } from "@icons";
 
 import { ChannelsTab } from "./ChannelsTab";
+import { EventsTab } from "./EventsTab";
 import { HistoryTab } from "./HistoryTab";
 
-const TAB_KEYS = ["channels", "history"] as const;
+const TAB_KEYS = ["channels", "events", "history"] as const;
 type TabKey = (typeof TAB_KEYS)[number];
 const DEFAULT_TAB: TabKey = "channels";
 
 const TAB_LABELS: Record<TabKey, string> = {
   channels: "Channels",
+  events: "Events",
   history: "History",
 };
 
@@ -28,6 +30,8 @@ export const NotificationsTabsPage = () => {
     switch (activeKey) {
       case "channels":
         return <ChannelsTab />;
+      case "events":
+        return <EventsTab />;
       case "history":
         return <HistoryTab />;
     }

@@ -11,6 +11,7 @@ package eventsources
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"time"
 
@@ -18,6 +19,14 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
+
+// AgentCaller mirrors the narrow slice eventsources need from the
+// agent: a single Call that takes method+params and returns raw
+// JSON. Avoids importing the full agent package and keeps tests
+// trivial.
+type AgentCaller interface {
+	Call(ctx context.Context, method string, params any) (json.RawMessage, error)
+}
 
 // Publisher is the write end of the notification pipeline. Matches
 // notifications.Queue.Publish; defined here as an interface so tests
@@ -54,6 +63,12 @@ type Deps struct {
 	Log         *slog.Logger
 	Now         Clock
 	CrowdSecBin string // path to cscli; empty → disable the crowdsec source
+	// disk_quota source — needs Users + Agent + QuotaMount to call
+	// agent.user.limits.report per user. All three required; missing
+	// any disables the source rather than panicking.
+	Users      repository.UserRepository
+	Agent      AgentCaller
+	QuotaMount string
 }
 
 // Start boots every configured source in its own goroutine. Each
@@ -74,6 +89,9 @@ func Start(ctx context.Context, d Deps) {
 	go runDiskFull(ctx, d)
 	go runServiceDown(ctx, d)
 	go runCrowdSec(ctx, d)
+	go runLoadHigh(ctx, d)
+	go runSystemUpdate(ctx, d)
+	go runDiskQuota(ctx, d)
 	// domain_expiry + backup_fail are stubs — see the stub files in
 	// this package.
 }

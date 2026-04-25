@@ -15,14 +15,14 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-// quotaMountOrEmpty resolves the mount path /home lives on, mapping
-// "/home on root filesystem" to "" to match install.sh's quota-off
-// contract (see serve.go QuotaMount docstring). Callers pass the
-// returned value as `quota_mount` on agent RPCs; "" tells the agent
-// to skip setquota entirely (ADR-0032 degradability rule).
+// quotaMountOrEmpty resolves the mount path /home lives on. Returns
+// "" only when QuotaMountFor itself errors — /home==/ is fine (install.sh
+// enables ext4 hidden quota inodes on /, matching cPanel/DA), and the
+// runtime decision to honor quotas is gated separately by
+// server_settings.disk_quota_enabled.
 func quotaMountOrEmpty() string {
 	m, err := limits.QuotaMountFor("/home")
-	if err != nil || m == "/" {
+	if err != nil {
 		return ""
 	}
 	return m
@@ -96,8 +96,6 @@ func newLimitsCheckCmd() *cobra.Command {
 			if mount, err := limits.QuotaMountFor("/home"); err != nil {
 				fmt.Fprintf(w, "quota mount\tFAIL\t%v\n", err)
 				ok = false
-			} else if mount == "/" {
-				fmt.Fprintf(w, "quota mount\tWARN\t/home on root filesystem; quota-on-root is unsafe\n")
 			} else {
 				fmt.Fprintf(w, "quota mount\tOK\t%s\n", mount)
 			}

@@ -235,24 +235,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// degrades gracefully — QuotaMount=="" disables the disk half
 		// of the pipeline while cgroups enforcement still works.
 		//
-		// When /home shares `/` (no dedicated partition), install.sh
-		// deliberately skips enabling usrquota on the root filesystem
-		// (see install.sh §install_quota: "quota-on-root is unsafe" —
-		// a runaway user can exhaust the partition the OS itself
-		// needs). QuotaMountFor still returns "/" in that case, so we
-		// match install.sh's rule here: treat "/" as quota-disabled
-		// rather than hand a mount path the kernel will reject. Agent
-		// skips setquota when QuotaMount is empty (see
-		// panel-agent/internal/commands/user_limits_apply_test.go §256).
+		// /home==/ is supported (matches cPanel/DA): install.sh enables
+		// ext4 hidden quota inodes on / via tune2fs -O quota; the
+		// reconciler only ever calls setquota for hosting UIDs (>=1000)
+		// so root and system daemons stay unlimited regardless of which
+		// filesystem holds the quota tables. Whether quota_mount is
+		// honored at runtime is a separate question, gated by
+		// server_settings.disk_quota_enabled (admin UI toggle).
 		if m, err := limits.QuotaMountFor("/home"); err == nil {
-			if m == "/" {
-				if log != nil {
-					log.Warn("m18: /home on root filesystem — disk-quota plumbing disabled (cgroups still active)")
-				}
-			} else {
-				deps.QuotaMount = m
-				rec.WithQuotaMount(m)
-			}
+			deps.QuotaMount = m
+			rec.WithQuotaMount(m)
 		} else if log != nil {
 			log.Warn("m18: could not resolve /home mount; disk-quota plumbing disabled", "err", err)
 		}

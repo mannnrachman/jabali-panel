@@ -1488,16 +1488,20 @@ const RecommendedHubCard = ({
         dataSource={RECOMMENDED_HUB_ITEMS}
         pagination={false}
         size="small"
-        scroll={{ x: "max-content" }}
+        tableLayout="fixed"
       >
         <Table.Column<RecommendedItem>
           title="Item"
           key="title"
+          width={260}
           render={(_, row) => (
             <Space direction="vertical" size={0}>
-              <Space size={6}>
+              <Space size={6} wrap>
                 <Typography.Text strong>{row.title}</Typography.Text>
                 <Tag color={CATEGORY_COLOR[row.category]}>{row.category}</Tag>
+                {installedKey.has(`${row.type}:${row.name}`) && (
+                  <Tag color="green">installed</Tag>
+                )}
               </Space>
               <Typography.Text code style={{ fontSize: 12 }}>
                 {row.name}
@@ -1512,22 +1516,10 @@ const RecommendedHubCard = ({
           render={(v: string) => <Typography.Text type="secondary">{v}</Typography.Text>}
         />
         <Table.Column<RecommendedItem>
-          title="Status"
-          key="status"
-          width={120}
-          render={(_, row) => {
-            const isInstalled = installedKey.has(`${row.type}:${row.name}`);
-            return isInstalled ? (
-              <Tag color="green">installed</Tag>
-            ) : (
-              <Tag>not installed</Tag>
-            );
-          }}
-        />
-        <Table.Column<RecommendedItem>
           title=""
           key="action"
-          width={120}
+          width={130}
+          align="right"
           render={(_, row) => {
             const key = `${row.type}:${row.name}`;
             const isInstalled = installedKey.has(key);

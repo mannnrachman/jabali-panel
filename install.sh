@@ -2922,7 +2922,7 @@ Group=jabali-sockets
 # jabali:jabali-sockets with no \`jabali\` supplementary, and can't read
 # its own EnvironmentFile ($ENV_FILE, root:jabali 0640). See
 # install/systemd/jabali-kratos.service for the identical fix reasoning.
-SupplementaryGroups=$SERVICE_USER
+SupplementaryGroups=$SERVICE_USER systemd-journal www-data
 # /run/jabali-panel — systemd creates owned $SERVICE_USER:$SERVICE_USER 0755
 # on service start and tears down on stop. The SSO UDS listener binds
 # \${runtime}/sso.sock here; unlike /run/jabali (owned by root, used by

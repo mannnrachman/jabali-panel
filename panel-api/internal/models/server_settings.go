@@ -55,16 +55,6 @@ type ServerSettings struct {
 	VAPIDPrivateKey *string `gorm:"type:varchar(64);column:vapid_private_key"  json:"-"`
 	VAPIDSubject    *string `gorm:"type:varchar(320);column:vapid_subject"     json:"-"`
 
-	// M26 ModSecurity globals (migration 000066, ADR-0055). The agent
-	// command security.modsec.global.set rewrites both these columns
-	// AND the on-disk /etc/nginx/modsecurity.conf SecRuleEngine
-	// directive in one transaction. Paranoia level is the OWASP CRS
-	// 1..4 scale; admin UI clamps to that range.
-	// Column names pinned explicitly — GORM's default snake_case on
-	// ModSec* would emit mod_sec_* which doesn't match migration 000066.
-	ModSecGlobalEnabled bool  `gorm:"column:modsec_global_enabled;type:tinyint(1);not null;default:0"        json:"modsec_global_enabled"`
-	ModSecParanoiaLevel uint8 `gorm:"column:modsec_paranoia_level;type:tinyint unsigned;not null;default:1"  json:"modsec_paranoia_level"`
-
 	// M28 Panel Branding. PanelBrandText is the short label next to
 	// the logo and in the browser title. LogoLightPath / LogoDarkPath
 	// hold absolute on-disk paths to operator-uploaded logo files

@@ -676,7 +676,7 @@ POLICYEOF
       nodejs \
       pdns-server pdns-backend-mysql pdns-recursor \
       bind9-dnsutils \
-      libnginx-mod-http-modsecurity modsecurity-crs ufw yq \
+      ufw yq \
       redis-server redis-tools \
       "${php_extensions[@]}"
 
@@ -3813,22 +3813,24 @@ install_sso_reaper_timer() {
   _ok "sso reaper timer enabled (every 30s)"
 }
 
-# ---------- step 8a: M26 security foundation (CrowdSec + ModSecurity + UFW) --
+# ---------- step 8a: M26 security foundation (CrowdSec + UFW) ---------------
 #
-# Three idempotent installs that land BEFORE Stalwart so:
+# Two idempotent installs that land BEFORE Stalwart so:
 #   - CrowdSec LAPI binds on /run/crowdsec/api.sock (NOT 127.0.0.1:8080,
 #     which Stalwart owns per ADR-0050).
 #   - UFW is `enable`d ONCE (idempotent guard) before Stalwart's first
 #     bind so the iptables/nftables reload cannot race Stalwart startup.
-#   - ModSecurity nginx module is loaded with a stock include set but
-#     `SecRuleEngine Off` — global toggle flips in M26 Step 4.
 #
-# All three are wired into main() between install_pdns_recursor and
-# install_stalwart. Apt packages (crowdsec, libnginx-mod-http-modsecurity,
-# modsecurity-crs, ufw, yq) are in the install_base_packages batch; the
-# CrowdSec firewall bouncer is detected + installed at runtime here
-# because the package name varies by Debian release (nftables on trixie,
-# iptables on bookworm) and apt-cache fallback is the safer model.
+# Both are wired into main() between install_pdns_recursor and
+# install_stalwart. Apt packages (crowdsec, ufw, yq) are in the
+# install_base_packages batch; the CrowdSec firewall bouncer is detected
+# + installed at runtime here because the package name varies by Debian
+# release (nftables on trixie, iptables on bookworm) and apt-cache
+# fallback is the safer model.
+#
+# cleanup_modsecurity also runs in this block — removes the dead M26
+# ModSecurity stack on hosts upgraded from older installs (ADR-0055
+# SUPERSEDED 2026-04-26).
 
 add_crowdsec_apt_source() {
   # CrowdSec upstream apt source. Debian-stock crowdsec on trixie is
@@ -4270,65 +4272,41 @@ EOF
   systemctl reload crowdsec 2>/dev/null || true
 }
 
-install_modsecurity() {
-  _log "configuring ModSecurity-nginx (packages installed in base batch)"
-
-  # The libnginx-mod-http-modsecurity package drops a symlink in
-  # /etc/nginx/modules-enabled/ that nginx loads via the stock
-  # /etc/nginx/nginx.conf `include modules-enabled/*.conf;`. Verify.
-  if ! ls /etc/nginx/modules-enabled/*modsecurity* >/dev/null 2>&1; then
-    _warn "no modsecurity module symlink in /etc/nginx/modules-enabled/ — nginx will not load the module until reinstall"
+cleanup_modsecurity() {
+  # ADR-0055 SUPERSEDED 2026-04-26 — CrowdSec AppSec covers the WAF role.
+  # Active cleanup so existing hosts that installed M26 ModSecurity drop
+  # the dead nginx module + CRS rules + main include on `jabali update`.
+  # Idempotent: bails fast when packages already gone and no leftover files.
+  local pkgs_present=0
+  if dpkg -l 2>/dev/null | grep -qE '^ii\s+(libnginx-mod-http-modsecurity|modsecurity-crs)\s'; then
+    pkgs_present=1
+  fi
+  if [[ "$pkgs_present" == "0" && ! -d /etc/nginx/modsec && ! -e /etc/nginx/modsecurity.conf ]]; then
+    return 0
   fi
 
-  # Ensure /etc/nginx/modsec/ exists and write the M26 main include. This
-  # file is REFERENCED by the per-vhost `modsecurity_rules_file` directive
-  # added in M26 Step 5 (per-domain enable). Step 1 lands the include
-  # set so vhost work in later steps doesn't have to bootstrap it.
-  install -d -m 0755 /etc/nginx/modsec
-  local main_conf="/etc/nginx/modsec/main.conf"
-  # Debian's libnginx-mod-http-modsecurity ships the core config at
-  # /etc/nginx/modsecurity.conf (NOT /etc/modsecurity/modsecurity.conf
-  # — that's the upstream-tarball path). Debian's modsecurity-crs ships
-  # crs-setup.conf under /etc/modsecurity/crs/ and rules under
-  # /usr/share/modsecurity-crs/rules/.
-  local desired_main=$'# Managed by jabali install.sh — M26 Step 1.\n# Per-vhost `modsecurity_rules_file /etc/nginx/modsec/main.conf;` pulls\n# in the stock OWASP CRS rule set. Do NOT add custom rules here — Step 5\n# of M26 lands a per-domain override mechanism.\nInclude /etc/nginx/modsecurity.conf\nInclude /etc/modsecurity/crs/crs-setup.conf\nInclude /usr/share/modsecurity-crs/rules/*.conf\n'
-  if [[ ! -f "$main_conf" ]] || ! cmp -s <(printf '%s' "$desired_main") "$main_conf"; then
-    _log "writing $main_conf"
-    local tmp
-    tmp="$(mktemp --tmpdir jabali-modsec-main.XXXXXX)"
-    printf '%s' "$desired_main" >"$tmp"
-    install -m 0644 -o root -g root "$tmp" "$main_conf"
-    rm -f "$tmp"
-  else
-    _log "$main_conf already current"
+  _log "removing ModSecurity (ADR-0055 superseded by CrowdSec AppSec)"
+  if [[ "$pkgs_present" == "1" ]]; then
+    DEBIAN_FRONTEND=noninteractive apt-get -y \
+      -o Dpkg::Lock::Timeout=300 \
+      remove --purge libnginx-mod-http-modsecurity modsecurity-crs >/dev/null 2>&1 || true
   fi
 
-  # The Debian-stock /etc/nginx/modsecurity.conf is shipped with
-  # `SecRuleEngine DetectionOnly`. M26 Step 1 keeps the engine OFF
-  # (no inspection) — Step 4 lands the global toggle that flips this
-  # to On via the admin Security tab + agent command. Default Off so
-  # Step 1 ships a safe no-op WAF that doesn't touch tenant traffic.
-  local stock_conf="/etc/nginx/modsecurity.conf"
-  if [[ -f "$stock_conf" ]]; then
-    if grep -qE '^SecRuleEngine[[:space:]]+(DetectionOnly|On)' "$stock_conf"; then
-      _log "setting SecRuleEngine Off in $stock_conf (M26 Step 1 default)"
-      sed -i -E 's/^SecRuleEngine[[:space:]]+(DetectionOnly|On)/SecRuleEngine Off/' "$stock_conf"
-    fi
-  else
-    _warn "$stock_conf missing — modsecurity package install incomplete?"
-  fi
+  # Sweep leftover nginx config + module symlinks. The apt purge usually
+  # handles modules-enabled/*.conf already, but operators sometimes
+  # symlinked manually — wipe both.
+  rm -f /etc/nginx/modules-enabled/*modsecurity* 2>/dev/null || true
+  rm -f /etc/nginx/modsecurity.conf 2>/dev/null || true
+  rm -rf /etc/nginx/modsec 2>/dev/null || true
+  rm -rf /etc/modsecurity 2>/dev/null || true
 
-  # Validate nginx config picks up the new module + main.conf without
-  # complaining; reload only if nginx is already running so a fresh
-  # install (where install_nginx_default_vhost reloads later) doesn't
-  # double-restart.
   if nginx -t >/dev/null 2>&1; then
     if systemctl is-active --quiet nginx; then
       systemctl reload nginx
     fi
-    _ok "ModSecurity module loaded; engine Off (Step 1 default)"
+    _ok "ModSecurity removed; nginx config still valid"
   else
-    _warn "nginx -t failed after modsecurity install — first relevant error:"
+    _warn "nginx -t failed after ModSecurity cleanup — first relevant error:"
     nginx -t 2>&1 | head -10 >&2
   fi
 }
@@ -5617,8 +5595,7 @@ main() {
   # M26 Step 1 — security foundation. Wired here (after pdns/certbot,
   # before clone_or_update_repo and the long build_frontend / npm steps)
   # because:
-  #   - All apt packages (crowdsec, libnginx-mod-http-modsecurity,
-  #     modsecurity-crs, ufw, yq) land in the install_base_packages
+  #   - All apt packages (crowdsec, ufw, yq) land in the install_base_packages
   #     batch above; the firewall bouncer is detected at runtime here.
   #   - CrowdSec LAPI binds on a Unix socket (ADR-0050) — must be
   #     configured BEFORE install_stalwart so it doesn't race Stalwart
@@ -5627,13 +5604,13 @@ main() {
   #     BEFORE Stalwart's first bind (avoids documented iptables-reload
   #     race) AND BEFORE build_frontend (so an interrupted build
   #     doesn't strand the host without a firewall).
-  #   - ModSecurity nginx module ships installed but `SecRuleEngine
-  #     Off` (Step 4 lands the global toggle).
+  #   - cleanup_modsecurity removes the M26 ModSecurity stack on existing
+  #     hosts that ran an earlier install (ADR-0055 superseded 2026-04-26).
   install_crowdsec
   install_crowdsec_appsec
   install_crowdsec_nginx_bouncer
   install_crowdsec_profiles
-  install_modsecurity
+  cleanup_modsecurity
   install_ufw
   install_restart_drop_ins
   clone_or_update_repo

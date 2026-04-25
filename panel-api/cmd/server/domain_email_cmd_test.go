@@ -86,7 +86,6 @@ func (*fakeDomainRepo) CountByPHPPoolID(context.Context, string) (int64, error) 
 	return 0, nil
 }
 func (*fakeDomainRepo) SetPHPPoolID(context.Context, string, *string) error { return nil }
-func (*fakeDomainRepo) SetModSecEnabled(context.Context, string, bool) error { return nil }
 func (*fakeDomainRepo) UpdatePHPSettings(context.Context, string, repository.DomainPHPSettings) error {
 	return nil
 }

@@ -1,25 +1,22 @@
 // AdminSecurityPage — admin-only Security tab shell (M26 Step 6).
 //
-// Three sub-tabs, URL-driven via ?tab=crowdsec|modsec|ufw. Uses the
-// Card.tabList pattern (same as MailTabsPage / NotificationsTabsPage)
-// so the tab strip is attached to a card body rather than floating
-// above the page.
+// Two sub-tabs, URL-driven via ?tab=crowdsec|ufw. ModSecurity was
+// removed (2026-04-26) — CrowdSec AppSec covers the WAF role with no
+// duplicate inspection layer. See ADR-0055 (SUPERSEDED).
 import { Card, Tabs, Typography } from "antd";
-import { BugOutlined, LockOutlined } from "@icons";
+import { LockOutlined } from "@icons";
 import type { ReactNode } from "react";
 import { useSearchParams } from "react-router";
 
 import crowdsecBrand from "../../../icons/brand/crowdsec.svg";
 import { AdminSecurityCrowdsec } from "./AdminSecurityCrowdsec";
-import { AdminSecurityModsec } from "./AdminSecurityModsec";
 import { AdminSecurityUfw } from "./AdminSecurityUfw";
 
-const TAB_KEYS = ["crowdsec", "modsec", "ufw"] as const;
+const TAB_KEYS = ["crowdsec", "ufw"] as const;
 type TabKey = (typeof TAB_KEYS)[number];
 
 const TAB_LABELS: Record<TabKey, string> = {
   crowdsec: "CrowdSec",
-  modsec: "ModSecurity",
   ufw: "Firewall (UFW)",
 };
 
@@ -37,7 +34,6 @@ const CrowdsecBrandIcon = () => (
 
 const TAB_ICONS: Record<TabKey, ReactNode> = {
   crowdsec: <CrowdsecBrandIcon />,
-  modsec: <BugOutlined />,
   ufw: <LockOutlined />,
 };
 
@@ -62,8 +58,6 @@ export const AdminSecurityPage = () => {
     switch (activeTab) {
       case "crowdsec":
         return <AdminSecurityCrowdsec />;
-      case "modsec":
-        return <AdminSecurityModsec />;
       case "ufw":
         return <AdminSecurityUfw />;
     }

@@ -963,20 +963,6 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 		}
 	}
 
-	// M26 ModSecurity (ADR-0055). Per-domain modsec_enabled flag plus
-	// the server-wide modsec_global_enabled — the agent template emits
-	// the modsecurity directives only when BOTH are true. Global
-	// engine-mode/paranoia rewrite happens out-of-band via
-	// security.modsec.global.set; per-vhost is just the on/off include.
-	params["modsec_enabled"] = domain.ModSecEnabled
-	if r.serverSettings != nil {
-		settingsCtx, settingsCancel := context.WithTimeout(ctx, 5*time.Second)
-		if s, err := r.serverSettings.Get(settingsCtx); err == nil && s != nil {
-			params["modsec_global_enabled"] = s.ModSecGlobalEnabled
-		}
-		settingsCancel()
-	}
-
 	// M28 — operator-editable default index body. Handed to the agent
 	// verbatim as a Go text/template string; empty means "use agent's
 	// baked-in default". Safe when pageTemplates isn't wired (tests).

@@ -226,15 +226,6 @@ type Domain struct {
 	DkimPublicKey   *string    `gorm:"type:text" json:"dkim_public_key,omitempty"`
 	EmailEnabledAt  *time.Time `gorm:"type:datetime(6)" json:"email_enabled_at,omitempty"`
 
-	// M26 ModSecurity per-domain toggle (migration 000064, ADR-0055).
-	// When true, the per-vhost nginx template emits the modsecurity
-	// include block (M26 Step 5). When false, the vhost has no modsec
-	// directives and tenant traffic is not inspected. Default 0 — opt-in.
-	// Column name pinned to `modsec_enabled` (migration 000066) — GORM's
-	// default snake_case for ModSecEnabled would emit `mod_sec_enabled`
-	// which doesn't exist in the schema.
-	ModSecEnabled bool `gorm:"column:modsec_enabled;type:tinyint(1);not null;default:0" json:"modsec_enabled"`
-
 	// IsPanelPrimary marks the single domain row auto-registered for the
 	// panel hostname (ADR-0048). Delete-protected at the repo and API
 	// layer; surfaced in Settings → Email. At-most-one is enforced in
@@ -259,7 +250,7 @@ type Domain struct {
 	// DNSSECEnabled into `dns_sec_enabled` (splits on every uppercase run),
 	// but migration 000070 creates the column as `dnssec_enabled`. Without
 	// the explicit `column:` tag every INSERT fails with "Unknown column
-	// 'dns_sec_enabled'". Mirrors the M26 ModSec/CrowdSec pattern.
+	// 'dns_sec_enabled'". Mirrors the CrowdSec pattern.
 	DNSSECEnabled   bool       `gorm:"column:dnssec_enabled;type:tinyint(1);not null;default:0" json:"dnssec_enabled"`
 	DNSSECEnabledAt *time.Time `gorm:"column:dnssec_enabled_at;type:datetime(6)" json:"dnssec_enabled_at,omitempty"`
 

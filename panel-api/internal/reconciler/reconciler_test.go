@@ -116,13 +116,6 @@ func (f *fakeDomainRepo) SetPHPPoolID(ctx context.Context, id string, poolID *st
 	return nil
 }
 
-func (f *fakeDomainRepo) SetModSecEnabled(ctx context.Context, id string, enabled bool) error {
-	if d, ok := f.domains[id]; ok {
-		d.ModSecEnabled = enabled
-	}
-	return nil
-}
-
 func (f *fakeDomainRepo) CountByPHPPoolID(ctx context.Context, poolID string) (int64, error) {
 	count := 0
 	for _, d := range f.domains {

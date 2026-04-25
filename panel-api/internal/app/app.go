@@ -458,19 +458,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterSystemRoutes(v1, deps.Agent)
 			api.RegisterPHPVersionRoutes(v1, deps.Agent)
 			// M26 Step 4 — admin Security tab. CrowdSec + UFW are pure
-			// agent passthroughs. ModSec needs the Domain repo for the
-			// per-domain toggle list + Reconciler to schedule a re-render
-			// after the toggle flips.
+			// agent passthroughs. ModSecurity removed 2026-04-26 (ADR-0055
+			// SUPERSEDED) — CrowdSec AppSec covers the WAF role.
 			api.RegisterSecurityCrowdSecRoutes(v1, deps.Agent, deps.ServerSettings)
 			api.RegisterSecurityAppSecRoutes(v1, deps.Agent, deps.ServerSettings)
 			api.RegisterSecurityUFWRoutes(v1, deps.Agent)
-			if deps.Domains != nil {
-				api.RegisterSecurityModsecRoutes(v1, api.SecurityModsecHandlerConfig{
-					Agent:      deps.Agent,
-					Domains:    deps.Domains,
-					Reconciler: deps.Reconciler,
-				})
-			}
 		}
 		if deps.SSO != nil && deps.Databases != nil && deps.PhpMyAdminSSOTokens != nil {
 			api.RegisterSSOPhpMyAdminRoutes(v1, api.SSOPhpMyAdminHandlerConfig{

@@ -1,6 +1,8 @@
 # ADR-0055: ModSecurity-nginx + OWASP CRS, per-domain toggle
 
-**Status:** Accepted (2026-04-24)
+**Status:** SUPERSEDED (2026-04-26) — replaced by ADR-0060 (CrowdSec AppSec geoblock) and the M27 AppSec work. CrowdSec AppSec covers the WAF role (in-band rule matching against virtual-patching + generic CRS-style rules) without a duplicate inspection layer. ModSecurity stack (apt packages, nginx module, /etc/nginx/modsec/, schema columns `domains.modsec_enabled` + `server_settings.modsec_global_enabled` + `server_settings.modsec_paranoia_level`, agent commands, panel-api routes, Security tab) all removed; migration `000074_drop_modsec_columns` drops the schema, `cleanup_modsecurity` in install.sh removes the apt packages on existing hosts.
+
+**Original status:** Accepted (2026-04-24)
 **Driven by:** Plan `plans/m26-security-tab.md` (M26 Step 1 — security foundation).
 
 ## Context

@@ -9,14 +9,14 @@
 // a footer Space for the push toggle. Container uses theme tokens
 // (colorBgElevated / borderRadiusLG / boxShadowSecondary) so the
 // popup is visually identical to every other AntD dropdown.
-import { Badge, Button, Divider, Dropdown, Empty, Popconfirm, Space, Tag, Typography, message, theme } from "antd";
+import { Badge, Button, Divider, Dropdown, Empty, Grid, Popconfirm, Space, Tag, Typography, message, theme } from "antd";
 import type { MenuProps } from "antd";
 import type { CSSProperties, ReactElement } from "react";
 import { cloneElement, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 
-import { BellOutlined, CheckOutlined, DeleteOutlined } from "@icons";
+import { BellOutlined, DeleteOutlined } from "@icons";
 
 import { apiClient } from "../apiClient";
 import { useWebPushSubscription } from "../hooks/useWebPushSubscription";
@@ -72,6 +72,8 @@ export function NotificationBell() {
   const qc = useQueryClient();
   const webpush = useWebPushSubscription();
   const { token } = useToken();
+  const screens = Grid.useBreakpoint();
+  const isNarrow = !screens.sm;
 
   const inbox = useQuery<InboxResponse>({
     queryKey: INBOX_KEY,
@@ -215,8 +217,12 @@ export function NotificationBell() {
           ),
         }));
 
+  // Width clamps so the popup never overflows the viewport on narrow
+  // phones — full bleed minus the body padding on <sm, capped at 380
+  // everywhere else. min() keeps the desktop ceiling so wide screens
+  // don't stretch the dropdown.
   const contentStyle: CSSProperties = {
-    width: 380,
+    width: isNarrow ? "calc(100vw - 16px)" : "min(380px, calc(100vw - 16px))",
     maxWidth: "100vw",
     backgroundColor: token.colorBgElevated,
     borderRadius: token.borderRadiusLG,
@@ -247,7 +253,6 @@ export function NotificationBell() {
               <Button
                 type="text"
                 size="small"
-                icon={<CheckOutlined />}
                 onClick={markAllRead}
                 disabled={unread === 0}
               >

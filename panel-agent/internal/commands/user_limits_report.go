@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 )
@@ -92,6 +94,13 @@ func userLimitsReportHandler(ctx context.Context, params json.RawMessage) (any, 
 	// header-less lines. Format (whitespace-separated):
 	//   <mount> <blocks> <quota-soft> <quota-hard> <grace> <files> ...
 	// We care about blocks (used in KB) and quota-hard (hard limit).
+	//
+	// Fallback: if `quota` returns nothing (no aquota.user yet — e.g.
+	// quotacheck refused to run on a busy /) OR returns UsedKB == 0
+	// while /home/<user> visibly has bytes on disk, fall back to
+	// `du -sk /home/<user>` so the dashboard reflects reality. Cached
+	// in-process for 60s so the 5s polling cadence doesn't fork-bomb
+	// the disk on a 50GB user.
 	if p.QuotaMount != "" {
 		stdout, _, err := runCmdFn(ctx, "quota", "-u", "-p", "-w", "-f", p.QuotaMount, p.Username)
 		if err == nil {
@@ -101,6 +110,15 @@ func userLimitsReportHandler(ctx context.Context, params json.RawMessage) (any, 
 		}
 		// quota exits non-zero when the user has no quota set on this
 		// mount — we treat that as "no disk report" rather than error.
+		if resp.Disk == nil || resp.Disk.UsedKB == 0 {
+			if du, ok := diskUsageFallback(ctx, p.Username); ok {
+				if resp.Disk == nil {
+					resp.Disk = &diskReport{UsedKB: du}
+				} else {
+					resp.Disk.UsedKB = du
+				}
+			}
+		}
 	}
 
 	cgroupDir := fmt.Sprintf("/sys/fs/cgroup/jabali.slice/jabali-user.slice/jabali-user-%s.slice", p.Username)
@@ -253,6 +271,61 @@ func readCPUQuota(path string) uint32 {
 		return 0
 	}
 	return uint32(quota * 100 / period)
+}
+
+// Per-user du fallback cache. Keyed by username; entries expire after
+// duCacheTTL. Single mutex covers both read + write — du can take
+// hundreds of ms on large homes, so we serialise to avoid two
+// concurrent dashboard polls forking the same scan.
+const duCacheTTL = 60 * time.Second
+
+type duCacheEntry struct {
+	usedKB uint64
+	at     time.Time
+}
+
+var (
+	duCacheMu sync.Mutex
+	duCache   = map[string]duCacheEntry{}
+)
+
+// diskUsageFallback returns used KB for /home/<username> using `du -sk`.
+// Cached for duCacheTTL. Returns (0, false) on any error so the caller
+// falls through to the existing "no disk report" branch.
+func diskUsageFallback(ctx context.Context, username string) (uint64, bool) {
+	duCacheMu.Lock()
+	if e, ok := duCache[username]; ok && time.Since(e.at) < duCacheTTL {
+		duCacheMu.Unlock()
+		return e.usedKB, true
+	}
+	duCacheMu.Unlock()
+
+	home := "/home/" + username
+	if fi, err := os.Stat(home); err != nil || !fi.IsDir() {
+		return 0, false
+	}
+
+	testMutex.Lock()
+	runCmdFn := runCmd
+	testMutex.Unlock()
+
+	stdout, _, err := runCmdFn(ctx, "du", "-sk", home)
+	if err != nil {
+		return 0, false
+	}
+	fields := strings.Fields(string(stdout))
+	if len(fields) == 0 {
+		return 0, false
+	}
+	used, err := strconv.ParseUint(fields[0], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+
+	duCacheMu.Lock()
+	duCache[username] = duCacheEntry{usedKB: used, at: time.Now()}
+	duCacheMu.Unlock()
+	return used, true
 }
 
 func init() {

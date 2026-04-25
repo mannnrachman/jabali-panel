@@ -107,6 +107,42 @@ export function useCrowdsecHub() {
   });
 }
 
+export type HubMutateInput = {
+  type: string;
+  name: string;
+  force?: boolean;
+};
+
+export function useInstallCrowdsecHubItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: HubMutateInput) => {
+      const { data } = await apiClient.post(`${BASE}/hub/install`, input);
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["security", "crowdsec", "hub"] });
+      qc.invalidateQueries({ queryKey: ["security", "crowdsec", "scenarios"] });
+    },
+  });
+}
+
+export function useRemoveCrowdsecHubItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { type: string; name: string }) => {
+      const { data } = await apiClient.delete(`${BASE}/hub`, {
+        params: { type: input.type, name: input.name },
+      });
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["security", "crowdsec", "hub"] });
+      qc.invalidateQueries({ queryKey: ["security", "crowdsec", "scenarios"] });
+    },
+  });
+}
+
 export type AddCrowdsecDecisionInput = {
   scope: CrowdsecScope;
   value: string;

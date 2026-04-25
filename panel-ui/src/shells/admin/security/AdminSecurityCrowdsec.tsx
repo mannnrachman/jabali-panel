@@ -32,7 +32,7 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 
 import {
@@ -45,6 +45,8 @@ import {
   useCrowdsecBouncers,
   useCrowdsecDecisions,
   useCrowdsecHub,
+  useInstallCrowdsecHubItem,
+  useRemoveCrowdsecHubItem,
   useCrowdsecMetrics,
   useCrowdsecCaptcha,
   useCrowdsecConsoleStatus,
@@ -320,31 +322,34 @@ export const AdminSecurityCrowdsec = () => {
   );
 
   const hubPanel = (
-    <Card size="small" title="Hub scenarios">
-      <Table
-        rowKey={(r: { type: string; name: string }) => `${r.type}:${r.name}`}
-        dataSource={hub.data ?? []}
-        loading={hub.isLoading}
-        pagination={{ pageSize: 20, showSizeChanger: false }}
-        locale={{ emptyText: <Empty description="No hub items" /> }}
-        scroll={{ x: "max-content" }}
-      >
-        <Table.Column dataIndex="name" title="Name" key="name" />
-        <Table.Column dataIndex="type" title="Type" key="type" />
-        <Table.Column
-          dataIndex="installed"
-          title="Installed"
-          key="installed"
-          render={(v: boolean) => (v ? <Tag color="blue">yes</Tag> : <Tag>no</Tag>)}
-        />
-        <Table.Column
-          dataIndex="enabled"
-          title="Enabled"
-          key="enabled"
-          render={(v: boolean) => (v ? <Tag color="green">yes</Tag> : <Tag>no</Tag>)}
-        />
-      </Table>
-    </Card>
+    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+      <RecommendedHubCard hub={hub} />
+      <Card size="small" title="All hub items">
+        <Table
+          rowKey={(r: { type: string; name: string }) => `${r.type}:${r.name}`}
+          dataSource={hub.data ?? []}
+          loading={hub.isLoading}
+          pagination={{ pageSize: 20, showSizeChanger: false }}
+          locale={{ emptyText: <Empty description="No hub items" /> }}
+          scroll={{ x: "max-content" }}
+        >
+          <Table.Column dataIndex="name" title="Name" key="name" />
+          <Table.Column dataIndex="type" title="Type" key="type" />
+          <Table.Column
+            dataIndex="installed"
+            title="Installed"
+            key="installed"
+            render={(v: boolean) => (v ? <Tag color="blue">yes</Tag> : <Tag>no</Tag>)}
+          />
+          <Table.Column
+            dataIndex="enabled"
+            title="Enabled"
+            key="enabled"
+            render={(v: boolean) => (v ? <Tag color="green">yes</Tag> : <Tag>no</Tag>)}
+          />
+        </Table>
+      </Card>
+    </Space>
   );
 
   return (
@@ -937,8 +942,12 @@ const ConsoleCard = () => {
       size="small"
       title="CrowdSec Console (optional)"
       extra={
-        <Typography.Link href="https://app.crowdsec.net" target="_blank" rel="noopener noreferrer">
-          app.crowdsec.net
+        <Typography.Link
+          href="https://app.crowdsec.net/security-engines?distribution=linux"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Get enrollment key
         </Typography.Link>
       }
     >
@@ -949,9 +958,17 @@ const ConsoleCard = () => {
           message="Enroll this instance to receive CTI community blocklists and a hosted dashboard."
           description={
             <>
-              Create an account at app.crowdsec.net, copy the enrollment key, paste it below, then
-              accept the pending instance in the web UI. Share settings and disenroll are managed in
-              the Console web UI.
+              Open{" "}
+              <Typography.Link
+                href="https://app.crowdsec.net/security-engines?distribution=linux"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                app.crowdsec.net/security-engines
+              </Typography.Link>
+              , copy the <Typography.Text code>cscli console enroll &lt;key&gt;</Typography.Text>{" "}
+              command, paste the key below, then accept the pending instance in the Console.
+              Share settings and disenroll are managed in the Console web UI.
             </>
           }
         />
@@ -1295,6 +1312,243 @@ const ProfilesCard = () => {
               ]}
             />
           )}
+        />
+      </Table>
+    </Card>
+  );
+};
+
+// RecommendedHubCard — curated picker of well-known free CrowdSec Hub
+// items. Each entry maps to `cscli <type> install <name>`. Catalog is
+// hand-maintained because cscli has no "free vs premium" filter and the
+// upstream Console catalog (Premium/Enterprise blocklists) requires a
+// signed-in account; everything below works on a fresh install with no
+// enrollment.
+type RecommendedItem = {
+  type: "collections" | "scenarios" | "parsers" | "appsec-rules";
+  name: string;
+  title: string;
+  description: string;
+  category: "core" | "web" | "mail" | "appsec" | "intel";
+};
+
+const RECOMMENDED_HUB_ITEMS: RecommendedItem[] = [
+  {
+    type: "collections",
+    name: "crowdsecurity/linux",
+    title: "Linux base",
+    description: "syslog, sshd, journald — required base for almost every other collection",
+    category: "core",
+  },
+  {
+    type: "collections",
+    name: "crowdsecurity/sshd",
+    title: "SSH brute-force",
+    description: "Detects sshd password brute-force, key rejection floods, slow-rate attacks",
+    category: "core",
+  },
+  {
+    type: "collections",
+    name: "crowdsecurity/nginx",
+    title: "nginx (web access)",
+    description: "Parsers + scenarios for nginx access/error logs (HTTP scans, bad-bots, 4xx floods)",
+    category: "web",
+  },
+  {
+    type: "collections",
+    name: "crowdsecurity/base-http-scenarios",
+    title: "Generic HTTP scenarios",
+    description: "Crawl detection, path traversal probes, generic HTTP exploits (works with any web server)",
+    category: "web",
+  },
+  {
+    type: "collections",
+    name: "crowdsecurity/http-cve",
+    title: "HTTP CVE detection",
+    description: "Known-CVE exploit fingerprints (Log4Shell, Spring4Shell, CVE-2023-* WordPress CVEs)",
+    category: "web",
+  },
+  {
+    type: "collections",
+    name: "crowdsecurity/wordpress",
+    title: "WordPress",
+    description: "wp-login brute force, xmlrpc abuse, plugin/theme CVE exploits",
+    category: "web",
+  },
+  {
+    type: "collections",
+    name: "crowdsecurity/postfix",
+    title: "Postfix (mail)",
+    description: "Mail brute-force on SASL auth + spammer probing — pairs with Stalwart submission",
+    category: "mail",
+  },
+  {
+    type: "collections",
+    name: "crowdsecurity/whitelist-good-actors",
+    title: "Good-actor whitelist",
+    description: "Skip bans for googlebot/bingbot/cloudflare/AWS health probes — reduces false positives",
+    category: "intel",
+  },
+  {
+    type: "collections",
+    name: "crowdsecurity/appsec-virtual-patching",
+    title: "AppSec virtual patching",
+    description: "Pre-eval AppSec rules for unpatched CVEs (blocks the request, not the IP). Already shipped by jabali — install adds upstream updates",
+    category: "appsec",
+  },
+  {
+    type: "collections",
+    name: "crowdsecurity/appsec-generic-rules",
+    title: "AppSec generic rules",
+    description: "Generic CRS-style patterns (XSS, SQLi, RCE) for nginx-bouncer in-band filtering",
+    category: "appsec",
+  },
+];
+
+const CATEGORY_COLOR: Record<RecommendedItem["category"], string> = {
+  core: "geekblue",
+  web: "blue",
+  mail: "purple",
+  appsec: "magenta",
+  intel: "green",
+};
+
+const RecommendedHubCard = ({
+  hub,
+}: {
+  hub: ReturnType<typeof useCrowdsecHub>;
+}) => {
+  const install = useInstallCrowdsecHubItem();
+  const remove = useRemoveCrowdsecHubItem();
+  const [pending, setPending] = useState<string | null>(null);
+
+  // Index installed items by `<type>:<name>` for O(1) lookup.
+  const installedKey = useMemo(() => {
+    const set = new Set<string>();
+    (hub.data ?? []).forEach((it) => {
+      if (it.installed) set.add(`${it.type}:${it.name}`);
+    });
+    return set;
+  }, [hub.data]);
+
+  const onInstall = async (item: RecommendedItem) => {
+    setPending(`${item.type}:${item.name}`);
+    try {
+      await install.mutateAsync({ type: item.type, name: item.name });
+      message.success(`Installed ${item.name}`);
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "Install failed");
+    } finally {
+      setPending(null);
+    }
+  };
+
+  const onRemove = async (item: RecommendedItem) => {
+    setPending(`${item.type}:${item.name}`);
+    try {
+      await remove.mutateAsync({ type: item.type, name: item.name });
+      message.success(`Removed ${item.name}`);
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "Remove failed");
+    } finally {
+      setPending(null);
+    }
+  };
+
+  return (
+    <Card
+      size="small"
+      title="Recommended free blocklists & scenarios"
+      extra={
+        <Typography.Link
+          href="https://hub.crowdsec.net/"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          hub.crowdsec.net
+        </Typography.Link>
+      }
+    >
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 12 }}
+        message="One-click install of upstream CrowdSec Hub items"
+        description={
+          <>
+            Curated free items from the public Hub — no Console enrollment required. Install runs{" "}
+            <Typography.Text code>cscli &lt;type&gt; install &lt;name&gt;</Typography.Text> and reloads
+            crowdsec. Premium/Enterprise blocklists (firehol, dshield, etc.) need an account and are
+            managed in the Console web UI after enrollment.
+          </>
+        }
+      />
+      <Table<RecommendedItem>
+        rowKey={(r) => `${r.type}:${r.name}`}
+        dataSource={RECOMMENDED_HUB_ITEMS}
+        pagination={false}
+        size="small"
+        scroll={{ x: "max-content" }}
+      >
+        <Table.Column<RecommendedItem>
+          title="Item"
+          key="title"
+          render={(_, row) => (
+            <Space direction="vertical" size={0}>
+              <Space size={6}>
+                <Typography.Text strong>{row.title}</Typography.Text>
+                <Tag color={CATEGORY_COLOR[row.category]}>{row.category}</Tag>
+              </Space>
+              <Typography.Text code style={{ fontSize: 12 }}>
+                {row.name}
+              </Typography.Text>
+            </Space>
+          )}
+        />
+        <Table.Column<RecommendedItem>
+          title="Description"
+          dataIndex="description"
+          key="description"
+          render={(v: string) => <Typography.Text type="secondary">{v}</Typography.Text>}
+        />
+        <Table.Column<RecommendedItem>
+          title="Status"
+          key="status"
+          width={120}
+          render={(_, row) => {
+            const isInstalled = installedKey.has(`${row.type}:${row.name}`);
+            return isInstalled ? (
+              <Tag color="green">installed</Tag>
+            ) : (
+              <Tag>not installed</Tag>
+            );
+          }}
+        />
+        <Table.Column<RecommendedItem>
+          title=""
+          key="action"
+          width={120}
+          render={(_, row) => {
+            const key = `${row.type}:${row.name}`;
+            const isInstalled = installedKey.has(key);
+            const busy = pending === key;
+            return isInstalled ? (
+              <Popconfirm
+                title={`Remove ${row.name}?`}
+                okText="Remove"
+                okButtonProps={{ danger: true }}
+                onConfirm={() => onRemove(row)}
+              >
+                <Button size="small" danger loading={busy}>
+                  Remove
+                </Button>
+              </Popconfirm>
+            ) : (
+              <Button size="small" type="primary" loading={busy} onClick={() => onInstall(row)}>
+                Install
+              </Button>
+            );
+          }}
         />
       </Table>
     </Card>

@@ -135,6 +135,60 @@ func RegisterSecurityCrowdSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterfac
 		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
 	})
 
+	// M27 follow-up — install/remove curated free hub items (collections,
+	// scenarios, parsers, appsec-rules). Wire contract:
+	//   POST   /admin/security/crowdsec/hub/install  {type, name, force?}
+	//   DELETE /admin/security/crowdsec/hub?type=...&name=...
+	g.POST("/hub/install", func(c *gin.Context) {
+		var body struct {
+			Type  string `json:"type"`
+			Name  string `json:"name"`
+			Force bool   `json:"force,omitempty"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_json"})
+			return
+		}
+		body.Type = strings.TrimSpace(body.Type)
+		body.Name = strings.TrimSpace(body.Name)
+		if body.Type == "" || body.Name == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "type_and_name_required"})
+			return
+		}
+		// cscli install talks to upstream registry — give it more time
+		// than the default cscli call budget. 30s covers slow networks.
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+		defer cancel()
+		raw, err := cli.Call(ctx, "security.crowdsec.hub.install", body)
+		if err != nil {
+			status, ebody := translateAgentError(err)
+			c.JSON(status, ebody)
+			return
+		}
+		c.Data(http.StatusCreated, "application/json; charset=utf-8", raw)
+	})
+
+	g.DELETE("/hub", func(c *gin.Context) {
+		typ := strings.TrimSpace(c.Query("type"))
+		name := strings.TrimSpace(c.Query("name"))
+		if typ == "" || name == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "type_and_name_required"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), csCallTimeout)
+		defer cancel()
+		raw, err := cli.Call(ctx, "security.crowdsec.hub.remove", map[string]any{
+			"type": typ,
+			"name": name,
+		})
+		if err != nil {
+			status, ebody := translateAgentError(err)
+			c.JSON(status, ebody)
+			return
+		}
+		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
+	})
+
 	// M27 Step 2 — allowlists (ADR-0061). Wire contract:
 	//   GET    /admin/security/crowdsec/allowlists           → {items}
 	//   POST   /admin/security/crowdsec/allowlists           {value, reason}

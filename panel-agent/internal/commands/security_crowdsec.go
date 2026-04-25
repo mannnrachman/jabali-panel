@@ -454,6 +454,66 @@ func csHubListHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	return resp, nil
 }
 
+// ---- security.crowdsec.hub.{install,remove} -------------------------------
+//
+// Wraps `cscli <type> install|remove <name>` for curated free hub items.
+// Reloads crowdsec on success so newly installed parsers/scenarios take
+// effect without operator intervention. Type is whitelisted against
+// validHubTypes to prevent shell smuggling via the cscli verb.
+
+type csHubMutateParams struct {
+	Type string `json:"type"`
+	Name string `json:"name"`
+	// Force allows reinstall when already present (cscli --force).
+	Force bool `json:"force,omitempty"`
+}
+
+// hubItemNameRE matches `crowdsecurity/sshd`, `crowdsecurity/appsec-virtual-patching`,
+// `myorg/my-collection.v2`. Rejects shell metacharacters by construction.
+var hubItemNameRE = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+
+func csHubInstallHandler(ctx context.Context, params json.RawMessage) (any, error) {
+	var p csHubMutateParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, csInvalidArg("invalid params")
+	}
+	if !validHubTypes[p.Type] {
+		return nil, csInvalidArg("type must be collections|parsers|scenarios|postoverflows|appsec-rules|appsec-configs")
+	}
+	if !hubItemNameRE.MatchString(p.Name) {
+		return nil, csInvalidArg("name must match <author>/<item>")
+	}
+	args := []string{p.Type, "install", p.Name}
+	if p.Force {
+		args = append(args, "--force")
+	}
+	cmd := exec.CommandContext(ctx, "cscli", args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return nil, csInternal(fmt.Sprintf("cscli %s install: %s", p.Type, strings.TrimSpace(string(out))), err)
+	}
+	_ = exec.CommandContext(ctx, "systemctl", "reload", "crowdsec").Run()
+	return map[string]any{"type": p.Type, "name": p.Name, "installed": true}, nil
+}
+
+func csHubRemoveHandler(ctx context.Context, params json.RawMessage) (any, error) {
+	var p csHubMutateParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, csInvalidArg("invalid params")
+	}
+	if !validHubTypes[p.Type] {
+		return nil, csInvalidArg("type must be collections|parsers|scenarios|postoverflows|appsec-rules|appsec-configs")
+	}
+	if !hubItemNameRE.MatchString(p.Name) {
+		return nil, csInvalidArg("name must match <author>/<item>")
+	}
+	cmd := exec.CommandContext(ctx, "cscli", p.Type, "remove", p.Name)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return nil, csInternal(fmt.Sprintf("cscli %s remove: %s", p.Type, strings.TrimSpace(string(out))), err)
+	}
+	_ = exec.CommandContext(ctx, "systemctl", "reload", "crowdsec").Run()
+	return map[string]any{"type": p.Type, "name": p.Name, "installed": false}, nil
+}
+
 // ---- security.crowdsec.appsec.geoblock.{get,set} --------------------------
 
 // appsecRulePath is where our single server-wide geoblock rule lives.
@@ -1277,6 +1337,8 @@ func init() {
 	Default.Register("security.crowdsec.bouncers.list", csBouncersListHandler)
 	Default.Register("security.crowdsec.metrics", csMetricsHandler)
 	Default.Register("security.crowdsec.hub.list", csHubListHandler)
+	Default.Register("security.crowdsec.hub.install", csHubInstallHandler)
+	Default.Register("security.crowdsec.hub.remove", csHubRemoveHandler)
 	Default.Register("security.crowdsec.appsec.geoblock.get", csAppSecGeoblockGetHandler)
 	Default.Register("security.crowdsec.appsec.geoblock.set", csAppSecGeoblockSetHandler)
 	Default.Register("security.crowdsec.allowlists.list", csAllowlistsListHandler)

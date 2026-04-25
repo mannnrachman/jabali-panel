@@ -961,15 +961,29 @@ configure_disk_quota() {
     _log "fstab: $home_mount already has usrquota set"
   else
     _log "adding usrquota,grpquota to /etc/fstab entry for $home_mount"
-    # Preserve the original line; append the quota options after the existing opts.
-    # Uses a unique marker to avoid double-patching on reinstall.
+    # Preserve the original line; append ",usrquota,grpquota" to the
+    # 4th field (options) for the mount-point row. Uses a unique marker
+    # to avoid double-patching on reinstall.
+    #
+    # Prior awk implementation used `sub(regex, "\\1\\2,usrquota,…")`
+    # relying on backreference expansion inside the replacement string.
+    # POSIX awk does NOT support backrefs in sub/gsub replacements;
+    # gawk supports `\1`…`\9` but only via --posix off and even then
+    # treats `\1\2` inside a double-quoted shell string as literal.
+    # The old code wrote the literal 10 characters `\1\2,usrquota,grpquota`
+    # into fstab line 12, bricking the mount entry (systemd ignored the
+    # line, / stayed mounted WITHOUT usrquota, every subsequent
+    # quotacheck/quotaon failed with "Mountpoint has no quota enabled").
+    #
+    # Replacement: split the matched line by field index in awk so we
+    # rebuild it explicitly. Preserves original whitespace collapsed to
+    # single spaces, which systemd accepts.
     if ! grep -q "# jabali-m18-quota" /etc/fstab; then
-      # awk append "usrquota,grpquota" to the 4th field (options) for the /home line.
-      # Backup first.
       cp -p /etc/fstab /etc/fstab.jabali-m18.bak
       awk -v mnt="$home_mount" '
         !/^#/ && $2 == mnt {
-          sub(/^([^ \t]+[ \t]+[^ \t]+[ \t]+[^ \t]+[ \t]+)([^ \t]+)/, "\\1\\2,usrquota,grpquota")
+          # $4 = current options field. Append ",usrquota,grpquota".
+          $4 = $4 ",usrquota,grpquota"
           print $0 " # jabali-m18-quota"
           next
         }
@@ -979,9 +993,12 @@ configure_disk_quota() {
     fi
   fi
 
-  # Remount to pick up the new options. On a busy mount this can fail;
-  # operator must reboot or migrate. -oremount preserves current state.
-  if ! mount -o remount "$home_mount" 2>/dev/null; then
+  # Remount to pick up the new options. We pass usrquota,grpquota on
+  # the cmdline explicitly (not just "remount") so the kernel honors
+  # them immediately — the fstab path alone depends on the line being
+  # parsed cleanly, and any syntax drift would silently leave quota
+  # off. Cmdline options are authoritative.
+  if ! mount -o remount,usrquota,grpquota "$home_mount" 2>/dev/null; then
     _warn "remount of $home_mount failed (busy). Reboot to apply quota, then re-run this step."
     return 0
   fi

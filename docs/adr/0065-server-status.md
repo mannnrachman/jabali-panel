@@ -1,6 +1,6 @@
 # ADR-0065: Server Status aggregator
 
-**Status:** PROPOSED (2026-04-25). Step 1 of M31.
+**Status:** ACCEPTED (2026-04-25). M31 Steps 1–6 shipped.
 **Related:** plans/m31-server-status.md.
 
 ## Context
@@ -116,6 +116,8 @@ recovers on the next.
 
 ## Open
 
-- Step 4 alerts: pending-updates + crowdsec-spike rules.
-- Service control buttons (Restart/Stop/Start) deferred to Step 4 with
-  the "Show service controls" toggle.
+- **Queue stats** (mariadb / nginx / stalwart). UI ships placeholder
+  card; aggregator extension lands in M31.1.
+- **Pending-updates + crowdsec alerts** (currently surfaced via the
+  Updates card; not synthesized into the AlertsBanner yet).
+- **Historical charts** — out of scope (see plan §Out of scope).

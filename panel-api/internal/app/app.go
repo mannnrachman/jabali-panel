@@ -360,6 +360,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		api.RegisterAdminServerStatusRoutes(v1, api.AdminServerStatusHandlerConfig{
 			Agent: deps.Agent,
 		})
+		// Admin: Service controls (M31). Mounts POST /admin/services/:name/:action.
+		api.RegisterAdminServicesRoutes(v1, api.AdminServicesHandlerConfig{
+			Agent: deps.Agent,
+		})
 		if deps.Domains != nil && deps.DNSZones != nil && deps.DNSRecords != nil {
 			api.RegisterDNSRoutes(v1, api.DNSHandlerConfig{
 				Domains:        deps.Domains,

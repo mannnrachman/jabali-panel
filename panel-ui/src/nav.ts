@@ -27,6 +27,7 @@ import {
   MailOutlined,
   PackageOpenOutlined,
   SafetyOutlined,
+  ServerOutlined,
   SettingOutlined,
   ShieldCheckOutlined,
   TeamOutlined,
@@ -63,6 +64,12 @@ export const adminNav: NavItem[] = [
     label: "Dashboard",
     icon: navIcon(HomeOutlined),
     path: "/jabali-admin/dashboard",
+  },
+  {
+    key: "server-status",
+    label: "Server Status",
+    icon: navIcon(ServerOutlined),
+    path: "/jabali-admin/server-status",
   },
   {
     key: "users",

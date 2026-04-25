@@ -38,6 +38,7 @@ import { AdminIPList } from "./shells/admin/ips/AdminIPList";
 import { NotificationsTabsPage } from "./shells/admin/notifications/NotificationsTabsPage";
 import { useApplyBrandingToTitle } from "./hooks/useBranding";
 import { AdminSecurityPage } from "./shells/admin/security/AdminSecurityPage";
+import { ServerStatusPage } from "./shells/admin/server-status/ServerStatusPage";
 import { AdminDNSSECPage } from "./shells/admin/dnssec/AdminDNSSECPage";
 import { UserDNSSECPage } from "./shells/user/dnssec/UserDNSSECPage";
 import { SystemUpdatesPage } from "./shells/admin/updates/SystemUpdatesPage";
@@ -157,6 +158,7 @@ const ThemedApp = () => {
               <Route path="edit/:id" element={<Navigate to="/jabali-admin/ips" replace />} />
             </Route>
             <Route path="security" element={<AdminSecurityPage />} />
+            <Route path="server-status" element={<ServerStatusPage />} />
             <Route path="dnssec" element={<AdminDNSSECPage />} />
             <Route path="updates" element={<SystemUpdatesPage />} />
             <Route path="support" element={<SupportPage />} />

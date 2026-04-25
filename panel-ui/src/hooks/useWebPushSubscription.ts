@@ -70,15 +70,27 @@ export function useWebPushSubscription(): WebPushState {
 
   // Register the service worker on first mount. Only once per tab;
   // navigator.serviceWorker.register is idempotent on the same URL.
+  //
+  // After register() we await navigator.serviceWorker.ready instead of
+  // calling pushManager.getSubscription() on the freshly-returned
+  // registration. register() resolves as soon as the SW file is fetched
+  // and parsed, before the worker reaches the activated state — and on
+  // Firefox in particular, querying the push manager during the
+  // installing phase can return null even when a real subscription
+  // exists from a previous session, which is the symptom we hit:
+  // refresh flipped the bell back to "Enable" when it should stay
+  // "Disable".
   useEffect(() => {
     if (!supported) return;
     let cancelled = false;
     (async () => {
       try {
-        const reg = await navigator.serviceWorker.register(SW_PATH, { scope: SW_SCOPE });
+        await navigator.serviceWorker.register(SW_PATH, { scope: SW_SCOPE });
+        const ready = await navigator.serviceWorker.ready;
         if (cancelled) return;
-        setRegistration(reg);
-        const existing = await reg.pushManager.getSubscription();
+        setRegistration(ready);
+        const existing = await ready.pushManager.getSubscription();
+        if (cancelled) return;
         setSubscribed(existing !== null);
       } catch (err) {
         // Don't blow up the UI — bell just shows the disabled state.

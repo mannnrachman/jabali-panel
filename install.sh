@@ -900,11 +900,15 @@ configure_cgroups_v2() {
 # when it can't make progress.
 configure_disk_quota() {
   local home_mount home_fs
-  # Find the mount /home lives on. On a host where /home is on / this
-  # returns "/", which we refuse to quota-enable (root fs quota is a
-  # disaster for system daemons).
+  # Find the mount /home lives on.
   home_mount="$(stat -c%m /home 2>/dev/null || echo /)"
-  home_fs="$(stat -fc %T /home 2>/dev/null || echo unknown)"
+  # Use findmnt for the precise fstype — `stat -fc %T` returns the
+  # composite "ext2/ext3" label for the entire ext family because the
+  # kernel's statfs f_type values are shared. findmnt asks the mount
+  # table directly and returns "ext4" / "ext3" / "ext2" / "xfs"
+  # exactly. Fall back to stat if findmnt isn't available (rare on
+  # Debian 13).
+  home_fs="$(findmnt -no FSTYPE "$home_mount" 2>/dev/null || stat -fc %T /home 2>/dev/null || echo unknown)"
   _log "quota probe: /home is on mount $home_mount (fs=$home_fs)"
 
   # Filesystem support matrix — ADR-0032 §2.

@@ -422,22 +422,24 @@ var validHubTypes = map[string]bool{
 func csHubListHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p csHubListParams
 	_ = json.Unmarshal(params, &p)
-	args := []string{"hub", "list"}
-	if p.Type != "" {
-		if !validHubTypes[p.Type] {
-			return nil, csInvalidArg("type must be collections|parsers|scenarios|postoverflows|appsec-rules|appsec-configs")
-		}
-		// `cscli hub list -t <type>` filters
+	if p.Type != "" && !validHubTypes[p.Type] {
+		return nil, csInvalidArg("type must be collections|parsers|scenarios|postoverflows|appsec-rules|appsec-configs")
 	}
-	out, err := runCscliJSON(ctx, args...)
+	// `cscli hub list -a` returns ALL hub items (installed + available);
+	// without -a only installed items come back. We need the full set so
+	// the UI can show "available to install" entries.
+	out, err := runCscliJSON(ctx, "hub", "list", "-a")
 	if err != nil {
-		return nil, csInternal("cscli hub list", err)
+		return nil, csInternal("cscli hub list -a", err)
 	}
+	// cscli omits `installed` / `enabled` boolean fields. Installed state
+	// is derived from `local_path` being non-empty (item exists on disk),
+	// and enabled state from the `status` string containing "enabled".
 	resp := csHubListResponse{Items: []csHubItem{}}
 	var raw map[string][]struct {
 		Name      string `json:"name"`
-		Installed bool   `json:"installed"`
-		Enabled   bool   `json:"enabled"`
+		LocalPath string `json:"local_path"`
+		Status    string `json:"status"`
 	}
 	if err := json.Unmarshal(out, &raw); err == nil {
 		for typ, items := range raw {
@@ -445,8 +447,10 @@ func csHubListHandler(ctx context.Context, params json.RawMessage) (any, error) 
 				continue
 			}
 			for _, it := range items {
+				installed := it.LocalPath != ""
+				enabled := installed && strings.Contains(it.Status, "enabled") && !strings.Contains(it.Status, "disabled")
 				resp.Items = append(resp.Items, csHubItem{
-					Name: it.Name, Type: typ, Installed: it.Installed, Enabled: it.Enabled,
+					Name: it.Name, Type: typ, Installed: installed, Enabled: enabled,
 				})
 			}
 		}

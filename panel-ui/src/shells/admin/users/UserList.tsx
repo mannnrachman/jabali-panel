@@ -11,13 +11,13 @@ import { useState } from "react";
 import { Button, Card, Input, Space, Table, Tag, Typography } from "antd";
 import { SearchOutlined } from "@icons";
 import type { SorterResult } from "antd/es/table/interface";
-import { useNavigate } from "react-router";
 
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useListQuery } from "../../../hooks/useQueries";
 import { useSelectQuery } from "../../../hooks/useSelectQuery";
 import { useTableURL } from "../../../hooks/useTableURL";
 import { UserDeleteAction } from "./UserDeleteAction";
+import { UserDrawer } from "./UserDrawer";
 import { UserSliceStatus } from "./UserSliceStatus";
 
 type User = {
@@ -47,14 +47,16 @@ const renderCreated = (ts: string) => new Date(ts).toLocaleString();
 // users-spec E2E asserts on `getByRole("cell", { name: email })`, and
 // if the action cell's accessible name contained the email too, the
 // matcher would hit both cells and fail with a strict-mode violation.
-function RowActions({ user }: { user: User }) {
-  const navigate = useNavigate();
+function RowActions({
+  user,
+  onEdit,
+}: {
+  user: User;
+  onEdit: (id: string) => void;
+}) {
   return (
     <Space size="middle">
-      <Button
-        type="text"
-        onClick={() => navigate(`/jabali-admin/users/edit/${user.id}`)}
-      >
+      <Button type="text" onClick={() => onEdit(user.id)}>
         Edit
       </Button>
       <UserDeleteAction recordItemId={user.id} userEmail={user.email} />
@@ -66,12 +68,14 @@ type UsersTableProps = {
   isAdmin: boolean;
   searchPlaceholder: string;
   showSliceColumn: boolean;
+  onEdit: (id: string) => void;
 };
 
 function UsersShellTable({
   isAdmin,
   searchPlaceholder,
   showSliceColumn,
+  onEdit,
 }: UsersTableProps) {
   const query = useTableURL<User>({
     resource: "users",
@@ -248,7 +252,7 @@ function UsersShellTable({
       <Table.Column
         title="Actions"
         dataIndex="actions"
-        render={(_: unknown, r: User) => <RowActions user={r} />}
+        render={(_: unknown, r: User) => <RowActions user={r} onEdit={onEdit} />}
       />
     </SearchableTableStringQ>
   );
@@ -256,7 +260,18 @@ function UsersShellTable({
 
 export const UserList = () => {
   const [activeTab, setActiveTab] = useState<"users" | "admins">("users");
-  const navigate = useNavigate();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | undefined>(undefined);
+
+  const openCreate = () => {
+    setEditingId(undefined);
+    setDrawerOpen(true);
+  };
+  const openEdit = (id: string) => {
+    setEditingId(id);
+    setDrawerOpen(true);
+  };
+  const closeDrawer = () => setDrawerOpen(false);
 
   // Tab-label badges need totals for BOTH roles regardless of which
   // tab is active. Tabs unmount inactive content, so the per-tab
@@ -284,10 +299,7 @@ export const UserList = () => {
         <Typography.Title level={3} style={{ margin: 0 }}>
           Users
         </Typography.Title>
-        <Button
-          type="primary"
-          onClick={() => navigate("/jabali-admin/users/create")}
-        >
+        <Button type="primary" onClick={openCreate}>
           Create
         </Button>
       </Space>
@@ -325,15 +337,19 @@ export const UserList = () => {
             isAdmin={false}
             searchPlaceholder="Search by email, username, or name"
             showSliceColumn
+            onEdit={openEdit}
           />
         ) : (
           <UsersShellTable
             isAdmin
             searchPlaceholder="Search by email or name"
             showSliceColumn={false}
+            onEdit={openEdit}
           />
         )}
       </Card>
+
+      <UserDrawer open={drawerOpen} onClose={closeDrawer} editingId={editingId} />
     </div>
   );
 };

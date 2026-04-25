@@ -5,11 +5,11 @@
 // the affected-domains list returned by the API.
 import { Button, Card, Modal, Space, Table, Tag, Typography, message } from "antd";
 import { useState } from "react";
-import { useNavigate } from "react-router";
 
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useDeleteMutation } from "../../../hooks/useQueries";
 import { useTableURL } from "../../../hooks/useTableURL";
+import { AdminIPDrawer } from "./AdminIPDrawer";
 
 type ManagedIP = {
   id: number;
@@ -50,8 +50,19 @@ type AffectedDomainsBody = {
 };
 
 export const AdminIPList = () => {
-  const navigate = useNavigate();
   const [conflictModal, setConflictModal] = useState<AffectedDomainsBody | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editingId, setEditingId] = useState<number | undefined>(undefined);
+
+  const openCreate = () => {
+    setEditingId(undefined);
+    setDrawerOpen(true);
+  };
+  const openEdit = (id: number) => {
+    setEditingId(id);
+    setDrawerOpen(true);
+  };
+  const closeDrawer = () => setDrawerOpen(false);
 
   const query = useTableURL<ManagedIP>({
     resource: "admin/ips",
@@ -88,10 +99,7 @@ export const AdminIPList = () => {
         <Typography.Title level={3} style={{ margin: 0 }}>
           IP Addresses
         </Typography.Title>
-        <Button
-          type="primary"
-          onClick={() => navigate("/jabali-admin/ips/create")}
-        >
+        <Button type="primary" onClick={openCreate}>
           Add IP
         </Button>
       </Space>
@@ -153,10 +161,7 @@ export const AdminIPList = () => {
             dataIndex="actions"
             render={(_: unknown, r: ManagedIP) => (
               <Space>
-                <Button
-                  type="text"
-                  onClick={() => navigate(`/jabali-admin/ips/edit/${r.id}`)}
-                >
+                <Button type="text" onClick={() => openEdit(r.id)}>
                   Edit
                 </Button>
                 <Button
@@ -172,6 +177,8 @@ export const AdminIPList = () => {
           />
         </SearchableTableStringQ>
       </Card>
+
+      <AdminIPDrawer open={drawerOpen} onClose={closeDrawer} editingId={editingId} />
 
       <Modal
         title="IP is in use"

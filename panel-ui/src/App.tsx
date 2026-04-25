@@ -33,11 +33,7 @@ import { UserLayout } from "./shells/UserLayout";
 import { LandingRedirect } from "./shells/LandingRedirect";
 import { ThemeModeProvider, useThemeMode } from "./theme/ThemeModeContext";
 import { Dashboard } from "./shells/admin/Dashboard";
-import { UserCreate } from "./shells/admin/users/UserCreate";
-import { UserEdit } from "./shells/admin/users/UserEdit";
 import { UserList } from "./shells/admin/users/UserList";
-import { AdminIPCreate } from "./shells/admin/ips/AdminIPCreate";
-import { AdminIPEdit } from "./shells/admin/ips/AdminIPEdit";
 import { AdminIPList } from "./shells/admin/ips/AdminIPList";
 import { NotificationsTabsPage } from "./shells/admin/notifications/NotificationsTabsPage";
 import { useApplyBrandingToTitle } from "./hooks/useBranding";
@@ -134,8 +130,10 @@ const ThemedApp = () => {
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="users">
               <Route index element={<UserList />} />
-              <Route path="create" element={<UserCreate />} />
-              <Route path="edit/:id" element={<UserEdit />} />
+              {/* legacy /create + /edit/:id redirect to list — Drawer
+                  is the new create/edit surface (M28 follow-up). */}
+              <Route path="create" element={<Navigate to="/jabali-admin/users" replace />} />
+              <Route path="edit/:id" element={<Navigate to="/jabali-admin/users" replace />} />
             </Route>
             <Route path="packages">
               <Route index element={<PackageList />} />
@@ -158,8 +156,8 @@ const ThemedApp = () => {
             <Route path="applications" element={<AdminApplicationList />} />
             <Route path="ips">
               <Route index element={<AdminIPList />} />
-              <Route path="create" element={<AdminIPCreate />} />
-              <Route path="edit/:id" element={<AdminIPEdit />} />
+              <Route path="create" element={<Navigate to="/jabali-admin/ips" replace />} />
+              <Route path="edit/:id" element={<Navigate to="/jabali-admin/ips" replace />} />
             </Route>
             <Route path="security" element={<AdminSecurityPage />} />
             <Route path="dnssec" element={<AdminDNSSECPage />} />

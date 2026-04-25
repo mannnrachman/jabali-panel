@@ -324,6 +324,25 @@ func validateChannelKindAndConfig(kind string, cfg models.NotificationChannelCon
 		if cfg.ToEmail == "" || cfg.FromEmail == "" {
 			return errors.New("email channel requires to_email and from_email")
 		}
+		switch cfg.SMTPMode {
+		case "", "local":
+			// loopback Stalwart — no further fields required.
+		case "smtp":
+			if cfg.SMTPHost == "" {
+				return errors.New("email channel: smtp_host required when smtp_mode=smtp")
+			}
+			if cfg.SMTPPort < 1 || cfg.SMTPPort > 65535 {
+				return errors.New("email channel: smtp_port must be 1–65535 when smtp_mode=smtp")
+			}
+			switch cfg.SMTPTLS {
+			case "", "starttls", "tls", "none":
+				// allowed
+			default:
+				return errors.New("email channel: smtp_tls must be starttls, tls, or none")
+			}
+		default:
+			return fmt.Errorf("email channel: unknown smtp_mode %q (valid: local, smtp)", cfg.SMTPMode)
+		}
 	case models.NotificationChannelKindSlack, models.NotificationChannelKindDiscord:
 		if err := validateHTTPURL(cfg.URL); err != nil {
 			return fmt.Errorf("%s channel: %w", kind, err)

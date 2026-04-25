@@ -73,7 +73,17 @@ export function AdminChannelDrawer({ open, onClose, existing }: AdminChannelDraw
   }, [open, existing, form]);
 
   const watchedKind = Form.useWatch<ChannelKind | undefined>("kind", form) ?? existing?.kind ?? "slack";
-  const fields = useMemo(() => kindFields[watchedKind] ?? [], [watchedKind]);
+  const watchedConfig = Form.useWatch<ChannelFormConfig | undefined>("config", form);
+  const fields = useMemo(() => {
+    const all = kindFields[watchedKind] ?? [];
+    return all.filter((f) => {
+      if (!f.dependsOn) return true;
+      const current = watchedConfig?.[f.dependsOn.name];
+      // Treat empty/undefined as the first option for select fields so
+      // dependent rows stay hidden until the parent has been picked.
+      return current === f.dependsOn.value;
+    });
+  }, [watchedKind, watchedConfig]);
 
   const handleSubmit = async (values: FormValues) => {
     try {
@@ -159,12 +169,24 @@ export function AdminChannelDrawer({ open, onClose, existing }: AdminChannelDraw
           const rules: { required?: boolean; message: string }[] = [];
           if (f.required) rules.push({ required: true, message: `${f.label} required` });
           const input = (() => {
-            if (f.type === "number") return <InputNumber min={1} max={5} style={{ width: "100%" }} />;
+            if (f.type === "number") {
+              // The ntfy priority field is the historical 1–5 caller; the
+              // SMTP port input wants the full TCP range. We split on the
+              // field name rather than overload FieldSpec so each kind's
+              // bounds stay legible.
+              if (f.name === "smtp_port") {
+                return <InputNumber min={1} max={65535} style={{ width: "100%" }} placeholder={f.placeholder} />;
+              }
+              return <InputNumber min={1} max={5} style={{ width: "100%" }} />;
+            }
             if (f.type === "password") return <Input.Password placeholder={f.placeholder} />;
             if (f.type === "tags") {
               return (
                 <Select mode="tags" tokenSeparators={[",", " "]} placeholder="tag1,tag2" />
               );
+            }
+            if (f.type === "select") {
+              return <Select options={f.options ?? []} placeholder={f.placeholder} />;
             }
             return <Input placeholder={f.placeholder} />;
           })();

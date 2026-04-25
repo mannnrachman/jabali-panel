@@ -40,14 +40,19 @@ export const kindLabels: Record<ChannelKind, string> = {
 
 // ChannelFormFields — which per-kind config fields to render. The
 // drawer renders inputs in this order. Each field is bound to the
-// NotificationChannelConfig JSON blob on the row.
+// NotificationChannelConfig JSON blob on the row. `dependsOn` hides
+// the field unless another config field equals the listed value —
+// used by the email kind's external-SMTP fan-out so the relay
+// host/port/credentials only show after the user picks "External SMTP".
 export type FieldSpec = {
   name: keyof ChannelFormConfig;
   label: string;
   placeholder?: string;
-  type?: "text" | "number" | "password" | "tags";
+  type?: "text" | "number" | "password" | "tags" | "select";
   required?: boolean;
   help?: string;
+  options?: { value: string; label: string }[];
+  dependsOn?: { name: keyof ChannelFormConfig; value: string };
 };
 
 export type ChannelFormConfig = {
@@ -58,12 +63,67 @@ export type ChannelFormConfig = {
   tags?: string[];
   to_email?: string;
   from_email?: string;
+  smtp_mode?: "local" | "smtp";
+  smtp_host?: string;
+  smtp_port?: number;
+  smtp_username?: string;
+  smtp_password?: string;
+  smtp_tls?: "starttls" | "tls" | "none";
 };
 
 export const kindFields: Record<ChannelKind, FieldSpec[]> = {
   email: [
     { name: "to_email", label: "Recipient", placeholder: "admin@example.com", required: true },
     { name: "from_email", label: "Envelope sender", placeholder: "jabali@example.com", required: true },
+    {
+      name: "smtp_mode",
+      label: "Delivery",
+      type: "select",
+      options: [
+        { value: "local", label: "Local Stalwart (default)" },
+        { value: "smtp", label: "External SMTP server" },
+      ],
+      help: "Local relays through the panel's loopback Stalwart submission port. External SMTP is for Gmail, SendGrid, Mailgun, etc.",
+    },
+    {
+      name: "smtp_host",
+      label: "SMTP host",
+      placeholder: "smtp.gmail.com",
+      required: true,
+      dependsOn: { name: "smtp_mode", value: "smtp" },
+    },
+    {
+      name: "smtp_port",
+      label: "SMTP port",
+      type: "number",
+      placeholder: "587",
+      required: true,
+      help: "587 for STARTTLS, 465 for implicit TLS, 25 for plaintext.",
+      dependsOn: { name: "smtp_mode", value: "smtp" },
+    },
+    {
+      name: "smtp_tls",
+      label: "TLS mode",
+      type: "select",
+      options: [
+        { value: "starttls", label: "STARTTLS (port 587)" },
+        { value: "tls", label: "Implicit TLS (port 465)" },
+        { value: "none", label: "None (plaintext)" },
+      ],
+      dependsOn: { name: "smtp_mode", value: "smtp" },
+    },
+    {
+      name: "smtp_username",
+      label: "SMTP username",
+      placeholder: "apikey or full email",
+      dependsOn: { name: "smtp_mode", value: "smtp" },
+    },
+    {
+      name: "smtp_password",
+      label: "SMTP password",
+      type: "password",
+      dependsOn: { name: "smtp_mode", value: "smtp" },
+    },
   ],
   slack: [
     { name: "url", label: "Webhook URL", placeholder: "https://hooks.slack.com/services/…", required: true },

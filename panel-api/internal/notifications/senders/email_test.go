@@ -54,6 +54,57 @@ func TestEmail_RejectsHeaderInjection(t *testing.T) {
 	require.Zero(t, calls)
 }
 
+func TestEmail_SMTPModeRoutesToExternalRelayWithAuth(t *testing.T) {
+	t.Parallel()
+	var gotAddr string
+	var gotAuth smtp.Auth
+	fake := func(addr string, a smtp.Auth, from string, to []string, msg []byte) error {
+		gotAddr = addr
+		gotAuth = a
+		return nil
+	}
+	e := NewEmail("127.0.0.1:587").withSender(fake)
+	ch := models.NotificationChannel{Kind: "email", Config: models.NotificationChannelConfig{
+		ToEmail:      "admin@example.com",
+		FromEmail:    "alerts@example.com",
+		SMTPMode:     "smtp",
+		SMTPHost:     "smtp.example.com",
+		SMTPPort:     587,
+		SMTPUsername: "u",
+		SMTPPassword: "p",
+		SMTPTLS:      "starttls",
+	}}
+	require.NoError(t, e.Send(context.Background(), ch, notifications.Envelope{Title: "x", Body: "y", Severity: "info"}))
+	require.Equal(t, "smtp.example.com:587", gotAddr)
+	require.NotNil(t, gotAuth)
+}
+
+func TestEmail_SMTPModeImplicitTLSUsesTLSSeam(t *testing.T) {
+	t.Parallel()
+	var localCalls, tlsCalls int
+	e := NewEmail("127.0.0.1:587").
+		withSender(func(addr string, a smtp.Auth, from string, to []string, msg []byte) error {
+			localCalls++
+			return nil
+		}).
+		withTLSSender(func(addr string, a smtp.Auth, from string, to []string, msg []byte) error {
+			tlsCalls++
+			require.Equal(t, "smtp.example.com:465", addr)
+			return nil
+		})
+	ch := models.NotificationChannel{Kind: "email", Config: models.NotificationChannelConfig{
+		ToEmail:   "a@b",
+		FromEmail: "c@d",
+		SMTPMode:  "smtp",
+		SMTPHost:  "smtp.example.com",
+		SMTPPort:  465,
+		SMTPTLS:   "tls",
+	}}
+	require.NoError(t, e.Send(context.Background(), ch, notifications.Envelope{Title: "x"}))
+	require.Equal(t, 0, localCalls)
+	require.Equal(t, 1, tlsCalls)
+}
+
 func TestEmail_StripsCRLFFromSubject(t *testing.T) {
 	t.Parallel()
 	var gotMsg string

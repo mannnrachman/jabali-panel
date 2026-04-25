@@ -11,13 +11,17 @@ export type ChannelKind =
   | "webhook"
   | "webpush";
 
+// CHANNEL_KINDS — kinds the admin can pick when creating a channel.
+// "webpush" lives in the type union (and the kindLabels/kindFields
+// maps) so existing rows keep rendering, but it's intentionally absent
+// here: web push is per-browser and managed from the Notifications →
+// Web Push tab, not as a configurable channel row.
 export const CHANNEL_KINDS: ChannelKind[] = [
   "email",
   "slack",
   "discord",
   "ntfy",
   "webhook",
-  "webpush",
 ];
 
 export const kindColors: Record<ChannelKind, string> = {

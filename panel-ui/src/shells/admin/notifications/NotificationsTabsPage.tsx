@@ -8,14 +8,16 @@ import { BellOutlined } from "@icons";
 import { ChannelsTab } from "./ChannelsTab";
 import { EventsTab } from "./EventsTab";
 import { HistoryTab } from "./HistoryTab";
+import { WebPushTab } from "./WebPushTab";
 
-const TAB_KEYS = ["channels", "events", "history"] as const;
+const TAB_KEYS = ["channels", "events", "webpush", "history"] as const;
 type TabKey = (typeof TAB_KEYS)[number];
 const DEFAULT_TAB: TabKey = "channels";
 
 const TAB_LABELS: Record<TabKey, string> = {
   channels: "Channels",
   events: "Events",
+  webpush: "Web Push",
   history: "History",
 };
 
@@ -32,6 +34,8 @@ export const NotificationsTabsPage = () => {
         return <ChannelsTab />;
       case "events":
         return <EventsTab />;
+      case "webpush":
+        return <WebPushTab />;
       case "history":
         return <HistoryTab />;
     }

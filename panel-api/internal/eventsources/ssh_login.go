@@ -75,9 +75,13 @@ func runSSHLogin(ctx context.Context, d Deps) {
 func tailSSHJournal(ctx context.Context, d Deps) error {
 	cmd := exec.CommandContext(ctx,
 		"journalctl",
+		// Match the systemd unit rather than the syslog identifier:
+		// modern OpenSSH on Debian 13 logs auth from the per-session
+		// worker (`sshd-session`), not the listener; --identifier=sshd
+		// would filter those out. ssh.service is the unit on Debian/
+		// Ubuntu, sshd.service on RHEL family.
 		"--unit=ssh.service",
 		"--unit=sshd.service",
-		"--identifier=sshd",
 		"--output=json",
 		"--follow",
 		"--since=now",

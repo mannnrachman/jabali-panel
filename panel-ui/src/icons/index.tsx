@@ -129,7 +129,7 @@ const shim = (Icon: LucideIcon, defaults?: { spin?: boolean }) => {
         className={mergedClass}
         style={mergedStyle}
         onClick={onClick as never}
-        strokeWidth={1}
+        strokeWidth={1.5}
         aria-label={title}
       />
     );

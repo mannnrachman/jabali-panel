@@ -329,15 +329,16 @@ const GeneralSettingsTab = () => {
               </Typography.Text>
               <Alert
                 style={{ marginTop: 12 }}
-                type="warning"
+                type="info"
                 showIcon
-                message="Requires /home on its own filesystem"
+                message="Kernel POSIX quota must be active on the filesystem holding /home"
                 description={
                   <>
-                    Quota enforcement requires <code>/home</code> to be mounted on a dedicated filesystem with
-                    <code> usrquota,grpquota</code> options. install.sh refuses to enable POSIX quota when
-                    <code> /home</code> shares the root filesystem. Verify with{" "}
-                    <code>mount | grep " on /home "</code> before flipping this on.
+                    install.sh wires this up automatically (works on dedicated <code>/home</code> partitions
+                    and on <code>/</code>-shared <code>/home</code> via ext4 hidden quota inodes).
+                    Only system UIDs ≥ 1000 ever get a setquota call, so root + system daemons stay
+                    unlimited. Verify with <code>quotaon -p -a</code> before flipping this on; if no
+                    quota is reported active, re-run install.sh or set it up manually.
                   </>
                 }
               />

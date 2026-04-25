@@ -934,15 +934,17 @@ configure_disk_quota() {
       ;;
   esac
 
-  # If /home is on /, adding usrquota to the root filesystem is unsafe.
-  # Warn + skip rather than block the install. The M18 cgroups drop-in
-  # still gets applied per user; only disk-quota enforcement is absent.
-  # Operator's path forward: migrate /home to its own mount (runbook §4),
-  # then re-run install.sh to pick up quota.
-  if [[ "$home_mount" == "/" ]]; then
-    _warn "/home shares the root filesystem — skipping POSIX quota setup (would be unsafe on /)."
-    _warn "cgroups limits (cpu/memory/io/tasks) still active."
-    _warn "To enable disk quota: move /home to its own partition (see plans/m18-resource-limits-runbook.md §4) and re-run install.sh."
+  # /home on / is supported (matches cPanel/DirectAdmin behavior). The
+  # M18 reconciler only ever calls setquota for hosting UIDs (>=1000); root
+  # and system daemons (UID < 1000) are exempt by absence — they never get
+  # a setquota call, so EDQUOT can't trip them. ext4 supports online quota
+  # via tune2fs -O quota + remount, no offline quotacheck needed.
+  #
+  # Operator can still opt out by setting JABALI_SKIP_QUOTA=1 in the env
+  # before running install.sh (e.g. for hosts where the operator wants to
+  # rely on cgroup IO caps only).
+  if [[ "${JABALI_SKIP_QUOTA:-0}" == "1" ]]; then
+    _warn "JABALI_SKIP_QUOTA=1 — skipping POSIX quota setup (cgroups still active)."
     return 0
   fi
 
@@ -989,17 +991,34 @@ configure_disk_quota() {
     }
     _ok "xfs user quota enabled on $home_mount"
   else
-    # ext4/ext3/ext2: quotacheck builds the aquota.user file, quotaon
-    # turns enforcement on. Idempotent — safe to rerun.
-    if [[ ! -f "$home_mount/aquota.user" ]]; then
-      _log "running quotacheck (may take time on large /home)"
-      quotacheck -cugm "$home_mount" || {
-        _err "quotacheck failed"
-        exit 1
-      }
+    # ext4: use hidden quota inodes via tune2fs -O quota (cleaner than
+    # external aquota.user files, especially when home_mount=/ where the
+    # external file would land at /aquota.user). tune2fs is online-safe
+    # since ext4 v3 quota (Linux 3.6+); idempotent — re-running is a no-op.
+    # ext2/ext3 fall back to the external-file path.
+    local backing_dev
+    backing_dev="$(findmnt -no SOURCE "$home_mount" 2>/dev/null || true)"
+    if [[ "$home_fs" == "ext4" && -n "$backing_dev" ]]; then
+      if ! tune2fs -l "$backing_dev" 2>/dev/null | grep -qE '^Filesystem features:.* quota\b'; then
+        _log "enabling ext4 hidden quota inodes on $backing_dev (tune2fs -O quota)"
+        tune2fs -O quota "$backing_dev" 2>&1 | grep -v "^tune2fs " || true
+      fi
+      quotaon -v "$home_mount" >/dev/null 2>&1 || true
+      _ok "POSIX user quota active on $home_mount (ext4 hidden inodes)"
+    else
+      # ext2/ext3 / unknown ext: external aquota.user file path.
+      # quotacheck builds the file; quotaon enforces. -m allows scan
+      # while filesystem is mounted r/w.
+      if [[ ! -f "$home_mount/aquota.user" ]]; then
+        _log "running quotacheck (may take time on large /home)"
+        quotacheck -cugm "$home_mount" || {
+          _err "quotacheck failed"
+          exit 1
+        }
+      fi
+      quotaon -v "$home_mount" >/dev/null 2>&1 || true
+      _ok "POSIX user quota active on $home_mount"
     fi
-    quotaon -v "$home_mount" >/dev/null 2>&1 || true
-    _ok "POSIX user quota active on $home_mount"
   fi
 }
 

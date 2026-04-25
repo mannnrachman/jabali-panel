@@ -13,7 +13,6 @@ import {
   Select,
   Space,
   Switch,
-  Tag,
   message,
 } from "antd";
 
@@ -22,7 +21,6 @@ import { useCreateMutation, useUpdateMutation } from "../../../hooks/useQueries"
 
 import {
   CHANNEL_KINDS,
-  kindColors,
   kindFields,
   kindLabels,
   type ChannelFormConfig,
@@ -137,16 +135,7 @@ export function AdminChannelDrawer({ open, onClose, existing }: AdminChannelDraw
           <Input placeholder="Ops Slack" />
         </Form.Item>
 
-        <Form.Item
-          name="kind"
-          label="Kind"
-          rules={[{ required: true }]}
-          extra={
-            <Tag color={kindColors[watchedKind]} style={{ marginTop: 4 }}>
-              {kindLabels[watchedKind]}
-            </Tag>
-          }
-        >
+        <Form.Item name="kind" label="Kind" rules={[{ required: true }]}>
           <Select
             disabled={isEdit}
             options={CHANNEL_KINDS.map((k) => ({ value: k, label: kindLabels[k] }))}

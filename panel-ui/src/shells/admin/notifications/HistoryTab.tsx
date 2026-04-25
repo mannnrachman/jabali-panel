@@ -9,6 +9,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 
+import { CheckOutlined, DeleteOutlined } from "@icons";
+
 import { apiClient } from "../../../apiClient";
 
 type NotificationHistoryRow = {
@@ -122,7 +124,12 @@ export const HistoryTab = () => {
           {total} total · {unread} unread
         </Typography.Text>
         <Space>
-          <Button onClick={markAllRead} disabled={unread === 0}>
+          <Button
+            size="small"
+            icon={<CheckOutlined />}
+            onClick={markAllRead}
+            disabled={unread === 0}
+          >
             Mark all as read
           </Button>
           <Popconfirm
@@ -132,7 +139,12 @@ export const HistoryTab = () => {
             okText="Clear"
             okButtonProps={{ danger: true }}
           >
-            <Button danger disabled={total === 0}>
+            <Button
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              disabled={total === 0}
+            >
               Clear all
             </Button>
           </Popconfirm>

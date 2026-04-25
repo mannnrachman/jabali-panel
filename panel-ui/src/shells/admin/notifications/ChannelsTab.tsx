@@ -118,14 +118,14 @@ export const ChannelsTab = () => {
           key="actions"
           render={(_: unknown, row: NotificationChannel) => (
             <Space>
-              <Button size="small" icon={<SendOutlined />} onClick={() => handleTest(row)}>
+              <Button type="text" icon={<SendOutlined />} onClick={() => handleTest(row)}>
                 Test
               </Button>
-              <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(row)}>
+              <Button type="text" icon={<EditOutlined />} onClick={() => openEdit(row)}>
                 Edit
               </Button>
               <Popconfirm title={`Delete ${row.name}?`} onConfirm={() => handleDelete(row)}>
-                <Button size="small" danger icon={<DeleteOutlined />}>
+                <Button type="text" danger icon={<DeleteOutlined />}>
                   Delete
                 </Button>
               </Popconfirm>

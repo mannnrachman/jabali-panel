@@ -356,6 +356,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		api.RegisterAdminSupportRoutes(v1, api.AdminSupportHandlerConfig{
 			Agent: deps.Agent,
 		})
+		// Admin: Server Status aggregator (M31, ADR-0065).
+		api.RegisterAdminServerStatusRoutes(v1, api.AdminServerStatusHandlerConfig{
+			Agent: deps.Agent,
+		})
 		if deps.Domains != nil && deps.DNSZones != nil && deps.DNSRecords != nil {
 			api.RegisterDNSRoutes(v1, api.DNSHandlerConfig{
 				Domains:        deps.Domains,

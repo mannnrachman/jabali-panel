@@ -1,0 +1,154 @@
+package api_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api"
+)
+
+func newServerStatusRouter(mock agent.AgentInterface, isAdmin bool) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	v1 := r.Group("/api/v1")
+	v1.Use(injectAdminClaims(isAdmin))
+	api.RegisterAdminServerStatusRoutes(v1, api.AdminServerStatusHandlerConfig{Agent: mock})
+	return r
+}
+
+func TestServerStatus_RBAC(t *testing.T) {
+	mock := agent.NewMockClient()
+	r := newServerStatusRouter(mock, false)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/server-status", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+func TestServerStatus_HappyPath(t *testing.T) {
+	mock := agent.NewMockClient().
+		On("system.info", map[string]any{
+			"hostname":      "test.local",
+			"os":            "Debian 13",
+			"kernel":        "6.12",
+			"cpu_count":     4,
+			"load_avg":      []float64{0.1, 0.1, 0.1},
+			"partitions":    []map[string]any{},
+			"mem_total_kb":  1000,
+			"mem_used_kb":   100,
+		}).
+		On("system.cpu_usage", map[string]any{"usage_percent": 12.5, "warming_up": false}).
+		On("system.network", map[string]any{"interfaces": []any{}}).
+		On("system.processes", map[string]any{"total": 200, "running": 1, "zombie": 0}).
+		On("system.service_details", map[string]any{
+			"services": []map[string]any{
+				{"unit": "jabali-panel.service", "active": "active", "sub": "running"},
+				{"unit": "mariadb.service", "active": "inactive"},
+			},
+		})
+
+	r := newServerStatusRouter(mock, true)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/server-status", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var env api.ServerStatusEnvelope
+	require := func(err error) {
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+	}
+	require(json.Unmarshal(rec.Body.Bytes(), &env))
+
+	if env.Host == nil {
+		t.Fatal("host slice missing")
+	}
+	if env.Services == nil {
+		t.Fatal("services slice missing")
+	}
+
+	// mariadb inactive must produce a critical service alert.
+	gotServiceAlert := false
+	for _, a := range env.Alerts {
+		if a.Kind == "service" && a.Level == "critical" {
+			gotServiceAlert = true
+		}
+	}
+	assert.True(t, gotServiceAlert, "expected critical alert for inactive mariadb")
+}
+
+// slowMockAgent simulates a sub-call that exceeds the per-call timeout.
+type slowMockAgent struct {
+	*agent.MockClient
+	slowCommand string
+	delay       time.Duration
+}
+
+func (m *slowMockAgent) Call(ctx context.Context, cmd string, params any) (json.RawMessage, error) {
+	if cmd == m.slowCommand {
+		select {
+		case <-time.After(m.delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return m.MockClient.Call(ctx, cmd, params)
+}
+
+func TestServerStatus_TimeoutDoesNotKillEnvelope(t *testing.T) {
+	base := agent.NewMockClient().
+		On("system.info", map[string]any{"hostname": "h"}).
+		On("system.network", map[string]any{"interfaces": []any{}}).
+		On("system.cpu_usage", map[string]any{"usage_percent": 0.0}).
+		On("system.service_details", map[string]any{"services": []map[string]any{}})
+	// processes returns nothing (mock has no entry → ErrUnknownCommand);
+	// AND we delay it past the 5s sub-call timeout via a slow wrapper.
+	// To keep the test fast we use a shorter delay than the prod cap;
+	// the assertion is "envelope still arrives even if a slice times out".
+	wrapped := &slowMockAgent{
+		MockClient:  base,
+		slowCommand: "system.processes",
+		delay:       50 * time.Millisecond,
+	}
+	// Simulate timeout by having the slow command return a deadline
+	// exceeded — quicker than waiting 5s in a unit test.
+	_ = wrapped
+	base.OnError("system.processes", context.DeadlineExceeded)
+
+	r := newServerStatusRouter(base, true)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/server-status", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var env api.ServerStatusEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Host == nil {
+		t.Fatal("host slice missing despite processes timeout")
+	}
+	if env.Errors["processes"] == "" {
+		t.Fatal("expected processes error captured in envelope")
+	}
+	// Alert for the timed-out slice surfaces as a warning.
+	gotProcAlert := false
+	for _, a := range env.Alerts {
+		if a.Kind == "agent" && a.Level == "warning" {
+			gotProcAlert = true
+		}
+	}
+	assert.True(t, gotProcAlert, "expected agent-warning alert for failed sub-call")
+
+	_ = errors.Is // keep import
+}

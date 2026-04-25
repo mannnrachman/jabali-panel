@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
@@ -13,6 +14,9 @@ import (
 // SystemInfoResponse is the payload for system.info.
 type SystemInfoResponse struct {
 	Hostname      string          `json:"hostname"`
+	OS            string          `json:"os"`
+	Kernel        string          `json:"kernel"`
+	CPUModel      string          `json:"cpu_model"`
 	Timezone      string          `json:"timezone"`
 	UptimeSeconds float64         `json:"uptime_seconds"`
 	LoadAvg       [3]float64      `json:"load_avg"`
@@ -20,7 +24,10 @@ type SystemInfoResponse struct {
 	MemTotalKB    uint64          `json:"mem_total_kb"`
 	MemAvailKB    uint64          `json:"mem_available_kb"`
 	MemUsedKB     uint64          `json:"mem_used_kb"`
+	SwapTotalKB   uint64          `json:"swap_total_kb"`
+	SwapUsedKB    uint64          `json:"swap_used_kb"`
 	Partitions    []PartitionInfo `json:"partitions"`
+	NTPSynced     bool            `json:"ntp_synced"`
 }
 
 // PartitionInfo describes one mounted filesystem.
@@ -57,12 +64,16 @@ func systemInfoHandler(_ context.Context, _ json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read meminfo: %w", err)
 	}
+	swapTotal, swapFree := parseMeminfoSwap(procRoot + "/meminfo")
 
 	mounts := []string{"/", "/home", "/var", "/tmp"}
 	partitions := collectPartitions(mounts)
 
 	return SystemInfoResponse{
 		Hostname:      hostname,
+		OS:            readOSPretty(),
+		Kernel:        readKernelRelease(procRoot + "/sys/kernel/osrelease"),
+		CPUModel:      readCPUModel(procRoot + "/cpuinfo"),
 		Timezone:      readSystemTimezone(),
 		UptimeSeconds: uptime,
 		LoadAvg:       loadAvg,
@@ -70,8 +81,89 @@ func systemInfoHandler(_ context.Context, _ json.RawMessage) (any, error) {
 		MemTotalKB:    memTotal,
 		MemAvailKB:    memAvail,
 		MemUsedKB:     memTotal - memAvail,
+		SwapTotalKB:   swapTotal,
+		SwapUsedKB:    swapTotal - swapFree,
 		Partitions:    partitions,
+		NTPSynced:     readNTPSynced(),
 	}, nil
+}
+
+// readOSPretty extracts PRETTY_NAME from /etc/os-release ("Debian GNU/Linux 13 (trixie)").
+func readOSPretty() string {
+	data, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "PRETTY_NAME=") {
+			return strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), `"`)
+		}
+	}
+	return ""
+}
+
+// readKernelRelease pulls "6.12.74-amd64" from /proc/sys/kernel/osrelease.
+func readKernelRelease(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// readCPUModel returns the first "model name" line from /proc/cpuinfo,
+// stripped of whitespace + "model name :" prefix.
+func readCPUModel(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "model name") {
+			continue
+		}
+		colon := strings.IndexByte(line, ':')
+		if colon < 0 {
+			continue
+		}
+		return strings.TrimSpace(line[colon+1:])
+	}
+	return ""
+}
+
+// readNTPSynced reads `timedatectl show -p NTPSynchronized --value`.
+// Failure to invoke is not an error — we just report false (the UI
+// renders a neutral "unknown" badge in that case).
+func readNTPSynced() bool {
+	out, err := timedatectlRunner("show", "-p", "NTPSynchronized", "--value")
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(out) == "yes"
+}
+
+// timedatectlRunner is a var so tests can substitute.
+var timedatectlRunner = func(args ...string) (string, error) {
+	cmd := exec.Command("timedatectl", args...)
+	out, err := cmd.Output()
+	return string(out), err
+}
+
+// parseMeminfoSwap returns SwapTotal + SwapFree in KB. Missing keys
+// (kernels without swap) collapse to 0.
+func parseMeminfoSwap(path string) (total, free uint64) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "SwapTotal:") {
+			total, _ = parseMeminfoLine(line)
+		} else if strings.HasPrefix(line, "SwapFree:") {
+			free, _ = parseMeminfoLine(line)
+		}
+	}
+	return total, free
 }
 
 // readSystemTimezone returns the OS-configured IANA timezone (e.g.

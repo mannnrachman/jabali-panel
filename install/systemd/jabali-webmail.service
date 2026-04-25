@@ -23,6 +23,15 @@ WorkingDirectory=/opt/jabali-webmail
 # bulwark updates that overwrite server.js leave server-unix.js alone.
 Environment=SOCKET_PATH=/run/jabali-bulwark/bulwark.sock
 Environment=NODE_ENV=production
+# Ensure .next/cache exists before main process starts. The Bulwark
+# tarball doesn't ship the cache subdir; without it, systemd refuses
+# to enter mount namespacing (ReadWritePaths below references the
+# path) and the unit fails with status=226/NAMESPACE. The leading +
+# runs the command as root so the directory can be created even when
+# /opt/jabali-webmail is owned by jabali-webmail:jabali-webmail and
+# the user-mode process couldn't mkdir at the required time.
+ExecStartPre=+/bin/mkdir -p /opt/jabali-webmail/.next/cache
+ExecStartPre=+/bin/chown jabali-webmail:jabali-webmail /opt/jabali-webmail/.next/cache
 ExecStart=/usr/bin/node /opt/jabali-webmail/server-unix.js
 
 # RuntimeDirectory creates /run/jabali-bulwark on every start, owned

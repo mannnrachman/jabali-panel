@@ -17,12 +17,31 @@ import (
 // because the admin is experimenting), `-a` hits BOTH filesystems.
 // We want per-user hosting quotas to land exactly on the user-home
 // mount, which here means walking up the path until we find a
-// mountpoint in /proc/mounts.
+// mountpoint.
+//
+// Source of truth: /proc/1/mounts (PID 1 / host mount namespace).
+// Systemd-hardened units can land in their own mount namespace via
+// ProtectHome=tmpfs / ProtectSystem=strict / PrivateMounts, which
+// overlays a tmpfs at /home inside panel-api's view. /proc/self/mounts
+// then shows that tmpfs as a separate mount whose longest-prefix
+// match for "/home" returns "/home" — but the agent runs in a
+// different namespace where /home is still part of the real root
+// filesystem, and setquota against the tmpfs path fails with
+// "Mountpoint /home not found or has no quota enabled". Reading PID 1's
+// mounts gives the authoritative host view. Falls back to
+// /proc/self/mounts if /proc/1/mounts is unreadable (sandboxed
+// environments, ProtectProc=invisible, test harnesses).
 //
 // Caches nothing — callers can wrap in a sync.Once if they want, but
 // the stat cost at startup is microseconds and keeping it stateless
 // lets tests inject paths.
 func QuotaMountFor(path string) (string, error) {
+	// Prefer host mount ns.
+	if _, err := os.Stat("/proc/1/mounts"); err == nil {
+		if mount, err := quotaMountForWithMounts(path, "/proc/1/mounts"); err == nil {
+			return mount, nil
+		}
+	}
 	return quotaMountForWithMounts(path, "/proc/mounts")
 }
 

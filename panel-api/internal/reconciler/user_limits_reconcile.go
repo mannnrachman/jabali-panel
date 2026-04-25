@@ -146,7 +146,7 @@ func (r *Reconciler) ReconcileUserLimits(ctx context.Context) {
 		cancel()
 		if err != nil {
 			r.log.Warn("reconcile user-limits: apply failed",
-				"username", *u.Username, "quota_mount", quotaMount, "r_quota_mount", r.quotaMount, "err", err)
+				"username", *u.Username, "quota_mount", quotaMount, "err", err)
 		}
 	}
 }

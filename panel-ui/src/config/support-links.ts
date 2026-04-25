@@ -11,4 +11,4 @@ export const SUPPORT_LINKS = {
 // Where the diagnostic-report email is addressed. Operator clicks
 // "Send via email" → mail client opens with this recipient + a
 // pre-filled subject/body containing the encrypted-note URL + password.
-export const DIAGNOSTIC_EMAIL_RECIPIENT = "support@jabali-panel.com";
+export const DIAGNOSTIC_EMAIL_RECIPIENT = "webmaster@jabali-panel.com";

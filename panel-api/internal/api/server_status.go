@@ -168,15 +168,19 @@ func synthesizeAlerts(results map[string]json.RawMessage, errMap map[string]stri
 		})
 	}
 
-	// Inactive / failed services → critical alerts. Decode minimally so
-	// we don't import the agent's struct here (one-way contract: panel-
-	// api decodes whatever shape the agent ships).
+	// Failed services → critical. Inactive services → critical only if
+	// the unit is meant to be running on this host (UnitFileState ∈
+	// {enabled, enabled-runtime, static, alias}). Lazy-started units
+	// (e.g. jabali-webmail starts on the first domain.email_enable)
+	// stay disabled until needed; flagging them inactive-critical
+	// shows a permanent red banner on hosts with no mail domains.
 	if rawSvc, ok := results["services"]; ok {
 		var payload struct {
 			Services []struct {
-				Unit      string `json:"unit"`
-				Active    string `json:"active"`
-				LoadState string `json:"load_state"`
+				Unit          string `json:"unit"`
+				Active        string `json:"active"`
+				LoadState     string `json:"load_state"`
+				UnitFileState string `json:"unit_file_state"`
 			} `json:"services"`
 		}
 		if err := json.Unmarshal(rawSvc, &payload); err == nil {
@@ -184,11 +188,17 @@ func synthesizeAlerts(results map[string]json.RawMessage, errMap map[string]stri
 				if svc.LoadState == "masked" {
 					continue
 				}
-				if svc.Active == "inactive" || svc.Active == "failed" {
+				if svc.Active == "failed" {
 					alerts = append(alerts, ServerStatusAlert{
-						Level:  "critical",
-						Kind:   "service",
-						Detail: svc.Unit + " is " + svc.Active,
+						Level: "critical", Kind: "service",
+						Detail: svc.Unit + " is failed",
+					})
+					continue
+				}
+				if svc.Active == "inactive" && unitShouldBeRunning(svc.UnitFileState) {
+					alerts = append(alerts, ServerStatusAlert{
+						Level: "critical", Kind: "service",
+						Detail: svc.Unit + " is inactive",
 					})
 				}
 			}
@@ -236,4 +246,17 @@ func synthesizeAlerts(results map[string]json.RawMessage, errMap map[string]stri
 	}
 
 	return alerts
+}
+
+// unitShouldBeRunning returns true when a systemd unit's UnitFileState
+// indicates the operator expects it to be active. "disabled" /
+// "indirect" / "" all signal a unit that's intentionally idle (in this
+// repo, the reconciler enables it lazily on first use, e.g.
+// jabali-webmail on the first domain.email_enable).
+func unitShouldBeRunning(unitFileState string) bool {
+	switch unitFileState {
+	case "enabled", "enabled-runtime", "static", "alias":
+		return true
+	}
+	return false
 }

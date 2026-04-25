@@ -5196,6 +5196,15 @@ _install_bulwark_systemd() {
   install -m 0644 -o root -g root "${REPO_DIR}/install/systemd/jabali-webmail.service" \
     /etc/systemd/system/jabali-webmail.service
 
+  # Re-create .next/cache after the atomic swap that ran in install_bulwark
+  # (mv of inner_dir into /opt/jabali-webmail wipes the cache subdir we
+  # created up front; the tarball doesn't ship one). Without this, the
+  # unit crash-loops with status=226/NAMESPACE on first start because
+  # systemd refuses to enter mount namespacing when a ReadWritePaths
+  # entry doesn't exist on disk.
+  install -d -m 0755 -o jabali-webmail -g jabali-webmail \
+    /opt/jabali-webmail/.next/cache
+
   # M25 Step 5: deploy the unix-socket wrapper alongside Bulwark's stock
   # server.js. The systemd unit runs node /opt/jabali-webmail/server-unix.js
   # which loads Next.js's request handler and binds SOCKET_PATH instead of

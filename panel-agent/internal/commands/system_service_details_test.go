@@ -13,6 +13,7 @@ import (
 const systemctlShowSample = `ActiveState=active
 SubState=running
 LoadState=loaded
+UnitFileState=enabled
 MemoryCurrent=12345678
 TasksCurrent=12
 ActiveEnterTimestamp=Fri 2026-04-25 10:00:00 UTC
@@ -21,6 +22,7 @@ Id=jabali-panel.service
 ActiveState=inactive
 SubState=dead
 LoadState=loaded
+UnitFileState=disabled
 MemoryCurrent=[not set]
 TasksCurrent=[not set]
 ActiveEnterTimestamp=
@@ -35,6 +37,7 @@ func TestParseSystemctlShow_HappyPath(t *testing.T) {
 	assert.Equal(t, "jabali-panel.service", panel.Unit)
 	assert.Equal(t, "active", panel.Active)
 	assert.Equal(t, "running", panel.Sub)
+	assert.Equal(t, "enabled", panel.UnitFileState)
 	assert.Equal(t, uint64(12345678), panel.MemoryBytes)
 	assert.Equal(t, 12, panel.Tasks)
 	assert.InDelta(t, 3600, panel.UptimeSeconds, 1.0,
@@ -43,6 +46,7 @@ func TestParseSystemctlShow_HappyPath(t *testing.T) {
 	mariadb := details[1]
 	assert.Equal(t, "mariadb.service", mariadb.Unit)
 	assert.Equal(t, "inactive", mariadb.Active)
+	assert.Equal(t, "disabled", mariadb.UnitFileState)
 	assert.Equal(t, uint64(0), mariadb.MemoryBytes,
 		"[not set] must coerce to 0")
 	assert.Equal(t, int64(0), mariadb.UptimeSeconds,

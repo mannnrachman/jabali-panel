@@ -26,6 +26,12 @@ type ServiceDetail struct {
 	Active          string `json:"active"`
 	Sub             string `json:"sub"`
 	LoadState       string `json:"load_state"`
+	// UnitFileState mirrors `systemctl is-enabled`: enabled, disabled,
+	// static, alias, masked, indirect, generated, transient,
+	// enabled-runtime. The aggregator uses it to suppress critical
+	// alerts on lazy-started services (e.g. jabali-webmail starts only
+	// when a domain enables email).
+	UnitFileState   string `json:"unit_file_state"`
 	MemoryBytes     uint64 `json:"memory_bytes"`
 	Tasks           int    `json:"tasks"`
 	UptimeSeconds   int64  `json:"uptime_seconds"`
@@ -79,6 +85,7 @@ func systemServiceDetailsHandler(ctx context.Context, raw json.RawMessage) (any,
 		"-p", "ActiveState",
 		"-p", "SubState",
 		"-p", "LoadState",
+		"-p", "UnitFileState",
 		"-p", "MemoryCurrent",
 		"-p", "TasksCurrent",
 		"-p", "ActiveEnterTimestamp",
@@ -115,10 +122,11 @@ func parseSystemctlShow(out string, now time.Time) []ServiceDetail {
 			props[line[:eq]] = line[eq+1:]
 		}
 		d := ServiceDetail{
-			Unit:      props["Id"],
-			Active:    props["ActiveState"],
-			Sub:       props["SubState"],
-			LoadState: props["LoadState"],
+			Unit:          props["Id"],
+			Active:        props["ActiveState"],
+			Sub:           props["SubState"],
+			LoadState:     props["LoadState"],
+			UnitFileState: props["UnitFileState"],
 		}
 		d.MemoryBytes = parseSystemdUint(props["MemoryCurrent"])
 		d.Tasks = int(parseSystemdUint(props["TasksCurrent"]))

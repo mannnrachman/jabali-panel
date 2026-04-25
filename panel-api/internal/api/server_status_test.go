@@ -51,8 +51,10 @@ func TestServerStatus_HappyPath(t *testing.T) {
 		On("system.processes", map[string]any{"total": 200, "running": 1, "zombie": 0}).
 		On("system.service_details", map[string]any{
 			"services": []map[string]any{
-				{"unit": "jabali-panel.service", "active": "active", "sub": "running"},
-				{"unit": "mariadb.service", "active": "inactive"},
+				{"unit": "jabali-panel.service", "active": "active", "sub": "running", "unit_file_state": "enabled"},
+				{"unit": "mariadb.service", "active": "inactive", "unit_file_state": "enabled"},
+				// Lazy-started service: disabled + inactive must NOT alert.
+				{"unit": "jabali-webmail.service", "active": "inactive", "unit_file_state": "disabled"},
 			},
 		})
 
@@ -77,14 +79,24 @@ func TestServerStatus_HappyPath(t *testing.T) {
 		t.Fatal("services slice missing")
 	}
 
-	// mariadb inactive must produce a critical service alert.
-	gotServiceAlert := false
+	// mariadb inactive (unit_file_state=enabled) must produce a critical
+	// service alert. jabali-webmail inactive (unit_file_state=disabled)
+	// must NOT — it's a lazy-started service.
+	mariadbAlert := false
+	webmailAlert := false
 	for _, a := range env.Alerts {
-		if a.Kind == "service" && a.Level == "critical" {
-			gotServiceAlert = true
+		if a.Kind != "service" || a.Level != "critical" {
+			continue
+		}
+		switch a.Detail {
+		case "mariadb.service is inactive":
+			mariadbAlert = true
+		case "jabali-webmail.service is inactive":
+			webmailAlert = true
 		}
 	}
-	assert.True(t, gotServiceAlert, "expected critical alert for inactive mariadb")
+	assert.True(t, mariadbAlert, "expected critical alert for inactive enabled mariadb")
+	assert.False(t, webmailAlert, "must not alert on inactive disabled jabali-webmail (lazy-started)")
 }
 
 // slowMockAgent simulates a sub-call that exceeds the per-call timeout.

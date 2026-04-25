@@ -100,6 +100,7 @@ export interface ServiceDetail {
   active: string;
   sub: string;
   load_state: string;
+  unit_file_state: string;
   memory_bytes: number;
   tasks: number;
   uptime_seconds: number;

@@ -1329,7 +1329,7 @@ type RecommendedItem = {
   name: string;
   title: string;
   description: string;
-  category: "core" | "web" | "mail" | "appsec" | "intel";
+  category: "core" | "web" | "appsec" | "intel";
 };
 
 const RECOMMENDED_HUB_ITEMS: RecommendedItem[] = [
@@ -1377,13 +1377,6 @@ const RECOMMENDED_HUB_ITEMS: RecommendedItem[] = [
   },
   {
     type: "collections",
-    name: "crowdsecurity/postfix",
-    title: "Postfix (mail)",
-    description: "Mail brute-force on SASL auth + spammer probing — pairs with Stalwart submission",
-    category: "mail",
-  },
-  {
-    type: "collections",
     name: "crowdsecurity/whitelist-good-actors",
     title: "Good-actor whitelist",
     description: "Skip bans for googlebot/bingbot/cloudflare/AWS health probes — reduces false positives",
@@ -1408,7 +1401,6 @@ const RECOMMENDED_HUB_ITEMS: RecommendedItem[] = [
 const CATEGORY_COLOR: Record<RecommendedItem["category"], string> = {
   core: "geekblue",
   web: "blue",
-  mail: "purple",
   appsec: "magenta",
   intel: "green",
 };

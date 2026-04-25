@@ -120,8 +120,6 @@ const GeneralSettingsTab = () => {
         ssh_port: values.ssh_port || 22,
         ssh_password_auth: values.ssh_password_auth || false,
         ssh_user_password_auth: values.ssh_user_password_auth || false,
-        disk_quota_enabled: values.disk_quota_enabled || false,
-        upload_max_size_mb: values.upload_max_size_mb || 1024,
       });
       notify({ type: "success", message: "Settings saved" });
       form.setFieldsValue(resp.data);
@@ -315,69 +313,6 @@ const GeneralSettingsTab = () => {
         </Row>
       </Card>
 
-      <Card title="File Manager" style={{ marginBottom: 16 }}>
-        <Row gutter={16}>
-          <Col xs={24} md={12}>
-            <Form.Item
-              label="Maximum Upload Size (MB)"
-              name="upload_max_size_mb"
-              rules={[
-                { required: true, message: "Required" },
-                {
-                  type: "number",
-                  min: 1,
-                  max: 10240,
-                  message: "Between 1 and 10240 MB",
-                },
-              ]}
-              tooltip="Hard cap on a single file upload via the File Manager. Applies to both single-multipart and chunked paths. Defaults to 1024 MB (1 GB)."
-            >
-              <InputNumber
-                min={1}
-                max={10240}
-                step={64}
-                style={{ width: "100%" }}
-                addonAfter="MB"
-              />
-            </Form.Item>
-          </Col>
-        </Row>
-      </Card>
-
-      <Card title="Disk Quotas" style={{ marginBottom: 16 }}>
-        <Row gutter={16}>
-          <Col xs={24}>
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                <Form.Item name="disk_quota_enabled" valuePropName="checked" noStyle>
-                  <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
-                </Form.Item>
-                <Typography.Text>POSIX Disk Quota Enforcement</Typography.Text>
-              </div>
-              <Typography.Text type="secondary">
-                When enabled, the reconciler applies per-user disk-quota limits from packages and overrides.
-                When disabled, disk-quota fields in Packages are read-only and only cgroup limits (cpu / memory / io / tasks) are enforced.
-              </Typography.Text>
-              <Alert
-                style={{ marginTop: 12 }}
-                type="info"
-                showIcon
-                message="Kernel POSIX quota must be active on the filesystem holding /home"
-                description={
-                  <>
-                    install.sh wires this up automatically (works on dedicated <code>/home</code> partitions
-                    and on <code>/</code>-shared <code>/home</code> via ext4 hidden quota inodes).
-                    Only system UIDs ≥ 1000 ever get a setquota call, so root + system daemons stay
-                    unlimited. Verify with <code>quotaon -p -a</code> before flipping this on; if no
-                    quota is reported active, re-run install.sh or set it up manually.
-                  </>
-                }
-              />
-            </div>
-          </Col>
-        </Row>
-      </Card>
-
       <Space>
         <Button
           type="primary"
@@ -549,7 +484,136 @@ const DNSSettingsTab = () => {
   );
 };
 
-type SettingsTabKey = "general" | "dns" | "email" | "branding";
+// StorageSettingsTab — File Manager upload cap + POSIX quota enforcement.
+// Owns its own form so unsaved edits are independent of the General tab,
+// and the partial PATCH only ships the two storage fields so a Save here
+// can't clobber identity/SSH/timezone settings.
+const StorageSettingsTab = () => {
+  const [form] = Form.useForm<ServerSettings>();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const notify = useNotify();
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await apiClient.get<ServerSettings>("/admin/settings");
+        if (cancelled) return;
+        form.setFieldsValue(resp.data);
+      } catch (err) {
+        notifyError(notify, "Failed to load settings", err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSubmit = async (values: ServerSettings) => {
+    setSaving(true);
+    try {
+      const resp = await apiClient.patch<ServerSettings>("/admin/settings", {
+        disk_quota_enabled: values.disk_quota_enabled || false,
+        upload_max_size_mb: values.upload_max_size_mb || 1024,
+      });
+      notify({ type: "success", message: "Storage settings saved" });
+      form.setFieldsValue(resp.data);
+    } catch (err) {
+      notifyError(notify, "Failed to save", err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Form
+      form={form}
+      layout="vertical"
+      onFinish={handleSubmit}
+      disabled={loading}
+    >
+      <Card title="File Manager" style={{ marginBottom: 16 }}>
+        <Row gutter={16}>
+          <Col xs={24} md={12}>
+            <Form.Item
+              label="Maximum Upload Size (MB)"
+              name="upload_max_size_mb"
+              rules={[
+                { required: true, message: "Required" },
+                {
+                  type: "number",
+                  min: 1,
+                  max: 10240,
+                  message: "Between 1 and 10240 MB",
+                },
+              ]}
+              tooltip="Hard cap on a single file upload via the File Manager. Applies to both single-multipart and chunked paths. Defaults to 1024 MB (1 GB)."
+            >
+              <InputNumber
+                min={1}
+                max={10240}
+                step={64}
+                style={{ width: "100%" }}
+                addonAfter="MB"
+              />
+            </Form.Item>
+          </Col>
+        </Row>
+      </Card>
+
+      <Card title="Disk Quotas" style={{ marginBottom: 16 }}>
+        <Row gutter={16}>
+          <Col xs={24}>
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <Form.Item name="disk_quota_enabled" valuePropName="checked" noStyle>
+                  <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
+                </Form.Item>
+                <Typography.Text>POSIX Disk Quota Enforcement</Typography.Text>
+              </div>
+              <Typography.Text type="secondary">
+                When enabled, the reconciler applies per-user disk-quota limits from packages and overrides.
+                When disabled, disk-quota fields in Packages are read-only and only cgroup limits (cpu / memory / io / tasks) are enforced.
+              </Typography.Text>
+              <Alert
+                style={{ marginTop: 12 }}
+                type="info"
+                showIcon
+                message="Kernel POSIX quota must be active on the filesystem holding /home"
+                description={
+                  <>
+                    install.sh wires this up automatically (works on dedicated <code>/home</code> partitions
+                    and on <code>/</code>-shared <code>/home</code> via ext4 hidden quota inodes).
+                    Only system UIDs ≥ 1000 ever get a setquota call, so root + system daemons stay
+                    unlimited. Verify with <code>quotaon -p -a</code> before flipping this on; if no
+                    quota is reported active, re-run install.sh or set it up manually.
+                  </>
+                }
+              />
+            </div>
+          </Col>
+        </Row>
+      </Card>
+
+      <Space>
+        <Button
+          type="primary"
+          icon={<SaveOutlined />}
+          loading={saving}
+          htmlType="submit"
+        >
+          Save Storage Settings
+        </Button>
+      </Space>
+    </Form>
+  );
+};
+
+type SettingsTabKey = "general" | "storage" | "dns" | "email" | "branding";
 
 const BrandingSettingsTab = () => (
   <>
@@ -576,6 +640,7 @@ export const ServerSettingsPage = () => {
       <Card
         tabList={[
           { key: "general", tab: "General" },
+          { key: "storage", tab: "Storage" },
           { key: "dns", tab: "DNS" },
           { key: "email", tab: "Email" },
           { key: "branding", tab: "Branding" },
@@ -584,6 +649,7 @@ export const ServerSettingsPage = () => {
         onTabChange={(k) => setActiveTab(k as SettingsTabKey)}
       >
         {activeTab === "general" && <GeneralSettingsTab />}
+        {activeTab === "storage" && <StorageSettingsTab />}
         {activeTab === "dns" && <DNSSettingsTab />}
         {activeTab === "email" && <EmailCard />}
         {activeTab === "branding" && <BrandingSettingsTab />}

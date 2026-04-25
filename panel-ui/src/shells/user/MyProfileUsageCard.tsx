@@ -87,7 +87,14 @@ export function MyProfileUsageCard({ userId }: { userId: string }) {
         <UsageRow
           label="Disk"
           used={current?.disk?.used_kb ?? 0}
-          limit={current?.disk?.limit_kb ?? effective.DiskQuotaMB * 1024}
+          // 0 from agent means "no quota plumbing", not "0-byte limit" —
+          // fall through to effective.DiskQuotaMB so the package limit
+          // still renders even when quotacheck couldn't run.
+          limit={
+            (current?.disk?.limit_kb ?? 0) > 0
+              ? (current?.disk?.limit_kb ?? 0)
+              : effective.DiskQuotaMB * 1024
+          }
           formatter={(kb) => humanBytes(kb * 1024)}
         />
         <UsageRow

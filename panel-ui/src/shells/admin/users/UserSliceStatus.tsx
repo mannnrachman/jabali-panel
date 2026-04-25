@@ -121,11 +121,16 @@ export function UserSliceStatus({ userId }: { userId: string }) {
 
   const mem = formatMemory(data.memory_current_bytes);
   const diskUsedKB = usage?.current?.disk?.used_kb ?? 0;
+  // 0 means "no quota plumbing" (e.g. quotacheck couldn't run on busy /),
+  // not "limit is 0 bytes". Fall through to effective.DiskQuotaMB so the
+  // package limit still renders.
+  const reportedLimitKB = usage?.current?.disk?.limit_kb ?? 0;
   const diskLimitKB =
-    usage?.current?.disk?.limit_kb ??
-    (usage?.effective?.DiskQuotaMB
-      ? usage.effective.DiskQuotaMB * 1024
-      : 0);
+    reportedLimitKB > 0
+      ? reportedLimitKB
+      : usage?.effective?.DiskQuotaMB
+        ? usage.effective.DiskQuotaMB * 1024
+        : 0;
   const diskLabel =
     diskLimitKB > 0
       ? `${formatMemory(diskUsedKB * 1024)} / ${formatMemory(diskLimitKB * 1024)}`

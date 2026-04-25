@@ -23,6 +23,12 @@ const useMuiTheme = (mode: ThemeMode): ConfigProviderProps =>
           // Every size-derived token (fontSizeSM, fontSizeLG, heading
           // sizes, line heights, control heights) scales off this.
           fontSize: 15,
+          // Inter as primary face (self-hosted via @fontsource/inter
+          // imported in main.tsx). Falls through to OS system font if
+          // the woff2 fails to load — cron/SSH/log views keep their
+          // inline `monospace` overrides untouched.
+          fontFamily:
+            "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
         },
         components: {
           // The Sider's collapse trigger bar at the bottom otherwise

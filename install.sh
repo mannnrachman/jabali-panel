@@ -2414,6 +2414,13 @@ ensure_user_and_dirs() {
     usermod -aG www-data "$SERVICE_USER" 2>/dev/null || true
   fi
 
+  # systemd-journal group lets the panel-api ssh.login event source tail
+  # the sshd journal without elevating to root. Group exists on every
+  # systemd distro; ignore failure on the rare init that doesn't ship it.
+  if getent group systemd-journal >/dev/null 2>&1; then
+    usermod -aG systemd-journal "$SERVICE_USER" 2>/dev/null || true
+  fi
+
   install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" "$REPO_DIR"
   install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$(dirname "$ENV_FILE")"
   install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali/backups

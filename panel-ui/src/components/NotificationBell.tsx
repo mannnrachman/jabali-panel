@@ -191,16 +191,16 @@ export function NotificationBell() {
             padding: `${token.paddingXS}px ${token.padding}px`,
             background: row.read_at ? undefined : token.colorPrimaryBg,
           },
-          icon: (
-            <Tag color={severityColor[row.severity] ?? "default"} style={{ marginInlineEnd: 0 }}>
-              {row.severity}
-            </Tag>
-          ),
           label: (
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              <Typography.Text strong style={{ lineHeight: 1.3 }}>
-                {row.title}
-              </Typography.Text>
+              <Space size={token.marginXS} align="center">
+                <Tag color={severityColor[row.severity] ?? "default"} style={{ marginInlineEnd: 0 }}>
+                  {row.severity}
+                </Tag>
+                <Typography.Text strong style={{ lineHeight: 1.3 }}>
+                  {row.title}
+                </Typography.Text>
+              </Space>
               <Typography.Paragraph
                 type="secondary"
                 style={{ margin: 0, fontSize: token.fontSizeSM, whiteSpace: "pre-wrap" }}

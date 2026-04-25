@@ -17,11 +17,12 @@ type AdminSupportHandlerConfig struct {
 	Agent agent.AgentInterface
 }
 
-// RegisterAdminSupportRoutes mounts the diagnostic endpoints under
+// RegisterAdminSupportRoutes mounts the diagnostic endpoint under
 // /admin/support. Admin-only. ADR-0064.
 //
-// POST /diagnostic         — collect+redact+upload to enclosed; return URL+password
-// POST /diagnostic/notify  — operator-confirmed: forward URL+password to team via ntfy
+// POST /diagnostic — collect+redact+upload to enclosed; return URL+password.
+// Operator forwards the credentials to the team via email — UI builds a
+// mailto: link client-side, no server endpoint needed.
 func RegisterAdminSupportRoutes(g *gin.RouterGroup, cfg AdminSupportHandlerConfig) {
 	if cfg.Agent == nil {
 		return
@@ -30,39 +31,18 @@ func RegisterAdminSupportRoutes(g *gin.RouterGroup, cfg AdminSupportHandlerConfi
 	grp := g.Group("/admin/support")
 	grp.Use(middleware.RequireAdmin())
 	grp.POST("/diagnostic", h.diagnostic)
-	grp.POST("/diagnostic/notify", h.diagnosticNotify)
 }
 
 type adminSupportHandler struct{ cfg AdminSupportHandlerConfig }
 
 // diagnostic asks the agent to collect host state, redact, encrypt and
 // upload to enclosed. Returns URL + password for the operator to copy
-// — and to feed into /diagnostic/notify if they want the team paged.
-// 120s timeout: journalctl for 10 services + a few-MB enclosed POST
-// over a slow link can stretch.
+// into a mail-client compose window. 120s timeout: journalctl for 10
+// services + a few-MB enclosed POST over a slow link can stretch.
 func (h *adminSupportHandler) diagnostic(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 120*time.Second)
 	defer cancel()
-	h.proxy(c, ctx, "system.diagnostic_report", nil)
-}
-
-// diagnosticNotify forwards a previously-minted URL+password pair to the
-// team via ntfy. Two-step on purpose: the operator decides whether the
-// case warrants a page, and the credentials never leave their browser
-// without their explicit click.
-func (h *adminSupportHandler) diagnosticNotify(c *gin.Context) {
-	var body map[string]any
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "details": err.Error()})
-		return
-	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
-	defer cancel()
-	h.proxy(c, ctx, "system.diagnostic_notify", body)
-}
-
-func (h *adminSupportHandler) proxy(c *gin.Context, ctx context.Context, cmd string, params any) {
-	raw, err := h.cfg.Agent.Call(ctx, cmd, params)
+	raw, err := h.cfg.Agent.Call(ctx, "system.diagnostic_report", nil)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "details": err.Error()})
 		return

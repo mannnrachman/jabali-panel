@@ -12,19 +12,10 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-agent/internal/enclosed"
 )
 
-// EnclosedBaseURL points at the operator-controlled enclosed.cc-compatible
-// note-sharing server. Hard-coded so the agent ships with the right
-// endpoint baked in. Override via the JABALI_ENCLOSED_URL env if a
-// dev wants to point at a local instance.
+// defaultEnclosedBaseURL points at the operator-controlled enclosed.cc-
+// compatible note-sharing server. Hard-coded so the agent ships with the
+// right endpoint baked in. Override via JABALI_ENCLOSED_URL for dev.
 const defaultEnclosedBaseURL = "https://enclosed.jabali-panel.com"
-
-// NtfyBaseURL + topic are the team's notification surface. Operator
-// hits "Send via ntfy" → agent posts the just-minted enclosed URL +
-// password to this topic and the team gets a push.
-const (
-	defaultNtfyBaseURL = "https://ntfy.jabali-panel.com"
-	defaultNtfyTopic   = "jabali-admin-alerts"
-)
 
 func enclosedBaseURL() string {
 	if v := os.Getenv("JABALI_ENCLOSED_URL"); v != "" {
@@ -33,32 +24,15 @@ func enclosedBaseURL() string {
 	return defaultEnclosedBaseURL
 }
 
-func ntfyBaseURL() string {
-	if v := os.Getenv("JABALI_NTFY_URL"); v != "" {
-		return v
-	}
-	return defaultNtfyBaseURL
-}
-
-func ntfyTopic() string {
-	if v := os.Getenv("JABALI_NTFY_TOPIC"); v != "" {
-		return v
-	}
-	return defaultNtfyTopic
-}
-
 // systemDiagnosticReportResponse mirrors what the panel UI renders on
 // /jabali-admin/support after the operator clicks "Send Diagnostic
 // Report". The URL + password are independent: the URL alone won't
-// decrypt without the password, and the password without the URL is
-// useless. The team needs both, so the next step is the operator posting
-// them to ntfy via system.diagnostic_notify.
+// decrypt without the password. The UI offers a "Send via email" button
+// that opens the operator's mail client with both fields pre-filled.
 type systemDiagnosticReportResponse struct {
 	URL            string `json:"url"`
 	Password       string `json:"password"`
 	NoteID         string `json:"note_id"`
-	NtfyURL        string `json:"ntfy_url"`
-	NtfyTopic      string `json:"ntfy_topic"`
 	ByteCount      int    `json:"byte_count"`
 	GeneratedAt    string `json:"generated_at"`
 	RedactionCount int    `json:"redaction_count"`
@@ -90,8 +64,6 @@ func systemDiagnosticReportHandler(ctx context.Context, _ json.RawMessage) (any,
 		URL:            res.URL,
 		Password:       res.Password,
 		NoteID:         res.NoteID,
-		NtfyURL:        ntfyBaseURL() + "/" + ntfyTopic(),
-		NtfyTopic:      ntfyTopic(),
 		ByteCount:      len(bundle.TarBytes),
 		GeneratedAt:    bundle.GeneratedAt.Format(time.RFC3339),
 		RedactionCount: bundle.RedactionCount,

@@ -1116,7 +1116,12 @@ export const FileManagerPage = () => {
           style={{ width: 280, flexShrink: 0 }}
           // body takes the scrollable region; the header is fixed so the
           // "Folders" title stays visible even when a deep tree scrolls.
+          // Header bg matches the AntD Table header tint so the two side-by-side
+          // panels read as one unit.
           styles={{
+            header: {
+              background: token.colorFillAlter,
+            },
             body: {
               maxHeight: "calc(100vh - 240px)",
               overflow: "auto",

@@ -45,9 +45,6 @@ export function MetersGrid({ host, cpu }: Props) {
             {cores === 1 ? "" : "s"}
             {cpuWarming ? " · warming up" : ""}
           </Typography.Text>
-          {cpu?.per_core && cpu.per_core.length > 0 && (
-            <PerCoreSparkline cores={cpu.per_core} />
-          )}
         </Card>
       </Col>
 
@@ -107,32 +104,6 @@ function LoadStat({ label, value, cores }: { label: string; value: number; cores
         <div style={{ color, fontWeight: 600, fontSize: 18 }}>{value.toFixed(2)}</div>
       </div>
     </Tooltip>
-  );
-}
-
-// PerCoreSparkline — inline SVG, no new dep. One bar per core, height
-// proportional to busy% (0..100). Threshold-coloured per bar.
-function PerCoreSparkline({ cores }: { cores: number[] }) {
-  const w = 120;
-  const h = 28;
-  const bw = w / cores.length;
-  return (
-    <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} style={{ marginTop: 6 }}>
-      {cores.map((pct, i) => {
-        const bh = Math.max(1, (pct / 100) * h);
-        return (
-          <rect
-            key={i}
-            x={i * bw + 1}
-            y={h - bh}
-            width={bw - 2}
-            height={bh}
-            fill={usageColor(pct)}
-            rx={1}
-          />
-        );
-      })}
-    </svg>
   );
 }
 

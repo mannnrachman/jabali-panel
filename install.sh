@@ -1741,6 +1741,27 @@ SQL
   # service bounce, no config rewrite, journal clean).
   local pdns_conf=/etc/powerdns/pdns.d/01-jabali-mysql.conf
   local pdns_conf_new="${pdns_conf}.new"
+
+  # Enumerate every global-scope IPv4 + IPv6 on the host. 'scope global'
+  # automatically excludes 127.0.0.0/8 (which is host scope) and
+  # fe80::/10 (link scope). Sorted for deterministic output so the .new
+  # vs live file comparison stays stable across re-runs that didn't
+  # actually change the IP layout. IPv6 addresses get bracketed for
+  # pdns's "addr:port" parser.
+  local pdns_local_addresses
+  pdns_local_addresses="$({
+    ip -4 -o addr show scope global 2>/dev/null \
+      | awk '{split($4,a,"/"); print a[1] ":53"}'
+    ip -6 -o addr show scope global 2>/dev/null \
+      | awk '{split($4,a,"/"); print "[" a[1] "]:53"}'
+    printf '127.0.0.1:5300\n[::1]:5300\n'
+  } | sort -u | paste -sd ', ' -)"
+  if [[ -z "$pdns_local_addresses" ]]; then
+    # Defensive: should never happen because the loopback entries are
+    # always emitted, but guard against an unexpected empty value
+    # producing an invalid pdns.conf line.
+    _die "pdns local-address enumeration produced empty string"
+  fi
   cat > "$pdns_conf_new" <<PDNSCONF
 # Managed by Jabali Panel install.sh. Hand edits will be overwritten
 # the next time install.sh runs.
@@ -1775,10 +1796,12 @@ gmysql-dnssec=yes
 #
 # We deliberately do NOT bind 0.0.0.0: systemd-resolved's stub listens
 # on 127.0.0.53:53 and recursor listens on 127.0.0.1:53, so any
-# wildcard bind would collide with one of them (EADDRINUSE). Operator
-# who adds more public IPs widens this via a drop-in; they must not
-# re-add 0.0.0.0 while systemd-resolved + pdns-recursor run.
-local-address=${JABALI_SRV_IPV4}:53, 127.0.0.1:5300, [::1]:5300
+# wildcard bind would collide with one of them (EADDRINUSE). Instead
+# enumerate every global-scope IP on the host (IPv4 + IPv6) at install
+# time and bind each on :53 explicitly. fe80::/10 + 127/8 + ::1 are
+# excluded by 'scope global'. Operators who add IPs after install
+# re-run install.sh (or jabali update -f triggers it) to widen.
+local-address=${pdns_local_addresses}
 
 # socket-dir is intentionally not set — Debian's pdns.service has
 # RuntimeDirectory=powerdns which auto-creates /run/powerdns with the
@@ -1825,7 +1848,7 @@ PDNSCONF
     systemctl is-active --quiet pdns \
       || _die "pdns failed to start; check 'journalctl -u pdns' for details"
   fi
-  _ok "PowerDNS running on ${JABALI_SRV_IPV4}:53 (authoritative) + 127.0.0.1:5300 (recursor forward target)"
+  _ok "PowerDNS running on ${pdns_local_addresses} (authoritative + recursor forward target on :5300)"
 }
 
 # ---------- step 2.6c: pdns-recursor for local self-resolution (M6.3) -------

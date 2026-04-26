@@ -169,6 +169,8 @@ export const UserCronList = () => {
   return (
     <div>
       <Space
+        wrap
+        align="center"
         style={{
           marginBottom: 16,
           width: "100%",

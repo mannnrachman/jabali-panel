@@ -133,7 +133,10 @@ test.describe("admin server status page", () => {
     await expect(page.getByText("mariadb.service is inactive")).toBeVisible();
 
     // Service rows render.
-    await expect(page.getByRole("cell", { name: "jabali-panel.service" })).toBeVisible();
+    // ServicesSummaryCard.prettyName strips the .service suffix and the
+    // jabali- prefix so the rendered cell text is "panel", not the raw
+    // unit name. Match the rendered shape, not the envelope's.
+    await expect(page.getByRole("cell", { name: "panel", exact: true })).toBeVisible();
   });
 
   test("dashboard deep-links into server status", async ({ page }) => {

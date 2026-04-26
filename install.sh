@@ -434,9 +434,18 @@ prompt_server_settings() {
       hostnamectl set-hostname "$JABALI_HOSTNAME" 2>/dev/null || \
         _warn "hostnamectl set-hostname failed (container without CAP_SYS_ADMIN?) — /etc/hostname may be stale"
     fi
-    if ! grep -q "[[:space:]]${JABALI_HOSTNAME}\([[:space:]]\|$\)" /etc/hosts 2>/dev/null; then
-      # Best-effort loopback entry so `hostname -f` resolves locally.
-      printf '127.0.1.1\t%s\n' "$JABALI_HOSTNAME" >> /etc/hosts
+    # Strip any existing `127.0.1.1 <hostname>` line. Debian seeds this
+    # on first boot via `hostnamectl`, but on a public VPS it shadows
+    # real DNS — net.LookupHost respects /etc/hosts before DNS, and the
+    # M32 panel-cert routability gate compares the lookup result against
+    # public_ipv4. With 127.0.1.1 in the way, the check sees loopback
+    # and refuses to attempt LE issuance ("dns points elsewhere"). Take
+    # the loopback resolution loss — `hostname -f` falls back to DNS
+    # which is what the operator needs anyway. Incident 2026-04-26 on
+    # mx.jabali-panel.com.
+    if [[ -f /etc/hosts ]]; then
+      sed -i "/^127\.0\.1\.1[[:space:]].*[[:space:]]\?${JABALI_HOSTNAME}\([[:space:]]\|$\)/d" /etc/hosts
+      sed -i "/^127\.0\.1\.1[[:space:]]\+${JABALI_HOSTNAME}[[:space:]]*$/d" /etc/hosts
     fi
   fi
 
@@ -3371,6 +3380,18 @@ install_nginx_default_vhost() {
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
+    # M24-aware: per-domain vhosts bind explicitly with `listen
+    # \${IPv4}:80` (when ListenIPv4 is non-empty in the vhost render
+    # path), which moves them into nginx's specific-IP listener pool.
+    # Wildcard listeners (`listen 80`) are NEVER consulted for an
+    # IP+port that has at least one specific-IP listener — so without
+    # this explicit \${JABALI_SRV_IPV4}:80 default_server line the
+    # default vhost would be invisible for traffic to the public IP,
+    # and HTTP-01 for the panel hostname would land on whichever
+    # tenant vhost happened to be alphabetically first. Render the
+    # explicit binding so the panel stays the de-facto default for
+    # its public IP. Incident 2026-04-26 on mx.jabali-panel.com.
+    listen ${JABALI_SRV_IPV4}:80 default_server;
     server_name _;
 
     # M32 (ADR-0066): serve LE HTTP-01 challenges for the panel

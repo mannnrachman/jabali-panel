@@ -77,7 +77,7 @@ func (r *Reconciler) applyWebmailVhost(ctx context.Context, d *models.Domain) {
 
 	callCtx, cancel := context.WithTimeout(ctx, webmailAgentTimeout)
 	defer cancel()
-	if _, err := r.agent.Call(callCtx, "webmail.vhost_apply", map[string]any{
+	params := map[string]any{
 		"domain_name":   d.Name,
 		"ssl_cert_path": certPath,
 		"ssl_key_path":  keyPath,
@@ -85,7 +85,21 @@ func (r *Reconciler) applyWebmailVhost(ctx context.Context, d *models.Domain) {
 		// mail.<domain>. Same path ssl.issue uses (-w domain.DocRoot)
 		// so renewal challenge files land where nginx will serve them.
 		"doc_root": d.DocRoot,
-	}); err != nil {
+	}
+	// listen_ipv4 / listen_ipv6 — same resolution as the apex vhost
+	// (M24). When the apex vhost binds a specific IP, the mail vhost
+	// MUST also bind that IP or it falls into nginx's wildcard pool
+	// (which gets ignored on IPs with at least one specific listener)
+	// and SNI for mail.<domain> lands on the wrong tenant's cert.
+	if r.managedIPs != nil {
+		if v4 := r.resolveListenIPAddress(ctx, d.ListenIPv4ID, "ipv4"); v4 != "" {
+			params["listen_ipv4"] = v4
+		}
+		if v6 := r.resolveListenIPAddress(ctx, d.ListenIPv6ID, "ipv6"); v6 != "" {
+			params["listen_ipv6"] = v6
+		}
+	}
+	if _, err := r.agent.Call(callCtx, "webmail.vhost_apply", params); err != nil {
 		r.log.Error("webmail reconcile: vhost_apply failed",
 			"domain_id", d.ID, "domain", d.Name, "err", err)
 	}

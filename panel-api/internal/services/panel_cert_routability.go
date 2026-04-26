@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 )
 
 // RoutabilityResult tells the caller why the panel hostname does (or
@@ -89,6 +90,21 @@ func (p *PanelCertRoutability) Check(ctx context.Context, hostname, publicIPv4 s
 		return RoutabilityResult{Routable: false, Reason: "dns lookup returned no records"}, nil
 	}
 
+	// /etc/hosts shadow guard: if every result is loopback (Debian
+	// seeds `127.0.1.1 <hostname>` on first boot and never strips it),
+	// the default resolver is misleading us — public DNS likely
+	// resolves elsewhere. Retry once against a public DNS resolver
+	// that bypasses /etc/hosts entirely. install.sh now strips the
+	// stale line on every run, but this guard catches operators who
+	// edit /etc/hosts by hand AND keeps the gate robust on hosts
+	// where install.sh hasn't been re-run since the strip landed.
+	if onlyLoopback(addrs) {
+		ext := newExternalResolver()
+		if extAddrs, extErr := ext.LookupHost(ctx, host); extErr == nil && len(extAddrs) > 0 {
+			addrs = extAddrs
+		}
+	}
+
 	// Walk the response set. We only consider IPv4 matches for the
 	// panel-cert routability gate; an AAAA-only result on a panel
 	// reachable via IPv6 still falls back to self-signed for now.
@@ -123,3 +139,36 @@ func (p *PanelCertRoutability) Check(ctx context.Context, hostname, publicIPv4 s
 // nil. Currently only used by tests to assert the constructor wires
 // a sane default.
 var ErrNoResolver = errors.New("nil Resolver")
+
+// onlyLoopback returns true when every IP in addrs is loopback (127/8
+// or ::1). Used by Check to detect /etc/hosts shadowing on Debian
+// hosts where `127.0.1.1 <hostname>` survived a hostname change.
+func onlyLoopback(addrs []string) bool {
+	if len(addrs) == 0 {
+		return false
+	}
+	for _, a := range addrs {
+		ip := net.ParseIP(a)
+		if ip == nil {
+			return false
+		}
+		if !ip.IsLoopback() {
+			return false
+		}
+	}
+	return true
+}
+
+// newExternalResolver returns a pure-Go resolver that bypasses
+// /etc/hosts by dialing a public DNS server directly. Uses
+// Cloudflare 1.1.1.1 with a tight 3s timeout so a flaky upstream
+// can't stall the panel-cert reconciler tick.
+func newExternalResolver() *net.Resolver {
+	return &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			d := &net.Dialer{Timeout: 3 * time.Second}
+			return d.DialContext(ctx, "udp", "1.1.1.1:53")
+		},
+	}
+}

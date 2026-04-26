@@ -28,13 +28,27 @@ import (
 // re-copying here.
 
 // mailVhostTemplate mirrors install/nginx/jabali-mail-vhost.conf.tmpl.
-// Go template variables: .Domain, .SSLCertPath, .SSLKeyPath.
+// Go template variables: .DomainName, .SSLCertPath, .SSLKeyPath,
+// .DocRoot, .ListenIPv4, .ListenIPv6.
+//
+// listen-line shape mirrors domain_create.go: when an explicit IPv4 or
+// IPv6 binding is set, we emit `listen <ip>:<port>` so the mail vhost
+// joins nginx's specific-IP listener pool and beats the wildcard
+// listener for traffic on that IP. Without this, on a host where the
+// apex domain vhost binds the public IP explicitly (M24 default), the
+// mail subdomain falls into the wildcard pool which nginx then
+// IGNORES for that IP — and SNI lands on whichever apex vhost
+// happens to be alphabetically first. Result: mail.<domain> serves
+// the wrong tenant's cert. Incident 2026-04-26.
 const mailVhostTemplate = `# Rendered by panel-agent webmail.vhost_apply (M6 Step 8).
 # DO NOT EDIT — changes belong in install/nginx/jabali-mail-vhost.conf.tmpl.
 
 server {
-  listen 443 ssl;
-  http2 on;
+{{ if .ListenIPv4 }}  listen {{.ListenIPv4}}:443 ssl;
+{{ else }}  listen 443 ssl;
+{{ end }}{{ if .ListenIPv6 }}  listen [{{.ListenIPv6}}]:443 ssl;
+{{ else }}  listen [::]:443 ssl;
+{{ end }}  http2 on;
   server_name mail.{{.DomainName}};
 
   ssl_certificate {{.SSLCertPath}};
@@ -95,8 +109,11 @@ server {
 }
 
 server {
-  listen 80;
-  server_name mail.{{.DomainName}};
+{{ if .ListenIPv4 }}  listen {{.ListenIPv4}}:80;
+{{ else }}  listen 80;
+{{ end }}{{ if .ListenIPv6 }}  listen [{{.ListenIPv6}}]:80;
+{{ else }}  listen [::]:80;
+{{ end }}  server_name mail.{{.DomainName}};
 
   # ACME HTTP-01 webroot. Must be a location block — a server-level
   # redirect fires in nginx SERVER_REWRITE phase BEFORE FIND_CONFIG,
@@ -134,6 +151,11 @@ type webmailVhostApplyParams struct {
 	// passes to ssl.issue (-w) so the renewal challenge file lands at
 	// the path nginx will actually serve.
 	DocRoot string `json:"doc_root"`
+	// ListenIPv4 / ListenIPv6 mirror the apex vhost's listener
+	// binding (M24). Empty falls back to wildcard. Required to keep
+	// SNI deterministic when the apex vhost has a specific-IP listen.
+	ListenIPv4 string `json:"listen_ipv4,omitempty"`
+	ListenIPv6 string `json:"listen_ipv6,omitempty"`
 }
 
 type webmailVhostResponse struct {

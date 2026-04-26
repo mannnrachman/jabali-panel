@@ -12,7 +12,7 @@
 # for domains where ACME hasn't completed yet.
 
 server {
-  listen 443 ssl;
+  ${LISTEN_443}
   http2 on;
   server_name mail.${DOMAIN};
 
@@ -105,7 +105,7 @@ server {
 # same writable directory. Incident 2026-04-26: jabali.site cert
 # stuck because mail.jabali.site:80 redirected to https → 404.
 server {
-  listen 80;
+  ${LISTEN_80}
   server_name mail.${DOMAIN};
 
   location ^~ /.well-known/acme-challenge/ {

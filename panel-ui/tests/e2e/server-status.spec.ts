@@ -118,8 +118,10 @@ test.describe("admin server status page", () => {
     // CPU meter renders the percentage.
     await expect(page.getByText("13%")).toBeVisible();
 
-    // Disk row mount point.
-    await expect(page.getByRole("cell", { name: "/" })).toBeVisible();
+    // Disk row mount point. Use exact match because "/" alone matches
+    // multiple cells (every disk's progress bar wrapper, percent
+    // suffixes, etc.) under non-strict mode.
+    await expect(page.getByRole("cell", { name: "/", exact: true })).toBeVisible();
 
     // Network row IP.
     await expect(page.getByText("10.0.0.5")).toBeVisible();

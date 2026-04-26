@@ -41,9 +41,22 @@ func (r *Reconciler) ReconcileSSHKeysForUser(ctx context.Context, userID string)
 			sshEnabled = pkg.SSHEnabled
 		}
 	}
+	// Order matters: when going SFTP→SSH we must restore <u>:<u> 0750 on
+	// /home/<u> BEFORE leaving jabali-sftp; when going SSH→SFTP we must
+	// flip to root:<u> 0751 BEFORE joining (sshd refuses to chroot into a
+	// non-root path on the next connect). Calling home_chown first in both
+	// paths is the safe order.
+	homeMode := "sftp"
 	groupMethod := "ssh.user.join_sftp_group"
 	if sshEnabled {
+		homeMode = "ssh"
 		groupMethod = "ssh.user.leave_sftp_group"
+	}
+	if _, err := r.agent.Call(ctx, "ssh.user.home_chown", map[string]interface{}{
+		"username": *user.Username,
+		"mode":     homeMode,
+	}); err != nil {
+		return fmt.Errorf("ssh.user.home_chown: %w", err)
 	}
 	if _, err := r.agent.Call(ctx, groupMethod, map[string]interface{}{
 		"username": *user.Username,

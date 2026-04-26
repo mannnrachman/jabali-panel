@@ -72,6 +72,10 @@ Match Group jabali-sftp
     PermitTunnel no
     AllowAgentForwarding no
 
+    # Lock user inside own home. Panel flips /home/<u> to root:<u> 0751
+    # via ssh.user.home_chown(mode=sftp) before joining jabali-sftp.
+    ChrootDirectory /home/%%u
+
     # Auth toggled by Server Settings → SSH Access → "User Password
     # Authentication". Default OFF (key-only) per project posture.
     PasswordAuthentication %s

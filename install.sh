@@ -611,8 +611,17 @@ install_base_packages() {
   # only touches the distro mirror (no 418 risk). The repos are
   # re-added immediately below by _install_sury_source /
   # _install_nodesource_source with the UA workaround in place.
+  #
+  # Also clear any deb822 *.sources files dropped by a previous
+  # `add-apt-repository ppa:ondrej/php` (or equivalent). Those embed
+  # an inline `Signed-By: <pgp>` block that conflicts with our
+  # signed-by=/usr/share/keyrings/sury-php.gpg, making apt error out
+  # with "Conflicting values set for option Signed-By regarding
+  # source ...".
   rm -f /etc/apt/sources.list.d/sury-php.list \
-        /etc/apt/sources.list.d/nodesource.list
+        /etc/apt/sources.list.d/nodesource.list \
+        /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources \
+        /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list
 
   # Bootstrap: `gpg` (from gnupg) + `curl` + `ca-certificates` must be
   # present BEFORE we add third-party repos (Sury, NodeSource) and verify

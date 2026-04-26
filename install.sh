@@ -600,6 +600,15 @@ install_base_packages() {
   _log "installing all system packages in one batch"
   export DEBIAN_FRONTEND=noninteractive
 
+  # Re-runs on a host whose previous install left
+  # /etc/apt/sources.list.d/sury-php.list behind would crash this very
+  # first apt update on Fastly's 418, before _install_sury_source has
+  # had a chance to write the UA workaround. Drop the conf upfront so
+  # both the bootstrap apt update and the subsequent one see it.
+  # Idempotent on fresh hosts — the file just gets written without
+  # anything else changing.
+  _install_sury_apt_ua_workaround
+
   # Bootstrap: `gpg` (from gnupg) + `curl` + `ca-certificates` must be
   # present BEFORE we add third-party repos (Sury, NodeSource) and verify
   # their GPG keys. Minimal LXC containers often ship without gnupg. Two

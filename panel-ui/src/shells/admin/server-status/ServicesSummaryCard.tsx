@@ -8,7 +8,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import {
   CheckCircleOutlined,
-  CloseCircleOutlined,
+  CloseOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
   SyncOutlined,
@@ -122,7 +122,7 @@ function statusIcon(state: string) {
       return <Tag color="green" icon={<CheckCircleOutlined />} bordered={false} />;
     case "failed":
     case "inactive":
-      return <Tag color="red" icon={<CloseCircleOutlined />} bordered={false} />;
+      return <Tag color="red" icon={<CloseOutlined />} bordered={false} />;
     case "activating":
     case "deactivating":
       return <Tag color="orange" icon={<SyncOutlined spin />} bordered={false} />;

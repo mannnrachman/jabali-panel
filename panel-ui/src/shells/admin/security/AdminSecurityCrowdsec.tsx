@@ -52,6 +52,7 @@ import {
   useCrowdsecCaptcha,
   useCrowdsecConsoleEnrollment,
   useCrowdsecConsoleStatus,
+  useDisenrollCrowdsecConsole,
   useCrowdsecProfiles,
   useCrowdsecStatus,
   useDeleteCrowdsecDecision,
@@ -885,6 +886,7 @@ const OPTION_LABEL: Record<string, string> = {
 
 const ConsoleCard = () => {
   const enroll = useEnrollCrowdsecConsole();
+  const disenroll = useDisenrollCrowdsecConsole();
   const enrollmentQ = useCrowdsecConsoleEnrollment();
   const statusQ = useCrowdsecConsoleStatus();
   const toggle = useToggleCrowdsecConsoleOption();
@@ -901,6 +903,15 @@ const ConsoleCard = () => {
       message.success("Enrollment sent — accept this instance at app.crowdsec.net");
     } catch (e: unknown) {
       message.error(e instanceof Error ? e.message : "Enrollment failed");
+    }
+  };
+
+  const onDisenroll = async () => {
+    try {
+      await disenroll.mutateAsync();
+      message.success("Disenrolled — you can enroll with a new key now");
+    } catch (e: unknown) {
+      message.error(e instanceof Error ? e.message : "Disenroll failed");
     }
   };
 
@@ -929,35 +940,44 @@ const ConsoleCard = () => {
     >
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         {isEnrolled ? (
-          <Alert
-            type="success"
-            showIcon
-            message={
-              <>
-                Enrolled as <Typography.Text code>{enrollmentQ.data?.login}</Typography.Text>
-                {enrollmentQ.data?.capi_ok === false && (
-                  <Tag color="orange" style={{ marginLeft: 8 }}>
-                    CAPI auth failing
-                  </Tag>
-                )}
-              </>
-            }
-            description={
-              <>
-                This engine is registered with the CrowdSec Console. CTI community blocklist pulls,
-                hosted dashboards, and remote management are active. Disenroll and share settings
-                are managed in the{" "}
-                <Typography.Link
-                  href="https://app.crowdsec.net/security-engines"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Console web UI
-                </Typography.Link>
-                .
-              </>
-            }
-          />
+          <>
+            <Alert
+              type="success"
+              showIcon
+              message={
+                <>
+                  Enrolled as <Typography.Text code>{enrollmentQ.data?.login}</Typography.Text>
+                  {enrollmentQ.data?.capi_ok === false && (
+                    <Tag color="orange" style={{ marginLeft: 8 }}>
+                      CAPI auth failing
+                    </Tag>
+                  )}
+                </>
+              }
+              description={
+                <>
+                  This engine is registered with the CrowdSec Console. CTI community blocklist
+                  pulls, hosted dashboards, and remote management are active. Use{" "}
+                  <strong>Disenroll</strong> below to drop the registration so you can re-enroll
+                  with a different key.
+                </>
+              }
+            />
+            <Space>
+              <Popconfirm
+                title="Disenroll this instance?"
+                description="Removes /etc/crowdsec/online_api_credentials.yaml and reloads crowdsec. Community blocklist pulls + Console dashboards stop until you enroll again."
+                okText="Disenroll"
+                okButtonProps={{ danger: true }}
+                cancelText="Cancel"
+                onConfirm={onDisenroll}
+              >
+                <Button danger loading={disenroll.isPending}>
+                  Disenroll
+                </Button>
+              </Popconfirm>
+            </Space>
+          </>
         ) : (
           <>
             <Alert

@@ -372,6 +372,22 @@ export type CrowdsecConsoleEnrollment = {
   capi_ok: boolean;
 };
 
+export function useDisenrollCrowdsecConsole() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const { data } = await apiClient.post<{ disenrolled: boolean }>(
+        `${BASE}/console/disenroll`,
+      );
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["security", "crowdsec", "console", "enrollment"] });
+      qc.invalidateQueries({ queryKey: ["security", "crowdsec", "console", "status"] });
+    },
+  });
+}
+
 export function useCrowdsecConsoleEnrollment() {
   return useQuery({
     queryKey: ["security", "crowdsec", "console", "enrollment"],

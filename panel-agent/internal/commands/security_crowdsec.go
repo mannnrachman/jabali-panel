@@ -1345,6 +1345,21 @@ func csConsoleEnrollmentHandler(ctx context.Context, _ json.RawMessage) (any, er
 	return resp, nil
 }
 
+// csConsoleDisenrollHandler wipes /etc/crowdsec/online_api_credentials.yaml
+// and reloads crowdsec so the engine forgets its CAPI registration. cscli
+// has no `console disenroll` verb; the upstream-recommended path is to
+// remove the credentials file and restart. Operator can immediately enroll
+// with a fresh key. Idempotent — missing file is treated as success.
+func csConsoleDisenrollHandler(ctx context.Context, _ json.RawMessage) (any, error) {
+	if err := os.Remove(onlineCredsPath); err != nil && !os.IsNotExist(err) {
+		return nil, csInternal("remove online_api_credentials.yaml", err)
+	}
+	// Reload (not restart) so accepted signals keep flowing. Best-effort
+	// — dev containers without systemd ignore the failure.
+	_ = exec.CommandContext(ctx, "systemctl", "reload", "crowdsec").Run()
+	return map[string]any{"disenrolled": true}, nil
+}
+
 var validConsoleOptions = map[string]bool{
 	"custom": true, "manual": true, "tainted": true, "context": true,
 	"console_management": true, "all": true,
@@ -1406,6 +1421,7 @@ func init() {
 	Default.Register("security.crowdsec.console.enroll", csConsoleEnrollHandler)
 	Default.Register("security.crowdsec.console.status", csConsoleStatusHandler)
 	Default.Register("security.crowdsec.console.enrollment", csConsoleEnrollmentHandler)
+	Default.Register("security.crowdsec.console.disenroll", csConsoleDisenrollHandler)
 	Default.Register("security.crowdsec.console.enable", csConsoleEnableHandler)
 	Default.Register("security.crowdsec.console.disable", csConsoleDisableHandler)
 	Default.Register("security.crowdsec.captcha.apply", csCaptchaApplyHandler)

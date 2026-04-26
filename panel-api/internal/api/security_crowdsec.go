@@ -264,6 +264,7 @@ func RegisterSecurityCrowdSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterfac
 	// Disenroll is managed in app.crowdsec.net (no cscli verb).
 	g.GET("/console/status", agentPassthrough(cli, "security.crowdsec.console.status", nil, csCallTimeout))
 	g.GET("/console/enrollment", agentPassthrough(cli, "security.crowdsec.console.enrollment", nil, csCallTimeout))
+	g.POST("/console/disenroll", agentPassthrough(cli, "security.crowdsec.console.disenroll", nil, csCallTimeout))
 
 	g.POST("/console/options/:option/enable", func(c *gin.Context) {
 		opt := c.Param("option")

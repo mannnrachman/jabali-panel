@@ -258,7 +258,7 @@ export const AdminSecurityCrowdsec = () => {
         dataSource={decisions.data ?? []}
         loading={decisions.isLoading}
         pagination={{ pageSize: 20, showSizeChanger: false }}
-        locale={{ emptyText: <Empty description="No active decisions" /> }}
+        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No active decisions" /> }}
         scroll={{ x: "max-content" }}
       >
         <Table.Column<CrowdsecDecision> dataIndex="ip" title="IP" key="ip" />
@@ -300,7 +300,7 @@ export const AdminSecurityCrowdsec = () => {
         dataSource={bouncers.data ?? []}
         loading={bouncers.isLoading}
         pagination={false}
-        locale={{ emptyText: <Empty description="No bouncers registered" /> }}
+        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No bouncers registered" /> }}
         scroll={{ x: "max-content" }}
       >
         <Table.Column dataIndex="name" title="Name" key="name" />
@@ -645,7 +645,7 @@ const AllowlistsCard = () => {
           dataSource={allowlists.data ?? []}
           loading={allowlists.isLoading}
           pagination={{ pageSize: 10, showSizeChanger: false }}
-          locale={{ emptyText: <Empty description="No allowlist entries" /> }}
+          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No allowlist entries" /> }}
           scroll={{ x: "max-content" }}
         >
           <Table.Column<CrowdsecAllowlistEntry>
@@ -760,7 +760,7 @@ const AlertsCard = () => {
           dataSource={alerts.data ?? []}
           loading={alerts.isLoading}
           pagination={{ pageSize: 20, showSizeChanger: false }}
-          locale={{ emptyText: <Empty description="No alerts in the last 24h" /> }}
+          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No alerts in the last 24h" /> }}
           scroll={{ x: "max-content" }}
           onRow={(row) => ({
             onClick: () => setSelectedId(row.id),
@@ -842,7 +842,7 @@ const AlertsCard = () => {
 
             <Card size="small" title="Decisions issued">
               {(alert.decisions ?? []).length === 0 ? (
-                <Empty description="No decisions issued" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No decisions issued" />
               ) : (
                 <Table
                   rowKey={(_, idx) => `d-${idx}`}
@@ -859,7 +859,7 @@ const AlertsCard = () => {
             </Card>
           </Space>
         ) : (
-          <Empty description="Alert not found" />
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Alert not found" />
         )}
       </Drawer>
     </>
@@ -1042,7 +1042,7 @@ const ConsoleCard = () => {
           loading={statusQ.isLoading}
           pagination={false}
           size="small"
-          locale={{ emptyText: <Empty description="Console options unavailable" /> }}
+          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Console options unavailable" /> }}
           scroll={{ x: "max-content" }}
         >
           <Table.Column<CrowdsecConsoleOption>
@@ -1292,7 +1292,7 @@ const ProfilesCard = () => {
         rowKey="name"
         dataSource={rows}
         pagination={{ pageSize: 20, showSizeChanger: false }}
-        locale={{ emptyText: <Empty description="No scenarios installed" /> }}
+        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No scenarios installed" /> }}
         tableLayout="fixed"
       >
         <Table.Column<ProfileRow>

@@ -222,7 +222,7 @@ export const AdminSecurityUfw = () => {
             loading={status.isLoading}
             pagination={false}
             size="small"
-            locale={{ emptyText: <Empty description="No rules" /> }}
+            locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No rules" /> }}
             scroll={{ x: "max-content" }}
           >
             <Table.Column<UfwRule> dataIndex="num" title="#" key="num" width={60} />

@@ -180,9 +180,12 @@ func (h *adminPanelCertHandler) issue(c *gin.Context) {
 	}
 	dispatchCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
+	// See panel_certificate_reconciler.go for why extra_hostnames is
+	// empty — mail.<panel-hostname> DNS isn't auto-provisioned, so
+	// including it as a SAN unconditionally fails every fresh install.
 	raw, agentErr := h.cfg.Agent.Call(dispatchCtx, "ssl.panel.issue", map[string]any{
 		"hostname":        settings.Hostname,
-		"extra_hostnames": []string{"mail." + settings.Hostname},
+		"extra_hostnames": []string{},
 		"email":           settings.AdminEmail,
 		"staging":         row.Staging,
 	})

@@ -94,9 +94,17 @@ func (r *Reconciler) reconcilePanelCertificate(ctx context.Context) {
 
 	dispatchCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
+	// extra_hostnames left empty: the mail.<panel-hostname> SAN was in
+	// the original M32 plan but every fresh install fails because the
+	// DNS record for mail.<panel-hostname> doesn't exist by default —
+	// the operator's DNS provider hosts the panel hostname zone, not
+	// pdns. Bulwark on the panel hostname is reachable through the
+	// /webmail redirect (ADR-0048) and through per-domain
+	// mail.<user-domain> certs. Re-introduce the SAN as opt-in once
+	// the DNS provisioning side lands.
 	raw, agentErr := r.agent.Call(dispatchCtx, "ssl.panel.issue", map[string]any{
 		"hostname":        settings.Hostname,
-		"extra_hostnames": []string{"mail." + settings.Hostname},
+		"extra_hostnames": []string{},
 		"email":           settings.AdminEmail,
 		"staging":         row.Staging,
 	})

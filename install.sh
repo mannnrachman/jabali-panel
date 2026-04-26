@@ -3394,7 +3394,16 @@ server {
     # leak "this server runs nginx" to random scanners. Domains with
     # their own vhost match BEFORE this default block, so this only
     # fires for hosts nginx has no server{} for.
-    return 444;
+    #
+    # Scoped to location / instead of server-level so the ^~ ACME
+    # location above wins for challenge paths. Server-scoped return
+    # would fire in SERVER_REWRITE phase BEFORE FIND_CONFIG and
+    # short-circuit the location match (incident 2026-04-26: panel
+    # cert HTTP-01 failed on mx.jabali-panel.com because the default
+    # vhost's server-level return 444 won the rewrite race).
+    location / {
+        return 444;
+    }
 }
 
 server {

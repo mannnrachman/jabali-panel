@@ -1749,13 +1749,15 @@ SQL
   # actually change the IP layout. IPv6 addresses get bracketed for
   # pdns's "addr:port" parser.
   local pdns_local_addresses
+  # paste -sd takes one char per separator + cycles when given more,
+  # so use a single comma here and let pdns trim whitespace itself.
   pdns_local_addresses="$({
     ip -4 -o addr show scope global 2>/dev/null \
       | awk '{split($4,a,"/"); print a[1] ":53"}'
     ip -6 -o addr show scope global 2>/dev/null \
       | awk '{split($4,a,"/"); print "[" a[1] "]:53"}'
     printf '127.0.0.1:5300\n[::1]:5300\n'
-  } | sort -u | paste -sd ', ' -)"
+  } | sort -u | paste -sd ',' -)"
   if [[ -z "$pdns_local_addresses" ]]; then
     # Defensive: should never happen because the loopback entries are
     # always emitted, but guard against an unexpected empty value

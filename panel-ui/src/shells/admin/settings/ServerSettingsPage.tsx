@@ -51,6 +51,7 @@ import { BrandingCard } from "./BrandingCard";
 import { DNSResolversCard } from "./DNSResolversCard";
 import { EmailCard } from "./EmailCard";
 import { PageTemplatesCard } from "./PageTemplatesCard";
+import { PanelSSLCard } from "./PanelSSLCard";
 
 type ServerSettings = {
   id: number;
@@ -322,6 +323,8 @@ const GeneralSettingsTab = () => {
           </Col>
         </Row>
       </Card>
+
+      <PanelSSLCard />
 
       <Space>
         <Button

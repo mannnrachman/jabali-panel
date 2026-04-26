@@ -2780,6 +2780,46 @@ EOF
   fi
 }
 
+# ---------- step 6b: panel-hostname Let's Encrypt webroot + deploy-hook ----
+#
+# M32 (ADR-0066). These two functions ensure the LE machinery is in
+# place on every install. They DO NOT trigger an actual issuance —
+# the admin UI's "Use Let's Encrypt" toggle drives that, and the
+# routability gate skips lab/dev hostnames silently. So even on a
+# .local install, the webroot directory and deploy-hook script exist
+# (forward-compat) but stay dormant.
+
+bootstrap_panel_acme_webroot() {
+  local webroot="/var/www/jabali-panel-acme"
+  if [[ -d "$webroot" ]]; then
+    _ok "panel-acme webroot exists: $webroot"
+  else
+    _log "creating panel-acme webroot at $webroot"
+    install -d -m 0750 -o root -g www-data "$webroot"
+    _ok "panel-acme webroot ready: $webroot (root:www-data 0750)"
+  fi
+  # Always enforce ownership/mode in case an older run left it
+  # root:root 0755 — nginx (www-data) needs group read+exec to
+  # serve the challenge file.
+  chown root:www-data "$webroot"
+  chmod 0750 "$webroot"
+}
+
+install_jabali_panel_cert_hook() {
+  local hook_dir="/etc/letsencrypt/renewal-hooks/deploy"
+  local hook_dst="${hook_dir}/jabali-panel-cert.sh"
+  local hook_src="$REPO_DIR/install/letsencrypt/jabali-panel-cert.sh"
+
+  if [[ ! -f "$hook_src" ]]; then
+    _warn "panel-cert deploy-hook source missing at $hook_src — skipping"
+    return 0
+  fi
+
+  install -d -m 0755 -o root -g root "$hook_dir"
+  install -m 0755 -o root -g root "$hook_src" "$hook_dst"
+  _ok "panel-cert deploy-hook installed at $hook_dst"
+}
+
 write_config_file() {
   local dest="$(dirname "$ENV_FILE")/config.toml"
   local src="$REPO_DIR/config.example.toml"
@@ -3212,6 +3252,22 @@ server {
     listen 80 default_server;
     listen [::]:80 default_server;
     server_name _;
+
+    # M32 (ADR-0066): serve LE HTTP-01 challenges for the panel
+    # hostname out of /var/www/jabali-panel-acme. The ^~ modifier
+    # makes this location take precedence over any future regex
+    # locations and over the catch-all return 444 below. Customer
+    # domain vhosts have their own ACME location at user-webroot
+    # paths and match BEFORE this default block, so this only
+    # fires for the panel hostname (and for any stray host that
+    # doesn't have its own :80 server block but happens to be
+    # validating against this VPS).
+    location ^~ /.well-known/acme-challenge/ {
+        default_type "text/plain";
+        root /var/www/jabali-panel-acme;
+        try_files \$uri =404;
+    }
+
     # 444 = close without response. Any HTTP request on a hostname we
     # don't know is silently dropped — no redirect to https because
     # https will just 444 too, and no HTML because we don't want to
@@ -5686,6 +5742,8 @@ main() {
   build_backend
   write_config_file
   provision_tls_cert
+  bootstrap_panel_acme_webroot
+  install_jabali_panel_cert_hook
   seed_admin_env
   install_sso_key
   install_sso_reaper_timer

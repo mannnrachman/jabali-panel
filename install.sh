@@ -710,6 +710,7 @@ POLICYEOF
       bind9-dnsutils \
       ufw yq \
       redis-server redis-tools \
+      bubblewrap debootstrap systemd-container \
       "${php_extensions[@]}"
 
   # Undo the policy-rc.d trap regardless of exit path above (set -e would
@@ -3956,6 +3957,64 @@ install_sftp_group() {
   fi
 }
 
+install_ssh_sandbox() {
+  _log "installing SSH shell sandbox (M13)"
+
+  # Group whose members are allowed to sudo-exec jabali-nspawn-enter.
+  # Reconciler manages membership in lockstep with package.ssh_enabled.
+  if ! getent group jabali-ssh-sandbox >/dev/null; then
+    groupadd --system jabali-ssh-sandbox 2>/dev/null || true
+    _ok "jabali-ssh-sandbox system group created"
+  fi
+
+  # Directories required by the wrapper / agent + reconciler.
+  install -d -m 0755 -o root -g root /etc/jabali
+  install -d -m 0755 -o root -g root /etc/jabali/users
+  install -d -m 0755 -o root -g root /var/lib/jabali-nspawn
+  install -d -m 0755 -o root -g root /var/lib/jabali-nspawn/images
+
+  # Wrapper script — every hosting user's login shell.
+  install -m 0755 -o root -g root \
+    "$REPO_DIR/install/ssh/jabali-ssh-shell" \
+    /usr/local/bin/jabali-ssh-shell
+
+  # Sudo-bridged nspawn entry helper. Runs as root after sudoers gate.
+  install -m 0755 -o root -g root \
+    "$REPO_DIR/install/ssh/jabali-nspawn-enter" \
+    /usr/local/bin/jabali-nspawn-enter
+
+  # Sudoers entry (NOPASSWD locked to absolute path). visudo -cf checks
+  # parse — abort install if the file is malformed before placement.
+  if ! visudo -cf "$REPO_DIR/install/ssh/jabali-nspawn-sudoers" >/dev/null; then
+    _die "jabali-nspawn-sudoers failed visudo -cf"
+  fi
+  install -m 0440 -o root -g root \
+    "$REPO_DIR/install/ssh/jabali-nspawn-sudoers" \
+    /etc/sudoers.d/jabali-nspawn
+
+  # Default mode = bubblewrap (ADR-0067 §0.2). Don't clobber on rerun.
+  if [ ! -f /etc/jabali/ssh-sandbox-mode ]; then
+    echo "bubblewrap" > /etc/jabali/ssh-sandbox-mode
+    chmod 0644 /etc/jabali/ssh-sandbox-mode
+  fi
+
+  # Default nspawn image pin. Image itself is built post-install via
+  # `jabali nspawn-build` — install.sh stays fast and offline-tolerant.
+  if [ ! -f /etc/jabali/default-nspawn-image ]; then
+    echo "debian-12-v1" > /etc/jabali/default-nspawn-image
+    chmod 0644 /etc/jabali/default-nspawn-image
+  fi
+
+  # Verify bwrap is setuid root (Debian/Ubuntu default). Without it the
+  # bubblewrap branch falls through to nologin — fail loudly at install
+  # time instead.
+  if [ ! -u /usr/bin/bwrap ]; then
+    _warn "/usr/bin/bwrap is not setuid root — bubblewrap mode will deny shell access until fixed"
+  fi
+
+  _ok "SSH shell sandbox installed (mode=bubblewrap; run 'jabali nspawn-build' to enable nspawn mode)"
+}
+
 install_sftp_sshd_config() {
   _log "installing SFTP sshd drop-in configuration"
 
@@ -5945,6 +6004,7 @@ main() {
   install_wp_cli
   install_sftp_group
   install_sftp_sshd_config
+  install_ssh_sandbox
   install_nginx_default_vhost
   # M25 Step 4: install the nginx vhost on :8443 that terminates TLS and
   # proxies to the panel-api Unix socket. Runs AFTER install_nginx_default_vhost
@@ -6111,6 +6171,9 @@ EOF
   rm -rf /etc/jabali
   rm -f  /etc/nginx/conf.d/jabali-pma-logformat.conf
   rm -f  /etc/ssh/sshd_config.d/jabali-sftp.conf
+  rm -f  /etc/sudoers.d/jabali-nspawn
+  rm -f  /usr/local/bin/jabali-ssh-shell /usr/local/bin/jabali-nspawn-enter
+  rm -rf /var/lib/jabali-nspawn
   # Validate sshd now that our drop-in is gone — best-effort.
   sshd -t 2>/dev/null && systemctl reload ssh 2>/dev/null || true
 
@@ -6194,7 +6257,7 @@ SQL
   # Groups (may remain if --user-group flag wasn't used, or if the user was
   # removed but the group lingered).
   local g
-  for g in jabali-sftp jabali-webmail jabali-mail jabali; do
+  for g in jabali-ssh-sandbox jabali-sftp jabali-webmail jabali-mail jabali; do
     getent group "$g" >/dev/null 2>&1 && { groupdel "$g" 2>/dev/null && _log "removed group $g" || true; }
   done
 

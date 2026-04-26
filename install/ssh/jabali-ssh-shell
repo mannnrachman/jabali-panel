@@ -1,0 +1,116 @@
+#!/bin/bash
+# Jabali Panel — SSH shell wrapper.
+#
+# Set as login shell for every hosting user via chsh:
+#   chsh -s /usr/local/bin/jabali-ssh-shell <user>
+#
+# Reads /etc/jabali/ssh-sandbox-mode on each connect and exec's the
+# matching backend. Failure mode is /usr/sbin/nologin — never exec's an
+# unsandboxed bash. SFTP-only users hit ForceCommand internal-sftp from
+# the Match block before this wrapper runs; the wrapper is a defense-
+# in-depth net for them.
+
+set -u
+
+readonly MODE_FILE=/etc/jabali/ssh-sandbox-mode
+readonly DEFAULT_IMAGE_FILE=/etc/jabali/default-nspawn-image
+readonly USER_PIN_DIR=/etc/jabali/users
+readonly IMAGES_DIR=/var/lib/jabali-nspawn/images
+readonly NSPAWN_ENTER=/usr/local/bin/jabali-nspawn-enter
+readonly BWRAP=/usr/bin/bwrap
+readonly NOLOGIN=/usr/sbin/nologin
+
+# Resolve the connecting user. SSH sets USER + LOGNAME; trust /etc/passwd
+# via id -un as the source of truth.
+USERNAME=$(id -un 2>/dev/null || true)
+if [ -z "${USERNAME}" ]; then
+  exec "${NOLOGIN}"
+fi
+
+# Read the sandbox mode. Anything outside the allowlist → nologin.
+MODE=""
+if [ -r "${MODE_FILE}" ]; then
+  MODE=$(tr -d '[:space:]' < "${MODE_FILE}")
+fi
+
+case "${MODE}" in
+  bubblewrap)
+    if [ ! -u "${BWRAP}" ]; then
+      # bwrap missing or not setuid — refuse to fall through to bash.
+      exec "${NOLOGIN}"
+    fi
+    HOME_DIR=$(getent passwd "${USERNAME}" | cut -d: -f6)
+    if [ -z "${HOME_DIR}" ] || [ ! -d "${HOME_DIR}" ]; then
+      exec "${NOLOGIN}"
+    fi
+    # Bubblewrap profile (ADR-0067, plan §3):
+    #   Read-only host /usr, /lib, /lib64, /bin, /sbin
+    #   Read-only filtered /etc (resolv.conf, ssl, hostname, nsswitch)
+    #   Bind /home/<user> rw, hide all other tenant homes
+    #   Fresh tmpfs /tmp, /run, /var
+    #   Filtered /etc/passwd + /etc/group (own row + system users only)
+    #   No /var/lib/jabali-*, /etc/jabali, /run/php, /run/mysqld
+    exec "${BWRAP}" \
+      --die-with-parent \
+      --unshare-pid \
+      --unshare-ipc \
+      --unshare-uts \
+      --unshare-cgroup-try \
+      --hostname "jabali-shell" \
+      --proc /proc \
+      --dev /dev \
+      --tmpfs /tmp \
+      --tmpfs /run \
+      --tmpfs /var \
+      --ro-bind /usr /usr \
+      --ro-bind-try /lib /lib \
+      --ro-bind-try /lib64 /lib64 \
+      --ro-bind-try /bin /bin \
+      --ro-bind-try /sbin /sbin \
+      --ro-bind /etc/resolv.conf /etc/resolv.conf \
+      --ro-bind-try /etc/hostname /etc/hostname \
+      --ro-bind-try /etc/nsswitch.conf /etc/nsswitch.conf \
+      --ro-bind-try /etc/ssl /etc/ssl \
+      --ro-bind-try /etc/ca-certificates /etc/ca-certificates \
+      --ro-bind /etc/passwd /etc/passwd \
+      --ro-bind /etc/group /etc/group \
+      --bind "${HOME_DIR}" "${HOME_DIR}" \
+      --chdir "${HOME_DIR}" \
+      --setenv HOME "${HOME_DIR}" \
+      --setenv USER "${USERNAME}" \
+      --setenv LOGNAME "${USERNAME}" \
+      --setenv PATH "/usr/local/bin:/usr/bin:/bin" \
+      --setenv SHELL "/bin/bash" \
+      /bin/bash --login
+    # exec returned (bwrap failed to start) — refuse fallback.
+    exec "${NOLOGIN}"
+    ;;
+  nspawn)
+    if [ ! -x "${NSPAWN_ENTER}" ]; then
+      exec "${NOLOGIN}"
+    fi
+    # Resolve pinned image: per-user pin first, then default.
+    IMAGE=""
+    if [ -r "${USER_PIN_DIR}/${USERNAME}/nspawn-image" ]; then
+      IMAGE=$(tr -d '[:space:]' < "${USER_PIN_DIR}/${USERNAME}/nspawn-image")
+    fi
+    if [ -z "${IMAGE}" ] && [ -r "${DEFAULT_IMAGE_FILE}" ]; then
+      IMAGE=$(tr -d '[:space:]' < "${DEFAULT_IMAGE_FILE}")
+    fi
+    # Whitelist the image name pattern. nspawn-enter re-validates.
+    case "${IMAGE}" in
+      ''|*[!a-z0-9-]*)
+        exec "${NOLOGIN}"
+        ;;
+    esac
+    if [ ! -d "${IMAGES_DIR}/${IMAGE}" ]; then
+      exec "${NOLOGIN}"
+    fi
+    exec sudo --non-interactive "${NSPAWN_ENTER}" "${IMAGE}"
+    exec "${NOLOGIN}"
+    ;;
+  *)
+    # Unknown / missing mode → deny shell.
+    exec "${NOLOGIN}"
+    ;;
+esac

@@ -28,11 +28,27 @@ func (r *Reconciler) ReconcileSSHKeysForUser(ctx context.Context, userID string)
 		return nil
 	}
 
-	// Ensure user is in jabali-sftp group
-	if _, err := r.agent.Call(ctx, "ssh.user.join_sftp_group", map[string]interface{}{
+	// Group membership gates SSH access mode:
+	//   ssh_enabled=true  → leave jabali-sftp group → real shell login
+	//   ssh_enabled=false → join jabali-sftp group  → SFTP-only (Match block)
+	// SSHEnabled lives on the hosting package, not the per-user overrides
+	// table. Missing package (no package_id, or package fetch fails)
+	// keeps the safe default (SFTP-only).
+	sshEnabled := false
+	if r.packages != nil && user.PackageID != nil && *user.PackageID != "" {
+		pkg, pkgErr := r.packages.FindByID(ctx, *user.PackageID)
+		if pkgErr == nil && pkg != nil {
+			sshEnabled = pkg.SSHEnabled
+		}
+	}
+	groupMethod := "ssh.user.join_sftp_group"
+	if sshEnabled {
+		groupMethod = "ssh.user.leave_sftp_group"
+	}
+	if _, err := r.agent.Call(ctx, groupMethod, map[string]interface{}{
 		"username": *user.Username,
 	}); err != nil {
-		return fmt.Errorf("add to sftp group: %w", err)
+		return fmt.Errorf("%s: %w", groupMethod, err)
 	}
 
 	// Fetch user's SSH keys

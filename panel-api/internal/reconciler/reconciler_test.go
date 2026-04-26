@@ -1910,8 +1910,10 @@ func TestReconcileMysqlAdminShadow_BatchLimitOf50(t *testing.T) {
 
 
 // TestSANHostnamesForDomain covers the M6.1 helper: email-enabled
-// domains advertise mail.<d> + autoconfig.<d> as extra SANs; others
-// return nil (base [domain, www.domain] set handled by the cert gen).
+// domains advertise mail.<d> as an extra SAN; others return nil (base
+// [domain, www.domain] set handled by the cert gen). autoconfig.<d>
+// was dropped 2026-04-26 — pdns doesn't auto-add the A record so
+// every fresh-install cert failed with NXDOMAIN.
 func TestSANHostnamesForDomain(t *testing.T) {
 	t.Run("nil domain", func(t *testing.T) {
 		if got := sanHostnamesForDomain(nil); got != nil {
@@ -1927,7 +1929,7 @@ func TestSANHostnamesForDomain(t *testing.T) {
 	t.Run("email enabled", func(t *testing.T) {
 		d := &models.Domain{Name: "example.com", EmailEnabled: true}
 		got := sanHostnamesForDomain(d)
-		want := []string{"mail.example.com", "autoconfig.example.com"}
+		want := []string{"mail.example.com"}
 		if len(got) != len(want) {
 			t.Fatalf("got %v, want %v", got, want)
 		}

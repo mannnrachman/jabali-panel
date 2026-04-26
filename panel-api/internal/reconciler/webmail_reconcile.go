@@ -81,6 +81,10 @@ func (r *Reconciler) applyWebmailVhost(ctx context.Context, d *models.Domain) {
 		"domain_name":   d.Name,
 		"ssl_cert_path": certPath,
 		"ssl_key_path":  keyPath,
+		// doc_root is the ACME HTTP-01 webroot for renewals targeting
+		// mail.<domain>. Same path ssl.issue uses (-w domain.DocRoot)
+		// so renewal challenge files land where nginx will serve them.
+		"doc_root": d.DocRoot,
 	}); err != nil {
 		r.log.Error("webmail reconcile: vhost_apply failed",
 			"domain_id", d.ID, "domain", d.Name, "err", err)

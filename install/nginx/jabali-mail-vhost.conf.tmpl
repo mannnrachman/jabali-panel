@@ -94,9 +94,27 @@ server {
   location = /Autodiscover/Autodiscover.xml { return 404; }
 }
 
-# HTTP → HTTPS redirect for mail.<domain>.
+# HTTP → HTTPS redirect for mail.<domain>. The ACME location must
+# be a location block, not server-level `return 301`, because nginx
+# evaluates server-scoped redirects in SERVER_REWRITE phase BEFORE
+# FIND_CONFIG locates the location — so a server-level redirect
+# bypasses the ^~ ACME match entirely. Webroot is the apex domain's
+# DocRoot to match what panel-api/internal/reconciler.IssueDomainCert
+# passes as -w, so cert renewal for the SAN set [<domain>,
+# www.<domain>, mail.<domain>, autoconfig.<domain>] all hits the
+# same writable directory. Incident 2026-04-26: jabali.site cert
+# stuck because mail.jabali.site:80 redirected to https → 404.
 server {
   listen 80;
   server_name mail.${DOMAIN};
-  return 301 https://$host$request_uri;
+
+  location ^~ /.well-known/acme-challenge/ {
+    default_type "text/plain";
+    root ${ACME_WEBROOT};
+    try_files $uri =404;
+  }
+
+  location / {
+    return 301 https://$host$request_uri;
+  }
 }

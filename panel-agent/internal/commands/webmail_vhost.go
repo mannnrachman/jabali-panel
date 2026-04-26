@@ -97,7 +97,23 @@ server {
 server {
   listen 80;
   server_name mail.{{.DomainName}};
-  return 301 https://$host$request_uri;
+
+  # ACME HTTP-01 webroot. Must be a location block — a server-level
+  # redirect fires in nginx SERVER_REWRITE phase BEFORE FIND_CONFIG,
+  # so a server-scoped redirect bypasses ^~ matching for ACME paths.
+  # Webroot mirrors what panel-api/internal/reconciler.IssueDomainCert
+  # passes as -w (the apex domain DocRoot). Incident 2026-04-26:
+  # jabali.site cert failed because mail.<domain>:80 redirected to
+  # https where the mail vhost served 404 for /.well-known/acme.
+  location ^~ /.well-known/acme-challenge/ {
+    default_type "text/plain";
+    root {{.DocRoot}};
+    try_files $uri =404;
+  }
+
+  location / {
+    return 301 https://$host$request_uri;
+  }
 }
 `
 
@@ -113,6 +129,11 @@ type webmailVhostApplyParams struct {
 	DomainName  string `json:"domain_name"`
 	SSLCertPath string `json:"ssl_cert_path"`
 	SSLKeyPath  string `json:"ssl_key_path"`
+	// DocRoot is the apex domain document root, used as the ACME
+	// HTTP-01 webroot in the :80 server block. Mirrors what panel-api
+	// passes to ssl.issue (-w) so the renewal challenge file lands at
+	// the path nginx will actually serve.
+	DocRoot string `json:"doc_root"`
 }
 
 type webmailVhostResponse struct {

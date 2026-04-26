@@ -89,16 +89,19 @@ const vhostTemplate = `server {
 {{ else }}    listen [::]:80;
 {{ end }}    server_name {{.Domain}} www.{{.Domain}};
 {{ if .IsEnabled }}
-    # M32-style ACME HTTP-01 webroot. ^~ outranks the regex catch-all
-    # below and the return 301 redirect, so cert issuance + renewal
-    # works even when SSLCertPath is set (initial issuance bootstraps
-    # off the self-signed cert that domain_create generates first).
-    # Webroot mirrors panel-api reconciler.IssueDomainCert which passes
-    # domain.DocRoot as -w. Without this, the redirect short-circuits
-    # LE challenge fetch and ACME never completes (incident 2026-04-26:
-    # jabali.site stuck in pending_acme_retry on first VPS install).
-    # Scoped to IsEnabled so disabled vhosts don't leak DocRoot or
-    # accept ACME requests for a domain we're not actively serving.
+    # ACME HTTP-01 webroot. Must be a location block — a server-level
+    # redirect fires in nginx SERVER_REWRITE phase BEFORE FIND_CONFIG,
+    # so a server-scoped redirect short-circuits every request
+    # including /.well-known/acme-challenge/, and Let's Encrypt's
+    # challenge fetch bounces to https where LE refuses to follow.
+    # Scoping the redirect to a location block instead pushes it into
+    # the per-location REWRITE phase, after FIND_CONFIG has had a
+    # chance to pick the ^~ ACME match. Webroot mirrors
+    # panel-api/internal/reconciler.IssueDomainCert (-w domain.DocRoot).
+    # Incident 2026-04-26: jabali.site stuck in pending_acme_retry on
+    # first VPS install — first under the no-ACME-location vhost, then
+    # again after we added the location but kept the server-scoped
+    # redirect that won the rewrite race.
     location ^~ /.well-known/acme-challenge/ {
         default_type "text/plain";
         root {{.DocRoot}};
@@ -106,8 +109,12 @@ const vhostTemplate = `server {
     }
 {{ end }}
 {{ if .SSLCertPath }}
-    # Redirect HTTP to HTTPS when SSL is configured
-    return 301 https://$host$request_uri;
+    # Redirect HTTP to HTTPS when SSL is configured. Scoped to the
+    # default location so the ^~ ACME location above wins for
+    # challenge paths — see the rationale comment there.
+    location / {
+        return 301 https://$host$request_uri;
+    }
 }
 
 server {

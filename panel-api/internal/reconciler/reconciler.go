@@ -1216,15 +1216,25 @@ type sslSelfSignResult struct {
 }
 
 // sanHostnamesForDomain returns the extra SANs the cert for this
-// domain should cover beyond [domain, www.domain]. M6.1 adds
-// `mail.<domain>` + `autoconfig.<domain>` once email is enabled so
-// Bulwark's server-side JMAP verify fetch and email-client autoconfig
-// probes hit a trusted cert. Empty slice for domains without email.
+// domain should cover beyond [domain, www.domain]. mail.<domain> ships
+// once email is enabled so Bulwark's server-side JMAP verify fetch
+// hits a trusted cert. Empty slice for domains without email.
+//
+// autoconfig.<domain> is intentionally OFF the default list. It is
+// ONLY used by Outlook + Thunderbird auto-configuration probes — the
+// webmail UI and JMAP API don't need it — and pdns doesn't auto-add an
+// A record for it when email is enabled. Including it in the SAN
+// list unconditionally caused every fresh-install cert to fail with
+// 'NXDOMAIN looking up A for autoconfig.<domain>' (incident
+// 2026-04-26: jabali.site stuck pending_acme_retry on first VPS).
+// Re-introduce it only after pdns auto-creates the corresponding A
+// record OR with an opt-in toggle so admins who set the DNS by hand
+// can request the SAN.
 func sanHostnamesForDomain(d *models.Domain) []string {
 	if d == nil || !d.EmailEnabled {
 		return nil
 	}
-	return []string{"mail." + d.Name, "autoconfig." + d.Name}
+	return []string{"mail." + d.Name}
 }
 
 // acmeRetryInterval is how long to wait between ACME (Let's Encrypt) attempts

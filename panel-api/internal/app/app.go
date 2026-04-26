@@ -267,7 +267,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			})
 		}
 		if deps.Packages != nil {
-			api.RegisterPackageRoutes(v1, api.PackageHandlerConfig{Repo: deps.Packages})
+			api.RegisterPackageRoutes(v1, api.PackageHandlerConfig{
+				Repo:       deps.Packages,
+				Users:      deps.Users,
+				Reconciler: deps.Reconciler,
+				Log:        deps.Log,
+			})
 		}
 		// M18 user-limits endpoints. Mount only when all deps are
 		// present — a pre-M18 deployment with no LimitOverrides repo

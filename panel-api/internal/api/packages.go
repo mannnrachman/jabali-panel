@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -14,9 +16,28 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
+// PackageReconciler is the narrow surface the update handler needs from
+// the reconciler — just the per-user SSH-keys re-run that translates
+// the package's ssh_enabled flag into jabali-sftp group membership.
+// Defined here so tests can supply a fake without pulling in the full
+// reconciler.
+type PackageReconciler interface {
+	ReconcileSSHKeysForUser(ctx context.Context, userID string) error
+}
+
 // PackageHandlerConfig plugs the hosting-package CRUD handlers into the router.
 type PackageHandlerConfig struct {
 	Repo repository.PackageRepository
+	// Users + Reconciler enable the post-update fan-out: when an admin
+	// flips a package field that affects per-user state (today only
+	// ssh_enabled, but the same hook covers future per-user-effective
+	// fields), the handler enumerates users on this package and triggers
+	// their reconciler so changes apply without waiting up to a minute
+	// for the periodic sweep — and without forcing the operator to
+	// re-save every user. Both nil-safe.
+	Users      repository.UserRepository
+	Reconciler PackageReconciler
+	Log        *slog.Logger
 }
 
 const (
@@ -183,6 +204,11 @@ func (h *packageHandler) update(c *gin.Context) {
 		return
 	}
 
+	// Snapshot the fields whose change requires a per-user reconcile
+	// fan-out, so we can compare to the new values once Update returns
+	// successfully. Read BEFORE the field copies overwrite pkg.
+	prevSSHEnabled := pkg.SSHEnabled
+
 	if req.Name != nil {
 		pkg.Name = *req.Name
 	}
@@ -240,7 +266,61 @@ func (h *packageHandler) update(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+
+	// Fan out to every user on this package whenever ssh_enabled flipped.
+	// Done in a detached goroutine + fresh background context so the
+	// admin response isn't blocked by per-user agent calls (each user
+	// triggers an ssh.user.{join,leave}_sftp_group + authorized_keys
+	// rewrite). The 60s reconciler sweep is the safety net; this just
+	// makes the change feel immediate.
+	if req.SSHEnabled != nil && *req.SSHEnabled != prevSSHEnabled {
+		h.fanOutSSHReconcile(pkg.ID)
+	}
+
 	c.JSON(http.StatusOK, pkg)
+}
+
+// fanOutSSHReconcile reconciles every user on the given package in a
+// detached goroutine. Bounded list size (10k) matches the periodic
+// sweep — anyone with > 10k users on a single package has bigger
+// problems than this fan-out missing a tail.
+//
+// Errors are logged, never returned: the admin already got their 200,
+// and the periodic sweep will catch any user we couldn't reach.
+func (h *packageHandler) fanOutSSHReconcile(packageID string) {
+	if h.cfg.Users == nil || h.cfg.Reconciler == nil {
+		return
+	}
+	users := h.cfg.Users
+	rec := h.cfg.Reconciler
+	log := h.cfg.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		all, _, err := users.List(ctx, repository.ListOptions{Limit: 10000})
+		if err != nil {
+			log.Warn("package update: list users for ssh reconcile", "package_id", packageID, "err", err)
+			return
+		}
+		count := 0
+		for i := range all {
+			u := &all[i]
+			if u.PackageID == nil || *u.PackageID != packageID {
+				continue
+			}
+			perCtx, perCancel := context.WithTimeout(ctx, 30*time.Second)
+			if err := rec.ReconcileSSHKeysForUser(perCtx, u.ID); err != nil {
+				log.Warn("package update: ssh reconcile user", "package_id", packageID, "user_id", u.ID, "err", err)
+			} else {
+				count++
+			}
+			perCancel()
+		}
+		log.Info("package update: ssh reconcile fan-out complete", "package_id", packageID, "users", count)
+	}()
 }
 
 func (h *packageHandler) delete(c *gin.Context) {

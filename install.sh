@@ -1847,11 +1847,17 @@ SQL
   local pdns_local_addresses
   # paste -sd takes one char per separator + cycles when given more,
   # so use a single comma here and let pdns trim whitespace itself.
+  # Skip virtual-bridge interfaces — LXC's lxcbr0 (10.0.3.1/24) ships
+  # with its own dnsmasq on :53, libvirt's virbr0 same idea, Docker's
+  # docker0 / br-* same. Binding pdns there collides with the
+  # bridge's resolver and crashes pdns at boot. Public + loopback
+  # addresses only.
+  local skip_iface_re='^(lxcbr[0-9]+|virbr[0-9]+|docker[0-9]+|br-[0-9a-f]+|cni[0-9]+|veth.*|tailscale.*|wg[0-9]+)$'
   pdns_local_addresses="$({
     ip -4 -o addr show scope global 2>/dev/null \
-      | awk '{split($4,a,"/"); print a[1] ":53"}'
+      | awk -v re="$skip_iface_re" '$2 !~ re { split($4,a,"/"); print a[1] ":53" }'
     ip -6 -o addr show scope global 2>/dev/null \
-      | awk '{split($4,a,"/"); print "[" a[1] "]:53"}'
+      | awk -v re="$skip_iface_re" '$2 !~ re { split($4,a,"/"); print "[" a[1] "]:53" }'
     printf '127.0.0.1:5300\n[::1]:5300\n'
   } | sort -u | paste -sd ',' -)"
   if [[ -z "$pdns_local_addresses" ]]; then

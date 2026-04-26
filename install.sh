@@ -1157,6 +1157,12 @@ _install_sury_source() {
   # Sury GPG fingerprint validation. Source: https://packages.sury.org/php/README.txt
   # Last verified: 2026-04-17 (DPA CA Certificate, Ondřej Surý)
   local SURY_GPG_FINGERPRINT="15058500A0235D97F5D10063B188E2B695BD4743"
+  # The launchpad PPA hosts the SAME upstream packages (Ondřej Surý
+  # maintains both) signed by the same key, but is served from
+  # launchpad.net rather than Fastly — bypassing the datacenter-IP
+  # 418 false-positives. We prefer it on Ubuntu and fall back to
+  # packages.sury.org for Debian (no PPA there).
+  local LP_GPG_FINGERPRINT="14AA40EC0831756756D7F66C4F4EA0AAE5267A6C"
 
   # Always write the Fastly 418 UA workaround, even when the .list
   # below short-circuits — earlier installs from before this fix
@@ -1167,11 +1173,13 @@ _install_sury_source() {
 
   [[ -f /etc/apt/sources.list.d/sury-php.list ]] && { _ok "Sury PHP source already configured"; return; }
 
-  # Derive the distro codename without depending on lsb_release (not
-  # installed on minimal Debian 13). /etc/os-release is a systemd-era
-  # standard and is always present.
-  local codename
+  # Derive the distro id + codename without depending on lsb_release
+  # (not installed on minimal Debian 13). /etc/os-release is a
+  # systemd-era standard and is always present.
+  local distro_id codename
   if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    distro_id=$(. /etc/os-release && echo "${ID:-}")
     # shellcheck disable=SC1091
     codename=$(. /etc/os-release && echo "${VERSION_CODENAME:-}")
   fi
@@ -1180,6 +1188,40 @@ _install_sury_source() {
   # Ensure target dir exists on minimal Debian images.
   install -d -m 0755 /usr/share/keyrings
 
+  if [[ "$distro_id" == "ubuntu" ]]; then
+    # ppa:ondrej/php — same packages as packages.sury.org, served by
+    # launchpad. No Fastly in front, no 418 risk. The launchpad
+    # signing key has its own fingerprint distinct from Sury's.
+    _log "fetching Ubuntu PPA signing key for ondrej/php"
+    curl -fsSL --connect-timeout 15 --max-time 60 \
+      "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${LP_GPG_FINGERPRINT}" \
+      | gpg --no-default-keyring --no-tty --batch --dearmor --yes \
+        -o /usr/share/keyrings/sury-php.gpg \
+      || _die "failed to fetch ondrej/php signing key from keyserver.ubuntu.com"
+
+    local lp_gpg_out
+    if ! lp_gpg_out="$(GNUPGHOME="$(mktemp -d)" gpg --no-default-keyring --no-tty --batch --show-keys /usr/share/keyrings/sury-php.gpg 2>&1)"; then
+      _err "gpg --show-keys failed; output was:"
+      printf '%s\n' "$lp_gpg_out" >&2
+      _die "cannot parse PPA key at /usr/share/keyrings/sury-php.gpg"
+    fi
+    if ! grep -q "$LP_GPG_FINGERPRINT" <<< "$lp_gpg_out"; then
+      _err "gpg parsed the key but the fingerprint doesn't match. gpg output:"
+      printf '%s\n' "$lp_gpg_out" >&2
+      _die "ondrej/php PPA key fingerprint mismatch. Expected: $LP_GPG_FINGERPRINT"
+    fi
+    _ok "ondrej/php PPA signing key validated"
+
+    cat > /etc/apt/sources.list.d/sury-php.list <<EOF
+deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://ppa.launchpadcontent.net/ondrej/php/ubuntu ${codename} main
+EOF
+    _ok "added ondrej/php PPA for ${codename} (launchpad mirror — bypasses Fastly)"
+    return
+  fi
+
+  # Debian: packages.sury.org is the only option. The Fastly 418
+  # affects fewer Debian-on-VPS installs in practice; if it bites,
+  # the operator is currently the one to debug.
   _log "downloading Sury GPG key (curl: connect 15s, total 60s)"
   curl -fsSL --connect-timeout 15 --max-time 60 \
     https://packages.sury.org/php/apt.gpg -o /usr/share/keyrings/sury-php.gpg \

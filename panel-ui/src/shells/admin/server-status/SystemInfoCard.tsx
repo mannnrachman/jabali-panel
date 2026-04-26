@@ -4,9 +4,9 @@
 //
 // Categories: Server (host identity), Hardware (CPU/RAM), Network
 // (interfaces). Source data lives in envelope.host + envelope.network.
-import { Button, Card, Space, Table, Tag, Typography } from "antd";
+import { Card, Table, Tag, Typography } from "antd";
 
-import { CheckCircleOutlined, ExclamationCircleOutlined, ReloadOutlined } from "@icons";
+import { CheckCircleOutlined, ExclamationCircleOutlined } from "@icons";
 
 import type { HostSlice, NetworkSlice } from "../../../hooks/useServerStatus";
 
@@ -24,11 +24,9 @@ interface Props {
   host: HostSlice | null;
   network: NetworkSlice | null;
   asOf: string;
-  onRefresh: () => void;
-  isFetching: boolean;
 }
 
-export function SystemInfoCard({ host, network, asOf, onRefresh, isFetching }: Props) {
+export function SystemInfoCard({ host, network, asOf }: Props) {
   const rows: Row[] = [];
 
   rows.push({
@@ -110,14 +108,9 @@ export function SystemInfoCard({ host, network, asOf, onRefresh, isFetching }: P
       title="System Information"
       size="small"
       extra={
-        <Space size={8}>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            Updated {humanizeAgo(asOf)}
-          </Typography.Text>
-          <Button size="small" icon={<ReloadOutlined />} onClick={onRefresh} loading={isFetching}>
-            Refresh
-          </Button>
-        </Space>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          Updated {humanizeAgo(asOf)}
+        </Typography.Text>
       }
     >
       <Table<Row>

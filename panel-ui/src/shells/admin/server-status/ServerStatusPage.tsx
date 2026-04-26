@@ -47,8 +47,6 @@ export const ServerStatusPage = () => {
           host={env?.host ?? null}
           network={env?.network ?? null}
           asOf={env?.as_of ?? ""}
-          onRefresh={() => q.refetch()}
-          isFetching={q.isFetching}
         />
       ),
     },

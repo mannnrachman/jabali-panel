@@ -3942,9 +3942,20 @@ install_sftp_sshd_config() {
   fi
   _ok "sshd configuration is valid"
 
-  # Reload sshd to apply the new configuration.
+  # Reload sshd to apply the new configuration. Debian and Ubuntu
+  # ship the unit under different names: Debian and pre-24.04 Ubuntu
+  # use `ssh.service`, while older docs and some derivatives still
+  # alias `sshd.service`. Ubuntu 24.04 dropped the `sshd` alias in
+  # favour of socket-activated `ssh.service` only. Try the canonical
+  # `ssh` first and fall through to `sshd` so both worlds work.
   _log "reloading sshd"
-  systemctl reload sshd
+  if systemctl list-unit-files ssh.service >/dev/null 2>&1; then
+    systemctl reload ssh
+  elif systemctl list-unit-files sshd.service >/dev/null 2>&1; then
+    systemctl reload sshd
+  else
+    _die "neither ssh.service nor sshd.service is present — install openssh-server"
+  fi
   _ok "sshd reloaded"
 }
 

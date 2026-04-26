@@ -28,6 +28,21 @@ func (r *Reconciler) ReconcileSSHKeysForUser(ctx context.Context, userID string)
 		return nil
 	}
 
+	// M13: ensure the wrapper is the user's login shell. Defense-in-depth
+	// for SFTP users (ForceCommand internal-sftp wins) and the actual
+	// sandbox entry point for SSH-shell users. Idempotent — agent skips
+	// chsh when current shell matches.
+	if _, err := r.agent.Call(ctx, "ssh.user.set_shell", map[string]interface{}{
+		"username": *user.Username,
+		"shell":    "/usr/local/bin/jabali-ssh-shell",
+	}); err != nil {
+		// Don't fail the whole reconcile on shell-set failure — older
+		// hosts may not have the wrapper installed yet (jabali update
+		// pending). Log and continue so SFTP/auth keys still flow.
+		r.log.WarnContext(ctx, "reconcile ssh keys: set_shell failed",
+			"user_id", userID, "username", *user.Username, "error", err)
+	}
+
 	// Group membership gates SSH access mode:
 	//   ssh_enabled=true  → leave jabali-sftp group → real shell login
 	//   ssh_enabled=false → join jabali-sftp group  → SFTP-only (Match block)

@@ -291,7 +291,7 @@ func (h *userHandler) create(c *gin.Context) {
 		_, err := h.cfg.Agent.Call(ctx, "user.create", map[string]any{
 			"username": *effectiveUsername,
 			"home_dir": "/home/" + *effectiveUsername,
-			"shell":    "/bin/bash",
+			"shell":    "/usr/local/bin/jabali-ssh-shell",
 			"password": req.Password,
 		})
 		if err != nil {
@@ -571,7 +571,7 @@ func (h *userHandler) reprovision(c *gin.Context) {
 	_, agentErr := h.cfg.Agent.Call(agentCtx, "user.create", map[string]any{
 		"username": username,
 		"home_dir": "/home/" + username,
-		"shell":    "/bin/bash",
+		"shell":    "/usr/local/bin/jabali-ssh-shell",
 		"password": req.Password,
 	})
 	if agentErr != nil {

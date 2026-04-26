@@ -306,7 +306,16 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 					// the reconciler's per-user FPM socket stat-check.
 					// usermod is idempotent; 'groups | grep -w' avoids an
 					// unnecessary write when already a member.
-					"groups "+serviceUser+" | grep -qw www-data || usermod -aG www-data "+serviceUser)
+					"groups "+serviceUser+" | grep -qw www-data || usermod -aG www-data "+serviceUser+"; "+
+					// M13 SSH sandbox: refresh wrapper + nspawn-enter +
+					// sudoers + mode files on every update. Idempotent.
+					"getent group jabali-ssh-sandbox >/dev/null || groupadd --system jabali-ssh-sandbox; "+
+					"install -d -m 0755 -o root -g root /etc/jabali /etc/jabali/users /var/lib/jabali-nspawn /var/lib/jabali-nspawn/images; "+
+					"install -m 0755 -o root -g root "+repoDir+"/install/ssh/jabali-ssh-shell /usr/local/bin/jabali-ssh-shell; "+
+					"install -m 0755 -o root -g root "+repoDir+"/install/ssh/jabali-nspawn-enter /usr/local/bin/jabali-nspawn-enter; "+
+					"visudo -cf "+repoDir+"/install/ssh/jabali-nspawn-sudoers >/dev/null && install -m 0440 -o root -g root "+repoDir+"/install/ssh/jabali-nspawn-sudoers /etc/sudoers.d/jabali-nspawn; "+
+					"[ -f /etc/jabali/ssh-sandbox-mode ] || { echo bubblewrap > /etc/jabali/ssh-sandbox-mode; chmod 0644 /etc/jabali/ssh-sandbox-mode; }; "+
+					"[ -f /etc/jabali/default-nspawn-image ] || { echo debian-12-v1 > /etc/jabali/default-nspawn-image; chmod 0644 /etc/jabali/default-nspawn-image; }")
 		}},
 		{"npm ci", func() error {
 			// Wipe node_modules before npm ci. npm ci's docs promise it

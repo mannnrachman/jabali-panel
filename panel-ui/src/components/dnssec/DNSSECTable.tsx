@@ -10,7 +10,6 @@ import { useMemo, useState } from "react";
 import {
   Alert,
   Button,
-  Card,
   Empty,
   Modal,
   Space,
@@ -59,13 +58,12 @@ export function DNSSECTable({ showOwner }: Props) {
 
   return (
     <>
-      <Card>
-        {query.isLoading ? (
-          <Spin />
-        ) : query.items.length === 0 ? (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No domains" />
-        ) : (
-          <SearchableTableStringQ<Domain>
+      {query.isLoading ? (
+        <Spin />
+      ) : query.items.length === 0 ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No domains" />
+      ) : (
+        <SearchableTableStringQ<Domain>
             rowKey="id"
             loading={query.isLoading}
             dataSource={query.items}
@@ -122,9 +120,8 @@ export function DNSSECTable({ showOwner }: Props) {
                 </Button>
               )}
             />
-          </SearchableTableStringQ>
-        )}
-      </Card>
+        </SearchableTableStringQ>
+      )}
 
       <DSModal
         domainID={dsDomainID}

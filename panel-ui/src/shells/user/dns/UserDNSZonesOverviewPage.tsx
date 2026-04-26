@@ -1,15 +1,16 @@
-// UserDNSZonesOverviewPage — tenant landing for DNS. Tabs split into
-// "Zones" + "DNSSEC", parallel of admin/dns/DNSZonesOverviewPage but
-// without the Owner column and navigating within /jabali-panel for
-// the DNS-record deep-link.
+// UserDNSZonesOverviewPage — tenant landing for DNS. Card.tabList
+// pattern matches admin DNS + UserList — controlled activeTabKey,
+// count Tag in each tab label, panel-attached strip. Both tabs view
+// the same `domains` list.
 import { useEffect, useState } from "react";
-import { Alert, Button, Card, Empty, Spin, Table, Tabs, Tag, Typography } from "antd";
+import { Alert, Button, Card, Empty, Space, Spin, Table, Tag, Typography } from "antd";
 import { useNavigate } from "react-router";
 
 import { apiClient } from "../../../apiClient";
 import { columnSearchProps } from "../../../components/columnSearch";
 import { DNSSECTable } from "../../../components/dnssec/DNSSECTable";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
+import { useListQuery } from "../../../hooks/useQueries";
 import { useTableURL } from "../../../hooks/useTableURL";
 
 interface Domain {
@@ -81,55 +82,53 @@ const ZonesTab = () => {
         showIcon
         style={{ marginBottom: 16 }}
       />
-      <Card>
-        {query.isLoading ? (
-          <Spin />
-        ) : query.items.length === 0 ? (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No domains found" />
-        ) : (
-          <SearchableTableStringQ<Domain>
-            rowKey="id"
-            loading={query.isLoading}
-            dataSource={query.items}
-            initialSearch={query.params.q}
-            searchPlaceholder="Search by domain name"
-            onSearchChange={(q) => query.setParams({ q, page: 1 })}
-            pagination={{
-              current: query.params.page,
-              pageSize: query.params.pageSize,
-              total: query.total,
-              onChange: (page, pageSize) => query.setParams({ page, pageSize }),
-            }}
-          >
-            <Table.Column<Domain>
-              dataIndex="name"
-              title="Domain Name"
-              {...columnSearchProps<Domain>({
-                placeholder: "Search by domain name",
-                currentQ: query.params.q,
-                onSearch: (v) => query.setParams({ q: v, page: 1 }),
-              })}
-            />
-            <Table.Column<Domain>
-              title="Zone Status"
-              render={(_, record) => getZoneStatusTag(record.id)}
-            />
-            <Table.Column<Domain>
-              title="Actions"
-              render={(_, record) => (
-                <Button
-                  type="primary"
-                  onClick={() =>
-                    navigate(`/jabali-panel/domains/${record.id}/dns`)
-                  }
-                >
-                  Manage Records
-                </Button>
-              )}
-            />
-          </SearchableTableStringQ>
-        )}
-      </Card>
+      {query.isLoading ? (
+        <Spin />
+      ) : query.items.length === 0 ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No domains found" />
+      ) : (
+        <SearchableTableStringQ<Domain>
+          rowKey="id"
+          loading={query.isLoading}
+          dataSource={query.items}
+          initialSearch={query.params.q}
+          searchPlaceholder="Search by domain name"
+          onSearchChange={(q) => query.setParams({ q, page: 1 })}
+          pagination={{
+            current: query.params.page,
+            pageSize: query.params.pageSize,
+            total: query.total,
+            onChange: (page, pageSize) => query.setParams({ page, pageSize }),
+          }}
+        >
+          <Table.Column<Domain>
+            dataIndex="name"
+            title="Domain Name"
+            {...columnSearchProps<Domain>({
+              placeholder: "Search by domain name",
+              currentQ: query.params.q,
+              onSearch: (v) => query.setParams({ q: v, page: 1 }),
+            })}
+          />
+          <Table.Column<Domain>
+            title="Zone Status"
+            render={(_, record) => getZoneStatusTag(record.id)}
+          />
+          <Table.Column<Domain>
+            title="Actions"
+            render={(_, record) => (
+              <Button
+                type="primary"
+                onClick={() =>
+                  navigate(`/jabali-panel/domains/${record.id}/dns`)
+                }
+              >
+                Manage Records
+              </Button>
+            )}
+          />
+        </SearchableTableStringQ>
+      )}
     </>
   );
 };
@@ -147,17 +146,45 @@ const DNSSECTab = () => (
   </>
 );
 
-export const UserDNSZonesOverviewPage = () => (
-  <div>
-    <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
-      DNS
-    </Typography.Title>
-    <Tabs
-      destroyOnHidden
-      items={[
-        { key: "zones", label: "Zones", children: <ZonesTab /> },
-        { key: "dnssec", label: "DNSSEC", children: <DNSSECTab /> },
-      ]}
-    />
-  </div>
-);
+export const UserDNSZonesOverviewPage = () => {
+  const [activeTab, setActiveTab] = useState<"zones" | "dnssec">("zones");
+
+  const domainsCountQ = useListQuery<Domain>({
+    resource: "domains",
+    params: { pageSize: 1 },
+  });
+
+  return (
+    <div>
+      <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
+        DNS
+      </Typography.Title>
+      <Card
+        tabList={[
+          {
+            key: "zones",
+            tab: (
+              <Space>
+                Zones
+                <Tag>{domainsCountQ.total}</Tag>
+              </Space>
+            ),
+          },
+          {
+            key: "dnssec",
+            tab: (
+              <Space>
+                DNSSEC
+                <Tag>{domainsCountQ.total}</Tag>
+              </Space>
+            ),
+          },
+        ]}
+        activeTabKey={activeTab}
+        onTabChange={(k) => setActiveTab(k as "zones" | "dnssec")}
+      >
+        {activeTab === "zones" ? <ZonesTab /> : <DNSSECTab />}
+      </Card>
+    </div>
+  );
+};

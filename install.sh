@@ -630,7 +630,10 @@ install_base_packages() {
   rm -f /etc/apt/sources.list.d/sury-php.list \
         /etc/apt/sources.list.d/nodesource.list \
         /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources \
-        /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list
+        /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list \
+        /etc/apt/sources.list.d/ondrej-ubuntu-nginx-*.sources \
+        /etc/apt/sources.list.d/ondrej-ubuntu-nginx-*.list \
+        /etc/apt/sources.list.d/ondrej-nginx*.list
 
   # Bootstrap: `gpg` (from gnupg) + `curl` + `ca-certificates` must be
   # present BEFORE we add third-party repos (Sury, NodeSource) and verify

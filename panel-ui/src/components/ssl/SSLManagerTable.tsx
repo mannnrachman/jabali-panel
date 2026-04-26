@@ -11,8 +11,17 @@ import {
   Space,
   Tooltip,
   Typography,
+  Modal,
+  Descriptions,
 } from "antd";
-import { ReloadOutlined, DeleteOutlined, SyncOutlined, WarningOutlined, RedoOutlined } from "@icons";
+import {
+  ReloadOutlined,
+  DeleteOutlined,
+  SyncOutlined,
+  WarningOutlined,
+  RedoOutlined,
+  ExclamationCircleOutlined,
+} from "@icons";
 import { apiClient } from "../../apiClient";
 import { columnSearchProps } from "../columnSearch";
 
@@ -120,6 +129,13 @@ export const SSLManagerTable = ({
   // Client-side search over the fetched rows — SSL list is small
   // enough that we don't need server-side ?q filtering.
   const [search, setSearch] = useState("");
+
+  // When non-null, opens a Modal showing the full last_error text + retry
+  // metadata for that row. The status column renders a small alert button
+  // beside the tag whenever last_error is non-empty so operators can
+  // diagnose pending_acme_retry / failed states without shelling into the
+  // VPS to grep journalctl.
+  const [errorRow, setErrorRow] = useState<SSLCertificate | null>(null);
 
   // Fetch SSL certificates
   const { data, isLoading, error } = useQuery({
@@ -237,15 +253,30 @@ export const SSLManagerTable = ({
         } else if (status === "pending_acme_retry") {
           tooltip = `ACME failed — retrying at ${formatDate(record.next_retry_at)}`;
         }
+        const hasError = !!record.last_error;
         return (
-          <Tooltip title={tooltip}>
-            <Tag
-              color={STATUS_COLORS[status] || "default"}
-              icon={STATUS_ICONS[status]}
-            >
-              {status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, " ")}
-            </Tag>
-          </Tooltip>
+          <Space size={4}>
+            <Tooltip title={tooltip}>
+              <Tag
+                color={STATUS_COLORS[status] || "default"}
+                icon={STATUS_ICONS[status]}
+              >
+                {status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, " ")}
+              </Tag>
+            </Tooltip>
+            {hasError && (
+              <Tooltip title="Show last error">
+                <Button
+                  size="small"
+                  type="text"
+                  danger
+                  icon={<ExclamationCircleOutlined />}
+                  onClick={() => setErrorRow(record)}
+                  aria-label={`Show last error for ${record.domain_name}`}
+                />
+              </Tooltip>
+            )}
+          </Space>
         );
       },
     },
@@ -366,6 +397,61 @@ export const SSLManagerTable = ({
           />
         </Space>
       )}
+      <Modal
+        open={!!errorRow}
+        title={errorRow ? `Last error — ${errorRow.domain_name}` : "Last error"}
+        onCancel={() => setErrorRow(null)}
+        footer={[
+          <Button key="close" onClick={() => setErrorRow(null)}>
+            Close
+          </Button>,
+        ]}
+        width={720}
+      >
+        {errorRow && (
+          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+            <Descriptions column={1} size="small" bordered>
+              <Descriptions.Item label="Status">
+                {errorRow.status.charAt(0).toUpperCase() +
+                  errorRow.status.slice(1).replace(/_/g, " ")}
+              </Descriptions.Item>
+              <Descriptions.Item label="Last attempt">
+                {errorRow.last_attempt_at
+                  ? new Date(errorRow.last_attempt_at).toLocaleString()
+                  : "—"}
+              </Descriptions.Item>
+              <Descriptions.Item label="Retry count">
+                {errorRow.retry_count}
+              </Descriptions.Item>
+              <Descriptions.Item label="Next retry">
+                {errorRow.next_retry_at
+                  ? new Date(errorRow.next_retry_at).toLocaleString()
+                  : "—"}
+              </Descriptions.Item>
+            </Descriptions>
+            <div>
+              <Typography.Text strong>Error</Typography.Text>
+              <pre
+                style={{
+                  marginTop: 8,
+                  marginBottom: 0,
+                  maxHeight: 360,
+                  overflow: "auto",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily: "monospace",
+                  fontSize: 12,
+                  background: "rgba(0,0,0,0.04)",
+                  padding: 12,
+                  borderRadius: 4,
+                }}
+              >
+                {errorRow.last_error || "(no error recorded)"}
+              </pre>
+            </div>
+          </Space>
+        )}
+      </Modal>
     </>
   );
 };

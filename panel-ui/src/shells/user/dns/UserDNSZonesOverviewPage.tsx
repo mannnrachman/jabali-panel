@@ -3,14 +3,13 @@
 // count Tag in each tab label, panel-attached strip. Both tabs view
 // the same `domains` list.
 import { useEffect, useState } from "react";
-import { Alert, Button, Card, Empty, Space, Spin, Table, Tag, Typography } from "antd";
+import { Alert, Button, Card, Empty, Spin, Table, Tag, Typography } from "antd";
 import { useNavigate } from "react-router";
 
 import { apiClient } from "../../../apiClient";
 import { columnSearchProps } from "../../../components/columnSearch";
 import { DNSSECTable } from "../../../components/dnssec/DNSSECTable";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
-import { useListQuery } from "../../../hooks/useQueries";
 import { useTableURL } from "../../../hooks/useTableURL";
 
 interface Domain {
@@ -148,12 +147,6 @@ const DNSSECTab = () => (
 
 export const UserDNSZonesOverviewPage = () => {
   const [activeTab, setActiveTab] = useState<"zones" | "dnssec">("zones");
-
-  const domainsCountQ = useListQuery<Domain>({
-    resource: "domains",
-    params: { pageSize: 1 },
-  });
-
   return (
     <div>
       <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
@@ -161,24 +154,8 @@ export const UserDNSZonesOverviewPage = () => {
       </Typography.Title>
       <Card
         tabList={[
-          {
-            key: "zones",
-            tab: (
-              <Space>
-                Zones
-                <Tag>{domainsCountQ.total}</Tag>
-              </Space>
-            ),
-          },
-          {
-            key: "dnssec",
-            tab: (
-              <Space>
-                DNSSEC
-                <Tag>{domainsCountQ.total}</Tag>
-              </Space>
-            ),
-          },
+          { key: "zones", tab: "Zones" },
+          { key: "dnssec", tab: "DNSSEC" },
         ]}
         activeTabKey={activeTab}
         onTabChange={(k) => setActiveTab(k as "zones" | "dnssec")}

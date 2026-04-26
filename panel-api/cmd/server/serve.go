@@ -21,6 +21,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/db"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/eventsources"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/notifications"
@@ -298,6 +299,33 @@ func runServe(cmd *cobra.Command, args []string) error {
 		case res.Created:
 			log.Warn("admin user created via bootstrap",
 				"kratos_identity_id", res.KratosIdentityID)
+			// Welcome bell row — fired exactly once, on the boot that
+			// creates the admin row. Written directly to
+			// notification_history (channel_id=NULL, user_id=admin) so
+			// it appears in the bell even on a fresh install with no
+			// channels configured (the dispatcher would ack-and-drop
+			// envelopes whose target list is empty). Best-effort: any
+			// failure here should not block panel start.
+			if deps.NotificationHistory != nil && res.UserID != "" {
+				now := time.Now().UTC()
+				row := &models.NotificationHistory{
+					ID:        ids.NewULID(),
+					EventKind: "panel.welcome",
+					Severity:  models.NotificationSeverityInfo,
+					Title:     "Welcome to Jabali Panel",
+					Body:      "Set up notification channels (email, Slack, ntfy, webhook, web push) so you hear about cert renewals, disk pressure, and security events. Tap to open Notifications.",
+					Deeplink:  "/jabali-admin/notifications/channels",
+					Outcome:   models.NotificationOutcomeSent,
+					UserID:    &res.UserID,
+					CreatedAt: now,
+					UpdatedAt: now,
+				}
+				wctx, wcancel := context.WithTimeout(context.Background(), 5*time.Second)
+				if wErr := deps.NotificationHistory.Create(wctx, row); wErr != nil {
+					log.Warn("welcome bell row insert failed", "err", wErr)
+				}
+				wcancel()
+			}
 		case res.ExistingID != "":
 			log.Info("admin bootstrap: already exists",
 				"user_id", res.ExistingID,

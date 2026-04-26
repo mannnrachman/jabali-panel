@@ -135,6 +135,13 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 		Severity:    "warning",
 		DefaultOn:   true,
 	},
+	{
+		Kind:        "panel.welcome",
+		Label:       "Welcome",
+		Description: "Fired once at install time for the bootstrap admin to point them at notification setup.",
+		Severity:    "info",
+		DefaultOn:   true,
+	},
 }
 
 // LookupNotificationEventKind returns the metadata for a known kind

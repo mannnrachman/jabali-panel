@@ -102,6 +102,20 @@ type ServerSettings struct {
 	// knob. Migration 000073. 0 falls back to the compile-time default.
 	UploadMaxSizeMB uint32 `gorm:"column:upload_max_size_mb;type:int unsigned;not null;default:1024" json:"upload_max_size_mb"`
 
+	// M13 SSH shell sandbox (ADR-0067).
+	// SSHSandboxMode ∈ {"bubblewrap", "nspawn"}. Default bubblewrap on
+	// fresh installs. Wrapper at /usr/local/bin/jabali-ssh-shell reads
+	// /etc/jabali/ssh-sandbox-mode (kept in lockstep with this column
+	// by system.set_ssh_sandbox_mode) on every connect, so toggling the
+	// mode does NOT require a sshd reload.
+	SSHSandboxMode string `gorm:"column:ssh_sandbox_mode;type:varchar(16);not null;default:'bubblewrap'" json:"ssh_sandbox_mode"`
+	// DefaultNspawnImageVersion is the image new SSH-enabled users are
+	// stamped with at user-create time (reconciler stamps NULL pins).
+	// Existing users keep their pin even after the default bumps —
+	// upgrades are an explicit admin action. Format: [a-z0-9-]+ matching
+	// the directory under /var/lib/jabali-nspawn/images/.
+	DefaultNspawnImageVersion string `gorm:"column:default_nspawn_image_version;type:varchar(64);not null;default:'debian-12-v1'" json:"default_nspawn_image_version"`
+
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 

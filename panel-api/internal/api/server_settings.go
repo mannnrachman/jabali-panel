@@ -91,6 +91,10 @@ type updateServerSettingsRequest struct {
 	PanelBrandText      *string `json:"panel_brand_text,omitempty"`
 	DiskQuotaEnabled    *bool   `json:"disk_quota_enabled,omitempty"`
 	UploadMaxSizeMB     *uint32 `json:"upload_max_size_mb,omitempty"`
+
+	// M13 SSH shell sandbox.
+	SSHSandboxMode            *string `json:"ssh_sandbox_mode,omitempty"`
+	DefaultNspawnImageVersion *string `json:"default_nspawn_image_version,omitempty"`
 }
 
 func (h *serverSettingsHandler) update(c *gin.Context) {
@@ -122,6 +126,8 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	prevSSHPort := current.SSHPort
 	prevSSHPasswordAuth := current.SSHPasswordAuth
 	prevSSHUserPasswordAuth := current.SSHUserPasswordAuth
+	prevSSHSandboxMode := current.SSHSandboxMode
+	prevDefaultNspawnImageVersion := current.DefaultNspawnImageVersion
 
 	if req.Hostname != nil {
 		current.Hostname = strings.TrimSpace(*req.Hostname)
@@ -167,6 +173,12 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.UploadMaxSizeMB != nil {
 		current.UploadMaxSizeMB = *req.UploadMaxSizeMB
+	}
+	if req.SSHSandboxMode != nil {
+		current.SSHSandboxMode = strings.TrimSpace(*req.SSHSandboxMode)
+	}
+	if req.DefaultNspawnImageVersion != nil {
+		current.DefaultNspawnImageVersion = strings.TrimSpace(*req.DefaultNspawnImageVersion)
 	}
 
 	// Validate — reject obviously bad input so we don't persist garbage.
@@ -225,6 +237,23 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 				"user_password_auth": current.SSHUserPasswordAuth,
 			}); err != nil {
 				h.cfg.Log.Error("agent set_ssh_config failed", "err", err)
+			}
+		}()
+	}
+
+	// Sandbox mode + default-image flips: write the matching files on
+	// disk so the wrapper picks them up on the next connect. No sshd
+	// reload needed (wrapper reads on every exec).
+	if (current.SSHSandboxMode != prevSSHSandboxMode ||
+		current.DefaultNspawnImageVersion != prevDefaultNspawnImageVersion) && h.cfg.Agent != nil {
+		go func() {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if _, err := h.cfg.Agent.Call(bgCtx, "system.set_ssh_sandbox_mode", map[string]any{
+				"mode":          current.SSHSandboxMode,
+				"default_image": current.DefaultNspawnImageVersion,
+			}); err != nil {
+				h.cfg.Log.Error("agent set_ssh_sandbox_mode failed", "err", err)
 			}
 		}()
 	}
@@ -288,7 +317,33 @@ func validateServerSettings(s *models.ServerSettings) error {
 	if s.UploadMaxSizeMB != 0 && (s.UploadMaxSizeMB < 1 || s.UploadMaxSizeMB > 10240) {
 		return fmt.Errorf("upload_max_size_mb: must be 0 or between 1 and 10240")
 	}
+	// M13 SSH sandbox.
+	if s.SSHSandboxMode != "" && s.SSHSandboxMode != "bubblewrap" && s.SSHSandboxMode != "nspawn" {
+		return fmt.Errorf("ssh_sandbox_mode: must be 'bubblewrap' or 'nspawn'")
+	}
+	if s.DefaultNspawnImageVersion != "" && !isImageNamePattern(s.DefaultNspawnImageVersion) {
+		return fmt.Errorf("default_nspawn_image_version: must match [a-z0-9-]+")
+	}
 	return nil
+}
+
+// isImageNamePattern matches the [a-z0-9-]+ shape used everywhere
+// from agent helpers to wrapper scripts. Kept inline here so the
+// file doesn't depend on regexp at build time for one validation.
+func isImageNamePattern(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9':
+		case r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 var (

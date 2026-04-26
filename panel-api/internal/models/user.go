@@ -59,6 +59,13 @@ type User struct {
 	// compensating-delete race can't FK-fail the panel insert.
 	KratosIdentityID *string `gorm:"type:varchar(64);uniqueIndex:ux_users_kratos_identity_id" json:"kratos_identity_id,omitempty"`
 
+	// NspawnImageVersion (M13 / ADR-0067) pins this user to a specific
+	// systemd-nspawn rootfs at /var/lib/jabali-nspawn/images/<value>/.
+	// NULL → reconciler stamps with server_settings.default_nspawn_image_version
+	// at next sweep. Existing pins are preserved across default bumps —
+	// per-tenant upgrades are explicit operator actions.
+	NspawnImageVersion *string `gorm:"type:varchar(64);column:nspawn_image_version" json:"nspawn_image_version,omitempty"`
+
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }

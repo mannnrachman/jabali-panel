@@ -51,46 +51,40 @@ the file is the source of truth.
 
 ## Build a nspawn image
 
-The `jabali nspawn-build` CLI is not yet implemented (M13 plan §4).
-Manual build instructions until it ships:
-
 ```bash
-# Pin to a snapshot.debian.org timestamp (mandatory for determinism).
-SNAPSHOT=20260426T000000Z
-VERSION=v1
-CODENAME=debian-12
+# --snapshot is mandatory. Pick a YYYYMMDDTHHMMSSZ timestamp from
+# https://snapshot.debian.org/archive/debian/ — same triple of
+# (codename, version, snapshot) produces a bit-identical rootfs.
+jabali nspawn build --codename debian-12 --version v1 \
+  --snapshot 20260426T000000Z
 
-IMG_DIR=/var/lib/jabali-nspawn/images/${CODENAME}-${VERSION}
-mkdir -p "$IMG_DIR"
+# List sealed images:
+jabali nspawn list
 
-debootstrap --variant=minbase \
-  --include=bash,coreutils,procps,findutils,grep,sed,gawk,less,nano,git,curl,ca-certificates \
-  bookworm "$IMG_DIR" \
-  https://snapshot.debian.org/archive/debian/${SNAPSHOT}/
-
-# Seal: read-only after build.
-chmod -R a-w "$IMG_DIR"
-chmod 0555 "$IMG_DIR"
-
-# Manifest for reproducibility.
-{
-  echo "{\"snapshot\": \"$SNAPSHOT\", \"codename\": \"$CODENAME\", \"version\": \"$VERSION\","
-  echo "  \"rootfs_sha256\": \"$(find "$IMG_DIR" -type f -exec sha256sum {} \\; | sort | sha256sum | cut -d' ' -f1)\"}"
-} > "$IMG_DIR/MANIFEST.json"
+# Remove images no user is pinned to (and that aren't the default):
+jabali nspawn prune          # dry-run
+jabali nspawn prune --yes    # actually delete
 ```
 
-Once built and `default-nspawn-image` matches, switching mode to
-`nspawn` lets users connect via the helper.
+`jabali nspawn build` runs debootstrap against snapshot.debian.org,
+strips apt cache + machine-id, computes a SHA-256 of the entire
+rootfs, writes `MANIFEST.json` (codename, version, snapshot, package
+list, sha256, built_at), then `chmod -R a-w` + `chmod 0555` to seal
+the image. Refuses to overwrite an existing image — bump `--version`
+to build a new one.
 
-## Add a user to the nspawn sudoers group
+## Per-user image pin
 
-Required for nspawn mode (bubblewrap mode doesn't need it). The
-reconciler will manage this group automatically once the M13 step 8
-extension lands; manual today:
+Admin user-edit drawer (or `PATCH /admin/users/<id>` with body
+`{"nspawn_image_version": "debian-12-v2"}`) sets the per-user pin.
+Reconciler mirrors the pin to `/etc/jabali/users/<u>/nspawn-image`
+on the next sweep. `nspawn_image_version: null` (or empty string)
+clears the pin so the user falls back to the server-wide default.
 
-```bash
-usermod -aG jabali-ssh-sandbox <username>
-```
+Existing users with `NULL` pins get stamped with the server default
+on the next reconciler sweep — they are then preserved across future
+default-image bumps. Promoting a default-image change therefore does
+NOT silently move pinned users.
 
 ## Test isolation (smoke)
 
@@ -122,8 +116,9 @@ Check journalctl for sshd's session log + the user's `~/.bash_history`
 (only populated if a previous session got past the wrapper).
 
 **`sudo: a password is required`** (nspawn mode)
-User isn't in `jabali-ssh-sandbox` group. `usermod -aG
-jabali-ssh-sandbox <user>` (until reconciler manages it).
+User isn't in `jabali-ssh-sandbox` group. Reconciler manages this
+on every sweep; if it hasn't run yet, `usermod -aG jabali-ssh-sandbox
+<user>` works as a manual nudge.
 
 **wp-cli: `Error establishing a database connection`**
 Expected. No host sockets bound (ADR-0067 §0.14). Use the panel UI's
@@ -157,11 +152,33 @@ chmod 000 /usr/local/bin/jabali-ssh-shell
 Then root-cause whatever made the sandbox unusable before bringing
 panel-api back up.
 
-## What's not yet shipped
+## Bulk image upgrade
 
-- `jabali nspawn-build` CLI (manual build above is the workaround)
-- Admin UI for mode + default image (edit `/etc/jabali/` files instead)
-- Per-user pin UI (future)
-- Reconciler-managed `jabali-ssh-sandbox` group membership (manual
-  `usermod` for now)
-- E2E specs (manual smoke above)
+To force every SSH-enabled user onto a new image (e.g. shipping a
+security-fixed `debian-12-v2`):
+
+```sql
+-- Connect as root via socket: mariadb -uroot
+USE jabali;
+UPDATE users SET nspawn_image_version = 'debian-12-v2'
+  WHERE username IS NOT NULL;
+```
+
+Then update the server-wide default in Server Settings → SSH Access →
+"Default nspawn Image" so new users also pin to the new version.
+Reconciler will materialize per-user pin files within 60 seconds.
+
+To clear all pins (let the server default apply uniformly):
+
+```sql
+UPDATE users SET nspawn_image_version = NULL WHERE username IS NOT NULL;
+```
+
+Old image versions remain on disk until `jabali nspawn prune --yes`.
+
+## v2 roadmap
+
+- Scoped TCP proxy for in-sandbox MariaDB / FPM access (currently
+  blocked by ADR-0067 §0.14).
+- `--unshare-net` + per-user NAT bridge for outbound network isolation.
+- Image content signing + supply-chain provenance (cosign).

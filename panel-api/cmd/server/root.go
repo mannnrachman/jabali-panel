@@ -76,6 +76,7 @@ func newRootCmd() *cobra.Command {
 		newMailboxCmd(),
 		newPdnsCmd(),
 		newPanelPrimaryCmd(),
+		newNspawnCmd(),
 		adminCmd,
 		newSSOCmd(),
 		newSSOReapCmd(),

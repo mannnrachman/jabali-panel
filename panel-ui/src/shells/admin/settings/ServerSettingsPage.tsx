@@ -67,9 +67,16 @@ type ServerSettings = {
   ssh_port: number;
   ssh_password_auth: boolean;
   ssh_user_password_auth: boolean;
+  ssh_sandbox_mode: "bubblewrap" | "nspawn";
+  default_nspawn_image_version: string;
   disk_quota_enabled: boolean;
   upload_max_size_mb: number;
   updated_at: string;
+};
+
+type NspawnImage = {
+  name: string;
+  manifest?: string;
 };
 
 // notifyError narrows axios-style errors to a friendly message.
@@ -94,6 +101,7 @@ const GeneralSettingsTab = () => {
   const [originalSSHPort, setOriginalSSHPort] = useState(22);
   const [originalSSHPasswordAuth, setOriginalSSHPasswordAuth] = useState(false);
   const [originalSSHUserPasswordAuth, setOriginalSSHUserPasswordAuth] = useState(false);
+  const [nspawnImages, setNspawnImages] = useState<NspawnImage[]>([]);
   const notify = useNotify();
 
   useEffect(() => {
@@ -107,6 +115,15 @@ const GeneralSettingsTab = () => {
         setOriginalSSHPort(resp.data.ssh_port || 22);
         setOriginalSSHPasswordAuth(resp.data.ssh_password_auth || false);
         setOriginalSSHUserPasswordAuth(resp.data.ssh_user_password_auth || false);
+        // Fetch nspawn images for the default-image dropdown.
+        try {
+          const imgResp = await apiClient.get<{ images: NspawnImage[] }>(
+            "/admin/system/nspawn-images",
+          );
+          if (!cancelled) setNspawnImages(imgResp.data.images || []);
+        } catch {
+          // Empty list is fine — admin sees a placeholder + warning.
+        }
       } catch (err) {
         notifyError(notify, "Failed to load settings", err);
       } finally {
@@ -131,6 +148,9 @@ const GeneralSettingsTab = () => {
         ssh_port: values.ssh_port || 22,
         ssh_password_auth: values.ssh_password_auth || false,
         ssh_user_password_auth: values.ssh_user_password_auth || false,
+        ssh_sandbox_mode: values.ssh_sandbox_mode || "bubblewrap",
+        default_nspawn_image_version:
+          values.default_nspawn_image_version || "debian-12-v1",
       });
       notify({ type: "success", message: "Settings saved" });
       form.setFieldsValue(resp.data);
@@ -320,6 +340,56 @@ const GeneralSettingsTab = () => {
                 Allow hosting users (jabali-sftp group) to authenticate with a password. They are still SFTP-only — no shell.
               </Typography.Text>
             </div>
+          </Col>
+        </Row>
+
+        <Divider style={{ margin: "8px 0 16px" }}>Shell Sandbox</Divider>
+
+        <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+          SSH-shell users land in a sandbox. Bubblewrap is lightweight
+          and runs against the host kernel; nspawn boots an ephemeral
+          systemd-nspawn container off a sealed, versioned rootfs.
+          <b> Mode change applies on the next SSH connect — no reload needed.</b>
+        </Typography.Paragraph>
+
+        <Row gutter={16}>
+          <Col xs={24} md={12}>
+            <Form.Item
+              label="Sandbox Mode"
+              name="ssh_sandbox_mode"
+              rules={[{ required: true }]}
+              extra="Bubblewrap = no rootfs needed. nspawn = build an image first via 'jabali nspawn build'."
+            >
+              <Select
+                options={[
+                  { value: "bubblewrap", label: "Bubblewrap (default, lightweight)" },
+                  { value: "nspawn", label: "systemd-nspawn (full container)" },
+                ]}
+                style={{ width: "100%" }}
+              />
+            </Form.Item>
+          </Col>
+          <Col xs={24} md={12}>
+            <Form.Item
+              label="Default nspawn Image"
+              name="default_nspawn_image_version"
+              extra={
+                nspawnImages.length === 0
+                  ? "No images built yet. Run 'jabali nspawn build --version v1 --snapshot ...' to seed."
+                  : "Pinned to new SSH-enabled users at create. Existing users keep their pin."
+              }
+            >
+              <Select
+                showSearch
+                allowClear
+                placeholder="debian-12-v1"
+                options={nspawnImages.map((img) => ({
+                  value: img.name,
+                  label: img.name,
+                }))}
+                style={{ width: "100%" }}
+              />
+            </Form.Item>
           </Col>
         </Row>
       </Card>

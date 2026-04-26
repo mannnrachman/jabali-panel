@@ -79,6 +79,52 @@ func (r *Reconciler) ReconcileSSHKeysForUser(ctx context.Context, userID string)
 		return fmt.Errorf("%s: %w", groupMethod, err)
 	}
 
+	// M13 sandbox group: SSH-shell users need membership in
+	// jabali-ssh-sandbox so the sudoers entry permits exec'ing
+	// jabali-nspawn-enter. SFTP users are removed.
+	sandboxGroupMethod := "ssh.user.leave_sandbox_group"
+	if sshEnabled {
+		sandboxGroupMethod = "ssh.user.join_sandbox_group"
+	}
+	if _, err := r.agent.Call(ctx, sandboxGroupMethod, map[string]interface{}{
+		"username": *user.Username,
+	}); err != nil {
+		// Non-fatal: bubblewrap mode (default) doesn't require this
+		// group, and the wrapper falls through to nologin if nspawn
+		// can't sudo. Log and continue.
+		r.log.WarnContext(ctx, "reconcile ssh keys: sandbox group failed",
+			"user_id", userID, "username", *user.Username, "method", sandboxGroupMethod, "error", err)
+	}
+
+	// M13 nspawn pin: stamp NULL pins from server-default, then
+	// materialize the per-user file under /etc/jabali/users/<u>/.
+	// SFTP-only users have the pin file removed (defensive — sandbox
+	// group is also gone, so the pin is moot, but keep state tidy).
+	pin := ""
+	if user.NspawnImageVersion != nil {
+		pin = *user.NspawnImageVersion
+	}
+	if sshEnabled && pin == "" && r.serverSettings != nil {
+		if s, sErr := r.serverSettings.Get(ctx); sErr == nil && s != nil && s.DefaultNspawnImageVersion != "" {
+			pin = s.DefaultNspawnImageVersion
+			user.NspawnImageVersion = &pin
+			if uErr := r.users.Update(ctx, user); uErr != nil {
+				r.log.WarnContext(ctx, "reconcile ssh keys: stamp nspawn pin failed",
+					"user_id", userID, "username", *user.Username, "error", uErr)
+			}
+		}
+	}
+	if !sshEnabled {
+		pin = "" // remove file
+	}
+	if _, err := r.agent.Call(ctx, "ssh.user.write_nspawn_pin", map[string]interface{}{
+		"username": *user.Username,
+		"image":    pin,
+	}); err != nil {
+		r.log.WarnContext(ctx, "reconcile ssh keys: write_nspawn_pin failed",
+			"user_id", userID, "username", *user.Username, "error", err)
+	}
+
 	// Fetch user's SSH keys
 	keys, err := r.sshKeys.ListByUserID(ctx, userID)
 	if err != nil {

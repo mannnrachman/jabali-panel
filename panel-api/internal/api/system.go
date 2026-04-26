@@ -208,4 +208,19 @@ func RegisterSystemRoutes(rg *gin.RouterGroup, cli agent.AgentInterface) {
 		}
 		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
 	})
+
+	// M13 SSH shell sandbox: list available nspawn images. The Server
+	// Settings card uses this for the "default image" dropdown; the
+	// per-user Edit drawer uses it for the per-user pin select.
+	sys.GET("/nspawn-images", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), systemCallTimeout)
+		defer cancel()
+		raw, err := cli.Call(ctx, "system.list_nspawn_images", nil)
+		if err != nil {
+			status, body := translateAgentError(err)
+			c.JSON(status, body)
+			return
+		}
+		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
+	})
 }

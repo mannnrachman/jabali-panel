@@ -143,10 +143,30 @@ func (r *domainRepo) FindByName(ctx context.Context, name string) (*models.Domai
 // domainListCols — only the domain name is free-text searchable.
 // user_id is deliberately absent from Search because it's an opaque ULID
 // and admins have a dedicated "this user's domains" path via ListByUserID.
+//
+// Sort accepts the qualified `users.username` form so the LEFT JOIN we
+// apply at the SQL layer can resolve it; List() rewrites the bare
+// `username` requested by the UI into the qualified form before
+// passing opts down to applyListOptions.
 var domainListCols = ListCols{
-	Search:      []string{"name"},
-	Sort:        []string{"name", "created_at"},
-	DefaultSort: "name",
+	Search:      []string{"domains.name"},
+	Sort:        []string{"domains.name", "domains.created_at", "users.username"},
+	DefaultSort: "domains.name",
+}
+
+// rewriteDomainSort maps the bare sort key the UI sends onto the
+// qualified column the JOIN-ed query needs. Unknown keys are passed
+// through verbatim and will fall back to DefaultSort via pickSort.
+func rewriteDomainSort(sort string) string {
+	switch sort {
+	case "name":
+		return "domains.name"
+	case "created_at":
+		return "domains.created_at"
+	case "username":
+		return "users.username"
+	}
+	return sort
 }
 
 func (r *domainRepo) List(ctx context.Context, opts ListOptions) ([]models.Domain, int64, error) {
@@ -154,7 +174,9 @@ func (r *domainRepo) List(ctx context.Context, opts ListOptions) ([]models.Domai
 		domains []models.Domain
 		total   int64
 	)
-	base := r.db.WithContext(ctx).Model(&models.Domain{})
+	base := r.db.WithContext(ctx).
+		Model(&models.Domain{}).
+		Joins("LEFT JOIN users ON users.id = domains.user_id")
 
 	countQ := applyListOptions(base.Session(&gorm.Session{}), ListOptions{Search: opts.Search}, domainListCols)
 	if err := countQ.Count(&total).Error; err != nil {
@@ -163,6 +185,7 @@ func (r *domainRepo) List(ctx context.Context, opts ListOptions) ([]models.Domai
 	if opts.Sort == "" && opts.Order == "" {
 		opts.Order = "asc"
 	}
+	opts.Sort = rewriteDomainSort(opts.Sort)
 	q := applyListOptions(base.Session(&gorm.Session{}), opts, domainListCols)
 	if err := q.Find(&domains).Error; err != nil {
 		return nil, 0, err
@@ -178,7 +201,10 @@ func (r *domainRepo) ListByUserID(ctx context.Context, userID string, opts ListO
 		domains []models.Domain
 		total   int64
 	)
-	base := r.db.WithContext(ctx).Model(&models.Domain{}).Where("user_id = ?", userID)
+	base := r.db.WithContext(ctx).
+		Model(&models.Domain{}).
+		Joins("LEFT JOIN users ON users.id = domains.user_id").
+		Where("domains.user_id = ?", userID)
 
 	countQ := applyListOptions(base.Session(&gorm.Session{}), ListOptions{Search: opts.Search}, domainListCols)
 	if err := countQ.Count(&total).Error; err != nil {
@@ -187,6 +213,7 @@ func (r *domainRepo) ListByUserID(ctx context.Context, userID string, opts ListO
 	if opts.Sort == "" && opts.Order == "" {
 		opts.Order = "asc"
 	}
+	opts.Sort = rewriteDomainSort(opts.Sort)
 	q := applyListOptions(base.Session(&gorm.Session{}), opts, domainListCols)
 	if err := q.Find(&domains).Error; err != nil {
 		return nil, 0, err

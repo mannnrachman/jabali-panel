@@ -49,6 +49,9 @@ func (f *fakeUsersRepo) FindByEmail(context.Context, string) (*models.User, erro
 func (f *fakeUsersRepo) FindByUsername(context.Context, string) (*models.User, error) {
 	panic("FindByUsername not expected from middleware")
 }
+func (f *fakeUsersRepo) FindByIDs(context.Context, []string) ([]models.User, error) {
+	panic("FindByIDs not expected from middleware")
+}
 func (f *fakeUsersRepo) List(context.Context, repository.ListOptions) ([]models.User, int64, error) {
 	panic("List not expected from middleware")
 }

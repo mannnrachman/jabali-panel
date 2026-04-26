@@ -49,6 +49,9 @@ func (*fakeRebuildUserRepo) FindByUsername(context.Context, string) (*models.Use
 func (*fakeRebuildUserRepo) FindByKratosIdentityID(context.Context, string) (*models.User, error) {
 	return nil, repository.ErrNotFound
 }
+func (*fakeRebuildUserRepo) FindByIDs(context.Context, []string) ([]models.User, error) {
+	return nil, nil
+}
 func (*fakeRebuildUserRepo) List(context.Context, repository.ListOptions) ([]models.User, int64, error) {
 	return nil, 0, nil
 }

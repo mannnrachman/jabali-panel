@@ -123,6 +123,11 @@ type sslBadge struct {
 type domainListRow struct {
 	models.Domain
 	SSL *sslBadge `json:"ssl,omitempty"`
+	// Username is the owning hosting user's Linux account name, batched
+	// onto each row so the admin Domains table can show a meaningful
+	// owner column without a per-row lookup. nil when the owner can't be
+	// resolved (deleted user, admin-only row).
+	Username *string `json:"username,omitempty"`
 	// Denormalized listen-IP summaries — UI shows the address string
 	// without a second roundtrip per row. Always populated when
 	// ManagedIPs is wired: explicit binding ⇒ that row's address; null
@@ -191,6 +196,32 @@ func (h *domainHandler) list(c *gin.Context) {
 		}
 		// On SSL lookup error we drop the badge silently — list response
 		// still ships flat domain data rather than 500ing.
+	}
+
+	// Denormalize the owning user's Linux username onto each row so the
+	// admin table can show a meaningful owner. Single batch lookup; on
+	// error we drop the field rather than 500ing — the row's user_id is
+	// still on the wire as a fallback.
+	if h.cfg.Users != nil && len(domains) > 0 {
+		userIDs := make([]string, 0, len(domains))
+		seen := make(map[string]struct{}, len(domains))
+		for i := range domains {
+			if _, ok := seen[domains[i].UserID]; ok {
+				continue
+			}
+			seen[domains[i].UserID] = struct{}{}
+			userIDs = append(userIDs, domains[i].UserID)
+		}
+		users, userErr := h.cfg.Users.FindByIDs(c.Request.Context(), userIDs)
+		if userErr == nil {
+			usernameByID := make(map[string]*string, len(users))
+			for i := range users {
+				usernameByID[users[i].ID] = users[i].Username
+			}
+			for i := range rows {
+				rows[i].Username = usernameByID[rows[i].UserID]
+			}
+		}
 	}
 
 	// M24: denormalize listen_ipv4 / listen_ipv6 onto each row. Pool is

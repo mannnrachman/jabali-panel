@@ -401,6 +401,10 @@ func (f *fakeUserRepo) FindByKratosIdentityID(_ context.Context, _ string) (*mod
 	return nil, repository.ErrNotFound
 }
 
+func (f *fakeUserRepo) FindByIDs(_ context.Context, _ []string) ([]models.User, error) {
+	return nil, nil
+}
+
 func (f *fakeUserRepo) FindByUsername(ctx context.Context, username string) (*models.User, error) {
 	for _, u := range f.users {
 		if u.Username != nil && *u.Username == username {

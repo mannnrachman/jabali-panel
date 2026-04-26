@@ -64,6 +64,10 @@ func (f *fakeUserRepo) FindByKratosIdentityID(_ context.Context, _ string) (*mod
 	return nil, repository.ErrNotFound
 }
 
+func (f *fakeUserRepo) FindByIDs(_ context.Context, _ []string) ([]models.User, error) {
+	return nil, nil
+}
+
 func (f *fakeUserRepo) FindByUsername(_ context.Context, username string) (*models.User, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

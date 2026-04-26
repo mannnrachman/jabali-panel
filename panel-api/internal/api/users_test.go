@@ -114,6 +114,18 @@ func (m *memUserRepo) FindByUsername(_ context.Context, username string) (*model
 	return nil, repository.ErrNotFound
 }
 
+func (m *memUserRepo) FindByIDs(_ context.Context, ids []string) ([]models.User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]models.User, 0, len(ids))
+	for _, id := range ids {
+		if v, ok := m.byID[id]; ok {
+			out = append(out, *v)
+		}
+	}
+	return out, nil
+}
+
 func (m *memUserRepo) List(_ context.Context, opts repository.ListOptions) ([]models.User, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

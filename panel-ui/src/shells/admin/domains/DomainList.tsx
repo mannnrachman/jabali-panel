@@ -79,6 +79,7 @@ const renderSSL = (ssl: SSLBadge | null | undefined) => {
 export type Domain = {
   id: string;
   user_id: string;
+  username?: string | null;
   name: string;
   doc_root: string;
   is_enabled: boolean;
@@ -201,9 +202,13 @@ export const DomainList = () => {
             }
           />
           <Table.Column<Domain>
-            dataIndex="user_id"
-            title="User ID"
-            render={(value: string) => value.substring(0, 8)}
+            dataIndex="username"
+            title="User"
+            key="username"
+            sorter={{ multiple: 1 }}
+            render={(username: string | null | undefined, record: Domain) =>
+              username ?? <Typography.Text type="secondary">{record.user_id.substring(0, 8)}</Typography.Text>
+            }
           />
           <Table.Column<Domain>
             dataIndex="is_enabled"

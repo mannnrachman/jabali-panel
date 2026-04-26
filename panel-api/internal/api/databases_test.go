@@ -173,6 +173,10 @@ func (m *mockUserRepo) FindByKratosIdentityID(_ context.Context, _ string) (*mod
 	return nil, repository.ErrNotFound
 }
 
+func (m *mockUserRepo) FindByIDs(_ context.Context, _ []string) ([]models.User, error) {
+	return nil, nil
+}
+
 func (m *mockUserRepo) List(ctx context.Context, opts repository.ListOptions) ([]models.User, int64, error) {
 	return nil, 0, nil
 }

@@ -19,6 +19,11 @@ type UserRepository interface {
 	FindByID(ctx context.Context, id string) (*models.User, error)
 	FindByEmail(ctx context.Context, email string) (*models.User, error)
 	FindByUsername(ctx context.Context, username string) (*models.User, error)
+	// FindByIDs returns the users matching the given ID set, in arbitrary
+	// order. Used by list endpoints that need to denormalize user.username
+	// onto sibling rows (e.g. admin Domains/Mailboxes columns) without a
+	// per-row N+1.
+	FindByIDs(ctx context.Context, ids []string) ([]models.User, error)
 	// FindByKratosIdentityID looks up a panel user by their Kratos identity
 	// UUID. Used by the Kratos middleware to resolve the session's identity
 	// to the panel's own user.id (ULID), which is what ownership checks key
@@ -79,6 +84,17 @@ func (r *userRepo) FindByUsername(ctx context.Context, username string) (*models
 		return nil, translate(err)
 	}
 	return &u, nil
+}
+
+func (r *userRepo) FindByIDs(ctx context.Context, ids []string) ([]models.User, error) {
+	if len(ids) == 0 {
+		return []models.User{}, nil
+	}
+	var out []models.User
+	if err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&out).Error; err != nil {
+		return nil, translate(err)
+	}
+	return out, nil
 }
 
 func (r *userRepo) FindByKratosIdentityID(ctx context.Context, kratosID string) (*models.User, error) {

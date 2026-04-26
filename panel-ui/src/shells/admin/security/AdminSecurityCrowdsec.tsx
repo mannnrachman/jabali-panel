@@ -518,7 +518,7 @@ const AppSecGeoblockCard = () => {
             <Typography.Text strong>Countries: </Typography.Text>
             <Select
               mode="tags"
-              style={{ minWidth: 360, width: "100%", maxWidth: 720 }}
+              style={{ width: "100%", maxWidth: 720 }}
               placeholder="Add ISO 3166-1 alpha-2 codes (RU, CN, IR, …)"
               value={countries}
               onChange={(next) =>

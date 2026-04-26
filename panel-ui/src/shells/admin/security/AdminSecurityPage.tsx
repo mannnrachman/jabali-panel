@@ -75,15 +75,10 @@ export const AdminSecurityPage = () => {
   };
 
   return (
-    <div style={{ padding: 20 }}>
-      <Space
-        align="center"
-        style={{ marginBottom: 16, width: "100%", justifyContent: "space-between" }}
-      >
-        <Typography.Title level={3} style={{ margin: 0 }}>
-          <SafetyOutlined /> Security
-        </Typography.Title>
-      </Space>
+    <div>
+      <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
+        <SafetyOutlined /> Security
+      </Typography.Title>
 
       <Card
         tabList={TAB_KEYS.map((k) => ({

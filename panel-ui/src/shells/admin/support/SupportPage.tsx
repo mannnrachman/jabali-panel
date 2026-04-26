@@ -79,13 +79,10 @@ export const SupportPage = () => {
 
   return (
     <div>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: 16,
-        }}
+      <Space
+        wrap
+        align="center"
+        style={{ width: "100%", justifyContent: "space-between", marginBottom: 16 }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
           Support
@@ -93,7 +90,7 @@ export const SupportPage = () => {
         <Button icon={<FileTextOutlined />} onClick={() => setModalOpen(true)}>
           Send Diagnostic Report
         </Button>
-      </div>
+      </Space>
 
       <Row gutter={[16, 16]}>
         {CARDS.map((c) => (

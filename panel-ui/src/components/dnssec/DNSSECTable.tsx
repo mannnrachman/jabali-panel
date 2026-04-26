@@ -219,7 +219,7 @@ function DSModal({
           Close
         </Button>,
       ]}
-      width={720}
+      width="min(720px, calc(100vw - 32px))"
     >
       {!enabled ? (
         <Alert

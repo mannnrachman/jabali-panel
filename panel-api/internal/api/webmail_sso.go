@@ -12,6 +12,7 @@ import (
 	"html/template"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -21,6 +22,17 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
+
+// defaultBulwarkBaseURL points at the M25 unix-domain socket bulwark
+// listens on. panel-api is in jabali-sockets so it can dial it. The
+// `unix:` prefix follows the same convention as Kratos's admin URL
+// (see kratosclient/transport.go) — operators learn one form.
+const defaultBulwarkBaseURL = "unix:/run/jabali-bulwark/bulwark.sock"
+
+// bulwarkSyntheticHost is the http.Transport-visible host used when
+// dialing bulwark over UDS. Bulwark's /api/auth/session does not
+// validate the Host header, so a synthetic value is fine.
+const bulwarkSyntheticHost = "bulwark"
 
 // bulwarkBridgeTmpl writes Bulwark's zustand-persist auth-storage key to
 // localStorage, then navigates to `/`. Without this, Bulwark 1.4.14's
@@ -78,9 +90,10 @@ type WebmailSSOHandlerConfig struct {
 	Domains   repository.DomainRepository
 	SSOKey    *ssokey.Key
 	SSOTokens repository.MailboxSSOTokenRepository
-	// BulwarkBaseURL is the internal loopback URL we POST to for
-	// session creation. Defaults to http://127.0.0.1:3000. Tests
-	// override this to point at an httptest server.
+	// BulwarkBaseURL is the URL we POST to for session creation.
+	// Defaults to unix:/run/jabali-bulwark/bulwark.sock (M25 lockdown);
+	// any `unix:/abs/path` form triggers a UDS-aware http.Client. Tests
+	// override with an httptest server's TCP URL (no UDS rewriting).
 	BulwarkBaseURL string
 	// HTTPClient is mockable for tests; defaults to http.DefaultClient
 	// with a 15s timeout.
@@ -256,18 +269,52 @@ func (h *webmailSSOHandler) land(c *gin.Context) {
 	}
 }
 
+// bulwarkBase returns the base URL we POST to for Bulwark session
+// creation. For `unix:/abs/path` configs (the default) we collapse to
+// the synthetic `http://bulwark` host so net/url.Parse and the http
+// client's Host-header logic still work — the per-request transport
+// (built in httpClient) routes that synthetic host over the socket.
 func (h *webmailSSOHandler) bulwarkBase() string {
-	if h.cfg.BulwarkBaseURL != "" {
-		return strings.TrimSuffix(h.cfg.BulwarkBaseURL, "/")
+	raw := h.cfg.BulwarkBaseURL
+	if raw == "" {
+		raw = defaultBulwarkBaseURL
 	}
-	return "http://127.0.0.1:3000"
+	if strings.HasPrefix(raw, "unix:") {
+		return "http://" + bulwarkSyntheticHost
+	}
+	return strings.TrimSuffix(raw, "/")
 }
 
 func (h *webmailSSOHandler) httpClient() *http.Client {
 	if h.cfg.HTTPClient != nil {
 		return h.cfg.HTTPClient
 	}
-	return &http.Client{Timeout: 15 * time.Second}
+	raw := h.cfg.BulwarkBaseURL
+	if raw == "" {
+		raw = defaultBulwarkBaseURL
+	}
+	if !strings.HasPrefix(raw, "unix:") {
+		return &http.Client{Timeout: 15 * time.Second}
+	}
+	sockPath := strings.TrimPrefix(strings.TrimPrefix(raw, "unix:"), "//")
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	tr := &http.Transport{
+		MaxIdleConns:          10,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, _, err := net.SplitHostPort(addr)
+			if err != nil {
+				return dialer.DialContext(ctx, network, addr)
+			}
+			if host == bulwarkSyntheticHost {
+				return dialer.DialContext(ctx, "unix", sockPath)
+			}
+			return dialer.DialContext(ctx, network, addr)
+		},
+	}
+	return &http.Client{Timeout: 15 * time.Second, Transport: tr}
 }
 
 func (h *webmailSSOHandler) logErr(msg string, err error) {

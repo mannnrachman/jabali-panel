@@ -1186,7 +1186,22 @@ _install_sury_source() {
   cat > /etc/apt/sources.list.d/sury-php.list <<EOF
 deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ ${codename} main
 EOF
-  _ok "added Sury PHP repository for ${codename}"
+
+  # packages.sury.org sits behind Fastly; the Fastly edge returns
+  # HTTP 418 ("I'm a teapot") when apt's default User-Agent string
+  # ("Debian APT-HTTP/1.3 (...)") arrives from a flagged datacenter
+  # IP. Override the User-Agent for Sury fetches only — keep the
+  # default elsewhere so we don't muddy other repos' bot heuristics.
+  # Fastly accepts a plain Mozilla string so we use that.
+  cat > /etc/apt/apt.conf.d/98-jabali-sury-ua.conf <<'APTEOF'
+// Workaround Fastly 418 on packages.sury.org (Debian/Ubuntu
+// datacenter-IP false positives). Scoped per-repo so other
+// archives still see the standard apt User-Agent.
+Acquire::http::User-Agent::"https://packages.sury.org/php" "Mozilla/5.0 (X11; Linux x86_64) jabali-panel-installer";
+Acquire::https::User-Agent::"https://packages.sury.org/php" "Mozilla/5.0 (X11; Linux x86_64) jabali-panel-installer";
+Acquire::Retries "3";
+APTEOF
+  _ok "added Sury PHP repository for ${codename} (with Fastly UA workaround)"
 }
 
 _install_php_version() {

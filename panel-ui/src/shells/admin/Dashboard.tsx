@@ -12,35 +12,30 @@ import { ServerOutlined, TeamOutlined, GlobalOutlined, MailOutlined } from "@ico
 import { apiClient } from "../../apiClient";
 import { useServerStatus } from "../../hooks/useServerStatus";
 
-interface CountResponse {
-  total: number;
-}
-
-async function fetchTotal(path: string): Promise<number> {
-  try {
-    const r = await apiClient.get<CountResponse>(path);
-    return r.data?.total ?? 0;
-  } catch {
-    return 0;
-  }
+interface CountsResponse {
+  users: number;
+  domains: number;
+  mailboxes: number;
 }
 
 export const Dashboard = () => {
   const status = useServerStatus();
   const env = status.data;
 
-  const users = useQuery({
-    queryKey: ["dashboard", "users-count"],
-    queryFn: () => fetchTotal("/admin/users?limit=1"),
+  const counts = useQuery({
+    queryKey: ["dashboard", "admin-counts"],
+    queryFn: async () => {
+      try {
+        const r = await apiClient.get<CountsResponse>("/admin/counts");
+        return r.data;
+      } catch {
+        return { users: 0, domains: 0, mailboxes: 0 } as CountsResponse;
+      }
+    },
   });
-  const domains = useQuery({
-    queryKey: ["dashboard", "domains-count"],
-    queryFn: () => fetchTotal("/admin/domains?limit=1"),
-  });
-  const mailboxes = useQuery({
-    queryKey: ["dashboard", "mailboxes-count"],
-    queryFn: () => fetchTotal("/admin/mailboxes?limit=1"),
-  });
+  const users = { data: counts.data?.users };
+  const domains = { data: counts.data?.domains };
+  const mailboxes = { data: counts.data?.mailboxes };
 
   const alerts = env?.alerts ?? [];
   const critical = alerts.filter((a) => a.level === "critical").length;

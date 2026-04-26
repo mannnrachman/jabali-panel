@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/time/rate"
+	"gorm.io/gorm"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api"
@@ -103,6 +104,12 @@ type Deps struct {
 	// write to this Queue. Nil when Redis is not configured; handlers
 	// must 503 rather than panic.
 	NotificationQueue *notifications.Queue
+	// DB is the raw GORM handle. Most handlers go through typed repos
+	// — this is only here for tiny one-off endpoints that need a
+	// COUNT(*) across multiple tables (e.g. /admin/counts on the
+	// admin Dashboard) where adding a CountAll method to every repo
+	// would be more code than the call site.
+	DB *gorm.DB
 }
 
 // Default tier: chosen so a reasonable SPA (polling, a few concurrent
@@ -367,6 +374,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// Admin: Service controls (M31). Mounts POST /admin/services/:name/:action.
 		api.RegisterAdminServicesRoutes(v1, api.AdminServicesHandlerConfig{
 			Agent: deps.Agent,
+		})
+		// Admin: dashboard counts (one-shot users/domains/mailboxes totals).
+		api.RegisterAdminCountsRoutes(v1, api.AdminCountsHandlerConfig{
+			DB: deps.DB,
 		})
 		// Admin: Panel SSL certificate (M32, ADR-0066). Skipped when
 		// PanelCerts isn't wired (legacy test fixtures).

@@ -121,6 +121,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	deps.SSOKey = ssoKeyPtr
 	deps.Redis = redisClient
 	if sharedDB != nil {
+		deps.DB = sharedDB
 		userRepo := repository.NewUserRepository(sharedDB)
 		packageRepo := repository.NewPackageRepository(sharedDB)
 		domainRepo := repository.NewDomainRepository(sharedDB)

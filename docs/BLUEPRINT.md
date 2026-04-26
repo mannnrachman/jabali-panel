@@ -579,6 +579,13 @@ Milestones describe locked-in delivery order. Status: Shipped, In-flight, or Pla
 - Mailbox CRUD: `jabali mailbox {list,create,delete,set-quota,passwd}`
   — bcrypt hash for Stalwart auth + ssokey-sealed plaintext for webmail
   SSO, both written atomically.
+- M6.5 mailbox extras (CLI mirrors of the HTTP handlers):
+  `jabali mailbox autoresponder {set,clear,show} <email>` (subject + plain
+  / HTML body + optional from/to RFC3339 dates),
+  `jabali mailbox forwarder {add,list,remove}` (alias OR external).
+- M6.5 domain extras: `jabali domain catchall {set,clear,show}` and
+  `jabali domain disclaimer {set,clear,show}` (`--text` literal or
+  `--file <path>` for HTML).
 - Panel-API: `GET/POST/DELETE /domains/:id/email`, `GET/POST /domains/:id/mailboxes`,
   `PATCH/DELETE /mailboxes/:id`, `POST /mailboxes/:id/rotate-password`,
   `POST /mailboxes/:id/sso` (mint) + `GET /sso/webmail?token=…` (landing).

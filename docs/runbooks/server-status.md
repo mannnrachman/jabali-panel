@@ -6,15 +6,24 @@ Operator notes for `/jabali-admin/server-status` (M31, ADR-0065).
 
 | Section | Source | Refresh |
 |---|---|---|
-| Host header | `system.info` (agent) | 5s |
-| CPU/Mem/Swap/Load meters | `system.cpu_usage` + `system.info` | 5s |
+| CPU / Memory / Swap / Load meters | `system.cpu_usage` + `system.info` | 5s |
 | Disks table | `system.info → partitions` | 5s |
 | Network table | `system.network` | 5s |
-| Services grid | `system.service_details` | 5s |
+| Services summary card | `system.service_details` | 5s |
+| System Information card | `system.info` + `system.network` (first non-loopback IPv4) | 5s |
+| User slices card | `system.user_slices` (cgroup v2 per-user) | 5s |
 | Processes card | `system.processes` | 5s |
 | Updates card | `system.update_check` + `system.apt_check` | manual |
 | Queues card | not yet wired (placeholder, M31.1) | — |
 | Alerts banner | `synthesizeAlerts` panel-api side | 5s |
+
+Layout: AntD `<Masonry columns={{xs:1,sm:1,md:2,lg:3}}>` over an
+items array. AntD Masonry only renders nodes from `items[].children`
+— children passed between `<Masonry>` tags render as nothing (the
+mistake that shipped a black page in the first cut). Order in the
+items array determines visual order (column-first packing): meters
+first (CPU/Memory/Swap/Load), then Disks/Network, then Services and
+System Information, then User slices / Processes / Queues / Updates.
 
 Polling pauses when the browser tab is hidden (`refetchIntervalInBackground:
 false`). One idle admin tab = zero load on the agent.
@@ -27,8 +36,16 @@ Hard-coded in `panel-api/internal/api/server_status.go`:
 |---|---|---|
 | Disk used | ≥ 80% | ≥ 95% |
 | 1m load | > 1× cores | > 2× cores |
-| Service ActiveState | — | `inactive` or `failed` |
+| Service `failed` | — | always |
+| Service `inactive` + UnitFileState ∈ {enabled, enabled-runtime, static, alias} | — | always |
+| Service `inactive` + UnitFileState `disabled` (lazy-started) | suppressed | suppressed |
 | Sub-call failure | always | — (warning, not critical) |
+
+Lazy-started services (e.g. `jabali-webmail` boots only on the first
+domain.email_enable) stay disabled+inactive on hosts with no mail
+domains; flagging them critical would paint a permanent red banner.
+The aggregator reads `UnitFileState` from `systemctl show` and only
+escalates inactive units when the operator expects them to be running.
 
 Adjusting thresholds = one-line edit in `synthesizeAlerts`. No reboot
 needed; `jabali update -f` rolls it out.
@@ -92,6 +109,32 @@ timedatectl set-ntp true
 
 Wait a minute and refresh.
 
+### "User slices card empty"
+
+`system.user_slices` walks `/sys/fs/cgroup/jabali.slice/jabali-user.slice/`
+for `jabali-user-*.slice` directories. Empty card means no per-user
+slices have been provisioned (fresh host with no Linux users) OR the
+M18 cgroup hierarchy didn't initialise. Verify:
+
+```bash
+ls /sys/fs/cgroup/jabali.slice/jabali-user.slice/
+systemctl status jabali-user.slice
+```
+
+If the parent slice is missing, the agent returns an empty `slices`
+array rather than erroring — the card renders "No per-user slices on
+this host." rather than "—".
+
+### "Service Restart vs Reload button"
+
+Per-row action button defaults to **Restart**. nginx, pdns, and
+pdns-recursor expose **Reload** instead — these accept `systemctl
+reload` to re-read config without dropping in-flight connections.
+The action allow-list lives in `ServicesSummaryCard.reloadCapable`;
+unit names in that set route to the agent's `service.reload` command
+(else `service.restart`). Both verbs are gated by the agent's
+`isAllowedService` allow-list (`service_list.go`).
+
 ## Adding a new metric
 
 1. Decide if it belongs in an existing slice (host / cpu / network /
@@ -115,8 +158,9 @@ Wait a minute and refresh.
 
 ## Files
 
-- Agent: `panel-agent/internal/commands/system_{network,processes,cpu_usage,service_details}.go`
-- panel-api: `panel-api/internal/api/server_status.go`, `admin_services.go`
-- UI: `panel-ui/src/shells/admin/server-status/*`, `panel-ui/src/hooks/useServerStatus.ts`
+- Agent: `panel-agent/internal/commands/system_{network,processes,cpu_usage,service_details,user_slices}.go`, `service_{restart,reload,lifecycle}.go`
+- panel-api: `panel-api/internal/api/server_status.go`, `admin_services.go`, `admin_counts.go`
+- UI cards: `panel-ui/src/shells/admin/server-status/{ServerStatusPage,SystemInfoCard,ServicesSummaryCard,UserSlicesCard,MetersGrid,DisksTable,NetworkTable,ProcessesCard,QueuesCard,UpdatesCard,AlertsBanner}.tsx`
+- UI hook: `panel-ui/src/hooks/useServerStatus.ts`
 - ADR: `docs/adr/0065-server-status.md`
 - Plan: `plans/m31-server-status.md`

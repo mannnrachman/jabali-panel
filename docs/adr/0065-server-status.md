@@ -45,10 +45,12 @@ The aggregator never returns 5xx for sub-call failure — the envelope is
 |---|---|---|
 | `system.info` | hostname, OS, kernel, CPU model + count, mem, swap, partitions, uptime, load avg, NTP | extended (added OS/kernel/cpu_model/swap/NTPSynced) |
 | `service.list` | systemd units allowlist + active/load_state/enabled | reused as-is |
+| `service.reload` | `systemctl reload <unit>` for nginx + pdns(-recursor) | new (M31 follow-up) |
 | `system.network` | per-iface state + bps + pps + errors | new |
 | `system.processes` | total/running/sleeping/zombie + top-N by RSS | new |
 | `system.cpu_usage` | aggregate + per-core busy% + iowait%, delta-cached | new |
-| `system.service_details` | per-unit memory/tasks/uptime via one `systemctl show` | new |
+| `system.service_details` | per-unit memory/tasks/uptime + UnitFileState via one `systemctl show` | new (UnitFileState added in alert-refinement follow-up) |
+| `system.user_slices` | per-user cgroup v2 metrics from `/sys/fs/cgroup/jabali.slice/jabali-user.slice/jabali-user-*.slice` | new (M31 follow-up) |
 
 `system.network` and `system.cpu_usage` keep an in-memory previous
 sample per agent process so they can compute rates from the next call's
@@ -66,8 +68,13 @@ lifecycle commands.
 ### 5. Alert synthesis lives panel-api-side, not agent-side
 
 Threshold rules (disk > 80% warning, > 95% critical; load > cores × 2
-warning; service inactive → critical) live in `synthesizeAlerts`. The
-agent ships raw numbers; the panel decides what they mean. This keeps
+warning; service `failed` → critical; service `inactive` → critical
+**only when** `UnitFileState ∈ {enabled, enabled-runtime, static, alias}`,
+suppressed otherwise) live in `synthesizeAlerts`. The agent ships raw
+numbers; the panel decides what they mean. Lazy-started units (e.g.
+`jabali-webmail` boots on the first domain.email_enable) stay disabled
+until needed, so flagging their inactivity as critical would paint a
+permanent red banner on hosts with no mail domains. This keeps
 threshold-tuning a one-place edit + lets the same agent serve multiple
 panel versions with different rule sets.
 
@@ -121,3 +128,26 @@ recovers on the next.
 - **Pending-updates + crowdsec alerts** (currently surfaced via the
   Updates card; not synthesized into the AlertsBanner yet).
 - **Historical charts** — out of scope (see plan §Out of scope).
+- **Per-process CPU%** — deferred (needs two `/proc/<pid>/stat` samples
+  + per-pid state in the agent).
+
+## Layout addendum (Masonry refactor)
+
+The original cut placed a single full-width banner card at the top
+(`HostHeaderCard`) with everything else in `<Row>/<Col>` below.
+Operators wanted a categorised "system information" table next to a
+compact services control card, plus the option to add per-user slice
+metrics without forcing matched row heights.
+
+Switched to AntD `<Masonry columns={{xs:1,sm:1,md:2,lg:3}}>` over an
+`items` array. Caveat: AntD Masonry only renders nodes from
+`items[].children` — children passed between `<Masonry>` tags render
+as nothing, which shipped a black page in the first cut. The fix is
+documented in the file header so the next refactor doesn't repeat it.
+
+Cards added in this layout pass: `SystemInfoCard` (categorised
+hostname/OS/kernel/CPU/memory table with Tag chips for category),
+`ServicesSummaryCard` (Service / status icon / inline Restart-or-
+Reload action behind Popconfirm), `UserSlicesCard` (per-user CPU% +
+memory + tasks). `HostHeaderCard` and the heavier `ServicesGrid` were
+deleted — both were superseded.

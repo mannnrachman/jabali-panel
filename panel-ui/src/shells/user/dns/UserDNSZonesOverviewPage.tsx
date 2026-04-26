@@ -1,12 +1,14 @@
-// UserDNSZonesOverviewPage — tenant landing for DNS. Parallel of
-// admin/dns/DNSZonesOverviewPage but navigates within /jabali-panel
-// for the DNS-record deep-link.
+// UserDNSZonesOverviewPage — tenant landing for DNS. Tabs split into
+// "Zones" + "DNSSEC", parallel of admin/dns/DNSZonesOverviewPage but
+// without the Owner column and navigating within /jabali-panel for
+// the DNS-record deep-link.
 import { useEffect, useState } from "react";
-import { Alert, Button, Card, Empty, Spin, Table, Tag, Typography } from "antd";
+import { Alert, Button, Card, Empty, Spin, Table, Tabs, Tag, Typography } from "antd";
 import { useNavigate } from "react-router";
 
 import { apiClient } from "../../../apiClient";
 import { columnSearchProps } from "../../../components/columnSearch";
+import { DNSSECTable } from "../../../components/dnssec/DNSSECTable";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useTableURL } from "../../../hooks/useTableURL";
 
@@ -22,7 +24,7 @@ interface ZoneStatus {
   provisioned: boolean;
 }
 
-export const UserDNSZonesOverviewPage = () => {
+const ZonesTab = () => {
   const navigate = useNavigate();
   const [zoneStatuses, setZoneStatuses] = useState<Map<string, ZoneStatus>>(
     new Map(),
@@ -72,18 +74,13 @@ export const UserDNSZonesOverviewPage = () => {
   };
 
   return (
-    <div>
-      <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
-        DNS Zones
-      </Typography.Title>
-
+    <>
       <Alert
         title="DNS zones are provisioned automatically when a domain is created. Nameservers are configured in Server Settings."
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
       />
-
       <Card>
         {query.isLoading ? (
           <Spin />
@@ -133,6 +130,34 @@ export const UserDNSZonesOverviewPage = () => {
           </SearchableTableStringQ>
         )}
       </Card>
-    </div>
+    </>
   );
 };
+
+const DNSSECTab = () => (
+  <>
+    <Alert
+      type="info"
+      showIcon
+      style={{ marginBottom: 16 }}
+      message="Protect your domain with DNSSEC."
+      description="Enable signing here, then copy the DS record to your registrar to complete the chain of trust."
+    />
+    <DNSSECTable showOwner={false} />
+  </>
+);
+
+export const UserDNSZonesOverviewPage = () => (
+  <div>
+    <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
+      DNS
+    </Typography.Title>
+    <Tabs
+      destroyOnHidden
+      items={[
+        { key: "zones", label: "Zones", children: <ZonesTab /> },
+        { key: "dnssec", label: "DNSSEC", children: <DNSSECTab /> },
+      ]}
+    />
+  </div>
+);

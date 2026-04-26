@@ -1,14 +1,15 @@
-// DNSZonesOverviewPage — admin landing for DNS. Lists every domain
-// with a "zone provisioned?" badge so operators can see at a glance
-// which zones didn't come up. Post-M21: useTable → useTableURL; the
-// per-domain zone probe is unchanged (apiClient.get on each row
-// after the list resolves).
+// DNSZonesOverviewPage — admin landing for DNS. Tabs split the page
+// into "Zones" (per-domain provisioning status) and "DNSSEC" (signing
+// state + DS export). Both tabs share the URL-backed table params via
+// useTableURL on `domains`, so a search in one tab carries over to
+// the other — they're both views of the same domain list.
 import { useEffect, useState } from "react";
-import { Alert, Button, Card, Empty, Spin, Table, Tag, Typography } from "antd";
+import { Alert, Button, Card, Empty, Spin, Table, Tabs, Tag, Typography } from "antd";
 import { useNavigate } from "react-router";
 
 import { apiClient } from "../../../apiClient";
 import { columnSearchProps } from "../../../components/columnSearch";
+import { DNSSECTable } from "../../../components/dnssec/DNSSECTable";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useTableURL } from "../../../hooks/useTableURL";
 
@@ -24,7 +25,7 @@ interface ZoneStatus {
   provisioned: boolean;
 }
 
-export const DNSZonesOverviewPage = () => {
+const ZonesTab = () => {
   const navigate = useNavigate();
   const [zoneStatuses, setZoneStatuses] = useState<Map<string, ZoneStatus>>(
     new Map(),
@@ -36,9 +37,6 @@ export const DNSZonesOverviewPage = () => {
     defaultOrder: "asc",
   });
 
-  // Fetch zone status for each domain after the list resolves.
-  // Keep this lightweight — one GET per row. Panel-side zones are
-  // cheap to look up and most admin-scale installs have <100 domains.
   useEffect(() => {
     const domains = query.items;
     if (domains.length === 0) return;
@@ -52,11 +50,7 @@ export const DNSZonesOverviewPage = () => {
             provisioned: !!res.data?.data?.id,
           };
         } catch {
-          // If zone doesn't exist or error, consider it not provisioned.
-          return {
-            domainId: domain.id,
-            provisioned: false,
-          };
+          return { domainId: domain.id, provisioned: false };
         }
       }),
     ).then((results) => {
@@ -81,18 +75,13 @@ export const DNSZonesOverviewPage = () => {
   };
 
   return (
-    <div>
-      <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
-        DNS Zones
-      </Typography.Title>
-
+    <>
       <Alert
         title="DNS zones are provisioned automatically when a domain is created. Nameservers are configured in Server Settings."
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
       />
-
       <Card>
         {query.isLoading ? (
           <Spin />
@@ -100,53 +89,81 @@ export const DNSZonesOverviewPage = () => {
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No domains found" />
         ) : (
           <SearchableTableStringQ<Domain>
-          rowKey="id"
-          loading={query.isLoading}
-          dataSource={query.items}
-          initialSearch={query.params.q}
-          searchPlaceholder="Search by domain name"
-          onSearchChange={(q) => query.setParams({ q, page: 1 })}
-          pagination={{
-            current: query.params.page,
-            pageSize: query.params.pageSize,
-            total: query.total,
-            onChange: (page, pageSize) => query.setParams({ page, pageSize }),
-          }}
-        >
-          <Table.Column<Domain>
-            dataIndex="name"
-            title="Domain Name"
-            {...columnSearchProps<Domain>({
-              placeholder: "Search by domain name",
-              currentQ: query.params.q,
-              onSearch: (v) => query.setParams({ q: v, page: 1 }),
-            })}
-          />
-          <Table.Column<Domain>
-            dataIndex="user_id"
-            title="Owner"
-            render={(value: string) => value.substring(0, 8)}
-          />
-          <Table.Column<Domain>
-            title="Zone Status"
-            render={(_, record) => getZoneStatusTag(record.id)}
-          />
-          <Table.Column<Domain>
-            title="Actions"
-            render={(_, record) => (
-              <Button
-                type="primary"
-                onClick={() =>
-                  navigate(`/jabali-admin/domains/${record.id}/dns`)
-                }
-              >
-                Manage Records
-              </Button>
-            )}
-          />
+            rowKey="id"
+            loading={query.isLoading}
+            dataSource={query.items}
+            initialSearch={query.params.q}
+            searchPlaceholder="Search by domain name"
+            onSearchChange={(q) => query.setParams({ q, page: 1 })}
+            pagination={{
+              current: query.params.page,
+              pageSize: query.params.pageSize,
+              total: query.total,
+              onChange: (page, pageSize) => query.setParams({ page, pageSize }),
+            }}
+          >
+            <Table.Column<Domain>
+              dataIndex="name"
+              title="Domain Name"
+              {...columnSearchProps<Domain>({
+                placeholder: "Search by domain name",
+                currentQ: query.params.q,
+                onSearch: (v) => query.setParams({ q: v, page: 1 }),
+              })}
+            />
+            <Table.Column<Domain>
+              dataIndex="user_id"
+              title="Owner"
+              render={(value: string) => value.substring(0, 8)}
+            />
+            <Table.Column<Domain>
+              title="Zone Status"
+              render={(_, record) => getZoneStatusTag(record.id)}
+            />
+            <Table.Column<Domain>
+              title="Actions"
+              render={(_, record) => (
+                <Button
+                  type="primary"
+                  onClick={() =>
+                    navigate(`/jabali-admin/domains/${record.id}/dns`)
+                  }
+                >
+                  Manage Records
+                </Button>
+              )}
+            />
           </SearchableTableStringQ>
         )}
       </Card>
-    </div>
+    </>
   );
 };
+
+const DNSSECTab = () => (
+  <>
+    <Alert
+      type="info"
+      showIcon
+      style={{ marginBottom: 16 }}
+      message="Sign zones with DNSSEC. Enable per-domain, then publish the DS record at the registrar."
+      description="Signing is best-effort NSEC3 with ECDSAP256SHA256 (RFC 8624). Keys are managed by PowerDNS via pdnsutil."
+    />
+    <DNSSECTable showOwner />
+  </>
+);
+
+export const DNSZonesOverviewPage = () => (
+  <div>
+    <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
+      DNS
+    </Typography.Title>
+    <Tabs
+      destroyOnHidden
+      items={[
+        { key: "zones", label: "Zones", children: <ZonesTab /> },
+        { key: "dnssec", label: "DNSSEC", children: <DNSSECTab /> },
+      ]}
+    />
+  </div>
+);

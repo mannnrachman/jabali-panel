@@ -135,12 +135,6 @@ export const adminNav: NavItem[] = [
     path: "/jabali-admin/applications",
   },
   {
-    key: "dnssec",
-    label: "DNSSEC",
-    icon: navIcon(ShieldCheckOutlined),
-    path: "/jabali-admin/dnssec",
-  },
-  {
     key: "notifications",
     label: "Notifications",
     icon: navIcon(BellOutlined),
@@ -184,12 +178,6 @@ export const userNav: NavItem[] = [
     label: "SSL Manager",
     icon: navIcon(ShieldCheckOutlined),
     path: "/jabali-panel/ssl",
-  },
-  {
-    key: "dnssec",
-    label: "DNSSEC",
-    icon: navIcon(SafetyOutlined),
-    path: "/jabali-panel/dnssec",
   },
   {
     key: "php-settings",

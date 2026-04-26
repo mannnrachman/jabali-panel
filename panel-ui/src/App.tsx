@@ -39,8 +39,6 @@ import { NotificationsTabsPage } from "./shells/admin/notifications/Notification
 import { useApplyBrandingToTitle } from "./hooks/useBranding";
 import { AdminSecurityPage } from "./shells/admin/security/AdminSecurityPage";
 import { ServerStatusPage } from "./shells/admin/server-status/ServerStatusPage";
-import { AdminDNSSECPage } from "./shells/admin/dnssec/AdminDNSSECPage";
-import { UserDNSSECPage } from "./shells/user/dnssec/UserDNSSECPage";
 import { SystemUpdatesPage } from "./shells/admin/updates/SystemUpdatesPage";
 import { SupportPage } from "./shells/admin/support/SupportPage";
 import { PackageCreate } from "./shells/admin/packages/PackageCreate";
@@ -159,7 +157,7 @@ const ThemedApp = () => {
             </Route>
             <Route path="security" element={<AdminSecurityPage />} />
             <Route path="server-status" element={<ServerStatusPage />} />
-            <Route path="dnssec" element={<AdminDNSSECPage />} />
+            <Route path="dnssec" element={<Navigate to="/jabali-admin/dns" replace />} />
             <Route path="updates" element={<SystemUpdatesPage />} />
             <Route path="support" element={<SupportPage />} />
             <Route path="notifications">
@@ -196,7 +194,7 @@ const ThemedApp = () => {
             </Route>
             <Route path="dns" element={<UserDNSZonesOverviewPage />} />
             <Route path="ssl" element={<UserSSLManagerPage />} />
-            <Route path="dnssec" element={<UserDNSSECPage />} />
+            <Route path="dnssec" element={<Navigate to="/jabali-panel/dns" replace />} />
             <Route path="php-settings" element={<UserPHPSettingsPage />} />
             <Route path="files" element={<FileManagerPage />} />
             <Route path="applications" element={<UserApplicationList />} />

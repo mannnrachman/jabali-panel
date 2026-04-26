@@ -86,6 +86,38 @@ admin who wants no isolation must make the user SFTP-only.
     Removing an image version requires confirming no user is pinned to
     it. `jabali nspawn-prune` CLI surfaces orphaned versions safely.
 
+14. **No host sockets bound into the sandbox. Period.**
+    The sandbox is an island. None of these are bound:
+      - `/run/php/jabali-<u>/fpm.sock` (own FPM)
+      - `/run/php/php-fpm.sock` (system FPM)
+      - `/run/mysqld/mysqld.sock` (MariaDB)
+      - `/run/jabali-agent.sock`, Kratos / panel-api / admin sockets
+      - `/var/lib/jabali-*`, `/etc/jabali/`, `/run/`, `/var/run/`
+    Rationale: a bound socket is a privilege channel. FPM runs as the
+    user but a compromised sandbox could replay any FPM request the
+    nginx vhost would; MariaDB skip-networking is on per M25 and
+    binding the socket would re-introduce a direct DB path from the
+    user-controlled environment. Sandboxed shells reach external
+    services only via TCP/HTTP on host loopback or public interfaces,
+    never via Unix sockets.
+    Implication for wp-cli / mysql CLI inside the sandbox: DB ops are
+    not available unless admin opens a TCP path (out of scope for v1).
+    Document in §4 runbook: "for DB operations from a shell, use the
+    panel's phpMyAdmin SSO or run wp-cli via the host (panel
+    Applications → Run command)." A scoped TCP proxy is a v2 feature.
+
+15. **Builds are deterministic via apt snapshot pinning.**
+    debootstrap pulls from `https://snapshot.debian.org/archive/debian/<TS>/`
+    where `<TS>` is an ISO-8601 timestamp like `20260426T000000Z`. Same
+    `--codename + --version + --snapshot` triple produces bit-identical
+    images on any host, any day. Snapshot timestamp + package list +
+    SHA-256 of the sealed rootfs are written to
+    `/var/lib/jabali-nspawn/images/<codename>-<version>/MANIFEST.json`.
+    Snapshot is mandatory — `jabali nspawn-build` refuses to run without
+    `--snapshot` (no implicit "now"). Security/availability fallback:
+    snapshot.debian.org reverse proxy (`deb.debian.org/debian-snapshot`)
+    is documented in the runbook for outage handling.
+
 ---
 
 ## 1. Steps / waves
@@ -95,7 +127,7 @@ admin who wants no isolation must make the user SFTP-only.
 | 1 — ADR | A | w/ 2 | Record "wrapper-as-shell + bubblewrap default + versioned nspawn images + sudo bridge" decisions; surface tradeoffs vs ForceCommand and shared-rootfs. | `docs/adr/0067-ssh-shell-sandbox.md` |
 | 2 — install foundations | A | w/ 1 | apt install `bubblewrap` `debootstrap` `systemd-container`. Create `/etc/jabali/`, `/etc/jabali/users/`, `/var/lib/jabali-nspawn/images/`. Ship `install/ssh/jabali-ssh-shell` wrapper. Write default `/etc/jabali/ssh-sandbox-mode = bubblewrap`. Create groups `jabali-ssh-sandbox`. | `install.sh`, `install/ssh/jabali-ssh-shell`, `update.go` sync |
 | 3 — bubblewrap profile + smoke | B | w/ 4,5 | Wrapper's bwrap branch with v1 mount profile (§3). Smoke: bwrap → bash → `ls /home/<other-user>` returns ENOENT, `cat /etc/shadow` denied. | `install/ssh/jabali-ssh-shell` (bwrap branch), `tests/smoke/bwrap-isolation.sh` |
-| 4 — nspawn image build CLI + seed v1 | B | w/ 3,5 | `jabali nspawn-build [--codename debian-12 --version v1]` runs debootstrap + minimal post-process at `/var/lib/jabali-nspawn/images/<codename>-<version>/`. install.sh invokes once on first install (idempotent: skip if v1 exists). Image is sealed read-only after build. | `panel-cli/cmd/nspawn_build.go`, `install/nspawn/postinstall.sh`, install.sh integration |
+| 4 — nspawn image build CLI + seed v1 | B | w/ 3,5 | `jabali nspawn-build --codename debian-12 --version v1 --snapshot 20260426T000000Z` runs debootstrap pointed at `https://snapshot.debian.org/archive/debian/<TS>/` for deterministic output, runs post-install script, writes `MANIFEST.json` (snapshot TS, package list, rootfs SHA-256), seals image dir `chmod 0555`. install.sh invokes once on first install with the bundled "blessed" snapshot timestamp (idempotent: skip if v1 exists). | `panel-cli/cmd/nspawn_build.go`, `install/nspawn/postinstall.sh`, `install/nspawn/blessed-snapshots.json`, install.sh integration |
 | 5 — nspawn enter helper + sudoers | B | w/ 3,4 | Ship `install/ssh/jabali-nspawn-enter` (validates image name from allowlist, validates `$SUDO_USER`, exec's `systemd-nspawn --ephemeral --bind=/home/<u>`). Ship `install/ssh/jabali-nspawn-sudoers` locked to absolute path + group `jabali-ssh-sandbox`. install.sh `visudo -c` checks. | `install/ssh/jabali-nspawn-enter`, `install/ssh/jabali-nspawn-sudoers`, install.sh |
 | 6 — migration + agent commands | C | — | Migration: `users.nspawn_image_version TEXT NULL`. Agent commands: `system.set_ssh_sandbox_mode` (writes mode file atomically); `ssh.user.set_shell` (chsh helper, idempotent); `ssh.user.write_nspawn_pin` (writes/removes `/etc/jabali/users/<u>/nspawn-image`); `system.list_nspawn_images` (returns directory listing for UI dropdowns). | new migration, `panel-agent/internal/commands/system_set_ssh_sandbox_mode.go`, `ssh_user_set_shell.go`, `ssh_user_write_nspawn_pin.go`, `system_list_nspawn_images.go` |
 | 7 — server_settings + user model + API | C | — | server_settings keys: `ssh_sandbox_mode` (default `bubblewrap`), `default_nspawn_image_version` (default `debian-12-v1`). User model + repo gain `NspawnImageVersion *string`. API: extend system settings GET/PATCH; expose per-user pin in user PATCH; `GET /api/v1/system/nspawn-images` for the dropdown. | `panel-api/internal/repository/server_settings.go`, `internal/models/user.go`, `internal/api/server_settings.go`, `internal/api/users.go`, `internal/api/nspawn_images.go` |
@@ -125,6 +157,11 @@ admin who wants no isolation must make the user SFTP-only.
   document SMTP submission to host in runbook.
 - **Custom rootfs distros (Ubuntu, Alpine).** Debian only in v1; the
   CLI's `--codename` flag is forward-compatible plumbing.
+- **In-sandbox DB / FPM access.** No host sockets bound (decision
+  §0.14). wp-cli/mysql CLI from inside the sandbox cannot reach
+  MariaDB or PHP-FPM. v2 may add a scoped TCP proxy (per-user
+  loopback bind with MariaDB ACL pre-check). Until then: panel UI,
+  phpMyAdmin SSO, or "Run command" via Applications.
 
 ---
 
@@ -151,6 +188,12 @@ admin who wants no isolation must make the user SFTP-only.
   `/etc/hostname`, `/etc/resolv.conf`, `/etc/ssl/certs/*`,
   `/etc/nsswitch.conf`. Hidden: `/etc/shadow`, `/etc/sudoers`,
   `/etc/jabali/`, `/etc/ssh/`, every other tenant's `/home/`.
+- **No host sockets bound into either sandbox.** `/var`, `/run`,
+  `/run/php`, `/run/mysqld`, `/var/lib/jabali-php-fpm-<u>/` are NOT
+  bound. Sandboxed shells reach services via TCP/HTTP on host
+  interfaces, not via Unix sockets. bwrap profile mounts a fresh tmpfs
+  at `/run` and `/var`; nspawn ephemeral overlay starts with the image's
+  empty `/var` + `/run`.
 - **nspawn image is read-only**, mounted with `--ephemeral` so writes
   are overlay'd and discarded. Image dir is `chmod 0555` after build.
 - **nspawn `/etc/passwd` filter** at image build: only system users +
@@ -199,18 +242,13 @@ Rollback:
 
 ## 5. Open questions
 
-1. **Image build reproducibility.** debootstrap pulls latest packages at
-   build time; same `--version` string built on different days produces
-   different binaries. Acceptable (admin owns the version label) or do
-   we want apt-snapshot pinning? Lean accept; document caveat.
-2. **Bind-mount `/var/lib/jabali-php-fpm-<u>/`** into nspawn so
-   user-driven scripts can poke their own FPM socket? Or force them to
-   ssh out and use the API? Lean: bind it in, matches bubblewrap which
-   has access to the host paths anyway.
-3. **WP-CLI / composer / git versions.** Inside nspawn the user gets
-   whatever's in the image. Outside (bubblewrap) they get host
+1. **WP-CLI / composer / git versions.** Inside nspawn the user gets
+   whatever's in the pinned image. Outside (bubblewrap) they get host
    versions. Documenting the difference in the runbook is enough; not
    trying to match toolchain across modes.
+
+(Resolved: deterministic builds via snapshot.debian.org pinning →
+decision §0.15. Host runtime socket binding ruled out → decision §0.14.)
 
 ---
 

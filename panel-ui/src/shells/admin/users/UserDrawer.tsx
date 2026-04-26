@@ -6,7 +6,7 @@
 //
 // Validation rules mirror the server's so the form rejects early.
 // Password on edit is optional — blank means "keep current".
-import { Button, Drawer, Form, Grid, Input, Space, Spin, Switch, message } from "antd";
+import { Button, Drawer, Form, Grid, Input, Select, Space, Spin, Switch, message } from "antd";
 import { useEffect } from "react";
 
 import { CheckOutlined, CloseOutlined } from "@icons";
@@ -235,7 +235,7 @@ const PackageSelect = (props: {
       loading={isLoading}
       options={[{ label: "No package", value: null }, ...options]}
       value={props.value}
-      onChange={(v) => props.onChange?.((v ?? null) as string | null)}
+      onChange={(v: string | null) => props.onChange?.(v ?? null)}
     />
   );
 };

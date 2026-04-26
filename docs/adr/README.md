@@ -59,6 +59,7 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0068](0068-per-user-cgroup-slice-metrics.md) | Per-user slice metrics via direct cgroup v2 read | Accepted |
 | [0069](0069-server-status-masonry-layout.md) | AntD `<Masonry>` for Server Status page layout | Accepted |
 | [0070](0070-le-cert-san-scope.md) | LE cert SAN list scoped to auto-provisioned DNS only (amends 0066) | Accepted |
+| [0071](0071-mariadb-loopback-only-not-skip-networking.md) | MariaDB loopback-only bind (amends 0050 M25.1) | Accepted |
 
 ## Decision Categories
 

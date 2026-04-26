@@ -1558,32 +1558,33 @@ provision_mariadb() {
   _ok "MariaDB provisioned: DB=${db_name}, user=${db_user}"
 }
 
-# ---------- step 2.5b: MariaDB skip-networking (M25.1) ----------------------
+# ---------- step 2.5b: MariaDB loopback-only (M25.1, amended) ---------------
 #
-# Drops a tiny drop-in conf that tells mariadbd NOT to bind TCP :3306.
-# Everything on this host — panel-api, Kratos, pdns, phpMyAdmin SSO —
-# already connects via /var/run/mysqld/mysqld.sock. Closing the TCP
-# listener shrinks the attack surface to the unix socket's POSIX ACL.
+# Drops a tiny drop-in conf that pins mariadbd to 127.0.0.1 only.
+#
+# Original M25.1 used `skip-networking` to close TCP :3306 entirely,
+# but Stalwart's SqlDirectory backend is TCP-only — there's no
+# unix-socket option in the upstream MySql store struct, so disabling
+# TCP broke webmail JMAP auth (502 "Failed to verify JMAP session").
+# The current setting binds to loopback only: external 3306 stays
+# closed (UFW + this binding), all panel-managed consumers (panel-api,
+# Kratos, pdns, phpMyAdmin SSO) keep using /var/run/mysqld/mysqld.sock,
+# and Stalwart can dial 127.0.0.1:3306.
 #
 # Why a drop-in under mariadb.conf.d/ rather than editing 50-server.cnf:
 # 50-server.cnf is package-owned. Every apt upgrade that ships a new
 # 50-server.cnf would either clobber our edit or prompt dpkg for
 # manual resolution. Drop-ins survive upgrades unchanged.
-#
-# Rollback (if some future service needs TCP again): `trash
-# /etc/mysql/mariadb.conf.d/99-jabali-skip-networking.cnf && systemctl
-# restart mariadb`. That re-opens :3306 without touching the
-# package-owned config.
 install_mariadb_skip_networking() {
   local dropin="/etc/mysql/mariadb.conf.d/99-jabali-skip-networking.cnf"
-  local desired=$'# Managed by jabali install.sh — M25.1. Do NOT hand-edit.\n# Closes MariaDB TCP :3306; every consumer on this host reaches MariaDB\n# via /var/run/mysqld/mysqld.sock. Removing this file re-opens TCP.\n[mysqld]\nskip-networking\n'
+  local desired=$'# Managed by jabali install.sh — M25.1 (amended).\n# Stalwart\'s SqlDirectory backend is TCP-only (no unix-socket support\n# in the upstream MySql store), so we can\'t fully skip-networking.\n# Bind to loopback only — UFW + jabali.slice still keep external 3306\n# closed, and every other consumer on this host (panel-api, pdns,\n# phpMyAdmin SSO) reaches MariaDB via /var/run/mysqld/mysqld.sock.\n[mysqld]\nbind-address=127.0.0.1\n'
 
   if [[ -f "$dropin" ]] && cmp -s <(printf '%s' "$desired") "$dropin"; then
-    _log "MariaDB skip-networking drop-in already current"
+    _log "MariaDB loopback-only drop-in already current"
     return
   fi
 
-  _log "installing MariaDB skip-networking drop-in → $dropin"
+  _log "installing MariaDB loopback-only drop-in → $dropin"
   local tmp
   tmp="$(mktemp --tmpdir jabali-mariadb-dropin.XXXXXX)"
   printf '%s' "$desired" >"$tmp"
@@ -1601,16 +1602,16 @@ install_mariadb_skip_networking() {
     sleep 1
   done
   if ! mariadb -e 'SELECT 1' >/dev/null 2>&1; then
-    _die "MariaDB did not come back up after skip-networking drop-in; rollback: trash $dropin && systemctl restart mariadb"
+    _die "MariaDB did not come back up after loopback-only drop-in; rollback: trash $dropin && systemctl restart mariadb"
   fi
 
-  # Defensive: verify :3306 is actually gone. If mariadb ignored the
-  # drop-in (wrong path, syntax error), fail loud rather than silently
-  # leaving an open TCP port.
-  if ss -tlnH 'sport = :3306' | grep -q LISTEN; then
-    _die "MariaDB still LISTENs on :3306 after drop-in — skip-networking did not take effect"
+  # Defensive: verify :3306 is loopback-only. A 0.0.0.0:3306 listener
+  # means the drop-in didn't take (wrong path, syntax error) and the
+  # port is exposed externally — fail loud.
+  if ss -tlnH 'sport = :3306' | awk '{print $4}' | grep -vqE '^127\.0\.0\.1:|^\[::1\]:'; then
+    _die "MariaDB :3306 is not loopback-only after drop-in — bind-address did not take effect"
   fi
-  _ok "MariaDB TCP :3306 closed (skip-networking active)"
+  _ok "MariaDB :3306 bound to 127.0.0.1 only (loopback-only mode)"
 }
 
 # ---------- step 2.5: Redis (notification dispatcher + future WP cache) ------

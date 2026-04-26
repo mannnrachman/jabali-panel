@@ -59,6 +59,10 @@ npm run dev                        # http://localhost:5173, proxies /api → :84
 | `make vet` | `go vet` |
 | `make tidy` | `go mod tidy` |
 | `make clean` | Remove build artefacts |
+| `make ui-install` | Install panel-ui npm deps (clean, reproducible) |
+| `make ui-build` | Build the panel-ui SPA (required before E2E — tests run against `dist/`) |
+| `make test-ui` | Run panel-ui unit tests (vitest) |
+| `make test-all` | Run everything: Go tests + vitest + Playwright |
 <!-- /AUTO-GENERATED -->
 
 ## Frontend targets
@@ -73,8 +77,9 @@ Run from `panel-ui/`.
 | `npm run preview` | Serve the production build locally |
 | `npm test` | Vitest unit tests (one-shot, CI-mode) |
 | `npm run test:watch` | Vitest watch mode |
-| `npm run test:e2e` | Playwright E2E tests |
+| `npm run test:e2e` | Playwright E2E tests (chromium project, list reporter) |
 | `npm run test:e2e:ui` | Playwright UI runner |
+| `npm run test:all` | Vitest + Playwright in sequence |
 | `npm run lint` | ESLint; warnings fail the run |
 <!-- /AUTO-GENERATED -->
 

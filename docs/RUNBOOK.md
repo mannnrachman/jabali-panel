@@ -2,6 +2,25 @@
 
 Operational procedures for managing the panel in production.
 
+## Per-feature runbooks
+
+Topic-specific runbooks live in [`runbooks/`](runbooks/). The top-level
+sections below cover cross-cutting ops (DB, services, upgrades,
+emergencies); for one feature at a time start there.
+
+<!-- AUTO-GENERATED:per-feature-runbooks — regenerate via /update-docs -->
+| File | Topic |
+|------|-------|
+| [`runbooks/applications.md`](runbooks/applications.md) | Adding a new app to the M19 Applications registry. |
+| [`runbooks/dns-secondary-nameserver.md`](runbooks/dns-secondary-nameserver.md) | Configuring secondary nameservers for managed zones. |
+| [`runbooks/m23-responsive.md`](runbooks/m23-responsive.md) | Responsive UI breakpoints + scroll-table contract (M23). |
+| [`runbooks/panel-ssl.md`](runbooks/panel-ssl.md) | M32 Let's Encrypt cert for the panel hostname (ADR-0066). |
+| [`runbooks/per-user-slices.md`](runbooks/per-user-slices.md) | Per-user PHP-FPM slice + cgroups layout. |
+| [`runbooks/php-extensions.md`](runbooks/php-extensions.md) | M9.6 PHP extension management (ADR-0031). |
+| [`runbooks/php-fpm-pools.md`](runbooks/php-fpm-pools.md) | M9 PHP-FPM pool manager (ADR-0023). |
+| [`runbooks/server-status.md`](runbooks/server-status.md) | M31 server-status aggregator (ADR-0065). |
+<!-- /AUTO-GENERATED -->
+
 ---
 
 ## 1. Database maintenance

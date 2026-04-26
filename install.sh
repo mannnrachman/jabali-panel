@@ -4694,7 +4694,30 @@ RESTARTCONF
       changed=1
       _log "wrote ${dropin}"
     fi
+
+    # Remove stale drop-ins from earlier install.sh versions. These were
+    # superseded by 10-jabali-restart.conf above. Leaving them in place
+    # is non-fatal except for ensure-logs.conf, whose ExecStartPre points
+    # at /usr/local/bin/nginx-ensure-logs (script never shipped to repo,
+    # so 203/EXEC crash-loops nginx on hosts that picked it up — incident
+    # 2026-04-26 on mx.jabali-panel.com).
+    local stale stale_drop
+    for stale in ensure-logs.conf jabali-restart.conf; do
+      stale_drop="${dropin_dir}/${stale}"
+      if [[ -f "$stale_drop" ]]; then
+        rm -f "$stale_drop"
+        changed=1
+        _log "removed stale drop-in ${stale_drop}"
+      fi
+    done
   done
+
+  # Drop the orphaned ExecStartPre helper script too, if any host still
+  # has it from the pre-2026-04-26 install.sh layout.
+  if [[ -f /usr/local/bin/nginx-ensure-logs ]]; then
+    rm -f /usr/local/bin/nginx-ensure-logs
+    _log "removed stale /usr/local/bin/nginx-ensure-logs"
+  fi
 
   if [[ "$changed" == "1" ]]; then
     systemctl daemon-reload

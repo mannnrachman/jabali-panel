@@ -44,6 +44,12 @@ export interface WebPushState {
   // Service worker registration — exposed so consumers can use it
   // directly (e.g. for navigator.permissions query fallbacks).
   registration?: ServiceWorkerRegistration | null;
+  // Last error from register / subscribe / unsubscribe — populated so
+  // the UI can surface the actual SecurityError ("self-signed cert
+  // blocks SW fetch", "user denied permission", etc.) instead of the
+  // button silently going nowhere when something fails. null when the
+  // last attempt succeeded or no attempt has been made.
+  error: string | null;
 }
 
 export function useWebPushSubscription(): WebPushState {
@@ -67,6 +73,7 @@ export function useWebPushSubscription(): WebPushState {
   const [subscribed, setSubscribed] = useState(false);
   const [permission, setPermission] = useState<PushPermission>(supported ? Notification.permission : "unsupported");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Register the service worker on first mount. Only once per tab;
   // navigator.serviceWorker.register is idempotent on the same URL.
@@ -97,6 +104,8 @@ export function useWebPushSubscription(): WebPushState {
         // Logged at console level so devs see it in dev tools without
         // spamming production error telemetry.
         console.warn("[webpush] service worker register failed", err);
+        if (cancelled) return;
+        setError(friendlyWebPushError(err, "register"));
       }
     })();
     return () => {
@@ -105,12 +114,34 @@ export function useWebPushSubscription(): WebPushState {
   }, [supported]);
 
   const subscribe = useCallback(async () => {
-    if (!supported || !registration) return;
+    if (!supported) {
+      setError("This browser does not support Web Push.");
+      return;
+    }
+    if (!registration) {
+      // The most common case where supported=true but registration is null
+      // is a self-signed TLS cert: window.isSecureContext returns true after
+      // the user clicks through Chrome's warning, but the SW script fetch
+      // still fails with SecurityError. Surface that explicitly so the
+      // operator stops staring at a button that "does nothing".
+      setError(
+        "Service worker is not registered. This usually means the panel hostname is using a self-signed certificate; install a Let's Encrypt cert from Server Settings → General → Panel SSL.",
+      );
+      return;
+    }
+    setError(null);
     setLoading(true);
     try {
       const perm = await Notification.requestPermission();
       setPermission(perm);
-      if (perm !== "granted") return;
+      if (perm !== "granted") {
+        setError(
+          perm === "denied"
+            ? "Notifications are blocked. Allow them in your browser's site settings to enable browser push."
+            : "Notification permission was not granted.",
+        );
+        return;
+      }
 
       const { data } = await apiClient.get<VAPIDResponse>(
         "/notifications/webpush/vapid-public-key",
@@ -134,6 +165,7 @@ export function useWebPushSubscription(): WebPushState {
       setSubscribed(true);
     } catch (err) {
       console.warn("[webpush] subscribe failed", err);
+      setError(friendlyWebPushError(err, "subscribe"));
     } finally {
       setLoading(false);
     }
@@ -154,10 +186,31 @@ export function useWebPushSubscription(): WebPushState {
       setSubscribed(false);
     } catch (err) {
       console.warn("[webpush] unsubscribe failed", err);
+      setError(friendlyWebPushError(err, "unsubscribe"));
     } finally {
       setLoading(false);
     }
   }, [registration, supported]);
 
-  return { supported, permission, subscribed, loading, subscribe, unsubscribe, registration };
+  return { supported, permission, subscribed, loading, subscribe, unsubscribe, registration, error };
+}
+
+// friendlyWebPushError maps a raw register/subscribe/unsubscribe failure
+// to an operator-readable message. The most common SecurityError shape
+// on Chrome ("Failed to register a ServiceWorker for scope ('…') with
+// script ('…'): An SSL certificate error occurred when fetching the
+// script.") gets translated into the actionable LE-cert hint. Anything
+// else falls through to the raw message so dev cycles aren't blocked.
+function friendlyWebPushError(err: unknown, op: "register" | "subscribe" | "unsubscribe"): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (/SSL certificate|certificate error|InsecureContext/i.test(raw)) {
+    return "The panel is served with an untrusted certificate, so the browser refuses to register the push service worker. Install a Let's Encrypt cert from Server Settings → General → Panel SSL.";
+  }
+  if (/Permission denied|NotAllowedError/i.test(raw)) {
+    return "Notifications are blocked. Allow them in your browser's site settings.";
+  }
+  if (/insecure context/i.test(raw)) {
+    return "Browser push requires HTTPS with a trusted certificate. Install a Let's Encrypt cert from Server Settings → General → Panel SSL.";
+  }
+  return `Could not ${op} for browser push: ${raw}`;
 }

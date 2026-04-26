@@ -75,6 +75,14 @@ export const WebPushTab = () => {
           tab is closed. Each browser needs its own enable click — the
           subscription is tied to the navigator, not your account.
         </Typography.Paragraph>
+        {webpush.error && (
+          <Alert
+            type="error"
+            showIcon
+            message="Couldn't enable browser push"
+            description={webpush.error}
+          />
+        )}
         <Button type="primary" onClick={handleEnable} loading={webpush.loading}>
           Enable on this browser
         </Button>

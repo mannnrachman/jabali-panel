@@ -9,7 +9,7 @@
 // a footer Space for the push toggle. Container uses theme tokens
 // (colorBgElevated / borderRadiusLG / boxShadowSecondary) so the
 // popup is visually identical to every other AntD dropdown.
-import { Badge, Button, Divider, Dropdown, Empty, Grid, Popconfirm, Space, Tag, Typography, message, theme } from "antd";
+import { Badge, Button, Divider, Dropdown, Empty, Grid, Popconfirm, Space, Tag, Tooltip, Typography, message, theme } from "antd";
 import type { MenuProps } from "antd";
 import type { CSSProperties, ReactElement } from "react";
 import { cloneElement, useEffect } from "react";
@@ -153,15 +153,29 @@ export function NotificationBell() {
         </Button>
       );
     }
-    return (
+    const button = (
       <Button
         type="text"
         size="small"
-        onClick={() => void webpush.subscribe()}
+        onClick={() => {
+          if (webpush.error) {
+            message.error(webpush.error);
+            return;
+          }
+          void webpush.subscribe();
+        }}
         loading={webpush.loading}
+        danger={!!webpush.error}
       >
         Enable browser push
       </Button>
+    );
+    return webpush.error ? (
+      <Tooltip title={webpush.error} placement="topLeft">
+        {button}
+      </Tooltip>
+    ) : (
+      button
     );
   })();
 

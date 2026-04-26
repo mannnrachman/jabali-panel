@@ -347,6 +347,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 			// again. Mirrors JABALI_BOOTSTRAP_ADMIN_{EMAIL,PASSWORD} already
 			// read by auth.BootstrapAdmin.
 			fillIfEmpty(&row.AdminEmail, os.Getenv("JABALI_BOOTSTRAP_ADMIN_EMAIL"))
+			// M13: stamp the latest default sandbox image so a row left
+			// behind by an older release (or one whose UI clobbered it
+			// with an obsolete pin) self-heals on next boot. Migration
+			// 000078 already bumps debian-12-v1 → debian-13-v1, but only
+			// matches that exact value; this catches NULL/"" too.
+			fillIfEmpty(&row.DefaultNspawnImageVersion, "debian-13-v1")
 
 			if !mutated {
 				return

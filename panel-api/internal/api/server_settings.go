@@ -178,7 +178,13 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 		current.SSHSandboxMode = strings.TrimSpace(*req.SSHSandboxMode)
 	}
 	if req.DefaultNspawnImageVersion != nil {
-		current.DefaultNspawnImageVersion = strings.TrimSpace(*req.DefaultNspawnImageVersion)
+		// Reject empty string — keeps UIs from clobbering a valid pin
+		// when the field is hidden / not yet loaded on submit. To clear,
+		// the operator must change the column DEFAULT in a migration.
+		v := strings.TrimSpace(*req.DefaultNspawnImageVersion)
+		if v != "" {
+			current.DefaultNspawnImageVersion = v
+		}
 	}
 
 	// Validate — reject obviously bad input so we don't persist garbage.

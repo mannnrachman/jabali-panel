@@ -149,8 +149,11 @@ const GeneralSettingsTab = () => {
         ssh_password_auth: values.ssh_password_auth || false,
         ssh_user_password_auth: values.ssh_user_password_auth || false,
         ssh_sandbox_mode: values.ssh_sandbox_mode || "bubblewrap",
-        default_nspawn_image_version:
-          values.default_nspawn_image_version || "debian-13-v1",
+        // Omit when blank so the server keeps its current value — never
+        // clobber the row with a hardcoded UI fallback.
+        ...(values.default_nspawn_image_version
+          ? { default_nspawn_image_version: values.default_nspawn_image_version }
+          : {}),
       });
       notify({ type: "success", message: "Settings saved" });
       form.setFieldsValue(resp.data);

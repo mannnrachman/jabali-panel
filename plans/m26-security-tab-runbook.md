@@ -2,16 +2,20 @@
 
 Operational reference for the admin Security tab shipped in Steps 1–9
 (2026-04-24). See `plans/m26-security-tab.md` for the full plan and
-ADRs 0053 (CrowdSec), 0054 (UFW), 0055 (ModSecurity).
+ADRs 0053 (CrowdSec) + 0054 (UFW). ADR-0055 (ModSecurity-per-domain)
+was SUPERSEDED on 2026-04-26 — CrowdSec AppSec covers the WAF role
+(see ADR-0060 + `plans/m27-crowdsec-extensions.md`); the entire ModSec
+stack (apt packages, nginx module, schema columns, panel UI tab) was
+removed. This runbook still covers the M26 foundation; the M27
+extensions live in their own section below.
 
 ## What it is
 
-Three-tab admin page at `/jabali-admin/security`:
+Two-tab admin page at `/jabali-admin/security`:
 
 | Tab | Purpose | Backed by |
 |-----|---------|-----------|
-| CrowdSec | View metrics + active decisions; add/remove manual bans; inspect bouncers + hub items | LAPI on `/run/crowdsec/api.sock` (mode 0660 group `jabali`); `cscli` shell-out for hub/list operations |
-| ModSecurity | Engine mode (Off / DetectionOnly / On); OWASP CRS paranoia 1..4; per-domain enable; audit-log tail | `/etc/nginx/modsecurity.conf` + `/etc/modsecurity/crs/crs-setup.conf`; `/var/log/modsec_audit.log` |
+| CrowdSec | View metrics + active decisions; add/remove manual bans; allowlists; alerts; Console enroll/disenroll; per-scenario remediation; AppSec geoblock; bouncers; hub | LAPI on `/run/crowdsec/api.sock` (mode 0660 group `jabali`); `cscli` shell-out for hub/list/console/profiles operations; AppSec listener on `127.0.0.1:7422` |
 | UFW | Status + rules; add/delete rules; enable/disable firewall (typed-YES gate) | `ufw status numbered verbose`, `ufw allow/deny`, `ufw enable/disable` |
 
 ## Architecture at a glance
@@ -19,9 +23,9 @@ Three-tab admin page at `/jabali-admin/security`:
 ```
 SPA  ──► panel-api /api/v1/admin/security/*  ──UDS──►  panel-agent
          (RequireAdmin gate)                            (shells out to ufw / cscli;
-                                                         edits modsecurity.conf;
-                                                         dispatches reconciler for
-                                                         per-domain ModSec changes)
+                                                         rewrites jabali-appsec.yaml
+                                                         and profiles.yaml; reloads
+                                                         crowdsec/nginx as needed)
 ```
 
 Every destructive action (UFW enable/disable, mass rule changes) requires
@@ -39,13 +43,14 @@ sudo -u jabali cscli decisions list -o json | head -1
 # 2. UFW present + status (initial state: inactive on fresh install)
 ufw status verbose | head -3
 
-# 3. ModSecurity module loaded + engine off by default
-nginx -V 2>&1 | grep -q modsecurity && echo "module compiled in"
-grep -E '^SecRuleEngine' /etc/nginx/modsecurity.conf
-# Expect: SecRuleEngine Off
+# 3. AppSec engine on TCP loopback :7422 + jabali-appsec config loaded
+ss -tlnp | grep ':7422'
+cat /etc/crowdsec/appsec-configs/jabali-appsec.yaml | head -10
+# Expect: inband_rules → base-config + vpatch-* + generic-*
 
-# 4. CRS paranoia level resolves
-grep -E '^\s*SecAction.*paranoia_level' /etc/modsecurity/crs/crs-setup.conf | head -1
+# 4. ModSecurity is GONE on healthy hosts
+dpkg -l 2>/dev/null | grep -E 'libnginx-mod-http-modsecurity|^ii.*modsecurity-crs' && echo "STALE: run install.sh cleanup_modsecurity"
+test ! -d /etc/nginx/modsec && echo OK
 
 # 5. Panel API surface alive
 curl -k --unix-socket /run/jabali-panel/api.sock \
@@ -72,30 +77,20 @@ To enable:
 5. If locked out, recover via the host console — see "UFW lockout
    recovery" below.
 
-### Changing ModSecurity paranoia
+### WAF — replaced by CrowdSec AppSec
 
-Two ways:
+ModSecurity was removed 2026-04-26. The WAF role is now CrowdSec AppSec
+(`/etc/crowdsec/appsec-configs/jabali-appsec.yaml` + listener on
+`127.0.0.1:7422` + nginx-bouncer in-band dial). Default rule set:
 
-| From UI | From CLI |
-|---------|----------|
-| `/jabali-admin/security?tab=modsec` → drag the Paranoia slider → **Apply** | `sudo sed -i -E 's/setvar:tx\.paranoia_level=[0-9]+/setvar:tx.paranoia_level=2/' /etc/modsecurity/crs/crs-setup.conf && sudo nginx -t && sudo systemctl reload nginx` |
+- `crowdsecurity/base-config` (plumbing)
+- `crowdsecurity/vpatch-*` (CVE virtual-patching corpus)
+- `crowdsecurity/generic-*` (CRS-style XSS / SSTI / WordPress upload)
 
-UI is preferred — it goes through the agent's atomic write + `nginx -t`
-gate. The CLI variant skips that gate and a typo will leave nginx in
-the previous-config state until it's restarted.
-
-Higher paranoia = more rules fire = more false positives. Defaults to
-1 (loose). Bump to 2 only after a week of `DetectionOnly` mode shows
-no legitimate-traffic hits.
-
-### Enabling ModSecurity on a domain
-
-1. Set global engine to `DetectionOnly` first (so you see what would
-   block without actually blocking).
-2. Toggle the per-domain switch on the ModSec tab.
-3. Wait ~10s for the reconciler to re-render the vhost and reload nginx.
-4. Watch the audit-log tail for 24-48h.
-5. Flip global engine to `On` once the audit shows no legitimate hits.
+The geoblock pre_eval hook in this same file is operator-managed via
+`/jabali-admin/security?sub=appsec` (mode + countries). Removing
+either rule glob is operator-supported via the Recommended hub picker
+on `/jabali-admin/security?sub=hub`.
 
 ### Banning in CrowdSec — IP, range, country, AS
 
@@ -177,10 +172,12 @@ cscli metrics show appsec
 - Bouncer not enforcing at all → `cscli bouncers list` should show
   `jabali-nginx`; `nginx -T | grep -i crowdsec` should show the Lua
   access hook active.
-- Allow-list locked you out → edit
-  `/etc/crowdsec/appsec-rules/jabali-geoblock.yaml` on the host, set
+- Geoblock locked you out → edit
+  `/etc/crowdsec/appsec-configs/jabali-appsec.yaml` on the host, set
   `# jabali-mode: off` in the header, wipe the `pre_eval:` block, then
-  `systemctl reload crowdsec`. UI then shows off-mode.
+  `systemctl reload crowdsec`. UI then shows off-mode. (Earlier path
+  `/etc/crowdsec/appsec-rules/jabali-geoblock.yaml` was wrong — pre_eval
+  hooks live in appsec-CONFIG, not appsec-rules.)
 
 ### Enrolling in CrowdSec Console (optional) — M27
 
@@ -189,16 +186,27 @@ blocklists. Free tier exists. Optional — out of the box CrowdSec
 runs fully self-contained.
 
 **From the admin UI** (M27 Step 4, ADR-0062):
-1. Create a free account at https://app.crowdsec.net, grab the enrollment key
-2. Open the "CrowdSec Console" card on the CrowdSec tab, paste key, click Enroll
+1. Create a free account at https://app.crowdsec.net/security-engines?distribution=linux,
+   grab the enrollment key
+2. Open the "Console" sub-tab on the CrowdSec tab, paste key, click Enroll
 3. Accept the pending instance in the Console web UI
-4. Sharing preferences (custom / manual / tainted / context / console_management)
-   are controlled via the Console web UI
+4. UI flips to "Enrolled as `<login>`" view (queries `/etc/crowdsec/online_api_credentials.yaml`
+   + `cscli capi status`); share-preferences toggles appear inline
 
-Disenroll is managed in app.crowdsec.net (remove instance). CrowdSec
-CLI has no `disenroll` verb — if you need to burn the link manually,
-`cscli capi register` re-registers this machine with fresh anonymous
-credentials and orphans the Console-side association.
+**Disenroll + re-enroll with a different key** (added 2026-04-26):
+The Console card now shows a red **Disenroll** button when enrolled.
+Click → typed-confirm → agent runs `rm /etc/crowdsec/online_api_credentials.yaml`
++ `systemctl reload crowdsec`. Card flips back to the enroll form so
+you can paste a fresh key. CLI equivalent:
+
+```bash
+sudo rm /etc/crowdsec/online_api_credentials.yaml
+sudo systemctl reload crowdsec
+sudo cscli console enroll <new-key>
+```
+
+cscli has no `console disenroll` verb — wiping the credentials file
+is the upstream-recommended path (ADR-0062 amended 2026-04-26).
 
 ### M27 — Allowlists, Alerts, Captcha, Per-scenario overrides
 
@@ -273,27 +281,25 @@ sudo -u <agent-user> curl --unix-socket /run/crowdsec/api.sock http://x/v1/decis
 If the socket is mode 0755 instead of 0660, the install drop-in's
 `ExecStartPost=chmod 0660` regressed — check `/etc/systemd/system/crowdsec.service.d/`.
 
-### ModSecurity blocking legitimate panel/webmail traffic
+### CrowdSec AppSec blocking legitimate panel/tenant traffic
 
-Symptom: `/jabali-admin` returns 403; `/admin/security?tab=modsec` audit
-log shows hits with rule IDs in the 9xxxxx range.
+Symptom: requests to `/jabali-admin` (or a tenant site) return 403 from
+nginx-bouncer; `cscli metrics show appsec` Blocked counter ticks.
 
 ```bash
-# Quickest mitigation: drop engine to DetectionOnly
-# UI: ModSec tab → DetectionOnly → Apply
-# CLI: sudo sed -i 's/^SecRuleEngine On/SecRuleEngine DetectionOnly/' /etc/nginx/modsecurity.conf && sudo systemctl reload nginx
+# Identify which rule fired:
+sudo journalctl -u crowdsec -n 200 --no-pager | grep -i appsec
 
-# Then identify which rule is hitting:
-sudo tail -200 /var/log/modsec_audit.log | grep -E 'id "[0-9]+"' | sort -u
-
-# Whitelist a specific rule on a specific URI by adding to crs-setup.conf:
-SecRule REQUEST_URI "@beginsWith /jabali-admin" "id:1001,phase:1,pass,nolog,ctl:ruleRemoveById=941100"
-# Then `nginx -t && systemctl reload nginx`
+# Quickest mitigation: remove the offending hub item via the UI
+# /jabali-admin/security?sub=hub → find rule → Remove. Or drop the
+# whole rule glob from /etc/crowdsec/appsec-configs/jabali-appsec.yaml
+# (e.g. comment out 'crowdsecurity/generic-*') then:
+sudo systemctl reload crowdsec
 ```
 
-If the panel itself is blocked by CRS, the per-domain ModSec switch on
-the panel hostname's vhost is the safest mitigation — flip it off and
-keep ModSec on the tenant vhosts only.
+If the panel hostname itself is mistakenly hit, add the panel IP/CIDR
+to the allowlist via `/jabali-admin/security?sub=allowlist` — that
+bypasses AppSec inspection for trusted sources.
 
 ### UFW lockout recovery (LXC console path)
 
@@ -332,27 +338,32 @@ when active).
 |---------|---------|-----|
 | UFW | `inactive` | Avoid lockout on fresh install — operator opts in |
 | UFW default in/out | `deny in / allow out` | Standard server posture once enabled |
-| ModSecurity engine | `Off` | Surface CRS gradually — flip to DetectionOnly first |
-| CRS paranoia | `1` | Lowest false-positive rate — bump only after audit-log review |
-| CrowdSec scenarios | `crowdsecurity/linux` collection | Default install bundle |
+| AppSec geoblock | `mode=off` | Operator opts in via `/jabali-admin/security?sub=appsec` |
+| AppSec rules | `base-config + vpatch-* + generic-*` | Default-on WAF (CVE virtual-patching + CRS-style generic) |
+| CrowdSec collections | `linux + sshd + nginx + base-http-scenarios + http-cve + wordpress + whitelist-good-actors + appsec-virtual-patching + appsec-generic-rules` | Default install bundle (operator removable via Recommended hub picker) |
 
 ## Files
 
 | Path | Purpose | Owner / mode |
 |------|---------|--------------|
 | `/run/crowdsec/api.sock` | LAPI unix socket | `root:jabali` 0660 |
-| `/etc/nginx/modsecurity.conf` | Global ModSec engine config | `root:root` 0644 |
-| `/etc/modsecurity/crs/crs-setup.conf` | OWASP CRS tunables (paranoia, etc.) | `root:root` 0644 |
-| `/etc/nginx/modsec/main.conf` | ModSec rule include — sourced from each per-domain vhost when modsec_enabled | `root:root` 0644 |
-| `/var/log/modsec_audit.log` | JSON audit events (read by UI tail) | `root:adm` 0640 |
+| `/etc/crowdsec/appsec-configs/jabali-appsec.yaml` | AppSec config — inband_rules + geoblock pre_eval (rewritten by agent) | `root:root` 0644 |
+| `/etc/crowdsec/acquis.d/jabali-appsec.yaml` | AppSec listener acquisition (`127.0.0.1:7422`) | `root:root` 0644 |
+| `/etc/crowdsec/online_api_credentials.yaml` | CrowdSec Console enrollment (present iff enrolled; wiped by Disenroll) | `root:root` 0600 |
+| `/etc/crowdsec/profiles.yaml` | Per-scenario remediation override (marker-bounded jabali block) | `root:root` 0644 |
+| `/etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf` | nginx-bouncer config (APPSEC_URL, captcha keys) | `root:root` 0640 |
 | `/etc/ufw/user.rules` | UFW rule store (touched only by `ufw` CLI) | `root:root` 0640 |
 
 ## References
 
 - ADR-0053 — Why CrowdSec over fail2ban (+ packagecloud upstream)
 - ADR-0054 — Why UFW over raw iptables
-- ADR-0055 — Per-domain ModSecurity (Debian paths)
+- ADR-0055 — Per-domain ModSecurity (SUPERSEDED 2026-04-26)
+- ADR-0060 — AppSec geoblock (server-wide country filter)
+- ADR-0061 — CrowdSec allowlists — LAPI is truth
+- ADR-0062 — CrowdSec Console enrollment (operator-driven disenroll)
+- ADR-0063 — Per-scenario remediation override via profiles.yaml
 - M25 ADR-0050 — Unix socket lockdown (LAPI socket rationale)
 - CrowdSec docs — https://docs.crowdsec.net/docs/next/
-- ModSecurity-nginx — https://github.com/owasp-modsecurity/ModSecurity-nginx
-- OWASP CRS — https://coreruleset.org/
+- CrowdSec Hub — https://hub.crowdsec.net/
+- CrowdSec AppSec — https://docs.crowdsec.net/docs/next/appsec/intro/

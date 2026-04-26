@@ -43,11 +43,17 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0029](0029-m8-cron-systemd-user-timers.md) | M8 Cron via systemd-user timers with closed-set allowlist | Accepted |
 | [0053](0053-crowdsec-over-fail2ban.md) | CrowdSec over fail2ban for behaviour-based IP blocking | Accepted |
 | [0054](0054-ufw-over-iptables.md) | UFW over raw iptables/nftables for the host firewall | Accepted |
-| [0055](0055-modsecurity-per-domain.md) | ModSecurity-nginx + OWASP CRS, per-domain toggle | Accepted |
+| [0055](0055-modsecurity-per-domain.md) | ModSecurity-nginx + OWASP CRS, per-domain toggle | SUPERSEDED (2026-04-26) by ADR-0060 + M27 AppSec |
 | [0056](0056-notification-dispatcher-redis-streams.md) | M14 Notification dispatcher via Redis Streams + consumer group | Accepted |
 | [0057](0057-webpush-vapid.md) | M14 Web Push via VAPID, keypair in server_settings | Accepted |
 | [0058](0058-ntfy-channel.md) | M14 ntfy.sh channel: plain HTTP POST + optional bearer + priority + tags | Accepted |
 | [0059](0059-redis-shared-cache.md) | Redis as shared local cache/queue (unix socket, jabali-sockets group) | Accepted |
+| [0060](0060-appsec-geoblock.md) | AppSec geoblock (server-wide country filter) — opt-in | Accepted |
+| [0061](0061-allowlists-lapi-truth.md) | CrowdSec allowlists — LAPI is truth, no DB mirror | Accepted |
+| [0062](0062-console-enrollment-machine-scope.md) | CrowdSec Console enrollment — operator-driven, disenroll wipes online_api_credentials.yaml | Accepted (amended 2026-04-26) |
+| [0063](0063-profiles-yaml-for-remediation-override.md) | Per-scenario remediation override via `/etc/crowdsec/profiles.yaml` | Accepted |
+| [0064](0064-diagnostic-report-enclosed-mail.md) | Diagnostic report — enclosed.cc upload + email delivery | Accepted |
+| [0065](0065-server-status.md) | Server Status aggregator | Accepted |
 
 ## Decision Categories
 

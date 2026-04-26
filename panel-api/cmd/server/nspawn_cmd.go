@@ -32,7 +32,8 @@ import (
 const (
 	nspawnImagesRoot = "/var/lib/jabali-nspawn/images"
 	debianSnapshot   = "https://snapshot.debian.org/archive/debian"
-	defaultIncludes  = "bash,coreutils,procps,findutils,grep,sed,gawk,less,nano,ca-certificates,git,curl,wget,vim-tiny"
+	defaultIncludes  = "bash,coreutils,procps,findutils,grep,sed,gawk,less,nano,ca-certificates,git,curl,wget,vim-tiny,php-cli,php-mysql,php-curl,php-xml,php-mbstring,php-zip,php-gd,unzip,rsync,mariadb-client"
+	hostWpCliLink    = "/opt/wp-cli/current"
 )
 
 var (
@@ -107,6 +108,20 @@ func newNspawnBuildCmd() *cobra.Command {
 			cleanup.Stderr = os.Stderr
 			_ = cleanup.Run()
 
+			// Install wp-cli inside the rootfs by copying the host's pinned
+			// phar (provisioned by install.sh under /opt/wp-cli/current).
+			// Skip silently if host phar is missing — image is still usable
+			// for non-WP shells; admin can rebuild after wp-cli install.
+			if hostPhar, err := filepath.EvalSymlinks(hostWpCliLink); err == nil {
+				dest := filepath.Join(partial, "usr/local/bin/wp")
+				fmt.Printf("[nspawn-build] installing wp-cli into rootfs (from %s)\n", hostPhar)
+				if cpErr := copyFileMode(hostPhar, dest, 0o755); cpErr != nil {
+					return fmt.Errorf("install wp-cli into rootfs: %w", cpErr)
+				}
+			} else {
+				fmt.Printf("[nspawn-build] WARN: host wp-cli not found at %s — image will not have wp-cli\n", hostWpCliLink)
+			}
+
 			fmt.Println("[nspawn-build] computing rootfs SHA-256")
 			sum, err := hashTree(partial)
 			if err != nil {
@@ -153,11 +168,11 @@ func newNspawnBuildCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&codename, "codename", "debian-12", "image family (e.g. debian-12)")
+	cmd.Flags().StringVar(&codename, "codename", "debian-13", "image family (e.g. debian-13)")
 	cmd.Flags().StringVar(&version, "version", "", "image version label (e.g. v1, v2)")
 	cmd.Flags().StringVar(&snapshot, "snapshot", "", "snapshot.debian.org timestamp YYYYMMDDTHHMMSSZ (mandatory)")
 	cmd.Flags().StringVar(&includes, "includes", defaultIncludes, "comma-separated debootstrap --include list")
-	cmd.Flags().StringVar(&suite, "suite", "bookworm", "debootstrap suite (bookworm, trixie, ...)")
+	cmd.Flags().StringVar(&suite, "suite", "trixie", "debootstrap suite (trixie, bookworm, ...)")
 	_ = cmd.MarkFlagRequired("version")
 	_ = cmd.MarkFlagRequired("snapshot")
 	return cmd
@@ -347,6 +362,26 @@ func capturePackageList(rootDir string) ([]map[string]string, error) {
 		pkgs = append(pkgs, map[string]string{"name": parts[0], "version": parts[1]})
 	}
 	return pkgs, nil
+}
+
+func copyFileMode(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return os.Chmod(dst, mode)
 }
 
 func readManifestSummary(dir string) (built, sum string) {

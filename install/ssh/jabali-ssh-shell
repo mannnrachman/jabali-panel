@@ -67,6 +67,7 @@ case "${MODE}" in
       --ro-bind-try /lib64 /lib64 \
       --ro-bind-try /bin /bin \
       --ro-bind-try /sbin /sbin \
+      --ro-bind-try /opt/wp-cli /opt/wp-cli \
       --ro-bind /etc/resolv.conf /etc/resolv.conf \
       --ro-bind-try /etc/hostname /etc/hostname \
       --ro-bind-try /etc/nsswitch.conf /etc/nsswitch.conf \

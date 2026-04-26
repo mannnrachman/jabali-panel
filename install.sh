@@ -3998,10 +3998,10 @@ install_ssh_sandbox() {
     chmod 0644 /etc/jabali/ssh-sandbox-mode
   fi
 
-  # Default nspawn image pin. Image itself is built post-install via
-  # `jabali nspawn-build` — install.sh stays fast and offline-tolerant.
+  # Default nspawn image pin. Image itself is built below by
+  # build_default_nspawn_image() (debootstrap from snapshot.debian.org).
   if [ ! -f /etc/jabali/default-nspawn-image ]; then
-    echo "debian-12-v1" > /etc/jabali/default-nspawn-image
+    echo "debian-13-v1" > /etc/jabali/default-nspawn-image
     chmod 0644 /etc/jabali/default-nspawn-image
   fi
 
@@ -4012,7 +4012,38 @@ install_ssh_sandbox() {
     _warn "/usr/bin/bwrap is not setuid root — bubblewrap mode will deny shell access until fixed"
   fi
 
-  _ok "SSH shell sandbox installed (mode=bubblewrap; run 'jabali nspawn-build' to enable nspawn mode)"
+  _ok "SSH shell sandbox installed (mode=bubblewrap; default nspawn image=debian-13-v1)"
+}
+
+# Default nspawn image: trixie + wp-cli. Built from a pinned
+# snapshot.debian.org timestamp so rebuilds are byte-identical. Skipped
+# if the sealed image already exists (idempotent across reruns).
+build_default_nspawn_image() {
+  local image="debian-13-v1"
+  local snapshot="20260301T000000Z"
+  local image_dir="/var/lib/jabali-nspawn/images/${image}"
+
+  if [ -d "${image_dir}" ]; then
+    _ok "nspawn image ${image} already built at ${image_dir}"
+    return 0
+  fi
+
+  if ! command -v jabali >/dev/null 2>&1; then
+    _warn "jabali CLI not found; skipping nspawn image build (rerun installer or run 'jabali nspawn build' manually)"
+    return 0
+  fi
+
+  if ! command -v debootstrap >/dev/null 2>&1; then
+    _warn "debootstrap missing; cannot auto-build nspawn image"
+    return 0
+  fi
+
+  _log "building default nspawn image ${image} (snapshot=${snapshot}); this takes 3-5 minutes"
+  if jabali nspawn build --codename debian-13 --version v1 --snapshot "${snapshot}" --suite trixie; then
+    _ok "nspawn image ${image} built and sealed"
+  else
+    _warn "nspawn image build failed — bubblewrap mode still works; rerun 'jabali nspawn build --version v1 --snapshot ${snapshot}' to retry"
+  fi
 }
 
 install_sftp_sshd_config() {
@@ -6005,6 +6036,7 @@ main() {
   install_sftp_group
   install_sftp_sshd_config
   install_ssh_sandbox
+  build_default_nspawn_image
   install_nginx_default_vhost
   # M25 Step 4: install the nginx vhost on :8443 that terminates TLS and
   # proxies to the panel-api Unix socket. Runs AFTER install_nginx_default_vhost

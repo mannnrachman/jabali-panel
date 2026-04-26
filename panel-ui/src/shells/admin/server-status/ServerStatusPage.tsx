@@ -28,7 +28,14 @@ export const ServerStatusPage = () => {
   const q = useServerStatus();
   const env = q.data;
 
+  // Order matters: Masonry fills column-first, so the first N items
+  // become the top row across the columns. Operator wants CPU/Memory/
+  // Swap visible above the fold — put the meters first.
   const items = [
+    { key: "cpu", data: null, children: <CPUMeterCard host={env?.host ?? null} cpu={env?.cpu ?? null} /> },
+    { key: "memory", data: null, children: <MemoryMeterCard host={env?.host ?? null} cpu={env?.cpu ?? null} /> },
+    { key: "swap", data: null, children: <SwapMeterCard host={env?.host ?? null} cpu={env?.cpu ?? null} /> },
+    { key: "load", data: null, children: <LoadMeterCard host={env?.host ?? null} cpu={env?.cpu ?? null} /> },
     { key: "services", data: null, children: <ServicesSummaryCard services={env?.services?.services ?? []} /> },
     {
       key: "sysinfo",
@@ -43,10 +50,6 @@ export const ServerStatusPage = () => {
         />
       ),
     },
-    { key: "cpu", data: null, children: <CPUMeterCard host={env?.host ?? null} cpu={env?.cpu ?? null} /> },
-    { key: "memory", data: null, children: <MemoryMeterCard host={env?.host ?? null} cpu={env?.cpu ?? null} /> },
-    { key: "swap", data: null, children: <SwapMeterCard host={env?.host ?? null} cpu={env?.cpu ?? null} /> },
-    { key: "load", data: null, children: <LoadMeterCard host={env?.host ?? null} cpu={env?.cpu ?? null} /> },
     { key: "disks", data: null, children: <DisksTable partitions={env?.host?.partitions ?? []} /> },
     { key: "network", data: null, children: <NetworkTable interfaces={env?.network?.interfaces ?? []} /> },
     { key: "user_slices", data: null, children: <UserSlicesCard data={env?.user_slices ?? null} /> },

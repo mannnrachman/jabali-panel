@@ -4433,15 +4433,20 @@ install_ufw() {
   ufw default deny incoming >/dev/null
   ufw default allow outgoing >/dev/null
 
-  # Allow-list: SSH, web (panel + nginx), mail (Stalwart). MUST be in
-  # place BEFORE `ufw enable` runs in the same install — otherwise
-  # default-deny locks out SSH the moment the firewall activates.
+  # Allow-list: SSH, web (panel + nginx), mail (Stalwart), DNS (PowerDNS
+  # authoritative, TCP for AXFR + large UDP responses, UDP for normal
+  # queries). MUST be in place BEFORE `ufw enable` runs in the same
+  # install — otherwise default-deny locks out SSH the moment the
+  # firewall activates.
   local port
-  for port in 22 80 443 8443 25 465 587 993 995 4190; do
+  for port in 22 80 443 8443 25 465 587 993 995 4190 53; do
     # `ufw allow N/tcp` is idempotent — second invocation prints
     # "Skipping adding existing rule" but exits 0.
     ufw allow "${port}/tcp" >/dev/null
   done
+  # DNS authoritative also needs UDP/53. Recursor + systemd-resolved
+  # bind loopback only, so the wildcard UFW rule won't expose them.
+  ufw allow 53/udp >/dev/null
 
   # Idempotent enable: bare `ufw --force enable` reloads the firewall
   # mid-install which can race in-flight TCP (apt mirror reuse, the
@@ -4472,7 +4477,7 @@ install_ufw() {
     ufw status verbose 2>&1 >&2 || true
     _die "UFW allow rule for port 22 missing after install — refusing to leave operator at risk of SSH lockout (status dumped above)"
   fi
-  _ok "UFW active; default-deny incoming with allow-list (22, 80, 443, 8443, 25, 465, 587, 993, 995, 4190)"
+  _ok "UFW active; default-deny incoming with allow-list (22, 80, 443, 8443, 25, 465, 587, 993, 995, 4190, 53/tcp+udp)"
 }
 
 # ---------- step 8a.1: auto-restart drop-ins for critical services ----------

@@ -54,6 +54,10 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0063](0063-profiles-yaml-for-remediation-override.md) | Per-scenario remediation override via `/etc/crowdsec/profiles.yaml` | Accepted |
 | [0064](0064-diagnostic-report-enclosed-mail.md) | Diagnostic report — enclosed.cc upload + email delivery | Accepted |
 | [0065](0065-server-status.md) | Server Status aggregator | Accepted |
+| [0066](0066-le-cert-panel-hostname.md) | Let's Encrypt cert for the panel hostname | Accepted |
+| [0067](0067-lazy-service-alert-suppression.md) | Suppress critical alert on inactive + disabled services (lazy-started units) | Accepted |
+| [0068](0068-per-user-cgroup-slice-metrics.md) | Per-user slice metrics via direct cgroup v2 read | Accepted |
+| [0069](0069-server-status-masonry-layout.md) | AntD `<Masonry>` for Server Status page layout | Accepted |
 
 ## Decision Categories
 

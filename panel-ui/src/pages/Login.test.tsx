@@ -10,20 +10,27 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as kratos from "../kratos";
+import { ThemeModeProvider } from "../theme/ThemeModeContext";
 import { LoginPage } from "./Login";
 
 // LoginPage uses useQueryClient to prime the ["whoami"] AuthContext
 // cache on successful login (eliminates the post-submit race where
 // RequireAdmin briefly saw stale null). QueryClientProvider is the
 // minimum wrapper that gives the hook something to read.
+//
+// LoginPage also reads `mode` from useThemeMode for the dark/light
+// switcher in the page chrome — wrap in ThemeModeProvider so the
+// hook resolves instead of throwing.
 function renderLogin() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <QueryClientProvider client={qc}>
-      <BrowserRouter>
-        <LoginPage />
-      </BrowserRouter>
-    </QueryClientProvider>,
+    <ThemeModeProvider>
+      <QueryClientProvider client={qc}>
+        <BrowserRouter>
+          <LoginPage />
+        </BrowserRouter>
+      </QueryClientProvider>
+    </ThemeModeProvider>,
   );
 }
 

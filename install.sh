@@ -1144,6 +1144,13 @@ _install_sury_source() {
   # Last verified: 2026-04-17 (DPA CA Certificate, Ondřej Surý)
   local SURY_GPG_FINGERPRINT="15058500A0235D97F5D10063B188E2B695BD4743"
 
+  # Always write the Fastly 418 UA workaround, even when the .list
+  # below short-circuits — earlier installs from before this fix
+  # landed have the source list but not the apt.conf.d override, and
+  # they crash on every apt-get update. Idempotent: writing the same
+  # bytes is a noop.
+  _install_sury_apt_ua_workaround
+
   [[ -f /etc/apt/sources.list.d/sury-php.list ]] && { _ok "Sury PHP source already configured"; return; }
 
   # Derive the distro codename without depending on lsb_release (not
@@ -1186,13 +1193,21 @@ _install_sury_source() {
   cat > /etc/apt/sources.list.d/sury-php.list <<EOF
 deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ ${codename} main
 EOF
+  _ok "added Sury PHP repository for ${codename}"
+}
 
-  # packages.sury.org sits behind Fastly; the Fastly edge returns
-  # HTTP 418 ("I'm a teapot") when apt's default User-Agent string
-  # ("Debian APT-HTTP/1.3 (...)") arrives from a flagged datacenter
-  # IP. Override the User-Agent for Sury fetches only — keep the
-  # default elsewhere so we don't muddy other repos' bot heuristics.
-  # Fastly accepts a plain Mozilla string so we use that.
+# packages.sury.org sits behind Fastly; the Fastly edge returns HTTP
+# 418 ("I'm a teapot") when apt's default User-Agent
+# ("Debian APT-HTTP/1.3 (...)") arrives from a flagged datacenter IP.
+# Override the User-Agent for Sury fetches only — keep the default
+# elsewhere so we don't muddy other repos' bot heuristics. Fastly
+# accepts a plain Mozilla string. Also bumps Acquire::Retries so
+# transient network blips don't crash the whole install.
+#
+# Split out from _install_sury_source so it always runs (the source
+# function early-returns when the .list exists, but a re-run on a
+# half-installed host still needs this conf written).
+_install_sury_apt_ua_workaround() {
   cat > /etc/apt/apt.conf.d/98-jabali-sury-ua.conf <<'APTEOF'
 // Workaround Fastly 418 on packages.sury.org (Debian/Ubuntu
 // datacenter-IP false positives). Scoped per-repo so other
@@ -1201,7 +1216,6 @@ Acquire::http::User-Agent::"https://packages.sury.org/php" "Mozilla/5.0 (X11; Li
 Acquire::https::User-Agent::"https://packages.sury.org/php" "Mozilla/5.0 (X11; Linux x86_64) jabali-panel-installer";
 Acquire::Retries "3";
 APTEOF
-  _ok "added Sury PHP repository for ${codename} (with Fastly UA workaround)"
 }
 
 _install_php_version() {

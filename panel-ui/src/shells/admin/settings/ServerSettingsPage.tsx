@@ -150,7 +150,7 @@ const GeneralSettingsTab = () => {
         ssh_user_password_auth: values.ssh_user_password_auth || false,
         ssh_sandbox_mode: values.ssh_sandbox_mode || "bubblewrap",
         default_nspawn_image_version:
-          values.default_nspawn_image_version || "debian-12-v1",
+          values.default_nspawn_image_version || "debian-13-v1",
       });
       notify({ type: "success", message: "Settings saved" });
       form.setFieldsValue(resp.data);

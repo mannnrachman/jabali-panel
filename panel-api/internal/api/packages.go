@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -77,23 +78,26 @@ type createPackageRequest struct {
 	MaxFTPAccounts   uint32 `json:"max_ftp_accounts"`
 	SSHEnabled       bool   `json:"ssh_enabled"`
 	CGIEnabled       bool   `json:"cgi_enabled"`
+	// M13: nspawn image pin (empty = use server default).
+	NspawnImageVersion string `json:"nspawn_image_version"`
 }
 
 type updatePackageRequest struct {
-	Name             *string `json:"name"`
-	DiskQuotaMB      *uint32 `json:"disk_quota_mb"`
-	CPUQuotaPercent  *uint32 `json:"cpu_quota_percent"`
-	MemoryLimitMB    *uint32 `json:"memory_limit_mb"`
-	IOReadMbps       *uint32 `json:"io_read_mbps"`
-	IOWriteMbps      *uint32 `json:"io_write_mbps"`
-	MaxTasks         *uint32 `json:"max_tasks"`
-	BandwidthQuotaMB *uint32 `json:"bandwidth_quota_mb"`
-	MaxDomains       *uint32 `json:"max_domains"`
-	MaxEmailAccounts *uint32 `json:"max_email_accounts"`
-	MaxDatabases     *uint32 `json:"max_databases"`
-	MaxFTPAccounts   *uint32 `json:"max_ftp_accounts"`
-	SSHEnabled       *bool   `json:"ssh_enabled"`
-	CGIEnabled       *bool   `json:"cgi_enabled"`
+	Name               *string `json:"name"`
+	DiskQuotaMB        *uint32 `json:"disk_quota_mb"`
+	CPUQuotaPercent    *uint32 `json:"cpu_quota_percent"`
+	MemoryLimitMB      *uint32 `json:"memory_limit_mb"`
+	IOReadMbps         *uint32 `json:"io_read_mbps"`
+	IOWriteMbps        *uint32 `json:"io_write_mbps"`
+	MaxTasks           *uint32 `json:"max_tasks"`
+	BandwidthQuotaMB   *uint32 `json:"bandwidth_quota_mb"`
+	MaxDomains         *uint32 `json:"max_domains"`
+	MaxEmailAccounts   *uint32 `json:"max_email_accounts"`
+	MaxDatabases       *uint32 `json:"max_databases"`
+	MaxFTPAccounts     *uint32 `json:"max_ftp_accounts"`
+	SSHEnabled         *bool   `json:"ssh_enabled"`
+	CGIEnabled         *bool   `json:"cgi_enabled"`
+	NspawnImageVersion *string `json:"nspawn_image_version"`
 }
 
 // ---- handlers ----
@@ -140,6 +144,16 @@ func (h *packageHandler) create(c *gin.Context) {
 		CGIEnabled:       req.CGIEnabled,
 		CreatedAt:        now,
 		UpdatedAt:        now,
+	}
+	if v := strings.TrimSpace(req.NspawnImageVersion); v != "" {
+		if !isImageNamePattern(v) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":  "invalid_nspawn_image_version",
+				"detail": "must match [a-z0-9-]+",
+			})
+			return
+		}
+		pkg.NspawnImageVersion = &v
 	}
 
 	if err := validatePackageLimits(pkg); err != nil {
@@ -250,6 +264,21 @@ func (h *packageHandler) update(c *gin.Context) {
 	}
 	if req.CGIEnabled != nil {
 		pkg.CGIEnabled = *req.CGIEnabled
+	}
+	if req.NspawnImageVersion != nil {
+		v := strings.TrimSpace(*req.NspawnImageVersion)
+		if v == "" {
+			pkg.NspawnImageVersion = nil
+		} else {
+			if !isImageNamePattern(v) {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error":  "invalid_nspawn_image_version",
+					"detail": "must match [a-z0-9-]+",
+				})
+				return
+			}
+			pkg.NspawnImageVersion = &v
+		}
 	}
 	pkg.UpdatedAt = time.Now().UTC()
 

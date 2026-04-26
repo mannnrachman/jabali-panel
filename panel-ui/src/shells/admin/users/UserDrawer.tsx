@@ -6,12 +6,11 @@
 //
 // Validation rules mirror the server's so the form rejects early.
 // Password on edit is optional — blank means "keep current".
-import { Button, Drawer, Form, Grid, Input, Select, Space, Spin, Switch, message } from "antd";
-import { useEffect, useState } from "react";
+import { Button, Drawer, Form, Grid, Input, Space, Spin, Switch, message } from "antd";
+import { useEffect } from "react";
 
 import { CheckOutlined, CloseOutlined } from "@icons";
 
-import { apiClient } from "../../../apiClient";
 import { PasswordInput } from "../../../components/PasswordInput";
 import {
   useCreateMutation,
@@ -19,8 +18,6 @@ import {
   useUpdateMutation,
 } from "../../../hooks/useQueries";
 import { useSelectQuery } from "../../../hooks/useSelectQuery";
-
-type NspawnImage = { name: string };
 
 type HostingPackage = {
   id: string;
@@ -35,7 +32,6 @@ type UserFormInput = {
   name_last?: string;
   is_admin: boolean;
   package_id?: string | null;
-  nspawn_image_version?: string | null;
 };
 
 type UserRecord = UserFormInput & {
@@ -67,25 +63,6 @@ export function UserDrawer({ open, onClose, editingId }: UserDrawerProps) {
 
   const create = useCreateMutation<UserCreated, UserFormInput>({ resource: RESOURCE });
   const update = useUpdateMutation<UserRecord, UserFormInput>({ resource: RESOURCE });
-
-  const [nspawnImages, setNspawnImages] = useState<NspawnImage[]>([]);
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const resp = await apiClient.get<{ images: NspawnImage[] }>(
-          "/admin/system/nspawn-images",
-        );
-        if (!cancelled) setNspawnImages(resp.data.images || []);
-      } catch {
-        // empty list is fine — pin field shows free-text fallback
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -221,23 +198,6 @@ export function UserDrawer({ open, onClose, editingId }: UserDrawerProps) {
 
           <Form.Item label="Hosting package" name="package_id">
             <PackageSelect />
-          </Form.Item>
-
-          <Form.Item
-            label="nspawn sandbox image"
-            name="nspawn_image_version"
-            extra="Only used when sandbox mode = nspawn. Empty = falls back to server default at next reconcile."
-          >
-            <Select
-              showSearch
-              allowClear
-              placeholder="(use server default)"
-              options={nspawnImages.map((img) => ({
-                value: img.name,
-                label: img.name,
-              }))}
-              style={{ width: "100%" }}
-            />
           </Form.Item>
 
           <Form.Item>

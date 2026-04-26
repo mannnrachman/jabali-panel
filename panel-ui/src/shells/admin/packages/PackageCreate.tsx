@@ -11,15 +11,20 @@ import {
   Input,
   InputNumber,
   Row,
+  Select,
   Switch,
   Typography,
   message,
 } from "antd";
 import { CheckOutlined, CloseOutlined } from "@icons";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 
+import { apiClient } from "../../../apiClient";
 import { useCreateMutation } from "../../../hooks/useQueries";
 import { useDiskQuotaEnabled } from "../../../hooks/useDiskQuotaEnabled";
+
+type NspawnImage = { name: string };
 
 type PackageCreateInput = {
   name: string;
@@ -36,6 +41,7 @@ type PackageCreateInput = {
   max_ftp_accounts: number;
   ssh_enabled: boolean;
   cgi_enabled: boolean;
+  nspawn_image_version?: string | null;
 };
 
 type PackageCreated = { id: string };
@@ -47,6 +53,24 @@ export const PackageCreate = () => {
   const createMutation = useCreateMutation<PackageCreated, PackageCreateInput>({
     resource: "packages",
   });
+
+  const [nspawnImages, setNspawnImages] = useState<NspawnImage[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await apiClient.get<{ images: NspawnImage[] }>(
+          "/admin/system/nspawn-images",
+        );
+        if (!cancelled) setNspawnImages(resp.data.images || []);
+      } catch {
+        // empty list — Select stays empty
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleFinish = async (values: PackageCreateInput) => {
     try {
@@ -250,6 +274,20 @@ export const PackageCreate = () => {
           </Form.Item>
           <Typography.Text>CGI Enabled</Typography.Text>
         </div>
+
+        <Form.Item
+          label="nspawn sandbox image"
+          name="nspawn_image_version"
+          extra="Only used when sandbox mode = nspawn AND SSH is enabled. Empty = use server default."
+        >
+          <Select
+            showSearch
+            allowClear
+            placeholder="(use server default)"
+            options={nspawnImages.map((img) => ({ value: img.name, label: img.name }))}
+            style={{ width: "100%" }}
+          />
+        </Form.Item>
 
         <Form.Item>
           <Button

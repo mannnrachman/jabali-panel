@@ -90,7 +90,7 @@ func (r *packageRepo) Update(ctx context.Context, p *models.HostingPackage) erro
 	if err := r.db.WithContext(ctx).Model(p).Where("id = ?", p.ID).Select(
 		"name", "disk_quota_mb", "bandwidth_quota_mb", "max_domains",
 		"max_email_accounts", "max_databases", "max_ftp_accounts",
-		"ssh_enabled", "cgi_enabled", "updated_at",
+		"ssh_enabled", "cgi_enabled", "nspawn_image_version", "updated_at",
 	).Updates(p).Error; err != nil {
 		return translate(err)
 	}

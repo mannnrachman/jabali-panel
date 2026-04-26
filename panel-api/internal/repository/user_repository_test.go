@@ -43,7 +43,6 @@ func TestUserRepository_Create(t *testing.T) {
 			sqlmock.AnyArg(), // mysqladmin_password_enc — GORM emits []byte{} for nil slice
 			nil,              // mysqladmin_provisioned_at
 			nil,              // kratos_identity_id (M20)
-			nil,              // nspawn_image_version (M13)
 			sqlmock.AnyArg(), // created_at
 			sqlmock.AnyArg(), // updated_at
 		).

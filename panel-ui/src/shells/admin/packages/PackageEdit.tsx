@@ -2,7 +2,7 @@
 //
 // Same field set as PackageCreate; initial values load via useOneQuery
 // and seed the Form once they arrive.
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   Button,
   Card,
@@ -12,6 +12,7 @@ import {
   Input,
   InputNumber,
   Row,
+  Select,
   Spin,
   Switch,
   Typography,
@@ -20,8 +21,11 @@ import {
 import { CheckOutlined, CloseOutlined } from "@icons";
 import { useNavigate, useParams } from "react-router";
 
+import { apiClient } from "../../../apiClient";
 import { useOneQuery, useUpdateMutation } from "../../../hooks/useQueries";
 import { useDiskQuotaEnabled } from "../../../hooks/useDiskQuotaEnabled";
+
+type NspawnImage = { name: string };
 
 type PackageEditInput = {
   name: string;
@@ -39,6 +43,7 @@ type PackageEditInput = {
   max_ftp_accounts: number;
   ssh_enabled: boolean;
   cgi_enabled: boolean;
+  nspawn_image_version?: string | null;
 };
 
 type PackageRecord = PackageEditInput & { id: string };
@@ -56,6 +61,24 @@ export const PackageEdit = () => {
   const updateMutation = useUpdateMutation<PackageRecord, PackageEditInput>({
     resource: "packages",
   });
+
+  const [nspawnImages, setNspawnImages] = useState<NspawnImage[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await apiClient.get<{ images: NspawnImage[] }>(
+          "/admin/system/nspawn-images",
+        );
+        if (!cancelled) setNspawnImages(resp.data.images || []);
+      } catch {
+        // empty list — Select stays empty, server default is used
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (data) {
@@ -268,6 +291,20 @@ export const PackageEdit = () => {
           </Form.Item>
           <Typography.Text>CGI Enabled</Typography.Text>
         </div>
+
+        <Form.Item
+          label="nspawn sandbox image"
+          name="nspawn_image_version"
+          extra="Only used when sandbox mode = nspawn AND SSH is enabled. Empty = use server default."
+        >
+          <Select
+            showSearch
+            allowClear
+            placeholder="(use server default)"
+            options={nspawnImages.map((img) => ({ value: img.name, label: img.name }))}
+            style={{ width: "100%" }}
+          />
+        </Form.Item>
 
         <Form.Item>
           <Button

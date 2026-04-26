@@ -15,7 +15,7 @@ import (
 // at /etc/jabali/users/<username>/nspawn-image.
 //
 // Reconciler is the source of truth for both the DB column
-// (users.nspawn_image_version) and this filesystem mirror. The wrapper
+// (hosting_packages.nspawn_image_version) and this filesystem mirror. The wrapper
 // reads the file on each connect and resolves to nologin if missing or
 // unreadable. Empty/blank image clears the pin (file removed).
 

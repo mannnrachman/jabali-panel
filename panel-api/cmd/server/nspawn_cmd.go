@@ -218,9 +218,9 @@ func newNspawnPruneCmd() *cobra.Command {
 		Use:   "prune",
 		Short: "Remove sealed images that no user is pinned to",
 		Long: `Pinned versions are read from /etc/jabali/users/<u>/nspawn-image
-(reconciler-managed mirror of users.nspawn_image_version) plus the
-server-wide /etc/jabali/default-nspawn-image. Anything else under
-/var/lib/jabali-nspawn/images is a candidate for removal.`,
+(reconciler-managed mirror of hosting_packages.nspawn_image_version)
+plus the server-wide /etc/jabali/default-nspawn-image. Anything else
+under /var/lib/jabali-nspawn/images is a candidate for removal.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pinned := map[string]bool{}
 			usersDir := "/etc/jabali/users"

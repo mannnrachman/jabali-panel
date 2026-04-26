@@ -114,7 +114,7 @@ type ServerSettings struct {
 	// Existing users keep their pin even after the default bumps —
 	// upgrades are an explicit admin action. Format: [a-z0-9-]+ matching
 	// the directory under /var/lib/jabali-nspawn/images/.
-	DefaultNspawnImageVersion string `gorm:"column:default_nspawn_image_version;type:varchar(64);not null;default:'debian-12-v1'" json:"default_nspawn_image_version"`
+	DefaultNspawnImageVersion string `gorm:"column:default_nspawn_image_version;type:varchar(64);not null;default:'debian-13-v1'" json:"default_nspawn_image_version"`
 
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }

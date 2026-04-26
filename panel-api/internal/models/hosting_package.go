@@ -33,6 +33,13 @@ type HostingPackage struct {
 	SSHEnabled bool `gorm:"type:tinyint(1);not null;default:0" json:"ssh_enabled"`
 	CGIEnabled bool `gorm:"type:tinyint(1);not null;default:0" json:"cgi_enabled"`
 
+	// NspawnImageVersion (M13 / ADR-0067) pins users on this package to a
+	// specific systemd-nspawn rootfs at /var/lib/jabali-nspawn/images/<v>/.
+	// NULL → reconciler stamps from server_settings.default_nspawn_image_version
+	// at next sweep. Only takes effect when ssh_sandbox_mode=nspawn AND the
+	// package has ssh_enabled=true.
+	NspawnImageVersion *string `gorm:"type:varchar(64);column:nspawn_image_version" json:"nspawn_image_version,omitempty"`
+
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }

@@ -50,10 +50,12 @@ func (r *Reconciler) ReconcileSSHKeysForUser(ctx context.Context, userID string)
 	// table. Missing package (no package_id, or package fetch fails)
 	// keeps the safe default (SFTP-only).
 	sshEnabled := false
+	var pkgPin *string
 	if r.packages != nil && user.PackageID != nil && *user.PackageID != "" {
 		pkg, pkgErr := r.packages.FindByID(ctx, *user.PackageID)
 		if pkgErr == nil && pkg != nil {
 			sshEnabled = pkg.SSHEnabled
+			pkgPin = pkg.NspawnImageVersion
 		}
 	}
 	// Order matters: when going SFTP→SSH we must restore <u>:<u> 0750 on
@@ -96,22 +98,18 @@ func (r *Reconciler) ReconcileSSHKeysForUser(ctx context.Context, userID string)
 			"user_id", userID, "username", *user.Username, "method", sandboxGroupMethod, "error", err)
 	}
 
-	// M13 nspawn pin: stamp NULL pins from server-default, then
-	// materialize the per-user file under /etc/jabali/users/<u>/.
-	// SFTP-only users have the pin file removed (defensive — sandbox
-	// group is also gone, so the pin is moot, but keep state tidy).
+	// M13 nspawn pin: take the package's pin first, fall back to server
+	// default. The materialized file under /etc/jabali/users/<u>/ is what
+	// jabali-nspawn-enter consults at SSH connect time. SFTP-only users
+	// have the pin file removed (defensive — sandbox group is also gone,
+	// so the pin is moot, but keep state tidy).
 	pin := ""
-	if user.NspawnImageVersion != nil {
-		pin = *user.NspawnImageVersion
+	if pkgPin != nil {
+		pin = *pkgPin
 	}
 	if sshEnabled && pin == "" && r.serverSettings != nil {
 		if s, sErr := r.serverSettings.Get(ctx); sErr == nil && s != nil && s.DefaultNspawnImageVersion != "" {
 			pin = s.DefaultNspawnImageVersion
-			user.NspawnImageVersion = &pin
-			if uErr := r.users.Update(ctx, user); uErr != nil {
-				r.log.WarnContext(ctx, "reconcile ssh keys: stamp nspawn pin failed",
-					"user_id", userID, "username", *user.Username, "error", uErr)
-			}
 		}
 	}
 	if !sshEnabled {

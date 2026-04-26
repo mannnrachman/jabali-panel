@@ -109,12 +109,11 @@ type createUserRequest struct {
 // users change them through the Kratos self-service settings flow rather
 // than PATCHing a panel row.
 type updateUserRequest struct {
-	Email              *string `json:"email,omitempty" binding:"omitempty,email"`
-	NameFirst          *string `json:"name_first,omitempty"`
-	NameLast           *string `json:"name_last,omitempty"`
-	IsAdmin            *bool   `json:"is_admin,omitempty"`
-	PackageID          *string `json:"package_id,omitempty"`
-	NspawnImageVersion *string `json:"nspawn_image_version,omitempty"`
+	Email     *string `json:"email,omitempty" binding:"omitempty,email"`
+	NameFirst *string `json:"name_first,omitempty"`
+	NameLast  *string `json:"name_last,omitempty"`
+	IsAdmin   *bool   `json:"is_admin,omitempty"`
+	PackageID *string `json:"package_id,omitempty"`
 }
 
 type reprovisionRequest struct {
@@ -390,26 +389,6 @@ func (h *userHandler) update(c *gin.Context) {
 		} else {
 			// Empty string means clear the package assignment
 			existing.PackageID = nil
-		}
-	}
-
-	// M13: per-user nspawn image pin. Empty string clears the pin →
-	// reconciler will re-stamp from server_settings.default at next
-	// sweep. A non-empty value must match [a-z0-9-]+ (the same shape
-	// the agent's image allowlist accepts).
-	if req.NspawnImageVersion != nil {
-		v := strings.TrimSpace(*req.NspawnImageVersion)
-		if v == "" {
-			existing.NspawnImageVersion = nil
-		} else {
-			if !isImageNamePattern(v) {
-				c.JSON(http.StatusBadRequest, gin.H{
-					"error":  "invalid_nspawn_image_version",
-					"detail": "must match [a-z0-9-]+",
-				})
-				return
-			}
-			existing.NspawnImageVersion = &v
 		}
 	}
 

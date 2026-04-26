@@ -40,6 +40,7 @@ var (
 		"restart": "service.restart",
 		"start":   "service.start",
 		"stop":    "service.stop",
+		"reload":  "service.reload",
 	}
 	// serviceNameRe is intentionally narrow — we re-validate panel-side
 	// even though the agent does the same check. Only allowlisted units

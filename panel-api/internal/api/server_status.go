@@ -50,14 +50,15 @@ const (
 // objects are pointers so a per-call failure can serialize as null
 // rather than zero-valued (prevents the UI from rendering ghosts).
 type ServerStatusEnvelope struct {
-	AsOf    string                  `json:"as_of"`
-	Host    *json.RawMessage        `json:"host,omitempty"`
-	CPU     *json.RawMessage        `json:"cpu,omitempty"`
-	Network *json.RawMessage        `json:"network,omitempty"`
-	Services *json.RawMessage       `json:"services,omitempty"`
-	Processes *json.RawMessage      `json:"processes,omitempty"`
-	Errors   map[string]string      `json:"errors,omitempty"`
-	Alerts   []ServerStatusAlert    `json:"alerts"`
+	AsOf       string              `json:"as_of"`
+	Host       *json.RawMessage    `json:"host,omitempty"`
+	CPU        *json.RawMessage    `json:"cpu,omitempty"`
+	Network    *json.RawMessage    `json:"network,omitempty"`
+	Services   *json.RawMessage    `json:"services,omitempty"`
+	Processes  *json.RawMessage    `json:"processes,omitempty"`
+	UserSlices *json.RawMessage    `json:"user_slices,omitempty"`
+	Errors     map[string]string   `json:"errors,omitempty"`
+	Alerts     []ServerStatusAlert `json:"alerts"`
 }
 
 // ServerStatusAlert is one synthesized warning / critical row. Kind
@@ -118,6 +119,7 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 	call("network", "system.network", nil)
 	call("processes", "system.processes", nil)
 	call("services", "system.service_details", nil)
+	call("user_slices", "system.user_slices", nil)
 
 	_ = g.Wait()
 
@@ -147,6 +149,10 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 	if v, ok := results["services"]; ok {
 		raw := v
 		env.Services = &raw
+	}
+	if v, ok := results["user_slices"]; ok {
+		raw := v
+		env.UserSlices = &raw
 	}
 
 	env.Alerts = synthesizeAlerts(results, errMap)

@@ -4,18 +4,23 @@
 // is foreground. All sub-sections share the same envelope so the page
 // renders cohesively even when one slice is null (timeout / agent
 // hiccup) — empty cells show "—" rather than ghost numbers.
-import { Col, Row, Space, Typography } from "antd";
+//
+// Layout: AntD Masonry flows every card into a balanced grid so cards
+// of different heights pack without forcing matched rows. Order in
+// source = visual order (top-left → top-right → next column).
+import { Masonry, Typography } from "antd";
 
 import { useServerStatus } from "../../../hooks/useServerStatus";
 import { AlertsBanner } from "./AlertsBanner";
 import { DisksTable } from "./DisksTable";
-import { HostHeaderCard } from "./HostHeaderCard";
-import { MetersGrid } from "./MetersGrid";
+import { CPUMeterCard, LoadMeterCard, MemoryMeterCard, SwapMeterCard } from "./MetersGrid";
 import { NetworkTable } from "./NetworkTable";
 import { ProcessesCard } from "./ProcessesCard";
 import { QueuesCard } from "./QueuesCard";
-import { ServicesGrid } from "./ServicesGrid";
+import { ServicesSummaryCard } from "./ServicesSummaryCard";
+import { SystemInfoCard } from "./SystemInfoCard";
 import { UpdatesCard } from "./UpdatesCard";
+import { UserSlicesCard } from "./UserSlicesCard";
 
 export const ServerStatusPage = () => {
   const q = useServerStatus();
@@ -29,39 +34,26 @@ export const ServerStatusPage = () => {
 
       <AlertsBanner alerts={env?.alerts ?? []} />
 
-      <Space direction="vertical" size={16} style={{ width: "100%" }}>
-        <HostHeaderCard
+      <Masonry columns={{ xs: 1, sm: 1, md: 2, lg: 3 }} gutter={16}>
+        <ServicesSummaryCard services={env?.services?.services ?? []} />
+        <SystemInfoCard
           host={env?.host ?? null}
+          network={env?.network ?? null}
           asOf={env?.as_of ?? ""}
           onRefresh={() => q.refetch()}
           isFetching={q.isFetching}
         />
-
-        <MetersGrid host={env?.host ?? null} cpu={env?.cpu ?? null} />
-
-        <Row gutter={[16, 16]}>
-          <Col xs={24} lg={12}>
-            <DisksTable partitions={env?.host?.partitions ?? []} />
-          </Col>
-          <Col xs={24} lg={12}>
-            <NetworkTable interfaces={env?.network?.interfaces ?? []} />
-          </Col>
-        </Row>
-
-        <ServicesGrid services={env?.services?.services ?? []} />
-
-        <Row gutter={[16, 16]}>
-          <Col xs={24} md={12} lg={8}>
-            <QueuesCard />
-          </Col>
-          <Col xs={24} md={12} lg={8}>
-            <ProcessesCard processes={env?.processes ?? null} />
-          </Col>
-          <Col xs={24} md={24} lg={8}>
-            <UpdatesCard />
-          </Col>
-        </Row>
-      </Space>
+        <CPUMeterCard host={env?.host ?? null} cpu={env?.cpu ?? null} />
+        <MemoryMeterCard host={env?.host ?? null} cpu={env?.cpu ?? null} />
+        <SwapMeterCard host={env?.host ?? null} cpu={env?.cpu ?? null} />
+        <LoadMeterCard host={env?.host ?? null} cpu={env?.cpu ?? null} />
+        <DisksTable partitions={env?.host?.partitions ?? []} />
+        <NetworkTable interfaces={env?.network?.interfaces ?? []} />
+        <UserSlicesCard data={env?.user_slices ?? null} />
+        <ProcessesCard processes={env?.processes ?? null} />
+        <QueuesCard />
+        <UpdatesCard />
+      </Masonry>
     </div>
   );
 };

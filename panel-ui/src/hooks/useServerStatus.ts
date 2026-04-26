@@ -15,8 +15,23 @@ export interface ServerStatusEnvelope {
   network: NetworkSlice | null;
   processes: ProcessesSlice | null;
   services: ServicesSlice | null;
+  user_slices: UserSlicesSlice | null;
   errors?: Record<string, string>;
   alerts: Alert[];
+}
+
+export interface UserSlicesSlice {
+  slices: UserSliceMetric[];
+  warming_up: boolean;
+  as_of: string;
+}
+
+export interface UserSliceMetric {
+  username: string;
+  cpu_percent: number;
+  memory_bytes: number;
+  memory_max_bytes: number;
+  tasks: number;
 }
 
 export interface HostSlice {

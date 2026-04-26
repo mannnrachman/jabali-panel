@@ -88,6 +88,23 @@ const vhostTemplate = `server {
 {{ end }}{{ if .ListenIPv6 }}    listen [{{.ListenIPv6}}]:80;
 {{ else }}    listen [::]:80;
 {{ end }}    server_name {{.Domain}} www.{{.Domain}};
+{{ if .IsEnabled }}
+    # M32-style ACME HTTP-01 webroot. ^~ outranks the regex catch-all
+    # below and the return 301 redirect, so cert issuance + renewal
+    # works even when SSLCertPath is set (initial issuance bootstraps
+    # off the self-signed cert that domain_create generates first).
+    # Webroot mirrors panel-api reconciler.IssueDomainCert which passes
+    # domain.DocRoot as -w. Without this, the redirect short-circuits
+    # LE challenge fetch and ACME never completes (incident 2026-04-26:
+    # jabali.site stuck in pending_acme_retry on first VPS install).
+    # Scoped to IsEnabled so disabled vhosts don't leak DocRoot or
+    # accept ACME requests for a domain we're not actively serving.
+    location ^~ /.well-known/acme-challenge/ {
+        default_type "text/plain";
+        root {{.DocRoot}};
+        try_files $uri =404;
+    }
+{{ end }}
 {{ if .SSLCertPath }}
     # Redirect HTTP to HTTPS when SSL is configured
     return 301 https://$host$request_uri;

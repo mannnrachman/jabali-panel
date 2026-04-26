@@ -36,6 +36,8 @@ export const ServerStatusPage = () => {
     { key: "memory", data: null, children: <MemoryMeterCard host={env?.host ?? null} cpu={env?.cpu ?? null} /> },
     { key: "swap", data: null, children: <SwapMeterCard host={env?.host ?? null} cpu={env?.cpu ?? null} /> },
     { key: "load", data: null, children: <LoadMeterCard host={env?.host ?? null} cpu={env?.cpu ?? null} /> },
+    { key: "disks", data: null, children: <DisksTable partitions={env?.host?.partitions ?? []} /> },
+    { key: "network", data: null, children: <NetworkTable interfaces={env?.network?.interfaces ?? []} /> },
     { key: "services", data: null, children: <ServicesSummaryCard services={env?.services?.services ?? []} /> },
     {
       key: "sysinfo",
@@ -50,8 +52,6 @@ export const ServerStatusPage = () => {
         />
       ),
     },
-    { key: "disks", data: null, children: <DisksTable partitions={env?.host?.partitions ?? []} /> },
-    { key: "network", data: null, children: <NetworkTable interfaces={env?.network?.interfaces ?? []} /> },
     { key: "user_slices", data: null, children: <UserSlicesCard data={env?.user_slices ?? null} /> },
     { key: "processes", data: null, children: <ProcessesCard processes={env?.processes ?? null} /> },
     { key: "queues", data: null, children: <QueuesCard /> },

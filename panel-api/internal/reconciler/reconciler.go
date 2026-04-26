@@ -19,6 +19,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/redirects"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler/phases"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/services"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/sso"
 )
 
@@ -64,6 +65,21 @@ type Reconciler struct {
 	// so a fresh docroot gets the customised welcome page rather than
 	// the agent's baked-in default.
 	pageTemplates repository.PageTemplateRepository
+	// M32 — singleton panel-cert row. When nil the panel-cert hook
+	// short-circuits (lab installs, tests). When wired with a routability
+	// service it drives ssl.panel.issue from ReconcileAll.
+	panelCerts          repository.PanelCertificateRepository
+	panelCertRoutability *services.PanelCertRoutability
+}
+
+// WithPanelCertificate injects the M32 panel-cert repo + routability
+// service. Wire both together — the reconciler skips the hook entirely
+// when either is nil so existing test fixtures don't need new
+// constructors.
+func (r *Reconciler) WithPanelCertificate(repo repository.PanelCertificateRepository, rout *services.PanelCertRoutability) *Reconciler {
+	r.panelCerts = repo
+	r.panelCertRoutability = rout
+	return r
 }
 
 // WithPageTemplates injects the M28 page template repo. When nil (the
@@ -264,6 +280,11 @@ func (r *Reconciler) Schedule(domainID string) {
 // ReconcileAll diffs the DB against the agent's filesystem state and converges them.
 // Returns an error if the agent list call fails; on per-domain errors, logs and continues.
 func (r *Reconciler) ReconcileAll(ctx context.Context) error {
+	// M32: panel-cert hook runs early so a successful issue lands
+	// before the rest of the loop touches the agent. Cheap noop when
+	// use_le=0 or routability gate fails.
+	r.reconcilePanelCertificate(ctx)
+
 	// PHP pool reconciliation first, so domain regens see latest pool state.
 	r.ReconcilePHPPools(ctx)
 

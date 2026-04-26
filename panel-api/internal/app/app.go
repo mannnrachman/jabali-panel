@@ -71,6 +71,10 @@ type Deps struct {
 	MailboxShares       repository.MailboxShareRepository
 	// DNSSECKeys caches DNSSEC public-key metadata (ADR-0057).
 	DNSSECKeys          repository.DNSSECKeyRepository
+	// PanelCerts is the M32 singleton panel_certificate repo. NewWithDeps
+	// registers /admin/panel-certificate when set; nil keeps the routes
+	// off (lab installs / older test wiring).
+	PanelCerts          repository.PanelCertificateRepository
 	// QuotaMount is the filesystem mount path /home lives on — passed
 	// on every M18 user.limits.{apply,clear,report} agent call so the
 	// agent can resolve `setquota -u <user> ... <mount>` without ever
@@ -364,6 +368,15 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		api.RegisterAdminServicesRoutes(v1, api.AdminServicesHandlerConfig{
 			Agent: deps.Agent,
 		})
+		// Admin: Panel SSL certificate (M32, ADR-0066). Skipped when
+		// PanelCerts isn't wired (legacy test fixtures).
+		if deps.PanelCerts != nil && deps.ServerSettings != nil {
+			api.RegisterAdminPanelCertificateRoutes(v1, api.AdminPanelCertificateHandlerConfig{
+				PanelCerts:     deps.PanelCerts,
+				ServerSettings: deps.ServerSettings,
+				Agent:          deps.Agent,
+			})
+		}
 		if deps.Domains != nil && deps.DNSZones != nil && deps.DNSRecords != nil {
 			api.RegisterDNSRoutes(v1, api.DNSHandlerConfig{
 				Domains:        deps.Domains,

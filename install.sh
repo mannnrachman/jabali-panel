@@ -1224,10 +1224,12 @@ EOF
 _install_sury_apt_ua_workaround() {
   cat > /etc/apt/apt.conf.d/98-jabali-sury-ua.conf <<'APTEOF'
 // Workaround Fastly 418 on packages.sury.org (Debian/Ubuntu
-// datacenter-IP false positives). Scoped per-repo so other
-// archives still see the standard apt User-Agent.
-Acquire::http::User-Agent::"https://packages.sury.org/php" "Mozilla/5.0 (X11; Linux x86_64) jabali-panel-installer";
-Acquire::https::User-Agent::"https://packages.sury.org/php" "Mozilla/5.0 (X11; Linux x86_64) jabali-panel-installer";
+// datacenter-IP false positives). Per-host User-Agent overrides
+// in apt's syntax are unreliable across versions; setting it
+// globally is the only form that consistently works. Other
+// archives don't care what the apt client identifies as.
+Acquire::http::User-Agent "Mozilla/5.0 (X11; Linux x86_64) jabali-panel-installer";
+Acquire::https::User-Agent "Mozilla/5.0 (X11; Linux x86_64) jabali-panel-installer";
 Acquire::Retries "3";
 APTEOF
 }

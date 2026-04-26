@@ -168,12 +168,19 @@ func systemSetSSHConfigHandler(ctx context.Context, params json.RawMessage) (any
 		}
 	}
 
-	// Reload sshd. If this fails the validated config stays in place — a
-	// re-attempt or manual reload by the operator will pick it up.
+	// Reload the SSH daemon. Debian/Ubuntu ship the unit as ssh.service;
+	// RHEL/Rocky ship it as sshd.service. Pick whichever exists rather
+	// than hard-coding sshd, which was breaking jabali update on
+	// Debian 13. If reload fails the validated config stays on disk —
+	// a re-attempt or manual reload by the operator will pick it up.
 	if os.Getenv("JABALI_SSHD_TEST_SKIP_RELOAD") == "" {
-		cmd := exec.CommandContext(ctx, "systemctl", "reload", "sshd")
+		unit := pickSSHUnit(ctx)
+		if unit == "" {
+			return nil, fmt.Errorf("no ssh/sshd systemd unit found")
+		}
+		cmd := exec.CommandContext(ctx, "systemctl", "reload", unit)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			return nil, fmt.Errorf("systemctl reload sshd: %s: %w", strings.TrimSpace(string(out)), err)
+			return nil, fmt.Errorf("systemctl reload %s: %s: %w", unit, strings.TrimSpace(string(out)), err)
 		}
 	}
 
@@ -182,6 +189,25 @@ func systemSetSSHConfigHandler(ctx context.Context, params json.RawMessage) (any
 		PasswordAuth:     p.PasswordAuth,
 		UserPasswordAuth: p.UserPasswordAuth,
 	}, nil
+}
+
+// pickSSHUnit returns "ssh" on Debian-family hosts and "sshd" on
+// RHEL-family hosts, by asking systemd which unit file exists. Returns
+// "" if neither is present (caller decides whether to fail or skip).
+func pickSSHUnit(ctx context.Context) string {
+	for _, name := range []string{"ssh", "sshd"} {
+		cmd := exec.CommandContext(ctx, "systemctl", "list-unit-files", name+".service")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			continue
+		}
+		// list-unit-files prints a header even when the unit is missing;
+		// look for the unit name itself in the output.
+		if strings.Contains(string(out), name+".service") {
+			return name
+		}
+	}
+	return ""
 }
 
 func init() {

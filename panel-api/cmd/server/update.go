@@ -290,7 +290,18 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 					// halts before the reload. Operator sees the error and fixes the
 					// source file.
 					"sshd -t; "+
-					"systemctl reload sshd; "+
+					// Reload the unit that actually exists. Debian/Ubuntu
+					// ship the daemon as ssh.service; RHEL/Rocky ship it
+					// as sshd.service. systemctl reload <name> aborts on
+					// unknown units, which broke jabali update on Debian
+					// 13 — pick the right name first.
+					"if systemctl list-unit-files ssh.service >/dev/null 2>&1; then "+
+					"  systemctl reload ssh; "+
+					"elif systemctl list-unit-files sshd.service >/dev/null 2>&1; then "+
+					"  systemctl reload sshd; "+
+					"else "+
+					"  echo 'no ssh/sshd unit found, skipping reload' >&2; "+
+					"fi; "+
 					// jabali service user in www-data group — needed for
 					// the reconciler's per-user FPM socket stat-check.
 					// usermod is idempotent; 'groups | grep -w' avoids an

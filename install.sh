@@ -2105,26 +2105,34 @@ AFTEREOF
   # --- ExecStart override for --enable-old-settings ---------------
   # PowerDNS Recursor 5.2 (Debian 13 trixie ships 5.2.8) flipped the
   # config-file default from old-style `key=value` to YAML. Our
-  # recursor.conf above is still key=value, and without this flag the
-  # daemon dies at startup with:
-  #   error="invalid type: string \"local-address=127.0.0.1, ::1
-  #   local-port=53\", expected struct Recursorsettings at line 3"
-  #   Old-style settings syntax not enabled by default anymore.
+  # recursor.conf above is still key=value, and without this flag
+  # 5.2+ dies at startup with:
+  #   error="invalid type: string \"local-address=127.0.0.1, ::1\"
+  #   ... Old-style settings syntax not enabled by default anymore.
   #   Use YAML or enable with --enable-old-settings on the command line
-  # systemd then auto-restarts forever (restart_counter climbs into
-  # the thousands), and `systemctl restart` blocks on stabilisation.
   # The flag is the official escape hatch until we do the YAML
   # conversion (tracked as an M6.3 follow-up).
   #
-  # Approach: drop-in that blanks + replaces ExecStart (first `=`
-  # empties the directive, second `=` sets the replacement — standard
-  # systemd override idiom). Source ExecStart copied verbatim from
-  # upstream's /usr/lib/systemd/system/pdns-recursor.service plus
-  # `--enable-old-settings`.
+  # Older releases (Ubuntu 24.04 noble ships pdns-recursor 4.9) don't
+  # know the flag at all and reject startup with:
+  #   error="Trying to set unknown setting 'enable-old-settings'"
+  # so the override has to be conditional. Check the binary's
+  # version and only add --enable-old-settings on 5.2+.
+  local rec_version rec_major rec_minor rec_needs_old_flag=0
+  rec_version="$(pdns_recursor --version 2>&1 | grep -oE 'PowerDNS Recursor [0-9]+\.[0-9]+' | awk '{print $NF}' | head -1)"
+  rec_major="${rec_version%%.*}"
+  rec_minor="${rec_version#*.}"
+  if [[ -n "$rec_major" && -n "$rec_minor" ]]; then
+    if (( rec_major > 5 )) || (( rec_major == 5 && rec_minor >= 2 )); then
+      rec_needs_old_flag=1
+    fi
+  fi
+
   local rec_exec_dropin=/etc/systemd/system/pdns-recursor.service.d/20-jabali-old-settings.conf
-  local rec_exec_dropin_new="${rec_exec_dropin}.new"
-  cat > "$rec_exec_dropin_new" <<'EXECEOF'
-# Managed by jabali-panel install.sh (M6.3). pdns-recursor 5.2 made
+  if (( rec_needs_old_flag == 1 )); then
+    local rec_exec_dropin_new="${rec_exec_dropin}.new"
+    cat > "$rec_exec_dropin_new" <<'EXECEOF'
+# Managed by jabali-panel install.sh (M6.3). pdns-recursor 5.2+ made
 # YAML the default config format; we still emit old-style key=value
 # in /etc/powerdns/recursor.conf. --enable-old-settings keeps the
 # old parser until a later M6.3.x converts our config to YAML. See
@@ -2133,13 +2141,23 @@ AFTEREOF
 ExecStart=
 ExecStart=/usr/sbin/pdns_recursor --daemon=no --write-pid=no --disable-syslog --log-timestamp=no --enable-old-settings
 EXECEOF
-  if [[ -f "$rec_exec_dropin" ]] && cmp -s "$rec_exec_dropin" "$rec_exec_dropin_new"; then
-    rm -f "$rec_exec_dropin_new"
+    if [[ -f "$rec_exec_dropin" ]] && cmp -s "$rec_exec_dropin" "$rec_exec_dropin_new"; then
+      rm -f "$rec_exec_dropin_new"
+    else
+      mv "$rec_exec_dropin_new" "$rec_exec_dropin"
+      chmod 0644 "$rec_exec_dropin"
+      recursor_changed=1
+      _log "wrote pdns-recursor.service.d/20-jabali-old-settings.conf (recursor ${rec_version})"
+    fi
   else
-    mv "$rec_exec_dropin_new" "$rec_exec_dropin"
-    chmod 0644 "$rec_exec_dropin"
-    recursor_changed=1
-    _log "wrote pdns-recursor.service.d/20-jabali-old-settings.conf"
+    # 4.x doesn't know the flag — drop any leftover override from a
+    # previous install on a host that has since been downgraded or
+    # the binary swapped (e.g. Sury → Ubuntu repo).
+    if [[ -f "$rec_exec_dropin" ]]; then
+      rm -f "$rec_exec_dropin"
+      recursor_changed=1
+      _log "removed stale pdns-recursor.service.d/20-jabali-old-settings.conf (recursor ${rec_version:-<unknown>} doesn't support --enable-old-settings)"
+    fi
   fi
 
   # --- zz-jabali-recursor.conf drop-in for systemd-resolved --------

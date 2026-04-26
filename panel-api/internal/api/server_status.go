@@ -57,6 +57,7 @@ type ServerStatusEnvelope struct {
 	Services   *json.RawMessage    `json:"services,omitempty"`
 	Processes  *json.RawMessage    `json:"processes,omitempty"`
 	UserSlices *json.RawMessage    `json:"user_slices,omitempty"`
+	Software   *json.RawMessage    `json:"software,omitempty"`
 	Errors     map[string]string   `json:"errors,omitempty"`
 	Alerts     []ServerStatusAlert `json:"alerts"`
 }
@@ -120,6 +121,7 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 	call("processes", "system.processes", nil)
 	call("services", "system.service_details", nil)
 	call("user_slices", "system.user_slices", nil)
+	call("software", "system.software", nil)
 
 	_ = g.Wait()
 
@@ -153,6 +155,10 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 	if v, ok := results["user_slices"]; ok {
 		raw := v
 		env.UserSlices = &raw
+	}
+	if v, ok := results["software"]; ok {
+		raw := v
+		env.Software = &raw
 	}
 
 	env.Alerts = synthesizeAlerts(results, errMap)

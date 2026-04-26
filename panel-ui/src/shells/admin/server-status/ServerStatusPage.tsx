@@ -46,6 +46,7 @@ export const ServerStatusPage = () => {
         <SystemInfoCard
           host={env?.host ?? null}
           network={env?.network ?? null}
+          software={env?.software ?? null}
           asOf={env?.as_of ?? ""}
         />
       ),

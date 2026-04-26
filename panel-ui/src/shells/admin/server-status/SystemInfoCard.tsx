@@ -8,7 +8,11 @@ import { Card, Table, Tag, Typography } from "antd";
 
 import { CheckCircleOutlined, ExclamationCircleOutlined } from "@icons";
 
-import type { HostSlice, NetworkSlice } from "../../../hooks/useServerStatus";
+import type {
+  HostSlice,
+  NetworkSlice,
+  SoftwareSlice,
+} from "../../../hooks/useServerStatus";
 
 type CategoryColor = "blue" | "purple" | "geekblue";
 
@@ -23,10 +27,11 @@ interface Row {
 interface Props {
   host: HostSlice | null;
   network: NetworkSlice | null;
+  software: SoftwareSlice | null;
   asOf: string;
 }
 
-export function SystemInfoCard({ host, network, asOf }: Props) {
+export function SystemInfoCard({ host, network, software, asOf }: Props) {
   const rows: Row[] = [];
 
   rows.push({
@@ -100,6 +105,21 @@ export function SystemInfoCard({ host, network, asOf }: Props) {
       key: "swap", category: "Hardware", categoryColor: "purple",
       property: "Swap",
       value: <code>{`${humanKB(host.swap_used_kb)} / ${humanKB(host.swap_total_kb)}`}</code>,
+    });
+  }
+
+  // Software stack — versions of installed binaries the panel manages.
+  // Backed by system.software (5min cache) so this is cheap to surface
+  // here even though the parent envelope refetches every 5s.
+  for (const item of software?.items ?? []) {
+    rows.push({
+      key: `sw-${item.name}`,
+      category: "Software",
+      categoryColor: "geekblue",
+      property: item.name,
+      value: item.version
+        ? <code>{item.version}</code>
+        : <Typography.Text type="secondary">not installed</Typography.Text>,
     });
   }
 

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 )
 
@@ -17,15 +19,20 @@ import (
 // endpoints used by the M31 server-status page.
 type AdminServicesHandlerConfig struct {
 	Agent agent.AgentInterface
+	Log   *slog.Logger
 }
 
 // RegisterAdminServicesRoutes mounts POST /admin/services/:name/{action}.
-// RequireAdmin gates every route. Allowed actions are constrained to
-// {restart, start, stop} — enable/disable are deferred to a follow-up
-// because they survive reboots and need a heavier audit trail.
+// RequireAdmin gates every route. Allowed actions: restart, start, stop,
+// reload, enable, disable. Stop+disable are blocked for the panel
+// self-destruct trio (jabali-panel, jabali-agent, mariadb) — those would
+// brick the management plane mid-request.
 func RegisterAdminServicesRoutes(g *gin.RouterGroup, cfg AdminServicesHandlerConfig) {
 	if cfg.Agent == nil {
 		return
+	}
+	if cfg.Log == nil {
+		cfg.Log = slog.Default()
 	}
 	h := &adminServicesHandler{cfg: cfg}
 	grp := g.Group("/admin/services")
@@ -41,6 +48,8 @@ var (
 		"start":   "service.start",
 		"stop":    "service.stop",
 		"reload":  "service.reload",
+		"enable":  "service.enable",
+		"disable": "service.disable",
 	}
 	// serviceNameRe is intentionally narrow — we re-validate panel-side
 	// even though the agent does the same check. Only allowlisted units
@@ -48,6 +57,23 @@ var (
 	// shell-injection-shaped strings before the request even hits the
 	// agent.
 	serviceNameRe = regexp.MustCompile(`^[a-zA-Z0-9._@-]+$`)
+
+	// panelSelfDestructUnits is the trio that, if stopped or disabled,
+	// would lock the operator out of the management plane mid-request:
+	// jabali-panel hosts the very HTTP this request rode in on; the agent
+	// is the only path back to systemctl on the host; mariadb backs
+	// every panel session and DB-as-truth state. Reject these at the
+	// API layer so the agent stays a dumb obedient executor and never
+	// has to know about product-UX concerns.
+	panelSelfDestructUnits = map[string]bool{
+		"jabali-panel": true,
+		"jabali-agent": true,
+		"mariadb":      true,
+	}
+	panelSelfDestructActions = map[string]bool{
+		"stop":    true,
+		"disable": true,
+	}
 )
 
 func (h *adminServicesHandler) action(c *gin.Context) {
@@ -62,10 +88,25 @@ func (h *adminServicesHandler) action(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported_action"})
 		return
 	}
+	if panelSelfDestructUnits[name] && panelSelfDestructActions[action] {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error":   "self_destruct_blocked",
+			"details": "stop/disable on panel-critical units (jabali-panel, jabali-agent, mariadb) would brick the management plane",
+		})
+		return
+	}
+
+	actorID := ""
+	if claims := ginctx.Claims(c); claims != nil {
+		actorID = claims.UserID
+	}
+
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 	raw, err := h.cfg.Agent.Call(ctx, cmd, map[string]any{"name": name})
 	if err != nil {
+		h.cfg.Log.Warn("event=audit kind=service_action_failed",
+			"actor_id", actorID, "service", name, "action", action, "err", err.Error())
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "details": err.Error()})
 		return
 	}
@@ -74,5 +115,7 @@ func (h *adminServicesHandler) action(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_parse"})
 		return
 	}
+	h.cfg.Log.Info("event=audit kind=service_action",
+		"actor_id", actorID, "service", name, "action", action)
 	c.JSON(http.StatusOK, data)
 }

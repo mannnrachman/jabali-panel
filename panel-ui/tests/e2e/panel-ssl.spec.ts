@@ -28,8 +28,11 @@ test.describe("admin panel SSL card", () => {
     await signIn(page, admin);
     await page.goto("/jabali-admin/settings");
 
-    // Status tag.
-    await expect(page.getByText("Self-signed")).toBeVisible();
+    // Status tag. The card's description prose also contains the
+    // word "Self-signed" ("Self-signed remains the fallback if
+    // issuance fails"), so a bare getByText hits two matches and
+    // trips Playwright strict mode. Scope to the AntD Tag instead.
+    await expect(page.locator(".ant-tag", { hasText: "Self-signed" })).toBeVisible();
     // Routability tag.
     await expect(page.getByText("Public-routable")).toBeVisible();
     // Toggle label.

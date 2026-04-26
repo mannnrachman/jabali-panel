@@ -123,8 +123,11 @@ test.describe("admin server status page", () => {
     // suffixes, etc.) under non-strict mode.
     await expect(page.getByRole("cell", { name: "/", exact: true })).toBeVisible();
 
-    // Network row IP.
-    await expect(page.getByText("10.0.0.5")).toBeVisible();
+    // Network row IP. SystemInfoCard's "IP address" descriptor also
+    // surfaces the same address ("first non-loopback IPv4"), so a
+    // bare getByText finds two matches. Scope to the NetworkTable's
+    // AntD Tag (the row chip) where the spec actually wants to look.
+    await expect(page.locator(".ant-tag", { hasText: "10.0.0.5" })).toBeVisible();
 
     // Critical alert from the envelope.
     await expect(page.getByText("mariadb.service is inactive")).toBeVisible();

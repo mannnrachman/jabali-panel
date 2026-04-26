@@ -27,6 +27,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/notifications/senders"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/services"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssokey"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/sso"
 )
@@ -225,6 +226,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.MailboxShares = repository.NewMailboxShareRepository(sharedDB)
 		deps.Forwarders = repository.NewEmailForwarderRepository(sharedDB)
 		deps.DNSSECKeys = repository.NewDNSSECKeyRepository(sharedDB)
+		// M32 (ADR-0066): singleton panel_certificate repo + reconciler.
+		// Without this wiring, /admin/panel-certificate routes are
+		// skipped (RegisterAdminPanelCertificateRoutes returns early
+		// when PanelCerts is nil) and the Server Settings → General
+		// → Panel SSL card 404s with "Failed to load panel SSL state".
+		// Surfaced 2026-04-26 on first VPS install at mx.jabali-panel.com.
+		panelCertRepo := repository.NewPanelCertificateRepository(sharedDB)
+		deps.PanelCerts = panelCertRepo
+		rec.WithPanelCertificate(panelCertRepo, services.NewPanelCertRoutability())
 		deps.PhpMyAdminSSOTokens = phpMyAdminSSOTokenRepo
 		deps.PHPPools = phpPoolRepo
 		deps.PHPPoolIniOverrides = phpPoolIniOverrideRepo

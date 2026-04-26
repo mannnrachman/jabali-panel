@@ -600,14 +600,19 @@ install_base_packages() {
   _log "installing all system packages in one batch"
   export DEBIAN_FRONTEND=noninteractive
 
-  # Re-runs on a host whose previous install left
-  # /etc/apt/sources.list.d/sury-php.list behind would crash this very
-  # first apt update on Fastly's 418, before _install_sury_source has
-  # had a chance to write the UA workaround. Drop the conf upfront so
-  # both the bootstrap apt update and the subsequent one see it.
-  # Idempotent on fresh hosts — the file just gets written without
-  # anything else changing.
-  _install_sury_apt_ua_workaround
+  # Re-runs on a host whose previous install crashed mid-way leave
+  # /etc/apt/sources.list.d/sury-php.list (and the matching
+  # NodeSource list) behind. The bootstrap apt update below would
+  # then re-fetch their indexes — and Sury's Fastly edge returns 418
+  # to flagged datacenter IPs, killing the whole install before
+  # _install_sury_source has a chance to write the UA workaround.
+  #
+  # Wipe the stale third-party lists upfront so the bootstrap update
+  # only touches the distro mirror (no 418 risk). The repos are
+  # re-added immediately below by _install_sury_source /
+  # _install_nodesource_source with the UA workaround in place.
+  rm -f /etc/apt/sources.list.d/sury-php.list \
+        /etc/apt/sources.list.d/nodesource.list
 
   # Bootstrap: `gpg` (from gnupg) + `curl` + `ca-certificates` must be
   # present BEFORE we add third-party repos (Sury, NodeSource) and verify

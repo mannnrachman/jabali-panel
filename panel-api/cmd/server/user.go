@@ -13,8 +13,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
-	"golang.org/x/term"
 
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
@@ -225,17 +225,23 @@ func newUserDeleteCmd() *cobra.Command {
 // host with no live user session: this talks to the Kratos admin API directly
 // (unix socket via sharedCfg) and doesn't need an HTTP self-service flow.
 //
-// --password is read from stdin by default (TTY: silent prompt + confirmation;
-// non-TTY: single-line read, no confirm). --password-stdin accepts a piped
-// password without any prompt — useful for automation. Explicit --password on
-// the flag is intentionally absent to keep plaintext out of shell history.
+// Password resolution order:
+//   --password <pwd>    explicit value (visible in shell history; convenience
+//                       for one-shot operator use, mirrors `mailbox create
+//                       --password`)
+//   --password-stdin    piped password, no prompt — for automation
+//   --link              emit a Kratos recovery URL; user picks their own
+//   (none of the above) auto-generate a strong password (ULID, 26 chars) and
+//                       print it once on stdout — mirrors `mailbox create`
+//                       and `mailbox rotate-password` behavior
 //
-// --link emits a Kratos recovery URL instead of setting a password directly,
-// matching the rebuild-kratos flow for the "user forgot their password and
-// operator doesn't want to pick one" case.
+// The legacy TTY twice-prompt was removed — auto-generate is friendlier for
+// the common operator case ("reset this user's password and tell me what it
+// is") and matches the mailbox CLI affordance the user already knows.
 
 func newUserPasswordCmd() *cobra.Command {
 	var (
+		password string
 		viaStdin bool
 		viaLink  bool
 		ttl      string
@@ -243,7 +249,7 @@ func newUserPasswordCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "password <email|username|user-id>",
-		Short:   "Reset a user's password (admin or regular; via Kratos admin API)",
+		Short:   "Reset a user's password (auto-generates one if --password is omitted)",
 		Args:    cobra.ExactArgs(1),
 		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -291,9 +297,26 @@ func newUserPasswordCmd() *cobra.Command {
 				return nil
 			}
 
-			newPwd, err := readNewPassword(viaStdin)
-			if err != nil {
-				return err
+			// Resolve the new password. Explicit --password wins; --password-stdin
+			// reads one line; otherwise auto-generate. Keep the conflict check
+			// strict — silently ignoring one of two contradictory flags hides
+			// scripting bugs.
+			if password != "" && viaStdin {
+				return fmt.Errorf("--password and --password-stdin are mutually exclusive")
+			}
+
+			generated := ""
+			newPwd := password
+			switch {
+			case viaStdin:
+				p, err := readPasswordStdin()
+				if err != nil {
+					return err
+				}
+				newPwd = p
+			case newPwd == "":
+				newPwd = ids.NewULID()
+				generated = newPwd
 			}
 			if len(newPwd) < 10 {
 				return fmt.Errorf("password must be at least 10 characters")
@@ -308,18 +331,29 @@ func newUserPasswordCmd() *cobra.Command {
 			}
 
 			if jsonOutput {
-				return printJSON(map[string]string{
-					"user_id":  target.ID,
-					"email":    target.Email,
-					"kratos":   *target.KratosIdentityID,
-					"status":   "password_reset",
-				})
+				out := map[string]string{
+					"user_id": target.ID,
+					"email":   target.Email,
+					"kratos":  *target.KratosIdentityID,
+					"status":  "password_reset",
+				}
+				if generated != "" {
+					out["password"] = generated
+				}
+				return printJSON(out)
 			}
-			fmt.Printf("Password reset for %s (%s)\n", target.ID, target.Email)
+			if generated != "" {
+				fmt.Printf("Password reset for %s (%s)\n", target.ID, target.Email)
+				fmt.Printf("New password: %s\n", generated)
+				fmt.Fprintln(os.Stderr, "(shown once — record it now)")
+			} else {
+				fmt.Printf("Password reset for %s (%s)\n", target.ID, target.Email)
+			}
 			return nil
 		},
 	}
 
+	cmd.Flags().StringVar(&password, "password", "", "explicit new password (omit to auto-generate)")
 	cmd.Flags().BoolVar(&viaStdin, "password-stdin", false, "read new password from stdin (no prompt, no echo)")
 	cmd.Flags().BoolVar(&viaLink, "link", false, "emit a one-click recovery URL instead of setting the password directly")
 	cmd.Flags().StringVar(&ttl, "expires-in", "24h", "TTL for recovery link (only with --link)")
@@ -354,35 +388,16 @@ func resolveUser(ctx context.Context, lookup string) (*models.User, error) {
 	return nil, fmt.Errorf("no user found matching %q", lookup)
 }
 
-// readNewPassword returns the operator-supplied plaintext. TTY mode prompts
-// twice and compares; stdin-piped mode reads one line (for automation); the
-// --password-stdin flag forces the single-read path even on a TTY.
-func readNewPassword(stdinOnly bool) (string, error) {
-	if stdinOnly || !term.IsTerminal(int(os.Stdin.Fd())) {
-		reader := bufio.NewReader(os.Stdin)
-		line, err := reader.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return "", fmt.Errorf("read password from stdin: %w", err)
-		}
-		return strings.TrimRight(line, "\r\n"), nil
+// readPasswordStdin reads a single line from stdin, stripping the trailing
+// newline. Used by the --password-stdin path; explicit --password and
+// auto-generate paths bypass this.
+func readPasswordStdin() (string, error) {
+	reader := bufio.NewReader(os.Stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("read password from stdin: %w", err)
 	}
-
-	fmt.Print("New password: ")
-	pw1, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Println()
-	if err != nil {
-		return "", fmt.Errorf("read password: %w", err)
-	}
-	fmt.Print("Confirm:      ")
-	pw2, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Println()
-	if err != nil {
-		return "", fmt.Errorf("read confirmation: %w", err)
-	}
-	if string(pw1) != string(pw2) {
-		return "", fmt.Errorf("passwords do not match")
-	}
-	return string(pw1), nil
+	return strings.TrimRight(line, "\r\n"), nil
 }
 
 // strOr returns *s when non-nil + non-empty, else fallback. Tiny helper so

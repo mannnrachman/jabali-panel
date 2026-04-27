@@ -59,7 +59,7 @@ export const ServerStatusPage = () => {
 
       <AlertsBanner alerts={env?.alerts ?? []} />
 
-      <Masonry columns={{ xs: 1, sm: 1, md: 2, lg: 3 }} gutter={16} items={items} />
+      <Masonry columns={{ xs: 1, sm: 1, md: 2, lg: 2 }} gutter={16} items={items} />
     </div>
   );
 };

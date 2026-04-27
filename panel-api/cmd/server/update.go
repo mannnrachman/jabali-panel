@@ -322,11 +322,39 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			// does this itself, but in practice it dies with
 			//   ENOTEMPTY: directory not empty, rmdir '.../node_modules/vite'
 			// whenever a prior partial install or filesystem quirk leaves
-			// a half-removed package tree behind. Doing the rm ourselves
-			// is the canonical workaround — safe here because node_modules
-			// is fully regenerated from package-lock on every run.
-			return asUser(repoDir+"/panel-ui", "bash", "-c",
-				"rm -rf node_modules && npm ci --no-audit --no-fund")
+			// a half-removed package tree behind.
+			//
+			// The dance below makes that resilient:
+			//   1. mv node_modules → node_modules.stale.<pid> so the
+			//      target dir is gone in one atomic syscall (rm -rf can
+			//      take seconds on a heavy tree, leaving a window where
+			//      npm ci sees a half-deleted target and races).
+			//   2. background-rm the stale tree so the install isn't
+			//      blocked on it.
+			//   3. run npm ci. If it fails (the ENOTEMPTY rotate race
+			//      inside npm itself, or the partial-install case where
+			//      "added N packages" prints but .bin/ is empty), wipe
+			//      and retry once — empirically the second attempt
+			//      lands clean. Two failures in a row points at a real
+			//      package-lock issue and we surface that.
+			return asUser(repoDir+"/panel-ui", "bash", "-c", `set -e
+trash="node_modules.stale.$$"
+if [ -d node_modules ]; then
+  mv node_modules "$trash"
+  ( rm -rf "$trash" 2>/dev/null & )
+fi
+attempt() { npm ci --no-audit --no-fund; }
+if ! attempt; then
+  echo "[jabali] npm ci failed, wiping node_modules and retrying once..." >&2
+  rm -rf node_modules
+  sleep 2
+  attempt
+fi
+test -x node_modules/.bin/tsc || {
+  echo "[jabali] npm ci reported success but node_modules/.bin/tsc is missing — partial install" >&2
+  exit 1
+}
+`)
 		}},
 		{"build frontend", func() error {
 			// vite's emptyDir unlinks every file under dist/ before

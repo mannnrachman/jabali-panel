@@ -236,6 +236,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 		panelCertRepo := repository.NewPanelCertificateRepository(sharedDB)
 		deps.PanelCerts = panelCertRepo
 		rec.WithPanelCertificate(panelCertRepo, services.NewPanelCertRoutability())
+
+		// M33 (ADR-0067): malware detection repos. Five repos wired
+		// together — RegisterSecurityMalwareRoutes activates only when
+		// all five are non-nil. Idempotent EnsureDefault on first /settings
+		// access seeds the singleton row if migration 000076 hasn't run.
+		deps.MalwareQuarantine = repository.NewMalwareQuarantineRepository(sharedDB)
+		deps.MalwareEvents = repository.NewMalwareEventRepository(sharedDB)
+		deps.MalwareSettings = repository.NewMalwareSettingsRepository(sharedDB)
+		deps.YARARules = repository.NewYARACustomRuleRepository(sharedDB)
+		deps.TetragonPolicies = repository.NewTetragonPolicyStateRepository(sharedDB)
 		deps.PhpMyAdminSSOTokens = phpMyAdminSSOTokenRepo
 		deps.PHPPools = phpPoolRepo
 		deps.PHPPoolIniOverrides = phpPoolIniOverrideRepo

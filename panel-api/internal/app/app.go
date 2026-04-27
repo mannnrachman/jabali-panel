@@ -222,6 +222,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			Settings:         deps.MalwareSettings,
 			YARARules:        deps.YARARules,
 			TetragonPolicies: deps.TetragonPolicies,
+			Users:            deps.Users,
 			Log:              deps.Log,
 		})
 	}

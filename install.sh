@@ -5211,24 +5211,45 @@ install_tetragon() {
     tmp_tg=$(mktemp -d -t tetragon-XXXXXX)
     # Tarball top-level is tetragon-<ver>-<arch>/ — flatten with
     # --strip-components=1 so /opt/tetragon/usr/local/bin/tetragon
-    # matches the path we install from. Without strip the binary
-    # lands at /opt/tetragon/tetragon-<ver>-<arch>/usr/local/bin/...
-    # and the install step below fails (caught on first VPS smoke).
-    if (
-      cd "$tmp_tg" && \
-      curl -fsSL "https://github.com/cilium/tetragon/releases/download/${TETRAGON_VERSION}/tetragon-${TETRAGON_VERSION}-${arch}.tar.gz" -o tg.tar.gz && \
-      install -d -m 0755 /opt/tetragon && \
-      tar -xzf tg.tar.gz --strip-components=1 -C /opt/tetragon && \
-      install -m 0755 /opt/tetragon/usr/local/bin/tetragon /usr/local/bin/tetragon && \
-      install -m 0755 /opt/tetragon/usr/local/bin/tetra /usr/local/bin/tetra && \
-      install -d -m 0755 /usr/local/lib/tetragon && \
-      cp -r /opt/tetragon/usr/local/lib/tetragon/. /usr/local/lib/tetragon/
-    ); then
+    # matches the path we install from.
+    #
+    # Retry the download up to 3 times with backoff. GitHub release CDN
+    # occasionally returns 502/connection-reset on slow networks; a
+    # one-shot failure used to leave the host with /etc/jabali/
+    # tetragon-disabled until the operator hand-ran install.sh again.
+    local tg_attempt=0 tg_ok=0 tg_sleep=5
+    while [[ $tg_attempt -lt 3 ]]; do
+      tg_attempt=$((tg_attempt + 1))
+      if (
+        cd "$tmp_tg" && \
+        curl -fsSL --max-time 120 \
+          "https://github.com/cilium/tetragon/releases/download/${TETRAGON_VERSION}/tetragon-${TETRAGON_VERSION}-${arch}.tar.gz" \
+          -o tg.tar.gz && \
+        install -d -m 0755 /opt/tetragon && \
+        tar -xzf tg.tar.gz --strip-components=1 -C /opt/tetragon && \
+        install -m 0755 /opt/tetragon/usr/local/bin/tetragon /usr/local/bin/tetragon && \
+        install -m 0755 /opt/tetragon/usr/local/bin/tetra /usr/local/bin/tetra && \
+        install -d -m 0755 /usr/local/lib/tetragon && \
+        cp -r /opt/tetragon/usr/local/lib/tetragon/. /usr/local/lib/tetragon/
+      ); then
+        tg_ok=1
+        break
+      fi
+      if [[ $tg_attempt -lt 3 ]]; then
+        _warn "Tetragon download attempt $tg_attempt failed; retrying in ${tg_sleep}s"
+        sleep "$tg_sleep"
+        tg_sleep=$((tg_sleep * 3))
+        # Wipe the partial extract before retrying so a half-extracted
+        # tree doesn't poison the next attempt.
+        rm -rf /opt/tetragon
+      fi
+    done
+    if [[ $tg_ok -eq 1 ]]; then
       mkdir -p /opt/tetragon
       touch "$tetragon_marker"
       _ok "Tetragon ${TETRAGON_VERSION} installed"
     else
-      _warn "Tetragon download/install failed — surfaced as 'disabled' in UI; manual retry on next jabali update"
+      _warn "Tetragon download/install failed after 3 attempts — surfaced as 'disabled' in UI; manual retry on next jabali update"
       touch /etc/jabali/tetragon-disabled
     fi
     rm -rf "$tmp_tg"

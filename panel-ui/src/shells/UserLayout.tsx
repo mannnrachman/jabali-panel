@@ -94,17 +94,20 @@ export function UserLayout() {
             collapsed={collapsed}
             onCollapse={setCollapsed}
             trigger={
-              <span
+              <div
                 style={{
-                  display: "inline-flex",
+                  display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
+                  width: "100%",
+                  height: "100%",
                   color: token.colorTextSecondary,
-                  background: token.colorFillSecondary,
+                  background: siderBg,
+                  borderTop: `1px solid ${token.colorBorderSecondary}`,
                 }}
               >
                 {collapsed ? <RightOutlined /> : <LeftOutlined />}
-              </span>
+              </div>
             }
             style={{ background: siderBg, paddingTop: 16, paddingInline: 8 }}
           >

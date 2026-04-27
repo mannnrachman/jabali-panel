@@ -89,7 +89,6 @@ export function AdminLayout() {
                   height: "100%",
                   color: token.colorTextSecondary,
                   background: siderBg,
-                  borderTop: `1px solid ${token.colorBorderSecondary}`,
                 }}
               >
                 {collapsed ? <RightOutlined /> : <LeftOutlined />}

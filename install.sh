@@ -4748,6 +4748,12 @@ email_alert="0"
 scan_clamscan="1"
 scan_user_access="1"
 scan_user_access_minuid="1000"
+# Jabali user docroot layout is /home/<user>/domains/<domain>/public_html
+# (NOT /home/<user>/public_html). LMD --monitor USERS joins inotify_docroot
+# onto /home/<user>/<docroot> with NO wildcard expansion, so we point it at
+# `domains` and rely on inotifywait's default recursion to pick up every
+# vhost docroot underneath. Matches M5 user scaffold + M19 wp-cli installs.
+inotify_docroot="domains"
 scan_yara="1"
 scan_yara_scope="custom"
 yara_rules="/usr/local/maldetect/sigs/rfxn.yara /etc/jabali/yara/*.yar"

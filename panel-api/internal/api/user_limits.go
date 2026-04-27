@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -14,6 +15,42 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
+
+// usageReportCacheTTL bounds how stale a cached user.limits.report
+// payload can be before we re-call the agent. 60s is short enough that
+// an operator who just changed a quota sees fresh numbers within a
+// minute, long enough that paging back-and-forth through a 20-row
+// users list doesn't trigger 20 agent round-trips per page reload.
+const usageReportCacheTTL = 60 * time.Second
+
+type cachedUsageReport struct {
+	raw     json.RawMessage
+	expires time.Time
+}
+
+var (
+	usageReportCacheMu sync.Mutex
+	usageReportCache   = map[string]cachedUsageReport{}
+)
+
+func usageReportCacheGet(key string) (json.RawMessage, bool) {
+	usageReportCacheMu.Lock()
+	defer usageReportCacheMu.Unlock()
+	c, ok := usageReportCache[key]
+	if !ok || time.Now().After(c.expires) {
+		return nil, false
+	}
+	return c.raw, true
+}
+
+func usageReportCachePut(key string, raw json.RawMessage) {
+	usageReportCacheMu.Lock()
+	defer usageReportCacheMu.Unlock()
+	usageReportCache[key] = cachedUsageReport{
+		raw:     raw,
+		expires: time.Now().Add(usageReportCacheTTL),
+	}
+}
 
 // UserLimitsHandlerConfig wires the M18 per-user limit endpoints. Both
 // repos are required; Agent + QuotaMount are required for the usage
@@ -84,15 +121,26 @@ func (h *userLimitsHandler) usage(c *gin.Context) {
 	// the admin UI to still render the effective-limits section even
 	// if the agent socket is temporarily down. The current section
 	// is just omitted.
+	//
+	// 60s in-memory cache (keyed by username + quota mount) keeps the
+	// admin Users page fast: a 20-row table reload only fans out for
+	// rows whose cache has expired. quotacheck is minutes-stale at
+	// the kernel level anyway, so 60s is well inside the noise floor.
 	if h.cfg.Agent != nil {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
-		defer cancel()
-		raw, err := h.cfg.Agent.Call(ctx, "user.limits.report", map[string]any{
-			"username":    *user.Username,
-			"quota_mount": h.cfg.QuotaMount,
-		})
-		if err == nil {
-			resp.Current = raw
+		cacheKey := *user.Username + "|" + h.cfg.QuotaMount
+		if cached, ok := usageReportCacheGet(cacheKey); ok {
+			resp.Current = cached
+		} else {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+			defer cancel()
+			raw, err := h.cfg.Agent.Call(ctx, "user.limits.report", map[string]any{
+				"username":    *user.Username,
+				"quota_mount": h.cfg.QuotaMount,
+			})
+			if err == nil {
+				resp.Current = raw
+				usageReportCachePut(cacheKey, raw)
+			}
 		}
 	}
 	c.JSON(http.StatusOK, resp)

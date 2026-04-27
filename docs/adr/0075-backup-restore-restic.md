@@ -40,12 +40,22 @@ directly — every flow goes through panel-api / panel-agent.
 ### Repository topology
 
 - **Single shared repo** at `/var/lib/jabali-backups/repo/`
-  (root:jabali 0750). Restic dedups across users (every WordPress
-  install shares the core), so per-user repos would burn disk for no
-  isolation gain — operators are single-tenant; admin already has
-  root.
+  (`root:root 0700`). Restic dedups across users (every WordPress
+  install shares the core), so per-user repos would burn disk for
+  no isolation gain — operators are single-tenant; admin already
+  has root.
+- **Repo + retention timer both run as root.** The agent writes
+  packs as root (it has to traverse `/home/<user>/*`), and restic
+  default-creates 0600 files. Running the retention timer as root
+  too keeps every restic invocation in one identity and avoids the
+  chown chase that earlier jabali-group attempts required (root
+  packs locked the jabali user out). Hardening on the timer unit
+  (PrivateTmp, ProtectSystem=strict, ReadWritePaths,
+  ProtectHome=read-only with `RESTIC_CACHE_DIR` redirected under
+  ReadWritePaths) keeps blast radius narrow without needing a
+  second user.
 - **Server-managed password** at `/etc/jabali-panel/restic-repo.password`
-  (root:jabali 0640). Generated once at install time
+  (root:root 0600). Generated once at install time
   (`openssl rand -base64 32`). Users never see the restic password;
   downloads materialize the snapshot first, then re-tar with zstd.
 
@@ -185,10 +195,8 @@ who ran that flag knew what they were doing.
 
 ### Security
 
-- Repo dir is root:jabali 0750; only the panel user can read.
-- Password file 0640 root:jabali; matches the kratos-db-password /
-  pdns.env convention where the panel user reads via group
-  membership.
+- Repo dir is root:root 0700; only root can read.
+- Password file 0600 root:root; only root can read.
 - Worker → panel-api status callback uses an HMAC at
   `/etc/jabali-panel/backup-worker.secret` (Step 6) — same M14
   defense-in-depth pattern (see ADR-0056).

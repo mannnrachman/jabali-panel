@@ -35,7 +35,7 @@ ADR target: **0075**. (ADRs 0065-0074 already on `main`: 0065 server-status, 006
 
 ## Constraints + invariants
 
-- **Single shared restic repo, server-managed password.** `/var/lib/jabali-backups/repo/` (root:jabali 0750). Password generated at install time, stored at `/etc/jabali-panel/restic-repo.password` (root:jabali 0640 — matches the kratos-db-password / pdns.env / sso.key conventions where the panel user reads via group membership; 0600 owner-only would lock the retention service out). Single repo because (a) hosting workloads dedup heavily across accounts (every WordPress install shares the core), and (b) operators are single-tenant — admin already has root, so per-user passwords add no isolation. Per-tenant repos can land later if multi-tenant ever happens.
+- **Single shared restic repo, server-managed password.** `/var/lib/jabali-backups/repo/` is root:root 0700; password at `/etc/jabali-panel/restic-repo.password` is root:root 0600. Both the agent (writes packs during backup) and the retention timer service run as root, matching restic's 0600 default file mode. Earlier drafts tried jabali-group ownership but root-written packs locked the jabali user out — the simplification is one identity for every restic invocation. Single repo because (a) hosting workloads dedup heavily across accounts (every WordPress install shares the core), and (b) operators are single-tenant — admin already has root, so per-user passwords add no isolation. Per-tenant repos can land later if multi-tenant ever happens.
 - **Snapshot tagging is the partition.** Every snapshot carries (a) `kind=<account_full|system>`, (b) `job-id=<ULID>` linking all stage-snapshots from one run, (c) `stage=<name>`, (d) `jabali` blanket. Account-full additionally carries `user-id=<ULID>`. System backups carry `system=<server-hostname>` so multi-host operators can disambiguate. UI lists filter on these tags server-side; users only ever see their own user-id's snapshots, system backups are admin-only.
 - **Long-running root op → systemd-run transient unit**, NOT an agent child. A 30-min backup running as a cgroup descendant of `jabali-agent.service` dies on every `jabali update`. Identical pattern to M29: `systemd-run --unit=jabali-backup-<job-id>.service /usr/local/bin/jabali-internal-backup-worker --params=/run/jabali/backup-<id>.json`. Status via `systemctl is-active` + `journalctl -u <unit>`.
 - **Disk-quota awareness.** Repo lives outside per-user quota. Restore-to-home is the only stage that hits quota; EDQUOT maps to 507/`quota_exceeded` per the M25.x path; restore stage records the failure but other stages still run (partial restore preferred over zero).
@@ -80,7 +80,7 @@ Wave C (8, 9): REST + admin UI + user UI. Sequential.
 - `install.sh`:
   - `apt-get install -y restic` (Debian 13 ships restic 0.16; pin via `dpkg --status` check)
   - `install -d -m 0750 -o root -g jabali /var/lib/jabali-backups /var/lib/jabali-backups/repo`
-  - First-boot: if no `/etc/jabali-panel/restic-repo.password`, generate `openssl rand -base64 32 > <file>`; install with `-m 0640 -o root -g jabali` (so the retention service running as `jabali` can read via group); then `restic init --repo /var/lib/jabali-backups/repo --password-file <file>` (idempotent; `restic init` fails fast on existing repo, swallow that error).
+  - First-boot: if no `/etc/jabali-panel/restic-repo.password`, generate `openssl rand -base64 32 > <file>`; install with `-m 0600 -o root -g root`; then `restic init --repo /var/lib/jabali-backups/repo --password-file <file>` (idempotent; `restic init` fails fast on existing repo, swallow that error).
 - `install/systemd/jabali-backup-retention.service` + `.timer` (daily 04:30) — runs `jabali backup retention apply`
 - `panel-api/cmd/server/backup_retention_cmd.go` (`jabali backup retention apply` → `restic forget --keep-daily=N --keep-weekly=M --keep-monthly=K --prune --tag jabali` using values from server_settings)
 - `docs/adr/0075-backup-restore-restic.md`
@@ -137,7 +137,7 @@ ALTER TABLE server_settings
 **Verification:**
 - `migrate up` → `mariadb -e "DESCRIBE backup_jobs"` shows expected cols; `migrate down` cleanly reverses.
 - `ls -la /var/lib/jabali-backups` → `drwxr-x--- root jabali`; repo subdir has `config` + `keys/` + `data/`.
-- `cat /etc/jabali-panel/restic-repo.password` → 0640 root:jabali, 44 chars (32 random bytes base64).
+- `cat /etc/jabali-panel/restic-repo.password` → 0600 root:root, 44 chars (32 random bytes base64).
 - `restic --repo /var/lib/jabali-backups/repo --password-file /etc/jabali-panel/restic-repo.password snapshots` → exits 0, prints empty list.
 - `systemctl status jabali-backup-retention.timer` → enabled + active, next firing 04:30.
 

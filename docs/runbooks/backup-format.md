@@ -6,9 +6,10 @@ Operator-facing reference for the wire shape of Jabali backups (M30 / ADR-0075).
 
 | Path | Owner / mode | Purpose |
 |---|---|---|
-| `/var/lib/jabali-backups/repo/` | `root:jabali` `0750` | Single shared restic repo |
-| `/etc/jabali-panel/restic-repo.password` | `root:jabali` `0640` | Repo encryption password |
-| `/var/lib/jabali-backups/.restore.lock` | `root:jabali` `0640` | Global restore flock |
+| `/var/lib/jabali-backups/` | `root:root` `0700` | Outer mountpoint |
+| `/var/lib/jabali-backups/repo/` | `root:root` `0700` | restic repo (init + every restic invocation runs as root) |
+| `/etc/jabali-panel/restic-repo.password` | `root:root` `0600` | Repo encryption password |
+| `/var/lib/jabali-backups/.restore.lock` | `root:root` `0600` | Global restore flock |
 | `/var/lib/jabali-backups/restore-staging/<job-id>/` | per-stage | Materialized stage dirs during restore |
 
 Operators **must back up `/etc/jabali-panel/restic-repo.password` to safe

@@ -14,6 +14,13 @@ ExecStart=/usr/local/bin/jabali backup retention apply
 StandardOutput=journal
 StandardError=journal
 
+# Restic needs a writable cache dir. ProtectHome=read-only blocks
+# /root/.cache, so point RESTIC_CACHE_DIR at a path under
+# ReadWritePaths instead. HOME stays pinned so any restic codepath
+# that falls back to $HOME also lands somewhere sane.
+Environment=HOME=/root
+Environment=RESTIC_CACHE_DIR=/var/lib/jabali-backups/.cache/restic
+
 # Restic prune walks every pack file in /var/lib/jabali-backups/repo/. On
 # a multi-GB repo this can hit several minutes of CPU + disk I/O; the
 # 04:30 schedule keeps it off-peak. ProtectHome=read-only because the
@@ -31,11 +38,14 @@ RestrictSUIDSGID=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 
-# Run as the panel user/group (set by install.sh post-install). The
-# repo dir is root:jabali 0750 and the password file is 0600 root:jabali,
-# so the supplementary 'jabali' group is enough to read both.
-User=jabali
-Group=jabali
-SupplementaryGroups=jabali
+# Runs as root (the default — no User= directive). Rationale: the
+# agent invokes restic as root for every backup (it has to traverse
+# /home/<user>/* which only root can read), so restic creates
+# 0600 root-owned packs in /var/lib/jabali-backups/repo/. Retention
+# must read+write those same packs to forget+prune; running as root
+# matches the agent's identity and avoids a chown -R after every
+# backup. The systemd hardening above (PrivateTmp, ProtectSystem,
+# ReadWritePaths=/var/lib/jabali-backups) keeps the blast radius
+# narrow.
 
 Restart=no

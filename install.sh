@@ -4191,11 +4191,20 @@ install_backup_foundation() {
   restic_version="$(restic version 2>/dev/null | awk '/^restic /{print $2; exit}')"
   _log "restic available: ${restic_version:-unknown}"
 
-  # Backup repo dir tree. 0750 root:jabali so the panel user can read via
-  # group; restic itself runs as root for actual backup ops (it needs to
-  # walk every user's /home), but the daily retention CLI runs as jabali.
-  install -d -m 0750 -o root -g "$SERVICE_USER" /var/lib/jabali-backups
-  install -d -m 0750 -o root -g "$SERVICE_USER" /var/lib/jabali-backups/repo
+  # Backup repo lives outright under root:root 0700. Both the agent
+  # (writes packs during backup) and the retention timer (forget+prune)
+  # run as root, so single-identity ownership avoids the file-mode
+  # chase that earlier jabali-group attempts produced (restic writes
+  # 0600 packs that the jabali user could not read after a root-owned
+  # backup left files behind). systemd hardening on the retention unit
+  # (PrivateTmp, ProtectSystem=strict, ReadWritePaths) limits blast
+  # radius without needing a separate user.
+  install -d -m 0700 -o root -g root /var/lib/jabali-backups
+  install -d -m 0700 -o root -g root /var/lib/jabali-backups/repo
+  # Cache dir for the retention timer. ProtectHome=read-only on the
+  # unit blocks /root/.cache, so RESTIC_CACHE_DIR points here instead.
+  install -d -m 0700 -o root -g root /var/lib/jabali-backups/.cache
+  install -d -m 0700 -o root -g root /var/lib/jabali-backups/.cache/restic
 
   # Password file. Generated once; never rotated automatically (rotating
   # the restic password would invalidate every existing snapshot — it's
@@ -4207,13 +4216,14 @@ install_backup_foundation() {
     local tmp
     tmp="$(mktemp)"
     openssl rand -base64 32 > "$tmp"
-    install -m 0640 -o root -g "$SERVICE_USER" "$tmp" "$pw_file"
+    install -m 0600 -o root -g root "$tmp" "$pw_file"
     rm -f "$tmp"
   else
     # Re-enforce ownership + mode on every run (matches install_sso_key
-    # idempotency). Earlier versions may have written 0600 root:root.
-    chown "root:$SERVICE_USER" "$pw_file"
-    chmod 0640 "$pw_file"
+    # idempotency). Earlier versions wrote 0640 root:jabali — flip back
+    # to 0600 root:root now that retention runs as root.
+    chown root:root "$pw_file"
+    chmod 0600 "$pw_file"
   fi
 
   # restic init is the only step that meaningfully fails on a re-run:
@@ -4223,7 +4233,7 @@ install_backup_foundation() {
   if [[ -s /var/lib/jabali-backups/repo/config ]]; then
     _log "restic repo already initialized at /var/lib/jabali-backups/repo"
   else
-    _log "running restic init"
+    _log "running restic init (root:root)"
     if ! restic --repo /var/lib/jabali-backups/repo \
                 --password-file "$pw_file" \
                 init >/dev/null; then
@@ -4232,6 +4242,10 @@ install_backup_foundation() {
     fi
     _ok "restic repo initialized"
   fi
+  # Re-enforce ownership on existing repos that earlier install.sh
+  # revisions chowned to jabali — flip back to root:root so retention
+  # (which runs as root) and the agent (also root) share one identity.
+  chown -R root:root /var/lib/jabali-backups
 
   # Timer + service drop-ins. Same install pattern as install_sso_reaper_timer.
   local svc_src="${REPO_DIR}/install/systemd/jabali-backup-retention.service"

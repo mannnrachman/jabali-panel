@@ -42,7 +42,7 @@ export const NotificationsTabsPage = () => {
   };
 
   return (
-    <div style={{ padding: "20px" }}>
+    <div>
       <Space
         wrap
         align="center"

@@ -16,15 +16,21 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/errgroup"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/notifications"
 )
 
 // AdminServerStatusHandlerConfig holds dependencies.
 type AdminServerStatusHandlerConfig struct {
 	Agent agent.AgentInterface
+	// Redis is optional; when supplied the envelope includes the M14
+	// notification dispatcher queue depths (main stream, DLQ, pending
+	// consumer-group count). Nil ⇒ Queues is omitted.
+	Redis *redis.Client
 }
 
 // RegisterAdminServerStatusRoutes mounts GET /admin/server-status.
@@ -58,8 +64,17 @@ type ServerStatusEnvelope struct {
 	Processes  *json.RawMessage    `json:"processes,omitempty"`
 	UserSlices *json.RawMessage    `json:"user_slices,omitempty"`
 	Software   *json.RawMessage    `json:"software,omitempty"`
+	Queues     *QueuesSlice        `json:"queues,omitempty"`
 	Errors     map[string]string   `json:"errors,omitempty"`
 	Alerts     []ServerStatusAlert `json:"alerts"`
+}
+
+// QueuesSlice is the M31.1 dispatcher-queue snapshot. All counters are
+// best-effort; Redis hiccups surface as zeros + an entry in `errors`.
+type QueuesSlice struct {
+	NotificationsQueue   int64 `json:"notifications_queue"`
+	NotificationsDLQ     int64 `json:"notifications_dlq"`
+	NotificationsPending int64 `json:"notifications_pending"`
 }
 
 // ServerStatusAlert is one synthesized warning / critical row. Kind
@@ -123,6 +138,38 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 	call("user_slices", "system.user_slices", nil)
 	call("software", "system.software", nil)
 
+	// M31.1 — Redis queue depths run in parallel with the agent calls.
+	// Three XLEN/XPending pipelines, each with its own short timeout so
+	// a Redis hiccup never delays the whole envelope.
+	var queues *QueuesSlice
+	if h.cfg.Redis != nil {
+		g.Go(func() error {
+			subCtx, cancel := context.WithTimeout(gctx, subCallTimeout)
+			defer cancel()
+			pipe := h.cfg.Redis.Pipeline()
+			qLen := pipe.XLen(subCtx, notifications.StreamQueue)
+			dlqLen := pipe.XLen(subCtx, notifications.StreamDLQ)
+			pending := pipe.XPending(subCtx, notifications.StreamQueue, notifications.ConsumerGroup)
+			if _, err := pipe.Exec(subCtx); err != nil && !errors.Is(err, redis.Nil) {
+				mu.Lock()
+				errMap["queues"] = err.Error()
+				mu.Unlock()
+				return nil
+			}
+			slice := &QueuesSlice{
+				NotificationsQueue: qLen.Val(),
+				NotificationsDLQ:   dlqLen.Val(),
+			}
+			if pending.Err() == nil && pending.Val() != nil {
+				slice.NotificationsPending = pending.Val().Count
+			}
+			mu.Lock()
+			queues = slice
+			mu.Unlock()
+			return nil
+		})
+	}
+
 	_ = g.Wait()
 
 	env := ServerStatusEnvelope{
@@ -160,8 +207,29 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 		raw := v
 		env.Software = &raw
 	}
+	if queues != nil {
+		env.Queues = queues
+	}
 
 	env.Alerts = synthesizeAlerts(results, errMap)
+	if queues != nil {
+		// Queue-depth alerts: a permanently-growing main stream means the
+		// dispatcher is stuck; a DLQ above zero means at least one
+		// envelope hit retry cap. Thresholds are intentionally low —
+		// admins want to notice these immediately on the dashboard.
+		if queues.NotificationsDLQ > 0 {
+			env.Alerts = append(env.Alerts, ServerStatusAlert{
+				Level: "warning", Kind: "queue",
+				Detail: "notification DLQ has " + formatInt64(queues.NotificationsDLQ) + " entries",
+			})
+		}
+		if queues.NotificationsQueue > 1000 {
+			env.Alerts = append(env.Alerts, ServerStatusAlert{
+				Level: "critical", Kind: "queue",
+				Detail: "notification queue backlog > 1000 (dispatcher stuck?)",
+			})
+		}
+	}
 	c.JSON(http.StatusOK, env)
 }
 
@@ -258,6 +326,30 @@ func synthesizeAlerts(results map[string]json.RawMessage, errMap map[string]stri
 	}
 
 	return alerts
+}
+
+// formatInt64 keeps queue alert detail text dependency-free.
+func formatInt64(n int64) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := false
+	if n < 0 {
+		neg = true
+		n = -n
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
 }
 
 // unitShouldBeRunning returns true when a systemd unit's UnitFileState

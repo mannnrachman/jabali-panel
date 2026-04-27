@@ -402,6 +402,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// Admin: Server Status aggregator (M31, ADR-0065).
 		api.RegisterAdminServerStatusRoutes(v1, api.AdminServerStatusHandlerConfig{
 			Agent: deps.Agent,
+			Redis: deps.Redis,
 		})
 		// Admin: Service controls (M31). Mounts POST /admin/services/:name/:action.
 		api.RegisterAdminServicesRoutes(v1, api.AdminServicesHandlerConfig{

@@ -17,8 +17,15 @@ export interface ServerStatusEnvelope {
   services: ServicesSlice | null;
   user_slices: UserSlicesSlice | null;
   software: SoftwareSlice | null;
+  queues: QueuesSlice | null;
   errors?: Record<string, string>;
   alerts: Alert[];
+}
+
+export interface QueuesSlice {
+  notifications_queue: number;
+  notifications_dlq: number;
+  notifications_pending: number;
 }
 
 export interface SoftwareSlice {

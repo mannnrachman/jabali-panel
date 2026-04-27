@@ -178,7 +178,7 @@ export const AdminSecurityCrowdsec = () => {
         type="info"
         showIcon
         message="What is CrowdSec?"
-        description="Behaviour-based IP blocker. Reads logs, detects attackers, bans them via firewall + nginx WAF. Replaces fail2ban + ModSecurity in Jabali."
+        description="Behaviour-based intrusion-prevention. Tails server logs (nginx, sshd, panel, mail), matches them against scenarios (brute-force, scanners, web exploits, credential stuffing), and emits IP decisions. Bouncers enforce them at the firewall (UFW), at nginx (AppSec WAF with OWASP CRS rules + optional captcha challenge), and against a crowdsourced blocklist of IPs flagged by the wider community in the last hours."
       />
 
       <Card size="small" title="CrowdSec status">

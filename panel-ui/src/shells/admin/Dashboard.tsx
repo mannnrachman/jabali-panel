@@ -215,7 +215,7 @@ export const Dashboard = () => {
               <Card
                 title="Recent Users"
                 size="small"
-                extra={<Link to="/jabali-admin/users">View all →</Link>}
+                extra={<Link to="/jabali-admin/users"><Button type="primary" size="small">View all</Button></Link>}
               >
                 <Table<UserRow>
                   size="small"
@@ -245,7 +245,7 @@ export const Dashboard = () => {
               <Card
                 title="Recent Domains"
                 size="small"
-                extra={<Link to="/jabali-admin/domains">View all →</Link>}
+                extra={<Link to="/jabali-admin/domains"><Button type="primary" size="small">View all</Button></Link>}
               >
                 <Table<DomainRow>
                   size="small"
@@ -268,7 +268,7 @@ export const Dashboard = () => {
               <Card
                 title="Recent Applications"
                 size="small"
-                extra={<Link to="/jabali-admin/applications">View all →</Link>}
+                extra={<Link to="/jabali-admin/applications"><Button type="primary" size="small">View all</Button></Link>}
               >
                 <Table<ApplicationRow>
                   size="small"
@@ -303,7 +303,7 @@ export const Dashboard = () => {
               <Card
                 title="Hosting Packages"
                 size="small"
-                extra={<Link to="/jabali-admin/packages">View all →</Link>}
+                extra={<Link to="/jabali-admin/packages"><Button type="primary" size="small">View all</Button></Link>}
               >
                 <Table<PackageRow>
                   size="small"

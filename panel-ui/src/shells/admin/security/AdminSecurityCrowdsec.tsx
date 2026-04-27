@@ -174,6 +174,48 @@ export const AdminSecurityCrowdsec = () => {
 
   const overviewPanel = (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
+      <Card size="small" title="About CrowdSec">
+        <Space direction="vertical" size={8} style={{ width: "100%" }}>
+          <Typography.Paragraph style={{ marginBottom: 0 }}>
+            <Typography.Text strong>CrowdSec</Typography.Text> is a behaviour-based
+            intrusion-prevention engine. It tails this server's logs (nginx access,
+            sshd auth, panel API, mail), correlates them against published
+            scenarios (brute-force, scanners, web exploits, credential stuffing),
+            and produces <Typography.Text strong>decisions</Typography.Text> —
+            usually a temporary IP ban — that a separate component called a{" "}
+            <Typography.Text strong>bouncer</Typography.Text> enforces.
+          </Typography.Paragraph>
+          <Typography.Paragraph style={{ marginBottom: 0 }}>
+            <Typography.Text strong>In Jabali</Typography.Text>, CrowdSec is the
+            sole behaviour-based blocker (replaces fail2ban — see ADR-0053).
+            Three bouncers consume its decisions:
+          </Typography.Paragraph>
+          <ul style={{ marginTop: 0, marginBottom: 0, paddingLeft: 20 }}>
+            <li>
+              <Typography.Text strong>cs-firewall-bouncer</Typography.Text> — drops
+              banned IPs at the kernel via UFW/nftables (network-layer block).
+            </li>
+            <li>
+              <Typography.Text strong>cs-nginx-bouncer + AppSec</Typography.Text>{" "}
+              — request-layer WAF. Inspects every HTTP request against the OWASP
+              CRS rules, blocks or returns a captcha (replaces ModSecurity per
+              ADR-0055).
+            </li>
+            <li>
+              <Typography.Text strong>Crowdsourced blocklist</Typography.Text> —
+              opt-in feed of IPs the wider CrowdSec community has flagged in the
+              last hours; pre-blocks attackers before they ever hit you.
+            </li>
+          </ul>
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+            Use the sub-tabs below to manage hub collections, allowlist trusted
+            IPs, browse alerts/decisions, enable the cloud Console for central
+            dashboards, swap a ban for a captcha challenge, override per-scenario
+            remediation, and configure the AppSec geoblock.
+          </Typography.Paragraph>
+        </Space>
+      </Card>
+
       <Card size="small" title="CrowdSec status">
         <Descriptions
           column={{ xs: 1, sm: 2, md: 3 }}

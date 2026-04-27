@@ -72,6 +72,15 @@ import { LoginPage } from "./pages/Login";
 // instead of letting them see the form. Public routes use this — the
 // Kratos-driven LoginPage itself doesn't know about AuthContext, so
 // the gate lives here.
+// KratosSettingsRedirect — preserves ?flow=<id> when bouncing to the
+// inline form on /jabali-panel/profile. Admins also land here from the
+// header dropdown; they get a flow query and are routed to the same
+// user-shell profile path (RequireUser allows admin sessions through).
+function KratosSettingsRedirect() {
+  const search = window.location.search;
+  return <Navigate to={`/jabali-panel/profile${search}`} replace />;
+}
+
 function PublicOnly({ children }: { children: ReactNode }) {
   const { user, isLoading } = useAuth();
   if (isLoading) {
@@ -214,6 +223,12 @@ const ThemedApp = () => {
               </PublicOnly>
             }
           />
+          {/* /settings is the ui_url Kratos uses for the post-login
+              settings flow (kratos.yml.tmpl). We don't want a separate
+              page — the Kratos form renders inline on My profile —
+              so this route just preserves ?flow=<id> while bouncing
+              to the user-shell profile path. */}
+          <Route path="/settings" element={<KratosSettingsRedirect />} />
 
           {/* landing / catch-all */}
           <Route path="/" element={<LandingRedirect />} />

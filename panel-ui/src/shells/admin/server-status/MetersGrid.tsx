@@ -38,42 +38,53 @@ export function CPUMeterCard({ host, cpu }: MeterProps) {
   );
 }
 
+// MemoryMeterCard renders Memory + Swap stacked in a single card.
+// Same physical resource family (RAM + paged-out RAM); operators
+// already read them together when diagnosing pressure. Combining
+// halves the masonry slot count without losing any data.
 export function MemoryMeterCard({ host }: MeterProps) {
   const memUsedPct =
     host && host.mem_total_kb > 0
       ? (host.mem_used_kb / host.mem_total_kb) * 100
       : 0;
+  const hasSwap = !!host && host.swap_total_kb > 0;
+  const swapUsedPct = hasSwap ? (host!.swap_used_kb / host!.swap_total_kb) * 100 : 0;
   return (
     <Card title="Memory" size="small">
-      <Progress
-        percent={Math.round(memUsedPct)}
-        strokeColor={usageColor(memUsedPct)}
-      />
-      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-        {humanKB(host?.mem_used_kb ?? 0)} / {humanKB(host?.mem_total_kb ?? 0)}
-      </Typography.Text>
-    </Card>
-  );
-}
-
-export function SwapMeterCard({ host }: MeterProps) {
-  if (!host || host.swap_total_kb === 0) {
-    return (
-      <Card title="Swap" size="small">
-        <Typography.Text type="secondary">No swap configured</Typography.Text>
-      </Card>
-    );
-  }
-  const swapUsedPct = (host.swap_used_kb / host.swap_total_kb) * 100;
-  return (
-    <Card title="Swap" size="small">
-      <Progress
-        percent={Math.round(swapUsedPct)}
-        strokeColor={usageColor(swapUsedPct)}
-      />
-      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-        {humanKB(host.swap_used_kb)} / {humanKB(host.swap_total_kb)}
-      </Typography.Text>
+      <div>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          RAM
+        </Typography.Text>
+        <Progress
+          percent={Math.round(memUsedPct)}
+          strokeColor={usageColor(memUsedPct)}
+        />
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {humanKB(host?.mem_used_kb ?? 0)} / {humanKB(host?.mem_total_kb ?? 0)}
+        </Typography.Text>
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          Swap
+        </Typography.Text>
+        {hasSwap ? (
+          <>
+            <Progress
+              percent={Math.round(swapUsedPct)}
+              strokeColor={usageColor(swapUsedPct)}
+            />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {humanKB(host!.swap_used_kb)} / {humanKB(host!.swap_total_kb)}
+            </Typography.Text>
+          </>
+        ) : (
+          <div>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              No swap configured
+            </Typography.Text>
+          </div>
+        )}
+      </div>
     </Card>
   );
 }

@@ -190,6 +190,63 @@ export async function logoutBrowser(): Promise<void> {
   });
 }
 
+/**
+ * Re-fetch a settings flow by id. Settings is the post-login flow that
+ * lets a user change their password and manage TOTP — Kratos owns the
+ * flow object, we just render the nodes inline on the profile page.
+ *
+ * Same shape as login's getLoginFlow; separate endpoint because Kratos
+ * scopes flow ids by flow type.
+ */
+export async function getSettingsFlow(id: string): Promise<KratosFlow> {
+  const resp = await kratosClient.get<KratosFlow>(
+    `/self-service/settings/flows?id=${encodeURIComponent(id)}`,
+  );
+  return resp.data;
+}
+
+/**
+ * Submit a settings flow update (e.g. password change, TOTP enrolment).
+ * Kratos returns:
+ *   200 with the updated flow — UI re-renders with success/error in
+ *     ui.messages and per-node errors. The flow stays alive so the user
+ *     can fix mistakes without re-initialising.
+ *   401 when the privileged session has expired — Kratos redirects to
+ *     login, we surface that as an error so the caller can prompt
+ *     re-authentication.
+ *   403 / 422 with a flow body on validation errors — same shape as 200.
+ */
+export async function submitSettingsFlow(
+  flow: KratosFlow,
+  body: Record<string, string | number | boolean>,
+): Promise<KratosSubmitResult> {
+  try {
+    const resp = await kratosClient.post<KratosFlow>(flow.ui.action, body);
+    if (resp.data?.ui) {
+      return { kind: "continue", flow: resp.data };
+    }
+    return { kind: "error", message: "Unexpected response from identity provider" };
+  } catch (err) {
+    const ax = err as AxiosError<KratosFlow>;
+    // 400 / 422 with a flow body is the normal "field validation
+    // failed" / "csrf_token mismatch" path — surface the flow so the
+    // UI can re-render with the per-field errors.
+    if (
+      (ax.response?.status === 400 || ax.response?.status === 422) &&
+      ax.response.data?.ui
+    ) {
+      return { kind: "continue", flow: ax.response.data };
+    }
+    if (ax.response?.status === 401 || ax.response?.status === 403) {
+      return {
+        kind: "error",
+        message: "Your session needs re-authentication. Sign out and back in to manage account security.",
+      };
+    }
+    return { kind: "error", message: humanizeKratosError(ax) };
+  }
+}
+
 function humanizeKratosError(err: AxiosError): string {
   const status = err.response?.status;
   if (!status) return "Network error — could not reach identity service";

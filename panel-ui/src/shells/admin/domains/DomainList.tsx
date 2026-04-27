@@ -177,14 +177,14 @@ export const DomainList = () => {
         <SearchableTableStringQ<Domain>
           rowKey="id"
           loading={query.isLoading}
-          dataSource={query.items}
+          dataSource={query.items.filter((d) => !d.is_panel_primary)}
           initialSearch={query.params.q}
           searchPlaceholder="Search by domain name"
           onSearchChange={(q) => query.setParams({ q, page: 1 })}
           pagination={{
             current: query.params.page,
             pageSize: query.params.pageSize,
-            total: query.total,
+            total: Math.max(0, query.total - query.items.filter((d) => d.is_panel_primary).length),
           }}
           onChange={handleTableChange}
         >

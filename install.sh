@@ -4978,11 +4978,14 @@ trap 'rm -f "$tmp"' EXIT
 if grep -q '^// JABALI-PMF-BEGIN' "$RFXN"; then
   sed -i '/^\/\/ JABALI-PMF-BEGIN/,/^\/\/ JABALI-PMF-END/d' "$RFXN"
 fi
-# Prepend `import "hash"` to the top of the appended block — required by
-# the whitelists/* rules that use hash.sha1(). YARA dedupes imports.
+# DO NOT add `import "hash"` — clamscan's libclamav YARA implementation
+# is a subset of YARA that supports hash.sha1() implicitly (rfxn.yara's
+# 2.5k hash.sha1 calls work without import) but rejects an explicit
+# `import "hash"` with "undefined identifier 'hash'". The `import` lines
+# stripped above by `grep -vE '^[[:space:]]*(include|import)[[:space:]]'`
+# are dropped specifically for this reason.
 {
   echo ""
-  echo 'import "hash"'
   cat "$tmp"
 } >> "$RFXN"
 

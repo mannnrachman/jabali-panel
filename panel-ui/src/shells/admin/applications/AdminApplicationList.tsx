@@ -39,6 +39,8 @@ type ApplicationInstall = {
   db_id: string;
   admin_username: string;
   admin_email: string;
+  owner_email: string;
+  owner_username?: string;
   locale: string;
   subdirectory: string;
   status:
@@ -240,8 +242,8 @@ export const AdminApplicationList = () => {
             }}
           />
           <Table.Column<ApplicationInstall>
-            dataIndex="admin_email"
-            title="User"
+            dataIndex="owner_email"
+            title="Owner"
             filterIcon={() => (
               <SearchOutlined
                 style={{ color: query.params.q ? "#ef4444" : undefined }}
@@ -261,7 +263,9 @@ export const AdminApplicationList = () => {
                 />
               </div>
             )}
-            render={(email: string) => <span>{email}</span>}
+            render={(_email: string, r) => (
+              <span>{r.owner_email || r.owner_username || "—"}</span>
+            )}
           />
           <Table.Column<ApplicationInstall>
             dataIndex="version"

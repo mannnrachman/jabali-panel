@@ -116,6 +116,13 @@ type wordPressListResponse struct {
 	DBID          string    `json:"db_id"`
 	AdminUsername string    `json:"admin_username"`
 	AdminEmail    string    `json:"admin_email"`
+	// Panel owner — the jabali user that installed this app. Distinct
+	// from AdminEmail/AdminUsername (those identify the WordPress/Joomla
+	// site admin inside the CMS). Admin list view surfaces this so an
+	// operator can attribute installs to the hosting account, not the
+	// CMS user.
+	OwnerEmail    string    `json:"owner_email"`
+	OwnerUsername string    `json:"owner_username,omitempty"`
 	Locale        string    `json:"locale"`
 	UseWWW        bool      `json:"use_www"`
 	Subdirectory  string    `json:"subdirectory"`
@@ -480,6 +487,36 @@ func (h *wordPressHandler) list(c *gin.Context) {
 		}
 	}
 
+	// Batch-lookup the panel owner for each install so the admin list
+	// can attribute rows to the jabali user, not the CMS admin. Single
+	// FindByIDs avoids N+1 fetches; missing users (rare — referential
+	// integrity should prevent it) just leave the owner fields blank.
+	ownerEmails := make(map[string]string, len(installs))
+	ownerUsernames := make(map[string]string, len(installs))
+	if h.cfg.Users != nil {
+		ownerIDSet := make(map[string]struct{}, len(installs))
+		for _, inst := range installs {
+			if inst.UserID != "" {
+				ownerIDSet[inst.UserID] = struct{}{}
+			}
+		}
+		ownerIDs := make([]string, 0, len(ownerIDSet))
+		for id := range ownerIDSet {
+			ownerIDs = append(ownerIDs, id)
+		}
+		if len(ownerIDs) > 0 {
+			owners, oErr := h.cfg.Users.FindByIDs(ctx, ownerIDs)
+			if oErr == nil {
+				for _, u := range owners {
+					ownerEmails[u.ID] = u.Email
+					if u.Username != nil {
+						ownerUsernames[u.ID] = *u.Username
+					}
+				}
+			}
+		}
+	}
+
 	out := make([]wordPressListResponse, len(installs))
 	for i, inst := range installs {
 		appType := inst.AppType
@@ -494,6 +531,8 @@ func (h *wordPressHandler) list(c *gin.Context) {
 			DBID:          inst.DBIDOr(),
 			AdminUsername: inst.AdminUsername,
 			AdminEmail:    inst.AdminEmail,
+			OwnerEmail:    ownerEmails[inst.UserID],
+			OwnerUsername: ownerUsernames[inst.UserID],
 			Locale:        inst.Locale,
 			UseWWW:        inst.UseWWW,
 			Subdirectory:  inst.Subdirectory,

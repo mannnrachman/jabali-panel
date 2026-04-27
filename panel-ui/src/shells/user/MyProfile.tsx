@@ -32,6 +32,7 @@ import {
   type KratosFlow,
   type RenderableField,
 } from "../../kratos";
+import { MyProfileBackupCard } from "./MyProfileBackupCard";
 import { MyProfileUsageCard } from "./MyProfileUsageCard";
 
 const SETTINGS_BROWSER_URL = "/.ory/self-service/settings/browser";
@@ -174,6 +175,7 @@ export function MyProfile() {
         </Card>
 
         {me && <MyProfileUsageCard userId={me.id} />}
+        {me && <MyProfileBackupCard />}
       </Space>
     </div>
   );

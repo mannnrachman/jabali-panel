@@ -1,7 +1,9 @@
-# ADR-0057: Per-domain DNSSEC via pdnsutil shell-out
+# ADR-0076: Per-domain DNSSEC via pdnsutil shell-out
 
 **Status:** ACCEPTED (2026-04-24).
 **Related:** ADR-0011 (PowerDNS MySQL backend), ADR-0002 (DB-as-truth).
+
+> **Renumber note (2026-04-28):** originally numbered ADR-0057, which collided with the M14 web-push VAPID ADR (added two hours earlier on 2026-04-24 — see git log). Renumbered to 0076; webpush keeps 0057.
 
 ## Context
 

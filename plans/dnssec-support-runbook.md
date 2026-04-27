@@ -1,7 +1,7 @@
 # DNSSEC runbook
 
 Per-domain DNSSEC signing via pdnsutil shell-out. Admin + user UI at
-`/jabali-admin/dnssec` and `/jabali-panel/dnssec`. See ADR-0057 for the
+`/jabali-admin/dnssec` and `/jabali-panel/dnssec`. See ADR-0076 for the
 decision record.
 
 ## Architecture
@@ -112,7 +112,7 @@ independent of publication at the registrar.
 
 ## Not in scope
 
-- Automatic DS publication to registrar (ADR-0057 §decision 4). Would require
+- Automatic DS publication to registrar (ADR-0076 §decision 4). Would require
   per-registrar API integration — consider after M-registrar-api lands.
 - Panel-side key rollover UI. Emergency rollovers are rare and CLI-safe;
   UI complexity not justified.

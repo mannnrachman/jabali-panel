@@ -26,6 +26,7 @@ func newSystemCmd() *cobra.Command {
 	cmd.AddCommand(
 		newSystemInfoCmd(),
 		newSystemServicesCmd(),
+		newSystemRestoreCmd(),
 	)
 	return cmd
 }

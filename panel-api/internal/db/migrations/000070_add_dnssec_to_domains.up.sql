@@ -1,4 +1,4 @@
--- DNSSEC intent + key cache (ADR-0057).
+-- DNSSEC intent + key cache (ADR-0076).
 -- Columns added to domains express operator intent. `domain_dnssec_keys` caches
 -- whatever `pdnsutil show-zone` reports for the latest reconcile tick; never
 -- stores private key material.

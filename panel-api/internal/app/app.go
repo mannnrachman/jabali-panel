@@ -70,7 +70,7 @@ type Deps struct {
 	Autoresponders      repository.EmailAutoresponderRepository
 	Forwarders          repository.EmailForwarderRepository
 	MailboxShares       repository.MailboxShareRepository
-	// DNSSECKeys caches DNSSEC public-key metadata (ADR-0057).
+	// DNSSECKeys caches DNSSEC public-key metadata (ADR-0076).
 	DNSSECKeys          repository.DNSSECKeyRepository
 	// PanelCerts is the M32 singleton panel_certificate repo. NewWithDeps
 	// registers /admin/panel-certificate when set; nil keeps the routes
@@ -78,6 +78,9 @@ type Deps struct {
 	PanelCerts          repository.PanelCertificateRepository
 	// M33 malware detection repos (ADR-0072). All five are wired
 	// together — nil on any disables RegisterSecurityMalwareRoutes.
+	// M30 backup-restore (ADR-0075). Nil disables the /admin/backups
+	// + /me/backups routes; UI surfaces an empty state.
+	BackupJobs          repository.BackupJobRepository
 	MalwareQuarantine   repository.MalwareQuarantineRepository
 	MalwareEvents       repository.MalwareEventRepository
 	YARARules           repository.YARACustomRuleRepository
@@ -385,7 +388,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			Forwarders:     deps.Forwarders,
 			MailboxShares:  deps.MailboxShares,
 		})
-		// DNSSEC per-domain (ADR-0057). Standalone mount; not part of M6.5.
+		// DNSSEC per-domain (ADR-0076). Standalone mount; not part of M6.5.
 		api.RegisterDomainDNSSECRoutes(v1, api.DomainDNSSECHandlerConfig{
 			Agent:   deps.Agent,
 			Domains: deps.Domains,
@@ -541,6 +544,20 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 					Log:              deps.Log,
 				})
 			}
+		}
+		if deps.BackupJobs != nil && deps.Users != nil {
+			api.RegisterBackupRoutes(v1, api.BackupHandlerConfig{
+				Agent: deps.Agent,
+				Jobs:  deps.BackupJobs,
+				Users: deps.Users,
+				Log:   deps.Log,
+			})
+			api.RegisterMeBackupRoutes(v1, api.MeBackupsHandlerConfig{
+				Agent: deps.Agent,
+				Jobs:  deps.BackupJobs,
+				Users: deps.Users,
+				Log:   deps.Log,
+			})
 		}
 		if deps.SSO != nil && deps.Databases != nil && deps.PhpMyAdminSSOTokens != nil {
 			api.RegisterSSOPhpMyAdminRoutes(v1, api.SSOPhpMyAdminHandlerConfig{

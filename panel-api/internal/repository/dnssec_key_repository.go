@@ -10,7 +10,7 @@ import (
 
 // DNSSECKeyRepository caches DNSSEC keys observed via `pdnsutil show-zone`.
 // Authoritative data lives in PowerDNS. This cache enables the UI to render
-// a "Keys" column without shelling out on every list render (ADR-0057).
+// a "Keys" column without shelling out on every list render (ADR-0076).
 type DNSSECKeyRepository interface {
 	ListByDomainID(ctx context.Context, domainID string) ([]models.DomainDNSSECKey, error)
 	ReplaceAll(ctx context.Context, domainID string, keys []models.DomainDNSSECKey) error

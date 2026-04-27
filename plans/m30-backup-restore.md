@@ -29,13 +29,13 @@ Operator UX paths:
 
 Branch: `m30/backup-restore`. Default mode: branch + ff-merge into `main` after every step.
 
-ADR target: **0065**. ADR `0064` reserved for M29.
+ADR target: **0075**. (ADRs 0065-0074 already on `main`: 0065 server-status, 0066 LE panel cert, 0067 SSH shell sandbox, 0068 cgroup metrics, 0069 status masonry, 0070 LE SAN, 0071 mariadb loopback, 0072 malware stack, 0073 stalwart aliases, 0074 lazy-service-alert-suppression — renumbered 0067 → 0074 by dispatcher in commit 183ae18 to resolve a 2-min collision with SSH sandbox. Pre-existing dnssec collision at 0057 resolved in this branch by renumbering dnssec → 0076; webpush keeps 0057.)
 
 ---
 
 ## Constraints + invariants
 
-- **Single shared restic repo, server-managed password.** `/var/lib/jabali-backups/repo/` (root:jabali 0750). Password generated at install time, stored at `/etc/jabali-panel/restic-repo.password` (root:jabali 0600). Single repo because (a) hosting workloads dedup heavily across accounts (every WordPress install shares the core), and (b) operators are single-tenant — admin already has root, so per-user passwords add no isolation. Per-tenant repos can land later if multi-tenant ever happens.
+- **Single shared restic repo, server-managed password.** `/var/lib/jabali-backups/repo/` (root:jabali 0750). Password generated at install time, stored at `/etc/jabali-panel/restic-repo.password` (root:jabali 0640 — matches the kratos-db-password / pdns.env / sso.key conventions where the panel user reads via group membership; 0600 owner-only would lock the retention service out). Single repo because (a) hosting workloads dedup heavily across accounts (every WordPress install shares the core), and (b) operators are single-tenant — admin already has root, so per-user passwords add no isolation. Per-tenant repos can land later if multi-tenant ever happens.
 - **Snapshot tagging is the partition.** Every snapshot carries (a) `kind=<account_full|system>`, (b) `job-id=<ULID>` linking all stage-snapshots from one run, (c) `stage=<name>`, (d) `jabali` blanket. Account-full additionally carries `user-id=<ULID>`. System backups carry `system=<server-hostname>` so multi-host operators can disambiguate. UI lists filter on these tags server-side; users only ever see their own user-id's snapshots, system backups are admin-only.
 - **Long-running root op → systemd-run transient unit**, NOT an agent child. A 30-min backup running as a cgroup descendant of `jabali-agent.service` dies on every `jabali update`. Identical pattern to M29: `systemd-run --unit=jabali-backup-<job-id>.service /usr/local/bin/jabali-internal-backup-worker --params=/run/jabali/backup-<id>.json`. Status via `systemctl is-active` + `journalctl -u <unit>`.
 - **Disk-quota awareness.** Repo lives outside per-user quota. Restore-to-home is the only stage that hits quota; EDQUOT maps to 507/`quota_exceeded` per the M25.x path; restore stage records the failure but other stages still run (partial restore preferred over zero).
@@ -50,7 +50,7 @@ ADR target: **0065**. ADR `0064` reserved for M29.
 - **No symlink escapes during restore.** `restic restore` doesn't honor absolute symlinks anyway, but the post-restore `tar` for download uses `--no-same-owner --no-same-permissions` and re-chowns post-extract.
 - **Manifest schema versioned.** `schema_version: 1` in manifest, stored as the first object in the snapshot (path `/manifest.json` inside the staging dir). Future M30.1 bumps schema; restore refuses unknown versions.
 - **Restic repo passwords NEVER leave the host.** Download materializes content first, then re-tars. The user gets a plain tar.zst — they don't need restic installed to read their backup.
-- **Migration high-water-mark on main: 000073** (upload_max_size_mb). M30 takes 000074 (backup_jobs) + 000075 (server_settings restic columns).
+- **Migration high-water-mark on main: 000083** (notifications_sms_kind, landed during the M30 Step 1 foundation rebase 2026-04-28). M30 Step 1 takes 000084 (backup_jobs) + 000085 (server_settings restic columns). Pre-merge collision check: `ls panel-api/internal/db/migrations/ | sed 's/\.\(up\|down\)\.sql$//' | sort -u | awk -F_ '{print $1}' | uniq -d` must be empty.
 - **No reconciler convergence.** Operator-initiated only. Daily snapshots are a `systemd timer`, not the reconciler tick.
 
 ---
@@ -70,23 +70,23 @@ Wave C (8, 9): REST + admin UI + user UI. Sequential.
 
 ## Steps
 
-### Step 1: foundation — DB schema, dirs, restic install, retention timer, ADR-0065
+### Step 1: foundation — DB schema, dirs, restic install, retention timer, ADR-0075
 
 **Files:**
-- `panel-api/internal/db/migrations/000074_create_backup_jobs.up.sql` + `.down.sql`
-- `panel-api/internal/db/migrations/000075_server_settings_backup.up.sql` + `.down.sql`
+- `panel-api/internal/db/migrations/000084_create_backup_jobs.up.sql` + `.down.sql`
+- `panel-api/internal/db/migrations/000085_server_settings_backup.up.sql` + `.down.sql`
 - `panel-api/internal/models/backup_job.go`
 - `panel-api/internal/repository/backup_job_repository.go`
 - `install.sh`:
   - `apt-get install -y restic` (Debian 13 ships restic 0.16; pin via `dpkg --status` check)
   - `install -d -m 0750 -o root -g jabali /var/lib/jabali-backups /var/lib/jabali-backups/repo`
-  - First-boot: if no `/etc/jabali-panel/restic-repo.password`, generate `openssl rand -base64 32 > <file>`; chmod 0600 root:jabali; then `restic init --repo /var/lib/jabali-backups/repo --password-file <file>` (idempotent; `restic init` fails fast on existing repo, swallow that error).
+  - First-boot: if no `/etc/jabali-panel/restic-repo.password`, generate `openssl rand -base64 32 > <file>`; install with `-m 0640 -o root -g jabali` (so the retention service running as `jabali` can read via group); then `restic init --repo /var/lib/jabali-backups/repo --password-file <file>` (idempotent; `restic init` fails fast on existing repo, swallow that error).
 - `install/systemd/jabali-backup-retention.service` + `.timer` (daily 04:30) — runs `jabali backup retention apply`
 - `panel-api/cmd/server/backup_retention_cmd.go` (`jabali backup retention apply` → `restic forget --keep-daily=N --keep-weekly=M --keep-monthly=K --prune --tag jabali` using values from server_settings)
-- `docs/adr/0065-backup-restore-restic.md`
+- `docs/adr/0075-backup-restore-restic.md`
 - `docs/BLUEPRINT.md` — add M30 section
 
-**Schema (000074):**
+**Schema (000084):**
 
 ```sql
 CREATE TABLE backup_jobs (
@@ -113,7 +113,7 @@ CREATE TABLE backup_jobs (
 );
 ```
 
-**Schema (000075):**
+**Schema (000085):**
 
 ```sql
 ALTER TABLE server_settings
@@ -124,7 +124,7 @@ ALTER TABLE server_settings
   ADD COLUMN backup_remote_credentials_ref VARCHAR(128) NOT NULL DEFAULT '';  -- pointer to /etc/jabali-panel/restic-remote.env
 ```
 
-**ADR-0065 covers:**
+**ADR-0075 covers:**
 - Why restic (vs tar.zst, vs borg, vs duplicity, vs rsnapshot): single Go binary, dedup + encryption + remote backends out of the box, mature.
 - Why a single shared repo (vs per-user): hosting workloads dedup massively, operators are single-tenant.
 - Why systemd-run transient units (M29 carry-over).
@@ -137,13 +137,13 @@ ALTER TABLE server_settings
 **Verification:**
 - `migrate up` → `mariadb -e "DESCRIBE backup_jobs"` shows expected cols; `migrate down` cleanly reverses.
 - `ls -la /var/lib/jabali-backups` → `drwxr-x--- root jabali`; repo subdir has `config` + `keys/` + `data/`.
-- `cat /etc/jabali-panel/restic-repo.password` → 0600 root:jabali, 44 chars (32 random bytes base64).
+- `cat /etc/jabali-panel/restic-repo.password` → 0640 root:jabali, 44 chars (32 random bytes base64).
 - `restic --repo /var/lib/jabali-backups/repo --password-file /etc/jabali-panel/restic-repo.password snapshots` → exits 0, prints empty list.
 - `systemctl status jabali-backup-retention.timer` → enabled + active, next firing 04:30.
 
 **Exit criteria:**
-- Migrations 000074, 000075 land on main.
-- ADR-0065 status = `accepted`.
+- Migrations 000084, 000085 land on main.
+- ADR-0075 status = `accepted`.
 - BLUEPRINT.md has M30 section.
 - restic 0.16+ present on host, repo initialized, password file in place.
 - Retention timer enabled.
@@ -589,7 +589,7 @@ jabali system restore \
 - Playwright suites green (admin account + user account + admin system).
 - Two-VM bare-metal recovery test passes (Step 11 verification).
 - Runbook at `plans/m30-backup-restore-runbook.md` covers: account flow, system flow, two-VM bare-metal recovery script, how to read manifests, how to point the repo at S3/SFTP, retention timer troubleshooting, restic password loss recovery (= you don't recover; document it).
-- ADR-0065 marked `accepted`.
+- ADR-0075 marked `accepted`.
 
 ---
 
@@ -637,7 +637,7 @@ Step 1  ──┐
           │                                                                  │         │
           │                                                                  │         └──> Step 12 (system backup admin UI)
           │
-          (ADR-0065 + restic install + retention timer land here)
+          (ADR-0075 + restic install + retention timer land here)
 ```
 
 Wave D (Steps 10-12) reuses Step 6's orchestrator + worker primitives + Step 2's restic wrapper. System backup with `IncludeAccounts=true` literally fans out to per-user account_full backups under one shared job-id, so the per-user code path is the same. System restore is its own worker because it has a unique pre-flight (stop services) + post-flight (restart + health-check) shape.

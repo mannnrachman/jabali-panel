@@ -21,7 +21,7 @@ type DomainDNSSECHandlerConfig struct {
 	Keys    repository.DNSSECKeyRepository
 }
 
-// RegisterDomainDNSSECRoutes mounts the three DNSSEC endpoints (ADR-0057).
+// RegisterDomainDNSSECRoutes mounts the three DNSSEC endpoints (ADR-0076).
 func RegisterDomainDNSSECRoutes(g *gin.RouterGroup, cfg DomainDNSSECHandlerConfig) {
 	if cfg.Domains == nil {
 		return

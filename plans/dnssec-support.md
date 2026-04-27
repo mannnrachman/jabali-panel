@@ -36,7 +36,7 @@
 
 **Target ADR**:
 
-- **ADR-0057** (draft in Step 1, accept in Step 6): "Per-domain DNSSEC via pdnsutil shell-out". Records four decisions: (a) shell out to `pdnsutil` instead of writing `cryptokeys` directly, (b) algorithm 13 (ECDSAP256SHA256) is the only supported algorithm in v1 — leave `pdnsutil secure-zone` defaults, (c) the panel stores `dnssec_enabled` intent + a key cache, never the private key material, (d) DS retrieval is read-through via `pdnsutil export-zone-ds` on user demand, not cached (registrars need the current active KSK's DS; caching invites staleness during rollover).
+- **ADR-0076** (draft in Step 1, accept in Step 6): "Per-domain DNSSEC via pdnsutil shell-out". Records four decisions: (a) shell out to `pdnsutil` instead of writing `cryptokeys` directly, (b) algorithm 13 (ECDSAP256SHA256) is the only supported algorithm in v1 — leave `pdnsutil secure-zone` defaults, (c) the panel stores `dnssec_enabled` intent + a key cache, never the private key material, (d) DS retrieval is read-through via `pdnsutil export-zone-ds` on user demand, not cached (registrars need the current active KSK's DS; caching invites staleness during rollover).
 
 **Dependencies** (all shipped on main):
 
@@ -72,7 +72,7 @@ Wave C parallelism is safe: Step 4 (reconciler phase) lives in `panel-api/intern
 
 Lock every cross-cutting contract so Waves B/C land without collisions.
 
-1. ADR-0057 draft in `docs/adr/0057-dnssec-per-domain-pdnsutil.md` — four decisions listed above.
+1. ADR-0076 draft in `docs/adr/0057-dnssec-per-domain-pdnsutil.md` — four decisions listed above.
 2. Migration `000067_add_dnssec_to_domains.up.sql` + `.down.sql`:
    - `ALTER TABLE domains ADD COLUMN dnssec_enabled BOOLEAN NOT NULL DEFAULT 0, ADD COLUMN dnssec_enabled_at DATETIME(6) NULL;`
    - `CREATE TABLE domain_dnssec_keys (domain_id BIGINT NOT NULL, key_tag INT NOT NULL, key_type ENUM('KSK','ZSK','CSK') NOT NULL, algorithm TINYINT UNSIGNED NOT NULL, public_key TEXT NOT NULL, active BOOLEAN NOT NULL DEFAULT 1, observed_at DATETIME(6) NOT NULL, PRIMARY KEY (domain_id, key_tag), FOREIGN KEY (domain_id) REFERENCES domains(id) ON DELETE CASCADE) ENGINE=InnoDB;` — cache only, never the private half.
@@ -96,7 +96,7 @@ Lock every cross-cutting contract so Waves B/C land without collisions.
 
 ### Tasks
 
-- [ ] Write ADR-0057 with the four decisions.
+- [ ] Write ADR-0076 with the four decisions.
 - [ ] Write migration 000067 up/down.
 - [ ] Scaffold four agent command stub files that return `CodeUnimplemented`.
 - [ ] Scaffold panel-API stubs + register in router.
@@ -303,7 +303,7 @@ Icons: `ShieldCheckOutlined` (active), `ShieldExclamationOutlined` or `SafetyOut
 
 ---
 
-## Step 6 — Runbook + ADR-0057 accept + memory + live smoke + merge
+## Step 6 — Runbook + ADR-0076 accept + memory + live smoke + merge
 
 **Model tier**: strongest (final ship gate).
 **Branch**: `dnssec/support/06-ship`.
@@ -316,7 +316,7 @@ Final wrap-up, same shape as M6.5 Step 8–9.
 ### Tasks
 
 - [ ] Write `plans/dnssec-support-runbook.md`: how to enable, what to hand the registrar, how to disable, what to do when `pdnsutil` fails (e.g. zone not in PowerDNS).
-- [ ] Move ADR-0057 to **ACCEPTED**.
+- [ ] Move ADR-0076 to **ACCEPTED**.
 - [ ] Update `docs/BLUEPRINT.md` with a DNSSEC section.
 - [ ] Add memory entries: `project_dnssec_shipped.md` + MEMORY.md index line.
 - [ ] Live smoke on test VM: enable DNSSEC on one zone, verify `dig @127.0.0.1 <zone> DNSKEY +short` returns keys, `dig DS <zone>` (via recursor resolving parent) intentionally won't validate until registrar publishes — document this expectation in the runbook.
@@ -350,7 +350,7 @@ Final wrap-up, same shape as M6.5 Step 8–9.
 ## Anti-patterns to avoid (learnt from M6/M6.5)
 
 - **No direct writes to `cryptokeys` / `domainmetadata`**. `pdnsutil` is the supported surface.
-- **No DS cache**. ADR-0057 item (d) — always read-through.
+- **No DS cache**. ADR-0076 item (d) — always read-through.
 - **No "secure-zone with custom args"**. v1 uses PDNS defaults. Advanced ops live in the admin DNS records page or a shell.
 - **No migration that seeds from app-populated tables** (per `feedback_migration_data_seed_ordering.md`). `domain_dnssec_keys` is populated by the reconciler, never the migration.
 - **No `domain_id` as Stalwart id or any cross-service id**. This is purely jabali's internal `domains.id`. (M6.5 got this wrong for catchall — lesson carried forward.)

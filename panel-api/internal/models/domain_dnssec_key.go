@@ -5,7 +5,7 @@ import "time"
 // DomainDNSSECKey caches a single DNSSEC key as reported by
 // `pdnsutil show-zone`. Advisory — the authoritative source is PowerDNS's
 // own `cryptokeys` table. Private key material is NEVER stored here
-// (ADR-0057).
+// (ADR-0076).
 type DomainDNSSECKey struct {
 	DomainID   string    `gorm:"primaryKey;type:char(26);not null" json:"domain_id"`
 	KeyTag     int       `gorm:"primaryKey;type:int;not null" json:"key_tag"`

@@ -1,0 +1,41 @@
+[Unit]
+Description=Jabali backup retention sweep (M30 — restic forget + prune)
+Documentation=https://git.linux-hosting.co.il/shukivaknin/jabali2/src/branch/main/docs/adr/0075-backup-restore-restic.md
+After=jabali-panel.service network-online.target
+# No Requires=jabali-panel.service. The CLI reads server_settings to pick
+# up keep-daily/weekly/monthly knobs but the panel may be transiently down
+# during boot; install.sh enables this timer in the install foundation
+# step before the panel unit lands. A failed run is tolerated — the timer
+# fires again at 04:30 the next day. `Restart=no` matches the M22 reaper.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/jabali backup retention apply
+StandardOutput=journal
+StandardError=journal
+
+# Restic prune walks every pack file in /var/lib/jabali-backups/repo/. On
+# a multi-GB repo this can hit several minutes of CPU + disk I/O; the
+# 04:30 schedule keeps it off-peak. ProtectHome=read-only because the
+# retention sweep never touches /home; it only purges restic packs.
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/jabali-backups
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+# Run as the panel user/group (set by install.sh post-install). The
+# repo dir is root:jabali 0750 and the password file is 0600 root:jabali,
+# so the supplementary 'jabali' group is enough to read both.
+User=jabali
+Group=jabali
+SupplementaryGroups=jabali
+
+Restart=no

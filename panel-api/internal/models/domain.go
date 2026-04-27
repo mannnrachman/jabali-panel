@@ -244,7 +244,7 @@ type Domain struct {
 	DisclaimerEnabled bool    `gorm:"type:tinyint(1);not null;default:0" json:"disclaimer_enabled"`
 	DisclaimerText    *string `gorm:"type:text" json:"disclaimer_text,omitempty"`
 
-	// DNSSEC: operator intent + enable timestamp (ADR-0057). Actual signing
+	// DNSSEC: operator intent + enable timestamp (ADR-0076). Actual signing
 	// state lives in PowerDNS; key cache in domain_dnssec_keys.
 	// Pin the column names — GORM's default snake_case derivation turns
 	// DNSSECEnabled into `dns_sec_enabled` (splits on every uppercase run),

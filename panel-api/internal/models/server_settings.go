@@ -116,6 +116,18 @@ type ServerSettings struct {
 	// the directory under /var/lib/jabali-nspawn/images/.
 	DefaultNspawnImageVersion string `gorm:"column:default_nspawn_image_version;type:varchar(64);not null;default:'debian-13-v1'" json:"default_nspawn_image_version"`
 
+	// M30 backup-restore retention knobs (migration 000085). Pruning runs
+	// daily via the jabali-backup-retention.timer drop-in; values mirror
+	// `restic forget --keep-daily/--keep-weekly/--keep-monthly`. Empty
+	// BackupRemoteURL keeps backups at the local repo
+	// /var/lib/jabali-backups/repo. M30.1 wires remote backends; v1 leaves
+	// these unused.
+	BackupKeepDaily            uint32 `gorm:"column:backup_keep_daily;type:int unsigned;not null;default:7"     json:"backup_keep_daily"`
+	BackupKeepWeekly           uint32 `gorm:"column:backup_keep_weekly;type:int unsigned;not null;default:4"    json:"backup_keep_weekly"`
+	BackupKeepMonthly          uint32 `gorm:"column:backup_keep_monthly;type:int unsigned;not null;default:6"   json:"backup_keep_monthly"`
+	BackupRemoteURL            string `gorm:"column:backup_remote_url;type:varchar(512);not null;default:''"    json:"backup_remote_url"`
+	BackupRemoteCredentialsRef string `gorm:"column:backup_remote_credentials_ref;type:varchar(128);not null;default:''" json:"backup_remote_credentials_ref"`
+
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 

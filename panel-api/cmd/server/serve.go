@@ -246,6 +246,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.MalwareSettings = repository.NewMalwareSettingsRepository(sharedDB)
 		deps.YARARules = repository.NewYARACustomRuleRepository(sharedDB)
 		deps.TetragonPolicies = repository.NewTetragonPolicyStateRepository(sharedDB)
+		// M30 (ADR-0075): backup-restore workflow rows.
+		deps.BackupJobs = repository.NewBackupJobRepository(sharedDB)
 		deps.PhpMyAdminSSOTokens = phpMyAdminSSOTokenRepo
 		deps.PHPPools = phpPoolRepo
 		deps.PHPPoolIniOverrides = phpPoolIniOverrideRepo

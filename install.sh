@@ -717,6 +717,7 @@ POLICYEOF
       yara \
       ed inotify-tools \
       bpftool \
+      restic \
       "${php_extensions[@]}"
 
   # Undo the policy-rc.d trap regardless of exit path above (set -e would
@@ -1898,7 +1899,7 @@ gmysql-dbname=jabali_pdns
 gmysql-user=jabali_pdns
 gmysql-password=${pdns_password}
 
-# DNSSEC (M15, ADR-0057): enable the gmysql-backed DNSSEC data path.
+# DNSSEC (M15, ADR-0076): enable the gmysql-backed DNSSEC data path.
 # Without this, pdnsutil secure-zone errors out with "no DNSSEC capable
 # backends". The schema already provisions cryptokeys / tsigkeys /
 # domainmetadata tables for exactly this path.
@@ -4161,6 +4162,95 @@ install_sso_reaper_timer() {
   systemctl enable --now jabali-sso-reaper.timer
 
   _ok "sso reaper timer enabled (every 30s)"
+}
+
+# ---------- M30 backup foundation (ADR-0075) -------------------------------
+#
+# install_backup_foundation lays the restic-backed backup foundation:
+#   1. /var/lib/jabali-backups + /var/lib/jabali-backups/repo/  (root:jabali 0750)
+#   2. /etc/jabali-panel/restic-repo.password                   (root:jabali 0640)
+#   3. `restic init` against the repo (idempotent — restic refuses to
+#      re-init an existing repo; that exit code is swallowed).
+#   4. jabali-backup-retention.{service,timer} drop-ins enabled --now.
+#
+# Apt-installed `restic` lives in the base-packages batch so this function
+# never touches apt itself. Steps 2-12 of M30 add the actual backup +
+# restore code paths; this function just guarantees the foundation is in
+# place on every fresh install AND on every `jabali update`.
+install_backup_foundation() {
+  _log "installing M30 backup foundation (restic repo + retention timer)"
+
+  # Sanity: the apt batch should have provided restic. If not, the host
+  # is too old or the install_base_packages step was skipped — bail loud
+  # rather than silently disable backups.
+  if ! command -v restic >/dev/null 2>&1; then
+    _err "restic binary not found on PATH after install_base_packages"
+    exit 1
+  fi
+  local restic_version
+  restic_version="$(restic version 2>/dev/null | awk '/^restic /{print $2; exit}')"
+  _log "restic available: ${restic_version:-unknown}"
+
+  # Backup repo dir tree. 0750 root:jabali so the panel user can read via
+  # group; restic itself runs as root for actual backup ops (it needs to
+  # walk every user's /home), but the daily retention CLI runs as jabali.
+  install -d -m 0750 -o root -g "$SERVICE_USER" /var/lib/jabali-backups
+  install -d -m 0750 -o root -g "$SERVICE_USER" /var/lib/jabali-backups/repo
+
+  # Password file. Generated once; never rotated automatically (rotating
+  # the restic password would invalidate every existing snapshot — it's
+  # a deliberate manual operation documented in the M30 runbook).
+  local pw_file="/etc/jabali-panel/restic-repo.password"
+  mkdir -p /etc/jabali-panel
+  if [[ ! -s "$pw_file" ]]; then
+    _log "generating restic repo password (32 bytes base64)"
+    local tmp
+    tmp="$(mktemp)"
+    openssl rand -base64 32 > "$tmp"
+    install -m 0640 -o root -g "$SERVICE_USER" "$tmp" "$pw_file"
+    rm -f "$tmp"
+  else
+    # Re-enforce ownership + mode on every run (matches install_sso_key
+    # idempotency). Earlier versions may have written 0600 root:root.
+    chown "root:$SERVICE_USER" "$pw_file"
+    chmod 0640 "$pw_file"
+  fi
+
+  # restic init is the only step that meaningfully fails on a re-run:
+  # restic exits 1 with `repository already exists` when the repo dir
+  # has a `config` blob. Detect that case explicitly so set -e doesn't
+  # kill the install, and surface any OTHER failure loud.
+  if [[ -s /var/lib/jabali-backups/repo/config ]]; then
+    _log "restic repo already initialized at /var/lib/jabali-backups/repo"
+  else
+    _log "running restic init"
+    if ! restic --repo /var/lib/jabali-backups/repo \
+                --password-file "$pw_file" \
+                init >/dev/null; then
+      _err "restic init failed; backup foundation incomplete"
+      exit 1
+    fi
+    _ok "restic repo initialized"
+  fi
+
+  # Timer + service drop-ins. Same install pattern as install_sso_reaper_timer.
+  local svc_src="${REPO_DIR}/install/systemd/jabali-backup-retention.service"
+  local timer_src="${REPO_DIR}/install/systemd/jabali-backup-retention.timer"
+  local svc_dst="/etc/systemd/system/jabali-backup-retention.service"
+  local timer_dst="/etc/systemd/system/jabali-backup-retention.timer"
+
+  if [[ ! -f "$svc_src" || ! -f "$timer_src" ]]; then
+    _err "backup retention systemd units missing at $svc_src / $timer_src"
+    exit 1
+  fi
+
+  install -m 0644 -o root -g root "$svc_src" "$svc_dst"
+  install -m 0644 -o root -g root "$timer_src" "$timer_dst"
+
+  systemctl daemon-reload
+  systemctl enable --now jabali-backup-retention.timer
+
+  _ok "M30 backup foundation installed (restic repo + retention timer)"
 }
 
 # ---------- step 8a: M26 security foundation (CrowdSec + UFW) ---------------
@@ -6853,6 +6943,7 @@ main() {
   seed_admin_env
   install_sso_key
   install_sso_reaper_timer
+  install_backup_foundation
   # Order matters: install_phpmyadmin extracts the tarball to
   # /opt/phpmyadmin/current, which the pma pool config references as
   # chdir=. Starting the FPM service before the tarball is extracted

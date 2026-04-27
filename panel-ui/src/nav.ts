@@ -27,6 +27,7 @@ import {
   MailOutlined,
   PackageOpenOutlined,
   SafetyOutlined,
+  SaveOutlined,
   ServerOutlined,
   SettingOutlined,
   ShieldCheckOutlined,
@@ -156,6 +157,12 @@ export const adminNav: NavItem[] = [
     label: "Support",
     icon: navIcon(LifeBuoyOutlined),
     path: "/jabali-admin/support",
+  },
+  {
+    key: "backups",
+    label: "Backups",
+    icon: navIcon(SaveOutlined),
+    path: "/jabali-admin/backups",
   },
 ];
 

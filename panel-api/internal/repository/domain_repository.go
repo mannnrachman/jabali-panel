@@ -68,7 +68,7 @@ type DomainRepository interface {
 	// M6.5 Step 6 ADR-0052; reconciler pushes to Stalwart sieve.
 	UpdateDisclaimer(ctx context.Context, id string, enabled bool, text *string) error
 	// UpdateDNSSECEnabled writes dnssec_enabled + dnssec_enabled_at.
-	// ADR-0057. Dedicated method because neither column is in Update()'s
+	// ADR-0076. Dedicated method because neither column is in Update()'s
 	// allowlist; enabling without a timestamp or disabling without clearing
 	// the timestamp is a bug waiting to happen.
 	UpdateDNSSECEnabled(ctx context.Context, id string, enabled bool) error

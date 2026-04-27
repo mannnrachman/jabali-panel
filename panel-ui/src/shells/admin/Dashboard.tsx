@@ -51,6 +51,39 @@ export const Dashboard = () => {
         Dashboard
       </Typography.Title>
 
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={24} sm={8}>
+          <Card size="small">
+            <Statistic
+              title="Total Users"
+              value={users.data ?? 0}
+              prefix={<TeamOutlined />}
+            />
+            <Link to="/jabali-admin/users">Manage →</Link>
+          </Card>
+        </Col>
+        <Col xs={24} sm={8}>
+          <Card size="small">
+            <Statistic
+              title="Active Domains"
+              value={domains.data ?? 0}
+              prefix={<GlobalOutlined />}
+            />
+            <Link to="/jabali-admin/domains">Manage →</Link>
+          </Card>
+        </Col>
+        <Col xs={24} sm={8}>
+          <Card size="small">
+            <Statistic
+              title="Mailboxes"
+              value={mailboxes.data ?? 0}
+              prefix={<MailOutlined />}
+            />
+            <Link to="/jabali-admin/domains">Manage →</Link>
+          </Card>
+        </Col>
+      </Row>
+
       <Card style={{ marginBottom: 16 }}>
         <Space direction="vertical" size={12} style={{ width: "100%" }}>
           <Space size={12} wrap>
@@ -82,39 +115,6 @@ export const Dashboard = () => {
           style={{ marginBottom: 16 }}
         />
       )}
-
-      <Row gutter={[16, 16]}>
-        <Col xs={24} sm={8}>
-          <Card size="small">
-            <Statistic
-              title="Users"
-              value={users.data ?? 0}
-              prefix={<TeamOutlined />}
-            />
-            <Link to="/jabali-admin/users">Manage →</Link>
-          </Card>
-        </Col>
-        <Col xs={24} sm={8}>
-          <Card size="small">
-            <Statistic
-              title="Domains"
-              value={domains.data ?? 0}
-              prefix={<GlobalOutlined />}
-            />
-            <Link to="/jabali-admin/domains">Manage →</Link>
-          </Card>
-        </Col>
-        <Col xs={24} sm={8}>
-          <Card size="small">
-            <Statistic
-              title="Mailboxes"
-              value={mailboxes.data ?? 0}
-              prefix={<MailOutlined />}
-            />
-            <Link to="/jabali-admin/users">Manage →</Link>
-          </Card>
-        </Col>
-      </Row>
     </div>
   );
 };

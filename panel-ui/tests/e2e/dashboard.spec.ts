@@ -39,7 +39,9 @@ test.describe("admin dashboard", () => {
     await signIn(page, admin);
 
     await expect(page).toHaveURL(/\/jabali-admin\/dashboard/);
-    await expect(page.getByRole("heading", { name: /dashboard/i })).toBeVisible();
+    // bf136db: dashboard dropped the redundant "Dashboard" heading. The
+    // welcome card's hostname assertion below is the deterministic
+    // proof that the dashboard rendered.
 
     // Welcome card surfaces the hostname from the envelope.
     await expect(page.getByText("test-server")).toBeVisible();

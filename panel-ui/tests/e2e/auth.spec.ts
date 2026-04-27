@@ -8,8 +8,11 @@ test.describe("login + role-based landing", () => {
     await signIn(page, admin);
 
     await expect(page).toHaveURL(/\/jabali-admin\/(dashboard|users)(\?|$)/);
+    // bf136db dropped the redundant "Dashboard" page title — landing
+    // verified via URL above plus the header user-menu button, which
+    // shows the signed-in email on every authenticated page.
     await expect(
-      page.getByRole("heading", { name: /dashboard|users/i }),
+      page.getByRole("button", { name: new RegExp(admin.email, "i") }),
     ).toBeVisible();
   });
 
@@ -21,7 +24,11 @@ test.describe("login + role-based landing", () => {
     // /dashboard (matching the admin shell). MyProfile still exists
     // and is reachable from the header dropdown.
     await expect(page).toHaveURL(/\/jabali-panel(\/dashboard)?$/);
-    await expect(page.getByRole("heading", { name: /dashboard/i })).toBeVisible();
+    // bf136db: user dashboard dropped the page title; assert on the
+    // header user-menu button instead.
+    await expect(
+      page.getByRole("button", { name: new RegExp(user.email, "i") }),
+    ).toBeVisible();
   });
 
   test("wrong password stays on /login and shows an error", async ({ page }) => {

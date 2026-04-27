@@ -4521,6 +4521,21 @@ install_crowdsec_nginx_bouncer() {
     return
   fi
 
+  # The crowdsec-nginx-bouncer postinst auto-registers a bouncer with
+  # a random `crowdsec-nginx-bouncer-<epoch>` name and writes its key
+  # into the conf file. We don't use that bouncer (we use 'jabali-nginx'
+  # below), so prune any auto-created ones to keep `cscli bouncers list`
+  # honest. Only delete bouncers that match the upstream auto-name
+  # pattern — never touch operator-added ones.
+  while IFS= read -r stale; do
+    [[ -z "$stale" ]] && continue
+    _log "deleting auto-registered upstream bouncer '$stale'"
+    cscli bouncers delete "$stale" >/dev/null 2>&1 || true
+  done < <(
+    cscli bouncers list -o json 2>/dev/null \
+      | python3 -c 'import json,re,sys; [print(b["name"]) for b in json.load(sys.stdin) if re.match(r"^crowdsec-nginx-bouncer-\d+$", b.get("name",""))]' 2>/dev/null
+  )
+
   # Mint an API key via cscli if one isn't already registered for us.
   # Bouncer name pinned (not SUFFIX-randomised) so repeated install
   # runs don't accumulate stale bouncers.

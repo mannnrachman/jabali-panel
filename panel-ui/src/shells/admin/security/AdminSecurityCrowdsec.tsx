@@ -42,6 +42,7 @@ import {
   SafetyOutlined,
   BellOutlined,
 } from "@icons";
+import { ISO3166_COUNTRIES } from "../../../data/iso3166";
 
 import {
   useAddCrowdsecAllowlist,
@@ -280,7 +281,10 @@ export const AdminSecurityCrowdsec = () => {
         />
       </Card>
 
-      <Card size="small" title="Metrics">
+      <div>
+        <Typography.Title level={5} style={{ marginTop: 0, marginBottom: 12 }}>
+          Metrics
+        </Typography.Title>
         {metrics.isLoading ? (
           <Typography.Text type="secondary">Loading…</Typography.Text>
         ) : (
@@ -322,7 +326,7 @@ export const AdminSecurityCrowdsec = () => {
             />
           </Row>
         )}
-      </Card>
+      </div>
     </Space>
   );
 
@@ -401,7 +405,20 @@ export const AdminSecurityCrowdsec = () => {
           dataIndex="last_pull"
           title="Last pull"
           key="last_pull"
-          render={(s: string) => fmtTime(s)}
+          render={(s: string, row: { name: string; type: string }) => {
+            if (s) return fmtTime(s);
+            const isAppSecOnly =
+              row.type === "" ||
+              row.name.toLowerCase().includes("nginx");
+            if (isAppSecOnly) {
+              return (
+                <Tooltip title="AppSec-only bouncer (Lua HTTP). Doesn't poll LAPI for L3/L4 decisions — those are handled by cs-firewall-bouncer. Every nginx request is forwarded to the AppSec engine on 127.0.0.1:7422 instead.">
+                  <Tag color="blue">AppSec-only</Tag>
+                </Tooltip>
+              );
+            }
+            return "—";
+          }}
         />
         <Table.Column
           dataIndex="revoked"
@@ -567,6 +584,20 @@ const AppSecGeoblockCard = () => {
   const [mode, setMode] = useState<AppSecGeoblockMode>("off");
   const [countries, setCountries] = useState<string[]>([]);
 
+  // Pre-built option set for the country Select. Memoised once at module
+  // load — ISO3166_COUNTRIES is a frozen literal so the .map is cheap
+  // either way, but useMemo here keeps Select.options stable across
+  // renders (helps AntD virtualisation cache).
+  const countryOptions = useMemo(
+    () =>
+      ISO3166_COUNTRIES.map((c) => ({
+        value: c.code,
+        label: `${c.flag}  ${c.name} (${c.code})`,
+        searchKey: `${c.name} ${c.code}`.toLowerCase(),
+      })),
+    [],
+  );
+
   useEffect(() => {
     if (geoblock.data) {
       setMode(geoblock.data.mode);
@@ -607,17 +638,26 @@ const AppSecGeoblockCard = () => {
         {mode !== "off" && (
           <div>
             <Typography.Text strong>Countries: </Typography.Text>
-            <Select
-              mode="tags"
+            <Select<string[]>
+              mode="multiple"
               style={{ width: "100%", maxWidth: 720 }}
-              placeholder="Add ISO 3166-1 alpha-2 codes (RU, CN, IR, …)"
+              placeholder="Type a country name or code, or pick from the list"
               value={countries}
               onChange={(next) =>
                 setCountries(
-                  next.map((c) => c.toUpperCase().trim()).filter((c) => /^[A-Z]{2}$/.test(c)),
+                  next
+                    .map((c) => c.toUpperCase().trim())
+                    .filter((c) => /^[A-Z]{2}$/.test(c)),
                 )
               }
-              tokenSeparators={[",", " "]}
+              options={countryOptions}
+              showSearch
+              optionFilterProp="searchKey"
+              filterOption={(input, opt) =>
+                (opt?.searchKey ?? "").includes(input.toLowerCase())
+              }
+              maxTagCount="responsive"
+              allowClear
             />
           </div>
         )}

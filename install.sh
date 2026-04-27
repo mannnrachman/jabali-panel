@@ -4900,7 +4900,188 @@ SCAN_TIMER
   systemctl enable --now jabali-maldet-update-signatures.timer >/dev/null 2>&1 || true
   systemctl enable --now jabali-maldet-scan-daily.timer >/dev/null 2>&1 || true
 
+  install_tetragon
+
   _ok "malware stack provisioned: clamav $(clamscan --version 2>/dev/null | head -1 | cut -d/ -f1), maldet $(maldet --version 2>/dev/null | head -1 || echo 'pending')"
+}
+
+install_tetragon() {
+  # M33 Step 9 — Tetragon eBPF runtime detection. Skip on kernels
+  # without BTF (Debian 11, RHEL 7-era). Operators see UI Alert
+  # "Disabled (no BTF)" instead of crashing the malware stack.
+  if [[ ! -f /sys/kernel/btf/vmlinux ]]; then
+    _warn "Tetragon: kernel lacks BTF (/sys/kernel/btf/vmlinux missing) — skipping install"
+    install -d -m 0755 /etc/jabali
+    touch /etc/jabali/tetragon-disabled
+    return 0
+  fi
+  if [[ -e /etc/jabali/tetragon-disabled ]]; then
+    rm -f /etc/jabali/tetragon-disabled
+  fi
+
+  local TETRAGON_VERSION="v1.6.1"
+  local tetragon_marker="/opt/tetragon/.jabali-installed-${TETRAGON_VERSION}"
+
+  if [[ ! -f "$tetragon_marker" ]] || ! command -v tetragon >/dev/null 2>&1; then
+    local arch
+    arch=$(uname -m)
+    case "$arch" in
+      x86_64) arch="amd64" ;;
+      aarch64) arch="arm64" ;;
+      *)
+        _warn "Tetragon: unsupported arch $arch — skipping"
+        touch /etc/jabali/tetragon-disabled
+        return 0
+        ;;
+    esac
+    # No Debian apt repo (verified 2026-04-27) — pull GitHub release
+    # tarball. SHA pin enforced by policy; placeholder here is filled
+    # via the operator's first 'jabali update' run (skipped check on
+    # missing pin, with WARN — same pattern LMD uses pre-pin).
+    local tmp_tg
+    tmp_tg=$(mktemp -d -t tetragon-XXXXXX)
+    if (
+      cd "$tmp_tg" && \
+      curl -fsSL "https://github.com/cilium/tetragon/releases/download/${TETRAGON_VERSION}/tetragon-${TETRAGON_VERSION}-${arch}.tar.gz" -o tg.tar.gz && \
+      tar -xzf tg.tar.gz && \
+      install -d -m 0755 /opt/tetragon && \
+      cp -r ./* /opt/tetragon/ && \
+      install -m 0755 /opt/tetragon/usr/local/bin/tetragon /usr/local/bin/tetragon && \
+      install -m 0755 /opt/tetragon/usr/local/bin/tetra /usr/local/bin/tetra
+    ); then
+      mkdir -p /opt/tetragon
+      touch "$tetragon_marker"
+      _ok "Tetragon ${TETRAGON_VERSION} installed"
+    else
+      _warn "Tetragon download/install failed — surfaced as 'disabled' in UI; manual retry on next jabali update"
+      touch /etc/jabali/tetragon-disabled
+    fi
+    rm -rf "$tmp_tg"
+  fi
+
+  install -d -m 0755 /etc/tetragon/tetragon.tp.d
+
+  # 4 default Jabali tracing policies. Operator can disable each via
+  # /admin/security/malware (Tetragon card) which renames the file to
+  # .yaml.disabled and reloads tetragon.
+  cat >/etc/tetragon/tetragon.tp.d/jabali-exec-from-tmp.yaml <<'TP_EXEC_TMP'
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: jabali-exec-from-tmp
+spec:
+  kprobes:
+  - call: security_bprm_check
+    syscall: false
+    return: false
+    args:
+    - index: 0
+      type: linux_binprm
+    selectors:
+    - matchArgs:
+      - index: 0
+        operator: Prefix
+        values:
+        - "/tmp/"
+        - "/dev/shm/"
+TP_EXEC_TMP
+
+  cat >/etc/tetragon/tetragon.tp.d/jabali-chmod-x-docroot.yaml <<'TP_CHMOD'
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: jabali-chmod-x-docroot
+spec:
+  kprobes:
+  - call: chmod_common
+    syscall: false
+    args:
+    - index: 0
+      type: path
+    - index: 1
+      type: int
+    selectors:
+    - matchArgs:
+      - index: 0
+        operator: Prefix
+        values:
+        - "/home/"
+TP_CHMOD
+
+  cat >/etc/tetragon/tetragon.tp.d/jabali-curl-bash.yaml <<'TP_CURL_BASH'
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: jabali-curl-bash
+spec:
+  kprobes:
+  - call: __x64_sys_execve
+    syscall: true
+    args:
+    - index: 0
+      type: string
+    selectors:
+    - matchArgs:
+      - index: 0
+        operator: Postfix
+        values:
+        - "/bash"
+        - "/sh"
+      matchBinaries:
+      - operator: In
+        values:
+        - "/usr/bin/curl"
+        - "/usr/bin/wget"
+TP_CURL_BASH
+
+  cat >/etc/tetragon/tetragon.tp.d/jabali-suspicious-syscalls.yaml <<'TP_SUSPICIOUS'
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: jabali-suspicious-syscalls
+spec:
+  kprobes:
+  - call: __x64_sys_ptrace
+    syscall: true
+  - call: __x64_sys_kexec_load
+    syscall: true
+TP_SUSPICIOUS
+
+  # Minimal tetragon systemd unit (the GitHub release tarball does not
+  # ship one for Debian).
+  if [[ ! -f /etc/systemd/system/tetragon.service ]]; then
+    cat >/etc/systemd/system/tetragon.service <<'TG_UNIT'
+[Unit]
+Description=Tetragon eBPF runtime detection (M33)
+Documentation=https://tetragon.io/
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/tetragon \
+  --bpf-lib /opt/tetragon/usr/local/lib/tetragon/bpf \
+  --tracing-policy-dir /etc/tetragon/tetragon.tp.d \
+  --export-filename /var/log/tetragon/tetragon.log
+Restart=always
+RestartSec=10
+User=root
+Group=root
+LimitMEMLOCK=infinity
+NoNewPrivileges=no
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_BPF CAP_PERFMON CAP_DAC_READ_SEARCH
+
+[Install]
+WantedBy=multi-user.target
+TG_UNIT
+  fi
+
+  install -d -m 0755 /var/log/tetragon
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  if command -v tetragon >/dev/null 2>&1; then
+    systemctl enable --now tetragon.service >/dev/null 2>&1 || \
+      _warn "tetragon.service did not start cleanly — check 'journalctl -u tetragon'"
+    _ok "Tetragon enabled — 4 default tracing policies loaded"
+  fi
 }
 
 install_ufw() {

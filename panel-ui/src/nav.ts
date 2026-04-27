@@ -165,6 +165,36 @@ export const userNav: NavItem[] = [
     path: "/jabali-panel/domains",
   },
   {
+    key: "mail",
+    label: "Mail",
+    icon: navIcon(MailOutlined),
+    path: "/jabali-panel/mail/mailboxes",
+  },
+  {
+    key: "applications",
+    label: "Applications",
+    icon: navIcon(AppstoreOutlined),
+    path: "/jabali-panel/applications",
+  },
+  {
+    key: "databases",
+    label: "Databases",
+    icon: navIcon(DatabaseOutlined),
+    path: "/jabali-panel/databases",
+  },
+  {
+    key: "files",
+    label: "Files",
+    icon: navIcon(FolderOutlined),
+    path: "/jabali-panel/files",
+  },
+  {
+    key: "ssh-keys",
+    label: "SSH Keys",
+    icon: navIcon(KeyOutlined),
+    path: "/jabali-panel/ssh-keys",
+  },
+  {
     key: "dns",
     label: "DNS",
     icon: navIcon(CloudServerOutlined),
@@ -183,40 +213,10 @@ export const userNav: NavItem[] = [
     path: "/jabali-panel/php-settings",
   },
   {
-    key: "databases",
-    label: "Databases",
-    icon: navIcon(DatabaseOutlined),
-    path: "/jabali-panel/databases",
-  },
-  {
-    key: "files",
-    label: "Files",
-    icon: navIcon(FolderOutlined),
-    path: "/jabali-panel/files",
-  },
-  {
-    key: "applications",
-    label: "Applications",
-    icon: navIcon(AppstoreOutlined),
-    path: "/jabali-panel/applications",
-  },
-  {
-    key: "ssh-keys",
-    label: "SSH Keys",
-    icon: navIcon(KeyOutlined),
-    path: "/jabali-panel/ssh-keys",
-  },
-  {
     key: "cron",
     label: "Cron",
     icon: navIcon(CalendarCheckOutlined),
     path: "/jabali-panel/cron",
-  },
-  {
-    key: "mail",
-    label: "Mail",
-    icon: navIcon(MailOutlined),
-    path: "/jabali-panel/mail/mailboxes",
   },
 ];
 

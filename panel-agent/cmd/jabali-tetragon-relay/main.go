@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -22,6 +23,8 @@ import (
 	"syscall"
 	"time"
 )
+
+const panelAPISocketDefault = "/run/jabali-panel/api.sock"
 
 // Tetragon JSON event shapes — narrow subset of the upstream
 // process_kprobe / process_exec envelope. Only the fields we route
@@ -191,7 +194,27 @@ func handleLine(ctx context.Context, log *slog.Logger, panelURL, line string) {
 		log.Warn("marshal payload", "err", err)
 		return
 	}
-	endpoint := strings.TrimRight(panelURL, "/") + "/api/v1/admin/security/malware/event"
+	socket := os.Getenv("JABALI_PANEL_API_SOCKET")
+	if socket == "" {
+		socket = panelAPISocketDefault
+	}
+	var endpoint string
+	var client *http.Client
+	if _, err := os.Stat(socket); err == nil {
+		endpoint = "http://panel-api.local/api/v1/admin/security/malware/event"
+		client = &http.Client{
+			Timeout: 5 * time.Second,
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+					var d net.Dialer
+					return d.DialContext(ctx, "unix", socket)
+				},
+			},
+		}
+	} else {
+		endpoint = strings.TrimRight(panelURL, "/") + "/api/v1/admin/security/malware/event"
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		log.Warn("build request", "err", err)
@@ -199,7 +222,6 @@ func handleLine(ctx context.Context, log *slog.Logger, panelURL, line string) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "jabali-tetragon-relay/1")
-	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Warn("post event", "err", err)

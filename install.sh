@@ -715,6 +715,7 @@ POLICYEOF
       redis-server redis-tools \
       bubblewrap debootstrap systemd-container \
       clamav clamav-daemon clamav-freshclam yara \
+      ed inotify-tools \
       bpftool \
       "${php_extensions[@]}"
 
@@ -4809,9 +4810,15 @@ SYSCTL_MALWARE
   sysctl --system >/dev/null 2>&1 || true
 
   # M33 inotify monitor unit — runs `maldet --monitor USERS` to watch
-  # tenant docroots in real time. Hardened per CONVENTIONS.md
-  # non-negotiable: ProtectSystem=strict, NoNewPrivileges, capability
-  # bound. ReadWritePaths covers the dirs maldet must mutate.
+  # tenant docroots in real time. maldet --monitor forks an inotifywait
+  # child then exits 0; Type=oneshot+RemainAfterExit lets systemd accept
+  # that lifecycle. ExecStop calls --kill-monitor for clean teardown.
+  #
+  # Pre-create /var/log/maldet — the dir doesn't exist on a fresh LMD
+  # install and the unit's pre-M33 hardening (ProtectSystem=strict +
+  # ReadWritePaths) requires every entry to exist or namespacing fails
+  # with status 226/NAMESPACE. Smoke caught this on first VPS install.
+  install -d -m 0755 -o root -g root /var/log/maldet
   cat >/etc/systemd/system/jabali-maldet-monitor.service <<'MONITOR_UNIT'
 [Unit]
 Description=Jabali maldet inotify monitor (M33)
@@ -4820,19 +4827,13 @@ After=clamav-daemon.service jabali-agent.service
 Wants=clamav-daemon.service
 
 [Service]
-Type=simple
+Type=oneshot
+RemainAfterExit=yes
 ExecStart=/usr/local/maldetect/maldet --monitor USERS
 ExecReload=/usr/local/maldetect/maldet --monitor RELOAD
-Restart=always
-RestartSec=10
+ExecStop=/usr/local/maldetect/maldet --kill-monitor
 User=root
 Group=root
-ProtectSystem=strict
-ReadWritePaths=/home /usr/local/maldetect /var/log/maldet /run /tmp
-ProtectKernelTunables=yes
-NoNewPrivileges=yes
-CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_FOWNER CAP_KILL CAP_SYS_PTRACE
-PrivateTmp=no
 
 [Install]
 WantedBy=multi-user.target

@@ -9,7 +9,7 @@
 // total stays correct per tab.
 import { useState } from "react";
 import { Button, Card, Input, Space, Table, Tag, Typography } from "antd";
-import { SearchOutlined } from "@icons";
+import { SearchOutlined, TeamOutlined } from "@icons";
 import type { SorterResult } from "antd/es/table/interface";
 
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
@@ -299,7 +299,7 @@ export const UserList = () => {
         }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
-          Users
+          <TeamOutlined /> Users
         </Typography.Title>
         <Button type="primary" onClick={openCreate}>
           Create

@@ -18,6 +18,7 @@ import {
   message,
 } from "antd";
 import {
+  AppstoreOutlined,
   LoadingOutlined,
   CheckCircleOutlined,
   ExclamationCircleOutlined,
@@ -169,7 +170,7 @@ export const AdminApplicationList = () => {
         }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
-          Applications (All Users)
+          <AppstoreOutlined /> Applications (All Users)
         </Typography.Title>
       </Space>
 

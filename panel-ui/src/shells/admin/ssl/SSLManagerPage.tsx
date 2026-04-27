@@ -1,26 +1,14 @@
-import { Card, Space, Typography } from "antd";
+import { Card, Typography } from "antd";
+import { ShieldCheckOutlined } from "@icons";
+
 import { SSLManagerTable } from "../../../components/ssl/SSLManagerTable";
 
 export const SSLManagerPage = () => {
   return (
-    <div >
-      <Space
-        wrap
-        align="center"
-        style={{
-          marginBottom: 16,
-          width: "100%",
-          justifyContent: "space-between",
-        }}
-        orientation="vertical"
-      >
-        <Typography.Title level={3} style={{ margin: 0 }}>
-          SSL Certificates
-        </Typography.Title>
-        <Typography.Text type="secondary">
-          Manage Let's Encrypt certificates across all hosted domains.
-        </Typography.Text>
-      </Space>
+    <div>
+      <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
+        <ShieldCheckOutlined /> SSL Manager
+      </Typography.Title>
 
       <Card>
         <SSLManagerTable

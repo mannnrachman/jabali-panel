@@ -37,7 +37,7 @@ import {
 export const SystemUpdatesPage = () => (
   <div>
     <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
-      Updates
+      <DownloadOutlined /> Updates
     </Typography.Title>
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
       <JabaliUpdateCard />

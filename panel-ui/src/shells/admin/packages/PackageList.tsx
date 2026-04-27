@@ -3,7 +3,7 @@
 // <DeleteButton> replaced with plain react-router <Button>s + a
 // RowDeleteButton wired to useDeleteMutation.
 import { Button, Card, Input, Space, Table, Tag, Typography } from "antd";
-import { SearchOutlined } from "@icons";
+import { PackageOpenOutlined, SearchOutlined } from "@icons";
 import { useNavigate } from "react-router";
 import type { SorterResult } from "antd/es/table/interface";
 
@@ -72,7 +72,7 @@ export const PackageList = () => {
         }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
-          Packages
+          <PackageOpenOutlined /> Hosting Packages
         </Typography.Title>
         <Button
           type="primary"

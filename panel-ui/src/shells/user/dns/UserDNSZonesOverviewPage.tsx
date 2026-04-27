@@ -4,6 +4,7 @@
 // the same `domains` list.
 import { useEffect, useState } from "react";
 import { Alert, Button, Card, Empty, Spin, Table, Tag, Typography } from "antd";
+import { CloudServerOutlined } from "@icons";
 import { useNavigate } from "react-router";
 
 import { apiClient } from "../../../apiClient";
@@ -150,7 +151,7 @@ export const UserDNSZonesOverviewPage = () => {
   return (
     <div>
       <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
-        DNS
+        <CloudServerOutlined /> DNS
       </Typography.Title>
       <Card
         tabList={[

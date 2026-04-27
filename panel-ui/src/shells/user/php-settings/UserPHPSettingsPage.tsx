@@ -12,6 +12,7 @@ import {
   message,
 } from "antd";
 import { useEffect, useState } from "react";
+import { CodeOutlined } from "@icons";
 import { apiClient } from "../../../apiClient";
 import { getIdentity, type Identity } from "../../../identity";
 
@@ -248,8 +249,8 @@ export function UserPHPSettingsPage() {
   return (
     <div style={{ maxWidth: 800, margin: "0 auto" }}>
       <Space orientation="vertical" size="large" style={{ width: "100%" }}>
-        <Typography.Title level={2} style={{ margin: 0 }}>
-          PHP Settings
+        <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
+          <CodeOutlined /> PHP Settings
         </Typography.Title>
 
         <Alert

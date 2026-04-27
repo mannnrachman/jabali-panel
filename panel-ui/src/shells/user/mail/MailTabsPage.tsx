@@ -2,7 +2,7 @@
 // Uses Card.tabList so the active-tab strip attaches to the card body (matches
 // admin UserList styling).
 import { Button, Card, Space, Typography } from "antd";
-import { PlusOutlined } from "@icons";
+import { MailOutlined, PlusOutlined } from "@icons";
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
@@ -73,7 +73,7 @@ export const MailTabsPage = () => {
         style={{ marginBottom: 16, width: "100%", justifyContent: "space-between" }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
-          Mail
+          <MailOutlined /> Mail
         </Typography.Title>
         <Button
           type="primary"

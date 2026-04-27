@@ -214,7 +214,7 @@ export const UserSSHKeysPage = () => {
         }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
-          SSH Keys
+          <KeyOutlined /> SSH Keys
         </Typography.Title>
         <Space>
           <Button

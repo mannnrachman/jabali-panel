@@ -85,7 +85,7 @@ export const SupportPage = () => {
         style={{ width: "100%", justifyContent: "space-between", marginBottom: 16 }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
-          Support
+          <LifeBuoyOutlined /> Support
         </Typography.Title>
         <Button icon={<FileTextOutlined />} onClick={() => setModalOpen(true)}>
           Send Diagnostic Report

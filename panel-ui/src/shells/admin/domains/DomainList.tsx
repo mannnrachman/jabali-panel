@@ -169,7 +169,7 @@ export const DomainList = () => {
         }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
-          Domains
+          <GlobalOutlined /> Domains
         </Typography.Title>
       </Space>
 

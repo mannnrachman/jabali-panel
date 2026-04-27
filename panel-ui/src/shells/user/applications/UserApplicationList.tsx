@@ -16,6 +16,7 @@ import {
   Tooltip,
 } from "antd";
 import {
+  AppstoreOutlined,
   PlusSquareOutlined,
   LoadingOutlined,
   CheckCircleOutlined,
@@ -249,7 +250,7 @@ export const UserApplicationList = () => {
         }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
-          My Applications
+          <AppstoreOutlined /> Applications
         </Typography.Title>
         <Button
           type="primary"

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import {
+  DatabaseOutlined,
   LinkOutlined,
   PlusSquareOutlined,
   ThunderboltOutlined,
@@ -138,7 +139,7 @@ export const UserDatabaseList = () => {
         }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
-          My Databases
+          <DatabaseOutlined /> Databases
         </Typography.Title>
         <Space wrap>
           <Button

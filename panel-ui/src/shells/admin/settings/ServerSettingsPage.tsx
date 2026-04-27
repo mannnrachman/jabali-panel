@@ -713,12 +713,9 @@ export const ServerSettingsPage = () => {
 
   return (
     <div style={{ maxWidth: 960 }}>
-      <Typography.Title level={3} style={{ marginTop: 0 }}>
-        Server Settings
+      <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
+        <SettingOutlined /> Server Settings
       </Typography.Title>
-      <Typography.Paragraph type="secondary">
-        Server identity, DNS nameserver names, branding, and page templates.
-      </Typography.Paragraph>
 
       {/* Card.tabList renders the tab strip attached to the card body —
           each tab owns an independent form, so unsaved edits in the

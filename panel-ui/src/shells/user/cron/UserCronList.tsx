@@ -13,6 +13,7 @@ import {
   Typography,
 } from "antd";
 import {
+  CalendarCheckOutlined,
   PlusSquareOutlined,
   DeleteOutlined,
   PlayCircleOutlined,
@@ -178,7 +179,7 @@ export const UserCronList = () => {
         }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
-          Cron Jobs
+          <CalendarCheckOutlined /> Cron Jobs
         </Typography.Title>
         <Button
           type="primary"

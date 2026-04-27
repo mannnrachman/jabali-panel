@@ -44,6 +44,7 @@ export const NotificationsTabsPage = () => {
   return (
     <div style={{ padding: "20px" }}>
       <Space
+        wrap
         align="center"
         style={{ marginBottom: 16, width: "100%", justifyContent: "space-between" }}
       >

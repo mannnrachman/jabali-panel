@@ -202,9 +202,11 @@ export const PHPPoolEdit = () => {
       {/* INI Overrides Section */}
       <div style={{ marginTop: 32, paddingTop: 24, borderTop: `1px solid ${token.colorBorder}` }}>
         <Space
+          wrap
+          align="center"
           style={{
             marginBottom: 16,
-            display: "flex",
+            width: "100%",
             justifyContent: "space-between",
           }}
         >

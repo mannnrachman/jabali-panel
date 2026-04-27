@@ -21,6 +21,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/db"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/eventsources"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/notifications"
@@ -235,6 +236,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 		panelCertRepo := repository.NewPanelCertificateRepository(sharedDB)
 		deps.PanelCerts = panelCertRepo
 		rec.WithPanelCertificate(panelCertRepo, services.NewPanelCertRoutability())
+
+		// M33 (ADR-0072): malware detection repos. Five repos wired
+		// together — RegisterSecurityMalwareRoutes activates only when
+		// all five are non-nil. Idempotent EnsureDefault on first /settings
+		// access seeds the singleton row if migration 000080 hasn't run.
+		deps.MalwareQuarantine = repository.NewMalwareQuarantineRepository(sharedDB)
+		deps.MalwareEvents = repository.NewMalwareEventRepository(sharedDB)
+		deps.MalwareSettings = repository.NewMalwareSettingsRepository(sharedDB)
+		deps.YARARules = repository.NewYARACustomRuleRepository(sharedDB)
+		deps.TetragonPolicies = repository.NewTetragonPolicyStateRepository(sharedDB)
 		deps.PhpMyAdminSSOTokens = phpMyAdminSSOTokenRepo
 		deps.PHPPools = phpPoolRepo
 		deps.PHPPoolIniOverrides = phpPoolIniOverrideRepo
@@ -298,6 +309,33 @@ func runServe(cmd *cobra.Command, args []string) error {
 		case res.Created:
 			log.Warn("admin user created via bootstrap",
 				"kratos_identity_id", res.KratosIdentityID)
+			// Welcome bell row — fired exactly once, on the boot that
+			// creates the admin row. Written directly to
+			// notification_history (channel_id=NULL, user_id=admin) so
+			// it appears in the bell even on a fresh install with no
+			// channels configured (the dispatcher would ack-and-drop
+			// envelopes whose target list is empty). Best-effort: any
+			// failure here should not block panel start.
+			if deps.NotificationHistory != nil && res.UserID != "" {
+				now := time.Now().UTC()
+				row := &models.NotificationHistory{
+					ID:        ids.NewULID(),
+					EventKind: "panel.welcome",
+					Severity:  models.NotificationSeverityInfo,
+					Title:     "Welcome to Jabali Panel",
+					Body:      "Set up notification channels (email, Slack, ntfy, webhook, web push) so you hear about cert renewals, disk pressure, and security events. Tap to open Notifications.",
+					Deeplink:  "/jabali-admin/notifications/channels",
+					Outcome:   models.NotificationOutcomeSent,
+					UserID:    &res.UserID,
+					CreatedAt: now,
+					UpdatedAt: now,
+				}
+				wctx, wcancel := context.WithTimeout(context.Background(), 5*time.Second)
+				if wErr := deps.NotificationHistory.Create(wctx, row); wErr != nil {
+					log.Warn("welcome bell row insert failed", "err", wErr)
+				}
+				wcancel()
+			}
 		case res.ExistingID != "":
 			log.Info("admin bootstrap: already exists",
 				"user_id", res.ExistingID,
@@ -478,13 +516,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// stops them alongside the dispatcher.
 	if deps.NotificationQueue != nil {
 		eventsources.Start(ctx, eventsources.Deps{
-			Queue:      deps.NotificationQueue,
-			History:    deps.NotificationHistory,
-			SSLCerts:   deps.SSLCerts,
-			Log:        log,
-			Users:      deps.Users,
-			Agent:      deps.Agent,
-			QuotaMount: deps.QuotaMount,
+			Queue:           deps.NotificationQueue,
+			History:         deps.NotificationHistory,
+			SSLCerts:        deps.SSLCerts,
+			Log:             log,
+			Users:           deps.Users,
+			Agent:           deps.Agent,
+			QuotaMount:      deps.QuotaMount,
+			MalwareEvents:   deps.MalwareEvents,
+			MalwareSettings: deps.MalwareSettings,
 		})
 	}
 
@@ -632,6 +672,9 @@ func startNotificationDispatcher(parent context.Context, deps app.Deps, log *slo
 	)
 	if err == nil && deps.NotificationEventSettings != nil {
 		d.WithEventSettings(deps.NotificationEventSettings)
+	}
+	if err == nil && deps.Users != nil {
+		d.WithUsers(deps.Users)
 	}
 	if err != nil {
 		log.Error("notifications dispatcher: construction failed", "err", err)

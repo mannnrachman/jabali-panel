@@ -120,6 +120,32 @@ func (r *Reconciler) ensurePanelPrimaryDKIM(ctx context.Context, domain *models.
 	r.syncPanelPrimaryEmailDNS(ctx, domain.ID, selector, pubKey)
 }
 
+// ensureTenantDKIMRecords back-fills the M6 DNS records (jabali._domainkey
+// TXT, autoconfig CNAME, _autodiscover._tcp SRV) for any non-panel-primary
+// tenant domain whose DB row has DKIM material but whose dns_records table
+// is missing those rows. Symptom this fixes: a domain enabled before the
+// M6 DNS-emit code path landed (or one whose insert failed mid-flight) has
+// `email_enabled=1` + a populated `dkim_public_key`, yet the DNS Records
+// page shows no `_domainkey` TXT — outbound mail signs but receivers can't
+// verify because the public key isn't published.
+//
+// Idempotent — `syncPanelPrimaryEmailDNS` already skips rows that already
+// exist (managed_by=m6) or conflict (user-edited). Reuses that helper
+// despite the name; M6.4 (panel-primary) and tenant flows are functionally
+// identical for the DNS-sync step.
+func (r *Reconciler) ensureTenantDKIMRecords(ctx context.Context, domain *models.Domain) {
+	if domain == nil || domain.IsPanelPrimary || !domain.EmailEnabled {
+		return
+	}
+	if domain.DkimSelector == nil || *domain.DkimSelector == "" {
+		return
+	}
+	if domain.DkimPublicKey == nil || *domain.DkimPublicKey == "" {
+		return
+	}
+	r.syncPanelPrimaryEmailDNS(ctx, domain.ID, *domain.DkimSelector, *domain.DkimPublicKey)
+}
+
 // syncPanelPrimaryEmailDNS mirrors syncEmailDNSOnEnableInline in the API
 // package without the cross-package import.
 func (r *Reconciler) syncPanelPrimaryEmailDNS(ctx context.Context, domainID, selector, pubKey string) {

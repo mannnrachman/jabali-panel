@@ -20,7 +20,14 @@ import (
 type NotificationsWebPushHandlerConfig struct {
 	ServerSettings repository.ServerSettingsRepository
 	Subs           repository.WebPushSubscriptionRepository
-	Log            *slog.Logger
+	// Channels is optional. When non-nil, the handler ensures one
+	// enabled webpush NotificationChannel row exists after a successful
+	// subscribe — without it, the dispatcher's resolveTargets returns
+	// no target for the webpush sender and the OS-level push never
+	// fires. Cheap idempotent guard (FindEnabledByKind first, Create
+	// only on empty).
+	Channels repository.NotificationChannelRepository
+	Log      *slog.Logger
 }
 
 // RegisterNotificationsWebPushRoutes mounts:
@@ -97,6 +104,29 @@ func (h *webpushHandler) subscribe(c *gin.Context) {
 		h.cfg.Log.Error("webpush subscribe failed", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "subscribe failed"})
 		return
+	}
+	// Ensure an enabled webpush channel exists so the dispatcher
+	// actually fans out to the WebPush sender. Idempotent: skips
+	// when one is already enabled. Failures are logged and ignored
+	// — subscription persisted is the user-visible outcome.
+	if h.cfg.Channels != nil {
+		existing, lookupErr := h.cfg.Channels.FindEnabledByKind(ctx, models.NotificationChannelKindWebpush)
+		switch {
+		case lookupErr != nil:
+			h.cfg.Log.Warn("webpush subscribe: channel lookup failed", "err", lookupErr)
+		case len(existing) == 0:
+			ch := &models.NotificationChannel{
+				ID:      ids.NewULID(),
+				Name:    "Web Push",
+				Kind:    models.NotificationChannelKindWebpush,
+				Enabled: true,
+			}
+			if cErr := h.cfg.Channels.Create(ctx, ch); cErr != nil {
+				h.cfg.Log.Warn("webpush subscribe: auto-create channel failed", "err", cErr)
+			} else {
+				h.cfg.Log.Info("webpush subscribe: auto-created webpush channel", "channel_id", ch.ID)
+			}
+		}
 	}
 	// The upserted row may have a different ID if the endpoint existed;
 	// re-fetch so the SPA displays the authoritative value.

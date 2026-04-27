@@ -18,7 +18,7 @@ import { useSelectQuery } from "../../../hooks/useSelectQuery";
 import { useTableURL } from "../../../hooks/useTableURL";
 import { UserDeleteAction } from "./UserDeleteAction";
 import { UserDrawer } from "./UserDrawer";
-import { UserSliceStatus } from "./UserSliceStatus";
+import { UserDiskUsage } from "./UserDiskUsage";
 
 type User = {
   id: string;
@@ -67,14 +67,14 @@ function RowActions({
 type UsersTableProps = {
   isAdmin: boolean;
   searchPlaceholder: string;
-  showSliceColumn: boolean;
+  showDiskUsageColumn: boolean;
   onEdit: (id: string) => void;
 };
 
 function UsersShellTable({
   isAdmin,
   searchPlaceholder,
-  showSliceColumn,
+  showDiskUsageColumn,
   onEdit,
 }: UsersTableProps) {
   const query = useTableURL<User>({
@@ -243,10 +243,10 @@ function UsersShellTable({
         defaultSortOrder="descend"
         render={renderCreated}
       />
-      {showSliceColumn && (
+      {showDiskUsageColumn && (
         <Table.Column
-          title="Slice"
-          render={(_: unknown, r: User) => <UserSliceStatus userId={r.id} />}
+          title="Disk usage"
+          render={(_: unknown, r: User) => <UserDiskUsage userId={r.id} />}
         />
       )}
       <Table.Column
@@ -290,6 +290,8 @@ export const UserList = () => {
   return (
     <div>
       <Space
+        wrap
+        align="center"
         style={{
           marginBottom: 16,
           width: "100%",
@@ -336,14 +338,14 @@ export const UserList = () => {
           <UsersShellTable
             isAdmin={false}
             searchPlaceholder="Search by email, username, or name"
-            showSliceColumn
+            showDiskUsageColumn
             onEdit={openEdit}
           />
         ) : (
           <UsersShellTable
             isAdmin
             searchPlaceholder="Search by email or name"
-            showSliceColumn={false}
+            showDiskUsageColumn={false}
             onEdit={openEdit}
           />
         )}

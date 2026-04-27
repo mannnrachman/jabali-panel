@@ -77,8 +77,12 @@ type Dispatcher struct {
 	// envelope passes (matches pre-M14.1 behaviour for tests + first
 	// boot before the table is seeded).
 	eventSettings repository.NotificationEventSettingRepository
-	log           *slog.Logger
-	consumer      string
+	// users powers the broadcast → admin-bell fan-out. Optional —
+	// when nil, broadcast envelopes (env.UserID == "") get no bell rows.
+	// Non-broadcast envelopes always get a bell row regardless.
+	users    repository.UserRepository
+	log      *slog.Logger
+	consumer string
 
 	wg      sync.WaitGroup
 	stopped chan struct{}
@@ -88,6 +92,15 @@ type Dispatcher struct {
 // consumer can ack+drop disabled kinds before fanout.
 func (d *Dispatcher) WithEventSettings(r repository.NotificationEventSettingRepository) *Dispatcher {
 	d.eventSettings = r
+	return d
+}
+
+// WithUsers injects the user repo so the dispatcher can fan out
+// broadcast envelopes (env.UserID == "") to every admin's in-app bell.
+// Without it, broadcast envelopes still go to channels but won't
+// surface in any admin's bell.
+func (d *Dispatcher) WithUsers(r repository.UserRepository) *Dispatcher {
+	d.users = r
 	return d
 }
 
@@ -264,6 +277,14 @@ func (d *Dispatcher) process(ctx context.Context, msg redis.XMessage) {
 		}
 	}
 
+	// In-app bell: write a channel_id=NULL history row before fanout
+	// so events appear in the inbox even when zero channels are
+	// configured. Targeted envelopes (env.UserID set) get one row;
+	// broadcast envelopes (UserID empty) get one row per admin so
+	// every operator's bell lights up. Errors are logged — the bell
+	// shouldn't block delivery to real channels.
+	d.writeBellRows(ctx, env)
+
 	targets, err := d.resolveTargets(ctx, env)
 	if err != nil {
 		d.log.Error("resolve targets failed", "id", msg.ID, "err", err)
@@ -272,9 +293,9 @@ func (d *Dispatcher) process(ctx context.Context, msg redis.XMessage) {
 		return
 	}
 	if len(targets) == 0 {
-		// No enabled channel matched this event. Ack + delete so
-		// the queue doesn't grow on a misconfigured install.
-		d.log.Info("no target channels for event; acking", "event", env.EventKind)
+		// No enabled channel matched. The bell row above is the
+		// only delivery; ACK + delete so the queue doesn't grow.
+		d.log.Info("no target channels for event; bell only", "event", env.EventKind)
 		if err := d.queue.AckAndDelete(ctx, msg.ID); err != nil {
 			d.log.Error("ack failed on no-target path", "id", msg.ID, "err", err)
 		}
@@ -436,3 +457,41 @@ func nextBackoff(_ context.Context) *time.Time {
 }
 
 func strPtr(s string) *string { return &s }
+
+// writeBellRows materializes one notification_history row per target
+// admin with channel_id=NULL — the in-app bell's source-of-truth row.
+// Always non-fatal: bell delivery should never block channel fanout.
+func (d *Dispatcher) writeBellRows(ctx context.Context, env Envelope) {
+	targets := []string{}
+	if env.UserID != "" {
+		targets = append(targets, env.UserID)
+	} else if d.users != nil {
+		admins, err := d.users.FindAdminsByEmail(ctx)
+		if err != nil {
+			d.log.Warn("bell: list admins failed", "event", env.EventKind, "err", err)
+			return
+		}
+		for _, a := range admins {
+			targets = append(targets, a.ID)
+		}
+	}
+	now := time.Now().UTC()
+	for _, uid := range targets {
+		uidCopy := uid
+		row := &models.NotificationHistory{
+			ID:        ulid.Make().String(),
+			EventKind: env.EventKind,
+			Severity:  env.Severity,
+			Title:     env.Title,
+			Body:      env.Body,
+			Deeplink:  env.Deeplink,
+			Outcome:   models.NotificationOutcomeSent,
+			UserID:    &uidCopy,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if err := d.history.Create(ctx, row); err != nil {
+			d.log.Warn("bell row insert failed", "event", env.EventKind, "user_id", uid, "err", err)
+		}
+	}
+}

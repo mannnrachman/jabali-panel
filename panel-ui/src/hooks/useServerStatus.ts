@@ -16,8 +16,18 @@ export interface ServerStatusEnvelope {
   processes: ProcessesSlice | null;
   services: ServicesSlice | null;
   user_slices: UserSlicesSlice | null;
+  software: SoftwareSlice | null;
   errors?: Record<string, string>;
   alerts: Alert[];
+}
+
+export interface SoftwareSlice {
+  items: SoftwareItem[];
+}
+
+export interface SoftwareItem {
+  name: string;
+  version: string;
 }
 
 export interface UserSlicesSlice {

@@ -44,6 +44,7 @@ type BootstrapOptions struct {
 // or already existed.
 type BootstrapResult struct {
 	Created          bool   // true if a new admin row was written
+	UserID           string // panel users.id of the bootstrapped (or existing) admin
 	ExistingID       string // set when an admin already existed (not our insert)
 	SkippedEmpty     bool   // true when Email/Password are blank — no-op
 	KratosIdentityID string // when Kratos != nil and Created == true, the new identity UUID
@@ -79,7 +80,7 @@ func BootstrapAdmin(ctx context.Context, users repository.UserRepository, opt Bo
 	// a simple FindByEmail is sufficient and avoids leaking user counts.
 	if u, err := users.FindByEmail(ctx, opt.Email); err == nil {
 		if u.IsAdmin {
-			existing := BootstrapResult{ExistingID: u.ID}
+			existing := BootstrapResult{ExistingID: u.ID, UserID: u.ID}
 			if u.KratosIdentityID != nil {
 				existing.KratosIdentityID = *u.KratosIdentityID
 			}
@@ -110,7 +111,7 @@ func BootstrapAdmin(ctx context.Context, users repository.UserRepository, opt Bo
 
 	// M20 LEGACY: remove after 2026-05-20 — legacy bootstrap path
 	if opt.Kratos == nil {
-		return BootstrapResult{Created: true}, nil
+		return BootstrapResult{Created: true, UserID: u.ID}, nil
 	}
 
 	// Kratos-aware path. Mirrors the compensating transaction in
@@ -144,5 +145,5 @@ func BootstrapAdmin(ctx context.Context, users repository.UserRepository, opt Bo
 		return BootstrapResult{}, fmt.Errorf("auth: link kratos identity: %w", err)
 	}
 
-	return BootstrapResult{Created: true, KratosIdentityID: identityID}, nil
+	return BootstrapResult{Created: true, UserID: u.ID, KratosIdentityID: identityID}, nil
 }

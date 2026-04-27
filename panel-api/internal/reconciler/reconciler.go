@@ -409,6 +409,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 		// already ran at the top of ReconcileAll so every user has a
 		// pool; this associates it with pre-existing unbound domains.
 		r.ensureDomainPHPBinding(ctx, domain)
+		// Back-fill M6 DNS rows for tenants enabled before DKIM-emit
+		// code shipped (or whose insert failed mid-flight). No-op when
+		// the rows already exist; safe on every tick.
+		r.ensureTenantDKIMRecords(ctx, domain)
 		r.createDomainOnAgent(ctx, domain)
 		// M6.3: ensure the recursor has a forwarder for this zone so
 		// local resolution hits pdns-server on loopback :5300. Idempotent.

@@ -69,6 +69,11 @@ type Deps struct {
 	Users      repository.UserRepository
 	Agent      AgentCaller
 	QuotaMount string
+	// M33 malware events — runMalware drains malware_events.notified=0
+	// rows into the dispatcher with severity-tier gating from
+	// malware_settings.notify_threshold.
+	MalwareEvents   repository.MalwareEventRepository
+	MalwareSettings repository.MalwareSettingsRepository
 }
 
 // Start boots every configured source in its own goroutine. Each
@@ -93,6 +98,7 @@ func Start(ctx context.Context, d Deps) {
 	go runSystemUpdate(ctx, d)
 	go runDiskQuota(ctx, d)
 	go runSSHLogin(ctx, d)
+	go runMalware(ctx, d)
 	// domain_expiry + backup_fail are stubs — see the stub files in
 	// this package.
 }

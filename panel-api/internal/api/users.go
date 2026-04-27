@@ -306,6 +306,10 @@ func (h *userHandler) create(c *gin.Context) {
 			})
 			return
 		}
+		// M33: re-evaluate maldet inotify watches now that a new tenant
+		// home exists. Fire-and-forget; LMD inotify_minutes=45 covers
+		// missed reloads automatically.
+		go reloadMalwareMonitor(h.cfg.Agent)
 	}
 
 	c.JSON(http.StatusCreated, u)
@@ -514,6 +518,8 @@ func (h *userHandler) delete(c *gin.Context) {
 				slog.Warn("user agent teardown failed",
 					"user_id", id, "username", username, "err", err)
 			}
+			// M33: re-evaluate maldet inotify watches after teardown.
+			reloadMalwareMonitor(h.cfg.Agent)
 		}()
 	}
 
@@ -605,6 +611,9 @@ func (h *userHandler) reprovision(c *gin.Context) {
 		h.translateErr(c, err)
 		return
 	}
+	// M33: re-evaluate maldet inotify watches (reprovision may have
+	// recreated the home dir).
+	go reloadMalwareMonitor(h.cfg.Agent)
 
 	claims := ginctx.Claims(c)
 	if claims != nil {
@@ -667,4 +676,22 @@ func linuxUserFromEmail(email string) string {
 		return email[:i]
 	}
 	return ""
+}
+
+// reloadMalwareMonitor fires security.malware.monitor.reload after a
+// user create/delete so LMD's inotify watches re-evaluate the
+// /etc/passwd UID >= inotify_minuid set immediately. Best-effort:
+// LMD's inotify_minutes=45 covers the case where this fails.
+//
+// Caller is expected to wrap in `go` so the user CRUD response does
+// not block on systemctl. Cancel-safe via own short timeout.
+func reloadMalwareMonitor(a agent.AgentInterface) {
+	if a == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := a.Call(ctx, "security.malware.monitor.reload", map[string]any{}); err != nil {
+		slog.Debug("malware monitor reload skipped", "err", err)
+	}
 }

@@ -8,21 +8,23 @@
 // (2026-04-26): CrowdSec AppSec covers the WAF role with no duplicate
 // inspection layer (ADR-0055 SUPERSEDED).
 import { Card, Space, Typography } from "antd";
-import { LockOutlined, SafetyOutlined } from "@icons";
+import { BugOutlined, LockOutlined, SafetyOutlined } from "@icons";
 import type { ReactNode } from "react";
 import { useSearchParams } from "react-router";
 
 import crowdsecBrand from "../../../icons/brand/crowdsec.svg";
 
 import { AdminSecurityCrowdsec } from "./AdminSecurityCrowdsec";
+import { AdminSecurityMalware } from "./AdminSecurityMalware";
 import { AdminSecurityUfw } from "./AdminSecurityUfw";
 
-const TAB_KEYS = ["crowdsec", "ufw"] as const;
+const TAB_KEYS = ["crowdsec", "malware", "ufw"] as const;
 type TabKey = (typeof TAB_KEYS)[number];
 const DEFAULT_TAB: TabKey = "crowdsec";
 
 const TAB_LABELS: Record<TabKey, string> = {
   crowdsec: "CrowdSec",
+  malware: "Malware",
   ufw: "Firewall (UFW)",
 };
 
@@ -40,6 +42,7 @@ const CrowdsecBrandIcon = () => (
 
 const TAB_ICONS: Record<TabKey, ReactNode> = {
   crowdsec: <CrowdsecBrandIcon />,
+  malware: <BugOutlined />,
   ufw: <LockOutlined />,
 };
 
@@ -69,6 +72,8 @@ export const AdminSecurityPage = () => {
     switch (activeKey) {
       case "crowdsec":
         return <AdminSecurityCrowdsec />;
+      case "malware":
+        return <AdminSecurityMalware />;
       case "ufw":
         return <AdminSecurityUfw />;
     }

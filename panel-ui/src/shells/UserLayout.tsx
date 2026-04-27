@@ -100,7 +100,7 @@ export function UserLayout() {
                   alignItems: "center",
                   justifyContent: "center",
                   color: token.colorTextSecondary,
-                  background: "transparent",
+                  background: token.colorFillSecondary,
                 }}
               >
                 {collapsed ? <RightOutlined /> : <LeftOutlined />}

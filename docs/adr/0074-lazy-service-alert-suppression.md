@@ -1,4 +1,4 @@
-# ADR-0067: Suppress critical alert on `inactive` + `disabled` services
+# ADR-0074: Suppress critical alert on `inactive` + `disabled` services
 
 **Date**: 2026-04-26
 **Status**: accepted

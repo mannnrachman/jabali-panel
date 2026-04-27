@@ -55,13 +55,14 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0064](0064-diagnostic-report-enclosed-mail.md) | Diagnostic report — enclosed.cc upload + email delivery | Accepted |
 | [0065](0065-server-status.md) | Server Status aggregator | Accepted |
 | [0066](0066-le-cert-panel-hostname.md) | Let's Encrypt cert for the panel hostname | Accepted |
-| [0067](0067-lazy-service-alert-suppression.md) | Suppress critical alert on inactive + disabled services (lazy-started units) | Accepted |
+| [0067](0067-ssh-shell-sandbox.md) | SSH shell sandbox (bubblewrap default; nspawn opt-in) | Accepted |
 | [0068](0068-per-user-cgroup-slice-metrics.md) | Per-user slice metrics via direct cgroup v2 read | Accepted |
 | [0069](0069-server-status-masonry-layout.md) | AntD `<Masonry>` for Server Status page layout | Accepted |
 | [0070](0070-le-cert-san-scope.md) | LE cert SAN list scoped to auto-provisioned DNS only (amends 0066) | Accepted |
 | [0071](0071-mariadb-loopback-only-not-skip-networking.md) | MariaDB loopback-only bind (amends 0050 M25.1) | Accepted |
 | [0072](0072-malware-detection-stack.md) | M33 Malware stack: ClamAV + maldet + YARA + Tetragon | Accepted |
 | [0073](0073-stalwart-email-aliases-query.md) | Stalwart `queryEmailAliases` + apply-plan schema evolution | Accepted |
+| [0074](0074-lazy-service-alert-suppression.md) | Suppress critical alert on inactive + disabled services (lazy-started units) | Accepted |
 
 ## Decision Categories
 

@@ -431,7 +431,7 @@ export const AdminSecurityCrowdsec = () => {
           { key: "console", label: "Console", children: <ConsoleCard /> },
           { key: "captcha", label: "Captcha", children: <CaptchaRemediationCard /> },
           { key: "profiles", label: "Per-scenario", children: <ProfilesCard /> },
-          { key: "appsec", label: "AppSec geoblock", children: <AppSecGeoblockCard /> },
+          { key: "appsec", label: "Block Country", children: <AppSecGeoblockCard /> },
           { key: "bouncers", label: "Bouncers", children: bouncersPanel },
         ]}
       />

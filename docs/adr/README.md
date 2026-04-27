@@ -61,6 +61,7 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0070](0070-le-cert-san-scope.md) | LE cert SAN list scoped to auto-provisioned DNS only (amends 0066) | Accepted |
 | [0071](0071-mariadb-loopback-only-not-skip-networking.md) | MariaDB loopback-only bind (amends 0050 M25.1) | Accepted |
 | [0072](0072-malware-detection-stack.md) | M33 Malware stack: ClamAV + maldet + YARA + Tetragon | Accepted |
+| [0073](0073-stalwart-email-aliases-query.md) | Stalwart `queryEmailAliases` + apply-plan schema evolution | Accepted |
 
 ## Decision Categories
 

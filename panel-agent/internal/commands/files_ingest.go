@@ -12,15 +12,25 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/filesafe"
 )
 
-// files.ingest — take a file in /tmp (written by panel-api from an
-// incoming chunked upload) and move it into the user's scope at the
-// requested destination path.
+// files.ingest — take a file in the upload staging dir (written by
+// panel-api from an incoming chunked or streaming upload) and move it
+// into the user's scope at the requested destination path.
 //
-// The `tmp_path` MUST start with "/tmp/jabali-upload-" so a malicious
-// panel-api request can't coerce this command into relocating, e.g.,
-// /etc/shadow into the user's homedir. panel-api always writes into
-// that prefix so this gate is a belt-and-braces check against it
-// being tricked via request tampering.
+// The `tmp_path` MUST start with "/var/lib/jabali-uploads/jabali-upload-"
+// so a malicious panel-api request can't coerce this command into
+// relocating, e.g., /etc/shadow into the user's homedir. panel-api
+// always writes into that prefix so this gate is a belt-and-braces
+// check against it being tricked via request tampering.
+//
+// Why /var/lib/jabali-uploads and not /tmp: jabali-agent.service runs
+// with PrivateTmp=yes (install.sh) and so does jabali-panel-api.service.
+// Each service therefore has its own per-unit /tmp namespace, so a file
+// panel-api writes to /tmp is invisible to the agent. Same scar story
+// as the app-install staging path documented in
+// commands/staging_tmp.go (commit 29823c3) — uploads need the same
+// treatment, just on their own dedicated dir so the lifecycle (write,
+// ingest, delete) is independent of the long-lived staging dirs the
+// app installers reuse.
 
 type filesIngestParams struct {
 	UserID   string `json:"user_id"`
@@ -34,7 +44,7 @@ type filesIngestResponse struct {
 	Bytes    int64  `json:"bytes"`
 }
 
-const tmpUploadPrefix = "/tmp/jabali-upload-"
+const tmpUploadPrefix = "/var/lib/jabali-uploads/jabali-upload-"
 
 func filesIngestHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p filesIngestParams

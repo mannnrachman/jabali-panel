@@ -3155,11 +3155,22 @@ RestrictNamespaces=true
 RestrictSUIDSGID=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
-ReadWritePaths=$REPO_DIR
+ReadWritePaths=$REPO_DIR /var/lib/jabali-uploads
 
 [Install]
 WantedBy=multi-user.target
 EOF
+
+  # Upload staging dir — both panel-api and panel-agent run with
+  # PrivateTmp=yes, so /tmp is per-unit and a staged upload written
+  # by panel-api is invisible to the agent's files.ingest. The shared
+  # /var/lib/jabali-uploads/ lives outside the tmp sandbox so both
+  # units see the same on-disk path. Owned by SERVICE_USER 0750 so
+  # panel-api can write under ProtectSystem=strict (covered by the
+  # ReadWritePaths entry above); agent runs as root and reads without
+  # restriction. Same scar story as the app-install staging dir
+  # (commands/staging_tmp.go, commit 29823c3).
+  install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali-uploads
 
   systemctl daemon-reload
   systemctl enable --quiet "$AGENT_SERVICE_NAME.service"
@@ -5551,11 +5562,12 @@ install_stalwart_apply() {
   mariadb -e "
     CREATE USER IF NOT EXISTS '${stalwart_db_user}'@'localhost' IDENTIFIED BY '${stalwart_db_pass}';
     ALTER USER '${stalwart_db_user}'@'localhost' IDENTIFIED BY '${stalwart_db_pass}';
-    GRANT SELECT ON jabali_panel.mailboxes  TO '${stalwart_db_user}'@'localhost';
-    GRANT SELECT ON jabali_panel.domains    TO '${stalwart_db_user}'@'localhost';
+    GRANT SELECT ON jabali_panel.mailboxes         TO '${stalwart_db_user}'@'localhost';
+    GRANT SELECT ON jabali_panel.domains           TO '${stalwart_db_user}'@'localhost';
+    GRANT SELECT ON jabali_panel.email_forwarders  TO '${stalwart_db_user}'@'localhost';
     FLUSH PRIVILEGES;
   "
-  _ok "Stalwart MariaDB user provisioned: ${stalwart_db_user} (SELECT on mailboxes, domains)"
+  _ok "Stalwart MariaDB user provisioned: ${stalwart_db_user} (SELECT on mailboxes, domains, email_forwarders)"
 
   local admin_token_file="/etc/jabali-panel/stalwart-admin.token"
   if [[ ! -f "$admin_token_file" ]]; then
@@ -5698,21 +5710,15 @@ _install_stalwart_apply_plan() {
   fi
   _ok "Stalwart /jmap ready on :${jmap_port} (HTTP ${jmap_status}) after ${waited}s"
 
-  # If Stalwart is serving on :8446 we know the plan is already applied
-  # (that's the whole point of the 8080→restart→8446 dance below). Re-
-  # running `stalwart-cli apply` against an already-applied plan fails
-  # with primaryKeyViolation on the NetworkListener create steps because
-  # the plan uses `@type: create`, not an upsert action — stalwart-cli
-  # has no first-class "apply or update" verb. Skipping a no-op apply is
-  # the right call here; reconciler-driven drift correction is out of
-  # scope for install.sh.
-  local skip_apply=0
-  if [[ "$jmap_port" == "8446" ]]; then
-    _ok "Stalwart plan already applied (serving on :8446) — skipping re-apply"
-    skip_apply=1
-  fi
-
-  if (( skip_apply == 0 )); then
+  # Apply runs every install/update pass regardless of which port
+  # Stalwart is on. The earlier skip_apply guard was a perf opt that
+  # kept the create-only :8446 plan from primaryKeyViolation-spamming
+  # the install log; with the filter below + new `update` steps that
+  # converge schema-evolution fields (queryEmailAliases per ADR-0073,
+  # future M6.5 transforms), skipping re-apply means existing installs
+  # never pick up template changes. Run every time; continue-on-error
+  # handles the no-op create steps.
+  if true; then
   # Idempotent apply: stalwart-cli apply uses @type: create for every
   # NetworkListener, which fails primaryKeyViolation on re-run because
   # there's no first-class upsert verb. Two re-run scenarios cause this:
@@ -5766,7 +5772,7 @@ _install_stalwart_apply_plan() {
   else
     _ok "Stalwart plan applied (SqlDirectory + listeners + Authentication)"
   fi
-  fi # end: if (( skip_apply == 0 ))
+  fi # end: always-apply guard
 
   # Delete factory NetworkListeners ([::]:8080, [::]:443) before restart.
   # stalwart-cli apply is create-only; only an explicit API delete removes

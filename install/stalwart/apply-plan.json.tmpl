@@ -26,7 +26,7 @@
         "queryLogin": "SELECT email_cached, password_hash FROM mailboxes WHERE email_cached = ? AND is_disabled = 0",
         "queryRecipient": "SELECT email_cached, password_hash FROM mailboxes WHERE email_cached = ? AND is_disabled = 0",
         "queryMemberOf": null,
-        "queryEmailAliases": null
+        "queryEmailAliases": "SELECT f.target FROM email_forwarders f LEFT JOIN domains d ON d.id = f.domain_id LEFT JOIN mailboxes m ON m.id = f.mailbox_id WHERE f.enabled = 1 AND COALESCE(CASE WHEN f.type = 'alias' THEN CONCAT(f.local_part, '@', d.name) END, CASE WHEN f.type = 'external' THEN m.email_cached END) = ?"
       }
     }
   },
@@ -38,6 +38,16 @@
     "value": {
       "directoryId": "#sql-directory",
       "passwordHashAlgorithm": "bcrypt"
+    }
+  },
+
+  {
+    "_comment": "Idempotent refresh of queryEmailAliases on existing installs. The create above primaryKeyViolations on re-apply, leaving older fields stuck at whatever they were on first install. This update converges the field every run so schema evolution lands without a Stalwart rebuild. ADR-0073.",
+    "@type": "update",
+    "object": "x:Directory",
+    "id": "sql-directory",
+    "value": {
+      "queryEmailAliases": "SELECT f.target FROM email_forwarders f LEFT JOIN domains d ON d.id = f.domain_id LEFT JOIN mailboxes m ON m.id = f.mailbox_id WHERE f.enabled = 1 AND COALESCE(CASE WHEN f.type = 'alias' THEN CONCAT(f.local_part, '@', d.name) END, CASE WHEN f.type = 'external' THEN m.email_cached END) = ?"
     }
   },
 

@@ -27,6 +27,19 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
+// uploadStagingPrefix is where panel-api writes incoming uploads
+// before handing off to the agent's files.ingest. MUST stay in sync
+// with the prefix gate in panel-agent/internal/commands/files_ingest.go.
+//
+// Why /var/lib/jabali-uploads and not /tmp: both jabali-panel-api and
+// jabali-agent run with PrivateTmp=true, so each has its own per-unit
+// /tmp namespace. A file panel-api writes to /tmp is invisible to the
+// agent, breaking every upload with `open_tmp: no such file or directory`.
+// The shared dir lives outside the tmp sandbox so both services see
+// the same on-disk path. Created at install time owned jabali:jabali
+// 0750 with /var/lib/jabali-uploads in panel-api's ReadWritePaths.
+const uploadStagingPrefix = "/var/lib/jabali-uploads/jabali-upload-"
+
 // Agent param struct types. JSON tags must match panel-agent/internal/commands/files_*.go
 // exactly — see files_wire_test.go for the drift-guard test.
 type filesListAgentParams struct {
@@ -170,7 +183,7 @@ func RegisterFilesRoutes(g *gin.RouterGroup, cfg FilesHandlerConfig) {
 	grp.POST("/write", h.write)
 	grp.POST("/upload-chunk", h.uploadChunk)
 	// Resume support — the client HEADs this before starting to see how
-	// many bytes of /tmp/jabali-upload-<id> already exist, so a reload
+	// many bytes of the upload-staging file already exist, so a reload
 	// mid-upload doesn't restart from zero.
 	grp.GET("/upload-chunk-status", h.uploadChunkStatus)
 }
@@ -515,14 +528,14 @@ func (h *filesHandler) preview(c *gin.Context) {
 // upload accepts a single multipart file under the "file" field; directory
 // is taken from ?path=. Cap enforced at middleware (filesUploadSizeLimit).
 //
-// Path: stream the multipart part directly to /tmp/jabali-upload-<uuid>,
-// then call files.ingest. The earlier implementation buffered the whole
-// file into memory and JSON-encoded it as a Content string into
-// files.write — for any non-trivial size (>~10 MB) the resulting JSON
-// envelope blew past the agentwire UDS write window and the call died
-// with "broken pipe". The /tmp + ingest path keeps the binary on disk
-// and only sends paths over the wire, matching what the chunked
-// uploader does.
+// Path: stream the multipart part directly to /var/lib/jabali-uploads/
+// jabali-upload-<uuid>, then call files.ingest. The earlier implementation
+// buffered the whole file into memory and JSON-encoded it as a Content
+// string into files.write — for any non-trivial size (>~10 MB) the
+// resulting JSON envelope blew past the agentwire UDS write window and
+// the call died with "broken pipe". The staging-dir + ingest path keeps
+// the binary on disk and only sends paths over the wire, matching what
+// the chunked uploader does.
 func (h *filesHandler) upload(c *gin.Context) {
 	userID, username, ok := h.requireClaimsAndUsername(c)
 	if !ok {
@@ -567,7 +580,7 @@ func (h *filesHandler) upload(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
 		return
 	}
-	tmpPath := fmt.Sprintf("/tmp/jabali-upload-%s", hex.EncodeToString(idBytes))
+	tmpPath := uploadStagingPrefix + hex.EncodeToString(idBytes)
 	tmpFile, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
@@ -808,9 +821,10 @@ func (h *filesHandler) write(c *gin.Context) {
 }
 
 // uploadChunk handles POST /files/upload-chunk: streams a binary chunk
-// to /tmp/jabali-upload-<id>, appending at `offset`. When `final=1` is
-// set on the last chunk, the accumulated /tmp file is moved into the
-// user's scope at `path/name` via the agent's files.ingest command.
+// to /var/lib/jabali-uploads/jabali-upload-<id>, appending at `offset`.
+// When `final=1` is set on the last chunk, the accumulated staging file
+// is moved into the user's scope at `path/name` via the agent's
+// files.ingest command.
 //
 // No auth other than the usual user check — upload_ids are random UUIDs
 // kept only in the client's memory, so there's no cross-user collision
@@ -830,7 +844,7 @@ func (h *filesHandler) uploadChunk(c *gin.Context) {
 		return
 	}
 	// Keep uploadID safe as a filesystem basename — no path separators,
-	// no ".." — since we string-interpolate it into /tmp/<id>.
+	// no ".." — since we string-interpolate it into the staging prefix.
 	if strings.ContainsAny(uploadID, "/\\.") || uploadID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_upload_id"})
 		return
@@ -844,7 +858,7 @@ func (h *filesHandler) uploadChunk(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_offset"})
 		return
 	}
-	tmpPath := fmt.Sprintf("/tmp/jabali-upload-%s", uploadID)
+	tmpPath := uploadStagingPrefix + uploadID
 
 	// Open for read-write-create; APPEND is wrong here because the
 	// client may re-send a chunk after a network blip — we want to
@@ -860,7 +874,7 @@ func (h *filesHandler) uploadChunk(c *gin.Context) {
 		return
 	}
 	// Cap at 1 GB total — huge uploads are fine but runaway sizes
-	// would fill /tmp. Check via stat AFTER the write to keep the
+	// would fill the staging dir. Check via stat AFTER the write to keep the
 	// per-chunk hot path simple.
 	const maxUploadSize = int64(1024 * 1024 * 1024)
 	written, copyErr := io.Copy(f, io.LimitReader(c.Request.Body, maxUploadSize-offset+1))
@@ -883,8 +897,8 @@ func (h *filesHandler) uploadChunk(c *gin.Context) {
 		return
 	}
 
-	// Final chunk: hand off to the agent to ingest the /tmp file into
-	// the user's homedir scope at the requested path/name.
+	// Final chunk: hand off to the agent to ingest the staging file
+	// into the user's homedir scope at the requested path/name.
 	destPath := filepath.Join(destDir, filename)
 	_, err = h.cfg.Agent.Call(c.Request.Context(), "files.ingest", filesIngestAgentParams{
 		UserID: userID, Username: username, TmpPath: tmpPath, DestPath: destPath,
@@ -899,10 +913,10 @@ func (h *filesHandler) uploadChunk(c *gin.Context) {
 
 // uploadChunkStatus returns the current byte count of a pending upload
 // so the client can resume from the right offset after a reload or a
-// network blip. Only reports /tmp/jabali-upload-<id> files — there's
-// no cross-user isolation on the scratch path, but since upload_ids
-// are 128-bit random UUIDs the risk is limited to the client leaking
-// its own id, which would already be in their localStorage anyway.
+// network blip. Only reports staging files — there's no cross-user
+// isolation on the scratch path, but since upload_ids are 128-bit
+// random UUIDs the risk is limited to the client leaking its own id,
+// which would already be in their localStorage anyway.
 func (h *filesHandler) uploadChunkStatus(c *gin.Context) {
 	if _, _, ok := h.requireClaimsAndUsername(c); !ok {
 		return
@@ -912,7 +926,7 @@ func (h *filesHandler) uploadChunkStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_upload_id"})
 		return
 	}
-	tmpPath := fmt.Sprintf("/tmp/jabali-upload-%s", uploadID)
+	tmpPath := uploadStagingPrefix + uploadID
 	info, err := os.Stat(tmpPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

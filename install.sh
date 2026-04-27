@@ -714,7 +714,7 @@ POLICYEOF
       ufw yq \
       redis-server redis-tools \
       bubblewrap debootstrap systemd-container \
-      clamav clamav-daemon clamav-freshclam yara \
+      yara \
       ed inotify-tools \
       bpftool \
       "${php_extensions[@]}"
@@ -4705,30 +4705,35 @@ cleanup_modsecurity() {
 }
 
 install_malware_stack() {
-  # M33 — ClamAV + Linux Malware Detect + YARA + Tetragon stack.
-  # ADR-0072. Inotify monitor unit + Tetragon land in M33 wave C/D
-  # follow-ups; this function provisions the binaries + drop-in
-  # config + signature DBs only.
+  # M33 — Linux Malware Detect + YARA + php-malware-finder + Tetragon stack.
+  # ADR-0072. ClamAV REMOVED 2026-04-27: clamd held 1.7GB RAM resident
+  # for full sig DB load — too costly for shared hosting where most
+  # threats are PHP webshells (which YARA + PMF cover with a tiny
+  # fraction of the memory). The PMF rule pack catches PHP obfuscation
+  # patterns (eval/base64/preg_replace/e-modifier/etc.) that ClamAV's
+  # generic sigs missed anyway.
   #
   # Idempotent: every step is guarded so jabali update re-runs cleanly.
 
-  _log "installing malware detection stack (ClamAV + maldet + YARA)"
+  _log "installing malware detection stack (LMD + YARA + PMF)"
 
-  # Refuse if /usr/bin/freshclam is already pinned to a manual cron
-  # somewhere — clamav-freshclam.service must own freshclam pulls or
-  # we get duplicate downloads racing each other on update day.
-  if grep -lr "freshclam" /etc/cron.d /etc/cron.daily /etc/cron.hourly 2>/dev/null | grep -v jabali >/dev/null; then
-    _warn "manual freshclam cron detected outside jabali — skipping clamav-freshclam.service to avoid races; remove the cron and re-run install_malware_stack"
-  else
-    if ! systemctl is-enabled --quiet clamav-freshclam.service 2>/dev/null; then
-      systemctl enable --now clamav-freshclam.service >/dev/null 2>&1 || \
-        _warn "clamav-freshclam.service did not start cleanly — check 'journalctl -u clamav-freshclam'"
+  # ClamAV purge — drop the daemon + freshclam updater + 1.7GB sig DB.
+  # Marker file means this runs once per host even on jabali update
+  # re-runs (apt-get purge is slow). Operators who want ClamAV back
+  # touch /etc/jabali/clamav-keep then jabali update.
+  local clamav_purge_marker="/etc/jabali/clamav-purged"
+  if [[ ! -f "$clamav_purge_marker" && ! -f /etc/jabali/clamav-keep ]]; then
+    if dpkg -l 2>/dev/null | grep -qE '^ii\s+clamav'; then
+      _log "purging ClamAV (removed from M33 stack — see ADR-0072 amendment)"
+      systemctl disable --now clamav-daemon.service clamav-freshclam.service >/dev/null 2>&1 || true
+      systemctl mask clamav-daemon.service clamav-freshclam.service >/dev/null 2>&1 || true
+      apt-get -y -qq purge clamav clamav-daemon clamav-freshclam clamav-base libclamav12 >/dev/null 2>&1 || true
+      apt-get -y -qq autoremove >/dev/null 2>&1 || true
+      rm -rf /var/lib/clamav /var/log/clamav /etc/clamav
+      _ok "ClamAV purged (~1.7GB RAM + ~180MB disk reclaimed)"
     fi
-  fi
-
-  if ! systemctl is-enabled --quiet clamav-daemon.service 2>/dev/null; then
-    systemctl enable --now clamav-daemon.service >/dev/null 2>&1 || \
-      _warn "clamav-daemon.service did not start cleanly — check 'journalctl -u clamav-daemon'"
+    install -d -m 0755 /etc/jabali
+    touch "$clamav_purge_marker"
   fi
 
   # Linux Malware Detect (LMD / maldet) — install from rfxn.com tarball
@@ -4771,7 +4776,9 @@ install_malware_stack() {
 quarantine_hits="1"
 quarantine_clean="0"
 email_alert="0"
-scan_clamscan="1"
+# ClamAV removed M33 amendment — set scan_clamscan=0 so LMD uses its
+# built-in pattern engine + the YARA rule packs (rfxn + PMF + admin).
+scan_clamscan="0"
 scan_user_access="1"
 scan_user_access_minuid="1000"
 # Jabali user docroot layout is /home/<user>/domains/<domain>/public_html
@@ -4822,14 +4829,27 @@ rule jabali_example {
 YARA_EX
   fi
 
-  # First freshclam run if the signature DB is missing (apt installs the
-  # package empty; freshclam.service will populate on its own timer but
-  # operators want clamscan to work immediately after install).
-  if [[ ! -s /var/lib/clamav/main.cvd && ! -s /var/lib/clamav/main.cld ]]; then
-    _log "clamav signature DB empty — pulling first sig pull (this can take a minute)"
-    systemctl stop clamav-freshclam >/dev/null 2>&1 || true
-    freshclam --quiet >/dev/null 2>&1 || _warn "initial freshclam pull failed; will retry via timer"
-    systemctl start clamav-freshclam >/dev/null 2>&1 || true
+  # php-malware-finder YARA rule pack — PHP webshell + obfuscation
+  # patterns (eval, base64, preg_replace e-modifier, etc.). Upstream
+  # is a single self-contained php.yar; we drop it into the existing
+  # /etc/jabali/yara/ pre-enabled and let LMD's yara_rules glob pick
+  # it up alongside rfxn.yara and admin uploads.
+  #
+  # Refresh cadence: jabali-pmf-update.timer below pulls daily.
+  install -d -m 0755 /etc/jabali/yara
+  local pmf_dst="/etc/jabali/yara/php-malware-finder.yar"
+  if [[ ! -s "$pmf_dst" ]]; then
+    _log "fetching php-malware-finder YARA rules (first install)"
+    if curl -fsSL --max-time 60 \
+      "https://raw.githubusercontent.com/jvoisin/php-malware-finder/master/data/php.yar" \
+      -o "$pmf_dst.tmp" 2>/dev/null; then
+      mv -f "$pmf_dst.tmp" "$pmf_dst"
+      chmod 0644 "$pmf_dst"
+      _ok "PMF rule pack installed at $pmf_dst ($(wc -l <"$pmf_dst") lines)"
+    else
+      _warn "PMF rule pack download failed — timer will retry"
+      rm -f "$pmf_dst.tmp"
+    fi
   fi
 
   # Lift inotify watch ceiling — LMD's per-user docroot watches add up
@@ -4855,8 +4875,7 @@ SYSCTL_MALWARE
 [Unit]
 Description=Jabali maldet inotify monitor (M33)
 Documentation=file:///etc/jabali/maldet/conf.maldet.d/00-jabali.conf
-After=clamav-daemon.service jabali-agent.service
-Wants=clamav-daemon.service
+After=jabali-agent.service
 
 [Service]
 Type=oneshot
@@ -4880,20 +4899,20 @@ MONITOR_UNIT
   # M33 systemd timers — daily signature update + daily scan + retention purge.
   cat >/etc/systemd/system/jabali-maldet-update-signatures.service <<'SIG_UNIT'
 [Unit]
-Description=Jabali maldet + ClamAV signature update (M33)
+Description=Jabali maldet signature update (M33)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash -c '/usr/bin/freshclam --quiet ; /usr/local/maldetect/maldet -u'
+ExecStart=/usr/local/maldetect/maldet -u
 Nice=15
 IOSchedulingClass=idle
 SIG_UNIT
 
   cat >/etc/systemd/system/jabali-maldet-update-signatures.timer <<'SIG_TIMER'
 [Unit]
-Description=Daily Jabali maldet + ClamAV signature pull (M33)
+Description=Daily Jabali maldet signature pull (M33)
 
 [Timer]
 OnCalendar=*-*-* 02:30:00
@@ -4904,10 +4923,51 @@ RandomizedDelaySec=15m
 WantedBy=timers.target
 SIG_TIMER
 
+  # PMF YARA rule pack — pulled daily from upstream (mirrors maldet
+  # signature cadence). Atomic write + maldet --reload-monitor so the
+  # inotify watcher picks up the new ruleset without restart.
+  cat >/etc/systemd/system/jabali-pmf-update.service <<'PMF_UNIT'
+[Unit]
+Description=Jabali php-malware-finder rule pack update (M33)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash -c '\
+  set -e; \
+  dst=/etc/jabali/yara/php-malware-finder.yar; \
+  tmp="$dst.tmp.$$"; \
+  curl -fsSL --max-time 60 \
+    "https://raw.githubusercontent.com/jvoisin/php-malware-finder/master/data/php.yar" \
+    -o "$tmp"; \
+  if [[ -s "$tmp" ]] && grep -q "^rule " "$tmp"; then \
+    mv -f "$tmp" "$dst"; \
+    chmod 0644 "$dst"; \
+    /usr/local/maldetect/maldet --monitor RELOAD >/dev/null 2>&1 || true; \
+  else \
+    rm -f "$tmp"; exit 1; \
+  fi'
+Nice=15
+IOSchedulingClass=idle
+PMF_UNIT
+
+  cat >/etc/systemd/system/jabali-pmf-update.timer <<'PMF_TIMER'
+[Unit]
+Description=Daily Jabali php-malware-finder rule refresh (M33)
+
+[Timer]
+OnCalendar=*-*-* 02:45:00
+Persistent=true
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target
+PMF_TIMER
+
   cat >/etc/systemd/system/jabali-maldet-scan-daily.service <<'SCAN_UNIT'
 [Unit]
 Description=Jabali maldet daily scan of all user homes (M33)
-After=clamav-daemon.service
 
 [Service]
 Type=oneshot
@@ -4954,12 +5014,13 @@ PURGE_TIMER
 
   systemctl daemon-reload >/dev/null 2>&1 || true
   systemctl enable --now jabali-maldet-update-signatures.timer >/dev/null 2>&1 || true
+  systemctl enable --now jabali-pmf-update.timer >/dev/null 2>&1 || true
   systemctl enable --now jabali-maldet-scan-daily.timer >/dev/null 2>&1 || true
   systemctl enable --now jabali-malware-quarantine-purge.timer >/dev/null 2>&1 || true
 
   install_tetragon
 
-  _ok "malware stack provisioned: clamav $(clamscan --version 2>/dev/null | head -1 | cut -d/ -f1), maldet $(maldet --version 2>/dev/null | head -1 || echo 'pending')"
+  _ok "malware stack provisioned: maldet $(maldet --version 2>/dev/null | head -1 || echo 'pending'), PMF rules $(grep -c '^rule ' /etc/jabali/yara/php-malware-finder.yar 2>/dev/null || echo 0)"
 }
 
 install_tetragon() {

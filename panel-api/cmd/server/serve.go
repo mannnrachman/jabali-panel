@@ -651,6 +651,7 @@ func startNotificationDispatcher(parent context.Context, deps app.Deps, log *slo
 	registry.Register(senders.NewDiscord())
 	registry.Register(senders.NewNtfy())
 	registry.Register(senders.NewWebhook())
+	registry.Register(senders.NewSMS())
 	registry.Register(senders.NewEmail("127.0.0.1:587"))
 	// WebPush reads VAPID keys from server_settings on every send; if
 	// the keypair is absent (EnsureVAPID hasn't run) Send returns

@@ -291,6 +291,7 @@ var knownChannelKinds = map[string]struct{}{
 	models.NotificationChannelKindNtfy:    {},
 	models.NotificationChannelKindWebhook: {},
 	models.NotificationChannelKindWebpush: {},
+	models.NotificationChannelKindSMS:     {},
 }
 
 var knownSeverities = map[string]struct{}{
@@ -317,7 +318,7 @@ func validateChannelName(name string) error {
 
 func validateChannelKindAndConfig(kind string, cfg models.NotificationChannelConfig) error {
 	if _, ok := knownChannelKinds[kind]; !ok {
-		return fmt.Errorf("unknown channel kind %q (valid: email/slack/discord/ntfy/webhook/webpush)", kind)
+		return fmt.Errorf("unknown channel kind %q (valid: email/slack/discord/ntfy/webhook/webpush/sms)", kind)
 	}
 	switch kind {
 	case models.NotificationChannelKindEmail:
@@ -361,6 +362,17 @@ func validateChannelKindAndConfig(kind string, cfg models.NotificationChannelCon
 	case models.NotificationChannelKindWebpush:
 		// No admin-configured fields — VAPID lives on server_settings,
 		// subscriptions live on webpush_subscriptions.
+	case models.NotificationChannelKindSMS:
+		if err := validateHTTPURL(cfg.URL); err != nil {
+			return fmt.Errorf("sms channel: %w", err)
+		}
+		if cfg.ToNumber == "" {
+			return errors.New("sms channel: to_number required (E.164, e.g. +15551234567)")
+		}
+		// HMAC secret optional but recommended.
+		if cfg.HMACSecret != "" && len(cfg.HMACSecret) < 16 {
+			return errors.New("sms channel: hmac_secret must be >= 16 chars when set")
+		}
 	}
 	return nil
 }

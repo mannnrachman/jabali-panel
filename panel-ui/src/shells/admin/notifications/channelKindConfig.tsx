@@ -9,7 +9,8 @@ export type ChannelKind =
   | "discord"
   | "ntfy"
   | "webhook"
-  | "webpush";
+  | "webpush"
+  | "sms";
 
 // CHANNEL_KINDS — kinds the admin can pick when creating a channel.
 // "webpush" lives in the type union (and the kindLabels/kindFields
@@ -22,6 +23,7 @@ export const CHANNEL_KINDS: ChannelKind[] = [
   "discord",
   "ntfy",
   "webhook",
+  "sms",
 ];
 
 export const kindColors: Record<ChannelKind, string> = {
@@ -31,6 +33,7 @@ export const kindColors: Record<ChannelKind, string> = {
   ntfy: "cyan",
   webhook: "gold",
   webpush: "green",
+  sms: "magenta",
 };
 
 export const kindLabels: Record<ChannelKind, string> = {
@@ -40,6 +43,7 @@ export const kindLabels: Record<ChannelKind, string> = {
   ntfy: "ntfy.sh",
   webhook: "Generic webhook",
   webpush: "Web Push (browser)",
+  sms: "SMS (gateway)",
 };
 
 // ChannelFormFields — which per-kind config fields to render. The
@@ -73,6 +77,7 @@ export type ChannelFormConfig = {
   smtp_username?: string;
   smtp_password?: string;
   smtp_tls?: "starttls" | "tls" | "none";
+  to_number?: string;
 };
 
 export const kindFields: Record<ChannelKind, FieldSpec[]> = {
@@ -152,4 +157,32 @@ export const kindFields: Record<ChannelKind, FieldSpec[]> = {
     },
   ],
   webpush: [],
+  sms: [
+    {
+      name: "url",
+      label: "Gateway URL",
+      placeholder: "https://example.com/sms-gateway",
+      required: true,
+      help: "Endpoint that accepts POST {to, body} JSON and forwards to your SMS provider (Twilio, MessageBird, etc.).",
+    },
+    {
+      name: "to_number",
+      label: "Recipient number",
+      placeholder: "+15551234567",
+      required: true,
+      help: "E.164 format. Sent as the JSON 'to' field.",
+    },
+    {
+      name: "hmac_secret",
+      label: "HMAC secret (optional)",
+      type: "password",
+      help: "≥16 chars when set. Used to sign X-Jabali-Signature so the gateway can verify the call originated here.",
+    },
+    {
+      name: "bearer",
+      label: "Bearer token (optional)",
+      type: "password",
+      help: "Sent as Authorization: Bearer … if your gateway authenticates that way.",
+    },
+  ],
 };

@@ -16,6 +16,7 @@ const (
 	NotificationChannelKindNtfy    = "ntfy"
 	NotificationChannelKindWebhook = "webhook"
 	NotificationChannelKindWebpush = "webpush"
+	NotificationChannelKindSMS     = "sms"
 )
 
 // NotificationChannel is a configured delivery target for system events.
@@ -63,6 +64,11 @@ type NotificationChannelConfig struct {
 	// "tls" (implicit TLS, RFC 8314, port 465), "none" (plaintext,
 	// only useful for local fixtures and 25/tcp legacy relays).
 	SMTPTLS string `json:"smtp_tls,omitempty"`
+
+	// SMS-channel destination phone number in E.164 format
+	// (e.g. "+15551234567"). Sent as the "to" field in the JSON
+	// payload POSTed to the gateway URL.
+	ToNumber string `json:"to_number,omitempty"`
 }
 
 func (c *NotificationChannelConfig) Scan(src any) error {

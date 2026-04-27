@@ -1,18 +1,18 @@
 // ServicesSummaryCard — compact Service / Status / Action table for the
-// Server Status top section. Action column is a Dropdown.Button: the
-// primary verb is the "obvious next step" (Start when down, Restart/
-// Reload when up); destructive verbs (stop/disable) are tucked into
-// the menu behind a Popconfirm. Self-destruct trio (jabali-panel,
-// jabali-agent, mariadb) hides Stop+Disable items entirely — those
-// requests are 403'd at the API anyway.
+// Server Status top section. Action column is a row of icon-only
+// Buttons each wrapped in a Tooltip explaining the verb. Self-destruct
+// trio (jabali-panel, jabali-agent, mariadb) hides Stop+Disable —
+// those requests are 403'd at the API anyway. Destructive verbs
+// (stop/disable/restart) show a confirm Modal first.
 import { useState } from "react";
 import {
+  Button,
   Card,
-  Dropdown,
-  type MenuProps,
   Modal,
+  Space,
   Table,
   Tag,
+  Tooltip,
   message,
 } from "antd";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -20,9 +20,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircleOutlined,
   CloseOutlined,
-  DownOutlined,
   PlayCircleOutlined,
+  PoweroffOutlined,
   ReloadOutlined,
+  StopOutlined,
   SyncOutlined,
 } from "@icons";
 
@@ -33,18 +34,12 @@ interface Props {
   services: ServiceDetail[];
 }
 
-// reloadCapable lists units whose canonical "apply config without
-// downtime" verb is reload, not restart. Anything else falls back to
-// restart (which is correct for stateful services like mariadb).
 const reloadCapable = new Set([
   "nginx.service",
   "pdns.service",
   "pdns-recursor.service",
 ]);
 
-// selfDestructUnits mirrors the API-side allow-list. Stop+Disable on
-// these would brick the management plane mid-request; the API rejects
-// them with 403 and the UI hides the menu items entirely.
 const selfDestructUnits = new Set([
   "jabali-panel.service",
   "jabali-agent.service",
@@ -106,12 +101,12 @@ export function ServicesSummaryCard({ services }: Props) {
             {
               title: "Status",
               dataIndex: "active",
-              width: 80,
+              width: 60,
               render: (s: string) => statusIcon(s),
             },
             {
-              title: "Action",
-              width: 160,
+              title: "Actions",
+              width: 200,
               align: "right" as const,
               render: (_: unknown, r: ServiceDetail) => (
                 <ServiceActions service={r} onAction={runAction} />
@@ -129,16 +124,10 @@ export function ServicesSummaryCard({ services }: Props) {
         onCancel={() => setPending(null)}
       >
         {pending?.action === "stop" && (
-          <p>
-            This will halt the unit. Dependent panel features may stop
-            working until you start it again.
-          </p>
+          <p>This will halt the unit. Dependent panel features may stop working until you start it again.</p>
         )}
         {pending?.action === "disable" && (
-          <p>
-            This will prevent the unit from starting at boot. Combine with
-            Stop if you also want it down right now.
-          </p>
+          <p>This will prevent the unit from starting at boot. Combine with Stop if you also want it down right now.</p>
         )}
         {pending?.action === "restart" && (
           <p>Restart causes a brief drop in service. Continue?</p>
@@ -163,60 +152,84 @@ function ServiceActions({ service, onAction }: ServiceActionsProps) {
     service.unit_file_state === "static" ||
     service.unit_file_state === "alias";
 
-  // Primary verb = the obvious next step. Down → Start. Up → Restart
-  // (or Reload for nginx/pdns). The dropdown carries the rest.
-  const primary: Action = isDown ? "start" : isReload ? "reload" : "restart";
-  const primaryLabel = isDown ? "Start" : isReload ? "Reload" : "Restart";
-  const primaryIcon = isDown
-    ? <PlayCircleOutlined />
-    : isReload
-      ? <ReloadOutlined />
-      : <SyncOutlined />;
-
-  const items: MenuProps["items"] = [];
-  // Always offer the non-primary up-actions when up.
-  if (!isDown) {
-    if (primary !== "restart") items.push({ key: "restart", label: "Restart" });
-    if (primary !== "reload" && isReload) items.push({ key: "reload", label: "Reload" });
-    if (!isSelfDestruct) {
-      items.push({ key: "stop", label: "Stop", danger: true });
-    }
-  }
-  // Enable/disable show in both up and down states.
-  items.push({ type: "divider" });
-  if (isEnabled) {
-    if (!isSelfDestruct) {
-      items.push({ key: "disable", label: "Disable at boot", danger: true });
-    } else {
-      items.push({ key: "enable", label: "Already enabled", disabled: true });
-    }
-  } else {
-    items.push({ key: "enable", label: "Enable at boot" });
-  }
-
-  const menu: MenuProps = {
-    items,
-    onClick: ({ key }) => onAction(service.unit, key as Action),
-  };
-
   return (
-    <Dropdown.Button
-      size="small"
-      type="text"
-      icon={<DownOutlined />}
-      menu={menu}
-      onClick={() => onAction(service.unit, primary)}
-    >
-      {primaryIcon}
-      {primaryLabel}
-    </Dropdown.Button>
+    <Space size={2}>
+      {isDown ? (
+        <Tooltip title="Start">
+          <Button
+            size="small"
+            type="text"
+            icon={<PlayCircleOutlined />}
+            onClick={() => onAction(service.unit, "start")}
+            aria-label="Start"
+          />
+        </Tooltip>
+      ) : (
+        <>
+          <Tooltip title="Restart">
+            <Button
+              size="small"
+              type="text"
+              icon={<SyncOutlined />}
+              onClick={() => onAction(service.unit, "restart")}
+              aria-label="Restart"
+            />
+          </Tooltip>
+          {isReload && (
+            <Tooltip title="Reload">
+              <Button
+                size="small"
+                type="text"
+                icon={<ReloadOutlined />}
+                onClick={() => onAction(service.unit, "reload")}
+                aria-label="Reload"
+              />
+            </Tooltip>
+          )}
+          {!isSelfDestruct && (
+            <Tooltip title="Stop">
+              <Button
+                size="small"
+                type="text"
+                danger
+                icon={<StopOutlined />}
+                onClick={() => onAction(service.unit, "stop")}
+                aria-label="Stop"
+              />
+            </Tooltip>
+          )}
+        </>
+      )}
+      {isEnabled
+        ? !isSelfDestruct && (
+            <Tooltip title="Disable at boot">
+              <Button
+                size="small"
+                type="text"
+                danger
+                icon={<PoweroffOutlined />}
+                onClick={() => onAction(service.unit, "disable")}
+                aria-label="Disable at boot"
+              />
+            </Tooltip>
+          )
+        : (
+          <Tooltip title="Enable at boot">
+            <Button
+              size="small"
+              type="text"
+              icon={<PoweroffOutlined />}
+              onClick={() => onAction(service.unit, "enable")}
+              aria-label="Enable at boot"
+            />
+          </Tooltip>
+        )}
+    </Space>
   );
 }
 
 function prettyName(unit: string): string {
   const base = unit.replace(/\.service$/, "");
-  // Strip jabali- prefix for the panel-managed services to match the
-  // operator's mental model ("Stalwart" not "jabali-stalwart").
   return base.replace(/^jabali-/, "");
 }
 

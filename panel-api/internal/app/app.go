@@ -207,6 +207,25 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 	// up RequireKratosSession.
 	api.RegisterNotificationsInternalRoutes(r.Group("/api/v1"), deps.NotificationQueue)
 
+	// M33 internal malware ingest — /api/v1/admin/security/malware/event.
+	// Mounted off the root router (not v1) so it bypasses the Kratos
+	// authMiddleware. Caller is the agent over the M25 unix socket;
+	// RequireLocalhost inside the route is the sole gate. Matches the
+	// RegisterNotificationsInternalRoutes pattern above.
+	if deps.MalwareQuarantine != nil && deps.MalwareEvents != nil &&
+		deps.MalwareSettings != nil && deps.YARARules != nil &&
+		deps.TetragonPolicies != nil && deps.Agent != nil {
+		api.RegisterSecurityMalwareInternalRoutes(r.Group("/api/v1"), api.SecurityMalwareHandlerConfig{
+			Agent:            deps.Agent,
+			Quarantine:       deps.MalwareQuarantine,
+			Events:           deps.MalwareEvents,
+			Settings:         deps.MalwareSettings,
+			YARARules:        deps.YARARules,
+			TetragonPolicies: deps.TetragonPolicies,
+			Log:              deps.Log,
+		})
+	}
+
 	// M28 — public branding endpoints (logo file + brand text). Lives
 	// off the root API group with NO auth so the pre-login page can
 	// render the operator's logo + brand text.

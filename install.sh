@@ -5100,10 +5100,44 @@ TG_UNIT
   fi
 
   install -d -m 0755 /var/log/tetragon
+
+  # jabali-tetragon-relay: tail tetragon JSON log → POST malware
+  # ingest events to panel-api. Built alongside panel-agent.
+  if [[ -x /usr/local/bin/jabali-tetragon-relay ]] || [[ -x "$REPO_DIR/bin/jabali-tetragon-relay" ]]; then
+    if [[ -x "$REPO_DIR/bin/jabali-tetragon-relay" && ! -x /usr/local/bin/jabali-tetragon-relay ]]; then
+      install -m 0755 "$REPO_DIR/bin/jabali-tetragon-relay" /usr/local/bin/jabali-tetragon-relay
+    fi
+    cat >/etc/systemd/system/jabali-tetragon-relay.service <<'RELAY_UNIT'
+[Unit]
+Description=Jabali tetragon JSON log → panel-api malware ingest (M33)
+After=tetragon.service jabali-panel-api.service
+Wants=tetragon.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/jabali-tetragon-relay --log /var/log/tetragon/tetragon.log
+Restart=always
+RestartSec=5
+User=root
+Group=root
+ProtectSystem=strict
+ReadOnlyPaths=/var/log/tetragon
+ReadWritePaths=/run /tmp
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
+RELAY_UNIT
+  fi
+
   systemctl daemon-reload >/dev/null 2>&1 || true
   if command -v tetragon >/dev/null 2>&1; then
     systemctl enable --now tetragon.service >/dev/null 2>&1 || \
       _warn "tetragon.service did not start cleanly — check 'journalctl -u tetragon'"
+    if [[ -x /usr/local/bin/jabali-tetragon-relay ]]; then
+      systemctl enable --now jabali-tetragon-relay.service >/dev/null 2>&1 || \
+        _warn "jabali-tetragon-relay did not start cleanly — check 'journalctl -u jabali-tetragon-relay'"
+    fi
     _ok "Tetragon enabled — 4 default tracing policies loaded"
   fi
 }

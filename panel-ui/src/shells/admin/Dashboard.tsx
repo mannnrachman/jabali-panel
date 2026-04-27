@@ -3,7 +3,7 @@
 // short landing card: hostname, top-level health roll-up, three count
 // stats (users / domains / mailboxes) and a prominent button into the
 // Server Status page.
-import { Alert, Button, Card, Col, Row, Space, Tag, Typography } from "antd";
+import { Alert, Button, Card, Col, Row, Space, Table, Tag, Typography } from "antd";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -11,7 +11,36 @@ import { useQuery } from "@tanstack/react-query";
 import { ServerOutlined, TeamOutlined, GlobalOutlined, MailOutlined } from "@icons";
 
 import { apiClient } from "../../apiClient";
+import { useListQuery } from "../../hooks/useQueries";
 import { useServerStatus } from "../../hooks/useServerStatus";
+
+interface UserRow {
+  id: string;
+  email: string;
+  is_admin?: boolean;
+  created_at?: string;
+}
+interface DomainRow {
+  id: string;
+  name: string;
+  created_at?: string;
+}
+interface ApplicationRow {
+  id: string;
+  name?: string;
+  domain?: string;
+  domain_name?: string;
+  type?: string;
+  app_type?: string;
+}
+interface PackageRow {
+  id: string;
+  name: string;
+  ssh_enabled?: boolean;
+  cgi_enabled?: boolean;
+}
+
+const RECENT_LIMIT = 5;
 
 interface CountsResponse {
   users: number;
@@ -86,6 +115,23 @@ export const Dashboard = () => {
   const domains = { data: counts.data?.domains };
   const mailboxes = { data: counts.data?.mailboxes };
 
+  const recentUsers = useListQuery<UserRow>({
+    resource: "users",
+    params: { pageSize: RECENT_LIMIT, sort: "created_at", order: "desc" },
+  });
+  const recentDomains = useListQuery<DomainRow>({
+    resource: "domains",
+    params: { pageSize: RECENT_LIMIT, sort: "created_at", order: "desc" },
+  });
+  const recentApps = useListQuery<ApplicationRow>({
+    resource: "applications",
+    params: { pageSize: RECENT_LIMIT, sort: "created_at", order: "desc" },
+  });
+  const allPackages = useListQuery<PackageRow>({
+    resource: "packages",
+    params: { pageSize: RECENT_LIMIT, sort: "name", order: "asc" },
+  });
+
   const alerts = env?.alerts ?? [];
   const critical = alerts.filter((a) => a.level === "critical").length;
   const warnings = alerts.filter((a) => a.level === "warning").length;
@@ -133,37 +179,142 @@ export const Dashboard = () => {
         </Col>
       </Row>
 
-      <Card style={{ marginBottom: 16 }}>
-        <Space direction="vertical" size={12} style={{ width: "100%" }}>
-          <Space size={12} wrap>
-            <Typography.Title level={4} style={{ margin: 0 }}>
-              {env?.host?.hostname ?? "—"}
-            </Typography.Title>
-            {healthTag}
-          </Space>
-          <Typography.Text type="secondary">
-            Top-level summary. For live metrics, services, network, and processes,
-            see Server Status.
-          </Typography.Text>
-          <Link to="/jabali-admin/server-status">
-            <Button type="primary" icon={<ServerOutlined />}>
-              View server status →
-            </Button>
-          </Link>
-        </Space>
-      </Card>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} lg={12}>
+          <Space direction="vertical" size={16} style={{ width: "100%" }}>
+            <Card
+              title="Recent Users"
+              size="small"
+              extra={<Link to="/jabali-admin/users">View all →</Link>}
+            >
+              <Table<UserRow>
+                size="small"
+                rowKey="id"
+                pagination={false}
+                loading={recentUsers.isLoading}
+                dataSource={recentUsers.items}
+                locale={{ emptyText: "No users yet" }}
+                columns={[
+                  { title: "Email", dataIndex: "email", ellipsis: true },
+                  {
+                    title: "Role",
+                    dataIndex: "is_admin",
+                    width: 90,
+                    render: (v: boolean) => (v ? <Tag color="blue">Admin</Tag> : <Tag>User</Tag>),
+                  },
+                ]}
+              />
+            </Card>
 
-      {critical > 0 && (
-        <Alert
-          type="error"
-          showIcon
-          message={`${critical} critical issue${critical === 1 ? "" : "s"} on host`}
-          description={
-            <Link to="/jabali-admin/server-status">Open Server Status to investigate →</Link>
-          }
-          style={{ marginBottom: 16 }}
-        />
-      )}
+            <Card
+              title="Recent Domains"
+              size="small"
+              extra={<Link to="/jabali-admin/domains">View all →</Link>}
+            >
+              <Table<DomainRow>
+                size="small"
+                rowKey="id"
+                pagination={false}
+                loading={recentDomains.isLoading}
+                dataSource={recentDomains.items}
+                locale={{ emptyText: "No domains yet" }}
+                columns={[
+                  { title: "Domain", dataIndex: "name", ellipsis: true },
+                ]}
+              />
+            </Card>
+
+            <Card
+              title="Recent Applications"
+              size="small"
+              extra={<Link to="/jabali-admin/applications">View all →</Link>}
+            >
+              <Table<ApplicationRow>
+                size="small"
+                rowKey="id"
+                pagination={false}
+                loading={recentApps.isLoading}
+                dataSource={recentApps.items}
+                locale={{ emptyText: "No applications yet" }}
+                columns={[
+                  {
+                    title: "Name",
+                    dataIndex: "name",
+                    ellipsis: true,
+                    render: (v: string | undefined, r) => v ?? r.domain_name ?? r.domain ?? "—",
+                  },
+                  {
+                    title: "Type",
+                    dataIndex: "type",
+                    width: 110,
+                    render: (v: string | undefined, r) => v ?? r.app_type ?? "—",
+                  },
+                ]}
+              />
+            </Card>
+
+            <Card
+              title="Hosting Packages"
+              size="small"
+              extra={<Link to="/jabali-admin/packages">View all →</Link>}
+            >
+              <Table<PackageRow>
+                size="small"
+                rowKey="id"
+                pagination={false}
+                loading={allPackages.isLoading}
+                dataSource={allPackages.items}
+                locale={{ emptyText: "No packages yet" }}
+                columns={[
+                  { title: "Name", dataIndex: "name", ellipsis: true },
+                  {
+                    title: "SSH",
+                    dataIndex: "ssh_enabled",
+                    width: 80,
+                    render: (v: boolean) =>
+                      v ? <Tag color="green">on</Tag> : <Tag>off</Tag>,
+                  },
+                ]}
+              />
+            </Card>
+          </Space>
+        </Col>
+
+        <Col xs={24} lg={12}>
+          <Space direction="vertical" size={16} style={{ width: "100%" }}>
+            <Card>
+              <Space direction="vertical" size={12} style={{ width: "100%" }}>
+                <Space size={12} wrap>
+                  <Typography.Title level={4} style={{ margin: 0 }}>
+                    {env?.host?.hostname ?? "—"}
+                  </Typography.Title>
+                  {healthTag}
+                </Space>
+                <Typography.Text type="secondary">
+                  Top-level summary. For live metrics, services, network, and processes,
+                  see Server Status.
+                </Typography.Text>
+                <Link to="/jabali-admin/server-status">
+                  <Button type="primary" icon={<ServerOutlined />}>
+                    View server status →
+                  </Button>
+                </Link>
+              </Space>
+            </Card>
+
+            {critical > 0 && (
+              <Alert
+                type="error"
+                showIcon
+                message={`${critical} critical issue${critical === 1 ? "" : "s"} on host`}
+                description={
+                  <Link to="/jabali-admin/server-status">Open Server Status to investigate →</Link>
+                }
+              />
+            )}
+          </Space>
+        </Col>
+      </Row>
     </div>
   );
 };

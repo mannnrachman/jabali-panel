@@ -3,7 +3,7 @@
 // short landing card: hostname, top-level health roll-up, three count
 // stats (users / domains / mailboxes) and a prominent button into the
 // Server Status page.
-import { Alert, Button, Card, Col, Row, Space, Table, Tag, Typography } from "antd";
+import { Alert, Button, Card, Col, Masonry, Row, Space, Table, Tag, Typography } from "antd";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -179,142 +179,175 @@ export const Dashboard = () => {
         </Col>
       </Row>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={12}>
-          <Space direction="vertical" size={16} style={{ width: "100%" }}>
-            <Card
-              title="Recent Users"
-              size="small"
-              extra={<Link to="/jabali-admin/users">View all →</Link>}
-            >
-              <Table<UserRow>
-                size="small"
-                rowKey="id"
-                pagination={false}
-                loading={recentUsers.isLoading}
-                dataSource={recentUsers.items}
-                locale={{ emptyText: "No users yet" }}
-                columns={[
-                  { title: "Email", dataIndex: "email", ellipsis: true },
-                  {
-                    title: "Role",
-                    dataIndex: "is_admin",
-                    width: 90,
-                    render: (v: boolean) => (v ? <Tag color="blue">Admin</Tag> : <Tag>User</Tag>),
-                  },
-                ]}
-              />
-            </Card>
-
-            <Card
-              title="Recent Domains"
-              size="small"
-              extra={<Link to="/jabali-admin/domains">View all →</Link>}
-            >
-              <Table<DomainRow>
-                size="small"
-                rowKey="id"
-                pagination={false}
-                loading={recentDomains.isLoading}
-                dataSource={recentDomains.items}
-                locale={{ emptyText: "No domains yet" }}
-                columns={[
-                  { title: "Domain", dataIndex: "name", ellipsis: true },
-                ]}
-              />
-            </Card>
-
-            <Card
-              title="Recent Applications"
-              size="small"
-              extra={<Link to="/jabali-admin/applications">View all →</Link>}
-            >
-              <Table<ApplicationRow>
-                size="small"
-                rowKey="id"
-                pagination={false}
-                loading={recentApps.isLoading}
-                dataSource={recentApps.items}
-                locale={{ emptyText: "No applications yet" }}
-                columns={[
-                  {
-                    title: "Name",
-                    dataIndex: "name",
-                    ellipsis: true,
-                    render: (v: string | undefined, r) => v ?? r.domain_name ?? r.domain ?? "—",
-                  },
-                  {
-                    title: "Type",
-                    dataIndex: "type",
-                    width: 110,
-                    render: (v: string | undefined, r) => v ?? r.app_type ?? "—",
-                  },
-                ]}
-              />
-            </Card>
-
-            <Card
-              title="Hosting Packages"
-              size="small"
-              extra={<Link to="/jabali-admin/packages">View all →</Link>}
-            >
-              <Table<PackageRow>
-                size="small"
-                rowKey="id"
-                pagination={false}
-                loading={allPackages.isLoading}
-                dataSource={allPackages.items}
-                locale={{ emptyText: "No packages yet" }}
-                columns={[
-                  { title: "Name", dataIndex: "name", ellipsis: true },
-                  {
-                    title: "SSH",
-                    dataIndex: "ssh_enabled",
-                    width: 80,
-                    render: (v: boolean) =>
-                      v ? <Tag color="green">on</Tag> : <Tag>off</Tag>,
-                  },
-                ]}
-              />
-            </Card>
-          </Space>
-        </Col>
-
-        <Col xs={24} lg={12}>
-          <Space direction="vertical" size={16} style={{ width: "100%" }}>
-            <Card>
-              <Space direction="vertical" size={12} style={{ width: "100%" }}>
-                <Space size={12} wrap>
-                  <Typography.Title level={4} style={{ margin: 0 }}>
-                    {env?.host?.hostname ?? "—"}
-                  </Typography.Title>
-                  {healthTag}
+      <Masonry
+        columns={{ xs: 1, sm: 1, md: 1, lg: 2 }}
+        gutter={16}
+        items={[
+          {
+            key: "health",
+            data: null,
+            children: (
+              <Card>
+                <Space direction="vertical" size={12} style={{ width: "100%" }}>
+                  <Space size={12} wrap>
+                    <Typography.Title level={4} style={{ margin: 0 }}>
+                      {env?.host?.hostname ?? "—"}
+                    </Typography.Title>
+                    {healthTag}
+                  </Space>
+                  <Typography.Text type="secondary">
+                    Top-level summary. For live metrics, services, network, and processes,
+                    see Server Status.
+                  </Typography.Text>
+                  <Link to="/jabali-admin/server-status">
+                    <Button type="primary" icon={<ServerOutlined />}>
+                      View server status →
+                    </Button>
+                  </Link>
                 </Space>
-                <Typography.Text type="secondary">
-                  Top-level summary. For live metrics, services, network, and processes,
-                  see Server Status.
-                </Typography.Text>
-                <Link to="/jabali-admin/server-status">
-                  <Button type="primary" icon={<ServerOutlined />}>
-                    View server status →
-                  </Button>
-                </Link>
-              </Space>
-            </Card>
-
-            {critical > 0 && (
-              <Alert
-                type="error"
-                showIcon
-                message={`${critical} critical issue${critical === 1 ? "" : "s"} on host`}
-                description={
-                  <Link to="/jabali-admin/server-status">Open Server Status to investigate →</Link>
-                }
-              />
-            )}
-          </Space>
-        </Col>
-      </Row>
+              </Card>
+            ),
+          },
+          {
+            key: "users",
+            data: null,
+            children: (
+              <Card
+                title="Recent Users"
+                size="small"
+                extra={<Link to="/jabali-admin/users">View all →</Link>}
+              >
+                <Table<UserRow>
+                  size="small"
+                  rowKey="id"
+                  pagination={false}
+                  loading={recentUsers.isLoading}
+                  dataSource={recentUsers.items}
+                  locale={{ emptyText: "No users yet" }}
+                  columns={[
+                    { title: "Email", dataIndex: "email", ellipsis: true },
+                    {
+                      title: "Role",
+                      dataIndex: "is_admin",
+                      width: 90,
+                      render: (v: boolean) =>
+                        v ? <Tag color="blue">Admin</Tag> : <Tag>User</Tag>,
+                    },
+                  ]}
+                />
+              </Card>
+            ),
+          },
+          {
+            key: "domains",
+            data: null,
+            children: (
+              <Card
+                title="Recent Domains"
+                size="small"
+                extra={<Link to="/jabali-admin/domains">View all →</Link>}
+              >
+                <Table<DomainRow>
+                  size="small"
+                  rowKey="id"
+                  pagination={false}
+                  loading={recentDomains.isLoading}
+                  dataSource={recentDomains.items}
+                  locale={{ emptyText: "No domains yet" }}
+                  columns={[
+                    { title: "Domain", dataIndex: "name", ellipsis: true },
+                  ]}
+                />
+              </Card>
+            ),
+          },
+          {
+            key: "apps",
+            data: null,
+            children: (
+              <Card
+                title="Recent Applications"
+                size="small"
+                extra={<Link to="/jabali-admin/applications">View all →</Link>}
+              >
+                <Table<ApplicationRow>
+                  size="small"
+                  rowKey="id"
+                  pagination={false}
+                  loading={recentApps.isLoading}
+                  dataSource={recentApps.items}
+                  locale={{ emptyText: "No applications yet" }}
+                  columns={[
+                    {
+                      title: "Name",
+                      dataIndex: "name",
+                      ellipsis: true,
+                      render: (v: string | undefined, r) =>
+                        v ?? r.domain_name ?? r.domain ?? "—",
+                    },
+                    {
+                      title: "Type",
+                      dataIndex: "type",
+                      width: 110,
+                      render: (v: string | undefined, r) => v ?? r.app_type ?? "—",
+                    },
+                  ]}
+                />
+              </Card>
+            ),
+          },
+          {
+            key: "packages",
+            data: null,
+            children: (
+              <Card
+                title="Hosting Packages"
+                size="small"
+                extra={<Link to="/jabali-admin/packages">View all →</Link>}
+              >
+                <Table<PackageRow>
+                  size="small"
+                  rowKey="id"
+                  pagination={false}
+                  loading={allPackages.isLoading}
+                  dataSource={allPackages.items}
+                  locale={{ emptyText: "No packages yet" }}
+                  columns={[
+                    { title: "Name", dataIndex: "name", ellipsis: true },
+                    {
+                      title: "SSH",
+                      dataIndex: "ssh_enabled",
+                      width: 80,
+                      render: (v: boolean) =>
+                        v ? <Tag color="green">on</Tag> : <Tag>off</Tag>,
+                    },
+                  ]}
+                />
+              </Card>
+            ),
+          },
+          ...(critical > 0
+            ? [
+                {
+                  key: "alert",
+                  data: null,
+                  children: (
+                    <Alert
+                      type="error"
+                      showIcon
+                      message={`${critical} critical issue${critical === 1 ? "" : "s"} on host`}
+                      description={
+                        <Link to="/jabali-admin/server-status">
+                          Open Server Status to investigate →
+                        </Link>
+                      }
+                    />
+                  ),
+                },
+              ]
+            : []),
+        ]}
+      />
     </div>
   );
 };

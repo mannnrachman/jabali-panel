@@ -66,12 +66,6 @@ export const adminNav: NavItem[] = [
     path: "/jabali-admin/dashboard",
   },
   {
-    key: "server-status",
-    label: "Server Status",
-    icon: navIcon(ServerOutlined),
-    path: "/jabali-admin/server-status",
-  },
-  {
     key: "users",
     label: "Users",
     icon: navIcon(TeamOutlined),
@@ -90,10 +84,28 @@ export const adminNav: NavItem[] = [
     path: "/jabali-admin/packages",
   },
   {
+    key: "ssl",
+    label: "SSL Manager",
+    icon: navIcon(ShieldCheckOutlined),
+    path: "/jabali-admin/ssl",
+  },
+  {
+    key: "applications",
+    label: "Applications",
+    icon: navIcon(AppstoreOutlined),
+    path: "/jabali-admin/applications",
+  },
+  {
     key: "settings",
     label: "Server Settings",
     icon: navIcon(SettingOutlined),
     path: "/jabali-admin/settings",
+  },
+  {
+    key: "server-status",
+    label: "Server Status",
+    icon: navIcon(ServerOutlined),
+    path: "/jabali-admin/server-status",
   },
   {
     key: "security",
@@ -114,25 +126,10 @@ export const adminNav: NavItem[] = [
     path: "/jabali-admin/dns",
   },
   {
-    key: "ssl",
-    label: "SSL Manager",
-    icon: navIcon(ShieldCheckOutlined),
-    path: "/jabali-admin/ssl",
-  },
-  {
     key: "ips",
     label: "IP Addresses",
     icon: navIcon(GlobalOutlined),
     path: "/jabali-admin/ips",
-  },
-  // Below — items not in operator's primary order. Kept after the
-  // canonical 10 so they remain reachable until they get a final
-  // home or are folded into other tabs.
-  {
-    key: "applications",
-    label: "Applications",
-    icon: navIcon(AppstoreOutlined),
-    path: "/jabali-admin/applications",
   },
   {
     key: "notifications",

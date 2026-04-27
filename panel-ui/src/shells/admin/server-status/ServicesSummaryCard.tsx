@@ -101,7 +101,7 @@ export function ServicesSummaryCard({ services }: Props) {
             {
               title: "Status",
               dataIndex: "active",
-              width: 60,
+              width: 120,
               render: (s: string) => statusIcon(s),
             },
             {
@@ -236,13 +236,15 @@ function prettyName(unit: string): string {
 function statusIcon(state: string) {
   switch (state) {
     case "active":
-      return <Tag color="green" icon={<CheckCircleOutlined />} bordered={false} />;
+      return <Tag color="green" icon={<CheckCircleOutlined />} bordered={false}>active</Tag>;
     case "failed":
+      return <Tag color="red" icon={<CloseOutlined />} bordered={false}>failed</Tag>;
     case "inactive":
-      return <Tag color="red" icon={<CloseOutlined />} bordered={false} />;
+      return <Tag color="red" icon={<CloseOutlined />} bordered={false}>inactive</Tag>;
     case "activating":
+      return <Tag color="orange" icon={<SyncOutlined spin />} bordered={false}>activating</Tag>;
     case "deactivating":
-      return <Tag color="orange" icon={<SyncOutlined spin />} bordered={false} />;
+      return <Tag color="orange" icon={<SyncOutlined spin />} bordered={false}>deactivating</Tag>;
     default:
       return <Tag color="default">{state}</Tag>;
   }

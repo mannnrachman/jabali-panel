@@ -405,6 +405,32 @@ test -x node_modules/.bin/tsc || {
 			}
 			return run("", "systemctl", "restart", "jabali-panel")
 		}},
+		{"sync malware stack", func() error {
+			// Source install.sh and re-run install_malware_stack so existing
+			// hosts converge on amendments to the M33 stack (ADR-0072) without
+			// manual SSH. Runs unconditionally — the function is fully
+			// idempotent (LMD install gated by version marker; clamav apt
+			// install gated by `command -v clamscan`; PMF tarball gated by
+			// presence of php.yar; systemd unit writes are install -m no-ops
+			// when content matches).
+			//
+			// install.sh has a BASH_SOURCE guard at its tail so sourcing it
+			// does NOT trigger main()'s full install — only the named
+			// function runs.
+			//
+			// Failure here does not block the update — malware stack is a
+			// post-deploy convergence step, not a service the panel depends
+			// on. Log and move on.
+			installSh := repoDir + "/install.sh"
+			if _, err := os.Stat(installSh); err != nil {
+				return nil
+			}
+			if err := run("", "bash", "-c",
+				"source "+installSh+" && install_malware_stack"); err != nil {
+				fmt.Printf("  (install_malware_stack failed: %v — continuing)\n", err)
+			}
+			return nil
+		}},
 	}
 
 	for _, s := range prelude {

@@ -36,7 +36,20 @@ func Parse(text string) Session {
 			if h, ok := parseHitLine(strings.TrimPrefix(line, "HIT:")); ok {
 				s.Hits = append(s.Hits, h)
 			}
+		default:
+			// LMD session.hits.<id> files use a different format with no
+			// HIT: prefix — one row per quarantined file:
+			//
+			//   {MD5}test.eicar : /home/u/x.txt => /usr/local/maldetect/quarantine/x.txt.NNN
+			//
+			// Try the quarantine-line shape on every otherwise-unmatched line.
+			if h, ok := parseQuarantineLine(line); ok {
+				s.Hits = append(s.Hits, h)
+			}
 		}
+	}
+	if s.TotalHits == 0 {
+		s.TotalHits = len(s.Hits)
 	}
 	return s
 }
@@ -58,4 +71,20 @@ func parseHitLine(rest string) (Hit, bool) {
 		return Hit{}, false
 	}
 	return Hit{Signature: m[1], OriginalPath: m[2]}, true
+}
+
+// quarantineRE matches the LMD session.hits.<id> per-file row:
+//
+//	{MD5}test.eicar : /home/u/x.txt => /usr/local/maldetect/quarantine/x.txt.NNN
+//
+// The leading {…} type tag is stripped from the signature so the UI
+// shows the same canonical "test.eicar" form as the HIT: format.
+var quarantineRE = regexp.MustCompile(`^\s*(?:\{[^}]+\})?\s*([A-Za-z0-9._:-]+)\s*:\s*(/[^\s]+)\s*=>\s*(/[^\s]+)\s*$`)
+
+func parseQuarantineLine(line string) (Hit, bool) {
+	m := quarantineRE.FindStringSubmatch(line)
+	if len(m) != 4 {
+		return Hit{}, false
+	}
+	return Hit{Signature: m[1], OriginalPath: m[2], QuarantinePath: m[3]}, true
 }

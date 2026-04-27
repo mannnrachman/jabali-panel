@@ -111,8 +111,9 @@ func main() {
 		hits := make([]commands.MaldetSessionHit, 0, len(s.Hits))
 		for _, h := range s.Hits {
 			hits = append(hits, commands.MaldetSessionHit{
-				OriginalPath: h.OriginalPath,
-				Signature:    h.Signature,
+				OriginalPath:   h.OriginalPath,
+				QuarantinePath: h.QuarantinePath,
+				Signature:      h.Signature,
 			})
 		}
 		return commands.DispatchMaldetSession(ctx, commands.MaldetSessionInput{

@@ -24,9 +24,9 @@
         "columnClass": null,
         "columnDescription": null,
         "queryLogin": "SELECT email_cached, password_hash FROM mailboxes WHERE email_cached = ? AND is_disabled = 0",
-        "queryRecipient": "SELECT email_cached, password_hash FROM mailboxes WHERE email_cached = ? AND is_disabled = 0",
+        "queryRecipient": "SELECT m.email_cached, m.password_hash FROM (SELECT ? AS lookup) input JOIN mailboxes m ON m.is_disabled = 0 AND (m.email_cached = input.lookup OR m.email_cached = (SELECT f.target FROM email_forwarders f JOIN domains d ON d.id = f.domain_id WHERE f.enabled = 1 AND f.type = 'alias' AND CONCAT(f.local_part, '@', d.name) = input.lookup LIMIT 1))",
         "queryMemberOf": null,
-        "queryEmailAliases": "SELECT f.target FROM email_forwarders f LEFT JOIN domains d ON d.id = f.domain_id LEFT JOIN mailboxes m ON m.id = f.mailbox_id WHERE f.enabled = 1 AND COALESCE(CASE WHEN f.type = 'alias' THEN CONCAT(f.local_part, '@', d.name) END, CASE WHEN f.type = 'external' THEN m.email_cached END) = ?"
+        "queryEmailAliases": "SELECT CONCAT(f.local_part, '@', d.name) AS alias FROM email_forwarders f JOIN domains d ON d.id = f.domain_id JOIN mailboxes m ON m.id = f.mailbox_id WHERE f.enabled = 1 AND f.type = 'alias' AND m.email_cached = ?"
       }
     }
   },
@@ -38,16 +38,6 @@
     "value": {
       "directoryId": "#sql-directory",
       "passwordHashAlgorithm": "bcrypt"
-    }
-  },
-
-  {
-    "_comment": "Idempotent refresh of queryEmailAliases on existing installs. The create above primaryKeyViolations on re-apply, leaving older fields stuck at whatever they were on first install. This update converges the field every run so schema evolution lands without a Stalwart rebuild. ADR-0073.",
-    "@type": "update",
-    "object": "x:Directory",
-    "id": "sql-directory",
-    "value": {
-      "queryEmailAliases": "SELECT f.target FROM email_forwarders f LEFT JOIN domains d ON d.id = f.domain_id LEFT JOIN mailboxes m ON m.id = f.mailbox_id WHERE f.enabled = 1 AND COALESCE(CASE WHEN f.type = 'alias' THEN CONCAT(f.local_part, '@', d.name) END, CASE WHEN f.type = 'external' THEN m.email_cached END) = ?"
     }
   },
 

@@ -25,7 +25,6 @@ import {
   Row,
   Select,
   Space,
-  Statistic,
   Switch,
   Table,
   Tabs,
@@ -40,8 +39,8 @@ import {
   FileTextOutlined,
   WarningOutlined,
   ThunderboltOutlined,
-  StopOutlined,
-  AlertOutlined,
+  SafetyOutlined,
+  BellOutlined,
 } from "@icons";
 
 import {
@@ -303,14 +302,14 @@ export const AdminSecurityCrowdsec = () => {
               hint="Scenario thresholds tripped (suspicious patterns)"
             />
             <MetricTile
-              icon={<StopOutlined />}
+              icon={<SafetyOutlined />}
               tint="#cf1322"
               label="Active decisions"
               value={metrics.data?.decisions_active ?? 0}
               hint="IPs currently banned / under captcha"
             />
             <MetricTile
-              icon={<AlertOutlined />}
+              icon={<BellOutlined />}
               tint="#13c2c2"
               label="Total alerts"
               value={metrics.data?.alerts_total ?? 0}

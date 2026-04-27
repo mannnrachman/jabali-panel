@@ -4920,11 +4920,14 @@ MONITOR_UNIT
   # jabali-maldet-monitor.service is OPT-IN (per ADR-0072 amendment 2).
   # Admin enables it via /jabali-admin/security?tab=malware Settings →
   # "Real-time scanning"; panel-api → agent reconciles the unit on toggle.
-  # On install we leave the unit installed but stopped + disabled. If it
-  # was previously enabled (older M33 default), respect that — the toggle
-  # state lives in malware_settings.realtime_enabled which migration
-  # 000082 flipped to 0; the reconciler will stop the unit on next boot
-  # if the admin has not re-enabled it. No auto-start here.
+  # We force-stop + disable here unconditionally — migration 000082 flips
+  # malware_settings.realtime_enabled to 0 in the DB, and there is no
+  # boot-time reconciler. If the unit was left enabled by an older M33
+  # build, leaving it running here would silently violate the admin's
+  # opt-out (DB says off, host says on, RAM keeps burning). Admin re-
+  # toggles via the UI to re-enable; that path calls
+  # security.malware.monitor.set_enabled which re-enables + starts.
+  systemctl disable --now jabali-maldet-monitor.service >/dev/null 2>&1 || true
 
   # PMF YARA build helper — flattens the PMF rule tree into a single file
   # appended to /usr/local/maldetect/sigs/rfxn.yara. maldet's clamscan

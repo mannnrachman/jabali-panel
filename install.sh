@@ -6950,8 +6950,15 @@ SQL
   _ok "OS packages (nginx, mariadb, pdns, php, node, …) left INSTALLED — remove with apt if desired"
 }
 
-if [[ -n "${_cli_uninstall:-}" ]]; then
-  uninstall
-else
-  main "$@"
+# Only execute main when this script is run directly (not sourced).
+# Sourcing was previously a foot-gun: `source install.sh; install_x`
+# re-ran the entire installer because main was unconditional. Caught
+# 2026-04-27 when sourcing for ad-hoc function invocation locked SSH
+# out of a live VM by re-provisioning sshd_config + authorized_keys.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  if [[ -n "${_cli_uninstall:-}" ]]; then
+    uninstall
+  else
+    main "$@"
+  fi
 fi

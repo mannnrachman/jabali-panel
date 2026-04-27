@@ -21,10 +21,21 @@ import (
 // fast rather than holding the dispatcher hostage.
 const DefaultHTTPTimeout = 10 * time.Second
 
-// newHTTPClient builds the shared *http.Client every HTTP-based sender
-// uses. Exposed (lowercase, package-private) so tests can poke a
-// transport via httptest.NewServer and still exercise the real
-// request-shape code.
+// newHTTPClient builds a *http.Client every HTTP-based sender uses.
+// Exposed (lowercase, package-private) so tests can poke a transport
+// via httptest.NewServer and still exercise the real request-shape
+// code.
+//
+// Each call returns a client with its OWN Transport (cloned from the
+// stdlib default). Without this, every sender silently shares
+// http.DefaultTransport — fine in production where senders are
+// long-lived singletons, but in CI under t.Parallel + -race the shared
+// idle-conn pool gets stomped: when one parallel test's httptest
+// Server.Close() races with another test's in-flight Post, the second
+// test fails with `transport connection broken: http: CloseIdleConnections
+// called`. Per-client transports isolate the pool so a tear-down on
+// one server can't kill another sender's request.
 func newHTTPClient() *http.Client {
-	return &http.Client{Timeout: DefaultHTTPTimeout}
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	return &http.Client{Timeout: DefaultHTTPTimeout, Transport: t}
 }

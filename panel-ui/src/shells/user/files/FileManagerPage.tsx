@@ -38,6 +38,7 @@ import {
 } from "antd";
 import type { DataNode } from "antd/es/tree";
 import {
+  DeleteOutlined,
   DownloadOutlined,
   DownOutlined,
   EditOutlined,
@@ -843,6 +844,7 @@ export const FileManagerPage = () => {
     {
       key: "delete",
       danger: true,
+      icon: <DeleteOutlined />,
       label: "Delete",
       onClick: () => confirmDelete(entry),
     },

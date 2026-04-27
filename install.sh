@@ -4808,6 +4808,98 @@ fs.inotify.max_user_watches = 524288
 SYSCTL_MALWARE
   sysctl --system >/dev/null 2>&1 || true
 
+  # M33 inotify monitor unit — runs `maldet --monitor USERS` to watch
+  # tenant docroots in real time. Hardened per CONVENTIONS.md
+  # non-negotiable: ProtectSystem=strict, NoNewPrivileges, capability
+  # bound. ReadWritePaths covers the dirs maldet must mutate.
+  cat >/etc/systemd/system/jabali-maldet-monitor.service <<'MONITOR_UNIT'
+[Unit]
+Description=Jabali maldet inotify monitor (M33)
+Documentation=file:///etc/jabali/maldet/conf.maldet.d/00-jabali.conf
+After=clamav-daemon.service jabali-agent.service
+Wants=clamav-daemon.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/maldetect/maldet --monitor USERS
+ExecReload=/usr/local/maldetect/maldet --monitor RELOAD
+Restart=always
+RestartSec=10
+User=root
+Group=root
+ProtectSystem=strict
+ReadWritePaths=/home /usr/local/maldetect /var/log/maldet /run /tmp
+ProtectKernelTunables=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_FOWNER CAP_KILL CAP_SYS_PTRACE
+PrivateTmp=no
+
+[Install]
+WantedBy=multi-user.target
+MONITOR_UNIT
+
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  if [[ -f "$lmd_marker" ]]; then
+    systemctl enable --now jabali-maldet-monitor.service >/dev/null 2>&1 || \
+      _warn "jabali-maldet-monitor failed to start — check 'journalctl -u jabali-maldet-monitor'"
+  fi
+
+  # M33 systemd timers — daily signature update + daily scan + retention purge.
+  cat >/etc/systemd/system/jabali-maldet-update-signatures.service <<'SIG_UNIT'
+[Unit]
+Description=Jabali maldet + ClamAV signature update (M33)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c '/usr/bin/freshclam --quiet ; /usr/local/maldetect/maldet -u'
+Nice=15
+IOSchedulingClass=idle
+SIG_UNIT
+
+  cat >/etc/systemd/system/jabali-maldet-update-signatures.timer <<'SIG_TIMER'
+[Unit]
+Description=Daily Jabali maldet + ClamAV signature pull (M33)
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target
+SIG_TIMER
+
+  cat >/etc/systemd/system/jabali-maldet-scan-daily.service <<'SCAN_UNIT'
+[Unit]
+Description=Jabali maldet daily scan of all user homes (M33)
+After=clamav-daemon.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/maldetect/maldet -b -r /home 1
+Nice=19
+IOSchedulingClass=idle
+SCAN_UNIT
+
+  cat >/etc/systemd/system/jabali-maldet-scan-daily.timer <<'SCAN_TIMER'
+[Unit]
+Description=Daily Jabali maldet scan (M33)
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target
+SCAN_TIMER
+
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl enable --now jabali-maldet-update-signatures.timer >/dev/null 2>&1 || true
+  systemctl enable --now jabali-maldet-scan-daily.timer >/dev/null 2>&1 || true
+
   _ok "malware stack provisioned: clamav $(clamscan --version 2>/dev/null | head -1 | cut -d/ -f1), maldet $(maldet --version 2>/dev/null | head -1 || echo 'pending')"
 }
 

@@ -516,13 +516,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// stops them alongside the dispatcher.
 	if deps.NotificationQueue != nil {
 		eventsources.Start(ctx, eventsources.Deps{
-			Queue:      deps.NotificationQueue,
-			History:    deps.NotificationHistory,
-			SSLCerts:   deps.SSLCerts,
-			Log:        log,
-			Users:      deps.Users,
-			Agent:      deps.Agent,
-			QuotaMount: deps.QuotaMount,
+			Queue:           deps.NotificationQueue,
+			History:         deps.NotificationHistory,
+			SSLCerts:        deps.SSLCerts,
+			Log:             log,
+			Users:           deps.Users,
+			Agent:           deps.Agent,
+			QuotaMount:      deps.QuotaMount,
+			MalwareEvents:   deps.MalwareEvents,
+			MalwareSettings: deps.MalwareSettings,
 		})
 	}
 

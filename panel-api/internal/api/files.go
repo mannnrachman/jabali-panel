@@ -27,9 +27,9 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-// uploadStagingPrefix is where panel-api writes incoming uploads
-// before handing off to the agent's files.ingest. MUST stay in sync
-// with the prefix gate in panel-agent/internal/commands/files_ingest.go.
+// uploadStagingDir is where panel-api writes incoming uploads before
+// handing off to the agent's files.ingest. MUST stay in sync with the
+// prefix gate in panel-agent/internal/commands/files_ingest.go.
 //
 // Why /var/lib/jabali-uploads and not /tmp: both jabali-panel-api and
 // jabali-agent run with PrivateTmp=true, so each has its own per-unit
@@ -37,8 +37,23 @@ import (
 // agent, breaking every upload with `open_tmp: no such file or directory`.
 // The shared dir lives outside the tmp sandbox so both services see
 // the same on-disk path. Created at install time owned jabali:jabali
-// 0750 with /var/lib/jabali-uploads in panel-api's ReadWritePaths.
-const uploadStagingPrefix = "/var/lib/jabali-uploads/jabali-upload-"
+// 0750 with /var/lib/jabali-uploads in panel-api's ReadWritePaths;
+// ensureUploadStagingDir() also creates it on first upload as a
+// belt-and-braces (test environments don't run install.sh).
+// var (not const) so tests can point it at t.TempDir() — production
+// install.sh creates /var/lib/jabali-uploads at install time and
+// systemd unit ReadWritePaths grants panel-api access to that exact
+// path; rewriting it at runtime would break that grant.
+var uploadStagingDir = "/var/lib/jabali-uploads"
+
+func uploadStagingPrefix() string { return uploadStagingDir + "/jabali-upload-" }
+
+// ensureUploadStagingDir is called from upload paths before any
+// OpenFile under uploadStagingPrefix(). MkdirAll is idempotent — a
+// no-op when install.sh's install -d already created the dir.
+func ensureUploadStagingDir() error {
+	return os.MkdirAll(uploadStagingDir, 0o750)
+}
 
 // Agent param struct types. JSON tags must match panel-agent/internal/commands/files_*.go
 // exactly — see files_wire_test.go for the drift-guard test.
@@ -580,7 +595,11 @@ func (h *filesHandler) upload(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
 		return
 	}
-	tmpPath := uploadStagingPrefix + hex.EncodeToString(idBytes)
+	if err := ensureUploadStagingDir(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
+		return
+	}
+	tmpPath := uploadStagingPrefix() + hex.EncodeToString(idBytes)
 	tmpFile, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
@@ -858,7 +877,11 @@ func (h *filesHandler) uploadChunk(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_offset"})
 		return
 	}
-	tmpPath := uploadStagingPrefix + uploadID
+	if err := ensureUploadStagingDir(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
+		return
+	}
+	tmpPath := uploadStagingPrefix() + uploadID
 
 	// Open for read-write-create; APPEND is wrong here because the
 	// client may re-send a chunk after a network blip — we want to
@@ -926,7 +949,7 @@ func (h *filesHandler) uploadChunkStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_upload_id"})
 		return
 	}
-	tmpPath := uploadStagingPrefix + uploadID
+	tmpPath := uploadStagingPrefix() + uploadID
 	info, err := os.Stat(tmpPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

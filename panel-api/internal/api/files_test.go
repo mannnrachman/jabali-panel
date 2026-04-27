@@ -23,6 +23,13 @@ import (
 // a pre-baked mockAgent. userID "" means "no claims" (tests 401).
 func setupFilesRouter(t *testing.T, userID string, agent *mockAgent) *gin.Engine {
 	t.Helper()
+	// Redirect upload staging to a per-test tmpdir; the production path
+	// (/var/lib/jabali-uploads) is created by install.sh and isn't
+	// writable from `go test`.
+	prev := uploadStagingDir
+	uploadStagingDir = t.TempDir()
+	t.Cleanup(func() { uploadStagingDir = prev })
+
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	v1 := r.Group("/api/v1")

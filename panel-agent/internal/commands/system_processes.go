@@ -93,14 +93,21 @@ func systemProcessesHandler(_ context.Context, _ json.RawMessage) (any, error) {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("read %s: %v", procDir, err)}
 	}
 
-	// First pass — collect pid set + sample 1 jiffies for every pid we
-	// can read. CPU sample is best-effort; pids whose stat is too short
-	// to parse jiffies (or doesn't exist) still get included with
-	// cpu_percent=0 so a fixture-style /proc tree with truncated stat
-	// files still reports population stats.
+	// First pass — collect pid set + initial state sample + sample 1
+	// jiffies for every pid we can read. CPU sample is best-effort;
+	// pids whose stat is too short to parse jiffies (or doesn't exist)
+	// still get included with cpu_percent=0 so a fixture-style /proc
+	// tree with truncated stat files still reports population stats.
+	//
+	// State is captured here (NOT in the second pass) because the
+	// 200ms sample interval is long enough that almost every R process
+	// has gone back to S by the time the second pass reads /proc —
+	// running counts collapsed to 0 in production. We classify off the
+	// first pass's snapshot, which matches `top`'s observation window.
 	uids := newUIDLookup()
 	pids := []int{}
 	sample1 := map[int]procSample{}
+	state1 := map[int]string{}
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -112,6 +119,11 @@ func systemProcessesHandler(_ context.Context, _ json.RawMessage) (any, error) {
 		pids = append(pids, pid)
 		if s, ok := readProcCPUSample(procDir, pid); ok {
 			sample1[pid] = s
+		}
+		if raw, err := os.ReadFile(procDir + "/" + entry.Name() + "/stat"); err == nil {
+			if _, st, err := parseProcStat(string(raw)); err == nil {
+				state1[pid] = st
+			}
 		}
 	}
 
@@ -146,7 +158,13 @@ func systemProcessesHandler(_ context.Context, _ json.RawMessage) (any, error) {
 			}
 		}
 		resp.Total++
-		switch info.State {
+		// Prefer the first-pass state (closer to a `top`-style snapshot),
+		// fall back to second-pass state if first-pass was missing.
+		classifyState := info.State
+		if s, ok := state1[pid]; ok && s != "" {
+			classifyState = s
+		}
+		switch classifyState {
 		case "R":
 			resp.Running++
 		case "S", "D", "I":

@@ -1,6 +1,8 @@
-// ProcessesCard — header counts + two side-by-side top-10 tables
-// (CPU% and RSS) with a Kill icon-button per row. The agent owns the
-// denylist; the UI just confirms before posting.
+// ProcessesCard — header counts + a single sortable top-processes
+// table merging top_by_cpu + top_by_rss (deduped by pid). CPU and
+// RSS columns each carry a sorter; default sort is CPU desc. Per-row
+// Kill icon buttons (SIGTERM / SIGKILL) with confirm Modal. The agent
+// owns the denylist.
 import { useState } from "react";
 import { Button, Card, Modal, Space, Statistic, Table, Tooltip, message } from "antd";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -65,22 +67,7 @@ export function ProcessesCard({ processes }: Props) {
           />
         </Space>
         {expanded && p ? (
-          <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "1fr", gap: 16 }}>
-            <ProcTable
-              title="Top 10 by CPU"
-              valueLabel="CPU"
-              rows={p.top_by_cpu ?? []}
-              valueRender={(r) => `${(r.cpu_percent ?? 0).toFixed(1)}%`}
-              onKill={askKill}
-            />
-            <ProcTable
-              title="Top 10 by RAM"
-              valueLabel="RSS"
-              rows={p.top_by_rss ?? []}
-              valueRender={(r) => humanKB(r.rss_kb)}
-              onKill={askKill}
-            />
-          </div>
+          <ProcTable rows={mergeTops(p)} onKill={askKill} />
         ) : null}
       </Card>
       <Modal
@@ -102,64 +89,83 @@ export function ProcessesCard({ processes }: Props) {
 }
 
 interface ProcTableProps {
-  title: string;
-  valueLabel: string;
   rows: ProcessTop[];
-  valueRender: (r: ProcessTop) => string;
   onKill: (r: ProcessTop, force: boolean) => void;
 }
 
-function ProcTable({ title, valueLabel, rows, valueRender, onKill }: ProcTableProps) {
+function ProcTable({ rows, onKill }: ProcTableProps) {
   return (
-    <div>
-      <div style={{ marginBottom: 6, fontWeight: 500 }}>{title}</div>
-      <Table<ProcessTop>
-        rowKey="pid"
-        size="small"
-        dataSource={rows}
-        pagination={false}
-        scroll={{ x: "max-content" }}
-        columns={[
-          { title: "PID", dataIndex: "pid", width: 70 },
-          { title: "Comm", dataIndex: "comm", ellipsis: true },
-          { title: "User", dataIndex: "user", width: 90 },
-          {
-            title: valueLabel,
-            width: 90,
-            render: (_: unknown, r: ProcessTop) => valueRender(r),
-          },
-          {
-            title: "",
-            width: 70,
-            align: "right" as const,
-            render: (_: unknown, r: ProcessTop) => (
-              <Space size={4}>
-                <Tooltip title="SIGTERM (graceful)">
-                  <Button
-                    size="small"
-                    type="text"
-                    icon={<CloseOutlined />}
-                    onClick={() => onKill(r, false)}
-                    aria-label="SIGTERM"
-                  />
-                </Tooltip>
-                <Tooltip title="SIGKILL (force)">
-                  <Button
-                    size="small"
-                    type="text"
-                    danger
-                    icon={<ThunderboltOutlined />}
-                    onClick={() => onKill(r, true)}
-                    aria-label="SIGKILL"
-                  />
-                </Tooltip>
-              </Space>
-            ),
-          },
-        ]}
-      />
-    </div>
+    <Table<ProcessTop>
+      rowKey="pid"
+      size="small"
+      style={{ marginTop: 12 }}
+      dataSource={rows}
+      pagination={false}
+      scroll={{ x: "max-content" }}
+      columns={[
+        { title: "PID", dataIndex: "pid", width: 80, sorter: (a, b) => a.pid - b.pid },
+        { title: "Comm", dataIndex: "comm", ellipsis: true, sorter: (a, b) => a.comm.localeCompare(b.comm) },
+        { title: "User", dataIndex: "user", width: 110, sorter: (a, b) => a.user.localeCompare(b.user) },
+        {
+          title: "CPU",
+          dataIndex: "cpu_percent",
+          width: 90,
+          sorter: (a, b) => (a.cpu_percent ?? 0) - (b.cpu_percent ?? 0),
+          defaultSortOrder: "descend" as const,
+          render: (_: unknown, r: ProcessTop) => `${(r.cpu_percent ?? 0).toFixed(1)}%`,
+        },
+        {
+          title: "RAM",
+          dataIndex: "rss_kb",
+          width: 90,
+          sorter: (a, b) => (a.rss_kb ?? 0) - (b.rss_kb ?? 0),
+          render: (_: unknown, r: ProcessTop) => humanKB(r.rss_kb),
+        },
+        {
+          title: "",
+          width: 70,
+          align: "right" as const,
+          render: (_: unknown, r: ProcessTop) => (
+            <Space size={4}>
+              <Tooltip title="SIGTERM (graceful)">
+                <Button
+                  size="small"
+                  type="text"
+                  icon={<CloseOutlined />}
+                  onClick={() => onKill(r, false)}
+                  aria-label="SIGTERM"
+                />
+              </Tooltip>
+              <Tooltip title="SIGKILL (force)">
+                <Button
+                  size="small"
+                  type="text"
+                  danger
+                  icon={<ThunderboltOutlined />}
+                  onClick={() => onKill(r, true)}
+                  aria-label="SIGKILL"
+                />
+              </Tooltip>
+            </Space>
+          ),
+        },
+      ]}
+    />
   );
+}
+
+// mergeTops returns the union of top_by_cpu + top_by_rss deduped by
+// pid. A high-RAM but low-CPU process and a high-CPU but low-RAM
+// process should both surface in the same sortable table; merging
+// the two server-side lists in the client is the cheapest way to
+// get there without bloating the polling payload.
+function mergeTops(p: ProcessesSlice): ProcessTop[] {
+  const seen = new Map<number, ProcessTop>();
+  for (const r of p.top_by_cpu ?? []) seen.set(r.pid, r);
+  for (const r of p.top_by_rss ?? []) {
+    if (!seen.has(r.pid)) seen.set(r.pid, r);
+  }
+  return Array.from(seen.values());
 }
 
 function humanKB(kb: number): string {

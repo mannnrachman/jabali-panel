@@ -661,6 +661,9 @@ func startNotificationDispatcher(parent context.Context, deps app.Deps, log *slo
 	if err == nil && deps.NotificationEventSettings != nil {
 		d.WithEventSettings(deps.NotificationEventSettings)
 	}
+	if err == nil && deps.Users != nil {
+		d.WithUsers(deps.Users)
+	}
 	if err != nil {
 		log.Error("notifications dispatcher: construction failed", "err", err)
 		return nil, nil

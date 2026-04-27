@@ -480,6 +480,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterNotificationsWebPushRoutes(v1, api.NotificationsWebPushHandlerConfig{
 				ServerSettings: deps.ServerSettings,
 				Subs:           deps.WebPushSubs,
+				Channels:       deps.NotificationChannels,
 				Log:            deps.Log,
 			})
 		}

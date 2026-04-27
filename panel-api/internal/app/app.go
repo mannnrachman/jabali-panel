@@ -406,6 +406,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		api.RegisterAdminServicesRoutes(v1, api.AdminServicesHandlerConfig{
 			Agent: deps.Agent,
 		})
+		// Admin: process kill (Server Status page). POST /admin/processes/:pid/kill.
+		api.RegisterAdminProcessesRoutes(v1, api.AdminProcessesHandlerConfig{
+			Agent: deps.Agent,
+		})
 		// Admin: dashboard counts (one-shot users/domains/mailboxes totals).
 		api.RegisterAdminCountsRoutes(v1, api.AdminCountsHandlerConfig{
 			DB: deps.DB,

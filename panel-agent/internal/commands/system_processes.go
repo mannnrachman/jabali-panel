@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 )
@@ -23,22 +24,27 @@ type SystemProcessesResponse struct {
 	Stopped  int               `json:"stopped"`
 	Other    int               `json:"other"`
 	TopByRSS []ProcessTopEntry `json:"top_by_rss"`
+	TopByCPU []ProcessTopEntry `json:"top_by_cpu"`
 }
 
-// ProcessTopEntry is one row of the top-N-by-RSS list. CPU% is omitted
-// in v1 — computing it correctly needs two /proc/<pid>/stat samples
-// over an interval and the agent doesn't keep that state per pid yet.
-// We surface RSS and command, which are the fields operators actually
-// scan first.
+// ProcessTopEntry is one row of the top-N list. CPU% is computed from
+// two /proc/<pid>/stat samples taken `cpuSampleInterval` apart inside
+// the same call — no per-call state in the agent. RSS comes from
+// /proc/<pid>/statm. CPUPercent is normalized to the host's CPU count
+// so a single fully-pegged core on an 8-core box reads as ~12.5%.
 type ProcessTopEntry struct {
-	PID    int    `json:"pid"`
-	Comm   string `json:"comm"`
-	User   string `json:"user"`
-	RSSKB  uint64 `json:"rss_kb"`
-	State  string `json:"state"`
+	PID        int     `json:"pid"`
+	Comm       string  `json:"comm"`
+	User       string  `json:"user"`
+	RSSKB      uint64  `json:"rss_kb"`
+	State      string  `json:"state"`
+	CPUPercent float64 `json:"cpu_percent"`
 }
 
-const defaultTopN = 10
+const (
+	defaultTopN        = 10
+	cpuSampleInterval  = 200 * time.Millisecond
+)
 
 // procDir is the base for /proc reads. Tests override.
 var procDir = "/proc"
@@ -72,15 +78,29 @@ func (u *uidLookup) name(uid uint32) string {
 	return usr.Username
 }
 
+// procSample captures the per-pid CPU jiffies snapshot taken at time t.
+// Two such samples taken cpuSampleInterval apart let us compute the
+// per-process CPU% without keeping any state across handler calls.
+type procSample struct {
+	utime  uint64
+	stime  uint64
+	atTime time.Time
+}
+
 func systemProcessesHandler(_ context.Context, _ json.RawMessage) (any, error) {
 	entries, err := os.ReadDir(procDir)
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("read %s: %v", procDir, err)}
 	}
-	uids := newUIDLookup()
-	var procs []ProcessTopEntry
-	resp := SystemProcessesResponse{}
 
+	// First pass — collect pid set + sample 1 jiffies for every pid we
+	// can read. CPU sample is best-effort; pids whose stat is too short
+	// to parse jiffies (or doesn't exist) still get included with
+	// cpu_percent=0 so a fixture-style /proc tree with truncated stat
+	// files still reports population stats.
+	uids := newUIDLookup()
+	pids := []int{}
+	sample1 := map[int]procSample{}
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -89,11 +109,41 @@ func systemProcessesHandler(_ context.Context, _ json.RawMessage) (any, error) {
 		if err != nil {
 			continue
 		}
+		pids = append(pids, pid)
+		if s, ok := readProcCPUSample(procDir, pid); ok {
+			sample1[pid] = s
+		}
+	}
+
+	// Sleep one sampling window then take sample 2 + the rest of the
+	// per-process info (RSS, state, comm, uid).
+	time.Sleep(cpuSampleInterval)
+
+	resp := SystemProcessesResponse{}
+	procs := make([]ProcessTopEntry, 0, len(pids))
+	clkTck := readClkTck()
+	cpuCount := readCPUCount(procDir + "/cpuinfo")
+	if cpuCount < 1 {
+		cpuCount = 1
+	}
+	for _, pid := range pids {
 		info, err := readProcInfo(procDir, pid, uids)
 		if err != nil {
-			// Process exited between readdir and our open — common,
-			// not an error.
 			continue
+		}
+		if s2, ok := readProcCPUSample(procDir, pid); ok {
+			s1, hasSample1 := sample1[pid]
+			deltaJiffies := float64((s2.utime + s2.stime) - (s1.utime + s1.stime))
+			deltaSec := s2.atTime.Sub(s1.atTime).Seconds()
+			if hasSample1 && clkTck > 0 && deltaSec > 0 {
+				// Per-core CPU% then divide by cpuCount so a pegged
+				// single thread on an 8-core box reads as ~12.5%, not
+				// 100%.
+				info.CPUPercent = (deltaJiffies / float64(clkTck)) / deltaSec * 100.0 / float64(cpuCount)
+				if info.CPUPercent < 0 {
+					info.CPUPercent = 0
+				}
+			}
 		}
 		resp.Total++
 		switch info.State {
@@ -114,11 +164,31 @@ func systemProcessesHandler(_ context.Context, _ json.RawMessage) (any, error) {
 		procs = append(procs, info)
 	}
 
-	sort.Slice(procs, func(i, j int) bool { return procs[i].RSSKB > procs[j].RSSKB })
-	if len(procs) > defaultTopN {
-		procs = procs[:defaultTopN]
+	// Top-N by RSS.
+	byRSS := make([]ProcessTopEntry, len(procs))
+	copy(byRSS, procs)
+	sort.Slice(byRSS, func(i, j int) bool { return byRSS[i].RSSKB > byRSS[j].RSSKB })
+	if len(byRSS) > defaultTopN {
+		byRSS = byRSS[:defaultTopN]
 	}
-	resp.TopByRSS = procs
+	resp.TopByRSS = byRSS
+
+	// Top-N by CPU%. Stable secondary by RSS so two zero-CPU rows have
+	// a deterministic order (helps the UI not jitter when pollers
+	// converge).
+	byCPU := make([]ProcessTopEntry, len(procs))
+	copy(byCPU, procs)
+	sort.Slice(byCPU, func(i, j int) bool {
+		if byCPU[i].CPUPercent != byCPU[j].CPUPercent {
+			return byCPU[i].CPUPercent > byCPU[j].CPUPercent
+		}
+		return byCPU[i].RSSKB > byCPU[j].RSSKB
+	})
+	if len(byCPU) > defaultTopN {
+		byCPU = byCPU[:defaultTopN]
+	}
+	resp.TopByCPU = byCPU
+
 	return resp, nil
 }
 
@@ -157,6 +227,61 @@ func readProcInfo(base string, pid int, uids *uidLookup) (ProcessTopEntry, error
 		RSSKB: rssKB,
 		State: state,
 	}, nil
+}
+
+// readProcCPUSample reads /proc/<pid>/stat and returns utime+stime
+// jiffies plus the wall-clock time the read happened. Returns false
+// when the pid vanished mid-call.
+func readProcCPUSample(base string, pid int) (procSample, bool) {
+	raw, err := os.ReadFile(base + "/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return procSample{}, false
+	}
+	utime, stime, ok := parseProcStatCPU(string(raw))
+	if !ok {
+		return procSample{}, false
+	}
+	return procSample{utime: utime, stime: stime, atTime: time.Now()}, true
+}
+
+// parseProcStatCPU pulls fields 14 (utime) + 15 (stime) from
+// /proc/<pid>/stat. comm in field 2 may contain spaces, so split on
+// the LAST ')' first.
+func parseProcStatCPU(content string) (utime, stime uint64, ok bool) {
+	close := strings.LastIndexByte(content, ')')
+	if close < 0 {
+		return 0, 0, false
+	}
+	rest := strings.TrimSpace(content[close+1:])
+	fields := strings.Fields(rest)
+	// state(1) ppid(2) pgrp(3) session(4) tty(5) tpgid(6) flags(7)
+	// minflt(8) cminflt(9) majflt(10) cmajflt(11) utime(12) stime(13)
+	// (after the trailing-paren split, fields are 0-indexed: utime=11, stime=12)
+	if len(fields) < 13 {
+		return 0, 0, false
+	}
+	u, err := strconv.ParseUint(fields[11], 10, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+	s, err := strconv.ParseUint(fields[12], 10, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+	return u, s, true
+}
+
+// readClkTck returns the kernel's CLOCKS_PER_SEC (ticks/sec). Linux
+// almost always exports 100. We hardcode the fallback for safety —
+// /proc doesn't expose it directly so syscall would be the proper
+// path, but we're inside a goroutine and don't want a libc dance.
+var clkTckOverride int64 = 0
+
+func readClkTck() int64 {
+	if clkTckOverride > 0 {
+		return clkTckOverride
+	}
+	return 100
 }
 
 // parseProcStat extracts comm + state from /proc/<pid>/stat. The format
@@ -219,6 +344,25 @@ func readProcStatusUID(base, pid string) uint32 {
 		return uint32(v)
 	}
 	return 0
+}
+
+// readCPUCount counts "processor" lines in /proc/cpuinfo. Defined here
+// (not imported) so this package stays self-contained for tests.
+func readCPUCount(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 1
+	}
+	count := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "processor") {
+			count++
+		}
+	}
+	if count < 1 {
+		count = 1
+	}
+	return count
 }
 
 func init() {

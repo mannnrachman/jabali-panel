@@ -106,6 +106,7 @@ export interface ProcessesSlice {
   stopped: number;
   other: number;
   top_by_rss: ProcessTop[];
+  top_by_cpu: ProcessTop[];
 }
 
 export interface ProcessTop {
@@ -114,6 +115,7 @@ export interface ProcessTop {
   user: string;
   rss_kb: number;
   state: string;
+  cpu_percent: number;
 }
 
 export interface ServicesSlice {

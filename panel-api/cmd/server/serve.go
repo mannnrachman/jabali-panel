@@ -237,10 +237,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.PanelCerts = panelCertRepo
 		rec.WithPanelCertificate(panelCertRepo, services.NewPanelCertRoutability())
 
-		// M33 (ADR-0067): malware detection repos. Five repos wired
+		// M33 (ADR-0072): malware detection repos. Five repos wired
 		// together — RegisterSecurityMalwareRoutes activates only when
 		// all five are non-nil. Idempotent EnsureDefault on first /settings
-		// access seeds the singleton row if migration 000076 hasn't run.
+		// access seeds the singleton row if migration 000080 hasn't run.
 		deps.MalwareQuarantine = repository.NewMalwareQuarantineRepository(sharedDB)
 		deps.MalwareEvents = repository.NewMalwareEventRepository(sharedDB)
 		deps.MalwareSettings = repository.NewMalwareSettingsRepository(sharedDB)

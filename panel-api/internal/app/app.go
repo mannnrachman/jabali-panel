@@ -76,7 +76,7 @@ type Deps struct {
 	// registers /admin/panel-certificate when set; nil keeps the routes
 	// off (lab installs / older test wiring).
 	PanelCerts          repository.PanelCertificateRepository
-	// M33 malware detection repos (ADR-0067). All five are wired
+	// M33 malware detection repos (ADR-0072). All five are wired
 	// together — nil on any disables RegisterSecurityMalwareRoutes.
 	MalwareQuarantine   repository.MalwareQuarantineRepository
 	MalwareEvents       repository.MalwareEventRepository
@@ -500,7 +500,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterSecurityCrowdSecRoutes(v1, deps.Agent, deps.ServerSettings)
 			api.RegisterSecurityAppSecRoutes(v1, deps.Agent, deps.ServerSettings)
 			api.RegisterSecurityUFWRoutes(v1, deps.Agent)
-			// M33 malware tab — ADR-0067. All five malware repos must be
+			// M33 malware tab — ADR-0072. All five malware repos must be
 			// wired or RegisterSecurityMalwareRoutes is skipped (older test
 			// wiring without the M33 graph). Tab still renders empty state.
 			if deps.MalwareQuarantine != nil && deps.MalwareEvents != nil &&

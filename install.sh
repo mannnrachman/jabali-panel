@@ -4679,7 +4679,7 @@ cleanup_modsecurity() {
 
 install_malware_stack() {
   # M33 — ClamAV + Linux Malware Detect + YARA + Tetragon stack.
-  # ADR-0067. Inotify monitor unit + Tetragon land in M33 wave C/D
+  # ADR-0072. Inotify monitor unit + Tetragon land in M33 wave C/D
   # follow-ups; this function provisions the binaries + drop-in
   # config + signature DBs only.
   #

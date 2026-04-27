@@ -3,7 +3,7 @@
 // as a malware ingest payload to panel-api over loopback.
 //
 // Runs as its own systemd unit (jabali-tetragon-relay.service) so
-// the agent stays focused on UDS request/response. M33 ADR-0067.
+// the agent stays focused on UDS request/response. M33 ADR-0072.
 package main
 
 import (

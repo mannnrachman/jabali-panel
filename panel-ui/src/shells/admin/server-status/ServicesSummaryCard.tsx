@@ -20,10 +20,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircleOutlined,
   CloseOutlined,
+  PauseCircleOutlined,
   PlayCircleOutlined,
   PoweroffOutlined,
   ReloadOutlined,
-  StopOutlined,
   SyncOutlined,
 } from "@icons";
 
@@ -192,7 +192,7 @@ function ServiceActions({ service, onAction }: ServiceActionsProps) {
                 size="small"
                 type="text"
                 danger
-                icon={<StopOutlined />}
+                icon={<PauseCircleOutlined />}
                 onClick={() => onAction(service.unit, "stop")}
                 aria-label="Stop"
               />

@@ -16,6 +16,7 @@
 //   E2E_USERNAME  admin@example.com
 //   E2E_PASSWORD  ...
 
+import { execFileSync } from "node:child_process";
 import { expect, test, type Page } from "@playwright/test";
 
 const SKIP_REASON =
@@ -203,6 +204,79 @@ if (SKIP_REASON) {
       await expect(
         page.getByText(/Firewall is (enabled|disabled)|Add rule|UFW/i).first(),
       ).toBeVisible({ timeout: 15_000 });
+
+      // ---- live malware-detection smoke -----------------------------------
+      //
+      // Plants an EICAR test file in a tenant docroot via SSH, waits for
+      // LMD's inotify monitor to quarantine it, then confirms the row
+      // surfaces in the Quarantine UI tab. Catches the full pipeline:
+      //   docroot write → inotify → LMD quarantine → sessionwatcher →
+      //   panel-api ingest → quarantine row → UI render.
+      //
+      // Inlined into the walkthrough (not a separate test) because Kratos
+      // rate-limits login at 5/min and the test runner only gets one
+      // session per spec.
+      //
+      // Gated on E2E_VM_HOST being set.
+      const vmHost = process.env.E2E_VM_HOST || "";
+      if (vmHost) {
+        const vmDocroot =
+          process.env.E2E_VM_DOCROOT ||
+          "/home/shukivaknin/domains/123123.com/public_html";
+        const sshUser = process.env.E2E_VM_SSH_USER || "root";
+
+        const eicar =
+          'X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*';
+        const filename = `eicar-smoke-${Date.now()}.txt`;
+        const fullPath = `${vmDocroot}/${filename}`;
+        const remoteCmd = [
+          `echo -n '${eicar}' > '${fullPath}'`,
+          `chown shukivaknin:shukivaknin '${fullPath}' 2>/dev/null || true`,
+        ].join(" && ");
+
+        execFileSync(
+          "ssh",
+          [
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "BatchMode=yes",
+            `${sshUser}@${vmHost}`,
+            remoteCmd,
+          ],
+          { encoding: "utf8" },
+        );
+
+        // LMD inotify takes ~5–15s to fire. Re-load the malware tab + click
+        // Quarantine sub-tab every 5s up to 90s. Click (not URL ?sub=)
+        // because the malware tab doesn't read the sub query param —
+        // sub-tab state is purely AntD Tabs activeKey.
+        const deadline = Date.now() + 90_000;
+        let found = false;
+        while (Date.now() < deadline && !found) {
+          await gotoSecurity(page, "malware");
+          await page.getByRole("tab", { name: /^Quarantine$/i }).click();
+          await page.waitForLoadState("networkidle");
+          if (
+            await page
+              .getByText(filename, { exact: false })
+              .first()
+              .isVisible()
+              .catch(() => false)
+          ) {
+            found = true;
+            break;
+          }
+          await page.waitForTimeout(5_000);
+        }
+        expect(
+          found,
+          `EICAR file '${filename}' did not appear in quarantine within 90s`,
+        ).toBe(true);
+        // Signature column should carry the well-known EICAR string —
+        // proves the row came from maldet, not some unrelated quarantine.
+        await expect(page.getByText(/test\.test\.eicar/i).first()).toBeVisible();
+      }
     });
   });
 }

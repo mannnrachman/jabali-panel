@@ -240,7 +240,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// M33 (ADR-0072): malware detection repos. Five repos wired
 		// together — RegisterSecurityMalwareRoutes activates only when
 		// all five are non-nil. Idempotent EnsureDefault on first /settings
-		// access seeds the singleton row if migration 000080 hasn't run.
+		// access seeds the singleton row if migration 000081 hasn't run.
 		deps.MalwareQuarantine = repository.NewMalwareQuarantineRepository(sharedDB)
 		deps.MalwareEvents = repository.NewMalwareEventRepository(sharedDB)
 		deps.MalwareSettings = repository.NewMalwareSettingsRepository(sharedDB)

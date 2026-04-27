@@ -4971,14 +4971,20 @@ install_tetragon() {
     # missing pin, with WARN — same pattern LMD uses pre-pin).
     local tmp_tg
     tmp_tg=$(mktemp -d -t tetragon-XXXXXX)
+    # Tarball top-level is tetragon-<ver>-<arch>/ — flatten with
+    # --strip-components=1 so /opt/tetragon/usr/local/bin/tetragon
+    # matches the path we install from. Without strip the binary
+    # lands at /opt/tetragon/tetragon-<ver>-<arch>/usr/local/bin/...
+    # and the install step below fails (caught on first VPS smoke).
     if (
       cd "$tmp_tg" && \
       curl -fsSL "https://github.com/cilium/tetragon/releases/download/${TETRAGON_VERSION}/tetragon-${TETRAGON_VERSION}-${arch}.tar.gz" -o tg.tar.gz && \
-      tar -xzf tg.tar.gz && \
       install -d -m 0755 /opt/tetragon && \
-      cp -r ./* /opt/tetragon/ && \
+      tar -xzf tg.tar.gz --strip-components=1 -C /opt/tetragon && \
       install -m 0755 /opt/tetragon/usr/local/bin/tetragon /usr/local/bin/tetragon && \
-      install -m 0755 /opt/tetragon/usr/local/bin/tetra /usr/local/bin/tetra
+      install -m 0755 /opt/tetragon/usr/local/bin/tetra /usr/local/bin/tetra && \
+      install -d -m 0755 /usr/local/lib/tetragon && \
+      cp -r /opt/tetragon/usr/local/lib/tetragon/. /usr/local/lib/tetragon/
     ); then
       mkdir -p /opt/tetragon
       touch "$tetragon_marker"

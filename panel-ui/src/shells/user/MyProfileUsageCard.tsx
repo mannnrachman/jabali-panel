@@ -5,8 +5,18 @@
 // live report (may be absent if the agent is down or the slice has no
 // running processes). Refreshes on 10s polling — adequate for a user
 // self-view; a websocket stream would be overkill.
-import { Card, Descriptions, Progress, Space, Typography } from "antd";
+import { Card, Progress, Space, Typography } from "antd";
+import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+
+import {
+  HddOutlined,
+  DatabaseOutlined,
+  ThunderboltOutlined,
+  ApartmentOutlined,
+  ArrowDownOutlined,
+  ArrowUpOutlined,
+} from "@icons";
 
 import { apiClient } from "../../apiClient";
 
@@ -56,9 +66,6 @@ export function MyProfileUsageCard({ userId }: { userId: string }) {
       }
     };
     fetch();
-    // 10s poll. Cheaper than websockets and the agent's cgroup reads
-    // are already live (memory.current updates on every allocation),
-    // so 10s feels instantaneous to a user watching.
     const id = setInterval(fetch, 10_000);
     return () => {
       alive = false;
@@ -81,95 +88,163 @@ export function MyProfileUsageCard({ userId }: { userId: string }) {
   }
 
   const { effective, current } = data;
+
+  const diskUsedKB = current?.disk?.used_kb ?? 0;
+  const diskLimitKB =
+    (current?.disk?.limit_kb ?? 0) > 0
+      ? (current?.disk?.limit_kb ?? 0)
+      : effective.DiskQuotaMB * 1024;
+  const memUsedB = current?.memory?.current_bytes ?? 0;
+  const memLimitB =
+    current?.memory?.max_bytes ?? effective.MemoryLimitMB * 1024 * 1024;
+
+  const cpuValue =
+    effective.CPUQuotaPercent > 0
+      ? `${effective.CPUQuotaPercent}% (${(effective.CPUQuotaPercent / 100).toFixed(1)} cores)`
+      : "Unlimited";
+  const procValue = current?.tasks
+    ? `${current.tasks.current}${current.tasks.max ? ` / ${current.tasks.max}` : ""}`
+    : effective.MaxTasks > 0
+      ? `Limit ${effective.MaxTasks}`
+      : "Unlimited";
+  const ioReadValue =
+    effective.IOReadMbps > 0 ? `${effective.IOReadMbps} MB/s` : "Unlimited";
+  const ioWriteValue =
+    effective.IOWriteMbps > 0 ? `${effective.IOWriteMbps} MB/s` : "Unlimited";
+
   return (
     <Card title="Resource usage">
-      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+      <Space direction="vertical" size={20} style={{ width: "100%" }}>
         <UsageRow
+          icon={<HddOutlined />}
+          iconBg="rgba(22, 119, 255, 0.12)"
+          iconColor="#1677ff"
           label="Disk"
-          used={current?.disk?.used_kb ?? 0}
-          // 0 from agent means "no quota plumbing", not "0-byte limit" —
-          // fall through to effective.DiskQuotaMB so the package limit
-          // still renders even when quotacheck couldn't run.
-          limit={
-            (current?.disk?.limit_kb ?? 0) > 0
-              ? (current?.disk?.limit_kb ?? 0)
-              : effective.DiskQuotaMB * 1024
-          }
-          formatter={(kb) => humanBytes(kb * 1024)}
+          used={diskUsedKB * 1024}
+          limit={diskLimitKB * 1024}
         />
         <UsageRow
+          icon={<DatabaseOutlined />}
+          iconBg="rgba(146, 84, 222, 0.14)"
+          iconColor="#9254de"
           label="Memory"
-          used={current?.memory?.current_bytes ?? 0}
-          limit={
-            current?.memory?.max_bytes ??
-            effective.MemoryLimitMB * 1024 * 1024
-          }
-          formatter={humanBytes}
+          used={memUsedB}
+          limit={memLimitB}
         />
-        <Descriptions column={1}>
-          <Descriptions.Item label="CPU quota">
-            {effective.CPUQuotaPercent > 0
-              ? `${effective.CPUQuotaPercent}% (${(effective.CPUQuotaPercent / 100).toFixed(1)} cores)`
-              : "unlimited"}
-          </Descriptions.Item>
-          <Descriptions.Item label="Processes">
-            {current?.tasks
-              ? `${current.tasks.current} / ${current.tasks.max || "∞"}`
-              : effective.MaxTasks > 0
-                ? `limit ${effective.MaxTasks}`
-                : "unlimited"}
-          </Descriptions.Item>
-          <Descriptions.Item label="I/O read limit">
-            {effective.IOReadMbps > 0
-              ? `${effective.IOReadMbps} MB/s`
-              : "unlimited"}
-          </Descriptions.Item>
-          <Descriptions.Item label="I/O write limit">
-            {effective.IOWriteMbps > 0
-              ? `${effective.IOWriteMbps} MB/s`
-              : "unlimited"}
-          </Descriptions.Item>
-        </Descriptions>
+        <SimpleRow
+          icon={<ThunderboltOutlined />}
+          iconBg="rgba(82, 196, 26, 0.14)"
+          iconColor="#52c41a"
+          label="CPU quota"
+          value={cpuValue}
+        />
+        <SimpleRow
+          icon={<ApartmentOutlined />}
+          iconBg="rgba(250, 140, 22, 0.14)"
+          iconColor="#fa8c16"
+          label="Processes"
+          value={procValue}
+        />
+        <SimpleRow
+          icon={<ArrowDownOutlined />}
+          iconBg="rgba(19, 194, 194, 0.14)"
+          iconColor="#13c2c2"
+          label="I/O read"
+          value={ioReadValue}
+        />
+        <SimpleRow
+          icon={<ArrowUpOutlined />}
+          iconBg="rgba(235, 47, 150, 0.14)"
+          iconColor="#eb2f96"
+          label="I/O write"
+          value={ioWriteValue}
+        />
       </Space>
     </Card>
   );
 }
 
-function UsageRow({
-  label,
-  used,
-  limit,
-  formatter,
-}: {
+interface IconBoxProps {
+  icon: ReactNode;
+  iconBg: string;
+  iconColor: string;
+}
+
+const IconBox = ({ icon, iconBg, iconColor }: IconBoxProps) => (
+  <div
+    style={{
+      width: 36,
+      height: 36,
+      borderRadius: 10,
+      background: iconBg,
+      color: iconColor,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      fontSize: 16,
+      flex: "0 0 36px",
+    }}
+  >
+    {icon}
+  </div>
+);
+
+interface UsageRowProps extends IconBoxProps {
   label: string;
   used: number;
   limit: number;
-  formatter: (v: number) => string;
-}) {
-  // Limit of 0 means unlimited — no bar, just show usage.
-  if (limit <= 0) {
-    return (
-      <div>
-        <Typography.Text strong>{label}</Typography.Text>
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <Typography.Text>{formatter(used)}</Typography.Text>
-          <Typography.Text type="secondary">unlimited</Typography.Text>
-        </div>
-      </div>
-    );
-  }
-  const pct = Math.min(100, Math.round((used / limit) * 100));
+}
+
+function UsageRow({ icon, iconBg, iconColor, label, used, limit }: UsageRowProps) {
+  const limited = limit > 0;
+  const pct = limited ? Math.min(100, Math.round((used / limit) * 100)) : 0;
   const status = pct >= 95 ? "exception" : pct >= 80 ? "active" : "normal";
   return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <Typography.Text strong>{label}</Typography.Text>
-        <Typography.Text type="secondary">
-          {formatter(used)} / {formatter(limit)}
-        </Typography.Text>
+    <Space align="start" size={12} style={{ width: "100%" }}>
+      <IconBox icon={icon} iconBg={iconBg} iconColor={iconColor} />
+      <div style={{ flex: 1, minWidth: 0, width: "100%" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 8,
+            marginBottom: 4,
+          }}
+        >
+          <Typography.Text strong>{label}</Typography.Text>
+          <Typography.Text type="secondary">
+            {limited
+              ? `${humanBytes(used)} / ${humanBytes(limit)}`
+              : `${humanBytes(used)} · Unlimited`}
+          </Typography.Text>
+        </div>
+        {limited && <Progress percent={pct} status={status} showInfo={false} size="small" />}
       </div>
-      <Progress percent={pct} status={status} showInfo={false} />
-    </div>
+    </Space>
+  );
+}
+
+interface SimpleRowProps extends IconBoxProps {
+  label: string;
+  value: string;
+}
+
+function SimpleRow({ icon, iconBg, iconColor, label, value }: SimpleRowProps) {
+  return (
+    <Space align="center" size={12} style={{ width: "100%" }}>
+      <IconBox icon={icon} iconBg={iconBg} iconColor={iconColor} />
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 8,
+        }}
+      >
+        <Typography.Text strong>{label}</Typography.Text>
+        <Typography.Text type="secondary">{value}</Typography.Text>
+      </div>
+    </Space>
   );
 }
 

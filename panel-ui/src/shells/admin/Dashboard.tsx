@@ -142,10 +142,6 @@ export const Dashboard = () => {
 
   return (
     <div>
-      <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
-        Dashboard
-      </Typography.Title>
-
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col xs={24} sm={8}>
           <StatCard

@@ -4942,51 +4942,51 @@ MONITOR_UNIT
   install -d -m 0755 /etc/jabali/maldet
   cat >/etc/jabali/maldet/build-rfxn-yara.sh <<'BUILD_YARA'
 #!/usr/bin/env bash
-# Append PMF rules to /usr/local/maldetect/sigs/rfxn.yara with includes
-# resolved inline. Idempotent: strips any prior JABALI-PMF-BEGIN block
-# before appending. Safe to run after maldet -u (which overwrites rfxn.yara
-# with the upstream copy).
+# Append the PMF webshell-detection rules to rfxn.yara. clamscan's
+# libclamav YARA implementation is a strict subset of upstream YARA: it
+# does NOT support the `hash` module at all (neither `import "hash"`
+# nor implicit `hash.sha1()` calls — both fail with "undefined identifier
+# 'hash'"). PMF's whitelist machinery (whitelist.yar + whitelists/*.yar)
+# is built entirely on `hash.sha1(0, filesize)` SHA1 lookups for known
+# legitimate framework files, so we cannot ship them here.
+#
+# Instead we ship php.yar's webshell-detection rules with a stubbed
+# `IsWhitelisted` rule that always evaluates to false. The trade-off is
+# losing the framework-file false-positive filter — vanilla WordPress /
+# Drupal / Magento / Symfony files that match a webshell heuristic will
+# now flag. This is acceptable for shared-hosting webshell hunting (the
+# actual webshells are what matter; admins can review false positives).
+#
+# Idempotent: strips any prior JABALI-PMF-BEGIN block + stray `import`
+# directives before re-appending. Safe to re-run after `maldet -u` (which
+# overwrites rfxn.yara with the upstream copy).
 set -euo pipefail
 RFXN="/usr/local/maldetect/sigs/rfxn.yara"
 PMF_DIR="/etc/jabali/pmf/data"
 [[ -s "$PMF_DIR/php.yar" ]] || { echo "PMF rule pack missing: $PMF_DIR/php.yar"; exit 0; }
 [[ -f "$RFXN" ]] || { echo "rfxn.yara missing: $RFXN"; exit 0; }
 
-# Build the inlined block in a temp file then atomic-append.
-tmp=$(mktemp -t jabali-pmf-block-XXXXXX)
-trap 'rm -f "$tmp"' EXIT
+# Strip any prior JABALI block + any stray `import` directive.
+if grep -q '^// JABALI-PMF-BEGIN' "$RFXN"; then
+  sed -i '/^\/\/ JABALI-PMF-BEGIN/,/^\/\/ JABALI-PMF-END/d' "$RFXN"
+fi
+sed -i '/^[[:space:]]*import[[:space:]]\+"[^"]*"[[:space:]]*$/d' "$RFXN"
+
+# Append the PMF block: stub IsWhitelisted + php.yar minus its
+# `include "whitelist.yar"` directive (which would error on missing
+# Whitelisted otherwise — our stub provides it).
 {
   echo ""
   echo "// JABALI-PMF-BEGIN — managed by /etc/jabali/maldet/build-rfxn-yara.sh"
-  echo "// php-malware-finder rules; includes inlined; do not edit by hand."
-  # Strip `include` lines + `import "hash"` (will appear once in our header
-  # below). Cat order: whitelists/*.yar (defines private rules referenced
-  # by the master whitelist + php.yar), then whitelist.yar, then php.yar.
-  for f in "$PMF_DIR"/whitelists/*.yar; do
-    [[ -f "$f" ]] || continue
-    grep -vE '^[[:space:]]*(include|import)[[:space:]]' "$f" || true
-    echo ""
-  done
-  grep -vE '^[[:space:]]*(include|import)[[:space:]]' "$PMF_DIR/whitelist.yar" || true
+  echo "// php-malware-finder webshell-detection rules. Do not edit by hand."
+  echo "// IsWhitelisted is stubbed false because clamscan's libclamav YARA"
+  echo "// does not implement the hash module that PMF's real whitelists use."
+  echo ""
+  echo "private rule IsWhitelisted { condition: false }"
   echo ""
   grep -vE '^[[:space:]]*(include|import)[[:space:]]' "$PMF_DIR/php.yar" || true
   echo ""
   echo "// JABALI-PMF-END"
-} > "$tmp"
-
-# Strip any prior JABALI block from rfxn.yara, then append.
-if grep -q '^// JABALI-PMF-BEGIN' "$RFXN"; then
-  sed -i '/^\/\/ JABALI-PMF-BEGIN/,/^\/\/ JABALI-PMF-END/d' "$RFXN"
-fi
-# DO NOT add `import "hash"` — clamscan's libclamav YARA implementation
-# is a subset of YARA that supports hash.sha1() implicitly (rfxn.yara's
-# 2.5k hash.sha1 calls work without import) but rejects an explicit
-# `import "hash"` with "undefined identifier 'hash'". The `import` lines
-# stripped above by `grep -vE '^[[:space:]]*(include|import)[[:space:]]'`
-# are dropped specifically for this reason.
-{
-  echo ""
-  cat "$tmp"
 } >> "$RFXN"
 
 # Ask maldet's monitor (if running) to re-load. No-op if not running.

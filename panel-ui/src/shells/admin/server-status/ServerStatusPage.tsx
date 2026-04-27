@@ -18,10 +18,8 @@ import { DisksTable } from "./DisksTable";
 import { CPUMeterCard, MemoryMeterCard } from "./MetersGrid";
 import { NetworkTable } from "./NetworkTable";
 import { ProcessesCard } from "./ProcessesCard";
-import { QueuesCard } from "./QueuesCard";
 import { ServicesSummaryCard } from "./ServicesSummaryCard";
 import { SystemInfoCard } from "./SystemInfoCard";
-import { UpdatesCard } from "./UpdatesCard";
 import { UserSlicesCard } from "./UserSlicesCard";
 
 export const ServerStatusPage = () => {
@@ -51,8 +49,6 @@ export const ServerStatusPage = () => {
     },
     { key: "user_slices", data: null, children: <UserSlicesCard data={env?.user_slices ?? null} /> },
     { key: "processes", data: null, children: <ProcessesCard processes={env?.processes ?? null} /> },
-    { key: "queues", data: null, children: <QueuesCard /> },
-    { key: "updates", data: null, children: <UpdatesCard /> },
   ];
 
   return (

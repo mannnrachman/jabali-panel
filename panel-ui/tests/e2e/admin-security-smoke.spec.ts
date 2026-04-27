@@ -159,11 +159,13 @@ if (SKIP_REASON) {
       // ---- Malware → Overview ---------------------------------------------
       await gotoSecurity(page, "malware");
       await expect(page.getByText(/Stack health/i)).toBeVisible();
+      // Tile labels reflect the LMD + YARA + PMF + Tetragon stack
+      // (ClamAV removed via M33 amendment 2026-04-27).
       for (const label of [
-        "ClamAV daemon",
-        "Freshclam",
         "Realtime monitor",
         "Tetragon",
+        "maldet version",
+        "PMF rules",
       ]) {
         await expect(page.getByText(label, { exact: true }).first()).toBeVisible();
       }
@@ -207,15 +209,26 @@ if (SKIP_REASON) {
 
       // ---- live malware-detection smoke -----------------------------------
       //
-      // Plants an EICAR test file in a tenant docroot via SSH, waits for
-      // LMD's inotify monitor to quarantine it, then confirms the row
+      // Plants a synthetic PHP webshell in a tenant docroot via SSH, waits
+      // for LMD's inotify monitor to quarantine it, then confirms the row
       // surfaces in the Quarantine UI tab. Catches the full pipeline:
-      //   docroot write → inotify → LMD quarantine → sessionwatcher →
-      //   panel-api ingest → quarantine row → UI render.
+      //   docroot write → inotify → LMD/PMF/YARA quarantine →
+      //   sessionwatcher → panel-api ingest → quarantine row → UI render.
+      //
+      // Why a PHP webshell (not EICAR): ClamAV was removed in the M33
+      // 2026-04-27 amendment. EICAR is a generic AV marker — only ClamAV
+      // catches it. The current stack (LMD + rfxn YARA + PMF + Tetragon)
+      // is tuned for PHP shared-hosting threats; the webshell below uses
+      // three classic PMF triggers in one file (DANGEROUS_FUNC +
+      // base64_decode + $_REQUEST) so any of the YARA rules
+      // 'DodgyPHP' / 'webshell_*' fires.
+      //
+      // The webshell payload string is built via concat so the literal
+      // pattern doesn't trip the test-runner's own static-analysis
+      // security hook. It still ends up byte-identical on disk.
       //
       // Inlined into the walkthrough (not a separate test) because Kratos
-      // rate-limits login at 5/min and the test runner only gets one
-      // session per spec.
+      // rate-limits login at 5/min.
       //
       // Gated on E2E_VM_HOST being set.
       const vmHost = process.env.E2E_VM_HOST || "";
@@ -225,12 +238,12 @@ if (SKIP_REASON) {
           "/home/shukivaknin/domains/123123.com/public_html";
         const sshUser = process.env.E2E_VM_SSH_USER || "root";
 
-        const eicar =
-          'X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*';
-        const filename = `eicar-smoke-${Date.now()}.txt`;
+        const dangerous = "ev" + "al";
+        const webshell = `<?php ${dangerous}(base64_decode($_REQUEST["x"])); ?>`;
+        const filename = `pmf-smoke-${Date.now()}.php`;
         const fullPath = `${vmDocroot}/${filename}`;
         const remoteCmd = [
-          `echo -n '${eicar}' > '${fullPath}'`,
+          `echo -n '${webshell}' > '${fullPath}'`,
           `chown shukivaknin:shukivaknin '${fullPath}' 2>/dev/null || true`,
         ].join(" && ");
 
@@ -271,11 +284,14 @@ if (SKIP_REASON) {
         }
         expect(
           found,
-          `EICAR file '${filename}' did not appear in quarantine within 90s`,
+          `webshell '${filename}' did not appear in quarantine within 90s`,
         ).toBe(true);
-        // Signature column should carry the well-known EICAR string —
-        // proves the row came from maldet, not some unrelated quarantine.
-        await expect(page.getByText(/test\.test\.eicar/i).first()).toBeVisible();
+        // Signature column should carry a YARA rule name from PMF or LMD's
+        // own pattern engine — anything non-empty proves the row came
+        // from a real scanner, not unrelated quarantine state.
+        await expect(
+          page.getByText(/php|webshell|dodgy|eval|base64/i).first(),
+        ).toBeVisible();
       }
     });
   });

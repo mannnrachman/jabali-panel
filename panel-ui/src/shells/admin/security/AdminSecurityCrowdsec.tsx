@@ -33,8 +33,16 @@ import {
   Tooltip,
   Typography,
 } from "antd";
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
+import {
+  FileTextOutlined,
+  WarningOutlined,
+  ThunderboltOutlined,
+  StopOutlined,
+  AlertOutlined,
+} from "@icons";
 
 import {
   useAddCrowdsecAllowlist,
@@ -106,6 +114,58 @@ type AddDecisionFormValues = {
 };
 
 const fmtTime = (s?: string): string => (s ? new Date(s).toLocaleString() : "—");
+
+// MetricTile renders one CrowdSec metric as an icon-led panel inside a
+// responsive grid Col. Tint is the icon background only — text stays
+// theme-default so light/dark themes both render correctly.
+function MetricTile({
+  icon,
+  tint,
+  label,
+  value,
+  hint,
+}: {
+  icon: ReactNode;
+  tint: string;
+  label: string;
+  value: number;
+  hint: string;
+}) {
+  return (
+    <Col xs={24} sm={12} md={8} lg={8} xl={Math.floor(24 / 5)}>
+      <Tooltip title={hint}>
+        <Card size="small" hoverable styles={{ body: { padding: 12 } }}>
+          <Space size={12} align="center">
+            <div
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 8,
+                background: `${tint}22`,
+                color: tint,
+                fontSize: 20,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+              }}
+            >
+              {icon}
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <Typography.Text type="secondary" style={{ fontSize: 12, display: "block" }}>
+                {label}
+              </Typography.Text>
+              <Typography.Text strong style={{ fontSize: 22, lineHeight: 1.1 }}>
+                {value.toLocaleString()}
+              </Typography.Text>
+            </div>
+          </Space>
+        </Card>
+      </Tooltip>
+    </Col>
+  );
+}
 
 export const AdminSecurityCrowdsec = () => {
   const status = useCrowdsecStatus();
@@ -220,22 +280,42 @@ export const AdminSecurityCrowdsec = () => {
         {metrics.isLoading ? (
           <Typography.Text type="secondary">Loading…</Typography.Text>
         ) : (
-          <Row gutter={[16, 16]}>
-            <Col xs={24} sm={12} md={8} lg={6} xl={4}>
-              <Statistic title="Parsed events" value={metrics.data?.parsed ?? 0} />
-            </Col>
-            <Col xs={24} sm={12} md={8} lg={6} xl={4}>
-              <Statistic title="Unparsed" value={metrics.data?.unparsed ?? 0} />
-            </Col>
-            <Col xs={24} sm={12} md={8} lg={6} xl={4}>
-              <Statistic title="Buckets fired" value={metrics.data?.buckets ?? 0} />
-            </Col>
-            <Col xs={24} sm={12} md={8} lg={6} xl={4}>
-              <Statistic title="Active decisions" value={metrics.data?.decisions_active ?? 0} />
-            </Col>
-            <Col xs={24} sm={12} md={8} lg={6} xl={4}>
-              <Statistic title="Total alerts" value={metrics.data?.alerts_total ?? 0} />
-            </Col>
+          <Row gutter={[12, 12]}>
+            <MetricTile
+              icon={<FileTextOutlined />}
+              tint="#1677ff"
+              label="Parsed events"
+              value={metrics.data?.parsed ?? 0}
+              hint="Log lines CrowdSec successfully parsed"
+            />
+            <MetricTile
+              icon={<WarningOutlined />}
+              tint="#faad14"
+              label="Unparsed"
+              value={metrics.data?.unparsed ?? 0}
+              hint="Lines no parser matched (gaps in coverage)"
+            />
+            <MetricTile
+              icon={<ThunderboltOutlined />}
+              tint="#722ed1"
+              label="Buckets fired"
+              value={metrics.data?.buckets ?? 0}
+              hint="Scenario thresholds tripped (suspicious patterns)"
+            />
+            <MetricTile
+              icon={<StopOutlined />}
+              tint="#cf1322"
+              label="Active decisions"
+              value={metrics.data?.decisions_active ?? 0}
+              hint="IPs currently banned / under captcha"
+            />
+            <MetricTile
+              icon={<AlertOutlined />}
+              tint="#13c2c2"
+              label="Total alerts"
+              value={metrics.data?.alerts_total ?? 0}
+              hint="All-time alerts since CrowdSec started"
+            />
           </Row>
         )}
       </Card>

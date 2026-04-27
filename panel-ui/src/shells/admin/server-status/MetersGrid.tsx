@@ -18,10 +18,16 @@ interface MeterProps {
   cpu: CPUSlice | null;
 }
 
+// CPUMeterCard renders CPU usage + 1/5/15m load averages in a single
+// card. Same physical resource (the CPU); reading them together is the
+// natural diagnostic flow ("usage spiking" + "load avg trend").
 export function CPUMeterCard({ host, cpu }: MeterProps) {
   const cpuPct = cpu?.usage_percent ?? 0;
   const cpuWarming = cpu?.warming_up ?? true;
   const cores = host?.cpu_count ?? 1;
+  const load1 = host?.load_avg?.[0] ?? 0;
+  const load5 = host?.load_avg?.[1] ?? 0;
+  const load15 = host?.load_avg?.[2] ?? 0;
   return (
     <Card title="CPU" size="small">
       <Progress
@@ -34,6 +40,18 @@ export function CPUMeterCard({ host, cpu }: MeterProps) {
         {cores === 1 ? "" : "s"}
         {cpuWarming ? " · warming up" : ""}
       </Typography.Text>
+      <div style={{ marginTop: 12 }}>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          Load average
+        </Typography.Text>
+        <div style={{ marginTop: 4 }}>
+          <Space size={16}>
+            <LoadStat label="1m" value={load1} cores={cores} />
+            <LoadStat label="5m" value={load5} cores={cores} />
+            <LoadStat label="15m" value={load15} cores={cores} />
+          </Space>
+        </div>
+      </div>
     </Card>
   );
 }
@@ -85,22 +103,6 @@ export function MemoryMeterCard({ host }: MeterProps) {
           </div>
         )}
       </div>
-    </Card>
-  );
-}
-
-export function LoadMeterCard({ host }: MeterProps) {
-  const cores = host?.cpu_count ?? 1;
-  const load1 = host?.load_avg?.[0] ?? 0;
-  const load5 = host?.load_avg?.[1] ?? 0;
-  const load15 = host?.load_avg?.[2] ?? 0;
-  return (
-    <Card title="Load" size="small">
-      <Space size={12}>
-        <LoadStat label="1m" value={load1} cores={cores} />
-        <LoadStat label="5m" value={load5} cores={cores} />
-        <LoadStat label="15m" value={load15} cores={cores} />
-      </Space>
     </Card>
   );
 }

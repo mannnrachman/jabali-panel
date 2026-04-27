@@ -4896,9 +4896,33 @@ RandomizedDelaySec=30m
 WantedBy=timers.target
 SCAN_TIMER
 
+  cat >/etc/systemd/system/jabali-malware-quarantine-purge.service <<'PURGE_UNIT'
+[Unit]
+Description=Jabali malware quarantine retention purge (M33)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/jabali malware-purge
+Nice=15
+PURGE_UNIT
+
+  cat >/etc/systemd/system/jabali-malware-quarantine-purge.timer <<'PURGE_TIMER'
+[Unit]
+Description=Daily Jabali malware quarantine retention purge (M33)
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target
+PURGE_TIMER
+
   systemctl daemon-reload >/dev/null 2>&1 || true
   systemctl enable --now jabali-maldet-update-signatures.timer >/dev/null 2>&1 || true
   systemctl enable --now jabali-maldet-scan-daily.timer >/dev/null 2>&1 || true
+  systemctl enable --now jabali-malware-quarantine-purge.timer >/dev/null 2>&1 || true
 
   install_tetragon
 

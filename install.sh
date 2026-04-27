@@ -714,6 +714,8 @@ POLICYEOF
       ufw yq \
       redis-server redis-tools \
       bubblewrap debootstrap systemd-container \
+      clamav clamav-daemon clamav-freshclam yara \
+      bpftool \
       "${php_extensions[@]}"
 
   # Undo the policy-rc.d trap regardless of exit path above (set -e would
@@ -4675,6 +4677,140 @@ cleanup_modsecurity() {
   fi
 }
 
+install_malware_stack() {
+  # M33 — ClamAV + Linux Malware Detect + YARA + Tetragon stack.
+  # ADR-0067. Inotify monitor unit + Tetragon land in M33 wave C/D
+  # follow-ups; this function provisions the binaries + drop-in
+  # config + signature DBs only.
+  #
+  # Idempotent: every step is guarded so jabali update re-runs cleanly.
+
+  _log "installing malware detection stack (ClamAV + maldet + YARA)"
+
+  # Refuse if /usr/bin/freshclam is already pinned to a manual cron
+  # somewhere — clamav-freshclam.service must own freshclam pulls or
+  # we get duplicate downloads racing each other on update day.
+  if grep -lr "freshclam" /etc/cron.d /etc/cron.daily /etc/cron.hourly 2>/dev/null | grep -v jabali >/dev/null; then
+    _warn "manual freshclam cron detected outside jabali — skipping clamav-freshclam.service to avoid races; remove the cron and re-run install_malware_stack"
+  else
+    if ! systemctl is-enabled --quiet clamav-freshclam.service 2>/dev/null; then
+      systemctl enable --now clamav-freshclam.service >/dev/null 2>&1 || \
+        _warn "clamav-freshclam.service did not start cleanly — check 'journalctl -u clamav-freshclam'"
+    fi
+  fi
+
+  if ! systemctl is-enabled --quiet clamav-daemon.service 2>/dev/null; then
+    systemctl enable --now clamav-daemon.service >/dev/null 2>&1 || \
+      _warn "clamav-daemon.service did not start cleanly — check 'journalctl -u clamav-daemon'"
+  fi
+
+  # Linux Malware Detect (LMD / maldet) — install from rfxn.com tarball
+  # because the Debian package lags upstream by ~2 years and ships
+  # signature pull URLs that 404. Pinned version + sha256 verified.
+  # Pin bumps require a PR review of both LMD_VERSION and LMD_SHA256.
+  local LMD_VERSION="1.6.6"
+  local LMD_SHA256="3ef7fd06b9ecc526e668b4afec889b583aa33005d3a71285e8bf32ab65bde3dc"
+  local lmd_marker="/usr/local/maldetect/.jabali-installed-${LMD_VERSION}"
+
+  if [[ -f "$lmd_marker" ]] && command -v maldet >/dev/null 2>&1; then
+    _log "maldet ${LMD_VERSION} already installed (marker present)"
+  else
+    local tmp_lmd
+    tmp_lmd=$(mktemp -d -t lmd-XXXXXX)
+    if (
+      cd "$tmp_lmd" && \
+      curl -fsSL "https://www.rfxn.com/downloads/maldetect-${LMD_VERSION}.tar.gz" -o lmd.tar.gz && \
+      echo "${LMD_SHA256}  lmd.tar.gz" | sha256sum -c - >/dev/null && \
+      tar -xzf lmd.tar.gz && \
+      cd "maldetect-${LMD_VERSION}" && \
+      bash ./install.sh >/tmp/lmd-install.log 2>&1
+    ); then
+      mkdir -p /usr/local/maldetect
+      touch "$lmd_marker"
+      _ok "maldet ${LMD_VERSION} installed (log: /tmp/lmd-install.log)"
+    else
+      _warn "maldet install failed (download/sha/install) — see /tmp/lmd-install.log; continuing with stack provisioning"
+    fi
+    rm -rf "$tmp_lmd"
+  fi
+
+  # Jabali drop-in config — overrides upstream conf.maldet defaults.
+  # Loaded by merge_maldet_config which appends our values to the
+  # upstream-shipped file. Idempotent: pure rewrite of drop-in dir.
+  install -d -m 0755 /etc/jabali/maldet/conf.maldet.d
+  cat >/etc/jabali/maldet/conf.maldet.d/00-jabali.conf <<'MALDET_DROPIN'
+# Jabali M33 maldet drop-in — managed by install.sh; do not edit by hand.
+# Rerun jabali update to regenerate.
+quarantine_hits="1"
+quarantine_clean="0"
+email_alert="0"
+scan_clamscan="1"
+scan_user_access="1"
+scan_user_access_minuid="1000"
+scan_yara="1"
+scan_yara_scope="custom"
+yara_rules="/usr/local/maldetect/sigs/rfxn.yara /etc/jabali/yara/*.yar"
+inotify_minutes="45"
+inotify_base_watches="15000"
+inotify_minuid="1000"
+scan_max_filesize="2048k"
+MALDET_DROPIN
+
+  if [[ -f /usr/local/maldetect/conf.maldet ]]; then
+    # Strip prior Jabali block (markers) and append fresh from drop-in.
+    local conf="/usr/local/maldetect/conf.maldet"
+    if grep -q '# JABALI-DROPIN-BEGIN' "$conf"; then
+      sed -i '/# JABALI-DROPIN-BEGIN/,/# JABALI-DROPIN-END/d' "$conf"
+    fi
+    {
+      echo ""
+      echo "# JABALI-DROPIN-BEGIN — managed by install.sh"
+      cat /etc/jabali/maldet/conf.maldet.d/00-jabali.conf
+      echo "# JABALI-DROPIN-END"
+    } >> "$conf"
+    _ok "maldet conf merged with Jabali drop-in"
+  fi
+
+  # Admin-editable YARA rule drop-in — populated via /admin/security/malware/yara.
+  install -d -m 0755 -o root -g root /etc/jabali/yara
+  if [[ ! -f /etc/jabali/yara/00-example.yar.disabled ]]; then
+    cat >/etc/jabali/yara/00-example.yar.disabled <<'YARA_EX'
+// Example YARA rule (disabled). Rename to .yar via /admin/security/malware/yara
+// to enable, or upload custom rules via the same UI.
+rule jabali_example {
+  meta:
+    description = "Trivial example — matches the literal string 'jabali-yara-example'"
+    author = "jabali install.sh"
+  strings:
+    $a = "jabali-yara-example"
+  condition:
+    $a
+}
+YARA_EX
+  fi
+
+  # First freshclam run if the signature DB is missing (apt installs the
+  # package empty; freshclam.service will populate on its own timer but
+  # operators want clamscan to work immediately after install).
+  if [[ ! -s /var/lib/clamav/main.cvd && ! -s /var/lib/clamav/main.cld ]]; then
+    _log "clamav signature DB empty — pulling first sig pull (this can take a minute)"
+    systemctl stop clamav-freshclam >/dev/null 2>&1 || true
+    freshclam --quiet >/dev/null 2>&1 || _warn "initial freshclam pull failed; will retry via timer"
+    systemctl start clamav-freshclam >/dev/null 2>&1 || true
+  fi
+
+  # Lift inotify watch ceiling — LMD's per-user docroot watches add up
+  # fast on a busy shared host (10k domains × a few hundred files each).
+  cat >/etc/sysctl.d/60-jabali-malware.conf <<'SYSCTL_MALWARE'
+# M33 inotify ceiling — maldet --monitor USERS adds many watches per
+# tenant docroot. Default 8192 is too low for shared hosting.
+fs.inotify.max_user_watches = 524288
+SYSCTL_MALWARE
+  sysctl --system >/dev/null 2>&1 || true
+
+  _ok "malware stack provisioned: clamav $(clamscan --version 2>/dev/null | head -1 | cut -d/ -f1), maldet $(maldet --version 2>/dev/null | head -1 || echo 'pending')"
+}
+
 install_ufw() {
   _log "configuring UFW (package installed in base batch)"
 
@@ -6003,6 +6139,7 @@ main() {
   install_crowdsec_nginx_bouncer
   install_crowdsec_profiles
   cleanup_modsecurity
+  install_malware_stack
   install_ufw
   install_restart_drop_ins
   clone_or_update_repo

@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Jabali OnFailure notifier helper. Invoked by jabali-notify@.service when
+# a critical unit fails. Argument is the unit name (escape-encoded by
+# systemd's %i — we decode with `systemd-escape -u`); we read the last
+# journal lines for that unit and POST a service.down envelope to the
+# panel-api notification enqueue endpoint over the unix socket.
+#
+# Failure modes:
+#   - panel-api socket missing / not reachable → log + exit 0
+#     (this is a notification path, not a service path — never block the
+#     restart cycle on a notification call)
+#   - curl http error → log + exit 0
+#
+# Idempotent: systemd already debounces (per-unit StartLimit). One
+# OnFailure trigger ⇒ one helper call ⇒ one envelope.
+set -uo pipefail
+
+ESCAPED_UNIT="${1:-}"
+if [[ -z "$ESCAPED_UNIT" ]]; then
+  echo "jabali-notify-onfailure: usage: $0 <unit-instance-name>" >&2
+  exit 0
+fi
+
+UNIT="$(systemd-escape -u -- "$ESCAPED_UNIT" 2>/dev/null || echo "$ESCAPED_UNIT")"
+
+PANEL_SOCKET="${JABALI_PANEL_SOCKET:-/run/jabali-panel/api.sock}"
+if [[ ! -S "$PANEL_SOCKET" ]]; then
+  logger -t jabali-notify "panel socket $PANEL_SOCKET missing — dropping OnFailure notice for $UNIT" || true
+  exit 0
+fi
+
+# Last 20 journal lines for the failed unit. Trim to 1800 chars to stay
+# under the panel-api 2000-char body cap with margin for prefix text.
+JOURNAL_TAIL="$(journalctl -u "$UNIT" -n 20 --no-pager --output=cat 2>/dev/null | tail -c 1800 || true)"
+
+# Build payload via printf-into-file to dodge shell-injection on unit
+# names that contain special chars (escape them with python json.dumps
+# semantics — but we don't have python guaranteed, so use jq if present
+# else fall back to a hand-escaped sed pipeline).
+TMP="$(mktemp -t jabali-notify.XXXXXX.json)"
+trap 'rm -f "$TMP"' EXIT
+
+if command -v jq >/dev/null 2>&1; then
+  jq -n \
+    --arg ek "service.down" \
+    --arg sev "critical" \
+    --arg title "$UNIT failed" \
+    --arg body "$JOURNAL_TAIL" \
+    '{event_kind:$ek, severity:$sev, title:$title, body:$body}' \
+    > "$TMP"
+else
+  # Hand-escape minimal JSON: replace " and \ and newlines.
+  esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' '; }
+  printf '{"event_kind":"service.down","severity":"critical","title":"%s","body":"%s"}\n' \
+    "$(esc "$UNIT failed")" "$(esc "$JOURNAL_TAIL")" > "$TMP"
+fi
+
+# Cap title at 200 chars (panel-api validator limit) by truncating UNIT
+# upstream — `systemd-escape -u` outputs the verbatim unit name, which
+# is bounded at 256 chars by systemd, so the " failed" suffix can push
+# us to 263. Re-cap by post-processing the JSON title field.
+if [[ ${#UNIT} -gt 192 ]]; then
+  if command -v jq >/dev/null 2>&1; then
+    jq --arg title "${UNIT:0:192}… failed" '.title=$title' < "$TMP" > "$TMP.new" && mv "$TMP.new" "$TMP"
+  fi
+fi
+
+curl --unix-socket "$PANEL_SOCKET" \
+  --silent --show-error \
+  --max-time 5 \
+  --output /dev/null \
+  --write-out '%{http_code}' \
+  -H 'Content-Type: application/json' \
+  -X POST \
+  --data-binary "@$TMP" \
+  http://localhost/api/v1/internal/notifications/enqueue \
+  >/tmp/jabali-notify-${UNIT//\//_}.code 2>/tmp/jabali-notify-${UNIT//\//_}.err || \
+  logger -t jabali-notify "POST failed for $UNIT — see /tmp/jabali-notify-${UNIT//\//_}.err" || true
+
+CODE="$(cat /tmp/jabali-notify-${UNIT//\//_}.code 2>/dev/null || echo 000)"
+if [[ "$CODE" != "202" && "$CODE" != "200" ]]; then
+  logger -t jabali-notify "panel-api enqueue returned $CODE for $UNIT" || true
+fi
+
+# Always exit 0 — notification path, never block.
+exit 0

@@ -1,0 +1,27 @@
+[Unit]
+Description=Jabali OnFailure notifier for %i
+# Critical services declare OnFailure=jabali-notify@%n.service in their
+# drop-ins. systemd substitutes %n→failed.unit.name; this template
+# unit's %i carries the same value (escape-encoded). The helper script
+# decodes it and POSTs a service.down envelope to the local notification
+# enqueue endpoint over the panel-api unix socket.
+#
+# Type=oneshot exits as soon as the helper returns; no hot-loop on
+# permanent failure (panel-api unreachable, Redis down, etc.).
+After=jabali-panel.service
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/jabali-notify-onfailure %i
+TimeoutStartSec=15s
+# Hardening — minimal capabilities. Helper only reads journalctl + curls
+# the panel-api unix socket.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/
+RestrictAddressFamilies=AF_UNIX
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM

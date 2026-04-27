@@ -5541,9 +5541,16 @@ install_restart_drop_ins() {
 # of waiting for the operator to notice. See install_restart_drop_ins()
 # in install.sh for rationale. Hand edits will be overwritten on the
 # next install.sh / `jabali update` run.
+#
+# OnFailure=jabali-notify@%n.service hooks the M14 notification path:
+# when this unit hits StartLimit and gives up, systemd starts
+# jabali-notify@<unit-name>.service which POSTs a service.down envelope
+# to the panel-api enqueue endpoint. The notifier never blocks the
+# restart loop (Type=oneshot, exits 0 even on transport failure).
 [Unit]
 StartLimitBurst=10
 StartLimitIntervalSec=60s
+OnFailure=jabali-notify@%n.service
 
 [Service]
 Restart=on-failure
@@ -5586,6 +5593,47 @@ RESTARTCONF
     systemctl daemon-reload
   fi
   _ok "auto-restart drop-ins installed for ${#units[@]} critical services"
+}
+
+# ---------- step 8a.2: OnFailure notifier template + helper (M14) ----------
+#
+# Receives the failed-unit name from systemd's %i, decodes it, and POSTs
+# a service.down envelope to /api/v1/internal/notifications/enqueue over
+# the panel-api unix socket. Wired up by the OnFailure= line in
+# 10-jabali-restart.conf above so every critical drop-in fires the
+# notifier on permanent failure (StartLimit hit).
+#
+# Idempotent: writes the helper script + template unit unconditionally,
+# only daemon-reloads when content changed.
+install_notify_template() {
+  _log "installing OnFailure notifier (M14)"
+
+  local helper_src="${REPO_DIR}/install/scripts/jabali-notify-onfailure"
+  local helper_dst="/usr/local/bin/jabali-notify-onfailure"
+  local unit_src="${REPO_DIR}/install/systemd/jabali-notify@.service"
+  local unit_dst="/etc/systemd/system/jabali-notify@.service"
+  local changed=0
+
+  if [[ ! -f "$helper_src" || ! -f "$unit_src" ]]; then
+    _warn "notifier template sources missing — skipping"
+    return 0
+  fi
+
+  if [[ ! -f "$helper_dst" ]] || ! cmp -s "$helper_src" "$helper_dst"; then
+    install -m 0755 -o root -g root "$helper_src" "$helper_dst"
+    changed=1
+    _log "wrote ${helper_dst}"
+  fi
+  if [[ ! -f "$unit_dst" ]] || ! cmp -s "$unit_src" "$unit_dst"; then
+    install -m 0644 -o root -g root "$unit_src" "$unit_dst"
+    changed=1
+    _log "wrote ${unit_dst}"
+  fi
+
+  if [[ "$changed" == "1" ]]; then
+    systemctl daemon-reload
+  fi
+  _ok "OnFailure notifier ready (jabali-notify@.service)"
 }
 
 # ---------- step 8b: Stalwart Mail Server + Bulwark webmail (M6) -------------
@@ -6779,6 +6827,7 @@ main() {
   install_malware_stack
   install_ufw
   install_restart_drop_ins
+  install_notify_template
   clone_or_update_repo
   # M25: source the socket-helper definitions now that the repo's install/
   # tree is on disk. Steps 2–5 will call verify_socket_perms /

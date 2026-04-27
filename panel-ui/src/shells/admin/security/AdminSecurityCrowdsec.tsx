@@ -131,18 +131,23 @@ function MetricTile({
   hint: string;
 }) {
   return (
-    <Col xs={24} sm={12} md={8} lg={8} xl={Math.floor(24 / 5)}>
+    <Col flex="1 1 200px" style={{ minWidth: 180 }}>
       <Tooltip title={hint}>
-        <Card size="small" hoverable styles={{ body: { padding: 12 } }}>
-          <Space size={12} align="center">
+        <Card
+          size="small"
+          hoverable
+          styles={{ body: { padding: 12 } }}
+          style={{ height: "100%" }}
+        >
+          <Space size={12} align="center" style={{ width: "100%" }}>
             <div
               style={{
-                width: 40,
-                height: 40,
+                width: 44,
+                height: 44,
                 borderRadius: 8,
                 background: `${tint}22`,
                 color: tint,
-                fontSize: 20,
+                fontSize: 22,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -151,7 +156,7 @@ function MetricTile({
             >
               {icon}
             </div>
-            <div style={{ minWidth: 0 }}>
+            <div style={{ minWidth: 0, flex: 1 }}>
               <Typography.Text type="secondary" style={{ fontSize: 12, display: "block" }}>
                 {label}
               </Typography.Text>

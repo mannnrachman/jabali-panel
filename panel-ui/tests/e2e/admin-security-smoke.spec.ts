@@ -216,16 +216,16 @@ if (SKIP_REASON) {
       //   sessionwatcher → panel-api ingest → quarantine row → UI render.
       //
       // Why a PHP webshell (not EICAR): ClamAV was removed in the M33
-      // 2026-04-27 amendment. EICAR is a generic AV marker — only ClamAV
-      // catches it. The current stack (LMD + rfxn YARA + PMF + Tetragon)
-      // is tuned for PHP shared-hosting threats; the webshell below uses
-      // three classic PMF triggers in one file (DANGEROUS_FUNC +
-      // base64_decode + $_REQUEST) so any of the YARA rules
-      // 'DodgyPHP' / 'webshell_*' fires.
+      // 2026-04-27 amendment. EICAR is a generic AV marker only ClamAV
+      // catches. The current stack (LMD + rfxn YARA + PMF + Tetragon)
+      // is tuned for PHP shared-hosting threats; the webshell below
+      // uses three classic PMF triggers in one file (DANGEROUS_FUNC +
+      // base64_decode + $_REQUEST) so PMF's 'DangerousPhp' or
+      // 'DodgyPhp' rule fires.
       //
-      // The webshell payload string is built via concat so the literal
-      // pattern doesn't trip the test-runner's own static-analysis
-      // security hook. It still ends up byte-identical on disk.
+      // The webshell payload is built via concat so the literal pattern
+      // doesn't trip the test-runner's static-analysis security hook.
+      // Byte-identical on disk.
       //
       // Inlined into the walkthrough (not a separate test) because Kratos
       // rate-limits login at 5/min.
@@ -286,11 +286,11 @@ if (SKIP_REASON) {
           found,
           `webshell '${filename}' did not appear in quarantine within 90s`,
         ).toBe(true);
-        // Signature column should carry a YARA rule name from PMF or LMD's
-        // own pattern engine — anything non-empty proves the row came
-        // from a real scanner, not unrelated quarantine state.
+        // Signature column should carry a YARA rule name from PMF or
+        // LMD — anything that hints at a real scanner match (rather
+        // than unrelated leftover quarantine state).
         await expect(
-          page.getByText(/php|webshell|dodgy|eval|base64/i).first(),
+          page.getByText(/php|webshell|dodgy|dangerous|base64/i).first(),
         ).toBeVisible();
       }
     });

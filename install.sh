@@ -4789,7 +4789,10 @@ scan_user_access_minuid="1000"
 inotify_docroot="domains"
 scan_yara="1"
 scan_yara_scope="custom"
-yara_rules="/usr/local/maldetect/sigs/rfxn.yara /etc/jabali/yara/*.yar"
+# php-malware-finder entry rule referenced explicitly — it `include`s
+# whitelist.yar + whitelists/<framework>.yar from its own dir, which
+# wouldn't resolve if it were globbed standalone under /etc/jabali/yara/.
+yara_rules="/usr/local/maldetect/sigs/rfxn.yara /etc/jabali/yara/*.yar /etc/jabali/pmf/data/php.yar"
 inotify_minutes="45"
 inotify_base_watches="15000"
 inotify_minuid="1000"
@@ -4830,27 +4833,43 @@ YARA_EX
   fi
 
   # php-malware-finder YARA rule pack — PHP webshell + obfuscation
-  # patterns (eval, base64, preg_replace e-modifier, etc.). Upstream
-  # is a single self-contained php.yar; we drop it into the existing
-  # /etc/jabali/yara/ pre-enabled and let LMD's yara_rules glob pick
-  # it up alongside rfxn.yara and admin uploads.
+  # patterns (eval/base64/preg_replace e-modifier/dangerous functions).
+  # PMF's php.yar `include "whitelist.yar"` which itself includes
+  # whitelists/<framework>.yar, so we ship the entire data/ tree under
+  # /etc/jabali/pmf/data/ (NOT under /etc/jabali/yara/, which LMD
+  # globs as standalone files — globbing php.yar standalone breaks the
+  # relative include path).
+  #
+  # maldet's yara_rules conf line below explicitly references the
+  # entry rule (php.yar); YARA resolves the includes from its own dir.
   #
   # Refresh cadence: jabali-pmf-update.timer below pulls daily.
-  install -d -m 0755 /etc/jabali/yara
-  local pmf_dst="/etc/jabali/yara/php-malware-finder.yar"
-  if [[ ! -s "$pmf_dst" ]]; then
-    _log "fetching php-malware-finder YARA rules (first install)"
-    if curl -fsSL --max-time 60 \
-      "https://raw.githubusercontent.com/jvoisin/php-malware-finder/master/data/php.yar" \
-      -o "$pmf_dst.tmp" 2>/dev/null; then
-      mv -f "$pmf_dst.tmp" "$pmf_dst"
-      chmod 0644 "$pmf_dst"
-      _ok "PMF rule pack installed at $pmf_dst ($(wc -l <"$pmf_dst") lines)"
+  install -d -m 0755 /etc/jabali/pmf
+  local pmf_dir="/etc/jabali/pmf/data"
+  if [[ ! -s "$pmf_dir/php.yar" ]]; then
+    _log "fetching php-malware-finder rule pack (first install)"
+    local tmp_pmf
+    tmp_pmf=$(mktemp -d -t pmf-XXXXXX)
+    if (
+      cd "$tmp_pmf" && \
+      curl -fsSL --max-time 60 \
+        "https://github.com/jvoisin/php-malware-finder/archive/refs/heads/master.tar.gz" \
+        -o pmf.tar.gz && \
+      tar -xzf pmf.tar.gz && \
+      install -d -m 0755 /etc/jabali/pmf/data /etc/jabali/pmf/data/whitelists && \
+      cp -f php-malware-finder-master/data/php.yar /etc/jabali/pmf/data/ && \
+      cp -f php-malware-finder-master/data/whitelist.yar /etc/jabali/pmf/data/ && \
+      cp -fr php-malware-finder-master/data/whitelists/. /etc/jabali/pmf/data/whitelists/
+    ); then
+      _ok "PMF rule pack installed at $pmf_dir ($(grep -c '^rule ' "$pmf_dir/php.yar") rules)"
     else
-      _warn "PMF rule pack download failed — timer will retry"
-      rm -f "$pmf_dst.tmp"
+      _warn "PMF rule pack download/install failed — timer will retry"
     fi
+    rm -rf "$tmp_pmf"
   fi
+  # Clean up any prior single-file install (PR #19 wrote to a path that
+  # broke YARA's include resolution).
+  rm -f /etc/jabali/yara/php-malware-finder.yar
 
   # Lift inotify watch ceiling — LMD's per-user docroot watches add up
   # fast on a busy shared host (10k domains × a few hundred files each).
@@ -4936,18 +4955,23 @@ Wants=network-online.target
 Type=oneshot
 ExecStart=/usr/bin/bash -c '\
   set -e; \
-  dst=/etc/jabali/yara/php-malware-finder.yar; \
-  tmp="$dst.tmp.$$"; \
+  dst=/etc/jabali/pmf/data; \
+  tmp=$(mktemp -d -t pmf-XXXXXX); \
+  cd "$tmp"; \
   curl -fsSL --max-time 60 \
-    "https://raw.githubusercontent.com/jvoisin/php-malware-finder/master/data/php.yar" \
-    -o "$tmp"; \
-  if [[ -s "$tmp" ]] && grep -q "^rule " "$tmp"; then \
-    mv -f "$tmp" "$dst"; \
-    chmod 0644 "$dst"; \
+    "https://github.com/jvoisin/php-malware-finder/archive/refs/heads/master.tar.gz" \
+    -o pmf.tar.gz; \
+  tar -xzf pmf.tar.gz; \
+  if grep -q "^rule " php-malware-finder-master/data/php.yar; then \
+    install -d -m 0755 "$dst" "$dst/whitelists"; \
+    install -m 0644 php-malware-finder-master/data/php.yar "$dst/php.yar"; \
+    install -m 0644 php-malware-finder-master/data/whitelist.yar "$dst/whitelist.yar"; \
+    cp -fr php-malware-finder-master/data/whitelists/. "$dst/whitelists/"; \
     /usr/local/maldetect/maldet --monitor RELOAD >/dev/null 2>&1 || true; \
   else \
-    rm -f "$tmp"; exit 1; \
-  fi'
+    rm -rf "$tmp"; exit 1; \
+  fi; \
+  rm -rf "$tmp"'
 Nice=15
 IOSchedulingClass=idle
 PMF_UNIT

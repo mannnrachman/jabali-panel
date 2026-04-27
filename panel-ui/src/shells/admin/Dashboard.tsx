@@ -3,7 +3,8 @@
 // short landing card: hostname, top-level health roll-up, three count
 // stats (users / domains / mailboxes) and a prominent button into the
 // Server Status page.
-import { Alert, Button, Card, Col, Row, Space, Statistic, Tag, Typography } from "antd";
+import { Alert, Button, Card, Col, Row, Space, Tag, Typography } from "antd";
+import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 
@@ -17,6 +18,54 @@ interface CountsResponse {
   domains: number;
   mailboxes: number;
 }
+
+const formatCount = (n: number | undefined) =>
+  n == null ? "—" : n.toLocaleString();
+
+interface StatCardProps {
+  label: string;
+  value: number | undefined;
+  icon: ReactNode;
+  iconBg: string;
+  iconColor: string;
+  to: string;
+}
+
+const StatCard = ({ label, value, icon, iconBg, iconColor, to }: StatCardProps) => (
+  <Link to={to} style={{ display: "block", color: "inherit" }}>
+    <Card hoverable size="small" styles={{ body: { padding: 16 } }}>
+      <Space size={16} align="center" style={{ width: "100%" }}>
+        <div
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: 12,
+            background: iconBg,
+            color: iconColor,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 22,
+            flex: "0 0 48px",
+          }}
+        >
+          {icon}
+        </div>
+        <Space direction="vertical" size={2} style={{ minWidth: 0 }}>
+          <Typography.Text
+            type="secondary"
+            style={{ fontSize: 12, letterSpacing: 0.6, textTransform: "uppercase" }}
+          >
+            {label}
+          </Typography.Text>
+          <Typography.Title level={3} style={{ margin: 0, lineHeight: 1.1 }}>
+            {formatCount(value)}
+          </Typography.Title>
+        </Space>
+      </Space>
+    </Card>
+  </Link>
+);
 
 export const Dashboard = () => {
   const status = useServerStatus();
@@ -53,34 +102,34 @@ export const Dashboard = () => {
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col xs={24} sm={8}>
-          <Card size="small">
-            <Statistic
-              title="Total Users"
-              value={users.data ?? 0}
-              prefix={<TeamOutlined />}
-            />
-            <Link to="/jabali-admin/users">Manage →</Link>
-          </Card>
+          <StatCard
+            label="Total Users"
+            value={users.data}
+            icon={<TeamOutlined />}
+            iconBg="rgba(22, 119, 255, 0.12)"
+            iconColor="#1677ff"
+            to="/jabali-admin/users"
+          />
         </Col>
         <Col xs={24} sm={8}>
-          <Card size="small">
-            <Statistic
-              title="Active Domains"
-              value={domains.data ?? 0}
-              prefix={<GlobalOutlined />}
-            />
-            <Link to="/jabali-admin/domains">Manage →</Link>
-          </Card>
+          <StatCard
+            label="Active Domains"
+            value={domains.data}
+            icon={<GlobalOutlined />}
+            iconBg="rgba(146, 84, 222, 0.14)"
+            iconColor="#9254de"
+            to="/jabali-admin/domains"
+          />
         </Col>
         <Col xs={24} sm={8}>
-          <Card size="small">
-            <Statistic
-              title="Mailboxes"
-              value={mailboxes.data ?? 0}
-              prefix={<MailOutlined />}
-            />
-            <Link to="/jabali-admin/domains">Manage →</Link>
-          </Card>
+          <StatCard
+            label="Mailboxes"
+            value={mailboxes.data}
+            icon={<MailOutlined />}
+            iconBg="rgba(250, 140, 22, 0.14)"
+            iconColor="#fa8c16"
+            to="/jabali-admin/domains"
+          />
         </Col>
       </Row>
 

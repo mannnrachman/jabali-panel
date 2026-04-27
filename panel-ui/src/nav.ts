@@ -40,6 +40,13 @@ export type NavItem = {
   label: string;
   icon: ReactNode;
   path: string;
+  // matchPatterns lets an item claim deeper sub-paths it doesn't own
+  // by `path` startsWith. Regex tested against the full pathname; if
+  // any matches, the item is selected even when another item's path
+  // would be a longer prefix. Use for nested routes like
+  // /jabali-panel/domains/:id/dns that logically belong to a different
+  // sidebar entry than the one /jabali-panel/domains owns.
+  matchPatterns?: RegExp[];
 };
 
 // All sidebar icons render a shade larger than AntD's default (14px
@@ -124,6 +131,7 @@ export const adminNav: NavItem[] = [
     label: "DNS Zones",
     icon: navIcon(CloudServerOutlined),
     path: "/jabali-admin/dns",
+    matchPatterns: [/^\/jabali-admin\/domains\/[^/]+\/dns(?:\/|$)/],
   },
   {
     key: "ips",
@@ -199,6 +207,7 @@ export const userNav: NavItem[] = [
     label: "DNS",
     icon: navIcon(CloudServerOutlined),
     path: "/jabali-panel/dns",
+    matchPatterns: [/^\/jabali-panel\/domains\/[^/]+\/dns(?:\/|$)/],
   },
   {
     key: "ssl",
@@ -229,6 +238,13 @@ export function selectedNavKey(
   items: NavItem[],
   pathname: string,
 ): string | undefined {
+  // matchPatterns win over startsWith — they're explicit overrides for
+  // nested routes that semantically belong to a different sidebar entry
+  // than the longest path prefix would pick.
+  const byPattern = items.find((item) =>
+    item.matchPatterns?.some((re) => re.test(pathname)),
+  );
+  if (byPattern) return byPattern.key;
   return [...items]
     .sort((a, b) => b.path.length - a.path.length)
     .find((item) => pathname.startsWith(item.path))?.key;

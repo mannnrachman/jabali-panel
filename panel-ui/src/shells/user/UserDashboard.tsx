@@ -226,7 +226,6 @@ export function UserDashboard() {
                 title: "Address",
                 dataIndex: "email",
                 ellipsis: true,
-                render: (_v, r) => `${r.local_part}@${r.domain_name}`,
               },
             ]}
           />

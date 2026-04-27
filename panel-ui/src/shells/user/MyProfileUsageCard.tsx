@@ -13,9 +13,9 @@ import {
   HddOutlined,
   DatabaseOutlined,
   ThunderboltOutlined,
-  ApartmentOutlined,
-  ArrowDownOutlined,
-  ArrowUpOutlined,
+  AppstoreLayoutOutlined,
+  DownloadOutlined,
+  UploadOutlined,
 } from "@icons";
 
 import { apiClient } from "../../apiClient";
@@ -139,21 +139,21 @@ export function MyProfileUsageCard({ userId }: { userId: string }) {
           value={cpuValue}
         />
         <SimpleRow
-          icon={<ApartmentOutlined />}
+          icon={<AppstoreLayoutOutlined />}
           iconBg="rgba(250, 140, 22, 0.14)"
           iconColor="#fa8c16"
           label="Processes"
           value={procValue}
         />
         <SimpleRow
-          icon={<ArrowDownOutlined />}
+          icon={<DownloadOutlined />}
           iconBg="rgba(19, 194, 194, 0.14)"
           iconColor="#13c2c2"
           label="I/O read"
           value={ioReadValue}
         />
         <SimpleRow
-          icon={<ArrowUpOutlined />}
+          icon={<UploadOutlined />}
           iconBg="rgba(235, 47, 150, 0.14)"
           iconColor="#eb2f96"
           label="I/O write"

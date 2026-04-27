@@ -19,8 +19,8 @@ interface MeterProps {
 }
 
 // CPUMeterCard renders CPU usage + 1/5/15m load averages in a single
-// card. Same physical resource (the CPU); reading them together is the
-// natural diagnostic flow ("usage spiking" + "load avg trend").
+// card. Load averages live in the card's `extra` slot (top-right of
+// the title bar) so the body stays a single clean Progress block.
 export function CPUMeterCard({ host, cpu }: MeterProps) {
   const cpuPct = cpu?.usage_percent ?? 0;
   const cpuWarming = cpu?.warming_up ?? true;
@@ -29,7 +29,22 @@ export function CPUMeterCard({ host, cpu }: MeterProps) {
   const load5 = host?.load_avg?.[1] ?? 0;
   const load15 = host?.load_avg?.[2] ?? 0;
   return (
-    <Card title="CPU" size="small">
+    <Card
+      title="CPU"
+      size="small"
+      extra={
+        <Tooltip title="Load average · 1m / 5m / 15m">
+          <Space size={4} style={{ fontSize: 12 }}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>load</Typography.Text>
+            <LoadInline value={load1} cores={cores} />
+            <Typography.Text type="secondary">/</Typography.Text>
+            <LoadInline value={load5} cores={cores} />
+            <Typography.Text type="secondary">/</Typography.Text>
+            <LoadInline value={load15} cores={cores} />
+          </Space>
+        </Tooltip>
+      }
+    >
       <Progress
         percent={Math.round(cpuPct)}
         strokeColor={usageColor(cpuPct)}
@@ -40,20 +55,18 @@ export function CPUMeterCard({ host, cpu }: MeterProps) {
         {cores === 1 ? "" : "s"}
         {cpuWarming ? " · warming up" : ""}
       </Typography.Text>
-      <div style={{ marginTop: 12 }}>
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          Load average
-        </Typography.Text>
-        <div style={{ marginTop: 4 }}>
-          <Space size={16}>
-            <LoadStat label="1m" value={load1} cores={cores} />
-            <LoadStat label="5m" value={load5} cores={cores} />
-            <LoadStat label="15m" value={load15} cores={cores} />
-          </Space>
-        </div>
-      </div>
     </Card>
   );
+}
+
+// LoadInline renders one load value with traffic-light coloring. Used
+// in the CPU card's title-bar extra slot.
+function LoadInline({ value, cores }: { value: number; cores: number }) {
+  let color: string | undefined;
+  if (value > cores * 2) color = "#cf1322";
+  else if (value > cores) color = "#fa8c16";
+  else color = "#52c41a";
+  return <span style={{ color, fontWeight: 600 }}>{value.toFixed(2)}</span>;
 }
 
 // MemoryMeterCard renders Memory + Swap stacked in a single card.
@@ -104,20 +117,6 @@ export function MemoryMeterCard({ host }: MeterProps) {
         )}
       </div>
     </Card>
-  );
-}
-
-function LoadStat({ label, value, cores }: { label: string; value: number; cores: number }) {
-  let color = "#52c41a";
-  if (value > cores * 2) color = "#cf1322";
-  else if (value > cores) color = "#fa8c16";
-  return (
-    <Tooltip title={`${label} avg`}>
-      <div style={{ textAlign: "center" }}>
-        <Typography.Text type="secondary" style={{ fontSize: 11 }}>{label}</Typography.Text>
-        <div style={{ color, fontWeight: 600, fontSize: 18 }}>{value.toFixed(2)}</div>
-      </div>
-    </Tooltip>
   );
 }
 

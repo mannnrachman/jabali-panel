@@ -128,21 +128,32 @@ func (c *Client) discover(ctx context.Context) error {
 // Stalwart returns its configured FQDN (e.g. mx.jabali-panel.local) in
 // session URLs but we always dial 127.0.0.1:8446. Without the rewrite,
 // downloads would fail when the FQDN isn't resolvable inside the panel.
+//
+// Implementation note: do NOT round-trip through url.URL — its String()
+// percent-encodes the literal `{` and `}` placeholders Stalwart returns
+// in apiUrl/downloadUrl/uploadUrl, breaking subsequent strings.ReplaceAll
+// of `{accountId}` etc. We instead extract the host:port substring with
+// a manual scheme-skip + first-slash split.
 func rewriteHostToBase(u, base string) string {
 	if u == "" || base == "" {
 		return u
 	}
-	parsed, err := url.Parse(u)
-	if err != nil {
-		return u
-	}
 	baseParsed, err := url.Parse(base)
-	if err != nil {
+	if err != nil || baseParsed.Host == "" {
 		return u
 	}
-	parsed.Scheme = baseParsed.Scheme
-	parsed.Host = baseParsed.Host
-	return parsed.String()
+	// Find scheme://host[:port][/path...].
+	schemeEnd := strings.Index(u, "://")
+	if schemeEnd < 0 {
+		return u
+	}
+	rest := u[schemeEnd+3:]
+	pathStart := strings.IndexByte(rest, '/')
+	if pathStart < 0 {
+		// No path component — just swap host.
+		return baseParsed.Scheme + "://" + baseParsed.Host
+	}
+	return baseParsed.Scheme + "://" + baseParsed.Host + rest[pathStart:]
 }
 
 // ---- JMAP request/response wire ----

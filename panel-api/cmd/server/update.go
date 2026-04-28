@@ -420,22 +420,24 @@ test -x node_modules/.bin/tsc || {
 			}
 			return run("", "systemctl", "restart", "jabali-panel")
 		}},
-		{"sync bulwark env", func() error {
-			// Re-render /etc/jabali-panel/bulwark.env from the repo
-			// template so changes (e.g. NODE_TLS_REJECT_UNAUTHORIZED for
-			// self-signed cert handshake — fix/bulwark-trust-self-signed)
+		{"sync bulwark systemd + env", func() error {
+			// Re-install the jabali-webmail.service unit file, the
+			// server-unix.js wrapper, the nginx upstream snippet, and
+			// re-render /etc/jabali-panel/bulwark.env from repo so
+			// changes (e.g. Restart=always, NODE_TLS_REJECT_UNAUTHORIZED)
 			// reach existing hosts without a full install.sh run.
-			// _install_bulwark_env is idempotent (sha256 diff guards the
-			// write) and restarts jabali-webmail only when the file
-			// changed. Failure is non-fatal: webmail keeps the previous
-			// env until the next update cycle.
+			// _install_bulwark_systemd is idempotent: install -m no-ops
+			// when content matches; daemon-reload runs unconditionally;
+			// _install_bulwark_env (called at the tail) restarts webmail
+			// only when the env content actually changed. Tarball stays
+			// untouched. Failure is non-fatal — old unit keeps working.
 			installSh := repoDir + "/install.sh"
 			if _, err := os.Stat(installSh); err != nil {
 				return nil
 			}
 			if err := run("", "bash", "-c",
-				"source "+installSh+" && _install_bulwark_env"); err != nil {
-				fmt.Printf("  (_install_bulwark_env failed: %v — continuing)\n", err)
+				"source "+installSh+" && _install_bulwark_systemd"); err != nil {
+				fmt.Printf("  (_install_bulwark_systemd failed: %v — continuing)\n", err)
 			}
 			return nil
 		}},

@@ -47,7 +47,14 @@ RuntimeDirectoryPreserve=no
 # land there.
 EnvironmentFile=-/etc/jabali-panel/bulwark.env
 
-Restart=on-failure
+# Bulwark must always be running while enabled. Restart=on-failure left
+# the unit "inactive" after clean exits — observed when the stock
+# update-check phase (logged "Update available: v1.5.2") finishes and
+# nothing else keeps the event loop alive on certain Bulwark builds, or
+# when systemd's namespace setup tears the process down post-listen.
+# Restart=always recovers from both the on-failure cases AND any clean
+# exit, which is the only correct policy for a long-lived HTTP daemon.
+Restart=always
 RestartSec=5s
 
 # Security hardening.

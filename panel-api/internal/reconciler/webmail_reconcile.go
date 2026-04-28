@@ -54,12 +54,31 @@ func (r *Reconciler) reconcileWebmailVhosts(ctx context.Context) {
 		return
 	}
 
+	anyEmailEnabled := false
 	for i := range domains {
 		d := &domains[i]
 		if d.EmailEnabled {
+			anyEmailEnabled = true
 			r.applyWebmailVhost(ctx, d)
 		} else {
 			r.removeWebmailVhost(ctx, d.Name)
+		}
+	}
+
+	// Ensure the Bulwark daemon itself is running whenever any tenant
+	// has email enabled. domain.email_enable starts it the first time,
+	// but on a clean exit (Restart=on-failure used to leave the unit
+	// inactive — fixed alongside this loop by switching to
+	// Restart=always) or a manual stop, nothing else converges. The
+	// agent's service.start verb is idempotent: a no-op when the unit
+	// is already active.
+	if anyEmailEnabled {
+		startCtx, cancel := context.WithTimeout(ctx, webmailAgentTimeout)
+		defer cancel()
+		if _, err := r.agent.Call(startCtx, "service.start", map[string]any{
+			"name": "jabali-webmail",
+		}); err != nil {
+			r.log.Error("webmail reconcile: service.start jabali-webmail failed", "err", err)
 		}
 	}
 }

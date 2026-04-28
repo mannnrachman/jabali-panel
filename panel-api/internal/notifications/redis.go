@@ -128,6 +128,13 @@ func (q *Queue) Claim(ctx context.Context, consumer string, minIdle time.Duratio
 	}).Result()
 }
 
+// RangeOne returns the single message at id, or nil/empty slice if no
+// such message exists. Used by the reclaim loop to recover the original
+// payload before routing a stuck entry to the DLQ.
+func (q *Queue) RangeOne(ctx context.Context, id string) ([]redis.XMessage, error) {
+	return q.rdb.XRange(ctx, StreamQueue, id, id).Result()
+}
+
 // ToDLQ moves an entry permanently: appends it to the DLQ stream +
 // ACKs + deletes from the main queue. Used when retry count hit the
 // cap or the envelope itself is malformed.

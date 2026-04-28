@@ -72,7 +72,9 @@ export const DLQTab = () => {
       message.success("Re-queued for delivery");
       qc.invalidateQueries({ queryKey: ["notifications", "dlq"] });
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Replay failed");
+      const apiMsg =
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      message.error(apiMsg ?? (err instanceof Error ? err.message : "Replay failed"));
     } finally {
       setBusyID(null);
     }

@@ -124,6 +124,17 @@ func (h *notificationsDLQHandler) replay(c *gin.Context) {
 		}
 		cleaned[k] = v
 	}
+	// Pre-d651ea5 DLQ rows only stored {reason, orig_id} — the original
+	// payload was lost. After stripping, cleaned is empty, and XADD
+	// with no fields fails with WRONGTYPE-style EXECABORT. Surface the
+	// situation as a 410 Gone so the UI can prompt the admin to Drop
+	// instead of Replay.
+	if len(cleaned) == 0 {
+		c.JSON(http.StatusGone, gin.H{
+			"error": "envelope payload missing — this DLQ entry was written by an older dispatcher build that didn't preserve the original values; use Drop instead",
+		})
+		return
+	}
 	pipe := h.cfg.Redis.TxPipeline()
 	pipe.XAdd(ctx, &redis.XAddArgs{Stream: notifications.StreamQueue, Values: cleaned})
 	pipe.XDel(ctx, notifications.StreamDLQ, id)

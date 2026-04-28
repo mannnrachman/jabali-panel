@@ -229,8 +229,15 @@ func (d *Dispatcher) reclaim(ctx context.Context) {
 	}
 	for _, p := range pending {
 		if int(p.RetryCount) >= d.cfg.MaxRetries {
-			// Retry budget exhausted. Move to DLQ with a reason.
-			if err := d.queue.ToDLQ(ctx, p.ID, "max_retries_exceeded", nil); err != nil {
+			// Retry budget exhausted. Move to DLQ — fetch the original
+			// payload first so the DLQ inspector can replay/inspect it.
+			// Without this the DLQ row is just {reason, orig_id} and
+			// Replay has nothing to re-publish (silent corruption).
+			var values map[string]any
+			if msgs, mErr := d.queue.RangeOne(ctx, p.ID); mErr == nil && len(msgs) > 0 {
+				values = msgs[0].Values
+			}
+			if err := d.queue.ToDLQ(ctx, p.ID, "max_retries_exceeded", values); err != nil {
 				d.log.Error("move to dlq failed", "id", p.ID, "err", err)
 			} else {
 				d.log.Warn("dispatched to DLQ", "id", p.ID, "owner", p.Consumer, "retries", p.RetryCount)

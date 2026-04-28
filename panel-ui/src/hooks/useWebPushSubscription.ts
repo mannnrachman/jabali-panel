@@ -101,9 +101,16 @@ export function useWebPushSubscription(): WebPushState {
         setSubscribed(existing !== null);
       } catch (err) {
         // Don't blow up the UI — bell just shows the disabled state.
-        // Logged at console level so devs see it in dev tools without
-        // spamming production error telemetry.
-        console.warn("[webpush] service worker register failed", err);
+        // SecurityError fires every page load on hostnames whose TLS
+        // cert isn't trusted (.local with self-signed, etc.). It's
+        // already surfaced via the subscribe button's "install LE cert"
+        // hint, so log at info-level there to keep DevTools clean.
+        const errName = (err as { name?: string } | null)?.name ?? "";
+        if (errName === "SecurityError") {
+          console.info("[webpush] service worker register skipped (cert not trusted)");
+        } else {
+          console.warn("[webpush] service worker register failed", err);
+        }
         if (cancelled) return;
         setError(friendlyWebPushError(err, "register"));
       }

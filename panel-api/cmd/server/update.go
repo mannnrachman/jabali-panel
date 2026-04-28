@@ -420,6 +420,25 @@ test -x node_modules/.bin/tsc || {
 			}
 			return run("", "systemctl", "restart", "jabali-panel")
 		}},
+		{"sync bulwark env", func() error {
+			// Re-render /etc/jabali-panel/bulwark.env from the repo
+			// template so changes (e.g. NODE_TLS_REJECT_UNAUTHORIZED for
+			// self-signed cert handshake — fix/bulwark-trust-self-signed)
+			// reach existing hosts without a full install.sh run.
+			// _install_bulwark_env is idempotent (sha256 diff guards the
+			// write) and restarts jabali-webmail only when the file
+			// changed. Failure is non-fatal: webmail keeps the previous
+			// env until the next update cycle.
+			installSh := repoDir + "/install.sh"
+			if _, err := os.Stat(installSh); err != nil {
+				return nil
+			}
+			if err := run("", "bash", "-c",
+				"source "+installSh+" && _install_bulwark_env"); err != nil {
+				fmt.Printf("  (_install_bulwark_env failed: %v — continuing)\n", err)
+			}
+			return nil
+		}},
 		{"sync malware stack", func() error {
 			// Source install.sh and re-run install_malware_stack so existing
 			// hosts converge on amendments to the M33 stack (ADR-0072) without

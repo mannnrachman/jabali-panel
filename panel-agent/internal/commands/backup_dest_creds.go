@@ -34,7 +34,7 @@ func backupDestCredsWriteHandler(ctx context.Context, raw json.RawMessage) (any,
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fmt.Errorf("invalid_arg: %w", err)
 	}
-	if !validULID(p.DestID) {
+	if !isValidULID(p.DestID) {
 		return nil, fmt.Errorf("invalid_arg: dest_id must be a 26-char ULID")
 	}
 	if len(p.Env) == 0 {
@@ -89,7 +89,7 @@ func backupDestCredsDeleteHandler(ctx context.Context, raw json.RawMessage) (any
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fmt.Errorf("invalid_arg: %w", err)
 	}
-	if !validULID(p.DestID) {
+	if !isValidULID(p.DestID) {
 		return nil, fmt.Errorf("invalid_arg: dest_id must be a 26-char ULID")
 	}
 	path := filepath.Join(credsDir, p.DestID+".env")
@@ -99,7 +99,7 @@ func backupDestCredsDeleteHandler(ctx context.Context, raw json.RawMessage) (any
 	return map[string]string{"path": path, "status": "deleted"}, nil
 }
 
-func validULID(s string) bool {
+func isValidULID(s string) bool {
 	if len(s) != 26 {
 		return false
 	}

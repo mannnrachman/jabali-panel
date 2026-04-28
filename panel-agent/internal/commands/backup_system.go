@@ -140,27 +140,15 @@ func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) er
 	manifest.Stages = append(manifest.Stages,
 		runSystemOSUsersStage(ctx, c, req.JobID, host))
 
-	// Disaster-recovery stages — small per-stage but each one is
-	// load-bearing for "rebuild this host on a fresh Debian VM".
-	// Missing path → skipped + warning, never fatal.
-	manifest.Stages = append(manifest.Stages,
-		runSystemMultiPathStage(ctx, c, req.JobID, host, backup.StageOSBase,
-			expandOSBasePaths(), nil))
-	manifest.Stages = append(manifest.Stages,
-		runSystemMultiPathStage(ctx, c, req.JobID, host, backup.StageAPT,
-			expandAPTPaths(), nil))
-	manifest.Stages = append(manifest.Stages,
-		runSystemMultiPathStage(ctx, c, req.JobID, host, backup.StageSSHHost,
-			expandSSHPaths(), nil))
-	manifest.Stages = append(manifest.Stages,
-		runSystemMultiPathStage(ctx, c, req.JobID, host, backup.StageSystemCron,
-			expandCronPaths(), nil))
+	// data_state: jabali runtime data living outside the MariaDB dump
+	// (crowdsec decisions DB, redis AOF, tetragon event spool, ACME
+	// webroot). Distro-managed dirs (fstab, network, apt, sshd, sudoers,
+	// cron, hostname) are intentionally NOT captured — restore target
+	// is a fresh OS the operator already configured; we only own the
+	// jabali plane.
 	manifest.Stages = append(manifest.Stages,
 		runSystemMultiPathStage(ctx, c, req.JobID, host, backup.StageDataState,
 			expandDataStatePaths(), nil))
-	manifest.Stages = append(manifest.Stages,
-		runSystemMultiPathStage(ctx, c, req.JobID, host, backup.StageSudoers,
-			expandSudoersPaths(), nil))
 
 	// Sum stage byte counts into the top-level ManifestRestic so the
 	// panel-side finalizer can record total bytes_added/bytes_total per
@@ -330,137 +318,61 @@ func runSystemMultiPathStage(ctx context.Context, c *backup.Client, jobID, hostn
 // here so missing trees don't break the stage and so the manifest
 // records exactly which paths were captured.
 func expandServiceConfigPaths() []string {
-	out := []string{
+	// Only configs jabali itself installs/manages. Distro-shipped trees
+	// (/etc/nginx/nginx.conf, /etc/php/*/php.ini, /etc/redis/redis.conf
+	// when not jabali-installed, /etc/clamav/clamd.conf when distro-
+	// shipped) are owned by the OS image — re-installing jabali on the
+	// restore host re-populates them. Capturing them would risk
+	// stomping on the destination's distro config when the operator
+	// runs the same installer there.
+	out := []string{}
+	for _, p := range []string{
 		"/etc/stalwart",
 		"/etc/powerdns",
-		"/etc/redis",
 		"/etc/jabali-bulwark",
 		"/etc/jabali-tetragon",
-		"/etc/clamav",
-	}
-	// nginx: capture the full tree (nginx.conf + conf.d + snippets +
-	// sites-*) — operator-edited entries land in any of these and a
-	// restore needs the whole config to come back the same way.
-	out = append(out, globOrSkip("/etc/nginx")...)
-	if matches, _ := filepath.Glob("/etc/php/*/fpm"); len(matches) > 0 {
-		out = append(out, matches...)
-	}
-	// systemd drop-ins AND single-file units.
-	if matches, _ := filepath.Glob("/etc/systemd/system/jabali-*.service.d"); len(matches) > 0 {
-		out = append(out, matches...)
-	}
-	if matches, _ := filepath.Glob("/etc/systemd/system/jabali-*.service"); len(matches) > 0 {
-		out = append(out, matches...)
-	}
-	if matches, _ := filepath.Glob("/etc/systemd/system/jabali-*.timer"); len(matches) > 0 {
-		out = append(out, matches...)
-	}
-	return out
-}
-
-// globOrSkip returns [path] if it exists, empty otherwise. Used by the
-// service_config expansion to skip paths that don't exist on this host
-// without breaking the stage.
-func globOrSkip(path string) []string {
-	if _, err := os.Stat(path); err != nil {
-		return nil
-	}
-	return []string{path}
-}
-
-// expandOSBasePaths returns the system-level files needed to identify
-// the host on disaster recovery: hostname, hosts table, fstab, network
-// config, sysctl tweaks. Most of these are 1-2 KB but absolutely
-// load-bearing for a re-install — without them the restored host comes
-// up with a default hostname or no network.
-func expandOSBasePaths() []string {
-	out := []string{}
-	for _, p := range []string{
-		"/etc/hostname",
-		"/etc/hosts",
-		"/etc/fstab",
-		"/etc/sysctl.conf",
-		"/etc/sysctl.d",
-		"/etc/netplan",
-		"/etc/network",
-		"/etc/resolv.conf",
-		"/etc/locale.gen",
-		"/etc/timezone",
-		"/etc/skel",
 	} {
 		if _, err := os.Stat(p); err == nil {
 			out = append(out, p)
 		}
 	}
-	return out
-}
-
-// expandAPTPaths returns the apt package-manager state needed to
-// re-install the same Debian + third-party packages on a restore host:
-// sources, prefs, keyrings (third-party signing keys).
-func expandAPTPaths() []string {
-	out := []string{}
-	for _, p := range []string{
-		"/etc/apt/sources.list",
-		"/etc/apt/sources.list.d",
-		"/etc/apt/preferences",
-		"/etc/apt/preferences.d",
-		"/etc/apt/keyrings",
-		"/etc/apt/trusted.gpg",
-		"/etc/apt/trusted.gpg.d",
-	} {
-		if _, err := os.Stat(p); err == nil {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
-// expandSSHPaths returns SSH server state: host config + host keys.
-// Host keys preserve the server's identity so existing SSH clients
-// don't trigger MITM warnings on restore.
-func expandSSHPaths() []string {
-	out := []string{}
-	for _, p := range []string{
-		"/etc/ssh/sshd_config",
-		"/etc/ssh/sshd_config.d",
-	} {
-		if _, err := os.Stat(p); err == nil {
-			out = append(out, p)
-		}
-	}
-	if matches, _ := filepath.Glob("/etc/ssh/ssh_host_*"); len(matches) > 0 {
+	// nginx: only jabali-generated entries (sites-* are 1-per-domain
+	// site files install.sh + reconciler write; nginx.conf + conf.d are
+	// distro-shipped + jabali-installer territory, NOT per-deployment
+	// state).
+	if matches, _ := filepath.Glob("/etc/nginx/sites-*"); len(matches) > 0 {
 		out = append(out, matches...)
 	}
-	return out
-}
-
-// expandCronPaths returns system cron state: /etc/cron.d (jabali timers
-// + apt-listchanges + …), /etc/crontab, and the spool dir holding
-// per-user crontabs (which include the panel jabali-cron entries).
-func expandCronPaths() []string {
-	out := []string{}
-	for _, p := range []string{
-		"/etc/crontab",
-		"/etc/cron.d",
-		"/etc/cron.daily",
-		"/etc/cron.hourly",
-		"/etc/cron.weekly",
-		"/etc/cron.monthly",
-		"/var/spool/cron/crontabs",
+	// PHP: only jabali pool drop-ins (per-user-slices). The rest of
+	// /etc/php/*/fpm is package-shipped + jabali installer territory.
+	if matches, _ := filepath.Glob("/etc/php/*/fpm/pool.d/jabali-*"); len(matches) > 0 {
+		out = append(out, matches...)
+	}
+	// systemd: jabali-installed units + drop-ins ONLY. Generic system
+	// units belong to the OS image.
+	for _, glob := range []string{
+		"/etc/systemd/system/jabali-*.service",
+		"/etc/systemd/system/jabali-*.service.d",
+		"/etc/systemd/system/jabali-*.timer",
 	} {
-		if _, err := os.Stat(p); err == nil {
-			out = append(out, p)
+		if matches, _ := filepath.Glob(glob); len(matches) > 0 {
+			out = append(out, matches...)
 		}
+	}
+	// jabali-installed cron files. cron.d is otherwise distro
+	// territory; jabali-* prefix is what install.sh writes.
+	if matches, _ := filepath.Glob("/etc/cron.d/jabali-*"); len(matches) > 0 {
+		out = append(out, matches...)
 	}
 	return out
 }
 
 // expandDataStatePaths returns runtime-data directories that aren't
-// part of the panel-plane MariaDB dump but still hold operator state:
-// crowdsec decisions DB, redis AOF, tetragon event spool. NOT included:
-// /var/lib/clamav (ClamAV signatures, ~250 MB; freshclam re-fetches
-// on restore) and /var/log/* (ephemeral observability).
+// part of the panel-plane MariaDB dump but still hold jabali state:
+// crowdsec decisions DB (jabali-installed bouncers + scenarios), redis
+// AOF (jabali notification queue), tetragon event spool (M33 malware
+// signals), ACME webroot. NOT included: /var/lib/clamav (~250 MB
+// signatures; freshclam re-fetches on restore), /var/log/* (ephemeral).
 func expandDataStatePaths() []string {
 	out := []string{}
 	for _, p := range []string{
@@ -468,21 +380,6 @@ func expandDataStatePaths() []string {
 		"/var/lib/redis",
 		"/var/lib/jabali-tetragon",
 		"/var/lib/jabali-panel-acme",
-	} {
-		if _, err := os.Stat(p); err == nil {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
-// expandSudoersPaths returns sudoers + drop-ins. Captured separately
-// so the security stage can stay scoped to firewall+intrusion configs.
-func expandSudoersPaths() []string {
-	out := []string{}
-	for _, p := range []string{
-		"/etc/sudoers",
-		"/etc/sudoers.d",
 	} {
 		if _, err := os.Stat(p); err == nil {
 			out = append(out, p)

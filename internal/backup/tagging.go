@@ -53,7 +53,11 @@ const (
 	StageMeta     = "meta" // YAML bundle for cron/ssh/apps/php
 	StageManifest = "manifest"
 
-	// system-backup stages
+	// system-backup stages — JABALI-PLANE ONLY. The restore target is a
+	// freshly-installed Debian + freshly-installed jabali-panel; the OS
+	// provider is responsible for hostname, fstab, apt, ssh, sudoers,
+	// network. We capture only the things jabali itself owns so a
+	// restore on a different VM doesn't trample the operator's OS.
 	StagePanelDB       = "panel_db"
 	StagePanelConfig   = "panel_config"
 	StageServiceConfig = "service_config"
@@ -61,14 +65,9 @@ const (
 	StageTLS           = "tls"
 	StageSecurity      = "security"
 	StageOSUsers       = "os_users"
-	// Disaster-recovery stages — enough state to rebuild a host from
-	// a fresh Debian install + jabali-panel reinstall + this backup.
-	StageOSBase    = "os_base"    // hostname, hosts, fstab, netplan, sysctl
-	StageAPT       = "apt"        // sources.list*, keyrings, prefs
-	StageSSHHost   = "ssh_host"   // sshd_config(.d) + host keys
-	StageSystemCron = "system_cron" // /etc/cron.d/*, /var/spool/cron/crontabs
-	StageDataState = "data_state" // redis, crowdsec, pdns runtime data
-	StageSudoers   = "sudoers"    // /etc/sudoers + sudoers.d
+	// jabali runtime state that lives outside MariaDB (crowdsec
+	// decisions DB, redis AOF, tetragon spool, ACME webroot).
+	StageDataState = "data_state"
 )
 
 // MakeTag formats `key=value`.

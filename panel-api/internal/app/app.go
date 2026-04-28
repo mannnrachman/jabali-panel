@@ -93,6 +93,11 @@ type Deps struct {
 	YARARules           repository.YARACustomRuleRepository
 	TetragonPolicies    repository.TetragonPolicyStateRepository
 	MalwareSettings     repository.MalwareSettingsRepository
+	// M33.2 mail YARA scanner — async tick walks Stalwart mailboxes via
+	// JMAP, scans attachments with yr, quarantines hits. Off by default;
+	// enabled via malware_settings.mail_scan_enabled. ADR-0079.
+	MailScanState       repository.MailScanStateRepository
+	MailScanFailures    repository.MailScanFailureRepository
 	// QuotaMount is the filesystem mount path /home lives on — passed
 	// on every M18 user.limits.{apply,clear,report} agent call so the
 	// agent can resolve `setquota -u <user> ... <mount>` without ever

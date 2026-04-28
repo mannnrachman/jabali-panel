@@ -23,8 +23,10 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupcopyworker"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupfinalizer"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupscheduler"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/eventsources"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/mailscan"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/notifications"
@@ -249,6 +251,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.MalwareSettings = repository.NewMalwareSettingsRepository(sharedDB)
 		deps.YARARules = repository.NewYARACustomRuleRepository(sharedDB)
 		deps.TetragonPolicies = repository.NewTetragonPolicyStateRepository(sharedDB)
+		// M33.2 (ADR-0079): mail YARA scanner state + DLQ.
+		deps.MailScanState = repository.NewMailScanStateRepository(sharedDB)
+		deps.MailScanFailures = repository.NewMailScanFailureRepository(sharedDB)
 		// M30 (ADR-0075): backup-restore workflow rows.
 		deps.BackupJobs = repository.NewBackupJobRepository(sharedDB)
 		// M30.1 (ADR-0078): destinations + schedules + copy queue.
@@ -550,6 +555,52 @@ func runServe(cmd *cobra.Command, args []string) error {
 		go cw.Start(ctx)
 	} else {
 		log.Info("backup copy worker not started — required deps missing")
+	}
+
+	// M33.2 (ADR-0079): mail YARA scanner tick. Off by default; the tick
+	// short-circuits when malware_settings.mail_scan_enabled is false so
+	// boot doesn't depend on Stalwart being up. Builds the in-process
+	// ingest closure here (mailscan can't import api/ — would cycle).
+	if deps.MailScanState != nil && deps.MailScanFailures != nil &&
+		deps.MalwareSettings != nil && deps.MalwareEvents != nil &&
+		deps.MalwareQuarantine != nil {
+		ingestCfg := api.SecurityMalwareHandlerConfig{
+			Quarantine: deps.MalwareQuarantine,
+			Events:     deps.MalwareEvents,
+			Settings:   deps.MalwareSettings,
+			Users:      deps.Users,
+			Log:        log,
+		}
+		go mailscan.StartTicker(ctx, mailscan.Deps{
+			State:    deps.MailScanState,
+			Failures: deps.MailScanFailures,
+			Settings: deps.MalwareSettings,
+			Log:      log,
+			Ingest: func(ctx context.Context, h mailscan.IngestHit) error {
+				p := &api.MalwareEventIngestPayload{
+					Source:     h.Source,
+					EventType:  h.EventType,
+					Severity:   h.Severity,
+					Signature:  h.Signature,
+					RawJSON:    h.RawJSON,
+					Hits: []api.MalwareEventIngestHit{{
+						OriginalPath:   h.OriginalPath,
+						QuarantinePath: h.QuarantinePath,
+						Signature:      h.Signature,
+						SHA256:         h.SHA256,
+						SizeBytes:      h.SizeBytes,
+						Username:       h.Username,
+					}},
+				}
+				_, _, errCode := api.IngestMalwareEventInProcess(ctx, ingestCfg, p)
+				if errCode != "" {
+					return errors.New(errCode)
+				}
+				return nil
+			},
+		}, 5*time.Minute)
+	} else {
+		log.Info("mailscan ticker not started — required deps missing")
 	}
 
 	// M14 notification dispatcher. Starts iff we have Redis + all

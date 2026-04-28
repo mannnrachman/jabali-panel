@@ -72,7 +72,10 @@ func SFTPCommandFlag(in SFTPInputs) string {
 	// ssh would only try pubkey methods, ending in "Permission denied
 	// (publickey,password)" even with the right password.
 	if in.Auth == "password" {
-		parts = append(parts, "-o", "PreferredAuthentications=password,keyboard-interactive",
+		// restic tokenizes sftp.command via go-shellwords which splits
+		// on commas — `password,keyboard-interactive` would become two
+		// args and confuse ssh. Stick to the single value.
+		parts = append(parts, "-o", "PreferredAuthentications=password",
 			"-o", "PubkeyAuthentication=no")
 	} else {
 		parts = append(parts, "-o", "BatchMode=yes")

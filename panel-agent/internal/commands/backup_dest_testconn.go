@@ -50,10 +50,25 @@ func backupDestTestHandler(ctx context.Context, raw json.RawMessage) (any, error
 		p.ExtraOptions,
 	)
 	if err != nil {
+		stderrStr := strings.TrimSpace(string(stderr))
+		// "repository does not exist" / "unable to open config file"
+		// means the SSH/SFTP layer succeeded — auth + reachability
+		// are fine, just no restic repo at the path yet. The first
+		// backup will run `restic init` and create it. From the
+		// operator's POV the destination IS reachable, so report ok
+		// with a hint.
+		lower := strings.ToLower(stderrStr)
+		if strings.Contains(lower, "repository does not exist") ||
+			strings.Contains(lower, "unable to open config file") {
+			return backupDestTestResult{
+				Status:        "ok",
+				StdoutPreview: "reachable — restic repo not yet initialized; first backup will create it",
+			}, nil
+		}
 		return backupDestTestResult{
 			Status: "error",
 			Detail: err.Error(),
-			Stderr: strings.TrimSpace(string(stderr)),
+			Stderr: stderrStr,
 		}, nil
 	}
 	return backupDestTestResult{

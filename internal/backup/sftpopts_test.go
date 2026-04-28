@@ -41,7 +41,8 @@ func TestSFTPCommandFlag_Password(t *testing.T) {
 	// Password auth must NOT set BatchMode=yes — that would block the
 	// interactive prompt sshpass needs.
 	require.NotContains(t, got, "BatchMode=yes")
-	require.Contains(t, got, "PreferredAuthentications=password,keyboard-interactive")
+	require.Contains(t, got, "PreferredAuthentications=password")
+	require.NotContains(t, got, "keyboard-interactive") // commas break go-shellwords tokenization
 	require.Contains(t, got, "PubkeyAuthentication=no")
 }
 

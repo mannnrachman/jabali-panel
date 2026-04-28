@@ -239,6 +239,48 @@ export const AdminSecurityCrowdsec = () => {
 
   const overviewPanel = (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
+      {metrics.isLoading ? (
+        <Typography.Text type="secondary">Loading…</Typography.Text>
+      ) : (
+        <Row gutter={[12, 12]}>
+          <MetricTile
+            icon={<FileTextOutlined />}
+            tint="#1677ff"
+            label="Parsed events"
+            value={metrics.data?.parsed ?? 0}
+            hint="Log lines CrowdSec successfully parsed"
+          />
+          <MetricTile
+            icon={<WarningOutlined />}
+            tint="#faad14"
+            label="Unparsed"
+            value={metrics.data?.unparsed ?? 0}
+            hint="Lines no parser matched (gaps in coverage)"
+          />
+          <MetricTile
+            icon={<ThunderboltOutlined />}
+            tint="#722ed1"
+            label="Buckets fired"
+            value={metrics.data?.buckets ?? 0}
+            hint="Scenario thresholds tripped (suspicious patterns)"
+          />
+          <MetricTile
+            icon={<SafetyOutlined />}
+            tint="#cf1322"
+            label="Active decisions"
+            value={metrics.data?.decisions_active ?? 0}
+            hint="IPs currently banned / under captcha"
+          />
+          <MetricTile
+            icon={<BellOutlined />}
+            tint="#13c2c2"
+            label="Total alerts"
+            value={metrics.data?.alerts_total ?? 0}
+            hint="All-time alerts since CrowdSec started"
+          />
+        </Row>
+      )}
+
       <Alert
         type="info"
         showIcon
@@ -280,53 +322,6 @@ export const AdminSecurityCrowdsec = () => {
           ]}
         />
       </Card>
-
-      <div>
-        <Typography.Title level={5} style={{ marginTop: 0, marginBottom: 12 }}>
-          Metrics
-        </Typography.Title>
-        {metrics.isLoading ? (
-          <Typography.Text type="secondary">Loading…</Typography.Text>
-        ) : (
-          <Row gutter={[12, 12]}>
-            <MetricTile
-              icon={<FileTextOutlined />}
-              tint="#1677ff"
-              label="Parsed events"
-              value={metrics.data?.parsed ?? 0}
-              hint="Log lines CrowdSec successfully parsed"
-            />
-            <MetricTile
-              icon={<WarningOutlined />}
-              tint="#faad14"
-              label="Unparsed"
-              value={metrics.data?.unparsed ?? 0}
-              hint="Lines no parser matched (gaps in coverage)"
-            />
-            <MetricTile
-              icon={<ThunderboltOutlined />}
-              tint="#722ed1"
-              label="Buckets fired"
-              value={metrics.data?.buckets ?? 0}
-              hint="Scenario thresholds tripped (suspicious patterns)"
-            />
-            <MetricTile
-              icon={<SafetyOutlined />}
-              tint="#cf1322"
-              label="Active decisions"
-              value={metrics.data?.decisions_active ?? 0}
-              hint="IPs currently banned / under captcha"
-            />
-            <MetricTile
-              icon={<BellOutlined />}
-              tint="#13c2c2"
-              label="Total alerts"
-              value={metrics.data?.alerts_total ?? 0}
-              hint="All-time alerts since CrowdSec started"
-            />
-          </Row>
-        )}
-      </div>
     </Space>
   );
 

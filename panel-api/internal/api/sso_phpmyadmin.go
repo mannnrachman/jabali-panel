@@ -178,9 +178,15 @@ func (h *ssoPhpMyAdminHandler) validateSameOrigin(c *gin.Context) bool {
 }
 
 func (h *ssoPhpMyAdminHandler) getOrigin(c *gin.Context) string {
-	scheme := "https"
-	if c.Request.TLS == nil {
-		scheme = "http"
+	// panel-api listens on a unix socket behind nginx (M25); TLS is
+	// terminated upstream so c.Request.TLS is always nil. The vhost
+	// template sets `X-Forwarded-Proto: https`, so honour that header
+	// before falling back to TLS-on-socket detection.
+	scheme := "http"
+	if fp := c.GetHeader("X-Forwarded-Proto"); fp != "" {
+		scheme = fp
+	} else if c.Request.TLS != nil {
+		scheme = "https"
 	}
 	return scheme + "://" + c.Request.Host
 }

@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	internalbackup "git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
@@ -32,8 +33,11 @@ type BackupHandlerConfig struct {
 	Jobs            repository.BackupJobRepository
 	Users           repository.UserRepository
 	Databases       repository.DatabaseRepository
+	DatabaseUsers   repository.DatabaseUserRepository
+	DatabaseGrants  repository.DatabaseUserGrantRepository
 	Domains         repository.DomainRepository
 	Mailboxes       repository.MailboxRepository
+	AppInstalls     repository.ApplicationInstallRepository
 	Log             *slog.Logger
 	StrictRateLimit gin.HandlerFunc
 }
@@ -193,6 +197,7 @@ func (h *backupHandler) createForUser(c *gin.Context) {
 			"is_admin":  user.IsAdmin,
 			"databases": dbs,
 			"mailboxes": mbs,
+			"metadata":  h.cfg.buildAccountMetadata(c.Request.Context(), user),
 		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), backupCallTimeout)
 		defer cancel()
@@ -415,6 +420,96 @@ func (cfg BackupHandlerConfig) logErr(msg string, err error, kv ...any) {
 	cfg.Log.Warn(msg, args...)
 }
 
+// buildAccountMetadata loads the panel-side state bundle (DB users +
+// grants, application_installs) for the given user. Returns a non-nil
+// pointer even on partial failure so the agent's metadata stage stays
+// consistent — missing pieces become empty arrays. Errors at any
+// repo are logged and the missing data is left out of the bundle.
+func (cfg BackupHandlerConfig) buildAccountMetadata(ctx context.Context, user *models.User) *internalbackup.AccountMetadata {
+	m := &internalbackup.AccountMetadata{
+		SchemaVersion: internalbackup.MetadataSchemaVersion,
+		UserID:        user.ID,
+		Email:         user.Email,
+	}
+	if user.Username != nil {
+		m.Username = *user.Username
+	}
+	if cfg.DatabaseUsers != nil && cfg.Databases != nil {
+		users, _, err := cfg.DatabaseUsers.ListByUserID(ctx, user.ID, repository.ListOptions{Limit: 10000})
+		if err != nil {
+			cfg.logErr("metadata: list db users", err, "user_id", user.ID)
+		} else {
+			// Build {db_id → name} once so every grant row can be
+			// enriched with database_name without a per-grant lookup.
+			dbs, _, _ := cfg.Databases.ListByUserID(ctx, user.ID, repository.ListOptions{Limit: 10000})
+			dbName := make(map[string]string, len(dbs))
+			for _, d := range dbs {
+				dbName[d.ID] = d.Name
+			}
+			for _, du := range users {
+				row := internalbackup.MetadataDatabaseUser{
+					ID:           du.ID,
+					Username:     du.Username,
+					PasswordHash: du.PasswordHash,
+					CreatedAt:    du.CreatedAt.Format("2006-01-02T15:04:05Z"),
+				}
+				if cfg.DatabaseGrants != nil {
+					grants, err := cfg.DatabaseGrants.ListByDatabaseUserID(ctx, du.ID)
+					if err != nil {
+						cfg.logErr("metadata: list grants", err, "database_user_id", du.ID)
+					} else {
+						for _, g := range grants {
+							row.Grants = append(row.Grants, internalbackup.MetadataDatabaseUserGrant{
+								DatabaseID:   g.DatabaseID,
+								DatabaseName: dbName[g.DatabaseID],
+								GrantLevel:   g.GrantLevel,
+								Privileges:   g.Privileges,
+							})
+						}
+					}
+				}
+				m.DatabaseUsers = append(m.DatabaseUsers, row)
+			}
+		}
+	}
+	if cfg.AppInstalls != nil {
+		installs, _, err := cfg.AppInstalls.ListByUserID(ctx, user.ID, repository.ListOptions{Limit: 10000})
+		if err != nil {
+			cfg.logErr("metadata: list app installs", err, "user_id", user.ID)
+		} else {
+			for _, ai := range installs {
+				dbID := ""
+				if ai.DBID != nil {
+					dbID = *ai.DBID
+				}
+				m.AppInstalls = append(m.AppInstalls, internalbackup.MetadataAppInstall{
+					ID:            ai.ID,
+					UserID:        ai.UserID,
+					DomainID:      ai.DomainID,
+					DBID:          dbID,
+					Version:       strDerefOr(ai.Version, ""),
+					AdminUsername: ai.AdminUsername,
+					AdminEmail:    ai.AdminEmail,
+					Locale:        ai.Locale,
+					Status:        ai.Status,
+					UseWWW:        ai.UseWWW,
+					Subdirectory:  ai.Subdirectory,
+					AppType:       ai.AppType,
+					CreatedAt:     ai.CreatedAt.Format("2006-01-02T15:04:05Z"),
+				})
+			}
+		}
+	}
+	return m
+}
+
+func strDerefOr(p *string, def string) string {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
 // allUserDatabases returns every database name owned by a user.
 // Used by manual + self-shell backup paths to default to "everything"
 // when the operator submits an empty list. Errors are logged + an
@@ -476,13 +571,90 @@ func (h *backupHandler) allUserMailboxes(ctx context.Context, userID string) []s
 // MeBackupsHandlerConfig wires the user-shell endpoints. Auth check
 // uses ginctx.Claims to scope the request to the caller's own user_id.
 type MeBackupsHandlerConfig struct {
-	Agent     agent.AgentInterface
-	Jobs      repository.BackupJobRepository
-	Users     repository.UserRepository
-	Databases repository.DatabaseRepository
-	Domains   repository.DomainRepository
-	Mailboxes repository.MailboxRepository
-	Log       *slog.Logger
+	Agent          agent.AgentInterface
+	Jobs           repository.BackupJobRepository
+	Users          repository.UserRepository
+	Databases      repository.DatabaseRepository
+	DatabaseUsers  repository.DatabaseUserRepository
+	DatabaseGrants repository.DatabaseUserGrantRepository
+	Domains        repository.DomainRepository
+	Mailboxes      repository.MailboxRepository
+	AppInstalls    repository.ApplicationInstallRepository
+	Log            *slog.Logger
+}
+
+// buildAccountMetadata duplicates BackupHandlerConfig.buildAccountMetadata
+// for the user-shell config bundle. The two configs share the same
+// repos but have separate types — adding a shared interface for one
+// helper would be heavier than the duplication.
+func (cfg MeBackupsHandlerConfig) buildAccountMetadata(ctx context.Context, user *models.User) *internalbackup.AccountMetadata {
+	m := &internalbackup.AccountMetadata{
+		SchemaVersion: internalbackup.MetadataSchemaVersion,
+		UserID:        user.ID,
+		Email:         user.Email,
+	}
+	if user.Username != nil {
+		m.Username = *user.Username
+	}
+	if cfg.DatabaseUsers != nil && cfg.Databases != nil {
+		users, _, err := cfg.DatabaseUsers.ListByUserID(ctx, user.ID, repository.ListOptions{Limit: 10000})
+		if err == nil {
+			dbs, _, _ := cfg.Databases.ListByUserID(ctx, user.ID, repository.ListOptions{Limit: 10000})
+			dbName := make(map[string]string, len(dbs))
+			for _, d := range dbs {
+				dbName[d.ID] = d.Name
+			}
+			for _, du := range users {
+				row := internalbackup.MetadataDatabaseUser{
+					ID:           du.ID,
+					Username:     du.Username,
+					PasswordHash: du.PasswordHash,
+					CreatedAt:    du.CreatedAt.Format("2006-01-02T15:04:05Z"),
+				}
+				if cfg.DatabaseGrants != nil {
+					grants, err := cfg.DatabaseGrants.ListByDatabaseUserID(ctx, du.ID)
+					if err == nil {
+						for _, g := range grants {
+							row.Grants = append(row.Grants, internalbackup.MetadataDatabaseUserGrant{
+								DatabaseID:   g.DatabaseID,
+								DatabaseName: dbName[g.DatabaseID],
+								GrantLevel:   g.GrantLevel,
+								Privileges:   g.Privileges,
+							})
+						}
+					}
+				}
+				m.DatabaseUsers = append(m.DatabaseUsers, row)
+			}
+		}
+	}
+	if cfg.AppInstalls != nil {
+		installs, _, err := cfg.AppInstalls.ListByUserID(ctx, user.ID, repository.ListOptions{Limit: 10000})
+		if err == nil {
+			for _, ai := range installs {
+				dbID := ""
+				if ai.DBID != nil {
+					dbID = *ai.DBID
+				}
+				m.AppInstalls = append(m.AppInstalls, internalbackup.MetadataAppInstall{
+					ID:            ai.ID,
+					UserID:        ai.UserID,
+					DomainID:      ai.DomainID,
+					DBID:          dbID,
+					Version:       strDerefOr(ai.Version, ""),
+					AdminUsername: ai.AdminUsername,
+					AdminEmail:    ai.AdminEmail,
+					Locale:        ai.Locale,
+					Status:        ai.Status,
+					UseWWW:        ai.UseWWW,
+					Subdirectory:  ai.Subdirectory,
+					AppType:       ai.AppType,
+					CreatedAt:     ai.CreatedAt.Format("2006-01-02T15:04:05Z"),
+				})
+			}
+		}
+	}
+	return m
 }
 
 func (cfg MeBackupsHandlerConfig) allUserDatabases(ctx context.Context, userID string) []string {
@@ -570,6 +742,7 @@ func (h *meBackupHandler) create(c *gin.Context) {
 			"is_admin":  user.IsAdmin,
 			"databases": h.cfg.allUserDatabases(c.Request.Context(), user.ID),
 			"mailboxes": h.cfg.allUserMailboxes(c.Request.Context(), user.ID),
+			"metadata":  h.cfg.buildAccountMetadata(c.Request.Context(), user),
 		}
 		if _, err := h.cfg.Agent.Call(ctx, "backup.create", params); err != nil {
 			_ = h.cfg.Jobs.MarkFinished(c.Request.Context(), job.ID, models.BackupJobStatusFailed,

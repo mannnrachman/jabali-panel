@@ -42,15 +42,18 @@ const MaxDuePerTick = 50
 
 // Deps is the dependency bundle passed by serve.go.
 type Deps struct {
-	Schedules repository.BackupScheduleRepository
-	Jobs      repository.BackupJobRepository
-	CopyJobs  repository.BackupCopyJobRepository
-	Users     repository.UserRepository
-	Databases repository.DatabaseRepository
-	Domains   repository.DomainRepository
-	Mailboxes repository.MailboxRepository
-	Agent     agent.AgentInterface
-	Log       *slog.Logger
+	Schedules      repository.BackupScheduleRepository
+	Jobs           repository.BackupJobRepository
+	CopyJobs       repository.BackupCopyJobRepository
+	Users          repository.UserRepository
+	Databases      repository.DatabaseRepository
+	DatabaseUsers  repository.DatabaseUserRepository
+	DatabaseGrants repository.DatabaseUserGrantRepository
+	Domains        repository.DomainRepository
+	Mailboxes      repository.MailboxRepository
+	AppInstalls    repository.ApplicationInstallRepository
+	Agent          agent.AgentInterface
+	Log            *slog.Logger
 }
 
 // Scheduler is the goroutine wrapper. Construct via New, start with
@@ -248,6 +251,7 @@ func (s *Scheduler) runOneAccountBackup(ctx context.Context, sched models.Backup
 	defer cancel()
 	dbs := userDatabases(callCtx, s.deps, user.ID, logger)
 	mbs := userMailboxes(callCtx, s.deps, user.ID, logger)
+	meta := buildScheduleMetadata(callCtx, s.deps, user, logger)
 	params := map[string]any{
 		"job_id":    jobID,
 		"user_id":   user.ID,
@@ -256,6 +260,7 @@ func (s *Scheduler) runOneAccountBackup(ctx context.Context, sched models.Backup
 		"is_admin":  user.IsAdmin,
 		"databases": dbs,
 		"mailboxes": mbs,
+		"metadata":  meta,
 	}
 	if _, err := s.deps.Agent.Call(callCtx, "backup.create", params); err != nil {
 		if isAgentConflict(err) {
@@ -305,6 +310,86 @@ func userDatabases(ctx context.Context, deps Deps, userID string, logger *slog.L
 	return out
 }
 
+// buildScheduleMetadata is the scheduler's mirror of
+// BackupHandlerConfig.buildAccountMetadata. Returns a non-nil bundle
+// even on partial repo failures so the agent's metadata stage stays
+// consistent — missing pieces become empty arrays.
+func buildScheduleMetadata(ctx context.Context, deps Deps, user *models.User, logger *slog.Logger) *internalbackup.AccountMetadata {
+	m := &internalbackup.AccountMetadata{
+		SchemaVersion: internalbackup.MetadataSchemaVersion,
+		UserID:        user.ID,
+		Email:         user.Email,
+	}
+	if user.Username != nil {
+		m.Username = *user.Username
+	}
+	if deps.DatabaseUsers != nil && deps.Databases != nil {
+		users, _, err := deps.DatabaseUsers.ListByUserID(ctx, user.ID, repository.ListOptions{Limit: 10000})
+		if err != nil {
+			logger.Warn("metadata: list db users", "err", err)
+		} else {
+			dbs, _, _ := deps.Databases.ListByUserID(ctx, user.ID, repository.ListOptions{Limit: 10000})
+			dbName := make(map[string]string, len(dbs))
+			for _, d := range dbs {
+				dbName[d.ID] = d.Name
+			}
+			for _, du := range users {
+				row := internalbackup.MetadataDatabaseUser{
+					ID:           du.ID,
+					Username:     du.Username,
+					PasswordHash: du.PasswordHash,
+					CreatedAt:    du.CreatedAt.Format("2006-01-02T15:04:05Z"),
+				}
+				if deps.DatabaseGrants != nil {
+					grants, err := deps.DatabaseGrants.ListByDatabaseUserID(ctx, du.ID)
+					if err != nil {
+						logger.Warn("metadata: list grants", "err", err, "database_user_id", du.ID)
+					} else {
+						for _, g := range grants {
+							row.Grants = append(row.Grants, internalbackup.MetadataDatabaseUserGrant{
+								DatabaseID:   g.DatabaseID,
+								DatabaseName: dbName[g.DatabaseID],
+								GrantLevel:   g.GrantLevel,
+								Privileges:   g.Privileges,
+							})
+						}
+					}
+				}
+				m.DatabaseUsers = append(m.DatabaseUsers, row)
+			}
+		}
+	}
+	if deps.AppInstalls != nil {
+		installs, _, err := deps.AppInstalls.ListByUserID(ctx, user.ID, repository.ListOptions{Limit: 10000})
+		if err != nil {
+			logger.Warn("metadata: list app installs", "err", err)
+		} else {
+			for _, ai := range installs {
+				dbID := ""
+				if ai.DBID != nil {
+					dbID = *ai.DBID
+				}
+				m.AppInstalls = append(m.AppInstalls, internalbackup.MetadataAppInstall{
+					ID:            ai.ID,
+					UserID:        ai.UserID,
+					DomainID:      ai.DomainID,
+					DBID:          dbID,
+					Version:       strDerefOr(ai.Version, ""),
+					AdminUsername: ai.AdminUsername,
+					AdminEmail:    ai.AdminEmail,
+					Locale:        ai.Locale,
+					Status:        ai.Status,
+					UseWWW:        ai.UseWWW,
+					Subdirectory:  ai.Subdirectory,
+					AppType:       ai.AppType,
+					CreatedAt:     ai.CreatedAt.Format("2006-01-02T15:04:05Z"),
+				})
+			}
+		}
+	}
+	return m
+}
+
 // userMailboxes returns the email addresses of every mailbox under
 // every domain owned by the user. Two-step: domain.list_by_user →
 // mailbox.list_by_domain. Errors per-domain are tolerated.
@@ -330,6 +415,13 @@ func userMailboxes(ctx context.Context, deps Deps, userID string, logger *slog.L
 		}
 	}
 	return out
+}
+
+func strDerefOr(p *string, def string) string {
+	if p == nil {
+		return def
+	}
+	return *p
 }
 
 func strDeref(p *string) string {

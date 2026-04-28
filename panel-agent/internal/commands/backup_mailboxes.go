@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
@@ -82,25 +83,74 @@ func backupMailboxesHandler(ctx context.Context, raw json.RawMessage) (any, erro
 	if _, err := bkResticBin(); err != nil {
 		return nil, bkInternal("restic missing", err)
 	}
-
-	// v1 strategy: stream the entire Stalwart data dir (RocksDB) into
-	// a single per-user snapshot, tagged with all mailbox addresses
-	// the user owns so the restore-side knows which accounts to
-	// recreate. Mail is account-keyed inside the RocksDB store and
-	// can't be cheaply per-mailbox-extracted offline; the previous
-	// `stalwart-cli account export` subcommand was removed in
-	// Stalwart 0.16 which is why this stage was producing exit 2 on
-	// every mailbox. Snapshotting the whole store still gives us the
-	// data we need for restore (the same store is also captured in
-	// system_backup but having it tagged per-user makes per-account
-	// restore from an account_backup self-contained).
-	stalwartDataDir := "/var/lib/stalwart"
-	if _, err := os.Stat(stalwartDataDir); err != nil {
+	if _, err := exec.LookPath("stalwart-cli"); err != nil {
 		return backupMailboxesResult{
 			Skipped:   true,
-			Reason:    "stalwart_data_dir_missing",
+			Reason:    "stalwart_cli_missing",
 			Mailboxes: req.Mailboxes,
 		}, nil
+	}
+
+	// v1 mail stage uses the Stalwart admin CLI to snapshot the per-
+	// user account configuration (Account/AccountPassword/Identity/
+	// MailboxConfig/SieveScript/Vacation… as supported by Stalwart's
+	// `snapshot` verb) into a JSON plan file, then bundles that plan
+	// PLUS the maildir-equivalent message bodies into one restic
+	// snapshot tagged stage=mail per job.
+	//
+	// stalwart-cli snapshot writes a plan consumable by `apply`, which
+	// is exactly what restore-side needs: one CLI call recreates the
+	// principal + every per-account setting. Message bodies still
+	// require pulling from Stalwart's RocksDB; for v1 we include the
+	// admin-side dump alongside the plan as a tarball mounted from
+	// /var/lib/stalwart so a per-user restore stays self-contained.
+	adminURL, adminUser, adminPass := stalwartAdminCreds()
+	if adminURL == "" || adminUser == "" || adminPass == "" {
+		return backupMailboxesResult{
+			Skipped:   true,
+			Reason:    "stalwart_admin_creds_missing",
+			Mailboxes: req.Mailboxes,
+		}, nil
+	}
+
+	stagingDir := filepath.Join(backupStagingRoot, req.JobID, "mail")
+	if err := os.MkdirAll(stagingDir, 0o700); err != nil {
+		return nil, bkInternal("mkdir staging", err)
+	}
+	defer os.RemoveAll(stagingDir)
+
+	planPath := filepath.Join(stagingDir, "plan.json")
+	// Snapshot the per-user account objects. --allow-unresolved keeps
+	// references to system-wide types (Domain, Tenant, Role) that
+	// already exist on the destination from forming hard refs in the
+	// plan. Without it Stalwart refuses to emit Account because Domain
+	// etc. aren't in the snapshot scope.
+	args := []string{
+		"snapshot", "Account",
+		"--allow-unresolved", "Domain,Tenant,Role,DkimSignature,PublicKey",
+		"--output", planPath,
+		"--quiet", "--no-color",
+	}
+	cmd := exec.CommandContext(ctx, "stalwart-cli", args...)
+	cmd.Env = append(os.Environ(),
+		"STALWART_URL="+adminURL,
+		"STALWART_USER="+adminUser,
+		"STALWART_PASSWORD="+adminPass,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return backupMailboxesResult{
+			Skipped:   true,
+			Reason:    fmt.Sprintf("stalwart_snapshot_failed: %v: %s", err, strings.TrimSpace(string(out))),
+			Mailboxes: req.Mailboxes,
+		}, nil
+	}
+
+	// Sidecar: mail-bodies tarball from /var/lib/stalwart so the
+	// snapshot is self-contained for restore. Bodies are account-keyed
+	// inside RocksDB; restore-side filters by account on apply.
+	if err := writeMailBodiesTarball(ctx, filepath.Join(stagingDir, "bodies.tar")); err != nil {
+		return nil, bkInternal("mail bodies tarball", err)
 	}
 
 	c := backup.New(backup.DefaultConfig())
@@ -109,7 +159,7 @@ func backupMailboxesHandler(ctx context.Context, raw json.RawMessage) (any, erro
 		tags = append(tags, backup.Tag("mailbox="+mb))
 	}
 	summary, err := c.Backup(ctx, backup.BackupOpts{
-		Paths: []string{stalwartDataDir},
+		Paths: []string{stagingDir},
 		Tags:  tags,
 	})
 	if err != nil {
@@ -124,9 +174,50 @@ func backupMailboxesHandler(ctx context.Context, raw json.RawMessage) (any, erro
 	return res, nil
 }
 
-// backupStagingRoot is no longer used by the mailbox stage but kept
-// as a package symbol so other backup commands can share the location.
-var _ = backupStagingRoot
+// stalwartAdminCreds returns the URL + Basic-auth credentials for the
+// Stalwart admin endpoint. Reads the same files install.sh provisions:
+//   - STALWART_RECOVERY_ADMIN=<user>:<token-b64> in
+//     /etc/jabali-panel/stalwart.env  (NOT the API token; this is the
+//     admin Basic-auth pair).
+//   - admin URL is hard-coded to the loopback admin listener
+//     127.0.0.1:18181 because that's what install.sh provisions.
+//
+// Returns empty strings on missing/parse failure; caller treats it as
+// "skip mail stage" rather than fatal.
+func stalwartAdminCreds() (url, user, pass string) {
+	body, err := os.ReadFile("/etc/jabali-panel/stalwart.env")
+	if err != nil {
+		return "", "", ""
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "STALWART_RECOVERY_ADMIN=") {
+			continue
+		}
+		val := strings.TrimPrefix(line, "STALWART_RECOVERY_ADMIN=")
+		if i := strings.Index(val, ":"); i > 0 {
+			return "http://127.0.0.1:18181", val[:i], val[i+1:]
+		}
+	}
+	return "", "", ""
+}
+
+// writeMailBodiesTarball captures the Stalwart RocksDB store as a tar
+// stream so the per-user mail snapshot is restoreable without a full
+// system_backup. The store is shared across all accounts; restore-side
+// applies the per-user plan on top of this base data.
+func writeMailBodiesTarball(ctx context.Context, dst string) error {
+	const dataDir = "/var/lib/stalwart"
+	if _, err := os.Stat(dataDir); err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, "tar", "-cf", dst, "-C", filepath.Dir(dataDir), filepath.Base(dataDir))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tar bodies: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
 
 func splitMailbox(mb string) (local, domain string, ok bool) {
 	at := strings.LastIndex(mb, "@")

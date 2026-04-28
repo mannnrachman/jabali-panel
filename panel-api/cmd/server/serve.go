@@ -514,15 +514,18 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// All three goroutines are no-ops without their respective repo
 	// deps; New(...) returns nil and we log + skip start.
 	if sched := backupscheduler.New(backupscheduler.Deps{
-		Schedules: deps.BackupSchedules,
-		Jobs:      deps.BackupJobs,
-		CopyJobs:  deps.BackupCopyJobs,
-		Users:     deps.Users,
-		Databases: deps.Databases,
-		Domains:   deps.Domains,
-		Mailboxes: deps.Mailboxes,
-		Agent:     deps.Agent,
-		Log:       log,
+		Schedules:      deps.BackupSchedules,
+		Jobs:           deps.BackupJobs,
+		CopyJobs:       deps.BackupCopyJobs,
+		Users:          deps.Users,
+		Databases:      deps.Databases,
+		DatabaseUsers:  deps.DatabaseUsers,
+		DatabaseGrants: deps.DatabaseUserGrants,
+		Domains:        deps.Domains,
+		Mailboxes:      deps.Mailboxes,
+		AppInstalls:    deps.WordPressInstalls,
+		Agent:          deps.Agent,
+		Log:            log,
 	}); sched != nil {
 		go sched.Start(ctx)
 	} else {

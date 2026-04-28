@@ -559,22 +559,28 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		}
 		if deps.BackupJobs != nil && deps.Users != nil {
 			api.RegisterBackupRoutes(v1, api.BackupHandlerConfig{
-				Agent:     deps.Agent,
-				Jobs:      deps.BackupJobs,
-				Users:     deps.Users,
-				Databases: deps.Databases,
-				Domains:   deps.Domains,
-				Mailboxes: deps.Mailboxes,
-				Log:       deps.Log,
+				Agent:          deps.Agent,
+				Jobs:           deps.BackupJobs,
+				Users:          deps.Users,
+				Databases:      deps.Databases,
+				DatabaseUsers:  deps.DatabaseUsers,
+				DatabaseGrants: deps.DatabaseUserGrants,
+				Domains:        deps.Domains,
+				Mailboxes:      deps.Mailboxes,
+				AppInstalls:    deps.WordPressInstalls,
+				Log:            deps.Log,
 			})
 			api.RegisterMeBackupRoutes(v1, api.MeBackupsHandlerConfig{
-				Agent:     deps.Agent,
-				Jobs:      deps.BackupJobs,
-				Users:     deps.Users,
-				Databases: deps.Databases,
-				Domains:   deps.Domains,
-				Mailboxes: deps.Mailboxes,
-				Log:       deps.Log,
+				Agent:          deps.Agent,
+				Jobs:           deps.BackupJobs,
+				Users:          deps.Users,
+				Databases:      deps.Databases,
+				DatabaseUsers:  deps.DatabaseUsers,
+				DatabaseGrants: deps.DatabaseUserGrants,
+				Domains:        deps.Domains,
+				Mailboxes:      deps.Mailboxes,
+				AppInstalls:    deps.WordPressInstalls,
+				Log:            deps.Log,
 			})
 		}
 		// M30.1 (ADR-0078): backup destinations + schedules.

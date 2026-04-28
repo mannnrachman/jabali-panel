@@ -58,6 +58,11 @@ type backupCreateParams struct {
 	IsAdmin   bool     `json:"is_admin"`
 	Databases []string `json:"databases,omitempty"`
 	Mailboxes []string `json:"mailboxes,omitempty"`
+	// Metadata is the JSON-shaped panel-side state bundle produced
+	// by panel-api (database users, app installs, ssh keys, …) and
+	// persisted as a stage=metadata snapshot. Optional — empty bundle
+	// is allowed and just produces an empty manifest of stage entries.
+	Metadata *backup.AccountMetadata `json:"metadata,omitempty"`
 }
 
 type backupCreateResult struct {
@@ -137,6 +142,11 @@ func runBackupOrchestrator(ctx context.Context, req backupCreateParams) error {
 	// Stage: mailboxes
 	mailStage := runMailStage(ctx, req)
 	manifest.Stages = append(manifest.Stages, mailStage)
+
+	// Stage: metadata (DB users, app installs, …) — sidecar JSON
+	// produced by panel-api and shipped via the call params.
+	metaStage := runMetadataStage(ctx, req)
+	manifest.Stages = append(manifest.Stages, metaStage)
 
 	// Sum stage byte counts into the top-level ManifestRestic block so
 	// finalizer + DTO consumers don't have to re-walk stages[]. SnapshotID
@@ -218,6 +228,42 @@ func runDatabaseStage(ctx context.Context, req backupCreateParams) []backup.Mani
 		stages = append(stages, st)
 	}
 	return stages
+}
+
+// runMetadataStage writes the panel-side bundle (DB users, app
+// installs, …) as one stdin-piped restic snapshot tagged stage=meta.
+// Empty/nil Metadata produces a "skipped: no metadata" stage so
+// restore-side knows to fall back to manual recreation.
+func runMetadataStage(ctx context.Context, req backupCreateParams) backup.ManifestStage {
+	st := backup.ManifestStage{Name: backup.StageMeta, Tag: "stage=" + backup.StageMeta}
+	if req.Metadata == nil {
+		st.Status = backup.StageStatusSkipped
+		st.Warnings = []string{"no metadata bundle provided by panel-api"}
+		return st
+	}
+	body, err := json.Marshal(req.Metadata)
+	if err != nil {
+		st.Status = backup.StageStatusFailed
+		st.Warnings = []string{"metadata marshal: " + err.Error()}
+		return st
+	}
+	c := backup.New(backup.DefaultConfig())
+	tags := backup.AccountBackupTags(req.JobID, req.UserID, backup.StageMeta)
+	summary, err := c.Backup(ctx, backup.BackupOpts{
+		Stdin:     strings.NewReader(string(body)),
+		StdinName: "metadata.json",
+		Tags:      tags,
+	})
+	if err != nil {
+		st.Status = backup.StageStatusFailed
+		st.Warnings = []string{"restic backup metadata: " + err.Error()}
+		return st
+	}
+	st.Status = backup.StageStatusOK
+	st.SnapshotID = summary.SnapshotID
+	st.BytesAdded = summary.DataAdded
+	st.BytesTotal = summary.TotalBytesProcessed
+	return st
 }
 
 func runMailStage(ctx context.Context, req backupCreateParams) backup.ManifestStage {

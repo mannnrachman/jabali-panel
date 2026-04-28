@@ -35,18 +35,23 @@ func yrPath() string {
 	return "/usr/local/bin/yr"
 }
 
-// rulePaths returns the canonical YARA rule sources we point yr at:
+// rulePaths returns the YARA rule sources mailscan points yr at:
 //   - rfxn.yara  (shipped + refreshed by maldet)
-//   - signature-base/yara/   (Neo23x0, git-pulled daily)
-//   - /etc/jabali/yara/      (admin-uploaded custom rules)
+//   - /etc/jabali/yara/  (admin-uploaded custom rules)
 //
-// All three are read-only from the scanner's perspective. Missing dirs
-// are silently skipped — rfxn.yara always exists post-install and the
-// other two are growth surfaces.
+// signature-base (Neo23x0) is INTENTIONALLY EXCLUDED here — many of
+// its host-detection rules reference yara identifiers (filename, magic)
+// that yara-x doesn't expose, and yr aborts the whole compile if ANY
+// rule fails to parse. The filesystem maldet scanner runs signature-base
+// via the libclamav-YARA engine which is more permissive. Mail
+// attachments are predominantly script/Office payloads that rfxn covers
+// well — full host-rule depth isn't load-bearing for the mail path.
+//
+// Missing dirs are silently skipped — rfxn.yara always exists
+// post-install and /etc/jabali/yara is a growth surface.
 func rulePaths() []string {
 	candidates := []string{
 		"/usr/local/maldetect/sigs/rfxn.yara",
-		"/opt/jabali/signature-base/yara",
 		"/etc/jabali/yara",
 	}
 	out := make([]string, 0, len(candidates))

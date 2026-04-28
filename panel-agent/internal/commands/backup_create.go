@@ -343,8 +343,13 @@ func backupStatusHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 	if manifestSnapID != "" {
 		// `restic dump` prints the file content as a tar stream when the
 		// path is a directory but for a single file it streams the raw
-		// bytes — manifest.json is a single file so we get JSON directly.
+		// bytes. account_backup writes /manifest.json; system_backup
+		// writes /system_manifest.json — try the account name first and
+		// fall through if absent so one path covers both kinds.
 		raw, err := c.Dump(ctx, manifestSnapID, "/manifest.json")
+		if err != nil || len(raw) == 0 {
+			raw, err = c.Dump(ctx, manifestSnapID, "/system_manifest.json")
+		}
 		if err == nil && len(raw) > 0 {
 			// account_backup manifest carries Restic.BytesAdded/Total.
 			// system_backup manifest has the same shape under

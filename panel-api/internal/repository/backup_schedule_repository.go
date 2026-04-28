@@ -118,15 +118,16 @@ func (r *backupScheduleRepo) Update(ctx context.Context, s *models.BackupSchedul
 		Model(&models.BackupSchedule{}).
 		Where("id = ?", s.ID).
 		Updates(map[string]any{
-			"kind":         s.Kind,
-			"user_id":      s.UserID,
-			"cron_expr":    s.CronExpr,
-			"enabled":      s.Enabled,
-			"keep_daily":   s.KeepDaily,
-			"keep_weekly":  s.KeepWeekly,
-			"keep_monthly": s.KeepMonthly,
-			"next_run_at":  s.NextRunAt,
-			"updated_at":   s.UpdatedAt,
+			"kind":                  s.Kind,
+			"user_id":               s.UserID,
+			"include_system_backup": s.IncludeSystemBackup,
+			"cron_expr":             s.CronExpr,
+			"enabled":               s.Enabled,
+			"keep_daily":            s.KeepDaily,
+			"keep_weekly":           s.KeepWeekly,
+			"keep_monthly":          s.KeepMonthly,
+			"next_run_at":           s.NextRunAt,
+			"updated_at":            s.UpdatedAt,
 		})
 	if res.Error != nil {
 		return translate(res.Error)

@@ -35,6 +35,7 @@ interface BackupSchedule {
   id: string;
   kind: "account_backup" | "system_backup";
   user_id?: string | null;
+  include_system_backup?: boolean;
   cron_expr: string;
   enabled: boolean;
   keep_daily?: number | null;
@@ -109,6 +110,7 @@ function ScheduleDrawer({
           keep_daily: editing.keep_daily ?? undefined,
           keep_weekly: editing.keep_weekly ?? undefined,
           keep_monthly: editing.keep_monthly ?? undefined,
+          include_system_backup: editing.include_system_backup ?? false,
           destination_ids: editing.destinations?.map((d) => d.id) ?? [],
         });
       } else {
@@ -157,6 +159,7 @@ function ScheduleDrawer({
         if (values.user_id !== ALL_USERS) {
           body.user_id = values.user_id;
         }
+        body.include_system_backup = !!values.include_system_backup;
       }
       if (values.keep_daily !== undefined) body.keep_daily = values.keep_daily;
       if (values.keep_weekly !== undefined) body.keep_weekly = values.keep_weekly;
@@ -203,26 +206,36 @@ function ScheduleDrawer({
           </Radio.Group>
         </Form.Item>
         {kindWatch === "account_backup" && (
-          <Form.Item
-            name="user_id"
-            label="User"
-            rules={[{ required: true, message: "User is required for account schedules" }]}
-          >
-            <Select
-              showSearch
-              placeholder="Select user"
-              optionFilterProp="label"
-              options={[
-                { value: ALL_USERS, label: "All users (every non-admin)" },
-                ...users
-                  .filter((u) => !u.is_admin)
-                  .map((u) => ({
-                    value: u.id,
-                    label: `${u.username} (${u.email})`,
-                  })),
-              ]}
-            />
-          </Form.Item>
+          <>
+            <Form.Item
+              name="user_id"
+              label="User"
+              rules={[{ required: true, message: "User is required for account schedules" }]}
+            >
+              <Select
+                showSearch
+                placeholder="Select user"
+                optionFilterProp="label"
+                options={[
+                  { value: ALL_USERS, label: "All users (every non-admin)" },
+                  ...users
+                    .filter((u) => !u.is_admin)
+                    .map((u) => ({
+                      value: u.id,
+                      label: `${u.username} (${u.email})`,
+                    })),
+                ]}
+              />
+            </Form.Item>
+            <Form.Item
+              name="include_system_backup"
+              label="Include system backup"
+              valuePropName="checked"
+              extra="Also fire a system backup (panel DBs + service config + mail state + …) every time this schedule runs."
+            >
+              <Switch />
+            </Form.Item>
+          </>
         )}
         <Form.Item label="Cadence">
           <Radio.Group

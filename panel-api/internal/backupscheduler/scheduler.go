@@ -158,6 +158,7 @@ func (s *Scheduler) dispatchBackup(ctx context.Context, sched models.BackupSched
 		// user-id anyway. Returns true if at least one user was
 		// dispatched (so the schedule still advances next_run_at and
 		// records last_run_at).
+		anyUser := false
 		if sched.UserID == nil {
 			notAdmin := false
 			users, _, err := s.deps.Users.List(ctx, repository.ListOptions{
@@ -167,59 +168,36 @@ func (s *Scheduler) dispatchBackup(ctx context.Context, sched models.BackupSched
 			if err != nil {
 				return false, fmt.Errorf("list users: %w", err)
 			}
-			any := false
 			for i := range users {
 				u := &users[i]
 				if ok := s.runOneAccountBackup(ctx, sched, u); ok {
-					any = true
+					anyUser = true
 				}
 			}
-			return any, nil
+		} else {
+			user, err := s.deps.Users.FindByID(ctx, *sched.UserID)
+			if err != nil {
+				return false, fmt.Errorf("load user %s: %w", *sched.UserID, err)
+			}
+			if user == nil {
+				return false, fmt.Errorf("user %s not found", *sched.UserID)
+			}
+			if user.IsAdmin {
+				return false, errors.New("account_backup schedule references admin user")
+			}
+			anyUser = s.runOneAccountBackup(ctx, sched, user)
 		}
-		user, err := s.deps.Users.FindByID(ctx, *sched.UserID)
-		if err != nil {
-			return false, fmt.Errorf("load user %s: %w", *sched.UserID, err)
+		// Opt-in: same schedule also fires a system_backup. Errors here
+		// are logged + swallowed so a system-side failure can't undo the
+		// per-user backups that already succeeded.
+		anySystem := false
+		if sched.IncludeSystemBackup {
+			anySystem = s.runOneSystemBackup(ctx, sched)
 		}
-		if user == nil {
-			return false, fmt.Errorf("user %s not found", *sched.UserID)
-		}
-		if user.IsAdmin {
-			return false, errors.New("account_backup schedule references admin user")
-		}
-		return s.runOneAccountBackup(ctx, sched, user), nil
+		return anyUser || anySystem, nil
 
 	case models.BackupScheduleKindSystem:
-		jobID := ids.NewULID()
-		schedID := sched.ID
-		job := &models.BackupJob{
-			ID:         jobID,
-			UserID:     "system",
-			ScheduleID: &schedID,
-			Kind:       models.BackupJobKindSystemBackup,
-			Status:     models.BackupJobStatusQueued,
-			CreatedAt:  time.Now().UTC(),
-		}
-		if err := s.deps.Jobs.Create(ctx, job); err != nil {
-			return false, fmt.Errorf("create system backup_job: %w", err)
-		}
-		callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		params := map[string]any{
-			"job_id":           jobID,
-			"include_accounts": false, // include_accounts toggle = manual-only in v1
-		}
-		if _, err := s.deps.Agent.Call(callCtx, "system.backup", params); err != nil {
-			if isAgentConflict(err) {
-				_ = s.deps.Jobs.MarkFinished(ctx, jobID, models.BackupJobStatusCancelled,
-					"", "", 0, 0, nil, nil, "skipped: prior system backup still running")
-				return false, nil
-			}
-			_ = s.deps.Jobs.MarkFinished(ctx, jobID, models.BackupJobStatusFailed,
-				"", "", 0, 0, nil, nil, err.Error())
-			return false, fmt.Errorf("agent system.backup: %w", err)
-		}
-		_ = s.deps.Jobs.MarkStarted(ctx, jobID)
-		return true, nil
+		return s.runOneSystemBackup(ctx, sched), nil
 
 	default:
 		return false, fmt.Errorf("unknown schedule kind %q", sched.Kind)
@@ -271,6 +249,48 @@ func (s *Scheduler) runOneAccountBackup(ctx context.Context, sched models.Backup
 		_ = s.deps.Jobs.MarkFinished(ctx, jobID, models.BackupJobStatusFailed,
 			"", "", 0, 0, nil, nil, err.Error())
 		logger.Error("agent backup.create failed", "err", err)
+		return false
+	}
+	_ = s.deps.Jobs.MarkStarted(ctx, jobID)
+	return true
+}
+
+// runOneSystemBackup creates one backup_jobs row + one system.backup
+// agent call. Used by both the dedicated system_backup schedule kind
+// and the include_system_backup opt-in on account schedules. Returns
+// true on success or graceful conflict; false on terminal failure with
+// the error logged.
+func (s *Scheduler) runOneSystemBackup(ctx context.Context, sched models.BackupSchedule) bool {
+	logger := s.deps.Log.With("schedule_id", sched.ID, "kind", "system_backup")
+	jobID := ids.NewULID()
+	schedID := sched.ID
+	job := &models.BackupJob{
+		ID:         jobID,
+		UserID:     "system",
+		ScheduleID: &schedID,
+		Kind:       models.BackupJobKindSystemBackup,
+		Status:     models.BackupJobStatusQueued,
+		CreatedAt:  time.Now().UTC(),
+	}
+	if err := s.deps.Jobs.Create(ctx, job); err != nil {
+		logger.Error("create system backup_job failed", "err", err)
+		return false
+	}
+	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	params := map[string]any{
+		"job_id":           jobID,
+		"include_accounts": false,
+	}
+	if _, err := s.deps.Agent.Call(callCtx, "system.backup", params); err != nil {
+		if isAgentConflict(err) {
+			_ = s.deps.Jobs.MarkFinished(ctx, jobID, models.BackupJobStatusCancelled,
+				"", "", 0, 0, nil, nil, "skipped: prior system backup still running")
+			return true
+		}
+		_ = s.deps.Jobs.MarkFinished(ctx, jobID, models.BackupJobStatusFailed,
+			"", "", 0, 0, nil, nil, err.Error())
+		logger.Error("agent system.backup failed", "err", err)
 		return false
 	}
 	_ = s.deps.Jobs.MarkStarted(ctx, jobID)

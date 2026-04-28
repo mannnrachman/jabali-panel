@@ -49,10 +49,11 @@ type backupScheduleHandler struct {
 }
 
 type scheduleDTO struct {
-	ID           string                  `json:"id"`
-	Kind         string                  `json:"kind"`
-	UserID       *string                 `json:"user_id,omitempty"`
-	CronExpr     string                  `json:"cron_expr"`
+	ID                  string                 `json:"id"`
+	Kind                string                 `json:"kind"`
+	UserID              *string                `json:"user_id,omitempty"`
+	IncludeSystemBackup bool                   `json:"include_system_backup"`
+	CronExpr            string                 `json:"cron_expr"`
 	Enabled      bool                    `json:"enabled"`
 	KeepDaily    *int                    `json:"keep_daily,omitempty"`
 	KeepWeekly   *int                    `json:"keep_weekly,omitempty"`
@@ -66,7 +67,8 @@ type scheduleDTO struct {
 func toScheduleDTO(s *models.BackupSchedule, dests []models.BackupDestination) scheduleDTO {
 	dto := scheduleDTO{
 		ID: s.ID, Kind: s.Kind, UserID: s.UserID,
-		CronExpr: s.CronExpr, Enabled: s.Enabled,
+		IncludeSystemBackup: s.IncludeSystemBackup,
+		CronExpr:            s.CronExpr, Enabled: s.Enabled,
 		KeepDaily: s.KeepDaily, KeepWeekly: s.KeepWeekly, KeepMonthly: s.KeepMonthly,
 	}
 	if s.LastRunAt != nil {
@@ -117,14 +119,15 @@ func (h *backupScheduleHandler) get(c *gin.Context) {
 }
 
 type createScheduleRequest struct {
-	Kind           string  `json:"kind"            binding:"required"`
-	UserID         *string `json:"user_id"`
-	CronExpr       string  `json:"cron_expr"       binding:"required"`
-	Enabled        *bool   `json:"enabled"`
-	KeepDaily      *int    `json:"keep_daily"`
-	KeepWeekly     *int    `json:"keep_weekly"`
-	KeepMonthly    *int    `json:"keep_monthly"`
-	DestinationIDs []string `json:"destination_ids"`
+	Kind                string   `json:"kind"            binding:"required"`
+	UserID              *string  `json:"user_id"`
+	IncludeSystemBackup bool     `json:"include_system_backup"`
+	CronExpr            string   `json:"cron_expr"       binding:"required"`
+	Enabled             *bool    `json:"enabled"`
+	KeepDaily           *int     `json:"keep_daily"`
+	KeepWeekly          *int     `json:"keep_weekly"`
+	KeepMonthly         *int     `json:"keep_monthly"`
+	DestinationIDs      []string `json:"destination_ids"`
 }
 
 func (h *backupScheduleHandler) create(c *gin.Context) {
@@ -170,16 +173,24 @@ func (h *backupScheduleHandler) create(c *gin.Context) {
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
+	// include_system_backup is a no-op on kind=system_backup (those
+	// schedules already back up the system); silently normalise to
+	// false so the field isn't a confusing leftover after a kind flip.
+	includeSys := req.IncludeSystemBackup
+	if req.Kind == models.BackupScheduleKindSystem {
+		includeSys = false
+	}
 	s := &models.BackupSchedule{
-		ID:          ids.NewULID(),
-		Kind:        req.Kind,
-		UserID:      req.UserID,
-		CronExpr:    strings.TrimSpace(req.CronExpr),
-		Enabled:     enabled,
-		KeepDaily:   req.KeepDaily,
-		KeepWeekly:  req.KeepWeekly,
-		KeepMonthly: req.KeepMonthly,
-		NextRunAt:   &next,
+		ID:                  ids.NewULID(),
+		Kind:                req.Kind,
+		UserID:              req.UserID,
+		IncludeSystemBackup: includeSys,
+		CronExpr:            strings.TrimSpace(req.CronExpr),
+		Enabled:             enabled,
+		KeepDaily:           req.KeepDaily,
+		KeepWeekly:          req.KeepWeekly,
+		KeepMonthly:         req.KeepMonthly,
+		NextRunAt:           &next,
 	}
 	if err := h.cfg.Schedules.Create(c.Request.Context(), s); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_create"})
@@ -196,12 +207,13 @@ func (h *backupScheduleHandler) create(c *gin.Context) {
 }
 
 type updateScheduleRequest struct {
-	CronExpr       *string  `json:"cron_expr"`
-	Enabled        *bool    `json:"enabled"`
-	KeepDaily      *int     `json:"keep_daily"`
-	KeepWeekly     *int     `json:"keep_weekly"`
-	KeepMonthly    *int     `json:"keep_monthly"`
-	DestinationIDs *[]string `json:"destination_ids"`
+	CronExpr            *string   `json:"cron_expr"`
+	Enabled             *bool     `json:"enabled"`
+	IncludeSystemBackup *bool     `json:"include_system_backup"`
+	KeepDaily           *int      `json:"keep_daily"`
+	KeepWeekly          *int      `json:"keep_weekly"`
+	KeepMonthly         *int      `json:"keep_monthly"`
+	DestinationIDs      *[]string `json:"destination_ids"`
 }
 
 func (h *backupScheduleHandler) update(c *gin.Context) {
@@ -231,6 +243,9 @@ func (h *backupScheduleHandler) update(c *gin.Context) {
 	}
 	if req.Enabled != nil {
 		s.Enabled = *req.Enabled
+	}
+	if req.IncludeSystemBackup != nil && s.Kind == models.BackupScheduleKindAccount {
+		s.IncludeSystemBackup = *req.IncludeSystemBackup
 	}
 	if req.KeepDaily != nil {
 		s.KeepDaily = req.KeepDaily

@@ -15,6 +15,11 @@ type BackupSchedule struct {
 	ID          string     `gorm:"type:char(26);primaryKey" json:"id"`
 	Kind        string     `gorm:"type:enum('account_backup','system_backup');not null" json:"kind"`
 	UserID      *string    `gorm:"type:char(26)" json:"user_id,omitempty"`
+	// IncludeSystemBackup, when true on a kind=account_backup schedule,
+	// fires a system.backup job alongside the per-user account fan-out
+	// every time the schedule ticks. Ignored on kind=system_backup
+	// (those always back up the system by definition).
+	IncludeSystemBackup bool `gorm:"not null;default:0" json:"include_system_backup"`
 	CronExpr    string     `gorm:"type:varchar(64);not null" json:"cron_expr"`
 	Enabled     bool       `gorm:"not null;default:1" json:"enabled"`
 	KeepDaily   *int       `gorm:"type:int" json:"keep_daily,omitempty"`

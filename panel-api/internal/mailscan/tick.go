@@ -60,9 +60,10 @@ type Deps struct {
 }
 
 // lockPath is the file lock that ensures only one tick runs at a time
-// across systemd timer races + reconciler ticker overlap. Lazy-created
-// on first call.
-const lockPath = "/run/jabali/mail-scan.lock"
+// across systemd timer races + reconciler ticker overlap. Lives under
+// /run/jabali-panel/ (panel-api owns this dir; /run/jabali is root-only
+// and panel-api runs as `jabali`).
+const lockPath = "/run/jabali-panel/mail-scan.lock"
 
 // StartTicker runs RunOnce on a 5-minute cadence until ctx is cancelled.
 // Logs but does not propagate per-tick errors — the next tick retries.
@@ -422,7 +423,7 @@ var lockOnce sync.Once
 // (unlock, true, nil) on success; (nil, false, nil) when another
 // process holds the lock; (nil, false, err) on real failure.
 func tryLock(path string) (func(), bool, error) {
-	lockOnce.Do(func() { _ = os.MkdirAll("/run/jabali", 0o750) })
+	lockOnce.Do(func() { _ = os.MkdirAll("/run/jabali-panel", 0o750) })
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, false, err

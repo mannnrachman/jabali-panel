@@ -1,13 +1,22 @@
 // M30.1 Destinations admin tab. Lists every backup_destinations row,
 // drawer for create/edit, "Test" button verifies creds against the
 // remote via `restic snapshots`.
+//
+// SFTP gets its own structured form with host/user/port/path inputs +
+// an auth picker (SSH key dropdown / password). The dropdown reads
+// /root/.ssh/ via the system-ssh-keys endpoint and offers a
+// "Generate new key" inline action that calls the same endpoint with
+// POST.
 import {
+  Alert,
   Button,
   Card,
   Drawer,
   Form,
   Input,
+  InputNumber,
   Modal,
+  Radio,
   Select,
   Space,
   Switch,
@@ -27,19 +36,41 @@ import { useEffect, useState } from "react";
 
 import { apiClient } from "../../../apiClient";
 
+type BackendKind = "local" | "sftp" | "s3" | "b2" | "azure" | "gcs" | "rest";
+
+interface BackupDestinationExtraOptions {
+  sftp?: {
+    host: string;
+    user: string;
+    port?: number;
+    path: string;
+    auth: "key" | "password";
+    key_path?: string;
+  };
+}
+
 interface BackupDestination {
   id: string;
   name: string;
-  kind: "local" | "sftp" | "s3" | "b2" | "azure" | "gcs" | "rest";
+  kind: BackendKind;
   url: string;
   has_credentials: boolean;
   credentials_keys_mask?: string[];
+  extra_options?: BackupDestinationExtraOptions;
   enabled: boolean;
   created_at: string;
   updated_at: string;
 }
 
-const KIND_OPTIONS: Array<{ value: BackupDestination["kind"]; label: string }> = [
+interface SSHKeyEntry {
+  name: string;
+  path: string;
+  pubkey_path: string;
+  pubkey: string;
+  has_passphrase: boolean;
+}
+
+const KIND_OPTIONS: Array<{ value: BackendKind; label: string }> = [
   { value: "local", label: "Local (this server)" },
   { value: "sftp", label: "SFTP" },
   { value: "s3", label: "S3-compatible (AWS, MinIO, Wasabi, R2)" },
@@ -49,9 +80,9 @@ const KIND_OPTIONS: Array<{ value: BackupDestination["kind"]; label: string }> =
   { value: "rest", label: "Restic REST server" },
 ];
 
-const URL_HINT: Record<BackupDestination["kind"], string> = {
+const URL_HINT: Record<BackendKind, string> = {
   local: "/var/lib/jabali-backups/repo",
-  sftp: "sftp:user@host:/path/to/repo",
+  sftp: "(composed automatically from host + user + path)",
   s3: "s3:s3.amazonaws.com/bucket/path",
   b2: "b2:bucket-name:path",
   azure: "azure:container:/path",
@@ -59,9 +90,9 @@ const URL_HINT: Record<BackupDestination["kind"], string> = {
   rest: "rest:https://restic-server.example.com/repo/",
 };
 
-const ENV_HINT: Record<BackupDestination["kind"], string> = {
+const ENV_HINT: Record<BackendKind, string> = {
   local: "(none)",
-  sftp: "(none — uses SSH keys from /root/.ssh)",
+  sftp: "(handled by SSH key / password fields)",
   s3: "AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY",
   b2: "B2_ACCOUNT_ID, B2_ACCOUNT_KEY",
   azure: "AZURE_ACCOUNT_NAME, AZURE_ACCOUNT_KEY",
@@ -79,19 +110,49 @@ interface DestinationDrawerProps {
 function DestinationDrawer({ open, editing, onClose, onSaved }: DestinationDrawerProps) {
   const [form] = Form.useForm();
   const [busy, setBusy] = useState(false);
+  const [sshKeys, setSshKeys] = useState<SSHKeyEntry[]>([]);
+  const [keysLoading, setKeysLoading] = useState(false);
+  const [generateOpen, setGenerateOpen] = useState(false);
+
+  const reloadKeys = async () => {
+    setKeysLoading(true);
+    try {
+      const resp = await apiClient.get<{ data: SSHKeyEntry[] }>(
+        "/api/v1/admin/system/ssh-keys",
+      );
+      setSshKeys(resp.data.data ?? []);
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "ssh-key list failed");
+    } finally {
+      setKeysLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (open) {
       form.resetFields();
+      void reloadKeys();
       if (editing) {
+        const sftp = editing.extra_options?.sftp;
         form.setFieldsValue({
           name: editing.name,
           kind: editing.kind,
           url: editing.url,
           enabled: editing.enabled,
+          sftp_host: sftp?.host,
+          sftp_user: sftp?.user,
+          sftp_port: sftp?.port,
+          sftp_path: sftp?.path,
+          sftp_auth: sftp?.auth ?? "key",
+          sftp_key_path: sftp?.key_path,
         });
       } else {
-        form.setFieldsValue({ kind: "s3", enabled: true });
+        form.setFieldsValue({
+          kind: "sftp",
+          enabled: true,
+          sftp_port: 22,
+          sftp_auth: "key",
+        });
       }
     }
   }, [open, editing, form]);
@@ -109,11 +170,30 @@ function DestinationDrawer({ open, editing, onClose, onSaved }: DestinationDrawe
       const body: Record<string, unknown> = {
         name: values.name,
         kind: values.kind,
-        url: values.url,
         enabled: values.enabled,
       };
-      if (Object.keys(credentialsEnv).length > 0) {
-        body.credentials_env = credentialsEnv;
+      if (values.kind === "sftp") {
+        body.sftp = {
+          host: values.sftp_host,
+          user: values.sftp_user,
+          port: values.sftp_port ?? 22,
+          path: values.sftp_path,
+          auth: values.sftp_auth,
+          key_path: values.sftp_auth === "key" ? values.sftp_key_path || "" : "",
+        };
+        if (values.sftp_auth === "password") {
+          if (!values.sftp_password && !editing?.has_credentials) {
+            message.error("password is required for SFTP password auth");
+            setBusy(false);
+            return;
+          }
+          if (values.sftp_password) body.sftp_password = values.sftp_password;
+        }
+      } else {
+        body.url = values.url;
+        if (Object.keys(credentialsEnv).length > 0) {
+          body.credentials_env = credentialsEnv;
+        }
       }
       if (editing) {
         await apiClient.patch(`/api/v1/admin/backup-destinations/${editing.id}`, body);
@@ -130,12 +210,13 @@ function DestinationDrawer({ open, editing, onClose, onSaved }: DestinationDrawe
     }
   };
 
-  const kindWatch: BackupDestination["kind"] = Form.useWatch("kind", form) || "s3";
+  const kindWatch: BackendKind = Form.useWatch("kind", form) || "sftp";
+  const sftpAuthWatch: "key" | "password" = Form.useWatch("sftp_auth", form) || "key";
 
   return (
     <Drawer
       title={editing ? `Edit destination — ${editing.name}` : "New destination"}
-      width={520}
+      width={560}
       open={open}
       onClose={onClose}
       destroyOnClose
@@ -153,41 +234,297 @@ function DestinationDrawer({ open, editing, onClose, onSaved }: DestinationDrawe
           <Input placeholder="offsite-s3" />
         </Form.Item>
         <Form.Item name="kind" label="Backend" rules={[{ required: true }]}>
-          <Select options={KIND_OPTIONS} />
+          <Select options={KIND_OPTIONS} disabled={!!editing} />
         </Form.Item>
-        <Form.Item
-          name="url"
-          label="Restic URL"
-          rules={[{ required: true }]}
-          extra={`Format: ${URL_HINT[kindWatch]}`}
-        >
-          <Input placeholder={URL_HINT[kindWatch]} />
-        </Form.Item>
-        <Form.Item
-          name="credentials_env_block"
-          label="Credentials (KEY=VALUE per line)"
-          extra={`Required env vars: ${ENV_HINT[kindWatch]}`}
-        >
-          <Input.TextArea
-            rows={5}
-            placeholder={
-              kindWatch === "s3"
-                ? "AWS_ACCESS_KEY_ID=AKIA…\nAWS_SECRET_ACCESS_KEY=…"
-                : ENV_HINT[kindWatch]
-            }
+
+        {kindWatch === "sftp" ? (
+          <SFTPFields
+            sshKeys={sshKeys}
+            keysLoading={keysLoading}
+            sftpAuthWatch={sftpAuthWatch}
+            editing={editing}
+            onGenerateKeyOpen={() => setGenerateOpen(true)}
           />
-        </Form.Item>
-        {editing?.has_credentials && (
-          <Typography.Text type="secondary">
-            Stored credentials: {editing.credentials_keys_mask?.join(", ") || "(redacted)"}.
-            Leave the field blank to keep them; fill it to overwrite.
-          </Typography.Text>
+        ) : (
+          <>
+            <Form.Item
+              name="url"
+              label="Restic URL"
+              rules={[{ required: true }]}
+              extra={`Format: ${URL_HINT[kindWatch]}`}
+            >
+              <Input placeholder={URL_HINT[kindWatch]} />
+            </Form.Item>
+            <Form.Item
+              name="credentials_env_block"
+              label="Credentials (KEY=VALUE per line)"
+              extra={`Required env vars: ${ENV_HINT[kindWatch]}`}
+            >
+              <Input.TextArea
+                rows={5}
+                placeholder={
+                  kindWatch === "s3"
+                    ? "AWS_ACCESS_KEY_ID=AKIA…\nAWS_SECRET_ACCESS_KEY=…"
+                    : ENV_HINT[kindWatch]
+                }
+              />
+            </Form.Item>
+            {editing?.has_credentials && (
+              <Typography.Text type="secondary">
+                Stored credentials: {editing.credentials_keys_mask?.join(", ") || "(redacted)"}.
+                Leave the field blank to keep them; fill it to overwrite.
+              </Typography.Text>
+            )}
+          </>
         )}
+
         <Form.Item name="enabled" label="Enabled" valuePropName="checked">
           <Switch />
         </Form.Item>
       </Form>
+
+      <GenerateKeyModal
+        open={generateOpen}
+        onClose={() => setGenerateOpen(false)}
+        onGenerated={(entry) => {
+          setSshKeys((prev) => [...prev, entry]);
+          form.setFieldsValue({ sftp_key_path: entry.path });
+          setGenerateOpen(false);
+        }}
+      />
     </Drawer>
+  );
+}
+
+interface SFTPFieldsProps {
+  sshKeys: SSHKeyEntry[];
+  keysLoading: boolean;
+  sftpAuthWatch: "key" | "password";
+  editing: BackupDestination | null;
+  onGenerateKeyOpen: () => void;
+}
+
+function SFTPFields({
+  sshKeys,
+  keysLoading,
+  sftpAuthWatch,
+  editing,
+  onGenerateKeyOpen,
+}: SFTPFieldsProps) {
+  const usableKeys = sshKeys.filter((k) => !k.has_passphrase);
+  const passphraseKeys = sshKeys.filter((k) => k.has_passphrase);
+
+  return (
+    <>
+      <Space.Compact block>
+        <Form.Item
+          name="sftp_user"
+          label="User"
+          rules={[{ required: true }]}
+          style={{ flex: 1 }}
+        >
+          <Input placeholder="bob" />
+        </Form.Item>
+        <Form.Item
+          name="sftp_host"
+          label="Host"
+          rules={[{ required: true }]}
+          style={{ flex: 2 }}
+        >
+          <Input placeholder="backup.example.com" />
+        </Form.Item>
+        <Form.Item name="sftp_port" label="Port" style={{ width: 100 }}>
+          <InputNumber min={1} max={65535} placeholder="22" style={{ width: "100%" }} />
+        </Form.Item>
+      </Space.Compact>
+      <Form.Item
+        name="sftp_path"
+        label="Repo path on remote"
+        rules={[{ required: true }]}
+        extra="Absolute path. Restic init will create it if missing."
+      >
+        <Input placeholder="/srv/backups/jabali-mx" />
+      </Form.Item>
+
+      <Form.Item name="sftp_auth" label="Authentication" rules={[{ required: true }]}>
+        <Radio.Group>
+          <Radio.Button value="key">SSH key</Radio.Button>
+          <Radio.Button value="password">Password</Radio.Button>
+        </Radio.Group>
+      </Form.Item>
+
+      {sftpAuthWatch === "key" ? (
+        <>
+          <Form.Item
+            name="sftp_key_path"
+            label="SSH private key"
+            extra={
+              usableKeys.length === 0
+                ? "No usable keys found in /root/.ssh. Generate one below."
+                : "Pick from /root/.ssh/. Only passphrase-less keys work with restic (BatchMode)."
+            }
+          >
+            <Select
+              loading={keysLoading}
+              placeholder="(default — uses ssh-agent / id_rsa / id_ed25519)"
+              allowClear
+              options={[
+                ...usableKeys.map((k) => ({
+                  value: k.path,
+                  label: k.name,
+                })),
+                ...passphraseKeys.map((k) => ({
+                  value: k.path,
+                  label: `${k.name} — has passphrase, will fail BatchMode`,
+                  disabled: true,
+                })),
+              ]}
+            />
+          </Form.Item>
+          <Space style={{ marginBottom: 16 }}>
+            <Button onClick={onGenerateKeyOpen}>Generate new key</Button>
+          </Space>
+        </>
+      ) : (
+        <>
+          <Form.Item
+            name="sftp_password"
+            label="SSH password"
+            extra={
+              editing?.has_credentials
+                ? "Leave blank to keep the stored password. Fill to overwrite."
+                : "Stored encrypted at rest in /etc/jabali-panel/restic-remotes/<id>.env (root:root 0600)."
+            }
+          >
+            <Input.Password autoComplete="new-password" />
+          </Form.Item>
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="Password auth requires sshpass on the host. install.sh provisions it."
+          />
+        </>
+      )}
+    </>
+  );
+}
+
+interface GenerateKeyModalProps {
+  open: boolean;
+  onClose: () => void;
+  onGenerated: (entry: SSHKeyEntry) => void;
+}
+
+function GenerateKeyModal({ open, onClose, onGenerated }: GenerateKeyModalProps) {
+  const [form] = Form.useForm();
+  const [busy, setBusy] = useState(false);
+  const [pubkey, setPubkey] = useState<string>("");
+
+  useEffect(() => {
+    if (open) {
+      form.resetFields();
+      form.setFieldsValue({ name: "id_jabali_offsite", type: "ed25519" });
+      setPubkey("");
+    }
+  }, [open, form]);
+
+  const handleGenerate = async () => {
+    let values;
+    try {
+      values = await form.validateFields();
+    } catch {
+      return;
+    }
+    setBusy(true);
+    try {
+      const resp = await apiClient.post<{
+        name: string;
+        path: string;
+        pubkey_path: string;
+        pubkey: string;
+      }>("/api/v1/admin/system/ssh-keys", values);
+      setPubkey(resp.data.pubkey);
+      onGenerated({
+        name: resp.data.name,
+        path: resp.data.path,
+        pubkey_path: resp.data.pubkey_path,
+        pubkey: resp.data.pubkey,
+        has_passphrase: false,
+      });
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "key generation failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="Generate SSH key"
+      open={open}
+      onCancel={onClose}
+      footer={
+        pubkey ? (
+          <Button type="primary" onClick={onClose}>
+            Done
+          </Button>
+        ) : (
+          <Space>
+            <Button onClick={onClose}>Cancel</Button>
+            <Button type="primary" loading={busy} onClick={handleGenerate}>
+              Generate
+            </Button>
+          </Space>
+        )
+      }
+    >
+      {!pubkey ? (
+        <Form form={form} layout="vertical">
+          <Form.Item
+            name="name"
+            label="Key name"
+            rules={[
+              { required: true },
+              {
+                pattern: /^id_[A-Za-z0-9_]+$/,
+                message: "Name must start with id_ and contain only letters, digits, _",
+              },
+            ]}
+            extra="Stored as /root/.ssh/<name> (private) + <name>.pub."
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item name="type" label="Type" rules={[{ required: true }]}>
+            <Radio.Group>
+              <Radio.Button value="ed25519">ed25519 (recommended)</Radio.Button>
+              <Radio.Button value="rsa">rsa-4096</Radio.Button>
+            </Radio.Group>
+          </Form.Item>
+        </Form>
+      ) : (
+        <>
+          <Alert
+            type="success"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="Key generated"
+            description={
+              <Typography.Text>
+                Add the public key below to the remote's <code>~/.ssh/authorized_keys</code> before
+                saving the destination.
+              </Typography.Text>
+            }
+          />
+          <Input.TextArea
+            rows={4}
+            value={pubkey}
+            readOnly
+            onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+          />
+        </>
+      )}
+    </Modal>
   );
 }
 

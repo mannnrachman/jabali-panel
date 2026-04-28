@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	internalbackup "git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -119,6 +120,7 @@ func runBackupCopy(ctx context.Context, copyJobID string, stdout, stderr writer)
 		ToRepo:           dest.URL,
 		ToPasswordFile:   internalbackup.DefaultPasswordFile,
 		Tags:             []internalbackup.Tag{tag},
+		ExtraOptions:     backupwrapperhelpers.ResticOptionsFor(dest),
 	}, extraEnv)
 	if len(out) > 0 {
 		fmt.Fprintln(stdout, strings.TrimRight(string(out), "\n"))

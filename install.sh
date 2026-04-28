@@ -718,6 +718,7 @@ POLICYEOF
       ed inotify-tools \
       bpftool \
       restic \
+      sshpass \
       "${php_extensions[@]}"
 
   # Undo the policy-rc.d trap regardless of exit path above (set -e would

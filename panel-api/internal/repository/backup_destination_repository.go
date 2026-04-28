@@ -86,6 +86,7 @@ func (r *backupDestinationRepo) Update(ctx context.Context, d *models.BackupDest
 			"kind":            d.Kind,
 			"url":             d.URL,
 			"credentials_ref": d.CredentialsRef,
+			"extra_options":   d.ExtraOptions,
 			"enabled":         d.Enabled,
 			"updated_at":      d.UpdatedAt,
 		})

@@ -7,6 +7,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	internalbackup "git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
@@ -51,16 +53,17 @@ type backupDestinationHandler struct {
 }
 
 type backupDestinationDTO struct {
-	ID                  string  `json:"id"`
-	Name                string  `json:"name"`
-	Kind                string  `json:"kind"`
-	URL                 string  `json:"url"`
-	HasCredentials      bool    `json:"has_credentials"`
-	CredentialsRef      *string `json:"credentials_ref,omitempty"`
-	CredentialsKeysMask []string `json:"credentials_keys_mask,omitempty"`
-	Enabled             bool    `json:"enabled"`
-	CreatedAt           string  `json:"created_at"`
-	UpdatedAt           string  `json:"updated_at"`
+	ID                  string                                `json:"id"`
+	Name                string                                `json:"name"`
+	Kind                string                                `json:"kind"`
+	URL                 string                                `json:"url"`
+	HasCredentials      bool                                  `json:"has_credentials"`
+	CredentialsRef      *string                               `json:"credentials_ref,omitempty"`
+	CredentialsKeysMask []string                              `json:"credentials_keys_mask,omitempty"`
+	ExtraOptions        *models.BackupDestinationExtraOptions `json:"extra_options,omitempty"`
+	Enabled             bool                                  `json:"enabled"`
+	CreatedAt           string                                `json:"created_at"`
+	UpdatedAt           string                                `json:"updated_at"`
 }
 
 func toDestDTO(d *models.BackupDestination) backupDestinationDTO {
@@ -85,6 +88,10 @@ func toDestDTO(d *models.BackupDestination) backupDestinationDTO {
 				}
 			}
 		}
+	}
+	if len(d.ExtraOptions) > 0 {
+		opts := d.ExtraOptionsTyped()
+		dto.ExtraOptions = &opts
 	}
 	return dto
 }
@@ -118,9 +125,23 @@ func (h *backupDestinationHandler) get(c *gin.Context) {
 type createDestinationRequest struct {
 	Name           string            `json:"name"            binding:"required"`
 	Kind           string            `json:"kind"            binding:"required"`
-	URL            string            `json:"url"             binding:"required"`
+	URL            string            `json:"url"`
 	Enabled        *bool             `json:"enabled"`
 	CredentialsEnv map[string]string `json:"credentials_env"`
+	// SFTP-only structured fields. When Kind == "sftp" the handler
+	// composes URL + extra_options from these and ignores any URL the
+	// client sent (UI doesn't expose the URL field for sftp).
+	SFTP         *sftpRequestOptions `json:"sftp,omitempty"`
+	SFTPPassword string              `json:"sftp_password,omitempty"` // plain — written to creds env as SSHPASS
+}
+
+type sftpRequestOptions struct {
+	Host    string `json:"host"`
+	User    string `json:"user"`
+	Port    int    `json:"port,omitempty"`
+	Path    string `json:"path"`
+	Auth    string `json:"auth"`               // "key" | "password"
+	KeyPath string `json:"key_path,omitempty"` // absolute path to private key
 }
 
 func (h *backupDestinationHandler) create(c *gin.Context) {
@@ -133,23 +154,67 @@ func (h *backupDestinationHandler) create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_kind"})
 		return
 	}
-	if err := validateURLForKind(req.Kind, req.URL); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_url", "detail": err.Error()})
-		return
-	}
+
 	id := ids.NewULID()
+
+	// SFTP path: derive URL + extra_options + (optional) password env
+	// from the structured req.SFTP block. Falls back to req.URL for
+	// non-SFTP backends.
+	var (
+		composedURL  string
+		extraOptions json.RawMessage
+		credsEnv     = req.CredentialsEnv
+	)
+	if req.Kind == models.BackupDestinationKindSFTP {
+		if req.SFTP == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "sftp_block_required"})
+			return
+		}
+		if err := validateSFTPInputs(req.SFTP); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_sftp", "detail": err.Error()})
+			return
+		}
+		composedURL = internalbackup.ComposeSFTPURL(internalbackup.SFTPInputs{
+			Host: req.SFTP.Host, User: req.SFTP.User, Path: req.SFTP.Path,
+		})
+		raw, _ := json.Marshal(models.BackupDestinationExtraOptions{
+			SFTP: &models.SFTPOptions{
+				Host: req.SFTP.Host, User: req.SFTP.User, Port: req.SFTP.Port,
+				Path: req.SFTP.Path, Auth: req.SFTP.Auth, KeyPath: req.SFTP.KeyPath,
+			},
+		})
+		extraOptions = raw
+		if req.SFTP.Auth == models.SFTPAuthPassword {
+			if req.SFTPPassword == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "sftp_password_required"})
+				return
+			}
+			if credsEnv == nil {
+				credsEnv = map[string]string{}
+			}
+			credsEnv["SSHPASS"] = req.SFTPPassword
+		}
+	} else {
+		if err := validateURLForKind(req.Kind, req.URL); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_url", "detail": err.Error()})
+			return
+		}
+		composedURL = req.URL
+	}
+
 	d := &models.BackupDestination{
-		ID:      id,
-		Name:    strings.TrimSpace(req.Name),
-		Kind:    req.Kind,
-		URL:     req.URL,
-		Enabled: true,
+		ID:           id,
+		Name:         strings.TrimSpace(req.Name),
+		Kind:         req.Kind,
+		URL:          composedURL,
+		ExtraOptions: extraOptions,
+		Enabled:      true,
 	}
 	if req.Enabled != nil {
 		d.Enabled = *req.Enabled
 	}
-	if len(req.CredentialsEnv) > 0 {
-		path, err := writeCredentialsEnvFile(id, req.CredentialsEnv)
+	if len(credsEnv) > 0 {
+		path, err := writeCredentialsEnvFile(id, credsEnv)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "creds_write_failed", "detail": err.Error()})
 			return
@@ -171,13 +236,39 @@ func (h *backupDestinationHandler) create(c *gin.Context) {
 	c.JSON(http.StatusCreated, toDestDTO(d))
 }
 
+// validateSFTPInputs enforces non-empty host+user, non-empty path, and
+// auth ∈ {key, password}. Key path absolute when auth=key.
+func validateSFTPInputs(s *sftpRequestOptions) error {
+	if s.Host == "" || s.User == "" {
+		return errors.New("host and user are required")
+	}
+	if s.Path == "" {
+		return errors.New("path is required")
+	}
+	switch s.Auth {
+	case models.SFTPAuthKey:
+		if s.KeyPath != "" && !strings.HasPrefix(s.KeyPath, "/") {
+			return errors.New("key_path must be an absolute path")
+		}
+	case models.SFTPAuthPassword:
+		// password value lives in req.SFTPPassword
+	case "":
+		// blank = key auth using default ssh config
+	default:
+		return errors.New("auth must be 'key' or 'password'")
+	}
+	return nil
+}
+
 type updateDestinationRequest struct {
-	Name           *string           `json:"name"`
-	Kind           *string           `json:"kind"`
-	URL            *string           `json:"url"`
-	Enabled        *bool             `json:"enabled"`
-	CredentialsEnv map[string]string `json:"credentials_env"` // empty map = no change; nil = clear
-	ClearCreds     bool              `json:"clear_credentials"`
+	Name           *string             `json:"name"`
+	Kind           *string             `json:"kind"`
+	URL            *string             `json:"url"`
+	Enabled        *bool               `json:"enabled"`
+	CredentialsEnv map[string]string   `json:"credentials_env"` // empty map = no change; nil = clear
+	ClearCreds     bool                `json:"clear_credentials"`
+	SFTP           *sftpRequestOptions `json:"sftp,omitempty"`
+	SFTPPassword   string              `json:"sftp_password,omitempty"`
 }
 
 func (h *backupDestinationHandler) update(c *gin.Context) {
@@ -206,12 +297,32 @@ func (h *backupDestinationHandler) update(c *gin.Context) {
 		}
 		d.Kind = *req.Kind
 	}
-	if req.URL != nil {
+	if req.URL != nil && d.Kind != models.BackupDestinationKindSFTP {
 		if err := validateURLForKind(d.Kind, *req.URL); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_url", "detail": err.Error()})
 			return
 		}
 		d.URL = *req.URL
+	}
+	if req.SFTP != nil {
+		if d.Kind != models.BackupDestinationKindSFTP {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "sftp_block_only_for_sftp_kind"})
+			return
+		}
+		if err := validateSFTPInputs(req.SFTP); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_sftp", "detail": err.Error()})
+			return
+		}
+		d.URL = internalbackup.ComposeSFTPURL(internalbackup.SFTPInputs{
+			Host: req.SFTP.Host, User: req.SFTP.User, Path: req.SFTP.Path,
+		})
+		raw, _ := json.Marshal(models.BackupDestinationExtraOptions{
+			SFTP: &models.SFTPOptions{
+				Host: req.SFTP.Host, User: req.SFTP.User, Port: req.SFTP.Port,
+				Path: req.SFTP.Path, Auth: req.SFTP.Auth, KeyPath: req.SFTP.KeyPath,
+			},
+		})
+		d.ExtraOptions = raw
 	}
 	if req.Enabled != nil {
 		d.Enabled = *req.Enabled
@@ -222,8 +333,16 @@ func (h *backupDestinationHandler) update(c *gin.Context) {
 		}
 		d.CredentialsRef = nil
 	}
-	if len(req.CredentialsEnv) > 0 {
-		path, err := writeCredentialsEnvFile(d.ID, req.CredentialsEnv)
+	credsEnv := req.CredentialsEnv
+	if d.Kind == models.BackupDestinationKindSFTP && req.SFTP != nil &&
+		req.SFTP.Auth == models.SFTPAuthPassword && req.SFTPPassword != "" {
+		if credsEnv == nil {
+			credsEnv = map[string]string{}
+		}
+		credsEnv["SSHPASS"] = req.SFTPPassword
+	}
+	if len(credsEnv) > 0 {
+		path, err := writeCredentialsEnvFile(d.ID, credsEnv)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "creds_write_failed", "detail": err.Error()})
 			return
@@ -291,6 +410,7 @@ func (h *backupDestinationHandler) test(c *gin.Context) {
 		d.URL,
 		internalbackup.DefaultPasswordFile,
 		extra,
+		backupwrapperhelpers.ResticOptionsFor(d),
 	)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{

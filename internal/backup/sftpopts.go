@@ -1,0 +1,85 @@
+// Package backup — SFTP option helpers for M30.1 destinations.
+//
+// restic's native SFTP backend speaks `sftp:user@host:/path` and uses
+// the system ssh client. To pin a non-default key or fall through to
+// password auth (sshpass) we override the default ssh invocation via
+// `-o sftp.command="..."`. This file builds that flag from the typed
+// SFTPOptions blob persisted by panel-api.
+package backup
+
+import (
+	"fmt"
+	"strings"
+)
+
+// SFTPInputs is the wire-shape view of models.SFTPOptions, lifted into
+// internal/backup so the wrapper doesn't depend on panel-api.
+type SFTPInputs struct {
+	Host    string
+	User    string
+	Port    int
+	Path    string
+	Auth    string // "key" | "password" — empty = default ssh config
+	KeyPath string
+}
+
+// ComposeSFTPURL returns the canonical restic URL form. Empty Path is
+// allowed (restic uses the home directory of the user); the panel UI
+// always fills it.
+//
+// The port is NOT encoded in the URL — restic's SFTP URL parser does
+// NOT support a `:port:` segment in modern versions. Non-22 ports are
+// handled exclusively via `-o sftp.command="ssh -p N ..."`.
+func ComposeSFTPURL(in SFTPInputs) string {
+	if in.User == "" || in.Host == "" {
+		return ""
+	}
+	if in.Path == "" {
+		return fmt.Sprintf("sftp:%s@%s:", in.User, in.Host)
+	}
+	return fmt.Sprintf("sftp:%s@%s:%s", in.User, in.Host, in.Path)
+}
+
+// SFTPCommandFlag returns the `-o sftp.command=...` option for the
+// given inputs, or an empty string if no override is needed (default
+// ssh config + default key + default port 22).
+//
+// `accept-new` host-key policy keeps the first connection working
+// without operator intervention; subsequent connections require the
+// known_hosts entry to match. This matches the operator-friendly
+// stance restic itself recommends.
+func SFTPCommandFlag(in SFTPInputs) string {
+	needsOverride := in.Auth == "password" ||
+		(in.Auth == "key" && in.KeyPath != "") ||
+		(in.Port > 0 && in.Port != 22)
+	if !needsOverride {
+		return ""
+	}
+	parts := []string{}
+	if in.Auth == "password" {
+		// sshpass reads SSHPASS from the env (loaded from the creds
+		// env file by the wrapper).
+		parts = append(parts, "sshpass", "-e")
+	}
+	parts = append(parts, "ssh")
+	if in.Auth == "key" && in.KeyPath != "" {
+		parts = append(parts, "-i", shellQuote(in.KeyPath), "-o", "IdentitiesOnly=yes")
+	}
+	parts = append(parts, "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes")
+	if in.Port > 0 && in.Port != 22 {
+		parts = append(parts, "-p", fmt.Sprintf("%d", in.Port))
+	}
+	parts = append(parts, fmt.Sprintf("%s@%s", in.User, in.Host), "-s", "sftp")
+	return "sftp.command=" + strings.Join(parts, " ")
+}
+
+// shellQuote single-quotes a path for embedding in `-o sftp.command=...`.
+// We don't actually parse the value through a shell, but restic's parser
+// tokenizes on spaces; spaces in key paths would break it. Quoting is
+// simple enough to do correctly.
+func shellQuote(s string) string {
+	if !strings.ContainsAny(s, " \t'\"\\") {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}

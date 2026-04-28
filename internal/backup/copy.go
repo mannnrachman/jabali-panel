@@ -40,6 +40,11 @@ type CopyOpts struct {
 	// instead of the tag-based filter. Used by retry paths that already
 	// know which snapshots are missing on the dest.
 	SnapshotIDs []string
+
+	// ExtraOptions are restic `-o key=value` flags applied to the
+	// destination side (e.g. `sftp.command=ssh -i /root/.ssh/id_x ...`).
+	// Each entry is the bare `key=value` pair; the wrapper prepends `-o`.
+	ExtraOptions []string
 }
 
 // LoadEnvFile parses a KEY=VALUE env file (one per line, # comments
@@ -98,10 +103,17 @@ func Copy(ctx context.Context, runner Runner, opts CopyOpts, extraEnv []string) 
 	args := []string{
 		"--repo", opts.ToRepo,
 		"--password-file", opts.ToPasswordFile,
-		"copy",
+	}
+	for _, opt := range opts.ExtraOptions {
+		if opt == "" {
+			continue
+		}
+		args = append(args, "-o", opt)
+	}
+	args = append(args, "copy",
 		"--from-repo", opts.FromRepo,
 		"--from-password-file", opts.FromPasswordFile,
-	}
+	)
 	for _, t := range opts.Tags {
 		args = append(args, "--tag", string(t))
 	}
@@ -122,15 +134,21 @@ func Copy(ctx context.Context, runner Runner, opts CopyOpts, extraEnv []string) 
 // supplied password file + env. Used by the `Test connection` REST
 // endpoint when the admin clicks the test button on a brand-new
 // destination.
-func InitRemote(ctx context.Context, runner Runner, repo, passwordFile string, extraEnv []string) ([]byte, []byte, error) {
+func InitRemote(ctx context.Context, runner Runner, repo, passwordFile string, extraEnv, extraOptions []string) ([]byte, []byte, error) {
 	if runner == nil {
 		runner = realRunner{}
 	}
 	args := []string{
 		"--repo", repo,
 		"--password-file", passwordFile,
-		"init",
 	}
+	for _, opt := range extraOptions {
+		if opt == "" {
+			continue
+		}
+		args = append(args, "-o", opt)
+	}
+	args = append(args, "init")
 	env := append(os.Environ(), extraEnv...)
 	stdout, stderr, err := runner.Run(ctx, "restic", args, env, nil)
 	if err != nil {
@@ -141,15 +159,21 @@ func InitRemote(ctx context.Context, runner Runner, repo, passwordFile string, e
 
 // SnapshotsRemote runs `restic snapshots` on a remote, used by the
 // test-connection endpoint to verify creds against an existing repo.
-func SnapshotsRemote(ctx context.Context, runner Runner, repo, passwordFile string, extraEnv []string) ([]byte, []byte, error) {
+func SnapshotsRemote(ctx context.Context, runner Runner, repo, passwordFile string, extraEnv, extraOptions []string) ([]byte, []byte, error) {
 	if runner == nil {
 		runner = realRunner{}
 	}
 	args := []string{
 		"--repo", repo,
 		"--password-file", passwordFile,
-		"snapshots", "--json",
 	}
+	for _, opt := range extraOptions {
+		if opt == "" {
+			continue
+		}
+		args = append(args, "-o", opt)
+	}
+	args = append(args, "snapshots", "--json")
 	env := append(os.Environ(), extraEnv...)
 	stdout, stderr, err := runner.Run(ctx, "restic", args, env, nil)
 	if err != nil {

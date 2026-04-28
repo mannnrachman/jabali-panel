@@ -41,6 +41,28 @@ func TestCopy_BuildsCorrectArgs(t *testing.T) {
 	require.Contains(t, r.gotEnv, "AWS_ACCESS_KEY_ID=x")
 }
 
+func TestCopy_ExtraOptionsForwarded(t *testing.T) {
+	r := &fakeCopyRunner{}
+	_, _, err := Copy(context.Background(), r, CopyOpts{
+		FromRepo:         "/var/lib/jabali-backups/repo",
+		FromPasswordFile: "/etc/jabali-panel/restic-repo.password",
+		ToRepo:           "sftp:bob@host:/repo",
+		ToPasswordFile:   "/etc/jabali-panel/restic-repo.password",
+		ExtraOptions:     []string{"sftp.command=ssh -i /root/.ssh/id_x bob@host -s sftp"},
+	}, nil)
+	require.NoError(t, err)
+	// -o flag must precede the `copy` subcommand for restic to pick it up.
+	var sawO bool
+	for i, a := range r.gotArgs {
+		if a == "-o" && i+1 < len(r.gotArgs) {
+			sawO = true
+			require.Contains(t, r.gotArgs[i+1], "sftp.command=")
+			break
+		}
+	}
+	require.True(t, sawO, "expected `-o sftp.command=...` flag in args")
+}
+
 func TestLoadEnvFile_ParsesAndSkipsComments(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "env")

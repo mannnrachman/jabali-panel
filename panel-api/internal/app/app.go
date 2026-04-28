@@ -571,6 +571,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterBackupDestinationRoutes(v1, api.BackupDestinationsConfig{
 				Repo: deps.BackupDestinations,
 			})
+			// SSH-key listing/generate endpoints feed the SFTP key
+			// dropdown on the destinations drawer.
+			api.RegisterSystemSSHKeysRoutes(v1)
 		}
 		if deps.BackupSchedules != nil && deps.BackupDestinations != nil {
 			api.RegisterBackupScheduleRoutes(v1, api.BackupSchedulesConfig{

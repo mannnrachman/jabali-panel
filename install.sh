@@ -7287,7 +7287,16 @@ SQL
 # re-ran the entire installer because main was unconditional. Caught
 # 2026-04-27 when sourcing for ad-hoc function invocation locked SSH
 # out of a live VM by re-provisioning sshd_config + authorized_keys.
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+#
+# Default BASH_SOURCE[0] to $0 under `set -u` because it is unset when
+# the script comes in over stdin (`curl … | bash`); the unguarded
+# expansion errored out before main() ever ran. The defaulting also
+# preserves the original semantics:
+#   - direct: BASH_SOURCE[0]==$0   → run main
+#   - sourced: BASH_SOURCE[0]!=$0  → skip main
+#   - piped: defaults to $0==$0    → run main (the user clearly invoked
+#                                    it, just via stdin)
+if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
   if [[ -n "${_cli_uninstall:-}" ]]; then
     uninstall
   else

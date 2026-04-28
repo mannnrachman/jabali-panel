@@ -85,7 +85,10 @@ func scanBytes(ctx context.Context, data []byte, attachmentName string) ScanResu
 	}
 	tmp.Close()
 
-	args := append([]string{"scan", "--no-warnings"}, rules...)
+	// yr flags: -w silences rule warnings (rfxn pack triggers tons of
+	// "deprecated" notices); --disable-console-logs hides scan progress.
+	args := []string{"scan", "-w", "--disable-console-logs"}
+	args = append(args, rules...)
 	args = append(args, tmp.Name())
 	cmd := exec.CommandContext(ctx, yrPath(), args...) //nolint:gosec // argv form, no shell, paths controlled
 	var stdout, stderr bytes.Buffer

@@ -138,14 +138,21 @@ func (h *backupScheduleHandler) create(c *gin.Context) {
 		return
 	}
 	if req.Kind == models.BackupScheduleKindAccount {
-		if req.UserID == nil || *req.UserID == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "user_id_required_for_account_kind"})
-			return
+		// user_id == nil  → "all non-admin users" fan-out at tick time.
+		// user_id == "X"  → single user X.
+		// Empty string is normalised to nil so the all-users path
+		// matches whether the UI sends null or "".
+		if req.UserID != nil && *req.UserID == "" {
+			req.UserID = nil
 		}
-		if h.cfg.Users != nil {
+		if req.UserID != nil && h.cfg.Users != nil {
 			user, err := h.cfg.Users.FindByID(c.Request.Context(), *req.UserID)
 			if err != nil || user == nil {
 				c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "user_not_found"})
+				return
+			}
+			if user.IsAdmin {
+				c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "admin_user_not_allowed"})
 				return
 			}
 		}

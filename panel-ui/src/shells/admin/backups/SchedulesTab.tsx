@@ -57,7 +57,13 @@ interface User {
   id: string;
   username: string;
   email: string;
+  is_admin?: boolean;
 }
+
+// Sentinel value used for the "All non-admin users" picker option.
+// Wire-shape on POST/PATCH is `user_id: null`; the form sends "" and
+// the submit handler omits user_id from the body.
+const ALL_USERS = "__all__";
 
 const PRESETS: Array<{ label: string; value: string; cron: string }> = [
   { label: "Daily 03:00", value: "daily", cron: "0 3 * * *" },
@@ -95,7 +101,9 @@ function ScheduleDrawer({
         setPreset(matched?.value ?? "custom");
         form.setFieldsValue({
           kind: editing.kind,
-          user_id: editing.user_id ?? undefined,
+          user_id: editing.kind === "account_backup"
+            ? (editing.user_id ?? ALL_USERS)
+            : undefined,
           cron_expr: editing.cron_expr,
           enabled: editing.enabled,
           keep_daily: editing.keep_daily ?? undefined,
@@ -140,11 +148,15 @@ function ScheduleDrawer({
       };
       if (values.kind === "account_backup") {
         if (!values.user_id) {
-          message.error("user_id required for account_backup schedules");
+          message.error("Pick a user (or 'All users') for account schedules");
           setBusy(false);
           return;
         }
-        body.user_id = values.user_id;
+        // ALL_USERS sentinel = omit user_id so the backend interprets
+        // it as fan-out across every non-admin user at tick time.
+        if (values.user_id !== ALL_USERS) {
+          body.user_id = values.user_id;
+        }
       }
       if (values.keep_daily !== undefined) body.keep_daily = values.keep_daily;
       if (values.keep_weekly !== undefined) body.keep_weekly = values.keep_weekly;
@@ -200,10 +212,15 @@ function ScheduleDrawer({
               showSearch
               placeholder="Select user"
               optionFilterProp="label"
-              options={users.map((u) => ({
-                value: u.id,
-                label: `${u.username} (${u.email})`,
-              }))}
+              options={[
+                { value: ALL_USERS, label: "All users (every non-admin)" },
+                ...users
+                  .filter((u) => !u.is_admin)
+                  .map((u) => ({
+                    value: u.id,
+                    label: `${u.username} (${u.email})`,
+                  })),
+              ]}
             />
           </Form.Item>
         )}
@@ -363,16 +380,16 @@ export function SchedulesTab() {
         scroll={{ x: "max-content" }}
       >
         <Table.Column dataIndex="kind" title="Kind" render={(k: string) => <Tag>{k}</Tag>} />
-        <Table.Column
-          dataIndex="user_id"
+        <Table.Column<BackupSchedule>
           title="User"
-          render={(uid: string | null) =>
-            uid ? (
-              users.find((u) => u.id === uid)?.username ?? <code>{uid.slice(0, 8)}…</code>
-            ) : (
-              "—"
-            )
-          }
+          render={(_, row) => {
+            if (row.kind === "system_backup") return "—";
+            if (!row.user_id) return <Tag color="blue">all users</Tag>;
+            return (
+              users.find((u) => u.id === row.user_id)?.username ??
+              <code>{row.user_id.slice(0, 8)}…</code>
+            );
+          }}
         />
         <Table.Column
           dataIndex="cron_expr"

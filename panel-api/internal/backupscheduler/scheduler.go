@@ -145,8 +145,30 @@ func (s *Scheduler) dispatch(ctx context.Context, sched models.BackupSchedule) {
 func (s *Scheduler) dispatchBackup(ctx context.Context, sched models.BackupSchedule) (bool, error) {
 	switch sched.Kind {
 	case models.BackupScheduleKindAccount:
+		// user_id NULL = fan out to every non-admin user. Each user
+		// gets one backup_jobs row + one agent call. We dispatch
+		// sequentially to keep the agent's per-user lock contention
+		// predictable; the agent enforces one running backup per
+		// user-id anyway. Returns true if at least one user was
+		// dispatched (so the schedule still advances next_run_at and
+		// records last_run_at).
 		if sched.UserID == nil {
-			return false, errors.New("account_backup schedule with NULL user_id")
+			notAdmin := false
+			users, _, err := s.deps.Users.List(ctx, repository.ListOptions{
+				Limit:   10000,
+				IsAdmin: &notAdmin,
+			})
+			if err != nil {
+				return false, fmt.Errorf("list users: %w", err)
+			}
+			any := false
+			for i := range users {
+				u := &users[i]
+				if ok := s.runOneAccountBackup(ctx, sched, u); ok {
+					any = true
+				}
+			}
+			return any, nil
 		}
 		user, err := s.deps.Users.FindByID(ctx, *sched.UserID)
 		if err != nil {
@@ -155,40 +177,10 @@ func (s *Scheduler) dispatchBackup(ctx context.Context, sched models.BackupSched
 		if user == nil {
 			return false, fmt.Errorf("user %s not found", *sched.UserID)
 		}
-		jobID := ids.NewULID()
-		schedID := sched.ID
-		job := &models.BackupJob{
-			ID:         jobID,
-			UserID:     user.ID,
-			ScheduleID: &schedID,
-			Kind:       models.BackupJobKindAccountBackup,
-			Status:     models.BackupJobStatusQueued,
-			CreatedAt:  time.Now().UTC(),
+		if user.IsAdmin {
+			return false, errors.New("account_backup schedule references admin user")
 		}
-		if err := s.deps.Jobs.Create(ctx, job); err != nil {
-			return false, fmt.Errorf("create backup_job: %w", err)
-		}
-		callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		params := map[string]any{
-			"job_id":   jobID,
-			"user_id":  user.ID,
-			"username": user.Username,
-			"email":    user.Email,
-			"is_admin": user.IsAdmin,
-		}
-		if _, err := s.deps.Agent.Call(callCtx, "backup.create", params); err != nil {
-			if isAgentConflict(err) {
-				_ = s.deps.Jobs.MarkFinished(ctx, jobID, models.BackupJobStatusCancelled,
-					"", "", 0, 0, nil, nil, "skipped: prior backup still running")
-				return false, nil
-			}
-			_ = s.deps.Jobs.MarkFinished(ctx, jobID, models.BackupJobStatusFailed,
-				"", "", 0, 0, nil, nil, err.Error())
-			return false, fmt.Errorf("agent backup.create: %w", err)
-		}
-		_ = s.deps.Jobs.MarkStarted(ctx, jobID)
-		return true, nil
+		return s.runOneAccountBackup(ctx, sched, user), nil
 
 	case models.BackupScheduleKindSystem:
 		jobID := ids.NewULID()
@@ -226,6 +218,51 @@ func (s *Scheduler) dispatchBackup(ctx context.Context, sched models.BackupSched
 	default:
 		return false, fmt.Errorf("unknown schedule kind %q", sched.Kind)
 	}
+}
+
+// runOneAccountBackup creates one backup_jobs row + one backup.create
+// agent call for the given user. Returns true on success or graceful
+// conflict (existing job running), false on terminal error. All errors
+// are logged and swallowed so a fan-out over many users never aborts
+// after the first failure.
+func (s *Scheduler) runOneAccountBackup(ctx context.Context, sched models.BackupSchedule, user *models.User) bool {
+	logger := s.deps.Log.With("schedule_id", sched.ID, "user_id", user.ID)
+	jobID := ids.NewULID()
+	schedID := sched.ID
+	job := &models.BackupJob{
+		ID:         jobID,
+		UserID:     user.ID,
+		ScheduleID: &schedID,
+		Kind:       models.BackupJobKindAccountBackup,
+		Status:     models.BackupJobStatusQueued,
+		CreatedAt:  time.Now().UTC(),
+	}
+	if err := s.deps.Jobs.Create(ctx, job); err != nil {
+		logger.Error("create backup_job failed", "err", err)
+		return false
+	}
+	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	params := map[string]any{
+		"job_id":   jobID,
+		"user_id":  user.ID,
+		"username": user.Username,
+		"email":    user.Email,
+		"is_admin": user.IsAdmin,
+	}
+	if _, err := s.deps.Agent.Call(callCtx, "backup.create", params); err != nil {
+		if isAgentConflict(err) {
+			_ = s.deps.Jobs.MarkFinished(ctx, jobID, models.BackupJobStatusCancelled,
+				"", "", 0, 0, nil, nil, "skipped: prior backup still running")
+			return true
+		}
+		_ = s.deps.Jobs.MarkFinished(ctx, jobID, models.BackupJobStatusFailed,
+			"", "", 0, 0, nil, nil, err.Error())
+		logger.Error("agent backup.create failed", "err", err)
+		return false
+	}
+	_ = s.deps.Jobs.MarkStarted(ctx, jobID)
+	return true
 }
 
 // isAgentConflict matches the agent's 409-equivalent NDJSON error string

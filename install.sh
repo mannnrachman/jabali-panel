@@ -5835,6 +5835,12 @@ install_stalwart() {
   # the server binary.
   _install_stalwart_cli
 
+  # Vendor the spam-filter rules bundle into /opt/stalwart/share before
+  # apply-plan references it via file://. Pinned to a known SHA for
+  # reproducibility; the auto-refresh timer (jabali-spam-rules-update)
+  # pulls /releases/latest in-place AFTER bootstrap.
+  _install_spam_rules
+
   # JMAP admin token — used later for panel <-> Stalwart management auth
   # (JMAP basic auth with stored credential). Generated once + preserved
   # across re-runs so a re-install doesn't break the panel-agent's auth.
@@ -5940,8 +5946,28 @@ EOF
   fi
   install -m 0644 -o root -g root "${REPO_DIR}/install/systemd/jabali-stalwart.service" \
     /etc/systemd/system/jabali-stalwart.service
+
+  # Spam-filter rules weekly refresh. Refresh script + timer + service.
+  # Enabled+started here so a fresh install ends with the timer armed.
+  local refresh_src="${REPO_DIR}/install/stalwart/jabali-spam-rules-refresh"
+  local refresh_dst="/usr/local/bin/jabali-spam-rules-refresh"
+  if [[ ! -f "$refresh_src" ]]; then
+    _die "spam-rules refresh script missing at $refresh_src"
+  fi
+  install -m 0755 -o root -g root "$refresh_src" "$refresh_dst"
+
+  for unit in jabali-spam-rules-update.service jabali-spam-rules-update.timer; do
+    if [[ ! -f "${REPO_DIR}/install/systemd/${unit}" ]]; then
+      _die "${unit} not found at ${REPO_DIR}/install/systemd/${unit}"
+    fi
+    install -m 0644 -o root -g root "${REPO_DIR}/install/systemd/${unit}" \
+      "/etc/systemd/system/${unit}"
+  done
+
   systemctl daemon-reload
-  _ok "jabali-stalwart.service installed (apply deferred to install_stalwart_apply)"
+  systemctl enable --now jabali-spam-rules-update.timer >/dev/null 2>&1 || \
+    _warn "could not enable jabali-spam-rules-update.timer — re-run install.sh or 'systemctl enable --now jabali-spam-rules-update.timer'"
+  _ok "jabali-stalwart.service installed (apply deferred to install_stalwart_apply); spam-rules weekly refresh timer armed"
 }
 
 # install_stalwart_apply — second phase of Stalwart bootstrap. Runs AFTER
@@ -6024,6 +6050,54 @@ install_stalwart_apply() {
   # WARN, not DIE. The runbook tells them to restart jabali-stalwart.
   if ss -lntp 2>/dev/null | grep -qE '(\*|0\.0\.0\.0|\[::\]):35181'; then
     _warn "Stalwart's legacy ephemeral :35181 is still bound on a wildcard — restart jabali-stalwart to pick up the M25 Step 7 #internal-loopback listener"
+  fi
+
+  _verify_spam_filter_loaded "$stalwart_admin_token"
+}
+
+# _verify_spam_filter_loaded queries the SpamSettings singleton via
+# stalwart-cli and asserts:
+#   - enable == true
+#   - spamFilterRulesUrl points at our pinned file:// path
+# Smoke-only: WARN on miss (don't _die) because Stalwart's spam filter
+# is a feature flag, not a bootstrap blocker. Drift here means the next
+# operator-visible event (mail with a spam tag) will trip; failing the
+# install over it would be too aggressive.
+_verify_spam_filter_loaded() {
+  local admin_token="$1"
+  local expected_url="file:///opt/stalwart/share/spam-filter-rules.json.gz"
+  local out
+  out="$(STALWART_URL="http://127.0.0.1:8446" \
+    STALWART_USER="admin" \
+    STALWART_PASSWORD="$admin_token" \
+    /usr/local/bin/stalwart-cli query x:SpamSettings --json 2>&1 || true)"
+  if [[ -z "$out" ]] || [[ "$out" == "[]" ]]; then
+    _warn "spam filter smoke: SpamSettings query returned empty — apply-plan may not have landed; check 'journalctl -u jabali-stalwart'"
+    return
+  fi
+  local enable rules_url
+  enable="$(printf '%s\n' "$out" | python3 -c \
+    'import sys,json
+try:
+    d=json.load(sys.stdin)
+    obj = d[0] if isinstance(d,list) and d else (d if isinstance(d,dict) else {})
+    print(str(obj.get("enable","")).lower())
+except Exception: pass' 2>/dev/null || true)"
+  rules_url="$(printf '%s\n' "$out" | python3 -c \
+    'import sys,json
+try:
+    d=json.load(sys.stdin)
+    obj = d[0] if isinstance(d,list) and d else (d if isinstance(d,dict) else {})
+    print(obj.get("spamFilterRulesUrl",""))
+except Exception: pass' 2>/dev/null || true)"
+  if [[ "$enable" != "true" ]]; then
+    _warn "spam filter smoke: enable=${enable:-<unset>} (expected 'true')"
+  fi
+  if [[ "$rules_url" != "$expected_url" ]]; then
+    _warn "spam filter smoke: rules URL '${rules_url:-<unset>}' (expected '${expected_url}')"
+  fi
+  if [[ "$enable" == "true" ]] && [[ "$rules_url" == "$expected_url" ]]; then
+    _ok "spam filter smoke: enabled + rules pinned to $expected_url"
   fi
 }
 
@@ -6399,6 +6473,82 @@ _install_stalwart_cli() {
   install -m 0755 -o root -g root "$bin_in_tar" "$cli_binary"
   rm -rf "$new_dir"
   _ok "stalwart-cli $cli_version installed at $cli_binary"
+}
+
+# _install_spam_rules vendors the Stalwart spam-filter rules bundle into
+# /opt/stalwart/share so apply-plan.json can point at file:// instead of
+# the upstream `/releases/latest` URL Stalwart fetches by default. Why:
+#   - reproducibility: a known-good SHA on every fresh install
+#   - supply-chain: pin shifts via deliberate repo bump, not silent on github
+#   - reachability: Stalwart's first-start fetch silently degrades when
+#     github is blocked (corp egress, ufw, etc.); local file always loads
+#
+# Pinned version + SHA live in install/stalwart-spam-filter-rules.sha256.
+# Idempotent: skips download when the on-disk file already matches the
+# pinned SHA.
+#
+# The auto-refresh timer (jabali-spam-rules-update.timer) overwrites this
+# same file with /releases/latest on a weekly cadence — so the pin is the
+# bootstrap floor, not an upper bound.
+_install_spam_rules() {
+  local sha_file="${REPO_DIR}/install/stalwart-spam-filter-rules.sha256"
+  local share_dir="/opt/stalwart/share"
+  local dst="${share_dir}/spam-filter-rules.json.gz"
+  if [[ ! -f "$sha_file" ]]; then
+    _die "Stalwart spam-filter SHA file not found at $sha_file"
+  fi
+
+  local version
+  version="$(awk -F= '/^VERSION=/ {print $2; exit}' "$sha_file")"
+  if [[ -z "$version" ]]; then
+    _die "no VERSION= line in $sha_file"
+  fi
+  local expected_sha
+  expected_sha="$(awk '/^[[:space:]]*#/ || /^VERSION=/ || NF==0 { next } { print $1; exit }' "$sha_file")"
+  if [[ -z "$expected_sha" ]]; then
+    _die "no checksum line found in $sha_file (comments only?)"
+  fi
+
+  install -d -m 0755 -o root -g root "$share_dir"
+
+  # Idempotence: if the existing file already matches the pinned SHA, do
+  # nothing. Avoids a network hit on every install.sh re-run.
+  if [[ -f "$dst" ]]; then
+    local current_sha
+    current_sha="$(sha256sum "$dst" | awk '{print $1}')"
+    if [[ "$current_sha" == "$expected_sha" ]]; then
+      _ok "Stalwart spam-filter rules v${version} already installed (sha matches)"
+      return 0
+    fi
+  fi
+
+  local url="https://github.com/stalwartlabs/spam-filter/releases/download/v${version}/spam-filter-rules.json.gz"
+  local tmp="/tmp/spam-filter-rules.json.gz.$$"
+  _log "downloading Stalwart spam-filter rules v${version}"
+  if ! curl -fsSL "$url" -o "$tmp"; then
+    rm -f "$tmp"
+    _die "failed to download spam-filter rules from $url"
+  fi
+
+  local actual_sha
+  actual_sha="$(sha256sum "$tmp" | awk '{print $1}')"
+  if [[ "$expected_sha" != "$actual_sha" ]]; then
+    rm -f "$tmp"
+    _die "spam-filter rules SHA-256 mismatch. Expected: $expected_sha, got: $actual_sha"
+  fi
+
+  # Validate the gzip envelope before swapping in. A truncated file
+  # passes sha256 (in theory it can't, but defense in depth) but Stalwart
+  # rejects on parse and disables the filter — silent regression.
+  if ! gzip -t "$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    _die "spam-filter rules gzip integrity check failed"
+  fi
+
+  # 0640 + jabali-mail group: same posture as stalwart-admin.token.
+  install -m 0640 -o root -g jabali-mail "$tmp" "$dst"
+  rm -f "$tmp"
+  _ok "Stalwart spam-filter rules v${version} pinned at $dst"
 }
 
 install_bulwark() {

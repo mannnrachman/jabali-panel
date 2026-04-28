@@ -1,0 +1,25 @@
+# Pinned SHA-256 for stalwartlabs/spam-filter rules bundle.
+#
+# Source URL: https://github.com/stalwartlabs/spam-filter/releases/download/v${VERSION}/spam-filter-rules.json.gz
+# Version pinned below; bump alongside SHA on upgrade.
+#
+# Why pinned (not "latest"): reproducible installs + supply-chain control.
+# Stalwart's default points at /releases/latest which silently shifts under
+# operators on every fresh install. Pin in the repo, bump deliberately,
+# diff what changed between versions before shipping.
+#
+# Refresh procedure:
+#   1. Find the new release version on https://github.com/stalwartlabs/spam-filter/releases
+#   2. curl -fsSL -o /tmp/sf.json.gz \
+#        https://github.com/stalwartlabs/spam-filter/releases/download/v${NEW}/spam-filter-rules.json.gz
+#   3. gzip -t /tmp/sf.json.gz   (fail -> abort, file corrupt)
+#   4. sha256sum /tmp/sf.json.gz
+#   5. Update VERSION + checksum line below; commit.
+#
+# The auto-refresh timer (jabali-spam-rules-update.timer) does NOT bump the
+# pin — it pulls /releases/latest in-place AFTER the pinned bootstrap.
+# Bootstrap remains pinned so a fresh install always lands on a known
+# checksum even if upstream is broken.
+
+VERSION=3.0.0
+c4e6cdda1e681b61ed59616e3894a9f2bbff8c94fcba01427c30b5b0b30feefa  spam-filter-rules.json.gz

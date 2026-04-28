@@ -1,0 +1,79 @@
+#!/bin/bash
+# jabali-spam-rules-refresh — pull latest Stalwart spam-filter rules
+# bundle from upstream and atomically replace the file at
+# /opt/stalwart/share/spam-filter-rules.json.gz that apply-plan pinned
+# during install.
+#
+# Invoked weekly by jabali-spam-rules-update.timer (Sun 03:15 host-local).
+# Idempotent: same SHA on disk = no rewrite, no reload.
+#
+# Trust model: TOFU after the install-time pin (install.sh verifies
+# against install/stalwart-spam-filter-rules.sha256). Subsequent fetches
+# pull /releases/latest with no per-version pin — same posture as
+# Stalwart's stock auto-fetch, but with file integrity checks so a
+# truncated download or HTML 404 page can't replace the working bundle.
+#
+# Failure handling: any failure (network, gzip-corrupt, sha-stuck-same
+# but file-different etc.) leaves the existing file in place and exits
+# non-zero. systemd records the failure via journal; the next weekly
+# fire retries. We never let this script wedge mail processing.
+
+set -euo pipefail
+
+URL="https://github.com/stalwartlabs/spam-filter/releases/latest/download/spam-filter-rules.json.gz"
+DST="/opt/stalwart/share/spam-filter-rules.json.gz"
+TMP="$(mktemp -p /tmp spam-filter-rules.XXXXXX.json.gz)"
+trap 'rm -f "$TMP"' EXIT
+
+if [[ ! -d "$(dirname "$DST")" ]]; then
+  echo "[spam-rules-refresh] target dir $(dirname "$DST") missing — install.sh hasn't run, skipping" >&2
+  exit 0
+fi
+
+echo "[spam-rules-refresh] fetching $URL"
+if ! curl -fsSL --max-time 90 -o "$TMP" "$URL"; then
+  echo "[spam-rules-refresh] curl failed — leaving $DST in place" >&2
+  exit 1
+fi
+
+# Plausibility: bundle has historically been 15-100KB. <1KB = HTML error
+# page, >5MB = upstream changed the format. Either way refuse to apply.
+size=$(stat -c '%s' "$TMP")
+if (( size < 1024 )) || (( size > 5*1024*1024 )); then
+  echo "[spam-rules-refresh] downloaded file size ${size}B is implausible — refusing to apply" >&2
+  exit 1
+fi
+
+# Gzip integrity. A corrupt gzip silently disables the spam filter when
+# Stalwart tries to load it; we'd rather keep yesterday's rules.
+if ! gzip -t "$TMP" 2>/dev/null; then
+  echo "[spam-rules-refresh] gzip integrity check failed — refusing to apply" >&2
+  exit 1
+fi
+
+new_sha="$(sha256sum "$TMP" | awk '{print $1}')"
+old_sha=""
+if [[ -f "$DST" ]]; then
+  old_sha="$(sha256sum "$DST" | awk '{print $1}')"
+fi
+
+if [[ "$new_sha" == "$old_sha" ]]; then
+  echo "[spam-rules-refresh] no change (sha=${new_sha:0:12}…) — skipping reload"
+  exit 0
+fi
+
+# Atomic replace. install -m drops temp -> dst with correct ownership.
+install -m 0640 -o root -g jabali-mail "$TMP" "$DST"
+echo "[spam-rules-refresh] updated $DST (sha ${new_sha:0:12}…, size ${size}B)"
+
+# Activate new rules. jabali-stalwart.service has no ExecReload= directive
+# (Type=simple, no SIGHUP handler in stalwart-server v0.16), so plain
+# `systemctl reload` would always fail. try-reload-or-restart degrades
+# to a restart in that case — same effect, ~5s SMTP downtime, fine for
+# the Sun 03:15 maintenance window this timer runs in. If the unit ever
+# grows ExecReload= upstream, this command picks it up automatically.
+if systemctl is-active --quiet jabali-stalwart.service; then
+  if ! systemctl try-reload-or-restart jabali-stalwart.service; then
+    echo "[spam-rules-refresh] try-reload-or-restart jabali-stalwart failed — file is in place; rules will load on next manual restart" >&2
+  fi
+fi

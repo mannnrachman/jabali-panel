@@ -441,6 +441,30 @@ test -x node_modules/.bin/tsc || {
 			}
 			return nil
 		}},
+		{"sync stalwart spam-filter rules", func() error {
+			// Vendor the pinned spam-filter rules bundle + (re-)install
+			// the weekly auto-refresh timer + script. Existing hosts
+			// without these (installed before feat/stalwart-spam-filter-pin)
+			// still hit github.com/stalwartlabs/spam-filter at every
+			// Stalwart cold start; this convergence step pins them to
+			// /opt/stalwart/share/spam-filter-rules.json.gz once and
+			// arms the timer to keep it refreshed.
+			//
+			// Apply-plan re-render + stalwart-cli re-apply is intentionally
+			// skipped here — apply is create-only for some objects and the
+			// SpamSettings update lives in the install-time plan path.
+			// Operators on a stale apply-plan can re-run install.sh to
+			// converge that. Non-fatal here either way.
+			installSh := repoDir + "/install.sh"
+			if _, err := os.Stat(installSh); err != nil {
+				return nil
+			}
+			if err := run("", "bash", "-c",
+				"source "+installSh+" && _install_spam_rules"); err != nil {
+				fmt.Printf("  (_install_spam_rules failed: %v — continuing)\n", err)
+			}
+			return nil
+		}},
 		{"sync malware stack", func() error {
 			// Source install.sh and re-run install_malware_stack so existing
 			// hosts converge on amendments to the M33 stack (ADR-0072) without

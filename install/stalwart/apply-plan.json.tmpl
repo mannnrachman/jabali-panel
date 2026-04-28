@@ -106,5 +106,20 @@
         "socketNoDelay": true
       }
     }
+  },
+
+  {
+    "@type": "update",
+    "object": "x:SpamSettings",
+    "id": "singleton",
+    "value": {
+      "enable": true,
+      "trustContacts": true,
+      "trustReplies": true,
+      "scoreSpam": 5.0,
+      "scoreReject": 15.0,
+      "scoreDiscard": 20.0,
+      "spamFilterRulesUrl": "file:///opt/stalwart/share/spam-filter-rules.json.gz"
+    }
   }
 ]

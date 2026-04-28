@@ -130,26 +130,44 @@ func (h *ssoPhpMyAdminHandler) issueSSOToken(c *gin.Context) {
 
 // getPhpMyAdminBaseURL derives the base URL for phpMyAdmin redirects.
 // Priority:
-//  1. Explicit JABALI_PHPMYADMIN_BASE_URL config (use as-is)
-//  2. Derived from request Host header (strip port, use http:// as scheme)
+//  1. Explicit sso.phpmyadmin_base_url config (use as-is)
+//  2. Browser-supplied Origin header (preserves the visible port —
+//     nginx fronts phpMyAdmin on the same vhost as the panel, so the
+//     panel's :8443 is also where /phpmyadmin lives)
+//  3. Referer header (same parse path)
+//  4. Last resort: scheme + Request.Host (port stripped by nginx,
+//     redirects to :443 — only useful when phpMyAdmin actually lives
+//     on the default vhost)
+//
+// Earlier builds always took path 4 and tripped over the M6.4 panel-
+// hostname mail topology, where the :443 default vhost is the
+// webmail — phpMyAdmin SSO redirected operators to Roundcube.
 func (h *ssoPhpMyAdminHandler) getPhpMyAdminBaseURL(c *gin.Context) string {
-	// If config specifies explicit base URL, use it (even with trailing slash)
 	if h.cfg.SSOConfig.PhpMyAdminBaseURL != "" {
-		baseURL := h.cfg.SSOConfig.PhpMyAdminBaseURL
-		// Ensure no trailing slash to avoid double-slashes when appending /phpmyadmin
-		return strings.TrimSuffix(baseURL, "/")
+		return strings.TrimSuffix(h.cfg.SSOConfig.PhpMyAdminBaseURL, "/")
 	}
 
-	// Derive from request Host header: strip port, always use https.
-	// The panel is https-only. The installer's default vhost at :443
-	// (jabali-default.conf) fronts phpMyAdmin with the panel's TLS cert,
-	// and :80 301-redirects to https. Operators deploying phpMyAdmin on
-	// a separate hostname/port must set sso.phpmyadmin_base_url.
-	host := c.Request.Host
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		host = host[:idx]
+	// Origin / Referer headers carry the URL the browser is on,
+	// including port — exactly what we want for the redirect target.
+	for _, raw := range []string{c.GetHeader("Origin"), c.GetHeader("Referer")} {
+		if raw == "" {
+			continue
+		}
+		if u, err := url.Parse(raw); err == nil && u.Scheme != "" && u.Host != "" {
+			return u.Scheme + "://" + u.Host
+		}
 	}
-	return "https://" + host
+
+	// Fallback: derive from forwarded scheme + Host. nginx strips port
+	// from $host so this URL won't preserve :8443 — kept only for
+	// non-browser callers (curl tests, agent loopbacks). Panel is
+	// https-only, so default to https unless X-Forwarded-Proto says
+	// otherwise.
+	scheme := "https"
+	if fp := c.GetHeader("X-Forwarded-Proto"); fp != "" {
+		scheme = fp
+	}
+	return scheme + "://" + hostnameOf(c.Request.Host)
 }
 
 // auditLog emits a structured slog line for SSO operations. Logged at

@@ -289,7 +289,7 @@ export function SchedulesTab() {
         apiClient.get<{ data: BackupDestinationOption[] }>(
           "/admin/backup-destinations",
         ),
-        apiClient.get<{ data: User[] }>("/admin/users?page_size=500"),
+        apiClient.get<{ data: User[] }>("/users?page_size=500"),
       ]);
       setRows(s.data.data ?? []);
       setDestinations(d.data.data ?? []);

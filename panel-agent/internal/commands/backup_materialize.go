@@ -39,12 +39,17 @@ const downloadRoot = "/var/lib/jabali-backups/downloads"
 var jobIDRE = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
 
 type backupMaterializeParams struct {
-	JobID      string `json:"job_id"`
-	SnapshotID string `json:"snapshot_id"`
+	JobID string `json:"job_id"`
+	// SnapshotID is accepted for compatibility but ignored — the
+	// handler always materializes ALL snapshots tagged job-id=<JobID>
+	// because the manifest snapshot alone holds only manifest.json
+	// (the real data lives in sibling stage=home/db/mail snapshots).
+	SnapshotID string `json:"snapshot_id,omitempty"`
 }
 
 type backupMaterializeResult struct {
-	Path string `json:"path"`
+	Path     string `json:"path"`
+	Stages   []string `json:"stages"`
 }
 
 func backupMaterializeHandler(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -55,23 +60,64 @@ func backupMaterializeHandler(ctx context.Context, raw json.RawMessage) (any, er
 	if !jobIDRE.MatchString(p.JobID) {
 		return nil, fmt.Errorf("invalid_arg: job_id must be a 26-char ULID")
 	}
-	if p.SnapshotID == "" {
-		return nil, fmt.Errorf("invalid_arg: snapshot_id required")
-	}
 	if err := os.MkdirAll(downloadRoot, 0o750); err != nil {
 		return nil, fmt.Errorf("mkdir downloadRoot: %w", err)
+	}
+	// /var/lib/jabali-backups is created by install.sh as 0700 root:root
+	// — fine for the repo, fatal for downloads which the jabali user
+	// (panel-api) needs to traverse to tar the materialized tree. Open
+	// just the traversal bit (g+x) without exposing repo contents
+	// (the repo dir itself stays 0700). chgrp gives the directory the
+	// jabali group so o-x stays closed.
+	if err := exec.Command("chgrp", "jabali", filepath.Dir(downloadRoot)).Run(); err != nil {
+		return nil, fmt.Errorf("chgrp /var/lib/jabali-backups: %w", err)
+	}
+	if err := os.Chmod(filepath.Dir(downloadRoot), 0o750); err != nil {
+		return nil, fmt.Errorf("chmod /var/lib/jabali-backups: %w", err)
+	}
+	if err := exec.Command("chgrp", "jabali", downloadRoot).Run(); err != nil {
+		return nil, fmt.Errorf("chgrp downloadRoot: %w", err)
+	}
+	if err := os.Chmod(downloadRoot, 0o750); err != nil {
+		return nil, fmt.Errorf("chmod downloadRoot: %w", err)
 	}
 	target := filepath.Join(downloadRoot, p.JobID)
 	// Clean any stale dir from a prior failed download so restic doesn't
 	// merge into it (restic refuses to clobber existing files).
 	_ = os.RemoveAll(target)
+	if err := os.MkdirAll(target, 0o750); err != nil {
+		return nil, fmt.Errorf("mkdir target: %w", err)
+	}
 
 	c := backup.New(backup.DefaultConfig())
-	if err := c.Restore(ctx, backup.RestoreOpts{
-		SnapshotID: p.SnapshotID,
-		Target:     target,
-	}); err != nil {
-		return nil, fmt.Errorf("restic restore: %w", err)
+	snaps, err := c.Snapshots(ctx, []backup.Tag{backup.MakeTag(backup.TagKeyJobID, p.JobID)})
+	if err != nil {
+		return nil, fmt.Errorf("list job snapshots: %w", err)
+	}
+	if len(snaps) == 0 {
+		return nil, fmt.Errorf("no snapshots for job %s", p.JobID)
+	}
+	stages := make([]string, 0, len(snaps))
+	for _, s := range snaps {
+		stage := stageFromTags(s.Tags)
+		if stage == "" {
+			stage = s.ID[:8]
+		}
+		// Restore each stage into a sibling subdir so the final
+		// archive layout is <job_id>/<stage>/<paths>. Avoids
+		// path collisions when /home/<u>/ + /manifest.json + db
+		// dumps would otherwise overlap at the same target root.
+		stageTarget := filepath.Join(target, stage)
+		if err := os.MkdirAll(stageTarget, 0o750); err != nil {
+			return nil, fmt.Errorf("mkdir stage %s: %w", stage, err)
+		}
+		if err := c.Restore(ctx, backup.RestoreOpts{
+			SnapshotID: s.ID,
+			Target:     stageTarget,
+		}); err != nil {
+			return nil, fmt.Errorf("restic restore %s (%s): %w", stage, s.ID[:8], err)
+		}
+		stages = append(stages, stage)
 	}
 	// Hand off read access to the jabali user (panel-api). Group
 	// `jabali` exists since M9 (per-user-slices baseline). chmod -R
@@ -86,7 +132,27 @@ func backupMaterializeHandler(ctx context.Context, raw json.RawMessage) (any, er
 	if err := os.Chmod(target, 0o750); err != nil {
 		return nil, fmt.Errorf("chmod target: %w", err)
 	}
-	return backupMaterializeResult{Path: target}, nil
+	return backupMaterializeResult{Path: target, Stages: stages}, nil
+}
+
+// stageFromTags returns the stage name (e.g. "home") if a `stage=X`
+// tag is present on the snapshot. Empty when no stage tag matches —
+// falls back to the snapshot short ID upstream.
+func stageFromTags(tags []string) string {
+	for _, t := range tags {
+		if len(t) > len("stage=") && t[:len("stage=")] == "stage=" {
+			s := t[len("stage="):]
+			// stage=db,db=foo collapses to "db" — anything past the
+			// first comma is metadata, not the stage name.
+			for i := 0; i < len(s); i++ {
+				if s[i] == ',' {
+					return s[:i]
+				}
+			}
+			return s
+		}
+	}
+	return ""
 }
 
 type backupMaterializeCleanupParams struct {

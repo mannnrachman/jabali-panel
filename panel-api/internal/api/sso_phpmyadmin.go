@@ -49,21 +49,29 @@ func (h *ssoPhpMyAdminHandler) issueSSOToken(c *gin.Context) {
 	ctx := c.Request.Context()
 	claims := ginctx.Claims(c)
 	if claims == nil {
-		h.auditLog(ctx, "", "", "", "unauthorized")
+		h.auditLog(ctx, "", "", "", "unauthorized:no_session")
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 
 	// CSRF: same-origin check via Origin/Referer headers
 	if !h.validateSameOrigin(c) {
-		h.auditLog(ctx, claims.UserID, "", "", "unauthorized")
+		h.cfg.Log.InfoContext(ctx, "sso_phpmyadmin same-origin check failed",
+			"user_id", claims.UserID,
+			"origin", c.GetHeader("Origin"),
+			"referer", c.GetHeader("Referer"),
+			"x_forwarded_proto", c.GetHeader("X-Forwarded-Proto"),
+			"host", c.Request.Host,
+			"computed", h.getOrigin(c),
+		)
+		h.auditLog(ctx, claims.UserID, "", "", "unauthorized:same_origin")
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 
 	var req ssoPhpMyAdminRequest
 	if err := c.BindJSON(&req); err != nil {
-		h.auditLog(ctx, claims.UserID, "", "", "unauthorized")
+		h.auditLog(ctx, claims.UserID, "", "", "unauthorized:bad_json")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
 		return
 	}
@@ -72,18 +80,18 @@ func (h *ssoPhpMyAdminHandler) issueSSOToken(c *gin.Context) {
 	db, err := h.cfg.Databases.FindByID(ctx, req.DatabaseID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			h.auditLog(ctx, claims.UserID, req.DatabaseID, "", "unauthorized")
+			h.auditLog(ctx, claims.UserID, req.DatabaseID, "", "unauthorized:db_not_found")
 			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 			return
 		}
 		h.cfg.Log.ErrorContext(ctx, "database lookup failed", "err", err)
-		h.auditLog(ctx, claims.UserID, req.DatabaseID, "", "unauthorized")
+		h.auditLog(ctx, claims.UserID, req.DatabaseID, "", "unauthorized:db_lookup_error")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
 
 	if db.UserID != claims.UserID {
-		h.auditLog(ctx, claims.UserID, req.DatabaseID, "", "unauthorized")
+		h.auditLog(ctx, claims.UserID, req.DatabaseID, "", "unauthorized:owner_mismatch")
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
@@ -144,9 +152,13 @@ func (h *ssoPhpMyAdminHandler) getPhpMyAdminBaseURL(c *gin.Context) string {
 	return "https://" + host
 }
 
-// auditLog emits a structured slog line for SSO operations.
+// auditLog emits a structured slog line for SSO operations. Logged at
+// info-level — the production log already keeps token-hash prefixes
+// only (never the token itself), and a 'forbidden' outcome is the
+// kind of signal an operator wants to see without flipping the
+// global level to debug.
 func (h *ssoPhpMyAdminHandler) auditLog(ctx context.Context, userID, databaseID, tokenHashPrefix, outcome string) {
-	h.cfg.Log.DebugContext(ctx, "sso_phpmyadmin",
+	h.cfg.Log.InfoContext(ctx, "sso_phpmyadmin",
 		"user_id", userID,
 		"database_id", databaseID,
 		"token_hash_prefix", tokenHashPrefix,

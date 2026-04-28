@@ -65,7 +65,18 @@ func SFTPCommandFlag(in SFTPInputs) string {
 	if in.Auth == "key" && in.KeyPath != "" {
 		parts = append(parts, "-i", shellQuote(in.KeyPath), "-o", "IdentitiesOnly=yes")
 	}
-	parts = append(parts, "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes")
+	parts = append(parts, "-o", "StrictHostKeyChecking=accept-new")
+	// BatchMode=yes disables password+keyboard-interactive prompts. Safe
+	// for key auth (no prompt needed); fatal for password auth — sshpass
+	// drives the interactive prompt, so BatchMode would lock it out and
+	// ssh would only try pubkey methods, ending in "Permission denied
+	// (publickey,password)" even with the right password.
+	if in.Auth == "password" {
+		parts = append(parts, "-o", "PreferredAuthentications=password,keyboard-interactive",
+			"-o", "PubkeyAuthentication=no")
+	} else {
+		parts = append(parts, "-o", "BatchMode=yes")
+	}
 	if in.Port > 0 && in.Port != 22 {
 		parts = append(parts, "-p", fmt.Sprintf("%d", in.Port))
 	}

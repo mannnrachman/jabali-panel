@@ -38,6 +38,19 @@ func TestSFTPCommandFlag_Password(t *testing.T) {
 	})
 	require.True(t, strings.HasPrefix(got, "sftp.command=sshpass -e ssh"))
 	require.Contains(t, got, "u@h")
+	// Password auth must NOT set BatchMode=yes — that would block the
+	// interactive prompt sshpass needs.
+	require.NotContains(t, got, "BatchMode=yes")
+	require.Contains(t, got, "PreferredAuthentications=password,keyboard-interactive")
+	require.Contains(t, got, "PubkeyAuthentication=no")
+}
+
+func TestSFTPCommandFlag_KeyAuthSetsBatchMode(t *testing.T) {
+	got := SFTPCommandFlag(SFTPInputs{
+		Host: "h", User: "u", Path: "/r", Auth: "key",
+		KeyPath: "/root/.ssh/id_rsa",
+	})
+	require.Contains(t, got, "BatchMode=yes")
 }
 
 func TestSFTPCommandFlag_NonStandardPort(t *testing.T) {

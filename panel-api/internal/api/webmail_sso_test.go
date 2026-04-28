@@ -268,3 +268,67 @@ func TestWebmailSSO_InvalidTokenReturns403(t *testing.T) {
 		t.Errorf("no cookies should leak on invalid token; got %v", rec.Header().Values("Set-Cookie"))
 	}
 }
+
+// TestWebmailSSO_PrefetchDoesNotConsumeToken locks in the regression
+// guard against Chrome address-bar prefetch. With a real, valid token
+// + Chrome's `Sec-Purpose: prefetch` header, the handler must reply
+// 204 No Content WITHOUT calling SSOTokens.ConsumeByHash — otherwise
+// the user's actual click sees "token is invalid or expired".
+func TestWebmailSSO_PrefetchDoesNotConsumeToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var ssoKey ssokey.Key
+
+	plain, hash := mintToken(t)
+	tok := &models.MailboxSSOToken{
+		ID:        "tok-1",
+		MailboxID: "mb-1",
+		UserID:    "user-1",
+		TokenHash: hash,
+		ExpiresAt: time.Now().Add(5 * time.Minute),
+	}
+
+	bulwark := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("bulwark should not be called on prefetch")
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer bulwark.Close()
+
+	tokenRepo := &fakeSSOTokenRepo{tok: tok}
+	cfg := WebmailSSOHandlerConfig{
+		Mailboxes:      &fakeMailboxRepoSSO{},
+		Domains:        &fakeDomainRepoSSO{},
+		SSOKey:         &ssoKey,
+		SSOTokens:      tokenRepo,
+		BulwarkBaseURL: bulwark.URL,
+	}
+	r := gin.New()
+	RegisterWebmailSSORoutes(r, cfg)
+
+	// Sec-Purpose: prefetch — Chrome's spec-compliant header.
+	req := httptest.NewRequest(http.MethodGet, "/sso/webmail?token="+plain, nil)
+	req.Header.Set("Sec-Purpose", "prefetch")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("status: got %d, want 204", rec.Code)
+	}
+	if tokenRepo.consumed {
+		t.Errorf("prefetch must not consume the SSO token")
+	}
+	if len(rec.Header().Values("Set-Cookie")) > 0 {
+		t.Errorf("no cookies on prefetch; got %v", rec.Header().Values("Set-Cookie"))
+	}
+
+	// Legacy Purpose: prefetch (older Chrome) — same behavior.
+	req2 := httptest.NewRequest(http.MethodGet, "/sso/webmail?token="+plain, nil)
+	req2.Header.Set("Purpose", "prefetch")
+	rec2 := httptest.NewRecorder()
+	r.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusNoContent {
+		t.Errorf("legacy Purpose header: got %d, want 204", rec2.Code)
+	}
+	if tokenRepo.consumed {
+		t.Errorf("legacy prefetch must not consume the SSO token")
+	}
+}

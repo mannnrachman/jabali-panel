@@ -116,6 +116,29 @@ type webmailSSOHandler struct{ cfg WebmailSSOHandlerConfig }
 func (h *webmailSSOHandler) land(c *gin.Context) {
 	ctx := c.Request.Context()
 
+	// Refuse to act on speculative / prefetch fetches. The token is
+	// single-use (consumed on first read), so a Chrome address-bar
+	// prefetch or a link-rel-prefetch hit would burn the token before
+	// the user's real click — they then see "token is invalid or
+	// expired" even though they just landed on the URL.
+	//
+	// Chrome ships `Purpose: prefetch` (legacy) and `Sec-Purpose:
+	// prefetch` (current spec). Either one means "do not produce
+	// observable side effects". A no-content reply with cache headers
+	// that forbid storage keeps the token un-consumed for the real
+	// navigation.
+	if isPrefetchRequest(c.Request) {
+		c.Header("Cache-Control", "no-store, no-cache, must-revalidate")
+		c.Status(http.StatusNoContent)
+		return
+	}
+	// Same idea for any responses that DO go through: tell every
+	// upstream + browser intermediary that this URL must not be cached
+	// or re-issued, since each successful response also consumed a
+	// single-use token.
+	c.Header("Cache-Control", "no-store, no-cache, must-revalidate")
+	c.Header("Pragma", "no-cache")
+
 	token := c.Query("token")
 	if token == "" {
 		c.String(http.StatusBadRequest, "missing token")
@@ -324,6 +347,28 @@ func (h *webmailSSOHandler) httpClient() *http.Client {
 		},
 	}
 	return &http.Client{Timeout: 15 * time.Second, Transport: tr}
+}
+
+// isPrefetchRequest reports whether the inbound request was issued by
+// a speculative prefetch (Chrome address-bar prerender, <link
+// rel=prefetch>, etc) rather than a real navigation. Chrome stamps
+// `Sec-Purpose: prefetch` (current spec) or the legacy `Purpose:
+// prefetch`. We match both, case-insensitive, on a substring so future
+// values like `prefetch;prerender` still hit.
+func isPrefetchRequest(r *http.Request) bool {
+	for _, h := range []string{"Sec-Purpose", "Purpose"} {
+		v := r.Header.Get(h)
+		if v == "" {
+			continue
+		}
+		if strings.Contains(strings.ToLower(v), "prefetch") {
+			return true
+		}
+		if strings.Contains(strings.ToLower(v), "prerender") {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *webmailSSOHandler) logErr(msg string, err error) {

@@ -4841,7 +4841,7 @@ cleanup_modsecurity() {
 }
 
 install_malware_stack() {
-  # M33 — Linux Malware Detect + YARA + php-malware-finder + Tetragon stack.
+  # M33 — Linux Malware Detect + YARA-X + signature-base + Tetragon stack.
   # ADR-0072.
   #
   # ClamAV runs ON-DEMAND (2026-04-27 amendment 2):
@@ -4876,12 +4876,16 @@ install_malware_stack() {
   # block this branch from running on hosts that previously purged.
   rm -f /etc/jabali/clamav-purged 2>/dev/null || true
 
-  # Linux Malware Detect (LMD / maldet) — install from rfxn.com tarball
-  # because the Debian package lags upstream by ~2 years and ships
-  # signature pull URLs that 404. Pinned version + sha256 verified.
+  # Linux Malware Detect (LMD / maldet) — install from upstream GitHub
+  # tarball. Pinned to v2.0.1-rc4 (Apr 20 2026 prerelease) which adds:
+  #   - native YARA scanner (scan_yara=1, no clamscan dependency for YARA)
+  #   - prefers `yr` (YARA-X) binary, falls back to libyara4
+  #   - drop-in custom YARA at sigs/custom.yara.d/*.yar
+  #   - post_scan_hook system (replaces our 5s sessionwatcher polling)
+  #   - 43x faster native scan (Aho-Corasick parallel workers)
   # Pin bumps require a PR review of both LMD_VERSION and LMD_SHA256.
-  local LMD_VERSION="1.6.6"
-  local LMD_SHA256="3ef7fd06b9ecc526e668b4afec889b583aa33005d3a71285e8bf32ab65bde3dc"
+  local LMD_VERSION="2.0.1-rc4"
+  local LMD_SHA256="933831a5addc975de030928c2ede108d211471f8ed739e88433e9ca0b2c70213"
   local lmd_marker="/usr/local/maldetect/.jabali-installed-${LMD_VERSION}"
 
   if [[ -f "$lmd_marker" ]] && command -v maldet >/dev/null 2>&1; then
@@ -4891,13 +4895,17 @@ install_malware_stack() {
     tmp_lmd=$(mktemp -d -t lmd-XXXXXX)
     if (
       cd "$tmp_lmd" && \
-      curl -fsSL "https://www.rfxn.com/downloads/maldetect-${LMD_VERSION}.tar.gz" -o lmd.tar.gz && \
+      curl -fsSL "https://github.com/rfxn/linux-malware-detect/archive/refs/tags/v${LMD_VERSION}.tar.gz" -o lmd.tar.gz && \
       echo "${LMD_SHA256}  lmd.tar.gz" | sha256sum -c - >/dev/null && \
       tar -xzf lmd.tar.gz && \
-      cd "maldetect-${LMD_VERSION}" && \
+      cd "linux-malware-detect-${LMD_VERSION}" && \
       bash ./install.sh >/tmp/lmd-install.log 2>&1
     ); then
       mkdir -p /usr/local/maldetect
+      # Drop the old 1.6.x marker so re-runs of jabali update on hosts
+      # that ran prior amendments don't short-circuit the upgrade.
+      rm -f /usr/local/maldetect/.jabali-installed-1.6.6 \
+            /usr/local/maldetect/.jabali-installed-1.6.6.1 2>/dev/null || true
       touch "$lmd_marker"
       _ok "maldet ${LMD_VERSION} installed (log: /tmp/lmd-install.log)"
     else
@@ -4906,40 +4914,88 @@ install_malware_stack() {
     rm -rf "$tmp_lmd"
   fi
 
+  # YARA-X (the `yr` binary) — Rust rewrite of YARA, full module support
+  # including the `hash` module that libclamav YARA can't load. maldet
+  # 2.0.1+ prefers `yr` over libyara when both are present.
+  local YARAX_VERSION="1.15.0"
+  local YARAX_SHA256="90bb8898a2052781890684d8b030d62401a1226caab9fe58adf6fd7513f4a7b3"
+  if ! command -v yr >/dev/null 2>&1 || \
+     [[ "$(yr --version 2>/dev/null | awk '{print $2}')" != "$YARAX_VERSION" ]]; then
+    local tmp_yrx
+    tmp_yrx=$(mktemp -d -t yarax-XXXXXX)
+    if (
+      cd "$tmp_yrx" && \
+      curl -fsSL "https://github.com/VirusTotal/yara-x/releases/download/v${YARAX_VERSION}/yara-x-v${YARAX_VERSION}-x86_64-unknown-linux-gnu.gz" -o yrx.tar.gz && \
+      echo "${YARAX_SHA256}  yrx.tar.gz" | sha256sum -c - >/dev/null && \
+      tar -xzf yrx.tar.gz && \
+      install -m 0755 -o root -g root yr /usr/local/bin/yr
+    ); then
+      _ok "yara-x ${YARAX_VERSION} installed at /usr/local/bin/yr"
+    else
+      _warn "yara-x install failed — maldet will fall back to libyara4 if present"
+    fi
+    rm -rf "$tmp_yrx"
+  else
+    _log "yara-x ${YARAX_VERSION} already installed"
+  fi
+  # libyara4 fallback for hosts that didn't get yara-x (apt). Cheap.
+  if ! command -v yara >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt-get -y -qq install --no-install-recommends \
+      yara >/dev/null 2>&1 || true
+  fi
+
   # Jabali drop-in config — overrides upstream conf.maldet defaults.
   # Loaded by merge_maldet_config which appends our values to the
   # upstream-shipped file. Idempotent: pure rewrite of drop-in dir.
   install -d -m 0755 /etc/jabali/maldet/conf.maldet.d
   cat >/etc/jabali/maldet/conf.maldet.d/00-jabali.conf <<'MALDET_DROPIN'
-# Jabali M33 maldet drop-in — managed by install.sh; do not edit by hand.
+# Jabali maldet drop-in — managed by install.sh; do not edit by hand.
 # Rerun jabali update to regenerate.
 quarantine_hits="1"
 quarantine_clean="0"
 email_alert="0"
-# ClamAV runs on-demand (binary only, no daemon). LMD's inotify monitor
-# batches changed files per cycle and invokes clamscan -f <list> once per
-# batch — clamscan loads sigs into RAM, scans, exits. This also brings
-# YARA scanning back online: maldet's YARA path is implemented inside
-# clamscan (via $clamav_db -d <yara file>), with no daemon required.
-scan_clamscan="1"
+# Native YARA scanner (maldet 2.0.1+). Prefers `yr` (YARA-X) when present,
+# falls back to libyara4. Loads sigs from:
+#   - sigs/rfxn.yara (upstream YARA-Forge pack, refreshed by `maldet -u`)
+#   - sigs/custom.yara (single file)
+#   - sigs/custom.yara.d/*.yar (drop-in dir — Jabali symlinks signature-base
+#     webshells/crime + admin uploads here)
+# scope=all means native YARA handles everything regardless of ClamAV.
+scan_yara="1"
+scan_yara_scope="all"
+# ClamAV stays on-demand for MD5/HEX hash database matches (Windows malware
+# coverage on mail-touched home dirs etc.). Daemon is masked; clamscan loads
+# sigs at scan time and frees on exit.
+scan_clamscan="auto"
+# SHA-256 hashing with hardware acceleration (auto-detected).
+scan_hashtype="auto"
 scan_user_access="1"
 scan_user_access_minuid="1000"
-# Jabali user docroot layout is /home/<user>/domains/<domain>/public_html
-# (NOT /home/<user>/public_html). LMD --monitor USERS joins inotify_docroot
-# onto /home/<user>/<docroot> with NO wildcard expansion, so we point it at
-# `domains` and rely on inotifywait's default recursion to pick up every
-# vhost docroot underneath. Matches M5 user scaffold + M19 wp-cli installs.
+# Jabali user docroot layout is /home/<user>/domains/<domain>/public_html.
+# LMD --monitor USERS joins inotify_docroot onto /home/<user>/<docroot>
+# with no wildcard expansion, so we point at `domains` and rely on
+# inotifywait recursion to pick up every vhost public_html underneath.
 inotify_docroot="domains"
-scan_yara="1"
-scan_yara_scope="custom"
-# php-malware-finder entry rule referenced explicitly — it `include`s
-# whitelist.yar + whitelists/<framework>.yar from its own dir, which
-# wouldn't resolve if it were globbed standalone under /etc/jabali/yara/.
-yara_rules="/usr/local/maldetect/sigs/rfxn.yara /etc/jabali/yara/*.yar /etc/jabali/pmf/data/php.yar"
-inotify_minutes="45"
-inotify_base_watches="15000"
 inotify_minuid="1000"
 scan_max_filesize="2048k"
+
+# Post-scan hook — replaces the 5s sessionwatcher polling. Hook receives
+# JSON on stdin (post_scan_hook_format=json) describing the scan result;
+# it parses LMD_SESSION_FILE (TSV: sig\tfilepath\tquarpath) and POSTs to
+# panel-api over the local UDS. async so a panel-api outage doesn't block
+# scan completion. min_hits=0 means we get scan_completed events for every
+# scan (not just hits).
+post_scan_hook="/etc/jabali/maldet/post-scan-hook.sh"
+post_scan_hook_format="json"
+post_scan_hook_exec="async"
+post_scan_hook_timeout="30"
+post_scan_hook_on="all"
+post_scan_hook_min_hits="0"
+
+# Remote YARA + hash imports — `maldet -u` fetches these daily. We also
+# maintain signature-base via git-clone timer (more rules + more frequent
+# refresh than what fits in a single sig_import_yara_url).
+# (Empty by default — operators can override via /etc/jabali/maldet/conf.maldet.d/99-local.conf.)
 MALDET_DROPIN
 
   if [[ -f /usr/local/maldetect/conf.maldet ]]; then
@@ -4975,44 +5031,57 @@ rule jabali_example {
 YARA_EX
   fi
 
-  # php-malware-finder YARA rule pack — PHP webshell + obfuscation
-  # patterns (eval/base64/preg_replace e-modifier/dangerous functions).
-  # PMF's php.yar `include "whitelist.yar"` which itself includes
-  # whitelists/<framework>.yar, so we ship the entire data/ tree under
-  # /etc/jabali/pmf/data/ (NOT under /etc/jabali/yara/, which LMD
-  # globs as standalone files — globbing php.yar standalone breaks the
-  # relative include path).
+  # signature-base (Florian Roth / Neo23x0) — ~600 actively-maintained
+  # YARA rules covering webshells (PHP/ASP/JSP), crimeware, exploit kits,
+  # APT samples. Pulled via git so daily-refresh is a `git pull` (no
+  # tarball churn). Active maintenance; releases tracked on the master
+  # branch.
   #
-  # maldet's yara_rules conf line below explicitly references the
-  # entry rule (php.yar); YARA resolves the includes from its own dir.
-  #
-  # Refresh cadence: jabali-pmf-update.timer below pulls daily.
-  install -d -m 0755 /etc/jabali/pmf
-  local pmf_dir="/etc/jabali/pmf/data"
-  if [[ ! -s "$pmf_dir/php.yar" ]]; then
-    _log "fetching php-malware-finder rule pack (first install)"
-    local tmp_pmf
-    tmp_pmf=$(mktemp -d -t pmf-XXXXXX)
-    if (
-      cd "$tmp_pmf" && \
-      curl -fsSL --max-time 60 \
-        "https://github.com/jvoisin/php-malware-finder/archive/refs/heads/master.tar.gz" \
-        -o pmf.tar.gz && \
-      tar -xzf pmf.tar.gz && \
-      install -d -m 0755 /etc/jabali/pmf/data /etc/jabali/pmf/data/whitelists && \
-      cp -f php-malware-finder-master/data/php.yar /etc/jabali/pmf/data/ && \
-      cp -f php-malware-finder-master/data/whitelist.yar /etc/jabali/pmf/data/ && \
-      cp -fr php-malware-finder-master/data/whitelists/. /etc/jabali/pmf/data/whitelists/
-    ); then
-      _ok "PMF rule pack installed at $pmf_dir ($(grep -c '^rule ' "$pmf_dir/php.yar") rules)"
-    else
-      _warn "PMF rule pack download/install failed — timer will retry"
-    fi
-    rm -rf "$tmp_pmf"
+  # Custom YARA scanner picks up rules via the maldet 2.0.1 drop-in dir
+  # at /usr/local/maldetect/sigs/custom.yara.d/. We symlink:
+  #   custom.yara.d/signature-base/  → /opt/jabali/signature-base/yara/  (subset)
+  #   custom.yara.d/jabali/          → /etc/jabali/yara/                  (admin uploads)
+  install -d -m 0755 /opt/jabali
+  if [[ ! -d /opt/jabali/signature-base/.git ]]; then
+    _log "cloning signature-base (Neo23x0/signature-base; ~600 YARA rules)"
+    git clone --depth=1 --quiet \
+      https://github.com/Neo23x0/signature-base.git \
+      /opt/jabali/signature-base 2>/dev/null || \
+      _warn "signature-base clone failed — will retry on next jabali-signature-base-update.timer"
   fi
-  # Clean up any prior single-file install (PR #19 wrote to a path that
-  # broke YARA's include resolution).
-  rm -f /etc/jabali/yara/php-malware-finder.yar
+  # Drop-in dir + symlinks. maldet 2.0.1 native YARA loads anything ending
+  # in .yar / .yara from custom.yara.d/. Symlinks survive `maldet -u`
+  # (only the rfxn.* sig files get rewritten by signature update).
+  install -d -m 0755 /usr/local/maldetect/sigs/custom.yara.d
+  # signature-base subset: webshells/ + crime/ are the highest-relevance
+  # for shared-PHP hosting. Could add more (apt/, exploit_kits/, etc.) but
+  # webshells is the load-bearing one.
+  if [[ -d /opt/jabali/signature-base/yara ]]; then
+    rm -f /usr/local/maldetect/sigs/custom.yara.d/signature-base 2>/dev/null
+    ln -sf /opt/jabali/signature-base/yara \
+      /usr/local/maldetect/sigs/custom.yara.d/signature-base
+  fi
+  # admin-editable YARA dir — /etc/jabali/yara/ already exists from
+  # earlier install (legacy path used by upload UI). Symlink so files
+  # written there are scanned without an extra copy step.
+  install -d -m 0755 -o root -g root /etc/jabali/yara
+  rm -f /usr/local/maldetect/sigs/custom.yara.d/jabali 2>/dev/null
+  ln -sf /etc/jabali/yara /usr/local/maldetect/sigs/custom.yara.d/jabali
+
+  # Cleanup of M33 amendment artifacts that this stack replaces.
+  rm -f /etc/jabali/maldet/build-rfxn-yara.sh 2>/dev/null
+  rm -rf /etc/jabali/pmf 2>/dev/null
+  rm -f /etc/systemd/system/jabali-pmf-update.service \
+        /etc/systemd/system/jabali-pmf-update.timer 2>/dev/null
+  systemctl disable --now jabali-pmf-update.timer >/dev/null 2>&1 || true
+  # Strip any prior JABALI-PMF-BEGIN/END block from rfxn.yara — it was
+  # only needed because libclamav YARA couldn't load PMF natively. Now
+  # native YARA loads custom.yara.d/ rules directly, no inlining hack.
+  if [[ -f /usr/local/maldetect/sigs/rfxn.yara ]] && \
+     grep -q '^// JABALI-PMF-BEGIN' /usr/local/maldetect/sigs/rfxn.yara; then
+    sed -i '/^\/\/ JABALI-PMF-BEGIN/,/^\/\/ JABALI-PMF-END/d' \
+      /usr/local/maldetect/sigs/rfxn.yara
+  fi
 
   # Lift inotify watch ceiling — LMD's per-user docroot watches add up
   # fast on a busy shared host (10k domains × a few hundred files each).
@@ -5065,75 +5134,92 @@ MONITOR_UNIT
   # security.malware.monitor.set_enabled which re-enables + starts.
   systemctl disable --now jabali-maldet-monitor.service >/dev/null 2>&1 || true
 
-  # PMF YARA build helper — flattens the PMF rule tree into a single file
-  # appended to /usr/local/maldetect/sigs/rfxn.yara. maldet's clamscan
-  # invocation passes that file to clamscan via -d (the only way YARA gets
-  # loaded by clamscan), but YARA's `include` directive resolves relative
-  # to the source file — and rfxn.yara lives in /usr/local/maldetect/sigs/
-  # while PMF includes whitelist.yar + whitelists/<framework>.yar from its
-  # own dir. So we inline all includes here, dedupe `import "hash"`, and
-  # write a JABALI-marked block onto rfxn.yara that survives `maldet -u`
-  # (the next maldet -u re-downloads upstream rfxn.yara, then this script
-  # re-appends the block — both timers below invoke it in order).
-  install -d -m 0755 /etc/jabali/maldet
-  cat >/etc/jabali/maldet/build-rfxn-yara.sh <<'BUILD_YARA'
+  # post-scan-hook — invoked by maldet 2.0.1 after every scan completion
+  # (cli, monitor digest, or manual). Replaces the panel-agent
+  # sessionwatcher 5s-poll loop that we used in M33 amendments. Hook
+  # contract (verified from rc4 source files/internals/lmd_hook.sh):
+  #   - argv: $1=SCANID $2=HITS $3=FILES $4=EXIT_CODE $5=SCAN_TYPE $6=PATH
+  #   - env:  LMD_SCANID, LMD_HITS, LMD_FILES, LMD_PATH, LMD_SESSION_FILE,
+  #           LMD_SCAN_TYPE, LMD_ENGINE, LMD_VERSION, ...
+  #   - stdin (when post_scan_hook_format=json): JSON envelope with
+  #     {version, scan_type, scan_id, hits, files, cleaned, quarantined,
+  #      scan_start, elapsed, exit_code, engine, path, session_file}
+  # Session TSV columns (verified from files/internals/lmd_quarantine.sh):
+  #     sig\tfilepath\tquarpath  (quarpath is "-" for non-quarantined hits)
+  install -d -m 0750 /etc/jabali/maldet
+  cat >/etc/jabali/maldet/post-scan-hook.sh <<'POST_SCAN_HOOK'
 #!/usr/bin/env bash
-# Append the PMF webshell-detection rules to rfxn.yara. clamscan's
-# libclamav YARA implementation is a strict subset of upstream YARA: it
-# does NOT support the `hash` module at all (neither `import "hash"`
-# nor implicit `hash.sha1()` calls — both fail with "undefined identifier
-# 'hash'"). PMF's whitelist machinery (whitelist.yar + whitelists/*.yar)
-# is built entirely on `hash.sha1(0, filesize)` SHA1 lookups for known
-# legitimate framework files, so we cannot ship them here.
+# Jabali post-scan hook. Forwards maldet scan results to panel-api over
+# the local UDS. Triggered by maldet 2.0.1 post_scan_hook config.
 #
-# Instead we ship php.yar's webshell-detection rules with a stubbed
-# `IsWhitelisted` rule that always evaluates to false. The trade-off is
-# losing the framework-file false-positive filter — vanilla WordPress /
-# Drupal / Magento / Symfony files that match a webshell heuristic will
-# now flag. This is acceptable for shared-hosting webshell hunting (the
-# actual webshells are what matter; admins can review false positives).
-#
-# Idempotent: strips any prior JABALI-PMF-BEGIN block + stray `import`
-# directives before re-appending. Safe to re-run after `maldet -u` (which
-# overwrites rfxn.yara with the upstream copy).
-set -euo pipefail
-RFXN="/usr/local/maldetect/sigs/rfxn.yara"
-PMF_DIR="/etc/jabali/pmf/data"
-[[ -s "$PMF_DIR/php.yar" ]] || { echo "PMF rule pack missing: $PMF_DIR/php.yar"; exit 0; }
-[[ -f "$RFXN" ]] || { echo "rfxn.yara missing: $RFXN"; exit 0; }
+# Validation: maldet refuses to invoke this script unless it's owned by
+# root and not world-writable. Permissions enforced at install time.
+set -uo pipefail
 
-# Strip any prior JABALI block + any stray `import` directive.
-if grep -q '^// JABALI-PMF-BEGIN' "$RFXN"; then
-  sed -i '/^\/\/ JABALI-PMF-BEGIN/,/^\/\/ JABALI-PMF-END/d' "$RFXN"
+# Don't fail the hook on a parse glitch — maldet prints a {hook} ERROR
+# but a panel-api ingest miss is recoverable on the next scan. Better
+# than blocking the next monitor cycle.
+trap 'exit 0' ERR
+
+PANEL_SOCK="/run/jabali-panel/api.sock"
+ENDPOINT="http://localhost/api/v1/admin/security/malware/event"
+
+# Sanity-check the panel-api UDS — on a host where panel-api is down,
+# silently exit 0 instead of timing out the hook (maldet has its own
+# 30s wrapper, but we'd rather not eat that on every cycle).
+[[ -S "$PANEL_SOCK" ]] || exit 0
+
+# Read the JSON envelope from stdin (when post_scan_hook_format=json).
+# Buffer it before reading TSV rows so we can attach hits[] to the same
+# request body.
+HOOK_JSON=$(cat)
+HITS_JSON="[]"
+
+if [[ -n "${LMD_SESSION_FILE:-}" && -f "${LMD_SESSION_FILE}" ]]; then
+  HITS_JSON=$(awk -F'\t' '
+    BEGIN { print "["; first = 1 }
+    /^[^#]/ {
+      sig = $1; fp = $2; qp = $3
+      gsub(/"/, "\\\"", sig); gsub(/"/, "\\\"", fp); gsub(/"/, "\\\"", qp)
+      if (first) first = 0; else printf ","
+      printf "{\"signature\":\"%s\",\"original_path\":\"%s\",\"quarantine_path\":\"%s\"}",
+        sig, fp, (qp == "-" ? "" : qp)
+    }
+    END { print "]" }
+  ' "${LMD_SESSION_FILE}")
 fi
-sed -i '/^[[:space:]]*import[[:space:]]\+"[^"]*"[[:space:]]*$/d' "$RFXN"
 
-# Append the PMF block: stub IsWhitelisted + php.yar minus its
-# `include "whitelist.yar"` directive (which would error on missing
-# Whitelisted otherwise — our stub provides it).
-{
-  echo ""
-  echo "// JABALI-PMF-BEGIN — managed by /etc/jabali/maldet/build-rfxn-yara.sh"
-  echo "// php-malware-finder webshell-detection rules. Do not edit by hand."
-  echo "// IsWhitelisted is stubbed false because clamscan's libclamav YARA"
-  echo "// does not implement the hash module that PMF's real whitelists use."
-  echo ""
-  echo "private rule IsWhitelisted { condition: false }"
-  echo ""
-  grep -vE '^[[:space:]]*(include|import)[[:space:]]' "$PMF_DIR/php.yar" || true
-  echo ""
-  echo "// JABALI-PMF-END"
-} >> "$RFXN"
+# Compose the panel-api ingest payload. event_type derives from hits>0;
+# severity stays warn for hits, info for clean scans.
+HITS_COUNT="${LMD_HITS:-0}"
+EVENT_TYPE="scan_completed"
+SEVERITY="info"
+if [[ "${HITS_COUNT}" -gt 0 ]]; then
+  EVENT_TYPE="file_hit"
+  SEVERITY="warn"
+fi
 
-# Ask maldet's monitor (if running) to re-load. No-op if not running.
-/usr/local/maldetect/maldet --monitor RELOAD >/dev/null 2>&1 || true
-BUILD_YARA
-  chmod 0755 /etc/jabali/maldet/build-rfxn-yara.sh
-  if [[ -f /usr/local/maldetect/sigs/rfxn.yara && -s /etc/jabali/pmf/data/php.yar ]]; then
-    /etc/jabali/maldet/build-rfxn-yara.sh >/tmp/jabali-build-rfxn-yara.log 2>&1 && \
-      _ok "PMF rules inlined into rfxn.yara" || \
-      _warn "PMF inline failed — see /tmp/jabali-build-rfxn-yara.log"
-  fi
+# Wrap into the panel-api ingest envelope. raw_json carries the hook
+# JSON for forensics; hits[] is the parsed TSV.
+PAYLOAD=$(printf '{"source":"maldet","event_type":"%s","severity":"%s","hits":%s,"raw_json":%s,"occurred_at":"%s"}' \
+  "${EVENT_TYPE}" "${SEVERITY}" "${HITS_JSON}" "${HOOK_JSON:-{}}" \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
+
+# POST via curl over UDS. Silent on success; log to journal on HTTP error
+# so the operator can see it via `journalctl -u jabali-maldet-monitor`.
+RESP=$(curl -sS --max-time 10 \
+  --unix-socket "${PANEL_SOCK}" \
+  -X POST "${ENDPOINT}" \
+  -H 'Content-Type: application/json' \
+  --data-raw "${PAYLOAD}" 2>&1) || {
+  printf '{hook} panel-api POST failed: %s\n' "${RESP}" >&2
+  exit 0
+}
+exit 0
+POST_SCAN_HOOK
+  # maldet enforces these — root-owned + not world-writable.
+  chown root:root /etc/jabali/maldet/post-scan-hook.sh
+  chmod 0750 /etc/jabali/maldet/post-scan-hook.sh
 
   # ClamAV-on-demand sig refresher — daily one-shot freshclam. Daemon-mode
   # freshclam is masked; this is the only sig-update path. Runs before
@@ -5167,8 +5253,8 @@ WantedBy=timers.target
 FRESH_TIMER
 
   # M33 systemd timers — daily signature update + daily scan + retention purge.
-  # maldet -u pulls rfxn.yara fresh; immediately re-append the PMF block
-  # so YARA stays loaded across signature updates.
+  # maldet -u refreshes rfxn.yara + hex/md5 sigs; custom.yara.d/ drop-ins
+  # (jabali/ + signature-base/) load automatically with maldet v2.0.1+.
   cat >/etc/systemd/system/jabali-maldet-update-signatures.service <<'SIG_UNIT'
 [Unit]
 Description=Jabali maldet signature update (M33)
@@ -5178,7 +5264,6 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/usr/local/maldetect/maldet -u
-ExecStartPost=/etc/jabali/maldet/build-rfxn-yara.sh
 Nice=15
 IOSchedulingClass=idle
 SIG_UNIT
@@ -5196,12 +5281,13 @@ RandomizedDelaySec=15m
 WantedBy=timers.target
 SIG_TIMER
 
-  # PMF YARA rule pack — pulled daily from upstream (mirrors maldet
-  # signature cadence). Atomic write + maldet --reload-monitor so the
-  # inotify watcher picks up the new ruleset without restart.
-  cat >/etc/systemd/system/jabali-pmf-update.service <<'PMF_UNIT'
+  # signature-base (Florian Roth / Neo23x0) — daily git pull keeps the
+  # ~600 webshell/crime YARA rules in sync. The repo is symlinked into
+  # /usr/local/maldetect/sigs/custom.yara.d/signature-base, so a fast-
+  # forward update is picked up by the inotify watcher's next scan.
+  cat >/etc/systemd/system/jabali-signature-base-update.service <<'SIGB_UNIT'
 [Unit]
-Description=Jabali php-malware-finder rule pack update (M33)
+Description=Jabali signature-base YARA rule pack refresh (M33)
 After=network-online.target
 Wants=network-online.target
 
@@ -5209,39 +5295,31 @@ Wants=network-online.target
 Type=oneshot
 ExecStart=/usr/bin/bash -c '\
   set -e; \
-  dst=/etc/jabali/pmf/data; \
-  tmp=$(mktemp -d -t pmf-XXXXXX); \
-  cd "$tmp"; \
-  curl -fsSL --max-time 60 \
-    "https://github.com/jvoisin/php-malware-finder/archive/refs/heads/master.tar.gz" \
-    -o pmf.tar.gz; \
-  tar -xzf pmf.tar.gz; \
-  if grep -q "^rule " php-malware-finder-master/data/php.yar; then \
-    install -d -m 0755 "$dst" "$dst/whitelists"; \
-    install -m 0644 php-malware-finder-master/data/php.yar "$dst/php.yar"; \
-    install -m 0644 php-malware-finder-master/data/whitelist.yar "$dst/whitelist.yar"; \
-    cp -fr php-malware-finder-master/data/whitelists/. "$dst/whitelists/"; \
-    /etc/jabali/maldet/build-rfxn-yara.sh >/dev/null 2>&1 || true; \
+  if [[ ! -d /opt/jabali/signature-base/.git ]]; then \
+    git clone --depth=1 --quiet \
+      https://github.com/Neo23x0/signature-base.git \
+      /opt/jabali/signature-base; \
   else \
-    rm -rf "$tmp"; exit 1; \
-  fi; \
-  rm -rf "$tmp"'
+    cd /opt/jabali/signature-base && \
+    git fetch --depth=1 --quiet origin master && \
+    git reset --hard --quiet origin/master; \
+  fi'
 Nice=15
 IOSchedulingClass=idle
-PMF_UNIT
+SIGB_UNIT
 
-  cat >/etc/systemd/system/jabali-pmf-update.timer <<'PMF_TIMER'
+  cat >/etc/systemd/system/jabali-signature-base-update.timer <<'SIGB_TIMER'
 [Unit]
-Description=Daily Jabali php-malware-finder rule refresh (M33)
+Description=Daily Jabali signature-base YARA rule refresh (M33)
 
 [Timer]
-OnCalendar=*-*-* 02:45:00
+OnCalendar=*-*-* 02:50:00
 Persistent=true
 RandomizedDelaySec=15m
 
 [Install]
 WantedBy=timers.target
-PMF_TIMER
+SIGB_TIMER
 
   cat >/etc/systemd/system/jabali-maldet-scan-daily.service <<'SCAN_UNIT'
 [Unit]
@@ -5301,13 +5379,13 @@ PURGE_TIMER
       _warn "first freshclam failed — clamscan will be sig-less until next run"
   fi
   systemctl enable --now jabali-maldet-update-signatures.timer >/dev/null 2>&1 || true
-  systemctl enable --now jabali-pmf-update.timer >/dev/null 2>&1 || true
+  systemctl enable --now jabali-signature-base-update.timer >/dev/null 2>&1 || true
   systemctl enable --now jabali-maldet-scan-daily.timer >/dev/null 2>&1 || true
   systemctl enable --now jabali-malware-quarantine-purge.timer >/dev/null 2>&1 || true
 
   install_tetragon
 
-  _ok "malware stack provisioned: maldet $(maldet --version 2>/dev/null | head -1 || echo 'pending'), PMF rules $(grep -c '^rule ' /etc/jabali/yara/php-malware-finder.yar 2>/dev/null || echo 0)"
+  _ok "malware stack provisioned: maldet $(/usr/local/maldetect/maldet --version 2>/dev/null | head -1 || echo 'pending'), yara-x $(yr --version 2>/dev/null | head -1 || echo 'pending')"
 }
 
 install_tetragon() {

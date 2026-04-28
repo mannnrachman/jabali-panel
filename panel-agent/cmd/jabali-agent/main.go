@@ -26,7 +26,6 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-agent/internal/commands"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-agent/internal/pdns"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-agent/internal/server"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-agent/internal/sessionwatcher"
 )
 
 // Build-time metadata. Production builds pass:
@@ -101,29 +100,9 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	// M33 sessionwatcher: poll /usr/local/maldetect/sess/ and dispatch
-	// each new session.<id> file as a security.malware.event ingest.
-	// Survives missing maldet (sessionwatcher.Run silently retries
-	// when SessionDir is absent). Adapter converts sessionwatcher.Session
-	// to commands.MaldetSessionInput so commands package does not need
-	// to import sessionwatcher (avoids import cycle).
-	go sessionwatcher.Run(ctx, log, func(ctx context.Context, s sessionwatcher.Session) error {
-		hits := make([]commands.MaldetSessionHit, 0, len(s.Hits))
-		for _, h := range s.Hits {
-			hits = append(hits, commands.MaldetSessionHit{
-				OriginalPath:   h.OriginalPath,
-				QuarantinePath: h.QuarantinePath,
-				Signature:      h.Signature,
-			})
-		}
-		return commands.DispatchMaldetSession(ctx, commands.MaldetSessionInput{
-			ID:        s.ID,
-			StartedAt: s.StartedAt,
-			TotalHits: s.TotalHits,
-			Hits:      hits,
-			Raw:       s.Raw,
-		})
-	})
+	// M33 ingest path is now driven by maldet 2.0.1 post_scan_hook
+	// (see /etc/jabali/maldet/post-scan-hook.sh). The earlier 5s
+	// sessionwatcher poll was removed once the hook contract landed.
 
 	if err := srv.Serve(ctx); err != nil {
 		log.Error("agent serve failed", "err", err)

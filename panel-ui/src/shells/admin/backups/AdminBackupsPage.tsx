@@ -10,6 +10,7 @@ import { apiClient } from "../../../apiClient";
 import { useTableURL } from "../../../hooks/useTableURL";
 import { CreateBackupDrawer } from "./CreateBackupDrawer";
 import { DestinationsTab } from "./DestinationsTab";
+import { EncryptionKeyCard } from "./EncryptionKeyCard";
 import { SchedulesTab } from "./SchedulesTab";
 import { SystemBackupsTab } from "./SystemBackupsTab";
 
@@ -193,6 +194,11 @@ export const AdminBackupsPage = () => {
             key: "schedules",
             label: "Schedules",
             children: <SchedulesTab />,
+          },
+          {
+            key: "encryption",
+            label: "Encryption key",
+            children: <EncryptionKeyCard />,
           },
         ]}
       />

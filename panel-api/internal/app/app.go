@@ -579,6 +579,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterSystemSSHKeysRoutes(v1, api.SystemSSHKeysConfig{
 				Agent: deps.Agent,
 			})
+			// Master restic password reveal — admin-only. Per
+			// ADR-0075 operators must back the password up
+			// out-of-band; losing it loses every snapshot.
+			api.RegisterBackupEncryptionKeyRoutes(v1, api.BackupEncryptionKeyConfig{
+				Agent: deps.Agent,
+			})
 		}
 		if deps.BackupSchedules != nil && deps.BackupDestinations != nil {
 			api.RegisterBackupScheduleRoutes(v1, api.BackupSchedulesConfig{

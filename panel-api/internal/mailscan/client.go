@@ -267,7 +267,8 @@ func (c *Client) downloadBlob(ctx context.Context, accountID, blobID, name, mime
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return nil, false, fmt.Errorf("blob download %d for %s/%s", resp.StatusCode, accountID, blobID)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return nil, false, fmt.Errorf("blob download %d for %s/%s url=%s body=%q", resp.StatusCode, accountID, blobID, rawURL, string(body))
 	}
 	limited := io.LimitReader(resp.Body, maxBytes+1)
 	buf, err := io.ReadAll(limited)

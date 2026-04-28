@@ -21,7 +21,22 @@ type MailboxSSOTokenRepository interface {
 	// SHA-256 hash, deletes it, and returns the snapshot. Returns
 	// ErrNotFound when the token is unknown, already consumed, or
 	// expired (caller treats all three the same to deny oracles).
+	//
+	// Prefer PeekByHash + DeleteByHash for new call sites — single-call
+	// consume couples token-burn to upstream success, which means a
+	// transient bulwark/Stalwart 502 burns the token and the user
+	// can't retry. Two-phase splits that.
 	ConsumeByHash(ctx context.Context, tokenHash string) (*models.MailboxSSOToken, error)
+	// PeekByHash returns the unexpired token for the given hash WITHOUT
+	// deleting it. Use to validate before performing side effects
+	// (e.g. minting an upstream session) so a downstream failure can
+	// leave the token in place for retry. Returns ErrNotFound for
+	// unknown / expired tokens.
+	PeekByHash(ctx context.Context, tokenHash string) (*models.MailboxSSOToken, error)
+	// DeleteByHash removes the token unconditionally. Idempotent:
+	// returns nil even if no row matched (so the success path doesn't
+	// crash on a concurrent-consume race).
+	DeleteByHash(ctx context.Context, tokenHash string) error
 	// PurgeExpired is the nightly sweep — matches the existing phpMyAdmin
 	// SSO tokens sweep driven by the reconciler prune ticker.
 	PurgeExpired(ctx context.Context) (int64, error)
@@ -58,6 +73,26 @@ func (r *mailboxSSOTokenRepo) ConsumeByHash(ctx context.Context, tokenHash strin
 		return nil, err
 	}
 	return &token, nil
+}
+
+func (r *mailboxSSOTokenRepo) PeekByHash(ctx context.Context, tokenHash string) (*models.MailboxSSOToken, error) {
+	var token models.MailboxSSOToken
+	err := r.db.WithContext(ctx).
+		Where("token_hash = ? AND expires_at > ?", tokenHash, time.Now()).
+		First(&token).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &token, nil
+}
+
+func (r *mailboxSSOTokenRepo) DeleteByHash(ctx context.Context, tokenHash string) error {
+	return r.db.WithContext(ctx).
+		Where("token_hash = ?", tokenHash).
+		Delete(&models.MailboxSSOToken{}).Error
 }
 
 func (r *mailboxSSOTokenRepo) PurgeExpired(ctx context.Context) (int64, error) {

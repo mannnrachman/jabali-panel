@@ -55,6 +55,20 @@ func (f *fakeSSOTokenRepo) ConsumeByHash(_ context.Context, hash string) (*model
 	return f.tok, nil
 }
 
+func (f *fakeSSOTokenRepo) PeekByHash(_ context.Context, hash string) (*models.MailboxSSOToken, error) {
+	if f.consumed || f.tok == nil || f.tok.TokenHash != hash {
+		return nil, repository.ErrNotFound
+	}
+	return f.tok, nil
+}
+
+func (f *fakeSSOTokenRepo) DeleteByHash(_ context.Context, hash string) error {
+	if f.tok != nil && f.tok.TokenHash == hash {
+		f.consumed = true
+	}
+	return nil
+}
+
 // --- helpers ---
 
 // newBulwarkFake returns an httptest server that mimics Bulwark's

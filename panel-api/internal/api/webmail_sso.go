@@ -160,7 +160,14 @@ func (h *webmailSSOHandler) land(c *gin.Context) {
 	hash := sha256.Sum256(raw)
 	hashHex := hex.EncodeToString(hash[:])
 
-	tok, err := h.cfg.SSOTokens.ConsumeByHash(ctx, hashHex)
+	// Two-phase: PEEK now, DELETE only after bulwark confirms the
+	// session was minted. Single-phase ConsumeByHash burned the token
+	// before the bulwark call, so any 502 from bulwark left the user
+	// with a 403 on the next retry — the recurring "token is invalid
+	// or expired" loop. Phase B (delete) happens after bulwark returns
+	// 200; bulwark failures keep the token live for a retry within
+	// the 60s TTL.
+	tok, err := h.cfg.SSOTokens.PeekByHash(ctx, hashHex)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			// Unknown / expired / already-consumed — all three collapse
@@ -168,7 +175,7 @@ func (h *webmailSSOHandler) land(c *gin.Context) {
 			c.String(http.StatusForbidden, "token is invalid or expired")
 			return
 		}
-		h.logErr("webmail sso: consume token", err)
+		h.logErr("webmail sso: peek token", err)
 		c.String(http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -244,6 +251,17 @@ func (h *webmailSSOHandler) land(c *gin.Context) {
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		c.String(http.StatusBadGateway, "webmail login failed (status %d); try logging in manually", resp.StatusCode)
 		return
+	}
+
+	// Bulwark accepted the creds — burn the SSO token now (phase B of
+	// the two-phase consume). Idempotent on the repo side so a
+	// concurrent prefetch-then-real-click race doesn't 500 the
+	// success path.
+	if err := h.cfg.SSOTokens.DeleteByHash(ctx, hashHex); err != nil {
+		h.logErr("webmail sso: delete token after success", err)
+		// Soft-fail: bulwark already minted a session, the user is
+		// effectively logged in. Best-effort cleanup; the 60s TTL
+		// PurgeExpired sweep is the backstop.
 	}
 
 	// Forward Bulwark's Set-Cookie headers onto our response. Bulwark

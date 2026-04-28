@@ -88,6 +88,11 @@ type ManifestStage struct {
 	SnapshotID string   `json:"snapshot_id,omitempty"` // restic snap ID for this stage
 	Items      []string `json:"items,omitempty"`       // dbs[], zones[], mailboxes[]
 	Warnings   []string `json:"warnings,omitempty"`
+	// BytesAdded/Total mirror restic's --json summary for the stage.
+	// BytesAdded = new unique data after dedup; BytesTotal = logical
+	// bytes scanned. Sum across stages = top-level ManifestRestic.
+	BytesAdded uint64 `json:"bytes_added,omitempty"`
+	BytesTotal uint64 `json:"bytes_total,omitempty"`
 }
 
 // Stage status values.

@@ -12,6 +12,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -137,6 +138,15 @@ func runBackupOrchestrator(ctx context.Context, req backupCreateParams) error {
 	mailStage := runMailStage(ctx, req)
 	manifest.Stages = append(manifest.Stages, mailStage)
 
+	// Sum stage byte counts into the top-level ManifestRestic block so
+	// finalizer + DTO consumers don't have to re-walk stages[]. SnapshotID
+	// at top-level is set after the manifest snapshot itself completes —
+	// here we only fill totals.
+	for _, s := range manifest.Stages {
+		manifest.Restic.BytesAdded += s.BytesAdded
+		manifest.Restic.BytesTotal += s.BytesTotal
+	}
+
 	// Stage: manifest snapshot (stdin-piped JSON blob)
 	body, err := manifest.ToBytes()
 	if err != nil {
@@ -167,6 +177,8 @@ func runHomeStage(ctx context.Context, req backupCreateParams) backup.ManifestSt
 	res := out.(backupHomeResult)
 	st.Status = backup.StageStatusOK
 	st.SnapshotID = res.SnapshotID
+	st.BytesAdded = res.BytesAdded
+	st.BytesTotal = res.BytesTotal
 	return st
 }
 
@@ -196,6 +208,8 @@ func runDatabaseStage(ctx context.Context, req backupCreateParams) []backup.Mani
 			SnapshotID: s.SnapshotID,
 			Items:      []string{s.DB},
 			Status:     backup.StageStatusOK,
+			BytesAdded: s.BytesAdded,
+			BytesTotal: s.BytesTotal,
 		}
 		if s.Error != "" {
 			st.Status = backup.StageStatusFailed
@@ -228,6 +242,8 @@ func runMailStage(ctx context.Context, req backupCreateParams) backup.ManifestSt
 	st.Status = backup.StageStatusOK
 	st.SnapshotID = res.SnapshotID
 	st.Items = res.Mailboxes
+	st.BytesAdded = res.BytesAdded
+	st.BytesTotal = res.BytesTotal
 	if len(res.Errors) > 0 {
 		st.Warnings = res.Errors
 	}
@@ -257,21 +273,86 @@ func backupStatusHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 		Stages        []string          `json:"stages"`
 		ManifestFound bool              `json:"manifest_found"`
 		Snapshots     []backup.Snapshot `json:"snapshots"`
+		// Sums from the manifest's Restic block when manifest_found.
+		// Zero on system_backup (manifest schema doesn't carry totals
+		// at top level) or when the manifest can't be read.
+		BytesAdded uint64 `json:"bytes_added,omitempty"`
+		BytesTotal uint64 `json:"bytes_total,omitempty"`
 	}{
 		JobID:     req.JobID,
 		Snapshots: snaps,
 	}
+	manifestSnapID := ""
 	for _, s := range snaps {
 		for _, t := range s.Tags {
 			if t == "stage=manifest" {
 				resp.ManifestFound = true
+				manifestSnapID = s.ID
 			}
 			if strings.HasPrefix(t, "stage=") {
 				resp.Stages = append(resp.Stages, strings.TrimPrefix(t, "stage="))
 			}
 		}
 	}
+	if manifestSnapID != "" {
+		// `restic dump` prints the file content as a tar stream when the
+		// path is a directory but for a single file it streams the raw
+		// bytes — manifest.json is a single file so we get JSON directly.
+		raw, err := c.Dump(ctx, manifestSnapID, "/manifest.json")
+		if err == nil && len(raw) > 0 {
+			// account_backup manifest carries Restic.BytesAdded/Total.
+			// system_backup manifest has the same shape under
+			// Restic.{BytesAdded,BytesTotal} so a single parse works for
+			// both via a small lenient struct.
+			var m struct {
+				Restic struct {
+					BytesAdded uint64 `json:"bytes_added"`
+					BytesTotal uint64 `json:"bytes_total"`
+				} `json:"restic"`
+				// stages[] also carries per-stage byte counts; sum them as
+				// a fallback when Restic.BytesAdded is zero (some older
+				// backup paths leave the top-level zero).
+				Stages []struct {
+					BytesAdded uint64 `json:"bytes_added"`
+					BytesTotal uint64 `json:"bytes_total"`
+				} `json:"stages"`
+			}
+			if err := json.Unmarshal(stripTar(raw), &m); err == nil {
+				resp.BytesAdded = m.Restic.BytesAdded
+				resp.BytesTotal = m.Restic.BytesTotal
+				if resp.BytesAdded == 0 && resp.BytesTotal == 0 && len(m.Stages) > 0 {
+					for _, st := range m.Stages {
+						resp.BytesAdded += st.BytesAdded
+						resp.BytesTotal += st.BytesTotal
+					}
+				}
+			}
+		}
+	}
 	return resp, nil
+}
+
+// stripTar pops a leading 512-byte tar header off the dump output if
+// present. `restic dump <id> /file` returns raw bytes for a single file
+// in modern restic; some versions wrap it in a tar archive. Header is
+// detectable by the "ustar" magic at offset 257; file size is the octal
+// number at offset 124 (12 bytes).
+func stripTar(b []byte) []byte {
+	if len(b) <= 512 || !bytes.HasPrefix(b[257:], []byte("ustar")) {
+		return b
+	}
+	sizeField := bytes.TrimSpace(bytes.Trim(b[124:124+12], "\x00"))
+	var size int64
+	for _, c := range sizeField {
+		if c < '0' || c > '7' {
+			break
+		}
+		size = size*8 + int64(c-'0')
+	}
+	if size <= 0 || 512+size > int64(len(b)) {
+		return b
+	}
+	return b[512 : 512+size]
 }
 
 // backupCancelHandler is a no-op stub for v1 — orchestrator runs

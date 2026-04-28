@@ -135,6 +135,14 @@ func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) er
 	manifest.Stages = append(manifest.Stages,
 		runSystemOSUsersStage(ctx, c, req.JobID, host))
 
+	// Sum stage byte counts into the top-level ManifestRestic so the
+	// panel-side finalizer can record total bytes_added/bytes_total per
+	// system backup without re-walking stages[].
+	for _, s := range manifest.Stages {
+		manifest.Restic.BytesAdded += s.BytesAdded
+		manifest.Restic.BytesTotal += s.BytesTotal
+	}
+
 	body, err := manifest.ToBytes()
 	if err != nil {
 		return fmt.Errorf("manifest serialize: %w", err)
@@ -174,6 +182,8 @@ func runSystemPathStage(ctx context.Context, c *backup.Client, jobID, hostname, 
 	}
 	st.Status = backup.StageStatusOK
 	st.SnapshotID = summary.SnapshotID
+	st.BytesAdded = summary.DataAdded
+	st.BytesTotal = summary.TotalBytesProcessed
 	return st
 }
 
@@ -282,6 +292,8 @@ func runSystemMultiPathStage(ctx context.Context, c *backup.Client, jobID, hostn
 	}
 	st.Status = backup.StageStatusOK
 	st.SnapshotID = summary.SnapshotID
+	st.BytesAdded = summary.DataAdded
+	st.BytesTotal = summary.TotalBytesProcessed
 	st.Items = keep
 	return st
 }
@@ -384,6 +396,8 @@ func dumpOneSystemDB(ctx context.Context, c *backup.Client, jobID, hostname, db 
 	}
 	st.Status = backup.StageStatusOK
 	st.SnapshotID = summary.SnapshotID
+	st.BytesAdded = summary.DataAdded
+	st.BytesTotal = summary.TotalBytesProcessed
 	return st
 }
 
@@ -420,6 +434,8 @@ func runSystemOSUsersStage(ctx context.Context, c *backup.Client, jobID, hostnam
 	}
 	st.Status = backup.StageStatusOK
 	st.SnapshotID = summary.SnapshotID
+	st.BytesAdded = summary.DataAdded
+	st.BytesTotal = summary.TotalBytesProcessed
 	return st
 }
 

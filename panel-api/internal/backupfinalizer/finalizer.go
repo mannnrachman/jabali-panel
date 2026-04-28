@@ -82,6 +82,8 @@ type agentStatus struct {
 		ID   string   `json:"id"`
 		Tags []string `json:"tags"`
 	} `json:"snapshots"`
+	BytesAdded uint64 `json:"bytes_added"`
+	BytesTotal uint64 `json:"bytes_total"`
 }
 
 func (f *Finalizer) tickOnce(ctx context.Context) {
@@ -142,7 +144,7 @@ func (f *Finalizer) checkOne(ctx context.Context, j models.BackupJob) {
 	}
 	if err := f.deps.Jobs.MarkFinished(ctx, j.ID,
 		models.BackupJobStatusSucceeded,
-		manifestSnapID, "", 0, 0, nil, nil, ""); err != nil {
+		manifestSnapID, "", st.BytesAdded, st.BytesTotal, nil, nil, ""); err != nil {
 		logger.Error("mark succeeded failed", "err", err)
 		return
 	}

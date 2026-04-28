@@ -109,6 +109,14 @@ func (*fakeDomainRepo) UpdateDNSSECEnabled(context.Context, string, bool) error 
 	return nil
 }
 
+func (*fakeDomainRepo) UpdateGhostState(context.Context, string, string, time.Time, *string) error {
+	return nil
+}
+
+func (*fakeDomainRepo) ListForGhostCheck(context.Context, time.Time, int) ([]models.Domain, error) {
+	return nil, nil
+}
+
 // fakeDNSZoneRepo / fakeDNSRecordRepo are minimal — enableDomainEmail
 // only calls FindByDomainID + ListByZoneID + Create, and disable only
 // calls FindByDomainID + DeleteByZoneIDAndManagedBy. Everything else

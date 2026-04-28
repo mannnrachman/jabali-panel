@@ -72,6 +72,17 @@ type DomainRepository interface {
 	// allowlist; enabling without a timestamp or disabling without clearing
 	// the timestamp is a bug waiting to happen.
 	UpdateDNSSECEnabled(ctx context.Context, id string, enabled bool) error
+	// UpdateGhostState writes the M38 ghost-detector columns
+	// (ghost_state + ghost_checked_at + ghost_detail) atomically.
+	// Dedicated method because none of the three are in Update()'s
+	// allowlist; the detector is the only writer and runs every few
+	// hours from the eventsources package.
+	UpdateGhostState(ctx context.Context, id, state string, checkedAt time.Time, detail *string) error
+	// ListForGhostCheck returns up to `limit` domains whose
+	// ghost_checked_at is older than `staleBefore` (NULL counts as
+	// stale), ordered by checked_at NULLS first then asc. Used by
+	// the ghost detector to walk the table in batches.
+	ListForGhostCheck(ctx context.Context, staleBefore time.Time, limit int) ([]models.Domain, error)
 }
 
 // DomainListenIPs is the bundle of optional column writes for
@@ -456,6 +467,39 @@ func (r *domainRepo) UpdateDNSSECEnabled(ctx context.Context, id string, enabled
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (r *domainRepo) UpdateGhostState(ctx context.Context, id, state string, checkedAt time.Time, detail *string) error {
+	updates := map[string]any{
+		"ghost_state":      state,
+		"ghost_checked_at": checkedAt.UTC(),
+		"ghost_detail":     detail, // GORM nil-pointer => SQL NULL
+	}
+	res := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Where("id = ?", id).
+		Updates(updates)
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *domainRepo) ListForGhostCheck(ctx context.Context, staleBefore time.Time, limit int) ([]models.Domain, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	var out []models.Domain
+	q := r.db.WithContext(ctx).
+		Where("ghost_checked_at IS NULL OR ghost_checked_at < ?", staleBefore.UTC()).
+		Order("ghost_checked_at IS NOT NULL, ghost_checked_at ASC").
+		Limit(limit)
+	if err := q.Find(&out).Error; err != nil {
+		return nil, translate(err)
+	}
+	return out, nil
 }
 
 // populateSSLStates enriches domains with their SSL certificate states

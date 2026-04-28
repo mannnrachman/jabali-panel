@@ -166,6 +166,22 @@ func (m *mockDomainRepo) UpdateDNSSECEnabled(ctx context.Context, id string, ena
 	return nil
 }
 
+func (m *mockDomainRepo) UpdateGhostState(ctx context.Context, id, state string, checkedAt time.Time, detail *string) error {
+	d, ok := m.domains[id]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	d.GhostState = state
+	t := checkedAt
+	d.GhostCheckedAt = &t
+	d.GhostDetail = detail
+	return nil
+}
+
+func (m *mockDomainRepo) ListForGhostCheck(ctx context.Context, staleBefore time.Time, limit int) ([]models.Domain, error) {
+	return nil, nil
+}
+
 type mockDNSZoneRepo struct {
 	zones map[string]*models.DNSZone
 }

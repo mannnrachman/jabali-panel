@@ -230,6 +230,17 @@ func (m *MockDomainRepository) UpdateDNSSECEnabled(ctx context.Context, id strin
 	return args.Error(0)
 }
 
+func (m *MockDomainRepository) UpdateGhostState(ctx context.Context, id, state string, checkedAt time.Time, detail *string) error {
+	args := m.Called(ctx, id, state, checkedAt, detail)
+	return args.Error(0)
+}
+
+func (m *MockDomainRepository) ListForGhostCheck(ctx context.Context, staleBefore time.Time, limit int) ([]models.Domain, error) {
+	args := m.Called(ctx, staleBefore, limit)
+	d, _ := args.Get(0).([]models.Domain)
+	return d, args.Error(1)
+}
+
 // TestListAllSSL_Success tests GET /admin/ssl-certificates returns all certificates
 func TestListAllSSL_Success(t *testing.T) {
 	mockSSLCerts := new(MockSSLCertificateRepository)

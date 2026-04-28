@@ -74,6 +74,10 @@ type Deps struct {
 	// malware_settings.notify_threshold.
 	MalwareEvents   repository.MalwareEventRepository
 	MalwareSettings repository.MalwareSettingsRepository
+	// M38 Ghost Domain Detector — periodic DNS-alignment check. Both
+	// fields required for the source to start; nil disables.
+	DomainsForGhost    DomainGhostRepo
+	ManagedIPsForGhost ManagedIPLister
 }
 
 // Start boots every configured source in its own goroutine. Each
@@ -99,6 +103,7 @@ func Start(ctx context.Context, d Deps) {
 	go runDiskQuota(ctx, d)
 	go runSSHLogin(ctx, d)
 	go runMalware(ctx, d)
+	go runDomainGhost(ctx, d)
 	// domain_expiry + backup_fail are stubs — see the stub files in
 	// this package.
 }

@@ -67,6 +67,7 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0076](0076-dnssec-per-domain-pdnsutil.md) | M15 Per-domain DNSSEC via pdnsutil shell-out (renumbered 2026-04-28 from 0057) | Accepted |
 | [0077](0077-jabali-repair-self-heal.md) | `jabali repair` — host-state self-heal subcommand | Accepted |
 | [0078](0078-backup-destinations-and-schedules.md) | M30.1 Backup destinations + scheduled backups (renumbered 2026-04-28 from 0077) | Accepted |
+| [0082](0082-ghost-domain-detector.md) | M38 Ghost Domain Detector — periodic DNS-alignment check | Accepted |
 
 ## Decision Categories
 

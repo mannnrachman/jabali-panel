@@ -224,6 +224,22 @@ func (f *fakeDomainRepo) UpdateDNSSECEnabled(ctx context.Context, id string, ena
 	return nil
 }
 
+func (f *fakeDomainRepo) UpdateGhostState(ctx context.Context, id, state string, checkedAt time.Time, detail *string) error {
+	d, ok := f.domains[id]
+	if !ok {
+		return &notFoundErr{}
+	}
+	d.GhostState = state
+	t := checkedAt
+	d.GhostCheckedAt = &t
+	d.GhostDetail = detail
+	return nil
+}
+
+func (f *fakeDomainRepo) ListForGhostCheck(ctx context.Context, staleBefore time.Time, limit int) ([]models.Domain, error) {
+	return nil, nil
+}
+
 type notFoundErr struct{}
 
 func (e *notFoundErr) Error() string { return "not found" }

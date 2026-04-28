@@ -254,6 +254,16 @@ type Domain struct {
 	DNSSECEnabled   bool       `gorm:"column:dnssec_enabled;type:tinyint(1);not null;default:0" json:"dnssec_enabled"`
 	DNSSECEnabledAt *time.Time `gorm:"column:dnssec_enabled_at;type:datetime(6)" json:"dnssec_enabled_at,omitempty"`
 
+	// M38 Ghost Domain Detector — periodic DNS-alignment state.
+	// GhostState is one of: unchecked / ok / mismatch / nxdomain / error.
+	// GhostCheckedAt is the last detector-pass timestamp; NULL for
+	// rows the detector hasn't seen yet. GhostDetail is a short
+	// human-readable explanation surfaced in the admin badge tooltip
+	// and the M14 notification body.
+	GhostState     string     `gorm:"column:ghost_state;type:enum('unchecked','ok','mismatch','nxdomain','error');not null;default:'unchecked'" json:"ghost_state"`
+	GhostCheckedAt *time.Time `gorm:"column:ghost_checked_at;type:datetime(0)" json:"ghost_checked_at,omitempty"`
+	GhostDetail    *string    `gorm:"column:ghost_detail;type:varchar(255)" json:"ghost_detail,omitempty"`
+
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }

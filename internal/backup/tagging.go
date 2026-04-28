@@ -61,6 +61,14 @@ const (
 	StageTLS           = "tls"
 	StageSecurity      = "security"
 	StageOSUsers       = "os_users"
+	// Disaster-recovery stages — enough state to rebuild a host from
+	// a fresh Debian install + jabali-panel reinstall + this backup.
+	StageOSBase    = "os_base"    // hostname, hosts, fstab, netplan, sysctl
+	StageAPT       = "apt"        // sources.list*, keyrings, prefs
+	StageSSHHost   = "ssh_host"   // sshd_config(.d) + host keys
+	StageSystemCron = "system_cron" // /etc/cron.d/*, /var/spool/cron/crontabs
+	StageDataState = "data_state" // redis, crowdsec, pdns runtime data
+	StageSudoers   = "sudoers"    // /etc/sudoers + sudoers.d
 )
 
 // MakeTag formats `key=value`.

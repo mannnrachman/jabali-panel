@@ -117,7 +117,12 @@ func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) er
 			expandServiceConfigPaths(), nil))
 
 	manifest.Stages = append(manifest.Stages,
-		runSystemPathStage(ctx, c, req.JobID, host, backup.StageMailState, "/var/lib/stalwart", nil),
+		runSystemPathStage(ctx, c, req.JobID, host, backup.StageMailState,
+			"/var/lib/stalwart",
+			// LOG / LOG.old.* / LOCK are RocksDB runtime artefacts —
+			// not data, just bloat. Same exclusions the per-user mail
+			// stage uses for its bodies tarball.
+			[]string{"LOG", "LOG.old.*", "LOCK"}),
 		runSystemPathStage(ctx, c, req.JobID, host, backup.StageTLS, "/etc/letsencrypt", nil),
 	)
 
@@ -134,6 +139,28 @@ func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) er
 	// jabali-sockets, pdns).
 	manifest.Stages = append(manifest.Stages,
 		runSystemOSUsersStage(ctx, c, req.JobID, host))
+
+	// Disaster-recovery stages — small per-stage but each one is
+	// load-bearing for "rebuild this host on a fresh Debian VM".
+	// Missing path → skipped + warning, never fatal.
+	manifest.Stages = append(manifest.Stages,
+		runSystemMultiPathStage(ctx, c, req.JobID, host, backup.StageOSBase,
+			expandOSBasePaths(), nil))
+	manifest.Stages = append(manifest.Stages,
+		runSystemMultiPathStage(ctx, c, req.JobID, host, backup.StageAPT,
+			expandAPTPaths(), nil))
+	manifest.Stages = append(manifest.Stages,
+		runSystemMultiPathStage(ctx, c, req.JobID, host, backup.StageSSHHost,
+			expandSSHPaths(), nil))
+	manifest.Stages = append(manifest.Stages,
+		runSystemMultiPathStage(ctx, c, req.JobID, host, backup.StageSystemCron,
+			expandCronPaths(), nil))
+	manifest.Stages = append(manifest.Stages,
+		runSystemMultiPathStage(ctx, c, req.JobID, host, backup.StageDataState,
+			expandDataStatePaths(), nil))
+	manifest.Stages = append(manifest.Stages,
+		runSystemMultiPathStage(ctx, c, req.JobID, host, backup.StageSudoers,
+			expandSudoersPaths(), nil))
 
 	// Sum stage byte counts into the top-level ManifestRestic so the
 	// panel-side finalizer can record total bytes_added/bytes_total per
@@ -306,15 +333,160 @@ func expandServiceConfigPaths() []string {
 	out := []string{
 		"/etc/stalwart",
 		"/etc/powerdns",
+		"/etc/redis",
+		"/etc/jabali-bulwark",
+		"/etc/jabali-tetragon",
+		"/etc/clamav",
 	}
-	if matches, _ := filepath.Glob("/etc/nginx/sites-*"); len(matches) > 0 {
-		out = append(out, matches...)
-	}
+	// nginx: capture the full tree (nginx.conf + conf.d + snippets +
+	// sites-*) — operator-edited entries land in any of these and a
+	// restore needs the whole config to come back the same way.
+	out = append(out, globOrSkip("/etc/nginx")...)
 	if matches, _ := filepath.Glob("/etc/php/*/fpm"); len(matches) > 0 {
 		out = append(out, matches...)
 	}
+	// systemd drop-ins AND single-file units.
 	if matches, _ := filepath.Glob("/etc/systemd/system/jabali-*.service.d"); len(matches) > 0 {
 		out = append(out, matches...)
+	}
+	if matches, _ := filepath.Glob("/etc/systemd/system/jabali-*.service"); len(matches) > 0 {
+		out = append(out, matches...)
+	}
+	if matches, _ := filepath.Glob("/etc/systemd/system/jabali-*.timer"); len(matches) > 0 {
+		out = append(out, matches...)
+	}
+	return out
+}
+
+// globOrSkip returns [path] if it exists, empty otherwise. Used by the
+// service_config expansion to skip paths that don't exist on this host
+// without breaking the stage.
+func globOrSkip(path string) []string {
+	if _, err := os.Stat(path); err != nil {
+		return nil
+	}
+	return []string{path}
+}
+
+// expandOSBasePaths returns the system-level files needed to identify
+// the host on disaster recovery: hostname, hosts table, fstab, network
+// config, sysctl tweaks. Most of these are 1-2 KB but absolutely
+// load-bearing for a re-install — without them the restored host comes
+// up with a default hostname or no network.
+func expandOSBasePaths() []string {
+	out := []string{}
+	for _, p := range []string{
+		"/etc/hostname",
+		"/etc/hosts",
+		"/etc/fstab",
+		"/etc/sysctl.conf",
+		"/etc/sysctl.d",
+		"/etc/netplan",
+		"/etc/network",
+		"/etc/resolv.conf",
+		"/etc/locale.gen",
+		"/etc/timezone",
+		"/etc/skel",
+	} {
+		if _, err := os.Stat(p); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// expandAPTPaths returns the apt package-manager state needed to
+// re-install the same Debian + third-party packages on a restore host:
+// sources, prefs, keyrings (third-party signing keys).
+func expandAPTPaths() []string {
+	out := []string{}
+	for _, p := range []string{
+		"/etc/apt/sources.list",
+		"/etc/apt/sources.list.d",
+		"/etc/apt/preferences",
+		"/etc/apt/preferences.d",
+		"/etc/apt/keyrings",
+		"/etc/apt/trusted.gpg",
+		"/etc/apt/trusted.gpg.d",
+	} {
+		if _, err := os.Stat(p); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// expandSSHPaths returns SSH server state: host config + host keys.
+// Host keys preserve the server's identity so existing SSH clients
+// don't trigger MITM warnings on restore.
+func expandSSHPaths() []string {
+	out := []string{}
+	for _, p := range []string{
+		"/etc/ssh/sshd_config",
+		"/etc/ssh/sshd_config.d",
+	} {
+		if _, err := os.Stat(p); err == nil {
+			out = append(out, p)
+		}
+	}
+	if matches, _ := filepath.Glob("/etc/ssh/ssh_host_*"); len(matches) > 0 {
+		out = append(out, matches...)
+	}
+	return out
+}
+
+// expandCronPaths returns system cron state: /etc/cron.d (jabali timers
+// + apt-listchanges + …), /etc/crontab, and the spool dir holding
+// per-user crontabs (which include the panel jabali-cron entries).
+func expandCronPaths() []string {
+	out := []string{}
+	for _, p := range []string{
+		"/etc/crontab",
+		"/etc/cron.d",
+		"/etc/cron.daily",
+		"/etc/cron.hourly",
+		"/etc/cron.weekly",
+		"/etc/cron.monthly",
+		"/var/spool/cron/crontabs",
+	} {
+		if _, err := os.Stat(p); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// expandDataStatePaths returns runtime-data directories that aren't
+// part of the panel-plane MariaDB dump but still hold operator state:
+// crowdsec decisions DB, redis AOF, tetragon event spool. NOT included:
+// /var/lib/clamav (ClamAV signatures, ~250 MB; freshclam re-fetches
+// on restore) and /var/log/* (ephemeral observability).
+func expandDataStatePaths() []string {
+	out := []string{}
+	for _, p := range []string{
+		"/var/lib/crowdsec",
+		"/var/lib/redis",
+		"/var/lib/jabali-tetragon",
+		"/var/lib/jabali-panel-acme",
+	} {
+		if _, err := os.Stat(p); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// expandSudoersPaths returns sudoers + drop-ins. Captured separately
+// so the security stage can stay scoped to firewall+intrusion configs.
+func expandSudoersPaths() []string {
+	out := []string{}
+	for _, p := range []string{
+		"/etc/sudoers",
+		"/etc/sudoers.d",
+	} {
+		if _, err := os.Stat(p); err == nil {
+			out = append(out, p)
+		}
 	}
 	return out
 }

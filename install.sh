@@ -694,6 +694,32 @@ POLICYEOF
     done
   done
 
+  # bpftool — only used at install time to probe BTF for the M33 Tetragon
+  # gate (ADR-0072). Debian trixie's official archive doesn't ship a
+  # standalone `bpftool` package; it lives in `linux-tools-<flavour>`
+  # which is kernel-version-specific (linux-tools-amd64,
+  # linux-tools-cloud-amd64, etc.) and not always installable inside
+  # containers/VPS images that pin a different kernel. Probe each
+  # candidate name and add the first that resolves. If none does, skip —
+  # Tetragon's BTF probe in install_malware_stack handles the absence
+  # (UI shows "Disabled (no BTF)").
+  local optional_pkgs=()
+  if command -v bpftool >/dev/null 2>&1; then
+    : # already installed (Debian sometimes ships it as part of linux-image)
+  else
+    local bpf_candidate
+    for bpf_candidate in bpftool linux-tools-common linux-perf; do
+      if apt-cache show "$bpf_candidate" >/dev/null 2>&1; then
+        optional_pkgs+=("$bpf_candidate")
+        _log "bpftool source: ${bpf_candidate}"
+        break
+      fi
+    done
+    if [[ ${#optional_pkgs[@]} -eq 0 ]]; then
+      _log "bpftool not in apt sources for this distro — Tetragon BTF probe will skip"
+    fi
+  fi
+
   # One big install. Downstream functions (install_nginx, _install_php_version,
   # install_node, install_powerdns, setup_certbot) short-circuit on
   # `command -v` / package-present checks now that the packages land here.
@@ -716,10 +742,10 @@ POLICYEOF
       bubblewrap debootstrap systemd-container \
       yara \
       ed inotify-tools \
-      bpftool \
       restic \
       sshpass \
-      "${php_extensions[@]}"
+      "${php_extensions[@]}" \
+      "${optional_pkgs[@]}"
 
   # Undo the policy-rc.d trap regardless of exit path above (set -e would
   # have left the trap in place — restore is best-effort but ordered so

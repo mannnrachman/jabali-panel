@@ -118,7 +118,7 @@ function DestinationDrawer({ open, editing, onClose, onSaved }: DestinationDrawe
     setKeysLoading(true);
     try {
       const resp = await apiClient.get<{ data: SSHKeyEntry[] }>(
-        "/api/v1/admin/system/ssh-keys",
+        "/admin/system/ssh-keys",
       );
       setSshKeys(resp.data.data ?? []);
     } catch (err) {
@@ -196,10 +196,10 @@ function DestinationDrawer({ open, editing, onClose, onSaved }: DestinationDrawe
         }
       }
       if (editing) {
-        await apiClient.patch(`/api/v1/admin/backup-destinations/${editing.id}`, body);
+        await apiClient.patch(`/admin/backup-destinations/${editing.id}`, body);
         message.success("Destination updated");
       } else {
-        await apiClient.post("/api/v1/admin/backup-destinations", body);
+        await apiClient.post("/admin/backup-destinations", body);
         message.success("Destination created");
       }
       onSaved();
@@ -443,7 +443,7 @@ function GenerateKeyModal({ open, onClose, onGenerated }: GenerateKeyModalProps)
         path: string;
         pubkey_path: string;
         pubkey: string;
-      }>("/api/v1/admin/system/ssh-keys", values);
+      }>("/admin/system/ssh-keys", values);
       setPubkey(resp.data.pubkey);
       onGenerated({
         name: resp.data.name,
@@ -552,7 +552,7 @@ export function DestinationsTab() {
     setLoading(true);
     try {
       const resp = await apiClient.get<{ data: BackupDestination[] }>(
-        "/api/v1/admin/backup-destinations",
+        "/admin/backup-destinations",
       );
       setRows(resp.data.data ?? []);
     } catch (err) {
@@ -576,7 +576,7 @@ export function DestinationsTab() {
       okType: "danger",
       onOk: async () => {
         try {
-          await apiClient.delete(`/api/v1/admin/backup-destinations/${row.id}`);
+          await apiClient.delete(`/admin/backup-destinations/${row.id}`);
           message.success(`Deleted ${row.name}`);
           void reload();
         } catch (err) {
@@ -590,7 +590,7 @@ export function DestinationsTab() {
     const hide = message.loading(`Testing ${row.name}…`, 0);
     try {
       const resp = await apiClient.post<{ status: string; detail?: string }>(
-        `/api/v1/admin/backup-destinations/${row.id}/test`,
+        `/admin/backup-destinations/${row.id}/test`,
         {},
       );
       hide();

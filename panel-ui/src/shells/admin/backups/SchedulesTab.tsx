@@ -150,10 +150,10 @@ function ScheduleDrawer({
       if (values.keep_monthly !== undefined) body.keep_monthly = values.keep_monthly;
 
       if (editing) {
-        await apiClient.patch(`/api/v1/admin/backup-schedules/${editing.id}`, body);
+        await apiClient.patch(`/admin/backup-schedules/${editing.id}`, body);
         message.success("Schedule updated");
       } else {
-        await apiClient.post("/api/v1/admin/backup-schedules", body);
+        await apiClient.post("/admin/backup-schedules", body);
         message.success("Schedule created");
       }
       onSaved();
@@ -284,11 +284,11 @@ export function SchedulesTab() {
     setLoading(true);
     try {
       const [s, d, u] = await Promise.all([
-        apiClient.get<{ data: BackupSchedule[] }>("/api/v1/admin/backup-schedules"),
+        apiClient.get<{ data: BackupSchedule[] }>("/admin/backup-schedules"),
         apiClient.get<{ data: BackupDestinationOption[] }>(
-          "/api/v1/admin/backup-destinations",
+          "/admin/backup-destinations",
         ),
-        apiClient.get<{ data: User[] }>("/api/v1/admin/users?page_size=500"),
+        apiClient.get<{ data: User[] }>("/admin/users?page_size=500"),
       ]);
       setRows(s.data.data ?? []);
       setDestinations(d.data.data ?? []);
@@ -311,7 +311,7 @@ export function SchedulesTab() {
       okType: "danger",
       onOk: async () => {
         try {
-          await apiClient.delete(`/api/v1/admin/backup-schedules/${row.id}`);
+          await apiClient.delete(`/admin/backup-schedules/${row.id}`);
           message.success("Schedule deleted");
           void reload();
         } catch (err) {
@@ -323,7 +323,7 @@ export function SchedulesTab() {
 
   const handleRunNow = async (row: BackupSchedule) => {
     try {
-      await apiClient.post(`/api/v1/admin/backup-schedules/${row.id}/run-now`, {});
+      await apiClient.post(`/admin/backup-schedules/${row.id}/run-now`, {});
       message.success("Schedule queued for the next tick (within 60s)");
       void reload();
     } catch (err) {

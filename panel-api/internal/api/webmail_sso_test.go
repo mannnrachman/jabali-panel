@@ -160,21 +160,16 @@ func TestWebmailSSOBridgePage_PersistsAuthStorage(t *testing.T) {
 		ExpiresAt: time.Now().Add(5 * time.Minute),
 	}
 
-	// JMAPHandshakeURL is what bulwark sees as serverUrl in the body —
-	// in production this is Stalwart's loopback so the handshake
-	// doesn't depend on mail.<domain> resolving inside the box. In
-	// tests we pin a sentinel and assert it flows through.
-	wantServerURL := "http://stalwart-loopback.test"
+	wantServerURL := "https://mail.example.com"
 	bulwark := newBulwarkFake(t, wantServerURL, mb.EmailCached)
 	defer bulwark.Close()
 
 	cfg := WebmailSSOHandlerConfig{
-		Mailboxes:        &fakeMailboxRepoSSO{mb: mb},
-		Domains:          &fakeDomainRepoSSO{dom: dom},
-		SSOKey:           &ssoKey,
-		SSOTokens:        &fakeSSOTokenRepo{tok: tok},
-		BulwarkBaseURL:   bulwark.URL,
-		JMAPHandshakeURL: wantServerURL,
+		Mailboxes:      &fakeMailboxRepoSSO{mb: mb},
+		Domains:        &fakeDomainRepoSSO{dom: dom},
+		SSOKey:         &ssoKey,
+		SSOTokens:      &fakeSSOTokenRepo{tok: tok},
+		BulwarkBaseURL: bulwark.URL,
 	}
 
 	r := gin.New()

@@ -29,18 +29,6 @@ import (
 // (see kratosclient/transport.go) — operators learn one form.
 const defaultBulwarkBaseURL = "unix:/run/jabali-bulwark/bulwark.sock"
 
-// defaultJMAPHandshakeURL is the JMAP server URL bulwark uses for the
-// SERVER-SIDE credential handshake during /api/auth/session — i.e. the
-// URL bulwark fetches /.well-known/jmap from. We point at Stalwart's
-// loopback HTTP listener (no TLS, no DNS, no nginx hop) so the
-// handshake doesn't depend on `mail.<domain>` resolving from inside the
-// box, on the cert covering that SAN, or on Node's TLS trust store
-// containing whatever CA signed it. Browser-side Bulwark still talks
-// to the public `https://mail.<domain>/jmap` path — that URL is
-// rewritten into the bridge's localStorage payload after the cookie
-// lands.
-const defaultJMAPHandshakeURL = "http://127.0.0.1:8446"
-
 // bulwarkSyntheticHost is the http.Transport-visible host used when
 // dialing bulwark over UDS. Bulwark's /api/auth/session does not
 // validate the Host header, so a synthetic value is fine.
@@ -107,13 +95,6 @@ type WebmailSSOHandlerConfig struct {
 	// any `unix:/abs/path` form triggers a UDS-aware http.Client. Tests
 	// override with an httptest server's TCP URL (no UDS rewriting).
 	BulwarkBaseURL string
-	// JMAPHandshakeURL is the URL bulwark uses for the server-side
-	// credential handshake (it fetches `<URL>/.well-known/jmap`).
-	// Defaults to http://127.0.0.1:8446 (Stalwart loopback) so the
-	// handshake doesn't depend on mail.<domain> DNS, TLS, or nginx
-	// availability from inside the box. Tests can pin this to assert
-	// the value flows through to bulwark.
-	JMAPHandshakeURL string
 	// HTTPClient is mockable for tests; defaults to http.DefaultClient
 	// with a 15s timeout.
 	HTTPClient *http.Client
@@ -198,22 +179,19 @@ func (h *webmailSSOHandler) land(c *gin.Context) {
 	// — if Stalwart's SqlDirectory wouldn't accept the plaintext, we
 	// get a 401 here and the user sees "Login failed" instead of an
 	// inconsistent half-session.
-	// Two URLs in play:
-	//   handshakeURL = http://127.0.0.1:8446 (Stalwart loopback) — what
-	//     bulwark uses to validate the creds + fetch /.well-known/jmap.
-	//     Skips DNS, TLS, and the per-domain nginx vhost — all of which
-	//     can independently break the SSO flow on a fresh install.
-	//   serverURL = https://mail.<domain> — what the BROWSER uses for
-	//     subsequent JMAP traffic. Written into bulwark's localStorage
-	//     auth-storage via the bridge below.
+	// serverURL must be the same value bulwark stores in its session
+	// cookie AND the value the browser keeps in localStorage. Bulwark's
+	// client-side checkAuth compares the two; any drift bounces the
+	// user back to /en/login with "Your session has expired" — which
+	// is what splitting the URL between handshake (loopback) and
+	// browser (public) caused. Keep them identical here. The TLS
+	// trust path for the server-side handshake fetch lives in
+	// bulwark.env via NODE_TLS_REJECT_UNAUTHORIZED so self-signed
+	// certs on internal mail.<domain> still resolve.
 	sessionURL := h.bulwarkBase() + "/api/auth/session"
-	handshakeURL := h.cfg.JMAPHandshakeURL
-	if handshakeURL == "" {
-		handshakeURL = defaultJMAPHandshakeURL
-	}
 	serverURL := "https://mail." + dom.Name
 	body, _ := json.Marshal(map[string]string{
-		"serverUrl": handshakeURL,
+		"serverUrl": serverURL,
 		"username":  mb.EmailCached,
 		"password":  string(plaintext),
 	})

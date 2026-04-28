@@ -30,7 +30,7 @@ type Effective = {
 };
 
 type Current = {
-  disk?: { used_kb: number; limit_kb: number };
+  disk?: { used_kb: number; limit_kb: number; host_fs_total_kb?: number };
   memory?: { current_bytes: number; max_bytes: number };
   cpu?: { usage_nsec: number; quota_percent: number };
   tasks?: { current: number; max: number };
@@ -90,10 +90,16 @@ export function MyProfileUsageCard({ userId }: { userId: string }) {
   const { effective, current } = data;
 
   const diskUsedKB = current?.disk?.used_kb ?? 0;
-  const diskLimitKB =
+  // Bar denominator: prefer the actual quota (limit_kb), then the
+  // package-effective quota, then the host filesystem total. The last
+  // fallback means we always render a bar instead of "Unlimited".
+  const diskQuotaKB =
     (current?.disk?.limit_kb ?? 0) > 0
       ? (current?.disk?.limit_kb ?? 0)
       : effective.DiskQuotaMB * 1024;
+  const diskLimitKB =
+    diskQuotaKB > 0 ? diskQuotaKB : (current?.disk?.host_fs_total_kb ?? 0);
+  const diskUnquotaed = diskQuotaKB === 0 && diskLimitKB > 0;
   const memUsedB = current?.memory?.current_bytes ?? 0;
   const memLimitB =
     current?.memory?.max_bytes ?? effective.MemoryLimitMB * 1024 * 1024;
@@ -122,6 +128,7 @@ export function MyProfileUsageCard({ userId }: { userId: string }) {
           label="Disk"
           used={diskUsedKB * 1024}
           limit={diskLimitKB * 1024}
+          suffix={diskUnquotaed ? "of host disk" : undefined}
         />
         <UsageRow
           icon={<DatabaseOutlined />}
@@ -193,9 +200,13 @@ interface UsageRowProps extends IconBoxProps {
   label: string;
   used: number;
   limit: number;
+  // suffix appended after the "X / Y" pair when the limit is the host
+  // filesystem total rather than a per-user quota — distinguishes the
+  // "no quota set, bar shows host capacity" case from a real quota.
+  suffix?: string;
 }
 
-function UsageRow({ icon, iconBg, iconColor, label, used, limit }: UsageRowProps) {
+function UsageRow({ icon, iconBg, iconColor, label, used, limit, suffix }: UsageRowProps) {
   const limited = limit > 0;
   const pct = limited ? Math.min(100, Math.round((used / limit) * 100)) : 0;
   const status = pct >= 95 ? "exception" : pct >= 80 ? "active" : "normal";
@@ -214,11 +225,11 @@ function UsageRow({ icon, iconBg, iconColor, label, used, limit }: UsageRowProps
           <Typography.Text strong>{label}</Typography.Text>
           <Typography.Text type="secondary">
             {limited
-              ? `${humanBytes(used)} / ${humanBytes(limit)}`
+              ? `${humanBytes(used)} / ${humanBytes(limit)}${suffix ? ` ${suffix}` : ""}`
               : `${humanBytes(used)} · Unlimited`}
           </Typography.Text>
         </div>
-        {limited && <Progress percent={pct} status={status} showInfo={false} size="small" />}
+        {limited && <Progress percent={pct} status={status} showInfo size="small" />}
       </div>
     </Space>
   );

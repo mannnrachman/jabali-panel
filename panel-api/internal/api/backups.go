@@ -9,7 +9,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -277,34 +276,53 @@ func (h *backupHandler) download(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "no_completed_snapshot"})
 		return
 	}
-	// Materialize: restic restore <manifest_snapshot> --target tmp;
-	// tar -I zstd -cf - on the materialized dir; stream response;
-	// remove tmp dir on close.
-	tmp, err := os.MkdirTemp("", "jabali-backup-download-")
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "mkdir_temp"})
+	if job.SnapshotID == "" {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"status": "error", "error": "no_snapshot_id"})
 		return
 	}
-	defer os.RemoveAll(tmp)
-
-	if job.SnapshotID != "" {
-		cmd := exec.CommandContext(c.Request.Context(),
-			"restic",
-			"--repo", "/var/lib/jabali-backups/repo",
-			"--password-file", "/etc/jabali-panel/restic-repo.password",
-			"restore", job.SnapshotID,
-			"--target", tmp,
-		)
-		if err := cmd.Run(); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "restic_restore_failed"})
-			return
-		}
+	if h.cfg.Agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "agent_unavailable"})
+		return
 	}
+	// panel-api runs as the jabali user and can read neither
+	// /etc/jabali-panel/restic-repo.password nor /var/lib/jabali-backups/repo
+	// (both 0600/0700 root:root). Dispatch the restic restore to the
+	// agent — it materializes the snapshot under
+	// /var/lib/jabali-backups/downloads/<job_id>/ as root:jabali 0750
+	// so we can tar it out without elevated privileges.
+	matCtx, matCancel := context.WithTimeout(c.Request.Context(), 30*time.Minute)
+	defer matCancel()
+	raw, err := h.cfg.Agent.Call(matCtx, "backup.materialize", map[string]string{
+		"job_id":      jobID,
+		"snapshot_id": job.SnapshotID,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error", "error": "restic_restore_failed", "detail": err.Error(),
+		})
+		return
+	}
+	var mat struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(raw, &mat); err != nil || mat.Path == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "agent_reply_parse"})
+		return
+	}
+	defer func() {
+		// Best-effort cleanup; a stale dir is recovered by the next
+		// download (handler RemoveAll's before re-restoring) or by a
+		// future cron sweeper.
+		cleanCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, _ = h.cfg.Agent.Call(cleanCtx, "backup.materialize_cleanup", map[string]string{"job_id": jobID})
+	}()
+
 	c.Header("Content-Type", "application/zstd")
 	c.Header("Content-Disposition", "attachment; filename=\""+jobID+".tar.zst\"")
 	tarCmd := exec.CommandContext(c.Request.Context(),
 		"tar", "-I", "zstd", "-cf", "-",
-		"-C", filepath.Dir(tmp), filepath.Base(tmp),
+		"-C", filepath.Dir(mat.Path), filepath.Base(mat.Path),
 	)
 	tarCmd.Stdout = c.Writer
 	if err := tarCmd.Run(); err != nil {

@@ -510,6 +510,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				StrictRateLimit: rl.Strict(),
 			})
 		}
+		// M31.1 follow-up — DLQ inspector (list / replay / drop / clear).
+		api.RegisterNotificationsDLQRoutes(v1, api.NotificationsDLQHandlerConfig{
+			Redis: deps.Redis,
+			Log:   deps.Log,
+		})
 		// M14 Step 5 — authenticated-user bell dropdown.
 		if deps.NotificationHistory != nil {
 			api.RegisterNotificationsInboxRoutes(v1, api.NotificationsInboxHandlerConfig{

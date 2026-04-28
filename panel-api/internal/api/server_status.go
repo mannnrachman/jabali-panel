@@ -218,9 +218,13 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 		// envelope hit retry cap. Thresholds are intentionally low —
 		// admins want to notice these immediately on the dashboard.
 		if queues.NotificationsDLQ > 0 {
+			noun := "entries"
+			if queues.NotificationsDLQ == 1 {
+				noun = "entry"
+			}
 			env.Alerts = append(env.Alerts, ServerStatusAlert{
 				Level: "warning", Kind: "queue",
-				Detail: "notification DLQ has " + formatInt64(queues.NotificationsDLQ) + " entries",
+				Detail: "notification DLQ has " + formatInt64(queues.NotificationsDLQ) + " " + noun,
 			})
 		}
 		if queues.NotificationsQueue > 1000 {

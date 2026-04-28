@@ -36,11 +36,14 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 import {
-  FileTextOutlined,
-  WarningOutlined,
-  ThunderboltOutlined,
-  SafetyOutlined,
+  ApiOutlined,
+  AppstoreOutlined,
   BellOutlined,
+  CheckCircleOutlined,
+  FileTextOutlined,
+  SafetyOutlined,
+  ThunderboltOutlined,
+  WarningOutlined,
 } from "@icons";
 import { ISO3166_COUNTRIES } from "../../../data/iso3166";
 
@@ -117,7 +120,9 @@ const fmtTime = (s?: string): string => (s ? new Date(s).toLocaleString() : "—
 
 // MetricTile renders one CrowdSec metric as an icon-led panel inside a
 // responsive grid Col. Tint is the icon background only — text stays
-// theme-default so light/dark themes both render correctly.
+// theme-default so light/dark themes both render correctly. `value`
+// accepts a number (formatted via toLocaleString at 22px) OR a ReactNode
+// (rendered raw at 16px so chips/tags fit the same tile shape).
 function MetricTile({
   icon,
   tint,
@@ -128,9 +133,10 @@ function MetricTile({
   icon: ReactNode;
   tint: string;
   label: string;
-  value: number;
+  value: number | ReactNode;
   hint: string;
 }) {
+  const isNumber = typeof value === "number";
   return (
     <Col flex="1 1 200px" style={{ minWidth: 180 }}>
       <Tooltip title={hint}>
@@ -161,9 +167,13 @@ function MetricTile({
               <Typography.Text type="secondary" style={{ fontSize: 12, display: "block" }}>
                 {label}
               </Typography.Text>
-              <Typography.Text strong style={{ fontSize: 22, lineHeight: 1.1 }}>
-                {value.toLocaleString()}
-              </Typography.Text>
+              {isNumber ? (
+                <Typography.Text strong style={{ fontSize: 22, lineHeight: 1.1 }}>
+                  {(value as number).toLocaleString()}
+                </Typography.Text>
+              ) : (
+                <div style={{ fontSize: 14, lineHeight: 1.2 }}>{value}</div>
+              )}
             </div>
           </Space>
         </Card>
@@ -244,6 +254,45 @@ export const AdminSecurityCrowdsec = () => {
       ) : (
         <Row gutter={[12, 12]}>
           <MetricTile
+            icon={<CheckCircleOutlined />}
+            tint={status.data?.running ? "#52c41a" : "#cf1322"}
+            label="Service"
+            value={
+              status.data?.running ? (
+                <Tag color="green">running</Tag>
+              ) : (
+                <Tag color="red">down</Tag>
+              )
+            }
+            hint="crowdsec.service systemd unit state"
+          />
+          <MetricTile
+            icon={<ApiOutlined />}
+            tint={status.data?.lapi_reachable ? "#52c41a" : "#cf1322"}
+            label="LAPI"
+            value={
+              status.data?.lapi_reachable ? (
+                <Tag color="green">reachable</Tag>
+              ) : (
+                <Tag color="red">unreachable</Tag>
+              )
+            }
+            hint="Local API socket reachable from panel-agent"
+          />
+          {status.data?.version && (
+            <MetricTile
+              icon={<AppstoreOutlined />}
+              tint="#1677ff"
+              label="Version"
+              value={
+                <Typography.Text code style={{ fontSize: 12 }}>
+                  {status.data.version}
+                </Typography.Text>
+              }
+              hint="Installed CrowdSec engine version"
+            />
+          )}
+          <MetricTile
             icon={<FileTextOutlined />}
             tint="#1677ff"
             label="Parsed events"
@@ -287,41 +336,6 @@ export const AdminSecurityCrowdsec = () => {
         message="What is CrowdSec?"
         description="Behaviour-based intrusion-prevention. Tails server logs (nginx, sshd, panel, mail), matches them against scenarios (brute-force, scanners, web exploits, credential stuffing), and emits IP decisions. Bouncers enforce them at the firewall (UFW), at nginx (AppSec WAF with OWASP CRS rules + optional captcha challenge), and against a crowdsourced blocklist of IPs flagged by the wider community in the last hours."
       />
-
-      <Card size="small" title="CrowdSec status">
-        <Descriptions
-          column={{ xs: 1, sm: 2, md: 3 }}
-          items={[
-            {
-              key: "service",
-              label: "Service",
-              children: status.data?.running ? (
-                <Tag color="green">running</Tag>
-              ) : (
-                <Tag color="red">down</Tag>
-              ),
-            },
-            {
-              key: "lapi",
-              label: "LAPI",
-              children: status.data?.lapi_reachable ? (
-                <Tag color="green">reachable</Tag>
-              ) : (
-                <Tag color="red">unreachable</Tag>
-              ),
-            },
-            ...(status.data?.version
-              ? [
-                  {
-                    key: "version",
-                    label: "Version",
-                    children: <Typography.Text code>{status.data.version}</Typography.Text>,
-                  },
-                ]
-              : []),
-          ]}
-        />
-      </Card>
     </Space>
   );
 

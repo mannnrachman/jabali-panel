@@ -279,19 +279,6 @@ export const AdminSecurityCrowdsec = () => {
             }
             hint="Local API socket reachable from panel-agent"
           />
-          {status.data?.version && (
-            <MetricTile
-              icon={<AppstoreOutlined />}
-              tint="#1677ff"
-              label="Version"
-              value={
-                <Typography.Text code style={{ fontSize: 12 }}>
-                  {status.data.version}
-                </Typography.Text>
-              }
-              hint="Installed CrowdSec engine version"
-            />
-          )}
           <MetricTile
             icon={<FileTextOutlined />}
             tint="#1677ff"
@@ -327,6 +314,19 @@ export const AdminSecurityCrowdsec = () => {
             value={metrics.data?.alerts_total ?? 0}
             hint="All-time alerts since CrowdSec started"
           />
+          {status.data?.version && (
+            <MetricTile
+              icon={<AppstoreOutlined />}
+              tint="#1677ff"
+              label="Version"
+              value={
+                <Typography.Text code style={{ fontSize: 12 }}>
+                  {status.data.version}
+                </Typography.Text>
+              }
+              hint="Installed CrowdSec engine version"
+            />
+          )}
         </Row>
       )}
 

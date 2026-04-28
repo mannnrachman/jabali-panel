@@ -3182,7 +3182,10 @@ ProtectControlGroups=true
 RestrictNamespaces=true
 RestrictSUIDSGID=true
 LockPersonality=true
-MemoryDenyWriteExecute=true
+# MemoryDenyWriteExecute INTENTIONALLY OMITTED — yara-x (M33.2 mailscan)
+# JIT-compiles YARA rules to WASM and requires PROT_EXEC mmap pages.
+# Defense-in-depth still covered by NoNewPrivileges + ProtectSystem +
+# RestrictAddressFamilies + ProtectKernel* above. ADR-0079.
 ReadWritePaths=$REPO_DIR /var/lib/jabali-uploads
 
 [Install]

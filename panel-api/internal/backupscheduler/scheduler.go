@@ -1,0 +1,250 @@
+// Package backupscheduler — M30.1 in-process scheduler. Ticks every
+// 60s, scans backup_schedules.next_run_at <= now, dispatches each
+// overdue row to panel-agent via the same backup.create call the REST
+// handler uses.
+//
+// Why in-process instead of a systemd timer + CLI tick (like the M30
+// retention sweep)? At 60s cadence the cobra cold-start cost dominates,
+// and we already have several goroutine-based tickers (reconciler, M14
+// notification dispatcher, eventsources). Missed ticks during panel
+// restart are tolerated — the schedules stay overdue and the next tick
+// picks them up.
+//
+// One backup at a time per (kind, user-id) is enforced by the agent;
+// the scheduler just dispatches and lets the agent return 409 Conflict
+// when the prior job is still running. We log + skip on conflict.
+package backupscheduler
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"time"
+
+	internalbackup "git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+)
+
+// TickInterval is the polling cadence. Bigger than 60s loses scheduling
+// precision; smaller burns DB queries with no operator value.
+const TickInterval = 60 * time.Second
+
+// MaxDuePerTick caps how many overdue schedules one tick will dispatch.
+// Bigger = potential DB contention with the agent's job-create lock;
+// smaller = recovery from a long pause takes more ticks. 50 fits a
+// 5-minute outage on a 1k-user host.
+const MaxDuePerTick = 50
+
+// Deps is the dependency bundle passed by serve.go.
+type Deps struct {
+	Schedules repository.BackupScheduleRepository
+	Jobs      repository.BackupJobRepository
+	CopyJobs  repository.BackupCopyJobRepository
+	Users     repository.UserRepository
+	Agent     agent.AgentInterface
+	Log       *slog.Logger
+}
+
+// Scheduler is the goroutine wrapper. Construct via New, start with
+// Start(ctx). Returns immediately; the loop runs until ctx is done.
+type Scheduler struct{ deps Deps }
+
+// New returns a configured scheduler. Returns nil if any required dep
+// is missing — callers log + skip start in that case so an incomplete
+// deployment doesn't crash on boot.
+func New(deps Deps) *Scheduler {
+	if deps.Schedules == nil || deps.Jobs == nil || deps.CopyJobs == nil ||
+		deps.Users == nil || deps.Agent == nil || deps.Log == nil {
+		return nil
+	}
+	return &Scheduler{deps: deps}
+}
+
+// Start runs the tick loop until ctx is done.
+func (s *Scheduler) Start(ctx context.Context) {
+	t := time.NewTicker(TickInterval)
+	defer t.Stop()
+	s.deps.Log.Info("backup scheduler started", "tick_interval", TickInterval)
+	// Run one tick immediately so a panel restart doesn't leave overdue
+	// schedules waiting up to 60s for the next firing.
+	s.tickOnce(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			s.deps.Log.Info("backup scheduler stopped")
+			return
+		case <-t.C:
+			s.tickOnce(ctx)
+		}
+	}
+}
+
+func (s *Scheduler) tickOnce(ctx context.Context) {
+	now := time.Now().UTC()
+	due, err := s.deps.Schedules.ListDue(ctx, now, MaxDuePerTick)
+	if err != nil {
+		s.deps.Log.Error("scheduler list-due failed", "err", err)
+		return
+	}
+	for _, sched := range due {
+		s.dispatch(ctx, sched)
+	}
+}
+
+// dispatch handles one overdue schedule end-to-end: compute next firing,
+// dispatch the backup, mark ran (or just bump next_run_at on conflict).
+// Errors are logged but not returned — one bad row must not stall the
+// whole tick.
+func (s *Scheduler) dispatch(ctx context.Context, sched models.BackupSchedule) {
+	logger := s.deps.Log.With(
+		"schedule_id", sched.ID,
+		"kind", sched.Kind,
+		"user_id", strDeref(sched.UserID),
+	)
+
+	next, err := internalbackup.NextFire(sched.CronExpr, time.Now().UTC())
+	if err != nil {
+		logger.Error("invalid cron in DB; disabling for one tick", "cron_expr", sched.CronExpr, "err", err)
+		// Push next_run_at far enough out that we don't re-process this
+		// row every tick. Operator must fix the cron via UI.
+		bump := time.Now().UTC().Add(24 * time.Hour)
+		_ = s.deps.Schedules.UpdateNextRun(ctx, sched.ID, bump)
+		return
+	}
+
+	dispatched, dispErr := s.dispatchBackup(ctx, sched)
+	if dispErr != nil {
+		logger.Error("scheduler dispatch failed", "err", dispErr)
+		// Still advance next_run_at so we don't tight-loop on a
+		// permanent failure (e.g. user deleted but FK didn't cascade).
+		_ = s.deps.Schedules.UpdateNextRun(ctx, sched.ID, next)
+		return
+	}
+	if !dispatched {
+		// Conflict path (existing job running). Don't update last_run_at
+		// since we didn't actually run, but advance next_run_at so the
+		// next tick re-attempts on the proper cadence.
+		_ = s.deps.Schedules.UpdateNextRun(ctx, sched.ID, next)
+		return
+	}
+
+	if err := s.deps.Schedules.MarkRan(ctx, sched.ID, time.Now().UTC(), next); err != nil {
+		logger.Error("schedule mark-ran failed", "err", err)
+	}
+}
+
+// dispatchBackup creates the backup_jobs row, calls the agent, and
+// returns true on success / false on conflict / non-nil error on
+// terminal failure. The caller decides what to do with the schedule
+// row based on the boolean.
+func (s *Scheduler) dispatchBackup(ctx context.Context, sched models.BackupSchedule) (bool, error) {
+	switch sched.Kind {
+	case models.BackupScheduleKindAccount:
+		if sched.UserID == nil {
+			return false, errors.New("account_backup schedule with NULL user_id")
+		}
+		user, err := s.deps.Users.FindByID(ctx, *sched.UserID)
+		if err != nil {
+			return false, fmt.Errorf("load user %s: %w", *sched.UserID, err)
+		}
+		if user == nil {
+			return false, fmt.Errorf("user %s not found", *sched.UserID)
+		}
+		jobID := ids.NewULID()
+		schedID := sched.ID
+		job := &models.BackupJob{
+			ID:         jobID,
+			UserID:     user.ID,
+			ScheduleID: &schedID,
+			Kind:       models.BackupJobKindAccountBackup,
+			Status:     models.BackupJobStatusQueued,
+			CreatedAt:  time.Now().UTC(),
+		}
+		if err := s.deps.Jobs.Create(ctx, job); err != nil {
+			return false, fmt.Errorf("create backup_job: %w", err)
+		}
+		callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		params := map[string]any{
+			"job_id":   jobID,
+			"user_id":  user.ID,
+			"username": user.Username,
+			"email":    user.Email,
+			"is_admin": user.IsAdmin,
+		}
+		if _, err := s.deps.Agent.Call(callCtx, "backup.create", params); err != nil {
+			if isAgentConflict(err) {
+				_ = s.deps.Jobs.MarkFinished(ctx, jobID, models.BackupJobStatusCancelled,
+					"", "", 0, 0, nil, nil, "skipped: prior backup still running")
+				return false, nil
+			}
+			_ = s.deps.Jobs.MarkFinished(ctx, jobID, models.BackupJobStatusFailed,
+				"", "", 0, 0, nil, nil, err.Error())
+			return false, fmt.Errorf("agent backup.create: %w", err)
+		}
+		_ = s.deps.Jobs.MarkStarted(ctx, jobID)
+		return true, nil
+
+	case models.BackupScheduleKindSystem:
+		jobID := ids.NewULID()
+		schedID := sched.ID
+		job := &models.BackupJob{
+			ID:         jobID,
+			UserID:     "system",
+			ScheduleID: &schedID,
+			Kind:       models.BackupJobKindSystemBackup,
+			Status:     models.BackupJobStatusQueued,
+			CreatedAt:  time.Now().UTC(),
+		}
+		if err := s.deps.Jobs.Create(ctx, job); err != nil {
+			return false, fmt.Errorf("create system backup_job: %w", err)
+		}
+		callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		params := map[string]any{
+			"job_id":           jobID,
+			"include_accounts": false, // include_accounts toggle = manual-only in v1
+		}
+		if _, err := s.deps.Agent.Call(callCtx, "system.backup", params); err != nil {
+			if isAgentConflict(err) {
+				_ = s.deps.Jobs.MarkFinished(ctx, jobID, models.BackupJobStatusCancelled,
+					"", "", 0, 0, nil, nil, "skipped: prior system backup still running")
+				return false, nil
+			}
+			_ = s.deps.Jobs.MarkFinished(ctx, jobID, models.BackupJobStatusFailed,
+				"", "", 0, 0, nil, nil, err.Error())
+			return false, fmt.Errorf("agent system.backup: %w", err)
+		}
+		_ = s.deps.Jobs.MarkStarted(ctx, jobID)
+		return true, nil
+
+	default:
+		return false, fmt.Errorf("unknown schedule kind %q", sched.Kind)
+	}
+}
+
+// isAgentConflict matches the agent's 409-equivalent NDJSON error string
+// for "another job already running". Cheap heuristic — cleaner than a
+// typed sentinel that would require coordinating both packages. False
+// positives only delay one tick, no data loss.
+func isAgentConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "already running") ||
+		strings.Contains(msg, "conflict") ||
+		strings.Contains(msg, "job_already_active")
+}
+
+func strDeref(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}

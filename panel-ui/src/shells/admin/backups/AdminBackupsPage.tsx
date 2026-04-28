@@ -9,6 +9,8 @@ import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { apiClient } from "../../../apiClient";
 import { useTableURL } from "../../../hooks/useTableURL";
 import { CreateBackupDrawer } from "./CreateBackupDrawer";
+import { DestinationsTab } from "./DestinationsTab";
+import { SchedulesTab } from "./SchedulesTab";
 import { SystemBackupsTab } from "./SystemBackupsTab";
 
 type BackupJob = {
@@ -181,6 +183,16 @@ export const AdminBackupsPage = () => {
             key: "system",
             label: "System backups",
             children: <SystemBackupsTab />,
+          },
+          {
+            key: "destinations",
+            label: "Destinations",
+            children: <DestinationsTab />,
+          },
+          {
+            key: "schedules",
+            label: "Schedules",
+            children: <SchedulesTab />,
           },
         ]}
       />

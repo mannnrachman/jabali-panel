@@ -4205,6 +4205,11 @@ install_backup_foundation() {
   # unit blocks /root/.cache, so RESTIC_CACHE_DIR points here instead.
   install -d -m 0700 -o root -g root /var/lib/jabali-backups/.cache
   install -d -m 0700 -o root -g root /var/lib/jabali-backups/.cache/restic
+  # M30.1 (ADR-0078): per-destination restic creds env files live here,
+  # one file per backup_destinations.id with restic backend env vars
+  # (AWS_*, B2_*, AZURE_*, etc.). Mode 0600 root:root per-file; the
+  # panel writes them via the destinations REST handler.
+  install -d -m 0700 -o root -g root /etc/jabali-panel/restic-remotes
 
   # Password file. Generated once; never rotated automatically (rotating
   # the restic password would invalidate every existing snapshot — it's

@@ -81,6 +81,13 @@ type Deps struct {
 	// M30 backup-restore (ADR-0075). Nil disables the /admin/backups
 	// + /me/backups routes; UI surfaces an empty state.
 	BackupJobs          repository.BackupJobRepository
+	// M30.1 backup destinations + schedules (ADR-0078). All three nil
+	// disables the /admin/backup-destinations + /admin/backup-schedules
+	// routes (UI tabs hidden) and the in-process scheduler / copy
+	// worker / finalizer goroutines.
+	BackupDestinations  repository.BackupDestinationRepository
+	BackupSchedules     repository.BackupScheduleRepository
+	BackupCopyJobs      repository.BackupCopyJobRepository
 	MalwareQuarantine   repository.MalwareQuarantineRepository
 	MalwareEvents       repository.MalwareEventRepository
 	YARARules           repository.YARACustomRuleRepository
@@ -557,6 +564,21 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Jobs:  deps.BackupJobs,
 				Users: deps.Users,
 				Log:   deps.Log,
+			})
+		}
+		// M30.1 (ADR-0078): backup destinations + schedules.
+		if deps.BackupDestinations != nil {
+			api.RegisterBackupDestinationRoutes(v1, api.BackupDestinationsConfig{
+				Repo: deps.BackupDestinations,
+			})
+		}
+		if deps.BackupSchedules != nil && deps.BackupDestinations != nil {
+			api.RegisterBackupScheduleRoutes(v1, api.BackupSchedulesConfig{
+				Schedules:    deps.BackupSchedules,
+				Destinations: deps.BackupDestinations,
+				Users:        deps.Users,
+				Jobs:         deps.BackupJobs,
+				CopyJobs:     deps.BackupCopyJobs,
 			})
 		}
 		if deps.SSO != nil && deps.Databases != nil && deps.PhpMyAdminSSOTokens != nil {

@@ -1,0 +1,45 @@
+// M30.1 backup schedules (ADR-0078). Schema in migration 000087/088.
+// One row per (kind, user_id, cron_expr) tuple. user_id NULL is
+// reserved for system_backup (server-wide). Multi-cadence per user
+// = multiple rows; restic dedup makes the incremental cost trivial.
+package models
+
+import "time"
+
+const (
+	BackupScheduleKindAccount = "account_backup"
+	BackupScheduleKindSystem  = "system_backup"
+)
+
+type BackupSchedule struct {
+	ID          string     `gorm:"type:char(26);primaryKey" json:"id"`
+	Kind        string     `gorm:"type:enum('account_backup','system_backup');not null" json:"kind"`
+	UserID      *string    `gorm:"type:char(26)" json:"user_id,omitempty"`
+	CronExpr    string     `gorm:"type:varchar(64);not null" json:"cron_expr"`
+	Enabled     bool       `gorm:"not null;default:1" json:"enabled"`
+	KeepDaily   *int       `gorm:"type:int" json:"keep_daily,omitempty"`
+	KeepWeekly  *int       `gorm:"type:int" json:"keep_weekly,omitempty"`
+	KeepMonthly *int       `gorm:"type:int" json:"keep_monthly,omitempty"`
+	LastRunAt   *time.Time `gorm:"type:datetime(6)" json:"last_run_at,omitempty"`
+	NextRunAt   *time.Time `gorm:"type:datetime(6)" json:"next_run_at,omitempty"`
+	CreatedAt   time.Time  `gorm:"type:datetime(6);not null" json:"created_at"`
+	UpdatedAt   time.Time  `gorm:"type:datetime(6);not null" json:"updated_at"`
+
+	// Loaded by repository when ListWithDestinations is called; not a
+	// GORM relation tag (the join table has its own model below).
+	Destinations []BackupDestination `gorm:"-" json:"destinations,omitempty"`
+}
+
+func (BackupSchedule) TableName() string { return "backup_schedules" }
+
+// BackupScheduleDestination is the M:N join row. Repositories set
+// CreatedAt explicitly; GORM does not auto-stamp on plain join tables.
+type BackupScheduleDestination struct {
+	ScheduleID    string    `gorm:"type:char(26);primaryKey" json:"schedule_id"`
+	DestinationID string    `gorm:"type:char(26);primaryKey" json:"destination_id"`
+	CreatedAt     time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
+}
+
+func (BackupScheduleDestination) TableName() string {
+	return "backup_schedule_destinations"
+}

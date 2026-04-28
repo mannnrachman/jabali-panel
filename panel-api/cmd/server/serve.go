@@ -20,6 +20,9 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/app"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/db"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupcopyworker"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupfinalizer"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupscheduler"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/eventsources"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
@@ -248,6 +251,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.TetragonPolicies = repository.NewTetragonPolicyStateRepository(sharedDB)
 		// M30 (ADR-0075): backup-restore workflow rows.
 		deps.BackupJobs = repository.NewBackupJobRepository(sharedDB)
+		// M30.1 (ADR-0078): destinations + schedules + copy queue.
+		deps.BackupDestinations = repository.NewBackupDestinationRepository(sharedDB)
+		deps.BackupSchedules = repository.NewBackupScheduleRepository(sharedDB)
+		deps.BackupCopyJobs = repository.NewBackupCopyJobRepository(sharedDB)
 		deps.PhpMyAdminSSOTokens = phpMyAdminSSOTokenRepo
 		deps.PHPPools = phpPoolRepo
 		deps.PHPPoolIniOverrides = phpPoolIniOverrideRepo
@@ -501,6 +508,42 @@ func runServe(cmd *cobra.Command, args []string) error {
 	defer cancel() // Ensure cancel is called on all exit paths
 	if deps.Reconciler != nil {
 		go deps.Reconciler.Start(ctx)
+	}
+
+	// M30.1 (ADR-0078) backup scheduler + finalizer + copy worker.
+	// All three goroutines are no-ops without their respective repo
+	// deps; New(...) returns nil and we log + skip start.
+	if sched := backupscheduler.New(backupscheduler.Deps{
+		Schedules: deps.BackupSchedules,
+		Jobs:      deps.BackupJobs,
+		CopyJobs:  deps.BackupCopyJobs,
+		Users:     deps.Users,
+		Agent:     deps.Agent,
+		Log:       log,
+	}); sched != nil {
+		go sched.Start(ctx)
+	} else {
+		log.Info("backup scheduler not started — required deps missing")
+	}
+	if fin := backupfinalizer.New(backupfinalizer.Deps{
+		Jobs:      deps.BackupJobs,
+		Schedules: deps.BackupSchedules,
+		CopyJobs:  deps.BackupCopyJobs,
+		Agent:     deps.Agent,
+		Log:       log,
+	}); fin != nil {
+		go fin.Start(ctx)
+	} else {
+		log.Info("backup finalizer not started — required deps missing")
+	}
+	if cw := backupcopyworker.New(backupcopyworker.Deps{
+		CopyJobs:     deps.BackupCopyJobs,
+		Destinations: deps.BackupDestinations,
+		Log:          log,
+	}); cw != nil {
+		go cw.Start(ctx)
+	} else {
+		log.Info("backup copy worker not started — required deps missing")
 	}
 
 	// M14 notification dispatcher. Starts iff we have Redis + all

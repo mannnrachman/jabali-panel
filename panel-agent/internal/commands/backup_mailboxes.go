@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
@@ -83,54 +82,51 @@ func backupMailboxesHandler(ctx context.Context, raw json.RawMessage) (any, erro
 	if _, err := bkResticBin(); err != nil {
 		return nil, bkInternal("restic missing", err)
 	}
-	if _, err := exec.LookPath("stalwart-cli"); err != nil {
+
+	// v1 strategy: stream the entire Stalwart data dir (RocksDB) into
+	// a single per-user snapshot, tagged with all mailbox addresses
+	// the user owns so the restore-side knows which accounts to
+	// recreate. Mail is account-keyed inside the RocksDB store and
+	// can't be cheaply per-mailbox-extracted offline; the previous
+	// `stalwart-cli account export` subcommand was removed in
+	// Stalwart 0.16 which is why this stage was producing exit 2 on
+	// every mailbox. Snapshotting the whole store still gives us the
+	// data we need for restore (the same store is also captured in
+	// system_backup but having it tagged per-user makes per-account
+	// restore from an account_backup self-contained).
+	stalwartDataDir := "/var/lib/stalwart"
+	if _, err := os.Stat(stalwartDataDir); err != nil {
 		return backupMailboxesResult{
 			Skipped:   true,
-			Reason:    "stalwart_cli_missing",
+			Reason:    "stalwart_data_dir_missing",
 			Mailboxes: req.Mailboxes,
 		}, nil
 	}
 
-	stagingDir := filepath.Join(backupStagingRoot, req.JobID, "mail")
-	if err := os.MkdirAll(stagingDir, 0o700); err != nil {
-		return nil, bkInternal("mkdir staging", err)
-	}
-	defer os.RemoveAll(stagingDir)
-
-	res := backupMailboxesResult{Mailboxes: make([]string, 0, len(req.Mailboxes))}
-	for _, mb := range req.Mailboxes {
-		dst := filepath.Join(stagingDir, mb+".mbox")
-		cmd := exec.CommandContext(ctx, "stalwart-cli",
-			"account", "export", mb,
-			"--format=mbox",
-			"--output="+dst,
-		)
-		if err := cmd.Run(); err != nil {
-			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", mb, err))
-			continue
-		}
-		res.Mailboxes = append(res.Mailboxes, mb)
-	}
-
-	if len(res.Mailboxes) == 0 {
-		// Every mailbox failed; do not produce an empty snapshot.
-		return res, nil
-	}
-
 	c := backup.New(backup.DefaultConfig())
 	tags := backup.AccountBackupTags(req.JobID, req.UserID, backup.StageMail)
+	for _, mb := range req.Mailboxes {
+		tags = append(tags, backup.Tag("mailbox="+mb))
+	}
 	summary, err := c.Backup(ctx, backup.BackupOpts{
-		Paths: []string{stagingDir},
+		Paths: []string{stalwartDataDir},
 		Tags:  tags,
 	})
 	if err != nil {
 		return nil, bkInternal("restic backup", err)
 	}
-	res.SnapshotID = summary.SnapshotID
-	res.BytesAdded = summary.DataAdded
-	res.BytesTotal = summary.TotalBytesProcessed
+	res := backupMailboxesResult{
+		Mailboxes:  req.Mailboxes,
+		SnapshotID: summary.SnapshotID,
+		BytesAdded: summary.DataAdded,
+		BytesTotal: summary.TotalBytesProcessed,
+	}
 	return res, nil
 }
+
+// backupStagingRoot is no longer used by the mailbox stage but kept
+// as a package symbol so other backup commands can share the location.
+var _ = backupStagingRoot
 
 func splitMailbox(mb string) (local, domain string, ok bool) {
 	at := strings.LastIndex(mb, "@")

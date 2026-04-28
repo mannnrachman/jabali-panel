@@ -31,6 +31,9 @@ type BackupHandlerConfig struct {
 	Agent           agent.AgentInterface
 	Jobs            repository.BackupJobRepository
 	Users           repository.UserRepository
+	Databases       repository.DatabaseRepository
+	Domains         repository.DomainRepository
+	Mailboxes       repository.MailboxRepository
 	Log             *slog.Logger
 	StrictRateLimit gin.HandlerFunc
 }
@@ -170,14 +173,26 @@ func (h *backupHandler) createForUser(c *gin.Context) {
 	}
 
 	if h.cfg.Agent != nil {
+		// Fall back to "every database / mailbox the user owns" when
+		// the operator submits empty arrays — that's what the admin
+		// "Create backup" button does. Empty arrays leaving DBs and
+		// mail untouched would silently produce home-only backups.
+		dbs := req.Databases
+		if len(dbs) == 0 {
+			dbs = h.allUserDatabases(c.Request.Context(), user.ID)
+		}
+		mbs := req.Mailboxes
+		if len(mbs) == 0 {
+			mbs = h.allUserMailboxes(c.Request.Context(), user.ID)
+		}
 		params := map[string]any{
 			"job_id":    job.ID,
 			"user_id":   user.ID,
 			"username":  user.Username,
 			"email":     user.Email,
 			"is_admin":  user.IsAdmin,
-			"databases": req.Databases,
-			"mailboxes": req.Mailboxes,
+			"databases": dbs,
+			"mailboxes": mbs,
 		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), backupCallTimeout)
 		defer cancel()
@@ -400,13 +415,110 @@ func (cfg BackupHandlerConfig) logErr(msg string, err error, kv ...any) {
 	cfg.Log.Warn(msg, args...)
 }
 
+// allUserDatabases returns every database name owned by a user.
+// Used by manual + self-shell backup paths to default to "everything"
+// when the operator submits an empty list. Errors are logged + an
+// empty slice returned so a transient repo failure doesn't fall
+// through into a "the agent backed up nothing" silent failure.
+func (cfg BackupHandlerConfig) allUserDatabases(ctx context.Context, userID string) []string {
+	if cfg.Databases == nil {
+		return nil
+	}
+	rows, _, err := cfg.Databases.ListByUserID(ctx, userID, repository.ListOptions{Limit: 10000})
+	if err != nil {
+		cfg.logErr("list databases for backup", err, "user_id", userID)
+		return nil
+	}
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.Name)
+	}
+	return out
+}
+
+// allUserMailboxes returns every mailbox EmailCached for a user, by
+// joining domains.list_by_user → mailboxes.list_by_domain. Errors
+// per-domain are tolerated (warn + skip) so one bad domain doesn't
+// hide the rest of the user's mail.
+func (cfg BackupHandlerConfig) allUserMailboxes(ctx context.Context, userID string) []string {
+	if cfg.Domains == nil || cfg.Mailboxes == nil {
+		return nil
+	}
+	doms, _, err := cfg.Domains.ListByUserID(ctx, userID, repository.ListOptions{Limit: 10000})
+	if err != nil {
+		cfg.logErr("list domains for backup", err, "user_id", userID)
+		return nil
+	}
+	var out []string
+	for _, d := range doms {
+		mbs, _, err := cfg.Mailboxes.ListByDomainID(ctx, d.ID, repository.ListOptions{Limit: 10000})
+		if err != nil {
+			cfg.logErr("list mailboxes for backup", err, "domain_id", d.ID)
+			continue
+		}
+		for _, m := range mbs {
+			out = append(out, m.EmailCached)
+		}
+	}
+	return out
+}
+
+// allUserDatabases shadow that the user-shell handler reaches via h.cfg
+// since it lives on the same config bundle. Same for mailboxes.
+func (h *backupHandler) allUserDatabases(ctx context.Context, userID string) []string {
+	return h.cfg.allUserDatabases(ctx, userID)
+}
+
+func (h *backupHandler) allUserMailboxes(ctx context.Context, userID string) []string {
+	return h.cfg.allUserMailboxes(ctx, userID)
+}
+
 // MeBackupsHandlerConfig wires the user-shell endpoints. Auth check
 // uses ginctx.Claims to scope the request to the caller's own user_id.
 type MeBackupsHandlerConfig struct {
-	Agent agent.AgentInterface
-	Jobs  repository.BackupJobRepository
-	Users repository.UserRepository
-	Log   *slog.Logger
+	Agent     agent.AgentInterface
+	Jobs      repository.BackupJobRepository
+	Users     repository.UserRepository
+	Databases repository.DatabaseRepository
+	Domains   repository.DomainRepository
+	Mailboxes repository.MailboxRepository
+	Log       *slog.Logger
+}
+
+func (cfg MeBackupsHandlerConfig) allUserDatabases(ctx context.Context, userID string) []string {
+	if cfg.Databases == nil {
+		return nil
+	}
+	rows, _, err := cfg.Databases.ListByUserID(ctx, userID, repository.ListOptions{Limit: 10000})
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.Name)
+	}
+	return out
+}
+
+func (cfg MeBackupsHandlerConfig) allUserMailboxes(ctx context.Context, userID string) []string {
+	if cfg.Domains == nil || cfg.Mailboxes == nil {
+		return nil
+	}
+	doms, _, err := cfg.Domains.ListByUserID(ctx, userID, repository.ListOptions{Limit: 10000})
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, d := range doms {
+		mbs, _, err := cfg.Mailboxes.ListByDomainID(ctx, d.ID, repository.ListOptions{Limit: 10000})
+		if err != nil {
+			continue
+		}
+		for _, m := range mbs {
+			out = append(out, m.EmailCached)
+		}
+	}
+	return out
 }
 
 // RegisterMeBackupRoutes mounts the user-shell self-backup endpoints
@@ -451,11 +563,13 @@ func (h *meBackupHandler) create(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), backupCallTimeout)
 		defer cancel()
 		params := map[string]any{
-			"job_id":   job.ID,
-			"user_id":  user.ID,
-			"username": user.Username,
-			"email":    user.Email,
-			"is_admin": user.IsAdmin,
+			"job_id":    job.ID,
+			"user_id":   user.ID,
+			"username":  user.Username,
+			"email":     user.Email,
+			"is_admin":  user.IsAdmin,
+			"databases": h.cfg.allUserDatabases(c.Request.Context(), user.ID),
+			"mailboxes": h.cfg.allUserMailboxes(c.Request.Context(), user.ID),
 		}
 		if _, err := h.cfg.Agent.Call(ctx, "backup.create", params); err != nil {
 			_ = h.cfg.Jobs.MarkFinished(c.Request.Context(), job.ID, models.BackupJobStatusFailed,

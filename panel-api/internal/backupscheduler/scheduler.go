@@ -46,6 +46,9 @@ type Deps struct {
 	Jobs      repository.BackupJobRepository
 	CopyJobs  repository.BackupCopyJobRepository
 	Users     repository.UserRepository
+	Databases repository.DatabaseRepository
+	Domains   repository.DomainRepository
+	Mailboxes repository.MailboxRepository
 	Agent     agent.AgentInterface
 	Log       *slog.Logger
 }
@@ -243,12 +246,16 @@ func (s *Scheduler) runOneAccountBackup(ctx context.Context, sched models.Backup
 	}
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	dbs := userDatabases(callCtx, s.deps, user.ID, logger)
+	mbs := userMailboxes(callCtx, s.deps, user.ID, logger)
 	params := map[string]any{
-		"job_id":   jobID,
-		"user_id":  user.ID,
-		"username": user.Username,
-		"email":    user.Email,
-		"is_admin": user.IsAdmin,
+		"job_id":    jobID,
+		"user_id":   user.ID,
+		"username":  user.Username,
+		"email":     user.Email,
+		"is_admin":  user.IsAdmin,
+		"databases": dbs,
+		"mailboxes": mbs,
 	}
 	if _, err := s.deps.Agent.Call(callCtx, "backup.create", params); err != nil {
 		if isAgentConflict(err) {
@@ -277,6 +284,52 @@ func isAgentConflict(err error) bool {
 	return strings.Contains(msg, "already running") ||
 		strings.Contains(msg, "conflict") ||
 		strings.Contains(msg, "job_already_active")
+}
+
+// userDatabases returns the names of every hosted database belonging
+// to the user. Errors are logged + an empty slice returned so a
+// transient DB hiccup in the scheduler doesn't abort the whole tick.
+func userDatabases(ctx context.Context, deps Deps, userID string, logger *slog.Logger) []string {
+	if deps.Databases == nil {
+		return nil
+	}
+	dbs, _, err := deps.Databases.ListByUserID(ctx, userID, repository.ListOptions{Limit: 10000})
+	if err != nil {
+		logger.Warn("list databases for backup failed", "err", err)
+		return nil
+	}
+	out := make([]string, 0, len(dbs))
+	for _, d := range dbs {
+		out = append(out, d.Name)
+	}
+	return out
+}
+
+// userMailboxes returns the email addresses of every mailbox under
+// every domain owned by the user. Two-step: domain.list_by_user →
+// mailbox.list_by_domain. Errors per-domain are tolerated.
+func userMailboxes(ctx context.Context, deps Deps, userID string, logger *slog.Logger) []string {
+	if deps.Domains == nil || deps.Mailboxes == nil {
+		return nil
+	}
+	doms, _, err := deps.Domains.ListByUserID(ctx, userID, repository.ListOptions{Limit: 10000})
+	if err != nil {
+		logger.Warn("list domains for backup failed", "err", err)
+		return nil
+	}
+	var out []string
+	for _, d := range doms {
+		mbs, _, err := deps.Mailboxes.ListByDomainID(ctx, d.ID, repository.ListOptions{Limit: 10000})
+		if err != nil {
+			logger.Warn("list mailboxes for backup failed",
+				"domain_id", d.ID, "err", err)
+			continue
+		}
+		for _, m := range mbs {
+			out = append(out, m.EmailCached)
+		}
+	}
+	return out
 }
 
 func strDeref(p *string) string {

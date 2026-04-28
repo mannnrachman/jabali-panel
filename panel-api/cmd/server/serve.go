@@ -518,6 +518,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		Jobs:      deps.BackupJobs,
 		CopyJobs:  deps.BackupCopyJobs,
 		Users:     deps.Users,
+		Databases: deps.Databases,
+		Domains:   deps.Domains,
+		Mailboxes: deps.Mailboxes,
 		Agent:     deps.Agent,
 		Log:       log,
 	}); sched != nil {

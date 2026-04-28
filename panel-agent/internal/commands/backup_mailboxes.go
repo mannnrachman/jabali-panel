@@ -211,7 +211,16 @@ func writeMailBodiesTarball(ctx context.Context, dst string) error {
 	if _, err := os.Stat(dataDir); err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, "tar", "-cf", dst, "-C", filepath.Dir(dataDir), filepath.Base(dataDir))
+	// Exclude RocksDB's debug log (LOG, LOG.old.*) and the in-process
+	// LOCK sentinel — they're runtime artefacts, not data, and balloon
+	// the snapshot by megabytes per backup. Everything else (.sst,
+	// .blob, .log = WAL, MANIFEST, OPTIONS, CURRENT, IDENTITY) is
+	// load-bearing for restore.
+	cmd := exec.CommandContext(ctx, "tar", "-cf", dst,
+		"--exclude=stalwart/LOG",
+		"--exclude=stalwart/LOG.old.*",
+		"--exclude=stalwart/LOCK",
+		"-C", filepath.Dir(dataDir), filepath.Base(dataDir))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tar bodies: %w (%s)", err, strings.TrimSpace(string(out)))

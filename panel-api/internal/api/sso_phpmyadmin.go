@@ -168,25 +168,57 @@ func (h *ssoPhpMyAdminHandler) auditLog(ctx context.Context, userID, databaseID,
 
 // validateSameOrigin checks that Origin or Referer header matches the request host.
 // Rejects cross-origin state-changing requests.
+//
+// Compares hostname-only (not full Origin string) because nginx's
+// `proxy_set_header Host $host` strips the port from Request.Host —
+// browsers send Origin with the visible port (`:8443`), so a strict
+// string comparison always fails on the panel's nginx-fronted topology.
+// Hostname + scheme is the actual same-origin invariant we need.
 func (h *ssoPhpMyAdminHandler) validateSameOrigin(c *gin.Context) bool {
 	origin := c.GetHeader("Origin")
 	referer := c.GetHeader("Referer")
 
-	// If Origin header is present (sent by browsers on state-changing requests),
-	// verify it matches the target host.
 	if origin != "" {
-		return origin == h.getOrigin(c)
+		return h.urlMatchesHost(c, origin)
 	}
-
-	// Fallback to Referer header.
 	if referer != "" {
-		return h.refererMatchesHost(c, referer)
+		return h.urlMatchesHost(c, referer)
 	}
-
-	// No origin/referer headers. Conservative: reject.
-	// (POST from old browsers or curl without headers is less critical than
-	// blocking cross-origin attacks.)
+	// No origin/referer. Conservative: reject. POST from old browsers
+	// or curl without headers is less critical than blocking
+	// cross-origin attacks.
 	return false
+}
+
+// urlMatchesHost parses raw and compares its hostname (port stripped)
+// to c.Request.Host's hostname (also port-stripped). Used for both
+// Origin and Referer matching.
+func (h *ssoPhpMyAdminHandler) urlMatchesHost(c *gin.Context, raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return hostnameOf(u.Host) == hostnameOf(c.Request.Host)
+}
+
+// hostnameOf strips any trailing :port from a Host string. Returns the
+// hostname half. Bracket-wrapped IPv6 literals are preserved
+// (`[::1]:8080` → `[::1]`).
+func hostnameOf(host string) string {
+	if host == "" {
+		return ""
+	}
+	// IPv6 literal in brackets: keep brackets, strip the port after them.
+	if host[0] == '[' {
+		if end := strings.LastIndex(host, "]"); end != -1 {
+			return host[:end+1]
+		}
+		return host
+	}
+	if idx := strings.LastIndex(host, ":"); idx != -1 {
+		return host[:idx]
+	}
+	return host
 }
 
 func (h *ssoPhpMyAdminHandler) getOrigin(c *gin.Context) string {
@@ -203,10 +235,8 @@ func (h *ssoPhpMyAdminHandler) getOrigin(c *gin.Context) string {
 	return scheme + "://" + c.Request.Host
 }
 
+// refererMatchesHost is retained for backwards compatibility with any
+// downstream tests; new code should call urlMatchesHost.
 func (h *ssoPhpMyAdminHandler) refererMatchesHost(c *gin.Context, referer string) bool {
-	u, err := url.Parse(referer)
-	if err != nil {
-		return false
-	}
-	return u.Host == c.Request.Host
+	return h.urlMatchesHost(c, referer)
 }

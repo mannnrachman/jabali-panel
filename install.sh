@@ -6305,6 +6305,26 @@ print(sql[0]["id"] if sql else "")' 2>/dev/null || true)"
     fi
   fi
 
+  # SpamSettings convergence — same pattern as the Directory query-field
+  # convergence above. The base apply-plan's `update x:SpamSettings`
+  # entry only lands on a fresh Stalwart instance; on idempotent re-
+  # installs (skip_apply=1 because :8446 is already serving) the entire
+  # plan is skipped, so newly-pinned spam-filter rules never reach the
+  # singleton. Run an explicit update here every install/update run.
+  # All fields are mutable per `stalwart-cli describe SpamSettings`, so
+  # this is safe to re-issue.
+  _log "converging Stalwart SpamSettings (pinned rules URL + score thresholds)"
+  local spam_patch
+  spam_patch='{"enable":true,"trustContacts":true,"trustReplies":true,"scoreSpam":5.0,"scoreReject":15.0,"scoreDiscard":20.0,"spamFilterRulesUrl":"file:///opt/stalwart/share/spam-filter-rules.json.gz"}'
+  if STALWART_URL="http://127.0.0.1:${jmap_port}" \
+    STALWART_USER="admin" \
+    STALWART_PASSWORD="$admin_token" \
+    /usr/local/bin/stalwart-cli update x:SpamSettings --json "$spam_patch" >/dev/null 2>&1; then
+    _ok "Stalwart SpamSettings converged (rules pinned to file:///opt/stalwart/share/spam-filter-rules.json.gz)"
+  else
+    _warn "Stalwart SpamSettings update failed — spam filter will keep current settings (probably default github URL); inspect with 'stalwart-cli get x:SpamSettings --json'"
+  fi
+
   # Delete factory NetworkListeners ([::]:8080, [::]:443) before restart.
   # stalwart-cli apply is create-only; only an explicit API delete removes
   # factory-seeded objects from RocksDB. Must happen while Stalwart is

@@ -29,6 +29,7 @@ import {
 import { useEffect, useState } from "react";
 
 import { apiClient } from "../../../apiClient";
+import { extractApiError } from "../../../apiErrors";
 
 interface BackupSchedule {
   id: string;
@@ -158,7 +159,7 @@ function ScheduleDrawer({
       }
       onSaved();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Save failed");
+      message.error(extractApiError(err, "Save failed"));
     } finally {
       setBusy(false);
     }
@@ -294,7 +295,7 @@ export function SchedulesTab() {
       setDestinations(d.data.data ?? []);
       setUsers(u.data.data ?? []);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Load failed");
+      message.error(extractApiError(err, "Load failed"));
     } finally {
       setLoading(false);
     }
@@ -315,7 +316,7 @@ export function SchedulesTab() {
           message.success("Schedule deleted");
           void reload();
         } catch (err) {
-          message.error(err instanceof Error ? err.message : "Delete failed");
+          message.error(extractApiError(err, "Delete failed"));
         }
       },
     });
@@ -327,7 +328,7 @@ export function SchedulesTab() {
       message.success("Schedule queued for the next tick (within 60s)");
       void reload();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Run-now failed");
+      message.error(extractApiError(err, "Run-now failed"));
     }
   };
 

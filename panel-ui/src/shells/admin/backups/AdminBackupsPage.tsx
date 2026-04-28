@@ -7,6 +7,7 @@ import { useState } from "react";
 
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { apiClient } from "../../../apiClient";
+import { extractApiError } from "../../../apiErrors";
 import { useTableURL } from "../../../hooks/useTableURL";
 import { CreateBackupDrawer } from "./CreateBackupDrawer";
 import { DestinationsTab } from "./DestinationsTab";
@@ -83,7 +84,7 @@ export const AdminBackupsPage = () => {
       message.success(`Cancellation requested for ${row.id}`);
       query.refetch();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Cancel failed");
+      message.error(extractApiError(err, "Cancel failed"));
     }
   };
 

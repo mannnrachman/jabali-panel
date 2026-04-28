@@ -7,6 +7,7 @@ import { ServerOutlined } from "@icons";
 import { useState } from "react";
 
 import { apiClient } from "../../../apiClient";
+import { extractApiError } from "../../../apiErrors";
 import { useListQuery } from "../../../hooks/useQueries";
 
 type SystemBackup = {
@@ -51,7 +52,7 @@ export const SystemBackupsTab = () => {
       message.success("System backup queued");
       query.refetch();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Create failed");
+      message.error(extractApiError(err, "Create failed"));
     } finally {
       setSubmitting(false);
     }

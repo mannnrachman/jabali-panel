@@ -25,6 +25,7 @@ import {
 import { useState } from "react";
 
 import { apiClient } from "../../../apiClient";
+import { extractApiError } from "../../../apiErrors";
 
 interface RevealResponse {
   status: string;
@@ -52,7 +53,7 @@ export function EncryptionKeyCard() {
       setSecret(resp.data);
       setRevealed(true);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "reveal failed");
+      message.error(extractApiError(err, "reveal failed"));
     } finally {
       setBusy(false);
     }

@@ -35,6 +35,7 @@ import {
 import { useEffect, useState } from "react";
 
 import { apiClient } from "../../../apiClient";
+import { extractApiError } from "../../../apiErrors";
 
 type BackendKind = "local" | "sftp" | "s3" | "b2" | "azure" | "gcs" | "rest";
 
@@ -122,7 +123,7 @@ function DestinationDrawer({ open, editing, onClose, onSaved }: DestinationDrawe
       );
       setSshKeys(resp.data.data ?? []);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "ssh-key list failed");
+      message.error(extractApiError(err, "ssh-key list failed"));
     } finally {
       setKeysLoading(false);
     }
@@ -204,7 +205,7 @@ function DestinationDrawer({ open, editing, onClose, onSaved }: DestinationDrawe
       }
       onSaved();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Save failed");
+      message.error(extractApiError(err, "Save failed"));
     } finally {
       setBusy(false);
     }
@@ -453,7 +454,7 @@ function GenerateKeyModal({ open, onClose, onGenerated }: GenerateKeyModalProps)
         has_passphrase: false,
       });
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "key generation failed");
+      message.error(extractApiError(err, "key generation failed"));
     } finally {
       setBusy(false);
     }
@@ -556,7 +557,7 @@ export function DestinationsTab() {
       );
       setRows(resp.data.data ?? []);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Load failed");
+      message.error(extractApiError(err, "Load failed"));
     } finally {
       setLoading(false);
     }
@@ -580,7 +581,7 @@ export function DestinationsTab() {
           message.success(`Deleted ${row.name}`);
           void reload();
         } catch (err) {
-          message.error(err instanceof Error ? err.message : "Delete failed");
+          message.error(extractApiError(err, "Delete failed"));
         }
       },
     });
@@ -598,7 +599,7 @@ export function DestinationsTab() {
       message.success(detail ? `OK — ${detail}` : "Connection OK");
     } catch (err) {
       hide();
-      message.error(err instanceof Error ? err.message : "Test failed");
+      message.error(extractApiError(err, "Test failed"));
     }
   };
 

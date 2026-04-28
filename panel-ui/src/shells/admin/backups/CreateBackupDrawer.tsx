@@ -6,6 +6,7 @@ import { Alert, Button, Drawer, Form, Grid, Input, Select, Space, message } from
 import { useEffect, useState } from "react";
 
 import { apiClient } from "../../../apiClient";
+import { extractApiError } from "../../../apiErrors";
 import { useListQuery } from "../../../hooks/useQueries";
 
 type User = {
@@ -58,7 +59,7 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
       message.success("Backup queued");
       onCreated();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "Create failed");
+      message.error(extractApiError(err, "Create failed"));
     } finally {
       setSubmitting(false);
     }

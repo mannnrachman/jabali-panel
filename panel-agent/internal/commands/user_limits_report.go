@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
@@ -39,10 +38,6 @@ type userLimitsReportParams struct {
 type diskReport struct {
 	UsedKB  uint64 `json:"used_kb"`
 	LimitKB uint64 `json:"limit_kb"`
-	// HostFSTotalKB is the total capacity of QuotaMount's filesystem
-	// (from statfs). Lets the UI render a "used / total disk" bar even
-	// when LimitKB is 0 (no quota set). Best-effort — 0 on statfs error.
-	HostFSTotalKB uint64 `json:"host_fs_total_kb,omitempty"`
 }
 
 type memReport struct {
@@ -126,17 +121,6 @@ func userLimitsReportHandler(ctx context.Context, params json.RawMessage) (any, 
 					resp.Disk.UsedKB = du
 				}
 			}
-		}
-		// statfs the quota mount to expose host-FS total. UI uses this
-		// as the denominator for the disk progress bar when no per-user
-		// quota is set — always renders a bar instead of "Unlimited".
-		var st syscall.Statfs_t
-		if err := syscall.Statfs(p.QuotaMount, &st); err == nil && st.Bsize > 0 {
-			totalKB := (uint64(st.Blocks) * uint64(st.Bsize)) / 1024
-			if resp.Disk == nil {
-				resp.Disk = &diskReport{}
-			}
-			resp.Disk.HostFSTotalKB = totalKB
 		}
 	}
 

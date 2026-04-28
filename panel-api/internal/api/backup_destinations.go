@@ -7,17 +7,17 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	internalbackup "git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
@@ -31,14 +31,15 @@ import (
 const CredentialsDir = "/etc/jabali-panel/restic-remotes"
 
 type BackupDestinationsConfig struct {
-	Repo repository.BackupDestinationRepository
+	Repo  repository.BackupDestinationRepository
+	Agent agent.AgentInterface
 }
 
 func RegisterBackupDestinationRoutes(rg *gin.RouterGroup, cfg BackupDestinationsConfig) {
 	if cfg.Repo == nil {
 		return
 	}
-	h := &backupDestinationHandler{repo: cfg.Repo}
+	h := &backupDestinationHandler{repo: cfg.Repo, agent: cfg.Agent}
 	admin := rg.Group("/admin", middleware.RequireAdmin())
 	admin.GET("/backup-destinations", h.list)
 	admin.GET("/backup-destinations/:id", h.get)
@@ -49,7 +50,42 @@ func RegisterBackupDestinationRoutes(rg *gin.RouterGroup, cfg BackupDestinations
 }
 
 type backupDestinationHandler struct {
-	repo repository.BackupDestinationRepository
+	repo  repository.BackupDestinationRepository
+	agent agent.AgentInterface
+}
+
+// writeCreds dispatches the env-file write to the agent (root). panel-api
+// runs as the jabali user with ProtectSystem=strict and cannot touch
+// /etc/jabali-panel/. Returns the on-disk path the agent wrote.
+func (h *backupDestinationHandler) writeCreds(ctx context.Context, destID string, env map[string]string) (string, error) {
+	if h.agent == nil {
+		return "", errors.New("agent unavailable")
+	}
+	raw, err := h.agent.Call(ctx, "backup.dest.creds_write", map[string]any{
+		"dest_id": destID, "env": env,
+	})
+	if err != nil {
+		return "", err
+	}
+	var resp struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return "", fmt.Errorf("parse creds_write reply: %w", err)
+	}
+	return resp.Path, nil
+}
+
+// deleteCreds dispatches the file removal to the agent. Best-effort —
+// caller treats errors as non-fatal because the row is being deleted
+// regardless.
+func (h *backupDestinationHandler) deleteCreds(ctx context.Context, destID string) {
+	if h.agent == nil {
+		return
+	}
+	_, _ = h.agent.Call(ctx, "backup.dest.creds_delete", map[string]any{
+		"dest_id": destID,
+	})
 }
 
 type backupDestinationDTO struct {
@@ -214,7 +250,7 @@ func (h *backupDestinationHandler) create(c *gin.Context) {
 		d.Enabled = *req.Enabled
 	}
 	if len(credsEnv) > 0 {
-		path, err := writeCredentialsEnvFile(id, credsEnv)
+		path, err := h.writeCreds(c.Request.Context(), id, credsEnv)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "creds_write_failed", "detail": err.Error()})
 			return
@@ -224,7 +260,7 @@ func (h *backupDestinationHandler) create(c *gin.Context) {
 	if err := h.repo.Create(c.Request.Context(), d); err != nil {
 		// Roll back creds file on DB failure.
 		if d.CredentialsRef != nil {
-			_ = os.Remove(*d.CredentialsRef)
+			h.deleteCreds(c.Request.Context(), id)
 		}
 		if errors.Is(err, repository.ErrConflict) {
 			c.JSON(http.StatusConflict, gin.H{"status": "error", "error": "name_in_use"})
@@ -329,7 +365,7 @@ func (h *backupDestinationHandler) update(c *gin.Context) {
 	}
 	if req.ClearCreds {
 		if d.CredentialsRef != nil {
-			_ = os.Remove(*d.CredentialsRef)
+			h.deleteCreds(c.Request.Context(), d.ID)
 		}
 		d.CredentialsRef = nil
 	}
@@ -342,7 +378,7 @@ func (h *backupDestinationHandler) update(c *gin.Context) {
 		credsEnv["SSHPASS"] = req.SFTPPassword
 	}
 	if len(credsEnv) > 0 {
-		path, err := writeCredentialsEnvFile(d.ID, credsEnv)
+		path, err := h.writeCreds(c.Request.Context(), d.ID, credsEnv)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "creds_write_failed", "detail": err.Error()})
 			return
@@ -372,7 +408,7 @@ func (h *backupDestinationHandler) delete(c *gin.Context) {
 		return
 	}
 	if d.CredentialsRef != nil {
-		_ = os.Remove(*d.CredentialsRef)
+		h.deleteCreds(c.Request.Context(), d.ID)
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
@@ -396,34 +432,47 @@ func (h *backupDestinationHandler) test(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "detail": "local destination — no remote test"})
 		return
 	}
-	var extra []string
-	if d.CredentialsRef != nil && *d.CredentialsRef != "" {
-		extra, err = internalbackup.LoadEnvFile(*d.CredentialsRef)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "creds_load_failed", "detail": err.Error()})
-			return
-		}
+	if h.agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "agent_unavailable"})
+		return
 	}
-	stdout, stderr, err := internalbackup.SnapshotsRemote(
-		c.Request.Context(),
-		nil,
-		d.URL,
-		internalbackup.DefaultPasswordFile,
-		extra,
-		backupwrapperhelpers.ResticOptionsFor(d),
-	)
+	var credsRef string
+	if d.CredentialsRef != nil {
+		credsRef = *d.CredentialsRef
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 60_000_000_000)
+	defer cancel()
+	raw, err := h.agent.Call(ctx, "backup.dest.test", map[string]any{
+		"url":             d.URL,
+		"credentials_ref": credsRef,
+		"extra_options":   backupwrapperhelpers.ResticOptionsFor(d),
+	})
 	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "agent_call", "detail": err.Error()})
+		return
+	}
+	var resp struct {
+		Status        string `json:"status"`
+		StdoutPreview string `json:"stdout_preview,omitempty"`
+		Stderr        string `json:"stderr,omitempty"`
+		Detail        string `json:"detail,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "agent_reply_parse"})
+		return
+	}
+	if resp.Status != "ok" {
 		c.JSON(http.StatusBadGateway, gin.H{
 			"status": "error",
 			"error":  "restic_test_failed",
-			"detail": err.Error(),
-			"stderr": strings.TrimSpace(string(stderr)),
+			"detail": resp.Detail,
+			"stderr": resp.Stderr,
 		})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"status": "ok",
-		"stdout_preview": firstLine(string(stdout)),
+		"status":         "ok",
+		"stdout_preview": resp.StdoutPreview,
 	})
 }
 
@@ -474,71 +523,3 @@ func validateURLForKind(kind, url string) error {
 	return nil
 }
 
-// writeCredentialsEnvFile writes <CredentialsDir>/<destID>.env atomically
-// as 0600 root:root. Caller is responsible for cleaning up the file on
-// rollback. Existing file is replaced via rename().
-func writeCredentialsEnvFile(destID string, env map[string]string) (string, error) {
-	if err := os.MkdirAll(CredentialsDir, 0o700); err != nil {
-		return "", fmt.Errorf("mkdir %s: %w", CredentialsDir, err)
-	}
-	final := filepath.Join(CredentialsDir, destID+".env")
-	tmp, err := os.CreateTemp(CredentialsDir, destID+".env.*")
-	if err != nil {
-		return "", fmt.Errorf("create temp env: %w", err)
-	}
-	cleanup := func() { _ = os.Remove(tmp.Name()) }
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return "", fmt.Errorf("chmod env: %w", err)
-	}
-	for k, v := range env {
-		if !validEnvKey(k) {
-			_ = tmp.Close()
-			cleanup()
-			return "", fmt.Errorf("invalid env key %q", k)
-		}
-		if strings.ContainsAny(v, "\n\r") {
-			_ = tmp.Close()
-			cleanup()
-			return "", fmt.Errorf("env value for %q contains newline", k)
-		}
-		if _, err := fmt.Fprintf(tmp, "%s=%s\n", k, v); err != nil {
-			_ = tmp.Close()
-			cleanup()
-			return "", fmt.Errorf("write env: %w", err)
-		}
-	}
-	if err := tmp.Close(); err != nil {
-		cleanup()
-		return "", fmt.Errorf("close env: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), final); err != nil {
-		cleanup()
-		return "", fmt.Errorf("rename env: %w", err)
-	}
-	return final, nil
-}
-
-func validEnvKey(k string) bool {
-	if k == "" {
-		return false
-	}
-	for i, r := range k {
-		switch {
-		case r >= 'A' && r <= 'Z':
-		case r == '_':
-		case i > 0 && r >= '0' && r <= '9':
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-func firstLine(s string) string {
-	if i := strings.Index(s, "\n"); i >= 0 {
-		return s[:i]
-	}
-	return s
-}

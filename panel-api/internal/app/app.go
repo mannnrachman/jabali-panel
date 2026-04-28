@@ -569,11 +569,16 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// M30.1 (ADR-0078): backup destinations + schedules.
 		if deps.BackupDestinations != nil {
 			api.RegisterBackupDestinationRoutes(v1, api.BackupDestinationsConfig{
-				Repo: deps.BackupDestinations,
+				Repo:  deps.BackupDestinations,
+				Agent: deps.Agent,
 			})
 			// SSH-key listing/generate endpoints feed the SFTP key
-			// dropdown on the destinations drawer.
-			api.RegisterSystemSSHKeysRoutes(v1)
+			// dropdown on the destinations drawer. Both ops run as
+			// root via the agent (panel-api can't read /root/.ssh
+			// or write /etc/jabali-panel/restic-remotes/).
+			api.RegisterSystemSSHKeysRoutes(v1, api.SystemSSHKeysConfig{
+				Agent: deps.Agent,
+			})
 		}
 		if deps.BackupSchedules != nil && deps.BackupDestinations != nil {
 			api.RegisterBackupScheduleRoutes(v1, api.BackupSchedulesConfig{

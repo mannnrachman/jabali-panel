@@ -41,7 +41,22 @@ func newUpdateCmd() *cobra.Command {
      the next update retries automatically (self-heal).
   3. If HEAD matches last-built-sha: print "Already up to date" and exit.
      Use --force (-f) to run the rebuild + restart cycle anyway.`,
-		RunE: runUpdate,
+		// SilenceUsage so a runtime failure (apt 404, ENOTEMPTY race,
+		// dirty migration) doesn't trigger cobra's full usage dump on
+		// the operator's terminal — they want the error and a next
+		// move, not the help text.
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			err := runUpdate(cmd, args)
+			if err != nil {
+				// Surface the repair hint directly under the failing
+				// step. The error itself is printed by cobra after
+				// RunE returns; the hint goes to stderr first so it's
+				// adjacent to the error in the operator's scrollback.
+				fmt.Fprint(os.Stderr, repairHint())
+			}
+			return err
+		},
 	}
 	cmd.Flags().BoolP("force", "f", false,
 		"Run the full rebuild/restart cycle even when git pull found no new commits")

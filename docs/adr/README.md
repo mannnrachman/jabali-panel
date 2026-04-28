@@ -65,6 +65,7 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0074](0074-lazy-service-alert-suppression.md) | Suppress critical alert on inactive + disabled services (lazy-started units; renumbered 2026-04-28 from 0067) | Accepted |
 | [0075](0075-backup-restore-restic.md) | M30 Backup & Restore: restic-backed, single shared repo | Accepted |
 | [0076](0076-dnssec-per-domain-pdnsutil.md) | M15 Per-domain DNSSEC via pdnsutil shell-out (renumbered 2026-04-28 from 0057) | Accepted |
+| [0077](0077-jabali-repair-self-heal.md) | `jabali repair` — host-state self-heal subcommand | Accepted |
 
 ## Decision Categories
 

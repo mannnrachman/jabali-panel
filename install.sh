@@ -6066,35 +6066,36 @@ install_stalwart_apply() {
 _verify_spam_filter_loaded() {
   local admin_token="$1"
   local expected_url="file:///opt/stalwart/share/spam-filter-rules.json.gz"
+  # `get x:SpamSettings` (no id) — singletons default to id "singleton"
+  # per stalwart-cli help. `query` rejects singletons with
+  # "SpamSettings is a singleton and does not support query".
   local out
   out="$(STALWART_URL="http://127.0.0.1:8446" \
     STALWART_USER="admin" \
     STALWART_PASSWORD="$admin_token" \
-    /usr/local/bin/stalwart-cli query x:SpamSettings --json 2>&1 || true)"
-  if [[ -z "$out" ]] || [[ "$out" == "[]" ]]; then
-    _warn "spam filter smoke: SpamSettings query returned empty — apply-plan may not have landed; check 'journalctl -u jabali-stalwart'"
+    /usr/local/bin/stalwart-cli get x:SpamSettings --json 2>&1 || true)"
+  if [[ -z "$out" ]] || ! printf '%s' "$out" | python3 -c 'import sys,json; json.load(sys.stdin)' 2>/dev/null; then
+    _warn "spam filter smoke: SpamSettings get returned non-JSON — apply-plan may not have landed; check 'journalctl -u jabali-stalwart' (raw: ${out:0:120})"
     return
   fi
   local enable rules_url
   enable="$(printf '%s\n' "$out" | python3 -c \
     'import sys,json
 try:
-    d=json.load(sys.stdin)
-    obj = d[0] if isinstance(d,list) and d else (d if isinstance(d,dict) else {})
+    obj=json.load(sys.stdin)
     print(str(obj.get("enable","")).lower())
 except Exception: pass' 2>/dev/null || true)"
   rules_url="$(printf '%s\n' "$out" | python3 -c \
     'import sys,json
 try:
-    d=json.load(sys.stdin)
-    obj = d[0] if isinstance(d,list) and d else (d if isinstance(d,dict) else {})
+    obj=json.load(sys.stdin)
     print(obj.get("spamFilterRulesUrl",""))
 except Exception: pass' 2>/dev/null || true)"
   if [[ "$enable" != "true" ]]; then
     _warn "spam filter smoke: enable=${enable:-<unset>} (expected 'true')"
   fi
   if [[ "$rules_url" != "$expected_url" ]]; then
-    _warn "spam filter smoke: rules URL '${rules_url:-<unset>}' (expected '${expected_url}')"
+    _warn "spam filter smoke: rules URL '${rules_url:-<unset>}' (expected '${expected_url}') — apply-plan SpamSettings update may not have stuck; try 'stalwart-cli get x:SpamSettings --json'"
   fi
   if [[ "$enable" == "true" ]] && [[ "$rules_url" == "$expected_url" ]]; then
     _ok "spam filter smoke: enabled + rules pinned to $expected_url"

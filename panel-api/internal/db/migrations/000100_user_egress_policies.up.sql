@@ -24,14 +24,14 @@
 -- migrations stay schema-only (memory: feedback_migration_data_seed_ordering).
 
 CREATE TABLE IF NOT EXISTS user_egress_policies (
-  user_id              VARCHAR(26)  NOT NULL,
+  user_id              CHAR(26)     NOT NULL,
   state                ENUM('off','learning','enforced') NOT NULL DEFAULT 'enforced',
   allowed_extra        JSON         NOT NULL,
   drop_count_24h       BIGINT UNSIGNED NOT NULL DEFAULT 0,
   drop_count_at        TIMESTAMP    NULL,
   learning_started_at  TIMESTAMP    NULL,
   updated_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  updated_by           VARCHAR(26)  NULL,
+  updated_by           CHAR(26)     NULL,
   PRIMARY KEY (user_id),
   KEY idx_user_egress_state (state),
   KEY idx_user_egress_drops (drop_count_24h),

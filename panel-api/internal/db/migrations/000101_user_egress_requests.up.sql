@@ -11,14 +11,14 @@
 -- hold the audit metadata; created_at is preserved for queue ordering.
 
 CREATE TABLE IF NOT EXISTS user_egress_requests (
-  id           VARCHAR(26)  NOT NULL,
-  user_id      VARCHAR(26)  NOT NULL,
+  id           CHAR(26)     NOT NULL,
+  user_id      CHAR(26)     NOT NULL,
   cidr         VARCHAR(43)  NOT NULL,
   port         INT UNSIGNED NULL,
   protocol     ENUM('tcp','udp') NOT NULL DEFAULT 'tcp',
   reason       VARCHAR(500) NOT NULL,
   status       ENUM('pending','approved','denied') NOT NULL DEFAULT 'pending',
-  reviewed_by  VARCHAR(26)  NULL,
+  reviewed_by  CHAR(26)     NULL,
   decided_at   TIMESTAMP    NULL,
   created_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),

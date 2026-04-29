@@ -39,6 +39,7 @@ import {
   Globe,
   Grip,
   HardDrive,
+  HardDriveDownload,
   Home,
   Inbox,
   Bell,
@@ -65,6 +66,7 @@ import {
   Power,
   RefreshCw,
   Redo2,
+  RotateCcw,
   RotateCw,
   Save,
   Search,
@@ -148,6 +150,7 @@ export const LockOutlined = shim(Lock);
 export const CodeOutlined = shim(Code);
 export const DatabaseOutlined = shim(Database);
 export const HddOutlined = shim(HardDrive);
+export const HardDriveDownloadOutlined = shim(HardDriveDownload);
 export const BgColorsOutlined = shim(Palette);
 export const FolderOutlined = shim(Folder);
 export const AppstoreOutlined = shim(LayoutGrid);
@@ -176,6 +179,7 @@ export const SaveOutlined = shim(Save);
 export const SearchOutlined = shim(Search);
 export const ReloadOutlined = shim(RefreshCw);
 export const SyncOutlined = shim(RotateCw);
+export const RotateCcwOutlined = shim(RotateCcw);
 export const RedoOutlined = shim(Redo2);
 export const ApiOutlined = shim(Plug);
 export const BookOutlined = shim(Book);

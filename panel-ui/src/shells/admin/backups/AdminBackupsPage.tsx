@@ -5,15 +5,14 @@
 import { Button, Card, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import {
   CalendarCheckOutlined,
-  CloudServerOutlined,
   DownloadOutlined,
   FileTextOutlined,
+  HardDriveDownloadOutlined,
   KeyOutlined,
   PlusOutlined,
+  RotateCcwOutlined,
   SaveOutlined,
-  ServerOutlined,
   SettingOutlined,
-  TeamOutlined,
 } from "@icons";
 import { useEffect, useState } from "react";
 
@@ -29,7 +28,6 @@ import { CreateBackupDrawer } from "./CreateBackupDrawer";
 import { DestinationsTab } from "./DestinationsTab";
 import { EncryptionKeyCard } from "./EncryptionKeyCard";
 import { SchedulesTab } from "./SchedulesTab";
-import { SystemBackupsTab } from "./SystemBackupsTab";
 
 type BackupJob = {
   id: string;
@@ -46,8 +44,7 @@ type BackupJob = {
 };
 
 type TabKey =
-  | "account"
-  | "system"
+  | "backups"
   | "destinations"
   | "schedules"
   | "encryption"
@@ -68,7 +65,7 @@ const formatBytes = (n: number): string => {
 export const AdminBackupsPage = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [logJob, setLogJob] = useState<BackupJob | null>(null);
-  const [activeTab, setActiveTab] = useState<TabKey>("account");
+  const [activeTab, setActiveTab] = useState<TabKey>("backups");
 
   const query = useTableURL<BackupJob>({
     resource: "admin/backups",
@@ -84,7 +81,7 @@ export const AdminBackupsPage = () => {
     (j) => j.status === "queued" || j.status === "running",
   );
   useEffect(() => {
-    if (activeTab !== "account") return;
+    if (activeTab !== "backups") return;
     const interval = hasActive ? 3000 : 8000;
     const t = window.setInterval(() => {
       query.refetch();
@@ -134,21 +131,12 @@ export const AdminBackupsPage = () => {
       <Card
         tabList={[
           {
-            key: "account",
+            key: "backups",
             tab: (
               <Space>
-                <TeamOutlined />
-                Account backups
+                <RotateCcwOutlined />
+                Backups
                 <Tag>{query.total}</Tag>
-              </Space>
-            ),
-          },
-          {
-            key: "system",
-            tab: (
-              <Space>
-                <ServerOutlined />
-                System backups
               </Space>
             ),
           },
@@ -156,7 +144,7 @@ export const AdminBackupsPage = () => {
             key: "destinations",
             tab: (
               <Space>
-                <CloudServerOutlined />
+                <HardDriveDownloadOutlined />
                 Destinations
               </Space>
             ),
@@ -192,7 +180,7 @@ export const AdminBackupsPage = () => {
         activeTabKey={activeTab}
         onTabChange={(k) => setActiveTab(k as TabKey)}
       >
-        {activeTab === "account" && (
+        {activeTab === "backups" && (
           <SearchableTableStringQ<BackupJob>
             rowKey="id"
             loading={query.isLoading}
@@ -263,7 +251,6 @@ export const AdminBackupsPage = () => {
             />
           </SearchableTableStringQ>
         )}
-        {activeTab === "system" && <SystemBackupsTab />}
         {activeTab === "destinations" && <DestinationsTab />}
         {activeTab === "schedules" && <SchedulesTab />}
         {activeTab === "encryption" && <EncryptionKeyCard />}

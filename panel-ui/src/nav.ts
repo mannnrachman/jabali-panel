@@ -122,6 +122,12 @@ export const adminNav: NavItem[] = [
     path: "/jabali-admin/security",
   },
   {
+    key: "backups",
+    label: "Backups",
+    icon: navIcon(SaveOutlined),
+    path: "/jabali-admin/backups",
+  },
+  {
     key: "php-pools",
     label: "PHP Manager",
     icon: navIcon(CodeOutlined),
@@ -157,12 +163,6 @@ export const adminNav: NavItem[] = [
     label: "Support",
     icon: navIcon(LifeBuoyOutlined),
     path: "/jabali-admin/support",
-  },
-  {
-    key: "backups",
-    label: "Backups",
-    icon: navIcon(SaveOutlined),
-    path: "/jabali-admin/backups",
   },
 ];
 

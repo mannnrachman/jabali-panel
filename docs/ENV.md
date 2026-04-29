@@ -40,15 +40,17 @@ non-secrets in TOML, secrets in the environment.
 | `JABALI_TEST_DATABASE_URL` | No | *(unset)* | Integration test DSN. When set, `make test-integration` / `make coverage-check` run against it. Must point at an empty test DB the test runner can drop/recreate. |
 <!-- /AUTO-GENERATED -->
 
-## Auth
+## Auth (Kratos)
+
+Since M20 (ADR-0034), Kratos owns sessions; the panel reads them via the
+whoami endpoint. JWT_* / AUTH_COOKIE_SECURE were removed when the legacy
+stack was deleted — do NOT re-introduce them.
 
 <!-- AUTO-GENERATED:env-auth — regenerate via /update-docs -->
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `JWT_SECRET` | Yes (prod) | *(unset)* | 32+ random bytes, hex-encoded. Generate with `openssl rand -hex 32`. Rotation invalidates every in-flight session. |
-| `JWT_ACCESS_TTL` | No | `15m` | Access token lifetime. Short by design — refresh tokens extend the session. |
-| `JWT_REFRESH_TTL` | No | `168h` (7d) | Refresh cookie lifetime. |
-| `AUTH_COOKIE_SECURE` | No | `true` (prod) / `false` (dev) | Force `Secure` flag on the refresh cookie. Unset = follow `PANEL_ENV`. |
+| `KRATOS_PUBLIC_URL` | No | `unix:/run/jabali-kratos/public.sock` | Base URL of the Kratos public API. The panel-api whoami client dials this to validate session cookies. M25 ships the unix-socket form; TCP `http://localhost:4433` is the dev fallback. |
+| `KRATOS_ADMIN_URL` | No | `unix:/run/jabali-kratos/admin.sock` | Base URL of the Kratos admin API. Used by impersonation + admin identity ops. M25 ships the unix-socket form; TCP `http://localhost:4434` is the dev fallback. |
 | `JABALI_BOOTSTRAP_ADMIN_EMAIL` | No | *(unset)* | If set at first boot, creates an admin with this email. Paired with `JABALI_BOOTSTRAP_ADMIN_PASSWORD`. |
 | `JABALI_BOOTSTRAP_ADMIN_PASSWORD` | No | *(unset)* | Plaintext bootstrap password. Used once; the row is seeded and the var can be removed. |
 <!-- /AUTO-GENERATED -->

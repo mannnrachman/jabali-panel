@@ -12,6 +12,7 @@ emergencies); for one feature at a time start there.
 | File | Topic |
 |------|-------|
 | [`runbooks/applications.md`](runbooks/applications.md) | Adding a new app to the M19 Applications registry. |
+| [`runbooks/backup-format.md`](runbooks/backup-format.md) | M30 backup wire format reference (ADR-0075). |
 | [`runbooks/dns-secondary-nameserver.md`](runbooks/dns-secondary-nameserver.md) | Configuring secondary nameservers for managed zones. |
 | [`runbooks/m23-responsive.md`](runbooks/m23-responsive.md) | Responsive UI breakpoints + scroll-table contract (M23). |
 | [`runbooks/panel-ssl.md`](runbooks/panel-ssl.md) | M32 Let's Encrypt cert for the panel hostname (ADR-0066). |

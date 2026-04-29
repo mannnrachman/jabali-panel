@@ -69,6 +69,7 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0078](0078-backup-destinations-and-schedules.md) | M30.1 Backup destinations + scheduled backups (renumbered 2026-04-28 from 0077) | Accepted |
 | [0079](0079-mail-yara-async-scanner.md) | M33.2 Mail YARA async scanner (JMAP-driven, in-process tick) | Accepted |
 | [0082](0082-ghost-domain-detector.md) | M38 Ghost Domain Detector — periodic DNS-alignment check | Accepted |
+| [0084](0084-per-user-egress-firewall-cgroupv2.md) | M34 Per-user PHP-FPM egress firewall via nftables + cgroupv2 socket match | Proposed |
 
 ## Decision Categories
 

@@ -37,6 +37,7 @@ import {
   EyeOff,
   File,
   FileText,
+  FlaskConical,
   Folder,
   Globe,
   Grip,
@@ -172,6 +173,7 @@ export const CloudServerOutlined = shim(Waypoints);
 export const ServerOutlined = shim(Server);
 export const ChartBarOutlined = shim(ChartBar);
 export const ThunderboltOutlined = shim(Zap);
+export const FlaskConicalOutlined = shim(FlaskConical);
 
 // --- Actions ---
 export const PlusOutlined = shim(Plus);

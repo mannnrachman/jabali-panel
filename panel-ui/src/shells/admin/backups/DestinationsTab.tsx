@@ -29,7 +29,7 @@ import {
   DeleteOutlined,
   EditOutlined,
   PlusOutlined,
-  ThunderboltOutlined,
+  FlaskConicalOutlined,
 } from "@icons";
 import { useEffect, useState } from "react";
 
@@ -649,7 +649,7 @@ export function DestinationsTab() {
               <Button
                 type="primary"
                 size="small"
-                icon={<ThunderboltOutlined />}
+                icon={<FlaskConicalOutlined />}
                 onClick={() => handleTest(row)}
               >
                 Test

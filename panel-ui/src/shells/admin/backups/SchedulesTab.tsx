@@ -177,9 +177,12 @@ function ScheduleDrawer({
           weekdays: spec.weekdays ?? [1],
           dom: spec.dom ?? 1,
           enabled: editing.enabled,
-          keep_daily: editing.keep_daily ?? undefined,
-          keep_weekly: editing.keep_weekly ?? undefined,
-          keep_monthly: editing.keep_monthly ?? undefined,
+          keep:
+            spec.freq === "daily"
+              ? (editing.keep_daily ?? undefined)
+              : spec.freq === "weekly"
+                ? (editing.keep_weekly ?? undefined)
+                : (editing.keep_monthly ?? undefined),
           include_system_backup: editing.include_system_backup ?? false,
           destination_ids: editing.destinations?.map((d) => d.id) ?? [],
         });
@@ -239,9 +242,12 @@ function ScheduleDrawer({
         user_ids: userIDs,
         include_system_backup: !!values.include_system_backup,
       };
-      if (values.keep_daily !== undefined) body.keep_daily = values.keep_daily;
-      if (values.keep_weekly !== undefined) body.keep_weekly = values.keep_weekly;
-      if (values.keep_monthly !== undefined) body.keep_monthly = values.keep_monthly;
+      // Retention is one knob, scoped to the chosen frequency. The
+      // matching keep_* column is set; the other two stay null so
+      // restic forget skips them.
+      body.keep_daily = values.freq === "daily" ? (values.keep ?? null) : null;
+      body.keep_weekly = values.freq === "weekly" ? (values.keep ?? null) : null;
+      body.keep_monthly = values.freq === "monthly" ? (values.keep ?? null) : null;
 
       if (editing) {
         await apiClient.patch(`/admin/backup-schedules/${editing.id}`, body);
@@ -366,20 +372,25 @@ function ScheduleDrawer({
         <Typography.Title level={5}>Retention</Typography.Title>
         <Typography.Paragraph type="secondary" style={{ marginTop: -8 }}>
           restic forget runs daily and prunes snapshots from this
-          schedule beyond these limits. Leave blank to keep every
-          snapshot.
+          schedule beyond this limit. Leave blank to keep every snapshot.
         </Typography.Paragraph>
-        <Space size={12} style={{ display: "flex", flexWrap: "wrap" }}>
-          <Form.Item name="keep_daily" label="Keep daily">
-            <InputNumber min={0} max={365} placeholder="inherit" />
-          </Form.Item>
-          <Form.Item name="keep_weekly" label="Keep weekly">
-            <InputNumber min={0} max={52} placeholder="inherit" />
-          </Form.Item>
-          <Form.Item name="keep_monthly" label="Keep monthly">
-            <InputNumber min={0} max={120} placeholder="inherit" />
-          </Form.Item>
-        </Space>
+        <Form.Item
+          name="keep"
+          label={
+            freq === "daily"
+              ? "Keep last N daily backups"
+              : freq === "weekly"
+                ? "Keep last N weekly backups"
+                : "Keep last N monthly backups"
+          }
+        >
+          <InputNumber
+            min={0}
+            max={freq === "daily" ? 365 : freq === "weekly" ? 104 : 120}
+            placeholder="keep all"
+            style={{ width: 200 }}
+          />
+        </Form.Item>
 
         <Form.Item name="enabled" label="Enabled" valuePropName="checked">
           <Switch />

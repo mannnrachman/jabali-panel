@@ -117,8 +117,52 @@ func domainGhostPass(ctx context.Context, d Deps, deps domainGhostDeps) {
 	}
 
 	for _, dom := range rows {
+		// Skip rows the detector should never classify as "ghost":
+		//
+		//  - The panel-primary row (ADR-0048) is the panel's own
+		//    self-address. On Debian it commonly resolves to 127.0.1.1
+		//    via /etc/hosts; that's not a misconfiguration, that's
+		//    the standard local-loopback FQDN entry.
+		//  - RFC 6761 reserved-TLD domains (.local, .test, .example,
+		//    .localhost, .invalid) are by definition NOT in public
+		//    DNS, so a "ghost" classification is meaningless. M6.4
+		//    already has a guard preventing Stalwart from registering
+		//    these for mail; mirroring it here for DNS-alignment.
+		if dom.IsPanelPrimary {
+			writeGhostState(ctx, d, deps, dom, "ok", "skipped: panel-primary self-address", now)
+			continue
+		}
+		if !hostnameIsPubliclyResolvable(dom.Name) {
+			writeGhostState(ctx, d, deps, dom, "ok", "skipped: RFC 6761 reserved TLD (not in public DNS)", now)
+			continue
+		}
 		domainGhostCheck(ctx, d, deps, dom, expected, now)
 	}
+}
+
+// hostnameIsPubliclyResolvable rejects RFC 6761 reserved TLDs that are
+// guaranteed never to appear in public DNS. Mirrors the
+// `hostnameIsMailRoutable` check in panel-api/cmd/server/panel_primary_cmd.go;
+// kept as a private copy here rather than imported because the CLI
+// package cannot be imported into the panel-api server package without
+// a build-time cycle.
+func hostnameIsPubliclyResolvable(hostname string) bool {
+	host := strings.ToLower(strings.TrimRight(strings.TrimSpace(hostname), "."))
+	if host == "" {
+		return false
+	}
+	lastDot := strings.LastIndex(host, ".")
+	var tld string
+	if lastDot < 0 {
+		tld = host
+	} else {
+		tld = host[lastDot+1:]
+	}
+	switch tld {
+	case "local", "localhost", "invalid", "test", "example":
+		return false
+	}
+	return true
 }
 
 // loadExpectedIPs returns the set of IPv4/IPv6 strings that count as

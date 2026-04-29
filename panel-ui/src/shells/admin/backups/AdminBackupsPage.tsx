@@ -65,18 +65,21 @@ export const AdminBackupsPage = () => {
     defaultOrder: "desc",
   });
 
-  // Auto-refresh while any job is queued or running so the operator
-  // sees status transitions live without hitting reload.
+  // Always poll on the account tab so newly enqueued jobs surface
+  // without F5. Fast tick (3s) when something is queued/running,
+  // slow tick (8s) otherwise. No immediate refetch on mount —
+  // initial useQuery load already filled the table.
   const hasActive = query.items.some(
     (j) => j.status === "queued" || j.status === "running",
   );
   useEffect(() => {
-    if (!hasActive) return;
+    if (activeTab !== "account") return;
+    const interval = hasActive ? 3000 : 8000;
     const t = window.setInterval(() => {
       query.refetch();
-    }, 5000);
+    }, interval);
     return () => window.clearInterval(t);
-  }, [hasActive, query]);
+  }, [activeTab, hasActive, query]);
 
   const handleDownload = (row: BackupJob) => {
     if (row.status !== "succeeded") {

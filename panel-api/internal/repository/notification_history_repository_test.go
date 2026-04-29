@@ -61,7 +61,7 @@ func TestNotificationHistoryRepository_CountUnreadForUser(t *testing.T) {
 	defer raw.Close()
 	repo := NewNotificationHistoryRepository(db)
 
-	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `notification_history` WHERE user_id = \\? AND read_at IS NULL").
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `notification_history` WHERE channel_id IS NULL AND \\(user_id = \\? AND read_at IS NULL\\)").
 		WithArgs("01HF000USER0000000000000").
 		WillReturnRows(sqlmock.NewRows([]string{"count(*)"}).AddRow(7))
 
@@ -77,7 +77,7 @@ func TestNotificationHistoryRepository_MarkAllReadForUser(t *testing.T) {
 	repo := NewNotificationHistoryRepository(db)
 
 	mock.ExpectBegin()
-	mock.ExpectExec("UPDATE `notification_history` SET.*WHERE user_id = \\? AND read_at IS NULL").
+	mock.ExpectExec("UPDATE `notification_history` SET.*WHERE user_id = \\? AND channel_id IS NULL AND read_at IS NULL").
 		WillReturnResult(sqlmock.NewResult(0, 3))
 	mock.ExpectCommit()
 

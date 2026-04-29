@@ -121,17 +121,24 @@ func (r *notificationHistoryRepo) MarkRead(ctx context.Context, id string) error
 
 func (r *notificationHistoryRepo) MarkAllReadForUser(ctx context.Context, userID string) (int64, error) {
 	now := time.Now().UTC()
+	// Scope to bell rows (channel_id IS NULL) so the count returned to
+	// the UI matches what the inbox shows. Per-channel audit rows are
+	// the dispatcher's bookkeeping; the user never sees them in the
+	// bell, so flipping their read_at would be silent and confusing.
 	res := r.db.WithContext(ctx).
 		Model(&models.NotificationHistory{}).
-		Where("user_id = ? AND read_at IS NULL", userID).
+		Where("user_id = ? AND channel_id IS NULL AND read_at IS NULL", userID).
 		Update("read_at", now)
 	return res.RowsAffected, res.Error
 }
 
 func (r *notificationHistoryRepo) DeleteAllForUser(ctx context.Context, userID string, includeBroadcast bool) (int64, error) {
-	q := r.db.WithContext(ctx).Where("user_id = ?", userID)
+	// Mirror the inbox-list scope: only bell rows. Per-channel audit
+	// rows survive so an admin can still inspect dispatcher history
+	// after a user-side "Clear all".
+	q := r.db.WithContext(ctx).Where("user_id = ? AND channel_id IS NULL", userID)
 	if includeBroadcast {
-		q = r.db.WithContext(ctx).Where("user_id = ? OR user_id IS NULL", userID)
+		q = r.db.WithContext(ctx).Where("(user_id = ? OR user_id IS NULL) AND channel_id IS NULL", userID)
 	}
 	res := q.Delete(&models.NotificationHistory{})
 	return res.RowsAffected, res.Error
@@ -148,12 +155,19 @@ func (r *notificationHistoryRepo) FindByID(ctx context.Context, id string) (*mod
 	return &row, nil
 }
 
+// inboxScope filters notification_history to the rows the bell + inbox
+// UI exposes: bell rows (channel_id IS NULL). Per-channel audit rows
+// (one per envelope per delivery surface — webpush, slack, …) are
+// dispatcher bookkeeping; the inbox would otherwise show duplicates of
+// every delivered event.
+func (r *notificationHistoryRepo) inboxScope() *gorm.DB {
+	return r.db.Model(&models.NotificationHistory{}).Where("channel_id IS NULL")
+}
+
 func (r *notificationHistoryRepo) ListForUser(ctx context.Context, userID string, opts ListOptions) ([]models.NotificationHistory, int64, error) {
 	var rows []models.NotificationHistory
 	var total int64
-	base := r.db.WithContext(ctx).
-		Model(&models.NotificationHistory{}).
-		Where("user_id = ?", userID)
+	base := r.inboxScope().WithContext(ctx).Where("user_id = ?", userID)
 	if err := base.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
@@ -173,9 +187,7 @@ func (r *notificationHistoryRepo) ListForUser(ctx context.Context, userID string
 func (r *notificationHistoryRepo) ListForAdminInbox(ctx context.Context, adminUserID string, opts ListOptions) ([]models.NotificationHistory, int64, error) {
 	var rows []models.NotificationHistory
 	var total int64
-	base := r.db.WithContext(ctx).
-		Model(&models.NotificationHistory{}).
-		Where("user_id = ? OR user_id IS NULL", adminUserID)
+	base := r.inboxScope().WithContext(ctx).Where("user_id = ? OR user_id IS NULL", adminUserID)
 	if err := base.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
@@ -194,8 +206,7 @@ func (r *notificationHistoryRepo) ListForAdminInbox(ctx context.Context, adminUs
 
 func (r *notificationHistoryRepo) CountUnreadForAdminInbox(ctx context.Context, adminUserID string) (int64, error) {
 	var count int64
-	err := r.db.WithContext(ctx).
-		Model(&models.NotificationHistory{}).
+	err := r.inboxScope().WithContext(ctx).
 		Where("(user_id = ? OR user_id IS NULL) AND read_at IS NULL", adminUserID).
 		Count(&count).Error
 	return count, err
@@ -203,8 +214,7 @@ func (r *notificationHistoryRepo) CountUnreadForAdminInbox(ctx context.Context, 
 
 func (r *notificationHistoryRepo) CountUnreadForUser(ctx context.Context, userID string) (int64, error) {
 	var count int64
-	err := r.db.WithContext(ctx).
-		Model(&models.NotificationHistory{}).
+	err := r.inboxScope().WithContext(ctx).
 		Where("user_id = ? AND read_at IS NULL", userID).
 		Count(&count).Error
 	return count, err

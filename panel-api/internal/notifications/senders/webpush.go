@@ -75,12 +75,6 @@ type webPushPayload struct {
 }
 
 func (w *WebPush) Send(ctx context.Context, channel models.NotificationChannel, env notifications.Envelope) error {
-	if env.UserID == "" {
-		// Web Push is a per-user transport — the browser subscription is
-		// anchored to an admin. A broadcast envelope with no UserID has
-		// nobody to push to; ACK and move on.
-		return nil
-	}
 	settings, err := w.settings.Get(ctx)
 	if err != nil {
 		return fmt.Errorf("webpush: load server_settings: %w", err)
@@ -93,12 +87,26 @@ func (w *WebPush) Send(ctx context.Context, channel models.NotificationChannel, 
 		subject = *settings.VAPIDSubject
 	}
 
-	rows, err := w.subs.FindByUser(ctx, env.UserID)
-	if err != nil {
-		return fmt.Errorf("webpush: list subs for %s: %w", env.UserID, err)
+	// Per-user envelope → push only to that admin's enrolled browsers.
+	// Broadcast envelope (UserID empty: ssh.login, disk.full, etc.) →
+	// fan out to every enrolled subscription so any admin who's opted
+	// in hears about it. Subscription set is small (one row per
+	// enrolled browser), so a full scan is cheaper than walking
+	// admins-then-subs separately.
+	var rows []models.WebPushSubscription
+	if env.UserID != "" {
+		rows, err = w.subs.FindByUser(ctx, env.UserID)
+		if err != nil {
+			return fmt.Errorf("webpush: list subs for %s: %w", env.UserID, err)
+		}
+	} else {
+		rows, err = w.subs.FindAll(ctx)
+		if err != nil {
+			return fmt.Errorf("webpush: list all subs: %w", err)
+		}
 	}
 	if len(rows) == 0 {
-		// Admin hasn't enrolled any browser; not an error.
+		// Nobody enrolled; not an error.
 		return nil
 	}
 

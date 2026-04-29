@@ -26,6 +26,14 @@ type WebPushSubscriptionRepository interface {
 	FindByUser(ctx context.Context, userID string) ([]models.WebPushSubscription, error)
 	FindByEndpoint(ctx context.Context, endpoint string) (*models.WebPushSubscription, error)
 
+	// FindAll returns every enrolled subscription. The webpush sender's
+	// broadcast path uses it for envelopes with no UserID (system-wide
+	// events like ssh.login or disk.full) — every admin who's opted in
+	// to push should hear about them. The set is small (one row per
+	// enrolled browser), so a full scan is cheaper than a per-admin
+	// fan-out loop.
+	FindAll(ctx context.Context) ([]models.WebPushSubscription, error)
+
 	// DeleteByEndpoint is called by the webpush sender when the browser
 	// push service responds 410 Gone. The endpoint URL is the globally
 	// UNIQUE key the dispatcher has in hand, so routing deletion via it
@@ -74,6 +82,14 @@ func (r *webPushSubscriptionRepo) FindByUser(ctx context.Context, userID string)
 	var rows []models.WebPushSubscription
 	err := r.db.WithContext(ctx).
 		Where("user_id = ?", userID).
+		Order("created_at DESC").
+		Find(&rows).Error
+	return rows, err
+}
+
+func (r *webPushSubscriptionRepo) FindAll(ctx context.Context) ([]models.WebPushSubscription, error) {
+	var rows []models.WebPushSubscription
+	err := r.db.WithContext(ctx).
 		Order("created_at DESC").
 		Find(&rows).Error
 	return rows, err

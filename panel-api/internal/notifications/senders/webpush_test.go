@@ -48,6 +48,15 @@ func (f *fakeSubs) FindByUser(ctx context.Context, userID string) ([]models.WebP
 	defer f.mu.Unlock()
 	return f.byUser[userID], nil
 }
+func (f *fakeSubs) FindAll(ctx context.Context) ([]models.WebPushSubscription, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := []models.WebPushSubscription{}
+	for _, rows := range f.byUser {
+		out = append(out, rows...)
+	}
+	return out, nil
+}
 func (f *fakeSubs) FindByEndpoint(ctx context.Context, endpoint string) (*models.WebPushSubscription, error) {
 	return nil, nil
 }
@@ -87,9 +96,28 @@ func cannedResp(status int) *http.Response {
 
 // --- tests ---
 
-func TestWebPush_EmptyUserIDIsNoOp(t *testing.T) {
+func TestWebPush_BroadcastFansOutToEverySub(t *testing.T) {
 	t.Parallel()
-	w, _ := newWithFakes(t, nil, nil, func(ctx context.Context, msg []byte, s *webpush.Subscription, o *webpush.Options) (*http.Response, error) {
+	row := &models.ServerSettings{ID: 1, VAPIDPublicKey: strPtr("pub"), VAPIDPrivateKey: strPtr("priv"), VAPIDSubject: strPtr("mailto:a@b")}
+	byUser := map[string][]models.WebPushSubscription{
+		"u1": {{ID: "s1", Endpoint: "https://push.example/sub1", Auth: "a", P256dh: "p"}},
+		"u2": {{ID: "s2", Endpoint: "https://push.example/sub2", Auth: "a", P256dh: "p"}},
+	}
+	var sent int
+	w, _ := newWithFakes(t, row, byUser, func(ctx context.Context, msg []byte, s *webpush.Subscription, o *webpush.Options) (*http.Response, error) {
+		sent++
+		return &http.Response{StatusCode: http.StatusCreated, Body: http.NoBody}, nil
+	})
+	// Empty UserID = system-wide envelope. Both u1's and u2's browsers
+	// should be pushed.
+	require.NoError(t, w.Send(context.Background(), models.NotificationChannel{Kind: "webpush"}, notifications.Envelope{Title: "x"}))
+	require.Equal(t, 2, sent)
+}
+
+func TestWebPush_BroadcastNoSubsIsNoOp(t *testing.T) {
+	t.Parallel()
+	row := &models.ServerSettings{ID: 1, VAPIDPublicKey: strPtr("pub"), VAPIDPrivateKey: strPtr("priv"), VAPIDSubject: strPtr("mailto:a@b")}
+	w, _ := newWithFakes(t, row, map[string][]models.WebPushSubscription{}, func(ctx context.Context, msg []byte, s *webpush.Subscription, o *webpush.Options) (*http.Response, error) {
 		t.Fatal("send should not be called")
 		return nil, nil
 	})

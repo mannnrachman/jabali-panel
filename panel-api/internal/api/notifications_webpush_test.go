@@ -65,6 +65,9 @@ func (f *fakeSubsRepo) FindByID(context.Context, string) (*models.WebPushSubscri
 func (f *fakeSubsRepo) FindByUser(context.Context, string) ([]models.WebPushSubscription, error) {
 	return nil, nil
 }
+func (f *fakeSubsRepo) FindAll(context.Context) ([]models.WebPushSubscription, error) {
+	return nil, nil
+}
 func (f *fakeSubsRepo) FindByEndpoint(_ context.Context, ep string) (*models.WebPushSubscription, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

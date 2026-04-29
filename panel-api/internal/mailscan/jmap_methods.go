@@ -86,7 +86,7 @@ func (c *Client) CallerAccountID() string {
 // ---- Mailbox/query + Mailbox/get + Mailbox/set ----
 
 type Mailbox struct {
-	ID       string  `json:"id"`
+	ID       string  `json:"id,omitempty"`
 	Name     string  `json:"name"`
 	Role     *string `json:"role,omitempty"`
 	ParentID *string `json:"parentId,omitempty"`

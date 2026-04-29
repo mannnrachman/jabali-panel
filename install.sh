@@ -5056,14 +5056,25 @@ YARA_EX
   # in .yar / .yara from custom.yara.d/. Symlinks survive `maldet -u`
   # (only the rfxn.* sig files get rewritten by signature update).
   install -d -m 0755 /usr/local/maldetect/sigs/custom.yara.d
-  # Open the sigs dir + custom rule dir for the panel-api `jabali` user
-  # — M33.2 mailscan needs to read rfxn.yara + /etc/jabali/yara/*.yar
-  # via the JIT-spawned yr subprocess. Files inside stay 0644; this only
-  # opens the parent dir traversal bit. Safe: rule sources are
-  # admin-editable already via the panel UI, and the maldet quarantine
-  # dir (which holds detected malware) lives at a sibling path with
-  # locked-down 0700.
-  chmod o+rx /usr/local/maldetect/sigs /usr/local/maldetect/sigs/custom.yara.d 2>/dev/null || true
+  # Grant the panel-api `jabali` user search+read on the sigs dir so the
+  # M33.2 mailscan tick's JIT-spawned yr subprocess can load rfxn.yara +
+  # /etc/jabali/yara/*.yar. We use POSIX ACLs (not chmod o+rx) because
+  # LMD's lmd_init.sh runs `chmod 750 "$sigdir"` on EVERY maldet invocation
+  # (sigup timer, scan, --version) — chmod alone gets reset on the next
+  # daily timer fire and the tick silently false-cleans. Named-user ACL
+  # entries survive `chmod` (only the mask gets clamped). Files inside
+  # stay 0644; this only opens parent-dir traversal for one user. Safe:
+  # rule sources are admin-editable via the panel UI, and the maldet
+  # quarantine dir (which holds detected malware) lives at a sibling
+  # path with locked-down 0700.
+  if command -v setfacl >/dev/null 2>&1; then
+    setfacl -m u:jabali:rx /usr/local/maldetect/sigs 2>/dev/null || true
+    setfacl -m u:jabali:rx /usr/local/maldetect/sigs/custom.yara.d 2>/dev/null || true
+  else
+    DEBIAN_FRONTEND=noninteractive apt-get -y -qq install --no-install-recommends acl >/dev/null 2>&1 || true
+    setfacl -m u:jabali:rx /usr/local/maldetect/sigs 2>/dev/null || true
+    setfacl -m u:jabali:rx /usr/local/maldetect/sigs/custom.yara.d 2>/dev/null || true
+  fi
   # signature-base subset: webshells/ + crime/ are the highest-relevance
   # for shared-PHP hosting. Could add more (apt/, exploit_kits/, etc.) but
   # webshells is the load-bearing one.

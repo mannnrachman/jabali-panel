@@ -55,10 +55,20 @@ func (r *Reconciler) reconcilePanelCertificate(ctx context.Context) {
 			return
 		}
 	case models.PanelCertStatusPendingACME:
-		// Another reconciler tick (or the admin's force-issue REST
-		// path) already kicked the agent. Skip — we'll see the
-		// terminal state on the next tick.
-		return
+		// In-flight or stale-lock. The dispatch path sets status=pending_acme
+		// before calling the agent, then transitions to issued / pending_acme_retry
+		// on result. If panel-api crashed (or the agent call hung past
+		// the dispatch context's 3-minute deadline) the row is stuck —
+		// the reconciler would otherwise skip it forever.
+		//
+		// Treat the row as stale and retry once UpdatedAt is older than
+		// 10 minutes (3× the dispatch timeout). Younger rows are still
+		// in flight and we keep skipping.
+		if time.Since(row.UpdatedAt) < 10*time.Minute {
+			return
+		}
+		r.log.Warn("panel-cert: stale pending_acme lock, retrying", "hostname", settings.Hostname, "stuck_for", time.Since(row.UpdatedAt))
+		// Fall through to dispatch path.
 	case models.PanelCertStatusIssued:
 		// certbot's daily timer handles renewal; deploy-hook updates
 		// the row out-of-band. The reconciler is only the "first

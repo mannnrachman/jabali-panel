@@ -558,6 +558,14 @@ func (h *domainHandler) create(c *gin.Context) {
 		DocRoot:   docRoot,
 		IsEnabled: true,
 		SSLEnabled: true,
+		// ADR-0080: email on by default for new domains. Set explicitly
+		// rather than relying on the DB default so GORM emits
+		// email_enabled=1 in the INSERT (a Go zero-value bool would be
+		// elided, the DB default would still kick in, but explicit is
+		// clearer and unit-test fixtures that bypass DB defaults stay
+		// correct). Admin can opt-out per-domain via the existing
+		// disable endpoint.
+		EmailEnabled: true,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}

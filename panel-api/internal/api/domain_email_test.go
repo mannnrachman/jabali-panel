@@ -587,8 +587,10 @@ func TestDomains_Create_AutoEnablesEmail(t *testing.T) {
 
 // TestDomains_Create_AutoEnableFailureStillReturns201 verifies the
 // best-effort semantic: agent down at create time must NOT fail the
-// domain.create call. The row is inserted; email_enabled stays 0 (or
-// the operator retries from the Email tab).
+// domain.create call. The row is inserted with email_enabled=1 (the
+// ADR-0080 default — intent stays "on" so the reconciler retries
+// provisioning on the next tick rather than leaving the tenant
+// stranded behind the mailbox-create gate).
 func TestDomains_Create_AutoEnableFailureStillReturns201(t *testing.T) {
 	ma := &mockAgent{callErr: errors.New("agent: dial: connection refused")}
 	domains := newMockDomainRepo()
@@ -624,7 +626,14 @@ func TestDomains_Create_AutoEnableFailureStillReturns201(t *testing.T) {
 
 	var resp models.Domain
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	require.False(t, resp.EmailEnabled, "email_enabled stays 0 when auto-enable failed")
+	// ADR-0080: email_enabled is the INTENT flag. Even when inline
+	// auto-enable fails (agent unreachable here), the row's intent
+	// stays "on" so the reconciler can converge provisioning later.
+	// What stays empty is the dependent provisioning state: no DKIM
+	// material, no email_enabled_at timestamp.
+	require.True(t, resp.EmailEnabled, "email_enabled intent stays 1 even when provisioning failed")
+	require.Nil(t, resp.DkimSelector, "no DKIM material when agent never ran")
+	require.Nil(t, resp.EmailEnabledAt, "email_enabled_at unset when agent never ran")
 }
 
 

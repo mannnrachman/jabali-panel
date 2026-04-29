@@ -5131,11 +5131,20 @@ Documentation=file:///etc/jabali/maldet/conf.maldet.d/00-jabali.conf
 After=jabali-agent.service
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
+# `maldet --monitor USERS` is a long-running foreground event loop —
+# it forks inotifywait then sits in a wait-for-events cycle scanning
+# changed files. Type=oneshot waits for ExecStart to RETURN before
+# marking the unit Active, so the unit hung in `activating (start)`
+# forever even though inotify watches were live and scans were firing.
+# Type=simple matches the actual lifecycle: process running == unit
+# active. ExecStop still drives `--kill-monitor` to tear down the
+# child inotifywait + temp paths cleanly.
+Type=simple
 ExecStart=/usr/local/maldetect/maldet --monitor USERS
 ExecReload=/usr/local/maldetect/maldet --monitor RELOAD
 ExecStop=/usr/local/maldetect/maldet --kill-monitor
+Restart=on-failure
+RestartSec=10s
 User=root
 Group=root
 

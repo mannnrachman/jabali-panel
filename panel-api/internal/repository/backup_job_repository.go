@@ -33,6 +33,35 @@ type BackupJobRepository interface {
 	// dispatches at server_settings.backup_max_concurrent_jobs.
 	CountByStatus(ctx context.Context, status string) (int64, error)
 	ListQueuedOldest(ctx context.Context, limit int) ([]models.BackupJob, error)
+
+	// Run grouping — admin UI rolls scheduler-fired jobs under one
+	// header per run_id. ListRuns aggregates jobs that share a run_id;
+	// ListByRun fetches all child jobs for an expanded row;
+	// ListManual streams jobs with run_id NULL (manual creates) so
+	// the UI can interleave them with grouped runs.
+	ListRuns(ctx context.Context, limit, offset int) ([]BackupRunSummary, int64, error)
+	ListByRun(ctx context.Context, runID string) ([]models.BackupJob, error)
+	ListManual(ctx context.Context, limit, offset int) ([]models.BackupJob, int64, error)
+}
+
+// BackupRunSummary aggregates one logical scheduler tick (run_id) into
+// the columns the admin UI needs for its parent rows. Per-job detail
+// loads on demand via ListByRun.
+type BackupRunSummary struct {
+	RunID         string    `json:"run_id"`
+	ScheduleID    *string   `json:"schedule_id,omitempty"`
+	Kind          string    `json:"kind"`
+	Total         int       `json:"total"`
+	Succeeded     int       `json:"succeeded"`
+	Failed        int       `json:"failed"`
+	Running       int       `json:"running"`
+	Queued        int       `json:"queued"`
+	Cancelled     int       `json:"cancelled"`
+	Partial       int       `json:"partial"`
+	BytesAdded    uint64    `json:"bytes_added"`
+	BytesTotal    uint64    `json:"bytes_total"`
+	StartedAt     time.Time `json:"started_at"`
+	LatestUpdated time.Time `json:"latest_updated"`
 }
 
 type backupJobRepo struct{ db *gorm.DB }
@@ -104,6 +133,96 @@ func (r *backupJobRepo) CountByStatus(ctx context.Context, status string) (int64
 		return 0, translate(err)
 	}
 	return n, nil
+}
+
+func (r *backupJobRepo) ListRuns(ctx context.Context, limit, offset int) ([]BackupRunSummary, int64, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var total int64
+	if err := r.db.WithContext(ctx).
+		Raw(`SELECT COUNT(DISTINCT run_id) FROM backup_jobs WHERE run_id IS NOT NULL`).
+		Scan(&total).Error; err != nil {
+		return nil, 0, translate(err)
+	}
+	type row struct {
+		RunID         string
+		ScheduleID    *string
+		Kind          string
+		Total         int
+		Succeeded     int
+		Failed        int
+		Running       int
+		Queued        int
+		Cancelled     int
+		Partial       int
+		BytesAdded    uint64
+		BytesTotal    uint64
+		StartedAt     time.Time
+		LatestUpdated time.Time
+	}
+	var rows []row
+	err := r.db.WithContext(ctx).Raw(`
+SELECT run_id                                                             AS run_id,
+       MAX(schedule_id)                                                   AS schedule_id,
+       MAX(kind)                                                          AS kind,
+       COUNT(*)                                                           AS total,
+       SUM(status = 'succeeded')                                          AS succeeded,
+       SUM(status = 'failed')                                             AS failed,
+       SUM(status = 'running')                                            AS running,
+       SUM(status = 'queued')                                             AS queued,
+       SUM(status = 'cancelled')                                          AS cancelled,
+       SUM(status = 'partial')                                            AS partial,
+       SUM(bytes_added)                                                   AS bytes_added,
+       SUM(bytes_total)                                                   AS bytes_total,
+       MIN(created_at)                                                    AS started_at,
+       GREATEST(MAX(COALESCE(finished_at, '1970-01-01')),
+                MAX(COALESCE(started_at,  '1970-01-01')),
+                MAX(created_at))                                          AS latest_updated
+  FROM backup_jobs
+ WHERE run_id IS NOT NULL
+ GROUP BY run_id
+ ORDER BY started_at DESC
+ LIMIT ? OFFSET ?`, limit, offset).Scan(&rows).Error
+	if err != nil {
+		return nil, 0, translate(err)
+	}
+	out := make([]BackupRunSummary, 0, len(rows))
+	for _, x := range rows {
+		out = append(out, BackupRunSummary{
+			RunID:         x.RunID,
+			ScheduleID:    x.ScheduleID,
+			Kind:          x.Kind,
+			Total:         x.Total,
+			Succeeded:     x.Succeeded,
+			Failed:        x.Failed,
+			Running:       x.Running,
+			Queued:        x.Queued,
+			Cancelled:     x.Cancelled,
+			Partial:       x.Partial,
+			BytesAdded:    x.BytesAdded,
+			BytesTotal:    x.BytesTotal,
+			StartedAt:     x.StartedAt,
+			LatestUpdated: x.LatestUpdated,
+		})
+	}
+	return out, total, nil
+}
+
+func (r *backupJobRepo) ListByRun(ctx context.Context, runID string) ([]models.BackupJob, error) {
+	var out []models.BackupJob
+	err := r.db.WithContext(ctx).
+		Where("run_id = ?", runID).
+		Order("created_at ASC").
+		Find(&out).Error
+	if err != nil {
+		return nil, translate(err)
+	}
+	return out, nil
+}
+
+func (r *backupJobRepo) ListManual(ctx context.Context, limit, offset int) ([]models.BackupJob, int64, error) {
+	return r.list(ctx, "run_id IS NULL", nil, limit, offset)
 }
 
 func (r *backupJobRepo) ListQueuedOldest(ctx context.Context, limit int) ([]models.BackupJob, error) {

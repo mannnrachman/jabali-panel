@@ -192,8 +192,10 @@ func (s *Scheduler) enqueue(ctx context.Context, sched models.BackupSchedule) {
 
 // enqueueBackup creates queued backup_jobs rows for the given
 // schedule. The dispatcher tick later picks them up and calls the
-// agent under the concurrency cap.
+// agent under the concurrency cap. All rows from one tick share a
+// run_id so the admin UI can roll them up under a single header.
 func (s *Scheduler) enqueueBackup(ctx context.Context, sched models.BackupSchedule) (bool, error) {
+	runID := ids.NewULID()
 	switch sched.Kind {
 	case models.BackupScheduleKindAccount:
 		// Multi-user fan-out via the backup_schedule_users join:
@@ -235,7 +237,7 @@ func (s *Scheduler) enqueueBackup(ctx context.Context, sched models.BackupSchedu
 		}
 		for i := range targets {
 			u := &targets[i]
-			if ok := s.enqueueAccountBackup(ctx, sched, u); ok {
+			if ok := s.enqueueAccountBackup(ctx, sched, u, runID); ok {
 				anyUser = true
 			}
 		}
@@ -244,12 +246,12 @@ func (s *Scheduler) enqueueBackup(ctx context.Context, sched models.BackupSchedu
 		// per-user backups that already succeeded.
 		anySystem := false
 		if sched.IncludeSystemBackup {
-			anySystem = s.enqueueSystemBackup(ctx, sched)
+			anySystem = s.enqueueSystemBackup(ctx, sched, runID)
 		}
 		return anyUser || anySystem, nil
 
 	case models.BackupScheduleKindSystem:
-		return s.enqueueSystemBackup(ctx, sched), nil
+		return s.enqueueSystemBackup(ctx, sched, runID), nil
 
 	default:
 		return false, fmt.Errorf("unknown schedule kind %q", sched.Kind)
@@ -259,13 +261,15 @@ func (s *Scheduler) enqueueBackup(ctx context.Context, sched models.BackupSchedu
 // enqueueAccountBackup creates one backup_jobs row in status=queued
 // for the given user. The dispatcher tick later picks it up and calls
 // the agent. Returns true on successful insert, false on DB error.
-func (s *Scheduler) enqueueAccountBackup(ctx context.Context, sched models.BackupSchedule, user *models.User) bool {
-	logger := s.deps.Log.With("schedule_id", sched.ID, "user_id", user.ID)
+func (s *Scheduler) enqueueAccountBackup(ctx context.Context, sched models.BackupSchedule, user *models.User, runID string) bool {
+	logger := s.deps.Log.With("schedule_id", sched.ID, "user_id", user.ID, "run_id", runID)
 	schedID := sched.ID
+	rid := runID
 	job := &models.BackupJob{
 		ID:         ids.NewULID(),
 		UserID:     user.ID,
 		ScheduleID: &schedID,
+		RunID:      &rid,
 		Kind:       models.BackupJobKindAccountBackup,
 		Status:     models.BackupJobStatusQueued,
 		CreatedAt:  time.Now().UTC(),
@@ -281,13 +285,15 @@ func (s *Scheduler) enqueueAccountBackup(ctx context.Context, sched models.Backu
 // for a system backup. Used by both the dedicated system_backup
 // schedule kind and the include_system_backup opt-in on account
 // schedules.
-func (s *Scheduler) enqueueSystemBackup(ctx context.Context, sched models.BackupSchedule) bool {
-	logger := s.deps.Log.With("schedule_id", sched.ID, "kind", "system_backup")
+func (s *Scheduler) enqueueSystemBackup(ctx context.Context, sched models.BackupSchedule, runID string) bool {
+	logger := s.deps.Log.With("schedule_id", sched.ID, "kind", "system_backup", "run_id", runID)
 	schedID := sched.ID
+	rid := runID
 	job := &models.BackupJob{
 		ID:         ids.NewULID(),
 		UserID:     "system",
 		ScheduleID: &schedID,
+		RunID:      &rid,
 		Kind:       models.BackupJobKindSystemBackup,
 		Status:     models.BackupJobStatusQueued,
 		CreatedAt:  time.Now().UTC(),

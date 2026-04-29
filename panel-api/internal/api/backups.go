@@ -66,10 +66,49 @@ func RegisterBackupRoutes(rg *gin.RouterGroup, cfg BackupHandlerConfig) {
 	admin.POST("/backups/:job_id/cancel", h.cancel)
 	admin.GET("/backups/:job_id/logs", h.logs)
 	admin.POST("/backups/restore", h.restore)
+	admin.GET("/backup-runs", h.listRuns)
+	admin.GET("/backup-runs/:run_id/jobs", h.listRunJobs)
 	admin.POST("/system/backups", h.systemCreate)
 	admin.GET("/system/backups", h.systemList)
 	admin.POST("/system/backups/:job_id/cancel", h.systemCancel)
 	admin.GET("/system/backups/:job_id/logs", h.logs)
+}
+
+func (h *backupHandler) listRuns(c *gin.Context) {
+	limit, offset := paginationFromQuery(c, 25, 100)
+	runs, total, err := h.cfg.Jobs.ListRuns(c.Request.Context(), limit, offset)
+	if err != nil {
+		h.cfg.logErr("list backup runs", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_list"})
+		return
+	}
+	manualLimit, manualOffset := paginationFromQuery(c, 25, 100)
+	manual, manualTotal, err := h.cfg.Jobs.ListManual(c.Request.Context(), manualLimit, manualOffset)
+	if err != nil {
+		h.cfg.logErr("list manual backups", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_list_manual"})
+		return
+	}
+	page := offset/maxInt(limit, 1) + 1
+	c.JSON(http.StatusOK, gin.H{
+		"data":         runs,
+		"manual":       manual,
+		"manual_total": manualTotal,
+		"total":        total,
+		"page":         page,
+		"page_size":    limit,
+	})
+}
+
+func (h *backupHandler) listRunJobs(c *gin.Context) {
+	runID := c.Param("run_id")
+	jobs, err := h.cfg.Jobs.ListByRun(c.Request.Context(), runID)
+	if err != nil {
+		h.cfg.logErr("list run jobs", err, "run_id", runID)
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_list"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": jobs})
 }
 
 type systemBackupRequest struct {

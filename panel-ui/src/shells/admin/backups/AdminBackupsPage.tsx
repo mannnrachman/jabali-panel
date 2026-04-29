@@ -1,7 +1,6 @@
-// AdminBackupsPage — admin overview of every account_backup +
-// system_backup job plus the destinations / schedules / encryption /
-// settings sub-pages. Card.tabList renders the tab strip visually
-// attached to the card body, matching the Users page.
+// AdminBackupsPage — admin overview of every backup run.
+// Scheduler-fired jobs roll up under their run_id (one parent row,
+// expandable to per-user children). Manual creates render flat.
 import { Button, Card, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import {
   CalendarCheckOutlined,
@@ -18,10 +17,8 @@ import { useEffect, useState } from "react";
 
 import { BackupStatusTag } from "./BackupStatusTag";
 
-import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { apiClient } from "../../../apiClient";
 import { extractApiError } from "../../../apiErrors";
-import { useTableURL } from "../../../hooks/useTableURL";
 import { BackupLogModal } from "./BackupLogModal";
 import { BackupSettingsTab } from "./BackupSettingsTab";
 import { CreateBackupDrawer } from "./CreateBackupDrawer";
@@ -29,7 +26,7 @@ import { DestinationsTab } from "./DestinationsTab";
 import { EncryptionKeyCard } from "./EncryptionKeyCard";
 import { SchedulesTab } from "./SchedulesTab";
 
-type BackupJob = {
+interface BackupJob {
   id: string;
   user_id: string;
   kind: string;
@@ -41,7 +38,44 @@ type BackupJob = {
   created_at: string;
   finished_at?: string;
   error_text?: string;
-};
+  run_id?: string;
+}
+
+interface BackupRun {
+  run_id: string;
+  schedule_id?: string;
+  kind: string;
+  total: number;
+  succeeded: number;
+  failed: number;
+  running: number;
+  queued: number;
+  cancelled: number;
+  partial: number;
+  bytes_added: number;
+  bytes_total: number;
+  started_at: string;
+  latest_updated: string;
+}
+
+interface RunsEnvelope {
+  data: BackupRun[];
+  manual: BackupJob[];
+  total: number;
+  manual_total: number;
+}
+
+interface RunRow {
+  rowKey: string;
+  isRun: true;
+  run: BackupRun;
+}
+interface ManualRow {
+  rowKey: string;
+  isRun: false;
+  job: BackupJob;
+}
+type TableRow = RunRow | ManualRow;
 
 type TabKey =
   | "backups"
@@ -62,32 +96,97 @@ const formatBytes = (n: number): string => {
   return `${v.toFixed(1)} ${units[i]}`;
 };
 
+const renderTypeTag = (k: string) => {
+  const label =
+    k === "system_backup"
+      ? "System Backup"
+      : k === "account_backup"
+        ? "Account Backup"
+        : k === "system_restore"
+          ? "System Restore"
+          : k === "account_restore"
+            ? "Account Restore"
+            : k;
+  const color = k.startsWith("system") ? "purple" : "blue";
+  return <Tag color={color}>{label}</Tag>;
+};
+
+// Run summary collapses 6 status counters into a single Tag stack so
+// the row at a glance answers "is this run still working / did any
+// fail?" — full breakdown lives in the expanded child table.
+const RunStatusSummary = ({ run }: { run: BackupRun }) => {
+  const tags: { color: string; text: string }[] = [];
+  if (run.running > 0) tags.push({ color: "blue", text: `${run.running} running` });
+  if (run.queued > 0) tags.push({ color: "default", text: `${run.queued} queued` });
+  if (run.failed > 0) tags.push({ color: "red", text: `${run.failed} failed` });
+  if (run.partial > 0) tags.push({ color: "gold", text: `${run.partial} partial` });
+  if (run.cancelled > 0) tags.push({ color: "default", text: `${run.cancelled} cancelled` });
+  if (run.succeeded > 0) tags.push({ color: "green", text: `${run.succeeded} succeeded` });
+  if (tags.length === 0) tags.push({ color: "default", text: `${run.total} jobs` });
+  return (
+    <Space size={4} wrap>
+      {tags.map((t) => (
+        <Tag key={t.text} color={t.color}>
+          {t.text}
+        </Tag>
+      ))}
+    </Space>
+  );
+};
+
 export const AdminBackupsPage = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [logJob, setLogJob] = useState<BackupJob | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("backups");
+  const [runs, setRuns] = useState<BackupRun[]>([]);
+  const [manual, setManual] = useState<BackupJob[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [runJobs, setRunJobs] = useState<Record<string, BackupJob[]>>({});
 
-  const query = useTableURL<BackupJob>({
-    resource: "admin/backups",
-    defaultSort: "created_at",
-    defaultOrder: "desc",
-  });
+  const reload = async () => {
+    setLoading(true);
+    try {
+      const resp = await apiClient.get<RunsEnvelope>(
+        "/admin/backup-runs?page_size=50",
+      );
+      setRuns(resp.data.data ?? []);
+      setManual(resp.data.manual ?? []);
+    } catch (err) {
+      message.error(extractApiError(err, "Load failed"));
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  // Always poll on the account tab so newly enqueued jobs surface
-  // without F5. Fast tick (3s) when something is queued/running,
-  // slow tick (8s) otherwise. No immediate refetch on mount —
-  // initial useQuery load already filled the table.
-  const hasActive = query.items.some(
-    (j) => j.status === "queued" || j.status === "running",
-  );
+  useEffect(() => {
+    if (activeTab === "backups") {
+      void reload();
+    }
+  }, [activeTab]);
+
+  const hasActive =
+    runs.some((r) => r.queued + r.running > 0) ||
+    manual.some((j) => j.status === "queued" || j.status === "running");
   useEffect(() => {
     if (activeTab !== "backups") return;
     const interval = hasActive ? 3000 : 8000;
     const t = window.setInterval(() => {
-      query.refetch();
+      void reload();
     }, interval);
     return () => window.clearInterval(t);
-  }, [activeTab, hasActive, query]);
+  }, [activeTab, hasActive]);
+
+  const expandRun = async (runID: string) => {
+    if (runJobs[runID]) return; // cached
+    try {
+      const resp = await apiClient.get<{ data: BackupJob[] }>(
+        `/admin/backup-runs/${runID}/jobs`,
+      );
+      setRunJobs((m) => ({ ...m, [runID]: resp.data.data ?? [] }));
+    } catch (err) {
+      message.error(extractApiError(err, "Load run failed"));
+    }
+  };
 
   const handleDownload = (row: BackupJob) => {
     if (row.status !== "succeeded") {
@@ -102,11 +201,84 @@ export const AdminBackupsPage = () => {
     try {
       await apiClient.post(`/admin/backups/${row.id}/cancel`);
       message.success(`Cancellation requested for ${row.id}`);
-      query.refetch();
+      void reload();
     } catch (err) {
       message.error(extractApiError(err, "Cancel failed"));
     }
   };
+
+  const tableRows: TableRow[] = [
+    ...runs.map<RunRow>((r) => ({ rowKey: `run:${r.run_id}`, isRun: true, run: r })),
+    ...manual.map<ManualRow>((j) => ({ rowKey: `job:${j.id}`, isRun: false, job: j })),
+  ].sort((a, b) => {
+    const aT = a.isRun ? a.run.latest_updated : a.job.created_at;
+    const bT = b.isRun ? b.run.latest_updated : b.job.created_at;
+    return aT < bT ? 1 : aT > bT ? -1 : 0;
+  });
+
+  const renderChildJobs = (jobs: BackupJob[]) => (
+    <Table<BackupJob>
+      rowKey="id"
+      dataSource={jobs}
+      pagination={false}
+      size="small"
+      columns={[
+        {
+          title: "Job ID",
+          dataIndex: "id",
+          render: (id: string) => (
+            <Tooltip title={id}>
+              <code>{id.slice(0, 8)}…</code>
+            </Tooltip>
+          ),
+        },
+        { title: "User", dataIndex: "user_id" },
+        {
+          title: "Status",
+          dataIndex: "status",
+          render: (s: string) => <BackupStatusTag status={s} />,
+        },
+        {
+          title: "Added",
+          dataIndex: "bytes_added",
+          render: (n: number) => formatBytes(n),
+        },
+        {
+          title: "Size",
+          dataIndex: "bytes_total",
+          render: (n: number) => formatBytes(n),
+        },
+        {
+          title: "Actions",
+          render: (_: unknown, row: BackupJob) => (
+            <Space>
+              <Button
+                size="small"
+                icon={<FileTextOutlined />}
+                onClick={() => setLogJob(row)}
+              >
+                Log
+              </Button>
+              {row.status === "succeeded" && (
+                <Button
+                  size="small"
+                  icon={<DownloadOutlined />}
+                  onClick={() => handleDownload(row)}
+                >
+                  Download
+                </Button>
+              )}
+              {row.status === "running" && (
+                <Button size="small" danger onClick={() => handleCancel(row)}>
+                  Cancel
+                </Button>
+              )}
+            </Space>
+          ),
+        },
+      ]}
+    />
+  );
 
   return (
     <div>
@@ -136,7 +308,7 @@ export const AdminBackupsPage = () => {
               <Space>
                 <RotateCcwOutlined />
                 Backups
-                <Tag>{query.total}</Tag>
+                <Tag>{runs.length + manual.length}</Tag>
               </Space>
             ),
           },
@@ -181,92 +353,111 @@ export const AdminBackupsPage = () => {
         onTabChange={(k) => setActiveTab(k as TabKey)}
       >
         {activeTab === "backups" && (
-          <SearchableTableStringQ<BackupJob>
-            rowKey="id"
-            loading={query.isLoading}
-            dataSource={query.items}
-            initialSearch={query.params.q}
-            searchPlaceholder="Search by user-id or job-id..."
-            onSearchChange={(q) => query.setParams({ q, page: 1 })}
-            pagination={{
-              current: query.params.page,
-              pageSize: query.params.pageSize,
-              total: query.total,
-            }}
+          <Table<TableRow>
+            rowKey="rowKey"
+            loading={loading}
+            dataSource={tableRows}
+            pagination={{ pageSize: 25 }}
             scroll={{ x: "max-content" }}
-          >
-            <Table.Column
-              dataIndex="id"
-              title="Job ID"
-              render={(id: string) => (
-                <Tooltip title={id}>
-                  <code>{id.slice(0, 8)}…</code>
-                </Tooltip>
-              )}
-            />
-            <Table.Column
-              dataIndex="kind"
-              title="Type"
-              render={(k: string) => {
-                const label =
-                  k === "system_backup"
-                    ? "System Backup"
-                    : k === "account_backup"
-                      ? "Account Backup"
-                      : k === "system_restore"
-                        ? "System Restore"
-                        : k === "account_restore"
-                          ? "Account Restore"
-                          : k;
-                const color = k.startsWith("system") ? "purple" : "blue";
-                return <Tag color={color}>{label}</Tag>;
-              }}
-            />
-            <Table.Column
-              dataIndex="status"
-              title="Status"
-              render={(s: string) => <BackupStatusTag status={s} />}
-            />
-            <Table.Column
-              dataIndex="bytes_added"
-              title="Added (dedup win)"
-              render={(n: number) => formatBytes(n)}
-            />
-            <Table.Column
-              dataIndex="bytes_total"
-              title="Logical size"
-              render={(n: number) => formatBytes(n)}
-            />
-            <Table.Column dataIndex="created_at" title="Created" />
-            <Table.Column<BackupJob>
-              title="Actions"
-              render={(_, row) => (
-                <Space>
-                  <Button
-                    size="small"
-                    icon={<FileTextOutlined />}
-                    onClick={() => setLogJob(row)}
-                  >
-                    Log
-                  </Button>
-                  {row.status === "succeeded" && (
-                    <Button
-                      size="small"
-                      icon={<DownloadOutlined />}
-                      onClick={() => handleDownload(row)}
-                    >
-                      Download
-                    </Button>
-                  )}
-                  {row.status === "running" && (
-                    <Button size="small" danger onClick={() => handleCancel(row)}>
-                      Cancel
-                    </Button>
-                  )}
-                </Space>
-              )}
-            />
-          </SearchableTableStringQ>
+            expandable={{
+              rowExpandable: (row) => row.isRun,
+              onExpand: (expanded, row) => {
+                if (expanded && row.isRun) void expandRun(row.run.run_id);
+              },
+              expandedRowRender: (row) =>
+                row.isRun ? (
+                  runJobs[row.run.run_id] ? (
+                    renderChildJobs(runJobs[row.run.run_id])
+                  ) : (
+                    <Typography.Text type="secondary">Loading…</Typography.Text>
+                  )
+                ) : null,
+            }}
+            columns={[
+              {
+                title: "ID",
+                render: (_: unknown, row: TableRow) => {
+                  const id = row.isRun ? row.run.run_id : row.job.id;
+                  return (
+                    <Tooltip title={id}>
+                      <code>{id.slice(0, 8)}…</code>
+                    </Tooltip>
+                  );
+                },
+              },
+              {
+                title: "Source",
+                render: (_: unknown, row: TableRow) =>
+                  row.isRun ? (
+                    <Tag color="geekblue">scheduled run</Tag>
+                  ) : (
+                    <Tag>manual</Tag>
+                  ),
+              },
+              {
+                title: "Type",
+                render: (_: unknown, row: TableRow) =>
+                  renderTypeTag(row.isRun ? row.run.kind : row.job.kind),
+              },
+              {
+                title: "Status",
+                render: (_: unknown, row: TableRow) =>
+                  row.isRun ? (
+                    <RunStatusSummary run={row.run} />
+                  ) : (
+                    <BackupStatusTag status={row.job.status} />
+                  ),
+              },
+              {
+                title: "Added (dedup win)",
+                render: (_: unknown, row: TableRow) =>
+                  formatBytes(row.isRun ? row.run.bytes_added : row.job.bytes_added),
+              },
+              {
+                title: "Logical size",
+                render: (_: unknown, row: TableRow) =>
+                  formatBytes(row.isRun ? row.run.bytes_total : row.job.bytes_total),
+              },
+              {
+                title: "Started",
+                render: (_: unknown, row: TableRow) =>
+                  row.isRun ? row.run.started_at : row.job.created_at,
+              },
+              {
+                title: "Actions",
+                render: (_: unknown, row: TableRow) => {
+                  if (row.isRun) {
+                    return <Typography.Text type="secondary">expand for jobs</Typography.Text>;
+                  }
+                  return (
+                    <Space>
+                      <Button
+                        size="small"
+                        icon={<FileTextOutlined />}
+                        onClick={() => setLogJob(row.job)}
+                      >
+                        Log
+                      </Button>
+                      {row.job.status === "succeeded" && (
+                        <Button
+                          size="small"
+                          icon={<DownloadOutlined />}
+                          onClick={() => handleDownload(row.job)}
+                        >
+                          Download
+                        </Button>
+                      )}
+                      {row.job.status === "running" && (
+                        <Button size="small" danger onClick={() => handleCancel(row.job)}>
+                          Cancel
+                        </Button>
+                      )}
+                    </Space>
+                  );
+                },
+              },
+            ]}
+          />
         )}
         {activeTab === "destinations" && <DestinationsTab />}
         {activeTab === "schedules" && <SchedulesTab />}
@@ -279,7 +470,7 @@ export const AdminBackupsPage = () => {
         onClose={() => setDrawerOpen(false)}
         onCreated={() => {
           setDrawerOpen(false);
-          query.refetch();
+          void reload();
         }}
       />
 

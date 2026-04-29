@@ -20,6 +20,7 @@ import {
   DownloadOutlined,
   LifeBuoyOutlined,
   DatabaseOutlined,
+  EthernetPortOutlined,
   FolderOutlined,
   GlobalOutlined,
   HomeOutlined,
@@ -143,7 +144,7 @@ export const adminNav: NavItem[] = [
   {
     key: "ips",
     label: "IP Addresses",
-    icon: navIcon(GlobalOutlined),
+    icon: navIcon(EthernetPortOutlined),
     path: "/jabali-admin/ips",
   },
   {

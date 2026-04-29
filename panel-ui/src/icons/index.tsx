@@ -30,6 +30,7 @@ import {
   Copy,
   Database,
   Download,
+  EthernetPort,
   ExternalLink,
   Eye,
   EyeOff,
@@ -147,6 +148,7 @@ const shim = (Icon: LucideIcon, defaults?: { spin?: boolean }) => {
 // --- Nav / core ---
 export const HomeOutlined = shim(Home);
 export const GlobalOutlined = shim(Globe);
+export const EthernetPortOutlined = shim(EthernetPort);
 export const LockOutlined = shim(Lock);
 export const CodeOutlined = shim(Code);
 export const DatabaseOutlined = shim(Database);

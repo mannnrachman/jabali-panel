@@ -4,7 +4,7 @@
 // RowDeleteButton. Delete handles the 409 ip_in_use case by surfacing
 // the affected-domains list returned by the API.
 import { Button, Card, Modal, Space, Table, Tag, Typography, message } from "antd";
-import { GlobalOutlined } from "@icons";
+import { EthernetPortOutlined } from "@icons";
 import { useState } from "react";
 
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
@@ -100,7 +100,7 @@ export const AdminIPList = () => {
         }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
-          <GlobalOutlined /> IP Addresses
+          <EthernetPortOutlined /> IP Addresses
         </Typography.Title>
         <Button type="primary" onClick={openCreate}>
           Add IP

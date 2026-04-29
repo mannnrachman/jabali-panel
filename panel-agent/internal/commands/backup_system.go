@@ -84,6 +84,9 @@ func systemBackupHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 
 // runSystemBackupOrchestrator walks every system stage in sequence.
 func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) error {
+	jl := backup.NewJobLogger(req.JobID)
+	defer jl.Close()
+	jl.Printf("system_backup start include_accounts=%v", req.IncludeAccounts)
 	c := backup.New(backup.DefaultConfig())
 	host := hostname()
 	manifest := backup.SystemManifest{
@@ -154,12 +157,17 @@ func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) er
 	// panel-side finalizer can record total bytes_added/bytes_total per
 	// system backup without re-walking stages[].
 	for _, s := range manifest.Stages {
+		jl.Printf("stage=%s status=%s bytes_added=%d bytes_total=%d items=%v warnings=%v",
+			s.Name, s.Status, s.BytesAdded, s.BytesTotal, s.Items, s.Warnings)
 		manifest.Restic.BytesAdded += s.BytesAdded
 		manifest.Restic.BytesTotal += s.BytesTotal
 	}
 
+	jl.Printf("stage=manifest start bytes_added_total=%d bytes_total_total=%d",
+		manifest.Restic.BytesAdded, manifest.Restic.BytesTotal)
 	body, err := manifest.ToBytes()
 	if err != nil {
+		jl.Printf("stage=manifest serialize_err=%v", err)
 		return fmt.Errorf("manifest serialize: %w", err)
 	}
 	tags := backup.SystemBackupTags(req.JobID, host, backup.StageManifest)
@@ -168,6 +176,11 @@ func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) er
 		StdinName: "system_manifest.json",
 		Tags:      tags,
 	})
+	if err != nil {
+		jl.Printf("stage=manifest restic_err=%v", err)
+	} else {
+		jl.Printf("system_backup done")
+	}
 	return err
 }
 

@@ -9,7 +9,6 @@
 import {
   Alert,
   Button,
-  Card,
   Input,
   Space,
   Typography,
@@ -83,14 +82,11 @@ export function EncryptionKeyCard() {
   };
 
   return (
-    <Card
-      title={
-        <Space>
-          <KeyOutlined />
-          <span>Master encryption key</span>
-        </Space>
-      }
-    >
+    <>
+      <Space style={{ marginBottom: 12 }}>
+        <KeyOutlined />
+        <Typography.Text strong>Master encryption key</Typography.Text>
+      </Space>
       <Alert
         type="warning"
         showIcon
@@ -163,6 +159,6 @@ restic restore <snapshot_id> --target /tmp/recovery`}
           style={{ fontFamily: "monospace", fontSize: 12 }}
         />
       </Space>
-    </Card>
+    </>
   );
 }

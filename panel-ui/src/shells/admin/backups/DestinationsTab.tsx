@@ -10,7 +10,6 @@
 import {
   Alert,
   Button,
-  Card,
   Drawer,
   Form,
   Input,
@@ -604,7 +603,7 @@ export function DestinationsTab() {
   };
 
   return (
-    <Card>
+    <>
       <Space style={{ marginBottom: 12 }}>
         <Button
           type="primary"
@@ -683,6 +682,6 @@ export function DestinationsTab() {
           void reload();
         }}
       />
-    </Card>
+    </>
   );
 }

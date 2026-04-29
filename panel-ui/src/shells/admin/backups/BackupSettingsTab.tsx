@@ -1,6 +1,6 @@
 // BackupSettingsTab — knobs that govern the in-process backup
 // scheduler/dispatcher. Backed by server_settings (PATCH /admin/settings).
-import { Button, Card, Form, InputNumber, Typography, message } from "antd";
+import { Button, Form, InputNumber, Spin, Typography, message } from "antd";
 import { SaveOutlined } from "@icons";
 import { useEffect, useState } from "react";
 
@@ -62,7 +62,7 @@ export const BackupSettingsTab = () => {
   };
 
   return (
-    <Card title="Backup settings" loading={loading}>
+    <Spin spinning={loading}>
       <Form<BackupSettingsShape>
         form={form}
         layout="vertical"
@@ -109,6 +109,6 @@ export const BackupSettingsTab = () => {
           </Button>
         </Form.Item>
       </Form>
-    </Card>
+    </Spin>
   );
 };

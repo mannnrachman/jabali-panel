@@ -1,7 +1,8 @@
-// AdminBackupsPage — admin overview of every account_backup + restore
-// job. Tab layout: Backups (list) / Create Backup (drawer trigger).
-// System backup tab lands in SystemBackupsTab when M30 Step 12 ships.
-import { Button, Card, Space, Table, Tabs, Tooltip, Typography, message } from "antd";
+// AdminBackupsPage — admin overview of every account_backup +
+// system_backup job plus the destinations / schedules / encryption /
+// settings sub-pages. Card.tabList renders the tab strip visually
+// attached to the card body, matching the Users page.
+import { Button, Card, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import { DownloadOutlined, FileTextOutlined, PlusOutlined, SaveOutlined } from "@icons";
 import { useEffect, useState } from "react";
 
@@ -33,6 +34,14 @@ type BackupJob = {
   error_text?: string;
 };
 
+type TabKey =
+  | "account"
+  | "system"
+  | "destinations"
+  | "schedules"
+  | "encryption"
+  | "settings";
+
 const formatBytes = (n: number): string => {
   if (!n) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -48,6 +57,7 @@ const formatBytes = (n: number): string => {
 export const AdminBackupsPage = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [logJob, setLogJob] = useState<BackupJob | null>(null);
+  const [activeTab, setActiveTab] = useState<TabKey>("account");
 
   const query = useTableURL<BackupJob>({
     resource: "admin/backups",
@@ -79,7 +89,7 @@ export const AdminBackupsPage = () => {
 
   const handleCancel = async (row: BackupJob) => {
     try {
-      await apiClient.post(`/api/v1/admin/backups/${row.id}/cancel`);
+      await apiClient.post(`/admin/backups/${row.id}/cancel`);
       message.success(`Cancellation requested for ${row.id}`);
       query.refetch();
     } catch (err) {
@@ -107,113 +117,102 @@ export const AdminBackupsPage = () => {
         </Button>
       </Space>
 
-      <Tabs
-        defaultActiveKey="account"
-        items={[
+      <Card
+        tabList={[
           {
             key: "account",
-            label: "Account backups",
-            children: (
-              <Card>
-                <SearchableTableStringQ<BackupJob>
-                  rowKey="id"
-                  loading={query.isLoading}
-                  dataSource={query.items}
-                  initialSearch={query.params.q}
-                  searchPlaceholder="Search by user-id or job-id..."
-                  onSearchChange={(q) => query.setParams({ q, page: 1 })}
-                  pagination={{
-                    current: query.params.page,
-                    pageSize: query.params.pageSize,
-                    total: query.total,
-                  }}
-                  scroll={{ x: "max-content" }}
-                >
-                  <Table.Column
-                    dataIndex="id"
-                    title="Job ID"
-                    render={(id: string) => (
-                      <Tooltip title={id}>
-                        <code>{id.slice(0, 8)}…</code>
-                      </Tooltip>
-                    )}
-                  />
-                  <Table.Column dataIndex="kind" title="Kind" />
-                  <Table.Column
-                    dataIndex="status"
-                    title="Status"
-                    render={(s: string) => <BackupStatusTag status={s} />}
-                  />
-                  <Table.Column
-                    dataIndex="bytes_added"
-                    title="Added (dedup win)"
-                    render={(n: number) => formatBytes(n)}
-                  />
-                  <Table.Column
-                    dataIndex="bytes_total"
-                    title="Logical size"
-                    render={(n: number) => formatBytes(n)}
-                  />
-                  <Table.Column dataIndex="created_at" title="Created" />
-                  <Table.Column<BackupJob>
-                    title="Actions"
-                    render={(_, row) => (
-                      <Space>
-                        <Button
-                          size="small"
-                          icon={<FileTextOutlined />}
-                          onClick={() => setLogJob(row)}
-                        >
-                          Log
-                        </Button>
-                        {row.status === "succeeded" && (
-                          <Button
-                            size="small"
-                            icon={<DownloadOutlined />}
-                            onClick={() => handleDownload(row)}
-                          >
-                            Download
-                          </Button>
-                        )}
-                        {row.status === "running" && (
-                          <Button size="small" danger onClick={() => handleCancel(row)}>
-                            Cancel
-                          </Button>
-                        )}
-                      </Space>
-                    )}
-                  />
-                </SearchableTableStringQ>
-              </Card>
+            tab: (
+              <Space>
+                Account backups
+                <Tag>{query.total}</Tag>
+              </Space>
             ),
           },
-          {
-            key: "system",
-            label: "System backups",
-            children: <SystemBackupsTab />,
-          },
-          {
-            key: "destinations",
-            label: "Destinations",
-            children: <DestinationsTab />,
-          },
-          {
-            key: "schedules",
-            label: "Schedules",
-            children: <SchedulesTab />,
-          },
-          {
-            key: "encryption",
-            label: "Encryption key",
-            children: <EncryptionKeyCard />,
-          },
-          {
-            key: "settings",
-            label: "Settings",
-            children: <BackupSettingsTab />,
-          },
+          { key: "system", tab: "System backups" },
+          { key: "destinations", tab: "Destinations" },
+          { key: "schedules", tab: "Schedules" },
+          { key: "encryption", tab: "Encryption key" },
+          { key: "settings", tab: "Settings" },
         ]}
-      />
+        activeTabKey={activeTab}
+        onTabChange={(k) => setActiveTab(k as TabKey)}
+      >
+        {activeTab === "account" && (
+          <SearchableTableStringQ<BackupJob>
+            rowKey="id"
+            loading={query.isLoading}
+            dataSource={query.items}
+            initialSearch={query.params.q}
+            searchPlaceholder="Search by user-id or job-id..."
+            onSearchChange={(q) => query.setParams({ q, page: 1 })}
+            pagination={{
+              current: query.params.page,
+              pageSize: query.params.pageSize,
+              total: query.total,
+            }}
+            scroll={{ x: "max-content" }}
+          >
+            <Table.Column
+              dataIndex="id"
+              title="Job ID"
+              render={(id: string) => (
+                <Tooltip title={id}>
+                  <code>{id.slice(0, 8)}…</code>
+                </Tooltip>
+              )}
+            />
+            <Table.Column
+              dataIndex="status"
+              title="Status"
+              render={(s: string) => <BackupStatusTag status={s} />}
+            />
+            <Table.Column
+              dataIndex="bytes_added"
+              title="Added (dedup win)"
+              render={(n: number) => formatBytes(n)}
+            />
+            <Table.Column
+              dataIndex="bytes_total"
+              title="Logical size"
+              render={(n: number) => formatBytes(n)}
+            />
+            <Table.Column dataIndex="created_at" title="Created" />
+            <Table.Column<BackupJob>
+              title="Actions"
+              render={(_, row) => (
+                <Space>
+                  <Button
+                    size="small"
+                    icon={<FileTextOutlined />}
+                    onClick={() => setLogJob(row)}
+                  >
+                    Log
+                  </Button>
+                  {row.status === "succeeded" && (
+                    <Button
+                      size="small"
+                      icon={<DownloadOutlined />}
+                      onClick={() => handleDownload(row)}
+                    >
+                      Download
+                    </Button>
+                  )}
+                  {row.status === "running" && (
+                    <Button size="small" danger onClick={() => handleCancel(row)}>
+                      Cancel
+                    </Button>
+                  )}
+                </Space>
+              )}
+            />
+          </SearchableTableStringQ>
+        )}
+        {activeTab === "system" && <SystemBackupsTab />}
+        {activeTab === "destinations" && <DestinationsTab />}
+        {activeTab === "schedules" && <SchedulesTab />}
+        {activeTab === "encryption" && <EncryptionKeyCard />}
+        {activeTab === "settings" && <BackupSettingsTab />}
+      </Card>
 
       <CreateBackupDrawer
         open={drawerOpen}

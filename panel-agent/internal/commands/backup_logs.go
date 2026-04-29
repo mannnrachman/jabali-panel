@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
 )
 
 var backupLogsJobIDRE = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
@@ -65,13 +67,28 @@ func backupLogsHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	statusOut, _ := exec.CommandContext(ctx, "systemctl", "is-active", unit).Output()
 	status := strings.TrimSpace(string(statusOut))
 
-	journalArgs := []string{"-u", unit, "--no-pager", "-o", "cat", "-n", strconv.Itoa(lines)}
-	journalOut, _ := exec.CommandContext(ctx, "journalctl", journalArgs...).Output()
+	// Primary log source: orchestrator-written file at
+	// /var/lib/jabali-backups/logs/<job_id>.log. The orchestrator runs
+	// in-process (no transient unit) so journalctl on a fictional
+	// jabali-backup-<id>.service unit returns nothing — the file is
+	// the only place stage events land.
+	var logText string
+	if data, err := os.ReadFile(backup.JobLogPath(p.JobID)); err == nil {
+		logText = string(data)
+	} else {
+		// Fallback: tail the panel-agent journal for messages whose
+		// printf went via fmt.Println("backup orchestrator failed:" …).
+		// Better than (no log output) when the orchestrator died
+		// before opening the file.
+		journalArgs := []string{"-u", unit, "--no-pager", "-o", "cat", "-n", strconv.Itoa(lines)}
+		out, _ := exec.CommandContext(ctx, "journalctl", journalArgs...).Output()
+		logText = string(out)
+	}
 
 	resp := backupLogsResponse{
 		Unit:      unit,
 		Status:    status,
-		LogText:   string(journalOut),
+		LogText:   logText,
 		FetchedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	if status == "inactive" || status == "failed" {

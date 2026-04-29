@@ -2,7 +2,7 @@
 // the Restore button is intentionally absent: system restore is CLI-only
 // in v1 (`jabali system restore --force …`). The card surfaces the
 // command line pre-filled with the most recent successful snapshot ID.
-import { Alert, Button, Card, Space, Table, Typography, message } from "antd";
+import { Alert, Button, Space, Table, Typography, message } from "antd";
 import { FileTextOutlined, ServerOutlined } from "@icons";
 import { useEffect, useState } from "react";
 
@@ -62,19 +62,16 @@ export const SystemBackupsTab = () => {
   const latestSucceeded = (query.items ?? []).find((b) => b.status === "succeeded");
 
   return (
-    <Card
-      title={
-        <span>
+    <>
+      <Space style={{ marginBottom: 16, width: "100%", justifyContent: "space-between" }}>
+        <Typography.Text strong>
           <ServerOutlined style={{ marginRight: 8 }} />
           System backups
-        </span>
-      }
-      extra={
+        </Typography.Text>
         <Button type="primary" loading={submitting} onClick={handleCreate}>
           Create system backup
         </Button>
-      }
-    >
+      </Space>
       <Alert
         type="warning"
         showIcon
@@ -127,6 +124,6 @@ export const SystemBackupsTab = () => {
         job={logJob ? { id: logJob.id, kind: logJob.kind || "system_backup", status: logJob.status } : null}
         onClose={() => setLogJob(null)}
       />
-    </Card>
+    </>
   );
 };

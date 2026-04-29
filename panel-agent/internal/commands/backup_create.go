@@ -119,6 +119,10 @@ func backupCreateHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 // the run (manifest records `status=failed` for that stage); fatal
 // failures (restic missing, repo corruption) abort.
 func runBackupOrchestrator(ctx context.Context, req backupCreateParams) error {
+	jl := backup.NewJobLogger(req.JobID)
+	defer jl.Close()
+	jl.Printf("account_backup start user_id=%s username=%s databases=%d mailboxes=%d",
+		req.UserID, req.Username, len(req.Databases), len(req.Mailboxes))
 	c := backup.New(backup.DefaultConfig())
 	manifest := backup.AccountManifest{
 		SchemaVersion: backup.ManifestSchemaVersion,
@@ -132,20 +136,34 @@ func runBackupOrchestrator(ctx context.Context, req backupCreateParams) error {
 	}
 
 	// Stage: home
+	jl.Printf("stage=home start")
 	homeStage := runHomeStage(ctx, req)
+	jl.Printf("stage=home done status=%s bytes_added=%d bytes_total=%d warnings=%v",
+		homeStage.Status, homeStage.BytesAdded, homeStage.BytesTotal, homeStage.Warnings)
 	manifest.Stages = append(manifest.Stages, homeStage)
 
 	// Stage: databases
+	jl.Printf("stage=db start dbs=%v", req.Databases)
 	dbStages := runDatabaseStage(ctx, req)
+	for _, s := range dbStages {
+		jl.Printf("stage=db done item=%v status=%s bytes_added=%d bytes_total=%d warnings=%v",
+			s.Items, s.Status, s.BytesAdded, s.BytesTotal, s.Warnings)
+	}
 	manifest.Stages = append(manifest.Stages, dbStages...)
 
 	// Stage: mailboxes
+	jl.Printf("stage=mail start mailboxes=%v", req.Mailboxes)
 	mailStage := runMailStage(ctx, req)
+	jl.Printf("stage=mail done status=%s bytes_added=%d bytes_total=%d warnings=%v",
+		mailStage.Status, mailStage.BytesAdded, mailStage.BytesTotal, mailStage.Warnings)
 	manifest.Stages = append(manifest.Stages, mailStage)
 
 	// Stage: metadata (DB users, app installs, …) — sidecar JSON
 	// produced by panel-api and shipped via the call params.
+	jl.Printf("stage=meta start")
 	metaStage := runMetadataStage(ctx, req)
+	jl.Printf("stage=meta done status=%s bytes_added=%d bytes_total=%d warnings=%v",
+		metaStage.Status, metaStage.BytesAdded, metaStage.BytesTotal, metaStage.Warnings)
 	manifest.Stages = append(manifest.Stages, metaStage)
 
 	// Sum stage byte counts into the top-level ManifestRestic block so
@@ -158,8 +176,11 @@ func runBackupOrchestrator(ctx context.Context, req backupCreateParams) error {
 	}
 
 	// Stage: manifest snapshot (stdin-piped JSON blob)
+	jl.Printf("stage=manifest start bytes_added_total=%d bytes_total_total=%d",
+		manifest.Restic.BytesAdded, manifest.Restic.BytesTotal)
 	body, err := manifest.ToBytes()
 	if err != nil {
+		jl.Printf("stage=manifest serialize_err=%v", err)
 		return fmt.Errorf("manifest serialize: %w", err)
 	}
 	tags := backup.AccountBackupTags(req.JobID, req.UserID, backup.StageManifest)
@@ -169,9 +190,11 @@ func runBackupOrchestrator(ctx context.Context, req backupCreateParams) error {
 		Tags:      tags,
 	})
 	if err != nil {
+		jl.Printf("stage=manifest restic_err=%v", err)
 		return fmt.Errorf("manifest snapshot: %w", err)
 	}
 	_ = summary // job snapshot id is also derivable via tag query
+	jl.Printf("account_backup done")
 	return nil
 }
 

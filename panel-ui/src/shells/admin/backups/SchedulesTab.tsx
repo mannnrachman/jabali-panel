@@ -3,7 +3,6 @@
 import {
   Alert,
   Button,
-  Card,
   Drawer,
   Form,
   Input,
@@ -361,7 +360,7 @@ export function SchedulesTab() {
   };
 
   return (
-    <Card>
+    <>
       <Space style={{ marginBottom: 12 }}>
         <Button
           type="primary"
@@ -390,7 +389,6 @@ export function SchedulesTab() {
         pagination={false}
         scroll={{ x: "max-content" }}
       >
-        <Table.Column dataIndex="kind" title="Kind" render={(k: string) => <Tag>{k}</Tag>} />
         <Table.Column<BackupSchedule>
           title="Users"
           render={(_, row) => {
@@ -496,6 +494,6 @@ export function SchedulesTab() {
         <code>restic copy</code> jobs are queued asynchronously after the local
         backup seals its manifest snapshot.
       </Typography.Paragraph>
-    </Card>
+    </>
   );
 }

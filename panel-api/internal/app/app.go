@@ -735,6 +735,20 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterPHPVersionAdminRoutes(admin, deps.Agent, deps.ServerSettings)
 			api.RegisterPHPExtensionAdminRoutes(admin, deps.Agent)
 		}
+		// M34 per-user PHP-FPM egress firewall — admin + user routes share
+		// the same handler config; admin half mounts under /admin
+		// (RequireAdmin) and user half under the auth-only base group so
+		// /me/* resolves to the caller via JWT.
+		if deps.Users != nil && deps.UserEgressPolicies != nil && deps.UserEgressRequests != nil {
+			adminEgress := v1.Group("/admin", middleware.RequireAdmin())
+			cfg := api.UserEgressHandlerConfig{
+				Users:    deps.Users,
+				Policies: deps.UserEgressPolicies,
+				Requests: deps.UserEgressRequests,
+			}
+			api.RegisterAdminUserEgressRoutes(adminEgress, cfg)
+			api.RegisterMeEgressRoutes(v1, cfg)
+		}
 	}
 
 	// Static SPA: owns r.NoRoute — serves embedded panel-ui/dist for

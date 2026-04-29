@@ -1,0 +1,467 @@
+package api
+
+import (
+	"encoding/json"
+	"errors"
+	"net"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+)
+
+// maxAllowedExtras caps the per-user override list size. Hard ceiling
+// rather than a per-row vs per-user limit — the nft renderer emits one
+// rule per entry, and a runaway list would inflate the rule file
+// without bound.
+const maxAllowedExtras = 50
+
+// UserEgressHandlerConfig wires the M34 admin + user-facing egress
+// endpoints. All four repos are required; if any are nil the routes
+// stay unmounted (matches the conditional pattern from M18).
+type UserEgressHandlerConfig struct {
+	Users    repository.UserRepository
+	Policies repository.UserEgressPolicyRepository
+	Requests repository.UserEgressRequestRepository
+}
+
+// RegisterAdminUserEgressRoutes mounts the admin-side egress endpoints.
+// Caller is responsible for ensuring g already has RequireAdmin().
+func RegisterAdminUserEgressRoutes(g *gin.RouterGroup, cfg UserEgressHandlerConfig) {
+	h := &userEgressHandler{cfg: cfg}
+	g.GET("/users/:id/egress", h.adminGet)
+	g.PUT("/users/:id/egress", h.adminPut)
+	g.GET("/egress-requests", h.listRequests)
+	g.POST("/egress-requests/:id/approve", h.approveRequest)
+	g.POST("/egress-requests/:id/deny", h.denyRequest)
+	g.GET("/egress-summary", h.summary)
+}
+
+// RegisterMeEgressRoutes mounts the user-facing /me/egress endpoints.
+// Auth comes from the parent group's RequireAuth middleware; the
+// handlers resolve the user from the JWT, so no path parameter is
+// required.
+func RegisterMeEgressRoutes(g *gin.RouterGroup, cfg UserEgressHandlerConfig) {
+	h := &userEgressHandler{cfg: cfg}
+	g.GET("/me/egress", h.meGet)
+	g.GET("/me/egress/requests", h.meListRequests)
+	g.POST("/me/egress/request", h.meCreateRequest)
+	g.DELETE("/me/egress/requests/:id", h.meCancelRequest)
+}
+
+type userEgressHandler struct{ cfg UserEgressHandlerConfig }
+
+// egressDestinationInput is the request-body shape for a single
+// allowed-destination row. Mirrors models.EgressDestination but with
+// validation hooks during binding.
+type egressDestinationInput struct {
+	CIDR     string `json:"cidr"     binding:"required"`
+	Port     *int   `json:"port,omitempty"`
+	Protocol string `json:"protocol,omitempty"`
+	Comment  string `json:"comment,omitempty"`
+}
+
+type adminEgressPutBody struct {
+	State        string                   `json:"state"        binding:"required"`
+	AllowedExtra []egressDestinationInput `json:"allowed_extra"`
+}
+
+// adminGet returns the policy for one user. EnsureDefault is called so
+// callers always get a row back (state=enforced + empty allowlist if
+// the user pre-dates the M34 migration), avoiding 404 noise in the UI.
+func (h *userEgressHandler) adminGet(c *gin.Context) {
+	userID := c.Param("id")
+	if _, err := h.cfg.Users.FindByID(c.Request.Context(), userID); err != nil {
+		if isNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "user_not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if err := h.cfg.Policies.EnsureDefault(c.Request.Context(), userID, ""); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ensure_default", "detail": err.Error()})
+		return
+	}
+	row, err := h.cfg.Policies.Get(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "fetch", "detail": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, h.policyView(row))
+}
+
+// adminPut replaces the policy for one user. Validates state + every
+// destination at the API boundary so invalid rows never land in the
+// reconciler queue.
+func (h *userEgressHandler) adminPut(c *gin.Context) {
+	userID := c.Param("id")
+	if _, err := h.cfg.Users.FindByID(c.Request.Context(), userID); err != nil {
+		if isNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "user_not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+
+	var body adminEgressPutBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body", "detail": err.Error()})
+		return
+	}
+	if !validEgressState(body.State) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_state"})
+		return
+	}
+	if len(body.AllowedExtra) > maxAllowedExtras {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "too_many_extras", "max": maxAllowedExtras})
+		return
+	}
+	for i := range body.AllowedExtra {
+		if err := validateExtra(&body.AllowedExtra[i]); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_destination", "detail": err.Error(), "index": i})
+			return
+		}
+	}
+
+	extras := convertExtras(body.AllowedExtra)
+	jsonExtras, _ := json.Marshal(extras)
+	claims := ginctx.Claims(c)
+	var updatedBy *string
+	if claims != nil && claims.UserID != "" {
+		uid := claims.UserID
+		updatedBy = &uid
+	}
+
+	policy := &models.UserEgressPolicy{
+		UserID:       userID,
+		State:        body.State,
+		AllowedExtra: jsonExtras,
+		UpdatedBy:    updatedBy,
+	}
+	if err := h.cfg.Policies.Upsert(c.Request.Context(), policy); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "upsert", "detail": err.Error()})
+		return
+	}
+	row, err := h.cfg.Policies.Get(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "fetch_after_upsert", "detail": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, h.policyView(row))
+}
+
+// listRequests is the admin queue view — every pending row.
+func (h *userEgressHandler) listRequests(c *gin.Context) {
+	rows, err := h.cfg.Requests.ListPending(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "list", "detail": err.Error()})
+		return
+	}
+	if rows == nil {
+		rows = []models.UserEgressRequest{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": rows, "total": len(rows)})
+}
+
+// approveRequest decides a request, and if approved folds the
+// destination into the user's allowed_extra list. Idempotent on
+// already-approved rows (returns 409).
+func (h *userEgressHandler) approveRequest(c *gin.Context) {
+	h.decideRequest(c, models.UserEgressRequestStatusApproved)
+}
+
+// denyRequest decides a request as denied. The user can submit a new
+// request afterwards if they want to retry.
+func (h *userEgressHandler) denyRequest(c *gin.Context) {
+	h.decideRequest(c, models.UserEgressRequestStatusDenied)
+}
+
+func (h *userEgressHandler) decideRequest(c *gin.Context, status string) {
+	requestID := c.Param("id")
+	req, err := h.cfg.Requests.Get(c.Request.Context(), requestID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "request_not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "fetch_request"})
+		return
+	}
+	if req.Status != models.UserEgressRequestStatusPending {
+		c.JSON(http.StatusConflict, gin.H{"error": "already_decided", "status": req.Status})
+		return
+	}
+
+	claims := ginctx.Claims(c)
+	reviewedBy := ""
+	if claims != nil {
+		reviewedBy = claims.UserID
+	}
+
+	if err := h.cfg.Requests.Decide(c.Request.Context(), requestID, status, reviewedBy); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "decide", "detail": err.Error()})
+		return
+	}
+
+	if status == models.UserEgressRequestStatusApproved {
+		if err := h.foldRequestIntoPolicy(c, req); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "fold_request", "detail": err.Error()})
+			return
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"id": requestID, "status": status})
+}
+
+// foldRequestIntoPolicy appends the approved destination to the user's
+// allowed_extra list. Dedupes on (cidr, port, protocol).
+func (h *userEgressHandler) foldRequestIntoPolicy(c *gin.Context, req *models.UserEgressRequest) error {
+	policy, err := h.cfg.Policies.Get(c.Request.Context(), req.UserID)
+	if err != nil {
+		if !errors.Is(err, repository.ErrNotFound) {
+			return err
+		}
+		// User has no row yet; create one in enforced state with the
+		// approved destination as the only entry.
+		policy = &models.UserEgressPolicy{
+			UserID: req.UserID,
+			State:  models.UserEgressStateEnforced,
+		}
+	}
+	existing, _ := policy.DecodeAllowedExtra()
+	proto := req.Protocol
+	if proto == "" {
+		proto = models.UserEgressProtocolTCP
+	}
+	for _, e := range existing {
+		samePort := (e.Port == nil && req.Port == nil) ||
+			(e.Port != nil && req.Port != nil && uint(*e.Port) == *req.Port)
+		if e.CIDR == req.CIDR && samePort && e.Protocol == proto {
+			return nil // already there
+		}
+	}
+	var portPtr *int
+	if req.Port != nil {
+		v := int(*req.Port)
+		portPtr = &v
+	}
+	existing = append(existing, models.EgressDestination{
+		CIDR:     req.CIDR,
+		Port:     portPtr,
+		Protocol: proto,
+		Comment:  "approved request " + req.ID,
+	})
+	jsonExtras, _ := json.Marshal(existing)
+	policy.AllowedExtra = jsonExtras
+	if policy.State == "" {
+		policy.State = models.UserEgressStateEnforced
+	}
+	claims := ginctx.Claims(c)
+	if claims != nil && claims.UserID != "" {
+		uid := claims.UserID
+		policy.UpdatedBy = &uid
+	}
+	return h.cfg.Policies.Upsert(c.Request.Context(), policy)
+}
+
+// summary returns a quick aggregate for the admin dashboard widget.
+// State counts + total drops in the last 24h, in one round-trip.
+func (h *userEgressHandler) summary(c *gin.Context) {
+	counts, err := h.cfg.Policies.StateCounts(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "state_counts"})
+		return
+	}
+	policies, err := h.cfg.Policies.List(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "list_policies"})
+		return
+	}
+	var totalDrops uint64
+	for _, p := range policies {
+		totalDrops += p.DropCount24h
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"state_counts":  counts,
+		"total_drops":   totalDrops,
+		"policy_total":  len(policies),
+	})
+}
+
+// meGet returns the caller's own policy. Always returns a row by
+// EnsureDefault — never 404.
+func (h *userEgressHandler) meGet(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil || claims.UserID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	if err := h.cfg.Policies.EnsureDefault(c.Request.Context(), claims.UserID, ""); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ensure_default", "detail": err.Error()})
+		return
+	}
+	row, err := h.cfg.Policies.Get(c.Request.Context(), claims.UserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "fetch"})
+		return
+	}
+	c.JSON(http.StatusOK, h.policyView(row))
+}
+
+// meListRequests returns the caller's own request history.
+func (h *userEgressHandler) meListRequests(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil || claims.UserID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	rows, err := h.cfg.Requests.ListByUser(c.Request.Context(), claims.UserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "list", "detail": err.Error()})
+		return
+	}
+	if rows == nil {
+		rows = []models.UserEgressRequest{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": rows, "total": len(rows)})
+}
+
+type meEgressRequestBody struct {
+	CIDR     string `json:"cidr"     binding:"required"`
+	Port     *uint  `json:"port,omitempty"`
+	Protocol string `json:"protocol,omitempty"`
+	Reason   string `json:"reason"   binding:"required"`
+}
+
+// meCreateRequest writes a pending row owned by the caller. Reason is
+// required so the admin queue carries enough context to decide.
+func (h *userEgressHandler) meCreateRequest(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil || claims.UserID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	var body meEgressRequestBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body", "detail": err.Error()})
+		return
+	}
+	if _, _, err := net.ParseCIDR(body.CIDR); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_cidr", "detail": err.Error()})
+		return
+	}
+	proto := body.Protocol
+	if proto == "" {
+		proto = models.UserEgressProtocolTCP
+	}
+	if proto != models.UserEgressProtocolTCP && proto != models.UserEgressProtocolUDP {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_protocol"})
+		return
+	}
+	if body.Port != nil && (*body.Port == 0 || *body.Port > 65535) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_port"})
+		return
+	}
+	if len(strings.TrimSpace(body.Reason)) < 4 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "reason_too_short", "min": 4})
+		return
+	}
+	if len(body.Reason) > 500 {
+		body.Reason = body.Reason[:500]
+	}
+
+	req := &models.UserEgressRequest{
+		ID:        ids.NewULID(),
+		UserID:    claims.UserID,
+		CIDR:      body.CIDR,
+		Port:      body.Port,
+		Protocol:  proto,
+		Reason:    body.Reason,
+		Status:    models.UserEgressRequestStatusPending,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := h.cfg.Requests.Create(c.Request.Context(), req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "create", "detail": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, req)
+}
+
+// meCancelRequest hard-deletes a pending row owned by the caller. Repo
+// matches on (id, user_id, status=pending) so the call cannot reach a
+// row from a different user nor a row already decided.
+func (h *userEgressHandler) meCancelRequest(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil || claims.UserID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	if err := h.cfg.Requests.CancelPending(c.Request.Context(), c.Param("id"), claims.UserID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "request_not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "cancel"})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// policyView reshapes the DB row for the wire — surfaces the decoded
+// allowed_extra list (never null) and inlines a typed shape.
+func (h *userEgressHandler) policyView(row *models.UserEgressPolicy) gin.H {
+	extras, _ := row.DecodeAllowedExtra()
+	return gin.H{
+		"user_id":             row.UserID,
+		"state":               row.State,
+		"allowed_extra":       extras,
+		"drop_count_24h":      row.DropCount24h,
+		"drop_count_at":       row.DropCountAt,
+		"learning_started_at": row.LearningStartedAt,
+		"updated_at":          row.UpdatedAt,
+		"updated_by":          row.UpdatedBy,
+	}
+}
+
+func validEgressState(s string) bool {
+	return s == models.UserEgressStateOff ||
+		s == models.UserEgressStateLearning ||
+		s == models.UserEgressStateEnforced
+}
+
+func validateExtra(e *egressDestinationInput) error {
+	if _, _, err := net.ParseCIDR(e.CIDR); err != nil {
+		return errors.New("cidr: " + err.Error())
+	}
+	if e.Port != nil && (*e.Port < 1 || *e.Port > 65535) {
+		return errors.New("port out of range")
+	}
+	if e.Protocol == "" {
+		e.Protocol = models.UserEgressProtocolTCP
+	}
+	if e.Protocol != models.UserEgressProtocolTCP && e.Protocol != models.UserEgressProtocolUDP {
+		return errors.New("protocol must be tcp or udp")
+	}
+	if len(e.Comment) > 200 {
+		return errors.New("comment too long")
+	}
+	return nil
+}
+
+func convertExtras(in []egressDestinationInput) []models.EgressDestination {
+	out := make([]models.EgressDestination, 0, len(in))
+	for _, e := range in {
+		out = append(out, models.EgressDestination{
+			CIDR: e.CIDR, Port: e.Port,
+			Protocol: e.Protocol, Comment: e.Comment,
+		})
+	}
+	return out
+}

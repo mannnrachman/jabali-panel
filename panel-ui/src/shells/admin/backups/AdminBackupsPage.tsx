@@ -104,7 +104,7 @@ export const AdminBackupsPage = () => {
         align="center"
         style={{ marginBottom: 16, width: "100%", justifyContent: "space-between" }}
       >
-        <Typography.Title level={2} style={{ margin: 0 }}>
+        <Typography.Title level={3} style={{ margin: 0 }}>
           <SaveOutlined style={{ marginRight: 8 }} />
           Backups
         </Typography.Title>

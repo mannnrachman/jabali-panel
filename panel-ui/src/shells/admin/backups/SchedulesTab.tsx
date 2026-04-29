@@ -3,9 +3,9 @@
 import {
   Alert,
   Button,
+  Checkbox,
   Drawer,
   Form,
-  Input,
   InputNumber,
   Modal,
   Radio,
@@ -14,10 +14,12 @@ import {
   Switch,
   Table,
   Tag,
+  TimePicker,
   Tooltip,
   Typography,
   message,
 } from "antd";
+import dayjs, { type Dayjs } from "dayjs";
 import {
   CalendarCheckOutlined,
   DeleteOutlined,
@@ -67,11 +69,73 @@ interface User {
 // strips ALL_USERS out of the array before sending.
 const ALL_USERS = "__all__";
 
-const PRESETS: Array<{ label: string; value: string; cron: string }> = [
-  { label: "Daily 03:00", value: "daily", cron: "0 3 * * *" },
-  { label: "Weekly Sun 03:00", value: "weekly", cron: "0 3 * * 0" },
-  { label: "Monthly 1st 03:00", value: "monthly", cron: "0 3 1 * *" },
-  { label: "Custom", value: "custom", cron: "" },
+type Freq = "daily" | "weekly" | "monthly";
+
+interface ScheduleSpec {
+  freq: Freq;
+  time: Dayjs;          // hour:minute only used
+  weekdays?: number[];  // weekly only — 0=Sun..6=Sat (cron numbering)
+  dom?: number;         // monthly only — 1..31
+}
+
+// cronFromSpec converts the form values into a 5-field cron expression.
+// Monthly is day-of-month only (Option A); nth-weekday lands when we
+// switch off robfig/cron, which OR-merges dom/dow restrictions.
+const cronFromSpec = (s: ScheduleSpec): string => {
+  const m = s.time.minute();
+  const h = s.time.hour();
+  switch (s.freq) {
+    case "daily":
+      return `${m} ${h} * * *`;
+    case "weekly": {
+      const days = (s.weekdays ?? []).slice().sort((a, b) => a - b);
+      const dow = days.length === 0 || days.length === 7 ? "*" : days.join(",");
+      return `${m} ${h} * * ${dow}`;
+    }
+    case "monthly":
+      return `${m} ${h} ${s.dom ?? 1} * *`;
+  }
+};
+
+// specFromCron is best-effort — recognises the shapes cronFromSpec
+// emits. Anything else returns null and the drawer falls back to
+// daily-default with a notice.
+const specFromCron = (expr: string): ScheduleSpec | null => {
+  const parts = expr.trim().split(/\s+/);
+  if (parts.length !== 5) return null;
+  const [mm, hh, dom, mon, dow] = parts;
+  const m = Number(mm);
+  const h = Number(hh);
+  if (!Number.isInteger(m) || !Number.isInteger(h)) return null;
+  if (mon !== "*") return null;
+  const time = dayjs().hour(h).minute(m).second(0);
+  // daily: dom * dow *
+  if (dom === "*" && dow === "*") {
+    return { freq: "daily", time };
+  }
+  // weekly: dom * dow restricted
+  if (dom === "*") {
+    const days = dow.split(",").map((x) => Number(x)).filter((n) => Number.isInteger(n));
+    if (days.length === 0 || days.some((d) => d < 0 || d > 6)) return null;
+    return { freq: "weekly", time, weekdays: days };
+  }
+  // monthly: dom restricted, dow *
+  if (dow === "*") {
+    const d = Number(dom);
+    if (!Number.isInteger(d) || d < 1 || d > 31) return null;
+    return { freq: "monthly", time, dom: d };
+  }
+  return null;
+};
+
+const WEEKDAY_OPTIONS = [
+  { label: "Mon", value: 1 },
+  { label: "Tue", value: 2 },
+  { label: "Wed", value: 3 },
+  { label: "Thu", value: 4 },
+  { label: "Fri", value: 5 },
+  { label: "Sat", value: 6 },
+  { label: "Sun", value: 0 },
 ];
 
 interface ScheduleDrawerProps {
@@ -93,22 +157,25 @@ function ScheduleDrawer({
 }: ScheduleDrawerProps) {
   const [form] = Form.useForm();
   const [busy, setBusy] = useState(false);
-  const [preset, setPreset] = useState<string>("daily");
+  const freq = (Form.useWatch("freq", form) ?? "daily") as Freq;
 
   useEffect(() => {
     if (open) {
       form.resetFields();
       if (editing) {
-        const matched = PRESETS.find((p) => p.cron === editing.cron_expr);
-        setPreset(matched?.value ?? "custom");
-        // Hydrate user_ids: empty backend list = "all non-admin users",
-        // shown as the ALL_USERS sentinel tag in the multi-select.
+        const spec = specFromCron(editing.cron_expr) ?? {
+          freq: "daily" as Freq,
+          time: dayjs().hour(3).minute(0).second(0),
+        };
         const editingIDs = editing.user_ids && editing.user_ids.length > 0
           ? editing.user_ids
           : [ALL_USERS];
         form.setFieldsValue({
           user_ids: editingIDs,
-          cron_expr: editing.cron_expr,
+          freq: spec.freq,
+          time: spec.time,
+          weekdays: spec.weekdays ?? [1],
+          dom: spec.dom ?? 1,
           enabled: editing.enabled,
           keep_daily: editing.keep_daily ?? undefined,
           keep_weekly: editing.keep_weekly ?? undefined,
@@ -117,10 +184,12 @@ function ScheduleDrawer({
           destination_ids: editing.destinations?.map((d) => d.id) ?? [],
         });
       } else {
-        setPreset("daily");
         form.setFieldsValue({
           user_ids: [ALL_USERS],
-          cron_expr: "0 3 * * *",
+          freq: "daily" as Freq,
+          time: dayjs().hour(3).minute(0).second(0),
+          weekdays: [1],
+          dom: 1,
           enabled: true,
           destination_ids: [],
           include_system_backup: false,
@@ -128,14 +197,6 @@ function ScheduleDrawer({
       }
     }
   }, [open, editing, form]);
-
-  const handlePresetChange = (value: string) => {
-    setPreset(value);
-    const p = PRESETS.find((x) => x.value === value);
-    if (p && p.cron) {
-      form.setFieldsValue({ cron_expr: p.cron });
-    }
-  };
 
   const handleSave = async () => {
     let values;
@@ -159,9 +220,20 @@ function ScheduleDrawer({
         setBusy(false);
         return;
       }
+      if (values.freq === "weekly" && (!values.weekdays || values.weekdays.length === 0)) {
+        message.error("Pick at least one weekday");
+        setBusy(false);
+        return;
+      }
+      const cron = cronFromSpec({
+        freq: values.freq,
+        time: values.time,
+        weekdays: values.weekdays,
+        dom: values.dom,
+      });
       const body: Record<string, unknown> = {
         kind: "account_backup",
-        cron_expr: values.cron_expr,
+        cron_expr: cron,
         enabled: values.enabled,
         destination_ids: values.destination_ids ?? [],
         user_ids: userIDs,
@@ -234,26 +306,42 @@ function ScheduleDrawer({
         >
           <Switch />
         </Form.Item>
-        <Form.Item label="Cadence">
-          <Radio.Group
-            value={preset}
-            onChange={(e) => handlePresetChange(e.target.value)}
-            buttonStyle="solid"
-          >
-            {PRESETS.map((p) => (
-              <Radio.Button key={p.value} value={p.value}>
-                {p.label}
-              </Radio.Button>
-            ))}
+        <Form.Item
+          name="freq"
+          label="Frequency"
+          rules={[{ required: true }]}
+        >
+          <Radio.Group buttonStyle="solid">
+            <Radio.Button value="daily">Daily</Radio.Button>
+            <Radio.Button value="weekly">Weekly</Radio.Button>
+            <Radio.Button value="monthly">Monthly</Radio.Button>
           </Radio.Group>
         </Form.Item>
+        {freq === "weekly" && (
+          <Form.Item
+            name="weekdays"
+            label="Days"
+            rules={[{ required: true, message: "Pick at least one weekday" }]}
+          >
+            <Checkbox.Group options={WEEKDAY_OPTIONS} />
+          </Form.Item>
+        )}
+        {freq === "monthly" && (
+          <Form.Item
+            name="dom"
+            label="Day of month"
+            rules={[{ required: true, type: "number", min: 1, max: 31 }]}
+            extra="1–31. Months without that day are skipped (e.g. day 31 in February)."
+          >
+            <InputNumber min={1} max={31} style={{ width: 120 }} />
+          </Form.Item>
+        )}
         <Form.Item
-          name="cron_expr"
-          label="Cron expression"
-          rules={[{ required: true }]}
-          extra="5-field cron (minute hour day month dow). Server validates before save."
+          name="time"
+          label="Time"
+          rules={[{ required: true, message: "Pick a time" }]}
         >
-          <Input placeholder="0 3 * * *" disabled={preset !== "custom"} />
+          <TimePicker format="HH:mm" minuteStep={5} />
         </Form.Item>
         <Form.Item
           name="destination_ids"
@@ -275,10 +363,11 @@ function ScheduleDrawer({
           />
         </Form.Item>
 
-        <Typography.Title level={5}>Retention overrides (advanced)</Typography.Title>
+        <Typography.Title level={5}>Retention</Typography.Title>
         <Typography.Paragraph type="secondary" style={{ marginTop: -8 }}>
-          Leave blank to inherit server defaults from server_settings.
-          backup_keep_*.
+          restic forget runs daily and prunes snapshots from this
+          schedule beyond these limits. Leave blank to keep every
+          snapshot.
         </Typography.Paragraph>
         <Space size={12} style={{ display: "flex", flexWrap: "wrap" }}>
           <Form.Item name="keep_daily" label="Keep daily">

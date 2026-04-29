@@ -119,14 +119,14 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 		Label:       "Admin signed in",
 		Description: "First request of a new Kratos admin session.",
 		Severity:    "info",
-		DefaultOn:   false,
+		DefaultOn:   true,
 	},
 	{
 		Kind:        "ssh.login",
 		Label:       "SSH login",
 		Description: "Successful SSH authentication for a panel-managed user.",
 		Severity:    "info",
-		DefaultOn:   false,
+		DefaultOn:   true,
 	},
 	{
 		Kind:        "notifications.channel.auto_disabled",

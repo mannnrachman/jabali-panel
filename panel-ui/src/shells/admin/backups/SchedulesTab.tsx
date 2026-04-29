@@ -389,7 +389,20 @@ export function SchedulesTab() {
         pagination={false}
         scroll={{ x: "max-content" }}
       >
-        <Table.Column dataIndex="kind" title="Type" render={(k: string) => <Tag>{k}</Tag>} />
+        <Table.Column
+          dataIndex="kind"
+          title="Type"
+          render={(k: string) => {
+            const label =
+              k === "system_backup"
+                ? "System Backup"
+                : k === "account_backup"
+                  ? "Account Backup"
+                  : k;
+            const color = k.startsWith("system") ? "purple" : "blue";
+            return <Tag color={color}>{label}</Tag>;
+          }}
+        />
         <Table.Column<BackupSchedule>
           title="Users"
           render={(_, row) => {

@@ -204,7 +204,24 @@ export const AdminBackupsPage = () => {
                 </Tooltip>
               )}
             />
-            <Table.Column dataIndex="kind" title="Type" />
+            <Table.Column
+              dataIndex="kind"
+              title="Type"
+              render={(k: string) => {
+                const label =
+                  k === "system_backup"
+                    ? "System Backup"
+                    : k === "account_backup"
+                      ? "Account Backup"
+                      : k === "system_restore"
+                        ? "System Restore"
+                        : k === "account_restore"
+                          ? "Account Restore"
+                          : k;
+                const color = k.startsWith("system") ? "purple" : "blue";
+                return <Tag color={color}>{label}</Tag>;
+              }}
+            />
             <Table.Column
               dataIndex="status"
               title="Status"

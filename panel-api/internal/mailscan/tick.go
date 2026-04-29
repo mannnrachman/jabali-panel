@@ -258,6 +258,11 @@ func scanOneAttachment(ctx context.Context, client *Client, deps Deps, cfg Setti
 	if err != nil {
 		return fmt.Errorf("download %q: %w", att.Name, err)
 	}
+	if deps.Log != nil {
+		deps.Log.Info("mailscan attachment downloaded",
+			"account", p.ID, "email", e.ID, "attachment", att.Name,
+			"jmap_size", att.Size, "downloaded_bytes", len(body), "truncated", truncated)
+	}
 	if truncated {
 		recordFailure(ctx, deps, p.ID, mailboxID, fmt.Sprintf("attachment %q truncated at %d bytes", att.Name, cfg.MaxAttachmentBytes), "attachment_truncated")
 		return nil
@@ -266,6 +271,11 @@ func scanOneAttachment(ctx context.Context, client *Client, deps Deps, cfg Setti
 	scanCtx, scanCancel := timeoutCtx(ctx, cfg.ScanTimeout)
 	res := scanBytes(scanCtx, body, att.Name)
 	scanCancel()
+	if deps.Log != nil {
+		deps.Log.Info("mailscan attachment scanned",
+			"account", p.ID, "email", e.ID, "attachment", att.Name,
+			"rule", res.RuleName, "engine_err", res.EngineErr)
+	}
 	if res.EngineErr != nil {
 		return fmt.Errorf("scan %q: %w", att.Name, res.EngineErr)
 	}

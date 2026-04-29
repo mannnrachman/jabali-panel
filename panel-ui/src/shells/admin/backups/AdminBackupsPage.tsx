@@ -145,7 +145,7 @@ export const AdminBackupsPage = () => {
   const [runJobs, setRunJobs] = useState<Record<string, BackupJob[]>>({});
 
   const usersQuery = useListQuery<{ id: string; username: string; email: string }>({
-    resource: "admin/users",
+    resource: "users",
     params: { pageSize: 500 },
     enabled: activeTab === "backups",
   });

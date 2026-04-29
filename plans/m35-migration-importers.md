@@ -16,13 +16,21 @@ review-time confusion.
 Branch: `m35/migration-importers`. Default mode: branch + ff-merge into
 `main` after every step.
 
-ADR target: **0079** (next free above ADR-0077 jabali-repair, with M34
-reserving 0078).
+ADR target: **0085** (next free above ADR-0084 per-user-egress-firewall;
+prior reservation of 0079 collided with M33.2 mail-yara-async-scanner).
 
-Migration high-water-mark on main: 000091. M35 takes 000092..000094 (this
-PARTIALLY collides with M34's reservation; if M34 lands first, M35 starts
-at the next free above M34's last migration. Whichever ships second
-renumbers.)
+Migration high-water-mark on main: 000102 (post-M34). M35 takes
+000103..000105. If a parallel milestone lands a migration before M35
+ships, the wave-1 step renumbers to the next free contiguous range.
+
+**MariaDB FK collation requirement:** every CREATE TABLE Step 1 introduces
+that has a FOREIGN KEY back to `users(id)` MUST declare both
+`DEFAULT CHARSET=utf8mb4` AND `COLLATE=utf8mb4_unicode_ci`, AND ULID
+columns referencing users.id MUST be `CHAR(26)` (not `VARCHAR(26)`).
+M34 shipped without these and crashed every fresh install with
+errno 150 "Foreign key constraint is incorrectly formed" until
+b336d856 + 10569464. Reference patterns: 000037_create_cron_jobs,
+000095_create_backup_schedule_users.
 
 ## Why now
 
@@ -91,19 +99,26 @@ Wave D (8, 9): admin UI + runbook + E2E.
 
 ## Steps
 
-### Step 1: foundation — DB schema, dirs, ADR-0079
+### Step 1: foundation — DB schema, dirs, ADR-0085
 
 **Files:**
-- `panel-api/internal/db/migrations/0000NN_create_migration_jobs.{up,down}.sql`
-- `panel-api/internal/db/migrations/0000NN_create_migration_stages.{up,down}.sql`
-- `panel-api/internal/db/migrations/0000NN_server_settings_migrations.{up,down}.sql`
+- `panel-api/internal/db/migrations/000103_create_migration_jobs.{up,down}.sql`
+- `panel-api/internal/db/migrations/000104_create_migration_stages.{up,down}.sql`
+- `panel-api/internal/db/migrations/000105_server_settings_migrations.{up,down}.sql`
 - `panel-api/internal/models/migration_job.go`
 - `panel-api/internal/repository/migration_job_repository.go` (+ tests)
 - `install.sh`: provision `/var/lib/jabali-migrations/` (root:jabali 0750)
   + the staging tmpfs directory `/run/jabali-migrations/<job-id>/`
 - `panel-api/cmd/server/migrate_run_cmd.go` — cobra subcommand the
   transient unit invokes
-- `docs/adr/0079-migration-importers.md`
+- `docs/adr/0085-migration-importers.md`
+
+Each CREATE TABLE that adds a FOREIGN KEY (target_user_id → users.id, or
+the migration_stages.job_id → migration_jobs.id self-FK) MUST end with:
+`ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`
+ULID columns referencing users.id MUST be `CHAR(26)` (not VARCHAR(26)).
+This is a hard precondition: skipping it crashes every fresh install
+with errno 150 (M34 scar; ref b336d856 + 10569464).
 
 `migration_jobs` shape:
 ```sql
@@ -122,7 +137,7 @@ CREATE TABLE migration_jobs (
   PRIMARY KEY (id),
   UNIQUE KEY uq_migration_source (source_host, source_user, source_kind),
   KEY idx_migration_state (state)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
 
 `migration_stages` records the per-stage state for resumability:

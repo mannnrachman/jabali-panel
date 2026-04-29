@@ -19,6 +19,7 @@ import { BackupStatusTag } from "./BackupStatusTag";
 
 import { apiClient } from "../../../apiClient";
 import { extractApiError } from "../../../apiErrors";
+import { useListQuery } from "../../../hooks/useQueries";
 import { BackupLogModal } from "./BackupLogModal";
 import { BackupSettingsTab } from "./BackupSettingsTab";
 import { CreateBackupDrawer } from "./CreateBackupDrawer";
@@ -143,6 +144,17 @@ export const AdminBackupsPage = () => {
   const [loading, setLoading] = useState(false);
   const [runJobs, setRunJobs] = useState<Record<string, BackupJob[]>>({});
 
+  const usersQuery = useListQuery<{ id: string; username: string; email: string }>({
+    resource: "admin/users",
+    params: { pageSize: 500 },
+    enabled: activeTab === "backups",
+  });
+  const usernameById = (id: string): string => {
+    if (id === "system") return "system";
+    const u = (usersQuery.items ?? []).find((x) => x.id === id);
+    return u?.username ?? id;
+  };
+
   const reload = async () => {
     setLoading(true);
     try {
@@ -232,7 +244,11 @@ export const AdminBackupsPage = () => {
             </Tooltip>
           ),
         },
-        { title: "User", dataIndex: "user_id" },
+        {
+          title: "User",
+          dataIndex: "user_id",
+          render: (id: string) => usernameById(id),
+        },
         {
           title: "Status",
           dataIndex: "status",
@@ -360,7 +376,6 @@ export const AdminBackupsPage = () => {
             pagination={{ pageSize: 25 }}
             scroll={{ x: "max-content" }}
             expandable={{
-              rowExpandable: (row) => row.isRun,
               onExpand: (expanded, row) => {
                 if (expanded && row.isRun) void expandRun(row.run.run_id);
               },
@@ -371,7 +386,9 @@ export const AdminBackupsPage = () => {
                   ) : (
                     <Typography.Text type="secondary">Loading…</Typography.Text>
                   )
-                ) : null,
+                ) : (
+                  renderChildJobs([row.job])
+                ),
             }}
             columns={[
               {
@@ -422,39 +439,6 @@ export const AdminBackupsPage = () => {
                 title: "Started",
                 render: (_: unknown, row: TableRow) =>
                   row.isRun ? row.run.started_at : row.job.created_at,
-              },
-              {
-                title: "Actions",
-                render: (_: unknown, row: TableRow) => {
-                  if (row.isRun) {
-                    return <Typography.Text type="secondary">expand for jobs</Typography.Text>;
-                  }
-                  return (
-                    <Space>
-                      <Button
-                        size="small"
-                        icon={<FileTextOutlined />}
-                        onClick={() => setLogJob(row.job)}
-                      >
-                        Log
-                      </Button>
-                      {row.job.status === "succeeded" && (
-                        <Button
-                          size="small"
-                          icon={<DownloadOutlined />}
-                          onClick={() => handleDownload(row.job)}
-                        >
-                          Download
-                        </Button>
-                      )}
-                      {row.job.status === "running" && (
-                        <Button size="small" danger onClick={() => handleCancel(row.job)}>
-                          Cancel
-                        </Button>
-                      )}
-                    </Space>
-                  );
-                },
               },
             ]}
           />

@@ -98,6 +98,11 @@ type Deps struct {
 	// enabled via malware_settings.mail_scan_enabled. ADR-0079.
 	MailScanState       repository.MailScanStateRepository
 	MailScanFailures    repository.MailScanFailureRepository
+	// MalwareUserScans tracks per-user manual-scan jobs (mig 000097).
+	// Upserted at scan start by the panel-api startScan handler;
+	// finalised by the post-scan-hook ingest path. Drives the Manual
+	// Scan UI's Last scanned + Status columns.
+	MalwareUserScans    repository.MalwareUserScanRepository
 	// QuotaMount is the filesystem mount path /home lives on — passed
 	// on every M18 user.limits.{apply,clear,report} agent call so the
 	// agent can resolve `setquota -u <user> ... <mount>` without ever
@@ -238,6 +243,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			YARARules:        deps.YARARules,
 			TetragonPolicies: deps.TetragonPolicies,
 			Users:            deps.Users,
+			UserScans:        deps.MalwareUserScans,
 			Log:              deps.Log,
 		})
 	}
@@ -558,6 +564,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 					Settings:         deps.MalwareSettings,
 					YARARules:        deps.YARARules,
 					TetragonPolicies: deps.TetragonPolicies,
+					Users:            deps.Users,
+					UserScans:        deps.MalwareUserScans,
 					Log:              deps.Log,
 				})
 			}

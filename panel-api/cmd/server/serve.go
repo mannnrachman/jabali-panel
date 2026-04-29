@@ -254,6 +254,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// M33.2 (ADR-0079): mail YARA scanner state + DLQ.
 		deps.MailScanState = repository.NewMailScanStateRepository(sharedDB)
 		deps.MailScanFailures = repository.NewMailScanFailureRepository(sharedDB)
+		// M33 follow-up: per-user manual-scan job tracking (mig 000097).
+		deps.MalwareUserScans = repository.NewMalwareUserScanRepository(sharedDB)
 		// M30 (ADR-0075): backup-restore workflow rows.
 		deps.BackupJobs = repository.NewBackupJobRepository(sharedDB)
 		// M30.1 (ADR-0078): destinations + schedules + copy queue.
@@ -570,6 +572,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			Events:     deps.MalwareEvents,
 			Settings:   deps.MalwareSettings,
 			Users:      deps.Users,
+			UserScans:  deps.MalwareUserScans,
 			Log:        log,
 		}
 		go mailscan.StartTicker(ctx, mailscan.Deps{

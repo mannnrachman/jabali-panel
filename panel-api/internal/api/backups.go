@@ -64,10 +64,12 @@ func RegisterBackupRoutes(rg *gin.RouterGroup, cfg BackupHandlerConfig) {
 	admin.GET("/backups/:job_id/status", h.status)
 	admin.GET("/backups/:job_id/download", h.download)
 	admin.POST("/backups/:job_id/cancel", h.cancel)
+	admin.GET("/backups/:job_id/logs", h.logs)
 	admin.POST("/backups/restore", h.restore)
 	admin.POST("/system/backups", h.systemCreate)
 	admin.GET("/system/backups", h.systemList)
 	admin.POST("/system/backups/:job_id/cancel", h.systemCancel)
+	admin.GET("/system/backups/:job_id/logs", h.logs)
 }
 
 type systemBackupRequest struct {
@@ -287,6 +289,36 @@ func (h *backupHandler) cancel(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// logs proxies journalctl tail of the transient unit
+// (jabali-backup-<id>.service or jabali-system-backup-<id>.service)
+// via the agent. Same handler covers both kinds — agent picks the
+// unit name from the job kind in the DB row.
+func (h *backupHandler) logs(c *gin.Context) {
+	jobID := c.Param("job_id")
+	job, err := h.cfg.Jobs.Get(c.Request.Context(), jobID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "not_found"})
+		return
+	}
+	if h.cfg.Agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "agent_unavailable"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+	raw, err := h.cfg.Agent.Call(ctx, "backup.logs", map[string]any{
+		"job_id": job.ID,
+		"kind":   job.Kind,
+	})
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "agent_call_failed", "detail": err.Error()})
+		return
+	}
+	var resp any
+	_ = json.Unmarshal(raw, &resp)
+	c.JSON(http.StatusOK, gin.H{"data": resp})
 }
 
 func (h *backupHandler) download(c *gin.Context) {

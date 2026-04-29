@@ -2,16 +2,18 @@
 // the Restore button is intentionally absent: system restore is CLI-only
 // in v1 (`jabali system restore --force …`). The card surfaces the
 // command line pre-filled with the most recent successful snapshot ID.
-import { Alert, Button, Card, Table, Tag, Typography, message } from "antd";
-import { ServerOutlined } from "@icons";
+import { Alert, Button, Card, Space, Table, Tag, Typography, message } from "antd";
+import { FileTextOutlined, ServerOutlined } from "@icons";
 import { useState } from "react";
 
 import { apiClient } from "../../../apiClient";
 import { extractApiError } from "../../../apiErrors";
 import { useListQuery } from "../../../hooks/useQueries";
+import { BackupLogModal } from "./BackupLogModal";
 
 type SystemBackup = {
   id: string;
+  kind: string;
   status: string;
   bytes_total: number;
   bytes_added: number;
@@ -40,6 +42,7 @@ const statusColor = (s: string): string => {
 
 export const SystemBackupsTab = () => {
   const [submitting, setSubmitting] = useState(false);
+  const [logJob, setLogJob] = useState<SystemBackup | null>(null);
   const query = useListQuery<SystemBackup>({
     resource: "admin/system/backups",
   });
@@ -110,7 +113,21 @@ export const SystemBackupsTab = () => {
           },
           { title: "Snapshot", dataIndex: "snapshot_id", render: (s: string) => s.slice(0, 12) },
           { title: "Bytes added", dataIndex: "bytes_added" },
+          {
+            title: "Actions",
+            render: (_: unknown, row: SystemBackup) => (
+              <Space>
+                <Button size="small" icon={<FileTextOutlined />} onClick={() => setLogJob(row)}>
+                  Log
+                </Button>
+              </Space>
+            ),
+          },
         ]}
+      />
+      <BackupLogModal
+        job={logJob ? { id: logJob.id, kind: logJob.kind || "system_backup", status: logJob.status } : null}
+        onClose={() => setLogJob(null)}
       />
     </Card>
   );

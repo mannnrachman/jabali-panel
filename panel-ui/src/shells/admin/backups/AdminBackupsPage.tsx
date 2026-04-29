@@ -2,13 +2,14 @@
 // job. Tab layout: Backups (list) / Create Backup (drawer trigger).
 // System backup tab lands in SystemBackupsTab when M30 Step 12 ships.
 import { Button, Card, Space, Table, Tabs, Tag, Tooltip, Typography, message } from "antd";
-import { DownloadOutlined, PlusOutlined, SaveOutlined } from "@icons";
+import { DownloadOutlined, FileTextOutlined, PlusOutlined, SaveOutlined } from "@icons";
 import { useState } from "react";
 
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { apiClient } from "../../../apiClient";
 import { extractApiError } from "../../../apiErrors";
 import { useTableURL } from "../../../hooks/useTableURL";
+import { BackupLogModal } from "./BackupLogModal";
 import { CreateBackupDrawer } from "./CreateBackupDrawer";
 import { DestinationsTab } from "./DestinationsTab";
 import { EncryptionKeyCard } from "./EncryptionKeyCard";
@@ -62,6 +63,7 @@ const formatBytes = (n: number): string => {
 
 export const AdminBackupsPage = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [logJob, setLogJob] = useState<BackupJob | null>(null);
 
   const query = useTableURL<BackupJob>({
     resource: "admin/backups",
@@ -160,6 +162,13 @@ export const AdminBackupsPage = () => {
                     title="Actions"
                     render={(_, row) => (
                       <Space>
+                        <Button
+                          size="small"
+                          icon={<FileTextOutlined />}
+                          onClick={() => setLogJob(row)}
+                        >
+                          Log
+                        </Button>
                         {row.status === "succeeded" && (
                           <Button
                             size="small"
@@ -211,6 +220,11 @@ export const AdminBackupsPage = () => {
           setDrawerOpen(false);
           query.refetch();
         }}
+      />
+
+      <BackupLogModal
+        job={logJob}
+        onClose={() => setLogJob(null)}
       />
     </div>
   );

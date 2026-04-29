@@ -40,6 +40,7 @@ import {
   Grip,
   HardDrive,
   HardDriveDownload,
+  HardDriveUpload,
   Home,
   Inbox,
   Bell,
@@ -151,6 +152,7 @@ export const CodeOutlined = shim(Code);
 export const DatabaseOutlined = shim(Database);
 export const HddOutlined = shim(HardDrive);
 export const HardDriveDownloadOutlined = shim(HardDriveDownload);
+export const HardDriveUploadOutlined = shim(HardDriveUpload);
 export const BgColorsOutlined = shim(Palette);
 export const FolderOutlined = shim(Folder);
 export const AppstoreOutlined = shim(LayoutGrid);

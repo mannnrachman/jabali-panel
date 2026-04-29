@@ -7,7 +7,7 @@ import {
   CalendarCheckOutlined,
   DownloadOutlined,
   FileTextOutlined,
-  HardDriveDownloadOutlined,
+  HardDriveUploadOutlined,
   KeyOutlined,
   PlusOutlined,
   RotateCcwOutlined,
@@ -144,7 +144,7 @@ export const AdminBackupsPage = () => {
             key: "destinations",
             tab: (
               <Space>
-                <HardDriveDownloadOutlined />
+                <HardDriveUploadOutlined />
                 Destinations
               </Space>
             ),

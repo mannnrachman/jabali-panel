@@ -530,6 +530,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		if deps.NotificationHistory != nil {
 			api.RegisterNotificationsInboxRoutes(v1, api.NotificationsInboxHandlerConfig{
 				History: deps.NotificationHistory,
+				Redis:   deps.Redis,
 				Log:     deps.Log,
 			})
 		}

@@ -4,12 +4,12 @@
 // own per-user deliveries AND system-wide broadcast rows (user_id IS
 // NULL) via ListForAdminInbox on the backend. Click a row to mark it
 // read and (if a deeplink exists) navigate there.
-import { Button, Popconfirm, Space, Table, Tag, Tooltip, Typography, message } from "antd";
+import { Button, Descriptions, Modal, Popconfirm, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 
-import { CheckOutlined, DeleteOutlined } from "@icons";
+import { CheckOutlined, DeleteOutlined, EyeOutlined } from "@icons";
 
 import { apiClient } from "../../../apiClient";
 
@@ -22,10 +22,12 @@ type NotificationHistoryRow = {
   deeplink?: string;
   outcome: "pending" | "sent" | "failed" | "skipped";
   channel_id?: string | null;
+  envelope_id?: string | null;
   error_message?: string;
   retry_count: number;
   read_at?: string | null;
   created_at: string;
+  is_dead_letter?: boolean;
 };
 
 type InboxListResponse = {
@@ -59,6 +61,7 @@ function formatTs(iso: string): string {
 export const HistoryTab = () => {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
+  const [info, setInfo] = useState<NotificationHistoryRow | null>(null);
   const navigate = useNavigate();
   const qc = useQueryClient();
 
@@ -215,13 +218,26 @@ export const HistoryTab = () => {
         <Table.Column<NotificationHistoryRow>
           title="Outcome"
           dataIndex="outcome"
-          width={120}
+          width={160}
           render={(o: NotificationHistoryRow["outcome"], row) => {
             const tag = <Tag color={outcomeColor[o] ?? "default"}>{o}</Tag>;
-            if (o === "failed" && row.error_message) {
-              return <Tooltip title={row.error_message}>{tag}</Tooltip>;
+            const wrapped =
+              o === "failed" && row.error_message ? (
+                <Tooltip title={row.error_message}>{tag}</Tooltip>
+              ) : (
+                tag
+              );
+            if (row.is_dead_letter) {
+              return (
+                <Space size={4} wrap>
+                  {wrapped}
+                  <Tooltip title="This envelope was moved to the Dead Letter queue after the dispatcher exhausted its retries.">
+                    <Tag color="volcano">dead letter</Tag>
+                  </Tooltip>
+                </Space>
+              );
             }
-            return tag;
+            return wrapped;
           }}
         />
         <Table.Column<NotificationHistoryRow>
@@ -232,7 +248,100 @@ export const HistoryTab = () => {
             v ? <Tag color="default">read</Tag> : <Tag color="blue">new</Tag>
           }
         />
+        <Table.Column<NotificationHistoryRow>
+          title=""
+          width={64}
+          render={(_v: unknown, row) => (
+            <Button
+              type="text"
+              size="small"
+              icon={<EyeOutlined />}
+              onClick={(e) => {
+                e.stopPropagation();
+                setInfo(row);
+                void markRead(row);
+              }}
+              aria-label="Show details"
+            />
+          )}
+        />
       </Table>
+
+      <Modal
+        open={info !== null}
+        onCancel={() => setInfo(null)}
+        title={info ? `${info.event_kind} · ${info.severity}` : ""}
+        footer={[
+          info?.deeplink ? (
+            <Button
+              key="open"
+              type="primary"
+              onClick={() => {
+                if (info?.deeplink) {
+                  navigate(info.deeplink);
+                  setInfo(null);
+                }
+              }}
+            >
+              Open
+            </Button>
+          ) : null,
+          <Button key="close" onClick={() => setInfo(null)}>
+            Close
+          </Button>,
+        ]}
+        width={720}
+      >
+        {info && (
+          <Descriptions column={1} size="small" bordered>
+            <Descriptions.Item label="Time">{formatTs(info.created_at)}</Descriptions.Item>
+            <Descriptions.Item label="Severity">
+              <Tag color={severityColor[info.severity] ?? "default"}>{info.severity}</Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label="Event">
+              <code style={{ fontSize: 12 }}>{info.event_kind}</code>
+            </Descriptions.Item>
+            <Descriptions.Item label="Title">
+              <Typography.Text strong>{info.title}</Typography.Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="Body">
+              <Typography.Paragraph
+                style={{ margin: 0, fontSize: 13, whiteSpace: "pre-wrap" }}
+                copyable={{ text: info.body }}
+              >
+                {info.body}
+              </Typography.Paragraph>
+            </Descriptions.Item>
+            <Descriptions.Item label="Outcome">
+              <Space size={4} wrap>
+                <Tag color={outcomeColor[info.outcome] ?? "default"}>{info.outcome}</Tag>
+                {info.is_dead_letter && <Tag color="volcano">dead letter</Tag>}
+              </Space>
+              {info.error_message && (
+                <Typography.Paragraph
+                  type="danger"
+                  style={{ margin: "8px 0 0", fontSize: 12, whiteSpace: "pre-wrap" }}
+                >
+                  {info.error_message}
+                </Typography.Paragraph>
+              )}
+            </Descriptions.Item>
+            {info.channel_id && (
+              <Descriptions.Item label="Channel">
+                <code style={{ fontSize: 12 }}>{info.channel_id}</code>
+              </Descriptions.Item>
+            )}
+            {info.retry_count > 0 && (
+              <Descriptions.Item label="Retries">{info.retry_count}</Descriptions.Item>
+            )}
+            {info.deeplink && (
+              <Descriptions.Item label="Deeplink">
+                <code style={{ fontSize: 12 }}>{info.deeplink}</code>
+              </Descriptions.Item>
+            )}
+          </Descriptions>
+        )}
+      </Modal>
     </div>
   );
 };

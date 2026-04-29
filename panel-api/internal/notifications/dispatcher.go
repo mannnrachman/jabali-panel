@@ -267,6 +267,10 @@ func (d *Dispatcher) process(ctx context.Context, msg redis.XMessage) {
 		}
 		return
 	}
+	// Stamp the stream entry id onto the in-memory envelope so every
+	// downstream history row can be correlated back to the queue entry
+	// (and, transitively, to a DLQ row keyed by orig_id).
+	env.StreamID = msg.ID
 
 	// Operator toggle: per-event-kind enable. Disabled kinds get
 	// ack+delete with no fanout and no inbox/history row. Repo cache
@@ -385,6 +389,9 @@ func (d *Dispatcher) sendOne(ctx context.Context, ch models.NotificationChannel,
 	if env.UserID != "" {
 		hist.UserID = strPtr(env.UserID)
 	}
+	if env.StreamID != "" {
+		hist.EnvelopeID = strPtr(env.StreamID)
+	}
 	if err := d.history.Create(ctx, hist); err != nil {
 		return fmt.Errorf("create history row: %w", err)
 	}
@@ -496,6 +503,9 @@ func (d *Dispatcher) writeBellRows(ctx context.Context, env Envelope) {
 			UserID:    &uidCopy,
 			CreatedAt: now,
 			UpdatedAt: now,
+		}
+		if env.StreamID != "" {
+			row.EnvelopeID = strPtr(env.StreamID)
 		}
 		if err := d.history.Create(ctx, row); err != nil {
 			d.log.Warn("bell row insert failed", "event", env.EventKind, "user_id", uid, "err", err)

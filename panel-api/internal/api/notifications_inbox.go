@@ -1,21 +1,30 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // NotificationsInboxHandlerConfig wires the authenticated-user bell
-// dropdown endpoints. History is required; Log is optional.
+// dropdown endpoints. History is required; Log is optional. Redis is
+// optional — when present, list responses cross-reference the DLQ
+// stream so the UI can show a "dead letter" badge on rows whose
+// envelope landed in the DLQ. Lab/installer-less environments where
+// Redis isn't configured still serve plain history with no badge.
 type NotificationsInboxHandlerConfig struct {
 	History repository.NotificationHistoryRepository
+	Redis   *redis.Client
 	Log     *slog.Logger
 }
 
@@ -46,13 +55,21 @@ func RegisterNotificationsInboxRoutes(g *gin.RouterGroup, cfg NotificationsInbox
 
 type inboxHandler struct{ cfg NotificationsInboxHandlerConfig }
 
+// inboxRow extends NotificationHistory with a transient is_dead_letter
+// flag the UI uses to badge the row. Computed per request from the
+// DLQ stream's orig_id field.
+type inboxRow struct {
+	models.NotificationHistory
+	IsDeadLetter bool `json:"is_dead_letter"`
+}
+
 type inboxListResponse struct {
-	Data       []models.NotificationHistory `json:"data"`
-	Total      int                          `json:"total"`
-	Page       int                          `json:"page"`
-	PageSize   int                          `json:"page_size"`
-	Unread     int64                        `json:"unread"`
-	UnreadOnly bool                         `json:"unread_only"`
+	Data       []inboxRow `json:"data"`
+	Total      int        `json:"total"`
+	Page       int        `json:"page"`
+	PageSize   int        `json:"page_size"`
+	Unread     int64      `json:"unread"`
+	UnreadOnly bool       `json:"unread_only"`
 }
 
 func (h *inboxHandler) list(c *gin.Context) {
@@ -97,14 +114,56 @@ func (h *inboxHandler) list(c *gin.Context) {
 		unread, _ = h.cfg.History.CountUnreadForUser(ctx, claims.UserID)
 	}
 
+	dlqIDs := h.dlqEnvelopeIDs(ctx)
+	out := make([]inboxRow, 0, len(rows))
+	for _, r := range rows {
+		row := inboxRow{NotificationHistory: r}
+		if r.EnvelopeID != nil && dlqIDs != nil {
+			if _, dlq := dlqIDs[*r.EnvelopeID]; dlq {
+				row.IsDeadLetter = true
+			}
+		}
+		out = append(out, row)
+	}
+
 	c.JSON(http.StatusOK, inboxListResponse{
-		Data:       rows,
+		Data:       out,
 		Total:      int(total),
 		Page:       page,
 		PageSize:   pageSize,
 		Unread:     unread,
 		UnreadOnly: unreadOnly,
 	})
+}
+
+// dlqEnvelopeIDs scans the DLQ stream once per inbox list call and
+// returns the set of orig_id values present. Returns nil when Redis
+// isn't configured or the read errors — the caller treats nil as
+// "no dead-letter info available" and renders rows without a badge.
+//
+// The DLQ is bounded (operators clear or replay), so an XRevRangeN of
+// the most recent few hundred entries is the steady-state cost. We
+// cap at 500 to keep the worst case tight even after a runaway burst.
+func (h *inboxHandler) dlqEnvelopeIDs(parent context.Context) map[string]struct{} {
+	if h.cfg.Redis == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(parent, 500*time.Millisecond)
+	defer cancel()
+	msgs, err := h.cfg.Redis.XRevRangeN(ctx, notifications.StreamDLQ, "+", "-", 500).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		h.cfg.Log.Warn("inbox: dlq scan failed; rendering without badges", "err", err)
+		return nil
+	}
+	out := make(map[string]struct{}, len(msgs))
+	for _, m := range msgs {
+		if v, ok := m.Values["orig_id"]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				out[s] = struct{}{}
+			}
+		}
+	}
+	return out
 }
 
 func (h *inboxHandler) markRead(c *gin.Context) {

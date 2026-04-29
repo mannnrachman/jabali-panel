@@ -43,6 +43,7 @@ type NotificationHistory struct {
 	ErrorMessage string     `gorm:"type:text" json:"error_message,omitempty"`
 	ReadAt       *time.Time `gorm:"type:datetime(6);index:idx_notification_history_user_read,priority:2" json:"read_at,omitempty"`
 	UserID       *string    `gorm:"type:char(26);column:user_id;index:idx_notification_history_user_read,priority:1" json:"user_id,omitempty"`
+	EnvelopeID   *string    `gorm:"type:varchar(40);column:envelope_id;index:idx_notification_history_envelope" json:"envelope_id,omitempty"`
 	CreatedAt    time.Time  `gorm:"type:datetime(6);not null;default:CURRENT_TIMESTAMP(6);index:idx_notification_history_event_created,priority:2" json:"created_at"`
 	UpdatedAt    time.Time  `gorm:"type:datetime(6);not null;default:CURRENT_TIMESTAMP(6)" json:"updated_at"`
 }

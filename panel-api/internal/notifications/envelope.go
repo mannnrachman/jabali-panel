@@ -38,6 +38,13 @@ type Envelope struct {
 	// the kind resolves to web-push, the dispatcher iterates every
 	// enrolled subscription.
 	UserID string
+
+	// StreamID is set by the dispatcher after XREADGROUP to the entry's
+	// Redis Streams id. It is NOT serialised by StreamMap — XADD already
+	// assigns the id, so producers leave this empty. Consumers use it to
+	// stamp notification_history.envelope_id, which lets the inbox UI
+	// correlate history rows with DLQ stream entries by orig_id.
+	StreamID string
 }
 
 // Stream field names — centralised so producer + consumer stay locked

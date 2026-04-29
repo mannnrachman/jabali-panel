@@ -78,6 +78,12 @@ type Deps struct {
 	// fields required for the source to start; nil disables.
 	DomainsForGhost    DomainGhostRepo
 	ManagedIPsForGhost ManagedIPLister
+	// M34 per-user PHP-FPM egress firewall burst source. Compares each
+	// user's drop_count_24h tick value against ServerSettings.EgressBurstThreshold
+	// every minute and fires egress.drop.burst when one or more users
+	// cross. Nil ServerSettings or UserEgressPolicies disables the source.
+	UserEgressPolicies repository.UserEgressPolicyRepository
+	ServerSettings     repository.ServerSettingsRepository
 }
 
 // Start boots every configured source in its own goroutine. Each
@@ -104,6 +110,7 @@ func Start(ctx context.Context, d Deps) {
 	go runSSHLogin(ctx, d)
 	go runMalware(ctx, d)
 	go runDomainGhost(ctx, d)
+	go runEgressBurst(ctx, d)
 	// domain_expiry + backup_fail are stubs — see the stub files in
 	// this package.
 }

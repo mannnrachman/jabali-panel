@@ -641,6 +641,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 			MalwareSettings:    deps.MalwareSettings,
 			DomainsForGhost:    deps.Domains,
 			ManagedIPsForGhost: deps.ManagedIPs,
+			UserEgressPolicies: deps.UserEgressPolicies,
+			ServerSettings:     deps.ServerSettings,
 		})
 	}
 

@@ -120,7 +120,35 @@ func scanBytes(ctx context.Context, data []byte, attachmentName string) ScanResu
 	if rule := firstRuleName(stdout.String(), tmp.Name()); rule != "" {
 		return ScanResult{RuleName: rule}
 	}
+	// Exit-0 with "error:" on stderr means yr loaded zero rules (e.g.
+	// permission denied on rule file) and reported "clean" — silently.
+	// Surface as engine error so the DLQ catches it instead of a false
+	// negative.
+	if errLine := stderrErrLine(stderr.String()); errLine != "" {
+		return ScanResult{EngineErr: fmt.Errorf("yr: %s", errLine)}
+	}
 	return ScanResult{}
+}
+
+// stderrErrLine returns the first stderr line that begins with "error:"
+// or contains "Permission denied" (case-insensitive) — the patterns yr
+// uses for non-fatal-but-load-bearing errors that don't change the exit
+// code. Empty when stderr is benign (warnings, progress, blank lines).
+func stderrErrLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		l := strings.TrimSpace(line)
+		if l == "" {
+			continue
+		}
+		ll := strings.ToLower(l)
+		if strings.HasPrefix(ll, "error:") || strings.Contains(ll, "permission denied") {
+			if len(l) > 256 {
+				l = l[:256] + "…"
+			}
+			return l
+		}
+	}
+	return ""
 }
 
 // firstRuleName parses the first token of the first non-blank line in

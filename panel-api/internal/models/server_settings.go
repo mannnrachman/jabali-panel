@@ -128,6 +128,12 @@ type ServerSettings struct {
 	BackupRemoteURL            string `gorm:"column:backup_remote_url;type:varchar(512);not null;default:''"    json:"backup_remote_url"`
 	BackupRemoteCredentialsRef string `gorm:"column:backup_remote_credentials_ref;type:varchar(128);not null;default:''" json:"backup_remote_credentials_ref"`
 
+	// BackupMaxConcurrentJobs caps how many backup_jobs the in-process
+	// dispatcher will keep in status=running at once. Scheduler ticks
+	// enqueue rows as queued; the dispatcher drains them under this
+	// ceiling. Migration 000096. 0 falls back to default 2.
+	BackupMaxConcurrentJobs uint32 `gorm:"column:backup_max_concurrent_jobs;type:int unsigned;not null;default:2" json:"backup_max_concurrent_jobs"`
+
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 

@@ -4,7 +4,7 @@
 // command line pre-filled with the most recent successful snapshot ID.
 import { Alert, Button, Card, Space, Table, Tag, Typography, message } from "antd";
 import { FileTextOutlined, ServerOutlined } from "@icons";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { apiClient } from "../../../apiClient";
 import { extractApiError } from "../../../apiErrors";
@@ -46,6 +46,18 @@ export const SystemBackupsTab = () => {
   const query = useListQuery<SystemBackup>({
     resource: "admin/system/backups",
   });
+
+  // Auto-refresh while any system backup is queued or running.
+  const hasActive = (query.items ?? []).some(
+    (j) => j.status === "queued" || j.status === "running",
+  );
+  useEffect(() => {
+    if (!hasActive) return;
+    const t = window.setInterval(() => {
+      query.refetch();
+    }, 5000);
+    return () => window.clearInterval(t);
+  }, [hasActive, query]);
 
   const handleCreate = async () => {
     setSubmitting(true);

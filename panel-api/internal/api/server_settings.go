@@ -95,6 +95,12 @@ type updateServerSettingsRequest struct {
 	// M13 SSH shell sandbox.
 	SSHSandboxMode            *string `json:"ssh_sandbox_mode,omitempty"`
 	DefaultNspawnImageVersion *string `json:"default_nspawn_image_version,omitempty"`
+
+	// M30.1 backup retention + concurrency.
+	BackupKeepDaily         *uint32 `json:"backup_keep_daily,omitempty"`
+	BackupKeepWeekly        *uint32 `json:"backup_keep_weekly,omitempty"`
+	BackupKeepMonthly       *uint32 `json:"backup_keep_monthly,omitempty"`
+	BackupMaxConcurrentJobs *uint32 `json:"backup_max_concurrent_jobs,omitempty"`
 }
 
 func (h *serverSettingsHandler) update(c *gin.Context) {
@@ -185,6 +191,25 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 		if v != "" {
 			current.DefaultNspawnImageVersion = v
 		}
+	}
+	if req.BackupKeepDaily != nil {
+		current.BackupKeepDaily = *req.BackupKeepDaily
+	}
+	if req.BackupKeepWeekly != nil {
+		current.BackupKeepWeekly = *req.BackupKeepWeekly
+	}
+	if req.BackupKeepMonthly != nil {
+		current.BackupKeepMonthly = *req.BackupKeepMonthly
+	}
+	if req.BackupMaxConcurrentJobs != nil {
+		// 0 acts as "use default" in the dispatcher. Cap at 64 — even a
+		// single restic chain at 8 cores tops out the IO ceiling well
+		// before then.
+		v := *req.BackupMaxConcurrentJobs
+		if v > 64 {
+			v = 64
+		}
+		current.BackupMaxConcurrentJobs = v
 	}
 
 	// Validate — reject obviously bad input so we don't persist garbage.

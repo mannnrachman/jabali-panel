@@ -529,6 +529,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		Domains:        deps.Domains,
 		Mailboxes:      deps.Mailboxes,
 		AppInstalls:    deps.WordPressInstalls,
+		Settings:       deps.ServerSettings,
 		Agent:          deps.Agent,
 		Log:            log,
 	}); sched != nil {

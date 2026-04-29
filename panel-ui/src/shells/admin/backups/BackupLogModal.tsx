@@ -31,9 +31,9 @@ interface BackupLogModalProps {
 
 const logsPathFor = (kind: string, id: string): string => {
   if (kind === "system_backup" || kind === "system_restore") {
-    return `/api/v1/admin/system/backups/${id}/logs`;
+    return `/admin/system/backups/${id}/logs`;
   }
-  return `/api/v1/admin/backups/${id}/logs`;
+  return `/admin/backups/${id}/logs`;
 };
 
 export const BackupLogModal = ({ job, onClose }: BackupLogModalProps) => {

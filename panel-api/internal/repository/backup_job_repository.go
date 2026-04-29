@@ -27,6 +27,12 @@ type BackupJobRepository interface {
 	ListAll(ctx context.Context, limit, offset int) ([]models.BackupJob, int64, error)
 	MarkStarted(ctx context.Context, id string) error
 	MarkFinished(ctx context.Context, id, status string, snapshotID, parentSnapshot string, bytesAdded, bytesTotal uint64, manifest, warnings json.RawMessage, errText string) error
+
+	// Queue helpers — used by the in-process dispatcher (M30.1
+	// follow-up). CountByStatus + ListQueuedOldest let it cap
+	// dispatches at server_settings.backup_max_concurrent_jobs.
+	CountByStatus(ctx context.Context, status string) (int64, error)
+	ListQueuedOldest(ctx context.Context, limit int) ([]models.BackupJob, error)
 }
 
 type backupJobRepo struct{ db *gorm.DB }
@@ -86,6 +92,34 @@ func (r *backupJobRepo) list(ctx context.Context, where string, args []any, limi
 		return nil, 0, translate(err)
 	}
 	return out, total, nil
+}
+
+func (r *backupJobRepo) CountByStatus(ctx context.Context, status string) (int64, error) {
+	var n int64
+	err := r.db.WithContext(ctx).
+		Model(&models.BackupJob{}).
+		Where("status = ?", status).
+		Count(&n).Error
+	if err != nil {
+		return 0, translate(err)
+	}
+	return n, nil
+}
+
+func (r *backupJobRepo) ListQueuedOldest(ctx context.Context, limit int) ([]models.BackupJob, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	var out []models.BackupJob
+	err := r.db.WithContext(ctx).
+		Where("status = ?", models.BackupJobStatusQueued).
+		Order("created_at ASC").
+		Limit(limit).
+		Find(&out).Error
+	if err != nil {
+		return nil, translate(err)
+	}
+	return out, nil
 }
 
 func (r *backupJobRepo) MarkStarted(ctx context.Context, id string) error {

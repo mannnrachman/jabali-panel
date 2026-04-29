@@ -3,13 +3,14 @@
 // System backup tab lands in SystemBackupsTab when M30 Step 12 ships.
 import { Button, Card, Space, Table, Tabs, Tag, Tooltip, Typography, message } from "antd";
 import { DownloadOutlined, FileTextOutlined, PlusOutlined, SaveOutlined } from "@icons";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { apiClient } from "../../../apiClient";
 import { extractApiError } from "../../../apiErrors";
 import { useTableURL } from "../../../hooks/useTableURL";
 import { BackupLogModal } from "./BackupLogModal";
+import { BackupSettingsTab } from "./BackupSettingsTab";
 import { CreateBackupDrawer } from "./CreateBackupDrawer";
 import { DestinationsTab } from "./DestinationsTab";
 import { EncryptionKeyCard } from "./EncryptionKeyCard";
@@ -70,6 +71,19 @@ export const AdminBackupsPage = () => {
     defaultSort: "created_at",
     defaultOrder: "desc",
   });
+
+  // Auto-refresh while any job is queued or running so the operator
+  // sees status transitions live without hitting reload.
+  const hasActive = query.items.some(
+    (j) => j.status === "queued" || j.status === "running",
+  );
+  useEffect(() => {
+    if (!hasActive) return;
+    const t = window.setInterval(() => {
+      query.refetch();
+    }, 5000);
+    return () => window.clearInterval(t);
+  }, [hasActive, query]);
 
   const handleDownload = (row: BackupJob) => {
     if (row.status !== "succeeded") {
@@ -209,6 +223,11 @@ export const AdminBackupsPage = () => {
             key: "encryption",
             label: "Encryption key",
             children: <EncryptionKeyCard />,
+          },
+          {
+            key: "settings",
+            label: "Settings",
+            children: <BackupSettingsTab />,
           },
         ]}
       />

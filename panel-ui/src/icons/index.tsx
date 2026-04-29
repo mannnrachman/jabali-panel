@@ -19,6 +19,7 @@ import {
   CalendarCheck,
   Check,
   CheckCircle2,
+  CircleX,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -199,6 +200,7 @@ export const CheckOutlined = shim(Check);
 export const CheckCircleOutlined = shim(CheckCircle2);
 export const CheckCircleTwoTone = shim(CheckCircle2);
 export const CloseOutlined = shim(X);
+export const CloseCircleOutlined = shim(CircleX);
 export const ExclamationCircleOutlined = shim(CircleAlert ?? AlertCircle);
 export const WarningOutlined = shim(AlertTriangle);
 export const LoadingOutlined = shim(Loader2, { spin: true });

@@ -2,7 +2,7 @@
 // the Restore button is intentionally absent: system restore is CLI-only
 // in v1 (`jabali system restore --force …`). The card surfaces the
 // command line pre-filled with the most recent successful snapshot ID.
-import { Alert, Button, Card, Space, Table, Tag, Typography, message } from "antd";
+import { Alert, Button, Card, Space, Table, Typography, message } from "antd";
 import { FileTextOutlined, ServerOutlined } from "@icons";
 import { useEffect, useState } from "react";
 
@@ -10,6 +10,7 @@ import { apiClient } from "../../../apiClient";
 import { extractApiError } from "../../../apiErrors";
 import { useListQuery } from "../../../hooks/useQueries";
 import { BackupLogModal } from "./BackupLogModal";
+import { BackupStatusTag } from "./BackupStatusTag";
 
 type SystemBackup = {
   id: string;
@@ -24,21 +25,6 @@ type SystemBackup = {
 interface SystemBackupCreatePayload {
   include_accounts: boolean;
 }
-
-const statusColor = (s: string): string => {
-  switch (s) {
-    case "succeeded":
-      return "green";
-    case "running":
-      return "blue";
-    case "failed":
-      return "red";
-    case "partial":
-      return "gold";
-    default:
-      return "default";
-  }
-};
 
 export const SystemBackupsTab = () => {
   const [submitting, setSubmitting] = useState(false);
@@ -121,7 +107,7 @@ export const SystemBackupsTab = () => {
           {
             title: "Status",
             dataIndex: "status",
-            render: (s: string) => <Tag color={statusColor(s)}>{s}</Tag>,
+            render: (s: string) => <BackupStatusTag status={s} />,
           },
           { title: "Snapshot", dataIndex: "snapshot_id", render: (s: string) => s.slice(0, 12) },
           { title: "Bytes added", dataIndex: "bytes_added" },

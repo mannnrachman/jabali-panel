@@ -1,9 +1,11 @@
 // AdminBackupsPage — admin overview of every account_backup + restore
 // job. Tab layout: Backups (list) / Create Backup (drawer trigger).
 // System backup tab lands in SystemBackupsTab when M30 Step 12 ships.
-import { Button, Card, Space, Table, Tabs, Tag, Tooltip, Typography, message } from "antd";
+import { Button, Card, Space, Table, Tabs, Tooltip, Typography, message } from "antd";
 import { DownloadOutlined, FileTextOutlined, PlusOutlined, SaveOutlined } from "@icons";
 import { useEffect, useState } from "react";
+
+import { BackupStatusTag } from "./BackupStatusTag";
 
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { apiClient } from "../../../apiClient";
@@ -29,25 +31,6 @@ type BackupJob = {
   created_at: string;
   finished_at?: string;
   error_text?: string;
-};
-
-const statusColor = (status: string): string => {
-  switch (status) {
-    case "succeeded":
-      return "green";
-    case "running":
-      return "blue";
-    case "queued":
-      return "default";
-    case "partial":
-      return "gold";
-    case "cancelled":
-      return "default";
-    case "failed":
-      return "red";
-    default:
-      return "default";
-  }
 };
 
 const formatBytes = (n: number): string => {
@@ -159,7 +142,7 @@ export const AdminBackupsPage = () => {
                   <Table.Column
                     dataIndex="status"
                     title="Status"
-                    render={(s: string) => <Tag color={statusColor(s)}>{s}</Tag>}
+                    render={(s: string) => <BackupStatusTag status={s} />}
                   />
                   <Table.Column
                     dataIndex="bytes_added"

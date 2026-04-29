@@ -647,6 +647,7 @@ export function DestinationsTab() {
           render={(_, row) => (
             <Space>
               <Button
+                type="primary"
                 size="small"
                 icon={<ThunderboltOutlined />}
                 onClick={() => handleTest(row)}
@@ -654,6 +655,7 @@ export function DestinationsTab() {
                 Test
               </Button>
               <Button
+                type="primary"
                 size="small"
                 icon={<EditOutlined />}
                 onClick={() => {
@@ -664,6 +666,7 @@ export function DestinationsTab() {
                 Edit
               </Button>
               <Button
+                type="primary"
                 size="small"
                 danger
                 icon={<DeleteOutlined />}

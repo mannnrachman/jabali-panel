@@ -269,6 +269,7 @@ export const AdminBackupsPage = () => {
           render: (_: unknown, row: BackupJob) => (
             <Space>
               <Button
+                type="primary"
                 size="small"
                 icon={<FileTextOutlined />}
                 onClick={() => setLogJob(row)}
@@ -277,6 +278,7 @@ export const AdminBackupsPage = () => {
               </Button>
               {row.status === "succeeded" && (
                 <Button
+                  type="primary"
                   size="small"
                   icon={<DownloadOutlined />}
                   onClick={() => handleDownload(row)}
@@ -285,7 +287,7 @@ export const AdminBackupsPage = () => {
                 </Button>
               )}
               {row.status === "running" && (
-                <Button size="small" danger onClick={() => handleCancel(row)}>
+                <Button type="primary" size="small" danger onClick={() => handleCancel(row)}>
                   Cancel
                 </Button>
               )}

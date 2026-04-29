@@ -455,6 +455,7 @@ export function SchedulesTab() {
           render={(_, row) => (
             <Space>
               <Button
+                type="primary"
                 size="small"
                 icon={<PlayCircleOutlined />}
                 onClick={() => handleRunNow(row)}
@@ -463,6 +464,7 @@ export function SchedulesTab() {
                 Run now
               </Button>
               <Button
+                type="primary"
                 size="small"
                 icon={<EditOutlined />}
                 onClick={() => {
@@ -472,7 +474,7 @@ export function SchedulesTab() {
               >
                 Edit
               </Button>
-              <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(row)} />
+              <Button type="primary" size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(row)} />
             </Space>
           )}
         />

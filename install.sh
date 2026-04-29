@@ -4995,6 +4995,18 @@ post_scan_hook_timeout="30"
 post_scan_hook_on="all"
 post_scan_hook_min_hits="0"
 
+# digest_escalate_hits=1 makes monitor mode fire the post-scan hook on
+# EVERY cycle that finds ≥1 hit, instead of waiting for the 24h digest
+# timer. Without this, real-time monitor catches a webshell upload in
+# inotify, quarantines it, and then sits silent for up to 24h before
+# notifying. Smoke caught this on first VPS install: EICAR planted at
+# 05:06, quarantined at 05:06:23, but no malware_events row + no M14
+# notification because the digest interval hadn't elapsed.
+digest_escalate_hits="1"
+# digest_interval is the "all-clear heartbeat" frequency; keep it long
+# (default 24h) so we don't spam admins with hourly empty-digest events.
+# Real-time alerts go through the escalation path above.
+
 # Remote YARA + hash imports — `maldet -u` fetches these daily. We also
 # maintain signature-base via git-clone timer (more rules + more frequent
 # refresh than what fits in a single sig_import_yara_url).
@@ -5156,14 +5168,21 @@ MONITOR_UNIT
   # jabali-maldet-monitor.service is OPT-IN (per ADR-0072 amendment 2).
   # Admin enables it via /jabali-admin/security?tab=malware Settings →
   # "Real-time scanning"; panel-api → agent reconciles the unit on toggle.
-  # We force-stop + disable here unconditionally — migration 000082 flips
-  # malware_settings.realtime_enabled to 0 in the DB, and there is no
-  # boot-time reconciler. If the unit was left enabled by an older M33
-  # build, leaving it running here would silently violate the admin's
-  # opt-out (DB says off, host says on, RAM keeps burning). Admin re-
-  # toggles via the UI to re-enable; that path calls
-  # security.malware.monitor.set_enabled which re-enables + starts.
-  systemctl disable --now jabali-maldet-monitor.service >/dev/null 2>&1 || true
+  #
+  # ONE-TIME force-stop+disable: needed once per host to migrate older
+  # M33 builds that shipped the monitor as enabled-by-default. Marker
+  # below records that we did the migration. Subsequent jabali updates
+  # SKIP the disable so an admin who deliberately enabled the monitor
+  # via the UI doesn't see it silently turned off on every update.
+  # Without this guard, every `jabali update` would clobber the admin's
+  # opt-in and the UI's Realtime monitor tile would flip to "stopped"
+  # (DB says enabled, host says dead).
+  local mon_default_marker="/etc/jabali/maldet/.monitor-default-applied"
+  if [[ ! -f "$mon_default_marker" ]]; then
+    systemctl disable --now jabali-maldet-monitor.service >/dev/null 2>&1 || true
+    install -d -m 0750 /etc/jabali/maldet
+    touch "$mon_default_marker"
+  fi
 
   # post-scan-hook — invoked by maldet 2.0.1 after every scan completion
   # (cli, monitor digest, or manual). Replaces the panel-agent

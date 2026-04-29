@@ -389,6 +389,7 @@ export function SchedulesTab() {
         pagination={false}
         scroll={{ x: "max-content" }}
       >
+        <Table.Column dataIndex="kind" title="Type" render={(k: string) => <Tag>{k}</Tag>} />
         <Table.Column<BackupSchedule>
           title="Users"
           render={(_, row) => {

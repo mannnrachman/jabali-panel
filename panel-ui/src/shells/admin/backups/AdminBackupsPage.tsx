@@ -216,6 +216,7 @@ export const AdminBackupsPage = () => {
                 </Tooltip>
               )}
             />
+            <Table.Column dataIndex="kind" title="Type" />
             <Table.Column
               dataIndex="status"
               title="Status"

@@ -3,7 +3,18 @@
 // settings sub-pages. Card.tabList renders the tab strip visually
 // attached to the card body, matching the Users page.
 import { Button, Card, Space, Table, Tag, Tooltip, Typography, message } from "antd";
-import { DownloadOutlined, FileTextOutlined, PlusOutlined, SaveOutlined } from "@icons";
+import {
+  CalendarCheckOutlined,
+  CloudServerOutlined,
+  DownloadOutlined,
+  FileTextOutlined,
+  KeyOutlined,
+  PlusOutlined,
+  SaveOutlined,
+  ServerOutlined,
+  SettingOutlined,
+  TeamOutlined,
+} from "@icons";
 import { useEffect, useState } from "react";
 
 import { BackupStatusTag } from "./BackupStatusTag";
@@ -126,16 +137,57 @@ export const AdminBackupsPage = () => {
             key: "account",
             tab: (
               <Space>
+                <TeamOutlined />
                 Account backups
                 <Tag>{query.total}</Tag>
               </Space>
             ),
           },
-          { key: "system", tab: "System backups" },
-          { key: "destinations", tab: "Destinations" },
-          { key: "schedules", tab: "Schedules" },
-          { key: "encryption", tab: "Encryption key" },
-          { key: "settings", tab: "Settings" },
+          {
+            key: "system",
+            tab: (
+              <Space>
+                <ServerOutlined />
+                System backups
+              </Space>
+            ),
+          },
+          {
+            key: "destinations",
+            tab: (
+              <Space>
+                <CloudServerOutlined />
+                Destinations
+              </Space>
+            ),
+          },
+          {
+            key: "schedules",
+            tab: (
+              <Space>
+                <CalendarCheckOutlined />
+                Schedules
+              </Space>
+            ),
+          },
+          {
+            key: "encryption",
+            tab: (
+              <Space>
+                <KeyOutlined />
+                Encryption key
+              </Space>
+            ),
+          },
+          {
+            key: "settings",
+            tab: (
+              <Space>
+                <SettingOutlined />
+                Settings
+              </Space>
+            ),
+          },
         ]}
         activeTabKey={activeTab}
         onTabChange={(k) => setActiveTab(k as TabKey)}

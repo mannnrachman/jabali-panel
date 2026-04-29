@@ -13,7 +13,7 @@ import {
   SaveOutlined,
   SettingOutlined,
 } from "@icons";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { BackupStatusTag } from "./BackupStatusTag";
 
@@ -143,6 +143,13 @@ export const AdminBackupsPage = () => {
   const [manual, setManual] = useState<BackupJob[]>([]);
   const [loading, setLoading] = useState(false);
   const [runJobs, setRunJobs] = useState<Record<string, BackupJob[]>>({});
+  // Mirror runJobs into a ref so the polling reload (whose closure
+  // captures state from effect-setup time) can read the LATEST set
+  // of expanded runs, not a stale snapshot.
+  const runJobsRef = useRef<Record<string, BackupJob[]>>({});
+  useEffect(() => {
+    runJobsRef.current = runJobs;
+  }, [runJobs]);
 
   const usersQuery = useListQuery<{ id: string; username: string; email: string }>({
     resource: "users",
@@ -163,6 +170,33 @@ export const AdminBackupsPage = () => {
       );
       setRuns(resp.data.data ?? []);
       setManual(resp.data.manual ?? []);
+      // Refresh any currently-expanded run's child rows so polling
+      // surfaces queued -> running -> succeeded transitions on the
+      // child table without needing collapse/expand. Read the LATEST
+      // runJobs via ref — the interval's closure would otherwise see
+      // the empty {} from before the operator expanded anything.
+      const expanded = Object.keys(runJobsRef.current);
+      if (expanded.length > 0) {
+        const updates = await Promise.all(
+          expanded.map(async (id) => {
+            try {
+              const r = await apiClient.get<{ data: BackupJob[] }>(
+                `/admin/backup-runs/${id}/jobs`,
+              );
+              return [id, r.data.data ?? []] as const;
+            } catch {
+              return [id, runJobsRef.current[id]] as const;
+            }
+          }),
+        );
+        setRunJobs((m) => {
+          const next = { ...m };
+          for (const [id, jobs] of updates) {
+            next[id] = jobs;
+          }
+          return next;
+        });
+      }
     } catch (err) {
       message.error(extractApiError(err, "Load failed"));
     } finally {
@@ -189,7 +223,9 @@ export const AdminBackupsPage = () => {
   }, [activeTab, hasActive]);
 
   const expandRun = async (runID: string) => {
-    if (runJobs[runID]) return; // cached
+    // No cache short-circuit: re-fetch on every expand so the child
+    // table reflects current state even after collapse/expand cycles
+    // while polling was paused (e.g. tab switch).
     try {
       const resp = await apiClient.get<{ data: BackupJob[] }>(
         `/admin/backup-runs/${runID}/jobs`,

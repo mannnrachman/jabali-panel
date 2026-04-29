@@ -1,6 +1,6 @@
 # ADR-0084 — Per-user PHP-FPM egress firewall via nftables + cgroupv2 socket match (M34)
 
-**Status:** ACCEPTED
+**Status:** PROPOSED — live end-to-end smoke pending (see Live evidence)
 **Date:** 2026-04-29
 **Supersedes/extends:** ADR-0054 (UFW over iptables), ADR-0068 (per-user cgroup v2 slice metrics)
 

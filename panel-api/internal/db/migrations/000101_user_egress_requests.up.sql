@@ -26,4 +26,4 @@ CREATE TABLE IF NOT EXISTS user_egress_requests (
   KEY idx_egress_req_status_created (status, created_at),
   CONSTRAINT fk_egress_req_user FOREIGN KEY (user_id)
     REFERENCES users(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

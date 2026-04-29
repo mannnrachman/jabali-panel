@@ -37,4 +37,4 @@ CREATE TABLE IF NOT EXISTS user_egress_policies (
   KEY idx_user_egress_drops (drop_count_24h),
   CONSTRAINT fk_user_egress_user FOREIGN KEY (user_id)
     REFERENCES users(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

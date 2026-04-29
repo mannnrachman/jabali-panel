@@ -51,7 +51,14 @@ func NewWebPush(settings repository.ServerSettingsRepository, subs repository.We
 		settings: settings,
 		subs:     subs,
 		log:      log,
-		opts:     webpush.Options{TTL: 30},
+		// TTL = how long the push service holds the message when the
+		// browser is offline. The earlier 30-second value meant any
+		// admin whose laptop was asleep dropped the notification on
+		// the floor. 24 hours matches typical operational windows
+		// (after-hours alerts get delivered when the operator opens
+		// the laptop next morning) without keeping notifications
+		// around stale enough to confuse.
+		opts: webpush.Options{TTL: 86400},
 		send:     webpush.SendNotificationWithContext,
 	}
 }

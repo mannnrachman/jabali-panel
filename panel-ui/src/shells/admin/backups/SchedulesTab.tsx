@@ -395,14 +395,13 @@ export function SchedulesTab() {
             if (row.kind === "system_backup") return "—";
             const ids = row.user_ids ?? [];
             if (ids.length === 0) return <Tag color="blue">all users</Tag>;
+            const names = ids
+              .map((uid) => users.find((u) => u.id === uid)?.username ?? uid.slice(0, 8))
+              .join(", ");
             return (
-              <Space size={4} wrap>
-                {ids.map((uid) => (
-                  <Tag key={uid}>
-                    {users.find((u) => u.id === uid)?.username ?? `${uid.slice(0, 8)}…`}
-                  </Tag>
-                ))}
-              </Space>
+              <Tooltip title={names}>
+                <Tag>{ids.length} selected</Tag>
+              </Tooltip>
             );
           }}
         />

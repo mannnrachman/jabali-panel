@@ -137,9 +137,16 @@ pointer plus the list of declared keys (no values).
 - New goroutines in panel-api: scheduler (60s), finalizer (30s), copy
   worker (60s). Each is a small loop with no memory growth; missed
   ticks tolerated.
-- Existing M30 retention timer (04:30 daily) is unchanged — it runs
-  `restic forget --tag jabali --keep-* --prune` against the local
-  repo. Per-destination retention = M30.2.
+- Existing M30 retention timer (04:30 daily) is now **per-schedule**:
+  iterates every enabled `backup_schedules` row whose
+  `keep_{daily,weekly,monthly}` is non-NULL, runs
+  `restic forget --tag schedule-id=<id> --keep-*`, then a single
+  `restic prune` at the end. Snapshots are tagged with
+  `schedule-id=<id>` at backup time. Manual (non-scheduled) backups
+  carry no `schedule-id` tag and are NEVER auto-pruned.
+  Server-wide `server_settings.backup_keep_*` columns still exist for
+  back-compat but the retention CLI no longer reads them.
+  Per-destination retention = M30.2.
 
 ### Schema
 - Migration 000086: `backup_destinations`.
@@ -149,6 +156,23 @@ pointer plus the list of declared keys (no values).
   manual trigger).
 - Migration 000090: `backup_copy_jobs` (async queue + per-destination
   status).
+- Migration 000094: `backup_schedules.include_system_backup` opt-in.
+- Migration 000095: `backup_schedule_users` (M:N) — multi-user fan-out
+  per schedule. Empty = every non-admin user; non-empty = those users.
+- Migration 000096: `server_settings.backup_max_concurrent_jobs`
+  (default 2). Caps the in-process dispatcher.
+- Migration 000103: `backup_jobs.run_id CHAR(26) NULL` + index. The
+  scheduler mints one ULID per tick fan-out; every fan-out row from
+  that tick shares the same `run_id` so the admin UI can roll them
+  up under one parent row. Manual API path leaves it NULL.
+
+### Concurrency
+
+`server_settings.backup_max_concurrent_jobs` (default 2) caps how
+many backup_jobs the in-process dispatcher will keep in
+status=running at once. The scheduler `tickEnqueue` (60s) only
+inserts queued rows — `tickDispatch` (10s) reads the cap, counts
+running, and dispatches up to `cap - running` rows per tick.
 
 ### Security
 - Creds on disk, not in DB. GET /admin/backup-destinations returns the

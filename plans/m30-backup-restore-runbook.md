@@ -71,9 +71,20 @@ curl -k https://localhost/api/v1/health
 ## 5. Retention
 
 `jabali-backup-retention.timer` fires daily 04:30 and runs
-`jabali backup retention apply`, which reads
-`server_settings.backup_keep_{daily,weekly,monthly}` and calls
-`restic forget --tag jabali ... --prune`.
+`jabali backup retention apply`. The command iterates every enabled
+`backup_schedules` row whose `keep_{daily,weekly,monthly}` is non-NULL
+and runs:
+
+```
+restic forget --tag schedule-id=<id> \
+    --keep-daily=<N> --keep-weekly=<N> --keep-monthly=<N>
+```
+
+per schedule, then a single `restic prune` at the end so blob removal
+runs once per timer fire. Snapshots are tagged with `schedule-id=<id>`
+at backup time so the per-schedule forget targets only that
+schedule's chain. Manual (non-scheduled) backups have no
+`schedule-id` tag and are NEVER auto-pruned.
 
 Manual sweep:
 
@@ -81,14 +92,29 @@ Manual sweep:
 sudo -u jabali jabali backup retention apply
 ```
 
-Adjust knobs:
+Adjust per-schedule policy via the Schedules drawer in the admin UI
+(Backups → Schedules → Edit), or directly:
 
 ```sql
-UPDATE server_settings SET
-    backup_keep_daily = 14,
-    backup_keep_weekly = 8,
-    backup_keep_monthly = 12
-WHERE id = 1;
+UPDATE backup_schedules SET
+    keep_daily = 14,
+    keep_weekly = 8,
+    keep_monthly = 12
+WHERE id = '01J5SCHED…';
+```
+
+Server-wide `server_settings.backup_keep_*` columns still exist for
+backwards compatibility but the retention CLI no longer reads them
+(per-schedule is the source of truth).
+
+### Concurrency cap
+
+`server_settings.backup_max_concurrent_jobs` (default 2) caps how
+many backup_jobs the in-process dispatcher will keep in
+status=running at once. Adjust from Backups → Settings, or:
+
+```sql
+UPDATE server_settings SET backup_max_concurrent_jobs = 4 WHERE id = 1;
 ```
 
 ## 6. Repo integrity

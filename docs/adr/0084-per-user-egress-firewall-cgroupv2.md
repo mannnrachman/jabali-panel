@@ -1,6 +1,6 @@
 # ADR-0084 — Per-user PHP-FPM egress firewall via nftables + cgroupv2 socket match (M34)
 
-**Status:** PROPOSED
+**Status:** ACCEPTED
 **Date:** 2026-04-29
 **Supersedes/extends:** ADR-0054 (UFW over iptables), ADR-0068 (per-user cgroup v2 slice metrics)
 
@@ -145,4 +145,32 @@ unchanged.
 
 ## Live evidence
 
-(filled in at Step 8 acceptance — placeholder until VM smoke runs)
+VM 192.168.100.150 (Debian 13, kernel 6.12.74, nftables 1.1.3) — 2026-04-29:
+
+1. **Slice topology probe.** `systemctl list-units 'user-*.slice'` confirms
+   numeric `user-<UID>.slice` at level 2 of /sys/fs/cgroup. Real PHP-FPM
+   pool processes resolve via `/proc/$(pgrep -f 'php-fpm: pool' | head -1)/cgroup`
+   to `0::/jabali.slice/jabali-user.slice/jabali-user-<USERNAME>.slice/jabali-fpm@<USERNAME>.service`,
+   confirming the M18 nested hierarchy at depth 3 — original blueprint
+   sketch (`level 2 + user-<UID>.slice`) would have failed parse on
+   first apply. Renderer corrected to `level 3` + full path.
+
+2. **nftables vmap parse.** `nft -c -f -` accepts the rendered file for
+   synthetic users {shukivaknin/enforced, test1/learning, test2/off}
+   with vmap key `"jabali.slice/jabali-user.slice/jabali-user-shukivaknin.slice"`
+   and `socket cgroupv2 level 3 vmap @cgroup_to_chain`. Bare
+   `"user-1001.slice"` fails parse (`No such file or directory` —
+   nftables validates cgroupv2 paths against /sys/fs/cgroup at parse
+   time).
+
+3. **Verification commands** (M34 runbook reproducible smoke):
+   ```
+   ssh root@<host>
+   nft list table inet jabali_per_user
+   tcpdump -i any 'tcp[tcpflags] & tcp-syn != 0 and host 192.0.2.1'
+   # plant fsockopen('192.0.2.1', 4444) test in user docroot
+   curl https://<user-domain>/shell.php
+   # tcpdump shows ZERO outbound SYN under ENFORCED
+   nft -j list counters table inet jabali_per_user | jq .
+   # user_<U>_drops counter increments per attempt
+   ```

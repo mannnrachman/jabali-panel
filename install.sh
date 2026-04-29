@@ -5795,6 +5795,37 @@ UNIT
   systemctl daemon-reload
   systemctl enable --now jabali-per-user-egress-load.service >/dev/null 2>&1 || true
 
+  # Step 8: LEARNING -> ENFORCED daily auto-flip timer.
+  # `jabali per-user-egress flip-mature` lists policies in LEARNING for
+  # ≥7 days and flips them to ENFORCED unless the operator pin file
+  # /etc/jabali/per-user-egress.mode contains "learning". Idempotent;
+  # safe to re-run on every `jabali update`.
+  cat >/etc/systemd/system/jabali-per-user-egress-flip.service <<'UNIT'
+[Unit]
+Description=Flip mature jabali per-user egress LEARNING policies to ENFORCED
+After=jabali-panel.service
+Requires=jabali-panel.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/jabali per-user-egress flip-mature --soak-days 7
+User=root
+UNIT
+  cat >/etc/systemd/system/jabali-per-user-egress-flip.timer <<'UNIT'
+[Unit]
+Description=Daily run of jabali-per-user-egress-flip.service
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=15min
+
+[Install]
+WantedBy=timers.target
+UNIT
+  systemctl daemon-reload
+  systemctl enable --now jabali-per-user-egress-flip.timer >/dev/null 2>&1 || true
+
   _ok "per-user egress firewall installed (mode: $(cat /etc/jabali/per-user-egress.mode 2>/dev/null || echo unknown))"
 }
 

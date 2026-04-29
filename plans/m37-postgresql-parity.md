@@ -17,11 +17,20 @@ Old issue tracker requests:
 Branch: `m37/postgresql-parity`. Default mode: branch + ff-merge into
 `main` after every step.
 
-ADR target: **0081** (next free after M34=0078, M35=0079, M36=0080).
-Will amend ADR-0018 with a "M37 reverses the deferral" note.
+ADR target: **0081** (still free at time of plan refresh 2026-04-29;
+M34 took 0084 and M33.2 took 0079, so 0081 is unblocked). Will amend
+ADR-0018 with a "M37 reverses the deferral" note.
 
-Migration high-water-mark on main: 000091. M37 takes 000092..000095
-(or shifts up if other milestones land first; renumber on merge).
+Migration high-water-mark on main: 000102 (post-M34). M37 takes the
+next free contiguous range at dispatch time; if M35/M36 ship first,
+M37 renumbers off the new high-water.
+
+**MariaDB FK collation requirement:** every CREATE TABLE that adds a
+FOREIGN KEY back to `users(id)` (e.g. `pg_databases`, `pg_database_users`)
+MUST declare both `DEFAULT CHARSET=utf8mb4` AND `COLLATE=utf8mb4_unicode_ci`,
+AND ULID columns referencing users.id MUST be `CHAR(26)` (not
+`VARCHAR(26)`). M34 scar; ref b336d856 + 10569464. (Postgres-side
+schemas are ANSI SQL, no charset/collation issue there.)
 
 ## Why this is large
 

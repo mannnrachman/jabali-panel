@@ -15,9 +15,19 @@ the M9 / M19 default `<user>:www-data` ownership.
 Branch: `m36/per-domain-facl`. Default mode: branch + ff-merge into
 `main` after every step.
 
-ADR target: **0080** (next free after M34=0078, M35=0079).
+ADR target: **0080** (still free at time of plan refresh 2026-04-29;
+M34 took 0084 and M35 will take 0085, so 0080 is unblocked).
 
-Migration high-water-mark on main: 000091. M36 takes 000092..000093.
+Migration high-water-mark on main: 000102 (post-M34). M36 takes the
+next free contiguous range at dispatch time; if M35 (or any other
+milestone with migrations) ships first, M36 renumbers off the new
+high-water.
+
+**MariaDB FK collation requirement:** every CREATE TABLE Step 1 introduces
+that has a FOREIGN KEY back to `users(id)` or `domains(id)` MUST declare
+both `DEFAULT CHARSET=utf8mb4` AND `COLLATE=utf8mb4_unicode_ci`, AND
+ULID columns referencing those tables MUST be `CHAR(26)` (not
+`VARCHAR(26)`). M34 scar; ref b336d856 + 10569464.
 
 ## Constraints + invariants
 

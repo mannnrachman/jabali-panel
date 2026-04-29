@@ -14,10 +14,13 @@ list for these three.
 Branch: `m41/operator-cli-extensions`. Default mode: branch + ff-merge
 into `main` after every step.
 
-ADR target: **0083** (next free above ADR-0082 ghost domain detector;
-M34/M35/M36/M37 plans hold 0078..0081 as targets).
+ADR target: **0083** (still free at time of plan refresh 2026-04-29;
+M34 took 0084 and M33.2 took 0079, so 0083 is unblocked).
 
-No new migrations. M41 is pure CLI + refactor work.
+No new migrations. M41 is pure CLI + refactor work — not affected by
+M34's CHAR(26)/COLLATE scar (no new FK-bearing tables) but the shared
+`internal/dbops/`, `internal/cronops/`, `internal/sshkeyops/` packages
+must preserve the existing repository column types unchanged.
 
 ## Why a refactor, not a copy-paste
 
@@ -172,7 +175,9 @@ user@host` succeeds for the SFTP gateway.
 
 ## Numbering note
 
-ADR target 0083 assumes M34 (0078), M35 (0079), M36 (0080),
-M37 (0081), M38 (0082) all ship before M41. If any of those slip,
-M41's ADR renumbers down to fill the gap (whichever ships, takes the
-next free number).
+Refreshed 2026-04-29 after M34 shipped at 0084 and M33.2 at 0079
+(blowing up the original assumption). Holes in the ADR sequence at
+0080, 0081, 0083 remain free; M41 keeps 0083 because M36 plan claims
+0080 and M37 plan claims 0081. Whichever of {M35, M36, M37, M41} ships
+first claims its declared number; the rest renumber on merge if
+collisions emerge.

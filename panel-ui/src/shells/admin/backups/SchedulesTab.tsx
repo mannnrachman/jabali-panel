@@ -35,6 +35,7 @@ interface BackupSchedule {
   id: string;
   kind: "account_backup" | "system_backup";
   user_id?: string | null;
+  user_ids?: string[];
   include_system_backup?: boolean;
   cron_expr: string;
   enabled: boolean;
@@ -61,9 +62,10 @@ interface User {
   is_admin?: boolean;
 }
 
-// Sentinel value used for the "All non-admin users" picker option.
-// Wire-shape on POST/PATCH is `user_id: null`; the form sends "" and
-// the submit handler omits user_id from the body.
+// Sentinel value used for the "All non-admin users" multi-select tag.
+// Wire-shape: empty user_ids[] = "every non-admin user" fan-out at
+// tick time; non-empty = those specific users only. The submit handler
+// strips ALL_USERS out of the array before sending.
 const ALL_USERS = "__all__";
 
 const PRESETS: Array<{ label: string; value: string; cron: string }> = [
@@ -100,11 +102,13 @@ function ScheduleDrawer({
       if (editing) {
         const matched = PRESETS.find((p) => p.cron === editing.cron_expr);
         setPreset(matched?.value ?? "custom");
+        // Hydrate user_ids: empty backend list = "all non-admin users",
+        // shown as the ALL_USERS sentinel tag in the multi-select.
+        const editingIDs = editing.user_ids && editing.user_ids.length > 0
+          ? editing.user_ids
+          : [ALL_USERS];
         form.setFieldsValue({
-          kind: editing.kind,
-          user_id: editing.kind === "account_backup"
-            ? (editing.user_id ?? ALL_USERS)
-            : undefined,
+          user_ids: editingIDs,
           cron_expr: editing.cron_expr,
           enabled: editing.enabled,
           keep_daily: editing.keep_daily ?? undefined,
@@ -116,10 +120,11 @@ function ScheduleDrawer({
       } else {
         setPreset("daily");
         form.setFieldsValue({
-          kind: "account_backup",
+          user_ids: [ALL_USERS],
           cron_expr: "0 3 * * *",
           enabled: true,
           destination_ids: [],
+          include_system_backup: false,
         });
       }
     }
@@ -142,25 +147,27 @@ function ScheduleDrawer({
     }
     setBusy(true);
     try {
+      const selected: string[] = values.user_ids ?? [];
+      const hasAll = selected.includes(ALL_USERS);
+      // ALL_USERS sentinel collapses to an empty list, which the
+      // backend interprets as "every non-admin user" at tick time.
+      // Any explicit picks while ALL_USERS is also selected are
+      // dropped — operator either backs up everyone or a specific
+      // subset, not both.
+      const userIDs = hasAll ? [] : selected.filter((u) => u !== ALL_USERS);
+      if (!hasAll && userIDs.length === 0) {
+        message.error("Pick at least one user, or 'All users'");
+        setBusy(false);
+        return;
+      }
       const body: Record<string, unknown> = {
-        kind: values.kind,
+        kind: "account_backup",
         cron_expr: values.cron_expr,
         enabled: values.enabled,
         destination_ids: values.destination_ids ?? [],
+        user_ids: userIDs,
+        include_system_backup: !!values.include_system_backup,
       };
-      if (values.kind === "account_backup") {
-        if (!values.user_id) {
-          message.error("Pick a user (or 'All users') for account schedules");
-          setBusy(false);
-          return;
-        }
-        // ALL_USERS sentinel = omit user_id so the backend interprets
-        // it as fan-out across every non-admin user at tick time.
-        if (values.user_id !== ALL_USERS) {
-          body.user_id = values.user_id;
-        }
-        body.include_system_backup = !!values.include_system_backup;
-      }
       if (values.keep_daily !== undefined) body.keep_daily = values.keep_daily;
       if (values.keep_weekly !== undefined) body.keep_weekly = values.keep_weekly;
       if (values.keep_monthly !== undefined) body.keep_monthly = values.keep_monthly;
@@ -180,8 +187,6 @@ function ScheduleDrawer({
     }
   };
 
-  const kindWatch = Form.useWatch("kind", form);
-
   return (
     <Drawer
       title={editing ? "Edit schedule" : "New schedule"}
@@ -199,44 +204,37 @@ function ScheduleDrawer({
       }
     >
       <Form form={form} layout="vertical">
-        <Form.Item name="kind" label="Backup kind" rules={[{ required: true }]}>
-          <Radio.Group>
-            <Radio.Button value="account_backup">Account</Radio.Button>
-            <Radio.Button value="system_backup">System</Radio.Button>
-          </Radio.Group>
+        <Form.Item
+          name="user_ids"
+          label="Users"
+          rules={[{ required: true, message: "Pick at least one user, or 'All users'" }]}
+          extra="Select 'All users' OR pick specific accounts. Admins are excluded from the list."
+        >
+          <Select
+            mode="multiple"
+            showSearch
+            allowClear
+            placeholder="Pick users (or 'All users')"
+            optionFilterProp="label"
+            options={[
+              { value: ALL_USERS, label: "All users (every non-admin)" },
+              ...users
+                .filter((u) => !u.is_admin)
+                .map((u) => ({
+                  value: u.id,
+                  label: `${u.username} (${u.email})`,
+                })),
+            ]}
+          />
         </Form.Item>
-        {kindWatch === "account_backup" && (
-          <>
-            <Form.Item
-              name="user_id"
-              label="User"
-              rules={[{ required: true, message: "User is required for account schedules" }]}
-            >
-              <Select
-                showSearch
-                placeholder="Select user"
-                optionFilterProp="label"
-                options={[
-                  { value: ALL_USERS, label: "All users (every non-admin)" },
-                  ...users
-                    .filter((u) => !u.is_admin)
-                    .map((u) => ({
-                      value: u.id,
-                      label: `${u.username} (${u.email})`,
-                    })),
-                ]}
-              />
-            </Form.Item>
-            <Form.Item
-              name="include_system_backup"
-              label="Include system backup"
-              valuePropName="checked"
-              extra="Also fire a system backup (panel DBs + service config + mail state + …) every time this schedule runs."
-            >
-              <Switch />
-            </Form.Item>
-          </>
-        )}
+        <Form.Item
+          name="include_system_backup"
+          label="Include system backup"
+          valuePropName="checked"
+          extra="Also fire a system backup (panel DBs + service config + mail state + …) every time this schedule runs."
+        >
+          <Switch />
+        </Form.Item>
         <Form.Item label="Cadence">
           <Radio.Group
             value={preset}
@@ -394,13 +392,19 @@ export function SchedulesTab() {
       >
         <Table.Column dataIndex="kind" title="Kind" render={(k: string) => <Tag>{k}</Tag>} />
         <Table.Column<BackupSchedule>
-          title="User"
+          title="Users"
           render={(_, row) => {
             if (row.kind === "system_backup") return "—";
-            if (!row.user_id) return <Tag color="blue">all users</Tag>;
+            const ids = row.user_ids ?? [];
+            if (ids.length === 0) return <Tag color="blue">all users</Tag>;
             return (
-              users.find((u) => u.id === row.user_id)?.username ??
-              <code>{row.user_id.slice(0, 8)}…</code>
+              <Space size={4} wrap>
+                {ids.map((uid) => (
+                  <Tag key={uid}>
+                    {users.find((u) => u.id === uid)?.username ?? `${uid.slice(0, 8)}…`}
+                  </Tag>
+                ))}
+              </Space>
             );
           }}
         />

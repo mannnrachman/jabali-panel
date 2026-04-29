@@ -17,7 +17,6 @@ package backupscheduler
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -151,15 +150,18 @@ func (s *Scheduler) dispatch(ctx context.Context, sched models.BackupSchedule) {
 func (s *Scheduler) dispatchBackup(ctx context.Context, sched models.BackupSchedule) (bool, error) {
 	switch sched.Kind {
 	case models.BackupScheduleKindAccount:
-		// user_id NULL = fan out to every non-admin user. Each user
-		// gets one backup_jobs row + one agent call. We dispatch
-		// sequentially to keep the agent's per-user lock contention
-		// predictable; the agent enforces one running backup per
-		// user-id anyway. Returns true if at least one user was
-		// dispatched (so the schedule still advances next_run_at and
-		// records last_run_at).
+		// Multi-user fan-out via the backup_schedule_users join:
+		//   - empty list      → every non-admin user on the host
+		//   - non-empty list  → only those specific users
+		// The legacy single backup_schedules.user_id column is
+		// ignored once the join table is the source of truth.
 		anyUser := false
-		if sched.UserID == nil {
+		explicitIDs, err := s.deps.Schedules.GetUserIDs(ctx, sched.ID)
+		if err != nil {
+			return false, fmt.Errorf("load schedule users: %w", err)
+		}
+		var targets []models.User
+		if len(explicitIDs) == 0 {
 			notAdmin := false
 			users, _, err := s.deps.Users.List(ctx, repository.ListOptions{
 				Limit:   10000,
@@ -168,24 +170,28 @@ func (s *Scheduler) dispatchBackup(ctx context.Context, sched models.BackupSched
 			if err != nil {
 				return false, fmt.Errorf("list users: %w", err)
 			}
-			for i := range users {
-				u := &users[i]
-				if ok := s.runOneAccountBackup(ctx, sched, u); ok {
-					anyUser = true
-				}
-			}
+			targets = users
 		} else {
-			user, err := s.deps.Users.FindByID(ctx, *sched.UserID)
-			if err != nil {
-				return false, fmt.Errorf("load user %s: %w", *sched.UserID, err)
+			for _, uid := range explicitIDs {
+				u, err := s.deps.Users.FindByID(ctx, uid)
+				if err != nil || u == nil {
+					s.deps.Log.Warn("schedule references missing user; skipping",
+						"schedule_id", sched.ID, "user_id", uid)
+					continue
+				}
+				if u.IsAdmin {
+					s.deps.Log.Warn("schedule references admin; skipping",
+						"schedule_id", sched.ID, "user_id", uid)
+					continue
+				}
+				targets = append(targets, *u)
 			}
-			if user == nil {
-				return false, fmt.Errorf("user %s not found", *sched.UserID)
+		}
+		for i := range targets {
+			u := &targets[i]
+			if ok := s.runOneAccountBackup(ctx, sched, u); ok {
+				anyUser = true
 			}
-			if user.IsAdmin {
-				return false, errors.New("account_backup schedule references admin user")
-			}
-			anyUser = s.runOneAccountBackup(ctx, sched, user)
 		}
 		// Opt-in: same schedule also fires a system_backup. Errors here
 		// are logged + swallowed so a system-side failure can't undo the

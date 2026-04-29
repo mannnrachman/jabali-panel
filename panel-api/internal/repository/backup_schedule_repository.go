@@ -33,6 +33,12 @@ type BackupScheduleRepository interface {
 	// destinations[] is atomic.
 	GetDestinations(ctx context.Context, scheduleID string) ([]models.BackupDestination, error)
 	ReplaceDestinations(ctx context.Context, scheduleID string, destIDs []string) error
+
+	// User link helpers — multi-select per-schedule. Empty list = fan
+	// out to every non-admin user at tick time; non-empty = those
+	// specific users only.
+	GetUserIDs(ctx context.Context, scheduleID string) ([]string, error)
+	ReplaceUsers(ctx context.Context, scheduleID string, userIDs []string) error
 }
 
 type backupScheduleRepo struct{ db *gorm.DB }
@@ -214,6 +220,44 @@ func (r *backupScheduleRepo) ReplaceDestinations(ctx context.Context, scheduleID
 				ScheduleID:    scheduleID,
 				DestinationID: id,
 				CreatedAt:     now,
+			})
+		}
+		if err := tx.Create(&rows).Error; err != nil {
+			return translate(err)
+		}
+		return nil
+	})
+}
+
+func (r *backupScheduleRepo) GetUserIDs(ctx context.Context, scheduleID string) ([]string, error) {
+	var out []string
+	err := r.db.WithContext(ctx).
+		Model(&models.BackupScheduleUser{}).
+		Where("schedule_id = ?", scheduleID).
+		Order("user_id ASC").
+		Pluck("user_id", &out).Error
+	if err != nil {
+		return nil, translate(err)
+	}
+	return out, nil
+}
+
+func (r *backupScheduleRepo) ReplaceUsers(ctx context.Context, scheduleID string, userIDs []string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("schedule_id = ?", scheduleID).
+			Delete(&models.BackupScheduleUser{}).Error; err != nil {
+			return translate(err)
+		}
+		if len(userIDs) == 0 {
+			return nil
+		}
+		now := time.Now().UTC()
+		rows := make([]models.BackupScheduleUser, 0, len(userIDs))
+		for _, id := range userIDs {
+			rows = append(rows, models.BackupScheduleUser{
+				ScheduleID: scheduleID,
+				UserID:     id,
+				CreatedAt:  now,
 			})
 		}
 		if err := tx.Create(&rows).Error; err != nil {

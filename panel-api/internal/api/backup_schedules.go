@@ -52,6 +52,7 @@ type scheduleDTO struct {
 	ID                  string                 `json:"id"`
 	Kind                string                 `json:"kind"`
 	UserID              *string                `json:"user_id,omitempty"`
+	UserIDs             []string               `json:"user_ids"`
 	IncludeSystemBackup bool                   `json:"include_system_backup"`
 	CronExpr            string                 `json:"cron_expr"`
 	Enabled      bool                    `json:"enabled"`
@@ -67,6 +68,7 @@ type scheduleDTO struct {
 func toScheduleDTO(s *models.BackupSchedule, dests []models.BackupDestination) scheduleDTO {
 	dto := scheduleDTO{
 		ID: s.ID, Kind: s.Kind, UserID: s.UserID,
+		UserIDs:             append([]string{}, s.UserIDs...),
 		IncludeSystemBackup: s.IncludeSystemBackup,
 		CronExpr:            s.CronExpr, Enabled: s.Enabled,
 		KeepDaily: s.KeepDaily, KeepWeekly: s.KeepWeekly, KeepMonthly: s.KeepMonthly,
@@ -99,6 +101,8 @@ func (h *backupScheduleHandler) list(c *gin.Context) {
 	out := make([]scheduleDTO, 0, len(rows))
 	for i := range rows {
 		dests, _ := h.cfg.Schedules.GetDestinations(c.Request.Context(), rows[i].ID)
+		uids, _ := h.cfg.Schedules.GetUserIDs(c.Request.Context(), rows[i].ID)
+		rows[i].UserIDs = uids
 		out = append(out, toScheduleDTO(&rows[i], dests))
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out, "total": len(out)})
@@ -115,12 +119,21 @@ func (h *backupScheduleHandler) get(c *gin.Context) {
 		return
 	}
 	dests, _ := h.cfg.Schedules.GetDestinations(c.Request.Context(), s.ID)
+	uids, _ := h.cfg.Schedules.GetUserIDs(c.Request.Context(), s.ID)
+	s.UserIDs = uids
 	c.JSON(http.StatusOK, toScheduleDTO(s, dests))
 }
 
 type createScheduleRequest struct {
-	Kind                string   `json:"kind"            binding:"required"`
+	// Kind defaults to account_backup when omitted (UI no longer
+	// exposes the system-only kind — system backups are an opt-in
+	// flag on the account schedule).
+	Kind                string   `json:"kind"`
+	// Legacy single-user field; kept for backwards compat. New
+	// callers should send UserIDs (multi-select). Empty UserIDs +
+	// nil/empty UserID = "all non-admin users" fan-out at tick time.
 	UserID              *string  `json:"user_id"`
+	UserIDs             []string `json:"user_ids"`
 	IncludeSystemBackup bool     `json:"include_system_backup"`
 	CronExpr            string   `json:"cron_expr"       binding:"required"`
 	Enabled             *bool    `json:"enabled"`
@@ -136,32 +149,47 @@ func (h *backupScheduleHandler) create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_body", "detail": err.Error()})
 		return
 	}
+	// Kind defaults to account_backup so the UI doesn't have to send
+	// it explicitly. system_backup kind is still accepted for direct
+	// API callers (sysadmin tooling).
+	if req.Kind == "" {
+		req.Kind = models.BackupScheduleKindAccount
+	}
 	if req.Kind != models.BackupScheduleKindAccount && req.Kind != models.BackupScheduleKindSystem {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_kind"})
 		return
 	}
-	if req.Kind == models.BackupScheduleKindAccount {
-		// user_id == nil  → "all non-admin users" fan-out at tick time.
-		// user_id == "X"  → single user X.
-		// Empty string is normalised to nil so the all-users path
-		// matches whether the UI sends null or "".
-		if req.UserID != nil && *req.UserID == "" {
-			req.UserID = nil
+	// Normalise user_ids: drop empty strings, accept the legacy single
+	// user_id by promoting it into UserIDs.
+	if req.UserID != nil && *req.UserID != "" {
+		req.UserIDs = append(req.UserIDs, *req.UserID)
+	}
+	req.UserID = nil
+	cleanIDs := make([]string, 0, len(req.UserIDs))
+	for _, uid := range req.UserIDs {
+		if uid == "" {
+			continue
 		}
-		if req.UserID != nil && h.cfg.Users != nil {
-			user, err := h.cfg.Users.FindByID(c.Request.Context(), *req.UserID)
+		cleanIDs = append(cleanIDs, uid)
+	}
+	req.UserIDs = cleanIDs
+	if req.Kind == models.BackupScheduleKindAccount {
+		for _, uid := range req.UserIDs {
+			if h.cfg.Users == nil {
+				break
+			}
+			user, err := h.cfg.Users.FindByID(c.Request.Context(), uid)
 			if err != nil || user == nil {
-				c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "user_not_found"})
+				c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "user_not_found", "detail": uid})
 				return
 			}
 			if user.IsAdmin {
-				c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "admin_user_not_allowed"})
+				c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "admin_user_not_allowed", "detail": uid})
 				return
 			}
 		}
 	} else {
-		// system_backup must NOT carry a user_id
-		req.UserID = nil
+		req.UserIDs = nil
 	}
 	next, err := internalbackup.NextFire(req.CronExpr, time.Now().UTC())
 	if err != nil {
@@ -202,6 +230,11 @@ func (h *backupScheduleHandler) create(c *gin.Context) {
 			return
 		}
 	}
+	if err := h.cfg.Schedules.ReplaceUsers(c.Request.Context(), s.ID, req.UserIDs); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_link_users"})
+		return
+	}
+	s.UserIDs = req.UserIDs
 	dests, _ := h.cfg.Schedules.GetDestinations(c.Request.Context(), s.ID)
 	c.JSON(http.StatusCreated, toScheduleDTO(s, dests))
 }
@@ -214,6 +247,7 @@ type updateScheduleRequest struct {
 	KeepWeekly          *int      `json:"keep_weekly"`
 	KeepMonthly         *int      `json:"keep_monthly"`
 	DestinationIDs      *[]string `json:"destination_ids"`
+	UserIDs             *[]string `json:"user_ids"`
 }
 
 func (h *backupScheduleHandler) update(c *gin.Context) {
@@ -265,6 +299,34 @@ func (h *backupScheduleHandler) update(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_link_destinations"})
 			return
 		}
+	}
+	if req.UserIDs != nil && s.Kind == models.BackupScheduleKindAccount {
+		clean := make([]string, 0, len(*req.UserIDs))
+		for _, uid := range *req.UserIDs {
+			if uid == "" {
+				continue
+			}
+			if h.cfg.Users != nil {
+				user, err := h.cfg.Users.FindByID(c.Request.Context(), uid)
+				if err != nil || user == nil {
+					c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "user_not_found", "detail": uid})
+					return
+				}
+				if user.IsAdmin {
+					c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "admin_user_not_allowed", "detail": uid})
+					return
+				}
+			}
+			clean = append(clean, uid)
+		}
+		if err := h.cfg.Schedules.ReplaceUsers(c.Request.Context(), s.ID, clean); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_link_users"})
+			return
+		}
+		s.UserIDs = clean
+	} else {
+		ids, _ := h.cfg.Schedules.GetUserIDs(c.Request.Context(), s.ID)
+		s.UserIDs = ids
 	}
 	dests, _ := h.cfg.Schedules.GetDestinations(c.Request.Context(), s.ID)
 	c.JSON(http.StatusOK, toScheduleDTO(s, dests))

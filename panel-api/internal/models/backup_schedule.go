@@ -33,7 +33,22 @@ type BackupSchedule struct {
 	// Loaded by repository when ListWithDestinations is called; not a
 	// GORM relation tag (the join table has its own model below).
 	Destinations []BackupDestination `gorm:"-" json:"destinations,omitempty"`
+	// UserIDs is the explicit per-schedule user list (multi-select on
+	// account schedules). Empty = "all non-admin users" fan-out at
+	// tick time. Loaded via repository.GetUsers; the legacy single
+	// user_id column on this table is ignored once UserIDs is loaded.
+	UserIDs []string `gorm:"-" json:"user_ids,omitempty"`
 }
+
+// BackupScheduleUser is the M:N join row pairing schedules to users
+// for account_backup fan-out.
+type BackupScheduleUser struct {
+	ScheduleID string    `gorm:"type:char(26);primaryKey" json:"schedule_id"`
+	UserID     string    `gorm:"type:char(26);primaryKey" json:"user_id"`
+	CreatedAt  time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
+}
+
+func (BackupScheduleUser) TableName() string { return "backup_schedule_users" }
 
 func (BackupSchedule) TableName() string { return "backup_schedules" }
 

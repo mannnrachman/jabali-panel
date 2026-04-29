@@ -228,7 +228,7 @@ type Domain struct {
 	// (ADR-0043). EmailEnabledAt is the last transition-to-enabled
 	// timestamp — useful for operator audit and the reconciler to
 	// re-publish DNS after a backup restore.
-	EmailEnabled    bool       `gorm:"type:tinyint(1);not null;default:0" json:"email_enabled"`
+	EmailEnabled    bool       `gorm:"type:tinyint(1);not null;default:1" json:"email_enabled"`
 	DkimSelector    *string    `gorm:"type:varchar(64)" json:"dkim_selector,omitempty"`
 	DkimPublicKey   *string    `gorm:"type:text" json:"dkim_public_key,omitempty"`
 	EmailEnabledAt  *time.Time `gorm:"type:datetime(6)" json:"email_enabled_at,omitempty"`

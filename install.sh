@@ -5428,7 +5428,11 @@ install_tetragon() {
     rm -f /etc/jabali/tetragon-disabled
   fi
 
-  local TETRAGON_VERSION="v1.6.1"
+  # v1.7.0 (2026-04-30) — kernel 6.12 BPF map pin / procfs inode-mismatch
+  # fixes upstream-of v1.6.1 (Debian 13 fresh installs at mx surfaced
+  # CrashLoop on /sys/fs/bpf/tetragon/execve_map pin denied + /proc/1/ns/*
+  # readlink permission denied with v1.6.1).
+  local TETRAGON_VERSION="v1.7.0"
   local tetragon_marker="/opt/tetragon/.jabali-installed-${TETRAGON_VERSION}"
 
   if [[ ! -f "$tetragon_marker" ]] || ! command -v tetragon >/dev/null 2>&1; then
@@ -5584,9 +5588,10 @@ spec:
 TP_SUSPICIOUS
 
   # Minimal tetragon systemd unit (the GitHub release tarball does not
-  # ship one for Debian).
-  if [[ ! -f /etc/systemd/system/tetragon.service ]]; then
-    cat >/etc/systemd/system/tetragon.service <<'TG_UNIT'
+  # ship one for Debian). Always rewritten so jabali update picks up
+  # capability/version changes (memory: jabali update doesn't refresh
+  # systemd units unless we overwrite explicitly).
+  cat >/etc/systemd/system/tetragon.service <<'TG_UNIT'
 [Unit]
 Description=Tetragon eBPF runtime detection (M33)
 Documentation=https://tetragon.io/
@@ -5604,12 +5609,18 @@ User=root
 Group=root
 LimitMEMLOCK=infinity
 NoNewPrivileges=no
-CapabilityBoundingSet=CAP_SYS_ADMIN CAP_BPF CAP_PERFMON CAP_DAC_READ_SEARCH
+# CAP_SYS_PTRACE required to readlink /proc/<pid>/ns/* on Linux 6.x —
+# without it Tetragon fails namespace detection ("Kernel does not support
+# pid namespaces" / "permission denied") and aborts the BPF base sensor
+# load (mx fresh install scar 2026-04-30).
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_BPF CAP_PERFMON CAP_DAC_READ_SEARCH CAP_SYS_PTRACE CAP_SYS_RESOURCE
+# Ensure caps actually reach the binary; default systemd hardening on
+# v245+ can strip them otherwise.
+AmbientCapabilities=CAP_SYS_ADMIN CAP_BPF CAP_PERFMON CAP_DAC_READ_SEARCH CAP_SYS_PTRACE CAP_SYS_RESOURCE
 
 [Install]
 WantedBy=multi-user.target
 TG_UNIT
-  fi
 
   install -d -m 0755 /var/log/tetragon
 
@@ -5644,10 +5655,17 @@ RELAY_UNIT
 
   systemctl daemon-reload >/dev/null 2>&1 || true
   if command -v tetragon >/dev/null 2>&1; then
-    systemctl enable --now tetragon.service >/dev/null 2>&1 || \
+    # reset-failed in case prior run was crash-looping; restart so the
+    # rewritten unit + new capabilities + bumped binary actually take
+    # effect on jabali update (enable --now is a no-op on running unit).
+    systemctl reset-failed tetragon.service >/dev/null 2>&1 || true
+    systemctl enable tetragon.service >/dev/null 2>&1 || true
+    systemctl restart tetragon.service >/dev/null 2>&1 || \
       _warn "tetragon.service did not start cleanly — check 'journalctl -u tetragon'"
     if [[ -x /usr/local/bin/jabali-tetragon-relay ]]; then
-      systemctl enable --now jabali-tetragon-relay.service >/dev/null 2>&1 || \
+      systemctl reset-failed jabali-tetragon-relay.service >/dev/null 2>&1 || true
+      systemctl enable jabali-tetragon-relay.service >/dev/null 2>&1 || true
+      systemctl restart jabali-tetragon-relay.service >/dev/null 2>&1 || \
         _warn "jabali-tetragon-relay did not start cleanly — check 'journalctl -u jabali-tetragon-relay'"
     fi
     _ok "Tetragon enabled — 4 default tracing policies loaded"

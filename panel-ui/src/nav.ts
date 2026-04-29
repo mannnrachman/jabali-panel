@@ -15,6 +15,7 @@ import {
   AppstoreOutlined,
   BellOutlined,
   CalendarCheckOutlined,
+  ChartBarOutlined,
   CloudServerOutlined,
   CodeOutlined,
   DownloadOutlined,
@@ -113,7 +114,7 @@ export const adminNav: NavItem[] = [
   {
     key: "server-status",
     label: "Server Status",
-    icon: navIcon(ServerOutlined),
+    icon: navIcon(ChartBarOutlined),
     path: "/jabali-admin/server-status",
   },
   {
@@ -137,7 +138,7 @@ export const adminNav: NavItem[] = [
   {
     key: "dns",
     label: "DNS Zones",
-    icon: navIcon(CloudServerOutlined),
+    icon: navIcon(ServerOutlined),
     path: "/jabali-admin/dns",
     matchPatterns: [/^\/jabali-admin\/domains\/[^/]+\/dns(?:\/|$)/],
   },

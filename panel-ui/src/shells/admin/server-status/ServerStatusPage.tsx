@@ -11,7 +11,7 @@
 // <Masonry> tags would silently render nothing, which is what made
 // this page show a blank canvas during the first cut.
 import { Masonry, Typography } from "antd";
-import { ServerOutlined } from "@icons";
+import { ChartBarOutlined } from "@icons";
 
 import { useServerStatus } from "../../../hooks/useServerStatus";
 import { AlertsBanner } from "./AlertsBanner";
@@ -57,7 +57,7 @@ export const ServerStatusPage = () => {
   return (
     <div>
       <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
-        <ServerOutlined /> Server Status
+        <ChartBarOutlined /> Server Status
       </Typography.Title>
 
       <AlertsBanner alerts={env?.alerts ?? []} />

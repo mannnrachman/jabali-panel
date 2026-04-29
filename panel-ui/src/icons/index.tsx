@@ -17,6 +17,7 @@ import {
   Book,
   Bug,
   CalendarCheck,
+  ChartBar,
   Check,
   CheckCircle2,
   CircleX,
@@ -169,6 +170,7 @@ export const SettingOutlined = shim(Settings);
 export const TeamOutlined = shim(Users);
 export const CloudServerOutlined = shim(Waypoints);
 export const ServerOutlined = shim(Server);
+export const ChartBarOutlined = shim(ChartBar);
 export const ThunderboltOutlined = shim(Zap);
 
 // --- Actions ---

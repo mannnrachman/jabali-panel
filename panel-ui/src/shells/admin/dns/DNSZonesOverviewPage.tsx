@@ -5,7 +5,7 @@
 // view the same `domains` list so the badge total matches on both.
 import { useEffect, useState } from "react";
 import { Alert, Button, Card, Empty, Spin, Table, Tag, Typography } from "antd";
-import { CloudServerOutlined } from "@icons";
+import { ServerOutlined } from "@icons";
 import { useNavigate } from "react-router";
 
 import { apiClient } from "../../../apiClient";
@@ -157,7 +157,7 @@ export const DNSZonesOverviewPage = () => {
   return (
     <div>
       <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
-        <CloudServerOutlined /> DNS Zones
+        <ServerOutlined /> DNS Zones
       </Typography.Title>
       <Card
         tabList={[

@@ -4847,33 +4847,48 @@ install_malware_stack() {
   # M33 — Linux Malware Detect + YARA-X + signature-base + Tetragon stack.
   # ADR-0072.
   #
-  # ClamAV runs ON-DEMAND (2026-04-27 amendment 2):
-  #   - clamav binary installed; clamav-daemon + clamav-freshclam services masked
-  #   - jabali-freshclam.timer runs `freshclam` once daily (one-shot, ~30s)
-  #   - LMD's inotify monitor batches changed files per cycle and invokes
-  #     `clamscan -f <list>` once per batch — sig DB loads into RAM (~1.7GB
-  #     peak) for the scan, frees on exit. Avg resident RAM ≈ 0.
-  #   - The realtime-monitor unit (jabali-maldet-monitor.service) is OPT-IN.
-  #     Admin enables it via /jabali-admin/security?tab=malware Settings.
-  #     Reconciler (panel-api → agent) starts/stops the unit on toggle.
+  # ClamAV is REMOVED (2026-04-29 amendment 3): maldet 2.0's native HEX +
+  # MD5 + SHA-256 scanner using sigs/{hex,md5,sha256v2}.dat from rfxn
+  # replaces clamscan. Web-threat focused, no Windows/macOS coverage we
+  # don't need on shared PHP hosting. Saves 1.5GB peak RAM during scans
+  # and 99% CPU spikes. YARA via yr (yara-x) covers pattern matching.
+  # Realtime-monitor unit (jabali-maldet-monitor.service) is OPT-IN.
+  # Admin enables it via /jabali-admin/security?tab=malware Settings.
+  # Reconciler (panel-api → agent) starts/stops the unit on toggle.
   #
   # Idempotent: every step is guarded so jabali update re-runs cleanly.
 
-  _log "installing malware detection stack (LMD + ClamAV-on-demand + YARA + PMF)"
+  _log "installing malware detection stack (LMD 2.0 native scanner + YARA-X)"
 
-  # ClamAV — binary only. clamav-daemon + clamav-freshclam are masked
-  # immediately so apt installation does not start the resident services.
-  # `freshclam` runs as a one-shot via jabali-freshclam.timer below.
-  systemctl mask clamav-daemon.service clamav-freshclam.service >/dev/null 2>&1 || true
-  if ! command -v clamscan >/dev/null 2>&1; then
-    _log "installing clamav (binary only; daemons stay masked)"
-    DEBIAN_FRONTEND=noninteractive apt-get -y -qq install --no-install-recommends \
-      clamav clamav-freshclam >/dev/null 2>&1 || \
-      _warn "apt install clamav failed — yara scan path will be unavailable"
-    # apt may have started services despite our mask attempt above; force
-    # them down + re-mask to be sure.
-    systemctl disable --now clamav-daemon.service clamav-freshclam.service >/dev/null 2>&1 || true
-    systemctl mask clamav-daemon.service clamav-freshclam.service >/dev/null 2>&1 || true
+  # ClamAV is no longer installed. maldet 2.0 ships its own native HEX +
+  # MD5 + SHA-256 scanner using sigs/{hex,md5,sha256v2}.dat (rfxn pack,
+  # web-threat focused). YARA via yr (yara-x) covers pattern matching.
+  # Together they replace clamscan entirely for shared PHP hosting:
+  # 1.5GB peak RAM during scans → gone, 99% CPU spike → gone, 150MB
+  # /var/lib/clamav → gone, daily freshclam bandwidth → gone.
+  #
+  # One-time cleanup: purge clamav from hosts that ran prior M33 builds
+  # which installed it. Gated by a marker so we don't run apt purge on
+  # every jabali update (slow + apt-lock contention with other ops).
+  if [[ ! -f /etc/jabali/.clamav-purged-v2 ]]; then
+    if dpkg -l clamav 2>/dev/null | grep -q '^ii'; then
+      _log "purging clamav (M33 amendment: maldet 2.0 native scanner replaces it)"
+      systemctl stop clamav-daemon.service clamav-freshclam.service >/dev/null 2>&1 || true
+      systemctl disable clamav-daemon.service clamav-freshclam.service >/dev/null 2>&1 || true
+      systemctl unmask clamav-daemon.service clamav-freshclam.service >/dev/null 2>&1 || true
+      DEBIAN_FRONTEND=noninteractive apt-get -y -qq purge \
+        'clamav*' >/dev/null 2>&1 || \
+        _warn "apt purge clamav failed — manual cleanup may be needed"
+      rm -rf /var/lib/clamav 2>/dev/null || true
+      systemctl stop jabali-freshclam.timer jabali-freshclam.service >/dev/null 2>&1 || true
+      systemctl disable jabali-freshclam.timer >/dev/null 2>&1 || true
+      rm -f /etc/systemd/system/jabali-freshclam.service \
+            /etc/systemd/system/jabali-freshclam.timer 2>/dev/null || true
+      systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+    install -d -m 0755 /etc/jabali
+    touch /etc/jabali/.clamav-purged-v2
+    _ok "clamav purged + jabali-freshclam units removed"
   fi
   # Drop the legacy purge marker (older M33 amendment) — keeping it would
   # block this branch from running on hosts that previously purged.
@@ -4963,13 +4978,14 @@ email_alert="0"
 #   - sigs/custom.yara (single file)
 #   - sigs/custom.yara.d/*.yar (drop-in dir — Jabali symlinks signature-base
 #     webshells/crime + admin uploads here)
-# scope=all means native YARA handles everything regardless of ClamAV.
+# scope=all means native YARA handles everything (no clamscan dependency).
 scan_yara="1"
 scan_yara_scope="all"
-# ClamAV stays on-demand for MD5/HEX hash database matches (Windows malware
-# coverage on mail-touched home dirs etc.). Daemon is masked; clamscan loads
-# sigs at scan time and frees on exit.
-scan_clamscan="auto"
+# clamscan is not installed on this stack — maldet 2.0 native HEX/MD5/SHA256
+# scanner (sigs/{hex,md5,sha256v2}.dat from rfxn) replaces it. Web-threat
+# focused signatures, no Windows/macOS coverage we don't need on shared
+# PHP hosting. Saves 1.5GB peak RAM during scans and ~99% CPU spike.
+scan_clamscan="0"
 # SHA-256 hashing with hardware acceleration (auto-detected).
 scan_hashtype="auto"
 scan_user_access="1"
@@ -5271,37 +5287,6 @@ POST_SCAN_HOOK
   chown root:root /etc/jabali/maldet/post-scan-hook.sh
   chmod 0750 /etc/jabali/maldet/post-scan-hook.sh
 
-  # ClamAV-on-demand sig refresher — daily one-shot freshclam. Daemon-mode
-  # freshclam is masked; this is the only sig-update path. Runs before
-  # the maldet sig timer so freshly-pulled clamav sigs are in place when
-  # the daily scan runs.
-  cat >/etc/systemd/system/jabali-freshclam.service <<'FRESH_UNIT'
-[Unit]
-Description=Jabali on-demand ClamAV signature refresh (M33)
-After=network-online.target
-Wants=network-online.target
-ConditionPathExists=/usr/bin/freshclam
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/freshclam --quiet
-Nice=15
-IOSchedulingClass=idle
-FRESH_UNIT
-
-  cat >/etc/systemd/system/jabali-freshclam.timer <<'FRESH_TIMER'
-[Unit]
-Description=Daily Jabali ClamAV signature refresh (M33)
-
-[Timer]
-OnCalendar=*-*-* 02:15:00
-Persistent=true
-RandomizedDelaySec=15m
-
-[Install]
-WantedBy=timers.target
-FRESH_TIMER
-
   # M33 systemd timers — daily signature update + daily scan + retention purge.
   # maldet -u refreshes rfxn.yara + hex/md5 sigs; custom.yara.d/ drop-ins
   # (jabali/ + signature-base/) load automatically with maldet v2.0.1+.
@@ -5419,15 +5404,6 @@ WantedBy=timers.target
 PURGE_TIMER
 
   systemctl daemon-reload >/dev/null 2>&1 || true
-  systemctl enable --now jabali-freshclam.timer >/dev/null 2>&1 || true
-  # First-install freshclam — clamscan needs /var/lib/clamav populated
-  # before the first scan succeeds. Daemon path is masked, so freshclam
-  # is run synchronously here once. The timer takes over from tomorrow.
-  if [[ -d /var/lib/clamav ]] && ! ls /var/lib/clamav/main.cvd /var/lib/clamav/main.cld >/dev/null 2>&1; then
-    _log "first-install freshclam (~30s, downloads ClamAV signatures)"
-    systemctl start jabali-freshclam.service >/dev/null 2>&1 || \
-      _warn "first freshclam failed — clamscan will be sig-less until next run"
-  fi
   systemctl enable --now jabali-maldet-update-signatures.timer >/dev/null 2>&1 || true
   systemctl enable --now jabali-signature-base-update.timer >/dev/null 2>&1 || true
   systemctl enable --now jabali-maldet-scan-daily.timer >/dev/null 2>&1 || true

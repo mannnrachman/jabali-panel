@@ -257,8 +257,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// M33 follow-up: per-user manual-scan job tracking (mig 000097).
 		deps.MalwareUserScans = repository.NewMalwareUserScanRepository(sharedDB)
 		// M34: per-user PHP-FPM egress firewall (mig 000100/000101, ADR-0084).
+		// Reconciler renders /etc/nftables.d/jabali-per-user-egress.nft from
+		// these rows every tick and pulls per-user drop counters back into
+		// drop_count_24h. Skipped on hosts without nft socket cgroupv2 by
+		// the agent itself (apply errors out, reconciler logs + retries).
 		deps.UserEgressPolicies = repository.NewUserEgressPolicyRepository(sharedDB)
 		deps.UserEgressRequests = repository.NewUserEgressRequestRepository(sharedDB)
+		rec.WithUserEgressPolicies(deps.UserEgressPolicies)
 		// M30 (ADR-0075): backup-restore workflow rows.
 		deps.BackupJobs = repository.NewBackupJobRepository(sharedDB)
 		// M30.1 (ADR-0078): destinations + schedules + copy queue.

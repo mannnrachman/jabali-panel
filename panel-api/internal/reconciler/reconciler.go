@@ -70,6 +70,12 @@ type Reconciler struct {
 	// service it drives ssl.panel.issue from ReconcileAll.
 	panelCerts          repository.PanelCertificateRepository
 	panelCertRoutability *services.PanelCertRoutability
+	// M34 — per-user PHP-FPM egress firewall. Renders
+	// /etc/nftables.d/jabali-per-user-egress.nft from user_egress_policies
+	// every tick, then reads + resets per-user counters into
+	// drop_count_24h. Both nil = pass skipped (test fixtures, hosts
+	// without nft socket cgroupv2 support).
+	userEgressPolicies repository.UserEgressPolicyRepository
 }
 
 // WithPanelCertificate injects the M32 panel-cert repo + routability
@@ -79,6 +85,14 @@ type Reconciler struct {
 func (r *Reconciler) WithPanelCertificate(repo repository.PanelCertificateRepository, rout *services.PanelCertRoutability) *Reconciler {
 	r.panelCerts = repo
 	r.panelCertRoutability = rout
+	return r
+}
+
+// WithUserEgressPolicies injects the M34 per-user egress repo. When nil
+// (the default in test fixtures) the egress reconciler pass is skipped
+// entirely — no agent calls, no nft writes.
+func (r *Reconciler) WithUserEgressPolicies(repo repository.UserEgressPolicyRepository) *Reconciler {
+	r.userEgressPolicies = repo
 	return r
 }
 
@@ -284,6 +298,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// before the rest of the loop touches the agent. Cheap noop when
 	// use_le=0 or routability gate fails.
 	r.reconcilePanelCertificate(ctx)
+
+	// M34: per-user PHP-FPM egress firewall. Cheap noop when the repo
+	// isn't wired (test fixtures) or when there are zero policies.
+	r.reconcileUserEgress(ctx)
 
 	// PHP pool reconciliation first, so domain regens see latest pool state.
 	r.ReconcilePHPPools(ctx)

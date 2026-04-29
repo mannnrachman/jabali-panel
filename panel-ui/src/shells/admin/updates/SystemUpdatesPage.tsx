@@ -56,6 +56,12 @@ function JabaliUpdateCard() {
   const result = check.data;
   const running =
     status.data?.status === "active" || status.data?.status === "activating";
+  const finished =
+    since !== null &&
+    status.data !== undefined &&
+    !running &&
+    status.data.exit_code !== undefined;
+  const succeeded = finished && status.data?.exit_code === 0;
 
   const onCheck = async () => {
     try {
@@ -97,14 +103,14 @@ function JabaliUpdateCard() {
         </Button>
       }
     >
-      {!result && !running ? (
+      {!result && !running && !finished ? (
         <Typography.Text type="secondary">
           Click "Check for updates" to compare your installation against the
           latest release on origin/main.
         </Typography.Text>
       ) : null}
 
-      {result && result.behind_count === 0 && !running ? (
+      {result && result.behind_count === 0 && !running && !finished ? (
         <Alert
           type="success"
           showIcon
@@ -119,7 +125,7 @@ function JabaliUpdateCard() {
         />
       ) : null}
 
-      {result && result.behind_count > 0 && !running ? (
+      {result && result.behind_count > 0 && !running && !finished ? (
         <Alert
           type="warning"
           showIcon
@@ -158,6 +164,32 @@ function JabaliUpdateCard() {
         />
       ) : null}
 
+      {finished ? (
+        <Alert
+          type={succeeded ? "success" : "error"}
+          showIcon
+          message={succeeded ? "Update completed successfully" : "Update failed"}
+          description={
+            <Space direction="vertical">
+              <span>
+                Exit code {status.data?.exit_code}. Re-run "Check for updates" to
+                refresh status.
+              </span>
+              <Button
+                size="small"
+                icon={<ReloadOutlined />}
+                onClick={() => {
+                  setSince(null);
+                  void check.mutateAsync().catch(() => {});
+                }}
+              >
+                Dismiss
+              </Button>
+            </Space>
+          }
+        />
+      ) : null}
+
       {since && status.data ? (
         <JobLogTail
           status={status.data.status}
@@ -179,6 +211,12 @@ function AptUpdateCard() {
   const result = check.data;
   const running =
     status.data?.status === "active" || status.data?.status === "activating";
+  const finished =
+    since !== null &&
+    status.data !== undefined &&
+    !running &&
+    status.data.exit_code !== undefined;
+  const succeeded = finished && status.data?.exit_code === 0;
 
   const onCheck = async () => {
     try {
@@ -220,21 +258,21 @@ function AptUpdateCard() {
         </Button>
       }
     >
-      {!result && !running ? (
+      {!result && !running && !finished ? (
         <Typography.Text type="secondary">
           Click "Check for updates" to run <code>apt-get update</code> and list
           all upgradable system packages.
         </Typography.Text>
       ) : null}
 
-      {result && result.total === 0 && !running ? (
+      {result && result.total === 0 && !running && !finished ? (
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
           description="System is up to date"
         />
       ) : null}
 
-      {result && result.total > 0 && !running ? (
+      {result && result.total > 0 && !running && !finished ? (
         <Space direction="vertical" size={12} style={{ width: "100%" }}>
           <Alert
             type="warning"
@@ -274,6 +312,32 @@ function AptUpdateCard() {
             <Button danger size="small" loading={stop.isPending} onClick={onStop}>
               Stop
             </Button>
+          }
+        />
+      ) : null}
+
+      {finished ? (
+        <Alert
+          type={succeeded ? "success" : "error"}
+          showIcon
+          message={succeeded ? "Apt upgrade completed successfully" : "Apt upgrade failed"}
+          description={
+            <Space direction="vertical">
+              <span>
+                Exit code {status.data?.exit_code}. Re-run "Check for updates" to
+                refresh upgradable list.
+              </span>
+              <Button
+                size="small"
+                icon={<ReloadOutlined />}
+                onClick={() => {
+                  setSince(null);
+                  void check.mutateAsync().catch(() => {});
+                }}
+              >
+                Dismiss
+              </Button>
+            </Space>
           }
         />
       ) : null}

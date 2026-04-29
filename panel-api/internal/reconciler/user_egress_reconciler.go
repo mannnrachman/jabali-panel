@@ -45,7 +45,13 @@ func (r *Reconciler) reconcileUserEgress(ctx context.Context) {
 		return
 	}
 	r.applyUserEgress(ctx, policies, defaults)
-	r.readUserEgressCounters(ctx)
+	// Build username→user_id map once from the same policies the apply
+	// pass already fetched. Avoids N FindByUsername round-trips per tick.
+	usernameToID := make(map[string]string, len(policies))
+	for _, p := range policies {
+		usernameToID[p.Username] = p.UserID
+	}
+	r.readUserEgressCounters(ctx, usernameToID)
 }
 
 // readUserEgressDefaults loads the operator-overridden default allowlist
@@ -63,25 +69,25 @@ func (r *Reconciler) readUserEgressDefaults(ctx context.Context) map[string]any 
 	out := map[string]any{}
 	if s.EgressDefaultLoopbackCIDRs != nil {
 		var v []string
-		if err := json.Unmarshal([]byte(*s.EgressDefaultLoopbackCIDRs), &v); err == nil {
+		if err := json.Unmarshal(*s.EgressDefaultLoopbackCIDRs, &v); err == nil {
 			out["loopback4"] = v
 		}
 	}
 	if s.EgressDefaultLoopback6CIDRs != nil {
 		var v []string
-		if err := json.Unmarshal([]byte(*s.EgressDefaultLoopback6CIDRs), &v); err == nil {
+		if err := json.Unmarshal(*s.EgressDefaultLoopback6CIDRs, &v); err == nil {
 			out["loopback6"] = v
 		}
 	}
 	if s.EgressDefaultPortsTCP != nil {
 		var v []int
-		if err := json.Unmarshal([]byte(*s.EgressDefaultPortsTCP), &v); err == nil {
+		if err := json.Unmarshal(*s.EgressDefaultPortsTCP, &v); err == nil {
 			out["ports_tcp"] = v
 		}
 	}
 	if s.EgressDefaultPortsUDP != nil {
 		var v []int
-		if err := json.Unmarshal([]byte(*s.EgressDefaultPortsUDP), &v); err == nil {
+		if err := json.Unmarshal(*s.EgressDefaultPortsUDP, &v); err == nil {
 			out["ports_udp"] = v
 		}
 	}
@@ -132,7 +138,7 @@ func (r *Reconciler) applyUserEgress(ctx context.Context, policies []repository.
 	}
 }
 
-func (r *Reconciler) readUserEgressCounters(ctx context.Context) {
+func (r *Reconciler) readUserEgressCounters(ctx context.Context, usernameToID map[string]string) {
 	dispatchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	raw, agentErr := r.agent.Call(dispatchCtx, "user.egress.read_counters", map[string]any{
@@ -167,29 +173,16 @@ func (r *Reconciler) readUserEgressCounters(ctx context.Context) {
 			delta = c.Packets
 		}
 		userEgressLastSeen[c.Username] = c.Packets
-		// Resolve user_id by username via the policies list. We did not
-		// thread the join through to the counters map for simplicity,
-		// so we fetch the policies once and look up by username. The
-		// list is bounded by the user count and read once per tick.
-		if uid := r.lookupUserIDForEgress(ctx, c.Username); uid != "" {
-			if err := r.userEgressPolicies.SetDropCount(ctx, uid, delta, now); err != nil {
-				r.log.Debug("user-egress reconcile: SetDropCount failed",
-					"user", c.Username, "error", err)
-			}
+		// Resolve user_id from the map built by reconcileUserEgress out
+		// of the same ListAllForReconcile result the apply pass used.
+		// Counter rows for a just-deleted user linger one tick — harmless.
+		uid, ok := usernameToID[c.Username]
+		if !ok || uid == "" {
+			continue
+		}
+		if err := r.userEgressPolicies.SetDropCount(ctx, uid, delta, now); err != nil {
+			r.log.Debug("user-egress reconcile: SetDropCount failed",
+				"user", c.Username, "error", err)
 		}
 	}
-}
-
-func (r *Reconciler) lookupUserIDForEgress(ctx context.Context, username string) string {
-	// Cheap: the users repo has GetByUsername. Empty when the user no
-	// longer exists (just got deleted) — counter rows linger one tick
-	// longer than the user, harmless.
-	if r.users == nil {
-		return ""
-	}
-	u, err := r.users.FindByUsername(ctx, username)
-	if err != nil || u == nil {
-		return ""
-	}
-	return u.ID
 }

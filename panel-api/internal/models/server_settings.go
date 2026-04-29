@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // ServerSettings is the single-row table holding server identity and
 // DNS configuration. Operators edit these from the admin Settings page;
@@ -138,10 +141,10 @@ type ServerSettings struct {
 	// NULL on the JSON columns means "use the agent's CanonicalDefaults()";
 	// non-null arrays (including empty []) override. Burst threshold is
 	// drops/tick that fires the M14 egress_drop_burst event source.
-	EgressDefaultLoopbackCIDRs  *string `gorm:"column:egress_default_loopback_cidrs;type:json"          json:"egress_default_loopback_cidrs,omitempty"`
-	EgressDefaultLoopback6CIDRs *string `gorm:"column:egress_default_loopback6_cidrs;type:json"         json:"egress_default_loopback6_cidrs,omitempty"`
-	EgressDefaultPortsTCP       *string `gorm:"column:egress_default_ports_tcp;type:json"               json:"egress_default_ports_tcp,omitempty"`
-	EgressDefaultPortsUDP       *string `gorm:"column:egress_default_ports_udp;type:json"               json:"egress_default_ports_udp,omitempty"`
+	EgressDefaultLoopbackCIDRs  *json.RawMessage `gorm:"column:egress_default_loopback_cidrs;type:json"          json:"egress_default_loopback_cidrs,omitempty"`
+	EgressDefaultLoopback6CIDRs *json.RawMessage `gorm:"column:egress_default_loopback6_cidrs;type:json"         json:"egress_default_loopback6_cidrs,omitempty"`
+	EgressDefaultPortsTCP       *json.RawMessage `gorm:"column:egress_default_ports_tcp;type:json"               json:"egress_default_ports_tcp,omitempty"`
+	EgressDefaultPortsUDP       *json.RawMessage `gorm:"column:egress_default_ports_udp;type:json"               json:"egress_default_ports_udp,omitempty"`
 	EgressBurstThreshold        uint32  `gorm:"column:egress_burst_threshold;type:int unsigned;not null;default:50" json:"egress_burst_threshold"`
 
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`

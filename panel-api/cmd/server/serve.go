@@ -256,6 +256,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.MailScanFailures = repository.NewMailScanFailureRepository(sharedDB)
 		// M33 follow-up: per-user manual-scan job tracking (mig 000097).
 		deps.MalwareUserScans = repository.NewMalwareUserScanRepository(sharedDB)
+		// M34: per-user PHP-FPM egress firewall (mig 000100/000101, ADR-0084).
+		deps.UserEgressPolicies = repository.NewUserEgressPolicyRepository(sharedDB)
+		deps.UserEgressRequests = repository.NewUserEgressRequestRepository(sharedDB)
 		// M30 (ADR-0075): backup-restore workflow rows.
 		deps.BackupJobs = repository.NewBackupJobRepository(sharedDB)
 		// M30.1 (ADR-0078): destinations + schedules + copy queue.

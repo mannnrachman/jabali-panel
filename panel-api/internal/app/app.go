@@ -103,6 +103,11 @@ type Deps struct {
 	// finalised by the post-scan-hook ingest path. Drives the Manual
 	// Scan UI's Last scanned + Status columns.
 	MalwareUserScans    repository.MalwareUserScanRepository
+	// M34 per-user PHP-FPM egress firewall. Two repos backing the
+	// nftables socket-cgroupv2 reconciler + admin/user request flow
+	// (migrations 000100/000101, ADR-0084).
+	UserEgressPolicies  repository.UserEgressPolicyRepository
+	UserEgressRequests  repository.UserEgressRequestRepository
 	// QuotaMount is the filesystem mount path /home lives on — passed
 	// on every M18 user.limits.{apply,clear,report} agent call so the
 	// agent can resolve `setquota -u <user> ... <mount>` without ever

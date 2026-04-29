@@ -96,10 +96,9 @@ type updateServerSettingsRequest struct {
 	SSHSandboxMode            *string `json:"ssh_sandbox_mode,omitempty"`
 	DefaultNspawnImageVersion *string `json:"default_nspawn_image_version,omitempty"`
 
-	// M30.1 backup retention + concurrency.
-	BackupKeepDaily         *uint32 `json:"backup_keep_daily,omitempty"`
-	BackupKeepWeekly        *uint32 `json:"backup_keep_weekly,omitempty"`
-	BackupKeepMonthly       *uint32 `json:"backup_keep_monthly,omitempty"`
+	// M30.1 backup concurrency. Per-schedule retention is the source
+	// of truth — server-wide keep_* fields exist on the row but are
+	// no longer writeable from the API.
 	BackupMaxConcurrentJobs *uint32 `json:"backup_max_concurrent_jobs,omitempty"`
 }
 
@@ -191,15 +190,6 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 		if v != "" {
 			current.DefaultNspawnImageVersion = v
 		}
-	}
-	if req.BackupKeepDaily != nil {
-		current.BackupKeepDaily = *req.BackupKeepDaily
-	}
-	if req.BackupKeepWeekly != nil {
-		current.BackupKeepWeekly = *req.BackupKeepWeekly
-	}
-	if req.BackupKeepMonthly != nil {
-		current.BackupKeepMonthly = *req.BackupKeepMonthly
 	}
 	if req.BackupMaxConcurrentJobs != nil {
 		// 0 acts as "use default" in the dispatcher. Cap at 64 — even a

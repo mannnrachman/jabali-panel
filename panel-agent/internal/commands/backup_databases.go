@@ -17,10 +17,11 @@ import (
 )
 
 type backupDatabasesParams struct {
-	JobID     string   `json:"job_id"`
-	UserID    string   `json:"user_id"`
-	Username  string   `json:"username"`
-	Databases []string `json:"databases"`
+	JobID      string   `json:"job_id"`
+	UserID     string   `json:"user_id"`
+	Username   string   `json:"username"`
+	Databases  []string `json:"databases"`
+	ScheduleID string   `json:"schedule_id,omitempty"`
 }
 
 type backupDatabasesResult struct {
@@ -68,7 +69,7 @@ func backupDatabasesHandler(ctx context.Context, raw json.RawMessage) (any, erro
 	c := backup.New(backup.DefaultConfig())
 	out := backupDatabasesResult{Snapshots: make([]backupDBStageSnapshot, 0, len(req.Databases))}
 	for _, db := range req.Databases {
-		snap, err := dumpOneDatabase(ctx, c, req.JobID, req.UserID, db)
+		snap, err := dumpOneDatabase(ctx, c, req.JobID, req.UserID, req.ScheduleID, db)
 		if err != nil {
 			out.Snapshots = append(out.Snapshots, backupDBStageSnapshot{DB: db, Error: err.Error()})
 			continue
@@ -80,7 +81,7 @@ func backupDatabasesHandler(ctx context.Context, raw json.RawMessage) (any, erro
 
 // dumpOneDatabase pipes mariadb-dump → restic backup --stdin. We avoid
 // shelling out twice (no intermediate file) so the dump stays in tmpfs.
-func dumpOneDatabase(ctx context.Context, c *backup.Client, jobID, userID, db string) (*backupDBStageSnapshot, error) {
+func dumpOneDatabase(ctx context.Context, c *backup.Client, jobID, userID, scheduleID, db string) (*backupDBStageSnapshot, error) {
 	cmd := exec.CommandContext(ctx, "mariadb-dump",
 		"--single-transaction", "--skip-lock-tables",
 		"--routines", "--triggers", "--events",
@@ -101,7 +102,7 @@ func dumpOneDatabase(ctx context.Context, c *backup.Client, jobID, userID, db st
 	// io.Reader. Tail end of the dump is required before the restic
 	// invocation can complete its summary write — straight piping plus
 	// goroutines is overkill for the typical dump size (KB-MB range).
-	tags := backup.AccountBackupTags(jobID, userID, backup.StageDB)
+	tags := backup.AccountBackupTags(jobID, userID, scheduleID, backup.StageDB)
 	tags = append(tags, backup.MakeTag(backup.TagKeyDB, db))
 
 	// Pump dump bytes through a pipe into the wrapper.

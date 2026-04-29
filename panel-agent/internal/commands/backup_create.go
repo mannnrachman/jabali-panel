@@ -51,13 +51,18 @@ func (s *jobSlot) release(kind, userID string) {
 }
 
 type backupCreateParams struct {
-	JobID     string   `json:"job_id"`
-	UserID    string   `json:"user_id"`
-	Username  string   `json:"username"`
-	Email     string   `json:"email,omitempty"`
-	IsAdmin   bool     `json:"is_admin"`
-	Databases []string `json:"databases,omitempty"`
-	Mailboxes []string `json:"mailboxes,omitempty"`
+	JobID      string   `json:"job_id"`
+	UserID     string   `json:"user_id"`
+	Username   string   `json:"username"`
+	Email      string   `json:"email,omitempty"`
+	IsAdmin    bool     `json:"is_admin"`
+	Databases  []string `json:"databases,omitempty"`
+	Mailboxes  []string `json:"mailboxes,omitempty"`
+	// ScheduleID is the originating backup_schedules.id when the job
+	// was enqueued by the in-process scheduler. Empty for manual
+	// admin-create jobs. When set, snapshots receive a
+	// `schedule-id=<id>` tag so per-schedule retention can target them.
+	ScheduleID string `json:"schedule_id,omitempty"`
 	// Metadata is the JSON-shaped panel-side state bundle produced
 	// by panel-api (database users, app installs, ssh keys, …) and
 	// persisted as a stage=metadata snapshot. Optional — empty bundle
@@ -183,7 +188,7 @@ func runBackupOrchestrator(ctx context.Context, req backupCreateParams) error {
 		jl.Printf("stage=manifest serialize_err=%v", err)
 		return fmt.Errorf("manifest serialize: %w", err)
 	}
-	tags := backup.AccountBackupTags(req.JobID, req.UserID, backup.StageManifest)
+	tags := backup.AccountBackupTags(req.JobID, req.UserID, req.ScheduleID, backup.StageManifest)
 	summary, err := c.Backup(ctx, backup.BackupOpts{
 		Stdin:     strings.NewReader(string(body)),
 		StdinName: "manifest.json",
@@ -200,7 +205,7 @@ func runBackupOrchestrator(ctx context.Context, req backupCreateParams) error {
 
 func runHomeStage(ctx context.Context, req backupCreateParams) backup.ManifestStage {
 	st := backup.ManifestStage{Name: backup.StageHome, Tag: "stage=home"}
-	body, _ := json.Marshal(backupHomeParams{JobID: req.JobID, UserID: req.UserID, Username: req.Username})
+	body, _ := json.Marshal(backupHomeParams{JobID: req.JobID, UserID: req.UserID, Username: req.Username, ScheduleID: req.ScheduleID})
 	out, err := backupHomeHandler(ctx, body)
 	if err != nil {
 		st.Status = backup.StageStatusFailed
@@ -223,7 +228,8 @@ func runDatabaseStage(ctx context.Context, req backupCreateParams) []backup.Mani
 		}}
 	}
 	body, _ := json.Marshal(backupDatabasesParams{
-		JobID: req.JobID, UserID: req.UserID, Username: req.Username, Databases: req.Databases,
+		JobID: req.JobID, UserID: req.UserID, Username: req.Username,
+		Databases: req.Databases, ScheduleID: req.ScheduleID,
 	})
 	out, err := backupDatabasesHandler(ctx, body)
 	if err != nil {
@@ -271,7 +277,7 @@ func runMetadataStage(ctx context.Context, req backupCreateParams) backup.Manife
 		return st
 	}
 	c := backup.New(backup.DefaultConfig())
-	tags := backup.AccountBackupTags(req.JobID, req.UserID, backup.StageMeta)
+	tags := backup.AccountBackupTags(req.JobID, req.UserID, req.ScheduleID, backup.StageMeta)
 	summary, err := c.Backup(ctx, backup.BackupOpts{
 		Stdin:     strings.NewReader(string(body)),
 		StdinName: "metadata.json",
@@ -292,7 +298,8 @@ func runMetadataStage(ctx context.Context, req backupCreateParams) backup.Manife
 func runMailStage(ctx context.Context, req backupCreateParams) backup.ManifestStage {
 	st := backup.ManifestStage{Name: backup.StageMail, Tag: "stage=mail"}
 	body, _ := json.Marshal(backupMailboxesParams{
-		JobID: req.JobID, UserID: req.UserID, Username: req.Username, Mailboxes: req.Mailboxes,
+		JobID: req.JobID, UserID: req.UserID, Username: req.Username,
+		Mailboxes: req.Mailboxes, ScheduleID: req.ScheduleID,
 	})
 	out, err := backupMailboxesHandler(ctx, body)
 	if err != nil {

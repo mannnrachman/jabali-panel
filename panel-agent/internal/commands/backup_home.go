@@ -30,9 +30,10 @@ const HomeBackupCeilingBytes uint64 = 50 * 1024 * 1024 * 1024
 const HomeExcludeFile = "/etc/jabali-panel/restic-excludes.list"
 
 type backupHomeParams struct {
-	JobID    string `json:"job_id"`
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
+	JobID      string `json:"job_id"`
+	UserID     string `json:"user_id"`
+	Username   string `json:"username"`
+	ScheduleID string `json:"schedule_id,omitempty"`
 }
 
 type backupHomeResult struct {
@@ -77,7 +78,7 @@ func backupHomeHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	}
 
 	c := backup.New(backup.DefaultConfig())
-	tags := backup.AccountBackupTags(req.JobID, req.UserID, backup.StageHome)
+	tags := backup.AccountBackupTags(req.JobID, req.UserID, req.ScheduleID, backup.StageHome)
 
 	opts := backup.BackupOpts{
 		Paths: []string{homePath},

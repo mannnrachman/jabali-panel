@@ -21,10 +21,11 @@ import (
 )
 
 type backupMailboxesParams struct {
-	JobID     string   `json:"job_id"`
-	UserID    string   `json:"user_id"`
-	Username  string   `json:"username"`
-	Mailboxes []string `json:"mailboxes"`
+	JobID      string   `json:"job_id"`
+	UserID     string   `json:"user_id"`
+	Username   string   `json:"username"`
+	Mailboxes  []string `json:"mailboxes"`
+	ScheduleID string   `json:"schedule_id,omitempty"`
 }
 
 type backupMailboxesResult struct {
@@ -154,7 +155,7 @@ func backupMailboxesHandler(ctx context.Context, raw json.RawMessage) (any, erro
 	}
 
 	c := backup.New(backup.DefaultConfig())
-	tags := backup.AccountBackupTags(req.JobID, req.UserID, backup.StageMail)
+	tags := backup.AccountBackupTags(req.JobID, req.UserID, req.ScheduleID, backup.StageMail)
 	for _, mb := range req.Mailboxes {
 		tags = append(tags, backup.Tag("mailbox="+mb))
 	}

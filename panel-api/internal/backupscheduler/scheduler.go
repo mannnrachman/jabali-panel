@@ -328,15 +328,20 @@ func (s *Scheduler) dispatchAccount(ctx context.Context, j models.BackupJob) {
 	dbs := userDatabases(callCtx, s.deps, user.ID, logger)
 	mbs := userMailboxes(callCtx, s.deps, user.ID, logger)
 	meta := buildScheduleMetadata(callCtx, s.deps, user, logger)
+	scheduleID := ""
+	if j.ScheduleID != nil {
+		scheduleID = *j.ScheduleID
+	}
 	params := map[string]any{
-		"job_id":    j.ID,
-		"user_id":   user.ID,
-		"username":  user.Username,
-		"email":     user.Email,
-		"is_admin":  user.IsAdmin,
-		"databases": dbs,
-		"mailboxes": mbs,
-		"metadata":  meta,
+		"job_id":      j.ID,
+		"user_id":     user.ID,
+		"username":    user.Username,
+		"email":       user.Email,
+		"is_admin":    user.IsAdmin,
+		"databases":   dbs,
+		"mailboxes":   mbs,
+		"metadata":    meta,
+		"schedule_id": scheduleID,
 	}
 	if _, err := s.deps.Agent.Call(callCtx, "backup.create", params); err != nil {
 		if isAgentConflict(err) {
@@ -356,9 +361,14 @@ func (s *Scheduler) dispatchSystem(ctx context.Context, j models.BackupJob) {
 	logger := s.deps.Log.With("job_id", j.ID, "kind", "system_backup")
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	scheduleID := ""
+	if j.ScheduleID != nil {
+		scheduleID = *j.ScheduleID
+	}
 	params := map[string]any{
 		"job_id":           j.ID,
 		"include_accounts": false,
+		"schedule_id":      scheduleID,
 	}
 	if _, err := s.deps.Agent.Call(callCtx, "system.backup", params); err != nil {
 		if isAgentConflict(err) {

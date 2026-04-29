@@ -16,12 +16,13 @@ type Tag string
 // are opaque strings; we constrain the ones Jabali emits so retention
 // + listing can filter reliably.
 const (
-	TagKeyKind   = "kind"
-	TagKeyJobID  = "job-id"
-	TagKeyStage  = "stage"
-	TagKeyUserID = "user-id"
-	TagKeySystem = "system"
-	TagKeyDB     = "db"
+	TagKeyKind       = "kind"
+	TagKeyJobID      = "job-id"
+	TagKeyStage      = "stage"
+	TagKeyUserID     = "user-id"
+	TagKeySystem     = "system"
+	TagKeyDB         = "db"
+	TagKeyScheduleID = "schedule-id"
 )
 
 // Blanket tag applied to every Jabali-managed snapshot. Retention
@@ -76,29 +77,37 @@ func MakeTag(key, value string) Tag {
 }
 
 // AccountBackupTags returns the canonical tag set for one stage of
-// an account_backup. Order is irrelevant to restic but stable here
-// for golden-file tests.
-func AccountBackupTags(jobID, userID, stage string) []Tag {
-	return []Tag{
+// an account_backup. scheduleID is empty for manual creates; when
+// set, retention can target the schedule with `--tag schedule-id=<id>`.
+func AccountBackupTags(jobID, userID, scheduleID, stage string) []Tag {
+	tags := []Tag{
 		TagBlanket,
 		MakeTag(TagKeyKind, KindAccountBackup),
 		MakeTag(TagKeyJobID, jobID),
 		MakeTag(TagKeyUserID, userID),
 		MakeTag(TagKeyStage, stage),
 	}
+	if scheduleID != "" {
+		tags = append(tags, MakeTag(TagKeyScheduleID, scheduleID))
+	}
+	return tags
 }
 
 // SystemBackupTags returns the canonical tag set for one stage of
 // a system_backup. `system=<hostname>` lets multi-host operators
 // disambiguate snapshots in a shared remote repo.
-func SystemBackupTags(jobID, hostname, stage string) []Tag {
-	return []Tag{
+func SystemBackupTags(jobID, hostname, scheduleID, stage string) []Tag {
+	tags := []Tag{
 		TagBlanket,
 		MakeTag(TagKeyKind, KindSystemBackup),
 		MakeTag(TagKeyJobID, jobID),
 		MakeTag(TagKeySystem, hostname),
 		MakeTag(TagKeyStage, stage),
 	}
+	if scheduleID != "" {
+		tags = append(tags, MakeTag(TagKeyScheduleID, scheduleID))
+	}
+	return tags
 }
 
 // ToStrings converts a tag slice to []string for restic CLI args.

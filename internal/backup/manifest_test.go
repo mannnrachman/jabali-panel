@@ -101,7 +101,7 @@ func TestSystemManifest_Roundtrip(t *testing.T) {
 }
 
 func TestAccountTags_StableOrder(t *testing.T) {
-	tags := AccountBackupTags("01J5JOB", "01J5USR", StageHome)
+	tags := AccountBackupTags("01J5JOB", "01J5USR", "", StageHome)
 	if string(tags[0]) != "jabali" {
 		t.Fatalf("blanket tag must come first; got %v", tags)
 	}
@@ -113,7 +113,7 @@ func TestAccountTags_StableOrder(t *testing.T) {
 }
 
 func TestSystemTags_HostScoped(t *testing.T) {
-	tags := SystemBackupTags("01J5JOB", "host.example.com", StagePanelDB)
+	tags := SystemBackupTags("01J5JOB", "host.example.com", "", StagePanelDB)
 	got := strings.Join(ToStrings(tags), " ")
 	if !strings.Contains(got, "system=host.example.com") {
 		t.Fatalf("missing system tag: %s", got)

@@ -52,6 +52,9 @@ var systemUsersGroupAllowlist = map[string]struct{}{
 type systemBackupParams struct {
 	JobID           string `json:"job_id"`
 	IncludeAccounts bool   `json:"include_accounts"`
+	// ScheduleID is the originating backup_schedules.id when the job
+	// came from the scheduler. Empty for manual admin-create jobs.
+	ScheduleID string `json:"schedule_id,omitempty"`
 }
 
 type systemBackupResult struct {
@@ -101,14 +104,14 @@ func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) er
 	// targeted restore can replace just one. Each snapshot tagged
 	// stage=panel_db,db=<name>.
 	manifest.Stages = append(manifest.Stages,
-		runSystemPanelDBStage(ctx, c, req.JobID, host)...,
+		runSystemPanelDBStage(ctx, c, req.JobID, host, req.ScheduleID)...,
 	)
 
 	// panel_config: 0600 master password is the operator's off-host
 	// responsibility (ADR-0075) — exclude from snapshots so a stolen
 	// system_backup tarball doesn't leak the key needed to decrypt it.
 	manifest.Stages = append(manifest.Stages,
-		runSystemPathStage(ctx, c, req.JobID, host, backup.StagePanelConfig, "/etc/jabali-panel",
+		runSystemPathStage(ctx, c, req.JobID, host, req.ScheduleID, backup.StagePanelConfig, "/etc/jabali-panel",
 			[]string{"restic-repo.password"}))
 
 	// service_config: every config tree the panel + reconciler write to.
@@ -116,24 +119,24 @@ func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) er
 	// /etc/systemd/system/jabali-*.service.d/ happens at scan time so a
 	// missing directory (e.g. PHP not installed) doesn't fail the stage.
 	manifest.Stages = append(manifest.Stages,
-		runSystemMultiPathStage(ctx, c, req.JobID, host, backup.StageServiceConfig,
+		runSystemMultiPathStage(ctx, c, req.JobID, host, req.ScheduleID, backup.StageServiceConfig,
 			expandServiceConfigPaths(), nil))
 
 	manifest.Stages = append(manifest.Stages,
-		runSystemPathStage(ctx, c, req.JobID, host, backup.StageMailState,
+		runSystemPathStage(ctx, c, req.JobID, host, req.ScheduleID, backup.StageMailState,
 			"/var/lib/stalwart",
 			// LOG / LOG.old.* / LOCK are RocksDB runtime artefacts —
 			// not data, just bloat. Same exclusions the per-user mail
 			// stage uses for its bodies tarball.
 			[]string{"LOG", "LOG.old.*", "LOCK"}),
-		runSystemPathStage(ctx, c, req.JobID, host, backup.StageTLS, "/etc/letsencrypt", nil),
+		runSystemPathStage(ctx, c, req.JobID, host, req.ScheduleID, backup.StageTLS, "/etc/letsencrypt", nil),
 	)
 
 	// security: CrowdSec + UFW rules + ModSec config. UFW + ModSec
 	// dirs may be absent on minimal installs; skip-on-missing keeps
 	// the stage successful with warnings.
 	manifest.Stages = append(manifest.Stages,
-		runSystemMultiPathStage(ctx, c, req.JobID, host, backup.StageSecurity,
+		runSystemMultiPathStage(ctx, c, req.JobID, host, req.ScheduleID, backup.StageSecurity,
 			[]string{"/etc/crowdsec", "/etc/ufw", "/etc/modsecurity"}, nil))
 
 	// os_users: stream filtered passwd/shadow/group/gshadow as a single
@@ -141,7 +144,7 @@ func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) er
 	// group in the system-accounts allowlist (jabali, jabali-mail,
 	// jabali-sockets, pdns).
 	manifest.Stages = append(manifest.Stages,
-		runSystemOSUsersStage(ctx, c, req.JobID, host))
+		runSystemOSUsersStage(ctx, c, req.JobID, host, req.ScheduleID))
 
 	// data_state: jabali runtime data living outside the MariaDB dump
 	// (crowdsec decisions DB, redis AOF, tetragon event spool, ACME
@@ -150,7 +153,7 @@ func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) er
 	// is a fresh OS the operator already configured; we only own the
 	// jabali plane.
 	manifest.Stages = append(manifest.Stages,
-		runSystemMultiPathStage(ctx, c, req.JobID, host, backup.StageDataState,
+		runSystemMultiPathStage(ctx, c, req.JobID, host, req.ScheduleID, backup.StageDataState,
 			expandDataStatePaths(), nil))
 
 	// Sum stage byte counts into the top-level ManifestRestic so the
@@ -170,7 +173,7 @@ func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) er
 		jl.Printf("stage=manifest serialize_err=%v", err)
 		return fmt.Errorf("manifest serialize: %w", err)
 	}
-	tags := backup.SystemBackupTags(req.JobID, host, backup.StageManifest)
+	tags := backup.SystemBackupTags(req.JobID, host, req.ScheduleID, backup.StageManifest)
 	_, err = c.Backup(ctx, backup.BackupOpts{
 		Stdin:     strings.NewReader(string(body)),
 		StdinName: "system_manifest.json",
@@ -186,14 +189,14 @@ func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) er
 
 // runSystemPathStage backs up one path tree. Missing path → skipped
 // stage with warning. Excludes is a list of basenames to drop.
-func runSystemPathStage(ctx context.Context, c *backup.Client, jobID, hostname, stageName, path string, excludes []string) backup.ManifestStage {
+func runSystemPathStage(ctx context.Context, c *backup.Client, jobID, hostname, scheduleID, stageName, path string, excludes []string) backup.ManifestStage {
 	st := backup.ManifestStage{Name: stageName, Tag: "stage=" + stageName}
 	if _, err := os.Stat(path); err != nil {
 		st.Status = backup.StageStatusSkipped
 		st.Warnings = []string{fmt.Sprintf("path missing: %s", path)}
 		return st
 	}
-	tags := backup.SystemBackupTags(jobID, hostname, stageName)
+	tags := backup.SystemBackupTags(jobID, hostname, scheduleID, stageName)
 	excludeArgs := make([]string, 0, len(excludes))
 	for _, e := range excludes {
 		excludeArgs = append(excludeArgs, filepath.Join(path, e))
@@ -289,7 +292,7 @@ func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 // One restic snapshot covers every existing path in the list. Missing
 // paths are recorded as warnings but don't fail the stage. Empty path
 // list (every entry missing) → status=skipped.
-func runSystemMultiPathStage(ctx context.Context, c *backup.Client, jobID, hostname, stageName string, paths, excludes []string) backup.ManifestStage {
+func runSystemMultiPathStage(ctx context.Context, c *backup.Client, jobID, hostname, scheduleID, stageName string, paths, excludes []string) backup.ManifestStage {
 	st := backup.ManifestStage{Name: stageName, Tag: "stage=" + stageName}
 	keep := make([]string, 0, len(paths))
 	for _, p := range paths {
@@ -303,7 +306,7 @@ func runSystemMultiPathStage(ctx context.Context, c *backup.Client, jobID, hostn
 		st.Status = backup.StageStatusSkipped
 		return st
 	}
-	tags := backup.SystemBackupTags(jobID, hostname, stageName)
+	tags := backup.SystemBackupTags(jobID, hostname, scheduleID, stageName)
 	excludeArgs := make([]string, 0, len(excludes))
 	for _, e := range excludes {
 		excludeArgs = append(excludeArgs, e)
@@ -406,7 +409,7 @@ func expandDataStatePaths() []string {
 // one snapshot per DB tagged stage=panel_db,db=<name>. Returns one
 // ManifestStage per database so the system manifest can record per-DB
 // status separately.
-func runSystemPanelDBStage(ctx context.Context, c *backup.Client, jobID, hostname string) []backup.ManifestStage {
+func runSystemPanelDBStage(ctx context.Context, c *backup.Client, jobID, hostname, scheduleID string) []backup.ManifestStage {
 	if _, err := exec.LookPath("mariadb-dump"); err != nil {
 		return []backup.ManifestStage{{
 			Name:     backup.StagePanelDB,
@@ -417,12 +420,12 @@ func runSystemPanelDBStage(ctx context.Context, c *backup.Client, jobID, hostnam
 	}
 	stages := make([]backup.ManifestStage, 0, len(systemPanelDatabases))
 	for _, db := range systemPanelDatabases {
-		stages = append(stages, dumpOneSystemDB(ctx, c, jobID, hostname, db))
+		stages = append(stages, dumpOneSystemDB(ctx, c, jobID, hostname, scheduleID, db))
 	}
 	return stages
 }
 
-func dumpOneSystemDB(ctx context.Context, c *backup.Client, jobID, hostname, db string) backup.ManifestStage {
+func dumpOneSystemDB(ctx context.Context, c *backup.Client, jobID, hostname, scheduleID, db string) backup.ManifestStage {
 	st := backup.ManifestStage{
 		Name:  backup.StagePanelDB,
 		Tag:   fmt.Sprintf("stage=panel_db,db=%s", db),
@@ -447,7 +450,7 @@ func dumpOneSystemDB(ctx context.Context, c *backup.Client, jobID, hostname, db 
 		st.Warnings = []string{fmt.Sprintf("start mariadb-dump %s: %v", db, err)}
 		return st
 	}
-	tags := backup.SystemBackupTags(jobID, hostname, backup.StagePanelDB)
+	tags := backup.SystemBackupTags(jobID, hostname, scheduleID, backup.StagePanelDB)
 	tags = append(tags, backup.MakeTag(backup.TagKeyDB, db))
 
 	pr, pw := io.Pipe()
@@ -488,7 +491,7 @@ func dumpOneSystemDB(ctx context.Context, c *backup.Client, jobID, hostname, db 
 // hosting-relevant entries: uid >= 1000, OR primary group name in
 // systemUsersGroupAllowlist, OR group name itself in the allowlist.
 // The blob is piped through restic --stdin tagged stage=os_users.
-func runSystemOSUsersStage(ctx context.Context, c *backup.Client, jobID, hostname string) backup.ManifestStage {
+func runSystemOSUsersStage(ctx context.Context, c *backup.Client, jobID, hostname, scheduleID string) backup.ManifestStage {
 	st := backup.ManifestStage{Name: backup.StageOSUsers, Tag: "stage=os_users"}
 
 	users, err := loadFilteredOSUsers()
@@ -503,7 +506,7 @@ func runSystemOSUsersStage(ctx context.Context, c *backup.Client, jobID, hostnam
 		st.Warnings = []string{fmt.Sprintf("marshal os_users: %v", err)}
 		return st
 	}
-	tags := backup.SystemBackupTags(jobID, hostname, backup.StageOSUsers)
+	tags := backup.SystemBackupTags(jobID, hostname, scheduleID, backup.StageOSUsers)
 	summary, err := c.Backup(ctx, backup.BackupOpts{
 		Stdin:     bytes.NewReader(body),
 		StdinName: "os_users.json",

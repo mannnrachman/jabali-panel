@@ -145,7 +145,7 @@ func (r *userEgressPolicyRepo) ListAllForReconcile(ctx context.Context) ([]Polic
 		Table("user_egress_policies AS p").
 		Select(`p.user_id,
 			u.username AS username,
-			u.uid AS uid,
+			u.linux_uid AS uid,
 			p.state,
 			p.allowed_extra,
 			p.learning_started_at`).

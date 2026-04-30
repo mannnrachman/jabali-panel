@@ -116,6 +116,12 @@ _cli_restore_creds=""
 _cli_restore_password=""
 _cli_restore_snapshot=""
 _cli_restore_extra_options=()
+# --restore-interactive triggers the prompt-driven disaster recovery
+# bootstrap: install.sh asks for restic password, remote URL, SFTP
+# auth (password OR key path), and snapshot id, then materialises
+# temp files at /run/jabali-install/ before the install_disaster_restore
+# step picks them up.
+_cli_restore_interactive=""
 _positional=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -136,6 +142,7 @@ while [[ $# -gt 0 ]]; do
     --restore-snapshot)      _cli_restore_snapshot="${2:-}"; shift 2 ;;
     --restore-extra-option=*) _cli_restore_extra_options+=("${1#*=}"); shift ;;
     --restore-extra-option)   _cli_restore_extra_options+=("${2:-}"); shift 2 ;;
+    --restore-interactive)    _cli_restore_interactive=1; shift ;;
     --)           shift; while [[ $# -gt 0 ]]; do _positional+=("$1"); shift; done ;;
     --*)          printf 'install.sh: unknown flag: %s\n' "$1" >&2; exit 64 ;;
     *)            _positional+=("$1"); shift ;;
@@ -3223,6 +3230,113 @@ EOF
 # ---------- step 7: start + smoke test --------------------------------------
 
 # ---------- step 6b: seed admin credentials ---------------------------------
+
+prompt_disaster_restore_inputs() {
+  # Interactive disaster-recovery walks the operator through every
+  # input install_disaster_restore needs. Safer than long curl-piped
+  # flag strings (no password in shell history; no creds in argv).
+  # Outputs:
+  #   _cli_restore_from               — repo URL
+  #   _cli_restore_password (path)    — temp file at /run/jabali-install/
+  #   _cli_restore_creds (path)       — temp file when SFTP password auth
+  #   _cli_restore_extra_options[...] — sftp.command override built from
+  #                                     the operator's auth choice
+  #   _cli_restore_snapshot           — snapshot id (defaults latest)
+  install -d -m 0700 /run/jabali-install
+
+  cat <<'EOF'
+
+──────────────────────── DISASTER RECOVERY ────────────────────────
+Restore an existing jabali-panel backup onto this fresh host. Have
+ready:
+  • restic repo URL  (sftp:user@host:/path | s3:bucket | local path)
+  • restic-repo.password (the operator-held secret that decrypts
+    the repo; without it the backup is opaque)
+  • SFTP auth — either the user's SSH password OR a private-key
+    path on this host
+───────────────────────────────────────────────────────────────────
+
+EOF
+
+  printf 'Repo URL [e.g. sftp:jabali@192.168.100.100:/home/jabali/mx/]: '
+  IFS= read -r _cli_restore_from
+  if [[ -z "$_cli_restore_from" ]]; then
+    _die "repo URL required"
+  fi
+
+  # Restic password — hidden read -s, written to a 0600 root:root tmp
+  # file the install_disaster_restore copy step picks up.
+  printf 'restic-repo.password (hidden): '
+  IFS= read -rs _restore_pw_tmp
+  echo
+  if [[ -z "$_restore_pw_tmp" ]]; then
+    _die "restic password required"
+  fi
+  printf '%s' "$_restore_pw_tmp" > /run/jabali-install/restic-pw
+  chmod 0600 /run/jabali-install/restic-pw
+  unset _restore_pw_tmp
+  _cli_restore_password=/run/jabali-install/restic-pw
+
+  # SFTP auth flow — only when the URL uses sftp:.
+  if [[ "$_cli_restore_from" == sftp:* ]]; then
+    printf 'SFTP auth — (p)assword or (k)ey path? [p/k] (default p): '
+    local _auth_kind
+    IFS= read -r _auth_kind
+    _auth_kind="${_auth_kind:-p}"
+
+    # Parse user@host:port out of sftp:USER@HOST[:PORT][:/PATH]. Strip
+    # the leading "sftp:" then split on "@" + ":" to extract the user
+    # and host so we can build the override sftp.command flag.
+    local _no_proto="${_cli_restore_from#sftp:}"
+    local _userhost="${_no_proto%%:*}"
+    if [[ "$_no_proto" != *":"* ]]; then _userhost="${_no_proto%%/*}"; fi
+    local _user="${_userhost%@*}"
+    local _host="${_userhost#*@}"
+    local _port="22"
+    # Optional port: sftp:user@host:port:/path
+    local _after_user="${_no_proto#*@}"
+    if [[ "$_after_user" =~ ^[^:/]+:([0-9]+) ]]; then
+      _port="${BASH_REMATCH[1]}"
+    fi
+
+    case "$_auth_kind" in
+      k|K|key)
+        printf 'SSH private key path on this host: '
+        local _key_path; IFS= read -r _key_path
+        if [[ ! -f "$_key_path" ]]; then
+          _die "key path not found: $_key_path"
+        fi
+        chmod 0600 "$_key_path"
+        _cli_restore_extra_options+=(
+          "sftp.command=ssh -i ${_key_path} -p ${_port} -o StrictHostKeyChecking=accept-new ${_user}@${_host} -s sftp"
+        )
+        ;;
+      *)
+        printf 'SSH password (hidden): '
+        local _ssh_pw; IFS= read -rs _ssh_pw
+        echo
+        if [[ -z "$_ssh_pw" ]]; then
+          _die "SSH password required"
+        fi
+        printf 'SSHPASS=%s\n' "$_ssh_pw" > /run/jabali-install/sftp-creds.env
+        chmod 0600 /run/jabali-install/sftp-creds.env
+        unset _ssh_pw
+        _cli_restore_creds=/run/jabali-install/sftp-creds.env
+        _cli_restore_extra_options+=(
+          "sftp.command=sshpass -e ssh -p ${_port} -o StrictHostKeyChecking=accept-new ${_user}@${_host} -s sftp"
+        )
+        ;;
+    esac
+  fi
+
+  printf 'Snapshot id (default: latest): '
+  IFS= read -r _cli_restore_snapshot
+  if [[ -z "$_cli_restore_snapshot" ]]; then
+    _cli_restore_snapshot=latest
+  fi
+
+  _ok "interactive restore inputs captured — proceeding with bootstrap"
+}
 
 install_disaster_restore() {
   _log "==== disaster recovery: restoring from ${_cli_restore_from} ===="
@@ -7480,6 +7594,13 @@ install_kratos() {
 main() {
   print_banner
   preflight
+  # When --restore-interactive is set, walk the operator through the
+  # disaster-recovery inputs BEFORE any other step. seed_admin_env +
+  # cred banner all skip when _cli_restore_from is non-empty, so we
+  # need it set before they decide.
+  if [[ -n "${_cli_restore_interactive:-}" && -z "${_cli_restore_from:-}" ]]; then
+    prompt_disaster_restore_inputs
+  fi
   prompt_server_settings
   install_base_packages
   # M25 step 1: kill the LLMNR :5355 listener once systemd-resolved is on

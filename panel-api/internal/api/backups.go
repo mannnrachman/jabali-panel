@@ -18,6 +18,7 @@ import (
 
 	internalbackup "git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupmetadata"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
@@ -40,6 +41,24 @@ type BackupHandlerConfig struct {
 	Domains         repository.DomainRepository
 	Mailboxes       repository.MailboxRepository
 	AppInstalls     repository.ApplicationInstallRepository
+
+	// Schema-v2 metadata producers — every nullable repo here is queried
+	// when building the per-user metadata bundle so disaster recovery
+	// can rebuild full panel state. Each is optional; missing repos
+	// log + skip the corresponding section.
+	SSLCerts        repository.SSLCertificateRepository
+	PHPPools        repository.PHPPoolRepository
+	PHPPoolIni      repository.PHPPoolIniOverrideRepository
+	Forwarders      repository.EmailForwarderRepository
+	Autoresponders  repository.EmailAutoresponderRepository
+	MailboxShares   repository.MailboxShareRepository
+	DNSSECKeys      repository.DNSSECKeyRepository
+	SSHKeys         repository.SSHKeyRepository
+	CronJobs        repository.CronJobRepository
+	LimitOverrides  repository.UserLimitOverrideRepository
+	EgressPolicies  repository.UserEgressPolicyRepository
+	EgressRequests  repository.UserEgressRequestRepository
+
 	Log             *slog.Logger
 	StrictRateLimit gin.HandlerFunc
 }
@@ -578,95 +597,21 @@ func (cfg BackupHandlerConfig) logErr(msg string, err error, kv ...any) {
 	cfg.Log.Warn(msg, args...)
 }
 
-// buildAccountMetadata loads the panel-side state bundle (DB users +
-// grants, application_installs) for the given user. Returns a non-nil
-// pointer even on partial failure so the agent's metadata stage stays
-// consistent — missing pieces become empty arrays. Errors at any
-// repo are logged and the missing data is left out of the bundle.
+// buildAccountMetadata delegates to the shared producer in
+// panel-api/internal/backupmetadata so the admin and user-shell
+// handlers stay in lockstep with the scheduler on schema changes.
 func (cfg BackupHandlerConfig) buildAccountMetadata(ctx context.Context, user *models.User) *internalbackup.AccountMetadata {
-	m := &internalbackup.AccountMetadata{
-		SchemaVersion: internalbackup.MetadataSchemaVersion,
-		UserID:        user.ID,
-		Email:         user.Email,
-	}
-	if user.Username != nil {
-		m.Username = *user.Username
-	}
-	if cfg.DatabaseUsers != nil && cfg.Databases != nil {
-		users, _, err := cfg.DatabaseUsers.ListByUserID(ctx, user.ID, repository.ListOptions{Limit: 10000})
-		if err != nil {
-			cfg.logErr("metadata: list db users", err, "user_id", user.ID)
-		} else {
-			// Build {db_id → name} once so every grant row can be
-			// enriched with database_name without a per-grant lookup.
-			dbs, _, _ := cfg.Databases.ListByUserID(ctx, user.ID, repository.ListOptions{Limit: 10000})
-			dbName := make(map[string]string, len(dbs))
-			for _, d := range dbs {
-				dbName[d.ID] = d.Name
-			}
-			for _, du := range users {
-				row := internalbackup.MetadataDatabaseUser{
-					ID:           du.ID,
-					Username:     du.Username,
-					PasswordHash: du.PasswordHash,
-					CreatedAt:    du.CreatedAt.Format("2006-01-02T15:04:05Z"),
-				}
-				if cfg.DatabaseGrants != nil {
-					grants, err := cfg.DatabaseGrants.ListByDatabaseUserID(ctx, du.ID)
-					if err != nil {
-						cfg.logErr("metadata: list grants", err, "database_user_id", du.ID)
-					} else {
-						for _, g := range grants {
-							row.Grants = append(row.Grants, internalbackup.MetadataDatabaseUserGrant{
-								DatabaseID:   g.DatabaseID,
-								DatabaseName: dbName[g.DatabaseID],
-								GrantLevel:   g.GrantLevel,
-								Privileges:   g.Privileges,
-							})
-						}
-					}
-				}
-				m.DatabaseUsers = append(m.DatabaseUsers, row)
-			}
-		}
-	}
-	if cfg.AppInstalls != nil {
-		installs, _, err := cfg.AppInstalls.ListByUserID(ctx, user.ID, repository.ListOptions{Limit: 10000})
-		if err != nil {
-			cfg.logErr("metadata: list app installs", err, "user_id", user.ID)
-		} else {
-			for _, ai := range installs {
-				dbID := ""
-				if ai.DBID != nil {
-					dbID = *ai.DBID
-				}
-				m.AppInstalls = append(m.AppInstalls, internalbackup.MetadataAppInstall{
-					ID:            ai.ID,
-					UserID:        ai.UserID,
-					DomainID:      ai.DomainID,
-					DBID:          dbID,
-					Version:       strDerefOr(ai.Version, ""),
-					AdminUsername: ai.AdminUsername,
-					AdminEmail:    ai.AdminEmail,
-					Locale:        ai.Locale,
-					Status:        ai.Status,
-					UseWWW:        ai.UseWWW,
-					Subdirectory:  ai.Subdirectory,
-					AppType:       ai.AppType,
-					CreatedAt:     ai.CreatedAt.Format("2006-01-02T15:04:05Z"),
-				})
-			}
-		}
-	}
-	return m
+	return backupmetadata.Build(ctx, user, backupmetadata.Deps{
+		Databases: cfg.Databases, DatabaseUsers: cfg.DatabaseUsers, DatabaseGrants: cfg.DatabaseGrants,
+		Domains: cfg.Domains, Mailboxes: cfg.Mailboxes, AppInstalls: cfg.AppInstalls,
+		SSLCerts: cfg.SSLCerts, PHPPools: cfg.PHPPools, PHPPoolIni: cfg.PHPPoolIni,
+		Forwarders: cfg.Forwarders, Autoresponders: cfg.Autoresponders, MailboxShares: cfg.MailboxShares,
+		DNSSECKeys: cfg.DNSSECKeys, SSHKeys: cfg.SSHKeys, CronJobs: cfg.CronJobs,
+		LimitOverrides: cfg.LimitOverrides, EgressPolicies: cfg.EgressPolicies, EgressRequests: cfg.EgressRequests,
+		Log: cfg.Log,
+	})
 }
 
-func strDerefOr(p *string, def string) string {
-	if p == nil {
-		return def
-	}
-	return *p
-}
 
 // allUserDatabases returns every database name owned by a user.
 // Used by manual + self-shell backup paths to default to "everything"
@@ -738,81 +683,35 @@ type MeBackupsHandlerConfig struct {
 	Domains        repository.DomainRepository
 	Mailboxes      repository.MailboxRepository
 	AppInstalls    repository.ApplicationInstallRepository
+
+	SSLCerts       repository.SSLCertificateRepository
+	PHPPools       repository.PHPPoolRepository
+	PHPPoolIni     repository.PHPPoolIniOverrideRepository
+	Forwarders     repository.EmailForwarderRepository
+	Autoresponders repository.EmailAutoresponderRepository
+	MailboxShares  repository.MailboxShareRepository
+	DNSSECKeys     repository.DNSSECKeyRepository
+	SSHKeys        repository.SSHKeyRepository
+	CronJobs       repository.CronJobRepository
+	LimitOverrides repository.UserLimitOverrideRepository
+	EgressPolicies repository.UserEgressPolicyRepository
+	EgressRequests repository.UserEgressRequestRepository
+
 	Log            *slog.Logger
 }
 
-// buildAccountMetadata duplicates BackupHandlerConfig.buildAccountMetadata
-// for the user-shell config bundle. The two configs share the same
-// repos but have separate types — adding a shared interface for one
-// helper would be heavier than the duplication.
+// buildAccountMetadata projects MeBackupsHandlerConfig into the shared
+// metadataDeps consumer. Same schema-v2 producer as BackupHandlerConfig.
 func (cfg MeBackupsHandlerConfig) buildAccountMetadata(ctx context.Context, user *models.User) *internalbackup.AccountMetadata {
-	m := &internalbackup.AccountMetadata{
-		SchemaVersion: internalbackup.MetadataSchemaVersion,
-		UserID:        user.ID,
-		Email:         user.Email,
-	}
-	if user.Username != nil {
-		m.Username = *user.Username
-	}
-	if cfg.DatabaseUsers != nil && cfg.Databases != nil {
-		users, _, err := cfg.DatabaseUsers.ListByUserID(ctx, user.ID, repository.ListOptions{Limit: 10000})
-		if err == nil {
-			dbs, _, _ := cfg.Databases.ListByUserID(ctx, user.ID, repository.ListOptions{Limit: 10000})
-			dbName := make(map[string]string, len(dbs))
-			for _, d := range dbs {
-				dbName[d.ID] = d.Name
-			}
-			for _, du := range users {
-				row := internalbackup.MetadataDatabaseUser{
-					ID:           du.ID,
-					Username:     du.Username,
-					PasswordHash: du.PasswordHash,
-					CreatedAt:    du.CreatedAt.Format("2006-01-02T15:04:05Z"),
-				}
-				if cfg.DatabaseGrants != nil {
-					grants, err := cfg.DatabaseGrants.ListByDatabaseUserID(ctx, du.ID)
-					if err == nil {
-						for _, g := range grants {
-							row.Grants = append(row.Grants, internalbackup.MetadataDatabaseUserGrant{
-								DatabaseID:   g.DatabaseID,
-								DatabaseName: dbName[g.DatabaseID],
-								GrantLevel:   g.GrantLevel,
-								Privileges:   g.Privileges,
-							})
-						}
-					}
-				}
-				m.DatabaseUsers = append(m.DatabaseUsers, row)
-			}
-		}
-	}
-	if cfg.AppInstalls != nil {
-		installs, _, err := cfg.AppInstalls.ListByUserID(ctx, user.ID, repository.ListOptions{Limit: 10000})
-		if err == nil {
-			for _, ai := range installs {
-				dbID := ""
-				if ai.DBID != nil {
-					dbID = *ai.DBID
-				}
-				m.AppInstalls = append(m.AppInstalls, internalbackup.MetadataAppInstall{
-					ID:            ai.ID,
-					UserID:        ai.UserID,
-					DomainID:      ai.DomainID,
-					DBID:          dbID,
-					Version:       strDerefOr(ai.Version, ""),
-					AdminUsername: ai.AdminUsername,
-					AdminEmail:    ai.AdminEmail,
-					Locale:        ai.Locale,
-					Status:        ai.Status,
-					UseWWW:        ai.UseWWW,
-					Subdirectory:  ai.Subdirectory,
-					AppType:       ai.AppType,
-					CreatedAt:     ai.CreatedAt.Format("2006-01-02T15:04:05Z"),
-				})
-			}
-		}
-	}
-	return m
+	return backupmetadata.Build(ctx, user, backupmetadata.Deps{
+		Databases: cfg.Databases, DatabaseUsers: cfg.DatabaseUsers, DatabaseGrants: cfg.DatabaseGrants,
+		Domains: cfg.Domains, Mailboxes: cfg.Mailboxes, AppInstalls: cfg.AppInstalls,
+		SSLCerts: cfg.SSLCerts, PHPPools: cfg.PHPPools, PHPPoolIni: cfg.PHPPoolIni,
+		Forwarders: cfg.Forwarders, Autoresponders: cfg.Autoresponders, MailboxShares: cfg.MailboxShares,
+		DNSSECKeys: cfg.DNSSECKeys, SSHKeys: cfg.SSHKeys, CronJobs: cfg.CronJobs,
+		LimitOverrides: cfg.LimitOverrides, EgressPolicies: cfg.EgressPolicies, EgressRequests: cfg.EgressRequests,
+		Log: cfg.Log,
+	})
 }
 
 func (cfg MeBackupsHandlerConfig) allUserDatabases(ctx context.Context, userID string) []string {

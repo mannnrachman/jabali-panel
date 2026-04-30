@@ -100,14 +100,39 @@ the running panel.`,
 				passwordFileForAgent = tmp
 			}
 
-			ag := agent.NewClient(agent.Config{})
+			// Agent's per-request default is 120s. Even a system-only
+			// restore can blow past that on a slow SFTP link, and an
+			// include-accounts run trivially does (5 users × 4 stages
+			// of restic restore + a multi-MB SQL load each). 4h is
+			// generous enough that we never time-out the operator
+			// mid-disaster; agent server.go honors req.Deadline above
+			// its own PerRequestTimeout.
+			ag := agent.NewClient(agent.Config{Timeout: 4 * time.Hour})
+			deadlineCtx, deadlineCancel := context.WithTimeout(ctx, 4*time.Hour)
+			defer deadlineCancel()
 
 			fmt.Fprintln(cmd.OutOrStdout(), "stopping jabali-panel.service…")
 			_ = exec.CommandContext(ctx, "systemctl", "stop", "jabali-panel.service").Run()
 			defer func() {
 				fmt.Fprintln(cmd.OutOrStdout(), "starting jabali-panel.service…")
-				_ = exec.CommandContext(context.Background(),
-					"systemctl", "start", "jabali-panel.service").Run()
+				// Retry until is-active returns "active" — single
+				// systemctl start can return 0 yet leave the unit in
+				// "activating" or transient failure state, leaving
+				// nginx upstream 502 on the operator. Loop a few
+				// times so we don't return to a bricked panel.
+				for i := 0; i < 6; i++ {
+					_ = exec.CommandContext(context.Background(),
+						"systemctl", "start", "jabali-panel.service").Run()
+					out, _ := exec.CommandContext(context.Background(),
+						"systemctl", "is-active", "jabali-panel.service").Output()
+					if strings.TrimSpace(string(out)) == "active" {
+						fmt.Fprintln(cmd.OutOrStdout(), "✓ jabali-panel.service active")
+						return
+					}
+					time.Sleep(2 * time.Second)
+				}
+				fmt.Fprintln(cmd.OutOrStdout(),
+					"⚠ jabali-panel.service did not reach active after 6 attempts — investigate via `journalctl -u jabali-panel.service`")
 			}()
 
 			jobID := ids.NewULID()
@@ -122,9 +147,9 @@ the running panel.`,
 				"apply":                apply,
 				"apply_stages":         applyStages,
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "→ agent system.restore job=%s snapshot=%s repo=%s apply=%v\n",
-				jobID, snapshot, remoteURL, apply)
-			raw, err := ag.Call(ctx, "system.restore", params)
+			fmt.Fprintf(cmd.OutOrStdout(), "→ agent system.restore job=%s snapshot=%s repo=%s apply=%v include_accounts=%v\n",
+				jobID, snapshot, remoteURL, apply, includeAccts)
+			raw, err := ag.Call(deadlineCtx, "system.restore", params)
 			if err != nil {
 				return fmt.Errorf("agent system.restore: %w", err)
 			}
@@ -328,6 +353,23 @@ func runInteractiveRestorePrompts(
 				*applyStages = append(*applyStages, s)
 			}
 		}
+	}
+
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Account data — restore every user's home directory + databases?")
+	fmt.Fprintln(w, "  This walks every kind=account_backup snapshot in the repo and")
+	fmt.Fprintln(w, "  rsyncs /home/<user> + loads each per-user MariaDB dump on top")
+	fmt.Fprintln(w, "  of the system restore. Mailboxes + cron/ssh/php/apps stay")
+	fmt.Fprintln(w, "  staged-only (operator review).")
+	acctVal, err := promptLine(w, r, "Include accounts? [Y/n]: ")
+	if err != nil {
+		return err
+	}
+	switch strings.TrimSpace(strings.ToLower(acctVal)) {
+	case "", "y", "yes":
+		*includeAccts = true
+	default:
+		*includeAccts = false
 	}
 
 	// Final confirm.

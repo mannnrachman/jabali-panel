@@ -24,6 +24,7 @@ import (
 
 	internalbackup "git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupmetadata"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
@@ -64,8 +65,25 @@ type Deps struct {
 	Mailboxes      repository.MailboxRepository
 	AppInstalls    repository.ApplicationInstallRepository
 	Settings       repository.ServerSettingsRepository
-	Agent          agent.AgentInterface
-	Log            *slog.Logger
+
+	// Schema-v2 metadata producer fan-out — every nullable repo here is
+	// queried by buildScheduleMetadata so scheduled backups carry the
+	// same per-user state as manual admin / self-shell jobs.
+	SSLCerts       repository.SSLCertificateRepository
+	PHPPools       repository.PHPPoolRepository
+	PHPPoolIni     repository.PHPPoolIniOverrideRepository
+	Forwarders     repository.EmailForwarderRepository
+	Autoresponders repository.EmailAutoresponderRepository
+	MailboxShares  repository.MailboxShareRepository
+	DNSSECKeys     repository.DNSSECKeyRepository
+	SSHKeys        repository.SSHKeyRepository
+	CronJobs       repository.CronJobRepository
+	LimitOverrides repository.UserLimitOverrideRepository
+	EgressPolicies repository.UserEgressPolicyRepository
+	EgressRequests repository.UserEgressRequestRepository
+
+	Agent agent.AgentInterface
+	Log   *slog.Logger
 }
 
 // Scheduler is the goroutine wrapper. Construct via New, start with
@@ -474,84 +492,32 @@ func userDatabases(ctx context.Context, deps Deps, userID string, logger *slog.L
 	return out
 }
 
-// buildScheduleMetadata is the scheduler's mirror of
-// BackupHandlerConfig.buildAccountMetadata. Returns a non-nil bundle
-// even on partial repo failures so the agent's metadata stage stays
-// consistent — missing pieces become empty arrays.
+// buildScheduleMetadata is the scheduler's wrapper around the shared
+// schema-v2 producer in panel-api/internal/backupmetadata. Keeps the
+// scheduler in lockstep with the admin / user-shell handlers so every
+// backup carries the same per-user state regardless of trigger path.
 func buildScheduleMetadata(ctx context.Context, deps Deps, user *models.User, logger *slog.Logger) *internalbackup.AccountMetadata {
-	m := &internalbackup.AccountMetadata{
-		SchemaVersion: internalbackup.MetadataSchemaVersion,
-		UserID:        user.ID,
-		Email:         user.Email,
-	}
-	if user.Username != nil {
-		m.Username = *user.Username
-	}
-	if deps.DatabaseUsers != nil && deps.Databases != nil {
-		users, _, err := deps.DatabaseUsers.ListByUserID(ctx, user.ID, repository.ListOptions{Limit: 10000})
-		if err != nil {
-			logger.Warn("metadata: list db users", "err", err)
-		} else {
-			dbs, _, _ := deps.Databases.ListByUserID(ctx, user.ID, repository.ListOptions{Limit: 10000})
-			dbName := make(map[string]string, len(dbs))
-			for _, d := range dbs {
-				dbName[d.ID] = d.Name
-			}
-			for _, du := range users {
-				row := internalbackup.MetadataDatabaseUser{
-					ID:           du.ID,
-					Username:     du.Username,
-					PasswordHash: du.PasswordHash,
-					CreatedAt:    du.CreatedAt.Format("2006-01-02T15:04:05Z"),
-				}
-				if deps.DatabaseGrants != nil {
-					grants, err := deps.DatabaseGrants.ListByDatabaseUserID(ctx, du.ID)
-					if err != nil {
-						logger.Warn("metadata: list grants", "err", err, "database_user_id", du.ID)
-					} else {
-						for _, g := range grants {
-							row.Grants = append(row.Grants, internalbackup.MetadataDatabaseUserGrant{
-								DatabaseID:   g.DatabaseID,
-								DatabaseName: dbName[g.DatabaseID],
-								GrantLevel:   g.GrantLevel,
-								Privileges:   g.Privileges,
-							})
-						}
-					}
-				}
-				m.DatabaseUsers = append(m.DatabaseUsers, row)
-			}
-		}
-	}
-	if deps.AppInstalls != nil {
-		installs, _, err := deps.AppInstalls.ListByUserID(ctx, user.ID, repository.ListOptions{Limit: 10000})
-		if err != nil {
-			logger.Warn("metadata: list app installs", "err", err)
-		} else {
-			for _, ai := range installs {
-				dbID := ""
-				if ai.DBID != nil {
-					dbID = *ai.DBID
-				}
-				m.AppInstalls = append(m.AppInstalls, internalbackup.MetadataAppInstall{
-					ID:            ai.ID,
-					UserID:        ai.UserID,
-					DomainID:      ai.DomainID,
-					DBID:          dbID,
-					Version:       strDerefOr(ai.Version, ""),
-					AdminUsername: ai.AdminUsername,
-					AdminEmail:    ai.AdminEmail,
-					Locale:        ai.Locale,
-					Status:        ai.Status,
-					UseWWW:        ai.UseWWW,
-					Subdirectory:  ai.Subdirectory,
-					AppType:       ai.AppType,
-					CreatedAt:     ai.CreatedAt.Format("2006-01-02T15:04:05Z"),
-				})
-			}
-		}
-	}
-	return m
+	return backupmetadata.Build(ctx, user, backupmetadata.Deps{
+		Databases:      deps.Databases,
+		DatabaseUsers:  deps.DatabaseUsers,
+		DatabaseGrants: deps.DatabaseGrants,
+		Domains:        deps.Domains,
+		Mailboxes:      deps.Mailboxes,
+		AppInstalls:    deps.AppInstalls,
+		SSLCerts:       deps.SSLCerts,
+		PHPPools:       deps.PHPPools,
+		PHPPoolIni:     deps.PHPPoolIni,
+		Forwarders:     deps.Forwarders,
+		Autoresponders: deps.Autoresponders,
+		MailboxShares:  deps.MailboxShares,
+		DNSSECKeys:     deps.DNSSECKeys,
+		SSHKeys:        deps.SSHKeys,
+		CronJobs:       deps.CronJobs,
+		LimitOverrides: deps.LimitOverrides,
+		EgressPolicies: deps.EgressPolicies,
+		EgressRequests: deps.EgressRequests,
+		Log:            logger,
+	})
 }
 
 // userMailboxes returns the email addresses of every mailbox under

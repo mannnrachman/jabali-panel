@@ -129,11 +129,11 @@ func (c *Client) Call(ctx context.Context, command string, params any) (json.Raw
 		_ = uc.CloseWrite()
 	}
 
-	// Bound the response we're willing to accept. 8 MiB is overkill for
-	// anything the agent should send (largest expected = file-browser
-	// metadata listings), but protects us from a runaway or malicious
-	// server draining memory.
-	const maxResponseBytes = 8 << 20
+	// Bound the response we're willing to accept. 64 MiB so a large
+	// system.restore --include-accounts run (5+ users × 4 stages each
+	// with applied/warning lists) can return a single envelope without
+	// the scanner choking on "token too long".
+	const maxResponseBytes = 64 << 20
 
 	scanner := bufio.NewScanner(io.LimitReader(conn, maxResponseBytes+1))
 	scanner.Buffer(make([]byte, 64<<10), maxResponseBytes)

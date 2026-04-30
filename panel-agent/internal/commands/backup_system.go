@@ -432,6 +432,33 @@ func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 		out.Applied = append(out.Applied, dbResyncs...)
 		out.ApplyWarnings = append(out.ApplyWarnings, dbWarnings...)
 	}
+
+	// include_accounts walks every kind=account_backup,stage=manifest
+	// snapshot in the same repo, restores newest-per-user, and (when
+	// apply=true) rsyncs home + loads each per-user database via the
+	// mariadb unix socket. Mail + meta stages are staged-only with
+	// operator warnings (Stalwart RocksDB import is destructive on a
+	// running spool; meta re-converges via reconciler).
+	if req.IncludeAccounts {
+		acctApplied, acctWarnings := restoreAccounts(ctx, c, req.JobID, stagingRoot, req.Apply)
+		out.Applied = append(out.Applied, acctApplied...)
+		out.ApplyWarnings = append(out.ApplyWarnings, acctWarnings...)
+	}
+
+	// On a successful apply, clean the staging tree to reclaim disk
+	// (per-user home tree + every restic restore lands here; multi-GB
+	// per run × multiple runs filled the disk to 87% on mx, which
+	// crashed migration 106 with "no space left on device"). Inspect
+	// runs (apply=false) leave staging in place so the operator can
+	// review.
+	if req.Apply {
+		if err := os.RemoveAll(stagingRoot); err != nil {
+			out.ApplyWarnings = append(out.ApplyWarnings,
+				fmt.Sprintf("staging cleanup: %v", err))
+		} else {
+			out.Applied = append(out.Applied, "staging cleaned: "+stagingRoot)
+		}
+	}
 	return out, nil
 }
 

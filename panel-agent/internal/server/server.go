@@ -240,6 +240,10 @@ func (s *Server) serveConn(parent context.Context, conn net.Conn) {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithDeadline(ctx, dl)
 			defer cancel()
+			// Extend the socket deadline too so writeResponse below
+			// doesn't hit the 120s socket cap when the operator gave
+			// us a longer request deadline (e.g. 4h system restore).
+			_ = conn.SetDeadline(dl)
 		}
 	} else if s.cfg.PerRequestTimeout > 0 {
 		var cancel context.CancelFunc

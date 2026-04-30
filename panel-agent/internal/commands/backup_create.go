@@ -306,6 +306,83 @@ func runDatabaseStage(ctx context.Context, req backupCreateParams) []backup.Mani
 	return stages
 }
 
+// enrichKratos pulls jabali_kratos.identities + identity_credentials
+// rows for the user via the unix socket and embeds them in the
+// metadata bundle. Done agent-side because panel-api doesn't have a
+// Kratos DB connection (would need a second GORM dialect + creds).
+// No-op when meta is nil or the user is admin-only / never linked to
+// a Kratos identity.
+func enrichKratos(ctx context.Context, meta *backup.AccountMetadata) {
+	if meta == nil {
+		return
+	}
+	email := meta.User.Email
+	if email == "" {
+		return
+	}
+	// Identity row
+	stmt := fmt.Sprintf(
+		"SELECT id, schema_id, traits, state, COALESCE(metadata_public,''), "+
+			"COALESCE(metadata_admin,''), COALESCE(available_aal,'') "+
+			"FROM jabali_kratos.identities "+
+			"WHERE JSON_EXTRACT(traits,'$.email')='\"%s\"' LIMIT 1",
+		strings.ReplaceAll(email, "'", "''"))
+	out, err := exec.Command("mariadb",
+		"--protocol=socket", "--socket=/run/mysqld/mysqld.sock",
+		"-N", "-B",
+		"-e", stmt,
+	).Output()
+	if err != nil {
+		return
+	}
+	cols := strings.Split(strings.TrimRight(string(out), "\n"), "\t")
+	if len(cols) < 7 || cols[0] == "" {
+		return
+	}
+	k := &backup.MetadataKratos{
+		IdentityID:     cols[0],
+		SchemaID:       cols[1],
+		Traits:         cols[2],
+		State:          cols[3],
+		MetadataPublic: cols[4],
+		MetadataAdmin:  cols[5],
+		AvailableAAL:   cols[6],
+	}
+	// Credentials. JOIN to identity_credential_types so we capture the
+	// type id verbatim (Kratos picks one per credential row, and we
+	// already have it via the FK column anyway).
+	credStmt := fmt.Sprintf(
+		"SELECT id, config, identity_credential_type_id, version "+
+			"FROM jabali_kratos.identity_credentials "+
+			"WHERE identity_id='%s'",
+		strings.ReplaceAll(k.IdentityID, "'", "''"))
+	credOut, err := exec.Command("mariadb",
+		"--protocol=socket", "--socket=/run/mysqld/mysqld.sock",
+		"-N", "-B",
+		"-e", credStmt,
+	).Output()
+	if err == nil {
+		for _, line := range strings.Split(strings.TrimRight(string(credOut), "\n"), "\n") {
+			if line == "" {
+				continue
+			}
+			parts := strings.Split(line, "\t")
+			if len(parts) < 4 {
+				continue
+			}
+			ver := 0
+			fmt.Sscanf(parts[3], "%d", &ver)
+			k.Credentials = append(k.Credentials, backup.MetadataKratosCredential{
+				ID:                       parts[0],
+				Config:                   parts[1],
+				IdentityCredentialTypeID: parts[2],
+				Version:                  ver,
+			})
+		}
+	}
+	meta.Kratos = k
+}
+
 // runMetadataStage writes the panel-side bundle (DB users, app
 // installs, …) as one stdin-piped restic snapshot tagged stage=meta.
 // Empty/nil Metadata produces a "skipped: no metadata" stage so
@@ -317,6 +394,10 @@ func runMetadataStage(ctx context.Context, req backupCreateParams) backup.Manife
 		st.Warnings = []string{"no metadata bundle provided by panel-api"}
 		return st
 	}
+	// Agent-side enrichment: pull Kratos identity + credentials by the
+	// user's email so the meta bundle carries everything panel-api
+	// can't reach (jabali_kratos isn't on panel-api's DSN).
+	enrichKratos(ctx, req.Metadata)
 	body, err := json.Marshal(req.Metadata)
 	if err != nil {
 		st.Status = backup.StageStatusFailed

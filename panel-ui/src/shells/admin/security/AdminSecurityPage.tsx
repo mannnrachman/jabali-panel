@@ -8,19 +8,20 @@
 // (2026-04-26): CrowdSec AppSec covers the WAF role with no duplicate
 // inspection layer (ADR-0055 SUPERSEDED).
 import { Card, Space, Typography } from "antd";
-import { BugOutlined, LockOutlined, SafetyOutlined, ApiOutlined, ShieldCheckOutlined } from "@icons";
+import { BugOutlined, LockOutlined, SafetyOutlined, ApiOutlined, ShieldCheckOutlined, SearchOutlined } from "@icons";
 import type { ReactNode } from "react";
 import { useSearchParams } from "react-router";
 
 import crowdsecBrand from "../../../icons/brand/crowdsec.svg";
 
+import { AdminSecurityAide } from "./AdminSecurityAide";
 import { AdminSecurityAppArmor } from "./AdminSecurityAppArmor";
 import { AdminSecurityCrowdsec } from "./AdminSecurityCrowdsec";
 import { AdminSecurityEgress } from "./AdminSecurityEgress";
 import { AdminSecurityMalware } from "./AdminSecurityMalware";
 import { AdminSecurityUfw } from "./AdminSecurityUfw";
 
-const TAB_KEYS = ["crowdsec", "malware", "ufw", "egress", "apparmor"] as const;
+const TAB_KEYS = ["crowdsec", "malware", "ufw", "egress", "apparmor", "aide"] as const;
 type TabKey = (typeof TAB_KEYS)[number];
 const DEFAULT_TAB: TabKey = "crowdsec";
 
@@ -30,6 +31,7 @@ const TAB_LABELS: Record<TabKey, string> = {
   ufw: "Firewall (UFW)",
   egress: "Egress (per-user)",
   apparmor: "AppArmor",
+  aide: "AIDE",
 };
 
 // CrowdSec uses the upstream brand mark (homarr-labs/dashboard-icons,
@@ -50,6 +52,7 @@ const TAB_ICONS: Record<TabKey, ReactNode> = {
   ufw: <LockOutlined />,
   egress: <ApiOutlined />,
   apparmor: <ShieldCheckOutlined />,
+  aide: <SearchOutlined />,
 };
 
 const isTabKey = (s: string | null): s is TabKey =>
@@ -86,6 +89,8 @@ export const AdminSecurityPage = () => {
         return <AdminSecurityEgress />;
       case "apparmor":
         return <AdminSecurityAppArmor />;
+      case "aide":
+        return <AdminSecurityAide />;
     }
   };
 

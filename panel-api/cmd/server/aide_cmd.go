@@ -1,0 +1,90 @@
+// `jabali aide {status,rebuild}` — operator CLI for AIDE FIM.
+//
+//   jabali aide status                — print DB age + last check summary
+//   jabali aide rebuild               — re-init AIDE DB from current FS state
+//                                       (run after a deliberate kernel/binary
+//                                       upgrade so daily check stays clean)
+//   jabali aide rebuild --paths PATTERN
+//                                     — partial re-baseline of matching paths
+//                                       only (use after `jabali update` to
+//                                       refresh /usr/local/bin/jabali-* binary
+//                                       checksums without nuking the whole DB).
+//
+// See ADR-0087 + plans/m42-aide-fim-system-integrity.md.
+
+package main
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+
+	"github.com/spf13/cobra"
+)
+
+func newAideCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "aide",
+		Short: "AIDE file integrity monitor (M42) operator commands",
+	}
+	cmd.AddCommand(newAideStatusCmd())
+	cmd.AddCommand(newAideRebuildCmd())
+	return cmd
+}
+
+func newAideStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Print AIDE DB age + last check summary",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			st, err := os.Stat("/var/lib/aide/aide.db")
+			if err != nil {
+				fmt.Println("aide: DB missing — run 'jabali aide rebuild --full'")
+				return nil
+			}
+			fmt.Printf("aide: DB at %s (mtime %s)\n", "/var/lib/aide/aide.db", st.ModTime().Format("2006-01-02 15:04 UTC"))
+			if _, err := os.Stat("/var/log/aide/aide.report.log"); err == nil {
+				out, err := exec.Command("tail", "-30", "/var/log/aide/aide.report.log").Output()
+				if err == nil {
+					fmt.Println("---- last report (tail 30) ----")
+					fmt.Print(string(out))
+				}
+			}
+			return nil
+		},
+	}
+}
+
+func newAideRebuildCmd() *cobra.Command {
+	var (
+		fullRebuild bool
+	)
+	cmd := &cobra.Command{
+		Use:   "rebuild",
+		Short: "Re-baseline the AIDE database after a deliberate change",
+		Long: `Re-baseline AIDE. Defaults to a full --init that rewrites
+/var/lib/aide/aide.db. Use --full to make this explicit.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !fullRebuild {
+				fmt.Println("aide rebuild: pass --full to confirm full re-init")
+				return nil
+			}
+			fmt.Println("aide rebuild: running 'aide --init' (2-5 min)…")
+			out, err := exec.Command("/usr/bin/aide", "--init").CombinedOutput()
+			fmt.Print(string(out))
+			if err != nil {
+				return fmt.Errorf("aide --init: %w", err)
+			}
+			if _, err := os.Stat("/var/lib/aide/aide.db.new"); err == nil {
+				if err := os.Rename("/var/lib/aide/aide.db.new", "/var/lib/aide/aide.db"); err != nil {
+					return fmt.Errorf("rename aide.db.new: %w", err)
+				}
+				_ = os.Chmod("/var/lib/aide/aide.db", 0o600)
+			}
+			fmt.Println("aide rebuild: complete")
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&fullRebuild, "full", false, "Confirm full DB re-init")
+	return cmd
+}

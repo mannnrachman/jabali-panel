@@ -111,6 +111,7 @@ func Start(ctx context.Context, d Deps) {
 	go runMalware(ctx, d)
 	go runDomainGhost(ctx, d)
 	go runEgressBurst(ctx, d)
+	go runAideTamper(ctx, d)
 	// domain_expiry + backup_fail are stubs — see the stub files in
 	// this package.
 }

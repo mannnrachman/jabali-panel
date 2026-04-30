@@ -1,0 +1,12 @@
+[Unit]
+Description=Jabali AIDE daily integrity check (04:30 UTC + 15m jitter)
+Documentation=https://git.linux-hosting.co.il/shukivaknin/jabali2/src/branch/main/docs/adr/0087-aide-system-fim.md
+
+[Timer]
+OnCalendar=*-*-* 04:30:00 UTC
+RandomizedDelaySec=900
+Persistent=true
+Unit=jabali-aide-check.service
+
+[Install]
+WantedBy=timers.target

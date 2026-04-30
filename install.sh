@@ -5769,6 +5769,133 @@ apply_apparmor_profiles() {
   systemctl daemon-reload >/dev/null 2>&1 || true
 }
 
+# ---------- step 8a.6: AIDE file integrity monitoring (M42) ----------------
+#
+# AIDE (Advanced Intrusion Detection Environment) is the FIM layer
+# that LMD doesn't cover. LMD watches user docroots; AIDE watches
+# system binaries + configs (/bin /sbin /usr/bin /usr/sbin /lib /etc
+# /boot /root). Daily check via systemd timer; M14 event source
+# fires on any diff. See ADR-0087 + plans/m42-aide-fim-system-integrity.md.
+
+install_aide() {
+  if ! dpkg -s aide >/dev/null 2>&1; then
+    _spin "apt install aide + aide-common" \
+      apt-get install -y -qq --no-install-recommends aide aide-common
+  fi
+
+  local conf=/etc/aide/aide.conf
+  local conf_tmp
+  conf_tmp=$(mktemp)
+  cat >"$conf_tmp" <<'AIDE_CONF'
+# Jabali — system-file integrity. ADR-0087.
+# Excludes paths the panel writes to + ephemeral state.
+
+database=file:/var/lib/aide/aide.db
+database_out=file:/var/lib/aide/aide.db.new
+gzip_dbout=yes
+report_url=file:/var/log/aide/aide.report.log
+report_url=stdout
+
+# Strong default rule: hash + meta but skip atime (mtime+ctime catch tamper).
+JABRULE = p+i+n+u+g+s+m+c+sha256
+
+# WATCH:
+/bin            JABRULE
+/sbin           JABRULE
+/usr/bin        JABRULE
+/usr/sbin       JABRULE
+/usr/local/bin  JABRULE
+/usr/local/sbin JABRULE
+/lib            JABRULE
+/lib64          JABRULE
+/usr/lib        JABRULE
+/etc            JABRULE
+/boot           JABRULE
+/root           JABRULE
+
+# EXCLUDE — paths jabali or its dependencies write to:
+!/etc/jabali
+!/etc/letsencrypt/live
+!/etc/letsencrypt/archive
+!/etc/letsencrypt/csr
+!/etc/letsencrypt/keys
+!/etc/letsencrypt/renewal
+!/etc/letsencrypt/accounts
+!/etc/nftables.d/jabali-.*
+!/etc/audit/rules.d/jabali-.*
+!/etc/nginx/sites-available/jabali-.*
+!/etc/nginx/sites-enabled/jabali-.*
+!/etc/php/.*/fpm/pool.d/jabali-.*
+!/etc/systemd/system/jabali-.*
+!/etc/systemd/system/user-.*\.slice\.d
+!/etc/systemd/system/multi-user\.target\.wants
+!/etc/cron\.d/jabali-.*
+!/etc/aliases
+!/etc/aliases\.db
+!/etc/apparmor\.d/usr\.local\.bin\.jabali-.*
+!/etc/group-?
+!/etc/passwd-?
+!/etc/shadow-?
+!/etc/gshadow-?
+!/etc/mtab
+!/etc/resolv\.conf
+!/etc/adjtime
+!/etc/machine-id
+!/etc/ssh/ssh_host_.*_key.*
+
+# Ephemeral state — never auditable:
+!/var
+!/run
+!/proc
+!/sys
+!/tmp
+!/home
+!/dev
+!/mnt
+!/media
+!/lost\+found
+AIDE_CONF
+
+  if [[ ! -f "$conf" ]] || ! cmp -s "$conf_tmp" "$conf"; then
+    install -m 0640 -o root -g root "$conf_tmp" "$conf"
+    _ok "AIDE config installed at $conf"
+  fi
+  rm -f "$conf_tmp"
+
+  install -d -m 0755 /var/log/aide
+
+  # Initial DB build — only if missing AND no in-progress marker.
+  if [[ ! -f /var/lib/aide/aide.db ]] && [[ ! -f /var/lib/aide/.init-in-progress ]]; then
+    install -d -m 0750 /var/lib/aide
+    touch /var/lib/aide/.init-in-progress
+    _log "AIDE: initial DB build (background — takes 2-5 min)"
+    nohup bash -c '
+      /usr/bin/aide --init >/var/log/aide/init.log 2>&1
+      if [[ -f /var/lib/aide/aide.db.new ]]; then
+        mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
+        chmod 0600 /var/lib/aide/aide.db
+        date -u +%Y-%m-%dT%H:%M:%SZ > /var/lib/aide/.jabali-installed
+      fi
+      rm -f /var/lib/aide/.init-in-progress
+    ' >/dev/null 2>&1 &
+  fi
+
+  # systemd units. Copied from install/systemd/.
+  local aide_svc_src="${REPO_DIR}/install/systemd/jabali-aide-check.service"
+  local aide_tmr_src="${REPO_DIR}/install/systemd/jabali-aide-check.timer"
+  if [[ -f "$aide_svc_src" && -f "$aide_tmr_src" ]]; then
+    install -m 0644 -o root -g root "$aide_svc_src" /etc/systemd/system/jabali-aide-check.service
+    install -m 0644 -o root -g root "$aide_tmr_src" /etc/systemd/system/jabali-aide-check.timer
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl enable --now jabali-aide-check.timer >/dev/null 2>&1 || \
+      _warn "jabali-aide-check.timer enable failed — check 'journalctl -u jabali-aide-check.timer'"
+  else
+    _warn "AIDE systemd units missing at $aide_svc_src / $aide_tmr_src"
+  fi
+
+  _ok "AIDE installed (daily check via jabali-aide-check.timer)"
+}
+
 # ---------- step 8a.1: auto-restart drop-ins for critical services ----------
 #
 # Third-party packages ship with inconsistent Restart= defaults — some have
@@ -7294,6 +7421,7 @@ main() {
   install_ufw
   install_per_user_egress
   install_apparmor
+  install_aide
   install_restart_drop_ins
   install_notify_template
   clone_or_update_repo

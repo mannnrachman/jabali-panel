@@ -558,6 +558,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterSecurityUFWRoutes(v1, deps.Agent)
 			// M40 (ADR-0086) AppArmor admin status + per-profile mode flip.
 			api.RegisterSecurityAppArmorRoutes(v1, deps.Agent)
+			// M42 (ADR-0087) AIDE FIM read-only status + manual check trigger.
+			api.RegisterSecurityAideRoutes(v1, deps.Agent)
 			// M33 malware tab — ADR-0072. All five malware repos must be
 			// wired or RegisterSecurityMalwareRoutes is skipped (older test
 			// wiring without the M33 graph). Tab still renders empty state.

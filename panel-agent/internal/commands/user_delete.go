@@ -1,11 +1,13 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
@@ -81,18 +83,52 @@ func userDeleteHandler(ctx context.Context, params json.RawMessage) (any, error)
 	}
 	slog.InfoContext(ctx, "user slice removed successfully", "username", p.Username)
 
-	// Delete user.
+	// Disable systemd-user linger so userdel can clean up the user-systemd
+	// state. user.create enables linger; without disabling here, userdel
+	// trips on the /var/lib/systemd/linger/<user> flag and exits 12
+	// ("can't remove home directory") even after slice removal (mx scar
+	// 2026-04-30).
+	if err := exec.CommandContext(ctx, "loginctl", "disable-linger", p.Username).Run(); err != nil {
+		// Best-effort. Linger may already be off.
+		slog.InfoContext(ctx, "loginctl disable-linger failed (best-effort)",
+			"username", p.Username, "err", err.Error())
+	}
+
+	// Delete user. Capture stderr for diagnostics.
 	var deleteCmd *exec.Cmd
 	if p.RemoveHome {
 		deleteCmd = exec.CommandContext(ctx, "userdel", "--remove", p.Username)
 	} else {
 		deleteCmd = exec.CommandContext(ctx, "userdel", p.Username)
 	}
+	var stderr bytes.Buffer
+	deleteCmd.Stderr = &stderr
 
 	if err := deleteCmd.Run(); err != nil {
+		// userdel(8) exit 12 = "can't remove home directory". The /etc/passwd
+		// + /etc/shadow + /etc/group entries are already gone by the time
+		// userdel reaches the home-removal step. Fall back to manual rm so
+		// the operator's --purge intent is honored.
+		var exitErr *exec.ExitError
+		if p.RemoveHome && errors.As(err, &exitErr) && exitErr.ExitCode() == 12 {
+			home := "/home/" + p.Username
+			if rmErr := os.RemoveAll(home); rmErr != nil {
+				return nil, &agentwire.AgentError{
+					Code: agentwire.CodeInternal,
+					Message: fmt.Sprintf("userdel exit 12; manual rm /home/%s failed: %v (stderr=%q)",
+						p.Username, rmErr, stderr.String()),
+				}
+			}
+			slog.InfoContext(ctx, "userdel exit 12; home removed via fallback rm",
+				"username", p.Username, "home", home, "userdel_stderr", stderr.String())
+			return userDeleteResponse{
+				Username:    p.Username,
+				RemovedHome: true,
+			}, nil
+		}
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("userdel failed: %v", err),
+			Message: fmt.Sprintf("userdel failed: %v (stderr=%q)", err, stderr.String()),
 		}
 	}
 

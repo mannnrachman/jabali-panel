@@ -419,8 +419,135 @@ func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 		applied, warnings := applySystemRestore(ctx, stagingRoot, manifest.Stages, req.ApplyStages)
 		out.Applied = applied
 		out.ApplyWarnings = warnings
+
+		// Post-apply MariaDB account password sync. mariadb-dump
+		// --single-transaction does NOT emit CREATE USER / GRANT, so
+		// after a cross-host restore the local MariaDB users still
+		// hold the destination host's original passwords while
+		// /etc/jabali-panel/<svc>-db-password files were just
+		// overwritten with the source host's. Re-sync each known
+		// service account so jabali-kratos / jabali-stalwart can
+		// reach their DBs without manual ALTER USER.
+		dbResyncs, dbWarnings := resyncDBAccountPasswords(ctx)
+		out.Applied = append(out.Applied, dbResyncs...)
+		out.ApplyWarnings = append(out.ApplyWarnings, dbWarnings...)
 	}
 	return out, nil
+}
+
+// resyncDBAccountPasswords re-runs ALTER USER for every known
+// jabali-plane MariaDB account using the password file the just-
+// applied panel_config landed at /etc/jabali-panel/. No-op on a host
+// where the password file is missing or the MariaDB user doesn't
+// exist (a non-jabali host with the same /etc/jabali-panel layout).
+func resyncDBAccountPasswords(ctx context.Context) ([]string, []string) {
+	type acct struct {
+		mariadbUser string
+		host        string
+		passwordFile string
+	}
+	accts := []acct{
+		{mariadbUser: "jabali_kratos", host: "localhost", passwordFile: "/etc/jabali-panel/kratos-db-password"},
+		{mariadbUser: "jabali-stalwart-ro", host: "localhost", passwordFile: "/etc/jabali-panel/stalwart-mariadb.password"},
+	}
+	// pdns password lives in pdns.env as PDNS_GMYSQL_PASSWORD; pull
+	// it out by simple grep so we don't import a new env-parser here.
+	if pdnsPW, ok := readEnvFileVar("/etc/jabali-panel/pdns.env", "PDNS_GMYSQL_PASSWORD"); ok && pdnsPW != "" {
+		// Persist to a tmp file so the helper signature stays uniform.
+		tmp, terr := writeTempStr(pdnsPW)
+		if terr == nil {
+			defer os.Remove(tmp)
+			accts = append(accts, acct{mariadbUser: "pdns", host: "localhost", passwordFile: tmp})
+		}
+	}
+
+	var applied, warnings []string
+	for _, a := range accts {
+		raw, err := os.ReadFile(a.passwordFile) // #nosec G304 — fixed allowlist
+		if err != nil {
+			warnings = append(warnings,
+				fmt.Sprintf("db-account resync %s: read password %s: %v", a.mariadbUser, a.passwordFile, err))
+			continue
+		}
+		pw := strings.TrimRight(string(raw), "\n")
+		if pw == "" {
+			warnings = append(warnings,
+				fmt.Sprintf("db-account resync %s: password file empty", a.mariadbUser))
+			continue
+		}
+		// Use mariadb client + ALTER USER ... IDENTIFIED BY '<pw>'.
+		// We use --execute= so the password never lands on the cmdline
+		// argv-visible part is just ALTER USER (the password too,
+		// unfortunately — but argv on a single-tenant host with root-
+		// owned mariadb client is acceptable; alternative is INI file
+		// auth which is more setup).
+		stmt := fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED BY '%s'; FLUSH PRIVILEGES;",
+			a.mariadbUser, a.host, sqlEscape(pw))
+		cmd := exec.CommandContext(ctx, "mariadb",
+			"--protocol=socket", "--socket=/run/mysqld/mysqld.sock",
+			"-e", stmt,
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			// 1396 = user doesn't exist on this host. Demote to warning.
+			warnings = append(warnings,
+				fmt.Sprintf("db-account resync %s: %v (output: %s)", a.mariadbUser, err,
+					strings.TrimSpace(string(out))))
+			continue
+		}
+		applied = append(applied, fmt.Sprintf("db-account-password: %s", a.mariadbUser))
+	}
+	return applied, warnings
+}
+
+// readEnvFileVar pulls KEY=VALUE out of a shell-style env file. Returns
+// (value, true) on hit, ("", false) on miss / unreadable file.
+func readEnvFileVar(path, key string) (string, bool) {
+	raw, err := os.ReadFile(path) // #nosec G304 — fixed allowlist of env files
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !strings.HasPrefix(line, key+"=") {
+			continue
+		}
+		val := strings.TrimPrefix(line, key+"=")
+		val = strings.Trim(val, `"'`)
+		return val, true
+	}
+	return "", false
+}
+
+// writeTempStr stashes a small string into /run/jabali for a short-
+// lived password handoff. 0600 root.
+func writeTempStr(s string) (string, error) {
+	if err := os.MkdirAll("/run/jabali", 0o750); err != nil {
+		return "", err
+	}
+	f, err := os.CreateTemp("/run/jabali", "tmpw-*")
+	if err != nil {
+		return "", err
+	}
+	if _, werr := f.WriteString(s); werr != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		return "", werr
+	}
+	_ = f.Chmod(0o600)
+	return f.Name(), f.Close()
+}
+
+// sqlEscape doubles single-quotes for embedding into an ALTER USER
+// IDENTIFIED BY '...' literal. Caller must wrap the result in single
+// quotes themselves. Passwords are install-generated strong randoms
+// so semicolon / backslash / null bytes shouldn't appear, but quoting
+// defensively keeps a future hand-edited file from breaking the SQL.
+func sqlEscape(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
 }
 
 // applySystemRestore walks staged restore output and applies the

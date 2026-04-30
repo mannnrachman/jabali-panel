@@ -638,6 +638,10 @@ func (h *userHandler) translateErr(c *gin.Context, err error) {
 	case errors.Is(err, repository.ErrConflict):
 		c.JSON(http.StatusConflict, gin.H{"error": "conflict"})
 	default:
+		slog.Warn("user handler internal error",
+			"path", c.Request.URL.Path,
+			"method", c.Request.Method,
+			"err", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 	}
 }

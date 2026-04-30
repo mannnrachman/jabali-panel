@@ -60,7 +60,7 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0069](0069-server-status-masonry-layout.md) | AntD `<Masonry>` for Server Status page layout | Accepted |
 | [0070](0070-le-cert-san-scope.md) | LE cert SAN list scoped to auto-provisioned DNS only (amends 0066) | Accepted |
 | [0071](0071-mariadb-loopback-only-not-skip-networking.md) | MariaDB loopback-only bind (amends 0050 M25.1) | Accepted |
-| [0072](0072-malware-detection-stack.md) | M33 Malware stack: ClamAV + maldet + YARA + Tetragon | Accepted |
+| [0072](0072-malware-detection-stack.md) | M33 Malware stack: maldet + YARA (Tetragon removed 2026-04-30 per ADR-0085) | Accepted (amended) |
 | [0073](0073-stalwart-email-aliases-query.md) | Stalwart `queryEmailAliases` + apply-plan schema evolution | Accepted |
 | [0074](0074-lazy-service-alert-suppression.md) | Suppress critical alert on inactive + disabled services (lazy-started units; renumbered 2026-04-28 from 0067) | Accepted |
 | [0075](0075-backup-restore-restic.md) | M30 Backup & Restore: restic-backed, single shared repo | Accepted |
@@ -70,6 +70,7 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0079](0079-mail-yara-async-scanner.md) | M33.2 Mail YARA async scanner (JMAP-driven, in-process tick) | Accepted |
 | [0082](0082-ghost-domain-detector.md) | M38 Ghost Domain Detector — periodic DNS-alignment check | Accepted |
 | [0084](0084-per-user-egress-firewall-cgroupv2.md) | M34 Per-user PHP-FPM egress firewall via nftables + cgroupv2 socket match | Proposed |
+| [0085](0085-narrow-scoped-auditd-exec-audit.md) | M39 Narrow-scoped auditd as L3 forensic exec audit (replaces Tetragon) | Accepted |
 
 ## Decision Categories
 

@@ -5390,6 +5390,7 @@ PURGE_TIMER
   systemctl enable --now jabali-malware-quarantine-purge.timer >/dev/null 2>&1 || true
 
   cleanup_tetragon_legacy
+  install_audit_exec
 
   _ok "malware stack provisioned: maldet $(/usr/local/maldetect/maldet --version 2>/dev/null | head -1 || echo 'pending'), yara-x $(yr --version 2>/dev/null | head -1 || echo 'pending')"
 }
@@ -5429,6 +5430,55 @@ cleanup_tetragon_legacy() {
     systemctl daemon-reload >/dev/null 2>&1 || true
     _ok "tetragon legacy footprint removed (M39)"
   fi
+}
+
+# install_audit_exec — M39 (2026-04-30) narrow-scoped suspicious-binary
+# execve audit via auditd. Replaces the L3 forensic audit promise that
+# Tetragon was supposed to fill. NOT blanket "-S execve" — only 11
+# suspicious binaries, per-user via auid>=1000 filter, single key.
+# See ADR-0085 + plans/m39-remove-tetragon-narrow-auditd.md Step 3.
+install_audit_exec() {
+  if ! dpkg -s auditd >/dev/null 2>&1; then
+    _spin "apt install auditd + audispd-plugins" \
+      apt-get install -y -qq --no-install-recommends auditd audispd-plugins
+  fi
+
+  local rules_file=/etc/audit/rules.d/jabali-exec.rules
+  local rules_tmp
+  rules_tmp=$(mktemp)
+  cat >"$rules_tmp" <<'AUDIT_RULES'
+# Jabali — narrow-scoped suspicious-binary execve audit.
+# Tagged 'jabali_susp_exec' for ausearch -k pivots.
+# auid>=1000 = real users only (excludes daemon services).
+# auid!=4294967295 = exclude pre-PAM kernel threads.
+# /usr/bin/php tagged separately (legit cron noise vs webshell signal class).
+
+-a always,exit -F arch=b64 -S execve -F path=/bin/bash         -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec
+-a always,exit -F arch=b64 -S execve -F path=/bin/sh           -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec
+-a always,exit -F arch=b64 -S execve -F path=/bin/dash         -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/wget     -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/curl     -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/nc       -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/ncat     -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/socat    -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/python3  -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/perl     -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/php      -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec_phpcli
+AUDIT_RULES
+
+  # Idempotent: only re-render + reload if checksum changed.
+  if [[ ! -f "$rules_file" ]] || ! cmp -s "$rules_tmp" "$rules_file"; then
+    install -m 0640 -o root -g root "$rules_tmp" "$rules_file"
+    if command -v augenrules >/dev/null 2>&1; then
+      augenrules --load >/dev/null 2>&1 || \
+        _warn "augenrules --load failed — auditd may need a restart"
+    fi
+    _ok "auditd jabali-exec.rules installed (11 narrow rules, key=jabali_susp_exec)"
+  fi
+  rm -f "$rules_tmp"
+
+  systemctl enable --now auditd >/dev/null 2>&1 || \
+    _warn "auditd enable/start failed — check 'systemctl status auditd'"
 }
 
 install_ufw() {

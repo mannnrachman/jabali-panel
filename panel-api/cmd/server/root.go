@@ -216,6 +216,16 @@ func domainRepoFromDB() repository.DomainRepository {
 	return repository.NewDomainRepository(sharedDB)
 }
 
+// databaseRepoFromDB returns a DatabaseRepository from the shared DB.
+func databaseRepoFromDB() repository.DatabaseRepository {
+	return repository.NewDatabaseRepository(sharedDB)
+}
+
+// databaseUserRepoFromDB returns a DatabaseUserRepository from the shared DB.
+func databaseUserRepoFromDB() repository.DatabaseUserRepository {
+	return repository.NewDatabaseUserRepository(sharedDB)
+}
+
 // requireConfig initializes config only (no DB or agent).
 // Used by CLI commands that only need to read config.
 func requireConfig(cmd *cobra.Command, args []string) error {

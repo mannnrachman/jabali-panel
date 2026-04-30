@@ -150,14 +150,11 @@ func newUserCreateCmd() *cobra.Command {
 // runbook documents the full flow.
 
 func newUserDeleteCmd() *cobra.Command {
-	var (
-		force bool
-		purge bool
-	)
+	var force bool
 
 	cmd := &cobra.Command{
 		Use:   "delete <email|username|user-id>",
-		Short: "Delete a user (direct DB + cascade domains + Kratos identity + OS teardown — M20-safe)",
+		Short: "Delete a user — destructive: domains, databases, mailboxes, OS account, /home, all related rows.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			lookup := strings.TrimSpace(args[0])
@@ -181,12 +178,9 @@ func newUserDeleteCmd() *cobra.Command {
 			userID := target.ID
 
 			if !force {
-				msg := fmt.Sprintf("Delete user %s (%s)?", target.ID, target.Email)
-				if purge {
-					msg += " This will also delete /home/" + strOr(target.Username, "<no-home>") + " and all its data."
-				} else {
-					msg += " (home directory WILL be preserved; pass --purge to remove it)"
-				}
+				home := "/home/" + strOr(target.Username, "<no-home>")
+				msg := fmt.Sprintf("Delete user %s (%s)? This will permanently remove %s, all owned domains, databases, mailboxes, cron jobs, and the OS account.",
+					target.ID, target.Email, home)
 				fmt.Print(msg + " [y/N]: ")
 				var confirm string
 				fmt.Scanln(&confirm)
@@ -196,23 +190,19 @@ func newUserDeleteCmd() *cobra.Command {
 				}
 			}
 
-			if err := deleteUserDirect(ctx, userID, purge); err != nil {
+			if err := deleteUserDirect(ctx, userID, true); err != nil {
 				return err
 			}
 
 			if jsonOutput {
 				return printJSON(map[string]string{"deleted": userID})
 			}
-			fmt.Printf("Deleted user %s (%s)\n", target.ID, target.Email)
-			if purge {
-				fmt.Println("/home directory removed.")
-			}
+			fmt.Printf("Deleted user %s (%s) — /home + DB + mail + OS account removed.\n", target.ID, target.Email)
 			return nil
 		},
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation prompt")
-	cmd.Flags().BoolVar(&purge, "purge", false, "also remove the user's /home directory (default: preserve tenant data)")
 
 	return cmd
 }

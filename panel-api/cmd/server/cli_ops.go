@@ -37,18 +37,17 @@ func listUsersDirect(ctx context.Context) ([]models.User, error) {
 	return users, nil
 }
 
-// deleteUserDirect removes a user (+ cascades to their domains + tears down
-// the OS account). Matches the HTTP delete handler's side effects:
+// deleteUserDirect removes a user and EVERYTHING they own. Matches the HTTP
+// delete handler:
 //   - refuses to delete the last admin
-//   - caller is responsible for the "don't delete yourself" check (CLI has
-//     no authenticated caller, so self-lockout is moot — the operator is
-//     root and can always recover via DB)
-//   - cascade-deletes all domains the user owned (best-effort per-row)
-//   - fires agent user.delete so /home/<user> is torn down
-//   - if Kratos is on, deletes the linked identity too
+//   - cascades all owned domains
+//   - drops every MariaDB schema + DB user the panel created for them
+//   - deletes the linked Kratos identity (if any)
+//   - tears down the OS account + /home (always — no preserve mode)
 //
-// purgeHome controls whether the agent removes /home/<user>. Default false
-// matches the HTTP query param so tenant data is preserved by default.
+// The purgeHome param is kept on the signature for source-compat but is
+// always treated as true. Caller is responsible for the "don't delete
+// yourself" check (CLI runs as root, no authenticated caller).
 func deleteUserDirect(ctx context.Context, userID string, purgeHome bool) error {
 	if err := initConfig(); err != nil {
 		return err
@@ -90,6 +89,35 @@ func deleteUserDirect(ctx context.Context, userID string, purgeHome bool) error 
 		}
 	}
 
+	// Drop MariaDB schemas + DB users via the agent BEFORE the panel row
+	// goes (which CASCADEs the metadata). Best-effort: log + continue.
+	dbs := databaseRepoFromDB()
+	if dbs != nil && sharedAgent != nil {
+		if rows, _, err := dbs.ListByUserID(ctx, userID, repository.ListOptions{Limit: 500}); err == nil {
+			for _, d := range rows {
+				agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				if _, err := sharedAgent.Call(agentCtx, "db.drop", map[string]any{"db_name": d.Name}); err != nil {
+					slog.Warn("cli delete: db.drop failed",
+						"user_id", userID, "db_name", d.Name, "err", err)
+				}
+				cancel()
+			}
+		}
+	}
+	dbus := databaseUserRepoFromDB()
+	if dbus != nil && sharedAgent != nil {
+		if rows, _, err := dbus.ListByUserID(ctx, userID, repository.ListOptions{Limit: 500}); err == nil {
+			for _, du := range rows {
+				agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				if _, err := sharedAgent.Call(agentCtx, "db_user.drop", map[string]any{"db_user_name": du.Username}); err != nil {
+					slog.Warn("cli delete: db_user.drop failed",
+						"user_id", userID, "db_user_name", du.Username, "err", err)
+				}
+				cancel()
+			}
+		}
+	}
+
 	// Kratos identity delete (if linked).
 	if target.KratosIdentityID != nil && sharedCfg.Auth.Kratos.PublicURL != "" {
 		k := kratosclient.NewClient(sharedCfg.Auth.Kratos.PublicURL, sharedCfg.Auth.Kratos.AdminURL)
@@ -108,17 +136,19 @@ func deleteUserDirect(ctx context.Context, userID string, purgeHome bool) error 
 	}
 
 	// OS teardown. Sync here — the CLI should surface agent failures
-	// instead of fire-and-forget silence.
+	// instead of fire-and-forget silence. purgeHome is always treated as
+	// true by the handler's contract; jabali user delete is destructive.
+	_ = purgeHome
 	if sharedAgent != nil && target.Username != nil && *target.Username != "" {
 		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		if _, err := sharedAgent.Call(agentCtx, "user.delete", map[string]any{
 			"username":    *target.Username,
-			"remove_home": purgeHome,
+			"remove_home": true,
 		}); err != nil {
 			slog.Warn("cli delete: agent user.delete failed — panel row gone, OS user remains",
 				"user_id", userID, "username", *target.Username, "err", err)
-			return fmt.Errorf("panel row deleted but OS teardown failed: %w (rerun with --purge=false to leave home intact, or manually delete user %q)",
+			return fmt.Errorf("panel row deleted but OS teardown failed: %w (manually clean up /home/%s + the OS account)",
 				err, *target.Username)
 		}
 	}

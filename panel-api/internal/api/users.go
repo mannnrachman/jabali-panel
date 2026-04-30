@@ -32,6 +32,8 @@ type UserHandlerConfig struct {
 	Agent           agent.AgentInterface
 	StrictRateLimit gin.HandlerFunc
 	Domains         repository.DomainRepository
+	Databases       repository.DatabaseRepository
+	DatabaseUsers   repository.DatabaseUserRepository
 	Packages        repository.PackageRepository
 	Reconciler      *reconciler.Reconciler
 	Log             *slog.Logger
@@ -498,21 +500,86 @@ func (h *userHandler) delete(c *gin.Context) {
 		username = *target.Username
 	}
 
+	// Cascade-drop MariaDB schemas + grants on the data plane BEFORE the
+	// panel row goes (which CASCADEs the metadata rows). Best-effort: any
+	// per-DB failure is logged, never blocks the user delete. Operator
+	// chose destructive — every panel-managed artefact must follow.
+	if h.cfg.Databases != nil && h.cfg.Agent != nil && username != "" {
+		const batchSize = 500
+		for {
+			dbs, _, dbErr := h.cfg.Databases.ListByUserID(c.Request.Context(), id, repository.ListOptions{Limit: batchSize})
+			if dbErr != nil {
+				slog.Warn("cascade delete: list user databases failed",
+					"user_id", id, "err", dbErr)
+				break
+			}
+			if len(dbs) == 0 {
+				break
+			}
+			for i := range dbs {
+				dbName := dbs[i].Name
+				agentCtx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+				_, dropErr := h.cfg.Agent.Call(agentCtx, "db.drop", map[string]any{
+					"db_name": dbName,
+				})
+				cancel()
+				if dropErr != nil {
+					slog.Warn("cascade delete: db.drop failed",
+						"user_id", id, "db_name", dbName, "err", dropErr)
+				}
+			}
+			if len(dbs) < batchSize {
+				break
+			}
+		}
+	}
+	if h.cfg.DatabaseUsers != nil && h.cfg.Agent != nil && username != "" {
+		const batchSize = 500
+		for {
+			dbus, _, duErr := h.cfg.DatabaseUsers.ListByUserID(c.Request.Context(), id, repository.ListOptions{Limit: batchSize})
+			if duErr != nil {
+				slog.Warn("cascade delete: list user database_users failed",
+					"user_id", id, "err", duErr)
+				break
+			}
+			if len(dbus) == 0 {
+				break
+			}
+			for i := range dbus {
+				duName := dbus[i].Username
+				agentCtx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+				_, dropErr := h.cfg.Agent.Call(agentCtx, "db_user.drop", map[string]any{
+					"db_user_name": duName,
+				})
+				cancel()
+				if dropErr != nil {
+					slog.Warn("cascade delete: db_user.drop failed",
+						"user_id", id, "db_user_name", duName, "err", dropErr)
+				}
+			}
+			if len(dbus) < batchSize {
+				break
+			}
+		}
+	}
+
 	if err := h.cfg.Repo.Delete(c.Request.Context(), id); err != nil {
 		h.translateErr(c, err)
 		return
 	}
 
-	// Best-effort OS teardown. remove_home defaults to false so tenant data is
-	// preserved for manual recovery; pass ?purge=true to delete home directory.
-	purge := c.Query("purge") == "true"
+	// Always-destructive OS teardown. The "delete user" operation in the
+	// UI/CLI now removes EVERYTHING the user owns — domains (above),
+	// MariaDB schemas + users (above), then the OS account + home dir
+	// here. There is no "preserve tenant data" mode anymore; the operator
+	// chose to delete and the cascade follows.
 	if h.cfg.Agent != nil && username != "" {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			_, err := h.cfg.Agent.Call(ctx, "user.delete", map[string]any{
 				"username":    username,
-				"remove_home": purge,
+				"remove_home": true,
 			})
 			if err != nil {
 				slog.Warn("user agent teardown failed",
@@ -523,13 +590,11 @@ func (h *userHandler) delete(c *gin.Context) {
 		}()
 	}
 
-	if purge {
-		slog.Info("audit",
-			"event", "user_purge_deleted",
-			"actor_id", claims.UserID,
-			"target_id", id,
-			"target_email", target.Email)
-	}
+	slog.Info("audit",
+		"event", "user_deleted",
+		"actor_id", claims.UserID,
+		"target_id", id,
+		"target_email", target.Email)
 
 	c.Status(http.StatusNoContent)
 }

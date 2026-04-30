@@ -1,9 +1,9 @@
 // UserDeleteAction — row-level destructive action with a confirmation
-// modal. Exposes a two-state destructive choice (metadata-only
-// vs. purge-OS) because the second one is irreversible and the user
-// needs to see the difference before committing.
+// modal. There is no longer a "preserve files" mode; deleting a user
+// always removes everything they own (domains, databases, mailboxes,
+// cron jobs, OS account, /home, related rows).
 import { useState } from "react";
-import { Button, Modal, Checkbox, Space, message } from "antd";
+import { Button, Modal, message } from "antd";
 import { DeleteOutlined } from "@icons";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -19,7 +19,6 @@ export const UserDeleteAction = ({
   userEmail,
 }: UserDeleteActionProps) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [purgeOS, setPurgeOS] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const qc = useQueryClient();
 
@@ -29,22 +28,14 @@ export const UserDeleteAction = ({
 
   const handleCancel = () => {
     setIsModalOpen(false);
-    setPurgeOS(false);
   };
 
   const handleDelete = async () => {
     setIsLoading(true);
     try {
-      const url = `/users/${encodeURIComponent(recordItemId)}${
-        purgeOS ? "?purge=true" : ""
-      }`;
-      await apiClient.delete(url);
+      await apiClient.delete(`/users/${encodeURIComponent(recordItemId)}`);
 
-      message.success(
-        purgeOS
-          ? `User "${userEmail}" and OS account deleted`
-          : `User "${userEmail}" deleted`
-      );
+      message.success(`User "${userEmail}" and all related data deleted`);
 
       // Invalidate every ["list", "users", *] variant so admin tabs
       // and the parent badge counters all refetch after a delete.
@@ -52,7 +43,6 @@ export const UserDeleteAction = ({
       qc.invalidateQueries({ queryKey: ["one", "users", recordItemId] });
 
       setIsModalOpen(false);
-      setPurgeOS(false);
     } catch (err: unknown) {
       const errMsg =
         err instanceof Error ? err.message : "Failed to delete user";
@@ -62,14 +52,14 @@ export const UserDeleteAction = ({
     }
   };
 
+  const localPart = userEmail.split("@")[0];
+
   return (
     <>
       <Button
         danger
         type="text"
         icon={<DeleteOutlined />}
-        // Generic "Delete" — see RowActions in UserList.tsx for why
-        // the email is intentionally kept out of the accessible name.
         aria-label="Delete"
         onClick={handleOpenModal}
       />
@@ -89,32 +79,24 @@ export const UserDeleteAction = ({
             loading={isLoading}
             onClick={handleDelete}
           >
-            Delete {purgeOS ? "and purge files" : "user"}
+            Delete user
           </Button>,
         ]}
       >
-        <Space orientation="vertical" style={{ width: "100%" }}>
-          <div>
-            <p>
-              <strong>Delete user:</strong> Removes the user record and all
-              owned domains from the database. The OS account and home
-              directory stay on disk.
-            </p>
-            <p>
-              <strong>Delete and purge files:</strong> Removes the user record,
-              all owned domains, AND deletes the OS account (
-              <code>userdel --remove</code>) along with the <code>/home</code>{" "}
-              directory. This is permanent and cannot be undone.
-            </p>
-          </div>
-          <Checkbox
-            checked={purgeOS}
-            onChange={(e) => setPurgeOS(e.target.checked)}
-          >
-            Also delete OS account and /home/{userEmail.split("@")[0]} directory
-            (destructive)
-          </Checkbox>
-        </Space>
+        <p>
+          This is permanent and cannot be undone. Deleting{" "}
+          <strong>{userEmail}</strong> will remove:
+        </p>
+        <ul>
+          <li>All owned domains, DNS zones, SSL certificates, nginx sites</li>
+          <li>All databases and database users (panel + MariaDB)</li>
+          <li>All mailboxes, forwarders, and Stalwart mail accounts</li>
+          <li>All cron jobs, applications, SSH keys</li>
+          <li>
+            The OS account <code>{localPart}</code> and <code>/home/{localPart}</code>
+          </li>
+          <li>The Kratos identity (login record)</li>
+        </ul>
       </Modal>
     </>
   );

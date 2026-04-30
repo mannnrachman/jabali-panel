@@ -311,6 +311,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Agent:           deps.Agent,
 				StrictRateLimit: rl.Strict(),
 				Domains:         deps.Domains,
+				Databases:       deps.Databases,
+				DatabaseUsers:   deps.DatabaseUsers,
 				Packages:        deps.Packages,
 				Reconciler:      deps.Reconciler,
 				Log:             deps.Log,

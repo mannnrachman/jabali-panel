@@ -13,9 +13,19 @@ import (
 )
 
 type backupDestTestParams struct {
-	URL              string   `json:"url"`
-	CredentialsRef   string   `json:"credentials_ref,omitempty"`
-	ExtraOptions     []string `json:"extra_options,omitempty"`
+	URL            string             `json:"url"`
+	CredentialsRef string             `json:"credentials_ref,omitempty"`
+	ExtraOptions   []string           `json:"extra_options,omitempty"`
+	SFTP           *backupTestSFTPIn  `json:"sftp,omitempty"`
+}
+
+type backupTestSFTPIn struct {
+	Host    string `json:"host"`
+	User    string `json:"user"`
+	Port    int    `json:"port,omitempty"`
+	Path    string `json:"path"`
+	Auth    string `json:"auth"`
+	KeyPath string `json:"key_path,omitempty"`
 }
 
 type backupDestTestResult struct {
@@ -53,16 +63,59 @@ func backupDestTestHandler(ctx context.Context, raw json.RawMessage) (any, error
 		stderrStr := strings.TrimSpace(string(stderr))
 		// "repository does not exist" / "unable to open config file"
 		// means the SSH/SFTP layer succeeded — auth + reachability
-		// are fine, just no restic repo at the path yet. The first
-		// backup will run `restic init` and create it. From the
-		// operator's POV the destination IS reachable, so report ok
-		// with a hint.
+		// are fine, just no restic repo at the path yet. Auto-init
+		// it so the first backup doesn't have to. restic's SFTP/S3/B2
+		// backends create parent directories during init.
 		lower := strings.ToLower(stderrStr)
 		if strings.Contains(lower, "repository does not exist") ||
 			strings.Contains(lower, "unable to open config file") {
+			// SFTP: pre-create the parent path on the remote — restic
+			// init does NOT mkdir -p the parent chain itself.
+			if p.SFTP != nil && p.SFTP.Host != "" {
+				if mkOut, mkErr := backup.MkdirRemoteSFTP(ctx, backup.SFTPInputs{
+					Host:    p.SFTP.Host,
+					User:    p.SFTP.User,
+					Port:    p.SFTP.Port,
+					Path:    p.SFTP.Path,
+					Auth:    p.SFTP.Auth,
+					KeyPath: p.SFTP.KeyPath,
+				}, extraEnv); mkErr != nil {
+					return backupDestTestResult{
+						Status: "error",
+						Detail: "remote_mkdir_failed: " + mkErr.Error(),
+						Stderr: strings.TrimSpace(string(mkOut)),
+					}, nil
+				}
+			}
+			_, initStderr, initErr := backup.InitRemote(
+				ctx,
+				nil,
+				p.URL,
+				backup.DefaultPasswordFile,
+				extraEnv,
+				p.ExtraOptions,
+			)
+			if initErr != nil {
+				initErrStr := strings.TrimSpace(string(initStderr))
+				lowerInit := strings.ToLower(initErrStr)
+				// Treat already-initialized as success (race with a
+				// concurrent init or a hand-initialized repo).
+				if strings.Contains(lowerInit, "already initialized") ||
+					strings.Contains(lowerInit, "config file already exists") {
+					return backupDestTestResult{
+						Status:        "ok",
+						StdoutPreview: "reachable — restic repo already initialized",
+					}, nil
+				}
+				return backupDestTestResult{
+					Status: "error",
+					Detail: "init_failed: " + initErr.Error(),
+					Stderr: initErrStr,
+				}, nil
+			}
 			return backupDestTestResult{
 				Status:        "ok",
-				StdoutPreview: "reachable — restic repo not yet initialized; first backup will create it",
+				StdoutPreview: "reachable — restic repo initialized at destination",
 			}, nil
 		}
 		return backupDestTestResult{

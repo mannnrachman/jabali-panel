@@ -55,6 +55,13 @@ type systemBackupParams struct {
 	// ScheduleID is the originating backup_schedules.id when the job
 	// came from the scheduler. Empty for manual admin-create jobs.
 	ScheduleID string `json:"schedule_id,omitempty"`
+	// RepoURL + CredentialsRef + ExtraOptions select the destination
+	// repo per ADR-0080. Empty = legacy local repo.
+	RepoURL         string            `json:"repo_url,omitempty"`
+	CredentialsRef  string            `json:"credentials_ref,omitempty"`
+	ExtraOptions    []string          `json:"extra_options,omitempty"`
+	DestinationKind string            `json:"destination_kind,omitempty"`
+	SFTP            *backupSFTPInputs `json:"sftp,omitempty"`
 }
 
 type systemBackupResult struct {
@@ -89,8 +96,16 @@ func systemBackupHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) error {
 	jl := backup.NewJobLogger(req.JobID)
 	defer jl.Close()
-	jl.Printf("system_backup start include_accounts=%v", req.IncludeAccounts)
-	c := backup.New(backup.DefaultConfig())
+	jl.Printf("system_backup start include_accounts=%v destination=%s", req.IncludeAccounts, req.RepoURL)
+	if err := bkEnsureRepoReady(ctx, req.RepoURL, req.CredentialsRef, req.DestinationKind, req.SFTP, req.ExtraOptions); err != nil {
+		jl.Printf("ensure_repo_failed=%v", err)
+		return fmt.Errorf("ensure repo: %w", err)
+	}
+	cfg, cerr := bkResticConfig(req.RepoURL, req.CredentialsRef, req.ExtraOptions)
+	if cerr != nil {
+		return fmt.Errorf("restic config: %w", cerr)
+	}
+	c := backup.New(cfg)
 	host := hostname()
 	manifest := backup.SystemManifest{
 		SchemaVersion: backup.ManifestSchemaVersion,
@@ -235,9 +250,12 @@ func systemBackupCancelHandler(ctx context.Context, raw json.RawMessage) (any, e
 // observe restore status interactively without the agent sandbox.
 func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	var req struct {
-		JobID              string `json:"job_id"`
-		ManifestSnapshotID string `json:"manifest_snapshot_id"`
-		IncludeAccounts    bool   `json:"include_accounts"`
+		JobID              string   `json:"job_id"`
+		ManifestSnapshotID string   `json:"manifest_snapshot_id"`
+		IncludeAccounts    bool     `json:"include_accounts"`
+		RepoURL            string   `json:"repo_url,omitempty"`
+		CredentialsRef     string   `json:"credentials_ref,omitempty"`
+		ExtraOptions       []string `json:"extra_options,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, bkInvalidArg("malformed JSON body")
@@ -246,7 +264,11 @@ func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 		return nil, bkInvalidArg("job_id must be a 26-char ULID")
 	}
 
-	c := backup.New(backup.DefaultConfig())
+	cfg, cerr := bkResticConfig(req.RepoURL, req.CredentialsRef, req.ExtraOptions)
+	if cerr != nil {
+		return nil, bkInternal("restic config", cerr)
+	}
+	c := backup.New(cfg)
 	manifestBytes, err := c.Dump(ctx, req.ManifestSnapshotID, "system_manifest.json")
 	if err != nil {
 		return nil, bkInternal("read system manifest", err)

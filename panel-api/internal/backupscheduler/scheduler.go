@@ -24,6 +24,7 @@ import (
 
 	internalbackup "git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
@@ -54,7 +55,7 @@ const DefaultMaxConcurrent = 2
 type Deps struct {
 	Schedules      repository.BackupScheduleRepository
 	Jobs           repository.BackupJobRepository
-	CopyJobs       repository.BackupCopyJobRepository
+	Destinations   repository.BackupDestinationRepository
 	Users          repository.UserRepository
 	Databases      repository.DatabaseRepository
 	DatabaseUsers  repository.DatabaseUserRepository
@@ -75,7 +76,7 @@ type Scheduler struct{ deps Deps }
 // is missing — callers log + skip start in that case so an incomplete
 // deployment doesn't crash on boot.
 func New(deps Deps) *Scheduler {
-	if deps.Schedules == nil || deps.Jobs == nil || deps.CopyJobs == nil ||
+	if deps.Schedules == nil || deps.Jobs == nil || deps.Destinations == nil ||
 		deps.Users == nil || deps.Agent == nil || deps.Log == nil {
 		return nil
 	}
@@ -191,18 +192,37 @@ func (s *Scheduler) enqueue(ctx context.Context, sched models.BackupSchedule) {
 }
 
 // enqueueBackup creates queued backup_jobs rows for the given
-// schedule. The dispatcher tick later picks them up and calls the
-// agent under the concurrency cap. All rows from one tick share a
-// run_id so the admin UI can roll them up under a single header.
+// schedule. Per ADR-0080 each linked destination gets its own row
+// (no source-then-mirror); the dispatcher tick later picks them up
+// and calls the agent under the concurrency cap. All rows from one
+// tick share a run_id so the admin UI can roll them up under a
+// single header.
 func (s *Scheduler) enqueueBackup(ctx context.Context, sched models.BackupSchedule) (bool, error) {
 	runID := ids.NewULID()
+	dests, err := s.deps.Schedules.GetDestinations(ctx, sched.ID)
+	if err != nil {
+		return false, fmt.Errorf("load schedule destinations: %w", err)
+	}
+	if len(dests) == 0 {
+		s.deps.Log.Warn("schedule has no destinations linked; skipping",
+			"schedule_id", sched.ID)
+		return false, nil
+	}
+	// Filter out disabled destinations — leaving them in would create
+	// jobs the dispatcher would then mark failed. Cleaner to drop here.
+	enabledDests := dests[:0]
+	for _, d := range dests {
+		if d.Enabled {
+			enabledDests = append(enabledDests, d)
+		}
+	}
+	if len(enabledDests) == 0 {
+		s.deps.Log.Warn("schedule destinations are all disabled; skipping",
+			"schedule_id", sched.ID)
+		return false, nil
+	}
 	switch sched.Kind {
 	case models.BackupScheduleKindAccount:
-		// Multi-user fan-out via the backup_schedule_users join:
-		//   - empty list      → every non-admin user on the host
-		//   - non-empty list  → only those specific users
-		// The legacy single backup_schedules.user_id column is
-		// ignored once the join table is the source of truth.
 		anyUser := false
 		explicitIDs, err := s.deps.Schedules.GetUserIDs(ctx, sched.ID)
 		if err != nil {
@@ -237,21 +257,30 @@ func (s *Scheduler) enqueueBackup(ctx context.Context, sched models.BackupSchedu
 		}
 		for i := range targets {
 			u := &targets[i]
-			if ok := s.enqueueAccountBackup(ctx, sched, u, runID); ok {
-				anyUser = true
+			for j := range enabledDests {
+				if ok := s.enqueueAccountBackup(ctx, sched, u, &enabledDests[j], runID); ok {
+					anyUser = true
+				}
 			}
 		}
-		// Opt-in: same schedule also fires a system_backup. Errors here
-		// are logged + swallowed so a system-side failure can't undo the
-		// per-user backups that already succeeded.
 		anySystem := false
 		if sched.IncludeSystemBackup {
-			anySystem = s.enqueueSystemBackup(ctx, sched, runID)
+			for j := range enabledDests {
+				if ok := s.enqueueSystemBackup(ctx, sched, &enabledDests[j], runID); ok {
+					anySystem = true
+				}
+			}
 		}
 		return anyUser || anySystem, nil
 
 	case models.BackupScheduleKindSystem:
-		return s.enqueueSystemBackup(ctx, sched, runID), nil
+		any := false
+		for j := range enabledDests {
+			if ok := s.enqueueSystemBackup(ctx, sched, &enabledDests[j], runID); ok {
+				any = true
+			}
+		}
+		return any, nil
 
 	default:
 		return false, fmt.Errorf("unknown schedule kind %q", sched.Kind)
@@ -259,20 +288,22 @@ func (s *Scheduler) enqueueBackup(ctx context.Context, sched models.BackupSchedu
 }
 
 // enqueueAccountBackup creates one backup_jobs row in status=queued
-// for the given user. The dispatcher tick later picks it up and calls
-// the agent. Returns true on successful insert, false on DB error.
-func (s *Scheduler) enqueueAccountBackup(ctx context.Context, sched models.BackupSchedule, user *models.User, runID string) bool {
-	logger := s.deps.Log.With("schedule_id", sched.ID, "user_id", user.ID, "run_id", runID)
+// for the given (user, destination) pair. Per ADR-0080 the destination
+// is a first-class field on backup_jobs.
+func (s *Scheduler) enqueueAccountBackup(ctx context.Context, sched models.BackupSchedule, user *models.User, dest *models.BackupDestination, runID string) bool {
+	logger := s.deps.Log.With("schedule_id", sched.ID, "user_id", user.ID, "destination_id", dest.ID, "run_id", runID)
 	schedID := sched.ID
 	rid := runID
+	dID := dest.ID
 	job := &models.BackupJob{
-		ID:         ids.NewULID(),
-		UserID:     user.ID,
-		ScheduleID: &schedID,
-		RunID:      &rid,
-		Kind:       models.BackupJobKindAccountBackup,
-		Status:     models.BackupJobStatusQueued,
-		CreatedAt:  time.Now().UTC(),
+		ID:            ids.NewULID(),
+		UserID:        user.ID,
+		DestinationID: &dID,
+		ScheduleID:    &schedID,
+		RunID:         &rid,
+		Kind:          models.BackupJobKindAccountBackup,
+		Status:        models.BackupJobStatusQueued,
+		CreatedAt:     time.Now().UTC(),
 	}
 	if err := s.deps.Jobs.Create(ctx, job); err != nil {
 		logger.Error("create backup_job failed", "err", err)
@@ -282,21 +313,21 @@ func (s *Scheduler) enqueueAccountBackup(ctx context.Context, sched models.Backu
 }
 
 // enqueueSystemBackup creates one backup_jobs row in status=queued
-// for a system backup. Used by both the dedicated system_backup
-// schedule kind and the include_system_backup opt-in on account
-// schedules.
-func (s *Scheduler) enqueueSystemBackup(ctx context.Context, sched models.BackupSchedule, runID string) bool {
-	logger := s.deps.Log.With("schedule_id", sched.ID, "kind", "system_backup", "run_id", runID)
+// for a system backup against the given destination.
+func (s *Scheduler) enqueueSystemBackup(ctx context.Context, sched models.BackupSchedule, dest *models.BackupDestination, runID string) bool {
+	logger := s.deps.Log.With("schedule_id", sched.ID, "kind", "system_backup", "destination_id", dest.ID, "run_id", runID)
 	schedID := sched.ID
 	rid := runID
+	dID := dest.ID
 	job := &models.BackupJob{
-		ID:         ids.NewULID(),
-		UserID:     "system",
-		ScheduleID: &schedID,
-		RunID:      &rid,
-		Kind:       models.BackupJobKindSystemBackup,
-		Status:     models.BackupJobStatusQueued,
-		CreatedAt:  time.Now().UTC(),
+		ID:            ids.NewULID(),
+		UserID:        "system",
+		DestinationID: &dID,
+		ScheduleID:    &schedID,
+		RunID:         &rid,
+		Kind:          models.BackupJobKindSystemBackup,
+		Status:        models.BackupJobStatusQueued,
+		CreatedAt:     time.Now().UTC(),
 	}
 	if err := s.deps.Jobs.Create(ctx, job); err != nil {
 		logger.Error("create system backup_job failed", "err", err)
@@ -329,6 +360,13 @@ func (s *Scheduler) dispatchAccount(ctx context.Context, j models.BackupJob) {
 		logger.Warn("dispatcher: user lookup failed; marking failed", "err", err)
 		return
 	}
+	dest, derr := s.loadDestination(ctx, j)
+	if derr != nil {
+		_ = s.deps.Jobs.MarkFinished(ctx, j.ID, models.BackupJobStatusFailed,
+			"", "", 0, 0, nil, nil, "destination lookup: "+derr.Error())
+		logger.Error("dispatcher: destination lookup failed", "err", derr)
+		return
+	}
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	dbs := userDatabases(callCtx, s.deps, user.ID, logger)
@@ -349,6 +387,9 @@ func (s *Scheduler) dispatchAccount(ctx context.Context, j models.BackupJob) {
 		"metadata":    meta,
 		"schedule_id": scheduleID,
 	}
+	for k, v := range destWireParams(dest) {
+		params[k] = v
+	}
 	if _, err := s.deps.Agent.Call(callCtx, "backup.create", params); err != nil {
 		if isAgentConflict(err) {
 			_ = s.deps.Jobs.MarkFinished(ctx, j.ID, models.BackupJobStatusCancelled,
@@ -365,6 +406,13 @@ func (s *Scheduler) dispatchAccount(ctx context.Context, j models.BackupJob) {
 
 func (s *Scheduler) dispatchSystem(ctx context.Context, j models.BackupJob) {
 	logger := s.deps.Log.With("job_id", j.ID, "kind", "system_backup")
+	dest, derr := s.loadDestination(ctx, j)
+	if derr != nil {
+		_ = s.deps.Jobs.MarkFinished(ctx, j.ID, models.BackupJobStatusFailed,
+			"", "", 0, 0, nil, nil, "destination lookup: "+derr.Error())
+		logger.Error("dispatcher: destination lookup failed", "err", derr)
+		return
+	}
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	scheduleID := ""
@@ -375,6 +423,9 @@ func (s *Scheduler) dispatchSystem(ctx context.Context, j models.BackupJob) {
 		"job_id":           j.ID,
 		"include_accounts": false,
 		"schedule_id":      scheduleID,
+	}
+	for k, v := range destWireParams(dest) {
+		params[k] = v
 	}
 	if _, err := s.deps.Agent.Call(callCtx, "system.backup", params); err != nil {
 		if isAgentConflict(err) {
@@ -542,4 +593,52 @@ func strDeref(p *string) string {
 		return ""
 	}
 	return *p
+}
+
+// loadDestination resolves the destination row a queued job points at.
+// Legacy rows (pre-ADR-0080) carry a NULL destination_id and are
+// rejected — the operator must re-create the schedule with explicit
+// destinations linked.
+func (s *Scheduler) loadDestination(ctx context.Context, j models.BackupJob) (*models.BackupDestination, error) {
+	if j.DestinationID == nil || *j.DestinationID == "" {
+		return nil, fmt.Errorf("legacy job without destination_id (pre-ADR-0080); re-create the schedule")
+	}
+	d, err := s.deps.Destinations.Get(ctx, *j.DestinationID)
+	if err != nil {
+		return nil, err
+	}
+	if d == nil {
+		return nil, fmt.Errorf("destination %s not found", *j.DestinationID)
+	}
+	if !d.Enabled {
+		return nil, fmt.Errorf("destination %s disabled", d.ID)
+	}
+	return d, nil
+}
+
+// destWireParams projects a destination into the JSON keys the agent
+// backup commands accept. Centralised so account+system dispatch stay
+// in lockstep.
+func destWireParams(d *models.BackupDestination) map[string]any {
+	out := map[string]any{
+		"repo_url":         d.URL,
+		"destination_kind": d.Kind,
+		"extra_options":    backupwrapperhelpers.ResticOptionsFor(d),
+	}
+	if d.CredentialsRef != nil {
+		out["credentials_ref"] = *d.CredentialsRef
+	}
+	if d.Kind == models.BackupDestinationKindSFTP {
+		if s := d.ExtraOptionsTyped().SFTP; s != nil {
+			out["sftp"] = map[string]any{
+				"host":     s.Host,
+				"user":     s.User,
+				"port":     s.Port,
+				"path":     s.Path,
+				"auth":     s.Auth,
+				"key_path": s.KeyPath,
+			}
+		}
+	}
+	return out
 }

@@ -23,6 +23,7 @@ import {
   Tag,
   Typography,
   message,
+  notification,
 } from "antd";
 import {
   CheckCircleOutlined,
@@ -195,12 +196,41 @@ function DestinationDrawer({ open, editing, onClose, onSaved }: DestinationDrawe
           body.credentials_env = credentialsEnv;
         }
       }
+      let savedID: string | undefined;
       if (editing) {
         await apiClient.patch(`/admin/backup-destinations/${editing.id}`, body);
-        message.success("Destination updated");
+        savedID = editing.id;
       } else {
-        await apiClient.post("/admin/backup-destinations", body);
-        message.success("Destination created");
+        const created = await apiClient.post<{ id?: string }>(
+          "/admin/backup-destinations",
+          body,
+        );
+        savedID = created.data?.id;
+      }
+      // Local destinations skip the SSH/restic round-trip — agent
+      // returns ok unconditionally. Remote backends get tested so the
+      // operator finds out about bad creds / unreachable hosts BEFORE
+      // the first scheduled backup runs.
+      if (savedID && values.kind !== "local") {
+        try {
+          const resp = await apiClient.post<{ status: string; detail?: string; stderr?: string }>(
+            `/admin/backup-destinations/${savedID}/test`,
+            {},
+          );
+          message.success(
+            resp.data.detail ? `Saved + tested OK — ${resp.data.detail}` : "Saved + tested OK",
+          );
+        } catch (testErr) {
+          notification.error({
+            message: editing ? "Saved, but test failed" : "Created, but test failed",
+            description: extractApiError(testErr, "Test failed"),
+            duration: 0,
+          });
+          onSaved();
+          return;
+        }
+      } else {
+        message.success(editing ? "Destination updated" : "Destination created");
       }
       onSaved();
     } catch (err) {

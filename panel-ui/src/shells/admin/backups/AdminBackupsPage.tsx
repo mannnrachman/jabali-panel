@@ -30,6 +30,7 @@ import { SchedulesTab } from "./SchedulesTab";
 interface BackupJob {
   id: string;
   user_id: string;
+  destination_id?: string;
   kind: string;
   status: string;
   systemd_unit: string;
@@ -161,6 +162,16 @@ export const AdminBackupsPage = () => {
     const u = (usersQuery.items ?? []).find((x) => x.id === id);
     return u?.username ?? id;
   };
+  const destQuery = useListQuery<{ id: string; name: string; kind: string }>({
+    resource: "admin/backup-destinations",
+    params: { pageSize: 100 },
+    enabled: activeTab === "backups",
+  });
+  const destNameById = (id?: string): string => {
+    if (!id) return "—";
+    const d = (destQuery.items ?? []).find((x) => x.id === id);
+    return d?.name ?? id.slice(0, 8) + "…";
+  };
 
   const reload = async () => {
     setLoading(true);
@@ -284,6 +295,11 @@ export const AdminBackupsPage = () => {
           title: "User",
           dataIndex: "user_id",
           render: (id: string) => usernameById(id),
+        },
+        {
+          title: "Destination",
+          dataIndex: "destination_id",
+          render: (id?: string) => destNameById(id),
         },
         {
           title: "Status",

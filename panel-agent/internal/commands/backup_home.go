@@ -30,10 +30,13 @@ const HomeBackupCeilingBytes uint64 = 50 * 1024 * 1024 * 1024
 const HomeExcludeFile = "/etc/jabali-panel/restic-excludes.list"
 
 type backupHomeParams struct {
-	JobID      string `json:"job_id"`
-	UserID     string `json:"user_id"`
-	Username   string `json:"username"`
-	ScheduleID string `json:"schedule_id,omitempty"`
+	JobID          string   `json:"job_id"`
+	UserID         string   `json:"user_id"`
+	Username       string   `json:"username"`
+	ScheduleID     string   `json:"schedule_id,omitempty"`
+	RepoURL        string   `json:"repo_url,omitempty"`
+	CredentialsRef string   `json:"credentials_ref,omitempty"`
+	ExtraOptions   []string `json:"extra_options,omitempty"`
 }
 
 type backupHomeResult struct {
@@ -77,7 +80,11 @@ func backupHomeHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 		return nil, bkInternal("restic missing", err)
 	}
 
-	c := backup.New(backup.DefaultConfig())
+	cfg, cerr := bkResticConfig(req.RepoURL, req.CredentialsRef, req.ExtraOptions)
+	if cerr != nil {
+		return nil, bkInternal("restic config", cerr)
+	}
+	c := backup.New(cfg)
 	tags := backup.AccountBackupTags(req.JobID, req.UserID, req.ScheduleID, backup.StageHome)
 
 	opts := backup.BackupOpts{

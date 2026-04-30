@@ -442,11 +442,24 @@ func (h *backupDestinationHandler) test(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 60_000_000_000)
 	defer cancel()
-	raw, err := h.agent.Call(ctx, "backup.dest.test", map[string]any{
+	payload := map[string]any{
 		"url":             d.URL,
 		"credentials_ref": credsRef,
 		"extra_options":   backupwrapperhelpers.ResticOptionsFor(d),
-	})
+	}
+	if d.Kind == models.BackupDestinationKindSFTP {
+		if s := d.ExtraOptionsTyped().SFTP; s != nil {
+			payload["sftp"] = map[string]any{
+				"host":     s.Host,
+				"user":     s.User,
+				"port":     s.Port,
+				"path":     s.Path,
+				"auth":     s.Auth,
+				"key_path": s.KeyPath,
+			}
+		}
+	}
+	raw, err := h.agent.Call(ctx, "backup.dest.test", payload)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "agent_call", "detail": err.Error()})
 		return

@@ -26,7 +26,6 @@ type BackupSchedulesConfig struct {
 	Destinations repository.BackupDestinationRepository
 	Users        repository.UserRepository
 	Jobs         repository.BackupJobRepository
-	CopyJobs     repository.BackupCopyJobRepository
 }
 
 func RegisterBackupScheduleRoutes(rg *gin.RouterGroup, cfg BackupSchedulesConfig) {
@@ -41,7 +40,6 @@ func RegisterBackupScheduleRoutes(rg *gin.RouterGroup, cfg BackupSchedulesConfig
 	admin.PATCH("/backup-schedules/:id", h.update)
 	admin.DELETE("/backup-schedules/:id", h.delete)
 	admin.POST("/backup-schedules/:id/run-now", h.runNow)
-	admin.GET("/backups/:job_id/copy-jobs", h.listCopyJobs)
 }
 
 type backupScheduleHandler struct {
@@ -373,18 +371,3 @@ func (h *backupScheduleHandler) runNow(c *gin.Context) {
 	})
 }
 
-// listCopyJobs returns the per-destination copy status for one
-// backup_jobs row. UI uses this for the per-row pills on the existing
-// admin Backups page.
-func (h *backupScheduleHandler) listCopyJobs(c *gin.Context) {
-	if h.cfg.CopyJobs == nil {
-		c.JSON(http.StatusOK, gin.H{"data": []any{}, "total": 0})
-		return
-	}
-	rows, err := h.cfg.CopyJobs.ListByBackupJob(c.Request.Context(), c.Param("job_id"))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_list"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"data": rows, "total": len(rows)})
-}

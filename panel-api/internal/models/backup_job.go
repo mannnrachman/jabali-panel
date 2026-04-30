@@ -42,6 +42,7 @@ const (
 type BackupJob struct {
 	ID              string          `gorm:"type:char(26);primaryKey"                                                  json:"id"`
 	UserID          string          `gorm:"type:char(26);not null"                                                    json:"user_id"`
+	DestinationID   *string         `gorm:"type:char(26)"                                                             json:"destination_id,omitempty"`
 	ScheduleID      *string         `gorm:"type:char(26)"                                                             json:"schedule_id,omitempty"`
 	RunID           *string         `gorm:"type:char(26)"                                                             json:"run_id,omitempty"`
 	Kind            string          `gorm:"type:enum('account_backup','account_restore','system_backup','system_restore');not null" json:"kind"`

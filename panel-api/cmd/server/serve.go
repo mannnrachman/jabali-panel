@@ -20,7 +20,6 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/app"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/db"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupcopyworker"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupfinalizer"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupscheduler"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api"
@@ -266,10 +265,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 		rec.WithUserEgressPolicies(deps.UserEgressPolicies)
 		// M30 (ADR-0075): backup-restore workflow rows.
 		deps.BackupJobs = repository.NewBackupJobRepository(sharedDB)
-		// M30.1 (ADR-0078): destinations + schedules + copy queue.
+		// M30.2 (ADR-0080): destinations + schedules. backup_copy_jobs
+		// removed — per-destination model writes directly to remote.
 		deps.BackupDestinations = repository.NewBackupDestinationRepository(sharedDB)
 		deps.BackupSchedules = repository.NewBackupScheduleRepository(sharedDB)
-		deps.BackupCopyJobs = repository.NewBackupCopyJobRepository(sharedDB)
 		deps.PhpMyAdminSSOTokens = phpMyAdminSSOTokenRepo
 		deps.PHPPools = phpPoolRepo
 		deps.PHPPoolIniOverrides = phpPoolIniOverrideRepo
@@ -525,13 +524,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 		go deps.Reconciler.Start(ctx)
 	}
 
-	// M30.1 (ADR-0078) backup scheduler + finalizer + copy worker.
-	// All three goroutines are no-ops without their respective repo
-	// deps; New(...) returns nil and we log + skip start.
+	// M30.2 (ADR-0080) backup scheduler + finalizer. Per-destination
+	// model — copy worker removed (no source repo, no mirror).
 	if sched := backupscheduler.New(backupscheduler.Deps{
 		Schedules:      deps.BackupSchedules,
 		Jobs:           deps.BackupJobs,
-		CopyJobs:       deps.BackupCopyJobs,
+		Destinations:   deps.BackupDestinations,
 		Users:          deps.Users,
 		Databases:      deps.Databases,
 		DatabaseUsers:  deps.DatabaseUsers,
@@ -548,24 +546,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 		log.Info("backup scheduler not started — required deps missing")
 	}
 	if fin := backupfinalizer.New(backupfinalizer.Deps{
-		Jobs:      deps.BackupJobs,
-		Schedules: deps.BackupSchedules,
-		CopyJobs:  deps.BackupCopyJobs,
-		Agent:     deps.Agent,
-		Log:       log,
+		Jobs:         deps.BackupJobs,
+		Schedules:    deps.BackupSchedules,
+		Destinations: deps.BackupDestinations,
+		Agent:        deps.Agent,
+		Log:          log,
 	}); fin != nil {
 		go fin.Start(ctx)
 	} else {
 		log.Info("backup finalizer not started — required deps missing")
-	}
-	if cw := backupcopyworker.New(backupcopyworker.Deps{
-		CopyJobs:     deps.BackupCopyJobs,
-		Destinations: deps.BackupDestinations,
-		Log:          log,
-	}); cw != nil {
-		go cw.Start(ctx)
-	} else {
-		log.Info("backup copy worker not started — required deps missing")
 	}
 
 	// M33.2 (ADR-0079): mail YARA scanner tick. Off by default; the tick

@@ -27,9 +27,12 @@ interface CreateBackupDrawerProps {
 interface FormValues {
   kind: Kind;
   user_id?: string;
+  destination_id?: string;
   databases?: string;
   mailboxes?: string;
 }
+
+type Destination = { id: string; name: string; kind: string; enabled: boolean };
 
 export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDrawerProps) => {
   const screens = Grid.useBreakpoint();
@@ -43,6 +46,11 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
     params: { pageSize: 200 },
     enabled: open && kind === "account_backup",
   });
+  const destQuery = useListQuery<Destination>({
+    resource: "admin/backup-destinations",
+    params: { pageSize: 100 },
+    enabled: open,
+  });
 
   useEffect(() => {
     if (!open) {
@@ -55,8 +63,15 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
   const handleSubmit = async (values: FormValues) => {
     setSubmitting(true);
     try {
+      if (!values.destination_id) {
+        message.error("Pick a destination");
+        return;
+      }
       if (values.kind === "system_backup") {
-        await apiClient.post(`/admin/system/backups`, { include_accounts: false });
+        await apiClient.post(`/admin/system/backups`, {
+          include_accounts: false,
+          destination_id: values.destination_id,
+        });
         message.success("System backup queued");
         onCreated();
         return;
@@ -66,6 +81,7 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
         return;
       }
       const payload = {
+        destination_id: values.destination_id,
         databases: values.databases
           ? values.databases.split(",").map((s) => s.trim()).filter(Boolean)
           : [],
@@ -114,6 +130,21 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
             <Radio.Button value="account_backup">Account</Radio.Button>
             <Radio.Button value="system_backup">System</Radio.Button>
           </Radio.Group>
+        </Form.Item>
+
+        <Form.Item
+          label="Destination"
+          name="destination_id"
+          rules={[{ required: true, message: "Pick a destination" }]}
+          extra="The backup writes directly to this destination — no local source repo."
+        >
+          <Select
+            placeholder="Pick a destination"
+            loading={destQuery.isLoading}
+            options={(destQuery.items ?? [])
+              .filter((d) => d.enabled)
+              .map((d) => ({ value: d.id, label: `${d.name} (${d.kind})` }))}
+          />
         </Form.Item>
 
         {kind === "account_backup" && (

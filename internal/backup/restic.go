@@ -29,7 +29,11 @@ type ResticConfig struct {
 	Repo         string
 	PasswordFile string
 	ExtraEnv     []string // KEY=VALUE; passed to exec.Cmd.Env in addition to os.Environ
-	Bin          string   // default "restic"; override for tests
+	// ExtraOptions are restic `-o key=value` flag bodies (without the
+	// `-o` prefix). Used for backend-specific knobs such as
+	// `sftp.command="..."`.
+	ExtraOptions []string
+	Bin          string // default "restic"; override for tests
 	// Runner intercepts every CLI invocation. Production uses
 	// realRunner (exec.CommandContext); tests inject a fake.
 	Runner Runner
@@ -93,10 +97,17 @@ func New(cfg ResticConfig) *Client {
 
 // baseArgs returns the universal flags every restic invocation carries.
 func (c *Client) baseArgs() []string {
-	return []string{
+	args := []string{
 		"--repo", c.cfg.Repo,
 		"--password-file", c.cfg.PasswordFile,
 	}
+	for _, opt := range c.cfg.ExtraOptions {
+		if opt == "" {
+			continue
+		}
+		args = append(args, "-o", opt)
+	}
+	return args
 }
 
 // run executes restic with the given subcommand args and stdin, prepending

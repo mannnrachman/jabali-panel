@@ -25,10 +25,13 @@ import (
 const restoreLockPath = "/var/lib/jabali-backups/.restore.lock"
 
 type backupRestoreParams struct {
-	JobID              string `json:"job_id"`
-	ManifestSnapshotID string `json:"manifest_snapshot_id"`
-	TargetUserID       string `json:"target_user_id"`
-	Overwrite          bool   `json:"overwrite"`
+	JobID              string   `json:"job_id"`
+	ManifestSnapshotID string   `json:"manifest_snapshot_id"`
+	TargetUserID       string   `json:"target_user_id"`
+	Overwrite          bool     `json:"overwrite"`
+	RepoURL            string   `json:"repo_url,omitempty"`
+	CredentialsRef     string   `json:"credentials_ref,omitempty"`
+	ExtraOptions       []string `json:"extra_options,omitempty"`
 }
 
 type backupRestoreResult struct {
@@ -74,7 +77,11 @@ func backupRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 	}
 	defer syscall.Flock(int(lf.Fd()), syscall.LOCK_UN)
 
-	c := backup.New(backup.DefaultConfig())
+	cfg, cerr := bkResticConfig(req.RepoURL, req.CredentialsRef, req.ExtraOptions)
+	if cerr != nil {
+		return nil, bkInternal("restic config", cerr)
+	}
+	c := backup.New(cfg)
 
 	// Step 1 — pull the manifest, validate schema, walk stages.
 	manifestBytes, err := c.Dump(ctx, req.ManifestSnapshotID, "manifest.json")

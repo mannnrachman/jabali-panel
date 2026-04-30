@@ -87,7 +87,6 @@ type Deps struct {
 	// worker / finalizer goroutines.
 	BackupDestinations  repository.BackupDestinationRepository
 	BackupSchedules     repository.BackupScheduleRepository
-	BackupCopyJobs      repository.BackupCopyJobRepository
 	MalwareQuarantine   repository.MalwareQuarantineRepository
 	MalwareEvents       repository.MalwareEventRepository
 	YARARules           repository.YARACustomRuleRepository
@@ -580,6 +579,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterBackupRoutes(v1, api.BackupHandlerConfig{
 				Agent:          deps.Agent,
 				Jobs:           deps.BackupJobs,
+				Destinations:   deps.BackupDestinations,
 				Users:          deps.Users,
 				Databases:      deps.Databases,
 				DatabaseUsers:  deps.DatabaseUsers,
@@ -628,7 +628,6 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Destinations: deps.BackupDestinations,
 				Users:        deps.Users,
 				Jobs:         deps.BackupJobs,
-				CopyJobs:     deps.BackupCopyJobs,
 			})
 		}
 		if deps.SSO != nil && deps.Databases != nil && deps.PhpMyAdminSSOTokens != nil {

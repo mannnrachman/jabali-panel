@@ -1,52 +1,49 @@
-// Package backupfinalizer — M30.1 in-process finalizer. Bridges the
-// gap between "agent finished writing the manifest snapshot" and
-// "panel-api marks the job succeeded + enqueues copy_jobs".
+// Package backupfinalizer — M30.2 in-process finalizer (ADR-0080).
+// Bridges the gap between "agent finished writing the manifest
+// snapshot" and "panel-api marks the job succeeded".
 //
-// Why a separate ticker instead of an agent → panel-api callback?
-// The agent runs the orchestrator inline (M30 v1; v2 will move it to
-// systemd-run + a real callback). Until then, panel-api polls the
-// agent's backup.status which inspects restic for the manifest
-// snapshot. Once a manifest is found, the job is considered done.
+// Per-destination model — copy fan-out is GONE. Each backup_jobs row
+// already targets one destination; once the manifest snapshot lands
+// on that destination's repo, the job is succeeded full-stop.
 //
 // Finalizer responsibilities:
 //   1. List backup_jobs.status='running'.
-//   2. For each, ask the agent if the manifest snapshot exists.
-//   3. If yes -> mark succeeded + enqueue copy_jobs (if schedule_id != NULL).
+//   2. For each, ask the agent if the manifest snapshot exists on
+//      the destination's repo.
+//   3. If yes -> mark succeeded.
 //   4. If running >4h -> mark failed (safety timeout).
 package backupfinalizer
 
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 const (
-	TickInterval     = 30 * time.Second
-	StallTimeout     = 4 * time.Hour
-	MaxJobsPerTick   = 25
+	TickInterval   = 30 * time.Second
+	StallTimeout   = 4 * time.Hour
+	MaxJobsPerTick = 25
 )
 
 type Deps struct {
-	Jobs      repository.BackupJobRepository
-	Schedules repository.BackupScheduleRepository
-	CopyJobs  repository.BackupCopyJobRepository
-	Agent     agent.AgentInterface
-	Log       *slog.Logger
+	Jobs         repository.BackupJobRepository
+	Schedules    repository.BackupScheduleRepository
+	Destinations repository.BackupDestinationRepository
+	Agent        agent.AgentInterface
+	Log          *slog.Logger
 }
 
 type Finalizer struct{ deps Deps }
 
 func New(deps Deps) *Finalizer {
-	if deps.Jobs == nil || deps.Schedules == nil || deps.CopyJobs == nil ||
+	if deps.Jobs == nil || deps.Destinations == nil ||
 		deps.Agent == nil || deps.Log == nil {
 		return nil
 	}
@@ -75,9 +72,9 @@ func (f *Finalizer) Start(ctx context.Context) {
 // from panel-agent would cross the boundary the wire is supposed to
 // hide.
 type agentStatus struct {
-	JobID         string `json:"job_id"`
+	JobID         string   `json:"job_id"`
 	Stages        []string `json:"stages"`
-	ManifestFound bool   `json:"manifest_found"`
+	ManifestFound bool     `json:"manifest_found"`
 	Snapshots     []struct {
 		ID   string   `json:"id"`
 		Tags []string `json:"tags"`
@@ -97,9 +94,6 @@ func (f *Finalizer) tickOnce(ctx context.Context) {
 		if j.Status != models.BackupJobStatusRunning {
 			continue
 		}
-		// Stall safety: a job that's been running >4h without a manifest
-		// is broken — mark failed so retention can prune the half-baked
-		// snapshots and the operator sees the error.
 		if j.StartedAt != nil && now.Sub(*j.StartedAt) > StallTimeout {
 			f.deps.Log.Warn("backup stalled past timeout; marking failed",
 				"job_id", j.ID, "started_at", j.StartedAt)
@@ -114,9 +108,23 @@ func (f *Finalizer) tickOnce(ctx context.Context) {
 func (f *Finalizer) checkOne(ctx context.Context, j models.BackupJob) {
 	logger := f.deps.Log.With("job_id", j.ID)
 
+	// backup.status now needs the destination repo URL/creds to query
+	// against. Legacy rows (NULL destination_id) fall back to the
+	// agent's local default.
+	statusParams := map[string]any{"job_id": j.ID}
+	if j.DestinationID != nil && *j.DestinationID != "" {
+		dest, err := f.deps.Destinations.Get(ctx, *j.DestinationID)
+		if err == nil && dest != nil {
+			statusParams["repo_url"] = dest.URL
+			statusParams["extra_options"] = backupwrapperhelpers.ResticOptionsFor(dest)
+			if dest.CredentialsRef != nil {
+				statusParams["credentials_ref"] = *dest.CredentialsRef
+			}
+		}
+	}
 	callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	raw, err := f.deps.Agent.Call(callCtx, "backup.status", map[string]string{"job_id": j.ID})
+	raw, err := f.deps.Agent.Call(callCtx, "backup.status", statusParams)
 	if err != nil {
 		logger.Debug("backup.status query failed; will retry", "err", err)
 		return
@@ -149,51 +157,4 @@ func (f *Finalizer) checkOne(ctx context.Context, j models.BackupJob) {
 		return
 	}
 	logger.Info("backup finalized", "snapshot_id", manifestSnapID)
-
-	if j.ScheduleID != nil && *j.ScheduleID != "" {
-		f.enqueueCopies(ctx, j)
-	}
 }
-
-// enqueueCopies fans out backup_copy_jobs rows for every destination
-// linked to the schedule that fired this backup. Skips local kind
-// (no-op copy). Idempotent: callers can re-enter without creating
-// duplicates if they pre-check, but the finalizer guarantees one entry
-// per check by transitioning the job to succeeded first.
-func (f *Finalizer) enqueueCopies(ctx context.Context, j models.BackupJob) {
-	logger := f.deps.Log.With("job_id", j.ID, "schedule_id", strDeref(j.ScheduleID))
-
-	dests, err := f.deps.Schedules.GetDestinations(ctx, *j.ScheduleID)
-	if err != nil {
-		logger.Error("load schedule destinations failed", "err", err)
-		return
-	}
-	for _, d := range dests {
-		if !d.Enabled || d.Kind == models.BackupDestinationKindLocal {
-			continue
-		}
-		cj := &models.BackupCopyJob{
-			ID:            ids.NewULID(),
-			BackupJobID:   j.ID,
-			DestinationID: d.ID,
-			Status:        models.BackupCopyJobStatusQueued,
-		}
-		if err := f.deps.CopyJobs.Create(ctx, cj); err != nil {
-			logger.Error("enqueue copy_job failed",
-				"destination_id", d.ID, "err", err)
-			continue
-		}
-		logger.Info("copy_job enqueued",
-			"copy_job_id", cj.ID, "destination", d.Name)
-	}
-}
-
-func strDeref(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return strings.TrimSpace(*p)
-}
-
-// fmtErr keeps lints quiet when error wrapping isn't needed inline.
-var _ = fmt.Sprintf

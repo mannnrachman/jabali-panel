@@ -352,10 +352,11 @@ function ScheduleDrawer({
         <Form.Item
           name="destination_ids"
           label="Destinations"
+          rules={[{ required: true, message: "Pick at least one destination" }]}
           extra={
             destinations.length === 0
               ? "Create at least one destination first."
-              : "Local repo always receives a copy. Pick remotes to mirror to."
+              : "Each destination receives its own independent backup (no source-then-mirror)."
           }
         >
           <Select

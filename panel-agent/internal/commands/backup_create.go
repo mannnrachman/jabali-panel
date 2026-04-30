@@ -63,11 +63,42 @@ type backupCreateParams struct {
 	// admin-create jobs. When set, snapshots receive a
 	// `schedule-id=<id>` tag so per-schedule retention can target them.
 	ScheduleID string `json:"schedule_id,omitempty"`
+	// RepoURL is the restic repo URL the backup writes to (per
+	// ADR-0080: each backup goes directly to one destination — local
+	// path, sftp:..., s3:..., etc.). Empty falls back to the legacy
+	// local repo at /var/lib/jabali-backups/repo for back-compat with
+	// pre-M30.2 callers.
+	RepoURL string `json:"repo_url,omitempty"`
+	// CredentialsRef is the absolute path to the 0600 root:root env
+	// file holding backend credentials (AWS_*, B2_*, SSHPASS, …).
+	// Loaded by the agent and merged into the restic process env.
+	CredentialsRef string `json:"credentials_ref,omitempty"`
+	// ExtraOptions are restic `-o key=value` flag bodies — typically
+	// `sftp.command="..."` for SFTP destinations with non-default
+	// auth/port/key.
+	ExtraOptions []string `json:"extra_options,omitempty"`
+	// DestinationKind is the BackupDestination.Kind ("local","sftp",…)
+	// — drives auto-mkdir for SFTP repos that don't yet exist on the
+	// remote host.
+	DestinationKind string `json:"destination_kind,omitempty"`
+	// SFTP carries the SFTPInputs needed for `ssh ... mkdir -p` when
+	// the target path is missing. Ignored for non-SFTP backends.
+	SFTP *backupSFTPInputs `json:"sftp,omitempty"`
 	// Metadata is the JSON-shaped panel-side state bundle produced
 	// by panel-api (database users, app installs, ssh keys, …) and
 	// persisted as a stage=metadata snapshot. Optional — empty bundle
 	// is allowed and just produces an empty manifest of stage entries.
 	Metadata *backup.AccountMetadata `json:"metadata,omitempty"`
+}
+
+// backupSFTPInputs mirrors panel-api models.SFTPOptions on the wire.
+type backupSFTPInputs struct {
+	Host    string `json:"host"`
+	User    string `json:"user"`
+	Port    int    `json:"port,omitempty"`
+	Path    string `json:"path"`
+	Auth    string `json:"auth"`
+	KeyPath string `json:"key_path,omitempty"`
 }
 
 type backupCreateResult struct {
@@ -126,9 +157,17 @@ func backupCreateHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 func runBackupOrchestrator(ctx context.Context, req backupCreateParams) error {
 	jl := backup.NewJobLogger(req.JobID)
 	defer jl.Close()
-	jl.Printf("account_backup start user_id=%s username=%s databases=%d mailboxes=%d",
-		req.UserID, req.Username, len(req.Databases), len(req.Mailboxes))
-	c := backup.New(backup.DefaultConfig())
+	jl.Printf("account_backup start user_id=%s username=%s databases=%d mailboxes=%d destination=%s",
+		req.UserID, req.Username, len(req.Databases), len(req.Mailboxes), req.RepoURL)
+	if err := bkEnsureRepoReady(ctx, req.RepoURL, req.CredentialsRef, req.DestinationKind, req.SFTP, req.ExtraOptions); err != nil {
+		jl.Printf("ensure_repo_failed=%v", err)
+		return fmt.Errorf("ensure repo: %w", err)
+	}
+	cfg, cerr := bkResticConfig(req.RepoURL, req.CredentialsRef, req.ExtraOptions)
+	if cerr != nil {
+		return fmt.Errorf("restic config: %w", cerr)
+	}
+	c := backup.New(cfg)
 	manifest := backup.AccountManifest{
 		SchemaVersion: backup.ManifestSchemaVersion,
 		Kind:          backup.KindAccountBackup,
@@ -205,7 +244,11 @@ func runBackupOrchestrator(ctx context.Context, req backupCreateParams) error {
 
 func runHomeStage(ctx context.Context, req backupCreateParams) backup.ManifestStage {
 	st := backup.ManifestStage{Name: backup.StageHome, Tag: "stage=home"}
-	body, _ := json.Marshal(backupHomeParams{JobID: req.JobID, UserID: req.UserID, Username: req.Username, ScheduleID: req.ScheduleID})
+	body, _ := json.Marshal(backupHomeParams{
+		JobID: req.JobID, UserID: req.UserID, Username: req.Username,
+		ScheduleID: req.ScheduleID, RepoURL: req.RepoURL,
+		CredentialsRef: req.CredentialsRef, ExtraOptions: req.ExtraOptions,
+	})
 	out, err := backupHomeHandler(ctx, body)
 	if err != nil {
 		st.Status = backup.StageStatusFailed
@@ -230,6 +273,8 @@ func runDatabaseStage(ctx context.Context, req backupCreateParams) []backup.Mani
 	body, _ := json.Marshal(backupDatabasesParams{
 		JobID: req.JobID, UserID: req.UserID, Username: req.Username,
 		Databases: req.Databases, ScheduleID: req.ScheduleID,
+		RepoURL: req.RepoURL, CredentialsRef: req.CredentialsRef,
+		ExtraOptions: req.ExtraOptions,
 	})
 	out, err := backupDatabasesHandler(ctx, body)
 	if err != nil {
@@ -276,7 +321,13 @@ func runMetadataStage(ctx context.Context, req backupCreateParams) backup.Manife
 		st.Warnings = []string{"metadata marshal: " + err.Error()}
 		return st
 	}
-	c := backup.New(backup.DefaultConfig())
+	cfg, cerr := bkResticConfig(req.RepoURL, req.CredentialsRef, req.ExtraOptions)
+	if cerr != nil {
+		st.Status = backup.StageStatusFailed
+		st.Warnings = []string{"restic config: " + cerr.Error()}
+		return st
+	}
+	c := backup.New(cfg)
 	tags := backup.AccountBackupTags(req.JobID, req.UserID, req.ScheduleID, backup.StageMeta)
 	summary, err := c.Backup(ctx, backup.BackupOpts{
 		Stdin:     strings.NewReader(string(body)),
@@ -300,6 +351,8 @@ func runMailStage(ctx context.Context, req backupCreateParams) backup.ManifestSt
 	body, _ := json.Marshal(backupMailboxesParams{
 		JobID: req.JobID, UserID: req.UserID, Username: req.Username,
 		Mailboxes: req.Mailboxes, ScheduleID: req.ScheduleID,
+		RepoURL: req.RepoURL, CredentialsRef: req.CredentialsRef,
+		ExtraOptions: req.ExtraOptions,
 	})
 	out, err := backupMailboxesHandler(ctx, body)
 	if err != nil {
@@ -331,7 +384,10 @@ func runMailStage(ctx context.Context, req backupCreateParams) backup.ManifestSt
 // present.
 func backupStatusHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	var req struct {
-		JobID string `json:"job_id"`
+		JobID          string   `json:"job_id"`
+		RepoURL        string   `json:"repo_url,omitempty"`
+		CredentialsRef string   `json:"credentials_ref,omitempty"`
+		ExtraOptions   []string `json:"extra_options,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, bkInvalidArg("malformed JSON body")
@@ -339,7 +395,11 @@ func backupStatusHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 	if !ulidRE.MatchString(req.JobID) {
 		return nil, bkInvalidArg("job_id must be a 26-char ULID")
 	}
-	c := backup.New(backup.DefaultConfig())
+	cfg, cerr := bkResticConfig(req.RepoURL, req.CredentialsRef, req.ExtraOptions)
+	if cerr != nil {
+		return nil, bkInternal("restic config", cerr)
+	}
+	c := backup.New(cfg)
 	snaps, err := c.Snapshots(ctx, []backup.Tag{backup.MakeTag(backup.TagKeyJobID, req.JobID)})
 	if err != nil {
 		return nil, bkInternal("restic snapshots", err)

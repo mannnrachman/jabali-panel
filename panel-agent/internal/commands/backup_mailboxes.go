@@ -21,11 +21,14 @@ import (
 )
 
 type backupMailboxesParams struct {
-	JobID      string   `json:"job_id"`
-	UserID     string   `json:"user_id"`
-	Username   string   `json:"username"`
-	Mailboxes  []string `json:"mailboxes"`
-	ScheduleID string   `json:"schedule_id,omitempty"`
+	JobID          string   `json:"job_id"`
+	UserID         string   `json:"user_id"`
+	Username       string   `json:"username"`
+	Mailboxes      []string `json:"mailboxes"`
+	ScheduleID     string   `json:"schedule_id,omitempty"`
+	RepoURL        string   `json:"repo_url,omitempty"`
+	CredentialsRef string   `json:"credentials_ref,omitempty"`
+	ExtraOptions   []string `json:"extra_options,omitempty"`
 }
 
 type backupMailboxesResult struct {
@@ -154,7 +157,11 @@ func backupMailboxesHandler(ctx context.Context, raw json.RawMessage) (any, erro
 		return nil, bkInternal("mail bodies tarball", err)
 	}
 
-	c := backup.New(backup.DefaultConfig())
+	cfg, cerr := bkResticConfig(req.RepoURL, req.CredentialsRef, req.ExtraOptions)
+	if cerr != nil {
+		return nil, bkInternal("restic config", cerr)
+	}
+	c := backup.New(cfg)
 	tags := backup.AccountBackupTags(req.JobID, req.UserID, req.ScheduleID, backup.StageMail)
 	for _, mb := range req.Mailboxes {
 		tags = append(tags, backup.Tag("mailbox="+mb))

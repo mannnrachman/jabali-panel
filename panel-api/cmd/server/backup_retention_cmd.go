@@ -1,9 +1,9 @@
 // `jabali backup retention apply` — fired by jabali-backup-retention.timer
-// daily at 04:30. Iterates every enabled backup_schedules row and runs
-// `restic forget --tag schedule-id=<id>` with that schedule's
-// keep_{daily,weekly,monthly} values, then a single `restic prune` at
-// the end so blob removal happens once per timer fire instead of N
-// times.
+// daily at 04:30. Per ADR-0080 each backup writes directly to ONE
+// destination, so retention has to walk every (schedule, destination)
+// pair and run `restic forget --tag schedule-id=<id>` against that
+// destination's repo. A single `restic prune` per destination is run
+// at the end so blob removal happens once per timer fire per repo.
 //
 // Manual (non-scheduled) backups carry no schedule-id tag and are
 // therefore NEVER auto-pruned. Operators who want them gone delete
@@ -21,12 +21,13 @@ import (
 
 	"github.com/spf13/cobra"
 
+	internalbackup "git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 const (
-	resticRepoDefault   = "/var/lib/jabali-backups/repo"
 	resticPasswordFile  = "/etc/jabali-panel/restic-repo.password"
 	resticForgetTimeout = 30 * time.Minute
 )
@@ -34,17 +35,16 @@ const (
 func newBackupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "backup",
-		Short: "Backup & restore subcommands (M30 — restic-backed; ADR-0075)",
+		Short: "Backup & restore subcommands (M30 — restic-backed; ADR-0075 / 0080)",
 	}
 	cmd.AddCommand(newBackupRetentionCmd())
-	cmd.AddCommand(newBackupCopyCmd())
 	return cmd
 }
 
 func newBackupRetentionCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "retention",
-		Short: "Manage restic retention (forget + prune)",
+		Short: "Manage restic retention (forget + prune per destination)",
 	}
 	cmd.AddCommand(newBackupRetentionApplyCmd())
 	return cmd
@@ -53,16 +53,16 @@ func newBackupRetentionCmd() *cobra.Command {
 func newBackupRetentionApplyCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "apply",
-		Short: "Run restic forget per schedule + a final prune",
-		Long: `For every enabled backup_schedules row with non-null keep_{daily,
-weekly,monthly}, run:
+		Short: "Run restic forget per (schedule, destination) + prune per destination",
+		Long: `For every (enabled schedule, enabled destination) pair where the
+schedule has at least one non-NULL keep_{daily,weekly,monthly}, run:
 
-    restic forget --tag schedule-id=<id> \
+    restic --repo <dest.url> forget --tag schedule-id=<sched.id> \
         --keep-daily=<N> --keep-weekly=<N> --keep-monthly=<N>
 
-then a single ` + "`restic prune`" + ` at the end. Schedules with all-NULL
-keep_* are skipped (the operator hasn't picked a policy yet). Manual
-backups (ScheduleID NULL) are never pruned.
+then a single ` + "`restic prune`" + ` per destination at the end. Schedules
+with all-NULL keep_* are skipped (operator hasn't picked a policy).
+Manual backups (ScheduleID NULL) are never pruned.
 
 Wired into systemd timer jabali-backup-retention.timer (daily 04:30)
 by install_backup_foundation in install.sh.`,
@@ -80,12 +80,15 @@ by install_backup_foundation in install.sh.`,
 			}
 
 			schedRepo := repository.NewBackupScheduleRepository(sharedDB)
+			destRepo := repository.NewBackupDestinationRepository(sharedDB)
 			scheds, err := schedRepo.List(ctx)
 			if err != nil {
 				return fmt.Errorf("list backup_schedules: %w", err)
 			}
 
-			anyForgotten := false
+			// Track which destinations had any forget run against them so
+			// we only invoke prune where it would have work to do.
+			pruneDests := map[string]*models.BackupDestination{}
 			for _, s := range scheds {
 				if !s.Enabled {
 					continue
@@ -95,45 +98,58 @@ by install_backup_foundation in install.sh.`,
 						"schedule %s: no retention policy, skipping\n", s.ID)
 					continue
 				}
-				if err := forgetForSchedule(ctx, cmd, s); err != nil {
-					// Don't abort — one bad schedule must not block the
-					// rest of the sweep.
+				dests, err := schedRepo.GetDestinations(ctx, s.ID)
+				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(),
-						"schedule %s forget failed: %v\n", s.ID, err)
+						"schedule %s: load destinations failed: %v\n", s.ID, err)
 					continue
 				}
-				anyForgotten = true
+				for i := range dests {
+					d := &dests[i]
+					if !d.Enabled {
+						continue
+					}
+					if err := forgetForSchedule(ctx, cmd, s, d); err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(),
+							"schedule %s dest %s forget failed: %v\n", s.ID, d.ID, err)
+						continue
+					}
+					pruneDests[d.ID] = d
+				}
 			}
 
-			if !anyForgotten {
+			if len(pruneDests) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(),
-					"no schedules with retention policy; nothing to forget or prune")
+					"no (schedule, destination) pairs with retention policy; nothing to forget or prune")
 				return nil
 			}
 
-			fmt.Fprintln(cmd.OutOrStdout(), "running: restic prune")
-			pruneCmd := exec.CommandContext(ctx, "restic",
-				"--repo", resticRepoDefault,
-				"--password-file", resticPasswordFile,
-				"prune",
-			)
-			pruneCmd.Stdout = cmd.OutOrStdout()
-			pruneCmd.Stderr = cmd.ErrOrStderr()
-			if err := pruneCmd.Run(); err != nil {
-				return fmt.Errorf("restic prune: %w", err)
+			// Resolve any remaining destinations that may have been
+			// stale-cached (defensive; pruneDests was populated above).
+			_ = destRepo
+			for _, d := range pruneDests {
+				if err := pruneOneDestination(ctx, cmd, d); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(),
+						"prune dest %s failed: %v\n", d.ID, err)
+				}
 			}
 			return nil
 		},
 	}
 }
 
-func forgetForSchedule(ctx context.Context, cmd *cobra.Command, s models.BackupSchedule) error {
+func forgetForSchedule(ctx context.Context, cmd *cobra.Command, s models.BackupSchedule, d *models.BackupDestination) error {
 	args := []string{
-		"--repo", resticRepoDefault,
+		"--repo", d.URL,
 		"--password-file", resticPasswordFile,
-		"forget",
-		"--tag", "schedule-id=" + s.ID,
 	}
+	for _, opt := range backupwrapperhelpers.ResticOptionsFor(d) {
+		if opt == "" {
+			continue
+		}
+		args = append(args, "-o", opt)
+	}
+	args = append(args, "forget", "--tag", "schedule-id="+s.ID)
 	if s.KeepDaily != nil {
 		args = append(args, "--keep-daily", strconv.Itoa(*s.KeepDaily))
 	}
@@ -144,13 +160,45 @@ func forgetForSchedule(ctx context.Context, cmd *cobra.Command, s models.BackupS
 		args = append(args, "--keep-monthly", strconv.Itoa(*s.KeepMonthly))
 	}
 	fmt.Fprintf(cmd.OutOrStdout(),
-		"schedule %s: restic forget --tag schedule-id=%s daily=%s weekly=%s monthly=%s\n",
-		s.ID, s.ID,
+		"schedule %s dest %s (%s): restic forget --tag schedule-id=%s daily=%s weekly=%s monthly=%s\n",
+		s.ID, d.ID, d.Name, s.ID,
 		intPtrStr(s.KeepDaily), intPtrStr(s.KeepWeekly), intPtrStr(s.KeepMonthly))
 	c := exec.CommandContext(ctx, "restic", args...)
+	c.Env = append(os.Environ(), destEnv(d)...)
 	c.Stdout = cmd.OutOrStdout()
 	c.Stderr = cmd.ErrOrStderr()
 	return c.Run()
+}
+
+func pruneOneDestination(ctx context.Context, cmd *cobra.Command, d *models.BackupDestination) error {
+	args := []string{
+		"--repo", d.URL,
+		"--password-file", resticPasswordFile,
+	}
+	for _, opt := range backupwrapperhelpers.ResticOptionsFor(d) {
+		if opt == "" {
+			continue
+		}
+		args = append(args, "-o", opt)
+	}
+	args = append(args, "prune")
+	fmt.Fprintf(cmd.OutOrStdout(), "running: restic prune (dest %s / %s)\n", d.ID, d.Name)
+	c := exec.CommandContext(ctx, "restic", args...)
+	c.Env = append(os.Environ(), destEnv(d)...)
+	c.Stdout = cmd.OutOrStdout()
+	c.Stderr = cmd.ErrOrStderr()
+	return c.Run()
+}
+
+func destEnv(d *models.BackupDestination) []string {
+	if d.CredentialsRef == nil || *d.CredentialsRef == "" {
+		return nil
+	}
+	env, err := internalbackup.LoadEnvFile(*d.CredentialsRef)
+	if err != nil {
+		return nil
+	}
+	return env
 }
 
 func intPtrStr(p *int) string {
@@ -174,5 +222,4 @@ func assertResticEnvironment() error {
 	return nil
 }
 
-// Silence import if errors becomes unused.
 var _ = errors.Is

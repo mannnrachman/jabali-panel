@@ -1,11 +1,14 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"regexp"
+	"strings"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
 )
 
 // M30 backup-side helpers. Shared across backup_home / backup_databases /
@@ -52,4 +55,76 @@ func bkResticBin() (string, error) {
 		return "", fmt.Errorf("restic binary missing: %w", err)
 	}
 	return bin, nil
+}
+
+// bkResticConfig builds a ResticConfig pointing at the destination
+// (post-M30.2 / ADR-0080). repoURL empty falls back to the legacy
+// local repo so unit tests + callers that don't supply a destination
+// keep working unchanged.
+func bkResticConfig(repoURL, credentialsRef string, extraOptions []string) (backup.ResticConfig, error) {
+	cfg := backup.DefaultConfig()
+	if repoURL != "" {
+		cfg.Repo = repoURL
+	}
+	if len(extraOptions) > 0 {
+		cfg.ExtraOptions = append([]string{}, extraOptions...)
+	}
+	if credentialsRef != "" {
+		env, err := backup.LoadEnvFile(credentialsRef)
+		if err != nil {
+			return cfg, fmt.Errorf("load creds %s: %w", credentialsRef, err)
+		}
+		cfg.ExtraEnv = env
+	}
+	return cfg, nil
+}
+
+// bkEnsureRepoReady probes the remote and runs mkdir -p (SFTP only) +
+// `restic init` if the repo doesn't exist yet. Idempotent — succeeds
+// on already-initialized repos. Local destinations get the parent dir
+// created if missing; failures bubble up.
+func bkEnsureRepoReady(ctx context.Context, repoURL, credentialsRef, destKind string, sftp *backupSFTPInputs, extraOptions []string) error {
+	if repoURL == "" {
+		return nil
+	}
+	var extraEnv []string
+	if credentialsRef != "" {
+		env, err := backup.LoadEnvFile(credentialsRef)
+		if err != nil {
+			return fmt.Errorf("load creds: %w", err)
+		}
+		extraEnv = env
+	}
+	_, snapStderr, snapErr := backup.SnapshotsRemote(ctx, nil, repoURL, backup.DefaultPasswordFile, extraEnv, extraOptions)
+	if snapErr == nil {
+		return nil
+	}
+	lower := strings.ToLower(strings.TrimSpace(string(snapStderr)))
+	if !strings.Contains(lower, "repository does not exist") &&
+		!strings.Contains(lower, "unable to open config file") {
+		// Not a missing-repo signal — surface up.
+		return fmt.Errorf("snapshots probe: %w (stderr: %s)", snapErr, lower)
+	}
+	if destKind == "sftp" && sftp != nil && sftp.Host != "" {
+		if _, err := backup.MkdirRemoteSFTP(ctx, backup.SFTPInputs{
+			Host:    sftp.Host,
+			User:    sftp.User,
+			Port:    sftp.Port,
+			Path:    sftp.Path,
+			Auth:    sftp.Auth,
+			KeyPath: sftp.KeyPath,
+		}, extraEnv); err != nil {
+			return fmt.Errorf("ssh mkdir: %w", err)
+		}
+	}
+	_, initStderr, initErr := backup.InitRemote(ctx, nil, repoURL, backup.DefaultPasswordFile, extraEnv, extraOptions)
+	if initErr != nil {
+		ls := strings.ToLower(strings.TrimSpace(string(initStderr)))
+		if strings.Contains(ls, "already initialized") ||
+			strings.Contains(ls, "config file already exists") {
+			return nil
+		}
+		return fmt.Errorf("restic init: %w (stderr: %s)", initErr, ls)
+	}
+	return nil
 }

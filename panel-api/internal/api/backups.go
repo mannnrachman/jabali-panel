@@ -18,6 +18,7 @@ import (
 
 	internalbackup "git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
@@ -31,6 +32,7 @@ import (
 type BackupHandlerConfig struct {
 	Agent           agent.AgentInterface
 	Jobs            repository.BackupJobRepository
+	Destinations    repository.BackupDestinationRepository
 	Users           repository.UserRepository
 	Databases       repository.DatabaseRepository
 	DatabaseUsers   repository.DatabaseUserRepository
@@ -112,18 +114,25 @@ func (h *backupHandler) listRunJobs(c *gin.Context) {
 }
 
 type systemBackupRequest struct {
-	IncludeAccounts bool `json:"include_accounts"`
+	IncludeAccounts bool   `json:"include_accounts"`
+	DestinationID   string `json:"destination_id,omitempty"`
 }
 
 func (h *backupHandler) systemCreate(c *gin.Context) {
 	var req systemBackupRequest
 	_ = c.ShouldBindJSON(&req)
+	dest, derr := h.resolveDest(c, req.DestinationID)
+	if derr != nil {
+		return
+	}
+	destID := dest.ID
 	job := &models.BackupJob{
-		ID:        ids.NewULID(),
-		UserID:    "system",
-		Kind:      models.BackupJobKindSystemBackup,
-		CreatedAt: time.Now().UTC(),
-		Status:    models.BackupJobStatusQueued,
+		ID:            ids.NewULID(),
+		UserID:        "system",
+		DestinationID: &destID,
+		Kind:          models.BackupJobKindSystemBackup,
+		CreatedAt:     time.Now().UTC(),
+		Status:        models.BackupJobStatusQueued,
 	}
 	if err := h.cfg.Jobs.Create(c.Request.Context(), job); err != nil {
 		h.cfg.logErr("create system backup", err)
@@ -136,6 +145,9 @@ func (h *backupHandler) systemCreate(c *gin.Context) {
 		params := map[string]any{
 			"job_id":           job.ID,
 			"include_accounts": req.IncludeAccounts,
+		}
+		for k, v := range destWireParams(dest) {
+			params[k] = v
 		}
 		if _, err := h.cfg.Agent.Call(ctx, "system.backup", params); err != nil {
 			_ = h.cfg.Jobs.MarkFinished(c.Request.Context(), job.ID, models.BackupJobStatusFailed,
@@ -185,9 +197,75 @@ func (h *backupHandler) systemCancel(c *gin.Context) {
 
 type backupHandler struct{ cfg BackupHandlerConfig }
 
+// resolveDest looks up the destination row (or auto-picks the only
+// enabled one when destID is empty + exactly one exists), writes a
+// 4xx + nil on miss, returns the row + nil on success.
+func (h *backupHandler) resolveDest(c *gin.Context, destID string) (*models.BackupDestination, error) {
+	if h.cfg.Destinations == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "destinations_repo_unavailable"})
+		return nil, errors.New("destinations repo unavailable")
+	}
+	if destID == "" {
+		// No destination supplied — fall back to the single enabled
+		// destination if exactly one exists, else 400.
+		all, err := h.cfg.Destinations.ListEnabled(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_list_destinations"})
+			return nil, err
+		}
+		if len(all) != 1 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  "destination_id_required",
+				"detail": "destination_id required when more than one destination exists",
+			})
+			return nil, errors.New("destination_id required")
+		}
+		return &all[0], nil
+	}
+	d, err := h.cfg.Destinations.Get(c.Request.Context(), destID)
+	if err != nil || d == nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "destination_not_found"})
+		return nil, errors.New("destination not found")
+	}
+	if !d.Enabled {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "destination_disabled"})
+		return nil, errors.New("destination disabled")
+	}
+	return d, nil
+}
+
+// destWireParams projects a destination into the JSON keys the agent
+// backup commands accept. Mirror of backupscheduler.destWireParams;
+// kept duplicated to avoid the api → backupscheduler import cycle.
+func destWireParams(d *models.BackupDestination) map[string]any {
+	out := map[string]any{
+		"repo_url":         d.URL,
+		"destination_kind": d.Kind,
+		"extra_options":    backupwrapperhelpers.ResticOptionsFor(d),
+	}
+	if d.CredentialsRef != nil {
+		out["credentials_ref"] = *d.CredentialsRef
+	}
+	if d.Kind == models.BackupDestinationKindSFTP {
+		if s := d.ExtraOptionsTyped().SFTP; s != nil {
+			out["sftp"] = map[string]any{
+				"host":     s.Host,
+				"user":     s.User,
+				"port":     s.Port,
+				"path":     s.Path,
+				"auth":     s.Auth,
+				"key_path": s.KeyPath,
+			}
+		}
+	}
+	return out
+}
+
 type createBackupRequest struct {
-	Databases []string `json:"databases,omitempty"`
-	Mailboxes []string `json:"mailboxes,omitempty"`
+	DestinationID string   `json:"destination_id,omitempty"`
+	Databases     []string `json:"databases,omitempty"`
+	Mailboxes     []string `json:"mailboxes,omitempty"`
 }
 
 func (h *backupHandler) createForUser(c *gin.Context) {
@@ -203,13 +281,19 @@ func (h *backupHandler) createForUser(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_json"})
 		return
 	}
+	dest, derr := h.resolveDest(c, req.DestinationID)
+	if derr != nil {
+		return
+	}
+	destID := dest.ID
 	job := &models.BackupJob{
-		ID:          ids.NewULID(),
-		UserID:      user.ID,
-		Kind:        models.BackupJobKindAccountBackup,
-		SystemdUnit: "",
-		CreatedAt:   time.Now().UTC(),
-		Status:      models.BackupJobStatusQueued,
+		ID:            ids.NewULID(),
+		UserID:        user.ID,
+		DestinationID: &destID,
+		Kind:          models.BackupJobKindAccountBackup,
+		SystemdUnit:   "",
+		CreatedAt:     time.Now().UTC(),
+		Status:        models.BackupJobStatusQueued,
 	}
 	if err := h.cfg.Jobs.Create(c.Request.Context(), job); err != nil {
 		h.cfg.logErr("create backup job", err, "user_id", user.ID)
@@ -239,6 +323,9 @@ func (h *backupHandler) createForUser(c *gin.Context) {
 			"databases": dbs,
 			"mailboxes": mbs,
 			"metadata":  h.cfg.buildAccountMetadata(c.Request.Context(), user),
+		}
+		for k, v := range destWireParams(dest) {
+			params[k] = v
 		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), backupCallTimeout)
 		defer cancel()

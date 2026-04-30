@@ -44,7 +44,10 @@ type backupMaterializeParams struct {
 	// handler always materializes ALL snapshots tagged job-id=<JobID>
 	// because the manifest snapshot alone holds only manifest.json
 	// (the real data lives in sibling stage=home/db/mail snapshots).
-	SnapshotID string `json:"snapshot_id,omitempty"`
+	SnapshotID     string   `json:"snapshot_id,omitempty"`
+	RepoURL        string   `json:"repo_url,omitempty"`
+	CredentialsRef string   `json:"credentials_ref,omitempty"`
+	ExtraOptions   []string `json:"extra_options,omitempty"`
 }
 
 type backupMaterializeResult struct {
@@ -89,7 +92,11 @@ func backupMaterializeHandler(ctx context.Context, raw json.RawMessage) (any, er
 		return nil, fmt.Errorf("mkdir target: %w", err)
 	}
 
-	c := backup.New(backup.DefaultConfig())
+	cfg, cerr := bkResticConfig(p.RepoURL, p.CredentialsRef, p.ExtraOptions)
+	if cerr != nil {
+		return nil, fmt.Errorf("restic config: %w", cerr)
+	}
+	c := backup.New(cfg)
 	snaps, err := c.Snapshots(ctx, []backup.Tag{backup.MakeTag(backup.TagKeyJobID, p.JobID)})
 	if err != nil {
 		return nil, fmt.Errorf("list job snapshots: %w", err)

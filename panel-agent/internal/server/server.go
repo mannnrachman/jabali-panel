@@ -259,6 +259,13 @@ func (s *Server) serveConn(parent context.Context, conn net.Conn) {
 	} else {
 		resp.Data = data
 	}
+	// Clear the socket deadline before writing the response. The earlier
+	// SetDeadline(dl) above is for read-side timeout enforcement; once
+	// the handler returns (success OR ctx.Done), the deadline may have
+	// already expired and a write would silently fail with i/o timeout
+	// — leaving the client hung on EOF. The connection closes right
+	// after this write anyway, so a far-future write deadline is safe.
+	_ = conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
 	s.writeResponse(conn, resp)
 	s.log.Debug("agent request handled", "id", req.ID, "command", req.Command, "ok", resp.Ok)
 }

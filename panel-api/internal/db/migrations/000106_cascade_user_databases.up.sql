@@ -10,10 +10,12 @@
 -- Note: only cleans panel metadata. Real MariaDB schemas + grants on the
 -- data plane stay until the operator runs jabali db drop or the agent
 -- reconciler GCs. Follow-up; this migration unblocks the UI.
+--
+-- `databases` is a MariaDB reserved word — must be backticked.
 
-ALTER TABLE databases DROP FOREIGN KEY fk_databases_user_id;
+ALTER TABLE `databases` DROP FOREIGN KEY fk_databases_user_id;
 
-ALTER TABLE databases ADD CONSTRAINT fk_databases_user_id
+ALTER TABLE `databases` ADD CONSTRAINT fk_databases_user_id
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
 
 ALTER TABLE database_users DROP FOREIGN KEY fk_database_users_user_id;

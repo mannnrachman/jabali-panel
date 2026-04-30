@@ -24,19 +24,21 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
 )
 
-// jobSlot tracks the single-active-job-per-(kind,user) invariant. The
-// orchestrator obtains a slot before starting, releases on finish.
+// jobSlot tracks the single-active-job-per-(kind, user, destination)
+// invariant. Per ADR-0080 each backup writes to one destination, and
+// different destinations for the same user can run concurrently —
+// they touch different repos so there's no restic lock contention.
 type jobSlot struct {
 	mu   sync.Mutex
-	open map[string]string // key="kind:user_id" → job_id
+	open map[string]string // key="kind:user_id:repo" → job_id
 }
 
 var defaultJobSlots = &jobSlot{open: map[string]string{}}
 
-func (s *jobSlot) acquire(kind, userID, jobID string) (existing string, ok bool) {
+func (s *jobSlot) acquire(kind, userID, repoURL, jobID string) (existing string, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := kind + ":" + userID
+	key := kind + ":" + userID + ":" + repoURL
 	if cur, occupied := s.open[key]; occupied {
 		return cur, false
 	}
@@ -44,10 +46,10 @@ func (s *jobSlot) acquire(kind, userID, jobID string) (existing string, ok bool)
 	return "", true
 }
 
-func (s *jobSlot) release(kind, userID string) {
+func (s *jobSlot) release(kind, userID, repoURL string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.open, kind+":"+userID)
+	delete(s.open, kind+":"+userID+":"+repoURL)
 }
 
 type backupCreateParams struct {
@@ -124,15 +126,15 @@ func backupCreateHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 		return nil, bkInvalidArg("username must match ^[a-z][a-z0-9_-]{0,31}$")
 	}
 
-	if existing, ok := defaultJobSlots.acquire("backup", req.UserID, req.JobID); !ok {
-		return nil, fmt.Errorf("backup already running for user_id=%s job=%s", req.UserID, existing)
+	if existing, ok := defaultJobSlots.acquire("backup", req.UserID, req.RepoURL, req.JobID); !ok {
+		return nil, fmt.Errorf("backup already running for user_id=%s repo=%s job=%s", req.UserID, req.RepoURL, existing)
 	}
 
 	// Inline orchestration for v1. Future split into a transient
 	// systemd unit happens once the panel-side observation surface
 	// (status endpoint + journal-tail websocket) is wired.
 	go func() {
-		defer defaultJobSlots.release("backup", req.UserID)
+		defer defaultJobSlots.release("backup", req.UserID, req.RepoURL)
 		ctxBg, cancel := context.WithTimeout(context.Background(), 90*time.Minute)
 		defer cancel()
 		if err := runBackupOrchestrator(ctxBg, req); err != nil {

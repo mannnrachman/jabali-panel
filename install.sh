@@ -309,7 +309,14 @@ _spin() {
     printf '\r\033[K\033[1;36m[%s]\033[0m %s (%ds)' \
       "${spinners[i++ % n]}" "$label" "$elapsed"
   done
-  wait "$pid"; local rc=$?
+  # set -e gotcha: `wait $pid; local rc=$?` are two statements. If wait
+  # returns non-zero (apt dpkg-lock contention, apt-get exit 100 from a
+  # post-firstboot unattended-upgrades run, etc.), set -e fires AFTER
+  # wait but BEFORE `local rc=$?`, so the failure-tail dump never runs
+  # and bash exits silently with no log entry. Capture rc inside the
+  # `||` clause where set -e is suppressed. (Memory: feedback_sigpipe_silent_exit.md)
+  local rc=0
+  wait "$pid" || rc=$?
   printf '\r\033[K'
 
   if [[ $rc -ne 0 ]]; then

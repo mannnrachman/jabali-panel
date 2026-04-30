@@ -249,7 +249,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.MalwareEvents = repository.NewMalwareEventRepository(sharedDB)
 		deps.MalwareSettings = repository.NewMalwareSettingsRepository(sharedDB)
 		deps.YARARules = repository.NewYARACustomRuleRepository(sharedDB)
-		deps.TetragonPolicies = repository.NewTetragonPolicyStateRepository(sharedDB)
 		// M33.2 (ADR-0079): mail YARA scanner state + DLQ.
 		deps.MailScanState = repository.NewMailScanStateRepository(sharedDB)
 		deps.MailScanFailures = repository.NewMailScanFailureRepository(sharedDB)

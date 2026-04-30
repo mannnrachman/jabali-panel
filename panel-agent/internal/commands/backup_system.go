@@ -162,8 +162,8 @@ func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) er
 		runSystemOSUsersStage(ctx, c, req.JobID, host, req.ScheduleID))
 
 	// data_state: jabali runtime data living outside the MariaDB dump
-	// (crowdsec decisions DB, redis AOF, tetragon event spool, ACME
-	// webroot). Distro-managed dirs (fstab, network, apt, sshd, sudoers,
+	// (crowdsec decisions DB, redis AOF, ACME webroot). Distro-managed
+	// dirs (fstab, network, apt, sshd, sudoers,
 	// cron, hostname) are intentionally NOT captured — restore target
 	// is a fresh OS the operator already configured; we only own the
 	// jabali plane.
@@ -368,7 +368,6 @@ func expandServiceConfigPaths() []string {
 		"/etc/stalwart",
 		"/etc/powerdns",
 		"/etc/jabali-bulwark",
-		"/etc/jabali-tetragon",
 	} {
 		if _, err := os.Stat(p); err == nil {
 			out = append(out, p)
@@ -408,15 +407,14 @@ func expandServiceConfigPaths() []string {
 // expandDataStatePaths returns runtime-data directories that aren't
 // part of the panel-plane MariaDB dump but still hold jabali state:
 // crowdsec decisions DB (jabali-installed bouncers + scenarios), redis
-// AOF (jabali notification queue), tetragon event spool (M33 malware
-// signals), ACME webroot. NOT included: /var/lib/clamav (~250 MB
-// signatures; freshclam re-fetches on restore), /var/log/* (ephemeral).
+// AOF (jabali notification queue), ACME webroot. NOT included:
+// /var/lib/clamav (~250 MB signatures; freshclam re-fetches on
+// restore), /var/log/* (ephemeral).
 func expandDataStatePaths() []string {
 	out := []string{}
 	for _, p := range []string{
 		"/var/lib/crowdsec",
 		"/var/lib/redis",
-		"/var/lib/jabali-tetragon",
 		"/var/lib/jabali-panel-acme",
 	} {
 		if _, err := os.Stat(p); err == nil {

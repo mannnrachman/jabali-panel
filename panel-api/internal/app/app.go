@@ -90,7 +90,6 @@ type Deps struct {
 	MalwareQuarantine   repository.MalwareQuarantineRepository
 	MalwareEvents       repository.MalwareEventRepository
 	YARARules           repository.YARACustomRuleRepository
-	TetragonPolicies    repository.TetragonPolicyStateRepository
 	MalwareSettings     repository.MalwareSettingsRepository
 	// M33.2 mail YARA scanner — async tick walks Stalwart mailboxes via
 	// JMAP, scans attachments with yr, quarantines hits. Off by default;
@@ -238,17 +237,16 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 	// RegisterNotificationsInternalRoutes pattern above.
 	if deps.MalwareQuarantine != nil && deps.MalwareEvents != nil &&
 		deps.MalwareSettings != nil && deps.YARARules != nil &&
-		deps.TetragonPolicies != nil && deps.Agent != nil {
+		deps.Agent != nil {
 		api.RegisterSecurityMalwareInternalRoutes(r.Group("/api/v1"), api.SecurityMalwareHandlerConfig{
-			Agent:            deps.Agent,
-			Quarantine:       deps.MalwareQuarantine,
-			Events:           deps.MalwareEvents,
-			Settings:         deps.MalwareSettings,
-			YARARules:        deps.YARARules,
-			TetragonPolicies: deps.TetragonPolicies,
-			Users:            deps.Users,
-			UserScans:        deps.MalwareUserScans,
-			Log:              deps.Log,
+			Agent:      deps.Agent,
+			Quarantine: deps.MalwareQuarantine,
+			Events:     deps.MalwareEvents,
+			Settings:   deps.MalwareSettings,
+			YARARules:  deps.YARARules,
+			Users:      deps.Users,
+			UserScans:  deps.MalwareUserScans,
+			Log:        deps.Log,
 		})
 	}
 
@@ -562,18 +560,16 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			// wired or RegisterSecurityMalwareRoutes is skipped (older test
 			// wiring without the M33 graph). Tab still renders empty state.
 			if deps.MalwareQuarantine != nil && deps.MalwareEvents != nil &&
-				deps.MalwareSettings != nil && deps.YARARules != nil &&
-				deps.TetragonPolicies != nil {
+				deps.MalwareSettings != nil && deps.YARARules != nil {
 				api.RegisterSecurityMalwareRoutes(v1, api.SecurityMalwareHandlerConfig{
-					Agent:            deps.Agent,
-					Quarantine:       deps.MalwareQuarantine,
-					Events:           deps.MalwareEvents,
-					Settings:         deps.MalwareSettings,
-					YARARules:        deps.YARARules,
-					TetragonPolicies: deps.TetragonPolicies,
-					Users:            deps.Users,
-					UserScans:        deps.MalwareUserScans,
-					Log:              deps.Log,
+					Agent:      deps.Agent,
+					Quarantine: deps.MalwareQuarantine,
+					Events:     deps.MalwareEvents,
+					Settings:   deps.MalwareSettings,
+					YARARules:  deps.YARARules,
+					Users:      deps.Users,
+					UserScans:  deps.MalwareUserScans,
+					Log:        deps.Log,
 				})
 			}
 		}

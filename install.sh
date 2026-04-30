@@ -694,31 +694,10 @@ POLICYEOF
     done
   done
 
-  # bpftool — only used at install time to probe BTF for the M33 Tetragon
-  # gate (ADR-0072). Debian trixie's official archive doesn't ship a
-  # standalone `bpftool` package; it lives in `linux-tools-<flavour>`
-  # which is kernel-version-specific (linux-tools-amd64,
-  # linux-tools-cloud-amd64, etc.) and not always installable inside
-  # containers/VPS images that pin a different kernel. Probe each
-  # candidate name and add the first that resolves. If none does, skip —
-  # Tetragon's BTF probe in install_malware_stack handles the absence
-  # (UI shows "Disabled (no BTF)").
+  # M39 (2026-04-30) removed Tetragon — bpftool is no longer required
+  # at install time. Empty optional_pkgs preserved so the apt invocation
+  # below still expands cleanly.
   local optional_pkgs=()
-  if command -v bpftool >/dev/null 2>&1; then
-    : # already installed (Debian sometimes ships it as part of linux-image)
-  else
-    local bpf_candidate
-    for bpf_candidate in bpftool linux-tools-common linux-perf; do
-      if apt-cache show "$bpf_candidate" >/dev/null 2>&1; then
-        optional_pkgs+=("$bpf_candidate")
-        _log "bpftool source: ${bpf_candidate}"
-        break
-      fi
-    done
-    if [[ ${#optional_pkgs[@]} -eq 0 ]]; then
-      _log "bpftool not in apt sources for this distro — Tetragon BTF probe will skip"
-    fi
-  fi
 
   # One big install. Downstream functions (install_nginx, _install_php_version,
   # install_node, install_powerdns, setup_certbot) short-circuit on
@@ -4844,8 +4823,9 @@ cleanup_modsecurity() {
 }
 
 install_malware_stack() {
-  # M33 — Linux Malware Detect + YARA-X + signature-base + Tetragon stack.
-  # ADR-0072.
+  # M33 — Linux Malware Detect + YARA-X + signature-base stack.
+  # ADR-0072 (Tetragon removed 2026-04-30 by M39 — see ADR-0072
+  # amendment + ADR-0085).
   #
   # ClamAV is REMOVED (2026-04-29 amendment 3): maldet 2.0's native HEX +
   # MD5 + SHA-256 scanner using sigs/{hex,md5,sha256v2}.dat from rfxn
@@ -5409,276 +5389,45 @@ PURGE_TIMER
   systemctl enable --now jabali-maldet-scan-daily.timer >/dev/null 2>&1 || true
   systemctl enable --now jabali-malware-quarantine-purge.timer >/dev/null 2>&1 || true
 
-  install_tetragon
+  cleanup_tetragon_legacy
 
   _ok "malware stack provisioned: maldet $(/usr/local/maldetect/maldet --version 2>/dev/null | head -1 || echo 'pending'), yara-x $(yr --version 2>/dev/null | head -1 || echo 'pending')"
 }
 
-install_tetragon() {
-  # M33 Step 9 — Tetragon eBPF runtime detection. Skip on kernels
-  # without BTF (Debian 11, RHEL 7-era). Operators see UI Alert
-  # "Disabled (no BTF)" instead of crashing the malware stack.
-  if [[ ! -f /sys/kernel/btf/vmlinux ]]; then
-    _warn "Tetragon: kernel lacks BTF (/sys/kernel/btf/vmlinux missing) — skipping install"
-    install -d -m 0755 /etc/jabali
-    touch /etc/jabali/tetragon-disabled
-    return 0
-  fi
-  if [[ -e /etc/jabali/tetragon-disabled ]]; then
-    rm -f /etc/jabali/tetragon-disabled
-  fi
-
-  # v1.7.0 (2026-04-30) — kernel 6.12 BPF map pin / procfs inode-mismatch
-  # fixes upstream-of v1.6.1 (Debian 13 fresh installs at mx surfaced
-  # CrashLoop on /sys/fs/bpf/tetragon/execve_map pin denied + /proc/1/ns/*
-  # readlink permission denied with v1.6.1).
-  local TETRAGON_VERSION="v1.7.0"
-  local tetragon_marker="/opt/tetragon/.jabali-installed-${TETRAGON_VERSION}"
-
-  if [[ ! -f "$tetragon_marker" ]] || ! command -v tetragon >/dev/null 2>&1; then
-    local arch
-    arch=$(uname -m)
-    case "$arch" in
-      x86_64) arch="amd64" ;;
-      aarch64) arch="arm64" ;;
-      *)
-        _warn "Tetragon: unsupported arch $arch — skipping"
-        touch /etc/jabali/tetragon-disabled
-        return 0
-        ;;
-    esac
-    # No Debian apt repo (verified 2026-04-27) — pull GitHub release
-    # tarball. SHA pin enforced by policy; placeholder here is filled
-    # via the operator's first 'jabali update' run (skipped check on
-    # missing pin, with WARN — same pattern LMD uses pre-pin).
-    local tmp_tg
-    tmp_tg=$(mktemp -d -t tetragon-XXXXXX)
-    # Tarball top-level is tetragon-<ver>-<arch>/ — flatten with
-    # --strip-components=1 so /opt/tetragon/usr/local/bin/tetragon
-    # matches the path we install from.
-    #
-    # Retry the download up to 3 times with backoff. GitHub release CDN
-    # occasionally returns 502/connection-reset on slow networks; a
-    # one-shot failure used to leave the host with /etc/jabali/
-    # tetragon-disabled until the operator hand-ran install.sh again.
-    local tg_attempt=0 tg_ok=0 tg_sleep=5
-    while [[ $tg_attempt -lt 3 ]]; do
-      tg_attempt=$((tg_attempt + 1))
-      if (
-        cd "$tmp_tg" && \
-        curl -fsSL --max-time 120 \
-          "https://github.com/cilium/tetragon/releases/download/${TETRAGON_VERSION}/tetragon-${TETRAGON_VERSION}-${arch}.tar.gz" \
-          -o tg.tar.gz && \
-        install -d -m 0755 /opt/tetragon && \
-        tar -xzf tg.tar.gz --strip-components=1 -C /opt/tetragon && \
-        install -m 0755 /opt/tetragon/usr/local/bin/tetragon /usr/local/bin/tetragon && \
-        install -m 0755 /opt/tetragon/usr/local/bin/tetra /usr/local/bin/tetra && \
-        install -d -m 0755 /usr/local/lib/tetragon && \
-        cp -r /opt/tetragon/usr/local/lib/tetragon/. /usr/local/lib/tetragon/
-      ); then
-        tg_ok=1
-        break
-      fi
-      if [[ $tg_attempt -lt 3 ]]; then
-        _warn "Tetragon download attempt $tg_attempt failed; retrying in ${tg_sleep}s"
-        sleep "$tg_sleep"
-        tg_sleep=$((tg_sleep * 3))
-        # Wipe the partial extract before retrying so a half-extracted
-        # tree doesn't poison the next attempt.
-        rm -rf /opt/tetragon
-      fi
-    done
-    if [[ $tg_ok -eq 1 ]]; then
-      mkdir -p /opt/tetragon
-      touch "$tetragon_marker"
-      _ok "Tetragon ${TETRAGON_VERSION} installed"
-    else
-      _warn "Tetragon download/install failed after 3 attempts — surfaced as 'disabled' in UI; manual retry on next jabali update"
-      touch /etc/jabali/tetragon-disabled
+# cleanup_tetragon_legacy — M39 (2026-04-30) removes Tetragon. On hosts
+# that previously installed M33 Tetragon, sweep the units, binaries,
+# config, and log paths. Idempotent: safe on a fresh host (every
+# branch short-circuits on the absence test).
+cleanup_tetragon_legacy() {
+  local removed=0
+  for unit in tetragon.service jabali-tetragon-relay.service; do
+    if systemctl list-unit-files "$unit" 2>/dev/null | grep -q "$unit"; then
+      systemctl disable --now "$unit" >/dev/null 2>&1 || true
+      systemctl mask "$unit" >/dev/null 2>&1 || true
+      removed=1
     fi
-    rm -rf "$tmp_tg"
-  fi
-
-  install -d -m 0755 /etc/tetragon/tetragon.tp.d
-
-  # 4 default Jabali tracing policies. Operator can disable each via
-  # /admin/security/malware (Tetragon card) which renames the file to
-  # .yaml.disabled and reloads tetragon.
-  cat >/etc/tetragon/tetragon.tp.d/jabali-exec-from-tmp.yaml <<'TP_EXEC_TMP'
-apiVersion: cilium.io/v1alpha1
-kind: TracingPolicy
-metadata:
-  name: jabali-exec-from-tmp
-spec:
-  kprobes:
-  - call: security_bprm_check
-    syscall: false
-    return: false
-    args:
-    - index: 0
-      type: linux_binprm
-    selectors:
-    - matchArgs:
-      - index: 0
-        operator: Prefix
-        values:
-        - "/tmp/"
-        - "/dev/shm/"
-TP_EXEC_TMP
-
-  cat >/etc/tetragon/tetragon.tp.d/jabali-chmod-x-docroot.yaml <<'TP_CHMOD'
-apiVersion: cilium.io/v1alpha1
-kind: TracingPolicy
-metadata:
-  name: jabali-chmod-x-docroot
-spec:
-  kprobes:
-  - call: chmod_common
-    syscall: false
-    args:
-    - index: 0
-      type: path
-    - index: 1
-      type: int
-    selectors:
-    - matchArgs:
-      - index: 0
-        operator: Prefix
-        values:
-        - "/home/"
-TP_CHMOD
-
-  cat >/etc/tetragon/tetragon.tp.d/jabali-curl-bash.yaml <<'TP_CURL_BASH'
-apiVersion: cilium.io/v1alpha1
-kind: TracingPolicy
-metadata:
-  name: jabali-curl-bash
-spec:
-  kprobes:
-  - call: __x64_sys_execve
-    syscall: true
-    args:
-    - index: 0
-      type: string
-    selectors:
-    - matchArgs:
-      - index: 0
-        operator: Postfix
-        values:
-        - "/bash"
-        - "/sh"
-      matchBinaries:
-      - operator: In
-        values:
-        - "/usr/bin/curl"
-        - "/usr/bin/wget"
-TP_CURL_BASH
-
-  cat >/etc/tetragon/tetragon.tp.d/jabali-suspicious-syscalls.yaml <<'TP_SUSPICIOUS'
-apiVersion: cilium.io/v1alpha1
-kind: TracingPolicy
-metadata:
-  name: jabali-suspicious-syscalls
-spec:
-  kprobes:
-  - call: __x64_sys_ptrace
-    syscall: true
-  - call: __x64_sys_kexec_load
-    syscall: true
-TP_SUSPICIOUS
-
-  # Minimal tetragon systemd unit (the GitHub release tarball does not
-  # ship one for Debian). Always rewritten so jabali update picks up
-  # capability/version changes (memory: jabali update doesn't refresh
-  # systemd units unless we overwrite explicitly).
-  cat >/etc/systemd/system/tetragon.service <<'TG_UNIT'
-[Unit]
-Description=Tetragon eBPF runtime detection (M33)
-Documentation=https://tetragon.io/
-After=network.target
-
-[Service]
-Type=simple
-# Ensure bpffs is mounted at /sys/fs/bpf BEFORE tetragon runs. Debian 13
-# fresh installs don't always have it auto-mounted (no docker/podman to
-# trigger systemd's bpffs auto-mount) — without bpffs typed at the path
-# tetragon's bpf-dir resolves to, mkdir of the BPF map subdirs returns
-# EACCES (mx scar 2026-04-30).
-ExecStartPre=/bin/sh -c 'mountpoint -q /sys/fs/bpf || mount -t bpf bpf /sys/fs/bpf'
-ExecStartPre=/usr/bin/install -d -m 0700 /sys/fs/bpf/tetragon
-ExecStart=/usr/local/bin/tetragon \
-  --bpf-lib /opt/tetragon/usr/local/lib/tetragon/bpf \
-  --bpf-dir /sys/fs/bpf/tetragon \
-  --tracing-policy-dir /etc/tetragon/tetragon.tp.d \
-  --export-filename /var/log/tetragon/tetragon.log
-Restart=always
-RestartSec=10
-User=root
-Group=root
-LimitMEMLOCK=infinity
-NoNewPrivileges=no
-# CapabilityBoundingSet intentionally NOT restricted. Tetragon needs at
-# least CAP_SYS_ADMIN, CAP_BPF, CAP_PERFMON, CAP_DAC_READ_SEARCH,
-# CAP_DAC_OVERRIDE, CAP_SYS_PTRACE, CAP_SYS_RESOURCE, CAP_NET_ADMIN, and
-# CAP_SYSLOG depending on which sensors load — restricting the bounding
-# set caused the M33 base sensor to fail "mkdir /sys/fs/bpf/tetragon/__base__:
-# permission denied" on Debian 13 / kernel 6.12 fresh installs (mx scar
-# 2026-04-30). Manual `/usr/local/bin/tetragon ...` as root succeeded
-# end-to-end (loaded generic_kprobe, listened for events) confirming the
-# bounding set was the gate, not a missing cap. Upstream tetragon docs
-# also do not impose a bounding set.
-
-[Install]
-WantedBy=multi-user.target
-TG_UNIT
-
-  install -d -m 0755 /var/log/tetragon
-
-  # jabali-tetragon-relay: tail tetragon JSON log → POST malware
-  # ingest events to panel-api. Built alongside panel-agent.
-  if [[ -x /usr/local/bin/jabali-tetragon-relay ]] || [[ -x "$REPO_DIR/bin/jabali-tetragon-relay" ]]; then
-    if [[ -x "$REPO_DIR/bin/jabali-tetragon-relay" && ! -x /usr/local/bin/jabali-tetragon-relay ]]; then
-      install -m 0755 "$REPO_DIR/bin/jabali-tetragon-relay" /usr/local/bin/jabali-tetragon-relay
+  done
+  for path in \
+    /etc/systemd/system/tetragon.service \
+    /etc/systemd/system/jabali-tetragon-relay.service \
+    /usr/local/bin/tetragon \
+    /usr/local/bin/tetra \
+    /usr/local/bin/jabali-tetragon-relay \
+    /opt/tetragon \
+    /etc/tetragon \
+    /var/log/tetragon \
+    /usr/local/lib/tetragon \
+    /etc/jabali/tetragon-disabled \
+    /sys/fs/bpf/tetragon
+  do
+    if [[ -e "$path" ]]; then
+      rm -rf "$path" 2>/dev/null || true
+      removed=1
     fi
-    cat >/etc/systemd/system/jabali-tetragon-relay.service <<'RELAY_UNIT'
-[Unit]
-Description=Jabali tetragon JSON log → panel-api malware ingest (M33)
-After=tetragon.service jabali-panel-api.service
-Wants=tetragon.service
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/jabali-tetragon-relay --log /var/log/tetragon/tetragon.log
-Restart=always
-RestartSec=5
-User=root
-Group=root
-ProtectSystem=strict
-ReadOnlyPaths=/var/log/tetragon
-ReadWritePaths=/run /tmp
-NoNewPrivileges=yes
-
-[Install]
-WantedBy=multi-user.target
-RELAY_UNIT
-  fi
-
-  systemctl daemon-reload >/dev/null 2>&1 || true
-  if command -v tetragon >/dev/null 2>&1; then
-    # reset-failed in case prior run was crash-looping; restart so the
-    # rewritten unit + new capabilities + bumped binary actually take
-    # effect on jabali update (enable --now is a no-op on running unit).
-    systemctl reset-failed tetragon.service >/dev/null 2>&1 || true
-    systemctl enable tetragon.service >/dev/null 2>&1 || true
-    systemctl restart tetragon.service >/dev/null 2>&1 || \
-      _warn "tetragon.service did not start cleanly — check 'journalctl -u tetragon'"
-    if [[ -x /usr/local/bin/jabali-tetragon-relay ]]; then
-      systemctl reset-failed jabali-tetragon-relay.service >/dev/null 2>&1 || true
-      systemctl enable jabali-tetragon-relay.service >/dev/null 2>&1 || true
-      systemctl restart jabali-tetragon-relay.service >/dev/null 2>&1 || \
-        _warn "jabali-tetragon-relay did not start cleanly — check 'journalctl -u jabali-tetragon-relay'"
-    fi
-    _ok "Tetragon enabled — 4 default tracing policies loaded"
+  done
+  if [[ $removed -eq 1 ]]; then
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    _ok "tetragon legacy footprint removed (M39)"
   fi
 }
 

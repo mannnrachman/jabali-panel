@@ -3274,29 +3274,39 @@ install_disaster_restore() {
     return 1
   fi
 
+  # Restart services so the now-restored DB + /etc/jabali-panel
+  # take effect. The CLI defer also restarts panel; this catches
+  # the agent + nginx + stalwart that the apply phase touched.
+  systemctl restart "$AGENT_SERVICE_NAME" "$SERVICE_NAME" 2>/dev/null || true
+
   cat <<EOF
 
 ╔══════════════════════════════════════════════════════════════╗
-║                  DISASTER RESTORE STAGED                     ║
+║                DISASTER RESTORE COMPLETE                     ║
 ╠══════════════════════════════════════════════════════════════╣
 ║                                                              ║
-║  Stages restored to:                                         ║
+║  panel_db loaded into MariaDB.                               ║
+║  /etc/jabali-panel synced from backup.                       ║
+║  /etc/letsencrypt synced from backup.                        ║
+║                                                              ║
+║  Stages staged at:                                           ║
 ║    /var/lib/jabali-backups/restore-staging/                  ║
 ║                                                              ║
-║  NEXT STEPS (manual — v1):                                   ║
-║    1. Apply panel_db SQL:                                    ║
-║       cat <staging>/panel_db/*.sql | mariadb                 ║
-║    2. Sync /etc/jabali-panel from staging.                   ║
-║    3. Restart services:                                      ║
-║       systemctl restart $AGENT_SERVICE_NAME $SERVICE_NAME    ║
+║  REVIEW STAGED-BUT-NOT-APPLIED stages (operator judgement):  ║
+║    • mail_state    — Stalwart RocksDB; stop+rsync+start by   ║
+║                      hand if Stalwart was on this host       ║
+║    • service_config — nginx/php pool overrides; install.sh   ║
+║                       has already written canonical configs ║
+║    • security      — UFW/CrowdSec/ModSec rules               ║
+║    • os_users      — /etc/passwd+shadow filtered backup      ║
+║    • data_state    — per-user account_full payloads          ║
 ║                                                              ║
-║  See plans/m30-backup-restore-runbook.md for the full        ║
-║  recovery checklist.                                         ║
+║  See plans/m30-backup-restore-runbook.md §"Disaster recovery"║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
 
 EOF
-  _ok "disaster restore framework done — apply panel_db + restart per banner above"
+  _ok "disaster restore complete — check journalctl -u $SERVICE_NAME for boot health"
 }
 
 seed_admin_env() {

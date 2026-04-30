@@ -39,34 +39,109 @@ Kratos session (cross-user attempts return 404, not 403, per plan §9).
 5. The Tab card prints the exact command pre-filled with the most
    recent successful snapshot ID.
 
-## 4. Bare-metal recovery (two-VM)
+## 4. Disaster recovery (bare-metal, ADR-0080)
 
-Source: VM-A (production). Destination: VM-B (clean Debian 13).
+Source: any reachable restic repo (SFTP, S3, B2, Azure, GCS, REST,
+local). Destination: a clean Debian 13 / Ubuntu 24.04 VPS.
+
+### One-shot install + restore
 
 ```bash
-# On VM-B
-bash <(curl -fsSL https://example.com/install.sh)
+# On the recovery host (root shell)
+bash <(curl -fsSL https://git.linux-hosting.co.il/shukivaknin/jabali2/raw/branch/main/install.sh) \
+    --restore-from=sftp:user@backup-host:/path/to/repo \
+    --restore-credentials=/root/dest.env \
+    --restore-password=/root/restic-repo.password \
+    --restore-snapshot=latest
+```
 
-# Copy the password file from offline storage
-install -m 0640 -o root -g jabali \
-        ~/restic-repo.password.backup \
-        /etc/jabali-panel/restic-repo.password
+The installer:
 
-# Point at the source repo (rsync, S3, sftp, etc.) — assumes you've
-# replicated /var/lib/jabali-backups/repo somewhere accessible from
-# VM-B. M30.1 will let `--remote-url=s3://…` work directly.
-rsync -avz vmA:/var/lib/jabali-backups/repo/ /var/lib/jabali-backups/repo/
+1. Lays the base packages, panel binaries, and systemd units.
+2. Installs the operator-supplied restic password +
+   destination-credentials env file at the canonical paths.
+3. Skips the bootstrap-admin seed (the restored panel_db brings the
+   real admin row).
+4. Calls `jabali system restore --remote-url=… --snapshot=latest
+   --include-accounts --apply --force`.
+5. Apply phase runs inside `panel-agent` and:
+   - Pipes each `panel_db` snapshot's SQL back into MariaDB via
+     unix-socket auth.
+   - Rsyncs the staged `panel_config` tree onto `/etc/jabali-panel`
+     (excluding `restic-repo.password` so the operator-supplied file
+     wins).
+   - Rsyncs the staged `tls` tree onto `/etc/letsencrypt`.
+6. Restarts `jabali-agent.service` + `jabali-panel.service`.
 
-# Run the restore. The CLI stops services around the run.
+### Inputs the operator must keep offline
+
+- **restic password file.** Without it the repo is opaque. Store
+  alongside (but not inside) the backup. Pass via `--restore-password=
+  <path>` or `JABALI_RESTORE_PASSWORD=<value>` env.
+- **destination credentials env file** (SFTP only when password
+  auth: `SSHPASS=<pw>`; S3/B2/Azure/GCS: backend env vars). Pass via
+  `--restore-credentials=<path>`. Format: `KEY=VALUE` per line, 0600
+  root:root.
+- **`--restore-from` URL.** Same syntax as `restic --repo`:
+  `sftp:user@host:/path`, `s3:s3.amazonaws.com/bucket`, `b2:bucket`,
+  `/var/lib/jabali-backups/repo`, etc.
+
+### Auto-applied stages
+
+| Stage          | Action                                                        |
+|----------------|---------------------------------------------------------------|
+| `panel_db`     | Pipe each `<db>.sql` into MariaDB via unix socket             |
+| `panel_config` | Rsync onto `/etc/jabali-panel` (excludes `restic-repo.password`) |
+| `tls`          | Rsync onto `/etc/letsencrypt`                                 |
+
+### Staged-but-not-auto-applied (operator judgement)
+
+| Stage            | Why deferred                                                                                  |
+|------------------|----------------------------------------------------------------------------------------------|
+| `mail_state`     | Stalwart RocksDB — must stop service, rsync `/var/lib/stalwart`, start service. Do by hand.  |
+| `service_config` | install.sh has already written canonical nginx/php configs; auto-overwrite would clobber.    |
+| `security`       | UFW + CrowdSec + ModSec rules; review diff before applying.                                  |
+| `os_users`       | Filtered `/etc/passwd` + `/etc/shadow`; needs careful merge with the new host's accounts.     |
+| `data_state`     | Per-user `account_full` payloads — separate per-user restore workflow.                       |
+
+Each shows up under `/var/lib/jabali-backups/restore-staging/<job-id>/<stage>/`.
+
+### Inspect-only (don't apply)
+
+```bash
 jabali system restore \
-    --snapshot=<system_manifest snapshot ID> \
-    --include-accounts \
+    --remote-url=sftp:user@backup-host:/path/to/repo \
+    --credentials-ref=/root/dest.env \
+    --snapshot=latest \
+    --no-apply \
     --force
+```
 
-# Verify
+Stages files only. Operator inspects, then either re-runs with
+`--apply` or applies by hand.
+
+### Verify
+
+```bash
 systemctl is-active jabali-panel jabali-agent
 curl -k https://localhost/api/v1/health
+journalctl -u jabali-panel -n 100 --no-pager
 ```
+
+### Restore from local repo (single-VM exercise)
+
+For drill / dry-run on the same host where the backup was taken:
+
+```bash
+jabali system restore \
+    --remote-url=/var/lib/jabali-backups/repo \
+    --snapshot=latest \
+    --no-apply \
+    --force
+```
+
+Skip `--apply` so the live host's panel_db isn't clobbered. Inspect
+the staged directory, then apply manually if everything looks sane.
 
 ## 5. Retention
 

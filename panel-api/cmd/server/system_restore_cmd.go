@@ -40,6 +40,7 @@ func newSystemRestoreCmd() *cobra.Command {
 		passwordFile string
 		snapshot     string
 		includeAccts bool
+		apply        bool
 		force        bool
 	)
 	cmd := &cobra.Command{
@@ -88,6 +89,7 @@ the running panel.`,
 				"repo_url":             remoteURL,
 				"credentials_ref":      credsRef,
 				"extra_options":        extraOpts,
+				"apply":                apply,
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "→ agent system.restore job=%s snapshot=%s repo=%s\n",
 				jobID, snapshot, remoteURL)
@@ -111,6 +113,7 @@ the running panel.`,
 	cmd.Flags().StringVar(&passwordFile, "password-file", "", "restic password file (default: /etc/jabali-panel/restic-repo.password)")
 	cmd.Flags().StringVar(&snapshot, "snapshot", "latest", "system_manifest snapshot ID, or 'latest' to auto-pick newest")
 	cmd.Flags().BoolVar(&includeAccts, "include-accounts", false, "also restore each linked account")
+	cmd.Flags().BoolVar(&apply, "apply", true, "after staging, apply panel_db SQL + sync /etc/jabali-panel + /etc/letsencrypt onto live host (default true; --no-apply for inspect-only)")
 	cmd.Flags().BoolVar(&force, "force", false, "required — restore overwrites the running panel")
 	return cmd
 }

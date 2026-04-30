@@ -279,6 +279,12 @@ func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 		RepoURL            string   `json:"repo_url,omitempty"`
 		CredentialsRef     string   `json:"credentials_ref,omitempty"`
 		ExtraOptions       []string `json:"extra_options,omitempty"`
+		// Apply, when true, runs the post-stage apply phase: load
+		// panel_db SQL into MariaDB, rsync panel_config to /etc/jabali-panel,
+		// rsync tls to /etc/letsencrypt. Other stages (mail_state,
+		// service_config, security, os_users, data_state) are flagged
+		// with a warning but not auto-applied (operator-judgement).
+		Apply bool `json:"apply,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, bkInvalidArg("malformed JSON body")
@@ -316,9 +322,13 @@ func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 	}
 
 	out := struct {
-		JobID  string                 `json:"job_id"`
-		Stages []backupRestoreStage `json:"stages"`
+		JobID    string               `json:"job_id"`
+		Stages   []backupRestoreStage `json:"stages"`
+		Applied  []string             `json:"applied,omitempty"`
+		ApplyWarnings []string        `json:"apply_warnings,omitempty"`
 	}{JobID: req.JobID}
+
+	stagingRoot := filepath.Join("/var/lib/jabali-backups/restore-staging", req.JobID)
 
 	for _, st := range manifest.Stages {
 		if st.SnapshotID == "" {
@@ -344,7 +354,124 @@ func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 			Name: st.Name, Status: backup.StageStatusOK,
 		})
 	}
+
+	if req.Apply {
+		applied, warnings := applySystemRestore(ctx, stagingRoot, manifest.Stages)
+		out.Applied = applied
+		out.ApplyWarnings = warnings
+	}
 	return out, nil
+}
+
+// applySystemRestore walks staged restore output and applies the
+// recoverable stages onto a freshly-installed host. Conservative:
+// only panel_db (SQL load) + panel_config (rsync) + tls (rsync) are
+// auto-applied. Service/state stages produce a warning so the
+// operator addresses them after watching the panel come back up.
+func applySystemRestore(ctx context.Context, stagingRoot string, stages []backup.ManifestStage) ([]string, []string) {
+	var applied, warnings []string
+	for _, st := range stages {
+		stageDir := filepath.Join(stagingRoot, st.Name)
+		switch st.Name {
+		case backup.StagePanelDB:
+			if err := applyPanelDBStage(ctx, stageDir, st); err != nil {
+				warnings = append(warnings, fmt.Sprintf("panel_db (%v): %v", st.Items, err))
+				continue
+			}
+			applied = append(applied, fmt.Sprintf("panel_db: %v", st.Items))
+		case backup.StagePanelConfig:
+			if err := rsyncStageOnto(ctx, stageDir, "/etc/jabali-panel", []string{"restic-repo.password"}); err != nil {
+				warnings = append(warnings, fmt.Sprintf("panel_config: %v", err))
+				continue
+			}
+			applied = append(applied, "panel_config → /etc/jabali-panel")
+		case backup.StageTLS:
+			if err := rsyncStageOnto(ctx, stageDir, "/etc/letsencrypt", nil); err != nil {
+				warnings = append(warnings, fmt.Sprintf("tls: %v", err))
+				continue
+			}
+			applied = append(applied, "tls → /etc/letsencrypt")
+		case backup.StageServiceConfig, backup.StageMailState, backup.StageSecurity,
+			backup.StageOSUsers, backup.StageDataState:
+			warnings = append(warnings,
+				fmt.Sprintf("stage %q staged at %s — apply manually (v1 auto-apply skips this stage to avoid clobbering OS-level state)",
+					st.Name, stageDir))
+		}
+	}
+	return applied, warnings
+}
+
+// applyPanelDBStage pipes the dumped SQL file from a panel_db
+// restic snapshot back into MariaDB. The snapshot was created via
+// `mariadb-dump <db> | restic backup --stdin --stdin-name=<db>.sql`,
+// so after restore the file lives at <stageDir>/<db>.sql.
+func applyPanelDBStage(ctx context.Context, stageDir string, st backup.ManifestStage) error {
+	if len(st.Items) == 0 {
+		return fmt.Errorf("manifest stage missing db name")
+	}
+	db := st.Items[0]
+	candidates := []string{
+		filepath.Join(stageDir, db+".sql"),
+		filepath.Join(stageDir, "stdin"), // restic default name when StdinName empty
+	}
+	var src string
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			src = p
+			break
+		}
+	}
+	if src == "" {
+		return fmt.Errorf("no SQL file in %s", stageDir)
+	}
+	f, err := os.Open(src) // #nosec G304 — path built from server-controlled stage dir
+	if err != nil {
+		return fmt.Errorf("open %s: %w", src, err)
+	}
+	defer f.Close()
+	cmd := exec.CommandContext(ctx, "mariadb",
+		"--protocol=socket",
+		"--socket=/run/mysqld/mysqld.sock",
+		db,
+	)
+	cmd.Stdin = f
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("mariadb load %s: %w (output: %s)", db, err,
+			strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// rsyncStageOnto mirrors a staged directory tree onto the live target
+// path. excludes are filenames (basename match) skipped during the
+// copy — used for restic-repo.password which the operator already
+// installed manually before the restore dispatch (see
+// install_disaster_restore in install.sh).
+func rsyncStageOnto(ctx context.Context, stageDir, target string, excludes []string) error {
+	// The staged tree mirrors the original absolute path: e.g.
+	// stageDir=/var/lib/jabali-backups/restore-staging/<job>/panel_config
+	// holds <stageDir>/etc/jabali-panel/... — we want to sync the
+	// inner /etc/jabali-panel/... part onto /etc/jabali-panel.
+	src := filepath.Join(stageDir, target) + "/"
+	if _, err := os.Stat(src); err != nil {
+		return fmt.Errorf("staged source %s missing: %w", src, err)
+	}
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		return fmt.Errorf("mkdir target: %w", err)
+	}
+	args := []string{"-a", "--delete-after"}
+	for _, e := range excludes {
+		args = append(args, "--exclude="+e)
+	}
+	args = append(args, src, target+"/")
+	cmd := exec.CommandContext(ctx, "rsync", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("rsync %s -> %s: %w (output: %s)", src, target, err,
+			strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // runSystemMultiPathStage is the multi-path variant of runSystemPathStage.

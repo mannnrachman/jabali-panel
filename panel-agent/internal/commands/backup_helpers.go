@@ -62,9 +62,21 @@ func bkResticBin() (string, error) {
 // local repo so unit tests + callers that don't supply a destination
 // keep working unchanged.
 func bkResticConfig(repoURL, credentialsRef string, extraOptions []string) (backup.ResticConfig, error) {
+	return bkResticConfigWithPassword(repoURL, credentialsRef, "", extraOptions)
+}
+
+// bkResticConfigWithPassword is the variant used by interactive
+// disaster-recovery. passwordFile empty falls back to the canonical
+// /etc/jabali-panel/restic-repo.password; non-empty lets the CLI hand
+// a temp-file path so a live host's runtime password isn't clobbered
+// during a drill / test recovery.
+func bkResticConfigWithPassword(repoURL, credentialsRef, passwordFile string, extraOptions []string) (backup.ResticConfig, error) {
 	cfg := backup.DefaultConfig()
 	if repoURL != "" {
 		cfg.Repo = repoURL
+	}
+	if passwordFile != "" {
+		cfg.PasswordFile = passwordFile
 	}
 	if len(extraOptions) > 0 {
 		cfg.ExtraOptions = append([]string{}, extraOptions...)

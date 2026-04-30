@@ -243,6 +243,61 @@ func systemBackupCancelHandler(ctx context.Context, raw json.RawMessage) (any, e
 	return backupCancelHandler(ctx, raw)
 }
 
+// systemRestoreListManifestsHandler returns every kind=system_backup
+// manifest snapshot in the supplied repo (newest first). Used by the
+// CLI's interactive disaster-recovery prompt so the operator picks a
+// snapshot from a real list instead of typing a ULID.
+func systemRestoreListManifestsHandler(ctx context.Context, raw json.RawMessage) (any, error) {
+	var req struct {
+		RepoURL        string   `json:"repo_url"`
+		CredentialsRef string   `json:"credentials_ref,omitempty"`
+		PasswordFile   string   `json:"password_file,omitempty"`
+		ExtraOptions   []string `json:"extra_options,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, bkInvalidArg("malformed JSON body")
+	}
+	if req.RepoURL == "" {
+		return nil, bkInvalidArg("repo_url required")
+	}
+	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.ExtraOptions)
+	if cerr != nil {
+		return nil, bkInternal("restic config", cerr)
+	}
+	c := backup.New(cfg)
+	snaps, err := c.Snapshots(ctx, []backup.Tag{
+		backup.MakeTag(backup.TagKeyKind, backup.KindSystemBackup),
+		backup.MakeTag(backup.TagKeyStage, backup.StageManifest),
+	})
+	if err != nil {
+		return nil, bkInternal("restic snapshots", err)
+	}
+	type manifestRow struct {
+		SnapshotID string    `json:"snapshot_id"`
+		Time       time.Time `json:"time"`
+		Hostname   string    `json:"hostname,omitempty"`
+		Tags       []string  `json:"tags,omitempty"`
+	}
+	out := make([]manifestRow, 0, len(snaps))
+	for _, s := range snaps {
+		out = append(out, manifestRow{
+			SnapshotID: s.ID,
+			Time:       s.Time,
+			Hostname:   s.Hostname,
+			Tags:       s.Tags,
+		})
+	}
+	// Newest first.
+	for i := 0; i < len(out); i++ {
+		for j := i + 1; j < len(out); j++ {
+			if out[j].Time.After(out[i].Time) {
+				out[i], out[j] = out[j], out[i]
+			}
+		}
+	}
+	return map[string]any{"manifests": out, "total": len(out)}, nil
+}
+
 // latestSystemManifest queries restic for snapshots tagged
 // kind=system_backup AND stage=manifest, returning the newest by Time.
 // Empty string + nil error = no manifest snapshots in the repo (fresh
@@ -278,6 +333,7 @@ func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 		IncludeAccounts    bool     `json:"include_accounts"`
 		RepoURL            string   `json:"repo_url,omitempty"`
 		CredentialsRef     string   `json:"credentials_ref,omitempty"`
+		PasswordFile       string   `json:"password_file,omitempty"`
 		ExtraOptions       []string `json:"extra_options,omitempty"`
 		// Apply, when true, runs the post-stage apply phase: load
 		// panel_db SQL into MariaDB, rsync panel_config to /etc/jabali-panel,
@@ -285,6 +341,10 @@ func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 		// service_config, security, os_users, data_state) are flagged
 		// with a warning but not auto-applied (operator-judgement).
 		Apply bool `json:"apply,omitempty"`
+		// ApplyStages, when non-empty, restricts the apply phase to
+		// the named stages. Empty = apply all auto-recoverable stages
+		// (panel_db, panel_config, tls).
+		ApplyStages []string `json:"apply_stages,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, bkInvalidArg("malformed JSON body")
@@ -293,7 +353,7 @@ func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 		return nil, bkInvalidArg("job_id must be a 26-char ULID")
 	}
 
-	cfg, cerr := bkResticConfig(req.RepoURL, req.CredentialsRef, req.ExtraOptions)
+	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.ExtraOptions)
 	if cerr != nil {
 		return nil, bkInternal("restic config", cerr)
 	}
@@ -356,7 +416,7 @@ func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 	}
 
 	if req.Apply {
-		applied, warnings := applySystemRestore(ctx, stagingRoot, manifest.Stages)
+		applied, warnings := applySystemRestore(ctx, stagingRoot, manifest.Stages, req.ApplyStages)
 		out.Applied = applied
 		out.ApplyWarnings = warnings
 	}
@@ -368,9 +428,22 @@ func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 // only panel_db (SQL load) + panel_config (rsync) + tls (rsync) are
 // auto-applied. Service/state stages produce a warning so the
 // operator addresses them after watching the panel come back up.
-func applySystemRestore(ctx context.Context, stagingRoot string, stages []backup.ManifestStage) ([]string, []string) {
+func applySystemRestore(ctx context.Context, stagingRoot string, stages []backup.ManifestStage, only []string) ([]string, []string) {
+	whitelist := map[string]bool{}
+	for _, s := range only {
+		whitelist[s] = true
+	}
+	skip := func(name string) bool {
+		if len(whitelist) == 0 {
+			return false
+		}
+		return !whitelist[name]
+	}
 	var applied, warnings []string
 	for _, st := range stages {
+		if skip(st.Name) {
+			continue
+		}
 		stageDir := filepath.Join(stagingRoot, st.Name)
 		switch st.Name {
 		case backup.StagePanelDB:
@@ -391,14 +464,67 @@ func applySystemRestore(ctx context.Context, stagingRoot string, stages []backup
 				continue
 			}
 			applied = append(applied, "tls → /etc/letsencrypt")
-		case backup.StageServiceConfig, backup.StageMailState, backup.StageSecurity,
-			backup.StageOSUsers, backup.StageDataState:
+		case backup.StageMailState:
+			// Stalwart RocksDB requires the service stopped first. Only
+			// apply when explicitly requested via apply_stages, since
+			// auto-applying mid-disaster could corrupt a running mail spool.
+			if !whitelist[st.Name] {
+				warnings = append(warnings,
+					fmt.Sprintf("mail_state staged at %s — pass --apply-stage=mail_state to load (stops Stalwart, rsync, restarts)",
+						stageDir))
+				continue
+			}
+			if err := applyMailState(ctx, stageDir); err != nil {
+				warnings = append(warnings, fmt.Sprintf("mail_state: %v", err))
+				continue
+			}
+			applied = append(applied, "mail_state → /var/lib/stalwart")
+		case backup.StageServiceConfig:
+			if !whitelist[st.Name] {
+				warnings = append(warnings,
+					fmt.Sprintf("service_config staged at %s — pass --apply-stage=service_config to overwrite nginx/php/systemd configs",
+						stageDir))
+				continue
+			}
+			// nginx, php pools, systemd drop-ins. Reload nginx after.
+			if err := rsyncStageOnto(ctx, stageDir, "/etc/nginx", nil); err != nil {
+				warnings = append(warnings, fmt.Sprintf("service_config nginx: %v", err))
+			}
+			if err := rsyncStageOnto(ctx, stageDir, "/etc/php", nil); err != nil {
+				warnings = append(warnings, fmt.Sprintf("service_config php: %v", err))
+			}
+			_ = exec.CommandContext(ctx, "systemctl", "daemon-reload").Run()
+			_ = exec.CommandContext(ctx, "systemctl", "reload", "nginx").Run()
+			applied = append(applied, "service_config → /etc/nginx + /etc/php")
+		case backup.StageSecurity:
+			if !whitelist[st.Name] {
+				warnings = append(warnings,
+					fmt.Sprintf("security staged at %s — pass --apply-stage=security to overwrite UFW/CrowdSec",
+						stageDir))
+				continue
+			}
+			if err := rsyncStageOnto(ctx, stageDir, "/etc/ufw", nil); err != nil {
+				warnings = append(warnings, fmt.Sprintf("security ufw: %v", err))
+			}
+			if err := rsyncStageOnto(ctx, stageDir, "/etc/crowdsec", nil); err != nil {
+				warnings = append(warnings, fmt.Sprintf("security crowdsec: %v", err))
+			}
+			applied = append(applied, "security → /etc/ufw + /etc/crowdsec")
+		case backup.StageOSUsers, backup.StageDataState:
 			warnings = append(warnings,
-				fmt.Sprintf("stage %q staged at %s — apply manually (v1 auto-apply skips this stage to avoid clobbering OS-level state)",
+				fmt.Sprintf("stage %q staged at %s — apply manually (auto-apply unsafe: cross-host /etc/passwd merge / per-user account_full restore)",
 					st.Name, stageDir))
 		}
 	}
 	return applied, warnings
+}
+
+func applyMailState(ctx context.Context, stageDir string) error {
+	_ = exec.CommandContext(ctx, "systemctl", "stop", "jabali-stalwart.service").Run()
+	defer func() {
+		_ = exec.CommandContext(context.Background(), "systemctl", "start", "jabali-stalwart.service").Run()
+	}()
+	return rsyncStageOnto(ctx, stageDir, "/var/lib/stalwart", nil)
 }
 
 // applyPanelDBStage pipes the dumped SQL file from a panel_db
@@ -912,4 +1038,5 @@ func init() {
 	Default.Register("system.backup_status", systemBackupStatusHandler)
 	Default.Register("system.backup_cancel", systemBackupCancelHandler)
 	Default.Register("system.restore", systemRestoreHandler)
+	Default.Register("system.restore_list_manifests", systemRestoreListManifestsHandler)
 }

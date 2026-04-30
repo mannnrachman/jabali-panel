@@ -1,0 +1,57 @@
+# AppArmor profile — jabali-bulwark (M40, ADR-0086)
+#
+# bulwark is the Node.js public-facing fronting daemon. Untrusted
+# input boundary; profile is tight: state dir + unix socket + outbound
+# TCP for relay/upstream calls. NO access to /etc/jabali/ panel
+# secrets — bulwark gets its own config from /etc/jabali-bulwark/.
+
+#include <tunables/global>
+
+profile jabali-bulwark /usr/local/bin/jabali-bulwark {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+  #include <abstractions/openssl>
+  #include <abstractions/ssl_certs>
+  #include <abstractions/nodejs>
+
+  capability net_bind_service,
+  capability setuid,
+  capability setgid,
+
+  network inet  stream,
+  network inet6 stream,
+  network unix  stream,
+
+  /usr/local/bin/jabali-bulwark    mr,
+  /usr/local/bin/node              mr,
+  /usr/bin/node                    mr,
+  /etc/jabali-bulwark/             r,
+  /etc/jabali-bulwark/**           r,
+
+  /var/lib/jabali-bulwark/         rw,
+  /var/lib/jabali-bulwark/**       rwk,
+  /var/log/jabali-bulwark/         rw,
+  /var/log/jabali-bulwark/**       rwk,
+
+  /run/jabali-bulwark.sock         rw,
+  /run/jabali-panel.sock           rw,
+
+  /usr/lib/node_modules/           r,
+  /usr/lib/node_modules/**         r,
+  /usr/share/jabali-bulwark/       r,
+  /usr/share/jabali-bulwark/**     r,
+  /usr/local/lib/jabali-bulwark/   r,
+  /usr/local/lib/jabali-bulwark/** r,
+
+  /proc/sys/net/core/somaxconn     r,
+  /proc/*/status                   r,
+
+  # Hard denies — bulwark must NOT read panel secrets, /etc/shadow,
+  # user homes, or audit logs.
+  deny /etc/jabali/ rwklx,
+  deny /etc/jabali/** rwklx,
+  deny /etc/shadow rwklx,
+  deny /home/** rwlkx,
+  deny /root/** rwlkx,
+  deny /var/log/audit/** rwklx,
+}

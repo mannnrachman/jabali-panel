@@ -1,0 +1,49 @@
+# AppArmor profile — stalwart-mail (M40, ADR-0086)
+#
+# Stalwart is the M6 mail daemon. Listens on 25/465/587 (mail
+# submission + transport). State at /var/lib/stalwart-mail/.
+
+#include <tunables/global>
+
+profile stalwart-mail /usr/local/bin/stalwart {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+  #include <abstractions/openssl>
+  #include <abstractions/ssl_certs>
+
+  capability net_bind_service,
+  capability setuid,
+  capability setgid,
+  capability dac_override,
+
+  network inet  stream,
+  network inet6 stream,
+  network unix  stream,
+
+  /usr/local/bin/stalwart       mr,
+  /etc/stalwart/                r,
+  /etc/stalwart/**              r,
+
+  /var/lib/stalwart-mail/       rw,
+  /var/lib/stalwart-mail/**     rwk,
+  /var/log/stalwart-mail/       rw,
+  /var/log/stalwart-mail/**     rwk,
+
+  /etc/letsencrypt/live/        r,
+  /etc/letsencrypt/live/**      r,
+  /etc/letsencrypt/archive/     r,
+  /etc/letsencrypt/archive/**   r,
+
+  /run/stalwart-admin.sock      rw,
+  /run/stalwart-mail.sock       rw,
+  /var/run/mysqld/mysqld.sock   rw,
+  /run/mysqld/mysqld.sock       rw,
+
+  /proc/sys/net/core/somaxconn  r,
+  /proc/*/status                r,
+
+  deny /etc/jabali/** rwklx,
+  deny /etc/shadow rwklx,
+  deny /home/** rwlkx,
+  deny /root/** rwlkx,
+}

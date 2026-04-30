@@ -5663,6 +5663,112 @@ UNIT
   _ok "per-user egress firewall installed (mode: $(cat /etc/jabali/per-user-egress.mode 2>/dev/null || echo unknown))"
 }
 
+# ---------- step 8a.5: AppArmor jabali daemon profiles (M40) ---------------
+#
+# AppArmor is in Debian 13 main, default-installed on every official
+# image. M40 (ADR-0086) adds path-based MAC profiles for the jabali-
+# owned daemons (panel-api, panel-agent, jabali-bulwark) plus a small
+# set of system services (mariadb, stalwart, redis, pdns, kratos).
+#
+# Default mode on FRESH installs: complain (audit-only). Operator
+# flips per-profile to enforce after a 7-day soak via
+#   jabali apparmor flip-mature [--profile name]
+# On UPGRADE (existing host), the function preserves the operator's
+# current mode — re-applying the canonical profile content but NOT
+# changing complain/enforce state.
+#
+# Profile sources live under install/apparmor/usr.local.bin.jabali-*
+# (Debian filename convention: dots replace slashes). install.sh
+# copies them to /etc/apparmor.d/ and reloads via apparmor_parser -r.
+
+install_apparmor() {
+  if ! dpkg -s apparmor >/dev/null 2>&1; then
+    _spin "apt install apparmor + apparmor-utils" \
+      apt-get install -y -qq --no-install-recommends apparmor apparmor-utils
+  fi
+
+  if [[ ! -d /sys/kernel/security/apparmor ]]; then
+    _warn "AppArmor LSM not active in kernel — skipping profile install"
+    touch /etc/jabali/.apparmor-disabled
+    return 0
+  fi
+
+  if ! grep -q apparmor /sys/kernel/security/lsm 2>/dev/null; then
+    _warn "AppArmor not in kernel LSM list — adding apparmor=1 security=apparmor to GRUB"
+    if [[ -f /etc/default/grub ]] && ! grep -q "apparmor=1" /etc/default/grub; then
+      sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\([^"]*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 apparmor=1 security=apparmor"/' /etc/default/grub
+      update-grub >/dev/null 2>&1 || true
+      touch /etc/jabali/.apparmor-grub-pending
+      _warn "AppArmor: reboot required to activate (sentinel /etc/jabali/.apparmor-grub-pending)"
+    fi
+    return 0
+  fi
+
+  rm -f /etc/jabali/.apparmor-disabled /etc/jabali/.apparmor-grub-pending
+
+  local first_install=0
+  if [[ ! -f /etc/jabali/.apparmor-installed ]]; then
+    first_install=1
+  fi
+
+  apply_apparmor_profiles "$first_install"
+
+  if [[ $first_install -eq 1 ]]; then
+    date -u +%Y-%m-%dT%H:%M:%SZ > /etc/jabali/.apparmor-installed
+  fi
+
+  _ok "AppArmor profiles applied ($(aa-status 2>/dev/null | grep -c 'jabali-') jabali profiles loaded)"
+}
+
+# apply_apparmor_profiles renders + reloads every jabali profile under
+# install/apparmor/. On first install all profiles default to complain
+# mode (operator burn-in soak). On subsequent runs the current mode of
+# each profile is preserved.
+#
+# Arg: $1 — 1 if this is the first install (set complain on every
+# profile), 0 to preserve existing mode.
+apply_apparmor_profiles() {
+  local first_install=${1:-0}
+  local src_dir="${REPO_DIR}/install/apparmor"
+  if [[ ! -d "$src_dir" ]]; then
+    _warn "AppArmor profile source dir missing: $src_dir"
+    return 0
+  fi
+
+  local profile
+  for profile in "$src_dir"/usr.local.bin.jabali-*; do
+    [[ -e "$profile" ]] || continue
+    local name
+    name=$(basename "$profile")
+    local prev_mode=""
+
+    # Detect prior mode (complain/enforce) before we overwrite.
+    if [[ -f "/etc/apparmor.d/$name" ]] && command -v aa-status >/dev/null 2>&1; then
+      local profile_label
+      profile_label=$(awk '/^profile / {print $2; exit}' "/etc/apparmor.d/$name" 2>/dev/null)
+      if [[ -n "$profile_label" ]] && aa-status --json 2>/dev/null | grep -q "\"$profile_label\""; then
+        if aa-status --json 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); ps={**d.get('profiles',{}), **{p['name']:p['status'] for s in d.get('processes',{}).values() for p in s}}; print(ps.get('$profile_label','complain'))" 2>/dev/null | grep -q enforce; then
+          prev_mode=enforce
+        else
+          prev_mode=complain
+        fi
+      fi
+    fi
+
+    install -m 0644 -o root -g root "$profile" "/etc/apparmor.d/$name"
+    apparmor_parser -r "/etc/apparmor.d/$name" 2>/dev/null || \
+      _warn "apparmor_parser -r failed for $name — check 'apparmor_parser -d /etc/apparmor.d/$name'"
+
+    if [[ $first_install -eq 1 ]] || [[ "$prev_mode" == "complain" ]]; then
+      aa-complain "/etc/apparmor.d/$name" >/dev/null 2>&1 || true
+    elif [[ "$prev_mode" == "enforce" ]]; then
+      aa-enforce "/etc/apparmor.d/$name" >/dev/null 2>&1 || true
+    fi
+  done
+
+  systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
 # ---------- step 8a.1: auto-restart drop-ins for critical services ----------
 #
 # Third-party packages ship with inconsistent Restart= defaults — some have
@@ -7187,6 +7293,7 @@ main() {
   install_malware_stack
   install_ufw
   install_per_user_egress
+  install_apparmor
   install_restart_drop_ins
   install_notify_template
   clone_or_update_repo

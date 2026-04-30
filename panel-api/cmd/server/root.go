@@ -84,6 +84,7 @@ func newRootCmd() *cobra.Command {
 		newBackupCmd(),
 		newRepairCmd(),
 		newPerUserEgressCmd(),
+		newAppArmorCmd(),
 	)
 	// `jabali reconcile` was removed by M20 — the reconciler already ticks
 	// every cfg.Agent.ReconcilerInterval (default 60s), and the CLI's

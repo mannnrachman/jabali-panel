@@ -1,0 +1,72 @@
+# AppArmor profile — jabali-panel (M40, ADR-0086)
+#
+# panel-api binary at /usr/local/bin/jabali-panel runs as root. It is
+# the HTTP API surface (port 8443 via nginx upstream socket), talks to
+# MariaDB via unix socket, Redis via unix socket, and panel-agent via
+# the M25 unix socket. Reads /etc/jabali/panel.env (DB DSN + secrets)
+# and /etc/jabali/config.toml. Writes /var/log/jabali-panel/.
+#
+# Default mode on first install: complain. Operator flips to enforce
+# after the 7-day soak via `jabali apparmor flip-mature`.
+
+#include <tunables/global>
+
+profile jabali-panel /usr/local/bin/jabali-panel {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+  #include <abstractions/openssl>
+  #include <abstractions/ssl_certs>
+
+  capability net_bind_service,
+  capability setuid,
+  capability setgid,
+
+  network inet  stream,
+  network inet6 stream,
+  network unix  stream,
+
+  /usr/local/bin/jabali-panel mr,
+  /etc/jabali/                 r,
+  /etc/jabali/**               r,
+  /etc/letsencrypt/live/       r,
+  /etc/letsencrypt/live/**     r,
+  /etc/letsencrypt/archive/    r,
+  /etc/letsencrypt/archive/**  r,
+
+  /var/lib/jabali-panel/       rw,
+  /var/lib/jabali-panel/**     rwk,
+  /var/log/jabali-panel/       rw,
+  /var/log/jabali-panel/**     rwk,
+
+  /run/jabali-panel.sock       rw,
+  /run/jabali-agent.sock       rw,
+  /run/redis/jabali.sock       rw,
+  /run/mysqld/mysqld.sock      rw,
+  /var/run/mysqld/mysqld.sock  rw,
+  /run/kratos-admin.sock       rw,
+  /run/kratos-public.sock      rw,
+  /run/jabali-bulwark.sock     rw,
+
+  # Static assets the embedded webui ships are read from /usr/local/share.
+  /usr/local/share/jabali/**   r,
+
+  /proc/sys/net/core/somaxconn r,
+  /proc/sys/kernel/random/uuid r,
+  /proc/*/status               r,
+  /proc/*/stat                 r,
+
+  # Outbound TCP — OIDC, SMTP relays, ntfy / Slack / Discord / Telegram
+  # webhooks. Unrestricted at the AppArmor layer because the targets
+  # are operator-configured at runtime.
+
+  # Hard denies — defence in depth on the typical RCE blast radius.
+  deny /etc/shadow rwklx,
+  deny /etc/gshadow rwklx,
+  deny /etc/sudoers rwklx,
+  deny /etc/sudoers.d/** rwklx,
+  deny /home/** rwlkx,
+  deny /root/** rwlkx,
+  deny /var/log/audit/** rwklx,
+  deny /var/spool/cron/** rwklx,
+  deny /etc/cron.d/** wlkx,
+}

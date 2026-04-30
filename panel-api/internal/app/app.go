@@ -556,6 +556,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterSecurityCrowdSecRoutes(v1, deps.Agent, deps.ServerSettings)
 			api.RegisterSecurityAppSecRoutes(v1, deps.Agent, deps.ServerSettings)
 			api.RegisterSecurityUFWRoutes(v1, deps.Agent)
+			// M40 (ADR-0086) AppArmor admin status + per-profile mode flip.
+			api.RegisterSecurityAppArmorRoutes(v1, deps.Agent)
 			// M33 malware tab — ADR-0072. All five malware repos must be
 			// wired or RegisterSecurityMalwareRoutes is skipped (older test
 			// wiring without the M33 graph). Tab still renders empty state.

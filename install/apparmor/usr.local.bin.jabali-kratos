@@ -1,0 +1,43 @@
+# AppArmor profile — kratos (M40, ADR-0086)
+#
+# Ory Kratos identity service (M20). Two unix sockets (admin +
+# public per M25). MariaDB DSN over unix socket.
+
+#include <tunables/global>
+
+profile jabali-kratos /usr/local/bin/kratos {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+  #include <abstractions/openssl>
+  #include <abstractions/ssl_certs>
+
+  capability net_bind_service,
+  capability setuid,
+  capability setgid,
+
+  network inet  stream,
+  network inet6 stream,
+  network unix  stream,
+
+  /usr/local/bin/kratos          mr,
+  /etc/jabali/kratos.yaml        r,
+  /etc/jabali/kratos/            r,
+  /etc/jabali/kratos/**          r,
+
+  /var/lib/kratos/               rw,
+  /var/lib/kratos/**             rwk,
+  /var/log/kratos/               rw,
+  /var/log/kratos/**             rwk,
+
+  /run/kratos-admin.sock         rw,
+  /run/kratos-public.sock        rw,
+  /var/run/mysqld/mysqld.sock    rw,
+  /run/mysqld/mysqld.sock        rw,
+
+  /proc/sys/net/core/somaxconn   r,
+  /proc/*/status                 r,
+
+  deny /etc/shadow rwklx,
+  deny /home/** rwlkx,
+  deny /root/** rwlkx,
+}

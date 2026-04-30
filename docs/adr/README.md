@@ -71,6 +71,7 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0082](0082-ghost-domain-detector.md) | M38 Ghost Domain Detector — periodic DNS-alignment check | Accepted |
 | [0084](0084-per-user-egress-firewall-cgroupv2.md) | M34 Per-user PHP-FPM egress firewall via nftables + cgroupv2 socket match | Proposed |
 | [0085](0085-narrow-scoped-auditd-exec-audit.md) | M39 Narrow-scoped auditd as L3 forensic exec audit (replaces Tetragon) | Accepted |
+| [0086](0086-apparmor-jabali-daemons.md) | M40 AppArmor profiles for jabali daemons + critical system services | Accepted |
 
 ## Decision Categories
 

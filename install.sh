@@ -5599,8 +5599,16 @@ After=network.target
 
 [Service]
 Type=simple
+# Ensure bpffs is mounted at /sys/fs/bpf BEFORE tetragon runs. Debian 13
+# fresh installs don't always have it auto-mounted (no docker/podman to
+# trigger systemd's bpffs auto-mount) — without bpffs typed at the path
+# tetragon's bpf-dir resolves to, mkdir of the BPF map subdirs returns
+# EACCES (mx scar 2026-04-30).
+ExecStartPre=/bin/sh -c 'mountpoint -q /sys/fs/bpf || mount -t bpf bpf /sys/fs/bpf'
+ExecStartPre=/usr/bin/install -d -m 0700 /sys/fs/bpf/tetragon
 ExecStart=/usr/local/bin/tetragon \
   --bpf-lib /opt/tetragon/usr/local/lib/tetragon/bpf \
+  --bpf-dir /sys/fs/bpf/tetragon \
   --tracing-policy-dir /etc/tetragon/tetragon.tp.d \
   --export-filename /var/log/tetragon/tetragon.log
 Restart=always
@@ -5609,14 +5617,16 @@ User=root
 Group=root
 LimitMEMLOCK=infinity
 NoNewPrivileges=no
-# CAP_SYS_PTRACE required to readlink /proc/<pid>/ns/* on Linux 6.x —
-# without it Tetragon fails namespace detection ("Kernel does not support
-# pid namespaces" / "permission denied") and aborts the BPF base sensor
-# load (mx fresh install scar 2026-04-30).
-CapabilityBoundingSet=CAP_SYS_ADMIN CAP_BPF CAP_PERFMON CAP_DAC_READ_SEARCH CAP_SYS_PTRACE CAP_SYS_RESOURCE
-# Ensure caps actually reach the binary; default systemd hardening on
-# v245+ can strip them otherwise.
-AmbientCapabilities=CAP_SYS_ADMIN CAP_BPF CAP_PERFMON CAP_DAC_READ_SEARCH CAP_SYS_PTRACE CAP_SYS_RESOURCE
+# CapabilityBoundingSet intentionally NOT restricted. Tetragon needs at
+# least CAP_SYS_ADMIN, CAP_BPF, CAP_PERFMON, CAP_DAC_READ_SEARCH,
+# CAP_DAC_OVERRIDE, CAP_SYS_PTRACE, CAP_SYS_RESOURCE, CAP_NET_ADMIN, and
+# CAP_SYSLOG depending on which sensors load — restricting the bounding
+# set caused the M33 base sensor to fail "mkdir /sys/fs/bpf/tetragon/__base__:
+# permission denied" on Debian 13 / kernel 6.12 fresh installs (mx scar
+# 2026-04-30). Manual `/usr/local/bin/tetragon ...` as root succeeded
+# end-to-end (loaded generic_kprobe, listened for events) confirming the
+# bounding set was the gate, not a missing cap. Upstream tetragon docs
+# also do not impose a bounding set.
 
 [Install]
 WantedBy=multi-user.target

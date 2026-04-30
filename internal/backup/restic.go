@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -59,8 +60,12 @@ type realRunner struct{}
 
 func (realRunner) Run(ctx context.Context, name string, args []string, env []string, stdin io.Reader) ([]byte, []byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	if env != nil {
-		cmd.Env = env
+	// env is ADDITIVE — caller's KEY=VALUE pairs merged on top of the
+	// process's own env. Replacing wholesale would strip PATH and
+	// leave restic's `sftp.command=sshpass …` failing with
+	// `exec: "sshpass": executable file not found in $PATH`.
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
 	}
 	if stdin != nil {
 		cmd.Stdin = stdin

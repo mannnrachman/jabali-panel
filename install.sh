@@ -107,6 +107,15 @@ _cli_token=""
 _cli_debug=""
 _cli_uninstall=""
 _cli_yes=""
+# --restore-from triggers the disaster-recovery bootstrap path. After
+# base packages + binaries land, install.sh skips first-boot DB seed
+# and invokes `jabali system restore --snapshot=<id|latest> --force`
+# to rebuild panel state from the supplied repo (ADR-0080).
+_cli_restore_from=""
+_cli_restore_creds=""
+_cli_restore_password=""
+_cli_restore_snapshot=""
+_cli_restore_extra_options=()
 _positional=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -117,11 +126,28 @@ while [[ $# -gt 0 ]]; do
     --debug)      _cli_debug=1; shift ;;
     --uninstall)  _cli_uninstall=1; shift ;;
     --yes|-y)     _cli_yes=1; shift ;;
+    --restore-from=*)        _cli_restore_from="${1#*=}"; shift ;;
+    --restore-from)          _cli_restore_from="${2:-}"; shift 2 ;;
+    --restore-credentials=*) _cli_restore_creds="${1#*=}"; shift ;;
+    --restore-credentials)   _cli_restore_creds="${2:-}"; shift 2 ;;
+    --restore-password=*)    _cli_restore_password="${1#*=}"; shift ;;
+    --restore-password)      _cli_restore_password="${2:-}"; shift 2 ;;
+    --restore-snapshot=*)    _cli_restore_snapshot="${1#*=}"; shift ;;
+    --restore-snapshot)      _cli_restore_snapshot="${2:-}"; shift 2 ;;
+    --restore-extra-option=*) _cli_restore_extra_options+=("${1#*=}"); shift ;;
+    --restore-extra-option)   _cli_restore_extra_options+=("${2:-}"); shift 2 ;;
     --)           shift; while [[ $# -gt 0 ]]; do _positional+=("$1"); shift; done ;;
     --*)          printf 'install.sh: unknown flag: %s\n' "$1" >&2; exit 64 ;;
     *)            _positional+=("$1"); shift ;;
   esac
 done
+
+# Defaults for the restore bootstrap path. _cli_restore_snapshot
+# defaults to "latest"; the operator only has to supply --restore-from
+# (and --restore-credentials for SFTP password-auth backends).
+if [[ -n "$_cli_restore_from" && -z "$_cli_restore_snapshot" ]]; then
+  _cli_restore_snapshot="latest"
+fi
 
 # --hostname CLI arg wins over JABALI_HOSTNAME env; re-export so downstream
 # functions (notably prompt_server_settings) pick it up via the same env var.
@@ -3198,7 +3224,89 @@ EOF
 
 # ---------- step 6b: seed admin credentials ---------------------------------
 
+install_disaster_restore() {
+  _log "==== disaster recovery: restoring from ${_cli_restore_from} ===="
+
+  # Operator-supplied restic password file is non-negotiable — without
+  # it the repo is opaque. We accept either an inline path (file
+  # already on disk) or stdin via JABALI_RESTORE_PASSWORD env (last
+  # resort for non-interactive installs).
+  if [[ -n "${_cli_restore_password:-}" && -f "${_cli_restore_password}" ]]; then
+    install -m 0600 -o root -g root "${_cli_restore_password}" /etc/jabali-panel/restic-repo.password
+    _ok "restic password installed from ${_cli_restore_password}"
+  elif [[ -n "${JABALI_RESTORE_PASSWORD:-}" ]]; then
+    printf '%s' "$JABALI_RESTORE_PASSWORD" > /etc/jabali-panel/restic-repo.password
+    chmod 0600 /etc/jabali-panel/restic-repo.password
+    chown root:root /etc/jabali-panel/restic-repo.password
+    _ok "restic password installed from JABALI_RESTORE_PASSWORD env"
+  else
+    _die "disaster restore requires --restore-password=<path> or JABALI_RESTORE_PASSWORD env"
+  fi
+
+  # Optional creds env file (SFTP password, S3 keys, …). Persist at
+  # the canonical path so the panel-side reconciler can find it after
+  # the restore brings backup_destinations rows.
+  local creds_arg=""
+  if [[ -n "${_cli_restore_creds:-}" && -f "${_cli_restore_creds}" ]]; then
+    install -d -m 0700 -o root -g root /etc/jabali-panel/restic-remotes
+    install -m 0600 -o root -g root "${_cli_restore_creds}" /etc/jabali-panel/restic-remotes/restore-bootstrap.env
+    creds_arg="--credentials-ref=/etc/jabali-panel/restic-remotes/restore-bootstrap.env"
+    _ok "restore credentials installed at /etc/jabali-panel/restic-remotes/restore-bootstrap.env"
+  fi
+
+  local extra_args=()
+  for opt in "${_cli_restore_extra_options[@]}"; do
+    extra_args+=("--extra-option=$opt")
+  done
+
+  local snap="${_cli_restore_snapshot:-latest}"
+  _log "→ jabali system restore --remote-url=${_cli_restore_from} --snapshot=${snap} --include-accounts --force"
+  if ! /usr/local/bin/jabali-panel system restore \
+      --remote-url="${_cli_restore_from}" \
+      $creds_arg \
+      "${extra_args[@]}" \
+      --snapshot="${snap}" \
+      --include-accounts \
+      --force; then
+    _err "disaster restore dispatch failed — manual intervention required"
+    _err "  staging dir:   /var/lib/jabali-backups/restore-staging/"
+    _err "  agent log:     journalctl -u $AGENT_SERVICE_NAME -n 200"
+    return 1
+  fi
+
+  cat <<EOF
+
+╔══════════════════════════════════════════════════════════════╗
+║                  DISASTER RESTORE STAGED                     ║
+╠══════════════════════════════════════════════════════════════╣
+║                                                              ║
+║  Stages restored to:                                         ║
+║    /var/lib/jabali-backups/restore-staging/                  ║
+║                                                              ║
+║  NEXT STEPS (manual — v1):                                   ║
+║    1. Apply panel_db SQL:                                    ║
+║       cat <staging>/panel_db/*.sql | mariadb                 ║
+║    2. Sync /etc/jabali-panel from staging.                   ║
+║    3. Restart services:                                      ║
+║       systemctl restart $AGENT_SERVICE_NAME $SERVICE_NAME    ║
+║                                                              ║
+║  See plans/m30-backup-restore-runbook.md for the full        ║
+║  recovery checklist.                                         ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+
+EOF
+  _ok "disaster restore framework done — apply panel_db + restart per banner above"
+}
+
 seed_admin_env() {
+  # Disaster-recovery skip: when --restore-from is set the restored
+  # panel_db brings the real admin row; bootstrap seeding would add a
+  # second account that the operator never asked for.
+  if [[ -n "${_cli_restore_from:-}" ]]; then
+    _ok "disaster restore mode — skipping admin bootstrap seed"
+    return
+  fi
   # If bootstrap vars are already set (e.g. re-run), don't regenerate —
   # the panel's BootstrapAdmin is idempotent and will detect the existing
   # admin row.
@@ -7496,6 +7604,17 @@ main() {
   # earlier (post clone_or_update_repo).
   ensure_jabali_sockets_group
   seed_last_built_sha
+  # Disaster-recovery: when --restore-from was supplied, hand off to
+  # `jabali system restore` so the just-installed panel pulls its
+  # state from the supplied repo. Runs AFTER start_and_verify so the
+  # agent socket is up + restic password file is in place; runs
+  # BEFORE the credentials banner so the operator sees the restore
+  # log instead of fresh-bootstrap creds (which the restore
+  # invalidates anyway).
+  if [[ -n "${_cli_restore_from:-}" ]]; then
+    install_disaster_restore
+    return 0
+  fi
   _ok "jabali-panel + jabali-agent installed. Status:"
   _ok "  systemctl status $AGENT_SERVICE_NAME"
   _ok "  systemctl status $SERVICE_NAME"

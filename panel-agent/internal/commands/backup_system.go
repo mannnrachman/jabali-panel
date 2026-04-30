@@ -243,6 +243,29 @@ func systemBackupCancelHandler(ctx context.Context, raw json.RawMessage) (any, e
 	return backupCancelHandler(ctx, raw)
 }
 
+// latestSystemManifest queries restic for snapshots tagged
+// kind=system_backup AND stage=manifest, returning the newest by Time.
+// Empty string + nil error = no manifest snapshots in the repo (fresh
+// disaster-recovery target).
+func latestSystemManifest(ctx context.Context, c *backup.Client) (string, error) {
+	snaps, err := c.Snapshots(ctx, []backup.Tag{
+		backup.MakeTag(backup.TagKeyKind, backup.KindSystemBackup),
+		backup.MakeTag(backup.TagKeyStage, backup.StageManifest),
+	})
+	if err != nil {
+		return "", err
+	}
+	var newestID string
+	var newestTime time.Time
+	for _, s := range snaps {
+		if newestID == "" || s.Time.After(newestTime) {
+			newestID = s.ID
+			newestTime = s.Time
+		}
+	}
+	return newestID, nil
+}
+
 // systemRestoreHandler is the agent-side entry point for `jabali system
 // restore` (Step 11 CLI). v1 reads the system manifest, restores every
 // path stage in declared order, then re-loads MariaDB dumps. Service
@@ -269,6 +292,20 @@ func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 		return nil, bkInternal("restic config", cerr)
 	}
 	c := backup.New(cfg)
+	// Resolve "latest" → most-recent system_backup manifest snapshot.
+	// Used by the disaster-recovery path (`jabali system restore
+	// --snapshot=latest`) so the operator doesn't have to know a ULID
+	// to bring a fresh host back online.
+	if req.ManifestSnapshotID == "" || req.ManifestSnapshotID == "latest" {
+		latest, lErr := latestSystemManifest(ctx, c)
+		if lErr != nil {
+			return nil, bkInternal("resolve latest system manifest", lErr)
+		}
+		if latest == "" {
+			return nil, bkInvalidArg("no system_backup manifest snapshots found in this repo")
+		}
+		req.ManifestSnapshotID = latest
+	}
 	manifestBytes, err := c.Dump(ctx, req.ManifestSnapshotID, "system_manifest.json")
 	if err != nil {
 		return nil, bkInternal("read system manifest", err)

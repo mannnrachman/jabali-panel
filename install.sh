@@ -3189,6 +3189,14 @@ Restart=on-failure
 RestartSec=3
 TimeoutStopSec=10
 
+# AppArmor profile applied to the daemon ONLY. The profile body removes
+# its path-attach line for /usr/local/bin/jabali-panel so direct CLI
+# invocations (\`jabali update\`, \`jabali repair\`, \`jabali apparmor
+# flip-mature\`) don't auto-attach this restrictive profile and can run
+# unconfined as the operator's root shell. Daemon attaches via this
+# unit directive instead.
+AppArmorProfile=jabali-panel
+
 # Hardening (minimal but real)
 NoNewPrivileges=true
 ProtectSystem=strict

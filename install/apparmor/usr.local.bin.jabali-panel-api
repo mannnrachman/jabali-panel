@@ -11,7 +11,12 @@
 
 #include <tunables/global>
 
-profile jabali-panel /usr/local/bin/jabali-panel {
+# Profile name only — no path attach. Auto-attach by binary path would
+# also confine direct CLI invocations (jabali update / jabali repair /
+# jabali apparmor flip-mature), which the operator runs as root. The
+# daemon picks up this profile via systemd's AppArmorProfile=jabali-panel
+# directive in the unit file.
+profile jabali-panel {
   #include <abstractions/base>
   #include <abstractions/nameservice>
   #include <abstractions/openssl>
@@ -24,6 +29,15 @@ profile jabali-panel /usr/local/bin/jabali-panel {
   # call apparmor_parser to flip jabali profiles complain↔enforce. The
   # daemon HTTP path doesn't exercise this; it's gated by allowedProfiles.
   capability mac_admin,
+  # `jabali update` + `jabali repair` recurse jabali-owned trees as root,
+  # invoke chown, write under /etc/{nginx,systemd,...}, etc. The daemon
+  # HTTP path doesn't need any of these; only the operator-only CLI does.
+  capability chown,
+  capability dac_override,
+  capability dac_read_search,
+  capability fowner,
+  capability fsetid,
+  capability kill,
 
   network inet  stream,
   network inet6 stream,
@@ -63,10 +77,59 @@ profile jabali-panel /usr/local/bin/jabali-panel {
   /usr/sbin/apparmor_parser   rix,
   /usr/bin/journalctl         rix,
 
+  # `jabali update` + `jabali repair` shell out to these. Without ix
+  # rules the CLI fails with "fork/exec ...: permission denied" once
+  # the panel profile is in enforce mode (incident 2026-05-02).
+  /usr/bin/bash               rix,
+  /bin/bash                   rix,
+  /usr/bin/sh                 rix,
+  /bin/sh                     rix,
+  /usr/bin/chmod              rix,
+  /bin/chmod                  rix,
+  /usr/bin/chown              rix,
+  /bin/chown                  rix,
+  /usr/bin/cp                 rix,
+  /bin/cp                     rix,
+  /usr/bin/mv                 rix,
+  /bin/mv                     rix,
+  /usr/bin/rm                 rix,
+  /bin/rm                     rix,
+  /usr/bin/mkdir              rix,
+  /bin/mkdir                  rix,
+  /usr/bin/ln                 rix,
+  /bin/ln                     rix,
+  /usr/bin/stat               rix,
+  /usr/bin/tail               rix,
+  /usr/bin/head               rix,
+  /usr/bin/cat                rix,
+  /usr/bin/sed                rix,
+  /usr/bin/awk                rix,
+  /usr/bin/grep               rix,
+  /usr/bin/git                rix,
+  /usr/bin/sudo               rix,
+  /bin/systemctl              rix,
+  /usr/bin/systemctl          rix,
+  /usr/sbin/nginx             rix,
+  /usr/sbin/chroot            rix,
+  /usr/sbin/debootstrap       rix,
+  /usr/bin/npm                rix,
+  /usr/bin/node               rix,
+  /usr/local/bin/go           rix,
+  /usr/bin/go                 rix,
+  /usr/local/bin/jabali-*     rix,
+
   /var/lib/jabali-panel/       rw,
   /var/lib/jabali-panel/**     rwk,
   /var/log/jabali-panel/       rw,
   /var/log/jabali-panel/**     rwk,
+
+  # `jabali update` rebuilds + reinstalls from the source tree.
+  /opt/jabali-panel/           rw,
+  /opt/jabali-panel/**         rwlk,
+  /opt/jabali-webmail/         rw,
+  /opt/jabali-webmail/**       rwlk,
+  /tmp/                        r,
+  /tmp/**                      rwlk,
 
   # Bind own listener sockets (M25 unix-socket layout, ADR-0050).
   /run/jabali-panel/           rw,

@@ -7702,14 +7702,21 @@ main() {
   install_per_user_egress
   install_restart_drop_ins
   clone_or_update_repo
-  # install_apparmor + install_aide + install_notify_template require
-  # files under $REPO_DIR/install/{apparmor,systemd,scripts}/ — must run
-  # AFTER clone_or_update_repo populates $REPO_DIR. Earlier ordering
-  # silently no-op'd on fresh installs (incident 2026-05-02 on
+  # install_apparmor + install_notify_template require files under
+  # $REPO_DIR/install/{apparmor,systemd,scripts}/ — must run AFTER
+  # clone_or_update_repo populates $REPO_DIR. Earlier ordering silently
+  # no-op'd on fresh installs (incident 2026-05-02 on
   # mx.jabali-panel.local: marker written, zero profiles loaded, AIDE
   # DB never built).
+  #
+  # install_aide is deliberately deferred to the END of main() — it
+  # forks aideinit in the background, which scans /etc /bin /usr/bin
+  # etc as they exist at fire time. Calling it here would baseline
+  # against a partial filesystem (every subsequent install_* writes a
+  # config file under /etc, all of which AIDE then reports as "added"
+  # on the first --check). End-of-main keeps wall time the same
+  # (aideinit is bg) and gives a clean baseline.
   install_apparmor
-  install_aide
   install_notify_template
   # M25: source the socket-helper definitions now that the repo's install/
   # tree is on disk. Steps 2–5 will call verify_socket_perms /
@@ -7781,6 +7788,12 @@ main() {
   # picks it up. Idempotent for SERVICE_USER + www-data which were added
   # earlier (post clone_or_update_repo).
   ensure_jabali_sockets_group
+  # AIDE baseline LAST: by now every install_* has written its share of
+  # /etc/{nginx,php,systemd,powerdns,...} so the aide.db that aideinit
+  # builds matches the deployed filesystem. aideinit forks bg — adds no
+  # wall time. Re-baseline manually with `jabali aide rebuild --full`
+  # if subsequent install_* steps land via `jabali update`.
+  install_aide
   seed_last_built_sha
   # Disaster-recovery: when --restore-from was supplied, hand off to
   # `jabali system restore` so the just-installed panel pulls its

@@ -26,6 +26,10 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   capability sys_admin,
   capability sys_resource,
   capability sys_ptrace,
+  # mac_admin lets the UI "Flip to enforce/complain" button (which routes
+  # panel-api → agent → aa-{enforce,complain}) call apparmor_parser. The
+  # set_mode handler is gated by allowedProfiles.
+  capability mac_admin,
 
   network inet  stream,
   network inet6 stream,
@@ -40,6 +44,14 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /etc/jabali-panel/**         r,
   /etc/aide/                   r,
   /etc/aide/**                 r,
+  /etc/apparmor/               r,
+  /etc/apparmor/**             r,
+  /etc/apparmor.d/             rw,
+  /etc/apparmor.d/**           rw,
+  /usr/share/apparmor-features/    r,
+  /usr/share/apparmor-features/**  r,
+  /var/cache/apparmor/         rw,
+  /var/cache/apparmor/**       rwk,
   /run/jabali-agent.sock       rw,
   /run/jabali-panel.sock       rw,
 
@@ -84,11 +96,22 @@ profile jabali-agent /usr/local/bin/jabali-agent {
 
   /proc/                       r,
   /proc/**                     r,
+  /proc/*/attr/                r,
+  /proc/*/attr/current         r,
+  /proc/*/attr/apparmor/current r,
 
   /run/                        r,
   /run/**                      rw,
   /sys/fs/cgroup/              r,
   /sys/fs/cgroup/**            r,
+  # apparmor management surface (UI Flip button → set_mode handler).
+  /sys/kernel/security/apparmor/    r,
+  /sys/kernel/security/apparmor/**  r,
+  /sys/kernel/security/apparmor/.replace  w,
+  /sys/kernel/security/apparmor/.load     w,
+  /sys/kernel/security/apparmor/.remove   w,
+  /sys/module/apparmor/             r,
+  /sys/module/apparmor/**           r,
   /sys/kernel/security/apparmor/         r,
   /sys/kernel/security/apparmor/**       r,
   /sys/module/apparmor/                  r,
@@ -177,9 +200,10 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /usr/bin/rec_control         ix,
   /usr/bin/redis-check-rdb     ix,
   /usr/bin/timedatectl         ix,
-  /usr/sbin/aa-enforce         ix,
-  /usr/sbin/aa-status          ix,
-  /usr/sbin/apparmor_parser    ix,
+  /usr/sbin/aa-enforce         rix,
+  /usr/sbin/aa-complain        rix,
+  /usr/sbin/aa-status          rix,
+  /usr/sbin/apparmor_parser    rix,
   /usr/sbin/pdns_recursor      ix,
   /usr/sbin/pdns_server        ix,
   /usr/bin/aide                ix,

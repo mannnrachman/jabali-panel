@@ -5914,9 +5914,35 @@ UNIT
 # copies them to /etc/apparmor.d/ and reloads via apparmor_parser -r.
 
 install_apparmor() {
-  if ! dpkg -s apparmor >/dev/null 2>&1; then
-    _spin "apt install apparmor + apparmor-utils" \
-      apt-get install -y -qq --no-install-recommends apparmor apparmor-utils
+  # Check apparmor + apparmor-utils SEPARATELY. Debian 13 ships
+  # `apparmor` default-installed but NOT `apparmor-utils`; the
+  # combined check `dpkg -s apparmor` succeeded and skipped the
+  # apt install, leaving aa-complain / aa-enforce missing. Result:
+  # apply_apparmor_profiles called aa-complain via `|| true`,
+  # silently swallowed the not-found error, and profiles fell through
+  # to apparmor_parser's default mode (enforce on Debian 13) — which
+  # then broke `jabali update`'s os/exec chown call (incident
+  # 2026-05-02 on mx.jabali-panel.local).
+  # `dpkg -s pkg` exits 0 even for "deinstall ok config-files" state
+  # (package known but not installed). Match the actual Status field
+  # so a previously-purged apparmor-utils gets re-installed.
+  _pkg_installed() {
+    dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q '^install ok installed$'
+  }
+  local need_install=()
+  _pkg_installed apparmor       || need_install+=(apparmor)
+  _pkg_installed apparmor-utils || need_install+=(apparmor-utils)
+  if [[ ${#need_install[@]} -gt 0 ]]; then
+    _spin "apt install ${need_install[*]}" \
+      apt-get install -y -qq --no-install-recommends "${need_install[@]}"
+  fi
+
+  # Hard-require aa-complain after the apt step. apply_apparmor_profiles
+  # calls it via `|| true`, so a missing binary silently leaves profiles
+  # in enforce — NOT what the M40 7-day soak design wants.
+  if ! command -v aa-complain >/dev/null 2>&1; then
+    _err "aa-complain missing after apparmor-utils install — cannot set complain mode"
+    return 1
   fi
 
   if [[ ! -d /sys/kernel/security/apparmor ]]; then

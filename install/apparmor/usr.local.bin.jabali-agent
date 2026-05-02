@@ -214,6 +214,11 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /usr/bin/aide                Ux,
 
   # Hard denies for things the agent should never touch.
-  deny /etc/shadow- rwklx,
-  deny /etc/gshadow- rwklx,
+  # NOTE: do NOT deny /etc/shadow- or /etc/gshadow-. useradd / usermod /
+  # passwd write the dash-suffixed backup files atomically; denying them
+  # makes user provisioning fail mid-way (incident 2026-05-03: useradd
+  # left /etc/passwd with a UID:GID pair whose GID had no /etc/group
+  # entry, breaking systemd-run --uid=user --gid=user with status 216/
+  # GROUP). The dash-suffixed files are owned root:shadow 0640 already
+  # which is the real safeguard.
 }

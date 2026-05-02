@@ -206,7 +206,12 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /usr/sbin/apparmor_parser    rix,
   /usr/sbin/pdns_recursor      ix,
   /usr/sbin/pdns_server        ix,
-  /usr/bin/aide                ix,
+  # AIDE must scan the entire filesystem (its config covers /bin /etc
+  # /lib /usr/bin /usr/sbin /boot /root). Inheriting the agent profile
+  # via ix would deny readdir on those parent dirs and aide reports
+  # all 26k+ baselined entries as "removed" (false-positive tamper).
+  # Ux = unconfined exec: aide runs free of any AppArmor profile.
+  /usr/bin/aide                Ux,
 
   # Hard denies for things the agent should never touch.
   deny /etc/shadow- rwklx,

@@ -5941,6 +5941,12 @@ install_apparmor() {
   local first_install=0
   if [[ ! -f /etc/jabali/.apparmor-installed ]]; then
     first_install=1
+  elif ! aa-status 2>/dev/null | grep -q 'jabali-'; then
+    # Marker exists but no jabali-* profiles are loaded — heals hosts
+    # that hit the old install_apparmor-before-clone bug (2026-05-02).
+    # Treat as first_install so the 7-day complain-mode soak applies.
+    _warn "AppArmor: marker present but no jabali-* profiles loaded; treating as first_install"
+    first_install=1
   fi
 
   apply_apparmor_profiles "$first_install"
@@ -5968,7 +5974,9 @@ apply_apparmor_profiles() {
   fi
 
   local profile
-  for profile in "$src_dir"/usr.local.bin.jabali-*; do
+  # Glob covers both jabali-* daemons AND stalwart-mail (M40 ships
+  # an apparmor profile for Stalwart too — same dir, different name).
+  for profile in "$src_dir"/usr.local.bin.*; do
     [[ -e "$profile" ]] || continue
     local name
     name=$(basename "$profile")
@@ -6022,8 +6030,11 @@ install_aide() {
 # Jabali — system-file integrity. ADR-0087.
 # Excludes paths the panel writes to + ephemeral state.
 
-database=file:/var/lib/aide/aide.db
+# AIDE 0.18+ renamed `database=` → `database_in=`. Debian 13 ships
+# 0.19.1, which rejects `database=` with "unexpected character: ':'".
+database_in=file:/var/lib/aide/aide.db
 database_out=file:/var/lib/aide/aide.db.new
+database_new=file:/var/lib/aide/aide.db.new
 gzip_dbout=yes
 report_url=file:/var/log/aide/aide.report.log
 report_url=stdout
@@ -6101,10 +6112,14 @@ AIDE_CONF
     install -d -m 0750 /var/lib/aide
     touch /var/lib/aide/.init-in-progress
     _log "AIDE: initial DB build (background — takes 2-5 min)"
+    # /usr/sbin/aideinit (ships with aide-common) is the Debian-canonical
+    # entrypoint: it reads /etc/aide/aide.conf, builds aide.db.new, and
+    # atomically renames to aide.db. Plain `aide --init` would require
+    # an explicit --config flag (init.log: "ERROR: missing configuration
+    # (use '--config' '--before' or '--after' command line parameter)").
     nohup bash -c '
-      /usr/bin/aide --init >/var/log/aide/init.log 2>&1
-      if [[ -f /var/lib/aide/aide.db.new ]]; then
-        mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
+      /usr/sbin/aideinit -y -f >/var/log/aide/init.log 2>&1
+      if [[ -f /var/lib/aide/aide.db ]]; then
         chmod 0600 /var/lib/aide/aide.db
         date -u +%Y-%m-%dT%H:%M:%SZ > /var/lib/aide/.jabali-installed
       fi
@@ -7659,11 +7674,17 @@ main() {
   install_malware_stack
   install_ufw
   install_per_user_egress
+  install_restart_drop_ins
+  clone_or_update_repo
+  # install_apparmor + install_aide + install_notify_template require
+  # files under $REPO_DIR/install/{apparmor,systemd,scripts}/ — must run
+  # AFTER clone_or_update_repo populates $REPO_DIR. Earlier ordering
+  # silently no-op'd on fresh installs (incident 2026-05-02 on
+  # mx.jabali-panel.local: marker written, zero profiles loaded, AIDE
+  # DB never built).
   install_apparmor
   install_aide
-  install_restart_drop_ins
   install_notify_template
-  clone_or_update_repo
   # M25: source the socket-helper definitions now that the repo's install/
   # tree is on disk. Steps 2–5 will call verify_socket_perms /
   # verify_no_all_interface_binds after each service-bind change. Sourced

@@ -12,7 +12,20 @@ profile jabali-bulwark /usr/local/bin/jabali-bulwark {
   #include <abstractions/nameservice>
   #include <abstractions/openssl>
   #include <abstractions/ssl_certs>
-  #include <abstractions/nodejs>
+
+  # Inline minimum Node.js runtime needs — Debian 13 doesn't ship
+  # abstractions/nodejs (parser error: "Could not open
+  # 'abstractions/nodejs'"). These cover libuv epoll/eventfd, V8 ICU
+  # tables, libc DNS, /dev/urandom for crypto.randomBytes, and CPU
+  # topology that Node samples at startup.
+  /dev/urandom                    r,
+  /dev/null                       rw,
+  /proc/sys/kernel/random/uuid    r,
+  /proc/*/maps                    r,
+  /proc/*/stat                    r,
+  /sys/devices/system/cpu/        r,
+  /sys/devices/system/cpu/**      r,
+  /etc/ssl/openssl.cnf            r,
 
   capability net_bind_service,
   capability setuid,

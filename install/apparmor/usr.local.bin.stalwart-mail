@@ -5,7 +5,11 @@
 
 #include <tunables/global>
 
-profile stalwart-mail /usr/local/bin/stalwart {
+# AppArmor matches on the canonicalized exec path. /usr/local/bin/stalwart
+# is a symlink to /opt/stalwart/stalwart; attaching the profile to the
+# symlink leaves the daemon unconfined. Attach to the real binary path
+# so systemd-launched + direct-exec both pick it up.
+profile stalwart-mail /opt/stalwart/stalwart {
   #include <abstractions/base>
   #include <abstractions/nameservice>
   #include <abstractions/openssl>

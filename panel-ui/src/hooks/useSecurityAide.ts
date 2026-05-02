@@ -22,7 +22,10 @@ export interface AideStatus {
   sample: AideSampleRow[];
 }
 
-const BASE = "/api/v1/admin/security/aide";
+// apiClient baseURL is already "/api/v1" — paths must be relative
+// to that, NOT include the prefix again (would produce
+// /api/v1/api/v1/... → 404).
+const BASE = "/admin/security/aide";
 
 export function useAideStatus() {
   return useQuery({

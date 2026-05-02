@@ -15,7 +15,10 @@ export interface AppArmorStatus {
   profiles: AppArmorProfile[];
 }
 
-const BASE = "/api/v1/admin/security/apparmor";
+// apiClient baseURL is already "/api/v1" — paths must be relative
+// to that, NOT include the prefix again (would produce
+// /api/v1/api/v1/... → 404).
+const BASE = "/admin/security/apparmor";
 
 export function useAppArmorStatus() {
   return useQuery({

@@ -299,6 +299,25 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 		}
 	}
 
+	// Verify wp-load.php landed in installPath. If the download silently
+	// wrote nothing (disk full, cache permission denied, etc.) we get a
+	// confusing "not a WordPress installation" error on the next step.
+	if _, statErr := os.Stat(filepath.Join(installPath, "wp-load.php")); os.IsNotExist(statErr) {
+		var lsOut bytes.Buffer
+		lsCmd := exec.CommandContext(ctx, "ls", "-la", installPath)
+		lsCmd.Stdout = &lsOut
+		_ = lsCmd.Run()
+		return nil, &agentwire.AgentError{
+			Code: agentwire.CodeInternal,
+			Message: fmt.Sprintf("wp core download exited 0 but wp-load.php missing at %s; dl_stdout=%q dl_stderr=%q ls=%q",
+				installPath,
+				truncateStr(dlStdout.String(), 400),
+				truncateStr(dlStderr.String(), 400),
+				truncateStr(lsOut.String(), 600),
+			),
+		}
+	}
+
 	// Step 2: wp config create (with placeholder password, then rewrite)
 	configCmd := buildSystemdRunCmd(ctx,
 		req.OSUser,

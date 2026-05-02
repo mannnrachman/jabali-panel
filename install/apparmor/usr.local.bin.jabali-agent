@@ -36,6 +36,8 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /usr/local/bin/jabali-agent mr,
   /etc/jabali/                 r,
   /etc/jabali/**               rw,
+  /etc/jabali-panel/           r,
+  /etc/jabali-panel/**         r,
   /run/jabali-agent.sock       rw,
   /run/jabali-panel.sock       rw,
 
@@ -81,6 +83,10 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /run/**                      rw,
   /sys/fs/cgroup/              r,
   /sys/fs/cgroup/**            r,
+  /sys/kernel/security/apparmor/         r,
+  /sys/kernel/security/apparmor/**       r,
+  /sys/module/apparmor/                  r,
+  /sys/module/apparmor/**                r,
 
   # Named exec list — agent shells out to these. Each ix = inherit
   # this profile (so child stays confined under jabali-agent).

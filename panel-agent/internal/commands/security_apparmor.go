@@ -78,6 +78,10 @@ func mwApparmorStatusHandler(ctx context.Context, _ json.RawMessage) (any, error
 			name != "stalwart-mail" {
 			continue
 		}
+		// Skip complain-mode child shadow profiles (e.g. "jabali-panel//null-/usr/sbin/...").
+		if strings.Contains(name, "//") {
+			continue
+		}
 		resp.Profiles = append(resp.Profiles, apparmorProfile{
 			Name: name,
 			Mode: mode,

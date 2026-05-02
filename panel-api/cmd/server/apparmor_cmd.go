@@ -25,6 +25,27 @@ var apparmorAllowlist = []string{
 	"stalwart-mail",
 }
 
+// apparmorProfileFile maps a profile name to the on-disk profile file
+// shipped under /etc/apparmor.d/. aa-enforce/aa-complain accept either
+// a binary path (resolved via PATH) or a profile-file path; profile
+// names like "jabali-bulwark" don't resolve via PATH on Debian, so we
+// always pass the file path explicitly.
+func apparmorProfileFile(name string) string {
+	switch name {
+	case "jabali-panel":
+		return "/etc/apparmor.d/usr.local.bin.jabali-panel-api"
+	case "jabali-agent":
+		return "/etc/apparmor.d/usr.local.bin.jabali-agent"
+	case "jabali-bulwark":
+		return "/etc/apparmor.d/usr.local.bin.jabali-bulwark"
+	case "jabali-kratos":
+		return "/etc/apparmor.d/usr.local.bin.jabali-kratos"
+	case "stalwart-mail":
+		return "/etc/apparmor.d/usr.local.bin.stalwart-mail"
+	}
+	return ""
+}
+
 func newAppArmorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "apparmor",
@@ -102,7 +123,12 @@ arbitrary system profiles. Use --profile <name> to target one.`,
 				if dryRun {
 					continue
 				}
-				out, err := exec.Command("aa-enforce", name).CombinedOutput()
+				profilePath := apparmorProfileFile(name)
+				if profilePath == "" {
+					fmt.Fprintf(os.Stderr, "  flip %s failed: no file path mapping\n", name)
+					continue
+				}
+				out, err := exec.Command("aa-enforce", profilePath).CombinedOutput()
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "  flip %s failed: %v\n%s\n", name, err, string(out))
 					continue

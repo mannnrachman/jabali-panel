@@ -33,6 +33,27 @@ var allowedProfiles = map[string]bool{
 	"stalwart-mail":  true,
 }
 
+// apparmorProfileFile maps a profile name to its on-disk file path.
+// aa-enforce/aa-complain need a path that resolves either via PATH or
+// directly to a profile file; profile names like "jabali-bulwark"
+// don't resolve via PATH on Debian, so we always pass the explicit
+// file path.
+func apparmorProfileFile(name string) string {
+	switch name {
+	case "jabali-panel":
+		return "/etc/apparmor.d/usr.local.bin.jabali-panel-api"
+	case "jabali-agent":
+		return "/etc/apparmor.d/usr.local.bin.jabali-agent"
+	case "jabali-bulwark":
+		return "/etc/apparmor.d/usr.local.bin.jabali-bulwark"
+	case "jabali-kratos":
+		return "/etc/apparmor.d/usr.local.bin.jabali-kratos"
+	case "stalwart-mail":
+		return "/etc/apparmor.d/usr.local.bin.stalwart-mail"
+	}
+	return ""
+}
+
 type apparmorProfile struct {
 	Name string `json:"name"`
 	Mode string `json:"mode"`
@@ -118,7 +139,11 @@ func mwApparmorSetModeHandler(ctx context.Context, raw json.RawMessage) (any, er
 
 	// aa-{enforce,complain} accepts either the profile-file path OR
 	// the profile label. We pass the label — works on Debian 13 AA 3.x.
-	out, err := osexec.CommandContext(ctx, tool, req.Profile).CombinedOutput()
+	profilePath := apparmorProfileFile(req.Profile)
+	if profilePath == "" {
+		return nil, mwInvalidArg("profile has no file path mapping")
+	}
+	out, err := osexec.CommandContext(ctx, tool, profilePath).CombinedOutput()
 	if err != nil {
 		return nil, mwInternal(fmt.Sprintf("%s %s: %s", tool, req.Profile, string(out)), err)
 	}

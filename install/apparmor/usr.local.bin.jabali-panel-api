@@ -20,6 +20,10 @@ profile jabali-panel /usr/local/bin/jabali-panel {
   capability net_bind_service,
   capability setuid,
   capability setgid,
+  # mac_admin lets the operator-only `jabali apparmor flip-mature` CLI
+  # call apparmor_parser to flip jabali profiles complain↔enforce. The
+  # daemon HTTP path doesn't exercise this; it's gated by allowedProfiles.
+  capability mac_admin,
 
   network inet  stream,
   network inet6 stream,
@@ -28,32 +32,73 @@ profile jabali-panel /usr/local/bin/jabali-panel {
   /usr/local/bin/jabali-panel mr,
   /etc/jabali/                 r,
   /etc/jabali/**               r,
+  /etc/jabali-panel/           r,
+  /etc/jabali-panel/**         r,
+  /etc/apparmor/               r,
+  /etc/apparmor/**             r,
+  /etc/apparmor.d/             rw,
+  /etc/apparmor.d/**           rw,
+  /usr/share/apparmor-features/    r,
+  /usr/share/apparmor-features/**  r,
+  /var/cache/apparmor/         rw,
+  /var/cache/apparmor/**       rwk,
   /etc/letsencrypt/live/       r,
   /etc/letsencrypt/live/**     r,
   /etc/letsencrypt/archive/    r,
   /etc/letsencrypt/archive/**  r,
+
+  # Read securityfs for aa-status; flip-mature CLI execs aa-{enforce,complain}.
+  /sys/kernel/security/apparmor/    r,
+  /sys/kernel/security/apparmor/**  r,
+  # apparmor_parser writes to control files to load/replace/remove policy.
+  /sys/kernel/security/apparmor/.replace  w,
+  /sys/kernel/security/apparmor/.load     w,
+  /sys/kernel/security/apparmor/.remove   w,
+  /sys/module/apparmor/             r,
+  /sys/module/apparmor/**           r,
+
+  /usr/sbin/aa-status         rix,
+  /usr/sbin/aa-enforce        rix,
+  /usr/sbin/aa-complain       rix,
+  /usr/sbin/apparmor_parser   rix,
+  /usr/bin/journalctl         rix,
 
   /var/lib/jabali-panel/       rw,
   /var/lib/jabali-panel/**     rwk,
   /var/log/jabali-panel/       rw,
   /var/log/jabali-panel/**     rwk,
 
-  /run/jabali-panel.sock       rw,
-  /run/jabali-agent.sock       rw,
+  # Bind own listener sockets (M25 unix-socket layout, ADR-0050).
+  /run/jabali-panel/           rw,
+  /run/jabali-panel/**         rw,
+  # Connect upstreams.
+  /run/jabali/                 r,
+  /run/jabali/agent.sock       rw,
+  /run/jabali-kratos/          r,
+  /run/jabali-kratos/**        rw,
+  /run/jabali-bulwark/         r,
+  /run/jabali-bulwark/**       rw,
+  /run/redis/                  r,
+  /run/redis/redis.sock        rw,
   /run/redis/jabali.sock       rw,
+  /run/mysqld/                 r,
   /run/mysqld/mysqld.sock      rw,
   /var/run/mysqld/mysqld.sock  rw,
-  /run/kratos-admin.sock       rw,
-  /run/kratos-public.sock      rw,
-  /run/jabali-bulwark.sock     rw,
 
   # Static assets the embedded webui ships are read from /usr/local/share.
   /usr/local/share/jabali/**   r,
 
+  /proc/                       r,
   /proc/sys/net/core/somaxconn r,
   /proc/sys/kernel/random/uuid r,
+  /proc/*/                     r,
   /proc/*/status               r,
   /proc/*/stat                 r,
+  /proc/*/attr/                r,
+  /proc/*/attr/current         r,
+  /proc/*/attr/apparmor/current r,
+  /proc/mounts                 r,
+  /proc/*/mounts               r,
 
   # Outbound TCP — OIDC, SMTP relays, ntfy / Slack / Discord / Telegram
   # webhooks. Unrestricted at the AppArmor layer because the targets

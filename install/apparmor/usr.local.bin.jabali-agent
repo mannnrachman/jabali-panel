@@ -38,6 +38,8 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /etc/jabali/**               rw,
   /etc/jabali-panel/           r,
   /etc/jabali-panel/**         r,
+  /etc/aide/                   r,
+  /etc/aide/**                 r,
   /run/jabali-agent.sock       rw,
   /run/jabali-panel.sock       rw,
 
@@ -68,6 +70,10 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /var/lib/jabali-*/**         rwk,
   /var/log/jabali-*/           rw,
   /var/log/jabali-*/**         rwk,
+  /var/lib/aide/               rw,
+  /var/lib/aide/**             rwk,
+  /var/log/aide/               rw,
+  /var/log/aide/**             rwk,
   /var/log/maldet/             rw,
   /var/log/maldet/**           rwk,
   /usr/local/maldetect/        r,
@@ -176,6 +182,7 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /usr/sbin/apparmor_parser    ix,
   /usr/sbin/pdns_recursor      ix,
   /usr/sbin/pdns_server        ix,
+  /usr/bin/aide                ix,
 
   # Hard denies for things the agent should never touch.
   deny /etc/shadow- rwklx,

@@ -150,7 +150,7 @@ func mwAideCheckHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
-	cmd := osexec.CommandContext(ctx, "/usr/bin/aide", "--check")
+	cmd := osexec.CommandContext(ctx, "/usr/bin/aide", "--config", "/etc/aide/aide.conf", "--check")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, mwInternal("aide stdout pipe", err)

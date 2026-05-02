@@ -116,6 +116,12 @@ type updateUserRequest struct {
 	NameLast  *string `json:"name_last,omitempty"`
 	IsAdmin   *bool   `json:"is_admin,omitempty"`
 	PackageID *string `json:"package_id,omitempty"`
+	// Password, when set, rotates the user's auth password: bcrypt-hashed
+	// into the DB row, pushed to Kratos via Identity API, and (for users
+	// with an OS account) synced to the system passwd via the agent's
+	// user.password command. Empty string is treated as "no change" so the
+	// admin UI can omit the field on submits where the form left it blank.
+	Password *string `json:"password,omitempty" binding:"omitempty,min=10"`
 }
 
 type reprovisionRequest struct {
@@ -411,6 +417,65 @@ func (h *userHandler) update(c *gin.Context) {
 			return
 		}
 		existing.IsAdmin = *req.IsAdmin
+	}
+
+	// Password rotation. Order: hash -> Kratos -> OS (agent) -> DB.
+	// Kratos is the authoritative auth backend post-M20; if it fails the
+	// DB hash stays old so login keeps working with the previous password.
+	// OS sync is best-effort; failure surfaces as 502 with detail but the
+	// Kratos+DB sides have already converged so login still works.
+	if req.Password != nil && *req.Password != "" {
+		hash, err := bcrypt.GenerateFromPassword([]byte(*req.Password), h.cfg.BcryptCost)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		if existing.KratosIdentityID == nil || *existing.KratosIdentityID == "" {
+			c.JSON(http.StatusConflict, gin.H{
+				"error":  "no_kratos_identity",
+				"detail": "user has no Kratos identity to update",
+			})
+			return
+		}
+		if h.cfg.KratosClient == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "kratos_unavailable"})
+			return
+		}
+		kctx, kcancel := context.WithTimeout(ctx, 10*time.Second)
+		if err := h.cfg.KratosClient.SetPassword(kctx, *existing.KratosIdentityID, string(hash)); err != nil {
+			kcancel()
+			slog.Warn("kratos SetPassword failed", "user_id", id, "err", err)
+			c.JSON(http.StatusBadGateway, gin.H{
+				"error":  "kratos_error",
+				"detail": err.Error(),
+			})
+			return
+		}
+		kcancel()
+		if !existing.IsAdmin && existing.Username != nil && *existing.Username != "" && h.cfg.Agent != nil {
+			actx, acancel := context.WithTimeout(ctx, 10*time.Second)
+			_, agentErr := h.cfg.Agent.Call(actx, "user.password", map[string]any{
+				"username": *existing.Username,
+				"password": *req.Password,
+			})
+			acancel()
+			if agentErr != nil {
+				slog.Warn("agent user.password failed", "user_id", id, "err", agentErr)
+				c.JSON(http.StatusBadGateway, gin.H{
+					"error":             "agent_error",
+					"detail":            agentErr.Error(),
+					"kratos_synced":     true,
+					"db_synced":         false,
+					"os_synced":         false,
+				})
+				return
+			}
+		}
+		existing.PasswordHash = string(hash)
+		if err := h.cfg.Repo.Update(ctx, existing); err != nil {
+			h.translateErr(c, err)
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, existing)

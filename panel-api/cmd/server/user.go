@@ -320,6 +320,30 @@ func newUserPasswordCmd() *cobra.Command {
 				return fmt.Errorf("kratos set password: %w", err)
 			}
 
+			// Mirror to the panel DB row so the bcrypt-hash column matches
+			// Kratos. Login is via Kratos but several legacy paths
+			// (BootstrapAdmin idempotency check, password_hash audit columns)
+			// still read the DB hash.
+			if err := userRepo().Update(ctx, &models.User{ID: target.ID, Email: target.Email, PasswordHash: string(hash)}); err != nil {
+				fmt.Fprintln(os.Stderr, "warning: kratos updated but DB hash sync failed:", err)
+			}
+
+			// Sync to the OS account for non-admin users so SSH / SFTP /
+			// chage all see the new password too. The agent's user.password
+			// command runs `chpasswd <user>:<pass>` as root.
+			if !target.IsAdmin && target.Username != nil && *target.Username != "" {
+				if sharedAgent != nil {
+					if _, agentErr := sharedAgent.Call(ctx, "user.password", map[string]any{
+						"username": *target.Username,
+						"password": newPwd,
+					}); agentErr != nil {
+						fmt.Fprintln(os.Stderr, "warning: kratos updated but OS password sync failed:", agentErr)
+					}
+				} else {
+					fmt.Fprintln(os.Stderr, "warning: agent client unavailable, OS password not synced")
+				}
+			}
+
 			if jsonOutput {
 				out := map[string]string{
 					"user_id": target.ID,

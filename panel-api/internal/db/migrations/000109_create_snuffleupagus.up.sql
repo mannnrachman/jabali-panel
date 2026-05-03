@@ -15,7 +15,11 @@ CREATE TABLE snuffleupagus_state (
   CONSTRAINT chk_snuf_state_singleton CHECK (id = 1)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT INTO snuffleupagus_state (id, mode) VALUES (1, 'off');
+-- Fresh installs land in simulation: rules log incidents but don't
+-- block tenant requests. Operator runs a 7-day soak, triages false
+-- positives via the per-rule kill switch, then flips to enforce via
+-- /admin/security/snuffleupagus.
+INSERT INTO snuffleupagus_state (id, mode) VALUES (1, 'simulation');
 
 CREATE TABLE snuffleupagus_rule_overrides (
   rule_name      VARCHAR(128) NOT NULL PRIMARY KEY,

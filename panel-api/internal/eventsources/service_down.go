@@ -67,11 +67,37 @@ func serviceDownPass(ctx context.Context, d Deps) {
 		if state == "active" || state == "activating" {
 			continue
 		}
+		// `failed` always fires — distinct from operator-disabled, this
+		// means the unit crashed or its ExecStart returned non-zero.
+		if state != "failed" {
+			// For everything else (inactive, deactivating, not-found),
+			// only fire when the unit is operator-ENABLED. Units that
+			// are disabled / static / masked / indirect are deliberately
+			// off — install.sh ships several such units (jabali-webmail,
+			// jabali-stalwart) that lazy-start on first user action,
+			// and treating them as failures spams the inbox on every
+			// fresh install. service.down is for "should be running but
+			// isn't", not "is configured to start later".
+			enabled, _ := unitEnabled(ctx, unit)
+			switch enabled {
+			case "disabled", "static", "masked", "indirect", "alias", "linked-runtime", "transient":
+				continue
+			}
+		}
 		// "inactive", "failed", "deactivating", "reloading" all fire.
 		// An enabled-but-not-loaded unit ("not-found") fires too — a
 		// missing unit file after an upgrade is itself a service-down.
 		fireServiceDown(ctx, d, unit, state)
 	}
+}
+
+// unitEnabled returns the `systemctl is-enabled <unit>` string. Empty
+// string + error when the unit is unknown to systemd.
+func unitEnabled(ctx context.Context, unit string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "systemctl", "is-enabled", unit).Output()
+	return strings.TrimSpace(string(out)), err
 }
 
 func fireServiceDown(ctx context.Context, d Deps, unit, state string) {

@@ -6079,10 +6079,23 @@ install_snuffleupagus() {
   fi
 
   # Build deps. snuffleupagus needs the same toolchain as any phpize-built
-  # extension; M9.6 already installs php-dev for each minor.
+  # extension. The phpX.Y-dev metapackage ships phpize + php-config + the
+  # Zend headers we link against. install_base_packages does NOT pull it
+  # because nothing else needs it; we must install per-minor here.
   if ! dpkg -s build-essential libpcre2-dev >/dev/null 2>&1; then
     _spin "apt install build-essential + libpcre2-dev" \
       apt-get install -y -qq --no-install-recommends build-essential libpcre2-dev
+  fi
+  local _php_versions="${JABALI_PHP_VERSIONS:-8.5}"
+  local _minor _dev_pkgs=()
+  for _minor in $_php_versions; do
+    if ! dpkg -s "php${_minor}-dev" >/dev/null 2>&1; then
+      _dev_pkgs+=("php${_minor}-dev")
+    fi
+  done
+  if (( ${#_dev_pkgs[@]} > 0 )); then
+    _spin "apt install ${_dev_pkgs[*]}" \
+      apt-get install -y -qq --no-install-recommends "${_dev_pkgs[@]}"
   fi
 
   # Active rules dir + placeholder file. mode=off by default, so the

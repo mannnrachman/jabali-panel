@@ -14,7 +14,20 @@ import (
 const (
 	serviceDownTick    = time.Minute
 	serviceDownCoolOff = 5 * time.Minute
+	// serviceDownGrace covers controlled restarts. `jabali update` and
+	// install.sh both run `systemctl restart` against managed units;
+	// the deactivating → inactive → activating window can span two
+	// ticks. Without this debounce, every `jabali update` ships a
+	// false-positive service.down alert per restarted unit (caught on
+	// 192.168.100.150 dogfood 2026-05-04: jabali-stalwart fired during
+	// the install-time bounce and stuck in the bell).
+	serviceDownGrace = 2 * time.Minute
 )
+
+// serviceDownInactiveSince tracks the first tick a unit was observed
+// in a non-active state. We only fire when the unit has been down for
+// >= serviceDownGrace, debouncing controlled restarts.
+var serviceDownInactiveSince = map[string]time.Time{}
 
 // jabaliUnits is the hard-coded list of systemd units we monitor. It
 // matches what install.sh enables — add new units here when
@@ -65,6 +78,15 @@ func serviceDownPass(ctx context.Context, d Deps) {
 			d.Log.Debug("eventsources: service_down lookup failed", "unit", unit, "err", err)
 		}
 		if state == "active" || state == "activating" {
+			// Active again — clear any down-since marker so the next
+			// outage starts its grace window fresh.
+			delete(serviceDownInactiveSince, unit)
+			continue
+		}
+		// `deactivating` and `reloading` are transient by definition.
+		// Don't latch onto them — wait for the unit to settle into
+		// inactive/failed/active before deciding.
+		if state == "deactivating" || state == "reloading" {
 			continue
 		}
 		// `failed` always fires — distinct from operator-disabled, this
@@ -84,9 +106,25 @@ func serviceDownPass(ctx context.Context, d Deps) {
 				continue
 			}
 		}
-		// "inactive", "failed", "deactivating", "reloading" all fire.
-		// An enabled-but-not-loaded unit ("not-found") fires too — a
-		// missing unit file after an upgrade is itself a service-down.
+		// `failed` is genuinely terminal — fire immediately. For
+		// `inactive` (and the catch-all "not-found"), require the
+		// unit to have been in this state for at least serviceDownGrace
+		// before firing. Suppresses false positives from controlled
+		// restarts (jabali update, install.sh upgrade flow).
+		if state == "failed" {
+			delete(serviceDownInactiveSince, unit)
+			fireServiceDown(ctx, d, unit, state)
+			continue
+		}
+		now := d.Now()
+		if firstSeen, seen := serviceDownInactiveSince[unit]; seen {
+			if now.Sub(firstSeen) < serviceDownGrace {
+				continue
+			}
+		} else {
+			serviceDownInactiveSince[unit] = now
+			continue
+		}
 		fireServiceDown(ctx, d, unit, state)
 	}
 }

@@ -6051,6 +6051,76 @@ apply_apparmor_profiles() {
 # /boot /root). Daily check via systemd timer; M14 event source
 # fires on any diff. See ADR-0087 + plans/m42-aide-fim-system-integrity.md.
 
+# install_snuffleupagus — M41 (ADR-0088). Source-builds Snuffleupagus.so
+# for every installed PHP minor and wires it into both fpm/ and cli/
+# conf.d directories. The shared sp.configuration_file points at
+# /etc/jabali/snuffleupagus/active.rules which the panel reconciler
+# renders from DB state. Default mode is off until Wave E flips fresh
+# installs to simulation.
+#
+# Idempotent: build.sh skips minors already on the pinned version.
+install_snuffleupagus() {
+  # Pin the upstream tag + tarball SHA256. Update both atomically when
+  # bumping. SHA256 = sha256sum of the GitHub release tarball.
+  local snuf_version="0.10.0"
+  local snuf_sha256="PLACEHOLDER_BUMP_BEFORE_FIRST_RELEASE"
+
+  local build="/install/snuffleupagus/build/build.sh"
+  if [[ ! -x "" ]]; then
+    _err "snuffleupagus build script missing: "
+    return 1
+  fi
+
+  # Build deps. snuffleupagus needs the same toolchain as any phpize-built
+  # extension; M9.6 already installs php-dev for each minor.
+  if ! dpkg -s build-essential libpcre2-dev >/dev/null 2>&1; then
+    _spin "apt install build-essential + libpcre2-dev"       apt-get install -y -qq --no-install-recommends build-essential libpcre2-dev
+  fi
+
+  # Active rules dir + placeholder file. mode=off by default, so the
+  # placeholder disables the module. Reconciler overwrites once state
+  # flips to simulation/enforce.
+  install -d -m 0755 /etc/jabali/snuffleupagus
+  if [[ ! -f /etc/jabali/snuffleupagus/active.rules ]]; then
+    cat > /etc/jabali/snuffleupagus/active.rules <<EOF_RULES
+# Jabali Snuffleupagus — placeholder (mode=off). Reconciler overwrites
+# this file when the operator flips mode to simulation or enforce.
+sp.global.enable(0);
+EOF_RULES
+    chmod 0644 /etc/jabali/snuffleupagus/active.rules
+  fi
+  # cli.ini for the jabali-php wrapper (Wave C). Pinning prevents
+  # customer-supplied -c flags from sidestepping the rules file.
+  if [[ ! -f /etc/jabali/snuffleupagus/cli.ini ]]; then
+    cat > /etc/jabali/snuffleupagus/cli.ini <<EOF_CLI
+; Jabali PHP-CLI wrapper config — pin sp.configuration_file so cron and
+; SFTP-shell PHP cannot dodge the active rule set via custom .ini.
+sp.configuration_file=/etc/jabali/snuffleupagus/active.rules
+EOF_CLI
+    chmod 0644 /etc/jabali/snuffleupagus/cli.ini
+  fi
+
+  # Build per minor. Discover via /etc/php/* dirs (matches M9.6).
+  local minor
+  for minor in 8.4; do
+    [[ -d "/etc/php//fpm" ]] || continue
+    SNUFFLEUPAGUS_VERSION=""     SNUFFLEUPAGUS_SHA256=""       "" "" || {
+        _warn "snuffleupagus build failed for PHP  (continuing other minors)"
+        continue
+      }
+    # mods-available + conf.d wiring.
+    cat > "/etc/php//mods-available/jabali-snuffleupagus.ini" <<EOF_MOD
+; Jabali Snuffleupagus extension load + config-file pin.
+extension=/usr/lib/php/jabali-snuffleupagus//snuffleupagus.so
+sp.configuration_file=/etc/jabali/snuffleupagus/active.rules
+EOF_MOD
+    ln -sf "../../mods-available/jabali-snuffleupagus.ini"       "/etc/php//fpm/conf.d/30-jabali-snuffleupagus.ini"
+    ln -sf "../../mods-available/jabali-snuffleupagus.ini"       "/etc/php//cli/conf.d/30-jabali-snuffleupagus.ini"
+  done
+
+  _ok "snuffleupagus installed across PHP minors (mode=off; flip via Security UI)"
+}
+
 install_aide() {
   if ! dpkg -s aide >/dev/null 2>&1; then
     _spin "apt install aide + aide-common" \
@@ -7726,6 +7796,7 @@ main() {
   # (aideinit is bg) and gives a clean baseline.
   install_apparmor
   install_notify_template
+  install_snuffleupagus
   # M25: source the socket-helper definitions now that the repo's install/
   # tree is on disk. Steps 2–5 will call verify_socket_perms /
   # verify_no_all_interface_binds after each service-bind change. Sourced

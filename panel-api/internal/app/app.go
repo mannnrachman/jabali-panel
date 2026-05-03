@@ -560,6 +560,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterSecurityAppArmorRoutes(v1, deps.Agent)
 			// M42 (ADR-0087) AIDE FIM read-only status + manual check trigger.
 			api.RegisterSecurityAideRoutes(v1, deps.Agent)
+			// M41 (ADR-0088) Snuffleupagus PHP hardening admin endpoints.
+			api.RegisterSecuritySnuffleupagusRoutes(v1, deps.Agent)
 			// M33 malware tab — ADR-0072. All five malware repos must be
 			// wired or RegisterSecurityMalwareRoutes is skipped (older test
 			// wiring without the M33 graph). Tab still renders empty state.

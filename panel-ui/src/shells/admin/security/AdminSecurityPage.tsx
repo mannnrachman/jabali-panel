@@ -16,12 +16,13 @@ import crowdsecBrand from "../../../icons/brand/crowdsec.svg";
 
 import { AdminSecurityAide } from "./AdminSecurityAide";
 import { AdminSecurityAppArmor } from "./AdminSecurityAppArmor";
+import { AdminSecuritySnuffleupagus } from "./AdminSecuritySnuffleupagus";
 import { AdminSecurityCrowdsec } from "./AdminSecurityCrowdsec";
 import { AdminSecurityEgress } from "./AdminSecurityEgress";
 import { AdminSecurityMalware } from "./AdminSecurityMalware";
 import { AdminSecurityUfw } from "./AdminSecurityUfw";
 
-const TAB_KEYS = ["crowdsec", "malware", "ufw", "egress", "apparmor", "aide"] as const;
+const TAB_KEYS = ["crowdsec", "malware", "snuffleupagus", "ufw", "egress", "apparmor", "aide"] as const;
 type TabKey = (typeof TAB_KEYS)[number];
 const DEFAULT_TAB: TabKey = "crowdsec";
 
@@ -30,6 +31,7 @@ const TAB_LABELS: Record<TabKey, string> = {
   malware: "Malware",
   ufw: "Firewall (UFW)",
   egress: "Egress (per-user)",
+  snuffleupagus: "Snuffleupagus",
   apparmor: "AppArmor",
   aide: "AIDE",
 };
@@ -51,6 +53,7 @@ const TAB_ICONS: Record<TabKey, ReactNode> = {
   malware: <BugOutlined />,
   ufw: <LockOutlined />,
   egress: <ApiOutlined />,
+  snuffleupagus: <ShieldCheckOutlined />,
   apparmor: <ShieldCheckOutlined />,
   aide: <SearchOutlined />,
 };
@@ -87,6 +90,8 @@ export const AdminSecurityPage = () => {
         return <AdminSecurityUfw />;
       case "egress":
         return <AdminSecurityEgress />;
+      case "snuffleupagus":
+        return <AdminSecuritySnuffleupagus />;
       case "apparmor":
         return <AdminSecurityAppArmor />;
       case "aide":

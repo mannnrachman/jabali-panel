@@ -140,6 +140,15 @@ type Deps struct {
 	// admin Dashboard) where adding a CountAll method to every repo
 	// would be more code than the call site.
 	DB *gorm.DB
+	// M41 (ADR-0088) Snuffleupagus PHP hardening. Repo + reconciler
+	// drive /admin/security/snuffleupagus. Nil disables the routes
+	// (UI surfaces an empty state).
+	Snuffleupagus           repository.SnuffleupagusRepository
+	SnuffleupagusReconciler *reconciler.SnuffleupagusReconciler
+	// SnuffleupagusBundleDir is the directory containing the rule
+	// bundle (`*.rules` files). Default `/usr/share/jabali/snuffleupagus/rules`;
+	// repo checkouts override to `/opt/jabali-panel/install/snuffleupagus/rules`.
+	SnuffleupagusBundleDir string
 }
 
 // Default tier: chosen so a reasonable SPA (polling, a few concurrent
@@ -561,7 +570,14 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			// M42 (ADR-0087) AIDE FIM read-only status + manual check trigger.
 			api.RegisterSecurityAideRoutes(v1, deps.Agent)
 			// M41 (ADR-0088) Snuffleupagus PHP hardening admin endpoints.
-			api.RegisterSecuritySnuffleupagusRoutes(v1, deps.Agent)
+			if deps.Snuffleupagus != nil {
+				api.RegisterSecuritySnuffleupagusRoutes(v1, api.SecuritySnuffleupagusConfig{
+					Agent:      deps.Agent,
+					Repo:       deps.Snuffleupagus,
+					Reconciler: deps.SnuffleupagusReconciler,
+					BundleDir:  deps.SnuffleupagusBundleDir,
+				})
+			}
 			// M33 malware tab — ADR-0072. All five malware repos must be
 			// wired or RegisterSecurityMalwareRoutes is skipped (older test
 			// wiring without the M33 graph). Tab still renders empty state.

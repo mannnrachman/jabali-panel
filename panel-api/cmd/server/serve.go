@@ -254,6 +254,25 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.MailScanFailures = repository.NewMailScanFailureRepository(sharedDB)
 		// M33 follow-up: per-user manual-scan job tracking (mig 000097).
 		deps.MalwareUserScans = repository.NewMalwareUserScanRepository(sharedDB)
+		// M41 (ADR-0088): Snuffleupagus PHP hardening — state singleton +
+		// rule overrides + incidents. Reconciler renders active.rules from
+		// DB → /etc/jabali/snuffleupagus/active.rules and triggers an FPM
+		// pool graceful reload via the agent.
+		snufRepo := repository.NewSnuffleupagusRepository(sharedDB)
+		deps.Snuffleupagus = snufRepo
+		deps.SnuffleupagusReconciler = &reconciler.SnuffleupagusReconciler{
+			Repo:  snufRepo,
+			Agent: sharedAgent,
+		}
+		// Bundle dir resolution: prefer the on-disk install path
+		// (set by `make install` / install.sh); fall back to the source
+		// tree for dev. The route handler also defaults to the same
+		// fallback if BundleDir is empty.
+		if _, err := os.Stat("/usr/share/jabali/snuffleupagus/rules"); err == nil {
+			deps.SnuffleupagusBundleDir = "/usr/share/jabali/snuffleupagus/rules"
+		} else {
+			deps.SnuffleupagusBundleDir = "/opt/jabali-panel/install/snuffleupagus/rules"
+		}
 		// M34: per-user PHP-FPM egress firewall (mig 000100/000101, ADR-0084).
 		// Reconciler renders /etc/nftables.d/jabali-per-user-egress.nft from
 		// these rows every tick and pulls per-user drop counters back into

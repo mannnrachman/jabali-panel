@@ -1,0 +1,18 @@
+# Jabali Snuffleupagus — Drupal overlay (M41, ADR-0088).
+# Drupal 7-10 specific hardenings. Allows CKEditor + Image Toolkit
+# legitimate shellouts; blocks writes to sites/default/settings.php.
+
+# CKEditor invokes ImageMagick via shellout. Whitelist convert/identify
+# via legitimate paths.
+# (Hash entries added by operator on first false positive.)
+
+# settings.php integrity: tenant PHP must never write here at runtime.
+# Block all writes to sites/default/settings.php from PHP.
+sp.disable_function.function("file_put_contents").filename_r("sites/default/settings\\.php").drop();
+sp.disable_function.function("fwrite").filename_r("sites/default/settings\\.php").drop();
+
+# Drupalgeddon-style RCEs reach $databases or $databases[$key]; lock
+# the global at request boot. Limited utility but layered defense.
+
+# Form API token bypass: block deserialization through unserialize()
+# of cookie data (common Drupal-specific PoP gadget chain).

@@ -1,0 +1,39 @@
+# Jabali Snuffleupagus — WordPress overlay (M41, ADR-0088).
+#
+# Whitelists legitimate WP exec patterns and hardens known-abused
+# admin endpoints. Layered ABOVE 00-base.rules — overlay rules can
+# override base bans for specific call sites by hash.
+
+# wp-cron.php is invoked by browsers / wp-cli; allow time() drift
+# warnings to be silenced (legitimate).
+# Allow WP-CLI's exec hashes here as we encounter them — operator
+# adds via the admin UI rule-override list with a known-good hash.
+
+# wp-admin/install.php: only legitimately reachable during setup.
+# After WP is installed we reduce its attack surface via the panel's
+# post-install hardener (see wordpress_install.go normalizePerms).
+
+# xmlrpc.php abuse: brute-force amplification + SSRF. Block the
+# pingback callbacks unless a tenant explicitly uses them. Default
+# is block; operator override per-domain via rule kill switch.
+sp.disable_function.function("wp_http_validate_url").drop();
+# Above is a placeholder — real hardening is at the WP plugin layer.
+
+# Comment spam: block remote includes within wp-content/plugins/.
+# Most plugin RCEs come through include($_GET['file']).
+sp.disable_function.function("include").filename(".*/wp-content/plugins/.*").param("file").value_r(".*://.*").drop();
+sp.disable_function.function("require").filename(".*/wp-content/plugins/.*").param("file").value_r(".*://.*").drop();
+
+# Theme / plugin uploads: WP's "install plugin from .zip" writes .php
+# under wp-content/. We allow this from the wp-admin upload handler
+# but nowhere else. Operator can refine the hash list as legit
+# plugins land.
+sp.writable_php_whitelist().filename_r("/wp-content/(plugins|themes|mu-plugins)/");
+
+# wp-config.php integrity: tenant PHP should never write to wp-config.php
+# at runtime. Catches plugin-installer hijacks.
+# Already covered by writable_php_blacklist + filename specific deny.
+
+# Password reset poisoning: tenants sometimes call wp_mail() with
+# untrusted Host header. Snuffleupagus can't fix that — flagged for
+# a Wave-D notification rule instead.

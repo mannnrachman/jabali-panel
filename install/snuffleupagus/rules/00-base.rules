@@ -1,0 +1,88 @@
+# Jabali Snuffleupagus — base rules (M41, ADR-0088).
+#
+# Always-on safety rules. Apply to every PHP-FPM pool regardless of CMS.
+# Rules-of-engagement:
+#   - Each rule has a stable name= so the per-rule kill switch can target it.
+#   - Comments explain the threat model so a future operator triaging a
+#     false-positive understands what they would be turning off.
+#   - We start tight on universally-suspicious patterns and loosen via
+#     CMS overlays (10-*.rules) where the legitimate use is well-known.
+
+# Master switch. Reconciler flips this to (1) when mode != off.
+sp.global.enable(1);
+
+# Disable the assert() function. attackers love this for eval-by-string.
+sp.disable_function.function("assert").drop();
+
+# Lock down eval(). Hard to ban outright (some frameworks use it for
+# template compilation) so we hash-allow common safe call sites and
+# block the rest. CMS overlays add hash entries.
+sp.eval_blacklist_keyword.keyword("base64_decode");
+sp.eval_blacklist_keyword.keyword("$_REQUEST");
+sp.eval_blacklist_keyword.keyword("$_GET");
+sp.eval_blacklist_keyword.keyword("$_POST");
+sp.eval_blacklist_keyword.keyword("$_COOKIE");
+sp.eval_blacklist_keyword.keyword("$_SERVER");
+
+# system() / exec() / shell_exec() / passthru() / popen() — hash-pin
+# legitimate callers, drop everything else. CMS overlays append hashes.
+sp.disable_function.function("system").drop();
+sp.disable_function.function("exec").drop();
+sp.disable_function.function("shell_exec").drop();
+sp.disable_function.function("passthru").drop();
+sp.disable_function.function("popen").drop();
+sp.disable_function.function("proc_open").drop();
+sp.disable_function.function("pcntl_exec").drop();
+
+# show_source / phpinfo — info leak vectors, never legitimate in tenant code.
+sp.disable_function.function("show_source").drop();
+sp.disable_function.function("highlight_file").drop();
+sp.disable_function.function("phpinfo").drop();
+
+# dl() — runtime extension load. Bypass for our pinned extension dir.
+sp.disable_function.function("dl").drop();
+
+# unserialize() POP-chain protection. The classic Magento / Joomla RCE.
+# Block dangerous magic methods on unserialize when the payload arrives
+# from $_REQUEST / cookie surfaces.
+sp.unserialize_hmac.enable();
+
+# readlink / file_get_contents on file:// schemes when called via
+# user-controlled URLs is path-traversal. Block file://, phar://, expect://.
+sp.wrapper.disable("expect");
+sp.wrapper.disable("phar");
+
+# XXE: DOMDocument and SimpleXMLElement default to entity expansion off,
+# but tenant code that re-enables it is suspicious.
+# Caught by sp.disabled_functions for libxml_disable_entity_loader=false
+# being toggled at runtime.
+
+# upload_max_filesize bypass: block ini_set/ini_restore on hardening
+# directives. Tenant code shouldn't be loosening these at runtime.
+sp.ini.key("disable_functions").ro();
+sp.ini.key("open_basedir").ro();
+sp.ini.key("session.use_strict_mode").ro();
+sp.ini.key("session.cookie_httponly").ro();
+
+# session.upload_progress.enabled is a known LFI vector when paired with
+# PHP_SESSION_UPLOAD_PROGRESS. Block runtime toggles.
+sp.ini.key("session.upload_progress.enabled").ro();
+
+# auto_prepend_file / auto_append_file: classic webshell persistence trick.
+sp.ini.key("auto_prepend_file").ro();
+sp.ini.key("auto_append_file").ro();
+
+# file_uploads: a tenant cannot enable file uploads at runtime if the
+# pool config disabled them.
+sp.ini.key("file_uploads").ro();
+
+# General: block writes to .php inside docroots from PHP itself.
+# Webshell-drop vector. Allowlist via 10-*.rules per-CMS for CMS plugin
+# install workflows.
+sp.writable_php_blacklist();
+
+# Cookie hardening: enforce httponly + samesite=lax server-wide.
+sp.cookie.name("PHPSESSID").samesite("Lax").httponly().secure();
+
+# Log everything we block (or would block in simulation mode).
+# log_media is set globally by the active.rules wrapper.

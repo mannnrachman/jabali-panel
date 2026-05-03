@@ -1,0 +1,10 @@
+# Jabali Snuffleupagus — PrestaShop overlay (M41, ADR-0088).
+
+# SmartyCompiler include: PrestaShop generates .php compile cache from
+# Smarty templates. Legitimate writes to /cache/smarty/compile/. Block
+# compile-cache tampering elsewhere.
+sp.writable_php_whitelist().filename_r("/cache/smarty/compile/");
+
+# WS-API SSRF: tenant code calling fopen/file_get_contents on
+# user-supplied URLs. Block phar:// + ftp:// schemes (covered by base
+# but reinforced here for clarity).

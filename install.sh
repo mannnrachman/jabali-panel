@@ -5040,13 +5040,20 @@ EOF
 cleanup_modsecurity() {
   # ADR-0055 SUPERSEDED 2026-04-26 — CrowdSec AppSec covers the WAF role.
   # Active cleanup so existing hosts that installed M26 ModSecurity drop
-  # the dead nginx module + CRS rules + main include on `jabali update`.
+  # the dead nginx module + CRS rules + libs + main include on `jabali update`.
   # Idempotent: bails fast when packages already gone and no leftover files.
+  #
+  # 2026-05-04: extended package list to include libmodsecurity3t64 +
+  # libmodsecurity-dev. Earlier list (libnginx-mod-http-modsecurity +
+  # modsecurity-crs only) left the base library packages installed,
+  # surfaced when auditing why install.sh seemed to "still install
+  # ModSec" on long-lived VMs. Library packages have no other consumer
+  # in the stack, so safe to purge.
   local pkgs_present=0
-  if dpkg -l 2>/dev/null | grep -qE '^ii\s+(libnginx-mod-http-modsecurity|modsecurity-crs)\s'; then
+  if dpkg -l 2>/dev/null | grep -qE '^ii\s+(libnginx-mod-http-modsecurity|modsecurity-crs|libmodsecurity3t64|libmodsecurity-dev)\s'; then
     pkgs_present=1
   fi
-  if [[ "$pkgs_present" == "0" && ! -d /etc/nginx/modsec && ! -e /etc/nginx/modsecurity.conf ]]; then
+  if [[ "$pkgs_present" == "0" && ! -d /etc/nginx/modsec && ! -e /etc/nginx/modsecurity.conf && ! -d /etc/modsecurity && ! -d /usr/share/modsecurity-crs ]]; then
     return 0
   fi
 
@@ -5054,16 +5061,28 @@ cleanup_modsecurity() {
   if [[ "$pkgs_present" == "1" ]]; then
     DEBIAN_FRONTEND=noninteractive apt-get -y \
       -o Dpkg::Lock::Timeout=300 \
-      remove --purge libnginx-mod-http-modsecurity modsecurity-crs >/dev/null 2>&1 || true
+      remove --purge \
+        libnginx-mod-http-modsecurity \
+        modsecurity-crs \
+        libmodsecurity3t64 \
+        libmodsecurity-dev \
+        >/dev/null 2>&1 || true
+    # Clean up any orphaned modsec deps left by the purge.
+    DEBIAN_FRONTEND=noninteractive apt-get -y \
+      -o Dpkg::Lock::Timeout=300 \
+      autoremove --purge >/dev/null 2>&1 || true
   fi
 
   # Sweep leftover nginx config + module symlinks. The apt purge usually
   # handles modules-enabled/*.conf already, but operators sometimes
-  # symlinked manually — wipe both.
+  # symlinked manually — wipe both. Also covers modsec rule bundles that
+  # live outside /etc and don't get touched by `apt purge`.
   rm -f /etc/nginx/modules-enabled/*modsecurity* 2>/dev/null || true
   rm -f /etc/nginx/modsecurity.conf 2>/dev/null || true
   rm -rf /etc/nginx/modsec 2>/dev/null || true
   rm -rf /etc/modsecurity 2>/dev/null || true
+  rm -rf /usr/share/modsecurity-crs 2>/dev/null || true
+  rm -rf /var/log/modsec_audit.log /var/log/modsec_debug.log 2>/dev/null || true
 
   if nginx -t >/dev/null 2>&1; then
     if systemctl is-active --quiet nginx; then

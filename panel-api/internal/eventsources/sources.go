@@ -84,6 +84,8 @@ type Deps struct {
 	// cross. Nil ServerSettings or UserEgressPolicies disables the source.
 	UserEgressPolicies repository.UserEgressPolicyRepository
 	ServerSettings     repository.ServerSettingsRepository
+	// M41 Snuffleupagus ingest. Nil disables the ingest source.
+	Snuffleupagus repository.SnuffleupagusRepository
 }
 
 // Start boots every configured source in its own goroutine. Each
@@ -112,6 +114,7 @@ func Start(ctx context.Context, d Deps) {
 	go runDomainGhost(ctx, d)
 	go runEgressBurst(ctx, d)
 	go runAideTamper(ctx, d)
+	go runSnuffleupagusIngest(ctx, d)
 	// domain_expiry + backup_fail are stubs — see the stub files in
 	// this package.
 }

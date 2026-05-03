@@ -662,6 +662,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			ManagedIPsForGhost: deps.ManagedIPs,
 			UserEgressPolicies: deps.UserEgressPolicies,
 			ServerSettings:     deps.ServerSettings,
+			Snuffleupagus:      deps.Snuffleupagus,
 		})
 	}
 

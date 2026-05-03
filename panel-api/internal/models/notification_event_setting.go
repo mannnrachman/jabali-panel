@@ -142,6 +142,13 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 		Severity:    "info",
 		DefaultOn:   true,
 	},
+	{
+		Kind:        "snuffleupagus.incident.detected",
+		Label:       "Snuffleupagus incident",
+		Description: "PHP-hardening rule fired on a tenant request (block / simulated block / log).",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
 }
 
 // LookupNotificationEventKind returns the metadata for a known kind

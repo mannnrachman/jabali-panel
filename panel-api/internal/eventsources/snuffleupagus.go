@@ -1,0 +1,178 @@
+// Package eventsources — snuffleupagus.go (M41 Wave D, ADR-0088)
+//
+// Polls agent.snuffleupagus.fetch_incidents on a 60s tick, persists each
+// row via SnuffleupagusRepository.InsertIncident, and emits one M14
+// envelope per batch (summary line; per-incident is too noisy for a
+// rule-violation pipeline). Severity scales with action:
+//   * block        → warning
+//   * simulated_block → info
+//   * log          → info
+package eventsources
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/notifications"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+)
+
+const snuffleupagusTick = 60 * time.Second
+
+// snuffleupagusCooldown debounces the M14 dispatch — every minute we
+// poll, but if the rule fires 1000x in a minute we still only send one
+// envelope. Cooldown gives the operator a single notification per 10 min
+// burst window.
+const snuffleupagusCooldown = 10 * time.Minute
+
+// runSnuffleupagusIngest is the M41 ingest loop. Disabled when Snuffleupagus
+// repo or Agent is nil.
+func runSnuffleupagusIngest(ctx context.Context, d Deps) {
+	if d.Agent == nil || d.Snuffleupagus == nil {
+		return
+	}
+	d.Log.Info("eventsources: snuffleupagus.ingest started", "tick", snuffleupagusTick.String())
+
+	since := time.Now().UTC().Add(-snuffleupagusTick)
+	tick := time.NewTicker(snuffleupagusTick)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		next, n := snuffleupagusIngestPass(ctx, d, since)
+		if !next.IsZero() {
+			since = next
+		}
+		_ = n
+	}
+}
+
+func snuffleupagusIngestPass(ctx context.Context, d Deps, since time.Time) (time.Time, int) {
+	callCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	raw, err := d.Agent.Call(callCtx, "snuffleupagus.fetch_incidents", map[string]any{
+		"since": since.Format(time.RFC3339),
+		"limit": 500,
+	})
+	if err != nil {
+		d.Log.Debug("eventsources: snuffleupagus.fetch_incidents call failed", "err", err)
+		return time.Time{}, 0
+	}
+	var fetched struct {
+		Incidents []struct {
+			Ts         time.Time `json:"ts"`
+			RuleName   string    `json:"rule_name"`
+			Action     string    `json:"action"`
+			SourceIP   string    `json:"source_ip"`
+			RequestURI string    `json:"request_uri"`
+			PhpVersion string    `json:"php_version"`
+			Raw        string    `json:"raw"`
+		} `json:"incidents"`
+		NextSince time.Time `json:"next_since"`
+	}
+	if err := json.Unmarshal(raw, &fetched); err != nil {
+		d.Log.Warn("eventsources: snuffleupagus.fetch_incidents parse failed", "err", err)
+		return time.Time{}, 0
+	}
+	if len(fetched.Incidents) == 0 {
+		next := fetched.NextSince
+		if next.IsZero() {
+			next = time.Now().UTC()
+		}
+		return next, 0
+	}
+
+	// Persist + bucket by action for the dispatch envelope.
+	var blockCount, simCount, logCount int
+	for _, in := range fetched.Incidents {
+		ph := in.PhpVersion
+		uri := in.RequestURI
+		raw := in.Raw
+		row := &models.SnuffleupagusIncident{
+			Ts:         in.Ts,
+			RuleName:   in.RuleName,
+			Action:     models.SnuffleupagusAction(in.Action),
+			RequestURI: stringPtr(uri),
+			PhpVersion: stringPtr(ph),
+			Raw:        stringPtr(raw),
+		}
+		if in.SourceIP != "" {
+			row.SourceIP = []byte(in.SourceIP) // stored verbatim; pretty-print in UI
+		}
+		if err := d.Snuffleupagus.InsertIncident(ctx, row); err != nil {
+			d.Log.Warn("eventsources: snuffleupagus.InsertIncident failed", "err", err)
+			continue
+		}
+		switch row.Action {
+		case models.SnuffleupagusActionBlock:
+			blockCount++
+		case models.SnuffleupagusActionSimulatedBlock:
+			simCount++
+		default:
+			logCount++
+		}
+	}
+
+	dedupe := fmt.Sprintf("snuf-batch=%s", fetched.Incidents[len(fetched.Incidents)-1].Ts.Format(time.RFC3339Nano))
+	if !shouldFire(ctx, d, "snuffleupagus.incident.detected", dedupe, snuffleupagusCooldown) {
+		return fetched.NextSince, len(fetched.Incidents)
+	}
+
+	severity := "info"
+	if blockCount > 0 {
+		severity = "warning"
+	}
+	title := fmt.Sprintf("Snuffleupagus %d incident(s): %d blocked / %d simulated / %d logged",
+		len(fetched.Incidents), blockCount, simCount, logCount)
+	body := snuffleupagusBatchBody(fetched.Incidents)
+	if _, err := d.Queue.Publish(ctx, notifications.Envelope{
+		EventKind: "snuffleupagus.incident.detected",
+		Severity:  severity,
+		Title:     title,
+		Body:      body,
+		Deeplink:  "/jabali-admin/security?tab=snuffleupagus",
+	}); err != nil {
+		d.Log.Warn("eventsources: snuffleupagus.incident.detected publish failed", "err", err)
+	}
+
+	return fetched.NextSince, len(fetched.Incidents)
+}
+
+func snuffleupagusBatchBody(items []struct {
+	Ts         time.Time `json:"ts"`
+	RuleName   string    `json:"rule_name"`
+	Action     string    `json:"action"`
+	SourceIP   string    `json:"source_ip"`
+	RequestURI string    `json:"request_uri"`
+	PhpVersion string    `json:"php_version"`
+	Raw        string    `json:"raw"`
+}) string {
+	const max = 10
+	out := ""
+	for i, it := range items {
+		if i >= max {
+			out += fmt.Sprintf("...+%d more\n", len(items)-max)
+			break
+		}
+		out += fmt.Sprintf("%s  %s  %s  %s\n",
+			it.Ts.Format("15:04:05"), it.Action, it.RuleName, it.SourceIP)
+	}
+	return out
+}
+
+func stringPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// SnuffleupagusRepoLite is the slice runSnuffleupagusIngest uses.
+// Defined where it's consumed so deps stay narrow (Go interface idiom).
+type SnuffleupagusRepoLite = repository.SnuffleupagusRepository

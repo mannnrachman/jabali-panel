@@ -25,7 +25,9 @@ import (
 	"sort"
 )
 
+
 const snuffleupagusActiveRulesPath = "/etc/jabali/snuffleupagus/active.rules"
+const snuffleupagusActiveRulesDir = "/etc/jabali/snuffleupagus"
 
 var phpMinorDirRe = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
 
@@ -106,43 +108,46 @@ type snuffleupagusPoolReloadResult struct {
 	Detail string `json:"detail,omitempty"`
 }
 
-// snuffleupagusReloadHandler issues `systemctl reload-or-restart phpX.Y-fpm.service`
-// for every PHP minor that has the Snuffleupagus extension built. Reload
-// is graceful: in-flight requests finish before workers respawn with the
-// new active.rules.
+// snuffleupagusReloadHandler issues `systemctl reload-or-restart` against
+// every active per-user FPM unit (jabali-fpm@<user>.service, M9.6/M25
+// per-user pools — system phpX.Y-fpm is masked). Reload is graceful: in-
+// flight requests finish before workers respawn with the new active.rules.
 func snuffleupagusReloadHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 	resp := snuffleupagusReloadResponse{Pools: []snuffleupagusPoolReloadResult{}}
 
-	entries, err := os.ReadDir("/etc/php")
+	listCmd := osexec.CommandContext(ctx,
+		"systemctl", "list-units", "jabali-fpm@*.service",
+		"--no-legend", "--no-pager", "--state=loaded",
+	)
+	out, err := listCmd.Output()
 	if err != nil {
-		// No PHP installed — not an error from this handler's point of
-		// view; the panel logs it and moves on.
 		return resp, nil
 	}
-
-	var minors []string
-	for _, e := range entries {
-		if !e.IsDir() || !phpMinorDirRe.MatchString(e.Name()) {
+	var units []string
+	for _, line := range bytes.Split(out, []byte("\n")) {
+		fields := bytes.Fields(line)
+		if len(fields) == 0 {
 			continue
 		}
-		// Skip minors without the .so — they have nothing to reload.
-		so := filepath.Join("/usr/lib/php/jabali-snuffleupagus", e.Name(), "snuffleupagus.so")
-		if _, err := os.Stat(so); err != nil {
-			continue
+		// First field can be a UTF-8 bullet ("●"); take the first token
+		// that ends with .service.
+		for _, f := range fields {
+			if bytes.HasSuffix(f, []byte(".service")) {
+				units = append(units, string(f))
+				break
+			}
 		}
-		minors = append(minors, e.Name())
 	}
-	sort.Strings(minors)
+	sort.Strings(units)
 
-	for _, m := range minors {
-		unit := fmt.Sprintf("php%s-fpm.service", m)
+	for _, unit := range units {
 		cmd := osexec.CommandContext(ctx, "systemctl", "reload-or-restart", unit)
-		out, err := cmd.CombinedOutput()
+		rOut, err := cmd.CombinedOutput()
 		if err != nil {
 			resp.Pools = append(resp.Pools, snuffleupagusPoolReloadResult{
 				Unit:   unit,
 				OK:     false,
-				Detail: fmt.Sprintf("%v: %s", err, string(out)),
+				Detail: fmt.Sprintf("%v: %s", err, string(rOut)),
 			})
 			continue
 		}
@@ -152,7 +157,68 @@ func snuffleupagusReloadHandler(ctx context.Context, _ json.RawMessage) (any, er
 	return resp, nil
 }
 
+type snuffleupagusApplyParams struct {
+	// Body is the full text of the rendered active.rules file. The
+	// panel-api's reconciler computes the SHA, diffs vs DB state, and
+	// only invokes apply when a write is actually needed — so this
+	// handler doesn't dedupe.
+	Body string `json:"body"`
+}
+
+type snuffleupagusApplyResponse struct {
+	Sha256 string                          `json:"sha256"`
+	Pools  []snuffleupagusPoolReloadResult `json:"pools"`
+}
+
+// snuffleupagusApplyHandler atomically writes the panel-rendered rules
+// to /etc/jabali/snuffleupagus/active.rules, then reload-or-restarts
+// every per-user FPM unit. The panel-api process is read-only on /etc
+// (M25 ProtectSystem=strict) — this delegation keeps the privileged
+// write inside the agent profile boundary.
+func snuffleupagusApplyHandler(ctx context.Context, raw json.RawMessage) (any, error) {
+	var p snuffleupagusApplyParams
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &p)
+	}
+	if p.Body == "" {
+		return nil, fmt.Errorf("body required")
+	}
+	if err := os.MkdirAll(snuffleupagusActiveRulesDir, 0o755); err != nil {
+		return nil, fmt.Errorf("mkdir: %w", err)
+	}
+	tmp, err := os.CreateTemp(snuffleupagusActiveRulesDir, ".active.rules.*.tmp")
+	if err != nil {
+		return nil, fmt.Errorf("create temp: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+	if _, err := tmp.Write([]byte(p.Body)); err != nil {
+		_ = tmp.Close()
+		return nil, fmt.Errorf("write: %w", err)
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
+		return nil, fmt.Errorf("chmod: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(tmpName, snuffleupagusActiveRulesPath); err != nil {
+		return nil, fmt.Errorf("rename: %w", err)
+	}
+	sum := sha256.Sum256([]byte(p.Body))
+	resp := snuffleupagusApplyResponse{
+		Sha256: hex.EncodeToString(sum[:]),
+	}
+	reload, _ := snuffleupagusReloadHandler(ctx, nil)
+	if r, ok := reload.(snuffleupagusReloadResponse); ok {
+		resp.Pools = r.Pools
+	}
+	return resp, nil
+}
+
 func init() {
 	Default.Register("snuffleupagus.status", snuffleupagusStatusHandler)
 	Default.Register("snuffleupagus.reload", snuffleupagusReloadHandler)
+	Default.Register("snuffleupagus.apply_rules", snuffleupagusApplyHandler)
 }

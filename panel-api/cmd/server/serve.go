@@ -264,6 +264,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 			Repo:  snufRepo,
 			Agent: sharedAgent,
 		}
+		// Boot-time render: if DB mode != off and active.rules SHA differs
+		// from last_applied_sha256, the reconciler writes the bundle and
+		// reloads FPM. SHA-pinned so a clean reboot is a no-op.
+		go func(rec *reconciler.SnuffleupagusReconciler) {
+			rctx, rcancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer rcancel()
+			if err := rec.Reconcile(rctx); err != nil {
+				log.Warn("snuffleupagus boot-reconcile failed", "err", err)
+			}
+		}(deps.SnuffleupagusReconciler)
 		// Bundle dir resolution: prefer the on-disk install path
 		// (set by `make install` / install.sh); fall back to the source
 		// tree for dev. The route handler also defaults to the same

@@ -6062,8 +6062,8 @@ apply_apparmor_profiles() {
 install_snuffleupagus() {
   # Pin the upstream tag + tarball SHA256. Update both atomically when
   # bumping. SHA256 = sha256sum of the GitHub release tarball.
-  local snuf_version="0.10.0"
-  local snuf_sha256="PLACEHOLDER_BUMP_BEFORE_FIRST_RELEASE"
+  local snuf_version="0.13.0"
+  local snuf_sha256="350a33cd3906bdba46f5c4cf3d00edeb81eaf6a7b9a3a7e5ef47bc967492ae90"
 
   local build="${REPO_DIR}/install/snuffleupagus/build/build.sh"
   if [[ ! -x "$build" ]]; then

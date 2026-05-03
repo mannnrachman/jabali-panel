@@ -1,13 +1,8 @@
-# Jabali Snuffleupagus — Magento overlay (M41, ADR-0088).
-
-# Magento's compiler emits .php under var/generation/ and
-# var/view_preprocessed/. Whitelist those paths so the compile-on-
-# demand path doesn't trip writable_php_blacklist.
-sp.writable_php_whitelist().filename_r("/var/(generation|view_preprocessed|cache)/");
+# Jabali Snuffleupagus -- Magento overlay (M41, ADR-0088).
 
 # pub/static is served as static assets; tenant PHP should never write
 # .php here at runtime.
 sp.disable_function.function("file_put_contents").filename_r("/pub/static/.*\\.php$").drop();
 
-# unserialize() PoP chain: Magento has a long history of these. Use
-# HMAC-protected sessions where possible (handled by base unserialize_hmac).
+# unserialize() PoP chain: Magento has a long history of these. HMAC-
+# protected sessions handled by base sp.unserialize_hmac.enable().

@@ -1,4 +1,4 @@
-# Jabali Snuffleupagus — Joomla overlay (M41, ADR-0088).
+# Jabali Snuffleupagus -- Joomla overlay (M41, ADR-0088).
 
 # JEXEC guard: legitimate Joomla files start with `defined('_JEXEC')
 # or die();`. Tenant PHP that bypasses this is suspicious.

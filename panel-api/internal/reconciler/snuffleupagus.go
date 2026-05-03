@@ -12,11 +12,11 @@ package reconciler
 
 import (
 	"bytes"
+	"regexp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -27,6 +27,8 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
+
+var simulationRe = regexp.MustCompile(`\.drop\(\)(?:\.simulation\(\))?;`)
 
 const (
 	snufActiveRulesPath = "/etc/jabali/snuffleupagus/active.rules"
@@ -64,23 +66,23 @@ func (r *SnuffleupagusReconciler) Reconcile(ctx context.Context) error {
 		return nil
 	}
 
-	if err := atomicWrite(snufActiveRulesPath, rendered, 0o644); err != nil {
-		return fmt.Errorf("atomic write: %w", err)
+	// panel-api is ProtectSystem=strict (M25); /etc is read-only here.
+	// Delegate the write + FPM reload to the agent — same trust boundary
+	// as every other privileged config write (nft, audit rules, ...).
+	if r.Agent == nil {
+		return fmt.Errorf("agent not configured; cannot apply rules")
+	}
+	actx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if _, err := r.Agent.Call(actx, "snuffleupagus.apply_rules", map[string]any{
+		"body": string(rendered),
+	}); err != nil {
+		return fmt.Errorf("agent apply_rules: %w", err)
 	}
 
 	now := time.Now().UTC()
 	if err := r.Repo.UpdateState(ctx, state.Mode, &now, &sha); err != nil {
 		return fmt.Errorf("update state: %w", err)
-	}
-
-	if r.Agent != nil {
-		actx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		if _, err := r.Agent.Call(actx, "snuffleupagus.reload", map[string]any{}); err != nil {
-			slog.Warn("snuffleupagus.reload failed", "err", err)
-			// Don't propagate — the file is on disk; next FPM restart picks
-			// it up. Surface to operator as a warn in the agent journal.
-		}
 	}
 	return nil
 }
@@ -94,7 +96,7 @@ func (r *SnuffleupagusReconciler) Reconcile(ctx context.Context) error {
 // commenting them out at the end of the file.
 func renderActiveRules(mode models.SnuffleupagusMode, overrides []models.SnuffleupagusRuleOverride) ([]byte, error) {
 	var buf bytes.Buffer
-	buf.WriteString("# Jabali Snuffleupagus active rules — RENDERED, do not edit.\n")
+	buf.WriteString("# Jabali Snuffleupagus active rules -- RENDERED, do not edit.\n")
 	buf.WriteString(fmt.Sprintf("# mode=%s rendered_at=%s\n\n", mode, time.Now().UTC().Format(time.RFC3339)))
 
 	if mode == models.SnuffleupagusModeOff {
@@ -120,8 +122,9 @@ func renderActiveRules(mode models.SnuffleupagusMode, overrides []models.Snuffle
 		buf.WriteString(fmt.Sprintf("\n# --- %s ---\n", filepath.Base(f)))
 		if mode == models.SnuffleupagusModeSimulation {
 			// Append .simulation() to drop() actions so rules log without
-			// blocking. Snuffleupagus syntax: rule.drop().simulation()
-			data = bytes.ReplaceAll(data, []byte(".drop();"), []byte(".drop().simulation();"))
+			// blocking. Snuffleupagus syntax: rule.drop().simulation().
+			// Idempotent: leave already-simulated chains alone.
+			data = simulationRe.ReplaceAll(data, []byte(".drop().simulation();"))
 		}
 		buf.Write(data)
 	}

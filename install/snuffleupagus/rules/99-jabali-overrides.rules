@@ -1,6 +1,6 @@
-# Jabali Snuffleupagus — operator overrides (M41, ADR-0088).
+# Jabali Snuffleupagus -- operator overrides (M41, ADR-0088).
 # This file is RENDERED BY THE RECONCILER from snuffleupagus_rule_overrides.
-# Do NOT edit by hand on a live system — the reconciler will overwrite.
-# Edit via the panel's Security → Snuffleupagus → Rules UI.
+# Do NOT edit by hand on a live system -- the reconciler will overwrite.
+# Edit via the panel's Security -> Snuffleupagus -> Rules UI.
 
 # (reconciler emits per-rule disable directives here)

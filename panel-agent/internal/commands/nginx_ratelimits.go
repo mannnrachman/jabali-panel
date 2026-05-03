@@ -20,6 +20,12 @@ import (
 // inside each vhost file (wired via writeVhost); this command manages
 // only the zone DECLARATIONS.
 //
+// M43 framing (2026-05-04): per-vhost rate limits are an ANTI-NOISE
+// pre-filter (scraping resistance, burst smoothing) NOT a security
+// layer. CrowdSec scenarios + AppSec own behavioural rate / attack
+// detection. Don't lean on rate_limit_rps for security — see
+// docs/security/decision-brains.md and ADR-0089.
+//
 // The fragment lives at /etc/nginx/conf.d/00-jabali-ratelimits.conf —
 // the 00- prefix forces alphabetical load before any other conf.d file
 // (review finding M11) so zone names referenced by vhost includes are

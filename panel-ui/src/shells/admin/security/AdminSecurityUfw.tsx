@@ -47,9 +47,6 @@ const PROTO_OPTIONS = [
   { value: "udp", label: "UDP" },
 ];
 
-// IPv4 / IPv4-CIDR / IPv6 / IPv6-CIDR — agent does authoritative
-// net.ParseIP / net.ParseCIDR check.
-const IP_OR_CIDR = /^[0-9a-fA-F:.]+(\/\d{1,3})?$/;
 // Matches "22" or "1000:2000" range.
 const PORT_OR_RANGE = /^\d+(:\d+)?$/;
 
@@ -87,7 +84,8 @@ export const AdminSecurityUfw = () => {
         action: values.action,
         port: values.port,
         proto: values.proto,
-        from: values.from || undefined,
+        // M43 Step 6: `from` is intentionally not sent. UFW UI is
+        // port-policy-only. IP decisions go through CrowdSec.
       });
       message.success("Rule added");
       addForm.resetFields();
@@ -304,13 +302,25 @@ export const AdminSecurityUfw = () => {
           <Form.Item name="proto" label="Protocol" rules={[{ required: true }]}>
             <Select options={PROTO_OPTIONS} />
           </Form.Item>
-          <Form.Item
-            name="from"
-            label="From (optional)"
-            rules={[{ pattern: IP_OR_CIDR, message: "IP or CIDR" }]}
-          >
-            <Input placeholder="203.0.113.0/24" autoComplete="off" />
-          </Form.Item>
+          {/*
+            M43 Step 6: per-IP UFW rules removed from the UI. CrowdSec is the
+            single source of truth for IP decisions. To block an IP, use the
+            CrowdSec tab → Decisions → Add (or `cscli decisions add`).
+            Reference: docs/security/decision-brains.md, ADR-0089.
+          */}
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginTop: 8 }}
+            message="UFW is port policy only"
+            description={
+              <span>
+                IP-level decisions live in CrowdSec — open the
+                <strong> CrowdSec </strong>tab to add an IP ban. UFW here
+                manages port allow/deny only.
+              </span>
+            }
+          />
         </Form>
       </Drawer>
     </Space>

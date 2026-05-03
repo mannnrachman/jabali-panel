@@ -94,7 +94,7 @@ export const AdminSecurityTrust = () => {
         title="Rate caps (anti-noise pre-filter)"
         extra={
           <a onClick={() => navigate("/jabali-admin/security?tab=ufw")}>
-            <LinkOutlined /> manage in Firewall tab
+            <LinkOutlined /> manage in Ports tab
           </a>
         }
       >

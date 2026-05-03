@@ -8,6 +8,10 @@
 # subsequent rules when it hits non-ASCII (em-dashes, smart quotes).
 # Use plain hyphens, plain quotes.
 
+# Log to syslog so the agent's journalctl --identifier snuffleupagus
+# tail picks every incident up.
+sp.log_media("syslog");
+
 # Harden the PRNG (mt_rand seeding).
 sp.harden_random.enable();
 

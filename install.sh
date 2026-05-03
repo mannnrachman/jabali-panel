@@ -107,6 +107,12 @@ _cli_token=""
 _cli_debug=""
 _cli_uninstall=""
 _cli_yes=""
+# --purge-packages, only meaningful with --uninstall, also `apt-get purge`
+# every Jabali-pulled package (nginx, mariadb, pdns, php, crowdsec, …)
+# AND removes the Sury / CrowdSec / MariaDB / NodeSource apt repo files.
+# Opt-in even with --yes because shared system packages may be in use
+# by non-Jabali workloads.
+_cli_purge_packages=""
 # --restore-from triggers the disaster-recovery bootstrap path. After
 # base packages + binaries land, install.sh skips first-boot DB seed
 # and invokes `jabali system restore --snapshot=<id|latest> --force`
@@ -131,6 +137,7 @@ while [[ $# -gt 0 ]]; do
     --token)      _cli_token="${2:-}"; shift 2 ;;
     --debug)      _cli_debug=1; shift ;;
     --uninstall)  _cli_uninstall=1; shift ;;
+    --purge-packages) _cli_purge_packages=1; shift ;;
     --yes|-y)     _cli_yes=1; shift ;;
     --restore-from=*)        _cli_restore_from="${1#*=}"; shift ;;
     --restore-from)          _cli_restore_from="${2:-}"; shift 2 ;;
@@ -7991,22 +7998,34 @@ uninstall() {
   JABALI UNINSTALL
 ============================================================
 This will remove:
-  • jabali-* systemd units and their drop-ins
+  • jabali-* systemd units, timers, and their drop-ins
   • /usr/local/bin/{jabali,jabali-panel,jabali-agent,kratos,stalwart,stalwart-cli}
-  • /etc/jabali-panel/, /etc/jabali/
-  • /var/lib/jabali-*, /var/lib/stalwart, /run/jabali*
-  • /opt/jabali-panel, /opt/jabali-webmail, /opt/stalwart, /opt/phpmyadmin
+  • /etc/jabali-panel/, /etc/jabali/, /etc/jabali-bulwark/
+  • /var/lib/jabali-*, /var/lib/stalwart, /var/lib/aide, /run/jabali*
+  • /opt/{jabali-panel,jabali-webmail,jabali-bulwark,stalwart,phpmyadmin}
   • systemd-resolved + pdns-recursor jabali drop-ins
   • /etc/ssh/sshd_config.d/jabali-sftp.conf
   • jabali PHP-FPM pools
+  • M39 auditd jabali rules (/etc/audit/rules.d/jabali-*)
+  • M40 AppArmor jabali profiles (/etc/apparmor.d/usr.local.bin.jabali-*)
+  • M41 PHP Defense bundle (/etc/jabali/snuffleupagus, /usr/lib/php/jabali-snuffleupagus,
+    /usr/share/jabali/snuffleupagus, conf.d 30-jabali-snuffleupagus.ini)
+  • M42 AIDE jabali timer + drop-in (/etc/aide/aide.conf.d/zz-jabali.conf)
+  • M33 malware stack state (/var/log/maldet, /var/lib/jabali-quarantine)
+  • M27 CrowdSec jabali drop-ins (/etc/nginx/conf.d/crowdsec_nginx.conf,
+    /etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf)
   • system accounts: jabali, jabali-mail, jabali-webmail, stalwart
-  • system groups:  jabali, jabali-mail, jabali-webmail, jabali-sftp
+  • system groups:  jabali, jabali-mail, jabali-webmail, jabali-sftp, jabali-sockets
 
 Will ASK before:
   • dropping MariaDB databases (jabali_panel, jabali_pdns, jabali_kratos, stalwart_smtp)
   • removing user home directories under /home/
 
-Will NOT remove apt packages (nginx, mariadb-server, pdns, php, node, …).
+By default WILL NOT remove apt packages (nginx, mariadb-server, pdns, php, node,
+crowdsec, aide, auditd, clamav, …). Pass --purge-packages to also apt-purge
+them AND remove the Sury / CrowdSec / MariaDB / NodeSource repo files.
+WARNING: --purge-packages is destructive on shared hosts where other
+workloads also use nginx / mariadb / etc.
 
 EOF
 
@@ -8217,8 +8236,128 @@ SQL
     fi
   fi
 
+  # ---------- M39 / M40 / M41 / M42 / M27 / M33 cleanup ----------
+  # Components added after the initial uninstall function landed.
+  # Order: stop timers/services first, then files, then perm-bits.
+  _log "removing M39 auditd jabali rules"
+  rm -f /etc/audit/rules.d/jabali-exec.rules \
+        /etc/audit/rules.d/jabali-snuffleupagus.rules
+  command -v augenrules >/dev/null && augenrules --load >/dev/null 2>&1 || true
+
+  _log "removing M40 AppArmor jabali profiles"
+  local profile
+  for profile in jabali-panel jabali-agent jabali-bulwark jabali-kratos stalwart-mail; do
+    aa-disable "/etc/apparmor.d/usr.local.bin.${profile/jabali-panel/jabali-panel-api}" 2>/dev/null || true
+  done
+  rm -f /etc/apparmor.d/usr.local.bin.jabali-panel-api \
+        /etc/apparmor.d/usr.local.bin.jabali-agent \
+        /etc/apparmor.d/usr.local.bin.jabali-bulwark \
+        /etc/apparmor.d/usr.local.bin.jabali-kratos \
+        /etc/apparmor.d/usr.local.bin.stalwart-mail
+  systemctl reload apparmor 2>/dev/null || true
+
+  _log "removing M41 PHP Defense (Snuffleupagus)"
+  systemctl stop crowdsec-nginx-bouncer 2>/dev/null || true
+  rm -rf /etc/jabali/snuffleupagus \
+         /usr/share/jabali/snuffleupagus \
+         /usr/lib/php/jabali-snuffleupagus
+  local pdir
+  for pdir in /etc/php/*/{fpm,cli}/conf.d; do
+    [[ -d "$pdir" ]] && rm -f "$pdir/30-jabali-snuffleupagus.ini"
+  done
+  for pdir in /etc/php/*/mods-available; do
+    [[ -d "$pdir" ]] && rm -f "$pdir/jabali-snuffleupagus.ini"
+  done
+
+  _log "removing M42 AIDE jabali config + state"
+  systemctl stop    jabali-aide-check.timer   2>/dev/null || true
+  systemctl disable jabali-aide-check.timer   2>/dev/null || true
+  systemctl stop    jabali-aide-check.service 2>/dev/null || true
+  rm -f /etc/systemd/system/jabali-aide-check.timer \
+        /etc/systemd/system/jabali-aide-check.service \
+        /etc/aide/aide.conf.d/zz-jabali.conf
+  rm -rf /var/lib/aide /var/log/aide
+  systemctl daemon-reload 2>/dev/null || true
+
+  _log "removing M33 malware stack state"
+  systemctl stop    jabali-malware-monitor.service 2>/dev/null || true
+  systemctl disable jabali-malware-monitor.service 2>/dev/null || true
+  systemctl stop    jabali-freshclam.timer         2>/dev/null || true
+  systemctl disable jabali-freshclam.timer         2>/dev/null || true
+  rm -f /etc/systemd/system/jabali-malware-monitor.service \
+        /etc/systemd/system/jabali-freshclam.timer \
+        /etc/systemd/system/jabali-freshclam.service
+  rm -f /etc/jabali/maldet/*.conf 2>/dev/null
+  rm -rf /var/log/maldet /usr/local/maldetect/quarantine /var/lib/jabali-quarantine
+  # Note: /usr/local/maldetect/ stays — it's the LMD install dir, removed
+  # only via --purge-packages below.
+
+  _log "removing M27 CrowdSec jabali drop-ins"
+  rm -f /etc/nginx/conf.d/crowdsec_nginx.conf
+  rm -f /etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf
+
+  _log "removing jabali-bulwark"
+  systemctl stop    jabali-bulwark.service 2>/dev/null || true
+  systemctl disable jabali-bulwark.service 2>/dev/null || true
+  rm -f /etc/systemd/system/jabali-bulwark.service
+  rm -rf /etc/jabali-bulwark /opt/jabali-bulwark
+  systemctl daemon-reload 2>/dev/null || true
+
+  # ---------- Optional package purge ----------
+  # --purge-packages also apt-purges every Jabali-pulled package. This is
+  # destructive and shared (other system services may depend on nginx,
+  # mariadb, pdns, etc.) so it's opt-in even with --yes.
+  if [[ "${_cli_purge_packages:-}" == "1" ]]; then
+    _log "purging Jabali-installed apt packages (--purge-packages)"
+    local pkgs=(
+      crowdsec
+      crowdsec-firewall-bouncer-nftables
+      crowdsec-nginx-bouncer
+      aide aide-common
+      auditd audispd-plugins
+      clamav clamav-daemon clamav-freshclam
+      pdns-server pdns-recursor pdns-backend-mysql
+      mariadb-server mariadb-client
+      nginx-extras nginx-common nginx
+      redis-server
+      php8.5 php8.5-cli php8.5-fpm php8.5-common php8.5-curl php8.5-gd
+      php8.5-intl php8.5-mbstring php8.5-mysql php8.5-opcache php8.5-readline
+      php8.5-soap php8.5-xml php8.5-zip php8.5-bcmath php8.5-imagick
+      php8.5-dev
+      nodejs npm
+      apparmor apparmor-utils
+      libapache2-mod-php8.5
+      php-pear
+    )
+    apt-get purge -y -qq "${pkgs[@]}" 2>&1 | tail -5 || _warn "some packages failed to purge"
+    apt-get autoremove --purge -y -qq 2>&1 | tail -3 || true
+
+    # Repo files we added.
+    rm -f /etc/apt/sources.list.d/sury-php.list \
+          /etc/apt/sources.list.d/sury-php.sources \
+          /etc/apt/sources.list.d/crowdsec_crowdsec.list \
+          /etc/apt/sources.list.d/crowdsec_crowdsec.sources \
+          /etc/apt/sources.list.d/mariadb.list \
+          /etc/apt/sources.list.d/mariadb.sources \
+          /etc/apt/sources.list.d/nodesource.list \
+          /etc/apt/sources.list.d/nodesource.sources
+    rm -f /usr/share/keyrings/sury-php.gpg \
+          /usr/share/keyrings/crowdsec_crowdsec-archive-keyring.gpg \
+          /usr/share/keyrings/mariadb-keyring.gpg \
+          /usr/share/keyrings/nodesource.gpg
+    apt-get update -qq 2>&1 | tail -3 || true
+
+    # Manual installs (downloaded tarballs / git clones).
+    rm -rf /usr/local/maldetect /opt/yara-x
+    rm -f /etc/init.d/maldet
+  fi
+
   _ok "jabali uninstall complete"
-  _ok "OS packages (nginx, mariadb, pdns, php, node, …) left INSTALLED — remove with apt if desired"
+  if [[ "${_cli_purge_packages:-}" == "1" ]]; then
+    _ok "OS packages PURGED (re-run install.sh on a clean tree to reinstall)"
+  else
+    _ok "OS packages (nginx, mariadb, pdns, php, node, …) left INSTALLED — pass --purge-packages to also apt purge them"
+  fi
 }
 
 # Only execute main when this script is run directly (not sourced).

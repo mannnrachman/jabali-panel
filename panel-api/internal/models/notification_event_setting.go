@@ -144,8 +144,8 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 	},
 	{
 		Kind:        "snuffleupagus.incident.detected",
-		Label:       "Snuffleupagus incident",
-		Description: "PHP-hardening rule fired on a tenant request (block / simulated block / log).",
+		Label:       "PHP Defense incident",
+		Description: "PHP Defense rule fired on a tenant request (block / simulated block / log).",
 		Severity:    "warning",
 		DefaultOn:   true,
 	},

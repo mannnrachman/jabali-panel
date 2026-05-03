@@ -56,7 +56,7 @@ export function AdminSecuritySnuffleupagus() {
 
   if (status.isLoading) {
     return (
-      <Card title="Snuffleupagus" size="small">
+      <Card title="PHP Defense" size="small">
         <Text type="secondary">Loading…</Text>
       </Card>
     );
@@ -68,7 +68,7 @@ export function AdminSecuritySnuffleupagus() {
 
   return (
     <Card
-      title="Snuffleupagus"
+      title="PHP Defense"
       size="small"
       extra={
         <Space>
@@ -86,7 +86,7 @@ export function AdminSecuritySnuffleupagus() {
     >
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          PHP-hardening module across {loadedCount}/{totalCount} installed PHP minor
+          PHP Defense (Snuffleupagus) across {loadedCount}/{totalCount} installed PHP minor
           {totalCount === 1 ? "" : "s"}. Rules are maintained by Jabali; mode applies server-wide.
           {data?.last_applied_at && (
             <>
@@ -118,7 +118,7 @@ export function AdminSecuritySnuffleupagus() {
               const next = e.target.value as SnuffleupagusMode;
               if (next === "enforce") {
                 Modal.confirm({
-                  title: "Switch Snuffleupagus to enforce mode?",
+                  title: "Switch PHP Defense to enforce mode?",
                   content:
                     "Tenant requests that match a hardening rule will be blocked. Run a soak in simulation first if you haven't already.",
                   okText: "Enforce",
@@ -192,7 +192,7 @@ export function AdminSecuritySnuffleupagus() {
       </Space>
 
       <Modal
-        title="Snuffleupagus rules"
+        title="PHP Defense rules"
         open={rulesOpen}
         onCancel={() => setRulesOpen(false)}
         footer={<Button onClick={() => setRulesOpen(false)}>Close</Button>}

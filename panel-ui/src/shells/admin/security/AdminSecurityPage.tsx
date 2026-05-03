@@ -31,7 +31,7 @@ const TAB_LABELS: Record<TabKey, string> = {
   malware: "Malware",
   ufw: "Firewall (UFW)",
   egress: "Egress (per-user)",
-  snuffleupagus: "Snuffleupagus",
+  snuffleupagus: "PHP Defense",
   apparmor: "AppArmor",
   aide: "AIDE",
 };

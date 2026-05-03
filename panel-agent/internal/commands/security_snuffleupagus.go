@@ -71,9 +71,19 @@ func snuffleupagusStatusHandler(ctx context.Context, _ json.RawMessage) (any, er
 	if err == nil {
 		var minors []string
 		for _, e := range entries {
-			if e.IsDir() && phpMinorDirRe.MatchString(e.Name()) {
-				minors = append(minors, e.Name())
+			if !e.IsDir() || !phpMinorDirRe.MatchString(e.Name()) {
+				continue
 			}
+			// /etc/php/<minor> dirs survive package removal sometimes
+			// (Sury / Debian apt purge leaves the conf tree). Treat the
+			// minor as installed only when the binary actually exists,
+			// otherwise UI shows phantom versions like PHP 8.4 on a
+			// host that only runs 8.5.
+			binPath := "/usr/bin/php" + e.Name()
+			if _, err := os.Stat(binPath); err != nil {
+				continue
+			}
+			minors = append(minors, e.Name())
 		}
 		sort.Strings(minors)
 		for _, m := range minors {

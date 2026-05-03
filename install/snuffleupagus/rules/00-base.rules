@@ -1,4 +1,4 @@
-# Jabali Snuffleupagus -- base rules (M41, ADR-0088).
+# Jabali PHP Defense -- base rules (M41, ADR-0088).
 #
 # Snuffleupagus v0.13 grammar. Every .drop() ban is converted to
 # .drop().simulation() by the renderer when mode=simulation; in enforce
@@ -6,7 +6,6 @@
 #
 # IMPORTANT: ASCII-only. Snuffleupagus's lexer silently swallows
 # subsequent rules when it hits non-ASCII (em-dashes, smart quotes).
-# Use plain hyphens, plain quotes.
 
 # Log to syslog so the agent's journalctl --identifier snuffleupagus
 # tail picks every incident up.
@@ -15,17 +14,10 @@ sp.log_media("syslog");
 # Harden the PRNG (mt_rand seeding).
 sp.harden_random.enable();
 
-# Read-only exec: only allow PHP to execute scripts on a read-only fs
-# mount. Low-hanging hardening; tenants don't write executable PHP at
-# runtime under normal flows. CMS overlays whitelist plugin install
-# paths if needed.
-sp.readonly_exec.enable();
-
 # unserialize() POP-chain protection. HMAC-pins serialized session state.
 sp.unserialize_hmac.enable();
 
-# Cookie hardening: SameSite=lax on the session cookie. (HttpOnly +
-# Secure are pinned via php-fpm pool.d ini, not via sp.)
+# Cookie hardening: SameSite=lax on the session cookie.
 sp.cookie.name("PHPSESSID").samesite("lax");
 
 # XXE protection: disable libxml entity expansion when ext/xml is loaded.
@@ -61,11 +53,16 @@ sp.disable_function.function("putenv").param("assignment").value_r("LD_").drop()
 sp.disable_function.function("putenv").param("assignment").value("PATH").drop();
 sp.disable_function.function("putenv").param("assignment").value_r("GCONV_").drop();
 
-# Webshell-drop prevention: ban writes to .php files. CMS overlays
-# whitelist plugin/theme upload paths.
-sp.disable_function.function("file_put_contents").param("filename").value_r("\\.php$").drop();
-
 # --- Stream wrapper allowlist ---
 # Permit only the wrappers tenants legitimately need; phar:// (POP gadget
 # vector) + expect:// (RCE) and ftp:// + glob:// stay out.
 sp.wrappers_whitelist.list("file,php,http,https,data");
+
+# NOTE: sp.readonly_exec.enable() is intentionally NOT shipped. It
+# blocks ANY writable .php from executing, which kills every CMS
+# (WordPress wp-admin/, Drupal modules/, plugin/theme installers all
+# write .php under tenant-owned paths). Webshell-write prevention is
+# handled by sp.disable_function.function("file_put_contents")
+# .param("filename").value_r("\\.php$").drop() instead -- block the
+# WRITE, not the EXECUTION.
+sp.disable_function.function("file_put_contents").param("filename").value_r("\\.php$").drop();

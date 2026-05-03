@@ -57,11 +57,13 @@ var (
 	//   "The file '/foo' is not in the wrappers whitelist ..."
 	// in every case the first 'X' is the actionable target.
 	quotedTargetRe = regexp.MustCompile(`'([^']+)'`)
-	// requestURIRe extracts the URI when the agent runs under FPM.
-	// Snuffleupagus appends "in <uri> on line <n>" where <uri> is the
-	// $_SERVER['SCRIPT_NAME'] for HTTP requests, or 'Command line code'
-	// for CLI. We only capture path-shaped values to avoid CLI noise.
+	// requestURIRe extracts the script path from the trailing
+	// "in <path> on line <n>" segment. Snuffleupagus emits the absolute
+	// filesystem path (NOT the HTTP URI), so we strip the standard
+	// /home/<user>/domains/<domain>/public_html docroot prefix below
+	// to surface the URI-shaped portion in the UI.
 	requestURIRe = regexp.MustCompile(` in (/[^ ]+) on line `)
+	docrootRe    = regexp.MustCompile(`^/home/[^/]+/domains/[^/]+/public_html`)
 )
 
 var snufLineRe = regexp.MustCompile(
@@ -178,6 +180,12 @@ func parseSnuffleupagusLine(realtimeUS, msg string) (snuffleupagusIncidentDTO, b
 	uri := ""
 	if m := requestURIRe.FindStringSubmatch(msg); m != nil {
 		uri = m[1]
+		// Strip docroot prefix to leave the URL-relative script path.
+		uri = docrootRe.ReplaceAllString(uri, "")
+		// CLI invocations log "Command line code" -- not a path. Drop.
+		if !strings.HasPrefix(uri, "/") {
+			uri = ""
+		}
 	}
 
 	ts := parseRealtime(realtimeUS)

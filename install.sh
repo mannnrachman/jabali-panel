@@ -6065,16 +6065,17 @@ install_snuffleupagus() {
   local snuf_version="0.10.0"
   local snuf_sha256="PLACEHOLDER_BUMP_BEFORE_FIRST_RELEASE"
 
-  local build="/install/snuffleupagus/build/build.sh"
-  if [[ ! -x "" ]]; then
-    _err "snuffleupagus build script missing: "
+  local build="${REPO_DIR}/install/snuffleupagus/build/build.sh"
+  if [[ ! -x "$build" ]]; then
+    _err "snuffleupagus build script missing: $build"
     return 1
   fi
 
   # Build deps. snuffleupagus needs the same toolchain as any phpize-built
   # extension; M9.6 already installs php-dev for each minor.
   if ! dpkg -s build-essential libpcre2-dev >/dev/null 2>&1; then
-    _spin "apt install build-essential + libpcre2-dev"       apt-get install -y -qq --no-install-recommends build-essential libpcre2-dev
+    _spin "apt install build-essential + libpcre2-dev" \
+      apt-get install -y -qq --no-install-recommends build-essential libpcre2-dev
   fi
 
   # Active rules dir + placeholder file. mode=off by default, so the
@@ -6082,7 +6083,7 @@ install_snuffleupagus() {
   # flips to simulation/enforce.
   install -d -m 0755 /etc/jabali/snuffleupagus
   if [[ ! -f /etc/jabali/snuffleupagus/active.rules ]]; then
-    cat > /etc/jabali/snuffleupagus/active.rules <<EOF_RULES
+    cat > /etc/jabali/snuffleupagus/active.rules <<'EOF_RULES'
 # Jabali Snuffleupagus — placeholder (mode=off). Reconciler overwrites
 # this file when the operator flips mode to simulation or enforce.
 sp.global.enable(0);
@@ -6092,7 +6093,7 @@ EOF_RULES
   # cli.ini for the jabali-php wrapper (Wave C). Pinning prevents
   # customer-supplied -c flags from sidestepping the rules file.
   if [[ ! -f /etc/jabali/snuffleupagus/cli.ini ]]; then
-    cat > /etc/jabali/snuffleupagus/cli.ini <<EOF_CLI
+    cat > /etc/jabali/snuffleupagus/cli.ini <<'EOF_CLI'
 ; Jabali PHP-CLI wrapper config — pin sp.configuration_file so cron and
 ; SFTP-shell PHP cannot dodge the active rule set via custom .ini.
 sp.configuration_file=/etc/jabali/snuffleupagus/active.rules
@@ -6100,25 +6101,88 @@ EOF_CLI
     chmod 0644 /etc/jabali/snuffleupagus/cli.ini
   fi
 
-  # Build per minor. Discover via /etc/php/* dirs (matches M9.6).
+  # Mirror the rule bundle into /usr/share/jabali/snuffleupagus/rules so
+  # the panel reconciler reads from a stable on-disk path independent of
+  # the source checkout layout.
+  install -d -m 0755 /usr/share/jabali/snuffleupagus/rules
+  if [[ -d "${REPO_DIR}/install/snuffleupagus/rules" ]]; then
+    install -m 0644 "${REPO_DIR}/install/snuffleupagus/rules/"*.rules \
+      /usr/share/jabali/snuffleupagus/rules/ 2>/dev/null || true
+    if [[ -f "${REPO_DIR}/install/snuffleupagus/rules/README.md" ]]; then
+      install -m 0644 "${REPO_DIR}/install/snuffleupagus/rules/README.md" \
+        /usr/share/jabali/snuffleupagus/rules/ 2>/dev/null || true
+    fi
+  fi
+
+  # Build per minor. JABALI_PHP_VERSIONS overrides; default 8.5.
+  local php_versions="${JABALI_PHP_VERSIONS:-8.5}"
   local minor
-  for minor in 8.4; do
-    [[ -d "/etc/php//fpm" ]] || continue
-    SNUFFLEUPAGUS_VERSION=""     SNUFFLEUPAGUS_SHA256=""       "" "" || {
-        _warn "snuffleupagus build failed for PHP  (continuing other minors)"
+  for minor in $php_versions; do
+    [[ -d "/etc/php/$minor/fpm" ]] || continue
+    SNUFFLEUPAGUS_VERSION="$snuf_version" \
+    SNUFFLEUPAGUS_SHA256="$snuf_sha256" \
+      "$build" "$minor" || {
+        _warn "snuffleupagus build failed for PHP $minor (continuing other minors)"
         continue
       }
-    # mods-available + conf.d wiring.
-    cat > "/etc/php//mods-available/jabali-snuffleupagus.ini" <<EOF_MOD
+    # mods-available + conf.d wiring (FPM + CLI both load sp.so).
+    cat > "/etc/php/$minor/mods-available/jabali-snuffleupagus.ini" <<EOF_MOD
 ; Jabali Snuffleupagus extension load + config-file pin.
-extension=/usr/lib/php/jabali-snuffleupagus//snuffleupagus.so
+extension=/usr/lib/php/jabali-snuffleupagus/$minor/snuffleupagus.so
 sp.configuration_file=/etc/jabali/snuffleupagus/active.rules
 EOF_MOD
-    ln -sf "../../mods-available/jabali-snuffleupagus.ini"       "/etc/php//fpm/conf.d/30-jabali-snuffleupagus.ini"
-    ln -sf "../../mods-available/jabali-snuffleupagus.ini"       "/etc/php//cli/conf.d/30-jabali-snuffleupagus.ini"
+    ln -sf "../../mods-available/jabali-snuffleupagus.ini" \
+      "/etc/php/$minor/fpm/conf.d/30-jabali-snuffleupagus.ini"
+    ln -sf "../../mods-available/jabali-snuffleupagus.ini" \
+      "/etc/php/$minor/cli/conf.d/30-jabali-snuffleupagus.ini"
   done
 
+  # Wave C: PHP-CLI bypass detection. Watch direct execve of every Sury
+  # /usr/bin/phpX.Y plus /usr/bin/php so SFTP-shell users running php
+  # outside the FPM pool surface in auditd logs (key=jabali_php_bypass).
+  install_audit_php_bypass
+
   _ok "snuffleupagus installed across PHP minors (mode=off; flip via Security UI)"
+}
+
+# install_audit_php_bypass — M41 Wave C (ADR-0088). Watches direct CLI
+# php exec by real users (auid>=1000) so an attacker dodging FPM via
+# `php8.5 -n shell.php` is at least logged. The conf.d/30-jabali-
+# snuffleupagus.ini drop-in already loads sp.so for normal CLI invocations,
+# but `php -n` skips conf.d entirely; that's what this audit rule catches.
+install_audit_php_bypass() {
+  if ! dpkg -s auditd >/dev/null 2>&1; then
+    _warn "auditd not installed — install_audit_exec should have run earlier"
+    return 0
+  fi
+
+  local rules_file=/etc/audit/rules.d/jabali-snuffleupagus.rules
+  local rules_tmp
+  rules_tmp=$(mktemp)
+  {
+    echo "# Jabali Snuffleupagus PHP-CLI bypass detection (M41, ADR-0088)."
+    echo "# Tagged 'jabali_php_bypass' for ausearch -k pivots."
+    echo "# auid>=1000 = real users only (excludes daemon services)."
+    echo "# Catches \`php -n\` style bypass of the conf.d sp.so drop-in."
+    echo
+    echo "-a always,exit -F arch=b64 -S execve -F path=/usr/bin/php       -F auid>=1000 -F auid!=4294967295 -k jabali_php_bypass"
+    local minor
+    for minor in $(ls -1d /etc/php/[0-9]*.[0-9]* 2>/dev/null | xargs -r -n1 basename); do
+      local bin="/usr/bin/php${minor}"
+      [[ -x "$bin" ]] || continue
+      printf -- '-a always,exit -F arch=b64 -S execve -F path=%-21s -F auid>=1000 -F auid!=4294967295 -k jabali_php_bypass\n' "$bin"
+    done
+  } >"$rules_tmp"
+
+  if [[ ! -f "$rules_file" ]] || ! cmp -s "$rules_tmp" "$rules_file"; then
+    install -m 0640 -o root -g root "$rules_tmp" "$rules_file"
+    if command -v augenrules >/dev/null 2>&1; then
+      augenrules --load >/dev/null 2>&1 || \
+        _warn "augenrules --load failed — auditd may need a restart"
+    fi
+    _ok "auditd jabali-snuffleupagus.rules installed (key=jabali_php_bypass)"
+  fi
+  rm -f "$rules_tmp"
 }
 
 install_aide() {

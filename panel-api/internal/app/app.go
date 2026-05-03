@@ -565,6 +565,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterSecurityCrowdSecRoutes(v1, deps.Agent, deps.ServerSettings)
 			api.RegisterSecurityAppSecRoutes(v1, deps.Agent, deps.ServerSettings)
 			api.RegisterSecurityUFWRoutes(v1, deps.Agent)
+			// M43 (ADR-0089) Trust test bench — POST /admin/security/trust/test
+			api.RegisterSecurityTrustRoutes(v1, deps.Agent)
 			// M40 (ADR-0086) AppArmor admin status + per-profile mode flip.
 			api.RegisterSecurityAppArmorRoutes(v1, deps.Agent)
 			// M42 (ADR-0087) AIDE FIM read-only status + manual check trigger.

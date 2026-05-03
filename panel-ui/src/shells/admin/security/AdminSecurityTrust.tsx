@@ -7,11 +7,12 @@
 // decision (per ADR-0089 target: CrowdSec is the single IP-trust
 // source of truth). Rate-cap and AppSec panels are TODO links to
 // existing tabs until M43 Wave B/C ships their dedicated views.
-import { Alert, Card, Empty, Space, Statistic, Table, Tag, Typography } from "antd";
+import { Alert, Button, Card, Empty, Form, Input, Space, Statistic, Table, Tag, Typography } from "antd";
 import { LinkOutlined } from "@icons";
 import { useNavigate } from "react-router";
 
 import { useCrowdsecDecisions } from "../../../hooks/useSecurityCrowdsec";
+import { useTrustTest, type TrustTestResponse } from "../../../hooks/useSecurityTrust";
 import { useUfwStatus, type UfwRule } from "../../../hooks/useSecurityUfw";
 
 // A UFW rule is flagged as an "IP rule" when `from` is anything other
@@ -25,6 +26,10 @@ export const AdminSecurityTrust = () => {
   const navigate = useNavigate();
   const decisions = useCrowdsecDecisions("ip");
   const ufw = useUfwStatus();
+  const trustTest = useTrustTest();
+  const [testForm] = Form.useForm<{ ip: string }>();
+  const lastResult: TrustTestResponse | undefined = trustTest.data;
+  const onTest = ({ ip }: { ip: string }) => trustTest.mutate(ip.trim());
 
   const csCount = decisions.data?.length ?? 0;
   const ufwIpRules = (ufw.data?.rules ?? []).filter(isIpRule);
@@ -122,6 +127,65 @@ export const AdminSecurityTrust = () => {
           Single risk authority — no duplicate WAF layer. ADR-0055
           superseded by ADR-0060.
         </Typography.Paragraph>
+      </Card>
+
+      <Card size="small" title="Test bench — would this IP be blocked?">
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+          Asks every brain at once. Returns each layer's verdict so you
+          can spot disagreement (the failure mode M43 fixes).
+        </Typography.Paragraph>
+        <Form
+          form={testForm}
+          layout="inline"
+          onFinish={onTest}
+          style={{ marginBottom: 16 }}
+        >
+          <Form.Item
+            name="ip"
+            rules={[{ required: true, message: "IP required" }]}
+          >
+            <Input placeholder="1.2.3.4" autoComplete="off" style={{ width: 220 }} />
+          </Form.Item>
+          <Form.Item>
+            <Button type="primary" htmlType="submit" loading={trustTest.isPending}>
+              Test
+            </Button>
+          </Form.Item>
+        </Form>
+        {trustTest.isError && (
+          <Alert
+            type="error"
+            message="Test failed"
+            description={trustTest.error instanceof Error ? trustTest.error.message : "unknown error"}
+          />
+        )}
+        {lastResult && (
+          <Table
+            size="small"
+            rowKey="layer"
+            dataSource={lastResult.verdicts}
+            pagination={false}
+            columns={[
+              { title: "Layer", dataIndex: "layer", width: 140 },
+              {
+                title: "Outcome",
+                dataIndex: "outcome",
+                width: 110,
+                render: (o: string) => (
+                  <Tag color={o === "deny" ? "red" : o === "allow" ? "green" : "default"}>
+                    {o}
+                  </Tag>
+                ),
+              },
+              { title: "Detail", dataIndex: "detail" },
+            ]}
+            footer={() => (
+              <Typography.Text type="secondary">
+                IP tested: <code>{lastResult.ip}</code>
+              </Typography.Text>
+            )}
+          />
+        )}
       </Card>
     </Space>
   );

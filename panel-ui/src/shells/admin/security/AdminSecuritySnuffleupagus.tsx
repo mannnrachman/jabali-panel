@@ -181,9 +181,25 @@ export function AdminSecuritySnuffleupagus() {
                 render: (a: string) => <Tag color={ACTION_COLOR[a] ?? "default"}>{a}</Tag>,
               },
               { title: "Rule", dataIndex: "rule_name", ellipsis: true },
-              { title: "PHP", dataIndex: "php_version", width: 70 },
-              { title: "Source", dataIndex: "source_ip", width: 140 },
-              { title: "URI", dataIndex: "request_uri", ellipsis: true },
+              {
+                title: "PHP",
+                dataIndex: "php_version",
+                width: 70,
+                render: (v?: string) => v || <Text type="secondary">-</Text>,
+              },
+              {
+                title: "Source",
+                dataIndex: "source_ip",
+                width: 140,
+                render: (v?: string) =>
+                  v && v !== "0.0.0.0" ? v : <Text type="secondary">CLI</Text>,
+              },
+              {
+                title: "URI",
+                dataIndex: "request_uri",
+                ellipsis: true,
+                render: (v?: string) => v || <Text type="secondary">-</Text>,
+              },
             ]}
             scroll={{ x: "max-content" }}
             locale={{ emptyText: "No incidents yet" }}

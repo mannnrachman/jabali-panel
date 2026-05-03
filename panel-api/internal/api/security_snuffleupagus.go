@@ -241,10 +241,18 @@ type bundleRule struct {
 	SourceFile string
 }
 
-// listBundleRules grep-extracts rule names from the bundle files. The
-// upstream Snuffleupagus DSL doesn't have explicit `name=` everywhere
-// so we synthesize stable names: <basename>:<line-no>:<directive>.
-var ruleLineRe = regexp.MustCompile(`^\s*sp\.([a-z_]+)\.([a-z_]+)\(`)
+// listBundleRules synthesizes a stable name per rule line. The upstream
+// Snuffleupagus DSL has no `name=` field, so we build one from:
+//   sp.<feature>.<verb>(<arg>)            -> sp.<feature>:<arg>
+//   sp.<feature>.enable() / .list(...)    -> sp.<feature>
+// This means every "sp.disable_function.function('system').drop()"
+// gets a distinct, meaningful row instead of collapsing under a single
+// "sp.disable_function.function" entry.
+
+var (
+	ruleArgRe   = regexp.MustCompile(`^\s*sp\.([a-z_]+)\.([a-z_]+)\("([^"]+)"\)`)
+	ruleEnableRe = regexp.MustCompile(`^\s*sp\.([a-z_]+)\.([a-z_]+)\(`)
+)
 
 func listBundleRules(dir string) ([]bundleRule, error) {
 	if dir == "" {
@@ -262,10 +270,21 @@ func listBundleRules(dir string) ([]bundleRule, error) {
 		}
 		base := filepath.Base(f)
 		for i, line := range strings.Split(string(data), "\n") {
-			if m := ruleLineRe.FindStringSubmatch(line); m != nil {
-				name := base + ":" + strconv.Itoa(i+1) + ":sp." + m[1] + "." + m[2]
-				out = append(out, bundleRule{Name: name, SourceFile: base})
+			var name string
+			if m := ruleArgRe.FindStringSubmatch(line); m != nil {
+				// sp.disable_function.function("system") -> sp.disable_function:system
+				name = "sp." + m[1] + ":" + m[3]
+			} else if m := ruleEnableRe.FindStringSubmatch(line); m != nil {
+				// sp.harden_random.enable()  -> sp.harden_random
+				name = "sp." + m[1]
+			} else {
+				continue
 			}
+			// Disambiguate duplicate names within the same file (multiple
+			// disable_function rows for different params) by appending the
+			// 1-based line number when needed.
+			full := base + "#" + strconv.Itoa(i+1) + " " + name
+			out = append(out, bundleRule{Name: full, SourceFile: base})
 		}
 	}
 	return out, nil

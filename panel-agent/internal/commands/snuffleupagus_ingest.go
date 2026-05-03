@@ -49,6 +49,21 @@ type snuffleupagusFetchResponse struct {
 // journalctl line shape (with --output=json):
 //   {"__REALTIME_TIMESTAMP":"1714650000000000",
 //    "MESSAGE":"[snuffleupagus][1.2.3.4][disabled_function][dropped] ..."}
+var (
+	// quotedTargetRe extracts the first single-quoted token from a
+	// Snuffleupagus message body. The body shape varies by feature:
+	//   "Aborted execution on call of the function 'system' in ..."
+	//   "Tried to set 'disable_functions' to ..."
+	//   "The file '/foo' is not in the wrappers whitelist ..."
+	// in every case the first 'X' is the actionable target.
+	quotedTargetRe = regexp.MustCompile(`'([^']+)'`)
+	// requestURIRe extracts the URI when the agent runs under FPM.
+	// Snuffleupagus appends "in <uri> on line <n>" where <uri> is the
+	// $_SERVER['SCRIPT_NAME'] for HTTP requests, or 'Command line code'
+	// for CLI. We only capture path-shaped values to avoid CLI noise.
+	requestURIRe = regexp.MustCompile(` in (/[^ ]+) on line `)
+)
+
 var snufLineRe = regexp.MustCompile(
 	`\[snuffleupagus\](?:\[([^\]]+)\])?(?:\[([^\]]+)\])?(?:\[([^\]]+)\])?\s*(.*)`,
 )
@@ -146,27 +161,33 @@ func parseSnuffleupagusLine(realtimeUS, msg string) (snuffleupagusIncidentDTO, b
 		act = "log"
 	}
 
-	// Best-effort rule name. Use feature + first token of details so the
-	// per-rule kill switch has something stable to target. Falls back to
-	// "snuffleupagus:unknown" when the line shape doesn't match.
+	// Rule name extraction: the actionable signal lives in the first
+	// quoted token of details (the function being blocked, the ini key
+	// being set, the file being written). Fall back to the feature name
+	// only when no quoted target is present.
 	rule := "snuffleupagus:unknown"
 	if feature != "" {
-		first := strings.SplitN(strings.TrimSpace(details), " ", 2)[0]
-		first = strings.Trim(first, "()'\":,")
-		if first == "" {
-			rule = "sp." + feature
-		} else {
-			rule = "sp." + feature + ":" + first
+		rule = "sp." + feature
+		if m := quotedTargetRe.FindStringSubmatch(details); m != nil {
+			rule = "sp." + feature + ":" + m[1]
 		}
+	}
+
+	// Extract request URI when Snuffleupagus emitted one. v0.13 logs
+	// 'in REQUEST_URI: /path' for non-CLI invocations.
+	uri := ""
+	if m := requestURIRe.FindStringSubmatch(msg); m != nil {
+		uri = m[1]
 	}
 
 	ts := parseRealtime(realtimeUS)
 	return snuffleupagusIncidentDTO{
-		Ts:       ts,
-		RuleName: rule,
-		Action:   act,
-		SourceIP: ip,
-		Raw:      msg,
+		Ts:         ts,
+		RuleName:   rule,
+		Action:     act,
+		SourceIP:   ip,
+		RequestURI: uri,
+		Raw:        msg,
 	}, true
 }
 

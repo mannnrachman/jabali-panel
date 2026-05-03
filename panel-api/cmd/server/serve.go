@@ -443,18 +443,25 @@ func runServe(cmd *cobra.Command, args []string) error {
 			// matches that exact value; this catches NULL/"" too.
 			fillIfEmpty(&row.DefaultNspawnImageVersion, "debian-13-v1")
 
-			if !mutated {
-				return
+			if mutated {
+				if err := serverSettingsRepo.Upsert(seedCtx, row); err != nil {
+					log.Error("failed to seed server_settings from config", "err", err)
+					return
+				}
+				if created {
+					log.Info("seeded server_settings from config.toml", "hostname", row.Hostname)
+				} else {
+					log.Info("merged missing server_settings fields from config.toml", "hostname", row.Hostname)
+				}
 			}
-			if err := serverSettingsRepo.Upsert(seedCtx, row); err != nil {
-				log.Error("failed to seed server_settings from config", "err", err)
-				return
-			}
-			if created {
-				log.Info("seeded server_settings from config.toml", "hostname", row.Hostname)
-			} else {
-				log.Info("merged missing server_settings fields from config.toml", "hostname", row.Hostname)
-			}
+			// IMPORTANT: subsequent seed steps (managed_ips, VAPID,
+			// page_templates, notification_event_settings) MUST run
+			// every boot regardless of `mutated`, otherwise new
+			// rows added to canonical lists (e.g. new event kinds in
+			// AllNotificationEventKinds) never get seeded on existing
+			// hosts. Bug surfaced by M43 Step 2 — security.decision.fired
+			// stayed unseeded for hours because server_settings was
+			// already fully populated.
 
 			// M24 first-boot seed: materialise the is_default managed_ips
 			// row(s) from the freshly-populated server_settings. Migration

@@ -143,6 +143,13 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 		DefaultOn:   true,
 	},
 	{
+		Kind:        "security.decision.fired",
+		Label:       "Security decision fired",
+		Description: "Aggregated drop/throttle from any decision brain (UFW, nginx limit_req, CrowdSec). One envelope per polling window when activity exceeds 0.",
+		Severity:    "info",
+		DefaultOn:   false,
+	},
+	{
 		Kind:        "snuffleupagus.incident.detected",
 		Label:       "PHP Defense incident",
 		Description: "PHP Defense rule fired on a tenant request (block / simulated block / log).",

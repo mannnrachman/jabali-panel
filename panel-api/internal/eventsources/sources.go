@@ -115,6 +115,7 @@ func Start(ctx context.Context, d Deps) {
 	go runEgressBurst(ctx, d)
 	go runAideTamper(ctx, d)
 	go runSnuffleupagusIngest(ctx, d)
+	go runSecurityDecision(ctx, d)
 	// domain_expiry + backup_fail are stubs — see the stub files in
 	// this package.
 }

@@ -8,7 +8,7 @@
 // (2026-04-26): CrowdSec AppSec covers the WAF role with no duplicate
 // inspection layer (ADR-0055 SUPERSEDED).
 import { Card, Space, Typography } from "antd";
-import { BugOutlined, LockOutlined, SafetyOutlined, ApiOutlined, ShieldCheckOutlined, SearchOutlined } from "@icons";
+import { BugOutlined, LockOutlined, SafetyOutlined, ApiOutlined, ShieldCheckOutlined, SearchOutlined, CheckCircleOutlined } from "@icons";
 import type { ReactNode } from "react";
 import { useSearchParams } from "react-router";
 
@@ -20,13 +20,15 @@ import { AdminSecuritySnuffleupagus } from "./AdminSecuritySnuffleupagus";
 import { AdminSecurityCrowdsec } from "./AdminSecurityCrowdsec";
 import { AdminSecurityEgress } from "./AdminSecurityEgress";
 import { AdminSecurityMalware } from "./AdminSecurityMalware";
+import { AdminSecurityTrust } from "./AdminSecurityTrust";
 import { AdminSecurityUfw } from "./AdminSecurityUfw";
 
-const TAB_KEYS = ["crowdsec", "malware", "snuffleupagus", "ufw", "egress", "apparmor", "aide"] as const;
+const TAB_KEYS = ["trust", "crowdsec", "malware", "snuffleupagus", "ufw", "egress", "apparmor", "aide"] as const;
 type TabKey = (typeof TAB_KEYS)[number];
-const DEFAULT_TAB: TabKey = "crowdsec";
+const DEFAULT_TAB: TabKey = "trust";
 
 const TAB_LABELS: Record<TabKey, string> = {
+  trust: "Trust",
   crowdsec: "CrowdSec",
   malware: "Malware",
   ufw: "Firewall (UFW)",
@@ -49,6 +51,7 @@ const CrowdsecBrandIcon = () => (
 );
 
 const TAB_ICONS: Record<TabKey, ReactNode> = {
+  trust: <CheckCircleOutlined />,
   crowdsec: <CrowdsecBrandIcon />,
   malware: <BugOutlined />,
   ufw: <LockOutlined />,
@@ -82,6 +85,8 @@ export const AdminSecurityPage = () => {
 
   const renderTab = () => {
     switch (activeKey) {
+      case "trust":
+        return <AdminSecurityTrust />;
       case "crowdsec":
         return <AdminSecurityCrowdsec />;
       case "malware":

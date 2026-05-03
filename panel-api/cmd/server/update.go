@@ -491,6 +491,29 @@ test -x node_modules/.bin/tsc || {
 			}
 			return nil
 		}},
+		{"sync PHP Defense (Snuffleupagus)", func() error {
+			// M41 (ADR-0088). Re-runs install_snuffleupagus so the per-PHP
+			// minor sp.so + conf.d wiring + rule bundle mirror converge on
+			// `jabali update`. Idempotent — build.sh skips minors already
+			// at the pinned tag (.jabali-version stamp); apt install of
+			// phpX.Y-dev / build-essential / libpcre2-dev short-circuits
+			// when already present.
+			//
+			// Without this step, fresh installs that were missing phpX.Y-dev
+			// at install_snuffleupagus time stayed permanently broken until
+			// manual intervention — rules + DB migrations landed but sp.so
+			// never built. install.sh's main() runs install_snuffleupagus
+			// once at install time only; update flow needs its own hook.
+			installSh := repoDir + "/install.sh"
+			if _, err := os.Stat(installSh); err != nil {
+				return nil
+			}
+			if err := run("", "bash", "-c",
+				"source "+installSh+" && install_snuffleupagus"); err != nil {
+				fmt.Printf("  (install_snuffleupagus failed: %v — continuing)\n", err)
+			}
+			return nil
+		}},
 	}
 
 	for _, s := range prelude {

@@ -8030,7 +8030,18 @@ workloads also use nginx / mariadb / etc.
 EOF
 
   if [[ "${_cli_yes:-}" != "1" ]]; then
-    read -rp "Proceed with uninstall? [y/N]: " ans
+    # When piped via `curl … | bash`, stdin is the script body (already
+    # drained by the time we reach here) so a plain `read` returns EOF.
+    # Fall back to /dev/tty when stdin isn't a terminal; if neither is
+    # available, fail loudly with a hint instead of silently exiting.
+    if [[ -t 0 ]]; then
+      read -rp "Proceed with uninstall? [y/N]: " ans
+    elif [[ -r /dev/tty ]]; then
+      read -rp "Proceed with uninstall? [y/N]: " ans </dev/tty
+    else
+      _err "non-interactive invocation (no tty) without --yes — re-run with --yes to proceed"
+      exit 64
+    fi
     [[ "${ans:-}" =~ ^[yY] ]] || { _log "cancelled"; exit 0; }
   fi
 
@@ -8153,7 +8164,13 @@ EOF
     if [[ "${_cli_yes:-}" == "1" ]]; then
       drop_db="y"
     else
-      read -rp "Drop jabali MariaDB databases + users (jabali_panel, jabali_pdns, jabali_kratos, stalwart_smtp)? [y/N]: " drop_db
+      if [[ -t 0 ]]; then
+        read -rp "Drop jabali MariaDB databases + users (jabali_panel, jabali_pdns, jabali_kratos, stalwart_smtp)? [y/N]: " drop_db
+      elif [[ -r /dev/tty ]]; then
+        read -rp "Drop jabali MariaDB databases + users (jabali_panel, jabali_pdns, jabali_kratos, stalwart_smtp)? [y/N]: " drop_db </dev/tty
+      else
+        drop_db="n"
+      fi
     fi
     if [[ "${drop_db:-}" =~ ^[yY] ]]; then
       _log "dropping jabali databases"
@@ -8213,7 +8230,13 @@ SQL
       _warn "Remove manually if desired: userdel -r <user>"
     else
       local rm_all
-      read -rp "Remove ALL listed users + their /home directories? [y/N/each]: " rm_all
+      if [[ -t 0 ]]; then
+        read -rp "Remove ALL listed users + their /home directories? [y/N/each]: " rm_all
+      elif [[ -r /dev/tty ]]; then
+        read -rp "Remove ALL listed users + their /home directories? [y/N/each]: " rm_all </dev/tty
+      else
+        rm_all="n"
+      fi
       case "${rm_all:-}" in
         [yY]*)
           for u in "${home_users[@]}"; do
@@ -8223,7 +8246,13 @@ SQL
         each|EACH|e|E)
           for u in "${home_users[@]}"; do
             local ans2
-            read -rp "  remove user '$u' (+ /home/$u)? [y/N]: " ans2
+            if [[ -t 0 ]]; then
+              read -rp "  remove user '$u' (+ /home/$u)? [y/N]: " ans2
+            elif [[ -r /dev/tty ]]; then
+              read -rp "  remove user '$u' (+ /home/$u)? [y/N]: " ans2 </dev/tty
+            else
+              ans2="n"
+            fi
             if [[ "${ans2:-}" =~ ^[yY] ]]; then
               userdel -r "$u" 2>/dev/null && _log "removed $u" || _warn "userdel -r $u failed"
             fi

@@ -1,10 +1,13 @@
 // AdminSecurityAppArmor — admin Security tab "AppArmor" sub-tab (M40,
 // ADR-0086). Read-only profile list + per-profile complain/enforce
-// flip behind a confirm modal.
-import { Alert, Badge, Button, Card, Modal, Table, Tag, Typography, message } from "antd";
+// flip behind a confirm modal. Recent denials feed (last 24h, capped
+// 50 rows) below the profile table — answers "what did AppArmor
+// actually drop?" without dropping to journalctl.
+import { Alert, Badge, Button, Card, Empty, Modal, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import { useState } from "react";
 
 import {
+  type AppArmorDenial,
   type AppArmorProfile,
   useAppArmorStatus,
   useSetAppArmorMode,
@@ -96,6 +99,89 @@ export const AdminSecurityAppArmor = () => {
           },
         ]}
       />
+
+      <Card
+        size="small"
+        title={
+          <Space>
+            <span>Recent denials (last 24h)</span>
+            <Typography.Text type="secondary">
+              {data.denials.length === 0
+                ? "no DENIED audit lines — clean state"
+                : `${data.denials.length} entries`}
+            </Typography.Text>
+          </Space>
+        }
+        style={{ marginTop: 16 }}
+      >
+        {data.denials.length === 0 ? (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description={
+              <Typography.Text type="secondary">
+                No <code>apparmor=&quot;DENIED&quot;</code> entries in the kernel
+                log over the last 24h. Profiles in <code>complain</code> mode
+                still log violations to <code>journalctl -k</code> as
+                <code> ALLOWED</code> with the violated rule — flip to
+                <code> enforce</code> after a clean soak window.
+              </Typography.Text>
+            }
+          />
+        ) : (
+          <Table<AppArmorDenial>
+            rowKey={(r) => `${r.timestamp}-${r.profile}-${r.path ?? ""}-${r.operation}`}
+            dataSource={data.denials}
+            tableLayout="fixed"
+            scroll={{ x: "max-content" }}
+            size="small"
+            pagination={{ pageSize: 10, showSizeChanger: false }}
+            columns={[
+              {
+                title: "When",
+                dataIndex: "timestamp",
+                width: 180,
+                render: (v: string) => v ? new Date(v).toLocaleString() : "—",
+              },
+              {
+                title: "Profile",
+                dataIndex: "profile",
+                width: 160,
+                render: (v: string) => <code>{v}</code>,
+              },
+              {
+                title: "Op",
+                dataIndex: "operation",
+                width: 100,
+              },
+              {
+                title: "Path",
+                dataIndex: "path",
+                ellipsis: true,
+                render: (v: string) =>
+                  v ? (
+                    <Tooltip title={v}>
+                      <code>{v}</code>
+                    </Tooltip>
+                  ) : (
+                    "—"
+                  ),
+              },
+              {
+                title: "Mask",
+                width: 110,
+                render: (_: unknown, r: AppArmorDenial) =>
+                  r.denied_mask ? (
+                    <Tag color="red">{r.denied_mask}</Tag>
+                  ) : r.requested_mask ? (
+                    <Tag>{r.requested_mask}</Tag>
+                  ) : (
+                    "—"
+                  ),
+              },
+            ]}
+          />
+        )}
+      </Card>
 
       <Modal
         open={pendingFlip !== null}

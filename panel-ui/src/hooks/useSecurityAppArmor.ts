@@ -9,10 +9,21 @@ export interface AppArmorProfile {
   mode: "enforce" | "complain";
 }
 
+export interface AppArmorDenial {
+  timestamp: string;
+  profile: string;
+  operation: string;
+  path?: string;
+  requested_mask?: string;
+  denied_mask?: string;
+  comm?: string;
+}
+
 export interface AppArmorStatus {
   enabled: boolean;
   reason?: string;
   profiles: AppArmorProfile[];
+  denials: AppArmorDenial[];
 }
 
 // apiClient baseURL is already "/api/v1" — paths must be relative

@@ -88,51 +88,120 @@ func mwAideStatusHandler(_ context.Context, _ json.RawMessage) (any, error) {
 }
 
 // parseAideReport extracts summary + sample paths from an aide.report.log.
-// AIDE's text output is stable across versions; we parse the
-// "Summary" block + "Detailed information" block.
+// AIDE 0.18 / 0.19 emit a section-based report:
+//
+//   Summary:
+//     Total number of entries: 154371
+//     Added entries: 10
+//     Removed entries: 10375
+//     Changed entries: 18
+//
+//   ---------------------------------------------------
+//   Added entries:
+//   ---------------------------------------------------
+//
+//   f++++++++++++++++++++++++++++ZZZZ /etc/example
+//
+//   ---------------------------------------------------
+//   Removed entries:
+//   ---------------------------------------------------
+//
+//   f------------------------------ZZZZ /usr/lib/foo
+//
+//   ---------------------------------------------------
+//   Changed entries:
+//   ---------------------------------------------------
+//
+//   f   ...mc.. .C.. /etc/bar
+//
+// We track the current section header and emit sample rows by stripping
+// the AIDE attribute string (the "f++++..." / "f-----..." / "f =..." or
+// "f ...mc.." prefix) and keeping the path. Sample is capped at 50.
 func parseAideReport(text string, resp *aideStatusResponse) {
 	scanner := bufio.NewScanner(strings.NewReader(text))
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 
 	var lastTimestamp string
+	var section string // "added" | "removed" | "changed" | ""
 
 	for scanner.Scan() {
-		line := scanner.Text()
+		raw := scanner.Text()
+		line := strings.TrimRight(raw, " \t")
+
 		// Header form: "Start timestamp: 2026-04-30 04:30:42 +0000 (AIDE 0.18)"
 		if strings.HasPrefix(line, "Start timestamp:") {
 			lastTimestamp = strings.TrimSpace(strings.TrimPrefix(line, "Start timestamp:"))
-		}
-		if strings.HasPrefix(line, "  Total number of entries:") {
 			continue
 		}
-		if strings.HasPrefix(line, "  Added entries:") {
-			fmt.Sscanf(line, "  Added entries:%d", &resp.Summary.Added)
+
+		// Summary counts. AIDE indents these with two spaces. Some
+		// formats omit the leading spaces — accept both.
+		trimmed := strings.TrimLeft(line, " \t")
+		switch {
+		case strings.HasPrefix(trimmed, "Added entries:") && section == "":
+			// "Added entries: N" only counts when we're still in the
+			// Summary block (section == ""). After we've entered the
+			// Added section header below, the same prefix marks the
+			// section header — handled separately.
+			fmt.Sscanf(trimmed, "Added entries:%d", &resp.Summary.Added)
+			continue
+		case strings.HasPrefix(trimmed, "Removed entries:") && section == "":
+			fmt.Sscanf(trimmed, "Removed entries:%d", &resp.Summary.Removed)
+			continue
+		case strings.HasPrefix(trimmed, "Changed entries:") && section == "":
+			fmt.Sscanf(trimmed, "Changed entries:%d", &resp.Summary.Changed)
+			continue
+		case strings.HasPrefix(trimmed, "Total number of entries:"):
+			continue
 		}
-		if strings.HasPrefix(line, "  Removed entries:") {
-			fmt.Sscanf(line, "  Removed entries:%d", &resp.Summary.Removed)
+
+		// Section headers. "Added entries:" / "Removed entries:" /
+		// "Changed entries:" appear standalone (no number) inside the
+		// detailed-information block. We've already consumed the
+		// summary form above.
+		switch trimmed {
+		case "Added entries:":
+			section = "added"
+			continue
+		case "Removed entries:":
+			section = "removed"
+			continue
+		case "Changed entries:":
+			section = "changed"
+			continue
+		case "Detailed information about changes:":
+			// Not a section by itself; per-file diff blocks follow.
+			// Stop sampling once we hit this — the section list above
+			// already gave us 50 paths' worth of detail.
+			section = ""
+			continue
 		}
-		if strings.HasPrefix(line, "  Changed entries:") {
-			fmt.Sscanf(line, "  Changed entries:%d", &resp.Summary.Changed)
+
+		// Section bodies. AIDE prefixes each path with an attribute
+		// string ("f+++++++...", "f-------...", or "f .....TS....").
+		// Take the path = last whitespace-separated token. Skip the
+		// horizontal-rule lines and blanks.
+		if section == "" || trimmed == "" || strings.HasPrefix(trimmed, "---") {
+			continue
 		}
-		// Sample paths: lines starting with "f " / "d " / "+++" / "---"
-		if strings.HasPrefix(line, "added: ") {
-			resp.Sample = append(resp.Sample, aideSampleRow{
-				Path: strings.TrimSpace(strings.TrimPrefix(line, "added: ")),
-				ChangeType: "added",
-			})
+		// Defensive: skip lines that look like another summary header
+		// or the start of a per-file detail block ("File: …").
+		if strings.HasPrefix(trimmed, "File:") || strings.HasPrefix(trimmed, "Summary:") {
+			continue
 		}
-		if strings.HasPrefix(line, "removed: ") {
-			resp.Sample = append(resp.Sample, aideSampleRow{
-				Path: strings.TrimSpace(strings.TrimPrefix(line, "removed: ")),
-				ChangeType: "removed",
-			})
+		fields := strings.Fields(trimmed)
+		if len(fields) < 2 {
+			continue
 		}
-		if strings.HasPrefix(line, "changed: ") {
-			resp.Sample = append(resp.Sample, aideSampleRow{
-				Path: strings.TrimSpace(strings.TrimPrefix(line, "changed: ")),
-				ChangeType: "changed",
-			})
+		path := fields[len(fields)-1]
+		// Sanity: must look like an absolute path.
+		if !strings.HasPrefix(path, "/") {
+			continue
 		}
+		resp.Sample = append(resp.Sample, aideSampleRow{
+			Path:       path,
+			ChangeType: section,
+		})
 		if len(resp.Sample) >= 50 {
 			break
 		}

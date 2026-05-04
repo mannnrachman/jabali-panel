@@ -12,10 +12,12 @@
 package commands
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	osexec "os/exec"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -59,9 +61,27 @@ type apparmorProfile struct {
 	Mode string `json:"mode"`
 }
 
+// apparmorDenial is one parsed audit-trail row. complain-mode profiles
+// emit "ALLOWED" but with a violation noted — we only return DENIED
+// rows here (genuine enforce-mode blocks). Path is the requested
+// resource; profile is which jabali-* daemon was confined.
+type apparmorDenial struct {
+	Timestamp     string `json:"timestamp"`
+	Profile       string `json:"profile"`
+	Operation     string `json:"operation"`
+	Path          string `json:"path,omitempty"`
+	RequestedMask string `json:"requested_mask,omitempty"`
+	DeniedMask    string `json:"denied_mask,omitempty"`
+	Comm          string `json:"comm,omitempty"`
+}
+
 type apparmorStatusResponse struct {
 	Enabled  bool              `json:"enabled"`
 	Profiles []apparmorProfile `json:"profiles"`
+	// Denials is the most recent N apparmor="DENIED" audit lines from
+	// journalctl across the last 24h. Empty list when nothing's been
+	// blocked (the desirable state for confined-and-correct daemons).
+	Denials []apparmorDenial `json:"denials"`
 	// Reason: human-readable when Enabled=false (e.g. "kernel LSM
 	// missing", "GRUB pending reboot").
 	Reason string `json:"reason,omitempty"`
@@ -71,7 +91,10 @@ func mwApparmorStatusHandler(ctx context.Context, _ json.RawMessage) (any, error
 	ctx, cancel := context.WithTimeout(ctx, apparmorCallTimeout)
 	defer cancel()
 
-	resp := apparmorStatusResponse{Profiles: []apparmorProfile{}}
+	resp := apparmorStatusResponse{
+		Profiles: []apparmorProfile{},
+		Denials:  []apparmorDenial{},
+	}
 
 	out, err := osexec.CommandContext(ctx, "aa-status", "--json").Output()
 	if err != nil {
@@ -108,7 +131,108 @@ func mwApparmorStatusHandler(ctx context.Context, _ json.RawMessage) (any, error
 			Mode: mode,
 		})
 	}
+
+	// Best-effort denial scrape. Failures (journalctl missing, no
+	// matches) leave Denials as the empty slice — never error here.
+	resp.Denials = readApparmorDenials(ctx)
 	return resp, nil
+}
+
+// apparmorDeniedRe matches the audit-line format kernel emits for
+// AppArmor denials. Sample:
+//
+//   audit: type=1400 audit(1746371982.123:567): apparmor="DENIED"
+//   operation="open" profile="jabali-panel" name="/etc/shadow"
+//   pid=1234 comm="jabali-panel" requested_mask="r" denied_mask="r"
+//   fsuid=0 ouid=0
+//
+// The fields appear in a stable order across kernel 6.x releases but
+// we extract by named regex per field — robust to extra/missing
+// trailing fields. profile= is mandatory; everything else is optional.
+var (
+	apparmorDeniedLineRe = regexp.MustCompile(`apparmor="DENIED"`)
+	apparmorFieldRe      = regexp.MustCompile(`(\w+)="?([^"\s]*)"?`)
+	apparmorAuditTSRe    = regexp.MustCompile(`audit\((\d+)\.\d+:\d+\)`)
+)
+
+// readApparmorDenials shells out to journalctl --grep'd against
+// apparmor="DENIED" and returns up to maxApparmorDenials rows. We use
+// journalctl rather than dmesg so the lookup honors --since reliably;
+// dmesg ring-buffer rotation could swallow older denials we still want.
+const (
+	apparmorDenialsWindow = "24 hours ago"
+	maxApparmorDenials    = 50
+)
+
+func readApparmorDenials(ctx context.Context) []apparmorDenial {
+	out := []apparmorDenial{}
+	if _, err := osexec.LookPath("journalctl"); err != nil {
+		return out
+	}
+	cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	cmd := osexec.CommandContext(cctx,
+		"journalctl",
+		"-k",
+		"--since", apparmorDenialsWindow,
+		"--no-pager",
+		"-q",
+		"--grep", `apparmor="DENIED"`,
+	)
+	stdout, err := cmd.Output()
+	if err != nil {
+		return out
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(string(stdout)))
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !apparmorDeniedLineRe.MatchString(line) {
+			continue
+		}
+		row := apparmorDenial{}
+		// audit timestamp epoch seconds
+		if m := apparmorAuditTSRe.FindStringSubmatch(line); len(m) == 2 {
+			if epoch, err := time.Parse("1136239445", m[1]); err == nil {
+				_ = epoch // unused — fall through to ParseInt path below
+			}
+			// time.Parse with epoch layout doesn't work; use Unix.
+			var sec int64
+			fmt.Sscanf(m[1], "%d", &sec)
+			if sec > 0 {
+				row.Timestamp = time.Unix(sec, 0).UTC().Format(time.RFC3339)
+			}
+		}
+		// Field extraction.
+		for _, fm := range apparmorFieldRe.FindAllStringSubmatch(line, -1) {
+			key, val := fm[1], fm[2]
+			switch key {
+			case "profile":
+				row.Profile = val
+			case "operation":
+				row.Operation = val
+			case "name":
+				row.Path = val
+			case "requested_mask":
+				row.RequestedMask = val
+			case "denied_mask":
+				row.DeniedMask = val
+			case "comm":
+				row.Comm = val
+			}
+		}
+		// Skip rows without a profile — those are unrelated audit lines
+		// the journalctl --grep happened to surface (rare).
+		if row.Profile == "" {
+			continue
+		}
+		out = append(out, row)
+		if len(out) >= maxApparmorDenials {
+			break
+		}
+	}
+	return out
 }
 
 type apparmorSetModeRequest struct {

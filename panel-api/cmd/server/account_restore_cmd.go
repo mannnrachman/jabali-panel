@@ -32,6 +32,61 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
+// accountRestoreUserBlock mirrors the manifest-user JSON shape the
+// agent surfaces in backup.restore replies (`user` field). Kept here
+// instead of importing internal/backup just to keep this CLI package
+// self-contained on the wire side.
+type accountRestoreUserBlock struct {
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	Email       string `json:"email,omitempty"`
+	UIDAtSource uint32 `json:"uid_at_source,omitempty"`
+	IsAdmin     bool   `json:"is_admin"`
+}
+
+// ensurePanelUserRow inserts users{ID, Username, Email, IsAdmin,
+// LinuxUID, locked PasswordHash} when the row is missing. No-op when
+// the row exists. Email defaults to <username>@localhost when the
+// manifest carries no email (older snapshots) so the NOT NULL +
+// uniqueIndex doesn't reject. Operator must set a real password via
+// Kratos recovery — `jabali user password <username> --link`.
+func ensurePanelUserRow(ctx context.Context, cmd *cobra.Command, mu accountRestoreUserBlock) error {
+	users := repository.NewUserRepository(sharedDB)
+	if existing, err := users.FindByID(ctx, mu.ID); err == nil && existing != nil {
+		return nil
+	} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
+		return fmt.Errorf("lookup user: %w", err)
+	}
+	email := mu.Email
+	if email == "" {
+		email = mu.Username + "@localhost"
+	}
+	usernamePtr := mu.Username
+	now := time.Now().UTC()
+	u := &models.User{
+		ID:           mu.ID,
+		Email:        email,
+		Username:     &usernamePtr,
+		IsAdmin:      mu.IsAdmin,
+		PasswordHash: "!", // locked — Kratos recovery sets the real value
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if mu.UIDAtSource != 0 {
+		uid := mu.UIDAtSource
+		u.LinuxUID = &uid
+	}
+	if err := users.Create(ctx, u); err != nil {
+		return fmt.Errorf("create user row: %w", err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(),
+		"✓ panel user row reconstructed: id=%s username=%s email=%s is_admin=%t\n"+
+			"  Password is LOCKED. Set a new one via:\n"+
+			"    jabali user password %s --link\n",
+		u.ID, mu.Username, email, mu.IsAdmin, mu.Username)
+	return nil
+}
+
 // accountManifestRow mirrors the payload returned by
 // backup.account_list_manifests.
 type accountManifestRow struct {
@@ -205,6 +260,24 @@ Examples:
 			fmt.Fprintln(cmd.OutOrStdout(), "✓ agent returned:")
 			pretty, _ := json.MarshalIndent(json.RawMessage(raw), "  ", "  ")
 			fmt.Fprintln(cmd.OutOrStdout(), "  "+string(pretty))
+
+			// Post-restore: if the panel user row is missing (DR mode
+			// or accidental panel-side delete), reconstruct it from the
+			// manifest's User block now that home + db + mail are back
+			// in place. Password gets a locked placeholder; operator
+			// must set a new one via Kratos recovery.
+			var resp struct {
+				User    accountRestoreUserBlock `json:"user"`
+				Applied []string                `json:"applied"`
+			}
+			if jerr := json.Unmarshal(raw, &resp); jerr == nil && resp.User.ID != "" {
+				if cerr := ensurePanelUserRow(ctx, cmd, resp.User); cerr != nil {
+					fmt.Fprintf(cmd.OutOrStdout(),
+						"WARNING: panel user row reconstruction failed: %v\n"+
+							"  Run `jabali user create --user-id %s --username %s --email %s` manually.\n",
+						cerr, resp.User.ID, resp.User.Username, resp.User.Email)
+				}
+			}
 			return nil
 		},
 	}

@@ -51,6 +51,16 @@ type backupRestoreResult struct {
 	Stages   []backupRestoreStage `json:"stages"`
 	Applied  []string             `json:"applied,omitempty"`
 	Warnings []string             `json:"warnings,omitempty"`
+	// User is the manifest's account block (id, username, email,
+	// is_admin, uid_at_source). CLI needs it for disaster-recovery
+	// mode where the panel row no longer exists and must be
+	// reconstructed before reconcile picks the account back up.
+	User backup.ManifestUser `json:"user"`
+	// StagingCleanup reports whether the staging directory was
+	// removed after a successful live apply ("removed", "kept",
+	// "cleanup_failed:<err>"). Recon mode (apply=false) always
+	// keeps the dir; the value is "kept" with detail.
+	StagingCleanup string `json:"staging_cleanup,omitempty"`
 }
 
 type backupRestoreStage struct {
@@ -107,7 +117,7 @@ func backupRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 		return nil, bkInternal("parse manifest", err)
 	}
 
-	out := backupRestoreResult{JobID: req.JobID}
+	out := backupRestoreResult{JobID: req.JobID, User: manifest.User}
 
 	// Stage walk. Each Stages[i] in the manifest carries the snapshot
 	// id we restore. Restore order matters in v2 (db before mail
@@ -150,11 +160,28 @@ func backupRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 		applied, warnings := applyAccountRestore(ctx, stagingRoot, req.TargetUsername, manifest.Stages, out.Stages)
 		out.Applied = applied
 		out.Warnings = warnings
+		// Live apply succeeded for at least one stage — drop the
+		// staging tree so /var/lib/jabali-backups/restore-staging/
+		// doesn't accumulate per-job dirs. Recon mode (apply=false)
+		// intentionally keeps them so the operator can inspect.
+		// On any apply failure (no stages applied) keep the dir so
+		// the operator can see what materialized.
+		if len(applied) > 0 {
+			if err := os.RemoveAll(stagingRoot); err != nil {
+				out.StagingCleanup = "cleanup_failed: " + err.Error()
+				out.Warnings = append(out.Warnings, "staging cleanup failed: "+err.Error())
+			} else {
+				out.StagingCleanup = "removed"
+			}
+		} else {
+			out.StagingCleanup = "kept (no stages applied)"
+		}
 	} else {
 		out.Warnings = append(out.Warnings,
 			"apply_staged=false — files materialized to "+
 				filepath.Join("/var/lib/jabali-backups/restore-staging", req.JobID)+
 				"; nothing applied to live system")
+		out.StagingCleanup = "kept (recon mode)"
 	}
 	return out, nil
 }

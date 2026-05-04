@@ -94,6 +94,13 @@ func (f *Finalizer) tickOnce(ctx context.Context) {
 		if j.Status != models.BackupJobStatusRunning {
 			continue
 		}
+		// Restore jobs are sealed synchronously by the API restore
+		// handler when Agent.Call returns. The finalizer only tracks
+		// fan-out backup jobs that publish a manifest snapshot.
+		if j.Kind == models.BackupJobKindAccountRestore ||
+			j.Kind == models.BackupJobKindSystemRestore {
+			continue
+		}
 		if j.StartedAt != nil && now.Sub(*j.StartedAt) > StallTimeout {
 			f.deps.Log.Warn("backup stalled past timeout; marking failed",
 				"job_id", j.ID, "started_at", j.StartedAt)

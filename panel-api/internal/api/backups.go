@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os/exec"
@@ -64,6 +65,11 @@ type BackupHandlerConfig struct {
 }
 
 const backupCallTimeout = 10 * time.Second
+
+// restoreCallTimeout: account restores run synchronously on the agent
+// (no goroutine fork). 10m covers reasonable home-dir + DB + mailbox
+// volumes; larger restores should switch to a background-job model.
+const restoreCallTimeout = 10 * time.Minute
 
 // RegisterBackupRoutes mounts the admin-scoped backup endpoints under
 // /admin/users/:id/backups + /admin/backups/:job_id. The user-shell
@@ -576,8 +582,14 @@ func (h *backupHandler) restore(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_create"})
 		return
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), backupCallTimeout)
+	// backup.restore is synchronous on the agent (no goroutine fork like
+	// backup.create). Use a long timeout so real-world account restores
+	// (db dumps + mailbox imports) don't hard-fail at 10s, but cap at a
+	// ceiling that matches operator UX expectations for the "Restore"
+	// button — anything longer should run as a tracked background job.
+	ctx, cancel := context.WithTimeout(c.Request.Context(), restoreCallTimeout)
 	defer cancel()
+	_ = h.cfg.Jobs.MarkStarted(c.Request.Context(), job.ID)
 	params := map[string]any{
 		"job_id":               job.ID,
 		"manifest_snapshot_id": req.ManifestSnapshotID,
@@ -587,13 +599,44 @@ func (h *backupHandler) restore(c *gin.Context) {
 	for k, v := range destWireParams(dest) {
 		params[k] = v
 	}
-	if _, err := h.cfg.Agent.Call(ctx, "backup.restore", params); err != nil {
+	raw, err := h.cfg.Agent.Call(ctx, "backup.restore", params)
+	if err != nil {
 		_ = h.cfg.Jobs.MarkFinished(c.Request.Context(), job.ID, models.BackupJobStatusFailed,
 			"", "", 0, 0, nil, nil, err.Error())
 		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "agent_call_failed", "detail": err.Error()})
 		return
 	}
-	_ = h.cfg.Jobs.MarkStarted(c.Request.Context(), job.ID)
+	// Parse the agent's restore result so the job row reflects what
+	// actually happened (succeeded / partial / failed based on stages).
+	var result struct {
+		JobID  string `json:"job_id"`
+		Stages []struct {
+			Name   string `json:"name"`
+			Status string `json:"status"`
+			Error  string `json:"error,omitempty"`
+		} `json:"stages"`
+	}
+	finalStatus := models.BackupJobStatusSucceeded
+	finalErr := ""
+	if uerr := json.Unmarshal(raw, &result); uerr == nil {
+		failed := 0
+		for _, s := range result.Stages {
+			if s.Status == "failed" {
+				failed++
+				if finalErr == "" {
+					finalErr = fmt.Sprintf("%s: %s", s.Name, s.Error)
+				}
+			}
+		}
+		switch {
+		case failed > 0 && failed < len(result.Stages):
+			finalStatus = models.BackupJobStatusPartial
+		case failed > 0:
+			finalStatus = models.BackupJobStatusFailed
+		}
+	}
+	_ = h.cfg.Jobs.MarkFinished(c.Request.Context(), job.ID, finalStatus,
+		"", "", 0, 0, raw, nil, finalErr)
 	c.JSON(http.StatusCreated, gin.H{"status": "ok", "job_id": job.ID})
 }
 

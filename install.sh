@@ -242,6 +242,53 @@ _warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*" >&2; _log_to_file "[!] $*"; }
 _err()  { printf '\033[1;31m[✗]\033[0m %s\n' "$*" >&2; _log_to_file "[✗] $*"; }
 _die()  { printf '\033[1;31m[✗]\033[0m %s\n' "$*" >&2; _log_to_file "[✗] $*"; exit 1; }
 
+# _apt_wait_lock polls dpkg + apt-lists locks until free or timeout
+# (default 300s, override via JABALI_APT_LOCK_WAIT). Concurrent apt
+# runs (unattended-upgrades, packagekit, manual operator apt-get) hold
+# /var/lib/apt/lists/lock or /var/lib/dpkg/lock-frontend; running our
+# own apt-get on top of that returns "exit 100" with no useful retry.
+# fuser is unavailable on minimal Debian images — fall back to a flock
+# probe (test acquire + release) when fuser is missing.
+_apt_wait_lock() {
+  local timeout="${JABALI_APT_LOCK_WAIT:-300}"
+  local locks=(
+    /var/lib/dpkg/lock-frontend
+    /var/lib/dpkg/lock
+    /var/lib/apt/lists/lock
+    /var/cache/apt/archives/lock
+  )
+  local waited=0 announced=0 lock pid
+  while (( waited < timeout )); do
+    local busy=0
+    for lock in "${locks[@]}"; do
+      [[ -f "$lock" ]] || continue
+      if command -v fuser >/dev/null 2>&1; then
+        if fuser "$lock" >/dev/null 2>&1; then
+          busy=1
+          if (( announced == 0 )); then
+            pid="$(fuser "$lock" 2>/dev/null | tr -d ' ')"
+            _log "apt lock held by PID ${pid:-?} on ${lock##*/} — waiting (timeout ${timeout}s)"
+            announced=1
+          fi
+          break
+        fi
+      else
+        # No fuser → try a non-blocking flock; if it can't acquire,
+        # something else holds it.
+        if ! ( flock -n -w 0 9 ) 9>"$lock" 2>/dev/null; then
+          busy=1
+          break
+        fi
+      fi
+    done
+    (( busy == 0 )) && return 0
+    sleep 2
+    waited=$(( waited + 2 ))
+  done
+  _err "apt lock still held after ${timeout}s — re-run jabali update once unattended-upgrades / packagekit settles, or set JABALI_APT_LOCK_WAIT=600"
+  return 1
+}
+
 # Announce where logs are going so the operator can tail -f in another
 # shell if the install stalls. Printed via _log so it's itself captured.
 if [[ -n "${LOG_FILE:-}" ]]; then
@@ -6223,8 +6270,11 @@ install_snuffleupagus() {
   # Zend headers we link against. install_base_packages does NOT pull it
   # because nothing else needs it; we must install per-minor here.
   if ! dpkg -s build-essential libpcre2-dev >/dev/null 2>&1; then
+    _apt_wait_lock || return 1
     _spin "apt install build-essential + libpcre2-dev" \
-      apt-get install -y -qq --no-install-recommends build-essential libpcre2-dev
+      apt-get install -y -qq --no-install-recommends \
+        -o DPkg::Lock::Timeout=300 \
+        build-essential libpcre2-dev
   fi
   # Build for every PHP minor that has an FPM binary on disk — not just
   # JABALI_PHP_VERSIONS. The PHP Manager UI lets the operator install
@@ -6265,11 +6315,13 @@ install_snuffleupagus() {
        && declare -F _install_sury_source >/dev/null 2>&1; then
       _install_sury_source
     fi
+    _apt_wait_lock || return 1
     _spin "apt update (refresh Sury index for php-dev)" \
       apt-get update -qq -o Acquire::Languages=none \
         -o Acquire::http::Timeout=20 \
         -o Acquire::https::Timeout=20 \
-        -o Acquire::Retries=3
+        -o Acquire::Retries=3 \
+        -o DPkg::Lock::Timeout=300
     # Per-minor install so a single PPA hiccup on one minor doesn't
     # nuke the entire build pass. Each minor's dev pkg is best-effort:
     # success unlocks the build below; failure logs a warning and the
@@ -6279,10 +6331,12 @@ install_snuffleupagus() {
     # cascade-failing the whole snuffleupagus install pass.
     local _dev_pkg
     for _dev_pkg in "${_dev_pkgs[@]}"; do
+      _apt_wait_lock || true
       if ! apt-get install -y -qq --no-install-recommends \
             -o Acquire::http::Timeout=30 \
             -o Acquire::https::Timeout=30 \
             -o Acquire::Retries=3 \
+            -o DPkg::Lock::Timeout=300 \
             "$_dev_pkg" >/dev/null 2>&1; then
         _warn "apt install $_dev_pkg failed (PPA unreachable?) — snuffleupagus build will skip the matching minor"
       else

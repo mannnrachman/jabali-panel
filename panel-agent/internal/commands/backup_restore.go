@@ -272,6 +272,20 @@ func applyAccountRestore(
 		}
 		warnings = append(warnings,
 			fmt.Sprintf("system user %q created (uid=%s, DR mode)", username, uidLabel))
+		// Enable linger so systemctl --user (the cron-timer apply
+		// path runs as the user) finds an active user manager. The
+		// reconciler eventually calls user.slice.ensure which also
+		// enables linger, but a fresh-DR tick can race: cron pass
+		// runs before user-slice pass on the same tick, cron.apply
+		// fails with "user does not have lingering enabled", and
+		// the timer never lands. Doing it here makes the DR path
+		// self-sufficient. Idempotent — loginctl returns success on
+		// already-enabled users.
+		lingerCmd := exec.CommandContext(ctx, "loginctl", "enable-linger", username)
+		if lOut, lErr := lingerCmd.CombinedOutput(); lErr != nil {
+			warnings = append(warnings,
+				fmt.Sprintf("loginctl enable-linger %q failed: %v: %s — cron timer apply may fail until reconciler retries", username, lErr, strings.TrimSpace(string(lOut))))
+		}
 		u, uerr = user.Lookup(username)
 		if uerr != nil {
 			warnings = append(warnings,

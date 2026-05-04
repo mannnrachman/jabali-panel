@@ -22,7 +22,197 @@ func newPdnsCmd() *cobra.Command {
 		Short: "PowerDNS helpers (recursor forwarders, etc.)",
 	}
 	cmd.AddCommand(newPdnsBackfillCmd())
+	cmd.AddCommand(newPdnsDNSSECCmd())
 	return cmd
+}
+
+func newPdnsDNSSECCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "dnssec",
+		Short: "Per-domain DNSSEC management (ADR-0057)",
+	}
+	cmd.AddCommand(
+		newPdnsDNSSECEnableCmd(),
+		newPdnsDNSSECDisableCmd(),
+		newPdnsDNSSECDSCmd(),
+		newPdnsDNSSECStatusCmd(),
+	)
+	return cmd
+}
+
+func newPdnsDNSSECEnableCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "enable <domain>",
+		Short:   "Enable DNSSEC for a zone (creates KSK+ZSK, rectifies, persists keys)",
+		Args:    cobra.ExactArgs(1),
+		PreRunE: requireDBAndAgent,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
+			defer cancel()
+			dom, err := domainRepoFromDB().FindByName(ctx, args[0])
+			if err != nil {
+				return fmt.Errorf("lookup domain %q: %w", args[0], err)
+			}
+			raw, err := sharedAgent.Call(ctx, "dns.dnssec_enable", map[string]any{"domain_name": dom.Name})
+			if err != nil {
+				return fmt.Errorf("dns.dnssec_enable: %w", err)
+			}
+			var resp struct {
+				Ok   bool `json:"ok"`
+				Keys []struct {
+					KeyTag    int    `json:"key_tag"`
+					KeyType   string `json:"key_type"`
+					Algorithm uint8  `json:"algorithm"`
+					PublicKey string `json:"public_key"`
+					Active    bool   `json:"active"`
+				} `json:"keys"`
+			}
+			_ = json.Unmarshal(raw, &resp)
+			if err := domainRepoFromDB().UpdateDNSSECEnabled(ctx, dom.ID, true); err != nil {
+				return fmt.Errorf("update dnssec flag: %w", err)
+			}
+			keysRepo := repository.NewDNSSECKeyRepository(sharedDB)
+			now := time.Now().UTC()
+			cached := make([]models.DomainDNSSECKey, 0, len(resp.Keys))
+			for _, k := range resp.Keys {
+				cached = append(cached, models.DomainDNSSECKey{
+					DomainID:   dom.ID,
+					KeyTag:     k.KeyTag,
+					KeyType:    k.KeyType,
+					Algorithm:  k.Algorithm,
+					PublicKey:  k.PublicKey,
+					Active:     k.Active,
+					ObservedAt: now,
+				})
+			}
+			_ = keysRepo.ReplaceAll(ctx, dom.ID, cached)
+			if jsonOutput {
+				return printJSON(resp)
+			}
+			fmt.Printf("DNSSEC enabled for %s (%d keys)\n", dom.Name, len(resp.Keys))
+			for _, k := range resp.Keys {
+				fmt.Printf("  %s tag=%d alg=%d active=%t\n", k.KeyType, k.KeyTag, k.Algorithm, k.Active)
+			}
+			fmt.Println("Publish DS records at the parent registrar to activate the chain of trust:")
+			fmt.Println("  jabali pdns dnssec ds " + dom.Name)
+			return nil
+		},
+	}
+}
+
+func newPdnsDNSSECDisableCmd() *cobra.Command {
+	var force bool
+	cmd := &cobra.Command{
+		Use:     "disable <domain>",
+		Short:   "Disable DNSSEC (removes keys + rectifies)",
+		Args:    cobra.ExactArgs(1),
+		PreRunE: requireDBAndAgent,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
+			defer cancel()
+			dom, err := domainRepoFromDB().FindByName(ctx, args[0])
+			if err != nil {
+				return fmt.Errorf("lookup domain %q: %w", args[0], err)
+			}
+			if !force {
+				fmt.Printf("Disable DNSSEC for %s? Resolvers will validate as bogus until DS is removed at registrar. [y/N]: ", dom.Name)
+				var c string
+				fmt.Scanln(&c)
+				if c != "y" && c != "Y" {
+					fmt.Println("Cancelled.")
+					return nil
+				}
+			}
+			if _, err := sharedAgent.Call(ctx, "dns.dnssec_disable", map[string]any{"domain_name": dom.Name}); err != nil {
+				return fmt.Errorf("dns.dnssec_disable: %w", err)
+			}
+			if err := domainRepoFromDB().UpdateDNSSECEnabled(ctx, dom.ID, false); err != nil {
+				return fmt.Errorf("update dnssec flag: %w", err)
+			}
+			_ = repository.NewDNSSECKeyRepository(sharedDB).DeleteAllForDomain(ctx, dom.ID)
+			if jsonOutput {
+				return printJSON(map[string]any{"domain": dom.Name, "dnssec_enabled": false})
+			}
+			fmt.Printf("DNSSEC disabled for %s. Remove DS records at registrar to complete deactivation.\n", dom.Name)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation")
+	return cmd
+}
+
+func newPdnsDNSSECDSCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "ds <domain>",
+		Short:   "Print DS records to publish at the parent registrar",
+		Args:    cobra.ExactArgs(1),
+		PreRunE: requireDBAndAgent,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+			defer cancel()
+			raw, err := sharedAgent.Call(ctx, "dns.dnssec_ds_export", map[string]any{"domain_name": args[0]})
+			if err != nil {
+				return fmt.Errorf("dns.dnssec_ds_export: %w", err)
+			}
+			var resp struct {
+				DSRecords []struct {
+					KeyTag     int    `json:"key_tag"`
+					Algorithm  uint8  `json:"algorithm"`
+					DigestType uint8  `json:"digest_type"`
+					Digest     string `json:"digest"`
+				} `json:"ds_records"`
+			}
+			_ = json.Unmarshal(raw, &resp)
+			if jsonOutput {
+				return printJSON(resp)
+			}
+			if len(resp.DSRecords) == 0 {
+				fmt.Println("No DS records — DNSSEC may not be enabled.")
+				return nil
+			}
+			fmt.Printf("DS records for %s:\n", args[0])
+			for _, d := range resp.DSRecords {
+				fmt.Printf("  %d %d %d %s\n", d.KeyTag, d.Algorithm, d.DigestType, d.Digest)
+			}
+			return nil
+		},
+	}
+}
+
+func newPdnsDNSSECStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "status <domain>",
+		Short:   "Show cached DNSSEC keys for a domain",
+		Args:    cobra.ExactArgs(1),
+		PreRunE: requireDB,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+			dom, err := domainRepoFromDB().FindByName(ctx, args[0])
+			if err != nil {
+				return fmt.Errorf("lookup domain %q: %w", args[0], err)
+			}
+			keys, err := repository.NewDNSSECKeyRepository(sharedDB).ListByDomainID(ctx, dom.ID)
+			if err != nil {
+				return fmt.Errorf("list keys: %w", err)
+			}
+			if jsonOutput {
+				return printJSON(map[string]any{
+					"domain":         dom.Name,
+					"dnssec_enabled": dom.DNSSECEnabled,
+					"keys":           keys,
+				})
+			}
+			fmt.Printf("Domain:   %s\n", dom.Name)
+			fmt.Printf("Enabled:  %s\n", boolYN(dom.DNSSECEnabled))
+			fmt.Printf("Keys:     %d\n", len(keys))
+			for _, k := range keys {
+				fmt.Printf("  %s tag=%d alg=%d active=%t observed=%s\n",
+					k.KeyType, k.KeyTag, k.Algorithm, k.Active, k.ObservedAt.Format(time.RFC3339))
+			}
+			return nil
+		},
+	}
 }
 
 type pdnsBackfillOpts struct {

@@ -97,6 +97,10 @@ func newRootCmd() *cobra.Command {
 		newAppArmorCmd(),
 		newAideCmd(),
 		newUfwCmd(),
+		newSSLCmd(),
+		newSSHKeyCmd(),
+		newPHPCmd(),
+		newCronCmd(),
 	)
 	// `jabali reconcile` was removed by M20 — the reconciler already ticks
 	// every cfg.Agent.ReconcilerInterval (default 60s), and the CLI's
@@ -253,4 +257,11 @@ func requireDBAndAgent(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	return initAgent()
+}
+
+func requireDB(cmd *cobra.Command, args []string) error {
+	if err := initConfig(); err != nil {
+		return err
+	}
+	return initDB()
 }

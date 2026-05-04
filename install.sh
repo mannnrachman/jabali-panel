@@ -6234,6 +6234,20 @@ install_snuffleupagus() {
     fi
   done
   if (( ${#_dev_pkgs[@]} > 0 )); then
+    # When install_snuffleupagus runs via `jabali update --force`'s
+    # prelude (sourcing install.sh then calling this function directly),
+    # install_base_packages's apt-get update + Sury repo setup may not
+    # have run in this shell. Ensure both before attempting the dev
+    # install or apt errors with "Unable to locate package phpX.Y-dev"
+    # because the Sury index is missing/stale (caught 2026-05-04 on the
+    # mx VM after install.sh refactor — install_php had run earlier so
+    # phpX.Y-fpm/cli were present, but apt cache had since aged out).
+    if [[ ! -s /etc/apt/sources.list.d/sury-php.list ]] \
+       && declare -F _install_sury_source >/dev/null 2>&1; then
+      _install_sury_source
+    fi
+    _spin "apt update (refresh Sury index for php-dev)" \
+      apt-get update -qq -o Acquire::Languages=none
     _spin "apt install ${_dev_pkgs[*]}" \
       apt-get install -y -qq --no-install-recommends "${_dev_pkgs[@]}"
   fi

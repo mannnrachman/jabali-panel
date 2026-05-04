@@ -277,6 +277,7 @@ export const AdminBackupsPage = () => {
         manifest_snapshot_id: row.snapshot_id,
         target_user_id: row.user_id,
         overwrite: true,
+        destination_id: row.destination_id,
       });
       message.success(`Restore queued for ${usernameById(row.user_id)}`);
       void reload();

@@ -531,6 +531,11 @@ type restoreRequest struct {
 	ManifestSnapshotID string `json:"manifest_snapshot_id"`
 	TargetUserID       string `json:"target_user_id"`
 	Overwrite          bool   `json:"overwrite"`
+	// DestinationID resolves the restic repo URL + credentials for the
+	// agent. Without it the agent defaults to the local repo at
+	// /var/lib/jabali-backups/repo, which silently 404s on snapshot
+	// lookup whenever the original backup landed on a remote dest.
+	DestinationID string `json:"destination_id,omitempty"`
 }
 
 func (h *backupHandler) restore(c *gin.Context) {
@@ -548,12 +553,23 @@ func (h *backupHandler) restore(c *gin.Context) {
 		return
 	}
 
+	// Resolve destination → repo_url + credentials (and SFTP block when
+	// applicable). Empty destination_id falls back to the single-enabled
+	// dest auto-pick already implemented for create flows; if the host
+	// has many destinations and none was supplied resolveDest 422s.
+	dest, derr := h.resolveDest(c, req.DestinationID)
+	if derr != nil {
+		return
+	}
+
+	destID := dest.ID
 	job := &models.BackupJob{
-		ID:        ids.NewULID(),
-		UserID:    req.TargetUserID,
-		Kind:      models.BackupJobKindAccountRestore,
-		CreatedAt: time.Now().UTC(),
-		Status:    models.BackupJobStatusQueued,
+		ID:            ids.NewULID(),
+		UserID:        req.TargetUserID,
+		DestinationID: &destID,
+		Kind:          models.BackupJobKindAccountRestore,
+		CreatedAt:     time.Now().UTC(),
+		Status:        models.BackupJobStatusQueued,
 	}
 	if err := h.cfg.Jobs.Create(c.Request.Context(), job); err != nil {
 		h.cfg.logErr("create restore job", err)
@@ -567,6 +583,9 @@ func (h *backupHandler) restore(c *gin.Context) {
 		"manifest_snapshot_id": req.ManifestSnapshotID,
 		"target_user_id":       req.TargetUserID,
 		"overwrite":            req.Overwrite,
+	}
+	for k, v := range destWireParams(dest) {
+		params[k] = v
 	}
 	if _, err := h.cfg.Agent.Call(ctx, "backup.restore", params); err != nil {
 		_ = h.cfg.Jobs.MarkFinished(c.Request.Context(), job.ID, models.BackupJobStatusFailed,

@@ -6266,9 +6266,29 @@ install_snuffleupagus() {
       _install_sury_source
     fi
     _spin "apt update (refresh Sury index for php-dev)" \
-      apt-get update -qq -o Acquire::Languages=none
-    _spin "apt install ${_dev_pkgs[*]}" \
-      apt-get install -y -qq --no-install-recommends "${_dev_pkgs[@]}"
+      apt-get update -qq -o Acquire::Languages=none \
+        -o Acquire::http::Timeout=20 \
+        -o Acquire::https::Timeout=20 \
+        -o Acquire::Retries=3
+    # Per-minor install so a single PPA hiccup on one minor doesn't
+    # nuke the entire build pass. Each minor's dev pkg is best-effort:
+    # success unlocks the build below; failure logs a warning and the
+    # build skips that minor while still attempting the rest. Caught
+    # 2026-05-04 on an Ubuntu host where ppa.launchpadcontent.net was
+    # intermittently unreachable, blocking php8.5-dev install and
+    # cascade-failing the whole snuffleupagus install pass.
+    local _dev_pkg
+    for _dev_pkg in "${_dev_pkgs[@]}"; do
+      if ! apt-get install -y -qq --no-install-recommends \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            -o Acquire::Retries=3 \
+            "$_dev_pkg" >/dev/null 2>&1; then
+        _warn "apt install $_dev_pkg failed (PPA unreachable?) — snuffleupagus build will skip the matching minor"
+      else
+        _ok "installed $_dev_pkg"
+      fi
+    done
   fi
 
   # Active rules dir + placeholder file. mode=off by default, so the
@@ -6316,6 +6336,14 @@ EOF_CLI
   local minor
   for minor in $php_versions; do
     [[ -d "/etc/php/$minor/fpm" ]] || continue
+    # Skip minors whose -dev package failed to install above (PPA
+    # unreachable etc.) — phpize won't be present and the build would
+    # fail with an unhelpful "phpize: command not found".
+    if ! command -v "phpize${minor}" >/dev/null 2>&1 \
+       && [[ ! -x "/usr/bin/phpize${minor}" ]]; then
+      _warn "skipping snuffleupagus build for PHP $minor — phpize${minor} not found (php${minor}-dev probably failed to install)"
+      continue
+    fi
     SNUFFLEUPAGUS_VERSION="$snuf_version" \
     SNUFFLEUPAGUS_SHA256="$snuf_sha256" \
       "$build" "$minor" || {

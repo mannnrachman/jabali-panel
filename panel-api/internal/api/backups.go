@@ -568,6 +568,15 @@ func (h *backupHandler) restore(c *gin.Context) {
 		return
 	}
 
+	// Resolve target user → username so the agent's apply step can
+	// chown home + scope mariadb loads. The system user must already
+	// exist on this host (cross-host restore is out of scope for v1).
+	targetUser, uerr := h.cfg.Users.FindByID(c.Request.Context(), req.TargetUserID)
+	if uerr != nil || targetUser == nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "target_user_not_found"})
+		return
+	}
+
 	destID := dest.ID
 	job := &models.BackupJob{
 		ID:            ids.NewULID(),
@@ -594,6 +603,7 @@ func (h *backupHandler) restore(c *gin.Context) {
 		"job_id":               job.ID,
 		"manifest_snapshot_id": req.ManifestSnapshotID,
 		"target_user_id":       req.TargetUserID,
+		"target_username":      targetUser.Username,
 		"overwrite":            req.Overwrite,
 	}
 	for k, v := range destWireParams(dest) {

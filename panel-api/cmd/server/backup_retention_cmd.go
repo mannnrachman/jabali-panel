@@ -38,6 +38,7 @@ func newBackupCmd() *cobra.Command {
 		Short: "Backup & restore subcommands (M30 — restic-backed; ADR-0075 / 0080)",
 	}
 	cmd.AddCommand(newBackupRetentionCmd())
+	cmd.AddCommand(newBackupAccountRestoreCmd())
 	return cmd
 }
 

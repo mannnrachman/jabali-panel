@@ -272,11 +272,11 @@ func newPackageDeleteCmd() *cobra.Command {
 					return nil
 				}
 			}
-			if err := repo.Delete(ctx, args[0]); err != nil {
+			if err := repo.Delete(ctx, p.ID); err != nil {
 				return fmt.Errorf("delete package: %w", err)
 			}
 			if jsonOutput {
-				return printJSON(map[string]string{"deleted": args[0]})
+				return printJSON(map[string]string{"deleted": p.ID})
 			}
 			fmt.Printf("Deleted package %s (%s)\n", p.ID, p.Name)
 			return nil

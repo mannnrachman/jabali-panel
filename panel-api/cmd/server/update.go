@@ -465,6 +465,31 @@ test -x node_modules/.bin/tsc || {
 			}
 			return nil
 		}},
+		{"sync kratos config", func() error {
+			// install_kratos is idempotent: if the binary is already at
+			// the target version it skips the download but still
+			// re-renders /etc/jabali-panel/kratos.yml from the template,
+			// detects content drift via cmp, and restarts
+			// jabali-kratos.service when the rendered config changed.
+			//
+			// Without this step, kratos.yml.tmpl edits (e.g. the
+			// selfservice.methods.code.enabled flip in 8c93811 that the
+			// v4 debug report flagged) reach the on-disk config but
+			// never the running process — operator has to ssh in and
+			// `systemctl restart jabali-kratos` by hand.
+			//
+			// Failure is logged but doesn't block the update; the
+			// running Kratos keeps serving the old config.
+			installSh := repoDir + "/install.sh"
+			if _, err := os.Stat(installSh); err != nil {
+				return nil
+			}
+			if err := run("", "bash", "-c",
+				"source "+installSh+" && install_kratos"); err != nil {
+				fmt.Printf("  (install_kratos failed: %v — continuing)\n", err)
+			}
+			return nil
+		}},
 		{"sync malware stack", func() error {
 			// Source install.sh and re-run install_malware_stack so existing
 			// hosts converge on amendments to the M33 stack (ADR-0072) without

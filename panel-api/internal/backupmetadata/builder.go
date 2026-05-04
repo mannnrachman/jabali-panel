@@ -19,6 +19,10 @@ import (
 // Deps is the union of repos the producer reads. Every field is
 // optional; missing repos log + skip the corresponding section.
 type Deps struct {
+	// Users is the user repo. Build doesn't read this (it gets the
+	// user as a parameter), but Apply needs it for upsert on
+	// disaster recovery.
+	Users          repository.UserRepository
 	Databases      repository.DatabaseRepository
 	DatabaseUsers  repository.DatabaseUserRepository
 	DatabaseGrants repository.DatabaseUserGrantRepository

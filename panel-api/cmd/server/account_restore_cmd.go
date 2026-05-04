@@ -25,12 +25,61 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	internalbackup "git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupmetadata"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
+
+// applyPanelMetadata parses the metadata.json bytes from the agent
+// reply and runs backupmetadata.Apply with the full set of repos.
+// Prints a summary table so the operator sees what was reinstated.
+func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMessage) {
+	var meta internalbackup.AccountMetadata
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		fmt.Fprintf(cmd.OutOrStdout(), "WARNING: failed to parse metadata bundle: %v\n", err)
+		return
+	}
+	deps := backupmetadata.Deps{
+		Users:          repository.NewUserRepository(sharedDB),
+		Domains:        repository.NewDomainRepository(sharedDB),
+		Databases:      repository.NewDatabaseRepository(sharedDB),
+		DatabaseUsers:  repository.NewDatabaseUserRepository(sharedDB),
+		DatabaseGrants: repository.NewDatabaseUserGrantRepository(sharedDB),
+		AppInstalls:    repository.NewApplicationInstallRepository(sharedDB),
+		SSLCerts:       repository.NewSSLCertificateRepository(sharedDB),
+		PHPPools:       repository.NewPHPPoolRepository(sharedDB),
+		PHPPoolIni:     repository.NewPHPPoolIniOverrideRepository(sharedDB),
+		SSHKeys:        repository.NewSSHKeyRepository(sharedDB),
+		CronJobs:       repository.NewCronJobRepository(sharedDB),
+	}
+	r := backupmetadata.Apply(ctx, &meta, deps)
+	w := cmd.OutOrStdout()
+	fmt.Fprintln(w, "✓ panel state reconstructed from metadata bundle:")
+	fmt.Fprintf(w, "  user:           %s\n", boolMark(r.UserCreated))
+	fmt.Fprintf(w, "  php_pools:      %d (ini overrides: %d)\n", r.PHPPools, r.PHPPoolIni)
+	fmt.Fprintf(w, "  domains:        %d (ssl_certs: %d)\n", r.Domains, r.SSLCerts)
+	fmt.Fprintf(w, "  databases:      %d (users: %d, grants: %d)\n", r.Databases, r.DatabaseUsers, r.DatabaseGrants)
+	fmt.Fprintf(w, "  app_installs:   %d\n", r.AppInstalls)
+	fmt.Fprintf(w, "  ssh_keys:       %d\n", r.SSHKeys)
+	fmt.Fprintf(w, "  cron_jobs:      %d\n", r.CronJobs)
+	fmt.Fprintf(w, "  skipped:        %d (already present)\n", r.Skipped)
+	for _, e := range r.Errors {
+		fmt.Fprintf(w, "  ERR: %s\n", e)
+	}
+	fmt.Fprintln(w, "Mailboxes/forwarders/dnssec keys/Kratos credentials are NOT in this bundle —")
+	fmt.Fprintln(w, "rebuild via the mail-stage warning + `jabali pdns dnssec enable` + Kratos recovery.")
+}
+
+func boolMark(b bool) string {
+	if b {
+		return "created"
+	}
+	return "already present"
+}
 
 // accountRestoreUserBlock mirrors the manifest-user JSON shape the
 // agent surfaces in backup.restore replies (`user` field). Kept here
@@ -261,21 +310,27 @@ Examples:
 			pretty, _ := json.MarshalIndent(json.RawMessage(raw), "  ", "  ")
 			fmt.Fprintln(cmd.OutOrStdout(), "  "+string(pretty))
 
-			// Post-restore: if the panel user row is missing (DR mode
-			// or accidental panel-side delete), reconstruct it from the
-			// manifest's User block now that home + db + mail are back
-			// in place. Password gets a locked placeholder; operator
-			// must set a new one via Kratos recovery.
+			// Post-restore: walk the meta-stage payload and reinstate
+			// every panel-DB row (user, php_pools, domains, ssl_certs,
+			// databases, db_users + grants, app_installs, ssh_keys,
+			// cron_jobs). Falls back to a manifest-only user-row
+			// reconstruction when the snapshot doesn't carry a meta
+			// stage (older schema_version=1 snapshots).
 			var resp struct {
-				User    accountRestoreUserBlock `json:"user"`
-				Applied []string                `json:"applied"`
+				User     accountRestoreUserBlock `json:"user"`
+				Metadata json.RawMessage         `json:"metadata"`
+				Applied  []string                `json:"applied"`
 			}
-			if jerr := json.Unmarshal(raw, &resp); jerr == nil && resp.User.ID != "" {
-				if cerr := ensurePanelUserRow(ctx, cmd, resp.User); cerr != nil {
-					fmt.Fprintf(cmd.OutOrStdout(),
-						"WARNING: panel user row reconstruction failed: %v\n"+
-							"  Run `jabali user create --user-id %s --username %s --email %s` manually.\n",
-						cerr, resp.User.ID, resp.User.Username, resp.User.Email)
+			if jerr := json.Unmarshal(raw, &resp); jerr == nil {
+				if len(resp.Metadata) > 0 {
+					applyPanelMetadata(ctx, cmd, resp.Metadata)
+				} else if resp.User.ID != "" {
+					if cerr := ensurePanelUserRow(ctx, cmd, resp.User); cerr != nil {
+						fmt.Fprintf(cmd.OutOrStdout(),
+							"WARNING: panel user row reconstruction failed: %v\n"+
+								"  Run `jabali user create --user-id %s --username %s --email %s` manually.\n",
+							cerr, resp.User.ID, resp.User.Username, resp.User.Email)
+					}
 				}
 			}
 			return nil

@@ -61,6 +61,12 @@ type backupRestoreResult struct {
 	// "cleanup_failed:<err>"). Recon mode (apply=false) always
 	// keeps the dir; the value is "kept" with detail.
 	StagingCleanup string `json:"staging_cleanup,omitempty"`
+	// Metadata is the raw metadata.json bytes pulled from the
+	// stage=meta snapshot. CLI feeds it to backupmetadata.Apply to
+	// rebuild domains/php_pools/databases/etc rows on disaster
+	// recovery. Empty when the snapshot has no meta stage (older
+	// snapshots, schema_version=1).
+	Metadata json.RawMessage `json:"metadata,omitempty"`
 }
 
 type backupRestoreStage struct {
@@ -119,6 +125,20 @@ func backupRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 
 	out := backupRestoreResult{JobID: req.JobID, User: manifest.User}
 
+	// Pull the metadata.json bytes from the stage=meta snapshot up
+	// front so the CLI can apply panel_state rows even when the live
+	// apply path skips meta (meta is panel-DB rebuild, not data).
+	for _, st := range manifest.Stages {
+		if st.Name != backup.StageMeta || st.Status != backup.StageStatusOK || st.SnapshotID == "" {
+			continue
+		}
+		metaBytes, derr := c.Dump(ctx, st.SnapshotID, "metadata.json")
+		if derr == nil && len(metaBytes) > 0 {
+			out.Metadata = metaBytes
+		}
+		break
+	}
+
 	// Stage walk. Each Stages[i] in the manifest carries the snapshot
 	// id we restore. Restore order matters in v2 (db before mail
 	// because mailboxes link to db rows); v1 honors manifest order
@@ -157,7 +177,7 @@ func backupRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 	}
 	if apply {
 		stagingRoot := filepath.Join("/var/lib/jabali-backups/restore-staging", req.JobID)
-		applied, warnings := applyAccountRestore(ctx, stagingRoot, req.TargetUsername, manifest.Stages, out.Stages)
+		applied, warnings := applyAccountRestore(ctx, stagingRoot, req.TargetUsername, manifest.User, manifest.Stages, out.Stages)
 		out.Applied = applied
 		out.Warnings = warnings
 		// Live apply succeeded for at least one stage — drop the
@@ -206,6 +226,7 @@ func backupRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 func applyAccountRestore(
 	ctx context.Context,
 	stagingRoot, username string,
+	manifestUser backup.ManifestUser,
 	manifestStages []backup.ManifestStage,
 	stageResults []backupRestoreStage,
 ) ([]string, []string) {
@@ -221,9 +242,40 @@ func applyAccountRestore(
 	}
 	u, uerr := user.Lookup(username)
 	if uerr != nil {
-		warnings = append(warnings,
-			fmt.Sprintf("apply skipped: user.Lookup(%q): %v — does the account exist on this host?", username, uerr))
-		return applied, warnings
+		// System user missing — disaster recovery onto a fresh host.
+		// Try to recreate it with the snapshot's source UID so home
+		// permissions round-trip cleanly. The home dir + chown happen
+		// later in this function; we just need a passwd entry now.
+		if manifestUser.UIDAtSource != 0 && manifestUser.Username == username {
+			homeDir := filepath.Join("/home", username)
+			args := []string{
+				"--uid", strconv.FormatUint(uint64(manifestUser.UIDAtSource), 10),
+				"--user-group",
+				"--home-dir", homeDir,
+				"--groups", "www-data",
+				"--shell", "/bin/bash",
+				"--no-create-home", // home dir comes from the home stage rsync
+				username,
+			}
+			cmd := exec.CommandContext(ctx, "useradd", args...)
+			if out, addErr := cmd.CombinedOutput(); addErr != nil {
+				warnings = append(warnings,
+					fmt.Sprintf("apply skipped: useradd %q failed: %v: %s", username, addErr, strings.TrimSpace(string(out))))
+				return applied, warnings
+			}
+			warnings = append(warnings,
+				fmt.Sprintf("system user %q created with uid=%d (DR mode)", username, manifestUser.UIDAtSource))
+			u, uerr = user.Lookup(username)
+			if uerr != nil {
+				warnings = append(warnings,
+					fmt.Sprintf("apply skipped: useradd succeeded but user.Lookup(%q) still fails: %v", username, uerr))
+				return applied, warnings
+			}
+		} else {
+			warnings = append(warnings,
+				fmt.Sprintf("apply skipped: user.Lookup(%q): %v — UIDAtSource=%d unset (older snapshot?), create the account first with `jabali user create`", username, uerr, manifestUser.UIDAtSource))
+			return applied, warnings
+		}
 	}
 	uid, _ := strconv.Atoi(u.Uid)
 	gid, _ := strconv.Atoi(u.Gid)

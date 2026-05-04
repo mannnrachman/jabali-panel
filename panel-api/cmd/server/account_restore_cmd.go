@@ -20,7 +20,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -115,27 +117,14 @@ Examples:
 			if err != nil {
 				return fmt.Errorf("list destinations: %w", err)
 			}
-			var dest = (*struct {
-				URL            string
-				CredentialsRef *string
-				Kind           string
-			})(nil)
-			_ = dest
-			var pickedURL, pickedKind string
-			var pickedCreds string
-			var pickedID string
-			for _, d := range all {
-				if d.Name == destName {
-					pickedURL = d.URL
-					pickedKind = d.Kind
-					pickedID = d.ID
-					if d.CredentialsRef != nil {
-						pickedCreds = *d.CredentialsRef
-					}
+			var picked *models.BackupDestination
+			for i := range all {
+				if all[i].Name == destName {
+					picked = &all[i]
 					break
 				}
 			}
-			if pickedURL == "" {
+			if picked == nil {
 				names := make([]string, 0, len(all))
 				for _, d := range all {
 					names = append(names, d.Name)
@@ -159,15 +148,28 @@ Examples:
 				"target_username":      resolvedName,
 				"overwrite":            true,
 				"apply_staged":         applyFlag,
-				"repo_url":             pickedURL,
-				"destination_kind":     pickedKind,
+				"repo_url":             picked.URL,
+				"destination_kind":     picked.Kind,
+				"extra_options":        backupwrapperhelpers.ResticOptionsFor(picked),
 			}
-			if pickedCreds != "" {
-				params["credentials_ref"] = pickedCreds
+			if picked.CredentialsRef != nil {
+				params["credentials_ref"] = *picked.CredentialsRef
+			}
+			if picked.Kind == models.BackupDestinationKindSFTP {
+				if s := picked.ExtraOptionsTyped().SFTP; s != nil {
+					params["sftp"] = map[string]any{
+						"host":     s.Host,
+						"user":     s.User,
+						"port":     s.Port,
+						"path":     s.Path,
+						"auth":     s.Auth,
+						"key_path": s.KeyPath,
+					}
+				}
 			}
 			fmt.Fprintf(cmd.OutOrStdout(),
 				"→ backup.restore job=%s user=%s snapshot=%s dest=%s(%s) apply=%v\n",
-				jobID, resolvedName, snapshotID, destName, pickedID, applyFlag)
+				jobID, resolvedName, snapshotID, destName, picked.ID, applyFlag)
 
 			ag := agent.NewClient(agent.Config{Timeout: 1 * time.Hour})
 			callCtx, callCancel := context.WithTimeout(ctx, 1*time.Hour)

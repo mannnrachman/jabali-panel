@@ -289,6 +289,83 @@ func chownTreeRecursive(root string, uid, gid int) error {
 	})
 }
 
+// backupAccountListManifestsHandler enumerates kind=account_backup
+// stage=manifest snapshots in a repo, used by the interactive
+// `jabali backup account-restore` prompt so the operator picks a
+// snapshot from a real list instead of typing a ULID. Mirrors
+// systemRestoreListManifestsHandler; difference is the kind tag and
+// the per-snapshot tag set carries user-id + job-id which the CLI
+// renders as a friendly grouping.
+func backupAccountListManifestsHandler(ctx context.Context, raw json.RawMessage) (any, error) {
+	var req struct {
+		RepoURL        string   `json:"repo_url"`
+		CredentialsRef string   `json:"credentials_ref,omitempty"`
+		PasswordFile   string   `json:"password_file,omitempty"`
+		ExtraOptions   []string `json:"extra_options,omitempty"`
+		// UserID optional; when set returns only that account's
+		// manifests. Useful to narrow when the repo carries many users.
+		UserID string `json:"user_id,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, bkInvalidArg("malformed JSON body")
+	}
+	if req.RepoURL == "" {
+		return nil, bkInvalidArg("repo_url required")
+	}
+	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.ExtraOptions)
+	if cerr != nil {
+		return nil, bkInternal("restic config", cerr)
+	}
+	c := backup.New(cfg)
+	tagFilter := []backup.Tag{
+		backup.MakeTag(backup.TagKeyKind, backup.KindAccountBackup),
+		backup.MakeTag(backup.TagKeyStage, backup.StageManifest),
+	}
+	if req.UserID != "" {
+		tagFilter = append(tagFilter, backup.MakeTag(backup.TagKeyUserID, req.UserID))
+	}
+	snaps, err := c.Snapshots(ctx, tagFilter)
+	if err != nil {
+		return nil, bkInternal("restic snapshots", err)
+	}
+	type manifestRow struct {
+		SnapshotID string    `json:"snapshot_id"`
+		Time       time.Time `json:"time"`
+		Hostname   string    `json:"hostname,omitempty"`
+		UserID     string    `json:"user_id,omitempty"`
+		JobID      string    `json:"job_id,omitempty"`
+		Tags       []string  `json:"tags,omitempty"`
+	}
+	out := make([]manifestRow, 0, len(snaps))
+	for _, s := range snaps {
+		row := manifestRow{
+			SnapshotID: s.ID,
+			Time:       s.Time,
+			Hostname:   s.Hostname,
+			Tags:       s.Tags,
+		}
+		// Tags arrive as "user-id=<ulid>", "job-id=<ulid>", … —
+		// extract the two we need without forcing the CLI to parse.
+		for _, t := range s.Tags {
+			if strings.HasPrefix(t, "user-id=") {
+				row.UserID = strings.TrimPrefix(t, "user-id=")
+			} else if strings.HasPrefix(t, "job-id=") {
+				row.JobID = strings.TrimPrefix(t, "job-id=")
+			}
+		}
+		out = append(out, row)
+	}
+	// Newest first.
+	for i := 0; i < len(out); i++ {
+		for j := i + 1; j < len(out); j++ {
+			if out[j].Time.After(out[i].Time) {
+				out[i], out[j] = out[j], out[i]
+			}
+		}
+	}
+	return map[string]any{"manifests": out, "total": len(out)}, nil
+}
+
 // backupRestoreStatusHandler reports the materialized staging area for
 // a restore job. v1 surface; v2 wires unit-status + import-progress.
 func backupRestoreStatusHandler(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -331,4 +408,5 @@ func _trimRestore(s string) string {
 func init() {
 	Default.Register("backup.restore", backupRestoreHandler)
 	Default.Register("backup.restore_status", backupRestoreStatusHandler)
+	Default.Register("backup.account_list_manifests", backupAccountListManifestsHandler)
 }

@@ -3,21 +3,27 @@
 // HTTP path so it works even when the panel UI is offline. Mirrors
 // the parameter shape that POST /admin/backups/restore now sends.
 //
-// Resolves destination → repo_url + creds + sftp{} from /etc/jabali-
-// panel using the same destination row the UI sees. Default behaviour
-// is full apply (rsync home + mariadb load); pass --apply=false for
-// staging-only smoke tests.
+// Two modes:
+//
+//   * Scriptable: every required flag set on the command line.
+//   * Interactive: --interactive, OR no flags on a TTY. Prompts the
+//     operator through destination → snapshot → user (existing or
+//     disaster-recovery) → confirmation. Same dispatch as scriptable.
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
@@ -25,6 +31,17 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
+
+// accountManifestRow mirrors the payload returned by
+// backup.account_list_manifests.
+type accountManifestRow struct {
+	SnapshotID string    `json:"snapshot_id"`
+	Time       time.Time `json:"time"`
+	Hostname   string    `json:"hostname,omitempty"`
+	UserID     string    `json:"user_id,omitempty"`
+	JobID      string    `json:"job_id,omitempty"`
+	Tags       []string  `json:"tags,omitempty"`
+}
 
 func newBackupAccountRestoreCmd() *cobra.Command {
 	var (
@@ -36,6 +53,7 @@ func newBackupAccountRestoreCmd() *cobra.Command {
 		destName       string
 		applyFlag      bool
 		force          bool
+		interactive    bool
 	)
 	cmd := &cobra.Command{
 		Use:   "account-restore",
@@ -44,23 +62,31 @@ func newBackupAccountRestoreCmd() *cobra.Command {
 the snapshot lives on, dispatches backup.restore, prints the per-stage
 result + applied list + warnings.
 
-Examples:
-  # Restore latest snapshot for shukivaknin from the 'test' destination
-  jabali backup account-restore --user shukivaknin --destination test \
-      --snapshot latest --force
+Two modes:
 
-  # Recon mode: materialize to staging, do not apply
+  - Scriptable: every flag set on the command line.
+  - Interactive: --interactive, OR no flags on a TTY. Walks destination
+    → snapshot → user (existing or disaster-recovery) → confirmation.
+
+Examples:
+  # Interactive (most common — operator picks from real lists)
+  jabali backup account-restore --force
+
+  # Scriptable
   jabali backup account-restore --user shukivaknin --destination test \
-      --snapshot latest --force --apply=false`,
+      --snapshot <manifest-snapshot-id> --force
+
+  # Recon mode: materialize to staging only, do not apply
+  jabali backup account-restore --user shukivaknin --destination test \
+      --snapshot <manifest-snapshot-id> --apply=false --force
+
+  # Disaster recovery (panel row + system account both rebuilt by hand)
+  jabali backup account-restore \
+      --target-user-id <orig-ulid> --target-username shukivaknin \
+      --destination test --snapshot <manifest-snapshot-id> --force`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !force {
 				return errors.New("account-restore requires --force; refusing on a live host")
-			}
-			if snapshotID == "" {
-				return errors.New("--snapshot required (manifest snapshot id, or 'latest')")
-			}
-			if destName == "" {
-				return errors.New("--destination required (matches backup_destinations.name)")
 			}
 			if err := initConfig(); err != nil {
 				return err
@@ -72,104 +98,102 @@ Examples:
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 			defer cancel()
 
-			// Two resolution modes:
-			//   1. Panel-managed: --user / --user-id resolve the panel
-			//      row; restore reuses its ID + username.
-			//   2. Disaster recovery: --target-user-id + --target-username
-			//      bypass the panel row entirely. Useful when the panel
-			//      DB lost the row (rebuilt host) but the system account
-			//      was recreated by hand. Both flags must be set.
-			var resolvedID, resolvedName string
-			switch {
-			case targetUserID != "" && targetUsername != "":
-				resolvedID = targetUserID
-				resolvedName = targetUsername
-			case username != "" || userID != "":
-				users := repository.NewUserRepository(sharedDB)
-				if userID != "" {
-					u, err := users.FindByID(ctx, userID)
-					if err != nil || u == nil {
-						return fmt.Errorf("user lookup by id %q: %w (use --target-user-id+--target-username for disaster recovery)", userID, err)
-					}
-					resolvedID = u.ID
-					if u.Username != nil {
-						resolvedName = *u.Username
-					}
-				} else {
-					u, err := users.FindByUsername(ctx, username)
-					if err != nil || u == nil {
-						return fmt.Errorf("user lookup by username %q: %w (use --target-user-id+--target-username for disaster recovery)", username, err)
-					}
-					resolvedID = u.ID
-					if u.Username != nil {
-						resolvedName = *u.Username
-					}
-				}
-				if resolvedName == "" {
-					return fmt.Errorf("user %q has NULL username (admin user?) — restore needs a Linux account", resolvedID)
-				}
-			default:
-				return errors.New("need --user OR --user-id OR (--target-user-id + --target-username) for disaster recovery")
-			}
+			useInteractive := interactive ||
+				(destName == "" && snapshotID == "" && username == "" &&
+					userID == "" && targetUserID == "" && targetUsername == "" &&
+					term.IsTerminal(int(os.Stdin.Fd())))
 
-			dests := repository.NewBackupDestinationRepository(sharedDB)
-			all, err := dests.ListEnabled(ctx)
-			if err != nil {
-				return fmt.Errorf("list destinations: %w", err)
-			}
 			var picked *models.BackupDestination
-			for i := range all {
-				if all[i].Name == destName {
-					picked = &all[i]
-					break
+			var resolvedID, resolvedName string
+
+			if useInteractive {
+				p, ok, err := runAccountRestorePrompts(cmd, ctx,
+					&destName, &snapshotID, &username, &userID,
+					&targetUserID, &targetUsername, &applyFlag)
+				if err != nil {
+					return err
 				}
-			}
-			if picked == nil {
-				names := make([]string, 0, len(all))
-				for _, d := range all {
-					names = append(names, d.Name)
+				if !ok {
+					fmt.Fprintln(cmd.OutOrStdout(), "aborted.")
+					return nil
 				}
-				return fmt.Errorf("destination %q not found; available: %v", destName, names)
+				picked = p
 			}
 
-			// Resolve "latest" → newest manifest snapshot for this user
-			// on this destination. Defer to caller for now: require
-			// explicit snapshot id. (Adding latest-resolution requires
-			// listing snapshots which is itself an agent round-trip.)
+			// (Re-)resolve dest from flag if non-interactive, OR
+			// interactive returned only IDs.
+			if picked == nil {
+				if destName == "" {
+					return errors.New("--destination required (matches backup_destinations.name)")
+				}
+				dests := repository.NewBackupDestinationRepository(sharedDB)
+				all, err := dests.ListEnabled(ctx)
+				if err != nil {
+					return fmt.Errorf("list destinations: %w", err)
+				}
+				for i := range all {
+					if all[i].Name == destName {
+						picked = &all[i]
+						break
+					}
+				}
+				if picked == nil {
+					names := make([]string, 0, len(all))
+					for _, d := range all {
+						names = append(names, d.Name)
+					}
+					return fmt.Errorf("destination %q not found; available: %v", destName, names)
+				}
+			}
+
+			if snapshotID == "" {
+				return errors.New("--snapshot required (manifest snapshot id)")
+			}
 			if snapshotID == "latest" {
-				return errors.New("--snapshot=latest not yet supported in CLI; pass the explicit manifest snapshot id")
+				return errors.New("--snapshot=latest not yet supported in scriptable mode; use --interactive or pass an explicit manifest snapshot id")
+			}
+
+			// Resolve target user (panel-managed OR disaster recovery).
+			if resolvedName == "" || resolvedID == "" {
+				switch {
+				case targetUserID != "" && targetUsername != "":
+					resolvedID = targetUserID
+					resolvedName = targetUsername
+				case username != "" || userID != "":
+					users := repository.NewUserRepository(sharedDB)
+					if userID != "" {
+						u, err := users.FindByID(ctx, userID)
+						if err != nil || u == nil {
+							return fmt.Errorf("user lookup by id %q: %w (use --target-user-id+--target-username for disaster recovery)", userID, err)
+						}
+						resolvedID = u.ID
+						if u.Username != nil {
+							resolvedName = *u.Username
+						}
+					} else {
+						u, err := users.FindByUsername(ctx, username)
+						if err != nil || u == nil {
+							return fmt.Errorf("user lookup by username %q: %w (use --target-user-id+--target-username for disaster recovery)", username, err)
+						}
+						resolvedID = u.ID
+						if u.Username != nil {
+							resolvedName = *u.Username
+						}
+					}
+					if resolvedName == "" {
+						return fmt.Errorf("user %q has NULL username (admin user?) — restore needs a Linux account", resolvedID)
+					}
+				default:
+					return errors.New("need --user OR --user-id OR (--target-user-id + --target-username) for disaster recovery")
+				}
 			}
 
 			jobID := ids.NewULID()
-			params := map[string]any{
-				"job_id":               jobID,
-				"manifest_snapshot_id": snapshotID,
-				"target_user_id":       resolvedID,
-				"target_username":      resolvedName,
-				"overwrite":            true,
-				"apply_staged":         applyFlag,
-				"repo_url":             picked.URL,
-				"destination_kind":     picked.Kind,
-				"extra_options":        backupwrapperhelpers.ResticOptionsFor(picked),
-			}
-			if picked.CredentialsRef != nil {
-				params["credentials_ref"] = *picked.CredentialsRef
-			}
-			if picked.Kind == models.BackupDestinationKindSFTP {
-				if s := picked.ExtraOptionsTyped().SFTP; s != nil {
-					params["sftp"] = map[string]any{
-						"host":     s.Host,
-						"user":     s.User,
-						"port":     s.Port,
-						"path":     s.Path,
-						"auth":     s.Auth,
-						"key_path": s.KeyPath,
-					}
-				}
-			}
+			params := buildRestoreParams(jobID, snapshotID, resolvedID, resolvedName, applyFlag, picked)
+
 			fmt.Fprintf(cmd.OutOrStdout(),
 				"→ backup.restore job=%s user=%s snapshot=%s dest=%s(%s) apply=%v\n",
-				jobID, resolvedName, snapshotID, destName, picked.ID, applyFlag)
+				jobID, resolvedName, snapshotID, picked.Name, picked.ID, applyFlag)
 
 			ag := agent.NewClient(agent.Config{Timeout: 1 * time.Hour})
 			callCtx, callCancel := context.WithTimeout(ctx, 1*time.Hour)
@@ -192,8 +216,223 @@ Examples:
 	cmd.Flags().StringVar(&destName, "destination", "", "destination name (e.g. 'test', 'b2-prod')")
 	cmd.Flags().BoolVar(&applyFlag, "apply", true, "apply home+db onto live system (false = staging-only smoke test)")
 	cmd.Flags().BoolVar(&force, "force", false, "required — restore overwrites home tree + reloads databases")
+	cmd.Flags().BoolVar(&interactive, "interactive", false, "force interactive prompts even when flags are set")
 	return cmd
 }
 
-// initConfig + initDB live in serve.go / shared cmd helpers.
-var _ = os.Getenv // keep imports honest
+// runAccountRestorePrompts walks: destination pick → manifest list →
+// snapshot pick → user pick (panel-managed or disaster recovery) →
+// confirmation. Returns (picked, ok, err). ok=false means the operator
+// answered no at the final confirmation; caller exits cleanly.
+func runAccountRestorePrompts(
+	cmd *cobra.Command, ctx context.Context,
+	destName, snapshotID, username, userID,
+	targetUserID, targetUsername *string,
+	applyFlag *bool,
+) (*models.BackupDestination, bool, error) {
+	w := cmd.OutOrStdout()
+	r := bufio.NewReader(os.Stdin)
+
+	// 1. Destination.
+	dests := repository.NewBackupDestinationRepository(sharedDB)
+	all, err := dests.ListEnabled(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("list destinations: %w", err)
+	}
+	if len(all) == 0 {
+		return nil, false, errors.New("no enabled destinations — create one first via panel UI or `jabali backup destinations …`")
+	}
+	fmt.Fprintln(w, "\nDestinations:")
+	for i, d := range all {
+		fmt.Fprintf(w, "  [%d] %s — kind=%s url=%s\n", i+1, d.Name, d.Kind, d.URL)
+	}
+	pickIdx, err := promptInt(w, r, "Pick destination number: ", 1, len(all))
+	if err != nil {
+		return nil, false, err
+	}
+	picked := &all[pickIdx-1]
+	*destName = picked.Name
+
+	// 2. List manifests via agent.
+	fmt.Fprintln(w, "Listing manifest snapshots (this can take a few seconds for remote dests)…")
+	listParams := map[string]any{
+		"repo_url":      picked.URL,
+		"extra_options": backupwrapperhelpers.ResticOptionsFor(picked),
+	}
+	if picked.CredentialsRef != nil {
+		listParams["credentials_ref"] = *picked.CredentialsRef
+	}
+	ag := agent.NewClient(agent.Config{Timeout: 90 * time.Second})
+	listCtx, listCancel := context.WithTimeout(ctx, 90*time.Second)
+	defer listCancel()
+	raw, err := ag.Call(listCtx, "backup.account_list_manifests", listParams)
+	if err != nil {
+		return nil, false, fmt.Errorf("agent backup.account_list_manifests: %w", err)
+	}
+	var listResp struct {
+		Manifests []accountManifestRow `json:"manifests"`
+		Total     int                  `json:"total"`
+	}
+	if err := json.Unmarshal(raw, &listResp); err != nil {
+		return nil, false, fmt.Errorf("decode manifests: %w", err)
+	}
+	if len(listResp.Manifests) == 0 {
+		return nil, false, fmt.Errorf("no account_backup manifests found on destination %q", picked.Name)
+	}
+
+	// 3. Group by user-id; render with username if panel knows the row.
+	users := repository.NewUserRepository(sharedDB)
+	type userBlock struct {
+		UserID    string
+		Username  string // "(unknown)" when panel row is gone
+		Manifests []accountManifestRow
+	}
+	byUser := map[string]*userBlock{}
+	order := []string{}
+	for _, m := range listResp.Manifests {
+		blk, ok := byUser[m.UserID]
+		if !ok {
+			blk = &userBlock{UserID: m.UserID, Username: "(unknown)"}
+			if u, err := users.FindByID(ctx, m.UserID); err == nil && u != nil && u.Username != nil {
+				blk.Username = *u.Username
+			}
+			byUser[m.UserID] = blk
+			order = append(order, m.UserID)
+		}
+		blk.Manifests = append(blk.Manifests, m)
+	}
+
+	fmt.Fprintln(w, "\nUsers with manifests on this destination:")
+	for i, uid := range order {
+		blk := byUser[uid]
+		fmt.Fprintf(w, "  [%d] %s (%s) — %d snapshot(s)\n", i+1, blk.Username, blk.UserID, len(blk.Manifests))
+	}
+	uIdx, err := promptInt(w, r, "Pick user number: ", 1, len(order))
+	if err != nil {
+		return nil, false, err
+	}
+	pickedBlock := byUser[order[uIdx-1]]
+
+	// 4. Snapshot pick.
+	fmt.Fprintf(w, "\nSnapshots for %s (%s) — newest first:\n", pickedBlock.Username, pickedBlock.UserID)
+	for i, m := range pickedBlock.Manifests {
+		fmt.Fprintf(w, "  [%d] %s  job=%s  host=%s\n",
+			i+1, m.Time.Format(time.RFC3339), m.JobID, m.Hostname)
+	}
+	sIdx, err := promptInt(w, r, "Pick snapshot number (or [L] for latest): ", 1, len(pickedBlock.Manifests))
+	if err != nil {
+		// promptInt returned an error which could be "L" — handle below.
+		// Re-prompt with a string parser to support "L".
+		val, perr := promptLine(w, r, "Pick snapshot number, or 'L' for latest: ")
+		if perr != nil {
+			return nil, false, perr
+		}
+		val = strings.TrimSpace(strings.ToUpper(val))
+		if val == "L" {
+			sIdx = 1 // newest first; index 0
+		} else {
+			n, cerr := strconv.Atoi(val)
+			if cerr != nil || n < 1 || n > len(pickedBlock.Manifests) {
+				return nil, false, fmt.Errorf("invalid snapshot pick %q", val)
+			}
+			sIdx = n
+		}
+	}
+	pickedSnap := pickedBlock.Manifests[sIdx-1]
+	*snapshotID = pickedSnap.SnapshotID
+
+	// 5. Resolve user (panel row OR disaster recovery prompts).
+	if pickedBlock.Username == "(unknown)" {
+		fmt.Fprintf(w, "\nUser %s has no panel row — disaster-recovery mode.\n", pickedBlock.UserID)
+		val, err := promptLine(w, r,
+			fmt.Sprintf("Target system username (must already exist in /etc/passwd) [%s if existed]: ", pickedBlock.UserID))
+		if err != nil {
+			return nil, false, err
+		}
+		val = strings.TrimSpace(val)
+		if val == "" {
+			return nil, false, errors.New("disaster recovery needs a username")
+		}
+		*targetUserID = pickedBlock.UserID
+		*targetUsername = val
+	} else {
+		*username = pickedBlock.Username
+	}
+
+	// 6. Apply mode.
+	applyVal, err := promptLine(w, r, "Apply onto live system (rsync home + mariadb load)? [Y/n]: ")
+	if err != nil {
+		return nil, false, err
+	}
+	applyVal = strings.TrimSpace(strings.ToLower(applyVal))
+	*applyFlag = !(applyVal == "n" || applyVal == "no")
+
+	// 7. Final confirmation.
+	fmt.Fprintln(w, "\nReady to dispatch:")
+	fmt.Fprintf(w, "  destination : %s (%s)\n", picked.Name, picked.URL)
+	fmt.Fprintf(w, "  user        : %s (%s)\n", pickedBlock.Username, pickedBlock.UserID)
+	fmt.Fprintf(w, "  snapshot    : %s @ %s\n", pickedSnap.SnapshotID[:12], pickedSnap.Time.Format(time.RFC3339))
+	fmt.Fprintf(w, "  apply       : %v\n", *applyFlag)
+	confirm, err := promptLine(w, r, "Type 'yes' to dispatch (anything else aborts): ")
+	if err != nil {
+		return nil, false, err
+	}
+	if strings.TrimSpace(strings.ToLower(confirm)) != "yes" {
+		return picked, false, nil
+	}
+	return picked, true, nil
+}
+
+func buildRestoreParams(
+	jobID, snapshotID, resolvedID, resolvedName string,
+	applyFlag bool,
+	picked *models.BackupDestination,
+) map[string]any {
+	params := map[string]any{
+		"job_id":               jobID,
+		"manifest_snapshot_id": snapshotID,
+		"target_user_id":       resolvedID,
+		"target_username":      resolvedName,
+		"overwrite":            true,
+		"apply_staged":         applyFlag,
+		"repo_url":             picked.URL,
+		"destination_kind":     picked.Kind,
+		"extra_options":        backupwrapperhelpers.ResticOptionsFor(picked),
+	}
+	if picked.CredentialsRef != nil {
+		params["credentials_ref"] = *picked.CredentialsRef
+	}
+	if picked.Kind == models.BackupDestinationKindSFTP {
+		if s := picked.ExtraOptionsTyped().SFTP; s != nil {
+			params["sftp"] = map[string]any{
+				"host":     s.Host,
+				"user":     s.User,
+				"port":     s.Port,
+				"path":     s.Path,
+				"auth":     s.Auth,
+				"key_path": s.KeyPath,
+			}
+		}
+	}
+	return params
+}
+
+// promptInt reads a numeric pick from r constrained to [lo, hi].
+// Returns an error if the input parses non-numeric (caller can fall
+// back to a string-parse, e.g. snapshot pick supports "L").
+func promptInt(w interface{ Write([]byte) (int, error) }, r *bufio.Reader, label string, lo, hi int) (int, error) {
+	fmt.Fprint(w, label)
+	line, err := r.ReadString('\n')
+	if err != nil && line == "" {
+		return 0, err
+	}
+	s := strings.TrimSpace(line)
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid number %q", s)
+	}
+	if n < lo || n > hi {
+		return 0, fmt.Errorf("out of range: %d (need %d..%d)", n, lo, hi)
+	}
+	return n, nil
+}

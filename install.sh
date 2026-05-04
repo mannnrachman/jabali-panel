@@ -776,10 +776,31 @@ POLICYEOF
   local php_versions="${JABALI_PHP_VERSIONS:-8.5}"
   local -a php_extensions=()
   local version
+  # Required extensions — every shared-hosting workload (WordPress,
+  # Drupal, Joomla, MediaWiki) needs at minimum mysql + mbstring + xml
+  # + curl + gd + zip. Missing mysql produces an opaque WP install
+  # failure ("missing the MySQL extension"); fail loudly here so the
+  # operator sees the real cause (usually stale apt cache or missing
+  # Sury repo) at install time instead of weeks later on first deploy.
+  local _required_ext=(mysql mbstring zip gd curl xml)
+  # Optional — nice-to-have but every supported app tolerates absence.
+  local _optional_ext=(intl bcmath opcache)
   for version in $php_versions; do
     php_extensions+=("php${version}-fpm" "php${version}-cli")
-    local ext
-    for ext in mysql mbstring zip gd curl xml intl bcmath opcache; do
+    local ext _missing_required=()
+    for ext in "${_required_ext[@]}"; do
+      if apt-cache show "php${version}-${ext}" >/dev/null 2>&1; then
+        php_extensions+=("php${version}-${ext}")
+      else
+        _missing_required+=("php${version}-${ext}")
+      fi
+    done
+    if (( ${#_missing_required[@]} > 0 )); then
+      _err "required PHP extensions missing from apt sources: ${_missing_required[*]}"
+      _err "this usually means the Sury repo isn't indexed yet — check /etc/apt/sources.list.d/sury-php.list"
+      _die "cannot proceed without mandatory extensions for PHP ${version}"
+    fi
+    for ext in "${_optional_ext[@]}"; do
       if apt-cache show "php${version}-${ext}" >/dev/null 2>&1; then
         php_extensions+=("php${version}-${ext}")
       else
@@ -1471,6 +1492,50 @@ install_php() {
   for version in $php_versions; do
     _install_php_version "$version"
   done
+  # Self-heal: catch any installed minor that's missing the mandatory
+  # extension set. Earlier installs probed apt-cache when the Sury
+  # repo wasn't indexed yet and silently shipped a PHP without
+  # mysql/mbstring/xml — WordPress/Drupal/Joomla then died at
+  # `wp core install` with "missing the MySQL extension". Idempotent;
+  # skips over minors that already have everything.
+  ensure_required_php_extensions
+}
+
+# ensure_required_php_extensions walks every installed PHP minor on
+# disk (via /usr/sbin/php<v>-fpm) and apt-installs any missing required
+# extension. Runs every install_php pass + every `jabali update`. The
+# required set matches install_base_packages's _required_ext list.
+ensure_required_php_extensions() {
+  local _required=(mysql mbstring zip gd curl xml)
+  local _detected_minors=""
+  if compgen -G "/usr/sbin/php*-fpm" >/dev/null; then
+    _detected_minors="$(ls -1 /usr/sbin/php*-fpm 2>/dev/null \
+      | sed -E 's|.*/php([0-9]+\.[0-9]+)-fpm|\1|' | sort -u | tr '\n' ' ')"
+  fi
+  [[ -z "${_detected_minors// /}" ]] && return 0
+  local _minor _ext _missing=()
+  for _minor in $_detected_minors; do
+    for _ext in "${_required[@]}"; do
+      if ! dpkg -s "php${_minor}-${_ext}" >/dev/null 2>&1; then
+        _missing+=("php${_minor}-${_ext}")
+      fi
+    done
+  done
+  (( ${#_missing[@]} == 0 )) && return 0
+  _log "installing missing required PHP extensions: ${_missing[*]}"
+  _apt_wait_lock || true
+  if ! apt-get install -y -qq --no-install-recommends \
+        -o DPkg::Lock::Timeout=300 \
+        "${_missing[@]}"; then
+    _err "apt install of required PHP extensions failed: ${_missing[*]}"
+    _err "WordPress/Drupal/Joomla installs will fail without these. Check Sury repo + retry."
+    return 1
+  fi
+  _ok "installed missing PHP extensions: ${_missing[*]}"
+  # Reload every per-user FPM master so the new extensions load. Best
+  # effort — service may not be running on a fresh install.
+  systemctl reload "jabali-fpm@*.service" 2>/dev/null || true
+  systemctl reload jabali-fpm@pma.service 2>/dev/null || true
 }
 
 

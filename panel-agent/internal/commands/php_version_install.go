@@ -201,13 +201,36 @@ func phpVersionInstallHandler(ctx context.Context, params json.RawMessage) (any,
 		}, nil
 	}
 
-	// Build package list
+	// Build package list. mysql + mbstring + xml + curl + gd + zip are
+	// mandatory: every supported one-click app (WordPress, Drupal,
+	// Joomla, MediaWiki) refuses to install without them, and the
+	// operator sees an opaque "missing MySQL extension" error months
+	// later instead of a clear failure here. intl/bcmath/opcache are
+	// optional (nice-to-have, distros sometimes bundle into -common).
 	required := []string{
 		fmt.Sprintf("php%s-fpm", p.Version),
 		fmt.Sprintf("php%s-cli", p.Version),
 	}
+	requiredExts := []string{"mysql", "mbstring", "zip", "gd", "curl", "xml"}
+	var missingRequired []string
+	for _, ext := range requiredExts {
+		pkg := fmt.Sprintf("php%s-%s", p.Version, ext)
+		if probePackage(pkg) {
+			required = append(required, pkg)
+		} else {
+			missingRequired = append(missingRequired, pkg)
+		}
+	}
+	if len(missingRequired) > 0 {
+		return nil, &agentwire.AgentError{
+			Code: agentwire.CodeInternal,
+			Message: fmt.Sprintf(
+				"required PHP extensions missing from apt sources: %v — usually the Sury repo isn't indexed; run `apt-get update` and retry",
+				missingRequired),
+		}
+	}
 
-	optionalNames := []string{"mysql", "mbstring", "zip", "gd", "curl", "xml", "intl", "bcmath", "opcache"}
+	optionalNames := []string{"intl", "bcmath", "opcache"}
 	var optional []string
 	for _, ext := range optionalNames {
 		pkg := fmt.Sprintf("php%s-%s", p.Version, ext)

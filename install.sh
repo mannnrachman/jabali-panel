@@ -6226,7 +6226,26 @@ install_snuffleupagus() {
     _spin "apt install build-essential + libpcre2-dev" \
       apt-get install -y -qq --no-install-recommends build-essential libpcre2-dev
   fi
-  local _php_versions="${JABALI_PHP_VERSIONS:-8.5}"
+  # Build for every PHP minor that has an FPM binary on disk — not just
+  # JABALI_PHP_VERSIONS. The PHP Manager UI lets the operator install
+  # additional minors at runtime; without auto-detect, install_snuffleupagus
+  # would only cover the bootstrap-time JABALI_PHP_VERSIONS set and
+  # operator-added minors would silently lack PHP Defense (caught
+  # 2026-05-04 — UI showed "1/3 installed PHP minors" with 8.5 active).
+  local _detected_minors=""
+  if compgen -G "/usr/sbin/php*-fpm" >/dev/null; then
+    _detected_minors="$(ls -1 /usr/sbin/php*-fpm 2>/dev/null \
+      | sed -E 's|.*/php([0-9]+\.[0-9]+)-fpm|\1|' \
+      | sort -u | tr '\n' ' ')"
+  fi
+  # Union of explicit override + on-disk detection. Keeps the override
+  # behavior (operator forcing a specific subset) while adding any
+  # newly-installed minor automatically on the next run.
+  local _php_versions="${JABALI_PHP_VERSIONS:-} ${_detected_minors}"
+  _php_versions="$(echo $_php_versions | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/ $//')"
+  if [[ -z "${_php_versions// /}" ]]; then
+    _php_versions="8.5"
+  fi
   local _minor _dev_pkgs=()
   for _minor in $_php_versions; do
     if ! dpkg -s "php${_minor}-dev" >/dev/null 2>&1; then
@@ -6288,8 +6307,12 @@ EOF_CLI
     fi
   fi
 
-  # Build per minor. JABALI_PHP_VERSIONS overrides; default 8.5.
-  local php_versions="${JABALI_PHP_VERSIONS:-8.5}"
+  # Build per minor. Same auto-detect as the dev-pkg loop above:
+  # union of JABALI_PHP_VERSIONS + every phpX.Y-fpm binary on disk.
+  # Operator-installed minors via the PHP Manager UI get covered on
+  # the next install.sh / `jabali update --force` run without manual
+  # JABALI_PHP_VERSIONS edits.
+  local php_versions="$_php_versions"
   local minor
   for minor in $php_versions; do
     [[ -d "/etc/php/$minor/fpm" ]] || continue

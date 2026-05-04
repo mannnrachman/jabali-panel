@@ -272,11 +272,38 @@ func phpVersionInstallHandler(ctx context.Context, params json.RawMessage) (any,
 	// want a stable reading.
 	time.Sleep(500 * time.Millisecond)
 
+	// PHP Defense (Snuffleupagus) covers every installed minor.
+	// install_snuffleupagus is idempotent + auto-detects on-disk
+	// minors, so re-running it after a UI install adds the new minor
+	// without touching minors already built. Best-effort: a build
+	// failure (unlikely on a host that already shipped sury php8.5)
+	// is logged but doesn't fail the install.
+	go runSnuffleupagusBuild(p.Version)
+
 	return phpVersionInstallResponse{
 		Version:    p.Version,
 		Installed:  isInstalledPHPVersion(p.Version),
 		FPMRunning: checkFPMRunning(p.Version),
 	}, nil
+}
+
+// runSnuffleupagusBuild reruns install.sh's install_snuffleupagus in a
+// detached shell. The function auto-detects every phpX.Y-fpm on disk,
+// so passing the just-installed version is unnecessary — but logging
+// it makes the journal trail readable. Standalone goroutine so the UI
+// install request returns immediately; the build can take 30-60s per
+// minor to compile against PHP headers.
+func runSnuffleupagusBuild(version string) {
+	const installSh = "/opt/jabali-panel/install.sh"
+	if _, err := os.Stat(installSh); err != nil {
+		return
+	}
+	cmd := exec.Command("bash", "-c",
+		"source "+installSh+" && install_snuffleupagus")
+	cmd.Env = append(os.Environ(), "JABALI_PHP_DEFENSE_TRIGGER_VERSION="+version)
+	// Detached: don't wait. Output goes to journalctl via stdout
+	// inheriting from the agent's systemd-managed PID.
+	_ = cmd.Run()
 }
 
 func init() {

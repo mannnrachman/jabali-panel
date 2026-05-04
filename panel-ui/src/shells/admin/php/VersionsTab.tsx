@@ -62,8 +62,15 @@ export const VersionsTab = () => {
   const handleInstall = async (version: string) => {
     setInstallingVersion(version);
     try {
+      // apt install of phpX.Y-fpm + extensions takes 30-90s. The
+      // default 15s axios ceiling fires a "timeout exceeded" error
+      // toast even when the install succeeds in the background. Bump
+      // per-request to 5 min — matches backend adminActionTimeout in
+      // panel-api/internal/api/php_versions.go.
       const response = await apiClient.post<PHPVersionAction>(
-        `/admin/php/versions/${version}/install`
+        `/admin/php/versions/${version}/install`,
+        undefined,
+        { timeout: 5 * 60 * 1000 },
       );
       notification.success({
         message: `PHP ${version} installed successfully`,

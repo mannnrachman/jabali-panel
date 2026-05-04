@@ -56,6 +56,11 @@ applying --yes.`,
 		},
 	}
 	cmd.Flags().BoolVar(&opts.yes, "yes", false, "apply the plan (default is dry-run)")
+	// --dry-run accepted for muscle-memory parity with other CLI verbs.
+	// Mutually exclusive with --yes; absent both = default dry-run mode.
+	var dryRunDecl bool
+	cmd.Flags().BoolVar(&dryRunDecl, "dry-run", false, "explicit dry-run (default; mutually exclusive with --yes)")
+	cmd.MarkFlagsMutuallyExclusive("yes", "dry-run")
 	cmd.Flags().BoolVar(&opts.verbose, "verbose", false, "print per-zone detail")
 	cmd.Flags().BoolVar(&opts.noninteractive, "no-confirm", false,
 		"skip the y/N confirmation when --yes is used (for scripted runs; "+

@@ -47,11 +47,11 @@ changed — you must manually swap the key files and reload the service.
 
 Example:
   openssl rand 32 | base64 > /tmp/new_sso_key.txt
-  jabali-panel sso rotate-key \
+  jabali sso rotate-key \
     --current-key /etc/jabali/sso_key.txt \
     --new-key /tmp/new_sso_key.txt
   mv /tmp/new_sso_key.txt /etc/jabali/sso_key.txt
-  systemctl kill -s SIGHUP jabali-panel-api
+  systemctl kill -s SIGHUP jabali-panel
 `,
 		RunE: runSSORotateKey,
 	}
@@ -176,7 +176,7 @@ during the nightly maintenance window. This command forces an immediate purge
 if needed.
 
 Example:
-  jabali-panel sso prune-tokens
+  jabali sso prune-tokens
 `,
 		RunE: runSSOPruneTokens,
 	}

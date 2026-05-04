@@ -230,7 +230,7 @@ func newLimitsStatusCmd() *cobra.Command {
 				if report.CPU.QuotaPercent > 0 {
 					q = fmt.Sprintf("%d%%", report.CPU.QuotaPercent)
 				}
-				fmt.Fprintf(w, "cpu\t%d ns total, quota %s\n", report.CPU.UsageNsec, q)
+				fmt.Fprintf(w, "cpu\t%s total, quota %s\n", humanCPUNs(report.CPU.UsageNsec), q)
 			}
 			if report.Tasks != nil {
 				fmt.Fprintf(w, "tasks\t%d / %s\n", report.Tasks.Current, fmtUint(report.Tasks.Max))
@@ -300,14 +300,16 @@ func newLimitsPackageCmd() *cobra.Command {
 // applyForUsername is the shared worker called by `apply` and
 // `package apply`. Hydrates package + override, resolves effective
 // limits via the pure resolver, calls user.limits.apply.
+//
+// `username` is misnamed for back-compat: any of email / username /
+// user-id is accepted (delegated to resolveUser).
 func applyForUsername(ctx context.Context, username string) error {
-	users := userRepo()
 	pkgs := packageRepoFromDB()
 	// Direct new constructor — no helper yet because this is the only
 	// CLI consumer; if we grow more we'll factor it into root.go.
 	ovRepo := repository.NewUserLimitOverrideRepository(sharedDB)
 
-	user, err := users.FindByUsername(ctx, username)
+	user, err := resolveUser(ctx, username)
 	if err != nil {
 		return fmt.Errorf("find user %s: %w", username, err)
 	}
@@ -354,19 +356,54 @@ func applyForUsername(ctx context.Context, username string) error {
 	return nil
 }
 
-func fmtKB(kb uint64) string { return fmt.Sprintf("%d KB", kb) }
+// humanBytes renders a byte count using SI scaling so disk + memory
+// readouts share the same units (KB, MB, GB, TB). Goes hand-in-hand
+// with humanCPUNs to fix the historical mixed-units output where
+// `limits status` showed 16 KB / 4673536 B / 258299000 ns side-by-side.
+func humanBytes(b uint64) string {
+	const k = 1024
+	if b < k {
+		return fmt.Sprintf("%d B", b)
+	}
+	v := float64(b)
+	suffixes := []string{"KB", "MB", "GB", "TB", "PB"}
+	i := -1
+	for v >= k && i < len(suffixes)-1 {
+		v /= k
+		i++
+	}
+	return fmt.Sprintf("%.2f %s", v, suffixes[i])
+}
+
+// humanCPUNs renders nanoseconds in human units (ms / s / min / h).
+func humanCPUNs(ns uint64) string {
+	switch {
+	case ns < 1_000_000:
+		return fmt.Sprintf("%d µs", ns/1_000)
+	case ns < 1_000_000_000:
+		return fmt.Sprintf("%.2f ms", float64(ns)/1_000_000)
+	case ns < 60_000_000_000:
+		return fmt.Sprintf("%.2f s", float64(ns)/1_000_000_000)
+	case ns < 3_600_000_000_000:
+		return fmt.Sprintf("%.2f min", float64(ns)/60_000_000_000)
+	default:
+		return fmt.Sprintf("%.2f h", float64(ns)/3_600_000_000_000)
+	}
+}
+
+func fmtKB(kb uint64) string { return humanBytes(kb * 1024) }
 func fmtKBLimit(kb uint64) string {
 	if kb == 0 {
 		return "unlimited"
 	}
-	return fmt.Sprintf("%d KB", kb)
+	return humanBytes(kb * 1024)
 }
-func fmtBytes(b uint64) string { return fmt.Sprintf("%d B", b) }
+func fmtBytes(b uint64) string { return humanBytes(b) }
 func fmtBytesLimit(b uint64) string {
 	if b == 0 {
 		return "unlimited"
 	}
-	return fmt.Sprintf("%d B", b)
+	return humanBytes(b)
 }
 func fmtUint(v uint64) string {
 	if v == 0 {

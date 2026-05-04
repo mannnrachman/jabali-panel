@@ -168,12 +168,9 @@ func newPackageEditCmd() *cobra.Command {
 			}
 
 			repo := packageRepoFromDB()
-			p, err := repo.FindByID(ctx, args[0])
+			p, err := resolvePackage(ctx, repo, args[0])
 			if err != nil {
-				if errors.Is(err, repository.ErrNotFound) {
-					return fmt.Errorf("package %q not found", args[0])
-				}
-				return fmt.Errorf("lookup package: %w", err)
+				return err
 			}
 
 			changed := false
@@ -262,12 +259,9 @@ func newPackageDeleteCmd() *cobra.Command {
 				return err
 			}
 			repo := packageRepoFromDB()
-			p, err := repo.FindByID(ctx, args[0])
+			p, err := resolvePackage(ctx, repo, args[0])
 			if err != nil {
-				if errors.Is(err, repository.ErrNotFound) {
-					return fmt.Errorf("package %q not found", args[0])
-				}
-				return fmt.Errorf("lookup package: %w", err)
+				return err
 			}
 			if !force {
 				fmt.Printf("Delete package %s (%s)? [y/N]: ", p.ID, p.Name)
@@ -290,6 +284,25 @@ func newPackageDeleteCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation")
 	return cmd
+}
+
+// resolvePackage accepts either a package ULID or its name (operators
+// remember names; ULIDs only useful when scripting). Tries ID first
+// (cheap exact-match lookup); falls back to name. Mirrors resolveUser
+// but unique to packages because hosting_packages has both columns
+// indexed.
+func resolvePackage(ctx context.Context, repo repository.PackageRepository, lookup string) (*models.HostingPackage, error) {
+	if p, err := repo.FindByID(ctx, lookup); err == nil {
+		return p, nil
+	} else if !errors.Is(err, repository.ErrNotFound) {
+		return nil, fmt.Errorf("lookup by id: %w", err)
+	}
+	if p, err := repo.FindByName(ctx, lookup); err == nil {
+		return p, nil
+	} else if !errors.Is(err, repository.ErrNotFound) {
+		return nil, fmt.Errorf("lookup by name: %w", err)
+	}
+	return nil, fmt.Errorf("package %q not found", lookup)
 }
 
 func boolYN(b bool) string {

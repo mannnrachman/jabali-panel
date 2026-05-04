@@ -180,6 +180,16 @@ func newSSLRenewCmd() *cobra.Command {
 				}
 				return fmt.Errorf("lookup domain: %w", err)
 			}
+			cert, cerr := sslRepoFromDB().FindByDomainID(ctx, dom.ID)
+			if cerr != nil && !errors.Is(cerr, repository.ErrNotFound) {
+				return fmt.Errorf("lookup cert: %w", cerr)
+			}
+			if cert == nil {
+				return fmt.Errorf("no cert for %s — run `jabali ssl enable %s` first to create + issue", dom.Name, dom.Name)
+			}
+			if cert.Status != models.SSLStatusIssued && cert.Status != models.SSLStatusRenewing {
+				return fmt.Errorf("cert for %s is in status %q (expected 'issued') — wait for reconciler to finish issuing or check `jabali ssl list`", dom.Name, cert.Status)
+			}
 			raw, err := sharedAgent.Call(ctx, "ssl.renew", map[string]any{
 				"domain": dom.Name,
 				"force":  force,

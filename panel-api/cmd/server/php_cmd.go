@@ -11,6 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/phpext"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -185,6 +188,15 @@ func newPHPExtApplyCmd(action, short string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
 			defer cancel()
+			// Built-ins are compiled into php<v>-common (always loaded).
+			// Agent has no mods-available file to enable/disable, so the
+			// agent call would fail with a misleading "ini file doesn't
+			// exist" error. Reject early with a clear message.
+			if action == "enable" || action == "disable" {
+				if spec, ok := phpext.Lookup(args[0]); ok && spec.BuiltIn {
+					return fmt.Errorf("extension %q is built into PHP — already loaded, cannot %s", args[0], action)
+				}
+			}
 			raw, err := sharedAgent.Call(ctx, "php.ext.apply", map[string]any{
 				"version": version,
 				"ext":     args[0],
@@ -277,17 +289,38 @@ func newPHPPoolSetCmd() *cobra.Command {
 			}
 			repo := repository.NewPHPPoolRepository(sharedDB)
 			pool, err := repo.FindByUserID(ctx, u.ID)
-			if err != nil {
+			if err != nil && !errors.Is(err, repository.ErrNotFound) {
 				return fmt.Errorf("get pool: %w", err)
 			}
-			pool.PHPVersion = version
-			if err := repo.Update(ctx, pool); err != nil {
-				return fmt.Errorf("update pool: %w", err)
+			created := false
+			if pool == nil {
+				pool = &models.PHPPool{
+					ID:                        ids.NewULID(),
+					UserID:                    u.ID,
+					PHPVersion:                version,
+					PmMode:                    "ondemand",
+					PmMaxChildren:             20,
+					ProcessIdleTimeoutSeconds: 60,
+					Status:                    "pending",
+				}
+				if err := repo.Create(ctx, pool); err != nil {
+					return fmt.Errorf("create pool: %w", err)
+				}
+				created = true
+			} else {
+				pool.PHPVersion = version
+				if err := repo.Update(ctx, pool); err != nil {
+					return fmt.Errorf("update pool: %w", err)
+				}
 			}
 			if jsonOutput {
-				return printJSON(pool)
+				return printJSON(map[string]any{"pool": pool, "created": created})
 			}
-			fmt.Printf("Set %s PHP version to %s. Reconciler tick (≤60s) regenerates pool conf + reloads php-fpm.\n", derefStr(u.Username), version)
+			verb := "Updated"
+			if created {
+				verb = "Created"
+			}
+			fmt.Printf("%s pool for %s with PHP version %s. Reconciler tick (≤60s) generates pool conf + reloads php-fpm.\n", verb, derefStr(u.Username), version)
 			return nil
 		},
 	}

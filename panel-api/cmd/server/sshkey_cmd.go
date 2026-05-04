@@ -38,10 +38,13 @@ func newSSHKeyCmd() *cobra.Command {
 }
 
 func newSSHKeyListCmd() *cobra.Command {
-	var userLookup string
+	var (
+		userLookup string
+		all        bool
+	)
 	cmd := &cobra.Command{
 		Use:     "list",
-		Short:   "List SSH keys (filtered by user, or all if --all)",
+		Short:   "List SSH keys (filtered by --user, or all without filter)",
 		PreRunE: requireDB,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
@@ -49,7 +52,7 @@ func newSSHKeyListCmd() *cobra.Command {
 			repo := sshKeyRepoFromDB()
 			var rows []models.SSHKey
 			var err error
-			if userLookup == "" {
+			if all || userLookup == "" {
 				rows, err = repo.List(ctx)
 			} else {
 				u, uerr := resolveUser(ctx, userLookup)
@@ -78,6 +81,8 @@ func newSSHKeyListCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&userLookup, "user", "", "filter by user (id|email|username); empty = all")
+	cmd.Flags().BoolVar(&all, "all", false, "list every user's keys (default when --user is omitted)")
+	cmd.MarkFlagsMutuallyExclusive("user", "all")
 	return cmd
 }
 

@@ -238,7 +238,8 @@ func newBackupScheduleUpdateCmd() *cobra.Command {
 	var (
 		cronExpr      string
 		preset        string
-		enabled       string
+		enable        bool
+		disable       bool
 		includeSystem string
 		keepDaily     int
 		keepWeekly    int
@@ -281,10 +282,11 @@ func newBackupScheduleUpdateCmd() *cobra.Command {
 				s.NextRunAt = &next
 				changed = true
 			}
-			if enabled == "true" {
+			if enable {
 				s.Enabled = true
 				changed = true
-			} else if enabled == "false" {
+			}
+			if disable {
 				s.Enabled = false
 				changed = true
 			}
@@ -350,7 +352,8 @@ func newBackupScheduleUpdateCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&cronExpr, "cron", "", "new cron expression")
 	cmd.Flags().StringVar(&preset, "preset", "", "preset: daily|weekly|monthly")
-	cmd.Flags().StringVar(&enabled, "enabled", "", "true|false")
+	cmd.Flags().BoolVar(&enable, "enable", false, "mark schedule enabled")
+	cmd.Flags().BoolVar(&disable, "disable", false, "mark schedule disabled")
 	cmd.Flags().StringVar(&includeSystem, "include-system", "", "true|false (account_backup only)")
 	cmd.Flags().IntVar(&keepDaily, "keep-daily", 0, "")
 	cmd.Flags().IntVar(&keepWeekly, "keep-weekly", 0, "")
@@ -360,6 +363,7 @@ func newBackupScheduleUpdateCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&clearDests, "clear-destinations", false, "remove all destinations")
 	cmd.Flags().BoolVar(&clearUsers, "clear-users", false, "remove all users (= fan-out to all)")
 	cmd.MarkFlagsMutuallyExclusive("cron", "preset")
+	cmd.MarkFlagsMutuallyExclusive("enable", "disable")
 	cmd.MarkFlagsMutuallyExclusive("destination", "clear-destinations")
 	cmd.MarkFlagsMutuallyExclusive("user", "clear-users")
 	return cmd

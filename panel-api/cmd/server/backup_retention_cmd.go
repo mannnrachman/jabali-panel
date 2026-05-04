@@ -209,6 +209,17 @@ func destEnv(d *models.BackupDestination) []string {
 	}
 	env, err := internalbackup.LoadEnvFile(*d.CredentialsRef)
 	if err != nil {
+		// Surface the failure to stderr so SFTP/S3 destinations don't
+		// silently fall through to "sftp.command failed" / "missing
+		// credentials" inside restic. Common cause: this CLI invoked
+		// as a non-root user (creds file is 0600 root:root). The
+		// jabali-backup-retention.timer runs as root by design.
+		fmt.Fprintf(os.Stderr,
+			"WARNING: failed to read credentials env %s for dest %s (%s): %v\n"+
+				"  This usually means the CLI is running as a non-root user. The retention\n"+
+				"  timer (jabali-backup-retention.timer) runs as root by design — invoke\n"+
+				"  this command via sudo, or wait for the timer's daily 04:30 run.\n",
+			*d.CredentialsRef, d.ID, d.Name, err)
 		return nil
 	}
 	return env

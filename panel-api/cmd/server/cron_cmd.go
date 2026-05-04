@@ -143,7 +143,8 @@ func newCronUpdateCmd() *cobra.Command {
 		name     string
 		schedule string
 		command  string
-		enabled  string
+		enable   bool
+		disable  bool
 	)
 	cmd := &cobra.Command{
 		Use:     "update <job-id>",
@@ -174,10 +175,11 @@ func newCronUpdateCmd() *cobra.Command {
 				job.Command = command
 				changed = true
 			}
-			if enabled == "true" {
+			if enable {
 				job.Enabled = true
 				changed = true
-			} else if enabled == "false" {
+			}
+			if disable {
 				job.Enabled = false
 				changed = true
 			}
@@ -197,7 +199,9 @@ func newCronUpdateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "")
 	cmd.Flags().StringVar(&schedule, "schedule", "", "")
 	cmd.Flags().StringVar(&command, "command", "", "")
-	cmd.Flags().StringVar(&enabled, "enabled", "", "true|false")
+	cmd.Flags().BoolVar(&enable, "enable", false, "mark job enabled")
+	cmd.Flags().BoolVar(&disable, "disable", false, "mark job disabled")
+	cmd.MarkFlagsMutuallyExclusive("enable", "disable")
 	return cmd
 }
 

@@ -14,6 +14,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	internalbackup "git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
@@ -122,6 +124,16 @@ func newBackupDestinationCreateCmd() *cobra.Command {
 			if !validDestKind(kind) {
 				return fmt.Errorf("invalid --kind %q (allowed: %v)", kind, models.AllBackupDestinationKinds)
 			}
+			if err := internalbackup.ValidateURLForKind(kind, url); err != nil {
+				return err
+			}
+			if kind == models.BackupDestinationKindLocal {
+				if fi, err := os.Stat(url); err != nil {
+					return fmt.Errorf("local path %q does not exist or is unreadable: %w (create it with `install -d -o jabali -g jabali -m 0750 %s` first)", url, err, url)
+				} else if !fi.IsDir() {
+					return fmt.Errorf("local path %q is not a directory", url)
+				}
+			}
 			env, err := collectEnv(envKV, envStdin)
 			if err != nil {
 				return err
@@ -176,7 +188,8 @@ func newBackupDestinationUpdateCmd() *cobra.Command {
 	var (
 		name    string
 		url     string
-		enabled string
+		enable  bool
+		disable bool
 	)
 	cmd := &cobra.Command{
 		Use:     "update <id-or-name>",
@@ -196,13 +209,24 @@ func newBackupDestinationUpdateCmd() *cobra.Command {
 				changed = true
 			}
 			if cmd.Flags().Changed("url") {
+				if err := internalbackup.ValidateURLForKind(d.Kind, url); err != nil {
+					return err
+				}
+				if d.Kind == models.BackupDestinationKindLocal {
+					if fi, err := os.Stat(url); err != nil {
+						return fmt.Errorf("local path %q does not exist: %w", url, err)
+					} else if !fi.IsDir() {
+						return fmt.Errorf("local path %q is not a directory", url)
+					}
+				}
 				d.URL = url
 				changed = true
 			}
-			if enabled == "true" {
+			if enable {
 				d.Enabled = true
 				changed = true
-			} else if enabled == "false" {
+			}
+			if disable {
 				d.Enabled = false
 				changed = true
 			}
@@ -220,8 +244,10 @@ func newBackupDestinationUpdateCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "new name")
-	cmd.Flags().StringVar(&url, "url", "", "new restic repo URL")
-	cmd.Flags().StringVar(&enabled, "enabled", "", "true|false")
+	cmd.Flags().StringVar(&url, "url", "", "new restic repo URL (validated against existing kind)")
+	cmd.Flags().BoolVar(&enable, "enable", false, "mark destination enabled")
+	cmd.Flags().BoolVar(&disable, "disable", false, "mark destination disabled")
+	cmd.MarkFlagsMutuallyExclusive("enable", "disable")
 	return cmd
 }
 
@@ -276,9 +302,31 @@ func newBackupDestinationTestCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			params := map[string]any{"url": d.URL}
+			if d.Kind == models.BackupDestinationKindLocal {
+				if jsonOutput {
+					return printJSON(map[string]any{"status": "ok", "detail": "local destination — no remote test"})
+				}
+				fmt.Println("Status: ok (local destination — no remote test needed)")
+				return nil
+			}
+			params := map[string]any{
+				"url":           d.URL,
+				"extra_options": backupwrapperhelpers.ResticOptionsFor(d),
+			}
 			if d.CredentialsRef != nil {
 				params["credentials_ref"] = *d.CredentialsRef
+			}
+			if d.Kind == models.BackupDestinationKindSFTP {
+				if s := d.ExtraOptionsTyped().SFTP; s != nil {
+					params["sftp"] = map[string]any{
+						"host":     s.Host,
+						"user":     s.User,
+						"port":     s.Port,
+						"path":     s.Path,
+						"auth":     s.Auth,
+						"key_path": s.KeyPath,
+					}
+				}
 			}
 			raw, err := sharedAgent.Call(ctx, "backup.dest.test", params)
 			if err != nil {

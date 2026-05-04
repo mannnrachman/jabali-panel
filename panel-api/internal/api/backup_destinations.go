@@ -231,7 +231,7 @@ func (h *backupDestinationHandler) create(c *gin.Context) {
 			credsEnv["SSHPASS"] = req.SFTPPassword
 		}
 	} else {
-		if err := validateURLForKind(req.Kind, req.URL); err != nil {
+		if err := internalbackup.ValidateURLForKind(req.Kind, req.URL); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_url", "detail": err.Error()})
 			return
 		}
@@ -334,7 +334,7 @@ func (h *backupDestinationHandler) update(c *gin.Context) {
 		d.Kind = *req.Kind
 	}
 	if req.URL != nil && d.Kind != models.BackupDestinationKindSFTP {
-		if err := validateURLForKind(d.Kind, *req.URL); err != nil {
+		if err := internalbackup.ValidateURLForKind(d.Kind, *req.URL); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_url", "detail": err.Error()})
 			return
 		}
@@ -498,41 +498,4 @@ func validKind(kind string) bool {
 	return false
 }
 
-func validateURLForKind(kind, url string) error {
-	url = strings.TrimSpace(url)
-	if url == "" {
-		return errors.New("url required")
-	}
-	switch kind {
-	case models.BackupDestinationKindLocal:
-		if !strings.HasPrefix(url, "/") {
-			return errors.New("local URL must be an absolute path")
-		}
-	case models.BackupDestinationKindSFTP:
-		if !strings.HasPrefix(url, "sftp:") {
-			return errors.New("sftp URL must start with 'sftp:'")
-		}
-	case models.BackupDestinationKindS3:
-		if !strings.HasPrefix(url, "s3:") {
-			return errors.New("s3 URL must start with 's3:'")
-		}
-	case models.BackupDestinationKindB2:
-		if !strings.HasPrefix(url, "b2:") {
-			return errors.New("b2 URL must start with 'b2:'")
-		}
-	case models.BackupDestinationKindAzure:
-		if !strings.HasPrefix(url, "azure:") {
-			return errors.New("azure URL must start with 'azure:'")
-		}
-	case models.BackupDestinationKindGCS:
-		if !strings.HasPrefix(url, "gs:") {
-			return errors.New("gcs URL must start with 'gs:'")
-		}
-	case models.BackupDestinationKindREST:
-		if !strings.HasPrefix(url, "rest:") {
-			return errors.New("rest URL must start with 'rest:'")
-		}
-	}
-	return nil
-}
 

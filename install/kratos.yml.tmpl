@@ -83,7 +83,14 @@ selfservice:
     link:
       enabled: false
     code:
-      enabled: false
+      # Required by POST /admin/recovery/code — even though we don't
+      # surface self-service code-via-email, the admin endpoint that
+      # `jabali user password --link` calls 404s without this. Kratos
+      # routes /admin/recovery/code through the code method handler
+      # regardless of self-service exposure.
+      enabled: true
+      config:
+        lifespan: 1h
     totp:
       enabled: true
       config:

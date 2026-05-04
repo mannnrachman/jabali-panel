@@ -89,6 +89,7 @@ func newUserCreateCmd() *cobra.Command {
 	var (
 		email     string
 		password  string
+		viaStdin  bool
 		nameFirst string
 		nameLast  string
 		isAdmin   bool
@@ -103,6 +104,21 @@ func newUserCreateCmd() *cobra.Command {
 			// seconds). Generous so a cold Kratos doesn't spuriously fail.
 			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 			defer cancel()
+
+			// Resolve password — same precedence as `user password`:
+			// explicit --password wins; --password-stdin reads one line
+			// from stdin (for automation pipes); both empty falls
+			// through to createUserDirect's "required" check.
+			if password != "" && viaStdin {
+				return fmt.Errorf("--password and --password-stdin are mutually exclusive")
+			}
+			if viaStdin {
+				p, err := readPasswordStdin()
+				if err != nil {
+					return err
+				}
+				password = p
+			}
 
 			u, warn, err := createUserDirect(ctx, cliUserInput{
 				Email:     email,
@@ -135,6 +151,7 @@ func newUserCreateCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&email, "email", "", "user email (required)")
 	cmd.Flags().StringVar(&password, "password", "", "user password (required, min 10 chars)")
+	cmd.Flags().BoolVar(&viaStdin, "password-stdin", false, "read password from stdin (no prompt, no echo)")
 	cmd.Flags().StringVar(&nameFirst, "name-first", "", "first name")
 	cmd.Flags().StringVar(&nameLast, "name-last", "", "last name")
 	cmd.Flags().BoolVar(&isAdmin, "admin", false, "grant admin role")

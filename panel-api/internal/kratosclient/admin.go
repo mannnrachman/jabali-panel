@@ -184,6 +184,17 @@ func (c *Client) CreateRecoveryCode(ctx context.Context, identityID, expiresIn s
 
 	if resp.StatusCode != http.StatusCreated {
 		errBody, _ := io.ReadAll(resp.Body)
+		// Kratos returns 404 when the admin recovery endpoint is
+		// disabled in config (selfservice.methods.code.config.lifespan
+		// missing OR the recovery flow disabled outright). Surface a
+		// clear hint so the operator knows to flip the config rather
+		// than chasing a phantom routing problem.
+		if resp.StatusCode == http.StatusNotFound &&
+			bytes.Contains(errBody, []byte("disabled by system administrator")) {
+			return nil, fmt.Errorf(
+				"createrecoverycode: Kratos admin recovery endpoint disabled — enable selfservice.methods.code.enabled=true in /etc/jabali-panel/kratos.yml + restart jabali-kratos.service. Detail: %s",
+				string(errBody))
+		}
 		return nil, fmt.Errorf("createrecoverycode: status %d: %s", resp.StatusCode, string(errBody))
 	}
 

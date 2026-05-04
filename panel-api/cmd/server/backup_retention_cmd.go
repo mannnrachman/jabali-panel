@@ -146,12 +146,15 @@ by install_backup_foundation in install.sh.`,
 }
 
 func forgetForSchedule(ctx context.Context, cmd *cobra.Command, s models.BackupSchedule, d *models.BackupDestination, dryRun bool) error {
+	// Argument layout: [global flags] subcommand [subcommand flags].
+	// `-o key=val` is global; `--dry-run` belongs to forget/prune
+	// directly. Putting --dry-run before the subcommand makes
+	// restic's parser bail with `unknown command "sftp.command=..."`
+	// because the next token (an -o value) gets misread as the
+	// subcommand. Order matters here.
 	args := []string{
 		"--repo", d.URL,
 		"--password-file", resticPasswordFile,
-	}
-	if dryRun {
-		args = append(args, "--dry-run")
 	}
 	for _, opt := range backupwrapperhelpers.ResticOptionsFor(d) {
 		if opt == "" {
@@ -160,6 +163,9 @@ func forgetForSchedule(ctx context.Context, cmd *cobra.Command, s models.BackupS
 		args = append(args, "-o", opt)
 	}
 	args = append(args, "forget", "--tag", "schedule-id="+s.ID)
+	if dryRun {
+		args = append(args, "--dry-run")
+	}
 	if s.KeepDaily != nil {
 		args = append(args, "--keep-daily", strconv.Itoa(*s.KeepDaily))
 	}
@@ -185,9 +191,6 @@ func pruneOneDestination(ctx context.Context, cmd *cobra.Command, d *models.Back
 		"--repo", d.URL,
 		"--password-file", resticPasswordFile,
 	}
-	if dryRun {
-		args = append(args, "--dry-run")
-	}
 	for _, opt := range backupwrapperhelpers.ResticOptionsFor(d) {
 		if opt == "" {
 			continue
@@ -195,6 +198,9 @@ func pruneOneDestination(ctx context.Context, cmd *cobra.Command, d *models.Back
 		args = append(args, "-o", opt)
 	}
 	args = append(args, "prune")
+	if dryRun {
+		args = append(args, "--dry-run")
+	}
 	fmt.Fprintf(cmd.OutOrStdout(), "running: restic prune (dest %s / %s)\n", d.ID, d.Name)
 	c := exec.CommandContext(ctx, "restic", args...)
 	c.Env = append(os.Environ(), destEnv(d)...)

@@ -12,7 +12,6 @@
 //   - mailboxes / forwarders / autoresponders / shares — stalwart
 //     spool rebuild lives in the agent's mail stage, not here
 //   - domain_dnssec_keys — pdnsutil drives this; metadata is a cache
-//   - kratos credentials — separate restore path via kratos-rebuild
 //   - egress policy / requests / limit overrides — scoped to M34
 package backupmetadata
 
@@ -23,6 +22,7 @@ import (
 	"time"
 
 	internalbackup "git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -361,6 +361,29 @@ func applyUser(ctx context.Context, m *internalbackup.AccountMetadata, d Deps, n
 	if pwd == "" {
 		pwd = "!" // locked — operator must reset via Kratos recovery
 	}
+
+	// Try to create Kratos identity if we have a client and valid password hash
+	var kratosIdentityID *string
+	if d.KratosClient != nil && pwd != "" && pwd != "!" && len(pwd) >= 59 {
+		username := ""
+		if m.User.Username != nil {
+			username = *m.User.Username
+		}
+		traits := kratosclient.AdminTraits{
+			Email:    m.User.Email,
+			Username: username,
+			IsAdmin:  m.User.IsAdmin,
+		}
+		if identityID, err := d.KratosClient.CreateIdentityWithPassword(ctx, traits, pwd); err == nil {
+			kratosIdentityID = &identityID
+		} else {
+			// Log warning but don't fail the user restore
+			if d.Log != nil {
+				d.Log.Warn("failed to create kratos identity during restore", "user_id", m.User.ID, "error", err)
+			}
+		}
+	}
+
 	row := &models.User{
 		ID:                    m.User.ID,
 		Email:                 m.User.Email,
@@ -373,7 +396,7 @@ func applyUser(ctx context.Context, m *internalbackup.AccountMetadata, d Deps, n
 		LinuxUID:              m.User.LinuxUID,
 		MysqladminUsername:    m.User.MysqladminUsername,
 		MysqladminPasswordEnc: m.User.MysqladminPasswordEnc,
-		KratosIdentityID:      nil, // recreate via kratos-rebuild flow
+		KratosIdentityID:      kratosIdentityID,
 		CreatedAt:             now,
 		UpdatedAt:             now,
 	}

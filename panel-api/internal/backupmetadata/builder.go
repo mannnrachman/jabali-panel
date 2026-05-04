@@ -12,9 +12,16 @@ import (
 	"log/slog"
 
 	internalbackup "git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
+
+// KratosClient defines the interface for Kratos admin operations needed
+// during user restore.
+type KratosClient interface {
+	CreateIdentityWithPassword(ctx context.Context, traits kratosclient.AdminTraits, passwordHash string) (string, error)
+}
 
 // Deps is the union of repos the producer reads. Every field is
 // optional; missing repos log + skip the corresponding section.
@@ -41,6 +48,7 @@ type Deps struct {
 	LimitOverrides repository.UserLimitOverrideRepository
 	EgressPolicies repository.UserEgressPolicyRepository
 	EgressRequests repository.UserEgressRequestRepository
+	KratosClient   KratosClient
 	Log            *slog.Logger
 }
 

@@ -72,6 +72,20 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 	for _, e := range r.Errors {
 		fmt.Fprintf(w, "  ERR: %s\n", e)
 	}
+
+	// Provision systemd timers for restored cron jobs
+	if r.CronJobs > 0 && meta.User.ID != "" {
+		if username := getUsernameFromMeta(&meta); username != "" {
+			if timerErr := provisionRestoredCronTimers(ctx, meta.User.ID, username, deps); timerErr != nil {
+				fmt.Fprintf(w, "  WARNING: cron timer provisioning failed: %v\n", timerErr)
+			} else {
+				fmt.Fprintf(w, "✓ cron timers provisioned for %d jobs\n", r.CronJobs)
+			}
+		} else {
+			fmt.Fprintln(w, "  WARNING: skipping cron timer provisioning — no username available")
+		}
+	}
+
 	fmt.Fprintln(w, "Mailboxes/forwarders/dnssec keys/Kratos credentials are NOT in this bundle —")
 	fmt.Fprintln(w, "rebuild via the mail-stage warning + `jabali pdns dnssec enable` + Kratos recovery.")
 }
@@ -565,4 +579,77 @@ func promptInt(w interface{ Write([]byte) (int, error) }, r *bufio.Reader, label
 		return 0, fmt.Errorf("out of range: %d (need %d..%d)", n, lo, hi)
 	}
 	return n, nil
+}
+
+// getUsernameFromMeta extracts username from AccountMetadata with nil checking.
+// Returns empty string if username is not available.
+func getUsernameFromMeta(meta *internalbackup.AccountMetadata) string {
+	if meta == nil || meta.User.Username == nil {
+		return ""
+	}
+	return *meta.User.Username
+}
+
+// provisionRestoredCronTimers creates systemd timers for all enabled cron jobs
+// in the restored account. Follows the cronApplyOne pattern from reconciler.
+func provisionRestoredCronTimers(ctx context.Context, userID, username string, deps backupmetadata.Deps) error {
+	if deps.CronJobs == nil {
+		return fmt.Errorf("cron job repository not available")
+	}
+
+	// Get all cron jobs for the restored user
+	jobs, err := deps.CronJobs.ListByUserID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("list cron jobs: %w", err)
+	}
+
+	// Filter to enabled jobs only
+	enabledJobs := make([]*models.CronJob, 0, len(jobs))
+	for i := range jobs {
+		if jobs[i].Enabled {
+			enabledJobs = append(enabledJobs, jobs[i])
+		}
+	}
+
+	if len(enabledJobs) == 0 {
+		return nil // No enabled jobs to provision
+	}
+
+	// Build owned docroots list for security context
+	var docroots []string
+	if deps.Domains != nil {
+		domains, _, err := deps.Domains.ListByUserID(ctx, userID, repository.ListOptions{Limit: 1000})
+		if err != nil {
+			return fmt.Errorf("list domains for docroots: %w", err)
+		}
+		docroots = make([]string, 0, len(domains))
+		for _, d := range domains {
+			if d.DocRoot != "" {
+				docroots = append(docroots, d.DocRoot)
+			}
+		}
+	}
+
+	// Create agent client for provisioning
+	ag := agent.NewClient(agent.Config{Timeout: 30 * time.Second})
+
+	// Provision each enabled cron job
+	for _, job := range enabledJobs {
+		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		_, err := ag.Call(agentCtx, "cron.apply", map[string]any{
+			"user_id":        userID,
+			"username":       username,
+			"job_id":         job.ID,
+			"name":           job.Name,
+			"command":        job.Command,
+			"schedule":       job.Schedule,
+			"owned_docroots": docroots,
+		})
+		cancel()
+		if err != nil {
+			return fmt.Errorf("provision cron timer %s (%s): %w", job.ID, job.Name, err)
+		}
+	}
+
+	return nil
 }

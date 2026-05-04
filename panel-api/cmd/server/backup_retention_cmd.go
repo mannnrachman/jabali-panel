@@ -52,7 +52,8 @@ func newBackupRetentionCmd() *cobra.Command {
 }
 
 func newBackupRetentionApplyCmd() *cobra.Command {
-	return &cobra.Command{
+	var dryRun bool
+	cmd := &cobra.Command{
 		Use:   "apply",
 		Short: "Run restic forget per (schedule, destination) + prune per destination",
 		Long: `For every (enabled schedule, enabled destination) pair where the
@@ -110,7 +111,7 @@ by install_backup_foundation in install.sh.`,
 					if !d.Enabled {
 						continue
 					}
-					if err := forgetForSchedule(ctx, cmd, s, d); err != nil {
+					if err := forgetForSchedule(ctx, cmd, s, d, dryRun); err != nil {
 						fmt.Fprintf(cmd.ErrOrStderr(),
 							"schedule %s dest %s forget failed: %v\n", s.ID, d.ID, err)
 						continue
@@ -129,7 +130,7 @@ by install_backup_foundation in install.sh.`,
 			// stale-cached (defensive; pruneDests was populated above).
 			_ = destRepo
 			for _, d := range pruneDests {
-				if err := pruneOneDestination(ctx, cmd, d); err != nil {
+				if err := pruneOneDestination(ctx, cmd, d, dryRun); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(),
 						"prune dest %s failed: %v\n", d.ID, err)
 				}
@@ -137,12 +138,18 @@ by install_backup_foundation in install.sh.`,
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
+		"Pass restic --dry-run to forget+prune (lists what would be removed; no destructive ops)")
+	return cmd
 }
 
-func forgetForSchedule(ctx context.Context, cmd *cobra.Command, s models.BackupSchedule, d *models.BackupDestination) error {
+func forgetForSchedule(ctx context.Context, cmd *cobra.Command, s models.BackupSchedule, d *models.BackupDestination, dryRun bool) error {
 	args := []string{
 		"--repo", d.URL,
 		"--password-file", resticPasswordFile,
+	}
+	if dryRun {
+		args = append(args, "--dry-run")
 	}
 	for _, opt := range backupwrapperhelpers.ResticOptionsFor(d) {
 		if opt == "" {
@@ -171,10 +178,13 @@ func forgetForSchedule(ctx context.Context, cmd *cobra.Command, s models.BackupS
 	return c.Run()
 }
 
-func pruneOneDestination(ctx context.Context, cmd *cobra.Command, d *models.BackupDestination) error {
+func pruneOneDestination(ctx context.Context, cmd *cobra.Command, d *models.BackupDestination, dryRun bool) error {
 	args := []string{
 		"--repo", d.URL,
 		"--password-file", resticPasswordFile,
+	}
+	if dryRun {
+		args = append(args, "--dry-run")
 	}
 	for _, opt := range backupwrapperhelpers.ResticOptionsFor(d) {
 		if opt == "" {

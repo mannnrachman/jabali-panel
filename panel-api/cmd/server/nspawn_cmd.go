@@ -285,6 +285,11 @@ under /var/lib/jabali-nspawn/images is a candidate for removal.`,
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "actually delete (default: dry-run)")
+	// Explicit --dry-run flag accepted for muscle-memory parity.
+	// Mutually exclusive with --yes; absent both = dry-run, the default.
+	var dryRunDecl bool
+	cmd.Flags().BoolVar(&dryRunDecl, "dry-run", false, "explicit dry-run (default; mutually exclusive with --yes)")
+	cmd.MarkFlagsMutuallyExclusive("yes", "dry-run")
 	return cmd
 }
 

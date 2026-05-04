@@ -59,6 +59,9 @@ func createUserDirect(ctx context.Context, in cliUserInput) (*models.User, strin
 	if in.Email == "" || in.Password == "" {
 		return nil, "", fmt.Errorf("--email and --password are required")
 	}
+	if !cliValidEmail(in.Email) {
+		return nil, "", fmt.Errorf("email %q is not a valid format (need user@domain.tld)", in.Email)
+	}
 	if len(in.Password) < 10 {
 		return nil, "", fmt.Errorf("password must be at least 10 characters")
 	}
@@ -171,6 +174,9 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 	if in.Name == "" || in.UserID == "" {
 		return nil, nil, fmt.Errorf("--name and --user are required")
 	}
+	if err := validateDomainName(in.Name); err != nil {
+		return nil, nil, err
+	}
 
 	domains := domainRepoFromDB()
 	packages := packageRepoFromDB()
@@ -260,6 +266,46 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 var cliUsernameRe = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
 
 func cliValidUsername(s string) bool { return cliUsernameRe.MatchString(s) }
+
+// cliEmailRe — pragmatic email shape: local-part allowed alphanumerics
+// + . _ % + -, exactly one '@', domain must match cliDomainNameRe shape.
+// Stricter than RFC 5322 but covers ≥99% of real addresses without a
+// 6KB regex; downstream Kratos applies its own validation if this passes.
+var cliEmailRe = regexp.MustCompile(
+	`^[A-Za-z0-9._%+\-]+@(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$`)
+
+func cliValidEmail(s string) bool {
+	return len(s) <= 320 && cliEmailRe.MatchString(s)
+}
+
+// cliDomainNameRe enforces the structural shape of a hostable domain
+// at the CLI surface. Rules (intentionally narrower than RFC 1035):
+//
+//   * Two or more labels separated by '.', total ≤253 chars.
+//   * Each label 1..63 chars, alphanumeric + hyphen, no leading/trailing
+//     hyphen.
+//   * Final label (TLD) ≥2 chars, all letters — rejects bare hostnames
+//     ("invalid"), IP literals ("192.168.1.1"), and numeric "TLDs".
+//   * No spaces (operators forgetting to quote get a clear error
+//     instead of a silently-truncated domain row).
+//
+// Stricter validation (TLD allowlist, .local handling) lives downstream
+// in stalwart / DNS layers; this CLI gate just rejects nonsense early.
+var cliDomainNameRe = regexp.MustCompile(
+	`^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$`)
+
+func validateDomainName(s string) error {
+	if strings.ContainsAny(s, " \t\n") {
+		return fmt.Errorf("domain %q contains whitespace — quote the value if it has special chars", s)
+	}
+	if len(s) > 253 {
+		return fmt.Errorf("domain %q exceeds 253 chars", s)
+	}
+	if !cliDomainNameRe.MatchString(s) {
+		return fmt.Errorf("domain %q is not a valid FQDN (need at least two labels and a 2+ letter TLD; bare hostnames + IP addresses are rejected)", s)
+	}
+	return nil
+}
 
 func cliLinuxUserFromEmail(email string) string {
 	if i := strings.IndexByte(email, '@'); i > 0 {

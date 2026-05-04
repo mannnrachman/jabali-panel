@@ -58,15 +58,34 @@ func newAideStatusCmd() *cobra.Command {
 func newAideRebuildCmd() *cobra.Command {
 	var (
 		fullRebuild bool
+		dryRun      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "rebuild",
 		Short: "Re-baseline the AIDE database after a deliberate change",
 		Long: `Re-baseline AIDE. Defaults to a full --init that rewrites
-/var/lib/aide/aide.db. Use --full to make this explicit.`,
+/var/lib/aide/aide.db. Use --full to make this explicit.
+
+--dry-run reports the planned action (which DB file gets rewritten,
+expected runtime, current DB size) without invoking aideinit. Same
+default-safe behaviour as 'pdns backfill' and 'nspawn prune'.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if dryRun {
+				fmt.Println("aide rebuild --dry-run:")
+				fmt.Println("  would invoke: /usr/sbin/aideinit -y -f")
+				fmt.Println("  target db   : /var/lib/aide/aide.db")
+				if st, err := os.Stat("/var/lib/aide/aide.db"); err == nil {
+					fmt.Printf("  current db  : %s, mtime %s, %d bytes\n",
+						"/var/lib/aide/aide.db", st.ModTime().Format("2006-01-02 15:04 UTC"), st.Size())
+				} else {
+					fmt.Println("  current db  : missing (first-time init)")
+				}
+				fmt.Println("  est. runtime: 2-5 min on a typical host")
+				fmt.Println("re-run with --full to actually rebuild")
+				return nil
+			}
 			if !fullRebuild {
-				fmt.Println("aide rebuild: pass --full to confirm full re-init")
+				fmt.Println("aide rebuild: pass --full to confirm full re-init (or --dry-run to preview)")
 				return nil
 			}
 			// AIDE 0.19 requires an explicit --config or a compiled-in
@@ -97,5 +116,7 @@ func newAideRebuildCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&fullRebuild, "full", false, "Confirm full DB re-init")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview plan without rebuilding (mutually exclusive with --full)")
+	cmd.MarkFlagsMutuallyExclusive("full", "dry-run")
 	return cmd
 }

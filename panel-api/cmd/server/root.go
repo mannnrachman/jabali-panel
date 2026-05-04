@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/db"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/logger"
@@ -18,6 +19,14 @@ import (
 )
 
 const defaultEnvFile = "/etc/jabali/panel.env"
+
+// cliVersionString feeds cobra's --version output. Reuses the link-time
+// Version baked into panel-api/internal/api/health.go so HTTP /health
+// and the CLI report the same string. Empty `Version=dev` is the
+// untagged-build placeholder; install.sh sets it via -ldflags.
+func cliVersionString() string {
+	return api.Version
+}
 
 // Shared state populated by initConfig / initDB / initAgent helpers.
 // Subcommands call these in their own PreRunE so `jabali help` stays fast.
@@ -33,9 +42,10 @@ var (
 
 func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "jabali",
-		Short: "Jabali Panel — web hosting control panel",
-		Long:  "Jabali Panel CLI. Use subcommands to manage users, view system status, or start the panel server.",
+		Use:     "jabali",
+		Version: cliVersionString(),
+		Short:   "Jabali Panel — web hosting control panel",
+		Long:    "Jabali Panel CLI. Use subcommands to manage users, view system status, or start the panel server.",
 		// Usage is shown on error by default. This matters most when a
 		// caller forgets a required flag (e.g. `jabali app install`):
 		// Cobra emits "Error: required flag(s) not set" AND the command's

@@ -313,6 +313,13 @@ func applyForUsername(ctx context.Context, username string) error {
 	if err != nil {
 		return fmt.Errorf("find user %s: %w", username, err)
 	}
+	// Agent's user.limits.apply validates the username field against
+	// POSIX rules (^[a-z_][a-z0-9_-]{0,31}$) — pass the resolved
+	// username, NOT the raw input which may have been an email or ULID.
+	if user.Username == nil || *user.Username == "" {
+		return fmt.Errorf("user %s has no POSIX username (admin-only?) — limits apply requires a Linux account", username)
+	}
+	posixUsername := *user.Username
 	var pkgL *limits.PackageLimits
 	if user.PackageID != nil && *user.PackageID != "" {
 		pkg, err := pkgs.FindByID(ctx, *user.PackageID)
@@ -341,7 +348,7 @@ func applyForUsername(ctx context.Context, username string) error {
 	effective := limits.Resolve(pkgL, ovL)
 
 	_, err = sharedAgent.Call(ctx, "user.limits.apply", map[string]any{
-		"username":          username,
+		"username":          posixUsername,
 		"disk_quota_mb":     effective.DiskQuotaMB,
 		"cpu_quota_percent": effective.CPUQuotaPercent,
 		"memory_limit_mb":   effective.MemoryLimitMB,

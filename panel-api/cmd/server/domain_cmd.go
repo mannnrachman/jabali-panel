@@ -80,6 +80,16 @@ func newDomainCreateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create a new domain (direct DB; bypasses HTTP auth — M20-safe)",
+		Long: `Create a new domain row + auto-enable email when the agent is reachable.
+
+The owner must be a non-admin user with a POSIX username. Admin users
+(created via 'jabali user create --admin') intentionally cannot host
+domains: admins have no /home/<user> tree to anchor the docroot, no
+slice for resource limits, and no SFTP gate. Create a regular user
+first, then assign domains to that account.
+
+Domain validation: must be a valid FQDN (≥2 labels, 2+ letter TLD,
+no IP literals). Bare hostnames like 'invalid' are rejected.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// 30s — the inline auto-enable step makes an agent round trip
 			// (DKIM keypair gen + Stalwart register) on top of the DB

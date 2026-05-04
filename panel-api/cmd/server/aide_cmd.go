@@ -69,12 +69,23 @@ func newAideRebuildCmd() *cobra.Command {
 				fmt.Println("aide rebuild: pass --full to confirm full re-init")
 				return nil
 			}
-			fmt.Println("aide rebuild: running 'aide --init' (2-5 min)…")
-			out, err := exec.Command("/usr/bin/aide", "--init").CombinedOutput()
+			// AIDE 0.19 requires an explicit --config or a compiled-in
+			// default that Debian's aide package leaves unset. Calling
+			// `aide --init` directly fails with exit 17 "missing
+			// configuration". /usr/sbin/aideinit (from aide-common) is
+			// the Debian-canonical wrapper: assembles /etc/aide/aide.conf
+			// from the conf.d snippets, runs aide --init --config <that>,
+			// and atomically renames aide.db.new -> aide.db. Same
+			// approach install.sh uses for the first-boot init.
+			fmt.Println("aide rebuild: running 'aideinit -y -f' (2-5 min)…")
+			out, err := exec.Command("/usr/sbin/aideinit", "-y", "-f").CombinedOutput()
 			fmt.Print(string(out))
 			if err != nil {
-				return fmt.Errorf("aide --init: %w", err)
+				return fmt.Errorf("aideinit: %w", err)
 			}
+			// aideinit handles the rename internally; this fallback is
+			// kept for the rare host where aideinit was patched to skip
+			// it (no upstream Debian flavor does today).
 			if _, err := os.Stat("/var/lib/aide/aide.db.new"); err == nil {
 				if err := os.Rename("/var/lib/aide/aide.db.new", "/var/lib/aide/aide.db"); err != nil {
 					return fmt.Errorf("rename aide.db.new: %w", err)

@@ -1,7 +1,7 @@
 // AdminBackupsPage — admin overview of every backup run.
 // Scheduler-fired jobs roll up under their run_id (one parent row,
 // expandable to per-user children). Manual creates render flat.
-import { Button, Card, Space, Table, Tag, Tooltip, Typography, message } from "antd";
+import { Button, Card, Popconfirm, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import {
   CalendarCheckOutlined,
   DownloadOutlined,
@@ -266,6 +266,25 @@ export const AdminBackupsPage = () => {
     }
   };
 
+  // Restore is account-only — system_backup snapshots are managed via
+  // `jabali aide rebuild` / system_restore CLI flows, not the panel UI.
+  // Submits the BackupJob's snapshot_id (== manifest snapshot) to the
+  // existing POST /admin/backups/restore handler with overwrite=true,
+  // which queues an account_restore job and dispatches it to the agent.
+  const handleRestore = async (row: BackupJob) => {
+    try {
+      await apiClient.post(`/admin/backups/restore`, {
+        manifest_snapshot_id: row.snapshot_id,
+        target_user_id: row.user_id,
+        overwrite: true,
+      });
+      message.success(`Restore queued for ${usernameById(row.user_id)}`);
+      void reload();
+    } catch (err) {
+      message.error(extractApiError(err, "Restore failed"));
+    }
+  };
+
   const tableRows: TableRow[] = [
     ...runs.map<RunRow>((r) => ({ rowKey: `run:${r.run_id}`, isRun: true, run: r })),
     ...manual.map<ManualRow>((j) => ({ rowKey: `job:${j.id}`, isRun: false, job: j })),
@@ -338,6 +357,26 @@ export const AdminBackupsPage = () => {
                   Download
                 </Button>
               )}
+              {row.status === "succeeded" &&
+                row.kind === "account_backup" &&
+                row.snapshot_id && (
+                  <Popconfirm
+                    title={`Restore ${usernameById(row.user_id)}?`}
+                    description="Overwrites the account's current files, databases, and mailboxes."
+                    okText="Restore"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => handleRestore(row)}
+                  >
+                    <Button
+                      type="primary"
+                      size="small"
+                      icon={<RotateCcwOutlined />}
+                      danger
+                    >
+                      Restore
+                    </Button>
+                  </Popconfirm>
+                )}
               {row.status === "running" && (
                 <Button type="primary" size="small" danger onClick={() => handleCancel(row)}>
                   Cancel

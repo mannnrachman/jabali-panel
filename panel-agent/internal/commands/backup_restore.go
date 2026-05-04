@@ -243,37 +243,39 @@ func applyAccountRestore(
 	u, uerr := user.Lookup(username)
 	if uerr != nil {
 		// System user missing — disaster recovery onto a fresh host.
-		// Try to recreate it with the snapshot's source UID so home
-		// permissions round-trip cleanly. The home dir + chown happen
-		// later in this function; we just need a passwd entry now.
+		// Recreate the passwd entry so the chown step at the end of
+		// this function has a UID to target. UIDAtSource (when set)
+		// keeps the source UID for traceability; on older snapshots
+		// where UIDAtSource is 0 we let the system pick — the home
+		// stage's chown -R rewrites every file regardless.
+		homeDir := filepath.Join("/home", username)
+		args := []string{
+			"--user-group",
+			"--home-dir", homeDir,
+			"--groups", "www-data",
+			"--shell", "/bin/bash",
+			"--no-create-home", // home dir comes from the home stage rsync
+		}
 		if manifestUser.UIDAtSource != 0 && manifestUser.Username == username {
-			homeDir := filepath.Join("/home", username)
-			args := []string{
-				"--uid", strconv.FormatUint(uint64(manifestUser.UIDAtSource), 10),
-				"--user-group",
-				"--home-dir", homeDir,
-				"--groups", "www-data",
-				"--shell", "/bin/bash",
-				"--no-create-home", // home dir comes from the home stage rsync
-				username,
-			}
-			cmd := exec.CommandContext(ctx, "useradd", args...)
-			if out, addErr := cmd.CombinedOutput(); addErr != nil {
-				warnings = append(warnings,
-					fmt.Sprintf("apply skipped: useradd %q failed: %v: %s", username, addErr, strings.TrimSpace(string(out))))
-				return applied, warnings
-			}
+			args = append(args, "--uid", strconv.FormatUint(uint64(manifestUser.UIDAtSource), 10))
+		}
+		args = append(args, username)
+		cmd := exec.CommandContext(ctx, "useradd", args...)
+		if out, addErr := cmd.CombinedOutput(); addErr != nil {
 			warnings = append(warnings,
-				fmt.Sprintf("system user %q created with uid=%d (DR mode)", username, manifestUser.UIDAtSource))
-			u, uerr = user.Lookup(username)
-			if uerr != nil {
-				warnings = append(warnings,
-					fmt.Sprintf("apply skipped: useradd succeeded but user.Lookup(%q) still fails: %v", username, uerr))
-				return applied, warnings
-			}
-		} else {
+				fmt.Sprintf("apply skipped: useradd %q failed: %v: %s", username, addErr, strings.TrimSpace(string(out))))
+			return applied, warnings
+		}
+		uidLabel := "system-picked"
+		if manifestUser.UIDAtSource != 0 {
+			uidLabel = strconv.FormatUint(uint64(manifestUser.UIDAtSource), 10)
+		}
+		warnings = append(warnings,
+			fmt.Sprintf("system user %q created (uid=%s, DR mode)", username, uidLabel))
+		u, uerr = user.Lookup(username)
+		if uerr != nil {
 			warnings = append(warnings,
-				fmt.Sprintf("apply skipped: user.Lookup(%q): %v — UIDAtSource=%d unset (older snapshot?), create the account first with `jabali user create`", username, uerr, manifestUser.UIDAtSource))
+				fmt.Sprintf("apply skipped: useradd succeeded but user.Lookup(%q) still fails: %v", username, uerr))
 			return applied, warnings
 		}
 	}
@@ -330,6 +332,20 @@ func applyAccountRestore(
 			f, err := os.Open(src)
 			if err != nil {
 				warnings = append(warnings, fmt.Sprintf("db %s: open dump: %v", db, err))
+				continue
+			}
+			// CREATE DATABASE IF NOT EXISTS so a freshly-deleted DB
+			// (panel user.delete cascade dropped it) can take the
+			// dump load. Charset/collation match what panel-api's
+			// db.create defaults to. Idempotent — present DBs are
+			// untouched. Backticks around name guard against names
+			// with reserved-word collisions (M24 'dual' incident).
+			createCmd := exec.CommandContext(ctx, "mariadb", "-e",
+				fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;", db))
+			if cOut, cErr := createCmd.CombinedOutput(); cErr != nil {
+				_ = f.Close()
+				warnings = append(warnings,
+					fmt.Sprintf("db %s: create database: %v: %s", db, cErr, strings.TrimSpace(string(cOut))))
 				continue
 			}
 			cmd := exec.CommandContext(ctx, "mariadb", db)

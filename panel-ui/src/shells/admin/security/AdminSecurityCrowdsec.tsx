@@ -46,6 +46,7 @@ import {
   WarningOutlined,
 } from "@icons";
 import { ISO3166_COUNTRIES } from "../../../data/iso3166";
+import { CrowdsecTestIPCard } from "./CrowdsecTestIPCard";
 
 import {
   useAddCrowdsecAllowlist,
@@ -233,6 +234,7 @@ export const AdminSecurityCrowdsec = () => {
     "appsec",
     "bouncers",
     "hub",
+    "test",
   ] as const;
   type SubTab = (typeof subTabs)[number];
   const activeSub: SubTab = ((): SubTab => {
@@ -459,6 +461,7 @@ export const AdminSecurityCrowdsec = () => {
           { key: "profiles", label: "Per-scenario", children: <ProfilesCard /> },
           { key: "appsec", label: "Block Country", children: <AppSecGeoblockCard /> },
           { key: "bouncers", label: "Bouncers", children: bouncersPanel },
+          { key: "test", label: "Test IP", children: <CrowdsecTestIPCard /> },
         ]}
       />
 

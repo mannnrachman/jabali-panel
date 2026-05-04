@@ -1,14 +1,17 @@
 // AdminSecurityPage — admin-only Security page (M26 Step 6).
 //
-// Two top tabs (CrowdSec, Firewall) on the Card.tabList pattern that
-// Mail and Notifications use, so the chrome matches the rest of the
-// panel. Sub-tabs and section cards live inside each tab's component
-// — those keep the existing Tabs / Card size="small" structure since
-// they're content groupings, not page chrome. ModSecurity was removed
-// (2026-04-26): CrowdSec AppSec covers the WAF role with no duplicate
-// inspection layer (ADR-0055 SUPERSEDED).
+// Top tabs on the Card.tabList pattern that Mail and Notifications use,
+// so the chrome matches the rest of the panel. Sub-tabs and section
+// cards live inside each tab's component — those keep the existing
+// Tabs / Card size="small" structure since they're content groupings,
+// not page chrome. ModSecurity was removed (2026-04-26): CrowdSec
+// AppSec covers the WAF role with no duplicate inspection layer
+// (ADR-0055 SUPERSEDED). Trust top-tab was removed (2026-05-04): all
+// it surfaced was a hierarchy explainer + 0/0 stat tiles + deeplinks.
+// Test-IP form folded into CrowdSec → Test IP sub-tab; explainer
+// lives in ADR-0089 + plans/m43-unified-trust-runbook.md.
 import { Card, Space, Typography } from "antd";
-import { BugOutlined, LockOutlined, SafetyOutlined, ApiOutlined, ShieldCheckOutlined, SearchOutlined, CheckCircleOutlined } from "@icons";
+import { BugOutlined, LockOutlined, SafetyOutlined, ApiOutlined, ShieldCheckOutlined, SearchOutlined } from "@icons";
 import type { ReactNode } from "react";
 import { useSearchParams } from "react-router";
 
@@ -20,15 +23,13 @@ import { AdminSecuritySnuffleupagus } from "./AdminSecuritySnuffleupagus";
 import { AdminSecurityCrowdsec } from "./AdminSecurityCrowdsec";
 import { AdminSecurityEgress } from "./AdminSecurityEgress";
 import { AdminSecurityMalware } from "./AdminSecurityMalware";
-import { AdminSecurityTrust } from "./AdminSecurityTrust";
 import { AdminSecurityUfw } from "./AdminSecurityUfw";
 
-const TAB_KEYS = ["trust", "crowdsec", "malware", "snuffleupagus", "ufw", "egress", "apparmor", "aide"] as const;
+const TAB_KEYS = ["crowdsec", "malware", "snuffleupagus", "ufw", "egress", "apparmor", "aide"] as const;
 type TabKey = (typeof TAB_KEYS)[number];
-const DEFAULT_TAB: TabKey = "trust";
+const DEFAULT_TAB: TabKey = "crowdsec";
 
 const TAB_LABELS: Record<TabKey, string> = {
-  trust: "Trust",
   crowdsec: "CrowdSec",
   malware: "Malware",
   ufw: "Ports (UFW)",
@@ -51,7 +52,6 @@ const CrowdsecBrandIcon = () => (
 );
 
 const TAB_ICONS: Record<TabKey, ReactNode> = {
-  trust: <CheckCircleOutlined />,
   crowdsec: <CrowdsecBrandIcon />,
   malware: <BugOutlined />,
   ufw: <LockOutlined />,
@@ -66,9 +66,15 @@ const isTabKey = (s: string | null): s is TabKey =>
 
 export const AdminSecurityPage = () => {
   const [params, setParams] = useSearchParams();
-  const activeKey: TabKey = isTabKey(params.get("tab"))
-    ? (params.get("tab") as TabKey)
-    : DEFAULT_TAB;
+  // Backwards-compat redirect: ?tab=trust now points at the Test IP
+  // sub-tab inside CrowdSec. Older bookmarks/notification deeplinks
+  // (security.decision.fired body sets Deeplink=...?tab=trust) keep
+  // working without 404'ing or landing on a missing tab.
+  let rawTab = params.get("tab");
+  if (rawTab === "trust") {
+    rawTab = "crowdsec";
+  }
+  const activeKey: TabKey = isTabKey(rawTab) ? (rawTab as TabKey) : DEFAULT_TAB;
 
   const onChange = (key: string) => {
     if (!isTabKey(key)) return;
@@ -85,8 +91,6 @@ export const AdminSecurityPage = () => {
 
   const renderTab = () => {
     switch (activeKey) {
-      case "trust":
-        return <AdminSecurityTrust />;
       case "crowdsec":
         return <AdminSecurityCrowdsec />;
       case "malware":

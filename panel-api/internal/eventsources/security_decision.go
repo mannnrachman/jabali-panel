@@ -72,7 +72,7 @@ func securityDecisionPass(ctx context.Context, d Deps, bin string) {
 	}
 
 	body := fmt.Sprintf(
-		"In the last %s: UFW drops=%d, nginx limit_req throttles=%d. (CrowdSec bans tracked separately via crowdsec.ban.spike.) See Security → Trust tab.",
+		"In the last %s: UFW drops=%d, nginx limit_req throttles=%d. (CrowdSec bans tracked separately via crowdsec.ban.spike.) See Security → CrowdSec tab.",
 		securityDecisionTick, ufwDrops, nginxRateLimits,
 	)
 
@@ -81,7 +81,7 @@ func securityDecisionPass(ctx context.Context, d Deps, bin string) {
 		Severity:  severity,
 		Title:     fmt.Sprintf("Security: %d decision(s) fired", total),
 		Body:      body,
-		Deeplink:  "/jabali-admin/security?tab=trust",
+		Deeplink:  "/jabali-admin/security?tab=crowdsec&sub=test",
 	}); err != nil {
 		d.Log.Warn("eventsources: publish security.decision.fired failed", "err", err)
 	}

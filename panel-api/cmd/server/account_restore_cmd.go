@@ -26,12 +26,14 @@ import (
 
 func newBackupAccountRestoreCmd() *cobra.Command {
 	var (
-		username   string
-		userID     string
-		snapshotID string
-		destName   string
-		applyFlag  bool
-		force      bool
+		username       string
+		userID         string
+		targetUserID   string
+		targetUsername string
+		snapshotID     string
+		destName       string
+		applyFlag      bool
+		force          bool
 	)
 	cmd := &cobra.Command{
 		Use:   "account-restore",
@@ -52,9 +54,6 @@ Examples:
 			if !force {
 				return errors.New("account-restore requires --force; refusing on a live host")
 			}
-			if username == "" && userID == "" {
-				return errors.New("--user (username) or --user-id required")
-			}
 			if snapshotID == "" {
 				return errors.New("--snapshot required (manifest snapshot id, or 'latest')")
 			}
@@ -68,33 +67,47 @@ Examples:
 				return err
 			}
 
-			// Resolve user → username (or username → id), and destination.
-			users := repository.NewUserRepository(sharedDB)
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 			defer cancel()
 
+			// Two resolution modes:
+			//   1. Panel-managed: --user / --user-id resolve the panel
+			//      row; restore reuses its ID + username.
+			//   2. Disaster recovery: --target-user-id + --target-username
+			//      bypass the panel row entirely. Useful when the panel
+			//      DB lost the row (rebuilt host) but the system account
+			//      was recreated by hand. Both flags must be set.
 			var resolvedID, resolvedName string
-			if userID != "" {
-				u, err := users.FindByID(ctx, userID)
-				if err != nil || u == nil {
-					return fmt.Errorf("user lookup by id %q: %w", userID, err)
+			switch {
+			case targetUserID != "" && targetUsername != "":
+				resolvedID = targetUserID
+				resolvedName = targetUsername
+			case username != "" || userID != "":
+				users := repository.NewUserRepository(sharedDB)
+				if userID != "" {
+					u, err := users.FindByID(ctx, userID)
+					if err != nil || u == nil {
+						return fmt.Errorf("user lookup by id %q: %w (use --target-user-id+--target-username for disaster recovery)", userID, err)
+					}
+					resolvedID = u.ID
+					if u.Username != nil {
+						resolvedName = *u.Username
+					}
+				} else {
+					u, err := users.FindByUsername(ctx, username)
+					if err != nil || u == nil {
+						return fmt.Errorf("user lookup by username %q: %w (use --target-user-id+--target-username for disaster recovery)", username, err)
+					}
+					resolvedID = u.ID
+					if u.Username != nil {
+						resolvedName = *u.Username
+					}
 				}
-				resolvedID = u.ID
-				if u.Username != nil {
-					resolvedName = *u.Username
+				if resolvedName == "" {
+					return fmt.Errorf("user %q has NULL username (admin user?) — restore needs a Linux account", resolvedID)
 				}
-			} else {
-				u, err := users.FindByUsername(ctx, username)
-				if err != nil || u == nil {
-					return fmt.Errorf("user lookup by username %q: %w", username, err)
-				}
-				resolvedID = u.ID
-				if u.Username != nil {
-					resolvedName = *u.Username
-				}
-			}
-			if resolvedName == "" {
-				return fmt.Errorf("user %q has NULL username (admin user?) — restore needs a Linux account", resolvedID)
+			default:
+				return errors.New("need --user OR --user-id OR (--target-user-id + --target-username) for disaster recovery")
 			}
 
 			dests := repository.NewBackupDestinationRepository(sharedDB)
@@ -169,8 +182,10 @@ Examples:
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&username, "user", "", "username (e.g. shukivaknin)")
-	cmd.Flags().StringVar(&userID, "user-id", "", "user ULID (alternative to --user)")
+	cmd.Flags().StringVar(&username, "user", "", "username (e.g. shukivaknin) — looks up panel row")
+	cmd.Flags().StringVar(&userID, "user-id", "", "user ULID — looks up panel row (alternative to --user)")
+	cmd.Flags().StringVar(&targetUserID, "target-user-id", "", "disaster recovery: panel row gone; use this ULID directly (pair with --target-username)")
+	cmd.Flags().StringVar(&targetUsername, "target-username", "", "disaster recovery: system account name to chown into (pair with --target-user-id)")
 	cmd.Flags().StringVar(&snapshotID, "snapshot", "", "manifest snapshot id (long form preferred)")
 	cmd.Flags().StringVar(&destName, "destination", "", "destination name (e.g. 'test', 'b2-prod')")
 	cmd.Flags().BoolVar(&applyFlag, "apply", true, "apply home+db onto live system (false = staging-only smoke test)")

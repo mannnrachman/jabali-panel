@@ -7892,16 +7892,32 @@ install_kratos() {
   # Kratos emits ~2 JSON-log lines per migration (one per file, bidirectional).
   # On a fresh install that's hundreds of lines — silence the chatter and
   # surface the full log only on failure.
-  local kratos_migrate_log="/tmp/jabali-kratos-migrate.$$.log"
-  if ! "$kratos_binary" migrate sql -e -c "$kratos_config" --yes >"$kratos_migrate_log" 2>&1; then
-    _err "Kratos database migrations failed — full output:"
-    cat "$kratos_migrate_log" >&2
-    rm -f "$kratos_migrate_log"
-    _die "Kratos database migrations failed"
+  local kratos_migrate_log="/var/log/jabali-kratos-migrate.log"
+  : > "$kratos_migrate_log"
+  set +e
+  "$kratos_binary" migrate sql -e -c "$kratos_config" --yes >"$kratos_migrate_log" 2>&1
+  local migrate_rc=$?
+  set -e
+  if (( migrate_rc != 0 )); then
+    _err "Kratos database migrations failed (exit ${migrate_rc})"
+    _err "command: $kratos_binary migrate sql -e -c $kratos_config --yes"
+    _err "config size: $(stat -c '%s' "$kratos_config" 2>/dev/null || echo missing) bytes"
+    _err "kratos --version: $("$kratos_binary" --version 2>&1 | head -1)"
+    local log_bytes
+    log_bytes="$(stat -c '%s' "$kratos_migrate_log" 2>/dev/null || echo 0)"
+    _err "log file: $kratos_migrate_log (${log_bytes} bytes)"
+    if (( log_bytes > 0 )); then
+      _err "----- log content -----"
+      tail -c 8192 "$kratos_migrate_log" >&2
+      _err "----- end log -----"
+    else
+      _err "log file is empty — kratos likely crashed before writing anything"
+      _err "try: $kratos_binary migrate sql -e -c $kratos_config --yes"
+    fi
+    _die "Kratos database migrations failed (log preserved at $kratos_migrate_log)"
   fi
   local migrate_count
   migrate_count="$(grep -c 'applied successfully' "$kratos_migrate_log" 2>/dev/null || echo 0)"
-  rm -f "$kratos_migrate_log"
   _ok "Kratos database migrations completed (${migrate_count} applied)"
 
   _ok "Kratos migrations completed"

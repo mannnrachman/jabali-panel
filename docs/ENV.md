@@ -157,7 +157,7 @@ production use; listed here so the one-liner env audit stays honest.
 | `JABALI_REPO_URL` | No | `https://git.linux-hosting.co.il/shukivaknin/jabali2.git` | Override the git remote `install.sh` clones from (useful for private mirrors). |
 | `JABALI_REPO_BRANCH` | No | `main` | Branch `install.sh` checks out. |
 | `JABALI_GITEA_TOKEN` | No | *(unset)* | Personal access token for private Gitea mirror. Used by `install.sh` when the source repo requires auth. Equivalent to the first positional arg to `install.sh`. |
-| `JABALI_PHP_VERSIONS` | No | `8.3` | Space-separated list of PHP versions `install.sh install_php` fetches from the Sury repo. Supported range: 7.4 through 8.3. Example: `JABALI_PHP_VERSIONS="7.4 8.2 8.3" bash install.sh`. See [ADR-0023](adr/0023-m9-php-fpm-pool-manager.md). |
+| `JABALI_PHP_VERSIONS` | No | `8.5` | Space-separated list of PHP versions `install.sh install_php` fetches from the Sury repo. Supported range: 7.4 through 8.5. Example: `JABALI_PHP_VERSIONS="7.4 8.2 8.5" bash install.sh`. See [ADR-0023](adr/0023-m9-php-fpm-pool-manager.md). |
 | `JABALI_PANEL_ADDR` | No | `0.0.0.0:8443` | Panel listen address written into `config.toml` on first install. Seeds `server_settings.addr`; DB is the source of truth after first boot. |
 | `JABALI_HOSTNAME` | No | *(unset)* | If set, `install.sh` runs `hostnamectl set-hostname` before configuring nginx and certs. Leave unset to preserve the host's current hostname. |
 | `JABALI_DEV` | No | `0` | If `1`, `install.sh` sets `PANEL_ENV=development` (log format stays text, TLS verification relaxed in relevant paths). |

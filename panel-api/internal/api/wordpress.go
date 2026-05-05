@@ -1167,11 +1167,129 @@ func createCloneAndKickAgent(parentCtx context.Context, cloneInstallID, sourceDo
 		return
 	}
 
-	// M19: dispatched through app.clone with app_type discriminator.
+	// Look up source domain to get docroot and site URL
+	sourceDomain, err := cfg.Domains.FindByID(ctx, sourceDomainID)
+	if err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to find source domain: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, cloneInstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	// Look up destination domain to get docroot and site URL
+	destDomain, err := cfg.Domains.FindByID(ctx, destDomainID)
+	if err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to find destination domain: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, cloneInstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	// Look up destination database details
+	destDatabase, err := cfg.Databases.FindByID(ctx, destDatabaseID)
+	if err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to find destination database: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, cloneInstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	// Look up database grants for the destination database to find the associated user
+	destGrants, err := cfg.DatabaseGrants.ListByDatabaseID(ctx, destDatabaseID)
+	if err != nil || len(destGrants) == 0 {
+		errMsg := truncateError(fmt.Sprintf("failed to find database grants for dest database: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, cloneInstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	// Get the database user from the first grant
+	destDatabaseUser, err := cfg.DatabaseUsers.FindByID(ctx, destGrants[0].DatabaseUserID)
+	if err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to find database user: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, cloneInstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	// Look up the user to get OS username
+	user, err := cfg.Users.FindByID(ctx, destDomain.UserID)
+	if err != nil || user.Username == nil {
+		errMsg := truncateError(fmt.Sprintf("failed to find user or missing username: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, cloneInstallID, "failed", &errMsg, nil)
+		return
+	}
+	osUser := *user.Username
+
+	// Look up source install to get database name
+	sourceInstall, err := cfg.ApplicationInstalls.FindByDomainAndSubdirectory(ctx, sourceDomainID, dstSubdirectory)
+	if err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to find source install: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, cloneInstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	// Look up source database
+	var srcDBName string
+	if sourceInstall.DBID != nil {
+		sourceDatabase, err := cfg.Databases.FindByID(ctx, *sourceInstall.DBID)
+		if err != nil {
+			errMsg := truncateError(fmt.Sprintf("failed to find source database: %v", err), 1024)
+			cfg.ApplicationInstalls.UpdateStatus(ctx, cloneInstallID, "failed", &errMsg, nil)
+			return
+		}
+		srcDBName = sourceDatabase.Name
+	} else {
+		errMsg := "source install has no database"
+		cfg.ApplicationInstalls.UpdateStatus(ctx, cloneInstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	// Construct site URLs
+	srcSiteURL := fmt.Sprintf("https://%s", sourceDomain.Name)
+	if useWWW {
+		srcSiteURL = fmt.Sprintf("https://www.%s", sourceDomain.Name)
+	}
+
+	dstSiteURL := fmt.Sprintf("https://%s", destDomain.Name)
+	if useWWW {
+		dstSiteURL = fmt.Sprintf("https://www.%s", destDomain.Name)
+	}
+
+	// Generate new password for destination database user (can't decrypt stored hash)
+	plainPassword := ids.NewULID()
+	hash, err := bcrypt.GenerateFromPassword([]byte(plainPassword), bcrypt.DefaultCost)
+	if err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to hash new password: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, cloneInstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	// Update the database user with the new password
+	if err := cfg.DatabaseUsers.UpdatePasswordHash(ctx, destDatabaseUser.ID, string(hash)); err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to update database user password: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, cloneInstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	// Update the MariaDB password via agent
+	if _, err := cfg.Agent.Call(ctx, "db_user.set_password", map[string]any{
+		"db_user_name": destDatabaseUser.Username,
+		"password":     plainPassword,
+	}); err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to update MariaDB password: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, cloneInstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	// M19: dispatched through app.clone with all required low-level parameters
 	agentResp, err := cfg.Agent.Call(ctx, "app.clone", map[string]any{
 		"app_type":         "wordpress",
-		"source_domain_id": sourceDomainID,
-		"dest_domain_id":   destDomainID,
+		"os_user":          osUser,
+		"src_docroot":      sourceDomain.DocRoot,
+		"dst_docroot":      destDomain.DocRoot,
+		"src_db_name":      srcDBName,
+		"dst_db_name":      destDatabase.Name,
+		"dst_db_user":      destDatabaseUser.Username,
+		"dst_db_password":  plainPassword,
+		"dst_db_host":      "/var/run/mysqld/mysqld.sock", // Unix socket per M25
+		"src_site_url":     srcSiteURL,
+		"dst_site_url":     dstSiteURL,
 		"use_www":          useWWW,
 		"dst_subdirectory": dstSubdirectory,
 	})
@@ -1202,7 +1320,6 @@ func createCloneAndKickAgent(parentCtx context.Context, cloneInstallID, sourceDo
 	// Update status to 'ready' with version
 	cfg.ApplicationInstalls.UpdateStatus(ctx, cloneInstallID, "ready", nil, &version)
 }
-
 // ---- Helpers ----
 
 func truncateError(msg string, maxLen int) string {

@@ -8130,10 +8130,12 @@ install_kratos() {
   # M25 Step 2+3 verification: both endpoints must be Unix sockets at
   # /run/jabali-kratos/{admin,public}.sock with mode 0660 jabali:jabali-sockets,
   # AND the legacy TCP listeners on 4433 + 4434 must be gone. The
-  # verify_socket_perms + verify_no_all_interface_binds helpers were sourced
-  # from install/scripts/socket-helpers.sh at the top of main(). If any
+  # verify_socket_perms + verify_no_all_interface_binds helpers are sourced
+  # from install/scripts/socket-helpers.sh here. If any
   # check fails the installer aborts loudly so the operator doesn't
   # discover a 502 from panel-api → Kratos in production.
+  # shellcheck source=install/scripts/socket-helpers.sh
+  source "$REPO_DIR/install/scripts/socket-helpers.sh"
   if ! verify_socket_perms /run/jabali-kratos/admin.sock jabali jabali-sockets 660; then
     _die "Kratos admin socket has wrong perms — see message above"
   fi
@@ -8261,13 +8263,6 @@ main() {
   install_apparmor
   install_notify_template
   install_snuffleupagus
-  # M25: source the socket-helper definitions now that the repo's install/
-  # tree is on disk. Steps 2–5 will call verify_socket_perms /
-  # verify_no_all_interface_binds after each service-bind change. Sourced
-  # here (not earlier) because under `curl | bash` the install/scripts/
-  # tree doesn't exist until clone_or_update_repo populates $REPO_DIR.
-  # shellcheck source=install/scripts/socket-helpers.sh
-  source "$REPO_DIR/install/scripts/socket-helpers.sh"
   # M25: bring the jabali-sockets group into existence. SERVICE_USER and
   # www-data already exist by now; jabali-webmail is created later by
   # install_bulwark — a second call after that picks it up. The function

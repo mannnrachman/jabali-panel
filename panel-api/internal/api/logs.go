@@ -162,7 +162,7 @@ func (h *logHandler) createAccess(c *gin.Context) {
 
 	// Build WebSocket URL
 	scheme := "ws"
-	if c.Request.TLS != nil {
+	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
 		scheme = "wss"
 	}
 	wsURL := fmt.Sprintf("%s://%s/api/v1/logs/stream/%s", scheme, c.Request.Host, streamKey)

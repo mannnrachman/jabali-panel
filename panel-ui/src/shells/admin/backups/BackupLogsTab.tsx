@@ -87,16 +87,18 @@ export const BackupLogsTab = () => {
       }
     });
 
-    return allJobs.sort((a, b) =>
-      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
+    return allJobs.sort((a, b) => {
+      const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return bTime - aTime;
+    });
   })();
 
   // Filter entries based on current filters
   const filteredEntries = entries.filter((entry: BackupLogEntry) => {
-    if (filters.from && dayjs(entry.created_at).isBefore(filters.from)) return false;
-    if (filters.to && dayjs(entry.created_at).isAfter(filters.to)) return false;
-    if (filters.kind && !entry.kind.includes(filters.kind)) return false;
+    if (filters.from && entry.created_at && dayjs(entry.created_at).isBefore(filters.from)) return false;
+    if (filters.to && entry.created_at && dayjs(entry.created_at).isAfter(filters.to)) return false;
+    if (filters.kind && entry.kind && !entry.kind.includes(filters.kind)) return false;
     if (filters.status && entry.status !== filters.status) return false;
     if (filters.user_id && entry.user_id !== filters.user_id) return false;
     return true;
@@ -232,7 +234,7 @@ export const BackupLogsTab = () => {
             width: 120,
             render: (id: string) => (
               <Typography.Text code style={{ fontSize: "12px" }}>
-                {id.slice(0, 8)}…
+                {id ? id.slice(0, 8) + "…" : "—"}
               </Typography.Text>
             ),
           },
@@ -258,7 +260,7 @@ export const BackupLogsTab = () => {
             title: "Created",
             dataIndex: "created_at",
             width: 180,
-            render: (v: string) => new Date(v).toLocaleString(),
+            render: (v: string) => v ? new Date(v).toLocaleString() : "—",
           },
           {
             title: "Finished",
@@ -290,7 +292,7 @@ export const BackupLogsTab = () => {
             Backup Log Details
             {selectedLog && (
               <Tag color="blue">
-                {selectedLog.kind.replace("_", " ")} - {selectedLog.id.slice(0, 8)}…
+                {selectedLog.kind?.replace("_", " ") || "unknown"} - {selectedLog.id ? selectedLog.id.slice(0, 8) + "…" : "no-id"}
               </Tag>
             )}
           </Space>

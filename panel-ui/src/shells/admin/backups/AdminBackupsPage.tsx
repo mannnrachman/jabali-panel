@@ -21,6 +21,7 @@ import { apiClient } from "../../../apiClient";
 import { extractApiError } from "../../../apiErrors";
 import { useListQuery } from "../../../hooks/useQueries";
 import { BackupLogModal } from "./BackupLogModal";
+import { BackupLogsTab } from "./BackupLogsTab";
 import { BackupSettingsTab } from "./BackupSettingsTab";
 import { CreateBackupDrawer } from "./CreateBackupDrawer";
 import { DestinationsTab } from "./DestinationsTab";
@@ -84,7 +85,8 @@ type TabKey =
   | "destinations"
   | "schedules"
   | "encryption"
-  | "settings";
+  | "settings"
+  | "logs";
 
 const formatBytes = (n: number): string => {
   if (!n) return "0 B";
@@ -458,6 +460,15 @@ export const AdminBackupsPage = () => {
               </Space>
             ),
           },
+          {
+            key: "logs",
+            tab: (
+              <Space>
+                <FileTextOutlined />
+                Logs
+              </Space>
+            ),
+          },
         ]}
         activeTabKey={activeTab}
         onTabChange={(k) => setActiveTab(k as TabKey)}
@@ -541,6 +552,7 @@ export const AdminBackupsPage = () => {
         {activeTab === "schedules" && <SchedulesTab />}
         {activeTab === "encryption" && <EncryptionKeyCard />}
         {activeTab === "settings" && <BackupSettingsTab />}
+        {activeTab === "logs" && <BackupLogsTab />}
       </Card>
 
       <CreateBackupDrawer

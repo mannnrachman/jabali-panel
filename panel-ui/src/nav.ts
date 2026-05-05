@@ -19,6 +19,7 @@ import {
   CloudServerOutlined,
   CodeOutlined,
   DownloadOutlined,
+  FileTextOutlined,
   LifeBuoyOutlined,
   DatabaseOutlined,
   EthernetPortOutlined,
@@ -104,6 +105,12 @@ export const adminNav: NavItem[] = [
     label: "Applications",
     icon: navIcon(AppstoreOutlined),
     path: "/jabali-admin/applications",
+  },
+  {
+    key: "logs",
+    label: "Logs & Statistics",
+    icon: navIcon(FileTextOutlined),
+    path: "/jabali-admin/logs",
   },
   {
     key: "settings",
@@ -204,6 +211,12 @@ export const userNav: NavItem[] = [
     label: "Files",
     icon: navIcon(FolderOutlined),
     path: "/jabali-panel/files",
+  },
+  {
+    key: "logs",
+    label: "Logs & Statistics",
+    icon: navIcon(FileTextOutlined),
+    path: "/jabali-panel/logs",
   },
   {
     key: "ssh-keys",

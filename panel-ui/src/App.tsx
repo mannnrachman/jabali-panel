@@ -61,10 +61,12 @@ import { SSLManagerPage } from "./shells/admin/ssl/SSLManagerPage";
 import { UserSSLManagerPage } from "./shells/user/ssl/UserSSLManagerPage";
 import { UserPHPSettingsPage } from "./shells/user/php-settings/UserPHPSettingsPage";
 import { UserApplicationList } from "./shells/user/applications/UserApplicationList";
+import { UserLogsPage } from "./shells/user/logs/UserLogsPage";
 import { UserSSHKeysPage } from "./shells/user/ssh-keys/UserSSHKeysPage";
 import { UserCronList } from "./shells/user/cron/UserCronList";
 import { MailTabsPage } from "./shells/user/mail/MailTabsPage";
 import { AdminApplicationList } from "./shells/admin/applications/AdminApplicationList";
+import { LogsPage } from "./shells/admin/logs/LogsPage";
 import { PHPVersionsPage } from "./shells/admin/php/PHPVersionsPage";
 import { PHPPoolEdit } from "./shells/admin/php-pools/PHPPoolEdit";
 import { LoginPage } from "./pages/Login";
@@ -160,6 +162,7 @@ const ThemedApp = () => {
               <Route path="edit/:id" element={<PHPPoolEdit />} />
             </Route>
             <Route path="applications" element={<AdminApplicationList />} />
+            <Route path="logs" element={<LogsPage />} />
             <Route path="ips">
               <Route index element={<AdminIPList />} />
               <Route path="create" element={<Navigate to="/jabali-admin/ips" replace />} />
@@ -208,6 +211,7 @@ const ThemedApp = () => {
             <Route path="dnssec" element={<Navigate to="/jabali-panel/dns" replace />} />
             <Route path="php-settings" element={<UserPHPSettingsPage />} />
             <Route path="files" element={<FileManagerPage />} />
+            <Route path="logs" element={<UserLogsPage />} />
             <Route path="applications" element={<UserApplicationList />} />
             <Route path="ssh-keys" element={<UserSSHKeysPage />} />
             <Route path="cron" element={<UserCronList />} />

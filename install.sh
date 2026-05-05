@@ -1506,7 +1506,7 @@ install_php() {
 # extension. Runs every install_php pass + every `jabali update`. The
 # required set matches install_base_packages's _required_ext list.
 ensure_required_php_extensions() {
-  local _required=(mysqli mbstring zip gd curl xml)
+  local _required=(mysql mbstring zip gd curl xml)
   local _detected_minors=""
   if compgen -G "/usr/sbin/php*-fpm" >/dev/null; then
     _detected_minors="$(ls -1 /usr/sbin/php*-fpm 2>/dev/null \

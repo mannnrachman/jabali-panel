@@ -30,7 +30,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupmetadata"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -86,8 +86,8 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 		}
 	}
 
-	fmt.Fprintln(w, "Mailboxes/forwarders/dnssec keys/Kratos credentials are NOT in this bundle —")
-	fmt.Fprintln(w, "rebuild via the mail-stage warning + `jabali pdns dnssec enable` + Kratos recovery.")
+	fmt.Fprintln(w, "Mailboxes/forwarders/dnssec keys are NOT in this bundle —")
+	fmt.Fprintln(w, "rebuild via the mail-stage warning + `jabali pdns dnssec enable`.")
 }
 
 func boolMark(b bool) string {
@@ -200,7 +200,7 @@ Examples:
   jabali backup account-restore --user shukivaknin --destination test \
       --snapshot <manifest-snapshot-id> --apply=false --force
 
-  # Disaster recovery (panel row + system account both rebuilt by hand)
+  # Disaster recovery (system account auto-created if missing)
   jabali backup account-restore \
       --target-user-id <orig-ulid> --target-username shukivaknin \
       --destination test --snapshot <manifest-snapshot-id> --force`,
@@ -489,7 +489,7 @@ func runAccountRestorePrompts(
 	if pickedBlock.Username == "(unknown)" {
 		fmt.Fprintf(w, "\nUser %s has no panel row — disaster-recovery mode.\n", pickedBlock.UserID)
 		val, err := promptLine(w, r,
-			fmt.Sprintf("Target system username (must already exist in /etc/passwd) [%s if existed]: ", pickedBlock.UserID))
+			fmt.Sprintf("Target system username (will be created if missing) [%s]: ", pickedBlock.UserID))
 		if err != nil {
 			return nil, false, err
 		}

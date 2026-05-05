@@ -8052,12 +8052,12 @@ install_kratos() {
   local kratos_migrate_log="/var/log/jabali-kratos-migrate.log"
   : > "$kratos_migrate_log"
   set +e
-  "$kratos_binary" migrate sql -e -c "$kratos_config" --yes >"$kratos_migrate_log" 2>&1
+  "$kratos_binary" migrate sql up -e -c "$kratos_config" --yes >"$kratos_migrate_log" 2>&1
   local migrate_rc=$?
   set -e
   if (( migrate_rc != 0 )); then
     _err "Kratos database migrations failed (exit ${migrate_rc})"
-    _err "command: $kratos_binary migrate sql -e -c $kratos_config --yes"
+    _err "command: $kratos_binary migrate sql up -e -c $kratos_config --yes"
     _err "config size: $(stat -c '%s' "$kratos_config" 2>/dev/null || echo missing) bytes"
     _err "kratos --version: $("$kratos_binary" --version 2>&1 | head -1)"
     local log_bytes
@@ -8069,7 +8069,7 @@ install_kratos() {
       _err "----- end log -----"
     else
       _err "log file is empty — kratos likely crashed before writing anything"
-      _err "try: $kratos_binary migrate sql -e -c $kratos_config --yes"
+      _err "try: $kratos_binary migrate sql up -e -c $kratos_config --yes"
     fi
     _die "Kratos database migrations failed (log preserved at $kratos_migrate_log)"
   fi

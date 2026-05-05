@@ -10,6 +10,7 @@ profile jabali-kratos /usr/local/bin/kratos {
   #include <abstractions/nameservice>
   #include <abstractions/openssl>
   #include <abstractions/ssl_certs>
+  #include <abstractions/mysql>
 
   capability net_bind_service,
   capability setuid,

@@ -141,6 +141,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		mailboxSSOTokenRepo := repository.NewMailboxSSOTokenRepository(sharedDB)
 
 		phpMyAdminSSOTokenRepo := repository.NewPhpMyAdminSSOTokenRepository(sharedDB)
+		logAccessStreamRepo := repository.NewLogAccessStreamRepository(sharedDB)
 		phpPoolRepo := repository.NewPHPPoolRepository(sharedDB)
 		phpPoolIniOverrideRepo := repository.NewPHPPoolIniOverrideRepository(sharedDB)
 		wordpressInstallRepo := repository.NewWordPressInstallRepository(sharedDB)
@@ -269,6 +270,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.BackupDestinations = repository.NewBackupDestinationRepository(sharedDB)
 		deps.BackupSchedules = repository.NewBackupScheduleRepository(sharedDB)
 		deps.PhpMyAdminSSOTokens = phpMyAdminSSOTokenRepo
+		deps.LogAccessStreams = logAccessStreamRepo
 		deps.PHPPools = phpPoolRepo
 		deps.PHPPoolIniOverrides = phpPoolIniOverrideRepo
 		deps.WordPressInstalls = wordpressInstallRepo

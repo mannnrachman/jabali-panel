@@ -1,4 +1,5 @@
 import { Card, Space, Table, Tag, Typography, message } from "antd";
+import { GlobalOutlined } from "@ant-design/icons";
 
 import type { NetworkInterface } from "../../../hooks/useServerStatus";
 
@@ -8,7 +9,7 @@ interface Props {
 
 export function NetworkTable({ interfaces }: Props) {
   return (
-    <Card title="Network" size="small">
+    <Card title={<><GlobalOutlined /> Network</>} size="small">
       <Table<NetworkInterface>
         rowKey="iface"
         size="small"

@@ -4,6 +4,7 @@
 // pids.current read directly. memory.max returning "max" (no limit)
 // renders as "—".
 import { Card, Table, Tag, Typography } from "antd";
+import { UserOutlined } from "@ant-design/icons";
 
 import type { UserSliceMetric, UserSlicesSlice } from "../../../hooks/useServerStatus";
 
@@ -14,7 +15,7 @@ interface Props {
 export function UserSlicesCard({ data }: Props) {
   const slices = data?.slices ?? [];
   return (
-    <Card title="User slices" size="small">
+    <Card title={<><UserOutlined /> User slices</>} size="small">
       {slices.length === 0 ? (
         <Typography.Text type="secondary">
           No per-user slices on this host.

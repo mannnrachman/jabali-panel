@@ -4,6 +4,7 @@
 // the Masonry layout as individual children so they flow with every
 // other card on the page rather than monopolising a full row.
 import { Card, Progress, Space, Tooltip, Typography } from "antd";
+import { ApiOutlined, DatabaseOutlined } from "@ant-design/icons";
 
 import type { CPUSlice, HostSlice } from "../../../hooks/useServerStatus";
 
@@ -30,7 +31,7 @@ export function CPUMeterCard({ host, cpu }: MeterProps) {
   const load15 = host?.load_avg?.[2] ?? 0;
   return (
     <Card
-      title="CPU"
+      title={<><ApiOutlined /> CPU</>}
       size="small"
       extra={
         <Tooltip title="Load average · 1m / 5m / 15m">
@@ -81,7 +82,7 @@ export function MemoryMeterCard({ host }: MeterProps) {
   const hasSwap = !!host && host.swap_total_kb > 0;
   const swapUsedPct = hasSwap ? (host!.swap_used_kb / host!.swap_total_kb) * 100 : 0;
   return (
-    <Card title="Memory" size="small">
+    <Card title={<><DatabaseOutlined /> Memory</>} size="small">
       <div>
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
           RAM

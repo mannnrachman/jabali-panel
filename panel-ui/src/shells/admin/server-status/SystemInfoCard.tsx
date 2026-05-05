@@ -6,7 +6,7 @@
 // (interfaces). Source data lives in envelope.host + envelope.network.
 import { Card, Table, Tag, Typography } from "antd";
 
-import { CheckCircleOutlined, ExclamationCircleOutlined } from "@icons";
+import { CheckCircleOutlined, ExclamationCircleOutlined, InfoCircleOutlined } from "@ant-design/icons";
 
 import type {
   HostSlice,
@@ -125,7 +125,7 @@ export function SystemInfoCard({ host, network, software, asOf }: Props) {
 
   return (
     <Card
-      title="System Information"
+      title={<><InfoCircleOutlined /> System Information</>}
       size="small"
       extra={
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>

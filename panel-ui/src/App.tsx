@@ -78,7 +78,19 @@ import { LoginPage } from "./pages/Login";
 // header dropdown; they get a flow query and are routed to the same
 // user-shell profile path (RequireUser allows admin sessions through).
 function KratosSettingsRedirect() {
+  const { user } = useAuth();
   const search = window.location.search;
+
+  // Check if we are an admin user by looking at the user's role
+  const isAdmin = user?.isAdmin;
+
+  if (isAdmin) {
+    // Admin users: redirect to Kratos settings via server-side navigation
+    window.location.assign(`/.ory/self-service/settings/browser${search}`);
+    return <Spin />;
+  }
+
+  // Regular users: redirect to user profile
   return <Navigate to={`/jabali-panel/profile${search}`} replace />;
 }
 

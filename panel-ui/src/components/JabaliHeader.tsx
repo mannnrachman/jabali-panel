@@ -267,11 +267,13 @@ export function JabaliHeader({ showMenuButton = false, onMenuClick }: JabaliHead
       icon: <UserOutlined />,
       label: "Profile",
       onClick: () => {
-        const inAdminShell = location.pathname.startsWith("/jabali-admin/");
-        if (inAdminShell) {
+        // Use existing isAdminShell variable
+        if (isAdminShell) {
           // Admins don't have a panel-side profile page; Kratos self-service
           // settings covers email/password/2FA uniformly (M20).
-          window.location.assign("/.ory/self-service/settings/browser");
+          // Use window.location to bypass React Router's relative navigation
+          // since /jabali-admin has its own nested /settings route.
+          window.location.assign("/settings" + window.location.search);
         } else {
           navigate("/jabali-panel/profile");
         }

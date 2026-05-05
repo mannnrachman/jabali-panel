@@ -1,4 +1,5 @@
 import { Card, Progress, Table, Tag } from "antd";
+import { HddOutlined } from "@ant-design/icons";
 
 import type { Partition } from "../../../hooks/useServerStatus";
 
@@ -8,7 +9,7 @@ interface Props {
 
 export function DisksTable({ partitions }: Props) {
   return (
-    <Card title="Disks" size="small">
+    <Card title={<><HddOutlined /> Disks</>} size="small">
       <Table<Partition>
         rowKey="mount_point"
         size="small"

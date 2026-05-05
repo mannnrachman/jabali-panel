@@ -8,6 +8,7 @@ import { Button, Card, Modal, Space, Statistic, Table, Tooltip, message } from "
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { CloseOutlined, ThunderboltOutlined } from "@icons";
+import { UnorderedListOutlined } from "@ant-design/icons";
 
 import { apiClient } from "../../../apiClient";
 import type { ProcessesSlice, ProcessTop } from "../../../hooks/useServerStatus";
@@ -48,7 +49,7 @@ export function ProcessesCard({ processes }: Props) {
   return (
     <>
       <Card
-        title="Processes"
+        title={<><UnorderedListOutlined /> Processes</>}
         size="small"
         extra={
           <Button size="small" onClick={() => setExpanded((v) => !v)}>

@@ -24,6 +24,7 @@ import {
   PlayCircleOutlined,
   PoweroffOutlined,
   ReloadOutlined,
+  SettingOutlined,
   SyncOutlined,
 } from "@icons";
 
@@ -84,7 +85,7 @@ export function ServicesSummaryCard({ services }: Props) {
 
   return (
     <>
-      <Card title="Services" size="small">
+      <Card title={<><SettingOutlined /> Services</>} size="small">
         <Table<ServiceDetail>
           rowKey="unit"
           size="small"

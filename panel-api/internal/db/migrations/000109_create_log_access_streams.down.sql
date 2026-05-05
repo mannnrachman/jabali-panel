@@ -1,0 +1,1 @@
+DROP TABLE log_access_streams;

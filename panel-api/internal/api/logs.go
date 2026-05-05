@@ -143,9 +143,13 @@ func (h *logHandler) createAccess(c *gin.Context) {
 
 	// Create stream record with 15-minute expiry
 	expiresAt := time.Now().Add(15 * time.Minute)
+	var domainID *string
+	if req.DomainID != "" {
+		domainID = &req.DomainID
+	}
 	stream := &models.LogAccessStream{
 		UserID:    claims.UserID,
-		DomainID:  stringPtr(req.DomainID),
+		DomainID:  domainID,
 		LogType:   req.LogType,
 		StreamKey: streamKey,
 		ExpiresAt: expiresAt,
@@ -251,10 +255,3 @@ func logFilePathForDomain(domainName, logType string) (string, error) {
 	}
 }
 
-// stringPtr returns a pointer to the string if non-empty, otherwise nil
-func stringPtr(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}

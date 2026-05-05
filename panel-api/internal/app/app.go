@@ -15,7 +15,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/apps"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/kratosclient"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
@@ -141,15 +141,6 @@ type Deps struct {
 	// admin Dashboard) where adding a CountAll method to every repo
 	// would be more code than the call site.
 	DB *gorm.DB
-	// M41 (ADR-0088) Snuffleupagus PHP hardening. Repo + reconciler
-	// drive /admin/security/snuffleupagus. Nil disables the routes
-	// (UI surfaces an empty state).
-	Snuffleupagus           repository.SnuffleupagusRepository
-	SnuffleupagusReconciler *reconciler.SnuffleupagusReconciler
-	// SnuffleupagusBundleDir is the directory containing the rule
-	// bundle (`*.rules` files). Default `/usr/share/jabali/snuffleupagus/rules`;
-	// repo checkouts override to `/opt/jabali-panel/install/snuffleupagus/rules`.
-	SnuffleupagusBundleDir string
 }
 
 // Default tier: chosen so a reasonable SPA (polling, a few concurrent
@@ -566,21 +557,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterSecurityCrowdSecRoutes(v1, deps.Agent, deps.ServerSettings)
 			api.RegisterSecurityAppSecRoutes(v1, deps.Agent, deps.ServerSettings)
 			api.RegisterSecurityUFWRoutes(v1, deps.Agent)
-			// M43 (ADR-0089) Trust test bench — POST /admin/security/trust/test
-			api.RegisterSecurityTrustRoutes(v1, deps.Agent)
 			// M40 (ADR-0086) AppArmor admin status + per-profile mode flip.
 			api.RegisterSecurityAppArmorRoutes(v1, deps.Agent)
 			// M42 (ADR-0087) AIDE FIM read-only status + manual check trigger.
 			api.RegisterSecurityAideRoutes(v1, deps.Agent)
-			// M41 (ADR-0088) Snuffleupagus PHP hardening admin endpoints.
-			if deps.Snuffleupagus != nil {
-				api.RegisterSecuritySnuffleupagusRoutes(v1, api.SecuritySnuffleupagusConfig{
-					Agent:      deps.Agent,
-					Repo:       deps.Snuffleupagus,
-					Reconciler: deps.SnuffleupagusReconciler,
-					BundleDir:  deps.SnuffleupagusBundleDir,
-				})
-			}
 			// M33 malware tab — ADR-0072. All five malware repos must be
 			// wired or RegisterSecurityMalwareRoutes is skipped (older test
 			// wiring without the M33 graph). Tab still renders empty state.
@@ -610,18 +590,6 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Domains:        deps.Domains,
 				Mailboxes:      deps.Mailboxes,
 				AppInstalls:    deps.WordPressInstalls,
-				SSLCerts:       deps.SSLCerts,
-				PHPPools:       deps.PHPPools,
-				PHPPoolIni:     deps.PHPPoolIniOverrides,
-				Forwarders:     deps.Forwarders,
-				Autoresponders: deps.Autoresponders,
-				MailboxShares:  deps.MailboxShares,
-				DNSSECKeys:     deps.DNSSECKeys,
-				SSHKeys:        deps.SSHKeys,
-				CronJobs:       deps.CronJobs,
-				LimitOverrides: deps.LimitOverrides,
-				EgressPolicies: deps.UserEgressPolicies,
-				EgressRequests: deps.UserEgressRequests,
 				Log:            deps.Log,
 			})
 			api.RegisterMeBackupRoutes(v1, api.MeBackupsHandlerConfig{
@@ -634,18 +602,6 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Domains:        deps.Domains,
 				Mailboxes:      deps.Mailboxes,
 				AppInstalls:    deps.WordPressInstalls,
-				SSLCerts:       deps.SSLCerts,
-				PHPPools:       deps.PHPPools,
-				PHPPoolIni:     deps.PHPPoolIniOverrides,
-				Forwarders:     deps.Forwarders,
-				Autoresponders: deps.Autoresponders,
-				MailboxShares:  deps.MailboxShares,
-				DNSSECKeys:     deps.DNSSECKeys,
-				SSHKeys:        deps.SSHKeys,
-				CronJobs:       deps.CronJobs,
-				LimitOverrides: deps.LimitOverrides,
-				EgressPolicies: deps.UserEgressPolicies,
-				EgressRequests: deps.UserEgressRequests,
 				Log:            deps.Log,
 			})
 		}
@@ -724,14 +680,20 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterWordPressRoutes(v1, appCfg)
 			api.RegisterApplicationRoutes(v1, appCfg)
 
-			// Log access routes (M13)
-			if deps.LogAccessStreams != nil && deps.Domains != nil && deps.Users != nil {
-				api.RegisterLogRoutes(v1, api.LogHandlerConfig{
-					LogAccessStreams: deps.LogAccessStreams,
-					Domains:          deps.Domains,
-					Users:            deps.Users,
-				})
-			}
+		// Log access routes (M13)
+		if deps.LogAccessStreams != nil && deps.Domains != nil && deps.Users != nil {
+			api.RegisterLogRoutes(v1, api.LogHandlerConfig{
+				LogAccessStreams: deps.LogAccessStreams,
+				Domains:          deps.Domains,
+				Users:            deps.Users,
+			})
+			// WebSocket log streaming routes
+			api.RegisterLogStreamRoutes(v1, api.LogStreamHandlerConfig{
+				LogAccessStreams: deps.LogAccessStreams,
+				Domains:          deps.Domains,
+				Log:              deps.Log,
+			})
+		}
 		}
 
 		// Magic-link admin login (ADR-0040): mint-only. The agent-written

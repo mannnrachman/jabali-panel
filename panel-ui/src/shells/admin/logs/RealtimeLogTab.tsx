@@ -1,0 +1,161 @@
+import { useState } from "react";
+import { Table, Button, Space, Select, message, Typography } from "antd";
+import { BarChartOutlined } from "@ant-design/icons";
+import { useQuery } from "@tanstack/react-query";
+import { apiClient } from "../../../apiClient";
+import { LogStreamModal } from "./LogStreamModal";
+
+const { Text } = Typography;
+const { Option } = Select;
+
+interface Domain {
+  id: string;
+  name: string;
+  status: string;
+}
+
+interface RealtimeLogTabProps {
+  refreshTrigger: number;
+}
+
+export const RealtimeLogTab = ({ refreshTrigger }: RealtimeLogTabProps) => {
+  const [selectedDomain, setSelectedDomain] = useState<string | undefined>(undefined);
+  const [streamModalVisible, setStreamModalVisible] = useState(false);
+  const [streamKey, setStreamKey] = useState<string | null>(null);
+  const [streamUrl, setStreamUrl] = useState<string | null>(null);
+
+  // Fetch available domains
+  const { data: domainsData, isLoading: domainsLoading } = useQuery({
+    queryKey: ["domains", refreshTrigger],
+    queryFn: async () => {
+      const response = await apiClient.get("/domains");
+      return response.data;
+    }
+  });
+
+  const domains: Domain[] = domainsData?.data || [];
+
+  // Create GoAccess stream
+  const createGoAccessStream = async (domainId?: string) => {
+    try {
+      const payload: any = {
+        log_type: "goaccess"
+      };
+
+      if (domainId) {
+        payload.domain_id = domainId;
+      }
+
+      const response = await apiClient.post("/logs/access", payload);
+      const { stream_key, websocket_url } = response.data;
+
+      setStreamKey(stream_key);
+      setStreamUrl(websocket_url);
+      setStreamModalVisible(true);
+
+      message.success("GoAccess real-time stream created successfully");
+    } catch (error: any) {
+      message.error(error.response?.data?.error || "Failed to create GoAccess stream");
+    }
+  };
+
+  const handleStreamClose = async () => {
+    if (streamKey) {
+      try {
+        await apiClient.delete(`/logs/access/${streamKey}`);
+        message.success("GoAccess stream closed");
+      } catch (error) {
+        // Stream might have expired, ignore error
+      }
+      setStreamKey(null);
+      setStreamUrl(null);
+    }
+    setStreamModalVisible(false);
+  };
+
+  const columns = [
+    {
+      title: "Domain",
+      dataIndex: "name",
+      key: "name",
+      render: (name: string, record: Domain) => (
+        <Space>
+          <Text strong>{name}</Text>
+          <Text type="secondary">({record.status})</Text>
+        </Space>
+      )
+    },
+    {
+      title: "Actions",
+      key: "actions",
+      render: (_: any, record: Domain) => (
+        <Space size="middle">
+          <Button
+            type="primary"
+            icon={<BarChartOutlined />}
+            onClick={() => createGoAccessStream(record.id)}
+          >
+            Open GoAccess Dashboard
+          </Button>
+        </Space>
+      )
+    }
+  ];
+
+  // Add "All Domains" option for admin users
+  const tableData = [
+    { id: "", name: "All Domains", status: "system" },
+    ...domains
+  ];
+
+  return (
+    <div>
+      <Space direction="vertical" size="large" style={{ width: "100%" }}>
+        <div>
+          <Space>
+            <Select
+              placeholder="Filter by domain"
+              allowClear
+              style={{ width: 200 }}
+              value={selectedDomain}
+              onChange={setSelectedDomain}
+            >
+              <Option value="">All Domains</Option>
+              {domains.map(domain => (
+                <Option key={domain.id} value={domain.id}>
+                  {domain.name}
+                </Option>
+              ))}
+            </Select>
+            <Button
+              type="primary"
+              icon={<BarChartOutlined />}
+              onClick={() => createGoAccessStream(selectedDomain)}
+            >
+              Launch GoAccess Dashboard
+            </Button>
+          </Space>
+        </div>
+
+        <Table
+          columns={columns}
+          dataSource={tableData.filter(item =>
+            !selectedDomain || selectedDomain === "" || item.id === selectedDomain
+          )}
+          rowKey="id"
+          loading={domainsLoading}
+          pagination={false}
+          size="middle"
+        />
+      </Space>
+
+      <LogStreamModal
+        visible={streamModalVisible}
+        onClose={handleStreamClose}
+        streamUrl={streamUrl}
+        title="GoAccess Real-Time Dashboard"
+        logType="goaccess"
+      />
+    </div>
+  );
+};

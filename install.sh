@@ -107,27 +107,6 @@ _cli_token=""
 _cli_debug=""
 _cli_uninstall=""
 _cli_yes=""
-# --purge-packages, only meaningful with --uninstall, also `apt-get purge`
-# every Jabali-pulled package (nginx, mariadb, pdns, php, crowdsec, …)
-# AND removes the Sury / CrowdSec / MariaDB / NodeSource apt repo files.
-# Opt-in even with --yes because shared system packages may be in use
-# by non-Jabali workloads.
-_cli_purge_packages=""
-# --restore-from triggers the disaster-recovery bootstrap path. After
-# base packages + binaries land, install.sh skips first-boot DB seed
-# and invokes `jabali system restore --snapshot=<id|latest> --force`
-# to rebuild panel state from the supplied repo (ADR-0080).
-_cli_restore_from=""
-_cli_restore_creds=""
-_cli_restore_password=""
-_cli_restore_snapshot=""
-_cli_restore_extra_options=()
-# --restore-interactive triggers the prompt-driven disaster recovery
-# bootstrap: install.sh asks for restic password, remote URL, SFTP
-# auth (password OR key path), and snapshot id, then materialises
-# temp files at /run/jabali-install/ before the install_disaster_restore
-# step picks them up.
-_cli_restore_interactive=""
 _positional=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -137,31 +116,12 @@ while [[ $# -gt 0 ]]; do
     --token)      _cli_token="${2:-}"; shift 2 ;;
     --debug)      _cli_debug=1; shift ;;
     --uninstall)  _cli_uninstall=1; shift ;;
-    --purge-packages) _cli_purge_packages=1; shift ;;
     --yes|-y)     _cli_yes=1; shift ;;
-    --restore-from=*)        _cli_restore_from="${1#*=}"; shift ;;
-    --restore-from)          _cli_restore_from="${2:-}"; shift 2 ;;
-    --restore-credentials=*) _cli_restore_creds="${1#*=}"; shift ;;
-    --restore-credentials)   _cli_restore_creds="${2:-}"; shift 2 ;;
-    --restore-password=*)    _cli_restore_password="${1#*=}"; shift ;;
-    --restore-password)      _cli_restore_password="${2:-}"; shift 2 ;;
-    --restore-snapshot=*)    _cli_restore_snapshot="${1#*=}"; shift ;;
-    --restore-snapshot)      _cli_restore_snapshot="${2:-}"; shift 2 ;;
-    --restore-extra-option=*) _cli_restore_extra_options+=("${1#*=}"); shift ;;
-    --restore-extra-option)   _cli_restore_extra_options+=("${2:-}"); shift 2 ;;
-    --restore-interactive)    _cli_restore_interactive=1; shift ;;
     --)           shift; while [[ $# -gt 0 ]]; do _positional+=("$1"); shift; done ;;
     --*)          printf 'install.sh: unknown flag: %s\n' "$1" >&2; exit 64 ;;
     *)            _positional+=("$1"); shift ;;
   esac
 done
-
-# Defaults for the restore bootstrap path. _cli_restore_snapshot
-# defaults to "latest"; the operator only has to supply --restore-from
-# (and --restore-credentials for SFTP password-auth backends).
-if [[ -n "$_cli_restore_from" && -z "$_cli_restore_snapshot" ]]; then
-  _cli_restore_snapshot="latest"
-fi
 
 # --hostname CLI arg wins over JABALI_HOSTNAME env; re-export so downstream
 # functions (notably prompt_server_settings) pick it up via the same env var.
@@ -241,53 +201,6 @@ _warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*" >&2; _log_to_file "[!] $*"; }
 # so any future caller has a matching pair to _warn.
 _err()  { printf '\033[1;31m[✗]\033[0m %s\n' "$*" >&2; _log_to_file "[✗] $*"; }
 _die()  { printf '\033[1;31m[✗]\033[0m %s\n' "$*" >&2; _log_to_file "[✗] $*"; exit 1; }
-
-# _apt_wait_lock polls dpkg + apt-lists locks until free or timeout
-# (default 300s, override via JABALI_APT_LOCK_WAIT). Concurrent apt
-# runs (unattended-upgrades, packagekit, manual operator apt-get) hold
-# /var/lib/apt/lists/lock or /var/lib/dpkg/lock-frontend; running our
-# own apt-get on top of that returns "exit 100" with no useful retry.
-# fuser is unavailable on minimal Debian images — fall back to a flock
-# probe (test acquire + release) when fuser is missing.
-_apt_wait_lock() {
-  local timeout="${JABALI_APT_LOCK_WAIT:-300}"
-  local locks=(
-    /var/lib/dpkg/lock-frontend
-    /var/lib/dpkg/lock
-    /var/lib/apt/lists/lock
-    /var/cache/apt/archives/lock
-  )
-  local waited=0 announced=0 lock pid
-  while (( waited < timeout )); do
-    local busy=0
-    for lock in "${locks[@]}"; do
-      [[ -f "$lock" ]] || continue
-      if command -v fuser >/dev/null 2>&1; then
-        if fuser "$lock" >/dev/null 2>&1; then
-          busy=1
-          if (( announced == 0 )); then
-            pid="$(fuser "$lock" 2>/dev/null | tr -d ' ')"
-            _log "apt lock held by PID ${pid:-?} on ${lock##*/} — waiting (timeout ${timeout}s)"
-            announced=1
-          fi
-          break
-        fi
-      else
-        # No fuser → try a non-blocking flock; if it can't acquire,
-        # something else holds it.
-        if ! ( flock -n -w 0 9 ) 9>"$lock" 2>/dev/null; then
-          busy=1
-          break
-        fi
-      fi
-    done
-    (( busy == 0 )) && return 0
-    sleep 2
-    waited=$(( waited + 2 ))
-  done
-  _err "apt lock still held after ${timeout}s — re-run jabali update once unattended-upgrades / packagekit settles, or set JABALI_APT_LOCK_WAIT=600"
-  return 1
-}
 
 # Announce where logs are going so the operator can tail -f in another
 # shell if the install stalls. Printed via _log so it's itself captured.
@@ -769,38 +682,17 @@ exit 101
 POLICYEOF
   chmod 0755 "$policy_rc"
 
-  # Sury's PHP extension packaging drifts between versions (8.3 ships
+  # Sury's PHP extension packaging drifts between versions (8.5 ships
   # OPcache inside -common instead of as a standalone -opcache package).
   # Probe apt-cache for each optional extension per PHP version and
   # include only what's actually available.
   local php_versions="${JABALI_PHP_VERSIONS:-8.5}"
   local -a php_extensions=()
   local version
-  # Required extensions — every shared-hosting workload (WordPress,
-  # Drupal, Joomla, MediaWiki) needs at minimum mysql + mbstring + xml
-  # + curl + gd + zip. Missing mysql produces an opaque WP install
-  # failure ("missing the MySQL extension"); fail loudly here so the
-  # operator sees the real cause (usually stale apt cache or missing
-  # Sury repo) at install time instead of weeks later on first deploy.
-  local _required_ext=(mysql mbstring zip gd curl xml)
-  # Optional — nice-to-have but every supported app tolerates absence.
-  local _optional_ext=(intl bcmath opcache)
   for version in $php_versions; do
     php_extensions+=("php${version}-fpm" "php${version}-cli")
-    local ext _missing_required=()
-    for ext in "${_required_ext[@]}"; do
-      if apt-cache show "php${version}-${ext}" >/dev/null 2>&1; then
-        php_extensions+=("php${version}-${ext}")
-      else
-        _missing_required+=("php${version}-${ext}")
-      fi
-    done
-    if (( ${#_missing_required[@]} > 0 )); then
-      _err "required PHP extensions missing from apt sources: ${_missing_required[*]}"
-      _err "this usually means the Sury repo isn't indexed yet — check /etc/apt/sources.list.d/sury-php.list"
-      _die "cannot proceed without mandatory extensions for PHP ${version}"
-    fi
-    for ext in "${_optional_ext[@]}"; do
+    local ext
+    for ext in mysql mbstring zip gd curl xml intl bcmath opcache; do
       if apt-cache show "php${version}-${ext}" >/dev/null 2>&1; then
         php_extensions+=("php${version}-${ext}")
       else
@@ -821,6 +713,8 @@ POLICYEOF
     apt-get install -y -qq --no-install-recommends \
       git curl ca-certificates build-essential tar bzip2 unzip openssl gnupg \
       mariadb-server mariadb-client \
+      php-cli php-mysql php-curl php-xml php-mbstring php-gd php-zip \
+      composer \
       rsync acl \
       systemd-resolved \
       quota quotatool xfsprogs \
@@ -1492,50 +1386,6 @@ install_php() {
   for version in $php_versions; do
     _install_php_version "$version"
   done
-  # Self-heal: catch any installed minor that's missing the mandatory
-  # extension set. Earlier installs probed apt-cache when the Sury
-  # repo wasn't indexed yet and silently shipped a PHP without
-  # mysql/mbstring/xml — WordPress/Drupal/Joomla then died at
-  # `wp core install` with "missing the MySQL extension". Idempotent;
-  # skips over minors that already have everything.
-  ensure_required_php_extensions
-}
-
-# ensure_required_php_extensions walks every installed PHP minor on
-# disk (via /usr/sbin/php<v>-fpm) and apt-installs any missing required
-# extension. Runs every install_php pass + every `jabali update`. The
-# required set matches install_base_packages's _required_ext list.
-ensure_required_php_extensions() {
-  local _required=(mysql mbstring zip gd curl xml)
-  local _detected_minors=""
-  if compgen -G "/usr/sbin/php*-fpm" >/dev/null; then
-    _detected_minors="$(ls -1 /usr/sbin/php*-fpm 2>/dev/null \
-      | sed -E 's|.*/php([0-9]+\.[0-9]+)-fpm|\1|' | sort -u | tr '\n' ' ')"
-  fi
-  [[ -z "${_detected_minors// /}" ]] && return 0
-  local _minor _ext _missing=()
-  for _minor in $_detected_minors; do
-    for _ext in "${_required[@]}"; do
-      if ! dpkg -s "php${_minor}-${_ext}" >/dev/null 2>&1; then
-        _missing+=("php${_minor}-${_ext}")
-      fi
-    done
-  done
-  (( ${#_missing[@]} == 0 )) && return 0
-  _log "installing missing required PHP extensions: ${_missing[*]}"
-  _apt_wait_lock || true
-  if ! apt-get install -y -qq --no-install-recommends \
-        -o DPkg::Lock::Timeout=300 \
-        "${_missing[@]}"; then
-    _err "apt install of required PHP extensions failed: ${_missing[*]}"
-    _err "WordPress/Drupal/Joomla installs will fail without these. Check Sury repo + retry."
-    return 1
-  fi
-  _ok "installed missing PHP extensions: ${_missing[*]}"
-  # Reload every per-user FPM master so the new extensions load. Best
-  # effort — service may not be running on a fresh install.
-  systemctl reload "jabali-fpm@*.service" 2>/dev/null || true
-  systemctl reload jabali-fpm@pma.service 2>/dev/null || true
 }
 
 
@@ -3306,14 +3156,6 @@ Restart=on-failure
 RestartSec=3
 TimeoutStopSec=10
 
-# AppArmor profile applied to the daemon ONLY. The profile body removes
-# its path-attach line for /usr/local/bin/jabali-panel so direct CLI
-# invocations (\`jabali update\`, \`jabali repair\`, \`jabali apparmor
-# flip-mature\`) don't auto-attach this restrictive profile and can run
-# unconfined as the operator's root shell. Daemon attaches via this
-# unit directive instead.
-AppArmorProfile=jabali-panel
-
 # Hardening (minimal but real)
 NoNewPrivileges=true
 ProtectSystem=strict
@@ -3356,206 +3198,7 @@ EOF
 
 # ---------- step 6b: seed admin credentials ---------------------------------
 
-prompt_disaster_restore_inputs() {
-  # Interactive disaster-recovery walks the operator through every
-  # input install_disaster_restore needs. Safer than long curl-piped
-  # flag strings (no password in shell history; no creds in argv).
-  # Outputs:
-  #   _cli_restore_from               — repo URL
-  #   _cli_restore_password (path)    — temp file at /run/jabali-install/
-  #   _cli_restore_creds (path)       — temp file when SFTP password auth
-  #   _cli_restore_extra_options[...] — sftp.command override built from
-  #                                     the operator's auth choice
-  #   _cli_restore_snapshot           — snapshot id (defaults latest)
-  install -d -m 0700 /run/jabali-install
-
-  cat <<'EOF'
-
-──────────────────────── DISASTER RECOVERY ────────────────────────
-Restore an existing jabali-panel backup onto this fresh host. Have
-ready:
-  • restic repo URL  (sftp:user@host:/path | s3:bucket | local path)
-  • restic-repo.password (the operator-held secret that decrypts
-    the repo; without it the backup is opaque)
-  • SFTP auth — either the user's SSH password OR a private-key
-    path on this host
-───────────────────────────────────────────────────────────────────
-
-EOF
-
-  printf 'Repo URL [e.g. sftp:jabali@192.168.100.100:/home/jabali/mx/]: '
-  IFS= read -r _cli_restore_from
-  if [[ -z "$_cli_restore_from" ]]; then
-    _die "repo URL required"
-  fi
-
-  # Restic password — hidden read -s, written to a 0600 root:root tmp
-  # file the install_disaster_restore copy step picks up.
-  printf 'restic-repo.password (hidden): '
-  IFS= read -rs _restore_pw_tmp
-  echo
-  if [[ -z "$_restore_pw_tmp" ]]; then
-    _die "restic password required"
-  fi
-  printf '%s' "$_restore_pw_tmp" > /run/jabali-install/restic-pw
-  chmod 0600 /run/jabali-install/restic-pw
-  unset _restore_pw_tmp
-  _cli_restore_password=/run/jabali-install/restic-pw
-
-  # SFTP auth flow — only when the URL uses sftp:.
-  if [[ "$_cli_restore_from" == sftp:* ]]; then
-    printf 'SFTP auth — (p)assword or (k)ey path? [p/k] (default p): '
-    local _auth_kind
-    IFS= read -r _auth_kind
-    _auth_kind="${_auth_kind:-p}"
-
-    # Parse user@host:port out of sftp:USER@HOST[:PORT][:/PATH]. Strip
-    # the leading "sftp:" then split on "@" + ":" to extract the user
-    # and host so we can build the override sftp.command flag.
-    local _no_proto="${_cli_restore_from#sftp:}"
-    local _userhost="${_no_proto%%:*}"
-    if [[ "$_no_proto" != *":"* ]]; then _userhost="${_no_proto%%/*}"; fi
-    local _user="${_userhost%@*}"
-    local _host="${_userhost#*@}"
-    local _port="22"
-    # Optional port: sftp:user@host:port:/path
-    local _after_user="${_no_proto#*@}"
-    if [[ "$_after_user" =~ ^[^:/]+:([0-9]+) ]]; then
-      _port="${BASH_REMATCH[1]}"
-    fi
-
-    case "$_auth_kind" in
-      k|K|key)
-        printf 'SSH private key path on this host: '
-        local _key_path; IFS= read -r _key_path
-        if [[ ! -f "$_key_path" ]]; then
-          _die "key path not found: $_key_path"
-        fi
-        chmod 0600 "$_key_path"
-        _cli_restore_extra_options+=(
-          "sftp.command=ssh -i ${_key_path} -p ${_port} -o StrictHostKeyChecking=accept-new ${_user}@${_host} -s sftp"
-        )
-        ;;
-      *)
-        printf 'SSH password (hidden): '
-        local _ssh_pw; IFS= read -rs _ssh_pw
-        echo
-        if [[ -z "$_ssh_pw" ]]; then
-          _die "SSH password required"
-        fi
-        printf 'SSHPASS=%s\n' "$_ssh_pw" > /run/jabali-install/sftp-creds.env
-        chmod 0600 /run/jabali-install/sftp-creds.env
-        unset _ssh_pw
-        _cli_restore_creds=/run/jabali-install/sftp-creds.env
-        _cli_restore_extra_options+=(
-          "sftp.command=sshpass -e ssh -p ${_port} -o StrictHostKeyChecking=accept-new ${_user}@${_host} -s sftp"
-        )
-        ;;
-    esac
-  fi
-
-  printf 'Snapshot id (default: latest): '
-  IFS= read -r _cli_restore_snapshot
-  if [[ -z "$_cli_restore_snapshot" ]]; then
-    _cli_restore_snapshot=latest
-  fi
-
-  _ok "interactive restore inputs captured — proceeding with bootstrap"
-}
-
-install_disaster_restore() {
-  _log "==== disaster recovery: restoring from ${_cli_restore_from} ===="
-
-  # Operator-supplied restic password file is non-negotiable — without
-  # it the repo is opaque. We accept either an inline path (file
-  # already on disk) or stdin via JABALI_RESTORE_PASSWORD env (last
-  # resort for non-interactive installs).
-  if [[ -n "${_cli_restore_password:-}" && -f "${_cli_restore_password}" ]]; then
-    install -m 0600 -o root -g root "${_cli_restore_password}" /etc/jabali-panel/restic-repo.password
-    _ok "restic password installed from ${_cli_restore_password}"
-  elif [[ -n "${JABALI_RESTORE_PASSWORD:-}" ]]; then
-    printf '%s' "$JABALI_RESTORE_PASSWORD" > /etc/jabali-panel/restic-repo.password
-    chmod 0600 /etc/jabali-panel/restic-repo.password
-    chown root:root /etc/jabali-panel/restic-repo.password
-    _ok "restic password installed from JABALI_RESTORE_PASSWORD env"
-  else
-    _die "disaster restore requires --restore-password=<path> or JABALI_RESTORE_PASSWORD env"
-  fi
-
-  # Optional creds env file (SFTP password, S3 keys, …). Persist at
-  # the canonical path so the panel-side reconciler can find it after
-  # the restore brings backup_destinations rows.
-  local creds_arg=""
-  if [[ -n "${_cli_restore_creds:-}" && -f "${_cli_restore_creds}" ]]; then
-    install -d -m 0700 -o root -g root /etc/jabali-panel/restic-remotes
-    install -m 0600 -o root -g root "${_cli_restore_creds}" /etc/jabali-panel/restic-remotes/restore-bootstrap.env
-    creds_arg="--credentials-ref=/etc/jabali-panel/restic-remotes/restore-bootstrap.env"
-    _ok "restore credentials installed at /etc/jabali-panel/restic-remotes/restore-bootstrap.env"
-  fi
-
-  local extra_args=()
-  for opt in "${_cli_restore_extra_options[@]}"; do
-    extra_args+=("--extra-option=$opt")
-  done
-
-  local snap="${_cli_restore_snapshot:-latest}"
-  _log "→ jabali system restore --remote-url=${_cli_restore_from} --snapshot=${snap} --include-accounts --force"
-  if ! /usr/local/bin/jabali-panel system restore \
-      --remote-url="${_cli_restore_from}" \
-      $creds_arg \
-      "${extra_args[@]}" \
-      --snapshot="${snap}" \
-      --include-accounts \
-      --force; then
-    _err "disaster restore dispatch failed — manual intervention required"
-    _err "  staging dir:   /var/lib/jabali-backups/restore-staging/"
-    _err "  agent log:     journalctl -u $AGENT_SERVICE_NAME -n 200"
-    return 1
-  fi
-
-  # Restart services so the now-restored DB + /etc/jabali-panel
-  # take effect. The CLI defer also restarts panel; this catches
-  # the agent + nginx + stalwart that the apply phase touched.
-  systemctl restart "$AGENT_SERVICE_NAME" "$SERVICE_NAME" 2>/dev/null || true
-
-  cat <<EOF
-
-╔══════════════════════════════════════════════════════════════╗
-║                DISASTER RESTORE COMPLETE                     ║
-╠══════════════════════════════════════════════════════════════╣
-║                                                              ║
-║  panel_db loaded into MariaDB.                               ║
-║  /etc/jabali-panel synced from backup.                       ║
-║  /etc/letsencrypt synced from backup.                        ║
-║                                                              ║
-║  Stages staged at:                                           ║
-║    /var/lib/jabali-backups/restore-staging/                  ║
-║                                                              ║
-║  REVIEW STAGED-BUT-NOT-APPLIED stages (operator judgement):  ║
-║    • mail_state    — Stalwart RocksDB; stop+rsync+start by   ║
-║                      hand if Stalwart was on this host       ║
-║    • service_config — nginx/php pool overrides; install.sh   ║
-║                       has already written canonical configs ║
-║    • security      — UFW/CrowdSec/ModSec rules               ║
-║    • os_users      — /etc/passwd+shadow filtered backup      ║
-║    • data_state    — per-user account_full payloads          ║
-║                                                              ║
-║  See plans/m30-backup-restore-runbook.md §"Disaster recovery"║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
-
-EOF
-  _ok "disaster restore complete — check journalctl -u $SERVICE_NAME for boot health"
-}
-
 seed_admin_env() {
-  # Disaster-recovery skip: when --restore-from is set the restored
-  # panel_db brings the real admin row; bootstrap seeding would add a
-  # second account that the operator never asked for.
-  if [[ -n "${_cli_restore_from:-}" ]]; then
-    _ok "disaster restore mode — skipping admin bootstrap seed"
-    return
-  fi
   # If bootstrap vars are already set (e.g. re-run), don't regenerate —
   # the panel's BootstrapAdmin is idempotent and will detect the existing
   # admin row.
@@ -5150,20 +4793,13 @@ EOF
 cleanup_modsecurity() {
   # ADR-0055 SUPERSEDED 2026-04-26 — CrowdSec AppSec covers the WAF role.
   # Active cleanup so existing hosts that installed M26 ModSecurity drop
-  # the dead nginx module + CRS rules + libs + main include on `jabali update`.
+  # the dead nginx module + CRS rules + main include on `jabali update`.
   # Idempotent: bails fast when packages already gone and no leftover files.
-  #
-  # 2026-05-04: extended package list to include libmodsecurity3t64 +
-  # libmodsecurity-dev. Earlier list (libnginx-mod-http-modsecurity +
-  # modsecurity-crs only) left the base library packages installed,
-  # surfaced when auditing why install.sh seemed to "still install
-  # ModSec" on long-lived VMs. Library packages have no other consumer
-  # in the stack, so safe to purge.
   local pkgs_present=0
-  if dpkg -l 2>/dev/null | grep -qE '^ii\s+(libnginx-mod-http-modsecurity|modsecurity-crs|libmodsecurity3t64|libmodsecurity-dev)\s'; then
+  if dpkg -l 2>/dev/null | grep -qE '^ii\s+(libnginx-mod-http-modsecurity|modsecurity-crs)\s'; then
     pkgs_present=1
   fi
-  if [[ "$pkgs_present" == "0" && ! -d /etc/nginx/modsec && ! -e /etc/nginx/modsecurity.conf && ! -d /etc/modsecurity && ! -d /usr/share/modsecurity-crs ]]; then
+  if [[ "$pkgs_present" == "0" && ! -d /etc/nginx/modsec && ! -e /etc/nginx/modsecurity.conf ]]; then
     return 0
   fi
 
@@ -5171,28 +4807,16 @@ cleanup_modsecurity() {
   if [[ "$pkgs_present" == "1" ]]; then
     DEBIAN_FRONTEND=noninteractive apt-get -y \
       -o Dpkg::Lock::Timeout=300 \
-      remove --purge \
-        libnginx-mod-http-modsecurity \
-        modsecurity-crs \
-        libmodsecurity3t64 \
-        libmodsecurity-dev \
-        >/dev/null 2>&1 || true
-    # Clean up any orphaned modsec deps left by the purge.
-    DEBIAN_FRONTEND=noninteractive apt-get -y \
-      -o Dpkg::Lock::Timeout=300 \
-      autoremove --purge >/dev/null 2>&1 || true
+      remove --purge libnginx-mod-http-modsecurity modsecurity-crs >/dev/null 2>&1 || true
   fi
 
   # Sweep leftover nginx config + module symlinks. The apt purge usually
   # handles modules-enabled/*.conf already, but operators sometimes
-  # symlinked manually — wipe both. Also covers modsec rule bundles that
-  # live outside /etc and don't get touched by `apt purge`.
+  # symlinked manually — wipe both.
   rm -f /etc/nginx/modules-enabled/*modsecurity* 2>/dev/null || true
   rm -f /etc/nginx/modsecurity.conf 2>/dev/null || true
   rm -rf /etc/nginx/modsec 2>/dev/null || true
   rm -rf /etc/modsecurity 2>/dev/null || true
-  rm -rf /usr/share/modsecurity-crs 2>/dev/null || true
-  rm -rf /var/log/modsec_audit.log /var/log/modsec_debug.log 2>/dev/null || true
 
   if nginx -t >/dev/null 2>&1; then
     if systemctl is-active --quiet nginx; then
@@ -5203,129 +4827,6 @@ cleanup_modsecurity() {
     _warn "nginx -t failed after ModSecurity cleanup — first relevant error:"
     nginx -t 2>&1 | head -10 >&2
   fi
-}
-
-install_composer_upstream() {
-  # Composer is a PHP application, not a Debian system tool. Apt's
-  # `composer` deb pulls unversioned `php-cli | php` virtual which on
-  # Debian 13 resolves to php8.4 (Debian's default major), dragging the
-  # whole `php8.4-*` extension stack along even when JABALI_PHP_VERSIONS
-  # is set to 8.5. The result: 9 unused php8.4-* packages on every
-  # install, plus the PHP Defense UI shows a phantom 8.4 minor.
-  #
-  # Fix: install the official upstream composer.phar and bind it to our
-  # chosen PHP minor. No apt dep on `php-cli` virtual = no 8.4 ride-along.
-  # The wrapper at /usr/local/bin/composer overrides the Debian deb on
-  # PATH (/usr/local/bin precedes /usr/bin in the standard PATH order
-  # used by login shells, sudo, and systemd). We also `apt purge` the
-  # Debian deb so `apt autoremove` can later sweep the orphaned
-  # php8.4-* packages.
-  #
-  # Idempotent: skips when /usr/local/bin/composer exists and reports
-  # the expected version + binds to a present php minor.
-  local primary_minor
-  primary_minor="$(echo "${JABALI_PHP_VERSIONS:-8.5}" | awk '{print $1}')"
-  local php_bin="/usr/bin/php${primary_minor}"
-  if [[ ! -x "$php_bin" ]]; then
-    _warn "install_composer_upstream: ${php_bin} not found; skipping (install_php must run first)"
-    return 0
-  fi
-
-  # Purge the Debian deb if present; release the unversioned php-*
-  # virtuals it dragged in so later autoremove can clean them.
-  if dpkg -l 2>/dev/null | grep -qE '^ii\s+composer\s'; then
-    _log "removing Debian composer deb (replacing with upstream phar pinned to php${primary_minor})"
-    DEBIAN_FRONTEND=noninteractive apt-get -y \
-      -o Dpkg::Lock::Timeout=300 \
-      remove --purge composer >/dev/null 2>&1 || true
-  fi
-
-  local target="/usr/local/bin/composer"
-  local current_version=""
-  if [[ -x "$target" ]]; then
-    current_version="$("$target" --version 2>/dev/null | awk '/^Composer/{print $3; exit}')"
-  fi
-
-  # Always (re)write the wrapper — install_composer_upstream is cheap
-  # and self-correcting if the operator flipped JABALI_PHP_VERSIONS.
-  _log "installing composer upstream phar (php${primary_minor})"
-  local tmp_installer
-  tmp_installer="$(mktemp /tmp/composer-installer.XXXXXX.php)"
-  if ! curl -fsSL https://getcomposer.org/installer -o "$tmp_installer"; then
-    rm -f "$tmp_installer"
-    _warn "install_composer_upstream: download installer failed; leaving existing composer (current: ${current_version:-none})"
-    return 0
-  fi
-
-  # The official installer prints the phar path on success. Run via our
-  # chosen PHP so any extension constraints check against 8.5 not the
-  # apt default. --filename=composer.phar so we can wrap it.
-  local phar_dir="/usr/local/lib/composer"
-  install -d -m 0755 "$phar_dir"
-  if ! "$php_bin" "$tmp_installer" \
-      --quiet \
-      --install-dir="$phar_dir" \
-      --filename="composer.phar"; then
-    rm -f "$tmp_installer"
-    _warn "install_composer_upstream: phar install failed; leaving existing composer"
-    return 0
-  fi
-  rm -f "$tmp_installer"
-
-  # Wrapper at /usr/local/bin/composer pins the PHP binary explicitly.
-  # No `env php` or update-alternatives drift — calling code paths
-  # (drupal_install.go, panel-agent etc.) get deterministic 8.5.
-  cat > "$target" <<EOF_COMPOSER
-#!/bin/sh
-# Generated by install.sh:install_composer_upstream — do not edit.
-# Pins composer to PHP ${primary_minor} (JABALI_PHP_VERSIONS primary).
-# Re-runs of install.sh refresh both the phar and this wrapper.
-exec ${php_bin} ${phar_dir}/composer.phar "\$@"
-EOF_COMPOSER
-  chmod 0755 "$target"
-
-  local new_version
-  new_version="$("$target" --version 2>/dev/null | awk '/^Composer/{print $3; exit}')"
-  _ok "composer ${new_version:-?} installed at ${target} (pinned to ${php_bin})"
-}
-
-cleanup_php_default() {
-  # M27 follow-up (2026-05-04): purge orphaned php8.4-* packages left
-  # behind by the apt `composer` deb (now replaced by upstream phar in
-  # install_composer_upstream). On a fresh install this is a no-op.
-  # On an existing host that previously ran the apt-composer flow, this
-  # removes the 9 orphaned php8.4-* extensions (cli, mysql, curl,
-  # mbstring, intl, zip, gd, opcache, xml, readline) plus the
-  # unversioned php-* metapackages.
-  #
-  # Defensive: only purges php8.4-* packages whose ONLY remaining rdep
-  # is a removed package. apt autoremove --purge handles the orphan
-  # logic — we just call it once Debian's php-defaults pin and the
-  # composer dep are out of the picture.
-  if dpkg -l 2>/dev/null | grep -qE '^ii\s+(php-cli|php-curl|php-mbstring|php-mysql|php-xml|php-zip|php-gd|php-intl|php-common)\s'; then
-    _log "purging unversioned php-* virtual packages (Debian default pulled them via composer deb)"
-    DEBIAN_FRONTEND=noninteractive apt-get -y \
-      -o Dpkg::Lock::Timeout=300 \
-      remove --purge \
-        php-cli php-curl php-mbstring php-mysql php-xml php-zip \
-        php-gd php-intl php-common \
-        >/dev/null 2>&1 || true
-  fi
-  # Sweep php8.4-* orphans now that nothing depends on them. Only fires
-  # when JABALI_PHP_VERSIONS doesn't include 8.4 (otherwise these are
-  # legitimately installed).
-  local php_versions="${JABALI_PHP_VERSIONS:-8.5}"
-  if ! echo " $php_versions " | grep -q ' 8.4 '; then
-    if dpkg -l 2>/dev/null | grep -qE '^ii\s+php8\.4-'; then
-      _log "removing php8.4-* (not in JABALI_PHP_VERSIONS=\"$php_versions\")"
-      DEBIAN_FRONTEND=noninteractive apt-get -y \
-        -o Dpkg::Lock::Timeout=300 \
-        remove --purge 'php8.4-*' >/dev/null 2>&1 || true
-    fi
-  fi
-  DEBIAN_FRONTEND=noninteractive apt-get -y \
-    -o Dpkg::Lock::Timeout=300 \
-    autoremove --purge >/dev/null 2>&1 || true
 }
 
 install_malware_stack() {
@@ -6181,35 +5682,9 @@ UNIT
 # copies them to /etc/apparmor.d/ and reloads via apparmor_parser -r.
 
 install_apparmor() {
-  # Check apparmor + apparmor-utils SEPARATELY. Debian 13 ships
-  # `apparmor` default-installed but NOT `apparmor-utils`; the
-  # combined check `dpkg -s apparmor` succeeded and skipped the
-  # apt install, leaving aa-complain / aa-enforce missing. Result:
-  # apply_apparmor_profiles called aa-complain via `|| true`,
-  # silently swallowed the not-found error, and profiles fell through
-  # to apparmor_parser's default mode (enforce on Debian 13) — which
-  # then broke `jabali update`'s os/exec chown call (incident
-  # 2026-05-02 on mx.jabali-panel.local).
-  # `dpkg -s pkg` exits 0 even for "deinstall ok config-files" state
-  # (package known but not installed). Match the actual Status field
-  # so a previously-purged apparmor-utils gets re-installed.
-  _pkg_installed() {
-    dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q '^install ok installed$'
-  }
-  local need_install=()
-  _pkg_installed apparmor       || need_install+=(apparmor)
-  _pkg_installed apparmor-utils || need_install+=(apparmor-utils)
-  if [[ ${#need_install[@]} -gt 0 ]]; then
-    _spin "apt install ${need_install[*]}" \
-      apt-get install -y -qq --no-install-recommends "${need_install[@]}"
-  fi
-
-  # Hard-require aa-complain after the apt step. apply_apparmor_profiles
-  # calls it via `|| true`, so a missing binary silently leaves profiles
-  # in enforce — NOT what the M40 7-day soak design wants.
-  if ! command -v aa-complain >/dev/null 2>&1; then
-    _err "aa-complain missing after apparmor-utils install — cannot set complain mode"
-    return 1
+  if ! dpkg -s apparmor >/dev/null 2>&1; then
+    _spin "apt install apparmor + apparmor-utils" \
+      apt-get install -y -qq --no-install-recommends apparmor apparmor-utils
   fi
 
   if [[ ! -d /sys/kernel/security/apparmor ]]; then
@@ -6233,12 +5708,6 @@ install_apparmor() {
 
   local first_install=0
   if [[ ! -f /etc/jabali/.apparmor-installed ]]; then
-    first_install=1
-  elif ! aa-status 2>/dev/null | grep -q 'jabali-'; then
-    # Marker exists but no jabali-* profiles are loaded — heals hosts
-    # that hit the old install_apparmor-before-clone bug (2026-05-02).
-    # Treat as first_install so the 7-day complain-mode soak applies.
-    _warn "AppArmor: marker present but no jabali-* profiles loaded; treating as first_install"
     first_install=1
   fi
 
@@ -6267,9 +5736,7 @@ apply_apparmor_profiles() {
   fi
 
   local profile
-  # Glob covers both jabali-* daemons AND stalwart-mail (M40 ships
-  # an apparmor profile for Stalwart too — same dir, different name).
-  for profile in "$src_dir"/usr.local.bin.*; do
+  for profile in "$src_dir"/usr.local.bin.jabali-*; do
     [[ -e "$profile" ]] || continue
     local name
     name=$(basename "$profile")
@@ -6310,225 +5777,6 @@ apply_apparmor_profiles() {
 # /boot /root). Daily check via systemd timer; M14 event source
 # fires on any diff. See ADR-0087 + plans/m42-aide-fim-system-integrity.md.
 
-# install_snuffleupagus — M41 (ADR-0088). Source-builds Snuffleupagus.so
-# for every installed PHP minor and wires it into both fpm/ and cli/
-# conf.d directories. The shared sp.configuration_file points at
-# /etc/jabali/snuffleupagus/active.rules which the panel reconciler
-# renders from DB state. Default mode is off until Wave E flips fresh
-# installs to simulation.
-#
-# Idempotent: build.sh skips minors already on the pinned version.
-install_snuffleupagus() {
-  # Pin the upstream tag + tarball SHA256. Update both atomically when
-  # bumping. SHA256 = sha256sum of the GitHub release tarball.
-  local snuf_version="0.13.0"
-  local snuf_sha256="350a33cd3906bdba46f5c4cf3d00edeb81eaf6a7b9a3a7e5ef47bc967492ae90"
-
-  local build="${REPO_DIR}/install/snuffleupagus/build/build.sh"
-  if [[ ! -x "$build" ]]; then
-    _err "snuffleupagus build script missing: $build"
-    return 1
-  fi
-
-  # Build deps. snuffleupagus needs the same toolchain as any phpize-built
-  # extension. The phpX.Y-dev metapackage ships phpize + php-config + the
-  # Zend headers we link against. install_base_packages does NOT pull it
-  # because nothing else needs it; we must install per-minor here.
-  if ! dpkg -s build-essential libpcre2-dev >/dev/null 2>&1; then
-    _apt_wait_lock || return 1
-    _spin "apt install build-essential + libpcre2-dev" \
-      apt-get install -y -qq --no-install-recommends \
-        -o DPkg::Lock::Timeout=300 \
-        build-essential libpcre2-dev
-  fi
-  # Build for every PHP minor that has an FPM binary on disk — not just
-  # JABALI_PHP_VERSIONS. The PHP Manager UI lets the operator install
-  # additional minors at runtime; without auto-detect, install_snuffleupagus
-  # would only cover the bootstrap-time JABALI_PHP_VERSIONS set and
-  # operator-added minors would silently lack PHP Defense (caught
-  # 2026-05-04 — UI showed "1/3 installed PHP minors" with 8.5 active).
-  local _detected_minors=""
-  if compgen -G "/usr/sbin/php*-fpm" >/dev/null; then
-    _detected_minors="$(ls -1 /usr/sbin/php*-fpm 2>/dev/null \
-      | sed -E 's|.*/php([0-9]+\.[0-9]+)-fpm|\1|' \
-      | sort -u | tr '\n' ' ')"
-  fi
-  # Union of explicit override + on-disk detection. Keeps the override
-  # behavior (operator forcing a specific subset) while adding any
-  # newly-installed minor automatically on the next run.
-  local _php_versions="${JABALI_PHP_VERSIONS:-} ${_detected_minors}"
-  _php_versions="$(echo $_php_versions | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/ $//')"
-  if [[ -z "${_php_versions// /}" ]]; then
-    _php_versions="8.5"
-  fi
-  local _minor _dev_pkgs=()
-  for _minor in $_php_versions; do
-    if ! dpkg -s "php${_minor}-dev" >/dev/null 2>&1; then
-      _dev_pkgs+=("php${_minor}-dev")
-    fi
-  done
-  if (( ${#_dev_pkgs[@]} > 0 )); then
-    # When install_snuffleupagus runs via `jabali update --force`'s
-    # prelude (sourcing install.sh then calling this function directly),
-    # install_base_packages's apt-get update + Sury repo setup may not
-    # have run in this shell. Ensure both before attempting the dev
-    # install or apt errors with "Unable to locate package phpX.Y-dev"
-    # because the Sury index is missing/stale (caught 2026-05-04 on the
-    # mx VM after install.sh refactor — install_php had run earlier so
-    # phpX.Y-fpm/cli were present, but apt cache had since aged out).
-    if [[ ! -s /etc/apt/sources.list.d/sury-php.list ]] \
-       && declare -F _install_sury_source >/dev/null 2>&1; then
-      _install_sury_source
-    fi
-    _apt_wait_lock || return 1
-    _spin "apt update (refresh Sury index for php-dev)" \
-      apt-get update -qq -o Acquire::Languages=none \
-        -o Acquire::http::Timeout=20 \
-        -o Acquire::https::Timeout=20 \
-        -o Acquire::Retries=3 \
-        -o DPkg::Lock::Timeout=300
-    # Per-minor install so a single PPA hiccup on one minor doesn't
-    # nuke the entire build pass. Each minor's dev pkg is best-effort:
-    # success unlocks the build below; failure logs a warning and the
-    # build skips that minor while still attempting the rest. Caught
-    # 2026-05-04 on an Ubuntu host where ppa.launchpadcontent.net was
-    # intermittently unreachable, blocking php8.5-dev install and
-    # cascade-failing the whole snuffleupagus install pass.
-    local _dev_pkg
-    for _dev_pkg in "${_dev_pkgs[@]}"; do
-      _apt_wait_lock || true
-      if ! apt-get install -y -qq --no-install-recommends \
-            -o Acquire::http::Timeout=30 \
-            -o Acquire::https::Timeout=30 \
-            -o Acquire::Retries=3 \
-            -o DPkg::Lock::Timeout=300 \
-            "$_dev_pkg" >/dev/null 2>&1; then
-        _warn "apt install $_dev_pkg failed (PPA unreachable?) — snuffleupagus build will skip the matching minor"
-      else
-        _ok "installed $_dev_pkg"
-      fi
-    done
-  fi
-
-  # Active rules dir + placeholder file. mode=off by default, so the
-  # placeholder disables the module. Reconciler overwrites once state
-  # flips to simulation/enforce.
-  install -d -m 0755 /etc/jabali/snuffleupagus
-  if [[ ! -f /etc/jabali/snuffleupagus/active.rules ]]; then
-    cat > /etc/jabali/snuffleupagus/active.rules <<'EOF_RULES'
-# Jabali Snuffleupagus — placeholder (mode=off). Reconciler overwrites
-# this file when the operator flips mode to simulation or enforce.
-sp.global.enable(0);
-EOF_RULES
-    chmod 0644 /etc/jabali/snuffleupagus/active.rules
-  fi
-  # cli.ini for the jabali-php wrapper (Wave C). Pinning prevents
-  # customer-supplied -c flags from sidestepping the rules file.
-  if [[ ! -f /etc/jabali/snuffleupagus/cli.ini ]]; then
-    cat > /etc/jabali/snuffleupagus/cli.ini <<'EOF_CLI'
-; Jabali PHP-CLI wrapper config — pin sp.configuration_file so cron and
-; SFTP-shell PHP cannot dodge the active rule set via custom .ini.
-sp.configuration_file=/etc/jabali/snuffleupagus/active.rules
-EOF_CLI
-    chmod 0644 /etc/jabali/snuffleupagus/cli.ini
-  fi
-
-  # Mirror the rule bundle into /usr/share/jabali/snuffleupagus/rules so
-  # the panel reconciler reads from a stable on-disk path independent of
-  # the source checkout layout.
-  install -d -m 0755 /usr/share/jabali/snuffleupagus/rules
-  if [[ -d "${REPO_DIR}/install/snuffleupagus/rules" ]]; then
-    install -m 0644 "${REPO_DIR}/install/snuffleupagus/rules/"*.rules \
-      /usr/share/jabali/snuffleupagus/rules/ 2>/dev/null || true
-    if [[ -f "${REPO_DIR}/install/snuffleupagus/rules/README.md" ]]; then
-      install -m 0644 "${REPO_DIR}/install/snuffleupagus/rules/README.md" \
-        /usr/share/jabali/snuffleupagus/rules/ 2>/dev/null || true
-    fi
-  fi
-
-  # Build per minor. Same auto-detect as the dev-pkg loop above:
-  # union of JABALI_PHP_VERSIONS + every phpX.Y-fpm binary on disk.
-  # Operator-installed minors via the PHP Manager UI get covered on
-  # the next install.sh / `jabali update --force` run without manual
-  # JABALI_PHP_VERSIONS edits.
-  local php_versions="$_php_versions"
-  local minor
-  for minor in $php_versions; do
-    [[ -d "/etc/php/$minor/fpm" ]] || continue
-    # Skip minors whose -dev package failed to install above (PPA
-    # unreachable etc.) — phpize won't be present and the build would
-    # fail with an unhelpful "phpize: command not found".
-    if ! command -v "phpize${minor}" >/dev/null 2>&1 \
-       && [[ ! -x "/usr/bin/phpize${minor}" ]]; then
-      _warn "skipping snuffleupagus build for PHP $minor — phpize${minor} not found (php${minor}-dev probably failed to install)"
-      continue
-    fi
-    SNUFFLEUPAGUS_VERSION="$snuf_version" \
-    SNUFFLEUPAGUS_SHA256="$snuf_sha256" \
-      "$build" "$minor" || {
-        _warn "snuffleupagus build failed for PHP $minor (continuing other minors)"
-        continue
-      }
-    # mods-available + conf.d wiring (FPM + CLI both load sp.so).
-    cat > "/etc/php/$minor/mods-available/jabali-snuffleupagus.ini" <<EOF_MOD
-; Jabali Snuffleupagus extension load + config-file pin.
-extension=/usr/lib/php/jabali-snuffleupagus/$minor/snuffleupagus.so
-sp.configuration_file=/etc/jabali/snuffleupagus/active.rules
-EOF_MOD
-    ln -sf "../../mods-available/jabali-snuffleupagus.ini" \
-      "/etc/php/$minor/fpm/conf.d/30-jabali-snuffleupagus.ini"
-    ln -sf "../../mods-available/jabali-snuffleupagus.ini" \
-      "/etc/php/$minor/cli/conf.d/30-jabali-snuffleupagus.ini"
-  done
-
-  # Wave C: PHP-CLI bypass detection. Watch direct execve of every Sury
-  # /usr/bin/phpX.Y plus /usr/bin/php so SFTP-shell users running php
-  # outside the FPM pool surface in auditd logs (key=jabali_php_bypass).
-  install_audit_php_bypass
-
-  _ok "snuffleupagus installed across PHP minors (mode=off; flip via Security UI)"
-}
-
-# install_audit_php_bypass — M41 Wave C (ADR-0088). Watches direct CLI
-# php exec by real users (auid>=1000) so an attacker dodging FPM via
-# `php8.5 -n shell.php` is at least logged. The conf.d/30-jabali-
-# snuffleupagus.ini drop-in already loads sp.so for normal CLI invocations,
-# but `php -n` skips conf.d entirely; that's what this audit rule catches.
-install_audit_php_bypass() {
-  if ! dpkg -s auditd >/dev/null 2>&1; then
-    _warn "auditd not installed — install_audit_exec should have run earlier"
-    return 0
-  fi
-
-  local rules_file=/etc/audit/rules.d/jabali-snuffleupagus.rules
-  local rules_tmp
-  rules_tmp=$(mktemp)
-  {
-    echo "# Jabali Snuffleupagus PHP-CLI bypass detection (M41, ADR-0088)."
-    echo "# Tagged 'jabali_php_bypass' for ausearch -k pivots."
-    echo "# auid>=1000 = real users only (excludes daemon services)."
-    echo "# Catches \`php -n\` style bypass of the conf.d sp.so drop-in."
-    echo
-    echo "-a always,exit -F arch=b64 -S execve -F path=/usr/bin/php       -F auid>=1000 -F auid!=4294967295 -k jabali_php_bypass"
-    local minor
-    for minor in $(ls -1d /etc/php/[0-9]*.[0-9]* 2>/dev/null | xargs -r -n1 basename); do
-      local bin="/usr/bin/php${minor}"
-      [[ -x "$bin" ]] || continue
-      printf -- '-a always,exit -F arch=b64 -S execve -F path=%-21s -F auid>=1000 -F auid!=4294967295 -k jabali_php_bypass\n' "$bin"
-    done
-  } >"$rules_tmp"
-
-  if [[ ! -f "$rules_file" ]] || ! cmp -s "$rules_tmp" "$rules_file"; then
-    install -m 0640 -o root -g root "$rules_tmp" "$rules_file"
-    if command -v augenrules >/dev/null 2>&1; then
-      augenrules --load >/dev/null 2>&1 || \
-        _warn "augenrules --load failed — auditd may need a restart"
-    fi
-    _ok "auditd jabali-snuffleupagus.rules installed (key=jabali_php_bypass)"
-  fi
-  rm -f "$rules_tmp"
-}
-
 install_aide() {
   if ! dpkg -s aide >/dev/null 2>&1; then
     _spin "apt install aide + aide-common" \
@@ -6542,11 +5790,8 @@ install_aide() {
 # Jabali — system-file integrity. ADR-0087.
 # Excludes paths the panel writes to + ephemeral state.
 
-# AIDE 0.18+ renamed `database=` → `database_in=`. Debian 13 ships
-# 0.19.1, which rejects `database=` with "unexpected character: ':'".
-database_in=file:/var/lib/aide/aide.db
+database=file:/var/lib/aide/aide.db
 database_out=file:/var/lib/aide/aide.db.new
-database_new=file:/var/lib/aide/aide.db.new
 gzip_dbout=yes
 report_url=file:/var/log/aide/aide.report.log
 report_url=stdout
@@ -6624,14 +5869,10 @@ AIDE_CONF
     install -d -m 0750 /var/lib/aide
     touch /var/lib/aide/.init-in-progress
     _log "AIDE: initial DB build (background — takes 2-5 min)"
-    # /usr/sbin/aideinit (ships with aide-common) is the Debian-canonical
-    # entrypoint: it reads /etc/aide/aide.conf, builds aide.db.new, and
-    # atomically renames to aide.db. Plain `aide --init` would require
-    # an explicit --config flag (init.log: "ERROR: missing configuration
-    # (use '--config' '--before' or '--after' command line parameter)").
     nohup bash -c '
-      /usr/sbin/aideinit -y -f >/var/log/aide/init.log 2>&1
-      if [[ -f /var/lib/aide/aide.db ]]; then
+      /usr/bin/aide --init >/var/log/aide/init.log 2>&1
+      if [[ -f /var/lib/aide/aide.db.new ]]; then
+        mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
         chmod 0600 /var/lib/aide/aide.db
         date -u +%Y-%m-%dT%H:%M:%SZ > /var/lib/aide/.jabali-installed
       fi
@@ -6653,150 +5894,6 @@ AIDE_CONF
   fi
 
   _ok "AIDE installed (daily check via jabali-aide-check.timer)"
-}
-
-
-# ---------- step XX: GoAccess log analyzer ----------------------------------
-
-install_goaccess() {
-  _log "installing GoAccess web log analyzer for logs & statistics"
-
-  # Install GoAccess from official Debian repositories
-  if ! command -v goaccess >/dev/null 2>&1; then
-    _spin "apt install goaccess" \
-      apt-get install -y -qq --no-install-recommends goaccess
-  fi
-
-  if ! command -v goaccess >/dev/null 2>&1; then
-    _die "goaccess binary not found after installation"
-  fi
-  _ok "GoAccess present ($(goaccess --version 2>&1 | head -1))"
-
-  # Create GoAccess configuration file
-  local goaccess_config="/etc/goaccess/goaccess.conf"
-  if [[ ! -f "$goaccess_config" ]]; then
-    _log "creating GoAccess configuration at $goaccess_config"
-    install -d -m 0755 /etc/goaccess
-    cat > "$goaccess_config" << 'GOACCESS_EOF'
-# GoAccess configuration for jabali panel
-# Managed by install.sh - do not edit manually
-
-# Log format for nginx access logs
-log-format COMBINED
-
-# Date format
-date-format %d/%b/%Y
-time-format %T
-
-# Real-time HTML settings
-real-time-html true
-ws-url ws://127.0.0.1:7890
-
-# Output settings
-html-prefs {"theme":"bright","perPage":7,"layout":"horizontal","showTables":true,"showGraphs":true}
-
-# Exclude static files
-ignore-panel /\.(?:css|js|jpg|png|gif|ico|jpeg|pdf|txt|zip|tar|gz|woff|woff2|eot|ttf|svg)(?:\?.*)?$
-
-# WebSocket settings
-port 7890
-addr 127.0.0.1
-GOACCESS_EOF
-    chmod 644 "$goaccess_config"
-  else
-    _log "GoAccess config already exists at $goaccess_config"
-  fi
-
-  # Create directory for GoAccess reports
-  local reports_dir="/var/lib/jabali-goaccess"
-  if [[ ! -d "$reports_dir" ]]; then
-    _log "creating reports directory at $reports_dir"
-    install -d -m 0755 -o jabali -g jabali "$reports_dir"
-  fi
-
-  # Create systemd timer for periodic report generation
-  local timer_dir="/etc/systemd/system"
-  local timer_unit="$timer_dir/jabali-goaccess.timer"
-  local service_unit="$timer_dir/jabali-goaccess.service"
-
-  # Service unit
-  if [[ ! -f "$service_unit" ]]; then
-    _log "creating GoAccess service unit"
-    cat > "$service_unit" << 'SERVICE_EOF'
-[Unit]
-Description=Generate GoAccess reports for jabali domains
-After=network.target
-
-[Service]
-Type=oneshot
-User=jabali
-Group=jabali
-ExecStart=/usr/local/bin/jabali-goaccess-generator
-PrivateTmp=yes
-ProtectHome=yes
-ProtectSystem=strict
-ReadWritePaths=/var/lib/jabali-goaccess
-ReadOnlyPaths=/var/log/nginx
-SERVICE_EOF
-  fi
-
-  # Timer unit
-  if [[ ! -f "$timer_unit" ]]; then
-    _log "creating GoAccess timer unit"
-    cat > "$timer_unit" << 'TIMER_EOF'
-[Unit]
-Description=Run GoAccess report generation every 15 minutes
-Requires=jabali-goaccess.service
-
-[Timer]
-OnCalendar=*:0/15
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-TIMER_EOF
-  fi
-
-  # Create the generator script
-  local generator_script="/usr/local/bin/jabali-goaccess-generator"
-  if [[ ! -f "$generator_script" ]]; then
-    _log "creating GoAccess report generator script"
-    cat > "$generator_script" << 'SCRIPT_EOF'
-#!/bin/bash
-set -euo pipefail
-
-# Generate GoAccess reports for all domains
-REPORTS_DIR="/var/lib/jabali-goaccess"
-NGINX_LOG_DIR="/var/log/nginx"
-
-# Ensure reports directory exists
-mkdir -p "$REPORTS_DIR"
-
-# Generate reports for each domain
-for access_log in "$NGINX_LOG_DIR"/*.access.log; do
-    if [[ -f "$access_log" ]]; then
-        domain=$(basename "$access_log" .access.log)
-        output_file="$REPORTS_DIR/${domain}.html"
-
-        # Skip if no new log entries since last generation
-        if [[ -f "$output_file" ]] && [[ ! "$access_log" -nt "$output_file" ]]; then
-            continue
-        fi
-
-        # Generate HTML report
-        goaccess "$access_log" -o "$output_file" --log-format=COMBINED --date-format='%d/%b/%Y' --time-format='%T' --html --real-time-html 2>/dev/null || true
-    fi
-done
-SCRIPT_EOF
-    chmod 755 "$generator_script"
-  fi
-
-  # Enable and start the timer
-  systemctl daemon-reload
-  systemctl enable --quiet jabali-goaccess.timer
-  systemctl start jabali-goaccess.timer
-
-  _ok "GoAccess log analyzer installed and configured"
 }
 
 # ---------- step 8a.1: auto-restart drop-ins for critical services ----------
@@ -8001,27 +7098,15 @@ install_kratos() {
   local kratos_sha_file="${REPO_DIR}/install/kratos.sha256"
   local kratos_url="https://github.com/ory/kratos/releases/download/v${kratos_version}/kratos_${kratos_version}-linux_64bit.tar.gz"
 
-  # Skip binary download when already at the target version, but DON'T
-  # short-circuit the rest of install_kratos: jabali update reruns this
-  # function on every cycle and needs the config render + DB migration
-  # + systemd unit refresh to converge any template drift (e.g. the
-  # selfservice.methods.code.enabled flip in 8c93811 which was invisible
-  # to running services until the next install run). Returning here on
-  # version match meant operators saw kratos.yml on disk update without
-  # the running service ever reloading.
-  local _kratos_binary_present=0
+  # Check if already installed at correct version.
   if [[ -f "$kratos_binary" ]]; then
     local installed_version
     installed_version=$("$kratos_binary" version 2>&1 | grep -oP 'Version:\s+\K[^[:space:]]+' || echo "unknown")
     if [[ "$installed_version" == "v${kratos_version}" ]]; then
-      _ok "Kratos $kratos_version already installed (skipping download)"
-      _kratos_binary_present=1
+      _ok "Kratos $kratos_version already installed"
+      return
     fi
   fi
-
-  if (( _kratos_binary_present == 1 )); then
-    : # skip download/SHA/install — binary already at target version
-  else
 
   # Download + verify SHA-256.
   _log "downloading Kratos $kratos_version from GitHub"
@@ -8053,7 +7138,6 @@ install_kratos() {
   rm -f "$kratos_tar" /tmp/kratos
 
   _ok "Kratos binary installed at $kratos_binary"
-  fi # end _kratos_binary_present skip
 
   # Provision MariaDB database + user for Kratos.
   local kratos_db_name="jabali_kratos"
@@ -8135,17 +7219,6 @@ install_kratos() {
   # to avoid escaping `/` in URLs. All inputs are either generated by us
   # (hex passwords, fixed db-user/db-name) or validated DNS names — no
   # shell-metacharacter exposure.
-  #
-  # Render to a temp first so we can detect a real config change vs a
-  # no-op rewrite. install.sh runs on every `jabali update`; if the
-  # rendered output is byte-identical to /etc/jabali-panel/kratos.yml
-  # we leave the running service alone. When the template OR a
-  # substituted value changes (e.g. selfservice.methods.code.enabled
-  # flipped in 8c93811), we must restart jabali-kratos for the new
-  # config to take effect — operator-invisible config drift caused
-  # the v4 debug-report finding where kratos.yml on disk had the new
-  # fields but the running process still 404'd /admin/recovery/code.
-  local kratos_config_new="${kratos_config}.new"
   sed \
     -e "s|{{\.KratosDatabaseUser}}|${kratos_db_user}|g" \
     -e "s|{{\.KratosDatabasePassword}}|${kratos_db_pass}|g" \
@@ -8153,31 +7226,17 @@ install_kratos() {
     -e "s|{{\.PanelHostname}}|${panel_hostname}|g" \
     -e "s|{{\.KratosSecretDefault}}|${kratos_secret_default}|g" \
     -e "s|{{\.KratosCookieSecret}}|${kratos_secret_cookie}|g" \
-    "${REPO_DIR}/install/kratos.yml.tmpl" > "$kratos_config_new"
-
-  # Fail loud if any mustache slipped through (template drift — a new
-  # placeholder was added without a matching sed line).
-  if grep -q '{{\..*}}' "$kratos_config_new"; then
-    rm -f "$kratos_config_new"
-    _die "unsubstituted mustaches left in rendered kratos.yml — template drift?"
-  fi
-
-  local kratos_config_changed=0
-  if [[ ! -f "$kratos_config" ]] || ! cmp -s "$kratos_config_new" "$kratos_config"; then
-    kratos_config_changed=1
-    mv -f "$kratos_config_new" "$kratos_config"
-  else
-    rm -f "$kratos_config_new"
-  fi
+    "${REPO_DIR}/install/kratos.yml.tmpl" > "$kratos_config"
   chmod 0640 "$kratos_config"
   chown root:"$SERVICE_USER" "$kratos_config"
 
-  if (( kratos_config_changed == 1 )); then
-    _ok "Kratos config written to $kratos_config (changed; will restart jabali-kratos.service after migrations)"
-    JABALI_KRATOS_NEEDS_RESTART=1
-  else
-    _ok "Kratos config at $kratos_config (unchanged)"
+  # Fail loud if any mustache slipped through (template drift — a new
+  # placeholder was added without a matching sed line).
+  if grep -q '{{\..*}}' "$kratos_config"; then
+    _die "unsubstituted mustaches left in $kratos_config — template drift?"
   fi
+
+  _ok "Kratos config written to $kratos_config"
 
   # Copy identity schema file.
   if [[ ! -f "${REPO_DIR}/install/kratos-identity-schema.json" ]]; then
@@ -8193,32 +7252,16 @@ install_kratos() {
   # Kratos emits ~2 JSON-log lines per migration (one per file, bidirectional).
   # On a fresh install that's hundreds of lines — silence the chatter and
   # surface the full log only on failure.
-  local kratos_migrate_log="/var/log/jabali-kratos-migrate.log"
-  : > "$kratos_migrate_log"
-  set +e
-  "$kratos_binary" migrate sql up -e -c "$kratos_config" --yes >"$kratos_migrate_log" 2>&1
-  local migrate_rc=$?
-  set -e
-  if (( migrate_rc != 0 )); then
-    _err "Kratos database migrations failed (exit ${migrate_rc})"
-    _err "command: $kratos_binary migrate sql up -e -c $kratos_config --yes"
-    _err "config size: $(stat -c '%s' "$kratos_config" 2>/dev/null || echo missing) bytes"
-    _err "kratos --version: $("$kratos_binary" --version 2>&1 | head -1)"
-    local log_bytes
-    log_bytes="$(stat -c '%s' "$kratos_migrate_log" 2>/dev/null || echo 0)"
-    _err "log file: $kratos_migrate_log (${log_bytes} bytes)"
-    if (( log_bytes > 0 )); then
-      _err "----- log content -----"
-      tail -c 8192 "$kratos_migrate_log" >&2
-      _err "----- end log -----"
-    else
-      _err "log file is empty — kratos likely crashed before writing anything"
-      _err "try: $kratos_binary migrate sql up -e -c $kratos_config --yes"
-    fi
-    _die "Kratos database migrations failed (log preserved at $kratos_migrate_log)"
+  local kratos_migrate_log="/tmp/jabali-kratos-migrate.$$.log"
+  if ! "$kratos_binary" migrate sql -e -c "$kratos_config" --yes >"$kratos_migrate_log" 2>&1; then
+    _err "Kratos database migrations failed — full output:"
+    cat "$kratos_migrate_log" >&2
+    rm -f "$kratos_migrate_log"
+    _die "Kratos database migrations failed"
   fi
   local migrate_count
   migrate_count="$(grep -c 'applied successfully' "$kratos_migrate_log" 2>/dev/null || echo 0)"
+  rm -f "$kratos_migrate_log"
   _ok "Kratos database migrations completed (${migrate_count} applied)"
 
   _ok "Kratos migrations completed"
@@ -8274,12 +7317,10 @@ install_kratos() {
   # M25 Step 2+3 verification: both endpoints must be Unix sockets at
   # /run/jabali-kratos/{admin,public}.sock with mode 0660 jabali:jabali-sockets,
   # AND the legacy TCP listeners on 4433 + 4434 must be gone. The
-  # verify_socket_perms + verify_no_all_interface_binds helpers are sourced
-  # from install/scripts/socket-helpers.sh here. If any
+  # verify_socket_perms + verify_no_all_interface_binds helpers were sourced
+  # from install/scripts/socket-helpers.sh at the top of main(). If any
   # check fails the installer aborts loudly so the operator doesn't
   # discover a 502 from panel-api → Kratos in production.
-  # shellcheck source=install/scripts/socket-helpers.sh
-  source "$REPO_DIR/install/scripts/socket-helpers.sh"
   if ! verify_socket_perms /run/jabali-kratos/admin.sock jabali jabali-sockets 660; then
     _die "Kratos admin socket has wrong perms — see message above"
   fi
@@ -8316,18 +7357,154 @@ install_kratos() {
 }
 
 
+# ---------- step XX: GoAccess log analyzer ----------------------------------
+
+install_goaccess() {
+  _log "installing GoAccess web log analyzer for logs & statistics"
+
+  # Install GoAccess from official Debian repositories
+  if ! command -v goaccess >/dev/null 2>&1; then
+    _spin "apt install goaccess" \
+      apt-get install -y -qq --no-install-recommends goaccess
+  fi
+
+  if ! command -v goaccess >/dev/null 2>&1; then
+    _die "goaccess binary not found after installation"
+  fi
+  _ok "GoAccess present ($(goaccess --version 2>&1 | head -1))"
+
+  # Create GoAccess configuration file
+  local goaccess_config="/etc/goaccess/goaccess.conf"
+  if [[ ! -f "$goaccess_config" ]]; then
+    _log "creating GoAccess configuration at $goaccess_config"
+    install -d -m 0755 /etc/goaccess
+    cat > "$goaccess_config" << 'GOACCESS_EOF'
+# GoAccess configuration for jabali panel
+# Managed by install.sh - do not edit manually
+
+# Log format for nginx access logs
+log-format COMBINED
+
+# Date format
+date-format %d/%b/%Y
+time-format %T
+
+# Real-time HTML settings
+real-time-html true
+ws-url ws://127.0.0.1:7890
+
+# Output settings
+html-prefs {"theme":"bright","perPage":7,"layout":"horizontal","showTables":true,"showGraphs":true}
+
+# Exclude static files
+ignore-panel /\.(?:css|js|jpg|png|gif|ico|jpeg|pdf|txt|zip|tar|gz|woff|woff2|eot|ttf|svg)(?:\?.*)?$
+
+# WebSocket settings
+port 7890
+addr 127.0.0.1
+GOACCESS_EOF
+    chmod 644 "$goaccess_config"
+  else
+    _log "GoAccess config already exists at $goaccess_config"
+  fi
+
+  # Create directory for GoAccess reports
+  local reports_dir="/var/lib/jabali-goaccess"
+  if [[ ! -d "$reports_dir" ]]; then
+    _log "creating reports directory at $reports_dir"
+    install -d -m 0755 -o jabali -g jabali "$reports_dir"
+  fi
+
+  # Create systemd timer for periodic report generation
+  local timer_dir="/etc/systemd/system"
+  local timer_unit="$timer_dir/jabali-goaccess.timer"
+  local service_unit="$timer_dir/jabali-goaccess.service"
+
+  # Service unit
+  if [[ ! -f "$service_unit" ]]; then
+    _log "creating GoAccess service unit"
+    cat > "$service_unit" << 'SERVICE_EOF'
+[Unit]
+Description=Generate GoAccess reports for jabali domains
+After=network.target
+
+[Service]
+Type=oneshot
+User=jabali
+Group=jabali
+ExecStart=/usr/local/bin/jabali-goaccess-generator
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/jabali-goaccess
+ReadOnlyPaths=/var/log/nginx
+SERVICE_EOF
+  fi
+
+  # Timer unit
+  if [[ ! -f "$timer_unit" ]]; then
+    _log "creating GoAccess timer unit"
+    cat > "$timer_unit" << 'TIMER_EOF'
+[Unit]
+Description=Run GoAccess report generation every 15 minutes
+Requires=jabali-goaccess.service
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+TIMER_EOF
+  fi
+
+  # Create the generator script
+  local generator_script="/usr/local/bin/jabali-goaccess-generator"
+  if [[ ! -f "$generator_script" ]]; then
+    _log "creating GoAccess report generator script"
+    cat > "$generator_script" << 'SCRIPT_EOF'
+#!/bin/bash
+set -euo pipefail
+
+# Generate GoAccess reports for all domains
+REPORTS_DIR="/var/lib/jabali-goaccess"
+NGINX_LOG_DIR="/var/log/nginx"
+
+# Ensure reports directory exists
+mkdir -p "$REPORTS_DIR"
+
+# Generate reports for each domain
+for access_log in "$NGINX_LOG_DIR"/*.access.log; do
+    if [[ -f "$access_log" ]]; then
+        domain=$(basename "$access_log" .access.log)
+        output_file="$REPORTS_DIR/${domain}.html"
+
+        # Skip if no new log entries since last generation
+        if [[ -f "$output_file" ]] && [[ ! "$access_log" -nt "$output_file" ]]; then
+            continue
+        fi
+
+        # Generate HTML report
+        goaccess "$access_log" -o "$output_file" --log-format=COMBINED --date-format='%d/%b/%Y' --time-format='%T' --html --real-time-html 2>/dev/null || true
+    fi
+done
+SCRIPT_EOF
+    chmod 755 "$generator_script"
+  fi
+
+  # Enable and start the timer
+  systemctl daemon-reload
+  systemctl enable --quiet jabali-goaccess.timer
+  systemctl start jabali-goaccess.timer
+
+  _ok "GoAccess log analyzer installed and configured"
+}
+
 # ---------- main ------------------------------------------------------------
 
 main() {
   print_banner
   preflight
-  # When --restore-interactive is set, walk the operator through the
-  # disaster-recovery inputs BEFORE any other step. seed_admin_env +
-  # cred banner all skip when _cli_restore_from is non-empty, so we
-  # need it set before they decide.
-  if [[ -n "${_cli_restore_interactive:-}" && -z "${_cli_restore_from:-}" ]]; then
-    prompt_disaster_restore_inputs
-  fi
   prompt_server_settings
   install_base_packages
   # M25 step 1: kill the LLMNR :5355 listener once systemd-resolved is on
@@ -8344,7 +7521,6 @@ main() {
   configure_tmp_tmpfs
   install_nginx
   install_php
-  install_composer_upstream
   install_disabled_page
   install_node
   install_go
@@ -8384,29 +7560,22 @@ main() {
   install_crowdsec_nginx_bouncer
   install_crowdsec_profiles
   cleanup_modsecurity
-  cleanup_php_default
   install_malware_stack
   install_ufw
   install_per_user_egress
-  install_restart_drop_ins
-  clone_or_update_repo
-  # install_apparmor + install_notify_template require files under
-  # $REPO_DIR/install/{apparmor,systemd,scripts}/ — must run AFTER
-  # clone_or_update_repo populates $REPO_DIR. Earlier ordering silently
-  # no-op'd on fresh installs (incident 2026-05-02 on
-  # mx.jabali-panel.local: marker written, zero profiles loaded, AIDE
-  # DB never built).
-  #
-  # install_aide is deliberately deferred to the END of main() — it
-  # forks aideinit in the background, which scans /etc /bin /usr/bin
-  # etc as they exist at fire time. Calling it here would baseline
-  # against a partial filesystem (every subsequent install_* writes a
-  # config file under /etc, all of which AIDE then reports as "added"
-  # on the first --check). End-of-main keeps wall time the same
-  # (aideinit is bg) and gives a clean baseline.
   install_apparmor
+  install_aide
+  install_goaccess
+  install_restart_drop_ins
   install_notify_template
-  install_snuffleupagus
+  clone_or_update_repo
+  # M25: source the socket-helper definitions now that the repo's install/
+  # tree is on disk. Steps 2–5 will call verify_socket_perms /
+  # verify_no_all_interface_binds after each service-bind change. Sourced
+  # here (not earlier) because under `curl | bash` the install/scripts/
+  # tree doesn't exist until clone_or_update_repo populates $REPO_DIR.
+  # shellcheck source=install/scripts/socket-helpers.sh
+  source "$REPO_DIR/install/scripts/socket-helpers.sh"
   # M25: bring the jabali-sockets group into existence. SERVICE_USER and
   # www-data already exist by now; jabali-webmail is created later by
   # install_bulwark — a second call after that picks it up. The function
@@ -8470,25 +7639,7 @@ main() {
   # picks it up. Idempotent for SERVICE_USER + www-data which were added
   # earlier (post clone_or_update_repo).
   ensure_jabali_sockets_group
-  # AIDE baseline LAST: by now every install_* has written its share of
-  # /etc/{nginx,php,systemd,powerdns,...} so the aide.db that aideinit
-  # builds matches the deployed filesystem. aideinit forks bg — adds no
-  # wall time. Re-baseline manually with `jabali aide rebuild --full`
-  # if subsequent install_* steps land via `jabali update`.
-  install_aide
-  install_goaccess
   seed_last_built_sha
-  # Disaster-recovery: when --restore-from was supplied, hand off to
-  # `jabali system restore` so the just-installed panel pulls its
-  # state from the supplied repo. Runs AFTER start_and_verify so the
-  # agent socket is up + restic password file is in place; runs
-  # BEFORE the credentials banner so the operator sees the restore
-  # log instead of fresh-bootstrap creds (which the restore
-  # invalidates anyway).
-  if [[ -n "${_cli_restore_from:-}" ]]; then
-    install_disaster_restore
-    return 0
-  fi
   _ok "jabali-panel + jabali-agent installed. Status:"
   _ok "  systemctl status $AGENT_SERVICE_NAME"
   _ok "  systemctl status $SERVICE_NAME"
@@ -8531,50 +7682,27 @@ uninstall() {
   JABALI UNINSTALL
 ============================================================
 This will remove:
-  • jabali-* systemd units, timers, and their drop-ins
+  • jabali-* systemd units and their drop-ins
   • /usr/local/bin/{jabali,jabali-panel,jabali-agent,kratos,stalwart,stalwart-cli}
-  • /etc/jabali-panel/, /etc/jabali/, /etc/jabali-bulwark/
-  • /var/lib/jabali-*, /var/lib/stalwart, /var/lib/aide, /run/jabali*
-  • /opt/{jabali-panel,jabali-webmail,jabali-bulwark,stalwart,phpmyadmin}
+  • /etc/jabali-panel/, /etc/jabali/
+  • /var/lib/jabali-*, /var/lib/stalwart, /run/jabali*
+  • /opt/jabali-panel, /opt/jabali-webmail, /opt/stalwart, /opt/phpmyadmin
   • systemd-resolved + pdns-recursor jabali drop-ins
   • /etc/ssh/sshd_config.d/jabali-sftp.conf
   • jabali PHP-FPM pools
-  • M39 auditd jabali rules (/etc/audit/rules.d/jabali-*)
-  • M40 AppArmor jabali profiles (/etc/apparmor.d/usr.local.bin.jabali-*)
-  • M41 PHP Defense bundle (/etc/jabali/snuffleupagus, /usr/lib/php/jabali-snuffleupagus,
-    /usr/share/jabali/snuffleupagus, conf.d 30-jabali-snuffleupagus.ini)
-  • M42 AIDE jabali timer + drop-in (/etc/aide/aide.conf.d/zz-jabali.conf)
-  • M33 malware stack state (/var/log/maldet, /var/lib/jabali-quarantine)
-  • M27 CrowdSec jabali drop-ins (/etc/nginx/conf.d/crowdsec_nginx.conf,
-    /etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf)
   • system accounts: jabali, jabali-mail, jabali-webmail, stalwart
-  • system groups:  jabali, jabali-mail, jabali-webmail, jabali-sftp, jabali-sockets
+  • system groups:  jabali, jabali-mail, jabali-webmail, jabali-sftp
 
 Will ASK before:
   • dropping MariaDB databases (jabali_panel, jabali_pdns, jabali_kratos, stalwart_smtp)
   • removing user home directories under /home/
 
-By default WILL NOT remove apt packages (nginx, mariadb-server, pdns, php, node,
-crowdsec, aide, auditd, clamav, …). Pass --purge-packages to also apt-purge
-them AND remove the Sury / CrowdSec / MariaDB / NodeSource repo files.
-WARNING: --purge-packages is destructive on shared hosts where other
-workloads also use nginx / mariadb / etc.
+Will NOT remove apt packages (nginx, mariadb-server, pdns, php, node, …).
 
 EOF
 
   if [[ "${_cli_yes:-}" != "1" ]]; then
-    # When piped via `curl … | bash`, stdin is the script body (already
-    # drained by the time we reach here) so a plain `read` returns EOF.
-    # Fall back to /dev/tty when stdin isn't a terminal; if neither is
-    # available, fail loudly with a hint instead of silently exiting.
-    if [[ -t 0 ]]; then
-      read -rp "Proceed with uninstall? [y/N]: " ans
-    elif [[ -r /dev/tty ]]; then
-      read -rp "Proceed with uninstall? [y/N]: " ans </dev/tty
-    else
-      _err "non-interactive invocation (no tty) without --yes — re-run with --yes to proceed"
-      exit 64
-    fi
+    read -rp "Proceed with uninstall? [y/N]: " ans
     [[ "${ans:-}" =~ ^[yY] ]] || { _log "cancelled"; exit 0; }
   fi
 
@@ -8697,13 +7825,7 @@ EOF
     if [[ "${_cli_yes:-}" == "1" ]]; then
       drop_db="y"
     else
-      if [[ -t 0 ]]; then
-        read -rp "Drop jabali MariaDB databases + users (jabali_panel, jabali_pdns, jabali_kratos, stalwart_smtp)? [y/N]: " drop_db
-      elif [[ -r /dev/tty ]]; then
-        read -rp "Drop jabali MariaDB databases + users (jabali_panel, jabali_pdns, jabali_kratos, stalwart_smtp)? [y/N]: " drop_db </dev/tty
-      else
-        drop_db="n"
-      fi
+      read -rp "Drop jabali MariaDB databases + users (jabali_panel, jabali_pdns, jabali_kratos, stalwart_smtp)? [y/N]: " drop_db
     fi
     if [[ "${drop_db:-}" =~ ^[yY] ]]; then
       _log "dropping jabali databases"
@@ -8763,13 +7885,7 @@ SQL
       _warn "Remove manually if desired: userdel -r <user>"
     else
       local rm_all
-      if [[ -t 0 ]]; then
-        read -rp "Remove ALL listed users + their /home directories? [y/N/each]: " rm_all
-      elif [[ -r /dev/tty ]]; then
-        read -rp "Remove ALL listed users + their /home directories? [y/N/each]: " rm_all </dev/tty
-      else
-        rm_all="n"
-      fi
+      read -rp "Remove ALL listed users + their /home directories? [y/N/each]: " rm_all
       case "${rm_all:-}" in
         [yY]*)
           for u in "${home_users[@]}"; do
@@ -8779,13 +7895,7 @@ SQL
         each|EACH|e|E)
           for u in "${home_users[@]}"; do
             local ans2
-            if [[ -t 0 ]]; then
-              read -rp "  remove user '$u' (+ /home/$u)? [y/N]: " ans2
-            elif [[ -r /dev/tty ]]; then
-              read -rp "  remove user '$u' (+ /home/$u)? [y/N]: " ans2 </dev/tty
-            else
-              ans2="n"
-            fi
+            read -rp "  remove user '$u' (+ /home/$u)? [y/N]: " ans2
             if [[ "${ans2:-}" =~ ^[yY] ]]; then
               userdel -r "$u" 2>/dev/null && _log "removed $u" || _warn "userdel -r $u failed"
             fi
@@ -8798,128 +7908,8 @@ SQL
     fi
   fi
 
-  # ---------- M39 / M40 / M41 / M42 / M27 / M33 cleanup ----------
-  # Components added after the initial uninstall function landed.
-  # Order: stop timers/services first, then files, then perm-bits.
-  _log "removing M39 auditd jabali rules"
-  rm -f /etc/audit/rules.d/jabali-exec.rules \
-        /etc/audit/rules.d/jabali-snuffleupagus.rules
-  command -v augenrules >/dev/null && augenrules --load >/dev/null 2>&1 || true
-
-  _log "removing M40 AppArmor jabali profiles"
-  local profile
-  for profile in jabali-panel jabali-agent jabali-bulwark jabali-kratos stalwart-mail; do
-    aa-disable "/etc/apparmor.d/usr.local.bin.${profile/jabali-panel/jabali-panel-api}" 2>/dev/null || true
-  done
-  rm -f /etc/apparmor.d/usr.local.bin.jabali-panel-api \
-        /etc/apparmor.d/usr.local.bin.jabali-agent \
-        /etc/apparmor.d/usr.local.bin.jabali-bulwark \
-        /etc/apparmor.d/usr.local.bin.jabali-kratos \
-        /etc/apparmor.d/usr.local.bin.stalwart-mail
-  systemctl reload apparmor 2>/dev/null || true
-
-  _log "removing M41 PHP Defense (Snuffleupagus)"
-  systemctl stop crowdsec-nginx-bouncer 2>/dev/null || true
-  rm -rf /etc/jabali/snuffleupagus \
-         /usr/share/jabali/snuffleupagus \
-         /usr/lib/php/jabali-snuffleupagus
-  local pdir
-  for pdir in /etc/php/*/{fpm,cli}/conf.d; do
-    [[ -d "$pdir" ]] && rm -f "$pdir/30-jabali-snuffleupagus.ini"
-  done
-  for pdir in /etc/php/*/mods-available; do
-    [[ -d "$pdir" ]] && rm -f "$pdir/jabali-snuffleupagus.ini"
-  done
-
-  _log "removing M42 AIDE jabali config + state"
-  systemctl stop    jabali-aide-check.timer   2>/dev/null || true
-  systemctl disable jabali-aide-check.timer   2>/dev/null || true
-  systemctl stop    jabali-aide-check.service 2>/dev/null || true
-  rm -f /etc/systemd/system/jabali-aide-check.timer \
-        /etc/systemd/system/jabali-aide-check.service \
-        /etc/aide/aide.conf.d/zz-jabali.conf
-  rm -rf /var/lib/aide /var/log/aide
-  systemctl daemon-reload 2>/dev/null || true
-
-  _log "removing M33 malware stack state"
-  systemctl stop    jabali-malware-monitor.service 2>/dev/null || true
-  systemctl disable jabali-malware-monitor.service 2>/dev/null || true
-  systemctl stop    jabali-freshclam.timer         2>/dev/null || true
-  systemctl disable jabali-freshclam.timer         2>/dev/null || true
-  rm -f /etc/systemd/system/jabali-malware-monitor.service \
-        /etc/systemd/system/jabali-freshclam.timer \
-        /etc/systemd/system/jabali-freshclam.service
-  rm -f /etc/jabali/maldet/*.conf 2>/dev/null
-  rm -rf /var/log/maldet /usr/local/maldetect/quarantine /var/lib/jabali-quarantine
-  # Note: /usr/local/maldetect/ stays — it's the LMD install dir, removed
-  # only via --purge-packages below.
-
-  _log "removing M27 CrowdSec jabali drop-ins"
-  rm -f /etc/nginx/conf.d/crowdsec_nginx.conf
-  rm -f /etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf
-
-  _log "removing jabali-bulwark"
-  systemctl stop    jabali-bulwark.service 2>/dev/null || true
-  systemctl disable jabali-bulwark.service 2>/dev/null || true
-  rm -f /etc/systemd/system/jabali-bulwark.service
-  rm -rf /etc/jabali-bulwark /opt/jabali-bulwark
-  systemctl daemon-reload 2>/dev/null || true
-
-  # ---------- Optional package purge ----------
-  # --purge-packages also apt-purges every Jabali-pulled package. This is
-  # destructive and shared (other system services may depend on nginx,
-  # mariadb, pdns, etc.) so it's opt-in even with --yes.
-  if [[ "${_cli_purge_packages:-}" == "1" ]]; then
-    _log "purging Jabali-installed apt packages (--purge-packages)"
-    local pkgs=(
-      crowdsec
-      crowdsec-firewall-bouncer-nftables
-      crowdsec-nginx-bouncer
-      aide aide-common
-      auditd audispd-plugins
-      clamav clamav-daemon clamav-freshclam
-      pdns-server pdns-recursor pdns-backend-mysql
-      mariadb-server mariadb-client
-      nginx-extras nginx-common nginx
-      redis-server
-      php8.5 php8.5-cli php8.5-fpm php8.5-common php8.5-curl php8.5-gd
-      php8.5-intl php8.5-mbstring php8.5-mysql php8.5-opcache php8.5-readline
-      php8.5-soap php8.5-xml php8.5-zip php8.5-bcmath php8.5-imagick
-      php8.5-dev
-      nodejs npm
-      apparmor apparmor-utils
-      libapache2-mod-php8.5
-      php-pear
-    )
-    apt-get purge -y -qq "${pkgs[@]}" 2>&1 | tail -5 || _warn "some packages failed to purge"
-    apt-get autoremove --purge -y -qq 2>&1 | tail -3 || true
-
-    # Repo files we added.
-    rm -f /etc/apt/sources.list.d/sury-php.list \
-          /etc/apt/sources.list.d/sury-php.sources \
-          /etc/apt/sources.list.d/crowdsec_crowdsec.list \
-          /etc/apt/sources.list.d/crowdsec_crowdsec.sources \
-          /etc/apt/sources.list.d/mariadb.list \
-          /etc/apt/sources.list.d/mariadb.sources \
-          /etc/apt/sources.list.d/nodesource.list \
-          /etc/apt/sources.list.d/nodesource.sources
-    rm -f /usr/share/keyrings/sury-php.gpg \
-          /usr/share/keyrings/crowdsec_crowdsec-archive-keyring.gpg \
-          /usr/share/keyrings/mariadb-keyring.gpg \
-          /usr/share/keyrings/nodesource.gpg
-    apt-get update -qq 2>&1 | tail -3 || true
-
-    # Manual installs (downloaded tarballs / git clones).
-    rm -rf /usr/local/maldetect /opt/yara-x
-    rm -f /etc/init.d/maldet
-  fi
-
   _ok "jabali uninstall complete"
-  if [[ "${_cli_purge_packages:-}" == "1" ]]; then
-    _ok "OS packages PURGED (re-run install.sh on a clean tree to reinstall)"
-  else
-    _ok "OS packages (nginx, mariadb, pdns, php, node, …) left INSTALLED — pass --purge-packages to also apt purge them"
-  fi
+  _ok "OS packages (nginx, mariadb, pdns, php, node, …) left INSTALLED — remove with apt if desired"
 }
 
 # Only execute main when this script is run directly (not sourced).

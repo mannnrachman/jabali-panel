@@ -40,6 +40,7 @@ type Deps struct {
 	Mailboxes           repository.MailboxRepository
 	MailboxSSOTokens    repository.MailboxSSOTokenRepository
 	PhpMyAdminSSOTokens repository.PhpMyAdminSSOTokenRepository
+	LogAccessStreams    repository.LogAccessStreamRepository
 	Agent               agent.AgentInterface
 	Reconciler          *reconciler.Reconciler
 	ServerSettings      repository.ServerSettingsRepository
@@ -722,6 +723,15 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			}
 			api.RegisterWordPressRoutes(v1, appCfg)
 			api.RegisterApplicationRoutes(v1, appCfg)
+
+			// Log access routes (M13)
+			if deps.LogAccessStreams != nil && deps.Domains != nil && deps.Users != nil {
+				api.RegisterLogRoutes(v1, api.LogHandlerConfig{
+					LogAccessStreams: deps.LogAccessStreams,
+					Domains:          deps.Domains,
+					Users:            deps.Users,
+				})
+			}
 		}
 
 		// Magic-link admin login (ADR-0040): mint-only. The agent-written

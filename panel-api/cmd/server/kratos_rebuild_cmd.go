@@ -39,16 +39,18 @@ func newAdminRebuildKratosCmd() *cobra.Command {
 		Use:   "rebuild-kratos",
 		Short: "Recreate Kratos identities from panel users (DB-loss recovery, ADR-0034)",
 		Long: `Rebuilds every Kratos identity from the panel users table. For each row
-with a non-NULL kratos_identity_id:
+including those with NULL kratos_identity_id (disaster recovery):
 
-  1. Mint a NEW Kratos identity with the user's traits (email, username,
+  1. If kratos_identity_id exists, probes Kratos to check if it's still valid.
+     If valid, skips the user. If invalid or NULL, creates a new identity.
+  2. Mint a NEW Kratos identity with the user's traits (email, username,
      is_admin) and a random cost-12 bcrypt temporary password that is
      never exposed to the operator or user.
-  2. Relink the panel row's kratos_identity_id to the new UUID via the
+  3. Relink the panel row's kratos_identity_id to the new UUID via the
      same compensating-transaction plumbing used by M20 user-create.
      If the relink fails, the newly-created Kratos identity is deleted
      so the rebuild stays atomic per user.
-  3. Generate a one-click recovery link for that identity and append a
+  4. Generate a one-click recovery link for that identity and append a
      row to the CSV output (email, new_kratos_id, recovery_link).
 
 Always run with --dry-run first. --yes skips the interactive prompt.`,
@@ -67,18 +69,17 @@ Always run with --dry-run first. --yes skips the interactive prompt.`,
 			}
 			kc := kratosclient.NewClient(kratosCfg.PublicURL, kratosCfg.AdminURL)
 
-			// Target set: every panel user with a non-NULL kratos_identity_id.
+			// Target set: every panel user (including NULL kratos_identity_id for disaster recovery).
 			// Note we don't filter by "still valid in Kratos" — the whole
 			// point of this command is that those UUIDs are now dangling.
 			var targets []models.User
 			if err := sharedDB.WithContext(ctx).
-				Where("kratos_identity_id IS NOT NULL").
 				Order("is_admin DESC, email ASC").
 				Find(&targets).Error; err != nil {
 				return fmt.Errorf("list users: %w", err)
 			}
 			if len(targets) == 0 {
-				fmt.Println("No users have kratos_identity_id set — nothing to rebuild.")
+				fmt.Println("No users found — nothing to rebuild.")
 				return nil
 			}
 

@@ -20,7 +20,8 @@ profile jabali-kratos /usr/local/bin/kratos {
   network unix  stream,
 
   /usr/local/bin/kratos          mr,
-  /etc/jabali/kratos.yaml        r,
+  /etc/jabali-panel/kratos.yml        r,
+  /etc/jabali-panel/           r,
   /etc/jabali/kratos/            r,
   /etc/jabali/kratos/**          r,
 

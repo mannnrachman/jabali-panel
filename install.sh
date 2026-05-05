@@ -769,11 +769,11 @@ exit 101
 POLICYEOF
   chmod 0755 "$policy_rc"
 
-  # Sury's PHP extension packaging drifts between versions (8.5 ships
+  # Sury's PHP extension packaging drifts between versions (8.3 ships
   # OPcache inside -common instead of as a standalone -opcache package).
   # Probe apt-cache for each optional extension per PHP version and
   # include only what's actually available.
-  local php_versions="${JABALI_PHP_VERSIONS:-8.4}"
+  local php_versions="${JABALI_PHP_VERSIONS:-8.3}"
   local -a php_extensions=()
   local version
   # Required extensions — every shared-hosting workload (WordPress,
@@ -1428,7 +1428,7 @@ _install_php_version() {
   # function owns the per-version post-install config: placeholder
   # pool, FPM mask, default-pool disable.
   if ! command -v "php${version}" >/dev/null 2>&1; then
-    _die "php${version} binary not found — install_base_packages should have installed it (check JABALI_PHP_VERSIONS=\"${JABALI_PHP_VERSIONS:-8.4}\")"
+    _die "php${version} binary not found — install_base_packages should have installed it (check JABALI_PHP_VERSIONS=\"${JABALI_PHP_VERSIONS:-8.3}\")"
   fi
   _ok "PHP ${version} present"
 
@@ -1484,10 +1484,10 @@ PLACEHOLDER_EOF
 
 install_php() {
   _log "configuring PHP/FPM (packages installed in base batch; this runs per-version post-install config)"
-  # Default install is PHP 8.5 (current stable). Sury supports 7.4–8.5;
+  # Default install is PHP 8.3 (current stable). Sury supports 7.4–8.3;
   # set JABALI_PHP_VERSIONS to install additional versions side-by-side,
-  # e.g. JABALI_PHP_VERSIONS="7.4 8.2 8.5" bash install.sh
-  local php_versions="${JABALI_PHP_VERSIONS:-8.4}"
+  # e.g. JABALI_PHP_VERSIONS="7.4 8.2 8.3" bash install.sh
+  local php_versions="${JABALI_PHP_VERSIONS:-8.3}"
   local version
   for version in $php_versions; do
     _install_php_version "$version"
@@ -5224,7 +5224,7 @@ install_composer_upstream() {
   # Idempotent: skips when /usr/local/bin/composer exists and reports
   # the expected version + binds to a present php minor.
   local primary_minor
-  primary_minor="$(echo "${JABALI_PHP_VERSIONS:-8.4}" | awk '{print $1}')"
+  primary_minor="$(echo "${JABALI_PHP_VERSIONS:-8.3}" | awk '{print $1}')"
   local php_bin="/usr/bin/php${primary_minor}"
   if [[ ! -x "$php_bin" ]]; then
     _warn "install_composer_upstream: ${php_bin} not found; skipping (install_php must run first)"
@@ -5314,7 +5314,7 @@ cleanup_php_default() {
   # Sweep php8.4-* orphans now that nothing depends on them. Only fires
   # when JABALI_PHP_VERSIONS doesn't include 8.4 (otherwise these are
   # legitimately installed).
-  local php_versions="${JABALI_PHP_VERSIONS:-8.4}"
+  local php_versions="${JABALI_PHP_VERSIONS:-8.3}"
   if ! echo " $php_versions " | grep -q ' 8.4 '; then
     if dpkg -l 2>/dev/null | grep -qE '^ii\s+php8\.4-'; then
       _log "removing php8.4-* (not in JABALI_PHP_VERSIONS=\"$php_versions\")"

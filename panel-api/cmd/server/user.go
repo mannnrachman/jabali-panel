@@ -15,7 +15,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )

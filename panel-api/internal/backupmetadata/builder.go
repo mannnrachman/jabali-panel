@@ -12,7 +12,7 @@ import (
 	"log/slog"
 
 	internalbackup "git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -21,6 +21,7 @@ import (
 // during user restore.
 type KratosClient interface {
 	CreateIdentityWithPassword(ctx context.Context, traits kratosclient.AdminTraits, passwordHash string) (string, error)
+	ImportIdentities(ctx context.Context, identities []kratosclient.ExportedIdentity) error
 }
 
 // Deps is the union of repos the producer reads. Every field is

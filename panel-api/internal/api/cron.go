@@ -237,10 +237,9 @@ func (h *cronHandler) create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
 		return
 	}
-	if len(req.Name) > 100 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "validation_failed", "field": "name", "code": "too_long",
-		})
+	// SECURITY: Validate cron name to prevent control character injection
+	if err := cronvalidate.ValidateCronName(req.Name); err != nil {
+		respondValidationErr(c, "name", err)
 		return
 	}
 
@@ -312,11 +311,12 @@ func (h *cronHandler) update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
 		return
 	}
-	if req.Name != nil && len(*req.Name) > 100 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "validation_failed", "field": "name", "code": "too_long",
-		})
-		return
+	// SECURITY: Validate cron name to prevent control character injection
+	if req.Name != nil {
+		if err := cronvalidate.ValidateCronName(*req.Name); err != nil {
+			respondValidationErr(c, "name", err)
+			return
+		}
 	}
 
 	docroots, err := h.ownedDocroots(ctx, job.UserID)

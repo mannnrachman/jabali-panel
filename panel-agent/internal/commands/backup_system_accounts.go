@@ -601,21 +601,40 @@ func insertUserAndKratos(ctx context.Context, u *backup.MetadataUser,
 		return "", fmt.Errorf("no existing Kratos identity to copy nid/schema_id from")
 	}
 
-	// Reuse existing identity by email when present.
-	kratosID := lookupKratosIdentityByEmail(ctx, u.Email)
-	if kratosID == "" && k != nil && k.IdentityID != "" {
-		kratosID = k.IdentityID
-	}
-	if kratosID == "" {
-		kratosID = newUUIDv4()
+	// When k != nil and k.ExportedIdentity != "", parse the exported identity
+	var kratosID, traits, state, availableAAL, usedSchema string
+	if k != nil && k.ExportedIdentity != "" {
+		var exported struct {
+			ID             string          `json:"id"`
+			Traits         json.RawMessage `json:"traits"`
+			State          string          `json:"state"`
+			AvailableAAL   string          `json:"available_aal"`
+			SchemaID       string          `json:"schema_id"`
+		}
+		if err := json.Unmarshal([]byte(k.ExportedIdentity), &exported); err == nil {
+			kratosID = exported.ID
+			traits = string(exported.Traits)
+			if exported.State != "" {
+				state = exported.State
+			}
+			if exported.AvailableAAL != "" {
+				availableAAL = exported.AvailableAAL
+			}
+			if exported.SchemaID != "" {
+				usedSchema = exported.SchemaID
+			}
+		}
 	}
 
-	// Build traits JSON. Prefer source-side traits when meta.Kratos
-	// carried them through.
-	var traits string
-	if k != nil && k.Traits != "" {
-		traits = k.Traits
-	} else {
+	// Set defaults if not found in exported data
+	if kratosID == "" {
+		kratosID = lookupKratosIdentityByEmail(ctx, u.Email)
+		if kratosID == "" {
+			kratosID = newUUIDv4()
+		}
+	}
+
+	if traits == "" {
 		t := map[string]any{
 			"email":    u.Email,
 			"is_admin": u.IsAdmin,
@@ -627,19 +646,14 @@ func insertUserAndKratos(ctx context.Context, u *backup.MetadataUser,
 		traits = string(body)
 	}
 
-	state := "active"
-	availableAAL := "aal1"
-	if k != nil {
-		if k.State != "" {
-			state = k.State
-		}
-		if k.AvailableAAL != "" {
-			availableAAL = k.AvailableAAL
-		}
+	if state == "" {
+		state = "active"
 	}
-	usedSchema := schemaID
-	if k != nil && k.SchemaID != "" {
-		usedSchema = k.SchemaID
+	if availableAAL == "" {
+		availableAAL = "aal1"
+	}
+	if usedSchema == "" {
+		usedSchema = schemaID
 	}
 
 	stmt := fmt.Sprintf(
@@ -654,17 +668,28 @@ func insertUserAndKratos(ctx context.Context, u *backup.MetadataUser,
 
 	// Credentials: preserve the source's password hash so login keeps
 	// working without an admin reset email.
-	if k != nil {
-		for _, cred := range k.Credentials {
-			cstmt := fmt.Sprintf(
-				"INSERT IGNORE INTO jabali_kratos.identity_credentials "+
-					"(id, config, identity_credential_type_id, identity_id, created_at, updated_at, nid, version) "+
-					"VALUES ('%s','%s','%s','%s',NOW(),NOW(),'%s',%d)",
-				sqlEscape(cred.ID), sqlEscape(cred.Config),
-				sqlEscape(cred.IdentityCredentialTypeID), sqlEscape(kratosID),
-				sqlEscape(nid), cred.Version)
-			if err := runMariaDBStmt(ctx, cstmt); err != nil {
-				return kratosID, fmt.Errorf("kratos credential insert: %w", err)
+	// Extract credentials from ExportedIdentity if available
+	if k != nil && k.ExportedIdentity != "" {
+		var exported struct {
+			Credentials []struct {
+				ID                        string `json:"id"`
+				Config                    string `json:"config"`
+				IdentityCredentialTypeID string `json:"identity_credential_type_id"`
+				Version                   int    `json:"version"`
+			} `json:"credentials"`
+		}
+		if err := json.Unmarshal([]byte(k.ExportedIdentity), &exported); err == nil {
+			for _, cred := range exported.Credentials {
+				cstmt := fmt.Sprintf(
+					"INSERT IGNORE INTO jabali_kratos.identity_credentials "+
+						"(id, config, identity_credential_type_id, identity_id, created_at, updated_at, nid, version) "+
+						"VALUES ('%s','%s','%s','%s',NOW(),NOW(),'%s',%d)",
+					sqlEscape(cred.ID), sqlEscape(cred.Config),
+					sqlEscape(cred.IdentityCredentialTypeID), sqlEscape(kratosID),
+					sqlEscape(nid), cred.Version)
+				if err := runMariaDBStmt(ctx, cstmt); err != nil {
+					return kratosID, fmt.Errorf("kratos credential insert: %w", err)
+				}
 			}
 		}
 	}

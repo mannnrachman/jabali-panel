@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 

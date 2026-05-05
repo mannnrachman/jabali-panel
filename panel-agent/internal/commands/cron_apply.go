@@ -56,6 +56,15 @@ func cronApplyHandler(ctx context.Context, params json.RawMessage) (any, error) 
 			Message: "job_id required",
 		}
 	}
+
+	// SECURITY: Validate cron name to prevent control character injection (defense-in-depth)
+	if err := cronvalidate.ValidateCronName(p.Name); err != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: fmt.Sprintf("name validation failed: %v", err),
+		}
+	}
+
 	if p.Command == "" {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,

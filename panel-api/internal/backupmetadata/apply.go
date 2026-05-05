@@ -20,9 +20,10 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"encoding/json"
 
 	internalbackup "git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -52,6 +53,21 @@ type ApplyResult struct {
 func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) ApplyResult {
 	r := ApplyResult{}
 	if m == nil {
+
+	// 8) Kratos identity restoration
+	if m.Kratos != nil && m.Kratos.ExportedIdentity != "" && d.KratosClient != nil {
+		var exportedIdentity kratosclient.ExportedIdentity
+		if err := json.Unmarshal([]byte(m.Kratos.ExportedIdentity), &exportedIdentity); err != nil {
+			r.Errors = append(r.Errors, fmt.Sprintf("kratos identity: unmarshal: %v", err))
+		} else {
+			if err := d.KratosClient.ImportIdentities(ctx, []kratosclient.ExportedIdentity{exportedIdentity}); err != nil {
+				r.Errors = append(r.Errors, fmt.Sprintf("kratos identity: import: %v", err))
+			} else {
+				// Successfully imported Kratos identity
+				r.UserCreated = true // User was restored to Kratos
+			}
+		}
+	}
 		return r
 	}
 	now := time.Now().UTC()
@@ -61,6 +77,21 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	if uerr != nil {
 		r.Errors = append(r.Errors, "user: "+uerr.Error())
 		// no point inserting child rows without the parent
+
+	// 8) Kratos identity restoration
+	if m.Kratos != nil && m.Kratos.ExportedIdentity != "" && d.KratosClient != nil {
+		var exportedIdentity kratosclient.ExportedIdentity
+		if err := json.Unmarshal([]byte(m.Kratos.ExportedIdentity), &exportedIdentity); err != nil {
+			r.Errors = append(r.Errors, fmt.Sprintf("kratos identity: unmarshal: %v", err))
+		} else {
+			if err := d.KratosClient.ImportIdentities(ctx, []kratosclient.ExportedIdentity{exportedIdentity}); err != nil {
+				r.Errors = append(r.Errors, fmt.Sprintf("kratos identity: import: %v", err))
+			} else {
+				// Successfully imported Kratos identity
+				r.UserCreated = true // User was restored to Kratos
+			}
+		}
+	}
 		return r
 	}
 	r.UserCreated = created
@@ -341,6 +372,21 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 		}
 	}
 
+
+	// 8) Kratos identity restoration
+	if m.Kratos != nil && m.Kratos.ExportedIdentity != "" && d.KratosClient != nil {
+		var exportedIdentity kratosclient.ExportedIdentity
+		if err := json.Unmarshal([]byte(m.Kratos.ExportedIdentity), &exportedIdentity); err != nil {
+			r.Errors = append(r.Errors, fmt.Sprintf("kratos identity: unmarshal: %v", err))
+		} else {
+			if err := d.KratosClient.ImportIdentities(ctx, []kratosclient.ExportedIdentity{exportedIdentity}); err != nil {
+				r.Errors = append(r.Errors, fmt.Sprintf("kratos identity: import: %v", err))
+			} else {
+				// Successfully imported Kratos identity
+				r.UserCreated = true // User was restored to Kratos
+			}
+		}
+	}
 	return r
 }
 

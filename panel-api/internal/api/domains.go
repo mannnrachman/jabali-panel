@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -49,6 +50,14 @@ const (
 	maxDomainsPageSize     = 200
 )
 
+// Security validation patterns
+var (
+	// Domain name validation regex - RFC 1035 compliant
+	domainNameRe = regexp.MustCompile(`^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$`)
+	// HTML tag detection for XSS prevention
+	htmlTagRe = regexp.MustCompile(`<[^>]*>`)
+)
+
 func RegisterDomainRoutes(g *gin.RouterGroup, cfg DomainHandlerConfig) {
 	h := &domainHandler{cfg: cfg}
 	domains := g.Group("/domains")
@@ -65,6 +74,61 @@ type createDomainRequest struct {
 	Name    string `json:"name" binding:"required"`
 	UserID  string `json:"user_id"`
 	DocRoot string `json:"doc_root"`
+}
+
+// validateDomainName validates domain name for security and RFC compliance
+func validateDomainName(s string) error {
+	// Check for empty or whitespace
+	if strings.TrimSpace(s) == "" {
+		return fmt.Errorf("domain name cannot be empty")
+	}
+
+	// Check for whitespace (potential injection)
+	if strings.ContainsAny(s, " \t\n\r") {
+		return fmt.Errorf("domain name contains invalid whitespace characters")
+	}
+
+	// Check length limits per RFC 1035
+	if len(s) > 253 {
+		return fmt.Errorf("domain name exceeds 253 character limit")
+	}
+
+	// Check for HTML tags (XSS prevention)
+	if htmlTagRe.MatchString(s) {
+		return fmt.Errorf("domain name contains invalid HTML characters")
+	}
+
+	// Check for path traversal attempts
+	if strings.Contains(s, "..") || strings.Contains(s, "/") || strings.Contains(s, "\\") {
+		return fmt.Errorf("domain name contains invalid path characters")
+	}
+
+	// RFC 1035 compliance check
+	if !domainNameRe.MatchString(s) {
+		return fmt.Errorf("domain name is not a valid FQDN (requires at least two labels and 2+ letter TLD)")
+	}
+
+	return nil
+}
+
+// validateDocumentRoot validates document root path to prevent path traversal
+func validateDocumentRoot(docRoot, username, domainName string) error {
+	if docRoot == "" {
+		return nil // Will use default
+	}
+
+	// Must be under user's home directory
+	expectedPrefix := "/home/" + username + "/"
+	if !strings.HasPrefix(docRoot, expectedPrefix) {
+		return fmt.Errorf("document root must be under user's home directory")
+	}
+
+	// Check for path traversal attempts
+	if strings.Contains(docRoot, "..") {
+		return fmt.Errorf("document root contains invalid path traversal sequences")
+	}
+
+	return nil
 }
 
 type updateDomainRequest struct {
@@ -375,6 +439,18 @@ func (h *domainHandler) create(c *gin.Context) {
 		return
 	}
 
+	// SECURITY: Validate domain name to prevent XSS and path traversal
+	if err := validateDomainName(req.Name); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":  "invalid_domain_name",
+			"detail": err.Error(),
+		})
+		return
+	}
+
+	// Sanitize domain name by removing any potential HTML tags
+	req.Name = htmlTagRe.ReplaceAllString(req.Name, "")
+
 	targetUserID := req.UserID
 	if !claims.IsAdmin {
 		targetUserID = claims.UserID
@@ -426,11 +502,21 @@ func (h *domainHandler) create(c *gin.Context) {
 		}
 	}
 
+	// SECURITY: Validate custom document root path
+	if err := validateDocumentRoot(req.DocRoot, *user.Username, req.Name); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":  "invalid_document_root",
+			"detail": err.Error(),
+		})
+		return
+	}
+
 	docRoot := req.DocRoot
 	if docRoot == "" {
 		// Per-domain subtree under /home/<user>/domains/<name>/ so sibling
 		// paths like logs/, ssl/, backups/ can live alongside public_html
 		// without polluting the user's home.
+		// SECURITY: Domain name is now validated, safe to use in path construction
 		docRoot = "/home/" + *user.Username + "/domains/" + req.Name + "/public_html"
 	}
 

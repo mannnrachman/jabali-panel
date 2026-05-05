@@ -81,30 +81,13 @@ type MetadataUser struct {
 	CreatedAt               string  `json:"created_at,omitempty"`
 }
 
-// MetadataKratos carries everything needed to re-INSERT into
-// jabali_kratos.identities + identity_credentials so the user can
-// continue logging in after restore without an admin password reset.
+// MetadataKratos carries the raw exported identity data from Kratos export API.
+// This replaces manual database extraction with official export/import functionality.
 type MetadataKratos struct {
-	IdentityID     string                       `json:"identity_id"`
-	SchemaID       string                       `json:"schema_id"`
-	Traits         string                       `json:"traits"`              // raw JSON
-	State          string                       `json:"state"`
-	StateChangedAt string                       `json:"state_changed_at,omitempty"`
-	MetadataPublic string                       `json:"metadata_public,omitempty"`
-	MetadataAdmin  string                       `json:"metadata_admin,omitempty"`
-	AvailableAAL   string                       `json:"available_aal,omitempty"`
-	Credentials    []MetadataKratosCredential   `json:"credentials,omitempty"`
+	// Raw exported identity data from Kratos export API, stored as JSON
+	ExportedIdentity string `json:"exported_identity"`
 }
 
-// MetadataKratosCredential mirrors jabali_kratos.identity_credentials.
-// Config is opaque (encrypted by Kratos) — preserve verbatim.
-type MetadataKratosCredential struct {
-	ID                       string `json:"id"`
-	Config                   string `json:"config"` // raw JSON, possibly enc by kratos secret
-	IdentityCredentialTypeID string `json:"identity_credential_type_id"`
-	Version                  int    `json:"version"`
-	CreatedAt                string `json:"created_at,omitempty"`
-}
 
 // MetadataDomain mirrors models.Domain plus the per-domain children
 // (SSL cert, mailboxes, forwarders, autoresponders, mailbox shares,

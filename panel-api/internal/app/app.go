@@ -15,7 +15,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/apps"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/kratosclient"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"

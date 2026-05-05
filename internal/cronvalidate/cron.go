@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/google/shlex"
 	"github.com/robfig/cron/v3"
@@ -28,6 +29,7 @@ const (
 	ErrCodeBadPathArg       = "bad_path_arg"       // --path= missing, not absolute, traversal, or not in owned docroot
 	ErrCodeBadScheduleSyntax = "bad_schedule_syntax"
 	ErrCodeScheduleTooFrequent = "schedule_too_frequent" // < 1 min step
+	ErrCodeInvalidName      = "invalid_name"       // control characters or invalid name
 )
 
 // ValidationError is the error type returned by validators.
@@ -157,12 +159,12 @@ func ValidateCommand(raw string, ownedDocroots []string) (*Command, error) {
 		}
 	}
 
-	// First token must be wp or php
+	// First token must be wp or php (or full paths)
 	binary := argv[0]
-	switch binary {
-	case "wp":
+	switch {
+	case binary == "wp":
 		return validateWPCommand(argv, ownedDocroots)
-	case "php":
+	case binary == "php" || strings.HasSuffix(binary, "/php"):
 		return validatePHPCommand(argv, ownedDocroots)
 	default:
 		return nil, &ValidationError{
@@ -208,15 +210,57 @@ func validateWPCommand(argv []string, ownedDocroots []string) (*Command, error) 
 
 // validatePHPCommand checks the first argument is an absolute path ending in .php
 // within an owned docroot.
+
+// Common PHP CLI flags that don't require file arguments
+var phpStandaloneFlags = map[string]bool{
+	"-v": true, "--version": true,
+	"-m": true, "--modules": true,
+	"-i": true, "--info": true,
+	"-h": true, "--help": true,
+	"-r": true, // followed by code string, not file
+}
 func validatePHPCommand(argv []string, ownedDocroots []string) (*Command, error) {
 	if len(argv) < 2 {
 		return nil, &ValidationError{
 			Code:   ErrCodeBadPathArg,
-			Detail: "php command requires a path argument",
+			Detail: "php command requires an argument",
 		}
 	}
 
-	pathArg := argv[1]
+	// Check for standalone flags first
+	if phpStandaloneFlags[argv[1]] {
+		return &Command{Argv: argv}, nil
+	}
+
+	// Handle -r code execution
+	if argv[1] == "-r" {
+		if len(argv) < 3 {
+			return nil, &ValidationError{
+				Code:   ErrCodeBadPathArg,
+				Detail: "php -r requires code argument",
+			}
+		}
+		return &Command{Argv: argv}, nil
+	}
+
+	// Find the script path - skip over flags
+	var pathArg string
+	pathArgIndex := -1
+	for i := 1; i < len(argv); i++ {
+		arg := argv[i]
+		// Skip known flags
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		pathArg = arg
+		pathArgIndex = i
+		break
+	}
+
+	// If no path argument found, might be all flags
+	if pathArgIndex == -1 {
+		return &Command{Argv: argv}, nil
+	}
 
 	// Must be absolute path
 	if !filepath.IsAbs(pathArg) {
@@ -246,7 +290,6 @@ func validatePHPCommand(argv []string, ownedDocroots []string) (*Command, error)
 
 	return &Command{Argv: argv}, nil
 }
-
 // validatePathArg validates that an absolute path:
 //   1. Has no .. tokens
 //   2. Is inside one of ownedDocroots (with / boundary check)
@@ -354,6 +397,38 @@ func ValidateSchedule(expr string) error {
 	// TODO(v2): supplementary systemd-analyze calendar subprocess call as argv array
 	// For v1 we rely on robfig/cron alone, which uses the same grammar as systemd's
 	// OnCalendar= parsing and is pure-Go and injection-proof.
+
+	return nil
+}
+
+// ValidateCronName validates a cron job name to prevent control character injection.
+// Control characters could corrupt systemd unit files or logging output.
+// Returns nil on valid names, or ValidationError with ErrCodeInvalidName.
+func ValidateCronName(name string) error {
+	if len(name) == 0 {
+		return &ValidationError{
+			Code:   ErrCodeEmpty,
+			Detail: "cron name cannot be empty",
+		}
+	}
+
+	if len(name) > 100 {
+		return &ValidationError{
+			Code:   ErrCodeTooLong,
+			Detail: fmt.Sprintf("cron name exceeds 100 character limit (%d characters)", len(name)),
+		}
+	}
+
+	// Reject all Unicode control characters (U+0000–U+001F, U+007F–U+009F)
+	// These could corrupt systemd unit files, logging output, or shell parsing
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return &ValidationError{
+				Code:   ErrCodeInvalidName,
+				Detail: "cron name contains invalid control characters",
+			}
+		}
+	}
 
 	return nil
 }

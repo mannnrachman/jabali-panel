@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/backup"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/kratosclient"
 )
 
 // jobSlot tracks the single-active-job-per-(kind, user, destination)
@@ -320,67 +321,39 @@ func enrichKratos(ctx context.Context, meta *backup.AccountMetadata) {
 	if email == "" {
 		return
 	}
-	// Identity row
-	stmt := fmt.Sprintf(
-		"SELECT id, schema_id, traits, state, COALESCE(metadata_public,''), "+
-			"COALESCE(metadata_admin,''), COALESCE(available_aal,'') "+
-			"FROM jabali_kratos.identities "+
-			"WHERE JSON_EXTRACT(traits,'$.email')='\"%s\"' LIMIT 1",
-		strings.ReplaceAll(email, "'", "''"))
-	out, err := exec.Command("mariadb",
-		"--protocol=socket", "--socket=/run/mysqld/mysqld.sock",
-		"-N", "-B",
-		"-e", stmt,
-	).Output()
+
+	// Use Kratos export API instead of manual database queries
+
+	kratosClient := kratosclient.NewClient("unix:///run/jabali-kratos/admin.sock", "unix:///run/jabali-kratos/public.sock")
+
+	// Export all identities from Kratos
+	exports, err := kratosClient.ExportIdentities(ctx)
 	if err != nil {
-		return
+		return // Silently skip if export fails
 	}
-	cols := strings.Split(strings.TrimRight(string(out), "\n"), "\t")
-	if len(cols) < 7 || cols[0] == "" {
-		return
-	}
-	k := &backup.MetadataKratos{
-		IdentityID:     cols[0],
-		SchemaID:       cols[1],
-		Traits:         cols[2],
-		State:          cols[3],
-		MetadataPublic: cols[4],
-		MetadataAdmin:  cols[5],
-		AvailableAAL:   cols[6],
-	}
-	// Credentials. JOIN to identity_credential_types so we capture the
-	// type id verbatim (Kratos picks one per credential row, and we
-	// already have it via the FK column anyway).
-	credStmt := fmt.Sprintf(
-		"SELECT id, config, identity_credential_type_id, version "+
-			"FROM jabali_kratos.identity_credentials "+
-			"WHERE identity_id='%s'",
-		strings.ReplaceAll(k.IdentityID, "'", "''"))
-	credOut, err := exec.Command("mariadb",
-		"--protocol=socket", "--socket=/run/mysqld/mysqld.sock",
-		"-N", "-B",
-		"-e", credStmt,
-	).Output()
-	if err == nil {
-		for _, line := range strings.Split(strings.TrimRight(string(credOut), "\n"), "\n") {
-			if line == "" {
-				continue
+
+	// Find the identity matching this user's email
+	for _, exported := range exports {
+		var traits struct {
+			Email string `json:"email"`
+		}
+		if err := json.Unmarshal(exported.Traits, &traits); err != nil {
+			continue
+		}
+
+		if strings.EqualFold(traits.Email, email) {
+			// Found matching identity, store the raw exported data
+			exportedJSON, err := json.Marshal(exported)
+			if err != nil {
+				return
 			}
-			parts := strings.Split(line, "\t")
-			if len(parts) < 4 {
-				continue
+
+			meta.Kratos = &backup.MetadataKratos{
+				ExportedIdentity: string(exportedJSON),
 			}
-			ver := 0
-			fmt.Sscanf(parts[3], "%d", &ver)
-			k.Credentials = append(k.Credentials, backup.MetadataKratosCredential{
-				ID:                       parts[0],
-				Config:                   parts[1],
-				IdentityCredentialTypeID: parts[2],
-				Version:                  ver,
-			})
+			return
 		}
 	}
-	meta.Kratos = k
 }
 
 // runMetadataStage writes the panel-side bundle (DB users, app

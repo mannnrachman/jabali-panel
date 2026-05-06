@@ -420,6 +420,24 @@ test -x node_modules/.bin/tsc || {
 			}
 			return run("", "systemctl", "restart", "jabali-panel")
 		}},
+		{"sync nginx panel vhost + websocket map", func() error {
+			// Re-render /etc/nginx/sites-available/jabali-panel.conf
+			// from the template, and (re-)install the WebSocket upgrade
+			// map snippet at /etc/nginx/conf.d/jabali-websocket-map.conf.
+			// Required for log streaming WS endpoints to work — without
+			// the map, $connection_upgrade is empty and nginx -t fails;
+			// without $http_host on Host header, backend builds WS URLs
+			// without the :8443 port.
+			installSh := repoDir + "/install.sh"
+			if _, err := os.Stat(installSh); err != nil {
+				return nil
+			}
+			if err := run("", "bash", "-c",
+				"source "+installSh+" && install_nginx_websocket_map && install_nginx_panel_vhost"); err != nil {
+				fmt.Printf("  (install_nginx_panel_vhost failed: %v — continuing)\n", err)
+			}
+			return nil
+		}},
 		{"sync bulwark systemd + env", func() error {
 			// Re-install the jabali-webmail.service unit file, the
 			// server-unix.js wrapper, the nginx upstream snippet, and

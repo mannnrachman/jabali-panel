@@ -3338,6 +3338,30 @@ seed_last_built_sha() {
 # ---------- step: SSO key generation ----------------------------------------
 
 
+# ---------- nginx WebSocket upgrade map ----
+
+install_nginx_websocket_map() {
+  _log "installing nginx WebSocket upgrade map snippet"
+
+  local src="${REPO_DIR}/install/nginx/jabali-websocket-map.conf"
+  local dst="/etc/nginx/conf.d/jabali-websocket-map.conf"
+
+  if [[ ! -f "$src" ]]; then
+    _die "websocket map snippet not found at $src"
+  fi
+
+  install -m 0644 "$src" "$dst"
+
+  if ! nginx -t 2>&1 | grep -q "successful"; then
+    nginx -t 2>&1 >&2 || true
+    _die "nginx configuration test failed (websocket map)"
+  fi
+
+  systemctl reload nginx || systemctl restart nginx
+
+  _ok "nginx WebSocket map installed: $dst"
+}
+
 # ---------- M25 Step 4: nginx panel vhost (TLS terminator on :8443) -----
 
 install_nginx_panel_vhost() {
@@ -7606,6 +7630,9 @@ main() {
   install_ssh_sandbox
   build_default_nspawn_image
   install_nginx_default_vhost
+  # WebSocket map snippet — must be installed BEFORE any vhost references
+  # $connection_upgrade, since nginx -t will fail otherwise.
+  install_nginx_websocket_map
   # M25 Step 4: install the nginx vhost on :8443 that terminates TLS and
   # proxies to the panel-api Unix socket. Runs AFTER install_nginx_default_vhost
   # so the http{} context (defined by Debian's stock nginx.conf) and the

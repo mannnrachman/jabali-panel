@@ -2597,6 +2597,14 @@ ensure_user_and_dirs() {
     usermod -aG systemd-journal "$SERVICE_USER" 2>/dev/null || true
   fi
 
+  # adm group lets the log-streaming WS handler tail the system-wide
+  # nginx logs (/var/log/nginx/{access,error}.log are mode 0640
+  # www-data:adm). Per-domain logs are 0644 root:jabali so this is
+  # only needed for the "All Domains (system)" stream variant.
+  if getent group adm >/dev/null 2>&1; then
+    usermod -aG adm "$SERVICE_USER" 2>/dev/null || true
+  fi
+
   install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" "$REPO_DIR"
   install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$(dirname "$ENV_FILE")"
   install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali/backups

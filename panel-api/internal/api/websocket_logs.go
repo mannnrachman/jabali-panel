@@ -235,7 +235,7 @@ func (h *logStreamHandler) streamGoAccess(conn *websocket.Conn, stream *models.L
 		cmd := exec.CommandContext(cmdCtx, "goaccess",
 			accessLogPath,
 			"--log-format=COMBINED",
-			"-o", "/dev/stdout",
+			"-o", "html",
 			"--no-progress",
 			"--no-html-last-updated")
 		out, err := cmd.Output()

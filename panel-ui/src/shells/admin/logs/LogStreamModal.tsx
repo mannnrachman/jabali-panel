@@ -45,6 +45,31 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
     }
   }, [logs, paused]);
 
+  // For GoAccess: write the latest HTML message into the iframe
+  // whenever logs grow. The iframe element is conditionally
+  // rendered only when logs.length > 0, so the first message's
+  // onmessage handler captures a null ref and can't write —
+  // this effect runs AFTER the re-render mounted the iframe and
+  // bridges the gap so the dashboard appears on the very first
+  // tick instead of waiting 10s for the second.
+  useEffect(() => {
+    if (logType !== "goaccess" || logs.length === 0) return;
+    const frame = goAccessFrameRef.current;
+    if (!frame) return;
+    const latest = logs[logs.length - 1];
+    if (!latest.includes("<html")) return;
+    try {
+      const doc = frame.contentDocument;
+      if (doc) {
+        doc.open();
+        doc.write(latest);
+        doc.close();
+      }
+    } catch (err) {
+      console.warn("Could not update GoAccess frame:", err);
+    }
+  }, [logs, logType]);
+
   const connectWebSocket = () => {
     if (!streamUrl) return;
 

@@ -210,24 +210,28 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
     >
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Space>
-          <Button
-            type={paused ? "primary" : "default"}
-            icon={paused ? <PlayCircleOutlined /> : <PauseOutlined />}
-            onClick={handlePauseToggle}
-            disabled={!connected}
-          >
-            {paused ? "Resume" : "Pause"}
-          </Button>
-          <Button
-            icon={<ClearOutlined />}
-            onClick={handleClearLogs}
-          >
-            Clear
-          </Button>
+          {logType !== "goaccess" && (
+            <>
+              <Button
+                type={paused ? "primary" : "default"}
+                icon={paused ? <PlayCircleOutlined /> : <PauseOutlined />}
+                onClick={handlePauseToggle}
+                disabled={!connected}
+              >
+                {paused ? "Resume" : "Pause"}
+              </Button>
+              <Button
+                icon={<ClearOutlined />}
+                onClick={handleClearLogs}
+              >
+                Clear
+              </Button>
+            </>
+          )}
           <Text type={connected ? "success" : "secondary"}>
             Status: {connecting ? "Connecting..." : connected ? "Connected" : "Disconnected"}
           </Text>
-          {logs.length > 0 && (
+          {logType !== "goaccess" && logs.length > 0 && (
             <Text type="secondary">
               {logs.length} lines {paused && pausedLogsRef.current.length > 0 &&
                 `(+${pausedLogsRef.current.length} paused)`}

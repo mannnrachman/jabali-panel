@@ -45,30 +45,10 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
     }
   }, [logs, paused]);
 
-  // For GoAccess: write the latest HTML message into the iframe
-  // whenever logs grow. The iframe element is conditionally
-  // rendered only when logs.length > 0, so the first message's
-  // onmessage handler captures a null ref and can't write —
-  // this effect runs AFTER the re-render mounted the iframe and
-  // bridges the gap so the dashboard appears on the very first
-  // tick instead of waiting 10s for the second.
-  useEffect(() => {
-    if (logType !== "goaccess" || logs.length === 0) return;
-    const frame = goAccessFrameRef.current;
-    if (!frame) return;
-    const latest = logs[logs.length - 1];
-    if (!latest.includes("<html")) return;
-    try {
-      const doc = frame.contentDocument;
-      if (doc) {
-        doc.open();
-        doc.write(latest);
-        doc.close();
-      }
-    } catch (err) {
-      console.warn("Could not update GoAccess frame:", err);
-    }
-  }, [logs, logType]);
+  // GoAccess iframe content is set declaratively via srcDoc on the
+  // iframe element below — no imperative doc.write needed (the
+  // sandbox="allow-scripts" attribute makes the iframe a unique
+  // origin, which blocks parent contentDocument access).
 
   const connectWebSocket = () => {
     if (!streamUrl) return;
@@ -85,21 +65,14 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
 
     ws.onmessage = (event) => {
       if (!paused) {
+        // For goaccess, only keep the latest HTML message — the
+        // iframe rerenders via srcDoc on the last entry, so growing
+        // the array unbounded would just leak memory.
         const logLine = event.data;
-        setLogs(prev => [...prev, logLine]);
-
-        // For GoAccess, update iframe if the message contains HTML
-        if (logType === "goaccess" && goAccessFrameRef.current) {
-          try {
-            const frameDoc = goAccessFrameRef.current.contentDocument;
-            if (frameDoc && logLine.includes("<html")) {
-              frameDoc.open();
-              frameDoc.write(logLine);
-              frameDoc.close();
-            }
-          } catch (error) {
-            console.warn("Could not update GoAccess frame:", error);
-          }
+        if (logType === "goaccess") {
+          setLogs([logLine]);
+        } else {
+          setLogs(prev => [...prev, logLine]);
         }
       } else {
         pausedLogsRef.current.push(event.data);
@@ -176,6 +149,7 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
           ) : (
             <iframe
               ref={goAccessFrameRef}
+              srcDoc={logs[logs.length - 1]}
               style={{
                 width: "100%",
                 height: "100%",

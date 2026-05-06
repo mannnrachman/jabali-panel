@@ -131,7 +131,7 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
     if (logType === "goaccess") {
       // For GoAccess, use iframe to safely display HTML content
       return (
-        <div style={{ height: "500px", border: "1px solid #d9d9d9", borderRadius: "4px" }}>
+        <div style={{ height: "calc(95vh - 230px)", minHeight: "300px", border: "1px solid #d9d9d9", borderRadius: "4px" }}>
           {logs.length === 0 ? (
             <div style={{
               display: "flex",
@@ -168,7 +168,7 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
     return (
       <div
         style={{
-          height: "500px",
+          height: "calc(95vh - 230px)", minHeight: "300px",
           overflow: "auto",
           backgroundColor: "#1f1f1f",
           color: "#ffffff",
@@ -202,7 +202,9 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
       title={title}
       open={visible}
       onCancel={handleClose}
-      width={1000}
+      width="95vw"
+      style={{ top: "2.5vh", maxWidth: "95vw", paddingBottom: 0 }}
+      styles={{ body: { height: "calc(95vh - 110px)", overflow: "hidden" } }}
       footer={null}
       destroyOnClose
     >

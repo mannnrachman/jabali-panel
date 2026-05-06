@@ -1,6 +1,7 @@
 package api
 
 import (
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -148,6 +149,7 @@ func (h *logHandler) createAccess(c *gin.Context) {
 		domainID = &req.DomainID
 	}
 	stream := &models.LogAccessStream{
+		ID:        ids.NewULID(),
 		UserID:    claims.UserID,
 		DomainID:  domainID,
 		LogType:   req.LogType,

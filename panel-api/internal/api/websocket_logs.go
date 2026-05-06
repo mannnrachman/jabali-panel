@@ -77,9 +77,22 @@ func (h *logStreamHandler) streamLogs(c *gin.Context) {
 	}
 	defer conn.Close()
 
-	// Set connection timeouts
-	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	// No deadlines set here. Initial deadlines (especially the 10s
+	// write deadline) would expire while scanner.Scan() blocks waiting
+	// for the next log line on an idle site, causing the very first
+	// WriteMessage to fail with i/o timeout. Per-write deadlines are
+	// set immediately before each WriteMessage in the streaming loops.
+	// Pump reader frames in the background so gorilla can auto-reply
+	// to control frames (ping/pong, close) — without this the browser
+	// can hang on close handshake and the server doesn't notice peer
+	// disconnection.
+	go func() {
+		for {
+			if _, _, err := conn.NextReader(); err != nil {
+				return
+			}
+		}
+	}()
 
 	// Handle different log types
 	switch stream.LogType {
@@ -160,6 +173,11 @@ func (h *logStreamHandler) streamLogFile(conn *websocket.Conn, stream *models.Lo
 			return
 		}
 
+		// Set deadline BEFORE the write — a deadline set after the
+		// previous write may have expired during the long scanner
+		// block while waiting for the next log line on an idle log.
+		conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+
 		// Send log line to client
 		line := scanner.Text()
 		if err := conn.WriteMessage(websocket.TextMessage, []byte(line+"\n")); err != nil {
@@ -168,9 +186,6 @@ func (h *logStreamHandler) streamLogFile(conn *websocket.Conn, stream *models.Lo
 			}
 			return
 		}
-
-		// Reset write deadline for next message
-		conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -243,6 +258,9 @@ func (h *logStreamHandler) streamGoAccess(conn *websocket.Conn, stream *models.L
 			h.cfg.Log.Warn("goaccess render failed", "err", err, "path", accessLogPath)
 			return err
 		}
+		// Set deadline BEFORE write — 700KB+ HTML over a slow link
+		// may take more than the 10s default; pick a generous cap.
+		conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
 		return conn.WriteMessage(websocket.TextMessage, out)
 	}
 
@@ -268,7 +286,6 @@ func (h *logStreamHandler) streamGoAccess(conn *websocket.Conn, stream *models.L
 			if err := render(); err != nil {
 				return
 			}
-			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		}
 	}
 }

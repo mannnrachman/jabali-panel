@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Modal, Typography, Button, Space, message, Spin } from "antd";
-import { CloseOutlined, PauseOutlined, PlayCircleOutlined, ClearOutlined } from "@ant-design/icons";
+import { PauseOutlined, PlayCircleOutlined, ClearOutlined } from "@ant-design/icons";
 
 const { Text } = Typography;
 
@@ -221,13 +221,6 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
             onClick={handleClearLogs}
           >
             Clear
-          </Button>
-          <Button
-            danger
-            icon={<CloseOutlined />}
-            onClick={handleClose}
-          >
-            Close Stream
           </Button>
           <Text type={connected ? "success" : "secondary"}>
             Status: {connecting ? "Connecting..." : connected ? "Connected" : "Disconnected"}

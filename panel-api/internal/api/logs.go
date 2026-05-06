@@ -249,9 +249,9 @@ func logFilePathForDomain(domainName, logType string) (string, error) {
 	baseDir := "/var/log/nginx"
 	switch logType {
 	case "access":
-		return filepath.Join(baseDir, fmt.Sprintf("%s.access.log", domainName)), nil
+		return filepath.Join(baseDir, fmt.Sprintf("%s-access.log", domainName)), nil
 	case "error":
-		return filepath.Join(baseDir, fmt.Sprintf("%s.error.log", domainName)), nil
+		return filepath.Join(baseDir, fmt.Sprintf("%s-error.log", domainName)), nil
 	default:
 		return "", fmt.Errorf("unsupported log type for file path: %s", logType)
 	}

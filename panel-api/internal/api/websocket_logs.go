@@ -205,15 +205,57 @@ func (h *logStreamHandler) streamGoAccess(conn *websocket.Conn, stream *models.L
 		return
 	}
 
-	// For now, send a message indicating GoAccess streaming is not yet implemented
-	// TODO: Implement GoAccess real-time streaming
-	message := fmt.Sprintf("GoAccess real-time streaming for %s is not yet implemented.\nAccess log path: %s\n",
-		stream.StreamKey, accessLogPath)
+	// Verify access log file exists. goaccess fails on missing input;
+	// surface a clear message via the iframe instead of crash-looping.
+	if _, statErr := os.Stat(accessLogPath); statErr != nil {
+		conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(
+			"<html><body style='font-family:sans-serif;padding:2em;background:#1f1f1f;color:#fff'>"+
+				"<h2>No access log yet</h2>"+
+				"<p>File <code>%s</code> doesn't exist. "+
+				"GoAccess will start once nginx writes traffic to this domain.</p>"+
+				"</body></html>", filepath.Base(accessLogPath))))
+		return
+	}
 
-	conn.WriteMessage(websocket.TextMessage, []byte(message))
+	// Generate a static GoAccess HTML report from the current log on a
+	// 10s cadence and push the full document over the WS. The frontend
+	// rewrites the iframe contents on every "<html…" message arrival
+	// (see LogStreamModal.tsx:onmessage). This is intentionally NOT
+	// real-time WS — running goaccess --real-time-html requires a
+	// second WS port + reverse proxy hop and isn't worth the complexity
+	// for the panel use case.
+	render := func() error {
+		// --no-progress: don't write progress bar to stdout (would
+		// corrupt the HTML stream). --no-html-last-updated:
+		// deterministic output so iframe doesn't churn diff-only
+		// changes. Use a 5s parse timeout via SIGTERM if goaccess
+		// hangs on a malformed line.
+		cmdCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(cmdCtx, "goaccess",
+			accessLogPath,
+			"--log-format=COMBINED",
+			"-o", "/dev/stdout",
+			"--no-progress",
+			"--no-html-last-updated")
+		out, err := cmd.Output()
+		if err != nil {
+			h.cfg.Log.Warn("goaccess render failed", "err", err, "path", accessLogPath)
+			return err
+		}
+		return conn.WriteMessage(websocket.TextMessage, out)
+	}
 
-	// Keep connection alive for the stream duration
-	ticker := time.NewTicker(30 * time.Second)
+	// Initial render — without this the UI stays on "Waiting…" until
+	// the first 10s tick fires.
+	if err := render(); err != nil {
+		conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(
+			"<html><body style='font-family:sans-serif;padding:2em;background:#1f1f1f;color:#fff'>"+
+				"<h2>GoAccess error</h2><pre>%s</pre></body></html>", err.Error())))
+		return
+	}
+
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -223,10 +265,10 @@ func (h *logStreamHandler) streamGoAccess(conn *websocket.Conn, stream *models.L
 				conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "stream expired"))
 				return
 			}
-			// Send heartbeat
-			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+			if err := render(); err != nil {
 				return
 			}
+			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		}
 	}
 }

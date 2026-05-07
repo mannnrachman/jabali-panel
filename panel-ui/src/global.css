@@ -75,6 +75,15 @@
   .ant-card-head {
     padding-inline: 16px !important;
   }
+  /* Allow card head title to wrap rather than ellipsis-clip on narrow
+     phones — shows the full label "Two-factor (TOTP)" instead of
+     "Two-factor authentic…". */
+  .ant-card-head-title {
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    line-height: 1.3 !important;
+  }
 }
 
 /* Tables overflow horizontally inside their card. SearchableTable

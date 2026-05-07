@@ -302,28 +302,50 @@ function SettingsGroupForm({ flow, group, onSubmit }: GroupFormProps) {
   return (
     <Card type="inner" title={groupTitle(group)} size="small">
       {totpDisplay && (
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message="Scan this QR code with your authenticator app"
-          description={
-            <div>
-              {totpDisplay.qrSrc && (
-                <img
-                  src={totpDisplay.qrSrc}
-                  alt="TOTP QR code"
-                  style={{ display: "block", marginTop: 8, width: 220, height: 220 }}
-                />
-              )}
-              {totpDisplay.secret && (
-                <Typography.Paragraph copyable style={{ marginTop: 8, marginBottom: 0 }}>
-                  <Typography.Text code>{totpDisplay.secret}</Typography.Text>
-                </Typography.Paragraph>
-              )}
-            </div>
-          }
-        />
+        <div
+          style={{
+            marginBottom: 16,
+            padding: 12,
+            background: "rgba(22, 119, 255, 0.06)",
+            border: "1px solid rgba(22, 119, 255, 0.2)",
+            borderRadius: 6,
+            textAlign: "center",
+          }}
+        >
+          <Typography.Text strong>
+            Scan this QR with your authenticator app
+          </Typography.Text>
+          {totpDisplay.qrSrc && (
+            <img
+              src={totpDisplay.qrSrc}
+              alt="TOTP QR code"
+              // Responsive QR — caps at 220px on wide screens, shrinks
+              // to viewport on phones. width:100%+max-width keeps it
+              // square via the source image's intrinsic ratio.
+              style={{
+                display: "block",
+                margin: "12px auto 8px",
+                width: "100%",
+                maxWidth: 220,
+                height: "auto",
+              }}
+            />
+          )}
+          {totpDisplay.secret && (
+            <Typography.Paragraph
+              copyable
+              style={{
+                marginTop: 8,
+                marginBottom: 0,
+                fontFamily: "monospace",
+                fontSize: 12,
+                wordBreak: "break-all",
+              }}
+            >
+              {totpDisplay.secret}
+            </Typography.Paragraph>
+          )}
+        </div>
       )}
       {recoveryCodes && recoveryCodes.length > 0 && (
         <RecoveryCodesReveal codes={recoveryCodes} />
@@ -434,7 +456,7 @@ function groupTitle(group: string): string {
     case "password":
       return "Change password";
     case "totp":
-      return "Two-factor authentication (TOTP)";
+      return "Two-factor (TOTP)";
     case "lookup_secret":
       return "Backup codes";
     case "webauthn":

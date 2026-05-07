@@ -363,15 +363,32 @@ export function totpEnrolmentDisplay(
   let secret: string | undefined;
   for (const node of flow.ui.nodes) {
     if (node.group !== "totp") continue;
-    if (node.type === "img" && node.attributes.name === "totp_qr") {
-      // Kratos uses `src` on img nodes; not in our narrowed
-      // KratosNodeInputAttributes type so cast through unknown.
+    // img + text nodes don't carry an `attributes.name` field — only
+    // input nodes do. Filter by node.type + (id|node_type) instead;
+    // Kratos returns at most one img + one secret-text per totp
+    // group during enrolment, so type alone is enough.
+    if (node.type === "img") {
       const attrs = node.attributes as unknown as { src?: string };
-      qrSrc = attrs.src;
+      qrSrc = attrs.src ?? qrSrc;
     }
-    if (node.type === "text" && node.attributes.name === "totp_secret_key") {
-      const attrs = node.attributes as unknown as { text?: { text?: string } };
-      secret = attrs.text?.text;
+    if (node.type === "text") {
+      const attrs = node.attributes as unknown as {
+        text?: { text?: string; id?: number };
+        id?: string;
+      };
+      // The base32 secret text node has id "totp_secret_key" or text.id
+      // 1050003 in v26. Match either to stay robust across upgrades.
+      const looksLikeSecret =
+        attrs.id === "totp_secret_key" ||
+        attrs.text?.id === 1050003 ||
+        // Fallback heuristic: a base32 secret is uppercase A-Z + 2-7
+        // and 16+ chars long. Catches version drift without coupling
+        // to internal Kratos node ids.
+        (typeof attrs.text?.text === "string" &&
+          /^[A-Z2-7]{16,}$/.test(attrs.text.text));
+      if (looksLikeSecret) {
+        secret = attrs.text?.text ?? secret;
+      }
     }
   }
   if (!qrSrc && !secret) return null;
@@ -388,10 +405,22 @@ export function lookupSecretReveal(flow: KratosFlow): string[] | null {
   for (const node of flow.ui.nodes) {
     if (node.group !== "lookup_secret") continue;
     if (node.type !== "text") continue;
-    if (node.attributes.name !== "lookup_secret_codes") continue;
     const attrs = node.attributes as unknown as {
-      text?: { text?: string; context?: { secrets?: { text?: string }[] } };
+      text?: {
+        text?: string;
+        id?: number;
+        context?: { secrets?: { text?: string }[] };
+      };
+      id?: string;
     };
+    // Match the lookup-secret reveal text by Kratos id 1050015 or
+    // attribute id, falling back to "any text node in the
+    // lookup_secret group whose context carries a secrets array".
+    const looksLikeReveal =
+      attrs.id === "lookup_secret_codes" ||
+      attrs.text?.id === 1050015 ||
+      Array.isArray(attrs.text?.context?.secrets);
+    if (!looksLikeReveal) continue;
     const ctx = attrs.text?.context?.secrets;
     if (Array.isArray(ctx)) {
       return ctx.map((s) => s.text ?? "").filter(Boolean);

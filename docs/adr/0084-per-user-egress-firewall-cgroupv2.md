@@ -1,6 +1,17 @@
 # ADR-0084 — Per-user PHP-FPM egress firewall via nftables + cgroupv2 socket match (M34)
 
-**Status:** PROPOSED — live end-to-end smoke pending (see Live evidence)
+**Status:** ACCEPTED — live end-to-end smoke 2026-05-07 on
+192.168.100.150 (Debian 13 / kernel 6.12.74 / nftables 1.1.3).
+Inserted `user_egress_policies(state=enforced)` for an existing
+PHP-FPM-bound user, reconciler tick (≤60s) populated the
+`cgroup_to_chain` vmap and rendered the per-user enforced chain.
+Outbound `curl` from the user's slice via `systemd-run --uid=… --slice=…`:
+  - port 4444 (not in default-allowed) → connection timed out;
+    `user_<u>_drops` counter incremented from 0 → 2 packets / 120
+    bytes (SYN+retry both dropped).
+  - port 443 (in default_ports_tcp) → HTTP 301 from 1.1.1.1 (allowed).
+Match validates the cgroupv2-socket-match path end to end. Original
+PROPOSED status pending live smoke is now satisfied.
 **Date:** 2026-04-29
 **Supersedes/extends:** ADR-0054 (UFW over iptables), ADR-0068 (per-user cgroup v2 slice metrics)
 

@@ -221,4 +221,19 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   # entry, breaking systemd-run --uid=user --gid=user with status 216/
   # GROUP). The dash-suffixed files are owned root:shadow 0640 already
   # which is the real safeguard.
+
+  # D-Bus / systemd manager. Without these the agent's `systemctl show`
+  # / `systemctl restart` calls hit "Failed to connect to bus: Permission
+  # denied" once the profile flips from complain to enforce — observed
+  # 2026-05-07 on testserver (Server Status services tile dead, agent
+  # wire returned the bus error wrapped in the services sub-call).
+  # `dbus,` allows full D-Bus access; access-control boundary remains
+  # the Unix socket (only the jabali group can connect to the agent),
+  # so granting full D-Bus to a daemon already running as root buys no
+  # additional attack surface.
+  dbus,
+  /run/dbus/                 r,
+  /run/dbus/**               rw,
+  /run/systemd/              r,
+  /run/systemd/**            rw,
 }

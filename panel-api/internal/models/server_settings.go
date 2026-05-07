@@ -147,6 +147,15 @@ type ServerSettings struct {
 	EgressDefaultPortsUDP       *json.RawMessage `gorm:"column:egress_default_ports_udp;type:json"               json:"egress_default_ports_udp,omitempty"`
 	EgressBurstThreshold        uint32  `gorm:"column:egress_burst_threshold;type:int unsigned;not null;default:50" json:"egress_burst_threshold"`
 
+	// M37 PostgreSQL parity (Phase 1, ADR-0091). Migration 000111.
+	// PostgresEnabled gates the engine-discriminator code path —
+	// fresh installs ship PG service installed but disabled; admin
+	// flips this true in Server Settings to start using PG.
+	// PostgresMaxConnectionsPerUser is surfaced when Wave A creates
+	// per-user PG roles (mirrors MariaDB max_user_connections cap).
+	PostgresEnabled               bool   `gorm:"column:postgres_enabled;type:tinyint(1);not null;default:0" json:"postgres_enabled"`
+	PostgresMaxConnectionsPerUser uint16 `gorm:"column:postgres_max_connections_per_user;type:smallint unsigned;not null;default:25" json:"postgres_max_connections_per_user"`
+
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 

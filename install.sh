@@ -1834,6 +1834,91 @@ install_redis() {
   _ok "Redis listening on unix socket /run/redis/redis.sock mode 0660 ${owner}:${group}"
 }
 
+# ---------- step 2.5c: PostgreSQL 16 (M37 Phase 1) ---------------------------
+#
+# Installs PostgreSQL 16 from Debian's archive (matches our M7 stance
+# of using stock distro packages, not vendor PGDG repos). Bound to
+# loopback only via a drop-in conf — same pattern as MariaDB's
+# skip-networking. The `postgres` superuser DSN credential is generated
+# once and stashed at /etc/jabali-panel/postgres.password (root:jabali
+# 0640) so panel-api (running as the jabali user) can read it without
+# `sudo -u postgres`.
+#
+# Service stays disabled until server_settings.postgres_enabled is
+# flipped on by the operator — fresh installs don't pay the resident
+# memory cost of an unused DB engine. ADR-0091.
+
+install_postgres() {
+  _log "installing PostgreSQL 16 (M37)"
+
+  if ! command -v psql >/dev/null 2>&1; then
+    apt-get install -y postgresql-16 postgresql-contrib-16 \
+      postgresql-client-16 postgresql-common >/dev/null 2>&1 \
+      || _die "postgres apt install failed"
+  fi
+
+  # Loopback-only listener. The default /etc/postgresql/16/main/postgresql.conf
+  # ships with `listen_addresses = 'localhost'` already, but explicit
+  # is better than implicit — ADR-0050 generalised this stance to all
+  # daemons (M25 unix-socket lockdown).
+  local pg_dropin_dir=/etc/postgresql/16/main/conf.d
+  install -d -m 0755 -o postgres -g postgres "$pg_dropin_dir"
+  local pg_dropin="$pg_dropin_dir/jabali.conf"
+  cat >"$pg_dropin" <<'PG_DROPIN'
+# Managed by jabali install.sh (M37). Do NOT hand-edit — the file
+# is rewritten on every `jabali update`. To override, drop a higher-
+# numbered file in this directory; postgresql.conf reads them in
+# alphabetical order so 50-* + 90-* take precedence.
+listen_addresses = 'localhost'
+unix_socket_directories = '/run/postgresql'
+unix_socket_permissions = 0775
+PG_DROPIN
+  chown postgres:postgres "$pg_dropin"
+  chmod 0644 "$pg_dropin"
+
+  # /etc/postgresql/16/main/pg_hba.conf — keep the default Debian
+  # pattern (peer auth on socket, scram-sha-256 on TCP loopback).
+  # No customisation needed for Phase 1; we never expose TCP and
+  # peer-auth on the socket lets panel-api connect as `postgres`
+  # via group membership (jabali in postgres group, set below).
+
+  # Enroll the jabali service user in the postgres group so it can
+  # read the unix socket (mode 0775 means rwx to postgres group).
+  if getent group postgres >/dev/null 2>&1; then
+    usermod -aG postgres "$SERVICE_USER" 2>/dev/null || true
+  fi
+
+  # Persisted password file for the postgres superuser. We don't
+  # actually use password auth (peer auth wins on the socket), but
+  # the file is the contract panel-api reads to discover whether
+  # postgres is provisioned + which DSN to use.
+  local pg_pw_file=/etc/jabali-panel/postgres.password
+  if [[ ! -f "$pg_pw_file" ]]; then
+    install -d -m 0750 -o root -g "$SERVICE_USER" /etc/jabali-panel
+    umask 077
+    openssl rand -hex 32 >"$pg_pw_file"
+    chmod 0640 "$pg_pw_file"
+    chown root:"$SERVICE_USER" "$pg_pw_file"
+    # Set the postgres role's password (so password auth works as a
+    # backup if peer auth is ever broken). Idempotent — ALTER ROLE
+    # is harmless on re-runs.
+    local pg_pass
+    pg_pass="$(cat "$pg_pw_file")"
+    sudo -u postgres psql -tAc \
+      "ALTER ROLE postgres WITH PASSWORD '${pg_pass//\'/\'\'}';" \
+      >/dev/null 2>&1 || _warn "ALTER ROLE postgres password failed (psql may have been down)"
+  fi
+
+  # Reload to pick up the drop-in conf. Don't enable the service
+  # at install time — server_settings.postgres_enabled gates it.
+  if systemctl is-active --quiet postgresql; then
+    systemctl reload postgresql || systemctl restart postgresql || true
+  fi
+  systemctl disable postgresql 2>/dev/null || true
+
+  _ok "PostgreSQL 16 installed (disabled — operator flips server_settings.postgres_enabled)"
+}
+
 # ---------- step 2.6: PowerDNS authoritative nameserver ----------------------
 
 install_powerdns() {
@@ -7642,6 +7727,7 @@ main() {
   provision_mariadb
   install_mariadb_skip_networking
   install_redis
+  install_postgres
   install_powerdns
   bootstrap_pdns_self_zone
   # M6.3: recursor owns loopback :53 and forwards panel-authoritative zones

@@ -27,6 +27,7 @@ import {
   csrfToken,
   flowMessages,
   getSettingsFlow,
+  initSettingsFlow,
   lookupSecretReveal,
   renderableFields,
   submitSettingsFlow,
@@ -36,8 +37,6 @@ import {
 } from "../../kratos";
 import { MyProfileBackupCard } from "./MyProfileBackupCard";
 import { MyProfileUsageCard } from "./MyProfileUsageCard";
-
-const SETTINGS_BROWSER_URL = "/.ory/self-service/settings/browser";
 
 export function MyProfile() {
   const navigate = useNavigate();
@@ -57,40 +56,45 @@ export function MyProfile() {
   }, []);
 
   // Auto-start the Kratos settings flow when the page loads without a
-  // ?flow= param. Kratos redirects /.ory/.../browser to its configured
-  // ui_url (/settings) which then bounces to this route with
-  // ?flow=<id> appended, and the second useEffect picks it up.
-  //
-  // Loop guard: if the redirect comes back without ?flow= (privileged
-  // session expired — user logged in > 15min ago — Kratos drops the
-  // flow and redirects to ui_url naked), don't re-fire. Instead route
-  // through Kratos login with refresh=true so the user re-authenticates
-  // and lands back here with a privileged session.
+  // ?flow= param. Use the JSON API instead of the browser flow's 303
+  // dance so we can handle privileged-session refresh inline without
+  // the multi-stage window.location.assign chain that kept landing
+  // admins on /dashboard. initSettingsFlow returns one of three
+  // states: flow ready (render), refresh required (kick a Kratos
+  // login flow with refresh=true), or unauthenticated (back to login).
   useEffect(() => {
-    if (flowID) {
-      sessionStorage.removeItem("kratos_settings_redirect_attempted");
-      sessionStorage.removeItem("post_login_return_to");
-      return;
-    }
-    // Stash the return path BEFORE the very first redirect — Kratos
-    // may route the request directly to /login (when the privileged
-    // session has already expired) without a /settings round-trip,
-    // skipping the second-attempt branch below. Login.tsx reads +
-    // clears this on success.
-    sessionStorage.setItem("post_login_return_to", location.pathname);
-
-    const attempted = sessionStorage.getItem("kratos_settings_redirect_attempted");
-    if (attempted) {
-      sessionStorage.removeItem("kratos_settings_redirect_attempted");
-      const returnTo = encodeURIComponent(location.pathname);
-      window.location.assign(
-        `/.ory/self-service/login/browser?refresh=true&return_to=${returnTo}`,
-      );
-      return;
-    }
-    sessionStorage.setItem("kratos_settings_redirect_attempted", "1");
-    window.location.assign(SETTINGS_BROWSER_URL);
-  }, [flowID, location.pathname]);
+    if (flowID) return;
+    let cancelled = false;
+    setFlowLoading(true);
+    initSettingsFlow().then((res) => {
+      if (cancelled) return;
+      switch (res.kind) {
+        case "flow":
+          // Push the flow id into the URL so refresh / back-button
+          // behaviour matches the Kratos-redirect path.
+          navigate(`${location.pathname}?flow=${res.flow.id}`, { replace: true });
+          break;
+        case "refresh_required": {
+          sessionStorage.setItem("post_login_return_to", location.pathname);
+          const ret = encodeURIComponent(location.pathname);
+          window.location.assign(
+            `/.ory/self-service/login/browser?refresh=true&return_to=${ret}`,
+          );
+          break;
+        }
+        case "unauthenticated":
+          window.location.assign("/login");
+          break;
+        case "error":
+          setFlowError(res.message);
+          setFlowLoading(false);
+          break;
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [flowID, location.pathname, navigate]);
 
   useEffect(() => {
     if (!flowID) {

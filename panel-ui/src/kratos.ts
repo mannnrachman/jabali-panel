@@ -206,6 +206,50 @@ export async function getSettingsFlow(id: string): Promise<KratosFlow> {
 }
 
 /**
+ * Result of an initSettingsFlow call. Kratos returns the flow on
+ * success, asks for a privileged-session refresh on stale sessions,
+ * or 401 when there's no session at all.
+ */
+export type SettingsInitResult =
+  | { kind: "flow"; flow: KratosFlow }
+  | { kind: "refresh_required" }
+  | { kind: "unauthenticated" }
+  | { kind: "error"; message: string };
+
+/**
+ * Initialise a settings flow without the redirect dance. Kratos's
+ * /self-service/settings/browser endpoint normally 303s to the
+ * configured ui_url; with `Accept: application/json` it returns the
+ * flow JSON directly. The browser flow init is the only Kratos path
+ * that performs the privileged-session check, so we still need it
+ * for that side-effect — we just sidestep the page reload.
+ *
+ * Privileged-session expired → 403 with id "session_refresh_required".
+ * No session at all → 401.
+ */
+export async function initSettingsFlow(): Promise<SettingsInitResult> {
+  try {
+    const resp = await kratosClient.get<KratosFlow>(
+      "/self-service/settings/browser",
+      // Don't follow the 303 to ui_url — we want the JSON body.
+      { headers: { Accept: "application/json" }, maxRedirects: 0 },
+    );
+    return { kind: "flow", flow: resp.data };
+  } catch (err) {
+    const ax = err as AxiosError<{ error?: { id?: string } }>;
+    const status = ax.response?.status;
+    const errorId = ax.response?.data?.error?.id;
+    if (status === 403 && errorId === "session_refresh_required") {
+      return { kind: "refresh_required" };
+    }
+    if (status === 401) {
+      return { kind: "unauthenticated" };
+    }
+    return { kind: "error", message: humanizeKratosError(ax) };
+  }
+}
+
+/**
  * Submit a settings flow update (e.g. password change, TOTP enrolment).
  * Kratos returns:
  *   200 with the updated flow — UI re-renders with success/error in

@@ -108,6 +108,18 @@
   h1, h2, h3 {
     word-break: break-word;
   }
+  /* AntD Space flex children get min-width: auto by default, which
+     for a Typography.Title means "shrink to longest unbreakable
+     word" — and the rendered <h2> sometimes gets squeezed below
+     that to one letter per line when sibling Space content is wide.
+     min-width: 0 on flex children + the word-break above lets the
+     title break across two lines instead. */
+  .ant-space-item h1,
+  .ant-space-item h2,
+  .ant-space-item h3,
+  .ant-space-item .ant-typography {
+    min-width: 0;
+  }
   /* AntD Tabs — let labels wrap across two lines instead of clipping
      "Storage" → "Stor". Default tab-nav uses overflow:hidden + ellipsis. */
   .ant-tabs-tab {

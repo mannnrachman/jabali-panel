@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   Drawer,
+  Flex,
   Grid,
   Space,
   Table,
@@ -206,17 +207,17 @@ export const UserSSHKeysPage = () => {
 
   return (
     <div>
-      <Space
-        style={{
-          marginBottom: 16,
-          width: "100%",
-          justifyContent: "space-between",
-        }}
+      <Flex
+        wrap
+        gap="middle"
+        justify="space-between"
+        align="center"
+        style={{ marginBottom: 16 }}
       >
-        <Typography.Title level={3} style={{ margin: 0 }}>
+        <Typography.Title level={3} style={{ margin: 0, wordBreak: "break-word" }}>
           <KeyOutlined /> SSH Keys
         </Typography.Title>
-        <Space>
+        <Space wrap>
           <Button
             icon={<KeyOutlined />}
             onClick={() => setGenOpen(true)}
@@ -231,7 +232,7 @@ export const UserSSHKeysPage = () => {
             Add Key
           </Button>
         </Space>
-      </Space>
+      </Flex>
 
       <Alert
         type="info"

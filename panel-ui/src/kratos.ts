@@ -146,12 +146,34 @@ export async function submitLoginFlow(
     }
     return { kind: "error", message: "Unexpected response from identity provider" };
   } catch (err) {
-    const ax = err as AxiosError<KratosFlow>;
-    // 400 on a login flow with errors embedded in the flow's ui.messages is
-    // the normal "wrong password" / "rate limited" path — surface the flow
-    // so the caller can re-render with the error messages in place.
-    if (ax.response?.status === 400 && ax.response.data?.ui) {
+    const ax = err as AxiosError<KratosFlow & { redirect_browser_to?: string }>;
+    // 400 on a login flow with errors embedded in the flow's ui.messages
+    // is the normal "wrong password" / "rate limited" path — surface
+    // the flow so the caller can re-render with errors in place.
+    //
+    // 422 happens when Kratos needs the SPA to follow an internal
+    // redirect — most commonly aal2 escalation: password verified
+    // ok, identity has TOTP/lookup_secret enrolled, the same login
+    // flow has been upgraded with totp/lookup_secret nodes and the
+    // SPA must re-fetch + render. The body carries either the
+    // updated flow or a redirect_browser_to URL with ?flow=<id>.
+    if (
+      (ax.response?.status === 400 || ax.response?.status === 422) &&
+      ax.response.data?.ui
+    ) {
       return { kind: "continue", flow: ax.response.data };
+    }
+    if (ax.response?.status === 422 && ax.response.data?.redirect_browser_to) {
+      try {
+        const upgradeUrl = new URL(ax.response.data.redirect_browser_to);
+        const upgradedFlowId = upgradeUrl.searchParams.get("flow");
+        if (upgradedFlowId) {
+          const upgraded = await getLoginFlow(upgradedFlowId);
+          return { kind: "continue", flow: upgraded };
+        }
+      } catch {
+        // fall through to error
+      }
     }
     return { kind: "error", message: humanizeKratosError(ax) };
   }

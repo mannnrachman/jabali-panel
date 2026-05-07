@@ -229,10 +229,12 @@ export type SettingsInitResult =
  */
 export async function initSettingsFlow(): Promise<SettingsInitResult> {
   try {
+    // kratosClient already sets Accept: application/json globally —
+    // Kratos returns 200 + flow body instead of 303 to ui_url. No
+    // need to disable axios follow-redirects (doing so would break
+    // the cookie-only flow path the SPA uses everywhere else).
     const resp = await kratosClient.get<KratosFlow>(
       "/self-service/settings/browser",
-      // Don't follow the 303 to ui_url — we want the JSON body.
-      { headers: { Accept: "application/json" }, maxRedirects: 0 },
     );
     return { kind: "flow", flow: resp.data };
   } catch (err) {

@@ -74,6 +74,7 @@
   /* Page titles and Card headers — tighter line-height for narrow widths. */
   .ant-card-head {
     padding-inline: 16px !important;
+    min-height: auto !important;
   }
   /* Allow card head title to wrap rather than ellipsis-clip on narrow
      phones — shows the full label "Two-factor (TOTP)" instead of
@@ -84,15 +85,65 @@
     text-overflow: clip !important;
     line-height: 1.3 !important;
   }
+  /* Stack card head title + extra (e.g. action button) vertically.
+     AntD's flex row otherwise lets a long extra (Add Record / Check
+     for updates) squeeze the title down to a single character per
+     line ("Ja…", "Sy…"). */
+  .ant-card-head-wrapper {
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+  }
+  .ant-card-head-wrapper > .ant-card-head-title {
+    flex: 1 1 100% !important;
+  }
+  .ant-card-head-wrapper > .ant-card-extra {
+    flex: 0 0 auto !important;
+    margin-inline-start: 0 !important;
+  }
+  /* Page-level h2 + extras (e.g. DNS Records page header) — same
+     stacking treatment, since they use Space justify=space-between
+     which collapses awkwardly on narrow widths. */
+  h1, h2, h3 {
+    word-break: break-word;
+  }
+  /* AntD Tabs — let labels wrap across two lines instead of clipping
+     "Storage" → "Stor". Default tab-nav uses overflow:hidden + ellipsis. */
+  .ant-tabs-tab {
+    padding: 8px 8px !important;
+  }
+  .ant-tabs-tab .ant-tabs-tab-btn {
+    white-space: normal !important;
+    line-height: 1.2 !important;
+  }
+  /* Notification + user-menu dropdowns: cap to viewport so the panel
+     doesn't render half-off-screen when triggered from the right edge
+     of the JabaliHeader. */
+  .ant-dropdown,
+  .ant-dropdown-menu {
+    max-width: calc(100vw - 16px) !important;
+  }
+  .ant-dropdown-menu-item {
+    white-space: normal !important;
+    word-break: break-word;
+  }
+  /* AntD Notification (toast) drawer is fixed at 384px which on a
+     304px viewport overflows. */
+  .ant-notification {
+    max-width: calc(100vw - 24px) !important;
+    inset-inline-end: 12px !important;
+  }
+  .ant-notification-notice {
+    max-width: 100% !important;
+    width: 100% !important;
+  }
 }
 
 /* Tables overflow horizontally inside their card. SearchableTable
- * already sets scroll.x = "max-content"; the raw <Table> usages
- * (dashboards, etc.) get a CSS-only fallback so a 5-column table
- * doesn't push the page wider than the viewport on mobile. */
+ * already sets scroll.x = "max-content"; raw <Table> usages
+ * (dashboards) keep their natural sizing — applying overflow-x:auto
+ * here also implies overflow-y:auto in browsers, which painted a
+ * vertical scrollbar on every dashboard table. Per-component
+ * scroll prop is the right knob; CSS shouldn't second-guess it. */
 .ant-table-container {
   max-width: 100%;
-}
-.ant-table-wrapper {
-  overflow-x: auto;
 }

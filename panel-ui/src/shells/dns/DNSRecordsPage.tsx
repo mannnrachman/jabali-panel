@@ -11,6 +11,7 @@ import {
 import {
   Button,
   Drawer,
+  Flex,
   Space,
   Table,
   Tag,
@@ -487,14 +488,14 @@ export const DNSRecordsPage = () => {
         Back to DNS
       </Button>
 
-      <Space
-        style={{
-          marginBottom: 16,
-          width: "100%",
-          justifyContent: "space-between",
-        }}
+      <Flex
+        wrap
+        gap="middle"
+        justify="space-between"
+        align="center"
+        style={{ marginBottom: 16 }}
       >
-        <Typography.Title level={3} style={{ margin: 0 }}>
+        <Typography.Title level={3} style={{ margin: 0, wordBreak: "break-word" }}>
           DNS Records for {domain?.name}
         </Typography.Title>
         <Button
@@ -504,7 +505,7 @@ export const DNSRecordsPage = () => {
         >
           Add Record
         </Button>
-      </Space>
+      </Flex>
 
       {zone && (
         <Typography.Text

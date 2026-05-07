@@ -398,11 +398,50 @@ export function JabaliHeader({ showMenuButton = false, onMenuClick }: JabaliHead
         <NotificationBell />
         <ThemeToggle />
         <Dropdown menu={{ items: userMenu }} placement="bottomRight">
-          <Button type="text" icon={<Avatar icon={<UserOutlined />} />}>
+          <Button
+            type="text"
+            icon={<GravatarAvatar email={email} />}
+          >
             {isWide ? <>&nbsp;{email || "…"}</> : null}
           </Button>
         </Dropdown>
       </Space>
     </Header>
   );
+}
+
+// GravatarAvatar — small wrapper around AntD Avatar that resolves
+// the user's email to a Gravatar SHA-256 URL. Falls back to the
+// generic UserOutlined icon while hashing is in flight or when the
+// email is empty (logged-out / first paint). Gravatar's `d=mp` makes
+// it serve their default mystery-person silhouette for emails with
+// no Gravatar profile, so the avatar never 404s in the network tab.
+function GravatarAvatar({ email }: { email: string }) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    const trimmed = email.trim().toLowerCase();
+    if (!trimmed) {
+      setSrc(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const enc = new TextEncoder().encode(trimmed);
+        const buf = await crypto.subtle.digest("SHA-256", enc);
+        const hex = Array.from(new Uint8Array(buf))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+        if (!cancelled) {
+          setSrc(`https://gravatar.com/avatar/${hex}?d=mp&s=64`);
+        }
+      } catch {
+        if (!cancelled) setSrc(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [email]);
+  return <Avatar src={src ?? undefined} icon={<UserOutlined />} />;
 }

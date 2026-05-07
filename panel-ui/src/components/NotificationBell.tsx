@@ -254,7 +254,13 @@ export function NotificationBell() {
     <Dropdown
       menu={{ items }}
       trigger={["click"]}
-      placement="bottomRight"
+      // On narrow viewports anchor below+centred under the bell so
+      // the panel doesn't overshoot the viewport's left edge —
+      // bottomRight aligned right edges, which on a 304px screen
+      // pushed the panel content past x=0 (text clipped at "t logged
+      // in" instead of "Just logged in"). bottomRight stays for tablet+.
+      placement={isNarrow ? "bottom" : "bottomRight"}
+      align={{ overflow: { adjustX: 1, adjustY: 1 } }}
       dropdownRender={(menu) => (
         <div style={contentStyle}>
           <div style={rowStyle}>

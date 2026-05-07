@@ -5959,12 +5959,15 @@ AIDE_CONF
   install -d -m 0755 /var/log/aide
 
   # Initial DB build — only if missing AND no in-progress marker.
+  # AIDE 0.19.1 requires an explicit --config (no implicit /etc/aide/
+  # aide.conf default any more), or --init exits with
+  # 'ERROR: missing configuration'. Pass it on every spawn.
   if [[ ! -f /var/lib/aide/aide.db ]] && [[ ! -f /var/lib/aide/.init-in-progress ]]; then
     install -d -m 0750 /var/lib/aide
     touch /var/lib/aide/.init-in-progress
     _log "AIDE: initial DB build (background — takes 2-5 min)"
     nohup bash -c '
-      /usr/bin/aide --init >/var/log/aide/init.log 2>&1
+      /usr/bin/aide --init --config=/etc/aide/aide.conf >/var/log/aide/init.log 2>&1
       if [[ -f /var/lib/aide/aide.db.new ]]; then
         mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
         chmod 0600 /var/lib/aide/aide.db

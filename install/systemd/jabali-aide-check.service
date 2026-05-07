@@ -5,7 +5,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/aide --check
+ExecStart=/usr/bin/aide --check --config=/etc/aide/aide.conf
 StandardOutput=append:/var/log/aide/aide.report.log
 StandardError=append:/var/log/aide/aide.report.log
 SuccessExitStatus=0 1 2 3 4 5 6 7

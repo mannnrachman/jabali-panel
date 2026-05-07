@@ -54,16 +54,16 @@ export const EventsTab = () => {
       loading={list.isLoading}
       dataSource={list.data?.data ?? []}
       pagination={false}
-      // Don't expand to max-content — long Description text was
-      // pushing the table well past the viewport. tableLayout=fixed
-      // honours per-column widths and lets the Description Column's
-      // own ellipsis kick in instead of horizontal overflow.
-      tableLayout="fixed"
+      // tableLayout=auto lets the browser size each column to its
+      // content. Description gets the leftover width so long
+      // sentences flow naturally without expanding Event past its
+      // own (short) label + kind code.
       scroll={{ x: 800 }}
     >
       <Table.Column<EventKindRow>
         title="Event"
         dataIndex="label"
+        width={280}
         render={(label: string, row) => (
           <div>
             <Typography.Text strong>{label}</Typography.Text>

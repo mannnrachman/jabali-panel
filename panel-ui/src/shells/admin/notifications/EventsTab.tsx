@@ -54,7 +54,12 @@ export const EventsTab = () => {
       loading={list.isLoading}
       dataSource={list.data?.data ?? []}
       pagination={false}
-      scroll={{ x: "max-content" }}
+      // Don't expand to max-content — long Description text was
+      // pushing the table well past the viewport. tableLayout=fixed
+      // honours per-column widths and lets the Description Column's
+      // own ellipsis kick in instead of horizontal overflow.
+      tableLayout="fixed"
+      scroll={{ x: 800 }}
     >
       <Table.Column<EventKindRow>
         title="Event"
@@ -81,6 +86,11 @@ export const EventsTab = () => {
       <Table.Column<EventKindRow>
         title="Description"
         dataIndex="description"
+        // Column-level ellipsis ensures the cell box itself caps at
+        // its column width and clips with '…'. The inner Paragraph's
+        // expandable line-clamp lets the operator click 'more' to
+        // see the full sentence inline.
+        ellipsis
         render={(v: string) => (
           <Typography.Paragraph
             type="secondary"

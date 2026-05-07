@@ -35,9 +35,16 @@ func (h *userHandler) reset2FA(c *gin.Context) {
 	}
 
 	if user.KratosIdentityID == nil || *user.KratosIdentityID == "" {
-		// User predates Kratos cutover or wasn't migrated — nothing to
-		// reset. Treat as success so the operator can move on.
-		c.JSON(http.StatusOK, gin.H{"ok": true, "noop": true})
+		// User predates Kratos cutover or wasn't migrated. There's
+		// genuinely no second-factor state to clear — but a 200 OK
+		// from a "Reset 2FA" button suggests the operator's request
+		// happened when nothing was actually done. Surface 422 so
+		// the UI can warn explicitly: "this user has no Kratos
+		// identity; run jabali admin rebuild-kratos first".
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"error":  "user_has_no_kratos_identity",
+			"detail": "User predates Kratos migration. Run `jabali admin rebuild-kratos` to provision an identity, then re-attempt.",
+		})
 		return
 	}
 

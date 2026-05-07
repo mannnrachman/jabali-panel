@@ -67,7 +67,7 @@ is the only auth source").
    TOTP enrolled MUST present a second factor before any
    authenticated panel-api endpoint succeeds.
 5. **Per-route override:** none. Whole panel is aal2-when-enrolled.
-   Admin CLI break-glass (`jabali admin login`) bypasses AAL via
+   Admin CLI break-glass (`jabali user 2fa-reset <email>`) bypasses
    the existing direct-DB session-mint path.
 6. **Privileged-session for settings:** Kratos's
    `selfservice.flows.settings.privileged_session_max_age` already

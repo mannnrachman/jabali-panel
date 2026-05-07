@@ -474,7 +474,7 @@ func newUser2FAResetCmd() *cobra.Command {
 				return err
 			}
 			if target.KratosIdentityID == nil || *target.KratosIdentityID == "" {
-				return fmt.Errorf("user %s (%s) has no kratos_identity_id — nothing to reset", target.ID, target.Email)
+				return fmt.Errorf("user %s (%s) has no kratos_identity_id — run `jabali admin rebuild-kratos` to provision one before retrying", target.ID, target.Email)
 			}
 
 			kratosCfg := sharedCfg.Auth.Kratos

@@ -62,10 +62,12 @@ users who enrol TOTP/lookup_secret MUST present a second factor
 before `whoami` succeeds. There is no per-route AAL exception — the
 whole panel is aal2-when-enrolled.
 
-The admin CLI break-glass path (`jabali admin login`, which mints a
-session directly via the Kratos admin API) is unaffected because it
-sets the session AAL itself; it remains the escape hatch when an
-operator's 2FA is broken AND no other admin can reset it.
+The CLI break-glass path is `jabali user 2fa-reset <email>` — runs
+directly against Kratos's admin socket, requires only host root, and
+strips both totp + lookup_secret credentials. Password remains
+intact; the user re-authenticates at aal1 on next sign-in. This is
+the only escape hatch when every admin has lost their authenticator
+and burned through all recovery codes.
 
 ## Consequences
 

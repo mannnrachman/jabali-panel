@@ -11,9 +11,11 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Descriptions,
   Form,
   Input,
+  Modal,
   Space,
   Spin,
   Typography,
@@ -324,20 +326,7 @@ function SettingsGroupForm({ flow, group, onSubmit }: GroupFormProps) {
         />
       )}
       {recoveryCodes && recoveryCodes.length > 0 && (
-        <Alert
-          type="success"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message="Save these recovery codes — shown once"
-          description={
-            <Typography.Paragraph
-              copyable={{ text: recoveryCodes.join("\n") }}
-              style={{ margin: 0, fontFamily: "monospace", whiteSpace: "pre" }}
-            >
-              {recoveryCodes.join("\n")}
-            </Typography.Paragraph>
-          }
-        />
+        <RecoveryCodesReveal codes={recoveryCodes} />
       )}
       <Form
         layout="vertical"
@@ -357,19 +346,35 @@ function SettingsGroupForm({ flow, group, onSubmit }: GroupFormProps) {
           <Space wrap>
             {fields
               .filter((f) => f.kind === "submit")
-              .map((f) => (
-                <Button
-                  key={f.name + "=" + f.value}
-                  type="primary"
-                  loading={submitting}
-                  danger={f.name.endsWith("_unlink")}
-                  onClick={() =>
-                    submit({ ...{}, [f.name]: f.value })
-                  }
-                >
-                  {submitButtonLabel(group, f.name)}
-                </Button>
-              ))}
+              .map((f) => {
+                const isDestructive =
+                  f.name.endsWith("_unlink") || f.name.endsWith("_disable");
+                const onPress = () => submit({ [f.name]: f.value });
+                return (
+                  <Button
+                    key={f.name + "=" + f.value}
+                    type="primary"
+                    loading={submitting}
+                    danger={isDestructive}
+                    onClick={() => {
+                      if (!isDestructive) {
+                        onPress();
+                        return;
+                      }
+                      Modal.confirm({
+                        title: confirmTitle(f.name),
+                        content: confirmBody(f.name),
+                        okText: "Yes, disable",
+                        okButtonProps: { danger: true },
+                        cancelText: "Cancel",
+                        onOk: onPress,
+                      });
+                    }}
+                  >
+                    {submitButtonLabel(group, f.name)}
+                  </Button>
+                );
+              })}
           </Space>
         ) : (
           <Form.Item style={{ marginBottom: 0 }}>
@@ -437,6 +442,68 @@ function groupTitle(group: string): string {
     default:
       return group;
   }
+}
+
+// Reveal-once block for newly-generated lookup_secret codes. Adds an
+// acknowledgement checkbox + Download .txt button so the user has a
+// fighting chance to actually keep them — Kratos shows them exactly
+// once and a refresh / tab-close loses them forever.
+function RecoveryCodesReveal({ codes }: { codes: string[] }) {
+  const [acked, setAcked] = useState(false);
+  const blob = codes.join("\n") + "\n";
+  const downloadName = `jabali-panel-recovery-codes-${new Date().toISOString().slice(0, 10)}.txt`;
+  const downloadHref = `data:text/plain;charset=utf-8,${encodeURIComponent(blob)}`;
+  return (
+    <Alert
+      type="success"
+      showIcon
+      style={{ marginBottom: 16 }}
+      message="Save these recovery codes — shown once"
+      description={
+        <Space direction="vertical" style={{ width: "100%" }}>
+          <Typography.Paragraph
+            copyable={{ text: blob }}
+            style={{ margin: 0, fontFamily: "monospace", whiteSpace: "pre" }}
+          >
+            {codes.join("\n")}
+          </Typography.Paragraph>
+          <Space wrap>
+            <Button
+              type="link"
+              href={downloadHref}
+              download={downloadName}
+              style={{ paddingLeft: 0 }}
+            >
+              Download .txt
+            </Button>
+          </Space>
+          <Checkbox checked={acked} onChange={(e) => setAcked(e.target.checked)}>
+            I've saved these somewhere safe
+          </Checkbox>
+          {!acked && (
+            <Typography.Text type="warning">
+              You won't see these again. If you lose your authenticator
+              and don't have these, an admin must reset your 2FA.
+            </Typography.Text>
+          )}
+        </Space>
+      }
+    />
+  );
+}
+
+function confirmTitle(name: string): string {
+  if (name === "totp_unlink") return "Disable two-factor authentication?";
+  if (name === "lookup_secret_disable") return "Disable backup codes?";
+  return "Disable?";
+}
+
+function confirmBody(name: string): string {
+  if (name === "totp_unlink")
+    return "Your authenticator entry will stop working. You'll only need your password to sign in until you re-enrol.";
+  if (name === "lookup_secret_disable")
+    return "Existing recovery codes will be invalidated. You'll lose your fallback if you lose your authenticator.";
+  return "This action cannot be undone.";
 }
 
 function submitLabel(group: string): string {

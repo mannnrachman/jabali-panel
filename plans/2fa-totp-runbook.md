@@ -41,13 +41,14 @@ Use the break-glass CLI on the host:
 
 ```bash
 ssh root@<panel-host>
-jabali admin login
+jabali user 2fa-reset <admin-email>
 ```
 
-Mints a session via the Kratos admin API and prints a one-shot URL
-that opens an authenticated browser session. Use it to reach
-`/jabali-admin/users` and reset 2FA on a trapped admin account as
-above. The CLI bypasses AAL by design.
+Strips totp + lookup_secret credentials from the user's Kratos
+identity via the admin API (no panel session required — runs
+directly against Kratos's admin socket). Password unchanged.
+Admin signs in normally afterwards and can re-enrol from
+`/jabali-admin/profile`.
 
 ## Inspecting state
 

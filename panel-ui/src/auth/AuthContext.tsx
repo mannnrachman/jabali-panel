@@ -90,6 +90,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       /* noop */
     }
     qc.clear();
+    // Wipe per-tab login redirect state so a future login from this
+    // tab doesn't bounce to a stale return path (e.g. /profile from
+    // a session that was closed mid-2FA-enrolment).
+    sessionStorage.removeItem("post_login_return_to");
+    sessionStorage.removeItem("kratos_settings_redirect_attempted");
   }, [qc]);
 
   const value = useMemo<AuthState>(

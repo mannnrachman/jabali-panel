@@ -30,6 +30,7 @@ func newUserCmd() *cobra.Command {
 		newUserCreateCmd(),
 		newUserDeleteCmd(),
 		newUserPasswordCmd(),
+		newUser2FAResetCmd(),
 	)
 	return cmd
 }
@@ -439,4 +440,59 @@ func strOr(s *string, fallback string) string {
 		return fallback
 	}
 	return *s
+}
+
+// ---- 2fa reset ----
+
+// newUser2FAResetCmd is the operator break-glass for a user whose
+// authenticator is lost AND recovery codes are exhausted. Strips
+// totp + lookup_secret credentials from their Kratos identity. The
+// password stays intact; on next sign-in the user is back at aal1
+// and can re-enrol from the profile page.
+//
+// Mirrors the panel-side admin REST endpoint
+// (POST /admin/users/:id/2fa/reset) but works without a logged-in
+// admin session — the use case is "every admin is locked out, ssh
+// to host, run this".
+func newUser2FAResetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "2fa-reset <email|username|user-id>",
+		Short:   "Strip TOTP + recovery codes from a user (CLI escape hatch when locked out)",
+		Args:    cobra.ExactArgs(1),
+		PreRunE: requireDBAndAgent,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			lookup := strings.TrimSpace(args[0])
+			if lookup == "" {
+				return fmt.Errorf("user identifier is required")
+			}
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
+			defer cancel()
+
+			target, err := resolveUser(ctx, lookup)
+			if err != nil {
+				return err
+			}
+			if target.KratosIdentityID == nil || *target.KratosIdentityID == "" {
+				return fmt.Errorf("user %s (%s) has no kratos_identity_id — nothing to reset", target.ID, target.Email)
+			}
+
+			kratosCfg := sharedCfg.Auth.Kratos
+			if kratosCfg.AdminURL == "" {
+				return fmt.Errorf("auth.kratos.admin_url not configured — cannot reach Kratos admin API")
+			}
+			kc := kratosclient.NewClient(kratosCfg.PublicURL, kratosCfg.AdminURL)
+
+			if err := kc.RemoveSecondFactor(ctx, *target.KratosIdentityID); err != nil {
+				if errors.Is(err, kratosclient.ErrIdentityNotFound) {
+					return fmt.Errorf("kratos identity %s not found — DB row may be orphaned", *target.KratosIdentityID)
+				}
+				return fmt.Errorf("kratos admin patch failed: %w", err)
+			}
+
+			fmt.Printf("Two-factor authentication reset for %s (%s).\n", target.ID, target.Email)
+			fmt.Printf("Password unchanged. User can sign in normally and re-enrol from /profile.\n")
+			return nil
+		},
+	}
 }

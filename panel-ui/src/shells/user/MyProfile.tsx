@@ -69,16 +69,19 @@ export function MyProfile() {
   useEffect(() => {
     if (flowID) {
       sessionStorage.removeItem("kratos_settings_redirect_attempted");
+      sessionStorage.removeItem("post_login_return_to");
       return;
     }
+    // Stash the return path BEFORE the very first redirect — Kratos
+    // may route the request directly to /login (when the privileged
+    // session has already expired) without a /settings round-trip,
+    // skipping the second-attempt branch below. Login.tsx reads +
+    // clears this on success.
+    sessionStorage.setItem("post_login_return_to", location.pathname);
+
     const attempted = sessionStorage.getItem("kratos_settings_redirect_attempted");
     if (attempted) {
       sessionStorage.removeItem("kratos_settings_redirect_attempted");
-      // Stash where to come back to so Login can read it after the
-      // refresh succeeds. Kratos's return_to query is unreliable —
-      // it doesn't propagate through to the /login UI URL nor reach
-      // the JSON success response.
-      sessionStorage.setItem("post_login_return_to", location.pathname);
       const returnTo = encodeURIComponent(location.pathname);
       window.location.assign(
         `/.ory/self-service/login/browser?refresh=true&return_to=${returnTo}`,

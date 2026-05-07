@@ -14,8 +14,10 @@ import {
   Alert,
   Button,
   Card,
+  Col,
   Form,
   Input,
+  Row,
   Space,
   Typography,
   Upload,
@@ -173,37 +175,42 @@ export const BrandingCard = () => {
           </Space>
         </Form>
 
-        <Typography.Title level={5} style={{ marginTop: 24 }}>Light Logo</Typography.Title>
-        <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-          Shown when the panel is in light mode. PNG / SVG / WEBP / JPEG, up to 512 KB.
-        </Typography.Paragraph>
-        {renderLogoPreview("light")}
-        <Space style={{ marginTop: 12 }}>
-          <Upload {...buildUploader("light")}>
-            <Button icon={<UploadOutlined />}>Upload Light Logo</Button>
-          </Upload>
-          {branding.hasLogoLight && (
-            <Button danger icon={<DeleteOutlined />} onClick={() => clearLogo("light")}>
-              Remove
-            </Button>
-          )}
-        </Space>
-
-        <Typography.Title level={5} style={{ marginTop: 24 }}>Dark Logo</Typography.Title>
-        <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-          Shown when the panel is in dark mode. PNG / SVG / WEBP / JPEG, up to 512 KB.
-        </Typography.Paragraph>
-        {renderLogoPreview("dark")}
-        <Space style={{ marginTop: 12 }}>
-          <Upload {...buildUploader("dark")}>
-            <Button icon={<UploadOutlined />}>Upload Dark Logo</Button>
-          </Upload>
-          {branding.hasLogoDark && (
-            <Button danger icon={<DeleteOutlined />} onClick={() => clearLogo("dark")}>
-              Remove
-            </Button>
-          )}
-        </Space>
+        <Row gutter={[24, 24]} style={{ marginTop: 24 }}>
+          <Col xs={24} md={12}>
+            <Typography.Title level={5} style={{ marginTop: 0 }}>Light Logo</Typography.Title>
+            <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+              Shown when the panel is in light mode. PNG / SVG / WEBP / JPEG, up to 512 KB.
+            </Typography.Paragraph>
+            {renderLogoPreview("light")}
+            <Space style={{ marginTop: 12 }} wrap>
+              <Upload {...buildUploader("light")}>
+                <Button icon={<UploadOutlined />}>Upload Light Logo</Button>
+              </Upload>
+              {branding.hasLogoLight && (
+                <Button danger icon={<DeleteOutlined />} onClick={() => clearLogo("light")}>
+                  Remove
+                </Button>
+              )}
+            </Space>
+          </Col>
+          <Col xs={24} md={12}>
+            <Typography.Title level={5} style={{ marginTop: 0 }}>Dark Logo</Typography.Title>
+            <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+              Shown when the panel is in dark mode. PNG / SVG / WEBP / JPEG, up to 512 KB.
+            </Typography.Paragraph>
+            {renderLogoPreview("dark")}
+            <Space style={{ marginTop: 12 }} wrap>
+              <Upload {...buildUploader("dark")}>
+                <Button icon={<UploadOutlined />}>Upload Dark Logo</Button>
+              </Upload>
+              {branding.hasLogoDark && (
+                <Button danger icon={<DeleteOutlined />} onClick={() => clearLogo("dark")}>
+                  Remove
+                </Button>
+              )}
+            </Space>
+          </Col>
+        </Row>
 
         <Alert
           type="info"

@@ -82,24 +82,34 @@ export async function initLoginFlow(): Promise<KratosFlow> {
     const resp = await kratosClient.get<KratosFlow>("/self-service/login/browser");
     return resp.data;
   } catch (err) {
-    const ax = err as AxiosError<{ error?: { id?: string } }>;
+    const ax = err as AxiosError<{
+      error?: { id?: string };
+      redirect_browser_to?: string;
+    }>;
     const errorId = ax.response?.data?.error?.id;
     // Kratos refuses to mint a fresh login flow when an aal1 session
-    // already exists (response: "A valid session was detected and
-    // thus login is not possible"). After a user enrols TOTP, panel-
-    // api's whoami starts returning 401 (aal2 required) so the SPA
-    // bounces to /login — but Kratos sees the aal1 cookie and
-    // 400/422s the bare browser-flow init. Retry with aal=aal2 to
-    // request a second-factor challenge against the existing session.
+    // already exists (after TOTP enrolment, panel-api's whoami starts
+    // 401-ing so the SPA bounces to /login but Kratos sees the aal1
+    // cookie). It returns 422 with redirect_browser_to=...?aal=aal2.
+    //
+    // Doing the aal2 GET via XHR ourselves was breaking the per-flow
+    // CSRF cookie — Kratos sets it via the 303 it emits on browser-
+    // path navigations, and following with an XHR fetch left the
+    // browser holding a cookie keyed to the wrong flow id. Use a
+    // native window.location redirect instead so the browser handles
+    // the cookie hand-off correctly.
     if (
+      ax.response?.status === 422 ||
       errorId === "session_already_available" ||
-      ax.response?.status === 400 ||
-      ax.response?.status === 422
+      errorId === "browser_location_change_required"
     ) {
-      const aal2 = await kratosClient.get<KratosFlow>(
-        "/self-service/login/browser?aal=aal2",
-      );
-      return aal2.data;
+      const target =
+        ax.response?.data?.redirect_browser_to ??
+        "/.ory/self-service/login/browser?aal=aal2";
+      window.location.assign(target);
+      // The current page is being torn down; throw a sentinel so the
+      // caller's await never resolves (UI shows the spinner).
+      return new Promise<KratosFlow>(() => {});
     }
     throw err;
   }
@@ -161,38 +171,23 @@ export async function submitLoginFlow(
     ) {
       return { kind: "continue", flow: ax.response.data };
     }
-    // 422 is also Kratos's "browser must redirect" signal. Body shape:
-    //   { error: { id: "browser_location_change_required" }, redirect_browser_to: "https://.../login?flow=<id>&aal=aal2" }
-    // Fetch the upgraded flow id and re-render. session_already_available
-    // means the user has an aal1 session they're trying to overwrite —
-    // also handled by re-initing with aal=aal2.
+    // 422 is Kratos's "browser must redirect" signal — body:
+    //   { error: { id: "browser_location_change_required" },
+    //     redirect_browser_to: "...login/browser?aal=aal2" or
+    //                          "...login?flow=<id>&aal=aal2" }
+    //
+    // Doing the redirect via XHR breaks the per-flow csrf cookie:
+    // Kratos's CSRF protection ties body.csrf_token to a cookie keyed
+    // by the flow id, set by Kratos's 303. Following the redirect
+    // ourselves with an XHR sometimes leaves the browser holding a
+    // stale per-flow cookie that no longer matches the new flow's
+    // body token (CSRF 403 on the next POST). The native browser
+    // redirect path is the only one Kratos-the-OAuth-y reliably
+    // supports — so do that.
     if (ax.response?.status === 422) {
-      const errorId = ax.response.data?.error?.id;
       const redirect = ax.response.data?.redirect_browser_to;
       if (redirect) {
-        try {
-          const upgradeUrl = new URL(redirect);
-          const upgradedFlowId = upgradeUrl.searchParams.get("flow");
-          if (upgradedFlowId) {
-            const upgraded = await getLoginFlow(upgradedFlowId);
-            return { kind: "continue", flow: upgraded };
-          }
-        } catch {
-          // fall through
-        }
-      }
-      if (
-        errorId === "session_already_available" ||
-        errorId === "browser_location_change_required"
-      ) {
-        try {
-          const aal2 = await kratosClient.get<KratosFlow>(
-            "/self-service/login/browser?aal=aal2",
-          );
-          return { kind: "continue", flow: aal2.data };
-        } catch {
-          // fall through
-        }
+        return { kind: "redirect", url: redirect };
       }
     }
     return { kind: "error", message: humanizeKratosError(ax) };
@@ -216,6 +211,7 @@ type KratosSuccess = {
 export type KratosSubmitResult =
   | { kind: "success"; session: KratosSession }
   | { kind: "continue"; flow: KratosFlow }
+  | { kind: "redirect"; url: string }
   | { kind: "error"; message: string };
 
 /**

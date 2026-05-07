@@ -42,6 +42,7 @@ function homeForRole(isAdmin: boolean): string {
 import {
   csrfToken,
   flowMessages,
+  getLoginFlow,
   initLoginFlow,
   renderableFields,
   submitLoginFlow,
@@ -65,7 +66,16 @@ export const LoginPage = () => {
 
   useEffect(() => {
     let cancelled = false;
-    initLoginFlow()
+    // Re-hydrate an existing flow when Kratos redirected here with
+    // ?flow=<id> (aal2 escalation, refresh re-auth, etc.). Without
+    // this, the SPA would mint a fresh aal1 flow and lose the
+    // upgraded ui that Kratos prepared for us.
+    const params = new URLSearchParams(window.location.search);
+    const existingFlowId = params.get("flow");
+    const fetcher = existingFlowId
+      ? getLoginFlow(existingFlowId)
+      : initLoginFlow();
+    fetcher
       .then((f) => {
         if (cancelled) return;
         setFlow(f);
@@ -131,6 +141,16 @@ export const LoginPage = () => {
     }
     if (result.kind === "continue") {
       setFlow(result.flow);
+      return;
+    }
+    if (result.kind === "redirect") {
+      // Kratos's "browser_location_change_required" — most commonly
+      // aal2 escalation after a successful password submit when the
+      // identity has TOTP enrolled. Native navigation is required so
+      // Kratos's per-flow CSRF cookie hand-off works (XHR-following
+      // the redirect leaves the browser holding a stale per-flow
+      // cookie that fails the next POST's csrf check).
+      window.location.assign(result.url);
       return;
     }
     // Error — surface into the flow messages via a local synthetic flow so

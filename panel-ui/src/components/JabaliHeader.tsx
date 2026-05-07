@@ -267,16 +267,12 @@ export function JabaliHeader({ showMenuButton = false, onMenuClick }: JabaliHead
       icon: <UserOutlined />,
       label: "Profile",
       onClick: () => {
-        // Use existing isAdminShell variable
-        if (isAdminShell) {
-          // Admins don't have a panel-side profile page; Kratos self-service
-          // settings covers email/password/2FA uniformly (M20).
-          // Use window.location to bypass React Router's relative navigation
-          // since /jabali-admin has its own nested /settings route.
-          window.location.assign("/settings" + window.location.search);
-        } else {
-          navigate("/jabali-panel/profile");
-        }
+        // Profile page lives under /jabali-panel/profile for both
+        // shells. The user-shell route guard is RequireAuth (not
+        // RequireAdmin), so admins can land there too. The page hosts
+        // the Kratos settings flow inline (password / TOTP / recovery
+        // codes) — same UX for everyone, one source of truth.
+        navigate("/jabali-panel/profile");
       },
     },
     { type: "divider" },

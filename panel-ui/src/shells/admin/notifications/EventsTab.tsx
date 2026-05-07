@@ -86,16 +86,18 @@ export const EventsTab = () => {
       <Table.Column<EventKindRow>
         title="Description"
         dataIndex="description"
-        // Column-level ellipsis ensures the cell box itself caps at
-        // its column width and clips with '…'. The inner Paragraph's
-        // expandable line-clamp lets the operator click 'more' to
-        // see the full sentence inline.
-        ellipsis
+        // Wrap on word boundaries instead of truncating — long
+        // sentences span multiple lines inside the cell so the
+        // operator sees the full description without expanding.
         render={(v: string) => (
           <Typography.Paragraph
             type="secondary"
-            style={{ margin: 0, fontSize: 12 }}
-            ellipsis={{ rows: 2, expandable: true, symbol: "more" }}
+            style={{
+              margin: 0,
+              fontSize: 12,
+              whiteSpace: "normal",
+              wordBreak: "break-word",
+            }}
           >
             {v}
           </Typography.Paragraph>

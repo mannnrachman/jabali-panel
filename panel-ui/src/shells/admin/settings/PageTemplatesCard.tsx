@@ -5,6 +5,7 @@ import { useState } from "react";
 import {
   Button,
   Card,
+  Input,
   List,
   Modal,
   Popconfirm,
@@ -156,21 +157,18 @@ export const PageTemplatesCard = () => {
             <Typography.Paragraph type="secondary">
               {editing.description}
             </Typography.Paragraph>
-            <textarea
+            <Input.TextArea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               spellCheck={false}
-              style={{
-                width: "100%",
-                minHeight: 360,
-                fontFamily:
-                  "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-                fontSize: 13,
-                lineHeight: 1.5,
-                padding: 12,
-                border: "1px solid #d9d9d9",
-                borderRadius: 6,
-                resize: "vertical",
+              autoSize={{ minRows: 14 }}
+              styles={{
+                textarea: {
+                  fontFamily:
+                    "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                },
               }}
             />
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>

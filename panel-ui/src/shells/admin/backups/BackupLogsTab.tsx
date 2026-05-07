@@ -10,6 +10,7 @@ import {
   Button,
   Modal,
   Spin,
+  theme,
 } from "antd";
 import { ReloadOutlined, FileTextOutlined } from "@ant-design/icons";
 import dayjs, { Dayjs } from "dayjs";
@@ -44,6 +45,7 @@ interface Filters {
 }
 
 export const BackupLogsTab = () => {
+  const { token } = theme.useToken();
   const [filters, setFilters] = useState<Filters>({});
   const [page, setPage] = useState(1);
   const [selectedLog, setSelectedLog] = useState<BackupLogEntry | null>(null);
@@ -336,7 +338,8 @@ export const BackupLogsTab = () => {
             <Typography.Title level={5}>Log Output:</Typography.Title>
             <pre
               style={{
-                backgroundColor: "#f6f6f6",
+                backgroundColor: token.colorBgLayout,
+                color: token.colorText,
                 padding: "16px",
                 borderRadius: "6px",
                 fontSize: "13px",

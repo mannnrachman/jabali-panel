@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Modal, Typography, Button, Space, message, Spin } from "antd";
+import { Modal, Typography, Button, Space, message, Spin, theme } from "antd";
 import { PauseOutlined, PlayCircleOutlined, ClearOutlined } from "@ant-design/icons";
 
 const { Text } = Typography;
@@ -13,6 +13,7 @@ interface LogStreamModalProps {
 }
 
 export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: LogStreamModalProps) => {
+  const { token } = theme.useToken();
   const [logs, setLogs] = useState<string[]>([]);
   const [connected, setConnected] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -138,7 +139,7 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
               alignItems: "center",
               justifyContent: "center",
               height: "100%",
-              backgroundColor: "#fafafa"
+              backgroundColor: token.colorBgLayout
             }}>
               <Spin spinning={connecting}>
                 <Text type="secondary">

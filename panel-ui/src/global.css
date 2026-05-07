@@ -38,3 +38,52 @@
   justify-content: flex-start;
   box-shadow: none;
 }
+
+/* ---------- Mobile / tablet responsive constraints ----------
+ *
+ * Many Modal + Drawer call sites pass width={500..900} as a px value.
+ * On a 375px phone or 768px tablet that overflows the viewport and
+ * clips controls. AntD writes `width: <N>px` inline; cap it via CSS
+ * with !important since :where() prefixed wrapper rules don't
+ * outrank inline styles.
+ */
+.ant-modal {
+  max-width: calc(100vw - 16px);
+}
+.ant-drawer-content-wrapper {
+  max-width: 100vw !important;
+}
+@media (max-width: 600px) {
+  /* Phones: drawers + modals get nearly full viewport.
+     The 16px gutter on Modal keeps the close button visible
+     against the edge. */
+  .ant-drawer-content-wrapper {
+    width: 100vw !important;
+  }
+  .ant-modal {
+    margin: 8px auto;
+  }
+  /* Layout content padding tightens so cards aren't squeezed. */
+  .ant-layout-content {
+    padding: 12px !important;
+  }
+  /* Card bodies — default 24px is too generous on a phone. */
+  .ant-card-body {
+    padding: 16px !important;
+  }
+  /* Page titles and Card headers — tighter line-height for narrow widths. */
+  .ant-card-head {
+    padding-inline: 16px !important;
+  }
+}
+
+/* Tables overflow horizontally inside their card. SearchableTable
+ * already sets scroll.x = "max-content"; the raw <Table> usages
+ * (dashboards, etc.) get a CSS-only fallback so a 5-column table
+ * doesn't push the page wider than the viewport on mobile. */
+.ant-table-container {
+  max-width: 100%;
+}
+.ant-table-wrapper {
+  overflow-x: auto;
+}

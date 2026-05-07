@@ -74,6 +74,11 @@ export function MyProfile() {
     const attempted = sessionStorage.getItem("kratos_settings_redirect_attempted");
     if (attempted) {
       sessionStorage.removeItem("kratos_settings_redirect_attempted");
+      // Stash where to come back to so Login can read it after the
+      // refresh succeeds. Kratos's return_to query is unreliable —
+      // it doesn't propagate through to the /login UI URL nor reach
+      // the JSON success response.
+      sessionStorage.setItem("post_login_return_to", location.pathname);
       const returnTo = encodeURIComponent(location.pathname);
       window.location.assign(
         `/.ory/self-service/login/browser?refresh=true&return_to=${returnTo}`,

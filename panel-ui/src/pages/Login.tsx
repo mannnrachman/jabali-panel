@@ -112,28 +112,20 @@ export const LoginPage = () => {
         ? { id: me.id, email: me.email, isAdmin: me.isAdmin }
         : null;
       qc.setQueryData<MeUser | null>(["whoami"], mePrimed);
-      // Honour return_to when the flow carried one. Kratos doesn't
-      // forward the query to the /login URL — only the flow id — so
-      // we have to dig it out of flow.request_url (the URL used to
-      // initiate the flow, which still has ?return_to=… on it). Used
-      // by /profile's refresh=true escalation when the privileged
-      // session has expired. Validate same-origin path so an attacker
-      // can't dangle return_to=https://evil.tld via a phishing link.
-      let safeReturn: string | null = null;
-      try {
-        const reqUrl = new URL(flow.request_url);
-        const rt = reqUrl.searchParams.get("return_to");
-        if (rt) {
-          // Accept both absolute URLs (same-origin) and relative paths.
-          if (rt.startsWith("/") && !rt.startsWith("//")) {
-            safeReturn = rt;
-          } else if (rt.startsWith(window.location.origin)) {
-            safeReturn = rt.slice(window.location.origin.length);
-          }
-        }
-      } catch {
-        // ignore — fall through to home
-      }
+      // Honour return_to set by /profile's refresh-flow escalation
+      // (M20.1). MyProfile stashes the path in sessionStorage before
+      // kicking the Kratos refresh-login flow because Kratos's own
+      // return_to query is dropped on the path from
+      // /self-service/login/browser → /login (it survives only on the
+      // flow object's request_url, which is fragile across upgrades).
+      // Read + clear once so a subsequent fresh login doesn't replay
+      // a stale path. Same-origin guard blocks //evil.tld phishing.
+      const stashed = sessionStorage.getItem("post_login_return_to");
+      sessionStorage.removeItem("post_login_return_to");
+      const safeReturn =
+        stashed && stashed.startsWith("/") && !stashed.startsWith("//")
+          ? stashed
+          : null;
       navigate(safeReturn ?? homeForRole(me?.isAdmin ?? false), { replace: true });
       return;
     }

@@ -75,25 +75,16 @@ import { LoginPage } from "./pages/Login";
 // instead of letting them see the form. Public routes use this — the
 // Kratos-driven LoginPage itself doesn't know about AuthContext, so
 // the gate lives here.
-// KratosSettingsRedirect — preserves ?flow=<id> when bouncing to the
-// inline form on /jabali-panel/profile. Admins also land here from the
-// header dropdown; they get a flow query and are routed to the same
-// user-shell profile path (RequireUser allows admin sessions through).
+// KratosSettingsRedirect — preserves ?flow=<id> when bouncing from
+// the Kratos settings ui_url (configured as /settings in kratos.yml)
+// to whichever shell-scoped profile route the user belongs to.
+// Both /jabali-admin/profile and /jabali-panel/profile mount the same
+// MyProfile component which then fetches the flow + renders inline.
 function KratosSettingsRedirect() {
-  const { user } = useAuth();
+  const { isAdmin } = useAuth();
   const search = window.location.search;
-
-  // Check if we are an admin user by looking at the user's role
-  const isAdmin = user?.isAdmin;
-
-  if (isAdmin) {
-    // Admin users: redirect to Kratos settings via server-side navigation
-    window.location.assign(`/.ory/self-service/settings/browser${search}`);
-    return <Spin />;
-  }
-
-  // Regular users: redirect to user profile
-  return <Navigate to={`/jabali-panel/profile${search}`} replace />;
+  const target = isAdmin ? "/jabali-admin/profile" : "/jabali-panel/profile";
+  return <Navigate to={`${target}${search}`} replace />;
 }
 
 function PublicOnly({ children }: { children: ReactNode }) {
@@ -190,6 +181,14 @@ const ThemedApp = () => {
               <Route index element={<Navigate to="channels" replace />} />
               <Route path=":tab" element={<NotificationsTabsPage />} />
             </Route>
+            {/* Admin profile — same MyProfile component as user shell.
+                The header dropdown's "Profile" item routes here for
+                admins; without this route RequireUser would bounce
+                them back to /jabali-admin and the click did nothing.
+                MyProfile is shell-agnostic: it hosts the Kratos
+                settings flow inline (password / TOTP / recovery
+                codes) which works for any authenticated session. */}
+            <Route path="profile" element={<MyProfile />} />
           </Route>
 
           {/* ---------------- user shell ----------------- */}

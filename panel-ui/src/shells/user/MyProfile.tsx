@@ -109,7 +109,11 @@ export function MyProfile() {
   };
 
   const closeFlow = () => {
-    navigate("/jabali-panel/profile", { replace: true });
+    // Strip ?flow=<id> while keeping the rest of the URL — the same
+    // route mounts under both shells (/jabali-admin/profile +
+    // /jabali-panel/profile) so use the current pathname rather than
+    // hard-coding the user-shell path.
+    navigate(location.pathname, { replace: true });
   };
 
   return (

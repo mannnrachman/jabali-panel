@@ -267,12 +267,10 @@ export function JabaliHeader({ showMenuButton = false, onMenuClick }: JabaliHead
       icon: <UserOutlined />,
       label: "Profile",
       onClick: () => {
-        // Profile page lives under /jabali-panel/profile for both
-        // shells. The user-shell route guard is RequireAuth (not
-        // RequireAdmin), so admins can land there too. The page hosts
-        // the Kratos settings flow inline (password / TOTP / recovery
-        // codes) — same UX for everyone, one source of truth.
-        navigate("/jabali-panel/profile");
+        // Each shell has its own /profile route mounted on the same
+        // MyProfile component. RequireUser bounces admins out of the
+        // user shell, so admin clicks must stay in /jabali-admin/.
+        navigate(isAdminShell ? "/jabali-admin/profile" : "/jabali-panel/profile");
       },
     },
     { type: "divider" },

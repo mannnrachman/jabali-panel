@@ -74,6 +74,15 @@ selfservice:
     - "https://{{.PanelHostname}}:8443/dashboard"
     - "https://{{.PanelHostname}}:8443/login"
     - "https://{{.PanelHostname}}:8443/admin"
+    # Shell roots — trailing slash makes Kratos treat these as prefix
+    # matches, so /jabali-admin/profile, /jabali-panel/profile?flow=…
+    # etc. all qualify. Without these, Kratos drops the return_to and
+    # falls back to default_browser_return_url (/dashboard) — which
+    # broke the M20.1 settings-refresh flow (login w/ refresh=true
+    # returned the user to the dashboard instead of /profile).
+    - "https://{{.PanelHostname}}:8443/jabali-admin/"
+    - "https://{{.PanelHostname}}:8443/jabali-panel/"
+    - "https://{{.PanelHostname}}:8443/settings"
 
   methods:
     password:

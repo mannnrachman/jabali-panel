@@ -5883,8 +5883,12 @@ install_aide() {
   cat >"$conf_tmp" <<'AIDE_CONF'
 # Jabali — system-file integrity. ADR-0087.
 # Excludes paths the panel writes to + ephemeral state.
-
-database=file:/var/lib/aide/aide.db
+#
+# AIDE 0.19 removed `database=` (renamed to `database_in=`). Both
+# database_in / database_out / report_url take URL values — keep
+# the `file:` scheme prefix on all three. Bare paths are rejected
+# as 'unknown URL-type'.
+database_in=file:/var/lib/aide/aide.db
 database_out=file:/var/lib/aide/aide.db.new
 gzip_dbout=yes
 report_url=file:/var/log/aide/aide.report.log

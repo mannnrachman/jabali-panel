@@ -306,6 +306,60 @@ export function renderableFields(flow: KratosFlow, group: string): RenderableFie
 }
 
 /**
+ * TOTP enrolment surfaces a QR code image and the base32 secret as
+ * non-input nodes. Pull them out so the form can render them above
+ * the verification-code field. Returns null when the flow doesn't
+ * carry an enrolment payload (already-enrolled users, or non-TOTP
+ * flows).
+ */
+export function totpEnrolmentDisplay(
+  flow: KratosFlow,
+): { qrSrc?: string; secret?: string } | null {
+  let qrSrc: string | undefined;
+  let secret: string | undefined;
+  for (const node of flow.ui.nodes) {
+    if (node.group !== "totp") continue;
+    if (node.type === "img" && node.attributes.name === "totp_qr") {
+      // Kratos uses `src` on img nodes; not in our narrowed
+      // KratosNodeInputAttributes type so cast through unknown.
+      const attrs = node.attributes as unknown as { src?: string };
+      qrSrc = attrs.src;
+    }
+    if (node.type === "text" && node.attributes.name === "totp_secret_key") {
+      const attrs = node.attributes as unknown as { text?: { text?: string } };
+      secret = attrs.text?.text;
+    }
+  }
+  if (!qrSrc && !secret) return null;
+  return { qrSrc, secret };
+}
+
+/**
+ * After regenerating recovery codes, Kratos surfaces the new codes as
+ * a `text` node in the `lookup_secret` group. Returns the codes split
+ * to an array, or null if the flow doesn't carry them (already-set
+ * state or unrelated flow).
+ */
+export function lookupSecretReveal(flow: KratosFlow): string[] | null {
+  for (const node of flow.ui.nodes) {
+    if (node.group !== "lookup_secret") continue;
+    if (node.type !== "text") continue;
+    if (node.attributes.name !== "lookup_secret_codes") continue;
+    const attrs = node.attributes as unknown as {
+      text?: { text?: string; context?: { secrets?: { text?: string }[] } };
+    };
+    const ctx = attrs.text?.context?.secrets;
+    if (Array.isArray(ctx)) {
+      return ctx.map((s) => s.text ?? "").filter(Boolean);
+    }
+    if (attrs.text?.text) {
+      return attrs.text.text.split(/\s+/).filter(Boolean);
+    }
+  }
+  return null;
+}
+
+/**
  * Flat list of top-level flow messages (not per-field). Kratos uses these
  * for cross-field errors like "invalid csrf token" or "account locked".
  */

@@ -1,113 +1,205 @@
-# 2FA (TOTP + Backup Codes) — Plan
+# 2FA (TOTP + Backup Codes via Kratos) — Plan
 
-**Goal:** Every account that logs in with password also verifies a 6-digit TOTP
-code after enrolment. Backup codes recover from a lost phone. Admin
-break-glass CLI login is unaffected (by design — it's the escape hatch).
+**Status:** Draft (rewritten 2026-05-07 from bespoke-JWT plan to
+Kratos-native). Old plan predated M20 Kratos cutover and would have
+duplicated auth surface.
+**Owner:** shuki
+**Goal.** Every account that logs in with password can opt into TOTP
+as a second factor. Lookup-secret recovery codes recover from a lost
+phone. Admin break-glass CLI login is unaffected (escape hatch).
+**Depends on:** M20 ✅ (Kratos identity).
+**Branch:** `2fa/kratos-totp`. Default mode: branch + ff-merge into
+`main` per step.
+**ADR target:** **0090** (M43 took 0089, 0090 free at draft time).
 
-## Scope
+---
 
-- TOTP only (RFC 6238) via `github.com/pquerna/otp`. Works with Google
-  Authenticator, 1Password, Authy, Bitwarden, etc. No WebAuthn (phase 2).
-- 10 backup codes, 8 digits each, shown once at enrolment, hashed in DB, single-use.
-- Applies to: all authenticated users (admins + regular). NOT applied to:
-  - Break-glass `jabali-panel admin login` CLI flow (stays passwordless).
-  - Admin impersonation (existing behavior: impersonator doesn't prove the
-    target's 2FA; this is the escape valve).
+## 0. Operating assumptions
 
-## Decisions
+- Branch + commit per step. Build, deploy to `root@192.168.100.150`
+  via `jabali update`, smoke-test before next step.
+- Conventional commits: `feat(auth): …`, `feat(ui): …`.
+- `make test` green per step. `npx tsc -b` + `npm run build` clean.
+- Kratos config templates live in `install/kratos.yml.tmpl`; renders
+  via sed in `install_kratos()`. Never hand-edit the rendered
+  `/etc/jabali-panel/kratos.yml` on VM — gets overwritten on next
+  `jabali update` ('install.sh is truth' — memory rule).
+- `feedback_never_agents`: hand-roll inline. No sub-agent dispatch
+  on this auth-surface work.
 
-1. **Library:** `github.com/pquerna/otp/totp` — stdlib of Go TOTP.
-2. **Issuer / label:** TOTP URI shows `Jabali Panel (<email>)` so multiple
-   accounts on one authenticator app are distinguishable.
-3. **Secret encryption at rest:** reuse existing `ssokey.Key` (AES-256-GCM)
-   for encryption. Rationale: it's already key-rotation-aware, already
-   bound to the server's secret material, adding a second key buys no
-   extra security and doubles the rotation surface.
-4. **2FA-pending token:** JWT with `purpose="2fa_pending"`, 5-min TTL, no
-   other claims — cannot be used to call any resource, only
-   `POST /auth/2fa/challenge`.
-5. **Backup codes:** bcrypt-hashed (cost 12), single-use (marked
-   `used_at` when redeemed). Shown once in the enrolment response.
-   Can re-generate via "Regenerate backup codes" action (requires current
-   TOTP code).
+## 1. Why Kratos-native (not bespoke)
 
-## Schema (migration 000040)
+Old plan drew its own `totp_backup_codes` table, AES-GCM-encrypted
+the secret, minted a custom `2fa_pending` JWT, built dedicated
+`/auth/2fa/*` endpoints. Kratos already ships:
 
-```sql
-ALTER TABLE users
-  ADD COLUMN totp_secret_encrypted VARBINARY(256) NULL,
-  ADD COLUMN totp_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-  ADD COLUMN totp_enabled_at DATETIME(6) NULL;
+- **`totp` method** (already enabled in kratos.yml: `issuer: "Jabali
+  Panel"`). Stores secret in `identity_credentials.config` keyed by
+  IdentityID. Enroll / verify / disable handled by the standard
+  `settings` flow.
+- **`lookup_secret` method** — N single-use recovery codes, hashed
+  by Kratos. Generated via the settings flow, surfaced once in the
+  flow response. Disable via the same flow.
+- **AAL** — `aal1` = password, `aal2` = password + second factor.
+  `session.whoami.required_aal` controls policy. When user has TOTP
+  enrolled, login starts at aal1 and Kratos requires a second flow
+  at aal2 before whoami succeeds.
+- **AAL upgrade flow** — `GET /self-service/login/browser?aal=aal2`
+  starts the second-factor challenge. Returns the same flow shape
+  panel-ui already consumes from M20.
 
-CREATE TABLE totp_backup_codes (
-  id         CHAR(26)    PRIMARY KEY,
-  user_id    CHAR(26)    NOT NULL,
-  code_hash  VARCHAR(72) NOT NULL,
-  used_at    DATETIME(6) NULL,
-  created_at DATETIME(6) NOT NULL,
-  INDEX idx_totp_backup_user (user_id),
-  CONSTRAINT fk_totp_backup_user
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
+Bespoke duplicates means: two TOTP secret stores to rotate, two
+recovery-code stores, custom JWTs that bypass Kratos session
+policy, admin tooling that diverges from Kratos's own identity APIs
+(which already support TOTP reset). All against ADR-0034 ("Kratos
+is the only auth source").
+
+## 2. Decisions
+
+1. **Library:** Kratos built-ins. No `pquerna/otp` dep, no custom
+   schema, no custom JWT.
+2. **Issuer / label:** `Jabali Panel (<email>)` — already configured
+   in kratos.yml `selfservice.methods.totp.config.issuer`.
+3. **Backup codes:** Kratos `lookup_secret` method, **enable in
+   kratos.yml** (currently disabled).
+4. **AAL policy:** `session.whoami.required_aal: highest_available`.
+   Users without TOTP keep aal1 (no behaviour change). Users with
+   TOTP enrolled MUST present a second factor before any
+   authenticated panel-api endpoint succeeds.
+5. **Per-route override:** none. Whole panel is aal2-when-enrolled.
+   Admin CLI break-glass (`jabali admin login`) bypasses AAL via
+   the existing direct-DB session-mint path.
+6. **Privileged-session for settings:** Kratos's
+   `selfservice.flows.settings.privileged_session_max_age` already
+   set to 15m — enrolling/disabling TOTP requires a fresh
+   re-authentication within 15min. Reuses existing UI at
+   `/login?refresh=true`.
+7. **No admin TOTP enforcement v1:** opt-in. Future M can flip an
+   "all admins must enable" gate at panel-api login handler.
+
+## 3. Kratos config delta
+
+```yaml
+# install/kratos.yml.tmpl
+selfservice:
+  methods:
+    lookup_secret:
+      enabled: true        # NEW — surface backup codes
+    totp:
+      enabled: true        # already on
+      config:
+        issuer: "Jabali Panel"
+
+session:
+  whoami:
+    required_aal: highest_available   # NEW — policy gate
 ```
 
-## Endpoints
+## 4. Steps
 
-| Method | Path | Auth | Purpose |
-|---|---|---|---|
-| POST | `/api/v1/auth/2fa/enroll`    | access token | generate secret, return `{secret, otpauth_url}`. Does NOT enable — user must verify first |
-| POST | `/api/v1/auth/2fa/verify`    | access token | `{code}` — on success: set `totp_enabled=true`, generate + return 10 backup codes |
-| POST | `/api/v1/auth/2fa/disable`   | access token | `{password, code}` — wipes secret + backup codes |
-| POST | `/api/v1/auth/2fa/regen-backup` | access token | `{code}` — invalidates old codes, returns 10 new |
-| POST | `/api/v1/auth/2fa/challenge` | 2fa-pending token | `{code}` OR `{backup_code}` — returns full access token |
+### Step 1 — Kratos config: enable lookup_secret + AAL policy
+**Files:** `install/kratos.yml.tmpl`. (No `install.sh` change —
+`install_kratos()` already re-renders.)
 
-## Login flow changes
+- Add `lookup_secret.enabled: true`.
+- Add `session.whoami.required_aal: highest_available`.
+- Verify on VM: `kratos validate --config /etc/jabali-panel/kratos.yml`
+  (already part of `install_kratos`). systemd reload.
+- Smoke: identity without TOTP still gets `whoami` 200. Identity
+  with TOTP enrolled but only aal1 session → `whoami` 401 with
+  `session_aal2_required` body.
+- **Wave gate.** Steps 2-5 depend on this config being live.
 
-```
-POST /auth/login (existing)
-  Body: {email, password}
-  → 200 {access_token, refresh_token}      — if totp_enabled=false (unchanged)
-  → 200 {twofa_pending_token, twofa_required: true} — if totp_enabled=true
+### Step 2 — UI: 2FA card on `/settings`
+**Files:** `panel-ui/src/shells/.../SettingsPage.tsx` (new card),
+new `panel-ui/src/components/TwoFactorCard.tsx`.
 
-POST /auth/2fa/challenge (new)
-  Auth: Bearer <twofa_pending_token>
-  Body: {code} OR {backup_code}
-  → 200 {access_token, refresh_token}
-  → 401 if invalid after N retries (rate-limit in-memory; no DB lock-out)
-```
+- States:
+  - Not enrolled → "Enable two-factor" → POST
+    `/.ory/self-service/settings/browser`, pick `totp` group, render
+    QR (Kratos returns `image` node `totp_qr`, base64 PNG), text
+    input for 6-digit code, submit, show `lookup_secret` reveal-once
+    block on success.
+  - Enrolled → "Disable" + "Recovery codes remaining: N" +
+    "Regenerate".
+- Reuse `apiClient` / Kratos browser-fetch helpers from M20 login.
+- Render the PNG, not a hand-rolled QR.
+- 15-min privileged-session: if Kratos returns 403
+  `session_refresh_required_error`, redirect to
+  `/login?aal=aal1&refresh=true&return_to=/settings/2fa`.
 
-## UI changes
+### Step 3 — UI: aal2 challenge on login
+**Files:** `panel-ui/src/shells/.../LoginPage.tsx`.
 
-**MyProfile page** — add "Two-Factor Authentication" card:
-- If `totp_enabled=false`: button "Enable 2FA" → Modal
-  1. Fetch `/auth/2fa/enroll` → display QR + manual secret
-  2. User enters 6-digit code → POST `/auth/2fa/verify`
-  3. Success: show 10 backup codes (download + copy), require explicit
-     "I've saved these" checkbox to close modal
-- If `totp_enabled=true`: show enabled status + 2 actions:
-  - "Regenerate backup codes" (requires current code)
-  - "Disable 2FA" (requires password + current code)
+- After password submit succeeds, call `whoami`. If 401 with
+  `session_aal2_required`, start a new login flow with `aal=aal2` —
+  same UI shell, only field is `totp_code` (or
+  `lookup_secret_code` alternative). Submit. On success, navigate
+  to original return_to.
+- "Use a recovery code instead" link switches to `lookup_secret`
+  group of the same flow (no separate flow).
 
-**Login page** — after password success, if `twofa_required`:
-- Render a small "Enter 6-digit code from your authenticator app" form
-- Link: "Use a backup code instead" → swaps to 8-digit input
-- On success → redirect to original destination
+### Step 4 — UI: recovery-code regeneration
+**Files:** `TwoFactorCard.tsx` (extend Step 2).
 
-## Risk / rollback
+- "Regenerate codes" → privileged-session prompt → settings flow →
+  submit `lookup_secret_regenerate=true` → render new codes
+  reveal-once.
+- "Show remaining" — Kratos
+  `whoami.identity.credentials_metadata.lookup_secret.used_at`
+  array; count unused codes. Render badge "8 of 12 codes
+  remaining". (If credentials_metadata isn't populated by default,
+  count by difference from regenerate-flow response — verify
+  during step.)
 
-- Admin-only unlock path: `jabali admin disable-2fa --email <target>` CLI
-  command (new) lets break-glass admin clear a user's 2FA if they lose
-  phone + backup codes.
-- Migration is additive + nullable — reversible via 000040 down.
-- No cryptographic dependency on existing tokens (fresh refresh tokens remain
-  valid across deploy), so rollout is safe mid-session.
+### Step 5 — Admin: TOTP reset for locked-out user
+**Files:** `panel-api/internal/api/admin_users.go` (extend),
+`panel-ui/src/shells/admin/users/UsersPage.tsx` (button).
 
-## Waves
+- New admin REST: `POST /api/v1/admin/users/{id}/2fa/reset` →
+  panel-api calls Kratos admin API `PATCH /admin/identities/{id}`
+  with JSON-Patch removing `credentials.totp` +
+  `credentials.lookup_secret`.
+- Audit trail: write to `audit_log` (existing).
+- UI: button on UsersPage row → confirm modal → success toast.
+  Admin-only.
 
-- **A.** Migration + model + repo (30 min)
-- **B.** TOTP service + 4 endpoints + tests (1-1.5 h)
-- **C.** Login-flow integration + challenge endpoint + tests (45 min)
-- **D.** UI: MyProfile card + Login challenge step (1 h)
-- **E.** Admin CLI disable-2fa command + docs (30 min)
+### Step 6 — Tests + CI
+- `panel-api/internal/api/admin_users_test.go` — table-driven test
+  for reset endpoint (mock Kratos admin client).
+- `panel-ui/.../TwoFactorCard.test.tsx` — render states (not
+  enrolled, enrolled, regenerate flow). Vitest only — Playwright
+  E2E for actual TOTP UX out of scope (TOTP requires wall-clock
+  stepping, fragile in CI).
+- `make test && cd panel-ui && npx vitest run` clean.
 
-Total: ~4 hours realistic.
+### Step 7 — ADR-0090 + BLUEPRINT + runbook
+- `docs/adr/0090-2fa-totp-via-kratos.md` — record decision to use
+  Kratos built-ins over bespoke schema, list kratos.yml delta, AAL
+  policy, admin-reset escape hatch.
+- BLUEPRINT entry under "Authentication" (existing M20 section).
+- `plans/2fa-totp-runbook.md` — operator runbook: how to reset
+  locked-out user, how to inspect lookup_secret usage, what to
+  delete from kratos DB if TOTP secret leaks.
+
+## 5. Out of scope
+
+- WebAuthn / passkeys (separate milestone).
+- TOTP-required-by-default for admins (separate milestone with
+  notice + grace period).
+- Per-route AAL exceptions.
+- Hardware-token methods (Kratos `webauthn` is the path, not reused
+  here).
+
+## 6. Open questions
+
+- Does Kratos surface
+  `credentials_metadata.lookup_secret.used_at` via `whoami` by
+  default in v26.2? If not: count by difference (12 generated minus
+  used set returned in regenerate flow), OR extend
+  `internal/kratosclient/admin.go` with a small
+  `IdentityWithMetadata(id)` call. Resolve in Step 4.
+- AAL upgrade UX on mobile — Kratos returns same flow shape as
+  aal1 login; verify LoginPage doesn't crash when only
+  totp/lookup_secret nodes are present (no email/password). If it
+  does, branch the form renderer.

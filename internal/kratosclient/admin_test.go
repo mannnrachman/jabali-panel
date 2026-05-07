@@ -612,3 +612,69 @@ func TestCreateRecoveryCode_ServerErrorPropagates(t *testing.T) {
 		t.Fatalf("expected 404 propagation, got %v", err)
 	}
 }
+
+func TestRemoveSecondFactor_PatchesBothCredentials(t *testing.T) {
+	t.Parallel()
+	var seenPaths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			t.Errorf("method = %s, want PATCH", r.Method)
+		}
+		body, _ := io.ReadAll(r.Body)
+		var patch []map[string]any
+		if err := json.Unmarshal(body, &patch); err != nil {
+			t.Fatalf("unmarshal patch body: %v", err)
+		}
+		if len(patch) != 1 || patch[0]["op"] != "remove" {
+			t.Errorf("patch shape unexpected: %+v", patch)
+		}
+		seenPaths = append(seenPaths, patch[0]["path"].(string))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	c := newAdminClient(srv)
+	if err := c.RemoveSecondFactor(context.Background(), "id-uuid"); err != nil {
+		t.Fatalf("RemoveSecondFactor: %v", err)
+	}
+	if len(seenPaths) != 2 {
+		t.Fatalf("paths = %d, want 2", len(seenPaths))
+	}
+	want := map[string]bool{"/credentials/totp": true, "/credentials/lookup_secret": true}
+	for _, p := range seenPaths {
+		if !want[p] {
+			t.Errorf("unexpected path %s", p)
+		}
+	}
+}
+
+func TestRemoveSecondFactor_TreatsMissingCredentialAsSuccess(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Kratos returns 422 when JSON-Patch `remove` targets a path
+		// that doesn't exist (user never enrolled this method).
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"error":{"reason":"path not found"}}`))
+	}))
+	defer srv.Close()
+
+	c := newAdminClient(srv)
+	if err := c.RemoveSecondFactor(context.Background(), "id-uuid"); err != nil {
+		t.Fatalf("422 should be silent success, got %v", err)
+	}
+}
+
+func TestRemoveSecondFactor_ReturnsErrIdentityNotFoundOn404(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := newAdminClient(srv)
+	err := c.RemoveSecondFactor(context.Background(), "missing-id")
+	if !errors.Is(err, ErrIdentityNotFound) {
+		t.Fatalf("err = %v, want ErrIdentityNotFound", err)
+	}
+}

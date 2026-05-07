@@ -27,8 +27,10 @@ import {
   csrfToken,
   flowMessages,
   getSettingsFlow,
+  lookupSecretReveal,
   renderableFields,
   submitSettingsFlow,
+  totpEnrolmentDisplay,
   type KratosFlow,
   type RenderableField,
 } from "../../kratos";
@@ -243,6 +245,8 @@ type GroupFormProps = {
 function SettingsGroupForm({ flow, group, onSubmit }: GroupFormProps) {
   const [submitting, setSubmitting] = useState(false);
   const fields = renderableFields(flow, group);
+  const totpDisplay = group === "totp" ? totpEnrolmentDisplay(flow) : null;
+  const recoveryCodes = group === "lookup_secret" ? lookupSecretReveal(flow) : null;
 
   const submit = async (values: Record<string, unknown>) => {
     setSubmitting(true);
@@ -255,6 +259,46 @@ function SettingsGroupForm({ flow, group, onSubmit }: GroupFormProps) {
 
   return (
     <Card type="inner" title={groupTitle(group)} size="small">
+      {totpDisplay && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="Scan this QR code with your authenticator app"
+          description={
+            <div>
+              {totpDisplay.qrSrc && (
+                <img
+                  src={totpDisplay.qrSrc}
+                  alt="TOTP QR code"
+                  style={{ display: "block", marginTop: 8, width: 220, height: 220 }}
+                />
+              )}
+              {totpDisplay.secret && (
+                <Typography.Paragraph copyable style={{ marginTop: 8, marginBottom: 0 }}>
+                  <Typography.Text code>{totpDisplay.secret}</Typography.Text>
+                </Typography.Paragraph>
+              )}
+            </div>
+          }
+        />
+      )}
+      {recoveryCodes && recoveryCodes.length > 0 && (
+        <Alert
+          type="success"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="Save these recovery codes — shown once"
+          description={
+            <Typography.Paragraph
+              copyable={{ text: recoveryCodes.join("\n") }}
+              style={{ margin: 0, fontFamily: "monospace", whiteSpace: "pre" }}
+            >
+              {recoveryCodes.join("\n")}
+            </Typography.Paragraph>
+          }
+        />
+      )}
       <Form
         layout="vertical"
         requiredMark={false}

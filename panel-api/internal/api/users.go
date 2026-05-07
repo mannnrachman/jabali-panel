@@ -88,6 +88,10 @@ func RegisterUserRoutes(g *gin.RouterGroup, cfg UserHandlerConfig) {
 
 	// Admin-only per-user systemd slice status (Step 8 of per-user-slices).
 	g.GET("/admin/users/:id/slice-status", middleware.RequireAdmin(), h.sliceStatus)
+
+	// Admin-only 2FA reset for locked-out users (Kratos JSON-Patch
+	// removes totp + lookup_secret credentials).
+	g.POST("/admin/users/:id/2fa/reset", middleware.RequireAdmin(), h.reset2FA)
 }
 
 type userHandler struct{ cfg UserHandlerConfig }

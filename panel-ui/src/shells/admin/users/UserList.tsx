@@ -19,6 +19,7 @@ import { useTableURL } from "../../../hooks/useTableURL";
 import { UserDeleteAction } from "./UserDeleteAction";
 import { UserDrawer } from "./UserDrawer";
 import { UserDiskUsage } from "./UserDiskUsage";
+import { UserReset2FAAction } from "./UserReset2FAAction";
 
 type User = {
   id: string;
@@ -59,6 +60,7 @@ function RowActions({
       <Button type="text" onClick={() => onEdit(user.id)}>
         Edit
       </Button>
+      <UserReset2FAAction userId={user.id} userEmail={user.email} />
       <UserDeleteAction recordItemId={user.id} userEmail={user.email} />
     </Space>
   );

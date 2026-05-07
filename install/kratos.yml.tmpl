@@ -95,6 +95,12 @@ selfservice:
       enabled: true
       config:
         issuer: "Jabali Panel"
+    lookup_secret:
+      # Recovery codes that work as a single-use second factor when
+      # the TOTP authenticator is lost. Kratos generates 12 codes per
+      # regeneration; codes are hashed at rest and marked used after
+      # redemption. Surfaced once in the settings flow response.
+      enabled: true
 
   flows:
     login:
@@ -149,6 +155,12 @@ session:
     path: /
     persistent: true
     same_site: Lax
+  whoami:
+    # Users without TOTP/lookup_secret stay aal1 (no behaviour
+    # change). Users with a second factor enrolled MUST present it
+    # before whoami succeeds — without this gate Kratos would happily
+    # return aal1 sessions for accounts that opted into 2FA.
+    required_aal: highest_available
 
 log:
   level: info

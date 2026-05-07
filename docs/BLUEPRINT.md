@@ -1053,6 +1053,28 @@ ADR-0052 (disclaimer sieve vs MtaHook decision matrix),
 **Depends on:** M1 (users table), M7 (MariaDB, reused for Kratos's own schema).
 **Blocks:** M16 (Automation API tokens via Hydra — Hydra integrates with Kratos via the login-consent flow).
 
+### M20.1: Two-factor (TOTP + recovery codes) via Kratos built-ins (SHIPPED 2026-05-07)
+
+**Goal:** Surface TOTP + lookup_secret recovery codes on the panel
+without adding any panel-side TOTP storage, custom JWT, or
+`/auth/2fa/*` endpoints. Kratos already ships both methods + AAL
+policy + admin reset; the panel just renders the existing flows.
+
+**Deliverables:**
+
+- `install/kratos.yml.tmpl` — `selfservice.methods.lookup_secret.enabled: true` + `session.whoami.required_aal: highest_available`. Users without 2FA stay aal1 (no behaviour change). Users with 2FA enrolled MUST present a second factor before whoami succeeds.
+- `panel-ui/src/kratos.ts` — `totpEnrolmentDisplay()` reads QR `img` + secret `text` nodes from the `totp` group; `lookupSecretReveal()` reads the codes array out of the `lookup_secret` group's text node. Narrow helpers so cosmetic Kratos changes don't ripple.
+- `panel-ui/src/shells/user/MyProfile.tsx` — renders the QR + base32 secret above the TOTP form; renders the recovery codes (copy-once) above the lookup_secret form. Reuses the existing settings-flow renderer; preferred group order already had `totp` + `lookup_secret`.
+- Login AAL2 path uses the existing flow handler — Kratos returns the same flow id with `requested_aal: "aal2"` and TOTP nodes; `submitLoginFlow`'s `continue` branch already re-renders the form.
+- `internal/kratosclient/admin.go` — `RemoveSecondFactor()` issues two JSON-Patch removes (`/credentials/totp` + `/credentials/lookup_secret`), 422 on missing path treated as success.
+- `panel-api/internal/api/users_2fa_reset.go` — `POST /api/v1/admin/users/:id/2fa/reset`, admin-only, no-op on pre-Kratos accounts (NULL `kratos_identity_id`).
+- `panel-ui/src/shells/admin/users/UserReset2FAAction.tsx` — confirm-modal row action on the admin Users table.
+- ADR-0090 + `plans/2fa-totp-runbook.md`.
+
+**Rejected:** the previously-drafted bespoke 2FA plan (custom `totp_backup_codes` table, AES-GCM secret encryption, `2fa_pending` JWT, `/auth/2fa/*` endpoints). Predated M20; would have duplicated everything Kratos already does. ADR-0090 records the decision.
+
+**Depends on:** M20 ✅ (Kratos identity).
+
 ### M21: Drop Refine (SHIPPED 2026-04-21)
 
 **Goal:** Remove the Refine framework from the panel SPA. After M20 made identity Kratos-native, Refine's `authProvider`/`dataProvider`/`resources`/`<ThemedLayoutV2>` shrank to indirection around calls panel-api already served natively. Wrappers (`<List>`/`<Create>`/`<Edit>`) were injecting chrome (auto headings, breadcrumbs, sticky save bars, card wrappings) the operator had spent a day trying to strip at the call-site — the framework itself was the source.

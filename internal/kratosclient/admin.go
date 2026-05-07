@@ -260,6 +260,55 @@ func (c *Client) SetPassword(ctx context.Context, identityID, passwordHash strin
 	return nil
 }
 
+// RemoveSecondFactor strips the totp + lookup_secret credentials from
+// an identity. Used by the admin "Reset 2FA" path when a user has
+// lost their authenticator and burned through their recovery codes.
+// The user keeps their password; on next login they're back to aal1
+// and can opt back into 2FA from /profile.
+//
+// JSON-Patch `remove` against a missing path returns 422; we issue the
+// two removes as separate requests and treat 422/404 as success — the
+// desired end state is "no second factor", and we don't care which
+// (or neither) was previously enrolled. 404 on the identity itself is
+// returned as ErrIdentityNotFound so the caller can render a clean
+// 404 to the operator.
+func (c *Client) RemoveSecondFactor(ctx context.Context, identityID string) error {
+	if identityID == "" {
+		return fmt.Errorf("removesecondfactor: identityID is empty")
+	}
+	for _, path := range []string{"/credentials/totp", "/credentials/lookup_secret"} {
+		patch := []map[string]any{{"op": "remove", "path": path}}
+		body, err := json.Marshal(patch)
+		if err != nil {
+			return fmt.Errorf("removesecondfactor: marshal %s: %w", path, err)
+		}
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPatch,
+			c.adminURL+"/admin/identities/"+url.PathEscape(identityID), bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("removesecondfactor: request %s: %w", path, err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json-patch+json")
+		resp, err := c.httpClient.Do(httpReq)
+		if err != nil {
+			return fmt.Errorf("removesecondfactor: do %s: %w", path, err)
+		}
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		switch resp.StatusCode {
+		case http.StatusOK:
+			// Removed.
+		case http.StatusNotFound:
+			return ErrIdentityNotFound
+		case http.StatusUnprocessableEntity, http.StatusBadRequest:
+			// Path didn't exist — that means this method wasn't enrolled.
+			// Treat as success; the desired state is "absent".
+		default:
+			return fmt.Errorf("removesecondfactor: %s: status %d: %s", path, resp.StatusCode, string(respBody))
+		}
+	}
+	return nil
+}
+
 // DeleteIdentity removes an identity by ID. 404 is treated as success because
 // a missing identity is the desired end state; this keeps the delete idempotent
 // during unwind/cleanup paths where we may race with a concurrent delete.

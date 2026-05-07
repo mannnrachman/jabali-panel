@@ -29,6 +29,7 @@ type DatabaseHandlerConfig struct {
 	WordPressInstalls repository.WordPressInstallRepository
 	Users             repository.UserRepository
 	Packages          repository.PackageRepository
+	ServerSettings    repository.ServerSettingsRepository
 	Agent             agent.AgentInterface
 }
 
@@ -249,6 +250,11 @@ func (h *databaseHandler) get(c *gin.Context) {
 
 type createDatabaseRequest struct {
 	Name string `json:"name" binding:"required"`
+	// Engine picks the database backend. Empty defaults to "mariadb"
+	// for back-compat with pre-M37 clients. "postgres" requires
+	// server_settings.postgres_enabled=true; otherwise the handler
+	// returns 422 postgres_disabled.
+	Engine string `json:"engine,omitempty"`
 }
 
 func (h *databaseHandler) create(c *gin.Context) {
@@ -341,14 +347,52 @@ func (h *databaseHandler) create(c *gin.Context) {
 		return
 	}
 
+	// M37 engine dispatch. Empty defaults to mariadb (back-compat
+	// with pre-M37 clients). 'postgres' requires server_settings.
+	// postgres_enabled — fresh installs ship the service disabled.
+	engine := req.Engine
+	if engine == "" {
+		engine = "mariadb"
+	}
+	if engine != "mariadb" && engine != "postgres" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_engine", "detail": "engine must be 'mariadb' or 'postgres'"})
+		return
+	}
+	if engine == "postgres" {
+		if h.cfg.ServerSettings == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "server_settings_unavailable"})
+			return
+		}
+		settings, sErr := h.cfg.ServerSettings.Get(ctx)
+		if sErr != nil || settings == nil || !settings.PostgresEnabled {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error":  "postgres_disabled",
+				"detail": "PostgreSQL is not enabled. Set server_settings.postgres_enabled=true and ensure jabali-postgres service is running.",
+			})
+			return
+		}
+	}
+
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	_, err = h.cfg.Agent.Call(agentCtx, "db.create", map[string]any{
-		"db_name":   finalName,
-		"charset":   "utf8mb4",
-		"collation": "utf8mb4_unicode_ci",
-	})
+	if engine == "mariadb" {
+		_, err = h.cfg.Agent.Call(agentCtx, "db.create", map[string]any{
+			"db_name":   finalName,
+			"charset":   "utf8mb4",
+			"collation": "utf8mb4_unicode_ci",
+		})
+	} else {
+		// Postgres: owner is the postgres role corresponding to the
+		// hosting user. Wave A creates roles lazily via the
+		// db.postgres.create_role command; for now the database is
+		// owned by the postgres superuser and the user-side role is
+		// granted explicitly by the per-user grant flow.
+		_, err = h.cfg.Agent.Call(agentCtx, "db.postgres.create_db", map[string]any{
+			"db_name": finalName,
+			"owner":   "postgres",
+		})
+	}
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
 		return
@@ -356,13 +400,19 @@ func (h *databaseHandler) create(c *gin.Context) {
 
 	// Persist to database
 	now := time.Now().UTC()
+	charset := "utf8mb4"
+	collation := "utf8mb4_unicode_ci"
+	if engine == "postgres" {
+		charset = "UTF8"
+		collation = ""
+	}
 	d := &models.Database{
 		ID:        ids.NewULID(),
 		UserID:    targetUserID,
 		Name:      finalName,
-		Engine:    "mariadb",
-		Charset:   "utf8mb4",
-		Collation: "utf8mb4_unicode_ci",
+		Engine:    engine,
+		Charset:   charset,
+		Collation: collation,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -459,9 +509,14 @@ func (h *databaseHandler) delete(c *gin.Context) {
 		}
 	}
 
-	// Drop the database on MariaDB. d.Name is the full prefixed name.
-	if _, err := h.cfg.Agent.Call(agentCtx, "db.drop", map[string]any{"db_name": d.Name}); err != nil {
-		slog.ErrorContext(ctx, "databases.delete: agent db.drop failed", "err", err, "db_name", d.Name)
+	// Drop the database on the engine the row was created with.
+	// d.Name is the full prefixed name.
+	dropCmd := "db.drop"
+	if d.Engine == "postgres" {
+		dropCmd = "db.postgres.drop_db"
+	}
+	if _, err := h.cfg.Agent.Call(agentCtx, dropCmd, map[string]any{"db_name": d.Name}); err != nil {
+		slog.ErrorContext(ctx, "databases.delete: agent drop failed", "err", err, "db_name", d.Name, "engine", d.Engine)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
 		return
 	}

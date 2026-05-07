@@ -1,12 +1,12 @@
 // UserDatabaseDrawer — tenant Create-database Drawer (replaces the
 // /jabali-panel/databases/create page route). Backend prepends the
-// caller's username to the final MariaDB database name.
-import { Button, Drawer, Form, Grid, Input, Space, message } from "antd";
+// caller's username to the final database name.
+import { Button, Drawer, Form, Grid, Input, Segmented, Space, message } from "antd";
 import { useEffect } from "react";
 
 import { useCreateMutation } from "../../../hooks/useQueries";
 
-type UserDatabaseCreateInput = { name: string };
+type UserDatabaseCreateInput = { name: string; engine?: "mariadb" | "postgres" };
 type DatabaseCreated = { id: string };
 
 export interface UserDatabaseDrawerProps {
@@ -46,7 +46,25 @@ export const UserDatabaseDrawer = ({ open, onClose }: UserDatabaseDrawerProps) =
       placement="right"
       destroyOnClose
     >
-      <Form<UserDatabaseCreateInput> form={form} layout="vertical" onFinish={handleFinish}>
+      <Form<UserDatabaseCreateInput>
+        form={form}
+        layout="vertical"
+        onFinish={handleFinish}
+        initialValues={{ engine: "mariadb" }}
+      >
+        <Form.Item
+          label="Engine"
+          name="engine"
+          tooltip="MariaDB is the default. PostgreSQL must be enabled by an admin in Server Settings."
+        >
+          <Segmented
+            options={[
+              { label: "MariaDB", value: "mariadb" },
+              { label: "PostgreSQL", value: "postgres" },
+            ]}
+          />
+        </Form.Item>
+
         <Form.Item
           label="Name"
           name="name"

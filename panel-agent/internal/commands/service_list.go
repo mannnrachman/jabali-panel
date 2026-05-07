@@ -44,6 +44,7 @@ type ServiceListResponse struct {
 var BaseAllowedServices = []string{
 	"nginx",
 	"mariadb",
+	"postgresql", // M37 PG parity (ADR-0091). Stays masked until
 	"redis-server",
 	// Mail stack (M6). The jabali-branded names are what install.sh
 	// actually creates — the upstream's own "stalwart-mail.service" is

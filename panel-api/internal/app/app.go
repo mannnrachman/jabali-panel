@@ -372,6 +372,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				WordPressInstalls: deps.WordPressInstalls,
 				Users:             deps.Users,
 				Packages:          deps.Packages,
+				ServerSettings:    deps.ServerSettings,
 				Agent:             deps.Agent,
 			})
 		}

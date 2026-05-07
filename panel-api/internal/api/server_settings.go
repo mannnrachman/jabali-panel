@@ -100,6 +100,12 @@ type updateServerSettingsRequest struct {
 	// of truth — server-wide keep_* fields exist on the row but are
 	// no longer writeable from the API.
 	BackupMaxConcurrentJobs *uint32 `json:"backup_max_concurrent_jobs,omitempty"`
+
+	// M37 PostgreSQL parity (ADR-0091). PostgresEnabled gates the
+	// /databases POST handler from accepting engine="postgres" + the
+	// reconciler from starting the postgresql service.
+	PostgresEnabled               *bool   `json:"postgres_enabled,omitempty"`
+	PostgresMaxConnectionsPerUser *uint16 `json:"postgres_max_connections_per_user,omitempty"`
 }
 
 func (h *serverSettingsHandler) update(c *gin.Context) {
@@ -200,6 +206,19 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 			v = 64
 		}
 		current.BackupMaxConcurrentJobs = v
+	}
+	if req.PostgresEnabled != nil {
+		current.PostgresEnabled = *req.PostgresEnabled
+	}
+	if req.PostgresMaxConnectionsPerUser != nil {
+		v := *req.PostgresMaxConnectionsPerUser
+		if v == 0 {
+			v = 25
+		}
+		if v > 1000 {
+			v = 1000
+		}
+		current.PostgresMaxConnectionsPerUser = v
 	}
 
 	// Validate — reject obviously bad input so we don't persist garbage.

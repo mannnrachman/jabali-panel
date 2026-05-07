@@ -56,6 +56,18 @@ export function MyProfile() {
     getIdentity().then(setMe);
   }, []);
 
+  // Auto-start the Kratos settings flow when the page loads without
+  // a ?flow= param. Without this, the user landed on a page with just
+  // a "Manage account security" button and nothing else — the 2FA
+  // controls only render once the flow is fetched, so they were
+  // hidden behind an extra click. Kratos redirects /.ory/.../browser
+  // to its configured ui_url (/settings) which then bounces to this
+  // route with ?flow=<id> appended, the second useEffect picks it up.
+  useEffect(() => {
+    if (flowID) return;
+    window.location.assign(SETTINGS_BROWSER_URL);
+  }, [flowID]);
+
   useEffect(() => {
     if (!flowID) {
       setFlow(null);
@@ -145,15 +157,11 @@ export function MyProfile() {
           }
         >
           {!flowID && (
-            <>
-              <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-                Password changes and two-factor authentication are managed by
-                our identity provider.
-              </Typography.Paragraph>
-              <Button type="primary" href={SETTINGS_BROWSER_URL}>
-                Manage account security
-              </Button>
-            </>
+            // The first useEffect above kicked window.location to the
+            // Kratos browser flow — show a spinner during the round-trip.
+            <div style={{ textAlign: "center", padding: 24 }}>
+              <Spin />
+            </div>
           )}
 
           {flowID && flowLoading && (

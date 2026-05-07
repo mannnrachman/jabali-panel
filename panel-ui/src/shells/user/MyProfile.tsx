@@ -56,17 +56,33 @@ export function MyProfile() {
     getIdentity().then(setMe);
   }, []);
 
-  // Auto-start the Kratos settings flow when the page loads without
-  // a ?flow= param. Without this, the user landed on a page with just
-  // a "Manage account security" button and nothing else — the 2FA
-  // controls only render once the flow is fetched, so they were
-  // hidden behind an extra click. Kratos redirects /.ory/.../browser
-  // to its configured ui_url (/settings) which then bounces to this
-  // route with ?flow=<id> appended, the second useEffect picks it up.
+  // Auto-start the Kratos settings flow when the page loads without a
+  // ?flow= param. Kratos redirects /.ory/.../browser to its configured
+  // ui_url (/settings) which then bounces to this route with
+  // ?flow=<id> appended, and the second useEffect picks it up.
+  //
+  // Loop guard: if the redirect comes back without ?flow= (privileged
+  // session expired — user logged in > 15min ago — Kratos drops the
+  // flow and redirects to ui_url naked), don't re-fire. Instead route
+  // through Kratos login with refresh=true so the user re-authenticates
+  // and lands back here with a privileged session.
   useEffect(() => {
-    if (flowID) return;
+    if (flowID) {
+      sessionStorage.removeItem("kratos_settings_redirect_attempted");
+      return;
+    }
+    const attempted = sessionStorage.getItem("kratos_settings_redirect_attempted");
+    if (attempted) {
+      sessionStorage.removeItem("kratos_settings_redirect_attempted");
+      const returnTo = encodeURIComponent(location.pathname);
+      window.location.assign(
+        `/.ory/self-service/login/browser?refresh=true&return_to=${returnTo}`,
+      );
+      return;
+    }
+    sessionStorage.setItem("kratos_settings_redirect_attempted", "1");
     window.location.assign(SETTINGS_BROWSER_URL);
-  }, [flowID]);
+  }, [flowID, location.pathname]);
 
   useEffect(() => {
     if (!flowID) {

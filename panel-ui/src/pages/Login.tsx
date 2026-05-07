@@ -112,7 +112,29 @@ export const LoginPage = () => {
         ? { id: me.id, email: me.email, isAdmin: me.isAdmin }
         : null;
       qc.setQueryData<MeUser | null>(["whoami"], mePrimed);
-      navigate(homeForRole(me?.isAdmin ?? false), { replace: true });
+      // Honour return_to when the flow carried one. Kratos doesn't
+      // forward the query to the /login URL — only the flow id — so
+      // we have to dig it out of flow.request_url (the URL used to
+      // initiate the flow, which still has ?return_to=… on it). Used
+      // by /profile's refresh=true escalation when the privileged
+      // session has expired. Validate same-origin path so an attacker
+      // can't dangle return_to=https://evil.tld via a phishing link.
+      let safeReturn: string | null = null;
+      try {
+        const reqUrl = new URL(flow.request_url);
+        const rt = reqUrl.searchParams.get("return_to");
+        if (rt) {
+          // Accept both absolute URLs (same-origin) and relative paths.
+          if (rt.startsWith("/") && !rt.startsWith("//")) {
+            safeReturn = rt;
+          } else if (rt.startsWith(window.location.origin)) {
+            safeReturn = rt.slice(window.location.origin.length);
+          }
+        }
+      } catch {
+        // ignore — fall through to home
+      }
+      navigate(safeReturn ?? homeForRole(me?.isAdmin ?? false), { replace: true });
       return;
     }
     if (result.kind === "continue") {

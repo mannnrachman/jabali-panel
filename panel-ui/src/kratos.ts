@@ -78,8 +78,31 @@ export type KratosFlow = {
  * `Accept: application/json` to receive the flow object directly instead.
  */
 export async function initLoginFlow(): Promise<KratosFlow> {
-  const resp = await kratosClient.get<KratosFlow>("/self-service/login/browser");
-  return resp.data;
+  try {
+    const resp = await kratosClient.get<KratosFlow>("/self-service/login/browser");
+    return resp.data;
+  } catch (err) {
+    const ax = err as AxiosError<{ error?: { id?: string } }>;
+    const errorId = ax.response?.data?.error?.id;
+    // Kratos refuses to mint a fresh login flow when an aal1 session
+    // already exists (response: "A valid session was detected and
+    // thus login is not possible"). After a user enrols TOTP, panel-
+    // api's whoami starts returning 401 (aal2 required) so the SPA
+    // bounces to /login — but Kratos sees the aal1 cookie and
+    // 400/422s the bare browser-flow init. Retry with aal=aal2 to
+    // request a second-factor challenge against the existing session.
+    if (
+      errorId === "session_already_available" ||
+      ax.response?.status === 400 ||
+      ax.response?.status === 422
+    ) {
+      const aal2 = await kratosClient.get<KratosFlow>(
+        "/self-service/login/browser?aal=aal2",
+      );
+      return aal2.data;
+    }
+    throw err;
+  }
 }
 
 /**

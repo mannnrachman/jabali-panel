@@ -85,20 +85,22 @@
     text-overflow: clip !important;
     line-height: 1.3 !important;
   }
-  /* Stack card head title + extra (e.g. action button) vertically.
-     AntD's flex row otherwise lets a long extra (Add Record / Check
-     for updates) squeeze the title down to a single character per
-     line ("Ja…", "Sy…"). */
+  /* Card head title + extra: allow wrap so a long extra (Check for
+     updates) doesn't squeeze the title into "Ja…" / "Sy…", but keep
+     them inline when they actually fit (Recent Domains | View all
+     fits comfortably at 320px wide). flex-basis: auto lets the title
+     take its natural width; the title's white-space:normal above
+     allows it to wrap to a second line if needed before stacking. */
   .ant-card-head-wrapper {
     flex-wrap: wrap !important;
     gap: 8px !important;
   }
   .ant-card-head-wrapper > .ant-card-head-title {
-    flex: 1 1 100% !important;
+    flex: 1 1 auto !important;
   }
   .ant-card-head-wrapper > .ant-card-extra {
     flex: 0 0 auto !important;
-    margin-inline-start: 0 !important;
+    margin-inline-start: auto !important;
   }
   /* Page-level h2 + extras (e.g. DNS Records page header) — same
      stacking treatment, since they use Space justify=space-between

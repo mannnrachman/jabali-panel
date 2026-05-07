@@ -388,6 +388,7 @@ func (s *Scheduler) dispatchAccount(ctx context.Context, j models.BackupJob) {
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	dbs := userDatabases(callCtx, s.deps, user.ID, logger)
+	pgDbs := userPostgresDatabases(callCtx, s.deps, user.ID, logger)
 	mbs := userMailboxes(callCtx, s.deps, user.ID, logger)
 	meta := buildScheduleMetadata(callCtx, s.deps, user, logger)
 	scheduleID := ""
@@ -395,15 +396,16 @@ func (s *Scheduler) dispatchAccount(ctx context.Context, j models.BackupJob) {
 		scheduleID = *j.ScheduleID
 	}
 	params := map[string]any{
-		"job_id":      j.ID,
-		"user_id":     user.ID,
-		"username":    user.Username,
-		"email":       user.Email,
-		"is_admin":    user.IsAdmin,
-		"databases":   dbs,
-		"mailboxes":   mbs,
-		"metadata":    meta,
-		"schedule_id": scheduleID,
+		"job_id":             j.ID,
+		"user_id":            user.ID,
+		"username":           user.Username,
+		"email":              user.Email,
+		"is_admin":           user.IsAdmin,
+		"databases":          dbs,
+		"databases_postgres": pgDbs,
+		"mailboxes":          mbs,
+		"metadata":           meta,
+		"schedule_id":        scheduleID,
 	}
 	for k, v := range destWireParams(dest) {
 		params[k] = v
@@ -476,18 +478,32 @@ func isAgentConflict(err error) bool {
 // userDatabases returns the names of every hosted database belonging
 // to the user. Errors are logged + an empty slice returned so a
 // transient DB hiccup in the scheduler doesn't abort the whole tick.
+//
+// M37: returns mariadb-engine names only. Postgres siblings come back
+// from userPostgresDatabases() and ride backup.create as a parallel
+// `databases_postgres` field.
 func userDatabases(ctx context.Context, deps Deps, userID string, logger *slog.Logger) []string {
+	return userDatabasesByEngine(ctx, deps, userID, "mariadb", logger)
+}
+
+func userPostgresDatabases(ctx context.Context, deps Deps, userID string, logger *slog.Logger) []string {
+	return userDatabasesByEngine(ctx, deps, userID, "postgres", logger)
+}
+
+func userDatabasesByEngine(ctx context.Context, deps Deps, userID, engine string, logger *slog.Logger) []string {
 	if deps.Databases == nil {
 		return nil
 	}
 	dbs, _, err := deps.Databases.ListByUserID(ctx, userID, repository.ListOptions{Limit: 10000})
 	if err != nil {
-		logger.Warn("list databases for backup failed", "err", err)
+		logger.Warn("list databases for backup failed", "err", err, "engine", engine)
 		return nil
 	}
 	out := make([]string, 0, len(dbs))
 	for _, d := range dbs {
-		out = append(out, d.Name)
+		if d.Engine == engine || (engine == "mariadb" && d.Engine == "") {
+			out = append(out, d.Name)
+		}
 	}
 	return out
 }

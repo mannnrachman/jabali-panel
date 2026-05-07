@@ -339,15 +339,19 @@ func (h *backupHandler) createForUser(c *gin.Context) {
 		if len(mbs) == 0 {
 			mbs = h.allUserMailboxes(c.Request.Context(), user.ID)
 		}
+		// M37: split mariadb and postgres dbs so the agent dispatches
+		// the right dump tool per engine.
+		pgDbs := h.cfg.allUserPostgresDatabases(c.Request.Context(), user.ID)
 		params := map[string]any{
-			"job_id":    job.ID,
-			"user_id":   user.ID,
-			"username":  user.Username,
-			"email":     user.Email,
-			"is_admin":  user.IsAdmin,
-			"databases": dbs,
-			"mailboxes": mbs,
-			"metadata":  h.cfg.buildAccountMetadata(c.Request.Context(), user),
+			"job_id":             job.ID,
+			"user_id":            user.ID,
+			"username":           user.Username,
+			"email":              user.Email,
+			"is_admin":           user.IsAdmin,
+			"databases":          dbs,
+			"databases_postgres": pgDbs,
+			"mailboxes":          mbs,
+			"metadata":           h.cfg.buildAccountMetadata(c.Request.Context(), user),
 		}
 		for k, v := range destWireParams(dest) {
 			params[k] = v
@@ -685,23 +689,40 @@ func (cfg BackupHandlerConfig) buildAccountMetadata(ctx context.Context, user *m
 }
 
 
-// allUserDatabases returns every database name owned by a user.
+// allUserDatabases returns every MariaDB database name owned by a user.
 // Used by manual + self-shell backup paths to default to "everything"
 // when the operator submits an empty list. Errors are logged + an
 // empty slice returned so a transient repo failure doesn't fall
 // through into a "the agent backed up nothing" silent failure.
+//
+// M37: filters to engine='mariadb' so the legacy `databases` param on
+// the agent's backup.create call only carries MariaDB names — PG
+// names go in the parallel databases_postgres slice.
 func (cfg BackupHandlerConfig) allUserDatabases(ctx context.Context, userID string) []string {
+	return cfg.allUserDatabasesByEngine(ctx, userID, "mariadb")
+}
+
+// allUserPostgresDatabases — M37 sibling. Returns every PostgreSQL
+// database name owned by a user. Backup orchestrator passes this
+// to backup.create as databases_postgres alongside the mariadb list.
+func (cfg BackupHandlerConfig) allUserPostgresDatabases(ctx context.Context, userID string) []string {
+	return cfg.allUserDatabasesByEngine(ctx, userID, "postgres")
+}
+
+func (cfg BackupHandlerConfig) allUserDatabasesByEngine(ctx context.Context, userID, engine string) []string {
 	if cfg.Databases == nil {
 		return nil
 	}
 	rows, _, err := cfg.Databases.ListByUserID(ctx, userID, repository.ListOptions{Limit: 10000})
 	if err != nil {
-		cfg.logErr("list databases for backup", err, "user_id", userID)
+		cfg.logErr("list databases for backup", err, "user_id", userID, "engine", engine)
 		return nil
 	}
 	out := make([]string, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, r.Name)
+		if r.Engine == engine || (engine == "mariadb" && r.Engine == "") {
+			out = append(out, r.Name)
+		}
 	}
 	return out
 }
@@ -787,6 +808,14 @@ func (cfg MeBackupsHandlerConfig) buildAccountMetadata(ctx context.Context, user
 }
 
 func (cfg MeBackupsHandlerConfig) allUserDatabases(ctx context.Context, userID string) []string {
+	return cfg.allUserDatabasesByEngine(ctx, userID, "mariadb")
+}
+
+func (cfg MeBackupsHandlerConfig) allUserPostgresDatabases(ctx context.Context, userID string) []string {
+	return cfg.allUserDatabasesByEngine(ctx, userID, "postgres")
+}
+
+func (cfg MeBackupsHandlerConfig) allUserDatabasesByEngine(ctx context.Context, userID, engine string) []string {
 	if cfg.Databases == nil {
 		return nil
 	}
@@ -796,7 +825,9 @@ func (cfg MeBackupsHandlerConfig) allUserDatabases(ctx context.Context, userID s
 	}
 	out := make([]string, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, r.Name)
+		if r.Engine == engine || (engine == "mariadb" && r.Engine == "") {
+			out = append(out, r.Name)
+		}
 	}
 	return out
 }
@@ -864,14 +895,15 @@ func (h *meBackupHandler) create(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), backupCallTimeout)
 		defer cancel()
 		params := map[string]any{
-			"job_id":    job.ID,
-			"user_id":   user.ID,
-			"username":  user.Username,
-			"email":     user.Email,
-			"is_admin":  user.IsAdmin,
-			"databases": h.cfg.allUserDatabases(c.Request.Context(), user.ID),
-			"mailboxes": h.cfg.allUserMailboxes(c.Request.Context(), user.ID),
-			"metadata":  h.cfg.buildAccountMetadata(c.Request.Context(), user),
+			"job_id":             job.ID,
+			"user_id":            user.ID,
+			"username":           user.Username,
+			"email":              user.Email,
+			"is_admin":           user.IsAdmin,
+			"databases":          h.cfg.allUserDatabases(c.Request.Context(), user.ID),
+			"databases_postgres": h.cfg.allUserPostgresDatabases(c.Request.Context(), user.ID),
+			"mailboxes":          h.cfg.allUserMailboxes(c.Request.Context(), user.ID),
+			"metadata":           h.cfg.buildAccountMetadata(c.Request.Context(), user),
 		}
 		if _, err := h.cfg.Agent.Call(ctx, "backup.create", params); err != nil {
 			_ = h.cfg.Jobs.MarkFinished(c.Request.Context(), job.ID, models.BackupJobStatusFailed,

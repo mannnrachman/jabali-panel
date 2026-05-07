@@ -420,6 +420,24 @@ test -x node_modules/.bin/tsc || {
 			}
 			return run("", "systemctl", "restart", "jabali-panel")
 		}},
+		{"verify NTP time sync", func() error {
+			// TOTP enrolment quietly breaks when the wall clock drifts
+			// > 30s from real time (every code the authenticator app
+			// generates falls outside the validation window). Re-run
+			// install_time_sync on every update so a host whose NTP
+			// daemon got disabled or a fresh-image clone whose clock
+			// skewed re-converges automatically. Non-fatal — install
+			// just warns if not synchronised yet.
+			installSh := repoDir + "/install.sh"
+			if _, err := os.Stat(installSh); err != nil {
+				return nil
+			}
+			if err := run("", "bash", "-c",
+				"source "+installSh+" && install_time_sync"); err != nil {
+				fmt.Printf("  (install_time_sync failed: %v — continuing)\n", err)
+			}
+			return nil
+		}},
 		{"sync nginx panel vhost + websocket map", func() error {
 			// Re-render /etc/nginx/sites-available/jabali-panel.conf
 			// from the template, and (re-)install the WebSocket upgrade

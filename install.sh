@@ -921,6 +921,68 @@ EARLYDNS
 # is a symlink to another manager's output are left untouched to avoid
 # fighting that manager.
 
+# ---------- step 1c.5: time sync (NTP via systemd-timesyncd) -----------------
+#
+# TOTP relies on the server clock matching real time within ±30s. Without
+# NTP, drift on a long-uptime VM eventually invalidates every code the
+# user generates and 2FA enrolment quietly stops working. Enforce
+# systemd-timesyncd is up at install time and on every `jabali update`.
+#
+# Idempotent. Operator can switch to chrony / ntpd manually; this
+# function detects that case (any time-sync service active) and skips.
+# Timezone is left to the operator's existing /etc/timezone unless
+# JABALI_TIMEZONE is exported (e.g. JABALI_TIMEZONE=UTC) to override.
+
+install_time_sync() {
+  _log "ensuring NTP time sync (TOTP-critical)"
+
+  # If a non-default time-sync daemon is already running (chrony, ntpd,
+  # openntpd), respect the operator's choice and skip.
+  if systemctl is-active --quiet chrony 2>/dev/null \
+      || systemctl is-active --quiet chronyd 2>/dev/null \
+      || systemctl is-active --quiet ntp 2>/dev/null \
+      || systemctl is-active --quiet ntpd 2>/dev/null \
+      || systemctl is-active --quiet openntpd 2>/dev/null; then
+    _ok "alternative time-sync daemon already active — leaving as-is"
+  else
+    # systemd-timesyncd ships with systemd on every Debian/Ubuntu host
+    # but isn't always enabled on minimal cloud images.
+    if ! systemctl is-enabled --quiet systemd-timesyncd 2>/dev/null; then
+      systemctl enable --quiet systemd-timesyncd 2>/dev/null || true
+    fi
+    if ! systemctl is-active --quiet systemd-timesyncd 2>/dev/null; then
+      systemctl start systemd-timesyncd 2>/dev/null || _warn "systemd-timesyncd failed to start"
+    fi
+    timedatectl set-ntp true 2>/dev/null || true
+    _ok "systemd-timesyncd enabled"
+  fi
+
+  # Optional timezone override.
+  if [[ -n "${JABALI_TIMEZONE:-}" ]]; then
+    if [[ -f "/usr/share/zoneinfo/${JABALI_TIMEZONE}" ]]; then
+      timedatectl set-timezone "$JABALI_TIMEZONE" || _warn "set-timezone $JABALI_TIMEZONE failed"
+      _ok "timezone set to $JABALI_TIMEZONE"
+    else
+      _warn "JABALI_TIMEZONE='$JABALI_TIMEZONE' has no zoneinfo entry — leaving timezone unchanged"
+    fi
+  fi
+
+  # Wait briefly for sync — fresh installs may show 'no' for the first
+  # few seconds. Don't block forever; warn-and-continue if still off
+  # so the install doesn't stall on a host with no internet.
+  local i
+  for i in 1 2 3 4 5 6; do
+    if timedatectl show -p NTPSynchronized --value 2>/dev/null | grep -q '^yes$'; then
+      _ok "system clock synchronized (NTPSynchronized=yes)"
+      return 0
+    fi
+    sleep 2
+  done
+
+  _warn "system clock not yet NTPSynchronized after 12s — TOTP enrolment may fail until sync completes"
+  _warn "  current state: $(timedatectl status 2>&1 | grep -E 'Local time|System clock|NTP' | head -3 | tr '\n' '|')"
+}
+
 # ---------- step 1d: M18 — cgroups v2 probe + disk quota + /tmp tmpfs -------
 #
 # Three idempotent setup steps that make the M18 per-user limits
@@ -7545,6 +7607,9 @@ main() {
   preflight
   prompt_server_settings
   install_base_packages
+  # NTP / time sync — must run before anything that depends on accurate
+  # wall-clock (TOTP enrolment, JWT/cookie expiry, certbot timestamps).
+  install_time_sync
   # M25 step 1: kill the LLMNR :5355 listener once systemd-resolved is on
   # the host. Drop-in only — operator can override later.
   disable_llmnr

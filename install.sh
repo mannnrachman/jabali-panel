@@ -7135,41 +7135,47 @@ install_kratos() {
     local installed_version
     installed_version=$("$kratos_binary" version 2>&1 | grep -oP 'Version:\s+\K[^[:space:]]+' || echo "unknown")
     if [[ "$installed_version" == "v${kratos_version}" ]]; then
-      _ok "Kratos $kratos_version already installed"
-      return
+      _ok "Kratos $kratos_version already installed (binary check) — re-rendering config"
+      _kratos_skip_binary=1
     fi
   fi
 
-  # Download + verify SHA-256.
-  _log "downloading Kratos $kratos_version from GitHub"
-  if ! curl -fsSL "$kratos_url" -o "$kratos_tar"; then
-    _die "failed to download Kratos from $kratos_url"
-  fi
+  # Download + verify SHA-256 + install binary. Skipped when binary is
+  # already at target version — the config-render block further down
+  # always runs so kratos.yml.tmpl edits reach existing hosts on
+  # `jabali update` (the "sync kratos config" step in update.go relies
+  # on this fall-through).
+  if [[ "${_kratos_skip_binary:-0}" != "1" ]]; then
+    _log "downloading Kratos $kratos_version from GitHub"
+    if ! curl -fsSL "$kratos_url" -o "$kratos_tar"; then
+      _die "failed to download Kratos from $kratos_url"
+    fi
 
-  if [[ ! -f "$kratos_sha_file" ]]; then
-    _die "Kratos SHA-256 checksum file not found at $kratos_sha_file"
-  fi
+    if [[ ! -f "$kratos_sha_file" ]]; then
+      _die "Kratos SHA-256 checksum file not found at $kratos_sha_file"
+    fi
 
-  # Skip comment + blank lines so the checksum file can carry provenance
-  # metadata (`# Source: ...`, `# Verified: YYYY-MM-DD`) without tripping
-  # the comparison — matches the sha256sum(1) convention.
-  local expected_sha
-  expected_sha="$(awk '/^[[:space:]]*#/ || NF==0 { next } { print $1; exit }' "$kratos_sha_file")"
-  local actual_sha
-  actual_sha="$(sha256sum "$kratos_tar" | awk '{print $1}')"
-  if [[ -z "$expected_sha" ]]; then
-    _die "no checksum line found in $kratos_sha_file (comments only?)"
-  fi
-  if [[ "$expected_sha" != "$actual_sha" ]]; then
-    _die "Kratos SHA-256 mismatch. Expected: $expected_sha, got: $actual_sha"
-  fi
+    # Skip comment + blank lines so the checksum file can carry provenance
+    # metadata (`# Source: ...`, `# Verified: YYYY-MM-DD`) without tripping
+    # the comparison — matches the sha256sum(1) convention.
+    local expected_sha
+    expected_sha="$(awk '/^[[:space:]]*#/ || NF==0 { next } { print $1; exit }' "$kratos_sha_file")"
+    local actual_sha
+    actual_sha="$(sha256sum "$kratos_tar" | awk '{print $1}')"
+    if [[ -z "$expected_sha" ]]; then
+      _die "no checksum line found in $kratos_sha_file (comments only?)"
+    fi
+    if [[ "$expected_sha" != "$actual_sha" ]]; then
+      _die "Kratos SHA-256 mismatch. Expected: $expected_sha, got: $actual_sha"
+    fi
 
-  # Extract + install binary.
-  tar -xzf "$kratos_tar" -C /tmp/
-  install -m 0755 -o root -g root /tmp/kratos "$kratos_binary"
-  rm -f "$kratos_tar" /tmp/kratos
+    # Extract + install binary.
+    tar -xzf "$kratos_tar" -C /tmp/
+    install -m 0755 -o root -g root /tmp/kratos "$kratos_binary"
+    rm -f "$kratos_tar" /tmp/kratos
 
-  _ok "Kratos binary installed at $kratos_binary"
+    _ok "Kratos binary installed at $kratos_binary"
+  fi
 
   # Provision MariaDB database + user for Kratos.
   local kratos_db_name="jabali_kratos"

@@ -346,11 +346,38 @@ function SettingsGroupForm({ flow, group, onSubmit }: GroupFormProps) {
         initialValues={Object.fromEntries(fields.map((f) => [f.name, f.value]))}
       >
         {fields.map((f) => renderField(f))}
-        <Form.Item style={{ marginBottom: 0 }}>
-          <Button type="primary" htmlType="submit" loading={submitting}>
-            {submitLabel(group)}
-          </Button>
-        </Form.Item>
+        {/* Submit-type Kratos nodes carry the action keyword (e.g.
+            totp_unlink=true, lookup_secret_regenerate=true). Render
+            one button per submit field; the button's onClick submits
+            the form with that action key set. When no submit field
+            exists, fall back to the generic group-default button
+            (e.g. password change has only inputs, no explicit
+            method-action node). */}
+        {fields.filter((f) => f.kind === "submit").length > 0 ? (
+          <Space wrap>
+            {fields
+              .filter((f) => f.kind === "submit")
+              .map((f) => (
+                <Button
+                  key={f.name + "=" + f.value}
+                  type="primary"
+                  loading={submitting}
+                  danger={f.name.endsWith("_unlink")}
+                  onClick={() =>
+                    submit({ ...{}, [f.name]: f.value })
+                  }
+                >
+                  {submitButtonLabel(group, f.name)}
+                </Button>
+              ))}
+          </Space>
+        ) : (
+          <Form.Item style={{ marginBottom: 0 }}>
+            <Button type="primary" htmlType="submit" loading={submitting}>
+              {submitLabel(group)}
+            </Button>
+          </Form.Item>
+        )}
       </Form>
     </Card>
   );
@@ -424,5 +451,27 @@ function submitLabel(group: string): string {
       return "Save security key";
     default:
       return "Save";
+  }
+}
+
+// Per-action button label. Kratos returns submit-type input nodes for
+// the actions that need a dedicated button (totp_unlink, lookup_secret_
+// regenerate, lookup_secret_disable, webauthn_remove). Localise to
+// English here so the UI doesn't leak Kratos's internal field names.
+function submitButtonLabel(group: string, name: string): string {
+  switch (name) {
+    case "totp_unlink":
+      return "Disable two-factor";
+    case "lookup_secret_regenerate":
+      return "Regenerate backup codes";
+    case "lookup_secret_disable":
+      return "Disable backup codes";
+    case "webauthn_remove":
+      return "Remove security key";
+    case "totp_code":
+    case "method":
+      return submitLabel(group);
+    default:
+      return humanizeName(name);
   }
 }

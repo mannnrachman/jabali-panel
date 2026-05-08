@@ -219,6 +219,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		managedIPRepo := repository.NewManagedIPRepository(sharedDB)
 		rec.WithManagedIPs(managedIPRepo)
 		rec.WithPageTemplates(pageTemplateRepo)
+		// M30.2.x: backup destinations repo for the legacy
+		// shared-password purge pass.
+		rec.WithBackupDestinations(repository.NewBackupDestinationRepository(sharedDB))
 		deps.ManagedIPs = managedIPRepo
 		deps.Reconciler = rec
 		deps.DNSZones = dnsZoneRepo

@@ -60,6 +60,10 @@ type Reconciler struct {
 	// rebind pass is skipped entirely (lets existing test harnesses
 	// pass without touching the new repo).
 	managedIPs repository.ManagedIPRepository
+	// M30.2.x — backup destinations. Optional; reconciler purges the
+	// legacy /etc/jabali-panel/restic-repo.password once every row
+	// has been migrated to per-destination password_enc.
+	backupDestinations repository.BackupDestinationRepository
 	// M28 — operator-editable page templates. Used only to pipe the
 	// domain_default_index body into the agent's domain.create call
 	// so a fresh docroot gets the customised welcome page rather than
@@ -180,6 +184,15 @@ func (r *Reconciler) WithManagedIPs(repo repository.ManagedIPRepository) *Reconc
 // WithSSOTokens injects the SSO token repository for nightly prune.
 func (r *Reconciler) WithSSOTokens(ssoTokens repository.PhpMyAdminSSOTokenRepository) *Reconciler {
 	r.ssoTokens = ssoTokens
+	return r
+}
+
+// WithBackupDestinations registers the M30.2 destinations repo. When
+// set, ReconcileAll runs reconcileResticLegacyPassword every pass
+// to purge /etc/jabali-panel/restic-repo.password once every
+// destination has its own per-row sealed password.
+func (r *Reconciler) WithBackupDestinations(repo repository.BackupDestinationRepository) *Reconciler {
+	r.backupDestinations = repo
 	return r
 }
 
@@ -315,6 +328,13 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// Backfill mysqladmin shadow accounts for users that don't have one yet.
 	// This is a separate pass that doesn't block domain reconciliation.
 	r.reconcileMysqlAdminShadow(ctx)
+
+	// M30.2: once every backup_destinations row has a per-destination
+	// restic password, the legacy shared file at
+	// /etc/jabali-panel/restic-repo.password is vestigial. Purge it
+	// so an operator who rotates and walks away doesn't leave the
+	// shared key on disk.
+	r.reconcileResticLegacyPassword(ctx)
 
 	// M18 rate-limit zone fragment MUST converge BEFORE the domain loop:
 	// domain.create on the agent writes each vhost then runs `nginx -t`.

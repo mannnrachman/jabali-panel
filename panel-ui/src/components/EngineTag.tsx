@@ -38,16 +38,17 @@ export function EngineTag({ engine }: EngineTagProps) {
   return (
     <Tag
       color={color}
-      icon={
-        <Icon
-          style={{
-            verticalAlign: "-0.15em",
-            marginInlineEnd: 4,
-          }}
-        />
-      }
+      style={{
+        fontSize: 14,
+        lineHeight: "22px",
+        padding: "2px 10px",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+      }}
     >
-      {label}
+      <Icon size={16} />
+      <span>{label}</span>
     </Tag>
   );
 }

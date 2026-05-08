@@ -63,11 +63,9 @@ func userLimitsClearHandler(ctx context.Context, params json.RawMessage) (any, e
 
 	// Reload either way — if the drop-in existed, systemd needs to
 	// forget it; if not, it's a cheap no-op.
-	// systemd-run wrap: see user_limits_apply for the namespace
-	// rationale.
-	if _, drStderr, err := runCmdFn(ctx, "systemd-run",
-		"--pipe", "--wait", "--quiet", "--collect",
-		"--service-type=oneshot", "--",
+	// nsenter into PID 1 namespace: see user_limits_apply.
+	if _, drStderr, err := runCmdFn(ctx, "nsenter",
+		"-t", "1", "-m", "-i", "--",
 		"systemctl", "daemon-reload"); err != nil {
 		return nil, &agentwire.AgentError{
 			Code: agentwire.CodeInternal,

@@ -131,15 +131,16 @@ func userLimitsApplyHandler(ctx context.Context, params json.RawMessage) (any, e
 	// Reload: always, so newly-written drop-ins take effect AND any
 	// idempotent retry also triggers the kernel-state verification
 	// below. Cheap operation — milliseconds on a quiet host.
-	// Wrap in systemd-run --pipe --wait so the daemon-reload runs
-	// from PID 1's namespace, not the jabali-agent's. Direct
-	// systemctl from inside the agent service hits 'Failed to
-	// connect to bus: Permission denied' — same root cause as the
-	// M37 install_postgres dance: PrivateTmp=connected +
-	// ProtectKernel* breaks libdbus auth handshake.
-	if _, drStderr, err := runCmdFn(ctx, "systemd-run",
-		"--pipe", "--wait", "--quiet", "--collect",
-		"--service-type=oneshot", "--",
+	// Direct \`systemctl daemon-reload\` from jabali-agent fails with
+	// 'Failed to connect to bus: Permission denied' — the agent's
+	// PrivateTmp + ProtectKernel* combo breaks libdbus's auth
+	// handshake (loginuid/audit visibility). Nor does systemd-run
+	// help: it also speaks DBus from the same broken namespace.
+	// Escape via \`nsenter -t 1 -a\` which joins PID 1's full
+	// namespace set (mnt + ipc + uts + cgroup + pid + net) so the
+	// systemctl call runs as if from the host root shell.
+	if _, drStderr, err := runCmdFn(ctx, "nsenter",
+		"-t", "1", "-m", "-i", "--",
 		"systemctl", "daemon-reload"); err != nil {
 		return nil, &agentwire.AgentError{
 			Code: agentwire.CodeInternal,

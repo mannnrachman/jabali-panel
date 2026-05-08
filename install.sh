@@ -210,6 +210,17 @@ else
   _warn "could not open install log file — post-mortem only via scrollback"
 fi
 
+# Socket-perm + bind helpers used by install_kratos and Step 2-5
+# verify blocks. Sourced at top of file so EVERY caller (including
+# agent `bash -c "source install.sh && install_<fn>"` invocations)
+# has the helpers in scope. Earlier the source line lived inside
+# main(), which meant `jabali update`'s sync kratos step always
+# failed with "verify_socket_perms: command not found".
+if [[ -r "$REPO_DIR/install/scripts/socket-helpers.sh" ]]; then
+  # shellcheck source=install/scripts/socket-helpers.sh
+  source "$REPO_DIR/install/scripts/socket-helpers.sh"
+fi
+
 # _flush_spin_log appends a wrapped command's captured output into the
 # main $LOG_FILE with a header so the post-mortem log reads top-to-bottom
 # as a sequence of {step, output} blocks. No-op when LOG_FILE is empty
@@ -7807,6 +7818,141 @@ SCRIPT_EOF
 
 # ---------- main ------------------------------------------------------------
 
+install_snuffleupagus() {
+  # Pin the upstream tag + tarball SHA256. Update both atomically when
+  # bumping. SHA256 = sha256sum of the GitHub release tarball.
+  local snuf_version="0.13.0"
+  local snuf_sha256="350a33cd3906bdba46f5c4cf3d00edeb81eaf6a7b9a3a7e5ef47bc967492ae90"
+
+  local build="${REPO_DIR}/install/snuffleupagus/build/build.sh"
+  if [[ ! -x "$build" ]]; then
+    _err "snuffleupagus build script missing: $build"
+    return 1
+  fi
+
+  # Build deps. snuffleupagus needs the same toolchain as any phpize-built
+  # extension. The phpX.Y-dev metapackage ships phpize + php-config + the
+  # Zend headers we link against. install_base_packages does NOT pull it
+  # because nothing else needs it; we must install per-minor here.
+  if ! dpkg -s build-essential libpcre2-dev >/dev/null 2>&1; then
+    _spin "apt install build-essential + libpcre2-dev" \
+      apt-get install -y -qq --no-install-recommends build-essential libpcre2-dev
+  fi
+  # Build for every PHP minor that has an FPM binary on disk — not just
+  # JABALI_PHP_VERSIONS. The PHP Manager UI lets the operator install
+  # additional minors at runtime; without auto-detect, install_snuffleupagus
+  # would only cover the bootstrap-time JABALI_PHP_VERSIONS set and
+  # operator-added minors would silently lack PHP Defense (caught
+  # 2026-05-04 — UI showed "1/3 installed PHP minors" with 8.5 active).
+  local _detected_minors=""
+  if compgen -G "/usr/sbin/php*-fpm" >/dev/null; then
+    _detected_minors="$(ls -1 /usr/sbin/php*-fpm 2>/dev/null \
+      | sed -E 's|.*/php([0-9]+\.[0-9]+)-fpm|\1|' \
+      | sort -u | tr '\n' ' ')"
+  fi
+  # Union of explicit override + on-disk detection. Keeps the override
+  # behavior (operator forcing a specific subset) while adding any
+  # newly-installed minor automatically on the next run.
+  local _php_versions="${JABALI_PHP_VERSIONS:-} ${_detected_minors}"
+  _php_versions="$(echo $_php_versions | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/ $//')"
+  if [[ -z "${_php_versions// /}" ]]; then
+    _php_versions="8.5"
+  fi
+  local _minor _dev_pkgs=()
+  for _minor in $_php_versions; do
+    if ! dpkg -s "php${_minor}-dev" >/dev/null 2>&1; then
+      _dev_pkgs+=("php${_minor}-dev")
+    fi
+  done
+  if (( ${#_dev_pkgs[@]} > 0 )); then
+    # When install_snuffleupagus runs via `jabali update --force`'s
+    # prelude (sourcing install.sh then calling this function directly),
+    # install_base_packages's apt-get update + Sury repo setup may not
+    # have run in this shell. Ensure both before attempting the dev
+    # install or apt errors with "Unable to locate package phpX.Y-dev"
+    # because the Sury index is missing/stale (caught 2026-05-04 on the
+    # mx VM after install.sh refactor — install_php had run earlier so
+    # phpX.Y-fpm/cli were present, but apt cache had since aged out).
+    if [[ ! -s /etc/apt/sources.list.d/sury-php.list ]] \
+       && declare -F _install_sury_source >/dev/null 2>&1; then
+      _install_sury_source
+    fi
+    _spin "apt update (refresh Sury index for php-dev)" \
+      apt-get update -qq -o Acquire::Languages=none
+    _spin "apt install ${_dev_pkgs[*]}" \
+      apt-get install -y -qq --no-install-recommends "${_dev_pkgs[@]}"
+  fi
+
+  # Active rules dir + placeholder file. mode=off by default, so the
+  # placeholder disables the module. Reconciler overwrites once state
+  # flips to simulation/enforce.
+  install -d -m 0755 /etc/jabali/snuffleupagus
+  if [[ ! -f /etc/jabali/snuffleupagus/active.rules ]]; then
+    cat > /etc/jabali/snuffleupagus/active.rules <<'EOF_RULES'
+# Jabali Snuffleupagus — placeholder (mode=off). Reconciler overwrites
+# this file when the operator flips mode to simulation or enforce.
+sp.global.enable(0);
+EOF_RULES
+    chmod 0644 /etc/jabali/snuffleupagus/active.rules
+  fi
+  # cli.ini for the jabali-php wrapper (Wave C). Pinning prevents
+  # customer-supplied -c flags from sidestepping the rules file.
+  if [[ ! -f /etc/jabali/snuffleupagus/cli.ini ]]; then
+    cat > /etc/jabali/snuffleupagus/cli.ini <<'EOF_CLI'
+; Jabali PHP-CLI wrapper config — pin sp.configuration_file so cron and
+; SFTP-shell PHP cannot dodge the active rule set via custom .ini.
+sp.configuration_file=/etc/jabali/snuffleupagus/active.rules
+EOF_CLI
+    chmod 0644 /etc/jabali/snuffleupagus/cli.ini
+  fi
+
+  # Mirror the rule bundle into /usr/share/jabali/snuffleupagus/rules so
+  # the panel reconciler reads from a stable on-disk path independent of
+  # the source checkout layout.
+  install -d -m 0755 /usr/share/jabali/snuffleupagus/rules
+  if [[ -d "${REPO_DIR}/install/snuffleupagus/rules" ]]; then
+    install -m 0644 "${REPO_DIR}/install/snuffleupagus/rules/"*.rules \
+      /usr/share/jabali/snuffleupagus/rules/ 2>/dev/null || true
+    if [[ -f "${REPO_DIR}/install/snuffleupagus/rules/README.md" ]]; then
+      install -m 0644 "${REPO_DIR}/install/snuffleupagus/rules/README.md" \
+        /usr/share/jabali/snuffleupagus/rules/ 2>/dev/null || true
+    fi
+  fi
+
+  # Build per minor. Same auto-detect as the dev-pkg loop above:
+  # union of JABALI_PHP_VERSIONS + every phpX.Y-fpm binary on disk.
+  # Operator-installed minors via the PHP Manager UI get covered on
+  # the next install.sh / `jabali update --force` run without manual
+  # JABALI_PHP_VERSIONS edits.
+  local php_versions="$_php_versions"
+  local minor
+  for minor in $php_versions; do
+    [[ -d "/etc/php/$minor/fpm" ]] || continue
+    SNUFFLEUPAGUS_VERSION="$snuf_version" \
+    SNUFFLEUPAGUS_SHA256="$snuf_sha256" \
+      "$build" "$minor" || {
+        _warn "snuffleupagus build failed for PHP $minor (continuing other minors)"
+        continue
+      }
+    # mods-available + conf.d wiring (FPM + CLI both load sp.so).
+    cat > "/etc/php/$minor/mods-available/jabali-snuffleupagus.ini" <<EOF_MOD
+; Jabali Snuffleupagus extension load + config-file pin.
+extension=/usr/lib/php/jabali-snuffleupagus/$minor/snuffleupagus.so
+sp.configuration_file=/etc/jabali/snuffleupagus/active.rules
+EOF_MOD
+    ln -sf "../../mods-available/jabali-snuffleupagus.ini" \
+      "/etc/php/$minor/fpm/conf.d/30-jabali-snuffleupagus.ini"
+    ln -sf "../../mods-available/jabali-snuffleupagus.ini" \
+      "/etc/php/$minor/cli/conf.d/30-jabali-snuffleupagus.ini"
+  done
+
+  # Wave C: PHP-CLI bypass detection. Watch direct execve of every Sury
+  # /usr/bin/phpX.Y plus /usr/bin/php so SFTP-shell users running php
+  # outside the FPM pool surface in auditd logs (key=jabali_php_bypass).
+  install_audit_php_bypass
+
+  _ok "snuffleupagus installed across PHP minors (mode=off; flip via Security UI)"
+}
 main() {
   print_banner
   preflight

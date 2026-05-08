@@ -18,6 +18,7 @@ import { columnSearchProps } from "../../../components/columnSearch";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useDeleteMutation } from "../../../hooks/useQueries";
 import { useTableURL } from "../../../hooks/useTableURL";
+import { EngineTag } from "../../../components/EngineTag";
 import { DatabaseUserDrawer } from "./DatabaseUserDrawer";
 
 export type Grant = {
@@ -36,11 +37,6 @@ export type DatabaseUser = {
   created_at: string;
   updated_at: string;
   grants: Grant[];
-};
-
-const engineColorMap: Record<string, string> = {
-  mariadb: "blue",
-  postgres: "geekblue",
 };
 
 // Rotate-password calls require the client to POST something in
@@ -194,11 +190,10 @@ export const DatabaseUsersList = () => {
           <Table.Column<DatabaseUser>
             dataIndex="engine"
             title="Engine"
-            width={110}
-            render={(engine: string | undefined) => {
-              const e = engine ?? "mariadb";
-              return <Tag color={engineColorMap[e] ?? "default"}>{e}</Tag>;
-            }}
+            width={140}
+            render={(engine: string | undefined) => (
+              <EngineTag engine={engine} />
+            )}
           />
           <Table.Column<DatabaseUser>
             title="Database Privileges"

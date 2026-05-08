@@ -1,20 +1,23 @@
 <?php
 /**
- * Jabali Adminer SSO plugin.
+ * Jabali Adminer SSO plugin (M37 Phase 4).
  *
- * Exchanges a single-use base64url token (URL `?token=`) for engine-
- * specific credentials by POSTing to /sso/adminer/validate over the
- * panel-api Unix domain socket. The socket is owned jabali:www-data
- * mode 0660 — Adminer runs in PHP-FPM as www-data, so it can stream
- * the request without touching the network stack.
+ * Token flow:
+ *   1. Browser hits /jabali-adminer/?token=<base64url>&engine=<eng>&db=<name>
+ *   2. Plugin POSTs token to /sso/adminer/validate over the panel-api
+ *      Unix socket; server consumes the token (FOR UPDATE + DELETE)
+ *      and returns {driver, server, username, password, db}.
+ *   3. Plugin caches creds in $_SESSION so subsequent requests within
+ *      the same browser session don't need a new token (Adminer
+ *      navigates inside its UI via more requests; without the cache
+ *      the token would be replay-rejected on the very next click).
+ *   4. Plugin auto-submits the Adminer login form with the cached
+ *      creds via a small <form> + JS so the user lands directly on
+ *      the database view.
  *
- * Token is consumed atomically server-side (FOR UPDATE + DELETE);
- * replay returns 404 and we hand the user to Adminer's normal login
- * form so they can see what failed.
- *
- * Driver mapping:
- *   - mariadb  → "server"  (Adminer's MySQLi/PDO_MySQL backend)
- *   - postgres → "pgsql"   (libpq via pg_connect)
+ * Engine driver mapping:
+ *   - mariadb  → driver "server"  (Adminer's MySQLi/PDO_MySQL backend)
+ *   - postgres → driver "pgsql"   (libpq via pg_connect)
  *
  * @see panel-api/internal/api/sso_adminer_validate.go
  */
@@ -26,32 +29,47 @@ class JabaliAdminerSSO {
 
     public function __construct($socket_path) {
         $this->socket_path = $socket_path;
+        // Adminer doesn't always start a session; we want to cache
+        // validated SSO creds for the life of the browser session
+        // so the user can navigate inside Adminer without burning
+        // a fresh token on every click. Idempotent: if Adminer
+        // already started a session, this is a no-op.
+        if (session_status() === PHP_SESSION_NONE) {
+            // Cookie-only sessions, scoped to /jabali-adminer/ so
+            // they don't leak into other apps on the same vhost.
+            session_set_cookie_params([
+                'lifetime' => 0,
+                'path'     => '/jabali-adminer/',
+                'domain'   => '',
+                'secure'   => true,
+                'httponly' => true,
+                'samesite' => 'Lax',
+            ]);
+            session_name('jabali_adminer_sid');
+            @session_start();
+        }
     }
 
     /**
-     * Lazy fetch — called by every override below. Returns null on
-     * any failure so Adminer falls through to its default form.
+     * Lazy fetch — first checks $_SESSION, then mints a new validation
+     * call when a fresh `?token=` is in the URL. Returns null when
+     * neither path yields creds (Adminer falls through to its
+     * default form so the failure surface is visible).
      */
     private function fetchCreds() {
-        if ($this->creds !== null) return $this->creds === false ? null : $this->creds;
+        if ($this->creds !== null) {
+            return $this->creds === false ? null : $this->creds;
+        }
+        if (!empty($_SESSION['jabali_adminer_creds'])) {
+            $this->creds = $_SESSION['jabali_adminer_creds'];
+            return $this->creds;
+        }
         $token = isset($_GET['token']) ? $_GET['token'] : '';
         if ($token === '' || !preg_match('/^[A-Za-z0-9_-]{40,200}$/', $token)) {
             $this->creds = false;
             return null;
         }
         $body = json_encode(['token' => $token]);
-        $context = stream_context_create([
-            'http' => [
-                'method'  => 'POST',
-                'header'  => "Host: jabali-sso\r\nContent-Type: application/json\r\nContent-Length: " . strlen($body) . "\r\n",
-                'content' => $body,
-                'timeout' => 5,
-                'ignore_errors' => true,
-            ],
-        ]);
-        $url = 'http://localhost/sso/adminer/validate';
-        // PHP's http stream wrapper doesn't speak unix:// directly —
-        // open the socket manually and shake hands by hand.
         $fp = @stream_socket_client('unix://' . $this->socket_path, $errno, $errstr, 5);
         if (!$fp) {
             $this->creds = false;
@@ -69,7 +87,6 @@ class JabaliAdminerSSO {
             $resp .= fread($fp, 4096);
         }
         fclose($fp);
-        // Split headers / body on first blank line.
         $sep = strpos($resp, "\r\n\r\n");
         if ($sep === false) {
             $this->creds = false;
@@ -77,12 +94,10 @@ class JabaliAdminerSSO {
         }
         $headers = substr($resp, 0, $sep);
         $payload = substr($resp, $sep + 4);
-        // Status line check.
         if (!preg_match('#^HTTP/1\\.\\d\\s+200\\b#', $headers)) {
             $this->creds = false;
             return null;
         }
-        // Strip transfer-encoding: chunked if present.
         if (stripos($headers, 'Transfer-Encoding: chunked') !== false) {
             $payload = $this->dechunk($payload);
         }
@@ -93,6 +108,7 @@ class JabaliAdminerSSO {
             return null;
         }
         $this->creds = $j;
+        $_SESSION['jabali_adminer_creds'] = $j;
         return $j;
     }
 
@@ -112,28 +128,50 @@ class JabaliAdminerSSO {
         return $out;
     }
 
-    /** Override the credential prompt. Adminer calls this for every page. */
+    /**
+     * Replace Adminer's login form with a hidden auto-submitting
+     * form. Returning truthy stops Adminer from rendering its own
+     * form below. When there are no creds to inject, return falsy
+     * so Adminer's standard form renders and the user can see
+     * what failed.
+     */
+    public function loginForm() {
+        $c = $this->fetchCreds();
+        if ($c === null) return;
+
+        $h = function ($v) {
+            return htmlspecialchars((string)$v, ENT_QUOTES);
+        };
+
+        echo '<form id="jabali-sso" action="" method="post" style="display:none">';
+        echo '<input type="hidden" name="auth[driver]"   value="' . $h($c['driver']) . '">';
+        echo '<input type="hidden" name="auth[server]"   value="' . $h($c['server']) . '">';
+        echo '<input type="hidden" name="auth[username]" value="' . $h($c['username']) . '">';
+        echo '<input type="hidden" name="auth[password]" value="' . $h($c['password']) . '">';
+        echo '<input type="hidden" name="auth[db]"       value="' . $h($c['db']) . '">';
+        echo '<noscript><button type="submit">Continue</button></noscript>';
+        echo '</form>';
+        echo '<p style="text-align:center;padding:2rem">Signing into Adminer via Jabali SSO…</p>';
+        echo '<script>document.getElementById("jabali-sso").submit();</script>';
+        return true;
+    }
+
+    /**
+     * credentials() supplies the connection tuple Adminer uses for
+     * MySQLi/pgSQL connect(). Returning [server,user,pass] from the
+     * session-cached creds means Adminer doesn't need to read its
+     * own form values.
+     */
     public function credentials() {
         $c = $this->fetchCreds();
         if ($c === null) return null;
         return [$c['server'], $c['username'], $c['password']];
     }
 
-    /** Force the engine driver. */
-    public function loginForm() {
-        // Returning truthy keeps Adminer's form behaviour. We instead
-        // pre-fill via auth() below by setting $_POST values when the
-        // SSO creds are valid; if invalid, Adminer falls through to
-        // its standard form so the user sees the failure UI.
-        $c = $this->fetchCreds();
-        if ($c === null) return;
-        // Minimal CSS placeholder; real flow auto-submits via login().
-        echo '<p>Signing into Adminer via Jabali SSO…</p>';
-    }
-
     /**
-     * login() runs after Adminer's parent::login() validates form
-     * data. Returning true here completes the auth round-trip.
+     * login() validates the submitted form. We auto-submit with the
+     * exact creds we'd accept here, so this just verifies the
+     * round-trip wasn't tampered with.
      */
     public function login($login, $password) {
         $c = $this->fetchCreds();
@@ -141,40 +179,22 @@ class JabaliAdminerSSO {
         return ($login === $c['username'] && $password === $c['password']);
     }
 
-    /** database() pins the visible DB to what was validated. */
+    /** Pin the visible DB to what was validated. */
     public function database() {
         $c = $this->fetchCreds();
         if ($c === null) return null;
         return $c['db'];
     }
 
-    /** databases() restricts the dropdown to the validated DB only. */
+    /** Restrict the dropdown to the validated DB only. */
     public function databases($flush = true) {
         $c = $this->fetchCreds();
         if ($c === null) return null;
         return [$c['db']];
     }
 
-    /** Disable permanent-login cookies — every entry is fresh-token. */
+    /** No persistent cookie — every fresh entry uses a one-shot token. */
     public function permanentLogin($create = false) {
         return false;
-    }
-
-    /**
-     * Auto-injection: when Adminer renders the login form, populate
-     * $_POST so it submits itself on the very first request.
-     */
-    public function head() {
-        $c = $this->fetchCreds();
-        if ($c === null) return;
-        if (!isset($_POST['auth'])) {
-            $_POST['auth'] = [
-                'driver'   => $c['driver'],
-                'server'   => $c['server'],
-                'username' => $c['username'],
-                'password' => $c['password'],
-                'db'       => $c['db'],
-            ];
-        }
     }
 }

@@ -4,7 +4,7 @@
 // popup blockers while the SSO call runs.
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Button, Card, Space, Table, Tag, Tooltip, Typography, message } from "antd";
+import { Button, Card, Space, Table, Tooltip, Typography, message } from "antd";
 import {
   DatabaseOutlined,
   LinkOutlined,
@@ -14,6 +14,7 @@ import {
 import type { SorterResult } from "antd/es/table/interface";
 
 import { ssoAdminer, ssoPhpMyAdmin } from "../../../apiClient";
+import { EngineTag } from "../../../components/EngineTag";
 import { RowDeleteButton } from "../../../components/RowDeleteButton";
 import { columnSearchProps } from "../../../components/columnSearch";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
@@ -32,11 +33,6 @@ export type Database = {
   created_at: string;
   updated_at: string;
   size_bytes?: number;
-};
-
-const engineColorMap: Record<string, string> = {
-  mariadb: "blue",
-  postgres: "green",
 };
 
 const formatBytes = (bytes: number | undefined): string => {
@@ -229,9 +225,8 @@ export const UserDatabaseList = () => {
           <Table.Column<Database>
             dataIndex="engine"
             title="Engine"
-            render={(engine: string) => (
-              <Tag color={engineColorMap[engine] || "default"}>{engine}</Tag>
-            )}
+            width={140}
+            render={(engine: string) => <EngineTag engine={engine} />}
           />
           <Table.Column<Database>
             dataIndex="size_bytes"

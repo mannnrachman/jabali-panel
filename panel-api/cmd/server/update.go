@@ -165,11 +165,26 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			// dir before pulling so the update self-heals instead of
 			// requiring the operator to know the magic chown command.
 			//
-			// Scope intentionally narrow: just .git/, not the whole
-			// repo (we don't want to clobber node_modules or other
-			// trees that might legitimately be group-owned differently).
-			return run("", "chown", "-R",
-				serviceUser+":"+serviceUser, repoDir+"/.git")
+			// Also chown panel-ui/test-results/ + playwright-report/
+			// since `npx playwright test` run as root drops files
+			// there which then block sudo-as-jabali `git reset --hard`
+			// with "unable to unlink: Permission denied". Both dirs
+			// are .gitignore'd; chown is purely to let `git reset`
+			// remove any leftovers from a previous Playwright run.
+			if err := run("", "chown", "-R",
+				serviceUser+":"+serviceUser, repoDir+"/.git"); err != nil {
+				return err
+			}
+			// Ignore failures on the panel-ui dirs — they may not
+			// exist yet on a fresh install, and missing dirs are not
+			// a deployment-blocking condition.
+			_ = run("", "bash", "-c",
+				"shopt -s nullglob; "+
+					"chown -R "+serviceUser+":"+serviceUser+" "+
+					repoDir+"/panel-ui/test-results "+
+					repoDir+"/panel-ui/playwright-report 2>/dev/null; "+
+					"true")
+			return nil
 		}},
 		{"git fetch + reset to origin/main", func() error {
 			// The VM is a deployment target, not a source of truth. Tracked-

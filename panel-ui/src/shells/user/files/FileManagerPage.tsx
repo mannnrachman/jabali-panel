@@ -1045,7 +1045,7 @@ export const FileManagerPage = () => {
   }
 
   return (
-    <div style={{ padding: 16 }}>
+    <div className="jabali-file-manager" style={{ padding: 16 }}>
       <div
         style={{
           display: "flex",

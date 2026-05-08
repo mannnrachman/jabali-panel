@@ -192,3 +192,18 @@
 *::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+/* ---------- File manager: bump font size on tree + table ----------------- */
+.jabali-file-manager .ant-tree {
+  font-size: 14px;
+}
+.jabali-file-manager .ant-tree-treenode {
+  padding: 2px 0;
+}
+.jabali-file-manager .ant-tree .ant-tree-title {
+  font-size: 14px;
+}
+.jabali-file-manager .ant-table-thead > tr > th,
+.jabali-file-manager .ant-table-tbody > tr > td {
+  font-size: 14px;
+}

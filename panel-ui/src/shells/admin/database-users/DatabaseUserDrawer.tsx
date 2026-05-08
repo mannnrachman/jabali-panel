@@ -27,9 +27,16 @@ export const DatabaseUserDrawer = ({
   const isDesktop = screens.lg !== false;
   const [submitting, setSubmitting] = useState(false);
   const [revealed, setRevealed] = useState<{ username: string; password: string } | null>(null);
+  // M37 Phase 4: hide engine picker if PostgreSQL is not server-enabled.
+  const [postgresEnabled, setPostgresEnabled] = useState(false);
 
   useEffect(() => {
-    if (open) form.resetFields();
+    if (!open) return;
+    form.resetFields();
+    apiClient
+      .get<{ postgres_enabled: boolean }>("/me/server-capabilities")
+      .then((r) => setPostgresEnabled(!!r.data.postgres_enabled))
+      .catch(() => setPostgresEnabled(false));
   }, [open, form]);
 
   const onFinish = async (values: CreateInput) => {
@@ -60,9 +67,11 @@ export const DatabaseUserDrawer = ({
         destroyOnClose
       >
         <Form<CreateInput> form={form} layout="vertical" onFinish={onFinish} initialValues={{ engine: "mariadb" }}>
-          <Form.Item label="Engine" name="engine" tooltip="MariaDB is the default. PostgreSQL must be enabled by an admin in Server Settings.">
-            <Segmented options={[{ label: "MariaDB", value: "mariadb" }, { label: "PostgreSQL", value: "postgres" }]} />
-          </Form.Item>
+          {postgresEnabled && (
+            <Form.Item label="Engine" name="engine" tooltip="MariaDB is the default. PostgreSQL must be enabled in Server Settings.">
+              <Segmented options={[{ label: "MariaDB", value: "mariadb" }, { label: "PostgreSQL", value: "postgres" }]} />
+            </Form.Item>
+          )}
           <Form.Item
             label="Username"
             name="username"

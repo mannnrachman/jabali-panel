@@ -26,7 +26,32 @@ func RegisterMeRoutes(g *gin.RouterGroup, cfg MeHandlerConfig) {
 	if cfg.Users != nil && cfg.ServerSettings != nil {
 		h := &meExtHandler{cfg: cfg}
 		g.GET("/me/ssh-connection", h.sshConnection)
+		// M37 Phase 4: server capability flags any signed-in user
+		// (admin OR tenant) needs to render the right UI. Currently
+		// only postgres_enabled — add fields here when more
+		// engine-/feature-gated UI lands.
+		g.GET("/me/server-capabilities", h.serverCapabilities)
 	}
+}
+
+// serverCapabilities returns the operator-controlled flags the SPA
+// reads to decide whether to expose engine choices, app types, etc.
+// Read-only mirror of the relevant server_settings fields, scoped to
+// what's safe to share with non-admin tenants.
+func (h *meExtHandler) serverCapabilities(c *gin.Context) {
+	ctx := c.Request.Context()
+	settings, err := h.cfg.ServerSettings.Get(ctx)
+	if errors.Is(err, repository.ErrNotFound) {
+		// Pre-seed install — every flag defaults to false.
+		c.JSON(http.StatusOK, gin.H{"postgres_enabled": false})
+		return
+	} else if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"postgres_enabled": settings.PostgresEnabled,
+	})
 }
 
 func meHandler(c *gin.Context) {

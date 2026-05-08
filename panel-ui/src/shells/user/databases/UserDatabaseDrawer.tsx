@@ -2,8 +2,9 @@
 // /jabali-panel/databases/create page route). Backend prepends the
 // caller's username to the final database name.
 import { Button, Drawer, Form, Grid, Input, Segmented, Space, message } from "antd";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
+import { apiClient } from "../../../apiClient";
 import { useCreateMutation } from "../../../hooks/useQueries";
 
 type UserDatabaseCreateInput = { name: string; engine?: "mariadb" | "postgres" };
@@ -18,13 +19,23 @@ export const UserDatabaseDrawer = ({ open, onClose }: UserDatabaseDrawerProps) =
   const [form] = Form.useForm<UserDatabaseCreateInput>();
   const screens = Grid.useBreakpoint();
   const isDesktop = screens.lg !== false;
+  // M37 Phase 4: hide the PostgreSQL engine option when the operator
+  // hasn't enabled it server-wide. Backend rejects engine=postgres
+  // with 400 in that state — letting the user pick it would just
+  // surface an error after Create.
+  const [postgresEnabled, setPostgresEnabled] = useState(false);
 
   const createMutation = useCreateMutation<DatabaseCreated, UserDatabaseCreateInput>({
     resource: "databases",
   });
 
   useEffect(() => {
-    if (open) form.resetFields();
+    if (!open) return;
+    form.resetFields();
+    apiClient
+      .get<{ postgres_enabled: boolean }>("/me/server-capabilities")
+      .then((r) => setPostgresEnabled(!!r.data.postgres_enabled))
+      .catch(() => setPostgresEnabled(false));
   }, [open, form]);
 
   const handleFinish = async (values: UserDatabaseCreateInput) => {
@@ -52,18 +63,20 @@ export const UserDatabaseDrawer = ({ open, onClose }: UserDatabaseDrawerProps) =
         onFinish={handleFinish}
         initialValues={{ engine: "mariadb" }}
       >
-        <Form.Item
-          label="Engine"
-          name="engine"
-          tooltip="MariaDB is the default. PostgreSQL must be enabled by an admin in Server Settings."
-        >
-          <Segmented
-            options={[
-              { label: "MariaDB", value: "mariadb" },
-              { label: "PostgreSQL", value: "postgres" },
-            ]}
-          />
-        </Form.Item>
+        {postgresEnabled && (
+          <Form.Item
+            label="Engine"
+            name="engine"
+            tooltip="MariaDB is the default. PostgreSQL must be enabled by an admin in Server Settings."
+          >
+            <Segmented
+              options={[
+                { label: "MariaDB", value: "mariadb" },
+                { label: "PostgreSQL", value: "postgres" },
+              ]}
+            />
+          </Form.Item>
+        )}
 
         <Form.Item
           label="Name"

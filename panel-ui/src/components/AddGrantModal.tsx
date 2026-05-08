@@ -16,12 +16,15 @@ interface AddGrantModalProps {
   username: string;
   /** Database ids this user already has a grant on — pre-filtered in the picker. */
   excludedDatabaseIds: string[];
+  /** User's engine — picker filters to same-engine databases only. Cross-engine
+   *  grants (mariadb user → postgres db) crash on the agent side. */
+  userEngine?: "mariadb" | "postgres";
   onClose: () => void;
   /** Called after a successful grant POST so the parent can refresh its table. */
   onSuccess: () => void;
 }
 
-type DatabaseOption = { id: string; name: string };
+type DatabaseOption = { id: string; name: string; engine?: "mariadb" | "postgres" };
 
 const AVAILABLE_PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "INDEX"];
 
@@ -37,6 +40,7 @@ export function AddGrantModal({
   userId,
   username,
   excludedDatabaseIds,
+  userEngine,
   onClose,
   onSuccess,
 }: AddGrantModalProps) {
@@ -52,7 +56,12 @@ export function AddGrantModal({
     enabled: open,
   });
   const databases = dbItems.filter(
-    (d) => !excludedDatabaseIds.includes(d.id),
+    (d) =>
+      !excludedDatabaseIds.includes(d.id) &&
+      // Same-engine only: a mariadb user can't grant on a postgres db
+      // (different role namespace, different agent command). Default
+      // to mariadb when either side is missing engine — pre-M37 rows.
+      (userEngine ?? "mariadb") === (d.engine ?? "mariadb"),
   );
 
   useEffect(() => {

@@ -37,7 +37,6 @@ import {
   type KratosFlow,
   type RenderableField,
 } from "../../kratos";
-import { MyProfileBackupCard } from "./MyProfileBackupCard";
 import { MyProfileUsageCard } from "./MyProfileUsageCard";
 
 export function MyProfile() {
@@ -219,7 +218,6 @@ export function MyProfile() {
         </Card>
 
         {me && <MyProfileUsageCard userId={me.id} />}
-        {me && <MyProfileBackupCard />}
       </Space>
     </div>
   );

@@ -61,6 +61,7 @@ import { SSLManagerPage } from "./shells/admin/ssl/SSLManagerPage";
 import { UserSSLManagerPage } from "./shells/user/ssl/UserSSLManagerPage";
 import { UserPHPSettingsPage } from "./shells/user/php-settings/UserPHPSettingsPage";
 import { UserApplicationList } from "./shells/user/applications/UserApplicationList";
+import { UserBackupsPage } from "./shells/user/backups/UserBackupsPage";
 import { UserLogsPage } from "./shells/user/logs/UserLogsPage";
 import { UserSSHKeysPage } from "./shells/user/ssh-keys/UserSSHKeysPage";
 import { UserCronList } from "./shells/user/cron/UserCronList";
@@ -226,6 +227,7 @@ const ThemedApp = () => {
             <Route path="applications" element={<UserApplicationList />} />
             <Route path="ssh-keys" element={<UserSSHKeysPage />} />
             <Route path="cron" element={<UserCronList />} />
+            <Route path="backups" element={<UserBackupsPage />} />
             <Route path="mail" element={<Navigate to="/jabali-panel/mail/mailboxes" replace />} />
             <Route path="mail/:tab" element={<MailTabsPage />} />
             <Route path="mailboxes" element={<Navigate to="/jabali-panel/mail/mailboxes" replace />} />

@@ -249,6 +249,12 @@ export const userNav: NavItem[] = [
     icon: navIcon(CalendarCheckOutlined),
     path: "/jabali-panel/cron",
   },
+  {
+    key: "backups",
+    label: "Backup/Restore",
+    icon: navIcon(SaveOutlined),
+    path: "/jabali-panel/backups",
+  },
 ];
 
 /**

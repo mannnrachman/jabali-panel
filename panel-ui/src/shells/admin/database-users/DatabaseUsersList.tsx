@@ -285,6 +285,7 @@ export const DatabaseUsersList = () => {
         open={grantTarget !== null}
         userId={grantTarget?.id ?? null}
         username={grantTarget?.username ?? ""}
+        userEngine={grantTarget?.engine ?? "mariadb"}
         excludedDatabaseIds={
           grantTarget?.grants?.map((g) => g.database_id) ?? []
         }

@@ -343,6 +343,7 @@ func (h *databaseUserHandler) list(c *gin.Context) {
 		ID        string          `json:"id"`
 		UserID    string          `json:"user_id"`
 		Username  string          `json:"username"`
+		Engine    string          `json:"engine"`
 		CreatedAt time.Time       `json:"created_at"`
 		UpdatedAt time.Time       `json:"updated_at"`
 		Grants    []grantResponse `json:"grants"`
@@ -353,10 +354,15 @@ func (h *databaseUserHandler) list(c *gin.Context) {
 		if g == nil {
 			g = []grantResponse{}
 		}
+		eng := u.Engine
+		if eng == "" {
+			eng = "mariadb"
+		}
 		out[i] = userRow{
 			ID:        u.ID,
 			UserID:    u.UserID,
 			Username:  u.Username,
+			Engine:    eng,
 			CreatedAt: u.CreatedAt,
 			UpdatedAt: u.UpdatedAt,
 			Grants:    g,

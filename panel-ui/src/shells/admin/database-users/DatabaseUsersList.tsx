@@ -32,9 +32,15 @@ export type DatabaseUser = {
   id: string;
   user_id: string;
   username: string;
+  engine: "mariadb" | "postgres";
   created_at: string;
   updated_at: string;
   grants: Grant[];
+};
+
+const engineColorMap: Record<string, string> = {
+  mariadb: "blue",
+  postgres: "geekblue",
 };
 
 // Rotate-password calls require the client to POST something in
@@ -184,6 +190,15 @@ export const DatabaseUsersList = () => {
                 <Typography.Text type="secondary">@localhost</Typography.Text>
               </Space>
             )}
+          />
+          <Table.Column<DatabaseUser>
+            dataIndex="engine"
+            title="Engine"
+            width={110}
+            render={(engine: string | undefined) => {
+              const e = engine ?? "mariadb";
+              return <Tag color={engineColorMap[e] ?? "default"}>{e}</Tag>;
+            }}
           />
           <Table.Column<DatabaseUser>
             title="Database Privileges"

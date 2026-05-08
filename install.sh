@@ -3916,15 +3916,22 @@ install_adminer() {
   local nginx_inc_dir="/etc/nginx/snippets"
   cat > "${nginx_inc_dir}/jabali-adminer.conf" <<'NGINXEOF'
 # Jabali Adminer (M37 Phase 4) — engine-aware DB admin via SSO.
+# `^~` prefix wins over the SPA `location /` catch-all. `root`
+# (not alias) keeps $document_root in scope so FPM
+# SCRIPT_FILENAME = $document_root$fastcgi_script_name resolves
+# correctly. The earlier alias+regex variant 502'd with PHP's
+# "No input file specified".
 location ^~ /jabali-adminer/ {
-    alias /var/www/jabali-adminer/;
+    root /var/www;
     index index.php;
+    try_files $uri $uri/ /jabali-adminer/index.php?$args;
 
-    location ~ \.php$ {
-        fastcgi_split_path_info ^(/jabali-adminer/.+\.php)(/.+)$;
+    location ~ ^/jabali-adminer/.+\.php$ {
+        root /var/www;
         fastcgi_pass unix:/run/php/jabali-pma/fpm.sock;
         include fastcgi_params;
-        fastcgi_param SCRIPT_FILENAME $request_filename;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_param PATH_INFO $fastcgi_path_info;
         fastcgi_read_timeout 60s;
     }
 }

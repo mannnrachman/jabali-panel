@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
@@ -21,7 +22,7 @@ import (
 //
 // install   → apt install + drop-in conf + jabali user enrolled in
 //             postgres group + service ENABLED + STARTED.
-// uninstall → apt purge -y postgresql-16 (DESTRUCTIVE — drops
+// uninstall → apt purge -y postgresql* (DESTRUCTIVE — drops
 //             /var/lib/postgresql).
 // enable    → systemctl enable --now postgresql (no-op if absent).
 // disable   → systemctl disable --now postgresql (data preserved).
@@ -39,7 +40,7 @@ func dbPostgresStatusHandler(ctx context.Context, _ json.RawMessage) (any, error
 	resp := postgresStatusResponse{}
 	if _, err := exec.LookPath("psql"); err == nil {
 		resp.Installed = true
-	} else if _, err := os.Stat("/usr/lib/postgresql/16/bin/psql"); err == nil {
+	} else if matches, _ := filepath.Glob("/usr/lib/postgresql/*/bin/psql"); len(matches) > 0 {
 		resp.Installed = true
 	}
 	if out, err := exec.CommandContext(ctx, "systemctl", "is-active", "postgresql").Output(); err == nil {
@@ -114,9 +115,13 @@ func dbPostgresDisableHandler(ctx context.Context, _ json.RawMessage) (any, erro
 func dbPostgresUninstallHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 	steps := [][]string{
 		{"systemctl", "disable", "--now", "postgresql"},
-		{"apt-get", "purge", "-y",
-			"postgresql-16", "postgresql-contrib-16",
-			"postgresql-client-16", "postgresql-common"},
+		// "postgresql*" purges every installed postgres major in one
+		// shot (15, 16, 17 — whichever the host shipped). The shell
+		// glob is interpreted by apt-get, not the shell, since we
+		// pass it as a single argv element.
+		{"bash", "-c",
+			"DEBIAN_FRONTEND=noninteractive apt-get purge -y " +
+				"'postgresql*' postgresql-common postgresql-client-common"},
 		{"apt-get", "autoremove", "-y"},
 		{"rm", "-rf", "/var/lib/postgresql", "/etc/postgresql",
 			"/etc/jabali-panel/postgres.password"},

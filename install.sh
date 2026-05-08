@@ -1849,19 +1849,34 @@ install_redis() {
 # memory cost of an unused DB engine. ADR-0091.
 
 install_postgres() {
-  _log "installing PostgreSQL 16 (M37)"
+  _log "installing PostgreSQL (M37)"
 
+  # Debian-shipped meta package — tracks whichever major version the
+  # release ships (15 on bookworm, 17 on trixie). Hardcoding 16
+  # broke trixie because postgresql-16 isn't in the default archive.
   if ! command -v psql >/dev/null 2>&1; then
-    apt-get install -y postgresql-16 postgresql-contrib-16 \
-      postgresql-client-16 postgresql-common >/dev/null 2>&1 \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      postgresql postgresql-contrib postgresql-client postgresql-common \
       || _die "postgres apt install failed"
   fi
 
-  # Loopback-only listener. The default /etc/postgresql/16/main/postgresql.conf
-  # ships with `listen_addresses = 'localhost'` already, but explicit
-  # is better than implicit — ADR-0050 generalised this stance to all
-  # daemons (M25 unix-socket lockdown).
-  local pg_dropin_dir=/etc/postgresql/16/main/conf.d
+  # Discover installed major. First sub-directory under /etc/postgresql
+  # is the cluster version (e.g. 17/main); fall back to pg_lsclusters.
+  local pg_ver=""
+  if [[ -d /etc/postgresql ]]; then
+    pg_ver="$(ls -1 /etc/postgresql 2>/dev/null | head -n1)"
+  fi
+  if [[ -z "$pg_ver" ]] && command -v pg_lsclusters >/dev/null 2>&1; then
+    pg_ver="$(pg_lsclusters -h 2>/dev/null | awk 'NR==1 {print $1}')"
+  fi
+  if [[ -z "$pg_ver" ]]; then
+    _die "could not determine installed PostgreSQL major version"
+  fi
+
+  # Loopback-only listener. Default postgresql.conf already ships
+  # listen_addresses='localhost'; explicit is better than implicit
+  # (ADR-0050 unix-socket lockdown).
+  local pg_dropin_dir="/etc/postgresql/${pg_ver}/main/conf.d"
   install -d -m 0755 -o postgres -g postgres "$pg_dropin_dir"
   local pg_dropin="$pg_dropin_dir/jabali.conf"
   cat >"$pg_dropin" <<'PG_DROPIN'
@@ -1876,7 +1891,7 @@ PG_DROPIN
   chown postgres:postgres "$pg_dropin"
   chmod 0644 "$pg_dropin"
 
-  # /etc/postgresql/16/main/pg_hba.conf — keep the default Debian
+  # /etc/postgresql/${pg_ver}/main/pg_hba.conf — keep the default Debian
   # pattern (peer auth on socket, scram-sha-256 on TCP loopback).
   # No customisation needed for Phase 1; we never expose TCP and
   # peer-auth on the socket lets panel-api connect as `postgres`

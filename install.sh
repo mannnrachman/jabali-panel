@@ -1851,23 +1851,29 @@ install_redis() {
 install_postgres() {
   _log "installing PostgreSQL (M37)"
 
-  # Debian-shipped meta package — tracks whichever major version
-  # the release ships (15 on bookworm, 17 on trixie). Hardcoding 16
-  # broke trixie because postgresql-16 isn't in the default archive.
-  if ! command -v psql >/dev/null 2>&1; then
-    # postgresql-common.postinst calls
-    #   install -d -m 02775 -o postgres -g postgres /var/run/postgresql
-    # which fails ("No such file or directory") when invoked from
-    # the jabali-agent's mount namespace (PrivateTmp=yes + various
-    # ProtectKernel*). Pre-creating the directory makes the postinst
-    # a no-op so the full install completes regardless of caller.
-    install -d -m 02775 /run/postgresql 2>/dev/null || true
+  # Pre-create /run/postgresql ALWAYS (not gated on psql presence).
+  # postgresql-common.postinst runs
+  #   install -d -m 02775 -o postgres -g postgres /var/run/postgresql
+  # which fails when invoked from the jabali-agent's mount namespace
+  # (PrivateTmp=yes + various ProtectKernel*). Creating the dir up
+  # front makes that postinst a no-op. The previous code gated
+  # this behind `! command -v psql` which skipped pre-create on
+  # partial-install state, wedging dpkg.
+  install -d -m 02775 /run/postgresql 2>/dev/null || true
+
+  # Debian meta — tracks whichever major version the release ships
+  # (15 on bookworm, 17 on trixie). Hardcoding 16 broke trixie.
+  if ! command -v psql >/dev/null 2>&1 || ! dpkg -s postgresql-common >/dev/null 2>&1; then
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       postgresql postgresql-contrib postgresql-client postgresql-common \
       || _die "postgres apt install failed"
-    if getent passwd postgres >/dev/null 2>&1; then
-      chown postgres:postgres /run/postgresql 2>/dev/null || true
-    fi
+  fi
+  # Converge any partial install state (kernel-image race, namespace
+  # failure, etc) — apt-get install -f re-runs postinst for every
+  # half-configured package.
+  DEBIAN_FRONTEND=noninteractive apt-get install -f -y >/dev/null 2>&1 || true
+  if getent passwd postgres >/dev/null 2>&1; then
+    chown postgres:postgres /run/postgresql 2>/dev/null || true
   fi
 
   # Discover installed major. First sub-directory under /etc/postgresql

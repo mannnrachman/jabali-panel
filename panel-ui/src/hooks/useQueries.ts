@@ -151,8 +151,16 @@ export function useCreateMutation<T, Input = Partial<T>>({
       const { data } = await apiClient.post<T>(`/${resource}`, input);
       return data;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["list", resource] });
+    // Awaiting invalidateQueries inside onSuccess makes mutateAsync()
+    // resolve only after the list refetch is in flight + completed,
+    // so callers that close a Drawer right after `await mutateAsync(...)`
+    // observe the new row before the drawer is gone. Without the await
+    // the create returns 201, drawer closes, and the list briefly
+    // shows the previous (stale) page until React re-renders post-
+    // refetch — a race that surfaces as "silent create failure" in
+    // E2E tests that assert too quickly.
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["list", resource] });
     },
   });
 }
@@ -168,9 +176,11 @@ export function useUpdateMutation<T, Input = Partial<T>>({
       const { data } = await apiClient.patch<T>(`/${resource}/${id}`, input);
       return data;
     },
-    onSuccess: (_data, { id }) => {
-      qc.invalidateQueries({ queryKey: ["list", resource] });
-      qc.invalidateQueries({ queryKey: ["one", resource, id] });
+    onSuccess: async (_data, { id }) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["list", resource] }),
+        qc.invalidateQueries({ queryKey: ["one", resource, id] }),
+      ]);
     },
   });
 }
@@ -185,9 +195,11 @@ export function useDeleteMutation({
     mutationFn: async ({ id }) => {
       await apiClient.delete(`/${resource}/${id}`);
     },
-    onSuccess: (_data, { id }) => {
-      qc.invalidateQueries({ queryKey: ["list", resource] });
-      qc.invalidateQueries({ queryKey: ["one", resource, id] });
+    onSuccess: async (_data, { id }) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["list", resource] }),
+        qc.invalidateQueries({ queryKey: ["one", resource, id] }),
+      ]);
     },
   });
 }

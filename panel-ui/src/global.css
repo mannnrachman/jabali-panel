@@ -161,3 +161,34 @@
 .ant-table-container {
   max-width: 100%;
 }
+
+/* ---------- Scrollbar styling (panel-wide) ----------------------------------
+ * Browsers default to chunky 16px scrollbars that look out of place on
+ * dark surfaces. Use thin/transparent rails everywhere — Firefox via
+ * scrollbar-width, Chromium/WebKit via ::-webkit-scrollbar pseudos.
+ * Track is transparent so it inherits the surface color; thumb uses the
+ * theme-aware AntD border-base token via currentColor opacity so dark
+ * + light themes both look right. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 128, 0.35) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: rgba(128, 128, 128, 0.35);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(128, 128, 128, 0.6);
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}

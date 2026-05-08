@@ -36,8 +36,12 @@ import {
   Eye,
   EyeOff,
   File,
+  FileArchive,
   FileCode2,
   FileImage,
+  FileMinus,
+  FilePlay,
+  FileVolume,
   FileText,
   MonitorPlay,
   FlaskConical,
@@ -233,8 +237,12 @@ export const ArrowLeftOutlined = shim(ArrowLeft);
 
 // --- Files ---
 export const FileOutlined = shim(File);
+export const FileArchiveOutlined = shim(FileArchive);
 export const FileCodeOutlined = shim(FileCode2);
 export const FileImageOutlined = shim(FileImage);
+export const FileMinusOutlined = shim(FileMinus);
+export const FilePlayOutlined = shim(FilePlay);
+export const FileVolumeOutlined = shim(FileVolume);
 export const MonitorPlayOutlined = shim(MonitorPlay);
 export const FileTextOutlined = shim(FileText);
 export const ExportOutlined = shim(ExternalLink);

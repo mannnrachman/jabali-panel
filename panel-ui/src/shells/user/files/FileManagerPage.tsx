@@ -43,16 +43,18 @@ import {
   DownOutlined,
   EditOutlined,
   EyeOutlined,
-  BgColorsOutlined,
   CloseOutlined,
   CopyOutlined,
+  FileArchiveOutlined,
   FileCodeOutlined,
   FileImageOutlined,
+  FileMinusOutlined,
   FileOutlined,
+  FilePlayOutlined,
   FileTextOutlined,
+  FileVolumeOutlined,
   FolderInputOutlined,
   FolderOutlined,
-  MonitorPlayOutlined,
   LockOutlined,
   MoreOutlined,
   PlusOutlined,
@@ -892,6 +894,36 @@ export const FileManagerPage = () => {
     "ogv",
     "3gp",
   ]);
+  const AUDIO_EXTS = new Set([
+    "mp3",
+    "wav",
+    "flac",
+    "ogg",
+    "oga",
+    "m4a",
+    "aac",
+    "wma",
+    "opus",
+    "aiff",
+    "aif",
+  ]);
+  const ARCHIVE_EXTS = new Set([
+    "zip",
+    "tar",
+    "gz",
+    "tgz",
+    "bz2",
+    "tbz",
+    "tbz2",
+    "xz",
+    "txz",
+    "7z",
+    "rar",
+    "lz",
+    "lzma",
+    "zst",
+    "zstd",
+  ]);
   const CODE_EXTS = new Set([
     "php",
     "phtml",
@@ -918,13 +950,19 @@ export const FileManagerPage = () => {
       return <FileImageOutlined style={{ color: "#eb2f96" }} />;
     }
     if (VIDEO_EXTS.has(ext)) {
-      return <MonitorPlayOutlined style={{ color: "#722ed1" }} />;
+      return <FilePlayOutlined style={{ color: "#722ed1" }} />;
+    }
+    if (AUDIO_EXTS.has(ext)) {
+      return <FileVolumeOutlined style={{ color: "#1890ff" }} />;
+    }
+    if (ARCHIVE_EXTS.has(ext)) {
+      return <FileArchiveOutlined style={{ color: "#a0522d" }} />;
     }
     if (CODE_EXTS.has(ext)) {
       return <FileCodeOutlined style={{ color: "#52c41a" }} />;
     }
     if (STYLE_EXTS.has(ext)) {
-      return <BgColorsOutlined style={{ color: "#13c2c2" }} />;
+      return <FileMinusOutlined style={{ color: "#13c2c2" }} />;
     }
     if (TEXT_EXTS.has(ext)) {
       return <FileTextOutlined style={{ color: "#fa8c16" }} />;

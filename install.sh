@@ -1958,7 +1958,27 @@ PG_DROPIN
   fi
   systemctl disable postgresql 2>/dev/null || true
 
-  _ok "PostgreSQL 16 installed (disabled — operator flips server_settings.postgres_enabled)"
+  # Install PHP pgsql + pdo_pgsql for every installed PHP major so
+  # Adminer + WordPress + tenant apps can speak Postgres. Without
+  # these, Adminer's pgsql driver renders "No PHP plugin available
+  # (PgSQL, PDO_PgSQL)". Idempotent: apt is a no-op when present.
+  if [[ -d /etc/php ]]; then
+    local php_pkgs=()
+    for ver_dir in /etc/php/*/; do
+      local ver
+      ver="$(basename "$ver_dir")"
+      [[ "$ver" =~ ^[0-9]+\.[0-9]+$ ]] || continue
+      php_pkgs+=("php${ver}-pgsql")
+    done
+    if [[ ${#php_pkgs[@]} -gt 0 ]]; then
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        "${php_pkgs[@]}" \
+        || _warn "php-pgsql install failed for ${php_pkgs[*]}"
+      systemctl reload jabali-fpm@pma 2>/dev/null || true
+    fi
+  fi
+
+  _ok "PostgreSQL installed + php-pgsql for every PHP major (service disabled — operator flips server_settings.postgres_enabled)"
 }
 
 # ---------- step 2.6: PowerDNS authoritative nameserver ----------------------

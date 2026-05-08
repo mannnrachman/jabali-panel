@@ -65,7 +65,19 @@ func dbPostgresInstallHandler(ctx context.Context, _ json.RawMessage) (any, erro
 			Message: fmt.Sprintf("install.sh missing at %s", installShPath),
 		}
 	}
-	cmd := exec.CommandContext(ctx, "bash", "-c",
+	// Wrap in `systemd-run --scope` so the install runs OUTSIDE the
+	// jabali-agent.service mount namespace. The agent's namespace
+	// inherits PrivateTmp + ProtectKernel* hardenings that prevent
+	// `install -d /run/postgresql` from succeeding (the directory
+	// either fails to materialise or fails to chmod due to the
+	// remount restrictions). systemd-run --scope detaches the
+	// child into a fresh transient unit attached to the calling
+	// session, so apt + dpkg + postinst all run as if invoked by
+	// a plain root shell.
+	cmd := exec.CommandContext(ctx, "systemd-run",
+		"--scope", "--quiet", "--collect",
+		"--unit=jabali-pg-install",
+		"--", "bash", "-c",
 		"source "+installShPath+" && install_postgres && "+
 			"systemctl enable postgresql >/dev/null 2>&1 && "+
 			"systemctl start postgresql")
@@ -116,16 +128,16 @@ func dbPostgresUninstallHandler(ctx context.Context, _ json.RawMessage) (any, er
 	steps := [][]string{
 		{"systemctl", "disable", "--now", "postgresql"},
 		// "postgresql*" purges every installed postgres major in one
-		// shot (15, 16, 17 — whichever the host shipped). Pass via
-		// bash so apt-get sees the unexpanded glob token.
-		// Intentionally NOT followed by `apt-get autoremove`: under
-		// the agent's mount namespace (ProtectKernelModules=yes ->
-		// /usr/lib/modules is read-only) autoremove can pick up
-		// stale linux-image candidates and fail mid-removal, which
-		// then blocks subsequent apt operations on this host. The
-		// operator can run autoremove manually when they know what
-		// they're cleaning.
-		{"bash", "-c",
+		// shot (15, 16, 17 — whichever the host shipped). Wrapped
+		// in systemd-run --scope so apt + dpkg + postrm escape the
+		// jabali-agent mount namespace (same reason install does).
+		// Intentionally NOT followed by `apt-get autoremove`:
+		// autoremove can pick up unrelated stale kernel images and
+		// fail mid-removal, which then blocks future apt ops on
+		// the host.
+		{"systemd-run", "--scope", "--quiet", "--collect",
+			"--unit=jabali-pg-purge", "--",
+			"bash", "-c",
 			"DEBIAN_FRONTEND=noninteractive apt-get purge -y " +
 				"'postgresql*' postgresql-common postgresql-client-common"},
 		{"rm", "-rf", "/var/lib/postgresql", "/etc/postgresql",

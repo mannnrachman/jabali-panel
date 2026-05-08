@@ -123,12 +123,23 @@ func (r *Reconciler) ReconcileUserLimits(ctx context.Context) {
 		}
 		effective := limits.Resolve(pkgL, overridesByUser[u.ID])
 
-		// Skip users with no package AND no override — they're
-		// unlimited by design (old-world behavior) and calling the
-		// agent for a no-op is wasted RPCs at scale. We still rely on
-		// ReconcileUsers having ensured the slice itself exists with
-		// accounting enabled (from ADR-0025).
+		// No package + no override → user must be unlimited.
+		// Dispatch user.limits.clear instead of skipping: skipping
+		// leaves stale POSIX quotas + cgroup drop-ins from a
+		// previously-assigned package on the host, so the user
+		// keeps hitting the old quota wall. The clear handler is
+		// idempotent (setquota -d is a no-op when no quota set;
+		// the cgroup drop-in delete is conditional on existence).
 		if pkgL == nil && overridesByUser[u.ID] == nil {
+			ctxCall, cancel := context.WithTimeout(ctx, 10*time.Second)
+			if _, err := r.agent.Call(ctxCall, "user.limits.clear", map[string]any{
+				"username":    *u.Username,
+				"quota_mount": r.quotaMount,
+			}); err != nil {
+				r.log.WarnContext(ctx, "user.limits.clear failed",
+					"username", *u.Username, "err", err)
+			}
+			cancel()
 			continue
 		}
 

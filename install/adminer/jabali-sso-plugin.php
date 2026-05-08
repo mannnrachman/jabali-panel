@@ -156,7 +156,12 @@ class JabaliAdminerSSO {
         echo '<noscript><button type="submit">Continue</button></noscript>';
         echo '</form>';
         echo '<p style="text-align:center;padding:2rem">Signing into Adminer via Jabali SSO…</p>';
-        echo '<script>document.getElementById("jabali-sso").submit();</script>';
+        // Adminer ships a strict CSP (script-src ... nonce-... strict-dynamic).
+        // Inline scripts WITHOUT the nonce are blocked. Adminer exposes the
+        // current request nonce via the nonce() helper which returns the
+        // full attribute string (` nonce="..."`).
+        $nonceAttr = function_exists("nonce") ? nonce() : "";
+        echo '<script' . $nonceAttr . '>document.getElementById("jabali-sso").submit();</script>';
         return true;
     }
 

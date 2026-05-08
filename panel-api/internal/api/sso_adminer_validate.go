@@ -23,13 +23,14 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/sso"
 )
 
-// pgLoopbackHostPort is what the Adminer pgsql driver dials. Postgres
-// sockets live at /var/run/postgresql/.s.PGSQL.5432 — but Adminer's
-// pgsql driver passes the value through to libpq's `host` parameter,
-// which accepts a directory containing the socket. Setting this to
-// /var/run/postgresql lets libpq find the right socket without us
-// having to teach Adminer about MariaDB-style socket fields.
-const pgLoopbackHost = "/var/run/postgresql"
+// pgLoopbackHost is what the Adminer pgsql driver dials. We connect
+// via TCP loopback (127.0.0.1) NOT the Unix socket: pg_hba.conf
+// default uses `peer` auth on the socket, which requires the OS
+// user to match the PG role name — but Adminer runs as www-data
+// while the role is shukivaknin_pgadmin, so peer fails. TCP
+// loopback gets scram-sha-256 by default, which validates the
+// shadow ROLE password from EnsurePgShadow.
+const pgLoopbackHost = "127.0.0.1"
 
 type SSOAdminerValidateHandlerConfig struct {
 	Databases repository.DatabaseRepository

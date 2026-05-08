@@ -59,6 +59,20 @@ jobs:
       - name: go test -race
         run: make test
 
+  install-sh-lint:
+    # Phantom-function detector for install.sh — guards against the
+    # install_snuffleupagus / verify_socket_perms regression class
+    # where a function gets removed from install.sh during a refactor
+    # but the call site (in update.go or elsewhere in install.sh)
+    # stays. Live-host crash with "command not found" mid-deploy
+    # was the historical symptom; this gate makes it a PR failure.
+    name: install.sh phantom-function lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run lint
+        run: tools/lint-install-sh.sh
+
   ui-unit:
     name: panel-ui unit tests (vitest)
     runs-on: ubuntu-latest

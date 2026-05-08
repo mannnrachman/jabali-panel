@@ -46,8 +46,9 @@ coverage-check: ## Fail if combined (unit+integration) coverage below MIN_COV
 	@pct=$$($(GO) tool cover -func=$(COVER) | awk '/total:/ {gsub("%","",$$3); print $$3}'); \
 	awk -v p="$$pct" -v m="$(MIN_COV)" 'BEGIN { if (p+0 < m+0) { printf "coverage %s%% below %s%%\n", p, m; exit 1 } else { printf "coverage %s%% OK\n", p } }'
 
-lint: ## Run golangci-lint across the workspace
+lint: ## Run golangci-lint across the workspace + install.sh phantom-function lint
 	golangci-lint run $(ALL_PKG)
+	tools/lint-install-sh.sh
 
 fmt: ## Format all Go code
 	$(GO) fmt $(ALL_PKG)

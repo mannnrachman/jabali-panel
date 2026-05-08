@@ -217,3 +217,12 @@
 .jabali-file-manager .ant-tree .ant-tree-title {
   white-space: nowrap;
 }
+
+/* GoAccess modal: zero out the inner content padding so the iframe
+ * fills the modal edge-to-edge. The close icon stays in its absolute
+ * position. body padding is already 0 via inline styles in
+ * LogStreamModal — this rule kills the .ant-modal-content padding
+ * that would otherwise inset the iframe. */
+.goaccess-modal .ant-modal-content {
+  padding: 0;
+}

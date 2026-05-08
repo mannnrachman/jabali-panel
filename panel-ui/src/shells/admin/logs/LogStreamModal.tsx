@@ -12,6 +12,16 @@ interface LogStreamModalProps {
   logType: "access" | "error" | "goaccess";
 }
 
+// Trim a single trailing CR/LF (or both) — accommodates servers that
+// send "line\n", "line\r\n", or "line" interchangeably. Keeps inner
+// newlines untouched in case a single frame carries a multi-line block.
+const stripTrailingNewline = (s: string): string => {
+  if (typeof s !== "string") return s;
+  if (s.endsWith("\r\n")) return s.slice(0, -2);
+  if (s.endsWith("\n") || s.endsWith("\r")) return s.slice(0, -1);
+  return s;
+};
+
 export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: LogStreamModalProps) => {
   const { token } = theme.useToken();
   const [logs, setLogs] = useState<string[]>([]);
@@ -73,10 +83,12 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
         if (logType === "goaccess") {
           setLogs([logLine]);
         } else {
-          setLogs(prev => [...prev, logLine]);
+          // Strip trailing CR/LF so the render-time join("\n") doesn't
+          // double-space lines that arrived with their own newline.
+          setLogs(prev => [...prev, stripTrailingNewline(logLine)]);
         }
       } else {
-        pausedLogsRef.current.push(event.data);
+        pausedLogsRef.current.push(stripTrailingNewline(event.data));
       }
     };
 
@@ -130,9 +142,11 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
 
   const renderLogContent = () => {
     if (logType === "goaccess") {
-      // For GoAccess, use iframe to safely display HTML content
+      // For GoAccess, use iframe to safely display HTML content.
+      // Fills the entire modal body — no border, no padding — so the
+      // GoAccess dashboard reads as a full-bleed surface.
       return (
-        <div style={{ height: "calc(95vh - 230px)", minHeight: "300px", border: "1px solid #d9d9d9", borderRadius: "4px" }}>
+        <div style={{ width: "100%", height: "100%", position: "relative" }}>
           {logs.length === 0 ? (
             <div style={{
               display: "flex",
@@ -155,7 +169,7 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
                 width: "100%",
                 height: "100%",
                 border: "none",
-                borderRadius: "4px"
+                display: "block",
               }}
               title="GoAccess Dashboard"
               sandbox="allow-scripts"
@@ -198,50 +212,57 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
     );
   };
 
+  const isGoAccess = logType === "goaccess";
+
   return (
     <Modal
-      title={title}
+      title={isGoAccess ? null : title}
       open={visible}
       onCancel={handleClose}
       width="95vw"
       style={{ top: "2.5vh", maxWidth: "95vw", paddingBottom: 0 }}
-      styles={{ body: { height: "calc(95vh - 110px)", overflow: "hidden" } }}
+      styles={
+        isGoAccess
+          ? { body: { height: "calc(95vh - 12px)", overflow: "hidden", padding: 0 } }
+          : { body: { height: "calc(95vh - 110px)", overflow: "hidden" } }
+      }
+      className={isGoAccess ? "goaccess-modal" : undefined}
       footer={null}
       destroyOnClose
     >
-      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-        <Space>
-          {logType !== "goaccess" && (
-            <>
-              <Button
-                type={paused ? "primary" : "default"}
-                icon={paused ? <PlayCircleOutlined /> : <PauseOutlined />}
-                onClick={handlePauseToggle}
-                disabled={!connected}
-              >
-                {paused ? "Resume" : "Pause"}
-              </Button>
-              <Button
-                icon={<ClearOutlined />}
-                onClick={handleClearLogs}
-              >
-                Clear
-              </Button>
-            </>
-          )}
-          <Text type={connected ? "success" : "secondary"}>
-            Status: {connecting ? "Connecting..." : connected ? "Connected" : "Disconnected"}
-          </Text>
-          {logType !== "goaccess" && logs.length > 0 && (
-            <Text type="secondary">
-              {logs.length} lines {paused && pausedLogsRef.current.length > 0 &&
-                `(+${pausedLogsRef.current.length} paused)`}
+      {isGoAccess ? (
+        renderLogContent()
+      ) : (
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Space>
+            <Button
+              type={paused ? "primary" : "default"}
+              icon={paused ? <PlayCircleOutlined /> : <PauseOutlined />}
+              onClick={handlePauseToggle}
+              disabled={!connected}
+            >
+              {paused ? "Resume" : "Pause"}
+            </Button>
+            <Button
+              icon={<ClearOutlined />}
+              onClick={handleClearLogs}
+            >
+              Clear
+            </Button>
+            <Text type={connected ? "success" : "secondary"}>
+              Status: {connecting ? "Connecting..." : connected ? "Connected" : "Disconnected"}
             </Text>
-          )}
-        </Space>
+            {logs.length > 0 && (
+              <Text type="secondary">
+                {logs.length} lines {paused && pausedLogsRef.current.length > 0 &&
+                  `(+${pausedLogsRef.current.length} paused)`}
+              </Text>
+            )}
+          </Space>
 
-        {renderLogContent()}
-      </Space>
+          {renderLogContent()}
+        </Space>
+      )}
     </Modal>
   );
 };

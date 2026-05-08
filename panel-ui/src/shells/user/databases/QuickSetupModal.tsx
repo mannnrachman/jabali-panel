@@ -11,12 +11,13 @@
 // Atomic rollback would need a new backend endpoint — out of scope for
 // the shortcut.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Modal,
   Form,
   Input,
   Button,
+  Segmented,
   Space,
   Typography,
   message,
@@ -55,10 +56,20 @@ function extractError(err: unknown, fallback: string): string {
 }
 
 export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
-  const [form] = Form.useForm<{ name: string }>();
+  const [form] = Form.useForm<{ name: string; engine: "mariadb" | "postgres" }>();
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<CreatedResult | null>(null);
+  // M37 Phase 4: hide engine picker if PostgreSQL not enabled server-wide.
+  const [postgresEnabled, setPostgresEnabled] = useState(false);
   const qc = useQueryClient();
+
+  useEffect(() => {
+    if (!open) return;
+    apiClient
+      .get<{ postgres_enabled: boolean }>("/me/server-capabilities")
+      .then((r) => setPostgresEnabled(!!r.data.postgres_enabled))
+      .catch(() => setPostgresEnabled(false));
+  }, [open]);
   // The DB + user tables are rendered by sibling Refine components with
   // their own query caches; bumping onSuccess() alone only refetched the
   // databases table. Invalidate the database-users cache too so the
@@ -85,12 +96,12 @@ export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
     } catch {
       return;
     }
-    const { name } = form.getFieldsValue();
+    const { name, engine = "mariadb" } = form.getFieldsValue();
     setSubmitting(true);
     try {
       const dbResp = await apiClient.post<{ id: string; name: string }>(
         "/databases",
-        { name },
+        { name, engine },
       );
       const dbId = dbResp.data.id;
       const dbName = dbResp.data.name;
@@ -103,7 +114,7 @@ export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
           id: string;
           username: string;
           password: string;
-        }>("/database-users", { username: name });
+        }>("/database-users", { username: name, engine });
         userId = userResp.data.id;
         username = userResp.data.username;
         password = userResp.data.password;
@@ -181,7 +192,26 @@ export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
           <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
             Create a database and user with full access in one step.
           </Typography.Paragraph>
-          <Form form={form} layout="vertical" disabled={submitting}>
+          <Form
+            form={form}
+            layout="vertical"
+            disabled={submitting}
+            initialValues={{ engine: "mariadb" }}
+          >
+            {postgresEnabled && (
+              <Form.Item
+                label="Engine"
+                name="engine"
+                tooltip="MariaDB is the default. PostgreSQL must be enabled in Server Settings."
+              >
+                <Segmented
+                  options={[
+                    { label: "MariaDB", value: "mariadb" },
+                    { label: "PostgreSQL", value: "postgres" },
+                  ]}
+                />
+              </Form.Item>
+            )}
             <Form.Item
               label="Database & User Name"
               name="name"

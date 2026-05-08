@@ -264,6 +264,51 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 					"systemctl daemon-reload; "+
 					"systemctl enable --now jabali-sso-reaper.timer")
 		}},
+		{"sync jabali-agent + jabali-panel units", func() error {
+			// Re-render the jabali-agent.service and jabali-panel.service
+			// unit files from install.sh's writers so hardening/env
+			// changes (PrivateTmp drops, SupplementaryGroups additions,
+			// RestartSec tweaks) reach existing hosts. Without this,
+			// `jabali update` only copies binaries — the running unit
+			// keeps the install-time directives until the operator
+			// manually re-runs install.sh.
+			//
+			// The cascade is delicate: jabali-panel.service Requires=
+			// jabali-agent.service, so restarting the agent restarts
+			// panel-api (us). To avoid suicide-during-update, we
+			// daemon-reload here and schedule the restart via a transient
+			// one-shot 5s in the future — by then the parent shell has
+			// returned and the cascade is harmless.
+			//
+			// Detection of "did anything change?" is by sha256 over the
+			// before/after file content; we only schedule the restart
+			// when content actually drifted.
+			installSh := repoDir + "/install.sh"
+			if _, err := os.Stat(installSh); err != nil {
+				return nil
+			}
+			script := `set -e
+sha_before_a=$(sha256sum /etc/systemd/system/jabali-agent.service 2>/dev/null | awk '{print $1}' || echo "")
+sha_before_p=$(sha256sum /etc/systemd/system/jabali-panel.service 2>/dev/null | awk '{print $1}' || echo "")
+source ` + installSh + `
+write_agent_systemd_unit
+write_systemd_unit
+systemctl daemon-reload
+sha_after_a=$(sha256sum /etc/systemd/system/jabali-agent.service 2>/dev/null | awk '{print $1}' || echo "")
+sha_after_p=$(sha256sum /etc/systemd/system/jabali-panel.service 2>/dev/null | awk '{print $1}' || echo "")
+if [ "$sha_before_a" != "$sha_after_a" ] || [ "$sha_before_p" != "$sha_after_p" ]; then
+  # Schedule a deferred restart so the cascade (panel-api Requires= agent)
+  # doesn't kill us mid-update. 5s gives the parent shell ample time to
+  # return.
+  systemd-run --on-active=5s --unit=jabali-agent-deferred-restart /bin/systemctl restart jabali-agent.service >/dev/null 2>&1 || true
+  echo "  (agent/panel unit content changed — restart scheduled in 5s)"
+fi
+`
+			if err := run("", "bash", "-c", script); err != nil {
+				fmt.Printf("  (unit sync failed: %v — continuing)\n", err)
+			}
+			return nil
+		}},
 		{"sync static assets", func() error {
 			// Mirror the file-writing half of install_php_pool_template(),
 			// ensure_user_and_dirs(), and install_phpmyadmin() from

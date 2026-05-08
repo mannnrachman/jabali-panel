@@ -6047,6 +6047,7 @@ install_apparmor() {
     first_install=1
   fi
 
+  cleanup_apparmor_legacy
   apply_apparmor_profiles "$first_install"
   apply_apparmor_system_profiles "$first_install"
 
@@ -6071,6 +6072,20 @@ install_apparmor() {
 #
 # Arg: $1 — 1 if first install (set complain), 0 to preserve existing
 # mode.
+# cleanup_apparmor_legacy removes profiles that were shipped in earlier
+# M40 releases but have since been parked (see install/apparmor/*.disabled).
+# Idempotent: aa-disable on an already-disabled profile is a no-op.
+cleanup_apparmor_legacy() {
+  if [[ ! -f /etc/apparmor.d/usr.local.bin.jabali-agent ]]; then
+    return 0
+  fi
+  if command -v aa-disable >/dev/null 2>&1; then
+    aa-disable /etc/apparmor.d/usr.local.bin.jabali-agent >/dev/null 2>&1 || true
+  fi
+  rm -f /etc/apparmor.d/usr.local.bin.jabali-agent
+  systemctl restart jabali-agent >/dev/null 2>&1 || true
+}
+
 apply_apparmor_system_profiles() {
   local first_install=${1:-0}
   local sys_profiles=(
@@ -6116,6 +6131,13 @@ apply_apparmor_profiles() {
   # additions). Earlier `jabali-*` glob silently dropped stalwart-mail.
   for profile in "$src_dir"/usr.local.bin.*; do
     [[ -e "$profile" ]] || continue
+    # Skip parked/disabled profiles — see usr.local.bin.jabali-agent.disabled.
+    # AA 4.x's unix-socket mediation rejects our agent profile even in
+    # complain mode (mariadb gmysql connect returns EACCES); profile is
+    # parked until we author rules that AA 4.x accepts.
+    case "$profile" in
+      *.disabled) continue ;;
+    esac
     local name
     name=$(basename "$profile")
     local prev_mode=""

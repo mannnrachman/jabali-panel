@@ -40,7 +40,6 @@ import type { DataNode } from "antd/es/tree";
 import {
   DeleteOutlined,
   DownloadOutlined,
-  DownOutlined,
   EditOutlined,
   EyeOutlined,
   CloseOutlined,
@@ -54,6 +53,7 @@ import {
   FileTextOutlined,
   FileVolumeOutlined,
   FolderInputOutlined,
+  FolderOpenOutlined,
   FolderOutlined,
   LockOutlined,
   MoreOutlined,
@@ -976,17 +976,26 @@ export const FileManagerPage = () => {
       title: "Name",
       dataIndex: "name",
       key: "name",
-      render: (_: string, entry: FileEntry) => (
-        <Space
-          size={8}
-          style={{ cursor: entry.is_dir ? "pointer" : "default" }}
-          onClick={() => entry.is_dir && handleRowClick(entry)}
-        >
-          {renderEntryIcon(entry)}
-          <Text>{entry.name}</Text>
-          {entry.is_symlink && <Text type="secondary">(link)</Text>}
-        </Space>
-      ),
+      render: (_: string, entry: FileEntry) => {
+        const clickable = entry.is_dir || isImagePath(entry.name);
+        return (
+          <Space
+            size={8}
+            style={{ cursor: clickable ? "pointer" : "default" }}
+            onClick={() => {
+              if (entry.is_dir) {
+                handleRowClick(entry);
+              } else if (isImagePath(entry.name)) {
+                void handlePreview(entry);
+              }
+            }}
+          >
+            {renderEntryIcon(entry)}
+            <Text>{entry.name}</Text>
+            {entry.is_symlink && <Text type="secondary">(link)</Text>}
+          </Space>
+        );
+      },
     },
     {
       title: "Size",
@@ -1187,9 +1196,13 @@ export const FileManagerPage = () => {
           selectedKeys={[currentPath]}
           loadData={(node) => loadTreeChildren(node as TreeNode)}
           showLine
-          switcherIcon={({ expanded }: { expanded?: boolean }) => (
-            <DownOutlined rotate={expanded ? 0 : -90} />
-          )}
+          switcherIcon={({ expanded }: { expanded?: boolean }) =>
+            expanded ? (
+              <FolderOpenOutlined style={{ color: "#faad14" }} />
+            ) : (
+              <FolderOutlined style={{ color: "#faad14" }} />
+            )
+          }
           onSelect={(keys) => {
             if (keys.length > 0) {
               setCurrentPath(keys[0] as string);
@@ -1213,8 +1226,6 @@ export const FileManagerPage = () => {
               background: token.colorFillAlter,
             },
             body: {
-              maxHeight: "calc(100vh - 240px)",
-              overflow: "auto",
               padding: 8,
             },
           }}
@@ -1230,9 +1241,13 @@ export const FileManagerPage = () => {
             // rotates based on expansion state automatically, so a single
             // DownOutlined serves both open and closed.
             showLine
-            switcherIcon={({ expanded }: { expanded?: boolean }) => (
-            <DownOutlined rotate={expanded ? 0 : -90} />
-          )}
+            switcherIcon={({ expanded }: { expanded?: boolean }) =>
+              expanded ? (
+                <FolderOpenOutlined style={{ color: "#faad14" }} />
+              ) : (
+                <FolderOutlined style={{ color: "#faad14" }} />
+              )
+            }
             onSelect={(keys) => {
               if (keys.length > 0) setCurrentPath(keys[0] as string);
             }}
@@ -1484,9 +1499,13 @@ export const FileManagerPage = () => {
             selectedKeys={bulkMoveDest ? [bulkMoveDest] : []}
             loadData={(node) => loadTreeChildren(node as TreeNode)}
             showLine
-            switcherIcon={({ expanded }: { expanded?: boolean }) => (
-            <DownOutlined rotate={expanded ? 0 : -90} />
-          )}
+            switcherIcon={({ expanded }: { expanded?: boolean }) =>
+              expanded ? (
+                <FolderOpenOutlined style={{ color: "#faad14" }} />
+              ) : (
+                <FolderOutlined style={{ color: "#faad14" }} />
+              )
+            }
             onSelect={(keys) => {
               if (keys.length > 0) setBulkMoveDest(keys[0] as string);
             }}

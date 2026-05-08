@@ -46,6 +46,7 @@ import {
   MonitorPlay,
   FlaskConical,
   Folder,
+  FolderOpen,
   Globe,
   Grip,
   HardDrive,
@@ -166,6 +167,7 @@ export const HardDriveDownloadOutlined = shim(HardDriveDownload);
 export const HardDriveUploadOutlined = shim(HardDriveUpload);
 export const BgColorsOutlined = shim(Palette);
 export const FolderOutlined = shim(Folder);
+export const FolderOpenOutlined = shim(FolderOpen);
 export const AppstoreOutlined = shim(LayoutGrid);
 export const PackageOpenOutlined = shim(PackageOpen);
 export const AppstoreAddOutlined = shim(SquarePlus);

@@ -358,6 +358,13 @@ func (h *userHandler) update(c *gin.Context) {
 		return
 	}
 
+	// Snapshot pre-update package assignment so the trailing
+	// reconcile-limits dispatch only fires on actual changes.
+	prevPackageID := ""
+	if existing.PackageID != nil {
+		prevPackageID = *existing.PackageID
+	}
+
 	// Refuse demoting the last admin — otherwise a careless PATCH locks
 	// everyone out. Check BEFORE mutating anything.
 	if req.IsAdmin != nil && existing.IsAdmin && !*req.IsAdmin {
@@ -411,6 +418,22 @@ func (h *userHandler) update(c *gin.Context) {
 	if err := h.cfg.Repo.Update(ctx, existing); err != nil {
 		h.translateErr(c, err)
 		return
+	}
+
+	// If the package assignment actually changed, kick the limits
+	// reconciler immediately so POSIX quota + cgroup drop-ins land
+	// without waiting for the next 60s ReconcileAll tick. Background
+	// goroutine — PATCH responds as soon as the DB row is durable.
+	newPackageID := ""
+	if existing.PackageID != nil {
+		newPackageID = *existing.PackageID
+	}
+	if newPackageID != prevPackageID && h.cfg.Reconciler != nil {
+		go func() {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			h.cfg.Reconciler.ReconcileUserLimits(bgCtx)
+		}()
 	}
 
 	// Flip is_admin in its own call so the repo's privilege-safe Update

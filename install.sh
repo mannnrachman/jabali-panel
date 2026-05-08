@@ -6074,16 +6074,44 @@ install_apparmor() {
 # mode.
 # cleanup_apparmor_legacy removes profiles that were shipped in earlier
 # M40 releases but have since been parked (see install/apparmor/*.disabled).
-# Idempotent: aa-disable on an already-disabled profile is a no-op.
+# All five jabali daemon profiles (agent, panel-api, bulwark, kratos,
+# stalwart-mail) are parked because:
+#   1. AA 4.x on Debian 13 enforces unix-socket mediation in a way the
+#      original profiles never accommodated — even in complain mode the
+#      gmysql DSN dial returns EACCES, so any daemon talking to MariaDB
+#      via /var/run/mysqld/mysqld.sock crashes at startup.
+#   2. Three of the four non-agent profiles never auto-attached anyway
+#      (declaration was `profile <name> flags=(complain)` with no path
+#      attach), so they were cosmetic at best.
+# Until profiles are re-authored against AA 4.x and verified per-daemon
+# via `aa-exec -p <name> -- <smoke command>`, this hook keeps existing
+# hosts converged toward "no jabali AA profiles loaded".
+# Idempotent.
 cleanup_apparmor_legacy() {
-  if [[ ! -f /etc/apparmor.d/usr.local.bin.jabali-agent ]]; then
-    return 0
+  local restart_needed=0
+  local p
+  for p in \
+    /etc/apparmor.d/usr.local.bin.jabali-agent \
+    /etc/apparmor.d/usr.local.bin.jabali-bulwark \
+    /etc/apparmor.d/usr.local.bin.jabali-kratos \
+    /etc/apparmor.d/usr.local.bin.jabali-panel-api \
+    /etc/apparmor.d/usr.local.bin.stalwart-mail \
+  ; do
+    if [[ -f "$p" ]]; then
+      if command -v aa-disable >/dev/null 2>&1; then
+        aa-disable "$p" >/dev/null 2>&1 || true
+      fi
+      rm -f "$p"
+      restart_needed=1
+    fi
+  done
+  if [[ $restart_needed -eq 1 ]]; then
+    systemctl restart jabali-agent >/dev/null 2>&1 || true
+    systemctl restart jabali-panel >/dev/null 2>&1 || true
+    systemctl restart jabali-bulwark >/dev/null 2>&1 || true
+    systemctl restart jabali-kratos >/dev/null 2>&1 || true
+    systemctl restart stalwart-mail >/dev/null 2>&1 || true
   fi
-  if command -v aa-disable >/dev/null 2>&1; then
-    aa-disable /etc/apparmor.d/usr.local.bin.jabali-agent >/dev/null 2>&1 || true
-  fi
-  rm -f /etc/apparmor.d/usr.local.bin.jabali-agent
-  systemctl restart jabali-agent >/dev/null 2>&1 || true
 }
 
 apply_apparmor_system_profiles() {

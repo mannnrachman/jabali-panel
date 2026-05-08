@@ -575,6 +575,21 @@ test -x node_modules/.bin/tsc || {
 			}
 			return nil
 		}},
+		{"sync adminer", func() error {
+			// M37 Phase 4 — Adminer SSO bridge. install_adminer is
+			// idempotent: re-runs are no-ops (file existence check
+			// + install -m), so it's safe to call on every update.
+			// Failure is logged but doesn't block the update.
+			installSh := repoDir + "/install.sh"
+			if _, err := os.Stat(installSh); err != nil {
+				return nil
+			}
+			if err := run("", "bash", "-c",
+				"source "+installSh+" && install_adminer"); err != nil {
+				fmt.Printf("  (install_adminer failed: %v — continuing)\n", err)
+			}
+			return nil
+		}},
 	}
 
 	for _, s := range prelude {

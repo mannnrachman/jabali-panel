@@ -65,7 +65,7 @@ func userLimitsClearHandler(ctx context.Context, params json.RawMessage) (any, e
 	// forget it; if not, it's a cheap no-op.
 	// nsenter into PID 1 namespace: see user_limits_apply.
 	if _, drStderr, err := runCmdFn(ctx, "nsenter",
-		"-t", "1", "-m", "-i", "--",
+		"-t", "1", "-m", "--",
 		"systemctl", "daemon-reload"); err != nil {
 		return nil, &agentwire.AgentError{
 			Code: agentwire.CodeInternal,

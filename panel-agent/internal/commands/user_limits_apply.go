@@ -140,7 +140,7 @@ func userLimitsApplyHandler(ctx context.Context, params json.RawMessage) (any, e
 	// namespace set (mnt + ipc + uts + cgroup + pid + net) so the
 	// systemctl call runs as if from the host root shell.
 	if _, drStderr, err := runCmdFn(ctx, "nsenter",
-		"-t", "1", "-m", "-i", "--",
+		"-t", "1", "-m", "--",
 		"systemctl", "daemon-reload"); err != nil {
 		return nil, &agentwire.AgentError{
 			Code: agentwire.CodeInternal,

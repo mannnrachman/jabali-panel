@@ -41,6 +41,7 @@ import { AdminSecurityPage } from "./shells/admin/security/AdminSecurityPage";
 import { ServerStatusPage } from "./shells/admin/server-status/ServerStatusPage";
 import { SystemUpdatesPage } from "./shells/admin/updates/SystemUpdatesPage";
 import { SupportPage } from "./shells/admin/support/SupportPage";
+import { AdminAutomationTokensPage } from "./shells/admin/automation/AdminAutomationTokensPage";
 import { AdminBackupsPage } from "./shells/admin/backups/AdminBackupsPage";
 import { PackageCreate } from "./shells/admin/packages/PackageCreate";
 import { PackageEdit } from "./shells/admin/packages/PackageEdit";
@@ -177,6 +178,7 @@ const ThemedApp = () => {
             <Route path="dnssec" element={<Navigate to="/jabali-admin/dns" replace />} />
             <Route path="updates" element={<SystemUpdatesPage />} />
             <Route path="support" element={<SupportPage />} />
+            <Route path="automation" element={<AdminAutomationTokensPage />} />
             <Route path="backups" element={<AdminBackupsPage />} />
             <Route path="notifications">
               <Route index element={<Navigate to="channels" replace />} />

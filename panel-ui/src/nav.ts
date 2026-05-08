@@ -173,6 +173,12 @@ export const adminNav: NavItem[] = [
     icon: navIcon(LifeBuoyOutlined),
     path: "/jabali-admin/support",
   },
+  {
+    key: "automation",
+    label: "Automation API",
+    icon: navIcon(KeyOutlined),
+    path: "/jabali-admin/automation",
+  },
 ];
 
 export const userNav: NavItem[] = [

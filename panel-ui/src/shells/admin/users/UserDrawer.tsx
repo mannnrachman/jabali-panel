@@ -83,6 +83,12 @@ export function UserDrawer({ open, onClose, editingId }: UserDrawerProps) {
       if (isEdit && editingId) {
         const payload = { ...values };
         if (!payload.password) delete payload.password;
+        // Backend's *string PATCH body can't tell "field omitted"
+        // from "field set to null" (Go JSON unmarshals both to nil),
+        // so it treats nil as "don't change". Send "" to mean clear.
+        if (payload.package_id == null) {
+          payload.package_id = "" as unknown as string;
+        }
         await update.mutateAsync({ id: editingId, input: payload });
         message.success("User updated");
       } else {

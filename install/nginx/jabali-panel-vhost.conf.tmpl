@@ -50,6 +50,16 @@ server {
   access_log /var/log/nginx/jabali-panel.access.log;
   error_log  /var/log/nginx/jabali-panel.error.log;
 
+  # M37: phpMyAdmin + Adminer share this vhost so the SSO redirect
+  # (mint endpoint hands the browser a URL on the panel's :8443
+  # origin) routes to the PHP backends instead of falling through
+  # to the SPA catch-all (which previously sent users to
+  # /jabali-panel/dashboard). Both snippets ship via install.sh
+  # (install_phpmyadmin + install_adminer); each uses `location ^~`
+  # so it wins over the SPA `location /` below.
+  include /etc/nginx/sites-available/includes/phpmyadmin.conf;
+  include /etc/nginx/snippets/jabali-adminer.conf;
+
   # /.ory/* is handled by panel-api itself (in-process reverse proxy
   # to the Kratos public socket). nginx just forwards to the panel
   # upstream — no special-case for /.ory/.

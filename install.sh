@@ -3916,7 +3916,7 @@ install_adminer() {
   local nginx_inc_dir="/etc/nginx/snippets"
   cat > "${nginx_inc_dir}/jabali-adminer.conf" <<'NGINXEOF'
 # Jabali Adminer (M37 Phase 4) — engine-aware DB admin via SSO.
-location /jabali-adminer/ {
+location ^~ /jabali-adminer/ {
     alias /var/www/jabali-adminer/;
     index index.php;
 
@@ -3930,12 +3930,11 @@ location /jabali-adminer/ {
 }
 NGINXEOF
 
-  # Wire snippet into the panel vhost if not already.
-  local panel_vhost="/etc/nginx/sites-enabled/jabali-panel.conf"
-  if [[ -f "${panel_vhost}" ]] && ! grep -q "jabali-adminer.conf" "${panel_vhost}"; then
-    _log "wiring jabali-adminer.conf into panel vhost"
-    sed -i '/include \/etc\/nginx\/snippets\/phpmyadmin.conf;/a\    include /etc/nginx/snippets/jabali-adminer.conf;' "${panel_vhost}"
-  fi
+  # Snippet wiring into the panel vhost is handled by the template
+  # render in install_nginx_panel_vhost (jabali-panel-vhost.conf.tmpl
+  # has explicit `include` lines for both phpmyadmin.conf and
+  # jabali-adminer.conf). No sed-into-installed-conf needed; the next
+  # `jabali update` rerenders the vhost.
 
   if nginx -t >/dev/null 2>&1; then
     systemctl reload nginx 2>/dev/null || true

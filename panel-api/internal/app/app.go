@@ -360,6 +360,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				// create still works — auto-enable is skipped cleanly.
 				DNSZones:   deps.DNSZones,
 				DNSRecords: deps.DNSRecords,
+				BWDaily:    deps.BWDaily,
 				// M24: lets PATCH listen_ipv*_id resolve FK + family + the
 				// is_user_selectable check, and lets GET denormalize
 				// listen_ipv4 / listen_ipv6 onto each row. Optional —

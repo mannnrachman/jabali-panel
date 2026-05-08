@@ -38,6 +38,11 @@ type DomainHandlerConfig struct {
 	// or hit an error during create.
 	DNSZones   repository.DNSZoneRepository
 	DNSRecords repository.DNSRecordRepository
+	// BWDaily backs the GET /domains/:id/bandwidth endpoint (M13.1).
+	// Optional — nil makes the endpoint return 503 instead of 404 so
+	// the panel UI knows the feature isn't wired vs. the domain
+	// genuinely having no traffic.
+	BWDaily repository.BWDailyRepository
 	// ManagedIPs is the M24 IP-pool repo. Optional: when nil, the
 	// listen_ipv*_id PATCH path is rejected with 503 (the pool is the
 	// source of truth) and GET responses skip the denormalized
@@ -66,6 +71,7 @@ func RegisterDomainRoutes(g *gin.RouterGroup, cfg DomainHandlerConfig) {
 	domains.GET("/:id", h.get)
 	domains.PATCH("/:id", h.update)
 	domains.DELETE("/:id", h.delete)
+	domains.GET("/:id/bandwidth", h.bandwidth)
 }
 
 type domainHandler struct{ cfg DomainHandlerConfig }
@@ -1197,4 +1203,82 @@ func domainLinuxUser(email string) string {
 		return email[:i]
 	}
 	return "user"
+}
+
+// bandwidth returns per-day bytes + monthly totals for a single domain.
+// Default window: prior 30 days inclusive of today. Query parameter
+// `from` accepts YYYY-MM-DD to override; `to` defaults to today UTC.
+//
+// Response shape:
+//   {
+//     "domain_id": "01...",
+//     "from": "2026-04-09", "to": "2026-05-09",
+//     "bytes_total": 12345678, "requests_total": 9876,
+//     "daily": [
+//       {"day": "2026-05-08", "bytes_total": 1234, "requests_total": 56},
+//       ...
+//     ]
+//   }
+//
+// Authorization mirrors GET /domains/:id: admins read any, users only
+// their own. Domain ownership is verified via the existing FindByID
+// path, which already 404s on cross-tenant lookup.
+func (h *domainHandler) bandwidth(c *gin.Context) {
+	if h.cfg.BWDaily == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "bandwidth feature not wired"})
+		return
+	}
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	domainID := c.Param("id")
+	dom, err := h.cfg.Domains.FindByID(c.Request.Context(), domainID)
+	if err != nil {
+		if isNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "domain not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if !claims.IsAdmin && dom.UserID != claims.UserID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "domain not found"})
+		return
+	}
+
+	now := time.Now().UTC()
+	to := now
+	from := now.AddDate(0, 0, -29) // 30 days inclusive
+	if v := c.Query("from"); v != "" {
+		if t, err := time.Parse("2006-01-02", v); err == nil {
+			from = t
+		}
+	}
+	if v := c.Query("to"); v != "" {
+		if t, err := time.Parse("2006-01-02", v); err == nil {
+			to = t
+		}
+	}
+
+	bytesTotal, reqsTotal, err := h.cfg.BWDaily.SumForDomain(c.Request.Context(), dom.ID, from, to)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	daily, err := h.cfg.BWDaily.SumPerDayForDomain(c.Request.Context(), dom.ID, from, to)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"domain_id":      dom.ID,
+		"from":           from.Format("2006-01-02"),
+		"to":             to.Format("2006-01-02"),
+		"bytes_total":    bytesTotal,
+		"requests_total": reqsTotal,
+		"daily":          daily,
+	})
 }

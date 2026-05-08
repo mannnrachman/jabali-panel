@@ -46,6 +46,7 @@ type backupMaterializeParams struct {
 	// (the real data lives in sibling stage=home/db/mail snapshots).
 	SnapshotID     string   `json:"snapshot_id,omitempty"`
 	RepoURL        string   `json:"repo_url,omitempty"`
+	PasswordFile   string   `json:"password_file,omitempty"`
 	CredentialsRef string   `json:"credentials_ref,omitempty"`
 	ExtraOptions   []string `json:"extra_options,omitempty"`
 }
@@ -92,7 +93,7 @@ func backupMaterializeHandler(ctx context.Context, raw json.RawMessage) (any, er
 		return nil, fmt.Errorf("mkdir target: %w", err)
 	}
 
-	cfg, cerr := bkResticConfig(p.RepoURL, p.CredentialsRef, p.ExtraOptions)
+	cfg, cerr := bkResticConfigWithPassword(p.RepoURL, p.CredentialsRef, p.PasswordFile, p.ExtraOptions)
 	if cerr != nil {
 		return nil, fmt.Errorf("restic config: %w", cerr)
 	}

@@ -29,6 +29,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
 // EnqueueInterval is the cadence at which due schedules are scanned and
@@ -83,6 +84,10 @@ type Deps struct {
 	EgressRequests repository.UserEgressRequestRepository
 
 	Agent agent.AgentInterface
+
+	// M30.2.x — sso key for unsealing per-destination restic
+	// passwords. Optional; nil falls back to the legacy shared file.
+	SSOKey *ssokey.Key
 	Log   *slog.Logger
 }
 
@@ -410,7 +415,15 @@ func (s *Scheduler) dispatchAccount(ctx context.Context, j models.BackupJob) {
 	for k, v := range destWireParams(dest) {
 		params[k] = v
 	}
-	if _, err := s.deps.Agent.Call(callCtx, "backup.create", params); err != nil {
+	err = backupwrapperhelpers.WithDestPasswordFile(callCtx, dest, s.deps.Agent, s.deps.SSOKey,
+		func(passwordFile string) error {
+			if passwordFile != "" {
+				params["password_file"] = passwordFile
+			}
+			_, callErr := s.deps.Agent.Call(callCtx, "backup.create", params)
+			return callErr
+		})
+	if err != nil {
 		if isAgentConflict(err) {
 			_ = s.deps.Jobs.MarkFinished(ctx, j.ID, models.BackupJobStatusCancelled,
 				"", "", 0, 0, nil, nil, "skipped: prior backup still running")

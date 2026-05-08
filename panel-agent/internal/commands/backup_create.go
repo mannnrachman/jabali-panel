@@ -72,6 +72,7 @@ type backupCreateParams struct {
 	// local repo at /var/lib/jabali-backups/repo for back-compat with
 	// pre-M30.2 callers.
 	RepoURL string `json:"repo_url,omitempty"`
+	PasswordFile   string   `json:"password_file,omitempty"`
 	// CredentialsRef is the absolute path to the 0600 root:root env
 	// file holding backend credentials (AWS_*, B2_*, SSHPASS, …).
 	// Loaded by the agent and merged into the restic process env.
@@ -166,7 +167,7 @@ func runBackupOrchestrator(ctx context.Context, req backupCreateParams) error {
 		jl.Printf("ensure_repo_failed=%v", err)
 		return fmt.Errorf("ensure repo: %w", err)
 	}
-	cfg, cerr := bkResticConfig(req.RepoURL, req.CredentialsRef, req.ExtraOptions)
+	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.ExtraOptions)
 	if cerr != nil {
 		return fmt.Errorf("restic config: %w", cerr)
 	}
@@ -377,7 +378,7 @@ func runMetadataStage(ctx context.Context, req backupCreateParams) backup.Manife
 		st.Warnings = []string{"metadata marshal: " + err.Error()}
 		return st
 	}
-	cfg, cerr := bkResticConfig(req.RepoURL, req.CredentialsRef, req.ExtraOptions)
+	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.ExtraOptions)
 	if cerr != nil {
 		st.Status = backup.StageStatusFailed
 		st.Warnings = []string{"restic config: " + cerr.Error()}
@@ -442,6 +443,7 @@ func backupStatusHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 	var req struct {
 		JobID          string   `json:"job_id"`
 		RepoURL        string   `json:"repo_url,omitempty"`
+		PasswordFile   string   `json:"password_file,omitempty"`
 		CredentialsRef string   `json:"credentials_ref,omitempty"`
 		ExtraOptions   []string `json:"extra_options,omitempty"`
 	}
@@ -451,7 +453,7 @@ func backupStatusHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 	if !ulidRE.MatchString(req.JobID) {
 		return nil, bkInvalidArg("job_id must be a 26-char ULID")
 	}
-	cfg, cerr := bkResticConfig(req.RepoURL, req.CredentialsRef, req.ExtraOptions)
+	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.ExtraOptions)
 	if cerr != nil {
 		return nil, bkInternal("restic config", cerr)
 	}

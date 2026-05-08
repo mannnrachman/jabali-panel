@@ -26,6 +26,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
 // BackupHandlerConfig is the dependency bundle for both /admin and /me
@@ -59,6 +60,13 @@ type BackupHandlerConfig struct {
 	LimitOverrides  repository.UserLimitOverrideRepository
 	EgressPolicies  repository.UserEgressPolicyRepository
 	EgressRequests  repository.UserEgressRequestRepository
+
+	// M30.2.x — sso key for unsealing per-destination restic
+	// passwords before the agent dispatch. Optional; when nil the
+	// password helper falls back to the legacy shared file at
+	// /etc/jabali-panel/restic-repo.password (back-compat for
+	// destinations that haven't been rotated yet).
+	SSOKey *ssokey.Key
 
 	Log             *slog.Logger
 	StrictRateLimit gin.HandlerFunc
@@ -358,7 +366,18 @@ func (h *backupHandler) createForUser(c *gin.Context) {
 		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), backupCallTimeout)
 		defer cancel()
-		if _, err := h.cfg.Agent.Call(ctx, "backup.create", params); err != nil {
+		// M30.2.x: per-destination password file is provisioned by
+		// the agent's write_temp on demand; cleanup runs after
+		// dispatch completes (or fails).
+		callErr := backupwrapperhelpers.WithDestPasswordFile(ctx, dest, h.cfg.Agent, h.cfg.SSOKey,
+			func(passwordFile string) error {
+				if passwordFile != "" {
+					params["password_file"] = passwordFile
+				}
+				_, err := h.cfg.Agent.Call(ctx, "backup.create", params)
+				return err
+			})
+		if err := callErr; err != nil {
 			// Mark failed so the UI surfaces the issue right away.
 			_ = h.cfg.Jobs.MarkFinished(c.Request.Context(), job.ID, models.BackupJobStatusFailed,
 				"", "", 0, 0, nil, nil, err.Error())
@@ -613,7 +632,16 @@ func (h *backupHandler) restore(c *gin.Context) {
 	for k, v := range destWireParams(dest) {
 		params[k] = v
 	}
-	raw, err := h.cfg.Agent.Call(ctx, "backup.restore", params)
+	var raw json.RawMessage
+	err := backupwrapperhelpers.WithDestPasswordFile(ctx, dest, h.cfg.Agent, h.cfg.SSOKey,
+		func(passwordFile string) error {
+			if passwordFile != "" {
+				params["password_file"] = passwordFile
+			}
+			var callErr error
+			raw, callErr = h.cfg.Agent.Call(ctx, "backup.restore", params)
+			return callErr
+		})
 	if err != nil {
 		_ = h.cfg.Jobs.MarkFinished(c.Request.Context(), job.ID, models.BackupJobStatusFailed,
 			"", "", 0, 0, nil, nil, err.Error())

@@ -595,6 +595,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		EgressPolicies: deps.UserEgressPolicies,
 		EgressRequests: deps.UserEgressRequests,
 		Agent:          deps.Agent,
+		SSOKey:         deps.SSOKey,
 		Log:            log,
 	}); sched != nil {
 		go sched.Start(ctx)

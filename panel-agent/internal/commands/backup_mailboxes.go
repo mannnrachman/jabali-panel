@@ -27,6 +27,7 @@ type backupMailboxesParams struct {
 	Mailboxes      []string `json:"mailboxes"`
 	ScheduleID     string   `json:"schedule_id,omitempty"`
 	RepoURL        string   `json:"repo_url,omitempty"`
+	PasswordFile   string   `json:"password_file,omitempty"`
 	CredentialsRef string   `json:"credentials_ref,omitempty"`
 	ExtraOptions   []string `json:"extra_options,omitempty"`
 }
@@ -157,7 +158,7 @@ func backupMailboxesHandler(ctx context.Context, raw json.RawMessage) (any, erro
 		return nil, bkInternal("mail bodies tarball", err)
 	}
 
-	cfg, cerr := bkResticConfig(req.RepoURL, req.CredentialsRef, req.ExtraOptions)
+	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.ExtraOptions)
 	if cerr != nil {
 		return nil, bkInternal("restic config", cerr)
 	}

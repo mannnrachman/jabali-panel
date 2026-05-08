@@ -610,6 +610,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Mailboxes:      deps.Mailboxes,
 				AppInstalls:    deps.WordPressInstalls,
 				Log:            deps.Log,
+				SSOKey:         deps.SSOKey,
 			})
 			api.RegisterMeBackupRoutes(v1, api.MeBackupsHandlerConfig{
 				Agent:          deps.Agent,

@@ -35,6 +35,7 @@ type backupHomeParams struct {
 	Username       string   `json:"username"`
 	ScheduleID     string   `json:"schedule_id,omitempty"`
 	RepoURL        string   `json:"repo_url,omitempty"`
+	PasswordFile   string   `json:"password_file,omitempty"`
 	CredentialsRef string   `json:"credentials_ref,omitempty"`
 	ExtraOptions   []string `json:"extra_options,omitempty"`
 }
@@ -80,7 +81,7 @@ func backupHomeHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 		return nil, bkInternal("restic missing", err)
 	}
 
-	cfg, cerr := bkResticConfig(req.RepoURL, req.CredentialsRef, req.ExtraOptions)
+	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.ExtraOptions)
 	if cerr != nil {
 		return nil, bkInternal("restic config", cerr)
 	}

@@ -264,6 +264,29 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 					"systemctl daemon-reload; "+
 					"systemctl enable --now jabali-sso-reaper.timer")
 		}},
+		{"sync apparmor profiles", func() error {
+			// Re-render every jabali AppArmor profile from
+			// install/apparmor/ + reload distro system profiles
+			// (mariadb/redis/pdns). Without this, profile edits in the
+			// repo never reach existing hosts — operator has to ssh in
+			// and `apparmor_parser -r` by hand. Detected first-time
+			// installs preserve complain mode; existing hosts keep
+			// whatever mode the operator chose per profile.
+			//
+			// Idempotent. Failure is logged but doesn't block the
+			// update; running daemons keep their currently-loaded
+			// profile (or none if AA is disabled on this host).
+			installSh := repoDir + "/install.sh"
+			if _, err := os.Stat(installSh); err != nil {
+				return nil
+			}
+			// first_install=0 → preserve existing per-profile mode.
+			if err := run("", "bash", "-c",
+				"source "+installSh+" && apply_apparmor_profiles 0 && apply_apparmor_system_profiles 0"); err != nil {
+				fmt.Printf("  (apparmor profile sync failed: %v — continuing)\n", err)
+			}
+			return nil
+		}},
 		{"sync jabali-agent + jabali-panel units", func() error {
 			// Re-render the jabali-agent.service and jabali-panel.service
 			// unit files from install.sh's writers so hardening/env

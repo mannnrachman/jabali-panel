@@ -6014,6 +6014,14 @@ install_apparmor() {
     _spin "apt install apparmor + apparmor-utils" \
       apt-get install -y -qq --no-install-recommends apparmor apparmor-utils
   fi
+  # apparmor-profiles-extra ships distro-curated profiles for mariadb,
+  # postfix, etc. Best-effort install — Debian 13 includes it; if a
+  # cloud minimal image lacks the package we just skip system-daemon
+  # profile activation in apply_apparmor_system_profiles().
+  if ! dpkg -s apparmor-profiles-extra >/dev/null 2>&1; then
+    apt-get install -y -qq --no-install-recommends apparmor-profiles-extra >/dev/null 2>&1 || \
+      _warn "apparmor-profiles-extra not installable — system-daemon profiles skipped"
+  fi
 
   if [[ ! -d /sys/kernel/security/apparmor ]]; then
     _warn "AppArmor LSM not active in kernel — skipping profile install"
@@ -6040,12 +6048,51 @@ install_apparmor() {
   fi
 
   apply_apparmor_profiles "$first_install"
+  apply_apparmor_system_profiles "$first_install"
 
   if [[ $first_install -eq 1 ]]; then
     date -u +%Y-%m-%dT%H:%M:%SZ > /etc/jabali/.apparmor-installed
   fi
 
   _ok "AppArmor profiles applied ($(aa-status 2>/dev/null | grep -c 'jabali-') jabali profiles loaded)"
+}
+
+# apply_apparmor_system_profiles activates distro-supplied profiles for
+# the system daemons jabali leans on (mariadb / redis / pdns). Profile
+# files come from the upstream packages (apparmor-profiles-extra,
+# redis-server, pdns-server, pdns-recursor) — we don't author them.
+# We only flip them to complain mode on first install (so an enforce-by-
+# default Debian profile doesn't bork an existing setup mid-upgrade).
+# Operator promotes individual profiles to enforce via
+# `jabali apparmor flip-mature --profile <name>` after the soak window.
+#
+# php-fpm + nginx are intentionally absent: tenant code surface is too
+# dynamic for a path-based profile without a long-tail of FPs.
+#
+# Arg: $1 — 1 if first install (set complain), 0 to preserve existing
+# mode.
+apply_apparmor_system_profiles() {
+  local first_install=${1:-0}
+  local sys_profiles=(
+    /etc/apparmor.d/usr.sbin.mysqld
+    /etc/apparmor.d/usr.bin.redis-server
+    /etc/apparmor.d/usr.sbin.pdns_server
+    /etc/apparmor.d/usr.sbin.pdns_recursor
+  )
+  local p
+  for p in "${sys_profiles[@]}"; do
+    [[ -f "$p" ]] || continue
+    apparmor_parser -r "$p" 2>/dev/null || {
+      _warn "apparmor_parser -r failed for $(basename "$p") — skipping"
+      continue
+    }
+    # First install: park in complain mode so a vendor profile mismatch
+    # with our M25 unix-socket / M6.3 split-port setup logs but doesn't
+    # break the daemon. Upgrade: leave whatever mode the operator chose.
+    if [[ $first_install -eq 1 ]]; then
+      aa-complain "$p" >/dev/null 2>&1 || true
+    fi
+  done
 }
 
 # apply_apparmor_profiles renders + reloads every jabali profile under
@@ -6064,7 +6111,10 @@ apply_apparmor_profiles() {
   fi
 
   local profile
-  for profile in "$src_dir"/usr.local.bin.jabali-*; do
+  # Glob covers BOTH `usr.local.bin.jabali-*` (panel-api/agent/bulwark/
+  # kratos) AND every other profile we author (stalwart-mail, future
+  # additions). Earlier `jabali-*` glob silently dropped stalwart-mail.
+  for profile in "$src_dir"/usr.local.bin.*; do
     [[ -e "$profile" ]] || continue
     local name
     name=$(basename "$profile")

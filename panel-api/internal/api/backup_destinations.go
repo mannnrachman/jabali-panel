@@ -8,11 +8,14 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -23,6 +26,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
 // CredentialsDir is the on-disk location for restic-remote env files.
@@ -31,15 +35,16 @@ import (
 const CredentialsDir = "/etc/jabali-panel/restic-remotes"
 
 type BackupDestinationsConfig struct {
-	Repo  repository.BackupDestinationRepository
-	Agent agent.AgentInterface
+	Repo   repository.BackupDestinationRepository
+	Agent  agent.AgentInterface
+	SSOKey *ssokey.Key // M30.2: encrypts per-destination restic passwords
 }
 
 func RegisterBackupDestinationRoutes(rg *gin.RouterGroup, cfg BackupDestinationsConfig) {
 	if cfg.Repo == nil {
 		return
 	}
-	h := &backupDestinationHandler{repo: cfg.Repo, agent: cfg.Agent}
+	h := &backupDestinationHandler{repo: cfg.Repo, agent: cfg.Agent, ssoKey: cfg.SSOKey}
 	admin := rg.Group("/admin", middleware.RequireAdmin())
 	admin.GET("/backup-destinations", h.list)
 	admin.GET("/backup-destinations/:id", h.get)
@@ -47,11 +52,16 @@ func RegisterBackupDestinationRoutes(rg *gin.RouterGroup, cfg BackupDestinations
 	admin.PATCH("/backup-destinations/:id", h.update)
 	admin.DELETE("/backup-destinations/:id", h.delete)
 	admin.POST("/backup-destinations/:id/test", h.test)
+	// M30.2: per-destination restic password rotation. Returns the
+	// freshly-minted password ONCE so the operator can store it
+	// off-band (the encrypted blob in DB is the only durable copy).
+	admin.POST("/backup-destinations/:id/rotate-password", h.rotatePassword)
 }
 
 type backupDestinationHandler struct {
-	repo  repository.BackupDestinationRepository
-	agent agent.AgentInterface
+	repo   repository.BackupDestinationRepository
+	agent  agent.AgentInterface
+	ssoKey *ssokey.Key
 }
 
 // writeCreds dispatches the env-file write to the agent (root). panel-api
@@ -496,6 +506,113 @@ func validKind(kind string) bool {
 		}
 	}
 	return false
+}
+
+// rotatePassword runs an atomic restic-key rotation against the
+// destination's repository: derive the OLD password from the row
+// (sealed) or the legacy shared file (one-time bootstrap), mint a
+// fresh 32-byte secret, dispatch the agent's
+// backup.repo.password.rotate command, persist the AES-GCM-sealed
+// new value on success, and return it once (reveal-and-forget).
+func (h *backupDestinationHandler) rotatePassword(c *gin.Context) {
+	ctx := c.Request.Context()
+	if h.ssoKey == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "sso_key_unavailable"})
+		return
+	}
+	if h.agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "agent_unavailable"})
+		return
+	}
+	id := c.Param("id")
+	dest, err := h.repo.Get(ctx, id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "internal"})
+		return
+	}
+
+	// Resolve the old password. Sealed column wins; otherwise the
+	// agent surfaces the legacy /etc/jabali-panel/restic-repo.password
+	// file (M30.1 bootstrap).
+	oldPassword, err := h.resolveOldPassword(ctx, dest)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError,
+			gin.H{"status": "error", "error": "old_password_unavailable", "detail": err.Error()})
+		return
+	}
+
+	// 32 random bytes → 64 hex chars. Restic accepts arbitrary bytes
+	// in the password file, but hex keeps copy/paste safe.
+	rawBuf := make([]byte, 32)
+	if _, err := rand.Read(rawBuf); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "rand"})
+		return
+	}
+	newPassword := hex.EncodeToString(rawBuf)
+
+	credsRef := ""
+	if dest.CredentialsRef != nil {
+		credsRef = *dest.CredentialsRef
+	}
+	rotateParams := map[string]any{
+		"repo_url":        dest.URL,
+		"credentials_ref": credsRef,
+		"old_password":    oldPassword,
+		"new_password":    newPassword,
+	}
+	if _, err := h.agent.Call(ctx, "backup.repo.password.rotate", rotateParams); err != nil {
+		c.JSON(http.StatusBadGateway,
+			gin.H{"status": "error", "error": "agent_rotate_failed", "detail": err.Error()})
+		return
+	}
+
+	sealed, err := h.ssoKey.Seal([]byte(newPassword))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "seal"})
+		return
+	}
+	now := time.Now().UTC()
+	if err := h.repo.SetPassword(ctx, dest.ID, sealed, now); err != nil {
+		c.JSON(http.StatusInternalServerError,
+			gin.H{"status": "error", "error": "persist", "detail": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":              "ok",
+		"password":            newPassword,
+		"password_rotated_at": now,
+	})
+}
+
+// resolveOldPassword reads the destination's sealed password if set,
+// otherwise asks the agent to surface the legacy shared file.
+func (h *backupDestinationHandler) resolveOldPassword(ctx context.Context, dest *models.BackupDestination) (string, error) {
+	if len(dest.PasswordEnc) > 0 {
+		plaintext, err := h.ssoKey.Open(dest.PasswordEnc)
+		if err != nil {
+			return "", fmt.Errorf("decrypt sealed password: %w", err)
+		}
+		return string(plaintext), nil
+	}
+	raw, err := h.agent.Call(ctx, "backup.repo.password.read", map[string]any{})
+	if err != nil {
+		return "", fmt.Errorf("agent read legacy password: %w", err)
+	}
+	var resp struct {
+		Password string `json:"password"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return "", fmt.Errorf("parse agent response: %w", err)
+	}
+	if resp.Password == "" {
+		return "", errors.New("legacy password file is empty")
+	}
+	return resp.Password, nil
 }
 
 

@@ -19,6 +19,8 @@ type BackupDestinationRepository interface {
 	ListEnabled(ctx context.Context) ([]models.BackupDestination, error)
 	Update(ctx context.Context, d *models.BackupDestination) error
 	Delete(ctx context.Context, id string) error
+	// M30.2: per-destination restic password (AES-GCM via sso.key).
+	SetPassword(ctx context.Context, id string, sealed []byte, rotatedAt time.Time) error
 }
 
 type backupDestinationRepo struct{ db *gorm.DB }
@@ -89,6 +91,24 @@ func (r *backupDestinationRepo) Update(ctx context.Context, d *models.BackupDest
 			"extra_options":   d.ExtraOptions,
 			"enabled":         d.Enabled,
 			"updated_at":      d.UpdatedAt,
+		})
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *backupDestinationRepo) SetPassword(ctx context.Context, id string, sealed []byte, rotatedAt time.Time) error {
+	res := r.db.WithContext(ctx).
+		Model(&models.BackupDestination{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"password_enc":         sealed,
+			"password_rotated_at":  rotatedAt,
+			"updated_at":           time.Now().UTC(),
 		})
 	if res.Error != nil {
 		return translate(res.Error)

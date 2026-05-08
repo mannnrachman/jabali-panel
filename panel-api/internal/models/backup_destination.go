@@ -67,7 +67,13 @@ type BackupDestination struct {
 	Kind           string          `gorm:"type:enum('local','sftp','s3','b2','azure','gcs','rest');not null" json:"kind"`
 	URL            string          `gorm:"type:varchar(512);not null" json:"url"`
 	CredentialsRef *string         `gorm:"type:varchar(255)" json:"credentials_ref,omitempty"`
-	ExtraOptions   json.RawMessage `gorm:"type:json" json:"extra_options,omitempty"`
+	// PasswordEnc is the AES-256-GCM-sealed restic repository password
+	// (M30.2 — per-destination encryption rotation, ADR-pending). NULL
+	// rows fall back to the legacy shared password file. Field is
+	// stripped from JSON; the password is never read by the SPA.
+	PasswordEnc       []byte     `gorm:"type:varbinary(512)" json:"-"`
+	PasswordRotatedAt *time.Time `gorm:"type:datetime(6)" json:"password_rotated_at,omitempty"`
+	ExtraOptions      json.RawMessage `gorm:"type:json" json:"extra_options,omitempty"`
 	Enabled        bool            `gorm:"not null;default:1" json:"enabled"`
 	CreatedAt      time.Time       `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt      time.Time       `gorm:"type:datetime(6);not null" json:"updated_at"`

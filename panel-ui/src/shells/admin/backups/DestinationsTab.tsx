@@ -31,6 +31,7 @@ import {
   EditOutlined,
   PlusOutlined,
   FlaskConicalOutlined,
+  KeyOutlined,
 } from "@icons";
 import { useEffect, useState } from "react";
 
@@ -61,6 +62,10 @@ interface BackupDestination {
   enabled: boolean;
   created_at: string;
   updated_at: string;
+  /** M30.2: ISO timestamp of last per-destination restic password
+   *  rotation. Null when the row is still on the legacy shared
+   *  password file. */
+  password_rotated_at?: string | null;
 }
 
 interface SSHKeyEntry {
@@ -577,6 +582,7 @@ export function DestinationsTab() {
   const [loading, setLoading] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<BackupDestination | null>(null);
+  const [rotatingId, setRotatingId] = useState<string | null>(null);
 
   const reload = async () => {
     setLoading(true);
@@ -611,6 +617,67 @@ export function DestinationsTab() {
           void reload();
         } catch (err) {
           message.error(extractApiError(err, "Delete failed"));
+        }
+      },
+    });
+  };
+
+  const handleRotatePassword = async (row: BackupDestination) => {
+    Modal.confirm({
+      title: `Rotate restic password for "${row.name}"?`,
+      content: (
+        <div>
+          <p>
+            A new 32-byte random password will be added to the restic
+            repository, then the old key removed. The repository data
+            is unchanged — only the unlock key rotates.
+          </p>
+          <p>
+            <strong>Make sure you have an off-host record</strong> of the
+            new password before closing the reveal dialog. Jabali stores
+            the encrypted blob, but the plaintext is shown only once.
+          </p>
+        </div>
+      ),
+      okText: "Rotate",
+      cancelText: "Cancel",
+      onOk: async () => {
+        setRotatingId(row.id);
+        try {
+          const resp = await apiClient.post<{
+            status: string;
+            password: string;
+            password_rotated_at: string;
+          }>(`/admin/backup-destinations/${row.id}/rotate-password`, {});
+          Modal.info({
+            title: `New restic password — ${row.name}`,
+            width: 560,
+            content: (
+              <div>
+                <p>Copy and store this password before closing — it is shown only once.</p>
+                <Input.TextArea
+                  readOnly
+                  autoSize
+                  value={resp.data.password}
+                  style={{ fontFamily: "monospace", marginBottom: 8 }}
+                />
+                <Button
+                  size="small"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(resp.data.password);
+                    message.success("Copied to clipboard");
+                  }}
+                >
+                  Copy
+                </Button>
+              </div>
+            ),
+          });
+          await reload();
+        } catch (err) {
+          message.error(extractApiError(err, "Rotate failed"));
+        } finally {
+          setRotatingId(null);
         }
       },
     });
@@ -694,6 +761,14 @@ export function DestinationsTab() {
                 }}
               >
                 Edit
+              </Button>
+              <Button
+                size="small"
+                icon={<KeyOutlined />}
+                onClick={() => handleRotatePassword(row)}
+                loading={rotatingId === row.id}
+              >
+                Rotate password
               </Button>
               <Button
                 type="primary"

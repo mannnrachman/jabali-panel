@@ -116,13 +116,18 @@ func dbPostgresUninstallHandler(ctx context.Context, _ json.RawMessage) (any, er
 	steps := [][]string{
 		{"systemctl", "disable", "--now", "postgresql"},
 		// "postgresql*" purges every installed postgres major in one
-		// shot (15, 16, 17 — whichever the host shipped). The shell
-		// glob is interpreted by apt-get, not the shell, since we
-		// pass it as a single argv element.
+		// shot (15, 16, 17 — whichever the host shipped). Pass via
+		// bash so apt-get sees the unexpanded glob token.
+		// Intentionally NOT followed by `apt-get autoremove`: under
+		// the agent's mount namespace (ProtectKernelModules=yes ->
+		// /usr/lib/modules is read-only) autoremove can pick up
+		// stale linux-image candidates and fail mid-removal, which
+		// then blocks subsequent apt operations on this host. The
+		// operator can run autoremove manually when they know what
+		// they're cleaning.
 		{"bash", "-c",
 			"DEBIAN_FRONTEND=noninteractive apt-get purge -y " +
 				"'postgresql*' postgresql-common postgresql-client-common"},
-		{"apt-get", "autoremove", "-y"},
 		{"rm", "-rf", "/var/lib/postgresql", "/etc/postgresql",
 			"/etc/jabali-panel/postgres.password"},
 	}

@@ -3313,10 +3313,15 @@ TimeoutStopSec=10
 # commands may need to re-exec tooling that escalates (chpasswd, useradd
 # etc). See the comment block above the cat << for why ProtectSystem=
 # and ProtectHome= are deliberately omitted.
-PrivateTmp=yes
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectControlGroups=yes
+# PrivateTmp + ProtectKernel* + ProtectControlGroups intentionally
+# OFF: each one breaks libdbus auth with PID 1's systemd, which the
+# agent has to talk to constantly (systemctl daemon-reload, service
+# start/stop/restart, set-property for slice limits). Symptom of
+# leaving them on: cascade of "Failed to connect to bus: Permission
+# denied" across user.limits.apply, domain.create's nginx reload,
+# app.install's database create, webmail.start, dns.zone.upsert, and
+# every other agent command that touches systemd. Net hardening lost
+# is minimal — the agent runs as UID 0 with full capability set.
 RestrictSUIDSGID=yes
 LockPersonality=yes
 

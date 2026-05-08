@@ -36,6 +36,7 @@ import {
   Eye,
   EyeOff,
   File,
+  FileCode2,
   FileImage,
   FileText,
   MonitorPlay,
@@ -232,6 +233,7 @@ export const ArrowLeftOutlined = shim(ArrowLeft);
 
 // --- Files ---
 export const FileOutlined = shim(File);
+export const FileCodeOutlined = shim(FileCode2);
 export const FileImageOutlined = shim(FileImage);
 export const MonitorPlayOutlined = shim(MonitorPlay);
 export const FileTextOutlined = shim(FileText);

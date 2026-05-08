@@ -45,8 +45,8 @@ import {
   EyeOutlined,
   BgColorsOutlined,
   CloseOutlined,
-  CodeOutlined,
   CopyOutlined,
+  FileCodeOutlined,
   FileImageOutlined,
   FileOutlined,
   FileTextOutlined,
@@ -921,7 +921,7 @@ export const FileManagerPage = () => {
       return <MonitorPlayOutlined style={{ color: "#722ed1" }} />;
     }
     if (CODE_EXTS.has(ext)) {
-      return <CodeOutlined style={{ color: "#52c41a" }} />;
+      return <FileCodeOutlined style={{ color: "#52c41a" }} />;
     }
     if (STYLE_EXTS.has(ext)) {
       return <BgColorsOutlined style={{ color: "#13c2c2" }} />;

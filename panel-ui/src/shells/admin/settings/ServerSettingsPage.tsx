@@ -3,6 +3,7 @@ import {
   BgColorsOutlined,
   CheckOutlined,
   CloseOutlined,
+  DatabaseOutlined,
   GlobalOutlined,
   HddOutlined,
   MailOutlined,
@@ -48,6 +49,7 @@ function useNotify() {
 
 import { apiClient } from "../../../apiClient";
 import { BrandingCard } from "./BrandingCard";
+import { DatabasesCard } from "./DatabasesCard";
 import { DNSResolversCard } from "./DNSResolversCard";
 import { EmailCard } from "./EmailCard";
 import { PageTemplatesCard } from "./PageTemplatesCard";
@@ -71,6 +73,8 @@ type ServerSettings = {
   default_nspawn_image_version: string;
   disk_quota_enabled: boolean;
   upload_max_size_mb: number;
+  postgres_enabled: boolean;
+  postgres_max_connections_per_user: number;
   updated_at: string;
 };
 
@@ -699,7 +703,13 @@ const StorageSettingsTab = () => {
   );
 };
 
-type SettingsTabKey = "general" | "storage" | "dns" | "email" | "branding";
+type SettingsTabKey =
+  | "general"
+  | "storage"
+  | "dns"
+  | "email"
+  | "databases"
+  | "branding";
 
 const BrandingSettingsTab = () => (
   <>
@@ -759,6 +769,15 @@ export const ServerSettingsPage = () => {
             ),
           },
           {
+            key: "databases",
+            tab: (
+              <span>
+                <DatabaseOutlined style={{ marginRight: 8 }} />
+                Databases
+              </span>
+            ),
+          },
+          {
             key: "branding",
             tab: (
               <span>
@@ -775,6 +794,7 @@ export const ServerSettingsPage = () => {
         {activeTab === "storage" && <StorageSettingsTab />}
         {activeTab === "dns" && <DNSSettingsTab />}
         {activeTab === "email" && <EmailCard />}
+        {activeTab === "databases" && <DatabasesCard />}
         {activeTab === "branding" && <BrandingSettingsTab />}
       </Card>
     </div>

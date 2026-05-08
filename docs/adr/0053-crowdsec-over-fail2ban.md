@@ -1,7 +1,7 @@
 # ADR-0053: CrowdSec over fail2ban for behaviour-based IP blocking
 
 **Status:** Accepted (2026-04-24)
-**Driven by:** Plan `plans/m26-security-tab.md` (M26 Step 1 — security foundation), Debian trixie packaging audit on test VM 192.168.100.13.
+**Driven by:** Plan `plans/m26-security-tab.md` (M26 Step 1 — security foundation), Debian trixie packaging audit on test VM 192.168.100.150.
 
 ## Context
 
@@ -16,7 +16,7 @@ fail2ban edits iptables INPUT directly. CrowdSec separates *detection* (the agen
 
 ### Packaging — upstream repo, not Debian stock
 
-VM smoke on trixie 192.168.100.13 surfaced two packaging facts that drove a deviation from the original "use Debian-repo crowdsec" assumption:
+VM smoke on trixie 192.168.100.150 surfaced two packaging facts that drove a deviation from the original "use Debian-repo crowdsec" assumption:
 
 1. **Trixie ships CrowdSec 1.4.6**, not 1.5+. CrowdSec 1.4.x's `csconfig.LocalApiServerCfg` has NO `listen_socket` field — added in 1.5.x. Writing `api.server.listen_socket: /run/crowdsec/api.sock` on a 1.4.x install yields fatal yaml unmarshal at startup. ADR-0050 requires socket binding (Stalwart owns 127.0.0.1:8080), so 1.4.x is non-viable.
 2. **Debian's `crowdsec-firewall-bouncer` is a single meta-package**, not the variant pair `-iptables` / `-nftables`. The bouncer-detection logic (lsb_release-driven) only works against upstream packaging.

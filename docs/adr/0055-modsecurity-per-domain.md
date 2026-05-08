@@ -27,7 +27,7 @@ Install:
    Include /etc/modsecurity/crs/crs-setup.conf
    Include /usr/share/modsecurity-crs/rules/*.conf
    ```
-   Paths match Debian packaging (`/etc/nginx/modsecurity.conf`, `/etc/modsecurity/crs/crs-setup.conf`). Upstream-tarball paths (`/etc/modsecurity/modsecurity.conf`, `/usr/share/modsecurity-crs/crs-setup.conf`) do NOT match what Debian ships — confirmed by VM smoke on 192.168.100.13.
+   Paths match Debian packaging (`/etc/nginx/modsecurity.conf`, `/etc/modsecurity/crs/crs-setup.conf`). Upstream-tarball paths (`/etc/modsecurity/modsecurity.conf`, `/usr/share/modsecurity-crs/crs-setup.conf`) do NOT match what Debian ships — confirmed by VM smoke on 192.168.100.150.
 3. The `libnginx-mod-http-modsecurity` package's stock `/etc/nginx/modsecurity.conf` ships with `SecRuleEngine DetectionOnly`. Install.sh edits it to `SecRuleEngine Off` (Step 1 default — visible globally but blocks nothing). The global toggle flips to `On` in M26 Step 4 (admin Security tab).
 4. `modules-enabled/50-mod-http-modsecurity.conf` is a stock symlink (apt creates it). Install.sh leaves it alone.
 

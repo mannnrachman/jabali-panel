@@ -20,7 +20,7 @@ Core deltas from today:
 - `go build ./...` green.
 - `go test ./panel-agent/... ./panel-api/...` green (race flag on).
 - `cd panel-ui && npx tsc -b && npx vite build` green.
-- On the smoke-test host (a disposable LXC or VM — **not** `192.168.100.13` except during step 6 cutover): a user's vhost serves PHP via the per-user slice and `systemd-cgls /jabali.slice` shows workers + shell under the user's own child slice.
+- On the smoke-test host (a disposable LXC or VM — **not** `192.168.100.150` except during step 6 cutover): a user's vhost serves PHP via the per-user slice and `systemd-cgls /jabali.slice` shows workers + shell under the user's own child slice.
 - No user-visible regression: existing bound vhosts keep serving PHP during and after the change (step 6 is the risky cutover — plan a maintenance window).
 
 ---
@@ -493,7 +493,7 @@ Steps 7 and 8 are file-disjoint (7: agent + docs; 8: API + UI) and can run in pa
 - **Do NOT** write to `/sys/fs/cgroup` directly. Always go through systemd unit files or `systemd-run`.
 - **Do NOT** parse `systemctl` human-readable output in Go code — use `--property=NAME --value` output which is machine-stable.
 - **Do NOT** use the same PID file path as the global FPM master. The per-user master uses `/run/php/jabali-fpm-<user>.pid`.
-- **Do NOT** skip the smoke host. Step 6 cutover directly on `192.168.100.13` without a disposable host first is reckless.
+- **Do NOT** skip the smoke host. Step 6 cutover directly on `192.168.100.150` without a disposable host first is reckless.
 - **Do NOT** embed `%i` expansion inside the Slice= directive on the template itself — systemd doesn't expand specifiers in `[Service]`/`[Slice]` directives the same way. Use per-instance drop-ins as specified.
 - **Do NOT** auto-start `jabali-fpm@<user>.service` from the template's `[Install]` WantedBy — that would try to instantiate the template itself. Enable only concrete instances (`systemctl enable jabali-fpm@alice.service`).
 

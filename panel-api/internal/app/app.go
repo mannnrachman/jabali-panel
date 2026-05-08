@@ -491,6 +491,16 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Log:  deps.Log,
 			})
 		}
+		// M37 Phase 4: Postgres lifecycle admin endpoints (status +
+		// destructive uninstall). The toggle itself rides PATCH
+		// /admin/settings; these endpoints expose what the toggle
+		// alone can't reveal.
+		if deps.Agent != nil {
+			api.RegisterPostgresAdminRoutes(v1, api.PostgresAdminHandlerConfig{
+				Agent: deps.Agent,
+				Log:   deps.Log,
+			})
+		}
 		if deps.PageTemplates != nil {
 			api.RegisterPageTemplatesRoutes(v1, api.PageTemplatesHandlerConfig{
 				Repo: deps.PageTemplates,

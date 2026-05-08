@@ -2484,7 +2484,7 @@ RESAFTEREOF
   # its multi-line status block, resolvectl is SIGPIPE'd (exit 141), pipefail
   # surfaces 141, and — because these are bare assignments, not `local var=…`
   # which would mask the command-substitution exit — set -e kills the script
-  # silently (no _die, no _ok, no trap output). Saw it on 10.0.3.13 with
+  # silently (no _die, no _ok, no trap output). Saw it on 192.168.100.150 with
   # systemd 257 / resolvectl ~258.3. The `|| true` keeps the assignment
   # happy; the subsequent `case` on $dns_servers is the real gate.
   local dns_servers
@@ -7803,7 +7803,10 @@ main() {
   provision_mariadb
   install_mariadb_skip_networking
   install_redis
-  install_postgres
+  # M37 Phase 4: PostgreSQL is OPT-IN. install_postgres no longer runs on
+  # fresh install. Operator flips server_settings.postgres_enabled in
+  # the Databases tab; panel-api dispatches db.postgres.install which
+  # sources install.sh and runs install_postgres on demand.
   install_powerdns
   bootstrap_pdns_self_zone
   # M6.3: recursor owns loopback :53 and forwards panel-authoritative zones

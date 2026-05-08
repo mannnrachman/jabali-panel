@@ -128,7 +128,7 @@ This must precede the existing 80→443 redirect block. install.sh already owns 
 
 **Verification:**
 - Fresh install on a `.local` host: panel cert stays self-signed, no LE attempt; nginx still has the `/.well-known/acme-challenge/` location for forward-compat.
-- Fresh install on a routable host with A-record pointing here (test VM 192.168.100.13 won't qualify; live-VM smoke is Step 6): the location block is present, deploy-hook script is installed, but no LE attempt fires — Step 4 wires the trigger.
+- Fresh install on a routable host with A-record pointing here (test VM 192.168.100.150 won't qualify; live-VM smoke is Step 6): the location block is present, deploy-hook script is installed, but no LE attempt fires — Step 4 wires the trigger.
 
 ---
 

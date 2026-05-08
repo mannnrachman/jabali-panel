@@ -14,7 +14,7 @@
 
 ## Context
 
-M22 magic-link (ADR-0039) shipped end-to-end on 2026-04-21 — opaque single-use HMAC-SHA256 tokens, 60-second TTL, a WordPress mu-plugin in every install validating tokens via a panel callback. End-to-end verification on test VM `192.168.100.13` the same day exposed five separate connectivity / lifecycle gaps in one validation session, all stemming from the same root cause: the design requires a **persistent panel-side WordPress plugin** and an **HTTPS callback from WP back to the panel**.
+M22 magic-link (ADR-0039) shipped end-to-end on 2026-04-21 — opaque single-use HMAC-SHA256 tokens, 60-second TTL, a WordPress mu-plugin in every install validating tokens via a panel callback. End-to-end verification on test VM `192.168.100.150` the same day exposed five separate connectivity / lifecycle gaps in one validation session, all stemming from the same root cause: the design requires a **persistent panel-side WordPress plugin** and an **HTTPS callback from WP back to the panel**.
 
 The five gaps:
 
@@ -169,4 +169,4 @@ We replace the M22 magic-link mechanism (kept the public mint endpoint and the w
 7. `panel-api` boot logs contain no "magic-link key load failed" messages.
 8. ADR-0040 is `accepted`; ADR-0039 is `superseded by 0040`.
 9. `BLUEPRINT.md` reflects the rework status (REWORK IN-FLIGHT during the work, SHIPPED-AS-SSO-FILE after).
-10. Existing test VM (`192.168.100.13`) has the old M22 artefacts cleaned up per the teardown doc.
+10. Existing test VM (`192.168.100.150`) has the old M22 artefacts cleaned up per the teardown doc.

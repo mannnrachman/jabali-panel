@@ -1,6 +1,6 @@
 # M26 Step 1 — UFW + CrowdSec firewall chain layout spike
 
-Captured on test VM 192.168.100.13:2222 (Debian trixie, x86_64) after
+Captured on test VM 192.168.100.150:2222 (Debian trixie, x86_64) after
 fresh 'bash install.sh' run with M26 install_crowdsec + install_modsecurity
 + install_ufw landed.
 

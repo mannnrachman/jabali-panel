@@ -24,7 +24,7 @@ M10 ✅ (WordPress, the surface we're generalising). The
 
 - **Branch + commit, do not push.** Every step gets its own feature
   branch off `origin/main`; commit there, build, deploy to
-  `root@192.168.100.13` via scp/rsync, never `git push`. The user merges to
+  `root@192.168.100.150` via scp/rsync, never `git push`. The user merges to
   `main` themselves. Per memory `feedback_fetch_rebase_before_deploy`:
   before every build, run `git fetch origin main && git rebase
   origin/main` so the deploy reflects upstream and the next
@@ -48,7 +48,7 @@ M10 ✅ (WordPress, the surface we're generalising). The
   (panel↔agent JSON contracts). Hand-roll or sequential only — see
   `feedback_subagent_contract_drift`.
 - **Shipping cadence per step:** commit on a feature branch, build
-  binaries, scp + rsync to `root@192.168.100.13`, restart, smoke-test. The
+  binaries, scp + rsync to `root@192.168.100.150`, restart, smoke-test. The
   user runs `jabali update` whenever they want; for changes to outlive
   that, the commit must reach `origin/main` (user-driven merge).
 - **`install.sh` is truth:** if a step requires a new system package
@@ -141,7 +141,7 @@ After each step, before commit:
 1. `make test` green (race detector on).
 2. `cd panel-ui && npm test && npx tsc --noEmit && npm run lint` clean.
 3. Existing WordPress installs still work end-to-end on
-   `https://192.168.100.13` (smoke: list view loads, install modal opens,
+   `https://192.168.100.150` (smoke: list view loads, install modal opens,
    "open" link goes to `https://<domain>/<subdir>/`, delete works).
 4. `git fetch origin main && git rebase origin/main` succeeds without
    conflict before building binaries.
@@ -227,9 +227,9 @@ The tricky bits:
 ```bash
 go build ./... && make test
 # After deploy:
-ssh -p 2222 root@192.168.100.13 "mariadb jabali_panel -e 'SHOW CREATE TABLE \
+ssh -p 2222 root@192.168.100.150 "mariadb jabali_panel -e 'SHOW CREATE TABLE \
   application_installs\\G' | grep -E 'app_type|UNIQUE KEY'"
-ssh -p 2222 root@192.168.100.13 "mariadb jabali_panel -e 'SELECT * FROM \
+ssh -p 2222 root@192.168.100.150 "mariadb jabali_panel -e 'SELECT * FROM \
   schema_migrations'"
 # Both: app_type column present, unique on (domain_id,subdirectory,app_type),
 # schema_migrations row {version=46, dirty=0}.

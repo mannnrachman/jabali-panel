@@ -25,8 +25,8 @@
 //   export E2E_PASSWORD=...
 //   export E2E_M24_DOMAIN=ip-probe.example.com    # existing owned domain
 //   export E2E_M24_BOUND_IP=10.0.3.50             # secondary IP, pre-bound
-//   export E2E_M24_OTHER_IP=10.0.3.13             # server primary
-//   export E2E_M24_NS=10.0.3.13                   # auth nameserver
+//   export E2E_M24_OTHER_IP=192.168.100.150             # server primary
+//   export E2E_M24_NS=192.168.100.150                   # auth nameserver
 //   npm run test:e2e ip-manager.spec.ts
 
 import { execFileSync } from "node:child_process";

@@ -3,7 +3,7 @@
 **Branch:** `m25/unix-sockets`
 **Target:** 8 PR-sized steps across 4 waves.
 **Status:** **SHIPPED on branch (2026-04-23)** — all 8 steps committed; awaits live-VM smoke + merge to main. ADR-0050 accepted; runbook at `plans/m25-unix-sockets-runbook.md`. M25.1 follow-up tracks the two deferred items: MariaDB `skip-networking` (blocked on phpMyAdmin SSO socket awareness) and Kratos DSN flip (blocked on live-VM `kratos migrate sql` verification).
-**Originally:** Dispatch-ready. Opus adversarial review complete (3 CRITICAL + 5 HIGH folded in). Pre-dispatch investigations I1 + I2 resolved on live VM 192.168.100.13 + Debian trixie nginx 1.26.3.
+**Originally:** Dispatch-ready. Opus adversarial review complete (3 CRITICAL + 5 HIGH folded in). Pre-dispatch investigations I1 + I2 resolved on live VM 192.168.100.150 + Debian trixie nginx 1.26.3.
 
 ## Goal
 
@@ -15,7 +15,7 @@ Both gates closed; findings baked into the step definitions below.
 
 ### I1 — Stalwart port 8080 + 35181 ownership [RESOLVED]
 
-Investigated on live VM 192.168.100.13 via `ss -lntp` + `/proc/<pid>/cmdline` + curl probes.
+Investigated on live VM 192.168.100.150 via `ss -lntp` + `/proc/<pid>/cmdline` + curl probes.
 
 | Port | Listener | Identity | Source of binding |
 |---|---|---|---|
@@ -66,7 +66,7 @@ Both investigations green. **Plan is fully dispatch-ready** — Wave A (Step 1 f
 **Out of scope — must stay out**
 
 - **DNS-protocol services**: `pdns_server :5300` (loopback forwarder for recursor), `pdns_recursor :53`, `systemd-resolved :53` stubs — DNS protocol requires TCP/UDP; sockets don't apply.
-- **Public-facing services**: nginx `:80`/`:443`, sshd `:22`, Stalwart SMTP `:25`/`:465`/`:587`, IMAPS `:993`, POP3S `:995`, ManageSieve `:4190`, pdns auth `192.168.100.13:53` — all correctly public, not touched.
+- **Public-facing services**: nginx `:80`/`:443`, sshd `:22`, Stalwart SMTP `:25`/`:465`/`:587`, IMAPS `:993`, POP3S `:995`, ManageSieve `:4190`, pdns auth `192.168.100.150:53` — all correctly public, not touched.
 - **Cross-host deployments**: M25 assumes single-host per memory `project_arch_decisions.md`. Any future auth/DB split to separate hosts exits this pattern and requires a new plan.
 - **mTLS between backends**: currently panel-api uses TLS to talk to itself. Unix sockets obsolete this; no replacement mTLS is added — the socket permission model is the security boundary.
 
@@ -412,4 +412,4 @@ Before merging a wave's branches into `m25/unix-sockets`:
 **Review date:** 2026-04-23 (opus/architect adversarial pass).
 **Review verdict:** GO-WITH-FIXES → all 3 CRITICAL + 5 HIGH findings folded in.
 
-**Dispatch status (2026-04-23):** ✅ **READY**. Both pre-dispatch investigations (I1 Stalwart ports + I2 nginx syntax) completed on live VM 192.168.100.13 + Debian trixie nginx 1.26.3. Findings folded into the top "Pre-dispatch investigations — RESOLVED" section and Steps 3/4/5/7. Wave A (Step 1) dispatchable now.
+**Dispatch status (2026-04-23):** ✅ **READY**. Both pre-dispatch investigations (I1 Stalwart ports + I2 nginx syntax) completed on live VM 192.168.100.150 + Debian trixie nginx 1.26.3. Findings folded into the top "Pre-dispatch investigations — RESOLVED" section and Steps 3/4/5/7. Wave A (Step 1) dispatchable now.

@@ -133,6 +133,7 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 
 	prevHostname := current.Hostname
+	prevPostgresEnabled := current.PostgresEnabled
 	prevTimezone := current.Timezone
 	prevSSHPort := current.SSHPort
 	prevSSHPasswordAuth := current.SSHPasswordAuth
@@ -245,6 +246,27 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 				h.cfg.Log.Error("agent set_hostname failed", "err", err)
 			}
 		}()
+	}
+
+	// M37 Phase 4: Postgres opt-in. flip true → install + start;
+	// flip false → stop + disable (data preserved). Dispatch in
+	// the background — install can take up to ~60s on apt-get and
+	// the PATCH should not block the UI for that long. The DB row
+	// already reflects the operator intent; reconcile will eventually
+	// catch up on retry.
+	if current.PostgresEnabled != prevPostgresEnabled && h.cfg.Agent != nil {
+		go func(target bool) {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			method := "db.postgres.disable"
+			if target {
+				method = "db.postgres.install"
+			}
+			if _, err := h.cfg.Agent.Call(bgCtx, method, map[string]any{}); err != nil {
+				h.cfg.Log.Error("agent postgres lifecycle failed",
+					"method", method, "err", err)
+			}
+		}(current.PostgresEnabled)
 	}
 
 	// Apply timezone to the OS via agent if changed and not empty.

@@ -82,7 +82,7 @@ Branch: create `m27/crowdsec-extensions` off `origin/main`. Every subsequent ste
 1. `git fetch origin main && git checkout -b m27/crowdsec-extensions origin/main`
 2. **VM cscli-shape probe** — before writing any agent code, probe the installed CrowdSec's CLI surface so Step 2/3/4/6 handlers match reality. Save transcripts to `plans/m27-probe.txt` and commit it:
    ```bash
-   ssh -p 2222 root@192.168.100.13 "\
+   ssh -p 2222 root@192.168.100.150 "\
      cscli version && \
      cscli allowlists --help 2>&1 && \
      cscli allowlists add --help 2>&1 && \
@@ -119,7 +119,7 @@ ls docs/adr/006[123]-*.md  # → 3 files
 # install.sh syntax
 bash -n install.sh && echo OK
 
-# on fresh VM (ssh -p 2222 root@192.168.100.13):
+# on fresh VM (ssh -p 2222 root@192.168.100.150):
 bash install.sh  # idempotent re-run after M26 baseline
 ls -l /etc/crowdsec/profiles.yaml  # exists
 ls /var/lib/crowdsec/lua/templates/  # captcha.html + ban.html present
@@ -595,7 +595,7 @@ E2E (Playwright): extend `panel-ui/e2e/admin-security.spec.ts` (M26's spec):
 - Captcha toggle + provider select
 - Per-scenario override table saves
 
-VM smoke: full five-feature walkthrough on `ssh -p 2222 root@192.168.100.13`. Screenshot or transcript appended to the PR.
+VM smoke: full five-feature walkthrough on `ssh -p 2222 root@192.168.100.150`. Screenshot or transcript appended to the PR.
 
 ### Tasks
 

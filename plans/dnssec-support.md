@@ -54,7 +54,7 @@
 | **A** Foundation | 1 | serial | Must complete before Wave B |
 | **B** Core | 2, 3 | **parallel** | Both green → Wave C |
 | **C** Reconciler + UI | 4, 5 | **parallel** | Both green → Wave D |
-| **D** Ship | 6 | serial | Live smoke on 192.168.100.13 before merge |
+| **D** Ship | 6 | serial | Live smoke on 192.168.100.150 before merge |
 
 Wave B parallelism is safe: Step 2 (agent commands) and Step 3 (panel-API routes) touch disjoint packages. Step 3 stubs the agent calls against the already-registered command names — Step 1 locks the contract.
 

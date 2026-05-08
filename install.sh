@@ -3790,10 +3790,10 @@ pm.process_idle_timeout = 60s
 chdir = /opt/phpmyadmin/current
 security.limit_extensions = .php
 
-; phpMyAdmin needs access to its own code, /tmp for sessions, and
-; /etc/jabali-panel/sso.key is out of scope — phpMyAdmin only reads
-; creds from the UDS SSO validator, never the key itself.
-php_admin_value[open_basedir] = /opt/phpmyadmin:/tmp:/var/tmp
+; phpMyAdmin needs access to its own code, /tmp for sessions; the
+; same pool also serves Adminer at /var/www/jabali-adminer (M37).
+; sso.key is out of scope — creds via the UDS SSO validator only.
+php_admin_value[open_basedir] = /opt/phpmyadmin:/var/www/jabali-adminer:/tmp:/var/tmp
 POOLEOF
   chmod 0644 /etc/php/${pma_phpver}/fpm/pool.d/jabali-pma.conf
   _ok "pool config written"

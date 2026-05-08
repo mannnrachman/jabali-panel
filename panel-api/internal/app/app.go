@@ -383,6 +383,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				DatabaseGrants: deps.DatabaseUserGrants,
 				Users:          deps.Users,
 				Packages:       deps.Packages,
+				ServerSettings: deps.ServerSettings,
 				Agent:          deps.Agent,
 			})
 		}

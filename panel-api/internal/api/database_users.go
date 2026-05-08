@@ -19,12 +19,13 @@ import (
 
 // DatabaseUserHandlerConfig plugs the database user handlers into the router.
 type DatabaseUserHandlerConfig struct {
-	Databases       repository.DatabaseRepository
-	DatabaseUsers   repository.DatabaseUserRepository
-	DatabaseGrants  repository.DatabaseUserGrantRepository
-	Users           repository.UserRepository
-	Packages        repository.PackageRepository
-	Agent           agent.AgentInterface
+	Databases      repository.DatabaseRepository
+	DatabaseUsers  repository.DatabaseUserRepository
+	DatabaseGrants repository.DatabaseUserGrantRepository
+	Users          repository.UserRepository
+	Packages       repository.PackageRepository
+	ServerSettings repository.ServerSettingsRepository
+	Agent          agent.AgentInterface
 }
 
 const (
@@ -143,6 +144,10 @@ func privilegesToCanonicalString(privs []string) (string, error) {
 
 type createDatabaseUserRequest struct {
 	Username string `json:"username" binding:"required"`
+	// M37 Phase 3 — engine picks the DB-level backend the role lives
+	// in. Empty defaults to 'mariadb' (back-compat). 'postgres'
+	// requires server_settings.postgres_enabled.
+	Engine string `json:"engine,omitempty"`
 }
 
 type createDatabaseUserResponse struct {
@@ -181,6 +186,72 @@ type rotateDatabaseUserPasswordResponse struct {
 type updateDatabaseUserGrantRequest struct {
 	GrantLevel string   `json:"grant_level"`
 	Privileges []string `json:"privileges"`
+}
+
+// ---- M37 engine dispatch helpers ----
+//
+// dbUserCmd returns the agent command name for a (engine, action)
+// pair. action ∈ {drop, grant, revoke, rotate_password}. Centralised
+// so call sites stay small + dispatch table is in one place.
+func dbUserCmd(engine, action string) string {
+	if engine == "postgres" {
+		switch action {
+		case "drop":
+			return "db.postgres.drop_role"
+		case "grant":
+			return "db.postgres.grant"
+		case "revoke":
+			return "db.postgres.revoke"
+		case "rotate_password":
+			// pg has no separate rotate; create_role's idempotent
+			// upsert via DO block ALTERs the password if the role
+			// already exists.
+			return "db.postgres.create_role"
+		}
+	}
+	switch action {
+	case "drop":
+		return "db_user.drop"
+	case "grant":
+		return "db_user.grant"
+	case "revoke":
+		return "db_user.revoke"
+	case "rotate_password":
+		return "db_user.rotate_password"
+	}
+	return ""
+}
+
+// dbUserDropParams returns the param shape for a drop call. MariaDB
+// uses db_user_name; Postgres uses role.
+func dbUserDropParams(engine, username string) map[string]any {
+	if engine == "postgres" {
+		return map[string]any{"role": username}
+	}
+	return map[string]any{"db_user_name": username}
+}
+
+// dbUserGrantParams covers grant + revoke. MariaDB also takes a
+// grant_level (rw|ro) which Postgres maps to a single GRANT ALL
+// (per-table grants are deferred per ADR-0091).
+func dbUserGrantParams(engine, dbName, username, grantLevel string) map[string]any {
+	if engine == "postgres" {
+		return map[string]any{"db_name": dbName, "role": username}
+	}
+	return map[string]any{
+		"db_name":      dbName,
+		"db_user_name": username,
+		"grant_level":  grantLevel,
+	}
+}
+
+// dbUserRotateParams: MariaDB takes db_user_name+password; Postgres
+// reuses create_role's upsert path (role+password).
+func dbUserRotateParams(engine, username, password string) map[string]any {
+	if engine == "postgres" {
+		return map[string]any{"role": username, "password": password}
+	}
+	return map[string]any{"db_user_name": username, "password": password}
 }
 
 // ---- Handlers ----
@@ -393,12 +464,36 @@ func (h *databaseUserHandler) create(c *gin.Context) {
 		return
 	}
 
+	// M37 engine dispatch on user create.
+	engine := req.Engine
+	if engine == "" {
+		engine = "mariadb"
+	}
+	if engine != "mariadb" && engine != "postgres" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_engine"})
+		return
+	}
+	if engine == "postgres" && h.cfg.ServerSettings != nil {
+		settings, sErr := h.cfg.ServerSettings.Get(ctx)
+		if sErr != nil || settings == nil || !settings.PostgresEnabled {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "postgres_disabled"})
+			return
+		}
+	}
+
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	_, err = h.cfg.Agent.Call(agentCtx, "db_user.create", map[string]any{
-		"db_user_name": finalUsername,
-		"password":     plainPassword,
-	})
+	if engine == "mariadb" {
+		_, err = h.cfg.Agent.Call(agentCtx, "db_user.create", map[string]any{
+			"db_user_name": finalUsername,
+			"password":     plainPassword,
+		})
+	} else {
+		_, err = h.cfg.Agent.Call(agentCtx, "db.postgres.create_role", map[string]any{
+			"role":     finalUsername,
+			"password": plainPassword,
+		})
+	}
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
 		return
@@ -409,6 +504,7 @@ func (h *databaseUserHandler) create(c *gin.Context) {
 		ID:           ids.NewULID(),
 		UserID:       targetUserID,
 		Username:     finalUsername,
+		Engine:       engine,
 		PasswordHash: string(hash),
 		CreatedAt:    now,
 		UpdatedAt:    now,
@@ -418,7 +514,7 @@ func (h *databaseUserHandler) create(c *gin.Context) {
 		// roll back so state is consistent.
 		dropCtx, dropCancel := context.WithTimeout(ctx, 30*time.Second)
 		defer dropCancel()
-		_, _ = h.cfg.Agent.Call(dropCtx, "db_user.drop", map[string]any{"db_user_name": finalUsername})
+		_, _ = h.cfg.Agent.Call(dropCtx, dbUserCmd(engine, "drop"), dbUserDropParams(engine, finalUsername))
 		if isConflict(err) {
 			c.JSON(http.StatusConflict, gin.H{"error": "username_exists"})
 			return
@@ -529,11 +625,18 @@ func (h *databaseUserHandler) addGrant(c *gin.Context) {
 	}
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	_, err = h.cfg.Agent.Call(agentCtx, "db_user.grant", map[string]any{
-		"db_name":      db.Name,
-		"db_user_name": du.Username,
-		"privileges":   strings.Split(canonicalPrivileges, ","),
-	})
+	if du.Engine == "postgres" {
+		_, err = h.cfg.Agent.Call(agentCtx, "db.postgres.grant", map[string]any{
+			"db_name": db.Name,
+			"role":    du.Username,
+		})
+	} else {
+		_, err = h.cfg.Agent.Call(agentCtx, "db_user.grant", map[string]any{
+			"db_name":      db.Name,
+			"db_user_name": du.Username,
+			"privileges":   strings.Split(canonicalPrivileges, ","),
+		})
+	}
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
 		return
@@ -550,14 +653,21 @@ func (h *databaseUserHandler) addGrant(c *gin.Context) {
 		UpdatedAt:      now,
 	}
 	if err := h.cfg.DatabaseGrants.Create(ctx, g); err != nil {
-		// Roll back the MariaDB grant we just made.
+		// Roll back the grant we just made (engine-aware).
 		revokeCtx, revokeCancel := context.WithTimeout(ctx, 30*time.Second)
 		defer revokeCancel()
-		_, _ = h.cfg.Agent.Call(revokeCtx, "db_user.revoke", map[string]any{
-			"db_name":      db.Name,
-			"db_user_name": du.Username,
-			"privileges":   strings.Split(canonicalPrivileges, ","),
-		})
+		if du.Engine == "postgres" {
+			_, _ = h.cfg.Agent.Call(revokeCtx, "db.postgres.revoke", map[string]any{
+				"db_name": db.Name,
+				"role":    du.Username,
+			})
+		} else {
+			_, _ = h.cfg.Agent.Call(revokeCtx, "db_user.revoke", map[string]any{
+				"db_name":      db.Name,
+				"db_user_name": du.Username,
+				"privileges":   strings.Split(canonicalPrivileges, ","),
+			})
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
@@ -614,11 +724,18 @@ func (h *databaseUserHandler) deleteGrant(c *gin.Context) {
 	}
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	_, err = h.cfg.Agent.Call(agentCtx, "db_user.revoke", map[string]any{
-		"db_name":      db.Name,
-		"db_user_name": du.Username,
-		"privileges":   strings.Split(g.Privileges, ","),
-	})
+	if du.Engine == "postgres" {
+		_, err = h.cfg.Agent.Call(agentCtx, "db.postgres.revoke", map[string]any{
+			"db_name": db.Name,
+			"role":    du.Username,
+		})
+	} else {
+		_, err = h.cfg.Agent.Call(agentCtx, "db_user.revoke", map[string]any{
+			"db_name":      db.Name,
+			"db_user_name": du.Username,
+			"privileges":   strings.Split(g.Privileges, ","),
+		})
+	}
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
 		return
@@ -682,24 +799,29 @@ func (h *databaseUserHandler) delete(c *gin.Context) {
 		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 
-		_, err = h.cfg.Agent.Call(agentCtx, "db_user.revoke", map[string]any{
-			"db_name":      db.Name,
-			"db_user_name": du.Username,
-			"privileges":   strings.Split(grant.Privileges, ","),
-		})
+		if du.Engine == "postgres" {
+			_, err = h.cfg.Agent.Call(agentCtx, "db.postgres.revoke", map[string]any{
+				"db_name": db.Name,
+				"role":    du.Username,
+			})
+		} else {
+			_, err = h.cfg.Agent.Call(agentCtx, "db_user.revoke", map[string]any{
+				"db_name":      db.Name,
+				"db_user_name": du.Username,
+				"privileges":   strings.Split(grant.Privileges, ","),
+			})
+		}
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
 			return
 		}
 	}
 
-	// Drop user from MariaDB
+	// Drop user from the engine it lives on.
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	_, err = h.cfg.Agent.Call(agentCtx, "db_user.drop", map[string]any{
-		"db_user_name": du.Username,
-	})
+	_, err = h.cfg.Agent.Call(agentCtx, dbUserCmd(du.Engine, "drop"), dbUserDropParams(du.Engine, du.Username))
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
 		return
@@ -770,10 +892,17 @@ func (h *databaseUserHandler) rotatePassword(c *gin.Context) {
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	_, err = h.cfg.Agent.Call(agentCtx, "db_user.rotate_password", map[string]any{
-		"db_user_name": du.Username,
-		"new_password": plainPassword,
-	})
+	if du.Engine == "postgres" {
+		_, err = h.cfg.Agent.Call(agentCtx, "db.postgres.create_role", map[string]any{
+			"role":     du.Username,
+			"password": plainPassword,
+		})
+	} else {
+		_, err = h.cfg.Agent.Call(agentCtx, "db_user.rotate_password", map[string]any{
+			"db_user_name": du.Username,
+			"new_password": plainPassword,
+		})
+	}
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
 		return
@@ -883,11 +1012,18 @@ func (h *databaseUserHandler) updateGrant(c *gin.Context) {
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	_, err = h.cfg.Agent.Call(agentCtx, "db_user.revoke", map[string]any{
-		"db_name":      db.Name,
-		"db_user_name": du.Username,
-		"grant_level":  grant.GrantLevel,
-	})
+	if du.Engine == "postgres" {
+		_, err = h.cfg.Agent.Call(agentCtx, "db.postgres.revoke", map[string]any{
+			"db_name": db.Name,
+			"role":    du.Username,
+		})
+	} else {
+		_, err = h.cfg.Agent.Call(agentCtx, "db_user.revoke", map[string]any{
+			"db_name":      db.Name,
+			"db_user_name": du.Username,
+			"grant_level":  grant.GrantLevel,
+		})
+	}
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
 		return
@@ -897,20 +1033,35 @@ func (h *databaseUserHandler) updateGrant(c *gin.Context) {
 	agentCtx, cancel = context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	_, err = h.cfg.Agent.Call(agentCtx, "db_user.grant", map[string]any{
-		"db_name":      db.Name,
-		"db_user_name": du.Username,
-		"grant_level":  req.GrantLevel,
-	})
-	if err != nil {
-		// If grant fails, try to restore old grant
-		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		h.cfg.Agent.Call(agentCtx, "db_user.grant", map[string]any{
+	if du.Engine == "postgres" {
+		_, err = h.cfg.Agent.Call(agentCtx, "db.postgres.grant", map[string]any{
+			"db_name": db.Name,
+			"role":    du.Username,
+		})
+	} else {
+		_, err = h.cfg.Agent.Call(agentCtx, "db_user.grant", map[string]any{
 			"db_name":      db.Name,
 			"db_user_name": du.Username,
-			"privileges":   strings.Split(grant.Privileges, ","),
+			"grant_level":  req.GrantLevel,
 		})
+	}
+	if err != nil {
+		// Restore-old-grant best-effort path. Mariadb path uses
+		// privileges; PG path re-grants ALL.
+		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if du.Engine == "postgres" {
+			h.cfg.Agent.Call(agentCtx, "db.postgres.grant", map[string]any{
+				"db_name": db.Name,
+				"role":    du.Username,
+			})
+		} else {
+			h.cfg.Agent.Call(agentCtx, "db_user.grant", map[string]any{
+				"db_name":      db.Name,
+				"db_user_name": du.Username,
+				"privileges":   strings.Split(grant.Privileges, ","),
+			})
+		}
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
 		return
 	}

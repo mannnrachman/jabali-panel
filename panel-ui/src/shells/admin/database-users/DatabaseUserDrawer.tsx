@@ -3,12 +3,12 @@
 // password modal is shown — the form drawer closes first so the
 // modal isn't trapped inside it.
 import { useEffect, useState } from "react";
-import { Button, Drawer, Form, Grid, Input, Space, message } from "antd";
+import { Button, Drawer, Form, Grid, Input, Segmented, Space, message } from "antd";
 
 import { apiClient } from "../../../apiClient";
 import { DatabaseUserPasswordModal } from "../../../components/DatabaseUserPasswordModal";
 
-type CreateInput = { username: string };
+type CreateInput = { username: string; engine?: "mariadb" | "postgres" };
 type CreateResponse = { id: string; username: string; password: string };
 
 export interface DatabaseUserDrawerProps {
@@ -59,7 +59,10 @@ export const DatabaseUserDrawer = ({
         placement="right"
         destroyOnClose
       >
-        <Form<CreateInput> form={form} layout="vertical" onFinish={onFinish}>
+        <Form<CreateInput> form={form} layout="vertical" onFinish={onFinish} initialValues={{ engine: "mariadb" }}>
+          <Form.Item label="Engine" name="engine" tooltip="MariaDB is the default. PostgreSQL must be enabled by an admin in Server Settings.">
+            <Segmented options={[{ label: "MariaDB", value: "mariadb" }, { label: "PostgreSQL", value: "postgres" }]} />
+          </Form.Item>
           <Form.Item
             label="Username"
             name="username"

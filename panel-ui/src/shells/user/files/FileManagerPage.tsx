@@ -43,8 +43,16 @@ import {
   DownOutlined,
   EditOutlined,
   EyeOutlined,
+  BgColorsOutlined,
+  CloseOutlined,
+  CodeOutlined,
+  CopyOutlined,
+  FileImageOutlined,
   FileOutlined,
+  FileTextOutlined,
+  FolderInputOutlined,
   FolderOutlined,
+  MonitorPlayOutlined,
   LockOutlined,
   MoreOutlined,
   PlusOutlined,
@@ -850,6 +858,80 @@ export const FileManagerPage = () => {
     },
   ];
 
+  // --- icon coloring ---
+  // Folders are warm yellow (matches the AntD breadcrumb folder
+  // glyph), generic files are blue, and recognised image files get
+  // a dedicated picture-frame icon in magenta. Extension-only
+  // detection is intentional — we don't want to read file bytes
+  // just to colour the row.
+  const IMAGE_EXTS = new Set([
+    "jpg",
+    "jpeg",
+    "png",
+    "gif",
+    "webp",
+    "svg",
+    "bmp",
+    "ico",
+    "avif",
+    "heic",
+    "tiff",
+    "tif",
+  ]);
+  const VIDEO_EXTS = new Set([
+    "mp4",
+    "mov",
+    "mkv",
+    "avi",
+    "webm",
+    "flv",
+    "wmv",
+    "m4v",
+    "mpeg",
+    "mpg",
+    "ogv",
+    "3gp",
+  ]);
+  const CODE_EXTS = new Set([
+    "php",
+    "phtml",
+    "html",
+    "htm",
+    "xhtml",
+  ]);
+  const STYLE_EXTS = new Set(["css", "scss", "sass", "less"]);
+  const TEXT_EXTS = new Set([
+    "txt",
+    "md",
+    "log",
+    "rst",
+    "readme",
+    "rtf",
+  ]);
+  const renderEntryIcon = (entry: FileEntry) => {
+    if (entry.is_dir) {
+      return <FolderOutlined style={{ color: "#faad14" }} />;
+    }
+    const dot = entry.name.lastIndexOf(".");
+    const ext = dot >= 0 ? entry.name.slice(dot + 1).toLowerCase() : "";
+    if (IMAGE_EXTS.has(ext)) {
+      return <FileImageOutlined style={{ color: "#eb2f96" }} />;
+    }
+    if (VIDEO_EXTS.has(ext)) {
+      return <MonitorPlayOutlined style={{ color: "#722ed1" }} />;
+    }
+    if (CODE_EXTS.has(ext)) {
+      return <CodeOutlined style={{ color: "#52c41a" }} />;
+    }
+    if (STYLE_EXTS.has(ext)) {
+      return <BgColorsOutlined style={{ color: "#13c2c2" }} />;
+    }
+    if (TEXT_EXTS.has(ext)) {
+      return <FileTextOutlined style={{ color: "#fa8c16" }} />;
+    }
+    return <FileOutlined style={{ color: "#1677ff" }} />;
+  };
+
   // --- table columns ---
   const columns = [
     {
@@ -862,7 +944,7 @@ export const FileManagerPage = () => {
           style={{ cursor: entry.is_dir ? "pointer" : "default" }}
           onClick={() => entry.is_dir && handleRowClick(entry)}
         >
-          {entry.is_dir ? <FolderOutlined /> : <FileOutlined />}
+          {renderEntryIcon(entry)}
           <Text>{entry.name}</Text>
           {entry.is_symlink && <Text type="secondary">(link)</Text>}
         </Space>
@@ -1013,19 +1095,19 @@ export const FileManagerPage = () => {
           >
             Download
           </Button>
-          <Button onClick={handleCopyToClipboard}>
+          <Button icon={<CopyOutlined />} onClick={handleCopyToClipboard}>
             Copy
           </Button>
-          <Button onClick={() => setBulkMoveOpen(true)}>
+          <Button icon={<FolderInputOutlined />} onClick={() => setBulkMoveOpen(true)}>
             Move to…
           </Button>
-          <Button onClick={() => setBulkChmodOpen(true)}>
+          <Button icon={<LockOutlined />} onClick={() => setBulkChmodOpen(true)}>
             Permissions
           </Button>
-          <Button danger onClick={handleBulkDelete}>
+          <Button icon={<DeleteOutlined />} danger onClick={handleBulkDelete}>
             Delete
           </Button>
-          <Button type="text" onClick={() => setSelectedNames([])}>
+          <Button type="text" icon={<CloseOutlined />} onClick={() => setSelectedNames([])}>
             Clear
           </Button>
         </div>

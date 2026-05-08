@@ -143,25 +143,24 @@ class JabaliAdminerSSO {
             return htmlspecialchars((string)$v, ENT_QUOTES);
         };
 
-        // action="/jabali-adminer/" strips the ?token=... query so a
-        // refresh after login doesn't replay the (already-consumed)
-        // token through the validate endpoint. Adminer's auth picks
-        // up auth[*] from $_POST regardless of query string.
-        echo '<form id="jabali-sso" action="/jabali-adminer/" method="post" style="display:none">';
+        // Adminer wraps loginForm() output inside its own <form
+        // action="" method="post">. HTML forbids nested forms, so
+        // browsers strip the inner one — getElementById then returns
+        // null and the auto-submit script crashes. Output hidden
+        // <input>s directly into the parent form and submit it.
         echo '<input type="hidden" name="auth[driver]"   value="' . $h($c['driver']) . '">';
         echo '<input type="hidden" name="auth[server]"   value="' . $h($c['server']) . '">';
         echo '<input type="hidden" name="auth[username]" value="' . $h($c['username']) . '">';
         echo '<input type="hidden" name="auth[password]" value="' . $h($c['password']) . '">';
         echo '<input type="hidden" name="auth[db]"       value="' . $h($c['db']) . '">';
         echo '<noscript><button type="submit">Continue</button></noscript>';
-        echo '</form>';
         echo '<p style="text-align:center;padding:2rem">Signing into Adminer via Jabali SSO…</p>';
         // Adminer ships a strict CSP (script-src ... nonce-... strict-dynamic).
-        // Inline scripts WITHOUT the nonce are blocked. Adminer exposes the
-        // current request nonce via the nonce() helper which returns the
-        // full attribute string (` nonce="..."`).
+        // Inline scripts WITHOUT the matching nonce are blocked. Use
+        // Adminer's nonce() helper which returns the full attribute
+        // string (` nonce="..."`).
         $nonceAttr = function_exists("nonce") ? nonce() : "";
-        echo '<script' . $nonceAttr . '>document.getElementById("jabali-sso").submit();</script>';
+        echo '<script' . $nonceAttr . '>(document.querySelector("form[method=post]")||document.forms[0]).submit();</script>';
         return true;
     }
 

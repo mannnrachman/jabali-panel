@@ -36,7 +36,9 @@ import {
   Eye,
   EyeOff,
   File,
+  FileImage,
   FileText,
+  MonitorPlay,
   FlaskConical,
   Folder,
   Globe,
@@ -194,6 +196,7 @@ export const BookOutlined = shim(Book);
 export const BugOutlined = shim(Bug);
 export const LifeBuoyOutlined = shim(LifeBuoy);
 export const DragOutlined = shim(Move);
+export const FolderInputOutlined = shim(Move);
 export const LinkOutlined = shim(LinkIcon);
 export const LoginOutlined = shim(LogIn);
 export const LogoutOutlined = shim(LogOut);
@@ -229,6 +232,8 @@ export const ArrowLeftOutlined = shim(ArrowLeft);
 
 // --- Files ---
 export const FileOutlined = shim(File);
+export const FileImageOutlined = shim(FileImage);
+export const MonitorPlayOutlined = shim(MonitorPlay);
 export const FileTextOutlined = shim(FileText);
 export const ExportOutlined = shim(ExternalLink);
 

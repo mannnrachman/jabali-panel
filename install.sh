@@ -6106,11 +6106,14 @@ cleanup_apparmor_legacy() {
     fi
   done
   if [[ $restart_needed -eq 1 ]]; then
+    # Real unit names: jabali-webmail (bulwark binary), jabali-stalwart
+    # (Stalwart binary). Don't reference stalwart-mail.service or
+    # jabali-bulwark.service — they don't exist.
     systemctl restart jabali-agent >/dev/null 2>&1 || true
     systemctl restart jabali-panel >/dev/null 2>&1 || true
-    systemctl restart jabali-bulwark >/dev/null 2>&1 || true
+    systemctl restart jabali-webmail >/dev/null 2>&1 || true
     systemctl restart jabali-kratos >/dev/null 2>&1 || true
-    systemctl restart stalwart-mail >/dev/null 2>&1 || true
+    systemctl restart jabali-stalwart >/dev/null 2>&1 || true
   fi
 }
 

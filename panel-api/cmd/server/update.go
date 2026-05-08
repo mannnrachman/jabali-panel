@@ -264,6 +264,28 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 					"systemctl daemon-reload; "+
 					"systemctl enable --now jabali-sso-reaper.timer")
 		}},
+		{"sync OnFailure + restart drop-ins", func() error {
+			// Re-render /etc/systemd/system/<unit>.service.d/10-jabali-restart.conf
+			// for every critical service (nginx/mariadb/pdns/redis/crowdsec/
+			// systemd-resolved + jabali daemons). Idempotent — the helper
+			// hashes before/after and only daemon-reloads on diff.
+			//
+			// Without this on the update path, hosts installed before the
+			// units list grew (e.g. before the jabali-* additions) never
+			// pick up the OnFailure=jabali-notify@%n hook for those units,
+			// so a service.down event only fires from the polling
+			// service_down event source — which is up to a 60s window
+			// behind the actual crash.
+			installSh := repoDir + "/install.sh"
+			if _, err := os.Stat(installSh); err != nil {
+				return nil
+			}
+			if err := run("", "bash", "-c",
+				"source "+installSh+" && install_restart_drop_ins"); err != nil {
+				fmt.Printf("  (install_restart_drop_ins failed: %v — continuing)\n", err)
+			}
+			return nil
+		}},
 		{"sync apparmor profiles", func() error {
 			// Re-render every jabali AppArmor profile from
 			// install/apparmor/ + reload distro system profiles

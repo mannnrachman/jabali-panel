@@ -6368,6 +6368,16 @@ install_restart_drop_ins() {
     redis-server.service
     crowdsec.service
     systemd-resolved.service
+    # Jabali daemons — OnFailure=jabali-notify@%n routes a service.down
+    # M14 envelope when StartLimit is hit. Unit files already declare
+    # Restart=on-failure; the drop-in's Restart=/RestartSec= lines are
+    # redundant-but-harmless. Real win: native systemd → notification
+    # bridge complementing the polling service_down event source.
+    jabali-agent.service
+    jabali-panel.service
+    jabali-stalwart.service
+    jabali-webmail.service
+    jabali-kratos.service
   )
 
   # crowdsec-firewall-bouncer is package-variant-named. Pick whichever

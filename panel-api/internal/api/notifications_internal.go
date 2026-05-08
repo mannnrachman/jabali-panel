@@ -83,6 +83,12 @@ var enqueueAllowedEventKinds = map[string]struct{}{
 	"postgres.service_down":          {},
 	"postgres.disk_high":             {},
 	"postgres.connections_exhausted": {},
+	// log-tail event source emits these from journalctl scan.
+	"agent.dispatch.failure":  {},
+	"reconciler.error":        {},
+	"agent.unreachable":       {},
+	"notifications.dlq.nonzero": {},
+	"panel.api.error":         {},
 }
 
 var enqueueAllowedSeverities = map[string]struct{}{

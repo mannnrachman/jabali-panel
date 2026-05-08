@@ -178,6 +178,41 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 		Severity:    "error",
 		DefaultOn:   true,
 	},
+	{
+		Kind:        "agent.dispatch.failure",
+		Label:       "Agent dispatch failure",
+		Description: "panel-api → agent RPC returned an internal error. One envelope per error bucket per 30-min window. Common causes: systemctl/DBus permission issues, missing helper binaries, exit-status leaks from wrapped commands.",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "reconciler.error",
+		Label:       "Reconciler error",
+		Description: "A ReconcileAll pass logged a level=ERROR. Could be a domain rebuild that crashed, an SSL cert provisioning rollback, a managed-IP rebind that the kernel rejected, etc.",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "agent.unreachable",
+		Label:       "Agent unreachable",
+		Description: "panel-api couldn't reach /run/jabali/agent.sock. Usually means jabali-agent.service crashed or is restart-looping; check `systemctl status jabali-agent`.",
+		Severity:    "error",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "notifications.dlq.nonzero",
+		Label:       "Notifications DLQ non-empty",
+		Description: "The M14 dead-letter queue has unprocessed envelopes. Means at least one channel send (Slack/email/web push) failed after the dispatcher retry budget. DLQ is a marker of channel rot — operator should inspect and either reset or disable the offending channel.",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "panel.api.error",
+		Label:       "panel-api 5xx",
+		Description: "An HTTP request to /api/v1/* returned 5xx. Bucketed per endpoint+status pair; one envelope per bucket per 30-min window.",
+		Severity:    "warning",
+		DefaultOn:   false,
+	},
 }
 
 // LookupNotificationEventKind returns the metadata for a known kind

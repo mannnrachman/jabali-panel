@@ -117,6 +117,7 @@ func Start(ctx context.Context, d Deps) {
 	go runSnuffleupagusIngest(ctx, d)
 	go runSecurityDecision(ctx, d)
 	go runPostgresMonitor(ctx, d)
+	go runPanelLogTail(ctx, d)
 	// domain_expiry + backup_fail are stubs — see the stub files in
 	// this package.
 }

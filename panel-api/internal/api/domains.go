@@ -205,6 +205,11 @@ type domainListRow struct {
 	// itself is missing (fresh install before a v6 was added etc.).
 	ListenIPv4 *ipSummary `json:"listen_ipv4,omitempty"`
 	ListenIPv6 *ipSummary `json:"listen_ipv6,omitempty"`
+	// Bytes30d is the prior-30-day bandwidth total in bytes harvested
+	// by the M13.1 goaccess pipeline. Populated on every list response
+	// when BWDaily is wired; omitted otherwise so older clients stay
+	// happy and a fresh install (no data yet) renders 0 not "missing".
+	Bytes30d *uint64 `json:"bytes_30d,omitempty"`
 }
 
 // ipSummary is the denormalized {id, address} blob the UI consumes for
@@ -266,6 +271,25 @@ func (h *domainHandler) list(c *gin.Context) {
 		}
 		// On SSL lookup error we drop the badge silently — list response
 		// still ships flat domain data rather than 500ing.
+	}
+
+	// M13.1: denormalize prior-30-day bandwidth bytes onto each row so
+	// the admin/user Domains table can render the column without an
+	// N+1 fetch. Single batch lookup against bw_daily; on error we
+	// drop the field rather than 500ing — older clients ignore it.
+	if h.cfg.BWDaily != nil && len(domains) > 0 {
+		now := time.Now().UTC()
+		from := now.AddDate(0, 0, -29)
+		domainIDs := make([]string, len(domains))
+		for i := range domains {
+			domainIDs[i] = domains[i].ID
+		}
+		if bw, bwErr := h.cfg.BWDaily.SumByDomainIDs(c.Request.Context(), domainIDs, from, now); bwErr == nil {
+			for i := range rows {
+				v := bw[rows[i].ID]
+				rows[i].Bytes30d = &v
+			}
+		}
 	}
 
 	// Denormalize the owning user's Linux username onto each row so the

@@ -30,6 +30,12 @@ type BWDailyRepository interface {
 	// (this month)" column.
 	SumByDomainForUser(ctx context.Context, userID string, from, to time.Time) (map[string]uint64, error)
 
+	// SumByDomainIDs is the batch-by-id variant for the admin domain
+	// list — caller already has the page's domain IDs, so the
+	// owner-side restriction is unnecessary. Returns map keyed by
+	// domain_id; absent keys mean zero traffic.
+	SumByDomainIDs(ctx context.Context, ids []string, from, to time.Time) (map[string]uint64, error)
+
 	// SumPerDayForDomain returns daily series (date → bytes) for a
 	// single domain over [from, to]. Drives sparkline charts on the
 	// Domain detail card.
@@ -90,6 +96,32 @@ func (r *bwDailyRepo) SumByDomainForUser(ctx context.Context, userID string, fro
 		Group("bw_daily.domain_id")
 	if !to.IsZero() {
 		q = q.Where("bw_daily.day <= ?", to)
+	}
+	if err := q.Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make(map[string]uint64, len(rows))
+	for _, r := range rows {
+		out[r.DomainID] = r.Bytes
+	}
+	return out, nil
+}
+
+func (r *bwDailyRepo) SumByDomainIDs(ctx context.Context, ids []string, from, to time.Time) (map[string]uint64, error) {
+	if len(ids) == 0 {
+		return map[string]uint64{}, nil
+	}
+	var rows []struct {
+		DomainID string `gorm:"column:domain_id"`
+		Bytes    uint64 `gorm:"column:bytes"`
+	}
+	q := r.db.WithContext(ctx).Table("bw_daily").
+		Select("domain_id, COALESCE(SUM(bytes_total),0) AS bytes").
+		Where("domain_id IN ?", ids).
+		Where("day >= ?", from).
+		Group("domain_id")
+	if !to.IsZero() {
+		q = q.Where("day <= ?", to)
 	}
 	if err := q.Scan(&rows).Error; err != nil {
 		return nil, err

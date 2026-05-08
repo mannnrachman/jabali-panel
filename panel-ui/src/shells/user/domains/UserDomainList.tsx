@@ -23,6 +23,7 @@ import { apiClient } from "../../../apiClient";
 import { columnSearchProps } from "../../../components/columnSearch";
 import { RowActionButton } from "../../../components/RowActionButton";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
+import { humanBytes } from "../../../utils/bytes";
 import { useDeleteMutation } from "../../../hooks/useQueries";
 import { useTableURL } from "../../../hooks/useTableURL";
 import { DomainSettingsButton } from "../../DomainSettingsButton";
@@ -79,6 +80,7 @@ export type Domain = {
     | null;
   ssl_state?: string;
   email_enabled?: boolean;
+  bytes_30d?: number;
   created_at: string;
   updated_at: string;
 };
@@ -189,6 +191,11 @@ export const UserDomainList = () => {
             render={(state?: string) => (
               <Tag color={getSSLTagColor(state)}>{getSSLTagLabel(state)}</Tag>
             )}
+          />
+          <Table.Column<Domain>
+            dataIndex="bytes_30d"
+            title="BW (30d)"
+            render={(v: number | undefined) => humanBytes(v ?? 0)}
           />
           <Table.Column<Domain>
             title="Actions"

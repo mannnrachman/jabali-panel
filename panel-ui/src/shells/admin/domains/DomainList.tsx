@@ -21,6 +21,7 @@ import type { SorterResult } from "antd/es/table/interface";
 import { apiClient } from "../../../apiClient";
 import { columnSearchProps } from "../../../components/columnSearch";
 import { RowActionButton } from "../../../components/RowActionButton";
+import { humanBytes } from "../../../utils/bytes";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useDeleteMutation } from "../../../hooks/useQueries";
 import { useTableURL } from "../../../hooks/useTableURL";
@@ -87,6 +88,7 @@ export type Domain = {
   is_panel_primary?: boolean;
   ssl_enabled?: boolean;
   ssl?: SSLBadge | null;
+  bytes_30d?: number;
   nginx_custom_directives: string;
   redirect_all_to?: string | null;
   redirect_all_type?: string | null;
@@ -228,6 +230,11 @@ export const DomainList = () => {
             dataIndex="ssl"
             title="SSL"
             render={(ssl: SSLBadge | null | undefined) => renderSSL(ssl)}
+          />
+          <Table.Column<Domain>
+            dataIndex="bytes_30d"
+            title="BW (30d)"
+            render={(v: number | undefined) => humanBytes(v ?? 0)}
           />
           <Table.Column<Domain>
             title="Actions"

@@ -8,6 +8,7 @@ import {
   Divider,
   Form,
   Input,
+  Space,
   Spin,
   Switch,
   Typography,
@@ -18,6 +19,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router";
 
 import { useOneQuery, useUpdateMutation } from "../../../hooks/useQueries";
+import { DomainBandwidthCard } from "../../../components/DomainBandwidthCard";
 import type { Domain } from "./DomainList";
 import { DomainEmailSection } from "./DomainEmailSection";
 import { DomainListenIPSection } from "./DomainListenIPSection";
@@ -81,6 +83,8 @@ export const DomainEdit = () => {
   }
 
   return (
+    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+    {id && <DomainBandwidthCard domainId={id} />}
     <Card>
       <Typography.Title level={3} style={{ marginTop: 0 }}>
         Edit domain
@@ -157,5 +161,6 @@ export const DomainEdit = () => {
         </>
       )}
     </Card>
+    </Space>
   );
 };

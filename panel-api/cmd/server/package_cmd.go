@@ -75,15 +75,20 @@ func newPackageListCmd() *cobra.Command {
 
 func newPackageCreateCmd() *cobra.Command {
 	var (
-		name       string
-		diskMB     uint32
-		bwMB       uint32
-		domains    uint32
-		emails     uint32
-		databases  uint32
-		ftp        uint32
-		sshEnabled bool
-		cgiEnabled bool
+		name        string
+		diskMB      uint32
+		bwMB        uint32
+		domains     uint32
+		emails      uint32
+		databases   uint32
+		ftp         uint32
+		cpuPercent  uint32
+		memoryMB    uint32
+		ioReadMbps  uint32
+		ioWriteMbps uint32
+		maxTasks    uint32
+		sshEnabled  bool
+		cgiEnabled  bool
 	)
 
 	cmd := &cobra.Command{
@@ -108,6 +113,11 @@ func newPackageCreateCmd() *cobra.Command {
 				MaxEmailAccounts: emails,
 				MaxDatabases:     databases,
 				MaxFTPAccounts:   ftp,
+				CPUQuotaPercent:  cpuPercent,
+				MemoryLimitMB:    memoryMB,
+				IOReadMbps:       ioReadMbps,
+				IOWriteMbps:      ioWriteMbps,
+				MaxTasks:         maxTasks,
 				SSHEnabled:       sshEnabled,
 				CGIEnabled:       cgiEnabled,
 				CreatedAt:        now,
@@ -134,6 +144,11 @@ func newPackageCreateCmd() *cobra.Command {
 	cmd.Flags().Uint32Var(&emails, "emails", 0, "max email accounts (0=unlimited)")
 	cmd.Flags().Uint32Var(&databases, "databases", 0, "max databases (0=unlimited)")
 	cmd.Flags().Uint32Var(&ftp, "ftp", 0, "max FTP accounts (0=unlimited)")
+	cmd.Flags().Uint32Var(&cpuPercent, "cpu", 0, "CPU quota percent across all cores (0=unlimited)")
+	cmd.Flags().Uint32Var(&memoryMB, "memory-mb", 0, "memory limit in MB (0=unlimited)")
+	cmd.Flags().Uint32Var(&ioReadMbps, "io-read-mbps", 0, "disk read bandwidth limit in MB/s (0=unlimited)")
+	cmd.Flags().Uint32Var(&ioWriteMbps, "io-write-mbps", 0, "disk write bandwidth limit in MB/s (0=unlimited)")
+	cmd.Flags().Uint32Var(&maxTasks, "max-tasks", 0, "max processes/threads per user slice (0=unlimited)")
 	cmd.Flags().BoolVar(&sshEnabled, "ssh", false, "enable SSH access")
 	cmd.Flags().BoolVar(&cgiEnabled, "cgi", false, "enable CGI")
 	_ = cmd.MarkFlagRequired("name")
@@ -142,15 +157,20 @@ func newPackageCreateCmd() *cobra.Command {
 
 func newPackageEditCmd() *cobra.Command {
 	var (
-		name       string
-		diskMB     uint32
-		bwMB       uint32
-		domains    uint32
-		emails     uint32
-		databases  uint32
-		ftp        uint32
-		sshEnabled string
-		cgiEnabled string
+		name        string
+		diskMB      uint32
+		bwMB        uint32
+		domains     uint32
+		emails      uint32
+		databases   uint32
+		ftp         uint32
+		cpuPercent  uint32
+		memoryMB    uint32
+		ioReadMbps  uint32
+		ioWriteMbps uint32
+		maxTasks    uint32
+		sshEnabled  string
+		cgiEnabled  string
 	)
 
 	cmd := &cobra.Command{
@@ -202,6 +222,26 @@ func newPackageEditCmd() *cobra.Command {
 				p.MaxFTPAccounts = ftp
 				changed = true
 			}
+			if cmd.Flags().Changed("cpu") {
+				p.CPUQuotaPercent = cpuPercent
+				changed = true
+			}
+			if cmd.Flags().Changed("memory-mb") {
+				p.MemoryLimitMB = memoryMB
+				changed = true
+			}
+			if cmd.Flags().Changed("io-read-mbps") {
+				p.IOReadMbps = ioReadMbps
+				changed = true
+			}
+			if cmd.Flags().Changed("io-write-mbps") {
+				p.IOWriteMbps = ioWriteMbps
+				changed = true
+			}
+			if cmd.Flags().Changed("max-tasks") {
+				p.MaxTasks = maxTasks
+				changed = true
+			}
 			if sshEnabled == "true" {
 				p.SSHEnabled = true
 				changed = true
@@ -238,6 +278,11 @@ func newPackageEditCmd() *cobra.Command {
 	cmd.Flags().Uint32Var(&emails, "emails", 0, "max emails")
 	cmd.Flags().Uint32Var(&databases, "databases", 0, "max databases")
 	cmd.Flags().Uint32Var(&ftp, "ftp", 0, "max FTP")
+	cmd.Flags().Uint32Var(&cpuPercent, "cpu", 0, "CPU quota percent")
+	cmd.Flags().Uint32Var(&memoryMB, "memory-mb", 0, "memory limit MB")
+	cmd.Flags().Uint32Var(&ioReadMbps, "io-read-mbps", 0, "io read MB/s")
+	cmd.Flags().Uint32Var(&ioWriteMbps, "io-write-mbps", 0, "io write MB/s")
+	cmd.Flags().Uint32Var(&maxTasks, "max-tasks", 0, "max processes/threads")
 	cmd.Flags().StringVar(&sshEnabled, "ssh", "", "SSH access (true/false)")
 	cmd.Flags().StringVar(&cgiEnabled, "cgi", "", "CGI access (true/false)")
 	return cmd

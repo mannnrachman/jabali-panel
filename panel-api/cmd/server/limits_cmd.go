@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -180,6 +181,9 @@ func newLimitsStatusCmd() *cobra.Command {
 		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			username := args[0]
+			if looksLikeULID(username) {
+				return fmt.Errorf("argument %q looks like a user ULID; this command takes the OS username (try `jabali users get %s` to look it up)", username, username)
+			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer cancel()
 
@@ -188,6 +192,9 @@ func newLimitsStatusCmd() *cobra.Command {
 				"quota_mount": quotaMountOrEmpty(),
 			})
 			if err != nil {
+				if strings.Contains(err.Error(), "user not found") || strings.Contains(err.Error(), "no such user") {
+					return fmt.Errorf("user %q not found on this host (this command expects the OS username, not user ID)", username)
+				}
 				return fmt.Errorf("agent: %w", err)
 			}
 			if jsonOutput {
@@ -417,4 +424,25 @@ func fmtUint(v uint64) string {
 		return "unlimited"
 	}
 	return fmt.Sprintf("%d", v)
+}
+
+// looksLikeULID returns true when arg matches Crockford-base32 ULID
+// shape (26 chars, [0-9A-HJKMNP-TV-Z]). OS usernames cap at 32 chars
+// per useradd but rarely match this exact pattern, so a true here is
+// a strong signal the operator typed a panel user_id by mistake.
+func looksLikeULID(s string) bool {
+	if len(s) != 26 {
+		return false
+	}
+	upper := strings.ToUpper(s)
+	for _, c := range upper {
+		if (c < '0' || c > '9') && (c < 'A' || c > 'Z') {
+			return false
+		}
+		switch c {
+		case 'I', 'L', 'O', 'U':
+			return false
+		}
+	}
+	return true
 }

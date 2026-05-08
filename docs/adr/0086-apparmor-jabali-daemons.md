@@ -1,9 +1,52 @@
 # ADR-0086 — AppArmor profiles for Jabali daemons (M40)
 
-**Status:** Accepted
+**Status:** Accepted, all profiles parked pending re-author (Amendment 2026-05-09)
 **Date:** 2026-04-30
 **Related:** ADR-0072 (malware stack), ADR-0084 (per-user egress
 firewall), ADR-0085 (narrow auditd exec audit).
+
+## Amendment 2026-05-09 — all profiles parked, awaiting M40.1
+
+Live audit on mx via `aa-exec -p <profile> -- /test_connect <socket>`
+exposed two structural problems:
+
+1. **AA 4.x unix-socket mediation rejects the rules as written.** Every
+   jabali daemon profile fails the same EACCES on a Unix-socket
+   `connect()` to `/var/run/mysqld/mysqld.sock`, even with
+   `abstractions/mysql` included AND explicit `unix (connect, receive,
+   send) type=stream,` AND both `/run/mysqld/mysqld.sock rw` +
+   `/var/run/mysqld/mysqld.sock rw` path rules. Disabling the profile
+   lifts the block. AA 4.x on Debian 13 wants rules we haven't yet
+   figured out — needs a per-rule test bench.
+
+2. **Three of four non-agent profiles never auto-attached.** The
+   declarations were `profile <name> flags=(complain) {` with no path
+   attach, so `/proc/<pid>/attr/current` showed `unconfined` for live
+   panel-api/kratos/stalwart processes. Only the `jabali-agent` profile
+   (which had a path attach) actually mediated anything — and that's
+   the one that broke `dns.zone.upsert` by EACCES'ing the gmysql
+   socket dial.
+
+**Current state:**
+
+- All 5 jabali AA profile files renamed to `*.disabled` in
+  `install/apparmor/`. The auto-loader skips them.
+- `cleanup_apparmor_legacy()` aa-disables + removes the live
+  `/etc/apparmor.d/usr.local.bin.jabali-*` files on every install +
+  `jabali update` tick, then restarts each daemon so any leftover
+  EACCES self-heals.
+- `jabali apparmor flip-mature` CLI + admin Security AppArmor card
+  remain shipped + useful for the system-daemon profiles
+  (mariadb/redis/pdns/pdns-recursor) that come from
+  `apparmor-profiles-extra` and DO work.
+- ADR-0086's design decisions still stand for **M40.1**: re-author
+  rules with AA-4.x-correct unix mediation and verify each profile
+  via `aa-exec -p` smoke runs against the daemon's full code-path
+  inventory (login, create user, install WordPress, mail
+  send/receive, reconciler tick) before any profile gets re-enabled.
+
+The "defense-in-depth on a panel RCE" goal is unchanged. The
+implementation gets a redo.
 
 ## Context
 

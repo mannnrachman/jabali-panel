@@ -228,6 +228,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.DNSRecords = dnsRecordRepo
 		deps.SSLCerts = sslCertRepo
 		deps.BWDaily = repository.NewBWDailyRepository(sharedDB)
+		deps.AutomationTokens = repository.NewAutomationTokenRepository(sharedDB)
 		deps.Databases = databaseRepo
 		deps.DatabaseUsers = databaseUserRepo
 		deps.DatabaseUserGrants = databaseUserGrantRepo

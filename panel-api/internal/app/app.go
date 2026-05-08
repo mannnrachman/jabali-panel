@@ -53,6 +53,7 @@ type Deps struct {
 	DNSRecords          repository.DNSRecordRepository
 	SSLCerts            repository.SSLCertificateRepository
 	BWDaily             repository.BWDailyRepository
+	AutomationTokens    repository.AutomationTokenRepository
 	PHPPools            repository.PHPPoolRepository
 	PHPPoolIniOverrides repository.PHPPoolIniOverrideRepository
 	WordPressInstalls   repository.WordPressInstallRepository
@@ -303,6 +304,22 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// panel user rows so claims.UserID carries the ULID every
 		// ownership check in the API expects.
 		authMiddleware := middleware.RequireKratosSession(deps.KratosClient, deps.Users)
+
+		// M44 Automation API public routes mount OUTSIDE the Kratos
+		// session middleware — HMAC is the only auth on
+		// /api/v1/automation/*. Mount BEFORE the auth-protected v1
+		// group so the path matcher hits the unauth group first.
+		if deps.AutomationTokens != nil && deps.SSOKey != nil {
+			autoGroup := r.Group("/api/v1")
+			api.RegisterAutomation(autoGroup, api.AutomationConfig{
+				AutomationTokens: deps.AutomationTokens,
+				Key:              deps.SSOKey,
+				Domains:          deps.Domains,
+				Users:            deps.Users,
+				Applications:     deps.WordPressInstalls,
+			})
+		}
+
 		v1 := r.Group("/api/v1", authMiddleware)
 		// M14 — fire one admin.login envelope per Kratos session.
 		// Redis SETNX dedupes; downgrades to no-op without Redis/queue.
@@ -777,6 +794,16 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterReconcileRoutes(admin, &api.ReconcileHandlerConfig{
 				Reconciler: deps.Reconciler,
 				Log:        deps.Log,
+			})
+		}
+		// M44: Automation API token management. Admin mints + revokes
+		// HMAC-signed tokens; the matching public read-only routes
+		// at /api/v1/automation/* are wired below outside the auth
+		// middleware (HMAC is the auth there, no Kratos session).
+		if deps.AutomationTokens != nil && deps.SSOKey != nil {
+			api.RegisterAdminAutomationTokens(v1, api.AdminAutomationTokensConfig{
+				Repo: deps.AutomationTokens,
+				Key:  deps.SSOKey,
 			})
 		}
 		if deps.Agent != nil {

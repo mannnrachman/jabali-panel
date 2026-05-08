@@ -8,10 +8,23 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/limits"
 )
+
+// killProcess wraps os.FindProcess + Signal so the limits handlers
+// can swap in a fake during tests. Unit tests redirect to a no-op;
+// production sends a real signal.
+var killProcess = func(pid int, sig os.Signal) error {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return p.Signal(sig)
+}
 
 // user.limits.apply — writes /etc/systemd/system/jabali-user-<u>.slice.d/limits.conf
 // with the effective cgroups v2 directives, calls setquota for the disk
@@ -139,15 +152,24 @@ func userLimitsApplyHandler(ctx context.Context, params json.RawMessage) (any, e
 	// Escape via \`nsenter -t 1 -a\` which joins PID 1's full
 	// namespace set (mnt + ipc + uts + cgroup + pid + net) so the
 	// systemctl call runs as if from the host root shell.
-	if _, drStderr, err := runCmdFn(ctx, "nsenter",
-		"-t", "1", "-m", "--",
-		"systemctl", "daemon-reload"); err != nil {
+	// systemctl daemon-reload from inside the agent fails with
+	// 'Failed to connect to bus: Permission denied' — libdbus auth
+	// breaks under PrivateTmp + ProtectKernel*. nsenter into PID 1
+	// also fails because ProtectKernelTunables blocks
+	// /proc/<pid>/ns/. The kernel-level reload signal is SIGHUP to
+	// PID 1, which systemd handles as a daemon-reload — no DBus
+	// auth, no namespace gymnastics. CAP_KILL is in the agent's
+	// capability set so the signal lands.
+	if err := killProcess(1, syscall.SIGHUP); err != nil {
 		return nil, &agentwire.AgentError{
-			Code: agentwire.CodeInternal,
-			Message: fmt.Sprintf("systemctl daemon-reload: %v: %s",
-				err, strings.TrimSpace(string(drStderr))),
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("kill -HUP 1: %v", err),
 		}
 	}
+	// systemd processes SIGHUP-induced daemon-reload async. Give
+	// it a beat so the kernel-state verification below sees the
+	// new drop-in.
+	time.Sleep(250 * time.Millisecond)
 
 	resp := &userLimitsApplyResponse{
 		Username:      p.Username,

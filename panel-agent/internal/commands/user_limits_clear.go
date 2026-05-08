@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+	"syscall"
+	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 )
@@ -63,16 +64,15 @@ func userLimitsClearHandler(ctx context.Context, params json.RawMessage) (any, e
 
 	// Reload either way — if the drop-in existed, systemd needs to
 	// forget it; if not, it's a cheap no-op.
-	// nsenter into PID 1 namespace: see user_limits_apply.
-	if _, drStderr, err := runCmdFn(ctx, "nsenter",
-		"-t", "1", "-m", "--",
-		"systemctl", "daemon-reload"); err != nil {
+	// SIGHUP to PID 1 → systemd daemon-reload. See user_limits_apply
+	// for the rationale (libdbus auth fails inside the agent's ns).
+	if err := killProcess(1, syscall.SIGHUP); err != nil {
 		return nil, &agentwire.AgentError{
-			Code: agentwire.CodeInternal,
-			Message: fmt.Sprintf("daemon-reload: %v: %s",
-				err, strings.TrimSpace(string(drStderr))),
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("kill -HUP 1: %v", err),
 		}
 	}
+	time.Sleep(250 * time.Millisecond)
 
 	if p.QuotaMount != "" {
 		// Clear the quota: 0 0 0 0 means no soft, no hard, no inode

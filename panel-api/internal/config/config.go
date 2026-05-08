@@ -159,6 +159,11 @@ type SSOConfig struct {
 	// Examples: "http://localhost", "https://pma.example.com"
 	// When empty, defaults to http://<Host> with port stripped.
 	PhpMyAdminBaseURL string `toml:"phpmyadmin_base_url"`
+
+	// AdminerBaseURL is the full base URL for Adminer redirects
+	// (engine-aware bridge for both MariaDB and PostgreSQL). Empty
+	// falls back to scheme + Origin/Referer/Host like phpMyAdmin.
+	AdminerBaseURL string `toml:"adminer_base_url"`
 }
 
 type WordPressConfig struct {

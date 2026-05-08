@@ -3838,6 +3838,82 @@ DROPINEOF
   _ok "phpMyAdmin FPM pool (jabali-pma) installed and running"
 }
 
+# ---------- step 6.4: Adminer SSO bridge -------------------------------------
+# M37 Phase 4. Single-PHP-file Adminer drop with the jabali-sso plugin.
+# Reuses the jabali-pma FPM pool (www-data) so the existing Unix socket at
+# /run/jabali-panel/sso.sock is reachable. nginx vhost lives at
+# /jabali-adminer/ on the panel hostname (same as phpMyAdmin's /phpmyadmin).
+install_adminer() {
+  _log "installing Adminer (multi-engine DB admin) — M37 Phase 4"
+
+  local adminer_dir="/var/www/jabali-adminer"
+  local adminer_url="https://github.com/vrana/adminer/releases/download/v4.8.1/adminer-4.8.1.php"
+  local adminer_plugin_url="https://raw.githubusercontent.com/vrana/adminer/v4.8.1/plugins/plugin.php"
+
+  mkdir -p "${adminer_dir}"
+
+  # Upstream single-file Adminer build. Pin v4.8.1 for reproducibility.
+  if [[ ! -f "${adminer_dir}/adminer.php" ]]; then
+    _log "downloading adminer.php"
+    if ! curl -fsSL -o "${adminer_dir}/adminer.php" "${adminer_url}"; then
+      _err "failed to download adminer from ${adminer_url}"
+      return 1
+    fi
+  else
+    _ok "adminer.php already present"
+  fi
+
+  # Adminer's plugin loader (separate from the main file).
+  if [[ ! -f "${adminer_dir}/plugin.php" ]]; then
+    _log "downloading Adminer plugin loader"
+    if ! curl -fsSL -o "${adminer_dir}/plugin.php" "${adminer_plugin_url}"; then
+      _err "failed to download adminer plugin loader"
+      return 1
+    fi
+  else
+    _ok "adminer plugin loader already present"
+  fi
+
+  # Drop our index.php + jabali-sso plugin from the repo.
+  install -m 0644 "${REPO_DIR}/install/adminer/index.php"            "${adminer_dir}/index.php"
+  install -m 0644 "${REPO_DIR}/install/adminer/jabali-sso-plugin.php" "${adminer_dir}/jabali-sso-plugin.php"
+
+  chown -R www-data:www-data "${adminer_dir}"
+  chmod 0755 "${adminer_dir}"
+
+  # nginx location block — same vhost as phpMyAdmin (jabali-panel-vhost.conf).
+  local nginx_inc_dir="/etc/nginx/snippets"
+  cat > "${nginx_inc_dir}/jabali-adminer.conf" <<'NGINXEOF'
+# Jabali Adminer (M37 Phase 4) — engine-aware DB admin via SSO.
+location /jabali-adminer/ {
+    alias /var/www/jabali-adminer/;
+    index index.php;
+
+    location ~ \.php$ {
+        fastcgi_split_path_info ^(/jabali-adminer/.+\.php)(/.+)$;
+        fastcgi_pass unix:/run/php/jabali-pma/fpm.sock;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $request_filename;
+        fastcgi_read_timeout 60s;
+    }
+}
+NGINXEOF
+
+  # Wire snippet into the panel vhost if not already.
+  local panel_vhost="/etc/nginx/sites-enabled/jabali-panel.conf"
+  if [[ -f "${panel_vhost}" ]] && ! grep -q "jabali-adminer.conf" "${panel_vhost}"; then
+    _log "wiring jabali-adminer.conf into panel vhost"
+    sed -i '/include \/etc\/nginx\/snippets\/phpmyadmin.conf;/a\    include /etc/nginx/snippets/jabali-adminer.conf;' "${panel_vhost}"
+  fi
+
+  if nginx -t >/dev/null 2>&1; then
+    systemctl reload nginx 2>/dev/null || true
+    _ok "Adminer installed at /jabali-adminer/"
+  else
+    _warn "nginx -t failed after Adminer install — review /etc/nginx/snippets/jabali-adminer.conf"
+  fi
+}
+
 # ---------- step 6.5: wp-cli provisioning ------------------------------------
 
 install_wp_cli() {
@@ -7796,6 +7872,7 @@ main() {
   # causes FPM to fail with "chdir path does not exist".
   install_phpmyadmin
   install_phpmyadmin_fpm_pool
+  install_adminer
   install_wp_cli
   install_sftp_group
   install_sftp_sshd_config

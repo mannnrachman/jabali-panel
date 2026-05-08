@@ -98,6 +98,22 @@ export async function ssoPhpMyAdmin(
   return resp.data;
 }
 
+/**
+ * Initiate Adminer SSO (M37 Phase 4) — engine-aware bridge for both
+ * MariaDB and PostgreSQL. Backend resolves engine from the database
+ * row and provisions the appropriate shadow account before minting
+ * the token. Returned URL points at /jabali-adminer/?token=...
+ */
+export async function ssoAdminer(
+  databaseId: string,
+): Promise<{ redirect_url: string }> {
+  const resp = await apiClient.post<{ redirect_url: string }>(
+    "/sso/adminer",
+    { database_id: databaseId },
+  );
+  return resp.data;
+}
+
 // === PHP Settings API ===
 
 export interface DomainPHPSettings {

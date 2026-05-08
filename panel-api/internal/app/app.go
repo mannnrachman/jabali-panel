@@ -40,6 +40,9 @@ type Deps struct {
 	Mailboxes           repository.MailboxRepository
 	MailboxSSOTokens    repository.MailboxSSOTokenRepository
 	PhpMyAdminSSOTokens repository.PhpMyAdminSSOTokenRepository
+	// M37 Phase 4: Adminer SSO bridge for both engines.
+	AdminerSSOTokens repository.AdminerSSOTokenRepository
+	AdminerSSO       *sso.AdminerService
 	LogAccessStreams    repository.LogAccessStreamRepository
 	Agent               agent.AgentInterface
 	Reconciler          *reconciler.Reconciler
@@ -643,6 +646,15 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterSSOPhpMyAdminRoutes(v1, api.SSOPhpMyAdminHandlerConfig{
 				Databases: deps.Databases,
 				SSO:       deps.SSO,
+				Log:       deps.Log,
+			})
+		}
+		// M37 Phase 4: Adminer SSO mint route — engine-aware.
+		if deps.SSO != nil && deps.AdminerSSO != nil && deps.Databases != nil && deps.AdminerSSOTokens != nil {
+			api.RegisterSSOAdminerRoutes(v1, api.SSOAdminerHandlerConfig{
+				Databases: deps.Databases,
+				SSO:       deps.SSO,
+				Adminer:   deps.AdminerSSO,
 				Log:       deps.Log,
 			})
 		}

@@ -16,6 +16,7 @@ import (
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/sso"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
@@ -30,6 +31,8 @@ func StartSSOUDSListener(
 	databases repository.DatabaseRepository,
 	users repository.UserRepository,
 	tokens repository.PhpMyAdminSSOTokenRepository,
+	adminerTokens repository.AdminerSSOTokenRepository,
+	adminerSSO *sso.AdminerService,
 	ssoKey *ssokey.Key,
 	log *slog.Logger,
 ) (*http.Server, func(context.Context) error, error) {
@@ -55,6 +58,18 @@ func StartSSOUDSListener(
 	}
 	g := r.Group("")
 	api.RegisterSSOPhpMyAdminValidateRoutes(g, cfg)
+	// M37 Phase 4: Adminer validate route on the same UDS — Adminer's
+	// jabali-sso plugin POSTs to /sso/adminer/validate; permission
+	// model identical to phpMyAdmin (group=www-data, mode 0660).
+	if adminerSSO != nil && adminerTokens != nil {
+		api.RegisterSSOAdminerValidateRoutes(g, api.SSOAdminerValidateHandlerConfig{
+			Databases: databases,
+			Users:     users,
+			Tokens:    adminerTokens,
+			Adminer:   adminerSSO,
+			Log:       log,
+		})
+	}
 
 	// Create Unix domain socket listener
 	listener, err := net.Listen("unix", socketPath)

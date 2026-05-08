@@ -52,6 +52,18 @@ type User struct {
 	// NULL until the shadow account is created.
 	MysqladminProvisionedAt *time.Time `gorm:"type:datetime(6)" json:"mysqladmin_provisioned_at,omitempty"`
 
+	// PgadminUsername is the shadow PostgreSQL ROLE created for the
+	// Adminer SSO bridge (M37 Phase 4). Mirrors mysqladmin_username
+	// but for engine='postgres' rows. NULL until first provision.
+	PgadminUsername *string `gorm:"type:varchar(64)" json:"pgadmin_username,omitempty"`
+
+	// PgadminPasswordEnc is the AES-256-GCM encrypted password for
+	// the PG shadow ROLE. Same SSO key as mysqladmin_password_enc.
+	PgadminPasswordEnc []byte `gorm:"type:varbinary(512)" json:"-"`
+
+	// PgadminProvisionedAt is the timestamp of the first PG SSO provision.
+	PgadminProvisionedAt *time.Time `gorm:"type:datetime(6)" json:"pgadmin_provisioned_at,omitempty"`
+
 	// KratosIdentityID is the UUID of the corresponding Kratos identity.
 	// Set atomically during user creation (inline hook) or during kratos-migrate batch.
 	// NULL only for rows created before the identity write landed — should

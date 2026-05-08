@@ -141,6 +141,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		mailboxSSOTokenRepo := repository.NewMailboxSSOTokenRepository(sharedDB)
 
 		phpMyAdminSSOTokenRepo := repository.NewPhpMyAdminSSOTokenRepository(sharedDB)
+		adminerSSOTokenRepo := repository.NewAdminerSSOTokenRepository(sharedDB)
 		logAccessStreamRepo := repository.NewLogAccessStreamRepository(sharedDB)
 		phpPoolRepo := repository.NewPHPPoolRepository(sharedDB)
 		phpPoolIniOverrideRepo := repository.NewPHPPoolIniOverrideRepository(sharedDB)
@@ -165,6 +166,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.Packages = packageRepo
 		deps.Domains = domainRepo
 		deps.SSO = ssoService
+		// M37 Phase 4: Adminer SSO bridge — engine-aware mint + PG shadow.
+		deps.AdminerSSO = sso.NewAdminerService(ssoService, adminerSSOTokenRepo)
+		deps.AdminerSSOTokens = adminerSSOTokenRepo
 
 		deps.ServerSettings = serverSettingsRepo
 		deps.PageTemplates = pageTemplateRepo
@@ -694,6 +698,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 			deps.Databases,
 			deps.Users,
 			deps.PhpMyAdminSSOTokens,
+			deps.AdminerSSOTokens,
+			deps.AdminerSSO,
 			ssoKeyPtr,
 			log,
 		)

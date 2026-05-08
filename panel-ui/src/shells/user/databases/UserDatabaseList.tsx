@@ -13,7 +13,7 @@ import {
 } from "@icons";
 import type { SorterResult } from "antd/es/table/interface";
 
-import { ssoPhpMyAdmin } from "../../../apiClient";
+import { ssoAdminer, ssoPhpMyAdmin } from "../../../apiClient";
 import { RowDeleteButton } from "../../../components/RowDeleteButton";
 import { columnSearchProps } from "../../../components/columnSearch";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
@@ -66,6 +66,7 @@ export const UserDatabaseList = () => {
   });
   const deleteMutation = useDeleteMutation({ resource: "databases" });
 
+  const [loadingAdminerId, setLoadingAdminerId] = useState<string | null>(null);
   const [loadingPhpMyAdminId, setLoadingPhpMyAdminId] = useState<string | null>(
     null,
   );
@@ -124,6 +125,33 @@ export const UserDatabaseList = () => {
       message.error(`Could not open phpMyAdmin: ${errorMsg}`);
     } finally {
       setLoadingPhpMyAdminId(null);
+    }
+  };
+
+  const handleOpenAdminer = async (row: Database) => {
+    // Same blank-tab-then-navigate dance as phpMyAdmin (popup blockers
+    // require the window.open call to be synchronous with the click).
+    const tab = window.open("", "_blank");
+    try {
+      setLoadingAdminerId(row.id);
+      const response = await ssoAdminer(row.id);
+      if (tab) {
+        tab.location.href = response.redirect_url;
+        try {
+          tab.opener = null;
+        } catch {
+          // ignore — some browsers treat opener as read-only
+        }
+      } else {
+        window.location.assign(response.redirect_url);
+      }
+    } catch (error) {
+      if (tab) tab.close();
+      const errorMsg =
+        error instanceof Error ? error.message : "Could not open Adminer";
+      message.error(`Could not open Adminer: ${errorMsg}`);
+    } finally {
+      setLoadingAdminerId(null);
     }
   };
 
@@ -230,6 +258,7 @@ export const UserDatabaseList = () => {
             render={(_, r) => {
               const isPostgres = r.engine === "postgres";
               const isLoading = loadingPhpMyAdminId === r.id;
+              const isAdminerLoading = loadingAdminerId === r.id;
 
               return (
                 <Space>
@@ -250,6 +279,15 @@ export const UserDatabaseList = () => {
                       Open in phpMyAdmin
                     </Button>
                   </Tooltip>
+                  <Button
+                    type="text"
+                    icon={<LinkOutlined />}
+                    onClick={() => handleOpenAdminer(r)}
+                    disabled={isAdminerLoading}
+                    loading={isAdminerLoading}
+                  >
+                    Open in Adminer
+                  </Button>
                   <RowDeleteButton
                     confirmTitle={`Delete database "${r.name}"?`}
                     onConfirm={async () => {

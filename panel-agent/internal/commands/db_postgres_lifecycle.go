@@ -74,9 +74,15 @@ func dbPostgresInstallHandler(ctx context.Context, _ json.RawMessage) (any, erro
 	// child into a fresh transient unit attached to the calling
 	// session, so apt + dpkg + postinst all run as if invoked by
 	// a plain root shell.
+	// systemd-run --pipe runs a transient service (NOT --scope —
+	// scope inherits the caller's mount namespace, the very thing
+	// we're trying to escape). --pipe forwards stdout/stderr back
+	// to us and waits for completion. --wait makes the call
+	// synchronous; --collect garbage-collects the unit on exit.
 	cmd := exec.CommandContext(ctx, "systemd-run",
-		"--scope", "--quiet", "--collect",
+		"--pipe", "--wait", "--quiet", "--collect",
 		"--unit=jabali-pg-install",
+		"--service-type=oneshot",
 		"--", "bash", "-c",
 		"source "+installShPath+" && install_postgres && "+
 			"systemctl enable postgresql >/dev/null 2>&1 && "+
@@ -135,9 +141,9 @@ func dbPostgresUninstallHandler(ctx context.Context, _ json.RawMessage) (any, er
 		// autoremove can pick up unrelated stale kernel images and
 		// fail mid-removal, which then blocks future apt ops on
 		// the host.
-		{"systemd-run", "--scope", "--quiet", "--collect",
-			"--unit=jabali-pg-purge", "--",
-			"bash", "-c",
+		{"systemd-run", "--pipe", "--wait", "--quiet", "--collect",
+			"--unit=jabali-pg-purge", "--service-type=oneshot",
+			"--", "bash", "-c",
 			"DEBIAN_FRONTEND=noninteractive apt-get purge -y " +
 				"'postgresql*' postgresql-common postgresql-client-common"},
 		{"rm", "-rf", "/var/lib/postgresql", "/etc/postgresql",

@@ -942,32 +942,32 @@ export const FileManagerPage = () => {
   ]);
   const renderEntryIcon = (entry: FileEntry) => {
     if (entry.is_dir) {
-      return <FolderOutlined style={{ color: "#faad14" }} />;
+      return <FolderOutlined style={{ color: "#faad14", fontSize: 18 }} />;
     }
     const dot = entry.name.lastIndexOf(".");
     const ext = dot >= 0 ? entry.name.slice(dot + 1).toLowerCase() : "";
     if (IMAGE_EXTS.has(ext)) {
-      return <FileImageOutlined style={{ color: "#eb2f96" }} />;
+      return <FileImageOutlined style={{ color: "#eb2f96", fontSize: 18 }} />;
     }
     if (VIDEO_EXTS.has(ext)) {
-      return <FilePlayOutlined style={{ color: "#722ed1" }} />;
+      return <FilePlayOutlined style={{ color: "#722ed1", fontSize: 18 }} />;
     }
     if (AUDIO_EXTS.has(ext)) {
-      return <FileVolumeOutlined style={{ color: "#1890ff" }} />;
+      return <FileVolumeOutlined style={{ color: "#1890ff", fontSize: 18 }} />;
     }
     if (ARCHIVE_EXTS.has(ext)) {
-      return <FileArchiveOutlined style={{ color: "#a0522d" }} />;
+      return <FileArchiveOutlined style={{ color: "#a0522d", fontSize: 18 }} />;
     }
     if (CODE_EXTS.has(ext)) {
-      return <FileCodeOutlined style={{ color: "#52c41a" }} />;
+      return <FileCodeOutlined style={{ color: "#52c41a", fontSize: 18 }} />;
     }
     if (STYLE_EXTS.has(ext)) {
-      return <FileMinusOutlined style={{ color: "#13c2c2" }} />;
+      return <FileMinusOutlined style={{ color: "#13c2c2", fontSize: 18 }} />;
     }
     if (TEXT_EXTS.has(ext)) {
-      return <FileTextOutlined style={{ color: "#fa8c16" }} />;
+      return <FileTextOutlined style={{ color: "#fa8c16", fontSize: 18 }} />;
     }
-    return <FileOutlined style={{ color: "#1677ff" }} />;
+    return <FileOutlined style={{ color: "#1677ff", fontSize: 18 }} />;
   };
 
   // --- table columns ---

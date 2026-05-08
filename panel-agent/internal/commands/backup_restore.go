@@ -328,6 +328,42 @@ func applyAccountRestore(
 				continue
 			}
 			db := st.Items[0]
+			// PG dump first — backup_databases.go writes "<db>.pgdump"
+			// for postgres engine. If present, route to pg_restore.
+			pgPath := filepath.Join(stagingRoot, "db", db+".pgdump")
+			if _, perr := os.Stat(pgPath); perr == nil {
+				// CREATE DATABASE if missing. PG has no
+				// IF NOT EXISTS for CREATE DATABASE pre-9.x but
+				// we accept an "already exists" error as success.
+				createSQL := fmt.Sprintf("SELECT 1 FROM pg_database WHERE datname = '%s'", db)
+				probeCmd := exec.CommandContext(ctx, "sudo", "-u", "postgres",
+					"psql", "-XAtq", "-c", createSQL)
+				probeOut, _ := probeCmd.Output()
+				if strings.TrimSpace(string(probeOut)) == "" {
+					mkCmd := exec.CommandContext(ctx, "sudo", "-u", "postgres",
+						"createdb", "--encoding=UTF8", db)
+					if cOut, cErr := mkCmd.CombinedOutput(); cErr != nil {
+						warnings = append(warnings,
+							fmt.Sprintf("db %s (postgres): createdb: %v: %s",
+								db, cErr, strings.TrimSpace(string(cOut))))
+						continue
+					}
+				}
+				// pg_restore --clean --if-exists drops then re-creates
+				// every object in the dump. Idempotent on re-runs.
+				restoreCmd := exec.CommandContext(ctx, "sudo", "-u", "postgres",
+					"pg_restore", "--clean", "--if-exists", "--no-owner",
+					"--no-privileges", "-d", db, pgPath)
+				if rOut, rErr := restoreCmd.CombinedOutput(); rErr != nil {
+					warnings = append(warnings,
+						fmt.Sprintf("db %s (postgres): pg_restore: %v: %s",
+							db, rErr, strings.TrimSpace(string(rOut))))
+					continue
+				}
+				applied = append(applied, fmt.Sprintf("db → %s (postgres)", db))
+				continue
+			}
+
 			candidates := []string{
 				filepath.Join(stagingRoot, "db", db+".sql"),
 				filepath.Join(stagingRoot, "db", "stdin"),

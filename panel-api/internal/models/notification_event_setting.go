@@ -156,6 +156,28 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 		Severity:    "warning",
 		DefaultOn:   true,
 	},
+	// M37 PostgreSQL parity (ADR-0091).
+	{
+		Kind:        "postgres.service_down",
+		Label:       "PostgreSQL service down",
+		Description: "postgresql.service is enabled but inactive — running connections fail.",
+		Severity:    "error",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "postgres.disk_high",
+		Label:       "PostgreSQL data dir disk high",
+		Description: "/var/lib/postgresql usage above 85%.",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "postgres.connections_exhausted",
+		Label:       "PostgreSQL connections exhausted",
+		Description: "Active connection count above 90% of max_connections — new clients will be refused.",
+		Severity:    "error",
+		DefaultOn:   true,
+	},
 }
 
 // LookupNotificationEventKind returns the metadata for a known kind

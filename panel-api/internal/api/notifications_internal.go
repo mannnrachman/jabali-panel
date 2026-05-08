@@ -79,6 +79,10 @@ var enqueueAllowedEventKinds = map[string]struct{}{
 	"domain.expiry.7d":             {},
 	"domain.expiry.1d":             {},
 	"notifications.channel.auto_disabled": {},
+	// M37 PostgreSQL parity (ADR-0091).
+	"postgres.service_down":          {},
+	"postgres.disk_high":             {},
+	"postgres.connections_exhausted": {},
 }
 
 var enqueueAllowedSeverities = map[string]struct{}{

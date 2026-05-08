@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { Alert, Button, notification, Spin, Table, Tag } from "antd";
+import { Alert, notification, Spin, Table, Tag } from "antd";
 import {
   CheckCircleOutlined,
   DownloadOutlined,
   ReloadOutlined,
 } from "@icons";
+import { RowActionButton } from "../../../components/RowActionButton";
 import { apiClient } from "../../../apiClient";
 
 interface PHPVersionStatus {
@@ -219,13 +220,13 @@ export const VersionsTab = () => {
             // failed-request UX entirely by hiding the button.
             if (record.installed && record.fpm_running) {
               return (
-                <Button
-                  type="text"
+                <RowActionButton
+                  icon={<CheckCircleOutlined />}
                   loading={settingDefaultVersion === record.version}
                   onClick={() => handleSetDefault(record.version)}
                 >
                   Set default
-                </Button>
+                </RowActionButton>
               );
             }
             return "—";
@@ -256,27 +257,25 @@ export const VersionsTab = () => {
 
             if (record.installed) {
               return (
-                <Button
-                  type="text"
+                <RowActionButton
                   icon={<ReloadOutlined />}
                   onClick={() => handleReload(record.version)}
                   loading={isReloading}
                   disabled={isReloading}
                 >
                   Reload
-                </Button>
+                </RowActionButton>
               );
             } else {
               return (
-                <Button
-                  type="text"
+                <RowActionButton
                   icon={<DownloadOutlined />}
                   onClick={() => handleInstall(record.version)}
                   loading={isInstalling}
                   disabled={isInstalling}
                 >
                   Install
-                </Button>
+                </RowActionButton>
               );
             }
           }}

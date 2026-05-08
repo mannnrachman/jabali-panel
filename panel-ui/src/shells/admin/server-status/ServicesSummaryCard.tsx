@@ -6,7 +6,6 @@
 // (stop/disable/restart) show a confirm Modal first.
 import { useState } from "react";
 import {
-  Button,
   Card,
   Modal,
   Space,
@@ -27,6 +26,7 @@ import {
   SettingOutlined,
   SyncOutlined,
 } from "@icons";
+import { RowActionButton } from "../../../components/RowActionButton";
 
 import { apiClient } from "../../../apiClient";
 import type { ServiceDetail } from "../../../hooks/useServerStatus";
@@ -157,46 +157,50 @@ function ServiceActions({ service, onAction }: ServiceActionsProps) {
     <Space size={2}>
       {isDown ? (
         <Tooltip title="Start">
-          <Button
+          <RowActionButton
             size="small"
-            type="text"
             icon={<PlayCircleOutlined />}
             onClick={() => onAction(service.unit, "start")}
             aria-label="Start"
-          />
+          >
+            Start
+          </RowActionButton>
         </Tooltip>
       ) : (
         <>
           <Tooltip title="Restart">
-            <Button
+            <RowActionButton
               size="small"
-              type="text"
               icon={<SyncOutlined />}
               onClick={() => onAction(service.unit, "restart")}
               aria-label="Restart"
-            />
+            >
+              Restart
+            </RowActionButton>
           </Tooltip>
           {isReload && (
             <Tooltip title="Reload">
-              <Button
+              <RowActionButton
                 size="small"
-                type="text"
                 icon={<ReloadOutlined />}
                 onClick={() => onAction(service.unit, "reload")}
                 aria-label="Reload"
-              />
+              >
+                Reload
+              </RowActionButton>
             </Tooltip>
           )}
           {!isSelfDestruct && (
             <Tooltip title="Stop">
-              <Button
+              <RowActionButton
                 size="small"
-                type="text"
                 danger
                 icon={<PauseCircleOutlined />}
                 onClick={() => onAction(service.unit, "stop")}
                 aria-label="Stop"
-              />
+              >
+                Stop
+              </RowActionButton>
             </Tooltip>
           )}
         </>
@@ -204,25 +208,27 @@ function ServiceActions({ service, onAction }: ServiceActionsProps) {
       {isEnabled
         ? !isSelfDestruct && (
             <Tooltip title="Disable at boot">
-              <Button
+              <RowActionButton
                 size="small"
-                type="text"
                 danger
                 icon={<PoweroffOutlined />}
                 onClick={() => onAction(service.unit, "disable")}
                 aria-label="Disable at boot"
-              />
+              >
+                Disable
+              </RowActionButton>
             </Tooltip>
           )
         : (
           <Tooltip title="Enable at boot">
-            <Button
+            <RowActionButton
               size="small"
-              type="text"
               icon={<PoweroffOutlined />}
               onClick={() => onAction(service.unit, "enable")}
               aria-label="Enable at boot"
-            />
+            >
+              Enable
+            </RowActionButton>
           </Tooltip>
         )}
     </Space>

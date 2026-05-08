@@ -22,6 +22,7 @@ import {
   Typography,
 } from "antd";
 import { DeleteOutlined, EditOutlined, PlusOutlined } from "@icons";
+import { RowActionButton } from "../../../../components/RowActionButton";
 import { useQueries } from "@tanstack/react-query";
 
 import { apiClient } from "../../../../apiClient";
@@ -187,7 +188,7 @@ export const CatchAllTab = () => {
                       okText="Clear"
                       okButtonProps={{ danger: true }}
                     >
-                      <Button type="text" danger icon={<DeleteOutlined />} />
+                      <RowActionButton danger icon={<DeleteOutlined />}>Remove</RowActionButton>
                     </Popconfirm>
                   )}
                 </Space>

@@ -16,11 +16,13 @@ import {
   CalendarCheckOutlined,
   PlusSquareOutlined,
   DeleteOutlined,
+  EditOutlined,
   PlayCircleOutlined,
   EyeOutlined,
   CheckOutlined,
   CloseOutlined,
 } from "@icons";
+import { RowActionButton } from "../../../components/RowActionButton";
 import { useQuery } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
@@ -270,8 +272,7 @@ export const UserCronList = () => {
             dataIndex: "actions",
             render: (_, record) => (
               <Space>
-                <Button
-                  type="text"
+                <RowActionButton
                   icon={<PlayCircleOutlined />}
                   onClick={() => handleRunNow(record)}
                   loading={runningId === record.id}
@@ -280,9 +281,8 @@ export const UserCronList = () => {
                   }
                 >
                   Run now
-                </Button>
-                <Button
-                  type="text"
+                </RowActionButton>
+                <RowActionButton
                   icon={<EyeOutlined />}
                   onClick={() => {
                     setLogJobId(record.id);
@@ -290,13 +290,13 @@ export const UserCronList = () => {
                   }}
                 >
                   Log
-                </Button>
-                <Button
-                  type="text"
+                </RowActionButton>
+                <RowActionButton
+                  icon={<EditOutlined />}
                   onClick={() => handleOpenEditModal(record)}
                 >
                   Edit
-                </Button>
+                </RowActionButton>
                 <Popconfirm
                   title="Delete Cron Job"
                   description="Are you sure you want to delete this cron job?"
@@ -304,15 +304,14 @@ export const UserCronList = () => {
                   okText="Yes"
                   cancelText="No"
                 >
-                  <Button
-                    type="text"
+                  <RowActionButton
                     danger
                     icon={<DeleteOutlined />}
                     loading={deletingId === record.id}
                     disabled={deletingId !== null && deletingId !== record.id}
                   >
                     Delete
-                  </Button>
+                  </RowActionButton>
                 </Popconfirm>
               </Space>
             ),

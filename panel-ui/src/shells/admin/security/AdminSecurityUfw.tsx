@@ -26,6 +26,8 @@ import {
 } from "antd";
 import { useState } from "react";
 
+import { DeleteOutlined } from "@icons";
+import { RowActionButton } from "../../../components/RowActionButton";
 import {
   useAddUfwRule,
   useDeleteUfwRule,
@@ -247,9 +249,9 @@ export const AdminSecurityUfw = () => {
                   cancelText="Cancel"
                   onConfirm={() => onDelete(row)}
                 >
-                  <Button danger type="text" size="small">
+                  <RowActionButton danger size="small" icon={<DeleteOutlined />}>
                     Delete
-                  </Button>
+                  </RowActionButton>
                 </Popconfirm>
               )}
             />

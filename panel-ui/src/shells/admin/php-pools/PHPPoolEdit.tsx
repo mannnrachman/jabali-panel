@@ -22,7 +22,9 @@ import {
 } from "antd";
 import { useNavigate, useParams } from "react-router";
 
+import { DeleteOutlined } from "@icons";
 import { apiClient } from "../../../apiClient";
+import { RowActionButton } from "../../../components/RowActionButton";
 import {
   useListQuery,
   useOneQuery,
@@ -249,13 +251,13 @@ export const PHPPoolEdit = () => {
               key: "actions",
               width: 100,
               render: (_, record) => (
-                <Button
-                  type="text"
+                <RowActionButton
                   danger
+                  icon={<DeleteOutlined />}
                   onClick={() => handleDeleteOverride(record.id)}
                 >
                   Delete
-                </Button>
+                </RowActionButton>
               ),
             },
           ]}

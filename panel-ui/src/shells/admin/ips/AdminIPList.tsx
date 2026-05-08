@@ -4,7 +4,8 @@
 // RowDeleteButton. Delete handles the 409 ip_in_use case by surfacing
 // the affected-domains list returned by the API.
 import { Button, Card, Modal, Space, Table, Tag, Typography, message } from "antd";
-import { EthernetPortOutlined } from "@icons";
+import { DeleteOutlined, EditOutlined, EthernetPortOutlined } from "@icons";
+import { RowActionButton } from "../../../components/RowActionButton";
 import { useState } from "react";
 
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
@@ -164,17 +165,17 @@ export const AdminIPList = () => {
             dataIndex="actions"
             render={(_: unknown, r: ManagedIP) => (
               <Space>
-                <Button type="text" onClick={() => openEdit(r.id)}>
+                <RowActionButton icon={<EditOutlined />} onClick={() => openEdit(r.id)}>
                   Edit
-                </Button>
-                <Button
+                </RowActionButton>
+                <RowActionButton
                   danger
-                  type="text"
+                  icon={<DeleteOutlined />}
                   loading={deleteMutation.isPending}
                   onClick={() => handleDelete(r)}
                 >
                   Delete
-                </Button>
+                </RowActionButton>
               </Space>
             )}
           />

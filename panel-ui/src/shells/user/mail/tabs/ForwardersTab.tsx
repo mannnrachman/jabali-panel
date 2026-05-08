@@ -23,6 +23,7 @@ import { DeleteOutlined, PlusOutlined } from "@icons";
 import { useQueries } from "@tanstack/react-query";
 
 import { apiClient } from "../../../../apiClient";
+import { RowActionButton } from "../../../../components/RowActionButton";
 import { useListQuery } from "../../../../hooks/useQueries";
 import {
   useForwarders,
@@ -173,7 +174,7 @@ export const ForwardersTab = () => {
                   okButtonProps={{ danger: true }}
                 >
                   <Tooltip title="Remove">
-                    <Button type="text" danger icon={<DeleteOutlined />} />
+                    <RowActionButton danger icon={<DeleteOutlined />}>Remove</RowActionButton>
                   </Tooltip>
                 </Popconfirm>
               ),

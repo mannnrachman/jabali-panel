@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
-  Button,
   Card,
   Input,
   notification,
@@ -12,8 +11,9 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { ApiOutlined, DownloadOutlined, SearchOutlined } from "@icons";
+import { ApiOutlined, DeleteOutlined, DownloadOutlined, PauseCircleOutlined, PlayCircleOutlined, SearchOutlined } from "@icons";
 import { apiClient } from "../../../apiClient";
+import { RowActionButton } from "../../../components/RowActionButton";
 
 // Shape mirrors the contract locked in panel-api/internal/agent/php_ext_contract_test.go.
 interface ExtensionState {
@@ -264,27 +264,26 @@ const ExtensionActions = ({ record, busy, onApply }: ExtensionActionsProps) => {
   // Built-ins: apt install/remove rejected; only enable/disable.
   if (record.built_in) {
     return record.enabled ? (
-      <Button type="text" danger loading={busy} onClick={() => onApply("disable")}>
+      <RowActionButton danger icon={<PauseCircleOutlined />} loading={busy} onClick={() => onApply("disable")}>
         Disable
-      </Button>
+      </RowActionButton>
     ) : (
-      <Button type="text" loading={busy} onClick={() => onApply("enable")}>
+      <RowActionButton icon={<PlayCircleOutlined />} loading={busy} onClick={() => onApply("enable")}>
         Enable
-      </Button>
+      </RowActionButton>
     );
   }
 
   // Not installed: only Install.
   if (!record.installed) {
     return (
-      <Button
-        type="text"
+      <RowActionButton
         icon={<DownloadOutlined />}
         loading={busy}
         onClick={() => onApply("install")}
       >
         Install
-      </Button>
+      </RowActionButton>
     );
   }
 
@@ -293,17 +292,17 @@ const ExtensionActions = ({ record, busy, onApply }: ExtensionActionsProps) => {
     <Space>
       {!isMysqlMeta &&
         (record.enabled ? (
-          <Button type="text" danger loading={busy} onClick={() => onApply("disable")}>
+          <RowActionButton danger icon={<PauseCircleOutlined />} loading={busy} onClick={() => onApply("disable")}>
             Disable
-          </Button>
+          </RowActionButton>
         ) : (
-          <Button type="text" loading={busy} onClick={() => onApply("enable")}>
+          <RowActionButton icon={<PlayCircleOutlined />} loading={busy} onClick={() => onApply("enable")}>
             Enable
-          </Button>
+          </RowActionButton>
         ))}
-      <Button type="text" danger loading={busy} onClick={() => onApply("remove")}>
+      <RowActionButton danger icon={<DeleteOutlined />} loading={busy} onClick={() => onApply("remove")}>
         Remove
-      </Button>
+      </RowActionButton>
     </Space>
   );
 };

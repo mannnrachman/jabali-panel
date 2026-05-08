@@ -22,6 +22,7 @@ import {
   KeyOutlined,
   MailOutlined,
 } from "@icons";
+import { RowActionButton } from "../../../../components/RowActionButton";
 import { useQueries } from "@tanstack/react-query";
 
 import { apiClient } from "../../../../apiClient";
@@ -257,7 +258,7 @@ export const MailboxesTab = () => {
                   okText="Delete"
                   okType="danger"
                 >
-                  <Button type="text" danger icon={<DeleteOutlined />} />
+                  <RowActionButton danger icon={<DeleteOutlined />}>Remove</RowActionButton>
                 </Popconfirm>
               </Space>
             ),

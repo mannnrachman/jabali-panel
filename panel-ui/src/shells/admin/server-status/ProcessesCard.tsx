@@ -8,6 +8,7 @@ import { Button, Card, Modal, Space, Statistic, Table, Tooltip, message } from "
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { CloseOutlined, ThunderboltOutlined } from "@icons";
+import { RowActionButton } from "../../../components/RowActionButton";
 import { UnorderedListOutlined } from "@ant-design/icons";
 
 import { apiClient } from "../../../apiClient";
@@ -129,23 +130,25 @@ function ProcTable({ rows, onKill }: ProcTableProps) {
           render: (_: unknown, r: ProcessTop) => (
             <Space size={4}>
               <Tooltip title="SIGTERM (graceful)">
-                <Button
+                <RowActionButton
                   size="small"
-                  type="text"
                   icon={<CloseOutlined />}
                   onClick={() => onKill(r, false)}
                   aria-label="SIGTERM"
-                />
+                >
+                  Term
+                </RowActionButton>
               </Tooltip>
               <Tooltip title="SIGKILL (force)">
-                <Button
+                <RowActionButton
                   size="small"
-                  type="text"
                   danger
                   icon={<ThunderboltOutlined />}
                   onClick={() => onKill(r, true)}
                   aria-label="SIGKILL"
-                />
+                >
+                  Kill
+                </RowActionButton>
               </Tooltip>
             </Space>
           ),

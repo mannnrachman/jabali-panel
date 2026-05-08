@@ -31,6 +31,7 @@ import {
   MailOutlined,
   PlusOutlined,
 } from "@icons";
+import { RowActionButton } from "../../../components/RowActionButton";
 
 import { DatabaseUserPasswordModal } from "../../../components/DatabaseUserPasswordModal";
 import { PasswordInput } from "../../../components/PasswordInput";
@@ -393,7 +394,7 @@ export const DomainMailboxesSection = ({
                     okText="Delete"
                     okButtonProps={{ danger: true }}
                   >
-                    <Button type="text" danger icon={<DeleteOutlined />} />
+                    <RowActionButton danger icon={<DeleteOutlined />}>Remove</RowActionButton>
                   </Popconfirm>
                 </Space>
               ),

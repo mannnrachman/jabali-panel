@@ -19,6 +19,7 @@ import {
 import { useState } from "react";
 
 import { DeleteOutlined, ReloadOutlined, RedoOutlined } from "@icons";
+import { RowActionButton } from "../../../components/RowActionButton";
 
 import { apiClient } from "../../../apiClient";
 
@@ -189,23 +190,22 @@ export const DLQTab = () => {
             title: "Actions",
             render: (_, r) => (
               <Space>
-                <Button
-                  type="link"
+                <RowActionButton
                   icon={<RedoOutlined />}
                   loading={busyID === r.id}
                   onClick={() => replay(r)}
                 >
                   Replay
-                </Button>
+                </RowActionButton>
                 <Popconfirm
                   title="Drop this entry?"
                   okText="Drop"
                   okButtonProps={{ danger: true }}
                   onConfirm={() => drop(r)}
                 >
-                  <Button type="link" danger icon={<DeleteOutlined />} loading={busyID === r.id}>
+                  <RowActionButton danger icon={<DeleteOutlined />} loading={busyID === r.id}>
                     Drop
-                  </Button>
+                  </RowActionButton>
                 </Popconfirm>
               </Space>
             ),

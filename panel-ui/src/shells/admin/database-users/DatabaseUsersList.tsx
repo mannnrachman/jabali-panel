@@ -8,6 +8,7 @@
 import { useState } from "react";
 import { Button, Card, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import { KeyOutlined, PlusOutlined, UserOutlined } from "@icons";
+import { RowActionButton } from "../../../components/RowActionButton";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
@@ -247,19 +248,21 @@ export const DatabaseUsersList = () => {
             render={(_, row) => (
               <Space>
                 <Tooltip title="Add database access">
-                  <Button
-                    type="text"
+                  <RowActionButton
                     icon={<PlusOutlined />}
                     onClick={() => setGrantTarget(row)}
-                  />
+                  >
+                    Grant
+                  </RowActionButton>
                 </Tooltip>
                 <Tooltip title="Rotate password">
-                  <Button
-                    type="text"
+                  <RowActionButton
                     icon={<KeyOutlined />}
                     loading={rotatingId === row.id}
                     onClick={() => rotate(row)}
-                  />
+                  >
+                    Rotate
+                  </RowActionButton>
                 </Tooltip>
                 <RowDeleteButton
                   confirmTitle={`Delete user "${row.username}"?`}

@@ -7,7 +7,6 @@
 // coupling low and avoid tight dependency on that component.
 import { useEffect } from "react";
 import {
-  Button,
   Card,
   Input,
   Space,
@@ -25,6 +24,7 @@ import {
   LoginOutlined,
   SearchOutlined,
 } from "@icons";
+import { RowActionButton } from "../../../components/RowActionButton";
 import type { SorterResult } from "antd/es/table/interface";
 
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
@@ -105,14 +105,13 @@ const AdminActionsCell = ({
     <Space>
       {canLogin && (
         <Tooltip title="Log in to the admin dashboard">
-          <Button
-            type="link"
+          <RowActionButton
             icon={<LoginOutlined />}
             loading={magicLinkLoading}
             onClick={handleMagicLink}
           >
             Log in to admin
-          </Button>
+          </RowActionButton>
         </Tooltip>
       )}
     </Space>

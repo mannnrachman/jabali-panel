@@ -44,7 +44,9 @@ import {
   SafetyOutlined,
   ThunderboltOutlined,
   WarningOutlined,
+  DeleteOutlined,
 } from "@icons";
+import { RowActionButton } from "../../../components/RowActionButton";
 import { ISO3166_COUNTRIES } from "../../../data/iso3166";
 import { CrowdsecTestIPCard } from "./CrowdsecTestIPCard";
 
@@ -390,9 +392,9 @@ export const AdminSecurityCrowdsec = () => {
               cancelText="Cancel"
               onConfirm={() => onDeleteDecision(row)}
             >
-              <Button danger type="text" size="small">
+              <RowActionButton danger size="small" icon={<DeleteOutlined />}>
                 Delete
-              </Button>
+              </RowActionButton>
             </Popconfirm>
           )}
         />

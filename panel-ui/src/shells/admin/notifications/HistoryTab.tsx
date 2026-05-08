@@ -10,6 +10,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 
 import { CheckOutlined, DeleteOutlined, EyeOutlined } from "@icons";
+import { RowActionButton } from "../../../components/RowActionButton";
 
 import { apiClient } from "../../../apiClient";
 
@@ -252,8 +253,7 @@ export const HistoryTab = () => {
           title=""
           width={64}
           render={(_v: unknown, row) => (
-            <Button
-              type="text"
+            <RowActionButton
               size="small"
               icon={<EyeOutlined />}
               onClick={(e) => {
@@ -262,7 +262,9 @@ export const HistoryTab = () => {
                 void markRead(row);
               }}
               aria-label="Show details"
-            />
+            >
+              View
+            </RowActionButton>
           )}
         />
       </Table>

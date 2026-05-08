@@ -8,6 +8,7 @@ import { useState } from "react";
 
 import { DeleteOutlined, EditOutlined, PlusOutlined, SendOutlined } from "@icons";
 
+import { RowActionButton } from "../../../components/RowActionButton";
 import { apiClient } from "../../../apiClient";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import {
@@ -118,16 +119,16 @@ export const ChannelsTab = () => {
           key="actions"
           render={(_: unknown, row: NotificationChannel) => (
             <Space>
-              <Button type="text" icon={<SendOutlined />} onClick={() => handleTest(row)}>
+              <RowActionButton icon={<SendOutlined />} onClick={() => handleTest(row)}>
                 Test
-              </Button>
-              <Button type="text" icon={<EditOutlined />} onClick={() => openEdit(row)}>
+              </RowActionButton>
+              <RowActionButton icon={<EditOutlined />} onClick={() => openEdit(row)}>
                 Edit
-              </Button>
+              </RowActionButton>
               <Popconfirm title={`Delete ${row.name}?`} onConfirm={() => handleDelete(row)}>
-                <Button type="text" danger icon={<DeleteOutlined />}>
+                <RowActionButton danger icon={<DeleteOutlined />}>
                   Delete
-                </Button>
+                </RowActionButton>
               </Popconfirm>
             </Space>
           )}

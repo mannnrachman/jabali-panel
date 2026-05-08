@@ -8,6 +8,7 @@ import {
   CloseOutlined,
   PlusOutlined,
 } from "@icons";
+import { RowActionButton } from "../../components/RowActionButton";
 import {
   Button,
   Drawer,
@@ -592,11 +593,12 @@ export const DNSRecordsPage = () => {
 
                   return (
                     <Space>
-                      <Button
-                        type="text"
+                      <RowActionButton
                         icon={<EditOutlined />}
                         onClick={() => openEditDrawer(record)}
-                      />
+                      >
+                        Edit
+                      </RowActionButton>
                       <Popconfirm
                         title="Delete record?"
                         description="This action cannot be undone."
@@ -604,12 +606,13 @@ export const DNSRecordsPage = () => {
                         okText="Delete"
                         okButtonProps={{ danger: true }}
                       >
-                        <Button
-                          type="text"
+                        <RowActionButton
                           danger
                           icon={<DeleteOutlined />}
                           loading={deletingRecordId === record.id}
-                        />
+                        >
+                          Delete
+                        </RowActionButton>
                       </Popconfirm>
                     </Space>
                   );

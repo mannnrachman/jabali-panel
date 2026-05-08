@@ -24,6 +24,7 @@ import {
   DownloadOutlined,
   CodeOutlined,
 } from "@icons";
+import { RowActionButton } from "../../../components/RowActionButton";
 import { getKeys as getEd25519SSHKeys } from "micro-key-producer/ssh.js";
 import {
   listSSHKeys,
@@ -330,15 +331,14 @@ export const UserSSHKeysPage = () => {
                   okText="Yes"
                   cancelText="No"
                 >
-                  <Button
-                    type="text"
+                  <RowActionButton
                     danger
                     icon={<DeleteOutlined />}
                     loading={deletingId === record.id}
                     disabled={deletingId !== null && deletingId !== record.id}
                   >
                     Delete
-                  </Button>
+                  </RowActionButton>
                 </Popconfirm>
               ),
             },

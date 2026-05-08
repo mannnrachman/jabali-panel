@@ -19,6 +19,7 @@ import {
   Typography,
 } from "antd";
 import { DeleteOutlined, PlusOutlined } from "@icons";
+import { RowActionButton } from "../../../../components/RowActionButton";
 import { useQueries } from "@tanstack/react-query";
 
 import { apiClient } from "../../../../apiClient";
@@ -191,7 +192,7 @@ export const SharedFoldersTab = () => {
                   okButtonProps={{ danger: true }}
                 >
                   <Tooltip title="Remove">
-                    <Button type="text" danger icon={<DeleteOutlined />} />
+                    <RowActionButton danger icon={<DeleteOutlined />}>Remove</RowActionButton>
                   </Tooltip>
                 </Popconfirm>
               ),

@@ -24,6 +24,7 @@ import {
   Typography,
 } from "antd";
 import { DeleteOutlined, EditOutlined, PlusOutlined } from "@icons";
+import { RowActionButton } from "../../../../components/RowActionButton";
 import { useQueries } from "@tanstack/react-query";
 import dayjs, { type Dayjs } from "dayjs";
 
@@ -267,7 +268,7 @@ export const AutorespondersTab = () => {
                     okText="Remove"
                     okButtonProps={{ danger: true }}
                   >
-                    <Button type="text" danger icon={<DeleteOutlined />} />
+                    <RowActionButton danger icon={<DeleteOutlined />}>Remove</RowActionButton>
                   </Popconfirm>
                 </Space>
               ),

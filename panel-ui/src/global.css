@@ -207,3 +207,13 @@
 .jabali-file-manager .ant-table-tbody > tr > td {
   font-size: 14px;
 }
+
+/* File manager folders pane: keep titles on a single line and let
+ * the body horizontally scroll when names overrun the card width. */
+.jabali-file-manager .ant-tree-list-holder-inner {
+  display: inline-block;
+  min-width: 100%;
+}
+.jabali-file-manager .ant-tree .ant-tree-title {
+  white-space: nowrap;
+}

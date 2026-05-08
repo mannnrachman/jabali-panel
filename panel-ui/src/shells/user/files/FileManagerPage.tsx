@@ -1216,7 +1216,7 @@ export const FileManagerPage = () => {
         {inlineTree && (
         <Card
           title={<Typography.Text type="secondary">Folders</Typography.Text>}
-          style={{ width: 280, flexShrink: 0 }}
+          style={{ width: 320, flexShrink: 0 }}
           // body takes the scrollable region; the header is fixed so the
           // "Folders" title stays visible even when a deep tree scrolls.
           // Header bg matches the AntD Table header tint so the two side-by-side
@@ -1227,6 +1227,10 @@ export const FileManagerPage = () => {
             },
             body: {
               padding: 8,
+              // Long folder names overflow the fixed-width tree pane.
+              // Allow horizontal scroll instead of clipping under the
+              // table card so the operator can pan to read them.
+              overflowX: "auto",
             },
           }}
         >

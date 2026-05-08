@@ -1851,13 +1851,23 @@ install_redis() {
 install_postgres() {
   _log "installing PostgreSQL (M37)"
 
-  # Debian-shipped meta package — tracks whichever major version the
-  # release ships (15 on bookworm, 17 on trixie). Hardcoding 16
+  # Debian-shipped meta package — tracks whichever major version
+  # the release ships (15 on bookworm, 17 on trixie). Hardcoding 16
   # broke trixie because postgresql-16 isn't in the default archive.
   if ! command -v psql >/dev/null 2>&1; then
+    # postgresql-common.postinst calls
+    #   install -d -m 02775 -o postgres -g postgres /var/run/postgresql
+    # which fails ("No such file or directory") when invoked from
+    # the jabali-agent's mount namespace (PrivateTmp=yes + various
+    # ProtectKernel*). Pre-creating the directory makes the postinst
+    # a no-op so the full install completes regardless of caller.
+    install -d -m 02775 /run/postgresql 2>/dev/null || true
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       postgresql postgresql-contrib postgresql-client postgresql-common \
       || _die "postgres apt install failed"
+    if getent passwd postgres >/dev/null 2>&1; then
+      chown postgres:postgres /run/postgresql 2>/dev/null || true
+    fi
   fi
 
   # Discover installed major. First sub-directory under /etc/postgresql

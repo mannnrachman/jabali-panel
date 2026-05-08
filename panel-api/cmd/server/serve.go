@@ -227,6 +227,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.DNSZones = dnsZoneRepo
 		deps.DNSRecords = dnsRecordRepo
 		deps.SSLCerts = sslCertRepo
+		deps.BWDaily = repository.NewBWDailyRepository(sharedDB)
 		deps.Databases = databaseRepo
 		deps.DatabaseUsers = databaseUserRepo
 		deps.DatabaseUserGrants = databaseUserGrantRepo
@@ -566,6 +567,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	defer cancel() // Ensure cancel is called on all exit paths
 	if deps.Reconciler != nil {
 		go deps.Reconciler.Start(ctx)
+	}
+	// M13.1: daily goaccess-driven bandwidth scan. Self-scoping —
+	// no-op on hosts where any of agent / domain repo / bw repo
+	// isn't wired (e.g. early-boot tests).
+	if sharedAgent != nil && deps.Domains != nil && deps.BWDaily != nil {
+		go reconciler.StartBandwidthTicker(ctx, sharedAgent, deps.Domains, deps.BWDaily, log)
 	}
 
 	// M30.2 (ADR-0080) backup scheduler + finalizer. Per-destination

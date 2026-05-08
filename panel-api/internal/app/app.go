@@ -52,6 +52,7 @@ type Deps struct {
 	DNSZones            repository.DNSZoneRepository
 	DNSRecords          repository.DNSRecordRepository
 	SSLCerts            repository.SSLCertificateRepository
+	BWDaily             repository.BWDailyRepository
 	PHPPools            repository.PHPPoolRepository
 	PHPPoolIniOverrides repository.PHPPoolIniOverrideRepository
 	WordPressInstalls   repository.WordPressInstallRepository

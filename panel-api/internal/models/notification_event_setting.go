@@ -213,6 +213,20 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 		Severity:    "warning",
 		DefaultOn:   false,
 	},
+	{
+		Kind:        "bandwidth.quota.warn",
+		Label:       "Bandwidth quota — 80%",
+		Description: "User crossed 80% of their package's monthly BandwidthQuotaMB. Per-user dedupe via 6h cooldown.",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "bandwidth.quota.crit",
+		Label:       "Bandwidth quota — 100%",
+		Description: "User crossed their package's monthly BandwidthQuotaMB. v1 does not auto-suspend; admin decides.",
+		Severity:    "critical",
+		DefaultOn:   true,
+	},
 }
 
 // LookupNotificationEventKind returns the metadata for a known kind

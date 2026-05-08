@@ -86,6 +86,11 @@ type Deps struct {
 	ServerSettings     repository.ServerSettingsRepository
 	// M41 Snuffleupagus ingest. Nil disables the ingest source.
 	Snuffleupagus repository.SnuffleupagusRepository
+	// M13.1 bandwidth quota event source. All three needed; nil
+	// disables the source.
+	BWDaily  repository.BWDailyRepository
+	Domains  repository.DomainRepository
+	Packages repository.PackageRepository
 }
 
 // Start boots every configured source in its own goroutine. Each
@@ -118,6 +123,7 @@ func Start(ctx context.Context, d Deps) {
 	go runSecurityDecision(ctx, d)
 	go runPostgresMonitor(ctx, d)
 	go runPanelLogTail(ctx, d)
+	go runBandwidthQuota(ctx, d)
 	// domain_expiry + backup_fail are stubs — see the stub files in
 	// this package.
 }

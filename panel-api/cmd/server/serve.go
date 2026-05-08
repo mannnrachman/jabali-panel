@@ -698,6 +698,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 			UserEgressPolicies: deps.UserEgressPolicies,
 			ServerSettings:     deps.ServerSettings,
 			Snuffleupagus:      deps.Snuffleupagus,
+			BWDaily:            deps.BWDaily,
+			Domains:            deps.Domains,
+			Packages:           deps.Packages,
 		})
 	}
 

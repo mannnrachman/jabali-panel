@@ -299,6 +299,13 @@ const deleteMutation = useDeleteMutation({ resource: "admin/xxx" });
 - `<Popconfirm title="Delete X?" onConfirm={...}>` wrapping the Delete button.
 - `message.success` / `message.error` for mutation outcomes — never `alert()` or silent failures.
 
+### Row action buttons (Tables → "Actions" column)
+
+- Use `<RowActionButton icon={...}>Label</RowActionButton>` from `src/components/RowActionButton.tsx` for non-destructive row actions (Edit, View, DNS, Open in PMA, Clone, …). Filled style, default `color="primary"`. Icon required.
+- Use `<RowDeleteButton ... />` (or `<RowActionButton danger icon={<DeleteOutlined/>}>Delete</RowActionButton>` inside a Popconfirm for compound flows) for destructive actions. Filled style, `color="danger"`.
+- DO NOT use `type="text"` or `type="link"` for row actions. They render visually inconsistent across light/dark themes, blend into the row background, and produced the M-period of "are these clickable?" UX bugs.
+- Toolbar buttons (above the table — Create, Refresh, Bulk Actions) keep `type="primary"` / default outlined style. Only the per-row column standardizes on filled.
+
 ### Hooks
 
 All CRUD flows through `src/hooks/useQueries.ts`:

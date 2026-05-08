@@ -21,6 +21,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
 import { columnSearchProps } from "../../../components/columnSearch";
+import { RowActionButton } from "../../../components/RowActionButton";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useDeleteMutation } from "../../../hooks/useQueries";
 import { useTableURL } from "../../../hooks/useTableURL";
@@ -195,13 +196,12 @@ export const UserDomainList = () => {
             render={(_, r) => (
               <>
                 <Space>
-                <Button
-                  type="text"
+                <RowActionButton
                   icon={<GlobalOutlined />}
                   onClick={() => navigate(`/jabali-panel/domains/${r.id}/dns`)}
                 >
                   DNS
-                </Button>
+                </RowActionButton>
                 <Dropdown
                   trigger={["click"]}
                   menu={{
@@ -270,7 +270,9 @@ export const UserDomainList = () => {
                     ],
                   }}
                 >
-                  <Button type="text" icon={<MoreOutlined />} />
+                  <RowActionButton icon={<MoreOutlined />} color="default">
+                    More
+                  </RowActionButton>
                 </Dropdown>
                 </Space>
                 {activeModal?.domainId === r.id && activeModal.type === "redirects" && (

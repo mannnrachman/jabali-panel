@@ -3,7 +3,9 @@
 // <DeleteButton> replaced with plain react-router <Button>s + a
 // RowDeleteButton wired to useDeleteMutation.
 import { Button, Card, Input, Space, Table, Tag, Typography } from "antd";
-import { PackageOpenOutlined, SearchOutlined } from "@icons";
+import { EditOutlined, PackageOpenOutlined, SearchOutlined } from "@icons";
+
+import { RowActionButton } from "../../../components/RowActionButton";
 import { useNavigate } from "react-router";
 import type { SorterResult } from "antd/es/table/interface";
 
@@ -166,14 +168,14 @@ export const PackageList = () => {
             dataIndex="actions"
             render={(_: unknown, r: Package) => (
               <Space>
-                <Button
-                  type="text"
+                <RowActionButton
+                  icon={<EditOutlined />}
                   onClick={() =>
                     navigate(`/jabali-admin/packages/edit/${r.id}`)
                   }
                 >
                   Edit
-                </Button>
+                </RowActionButton>
                 <RowDeleteButton
                   confirmTitle={`Delete package "${r.name}"?`}
                   onConfirm={async () => {

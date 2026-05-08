@@ -57,12 +57,14 @@ export const UserDeleteAction = ({
   return (
     <>
       <Button
-        danger
-        type="text"
+        variant="filled"
+        color="danger"
         icon={<DeleteOutlined />}
         aria-label="Delete"
         onClick={handleOpenModal}
-      />
+      >
+        Delete
+      </Button>
 
       <Modal
         title={`Delete user "${userEmail}"?`}

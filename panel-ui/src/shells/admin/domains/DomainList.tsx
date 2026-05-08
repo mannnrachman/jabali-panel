@@ -2,7 +2,7 @@
 // stays the same (DNS/Redirects/Index/Settings/Toggle/Edit/Delete);
 // only the hook and the two Refine action buttons change.
 import { useState } from "react";
-import { Button, Card, Dropdown, Modal, Space, Table, Tag, Typography, notification } from "antd";
+import { Card, Dropdown, Modal, Space, Table, Tag, Typography, notification } from "antd";
 import {
   DeleteOutlined,
   DownOutlined,
@@ -20,6 +20,7 @@ import type { SorterResult } from "antd/es/table/interface";
 
 import { apiClient } from "../../../apiClient";
 import { columnSearchProps } from "../../../components/columnSearch";
+import { RowActionButton } from "../../../components/RowActionButton";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useDeleteMutation } from "../../../hooks/useQueries";
 import { useTableURL } from "../../../hooks/useTableURL";
@@ -233,20 +234,18 @@ export const DomainList = () => {
             dataIndex="actions"
             render={(_, r) => (
               <Space>
-                <Button
-                  type="text"
+                <RowActionButton
                   icon={<GlobalOutlined />}
                   onClick={() => navigate(`/jabali-admin/domains/${r.id}/dns`)}
                 >
                   DNS
-                </Button>
-                <Button
-                  type="text"
+                </RowActionButton>
+                <RowActionButton
                   icon={<EditOutlined />}
                   onClick={() => navigate(`/jabali-admin/domains/edit/${r.id}`)}
                 >
                   Edit
-                </Button>
+                </RowActionButton>
                 <Dropdown
                   menu={{
                     items: [
@@ -298,9 +297,9 @@ export const DomainList = () => {
                     ],
                   }}
                 >
-                  <Button type="text">
-                    More <DownOutlined />
-                  </Button>
+                  <RowActionButton icon={<DownOutlined />} color="default">
+                    More
+                  </RowActionButton>
                 </Dropdown>
                 {activeModal?.domain.id === r.id && activeModal.type === "redirects" && (
                   <DomainRedirectsButton

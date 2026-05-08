@@ -9,7 +9,9 @@
 // total stays correct per tab.
 import { useState } from "react";
 import { Button, Card, Input, Space, Table, Tag, Typography } from "antd";
-import { SearchOutlined, TeamOutlined } from "@icons";
+import { EditOutlined, SearchOutlined, TeamOutlined } from "@icons";
+
+import { RowActionButton } from "../../../components/RowActionButton";
 import type { SorterResult } from "antd/es/table/interface";
 
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
@@ -57,9 +59,9 @@ function RowActions({
 }) {
   return (
     <Space size="middle">
-      <Button type="text" onClick={() => onEdit(user.id)}>
+      <RowActionButton icon={<EditOutlined />} onClick={() => onEdit(user.id)}>
         Edit
-      </Button>
+      </RowActionButton>
       <UserReset2FAAction userId={user.id} userEmail={user.email} />
       <UserDeleteAction recordItemId={user.id} userEmail={user.email} />
     </Space>

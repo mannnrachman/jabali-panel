@@ -54,8 +54,8 @@ export function RowDeleteButton({
       cancelText="Cancel"
     >
       <Button
-        danger
-        type="text"
+        variant="filled"
+        color="danger"
         icon={<DeleteOutlined />}
       >
         Delete

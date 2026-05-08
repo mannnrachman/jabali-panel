@@ -38,7 +38,8 @@ export const UserReset2FAAction = ({
   return (
     <>
       <Button
-        type="text"
+        variant="filled"
+        color="primary"
         icon={<SafetyOutlined />}
         onClick={() => setIsModalOpen(true)}
       >

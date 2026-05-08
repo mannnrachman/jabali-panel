@@ -15,6 +15,7 @@ import type { SorterResult } from "antd/es/table/interface";
 
 import { ssoAdminer, ssoPhpMyAdmin } from "../../../apiClient";
 import { EngineTag } from "../../../components/EngineTag";
+import { RowActionButton } from "../../../components/RowActionButton";
 import { RowDeleteButton } from "../../../components/RowDeleteButton";
 import { columnSearchProps } from "../../../components/columnSearch";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
@@ -264,25 +265,23 @@ export const UserDatabaseList = () => {
                         : ""
                     }
                   >
-                    <Button
-                      type="text"
+                    <RowActionButton
                       icon={<LinkOutlined />}
                       onClick={() => handleOpenPhpMyAdmin(r)}
                       disabled={isPostgres || isLoading}
                       loading={isLoading}
                     >
                       Open in phpMyAdmin
-                    </Button>
+                    </RowActionButton>
                   </Tooltip>
-                  <Button
-                    type="text"
+                  <RowActionButton
                     icon={<LinkOutlined />}
                     onClick={() => handleOpenAdminer(r)}
                     disabled={isAdminerLoading}
                     loading={isAdminerLoading}
                   >
                     Open in Adminer
-                  </Button>
+                  </RowActionButton>
                   <RowDeleteButton
                     confirmTitle={`Delete database "${r.name}"?`}
                     onConfirm={async () => {

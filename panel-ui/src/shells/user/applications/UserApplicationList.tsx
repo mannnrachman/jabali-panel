@@ -29,6 +29,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { SorterResult } from "antd/es/table/interface";
 
 import { columnSearchProps } from "../../../components/columnSearch";
+import { RowActionButton } from "../../../components/RowActionButton";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { apiClient } from "../../../apiClient";
 import { useAuth } from "../../../auth/AuthContext";
@@ -117,14 +118,13 @@ const ActionsCell = ({
     <Space>
       {canLogin && (
         <Tooltip title="Log in to the admin dashboard">
-          <Button
-            type="link"
+          <RowActionButton
             icon={<LoginOutlined />}
             loading={magicLinkLoading}
             onClick={handleMagicLink}
           >
             Log in to admin
-          </Button>
+          </RowActionButton>
         </Tooltip>
       )}
       <Tooltip
@@ -134,14 +134,13 @@ const ActionsCell = ({
             : "Clone is only available for healthy WordPress installs"
         }
       >
-        <Button
-          type="link"
+        <RowActionButton
           icon={<CopyOutlined />}
           disabled={!canClone}
           onClick={onClone}
         >
           Clone
-        </Button>
+        </RowActionButton>
       </Tooltip>
       <Popconfirm
         title="Delete this application?"
@@ -152,14 +151,13 @@ const ActionsCell = ({
         onConfirm={onDelete}
         disabled={isDeleting}
       >
-        <Button
-          type="link"
+        <RowActionButton
           danger
           icon={<DeleteOutlined />}
           loading={isDeleting}
         >
           Delete
-        </Button>
+        </RowActionButton>
       </Popconfirm>
     </Space>
   );

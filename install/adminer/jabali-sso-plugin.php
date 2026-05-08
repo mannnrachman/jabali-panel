@@ -143,7 +143,11 @@ class JabaliAdminerSSO {
             return htmlspecialchars((string)$v, ENT_QUOTES);
         };
 
-        echo '<form id="jabali-sso" action="" method="post" style="display:none">';
+        // action="/jabali-adminer/" strips the ?token=... query so a
+        // refresh after login doesn't replay the (already-consumed)
+        // token through the validate endpoint. Adminer's auth picks
+        // up auth[*] from $_POST regardless of query string.
+        echo '<form id="jabali-sso" action="/jabali-adminer/" method="post" style="display:none">';
         echo '<input type="hidden" name="auth[driver]"   value="' . $h($c['driver']) . '">';
         echo '<input type="hidden" name="auth[server]"   value="' . $h($c['server']) . '">';
         echo '<input type="hidden" name="auth[username]" value="' . $h($c['username']) . '">';

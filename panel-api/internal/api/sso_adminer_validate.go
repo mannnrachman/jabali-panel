@@ -124,7 +124,13 @@ func (h *ssoAdminerValidateHandler) validate(c *gin.Context) {
 	switch token.Engine {
 	case "mariadb":
 		resp.Driver = "server"
-		resp.Server = mariaDBSocketPath
+		// Adminer's MySQLi backend reads $server like
+		// `host[:port]` and only treats a colon-prefixed value
+		// as a Unix socket path. Bare `/var/run/mysqld/mysqld.sock`
+		// is interpreted as a hostname → DNS lookup → connect
+		// failure (the symptom: Adminer login form submits but
+		// the page returns to the form, looking "stuck").
+		resp.Server = "localhost:" + mariaDBSocketPath
 		if user.MysqladminUsername == nil {
 			h.audit(ctx, token.UserID, token.DatabaseID, token.Engine, hashPrefix, "shadow_username_nil")
 			c.JSON(http.StatusInternalServerError, ssoErrorResponse{Error: "internal"})

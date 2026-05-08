@@ -131,10 +131,11 @@ func userLimitsApplyHandler(ctx context.Context, params json.RawMessage) (any, e
 	// Reload: always, so newly-written drop-ins take effect AND any
 	// idempotent retry also triggers the kernel-state verification
 	// below. Cheap operation — milliseconds on a quiet host.
-	if _, _, err := runCmdFn(ctx, "systemctl", "daemon-reload"); err != nil {
+	if _, drStderr, err := runCmdFn(ctx, "systemctl", "daemon-reload"); err != nil {
 		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("systemctl daemon-reload: %v", err),
+			Code: agentwire.CodeInternal,
+			Message: fmt.Sprintf("systemctl daemon-reload: %v: %s",
+				err, strings.TrimSpace(string(drStderr))),
 		}
 	}
 

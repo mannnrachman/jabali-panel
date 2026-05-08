@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 )
@@ -62,10 +63,11 @@ func userLimitsClearHandler(ctx context.Context, params json.RawMessage) (any, e
 
 	// Reload either way — if the drop-in existed, systemd needs to
 	// forget it; if not, it's a cheap no-op.
-	if _, _, err := runCmdFn(ctx, "systemctl", "daemon-reload"); err != nil {
+	if _, drStderr, err := runCmdFn(ctx, "systemctl", "daemon-reload"); err != nil {
 		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("daemon-reload: %v", err),
+			Code: agentwire.CodeInternal,
+			Message: fmt.Sprintf("daemon-reload: %v: %s",
+				err, strings.TrimSpace(string(drStderr))),
 		}
 	}
 

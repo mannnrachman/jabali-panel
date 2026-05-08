@@ -7953,6 +7953,40 @@ EOF_MOD
 
   _ok "snuffleupagus installed across PHP minors (mode=off; flip via Security UI)"
 }
+install_audit_php_bypass() {
+  if ! dpkg -s auditd >/dev/null 2>&1; then
+    _warn "auditd not installed — install_audit_exec should have run earlier"
+    return 0
+  fi
+
+  local rules_file=/etc/audit/rules.d/jabali-snuffleupagus.rules
+  local rules_tmp
+  rules_tmp=$(mktemp)
+  {
+    echo "# Jabali Snuffleupagus PHP-CLI bypass detection (M41, ADR-0088)."
+    echo "# Tagged 'jabali_php_bypass' for ausearch -k pivots."
+    echo "# auid>=1000 = real users only (excludes daemon services)."
+    echo "# Catches \`php -n\` style bypass of the conf.d sp.so drop-in."
+    echo
+    echo "-a always,exit -F arch=b64 -S execve -F path=/usr/bin/php       -F auid>=1000 -F auid!=4294967295 -k jabali_php_bypass"
+    local minor
+    for minor in $(ls -1d /etc/php/[0-9]*.[0-9]* 2>/dev/null | xargs -r -n1 basename); do
+      local bin="/usr/bin/php${minor}"
+      [[ -x "$bin" ]] || continue
+      printf -- '-a always,exit -F arch=b64 -S execve -F path=%-21s -F auid>=1000 -F auid!=4294967295 -k jabali_php_bypass\n' "$bin"
+    done
+  } >"$rules_tmp"
+
+  if [[ ! -f "$rules_file" ]] || ! cmp -s "$rules_tmp" "$rules_file"; then
+    install -m 0640 -o root -g root "$rules_tmp" "$rules_file"
+    if command -v augenrules >/dev/null 2>&1; then
+      augenrules --load >/dev/null 2>&1 || \
+        _warn "augenrules --load failed — auditd may need a restart"
+    fi
+    _ok "auditd jabali-snuffleupagus.rules installed (key=jabali_php_bypass)"
+  fi
+  rm -f "$rules_tmp"
+}
 main() {
   print_banner
   preflight

@@ -89,6 +89,10 @@ var enqueueAllowedEventKinds = map[string]struct{}{
 	"agent.unreachable":       {},
 	"notifications.dlq.nonzero": {},
 	"panel.api.error":         {},
+	// M13.1 bandwidth quota events (in-process publisher; allowed
+	// here so a future external poster can hit the same envelopes).
+	"bandwidth.quota.warn": {},
+	"bandwidth.quota.crit": {},
 }
 
 var enqueueAllowedSeverities = map[string]struct{}{

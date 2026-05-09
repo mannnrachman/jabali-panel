@@ -4519,6 +4519,31 @@ install_sso_reaper_timer() {
   _ok "sso reaper timer enabled (every 30s)"
 }
 
+# ---------- M35 migration-secrets reaper (ADR-0094) ----------------------
+#
+# install_migration_secrets_reaper writes the daily timer + service
+# that wipes /etc/jabali-panel/migration-secrets/<job-id>.env files
+# for terminal-state migration_jobs (done/failed/cancelled). Closes
+# the ADR-0094 §"tracked risks" gap: per-job credentials previously
+# persisted across job-terminal state with no scheduled wipe.
+install_migration_secrets_reaper() {
+  _log "installing migration-secrets reaper systemd timer"
+  local svc_src="${REPO_DIR}/install/systemd/jabali-migration-secrets-reap.service"
+  local timer_src="${REPO_DIR}/install/systemd/jabali-migration-secrets-reap.timer"
+  local svc_dst="/etc/systemd/system/jabali-migration-secrets-reap.service"
+  local timer_dst="/etc/systemd/system/jabali-migration-secrets-reap.timer"
+  if [[ ! -f "$svc_src" || ! -f "$timer_src" ]]; then
+    _warn "migration-secrets reaper units missing at $svc_src / $timer_src — skipping"
+    return 0
+  fi
+  install -m 0644 -o root -g root "$svc_src" "$svc_dst"
+  install -m 0644 -o root -g root "$timer_src" "$timer_dst"
+  systemctl daemon-reload
+  systemctl enable --now jabali-migration-secrets-reap.timer >/dev/null 2>&1 || \
+    _warn "jabali-migration-secrets-reap.timer enable failed — check 'journalctl -u jabali-migration-secrets-reap.timer'"
+  _ok "migration-secrets reaper timer enabled (daily 04:30 UTC + 15min jitter)"
+}
+
 # ---------- M30 backup foundation (ADR-0075) -------------------------------
 #
 # install_backup_foundation lays the restic-backed backup foundation:
@@ -8250,6 +8275,7 @@ main() {
   seed_admin_env
   install_sso_key
   install_sso_reaper_timer
+  install_migration_secrets_reaper
   install_backup_foundation
   # Order matters: install_phpmyadmin extracts the tarball to
   # /opt/phpmyadmin/current, which the pma pool config references as

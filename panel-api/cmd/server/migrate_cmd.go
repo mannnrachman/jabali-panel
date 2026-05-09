@@ -19,6 +19,7 @@ func newMigrateCmd() *cobra.Command {
 	// schema, one account-import). Different scope from `up` which
 	// runs golang-migrate DB-schema migrations.
 	cmd.AddCommand(newMigrateImportCmd())
+	cmd.AddCommand(newMigrateReapSecretsCmd())
 	return cmd
 }
 

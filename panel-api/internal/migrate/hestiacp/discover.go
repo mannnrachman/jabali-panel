@@ -266,18 +266,58 @@ func (d *Discoverer) DescribeAccount(ctx context.Context, raw migrate.Session, a
 	if _, err := s.run(ctx, d.CommandTimeout, fmt.Sprintf("v-list-user '%s' json", strings.ReplaceAll(accountID, "'", `'\''`))); err != nil {
 		return nil, fmt.Errorf("v-list-user %q: %w", accountID, err)
 	}
-	return &migrate.AccountManifest{
+	m := &migrate.AccountManifest{
 		SchemaVersion: migrate.ManifestSchemaVersion,
 		Source: migrate.SourceRef{
 			Kind: models.MigrationSourceHestia,
 			Host: host,
 			User: accountID,
 		},
-		Warnings: []migrate.Warning{
-			{
-				Code:   "hestiacp_per_area_builders_pending",
-				Detail: "Hestia importer Discoverer scaffold shipped; per-area builders (domains/dbs/mailboxes/cron/ssh) land in follow-up commits. Operator alternative today: v-backup-user produces a tar; extract under /var/lib/jabali-migrations/<job>/extracted/ and use the cpanel restore code-paths via manual SQL job-row tweak.",
-			},
-		},
-	}, nil
+		Warnings: []migrate.Warning{},
+	}
+
+	var firstErr error
+	if doms, err := d.describeDomains(ctx, s, accountID); err != nil {
+		firstErr = fmt.Errorf("domains: %w", err)
+		m.Warnings = append(m.Warnings, migrate.Warning{
+			Code: "domains_failed", Detail: err.Error(),
+		})
+	} else {
+		m.Domains = doms
+	}
+
+	if dbs, warn, err := d.describeDatabases(ctx, s, accountID); err != nil {
+		if firstErr == nil {
+			firstErr = fmt.Errorf("databases: %w", err)
+		}
+		m.Warnings = append(m.Warnings, migrate.Warning{
+			Code: "databases_failed", Detail: err.Error(),
+		})
+	} else {
+		m.Databases = dbs
+		m.Warnings = append(m.Warnings, warn...)
+	}
+
+	if boxes, warn, err := d.describeMailboxes(ctx, s, accountID); err != nil {
+		m.Warnings = append(m.Warnings, migrate.Warning{
+			Code: "mailboxes_failed", Detail: err.Error(),
+		})
+		_ = warn
+	} else {
+		m.Mailboxes = boxes
+		m.Warnings = append(m.Warnings, warn...)
+	}
+
+	// Cron + SSH keys via tarball — same shape as DA. v-backup-user
+	// tarball has user/cron + user/ssh.keys; cpanel restore writers
+	// walk those when DA/Hestia tarball parser ships.
+	m.Warnings = append(m.Warnings, migrate.Warning{
+		Code:   "hestiacp_cron_ssh_via_tarball",
+		Detail: "Hestia v-list-* doesn't expose cron + ssh keys at the user level; pull v-backup-user tarball + reuse cpanel writers (Step 5 follow-up).",
+	})
+
+	if firstErr != nil && len(m.Domains) == 0 {
+		return nil, firstErr
+	}
+	return m, nil
 }

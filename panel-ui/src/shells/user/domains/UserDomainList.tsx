@@ -49,14 +49,59 @@ const renderDomainCell = (name: string, docRoot: string) => (
   </div>
 );
 
+// SSL state values come from panel-api/internal/repository/
+// domain_repository.go computeSSLState: "active_le" (valid LE
+// cert), "self_signed", "pending", "issuing", "renewing",
+// "pending_acme_retry", "failed", "revoked", "off".
+//
+// Mirrors admin DomainList renderSSL (DomainList.tsx 66-80) so
+// user + admin shells render identically.
 const getSSLTagColor = (state?: string): string => {
-  if (state === "active") return "green";
-  if (state === "error") return "red";
-  return "default";
+  switch (state) {
+    case "active_le":
+      return "gold"; // Let's Encrypt rendered yellow per operator request
+    case "active":
+      return "green";
+    case "self_signed":
+      return "orange";
+    case "pending":
+    case "issuing":
+    case "renewing":
+    case "pending_acme_retry":
+      return "gold";
+    case "failed":
+    case "error":
+    case "revoked":
+      return "red";
+    default:
+      return "default";
+  }
 };
 
 const getSSLTagLabel = (state?: string): string => {
-  return state || "off";
+  switch (state) {
+    case "active_le":
+      return "Let's Encrypt";
+    case "active":
+      return "Active";
+    case "self_signed":
+      return "Self-signed";
+    case "pending":
+    case "issuing":
+    case "renewing":
+    case "pending_acme_retry":
+      return "Issuing…";
+    case "failed":
+    case "error":
+      return "Failed";
+    case "revoked":
+      return "Revoked";
+    case "":
+    case undefined:
+      return "Off";
+    default:
+      return state;
+  }
 };
 
 export type Domain = {

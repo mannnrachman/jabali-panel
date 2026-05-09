@@ -20,6 +20,7 @@ func newMigrateCmd() *cobra.Command {
 	// runs golang-migrate DB-schema migrations.
 	cmd.AddCommand(newMigrateImportCmd())
 	cmd.AddCommand(newMigrateReapSecretsCmd())
+	cmd.AddCommand(newMigratePullSourceCmd())
 	return cmd
 }
 

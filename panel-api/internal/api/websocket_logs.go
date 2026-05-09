@@ -19,13 +19,49 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		// Allow connections from same origin for now
-		// TODO: Implement proper origin validation
-		return true
-	},
+	CheckOrigin:     checkLogStreamOrigin,
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
+}
+
+// checkLogStreamOrigin enforces same-origin on the log-stream WS so a
+// CSRF page can't surreptitiously open a stream against the panel.
+//
+// Behaviour:
+//   - No Origin header (curl, native WS clients, panel-api → panel-api):
+//     allow. They can't be CSRF'd because there's no browser ambient
+//     credential to leak.
+//   - Origin header present: must be a same-host URL (host + port match
+//     r.Host verbatim). Cross-origin attempts are rejected even if
+//     they happen to know the stream_key — defense in depth.
+//
+// Schemes are NOT compared because the panel is reachable via both
+// http (rare, dev) and https (production); ports ARE compared via
+// r.Host so a panel on :8443 doesn't accept origin :443.
+func checkLogStreamOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	const sep = "://"
+	if idx := stringsIndexOf(origin, sep); idx >= 0 {
+		origin = origin[idx+len(sep):]
+	}
+	return origin == r.Host
+}
+
+// stringsIndexOf — local, allocation-free strings.Index. Inline to
+// keep the security check obvious at a glance.
+func stringsIndexOf(s, sub string) int {
+	if len(sub) == 0 {
+		return 0
+	}
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
 }
 
 type LogStreamHandlerConfig struct {

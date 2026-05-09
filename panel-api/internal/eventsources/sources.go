@@ -124,6 +124,7 @@ func Start(ctx context.Context, d Deps) {
 	go runPostgresMonitor(ctx, d)
 	go runPanelLogTail(ctx, d)
 	go runBandwidthQuota(ctx, d)
+	go runExecAuditBurst(ctx, d)
 	// domain_expiry + backup_fail are stubs — see the stub files in
 	// this package.
 }

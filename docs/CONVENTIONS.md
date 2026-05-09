@@ -353,6 +353,9 @@ Wrapper pattern: cross-resource side effects (e.g. "after domain create, invalid
 | Icons | lucide-react via `@icons` shim — no `@ant-design/icons` imports | — |
 | Commits | Conventional format (`feat:`, `fix:`, …); no `Co-Authored-By`; NEVER push from an agent worktree | CONTRIBUTING.md + CLAUDE.md |
 | Git flow | Feature branch off latest `origin/main`; rebase before final report; dispatcher is the only entity that pushes | CLAUDE.md |
+| Automation API auth | HMAC-SHA256 over `METHOD || PATH || ts || sha256(BODY)`, 5-min skew window, scope-checked per route via `RequireScope` | ADR-0093 / `middleware/automation_hmac.go` |
+| Per-row denormalized stats | List handler does ONE batch lookup (e.g. `BWDaily.SumByDomainIDs`) and writes the result onto each list-row struct field. Avoid N+1 fetches and per-row `useQuery` calls. | M13.1 `domains.go` list path |
+| AppArmor profiles | Author against AA 4.x rules verified by `make aa-smoke` (per-profile `aa-exec` + socket dial probe). Never ship a profile that hasn't passed the harness. | ADR-0086 amendment / `tools/aa-smoke/` |
 
 ---
 

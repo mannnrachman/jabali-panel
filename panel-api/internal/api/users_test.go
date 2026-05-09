@@ -552,9 +552,16 @@ func TestUsers_Create_NonAdmin403(t *testing.T) {
 func TestUsers_Patch_PasswordFieldRejected(t *testing.T) {
 	t.Parallel()
 
-	// Post-M20: password changes live in Kratos. The panel PATCH handler no
-	// longer accepts a password field at all — it's silently ignored by
-	// json.Unmarshal (the struct has no such field). Hash must be unchanged.
+	// Post-M20: password changes live in Kratos. A PATCH carrying a
+	// password for a user with NO Kratos identity is rejected loud
+	// with 409 (no_kratos_identity) — the panel cannot honor the
+	// request, and silently dropping it would mask a real corruption
+	// case where a user has a panel row but no auth identity.
+	//
+	// 409 also short-circuits the handler so other fields in the same
+	// PATCH body (e.g. name_first) are NOT applied. That's by design:
+	// the operator should see the Kratos-identity issue first; once
+	// resolved, the rename PATCHes through normally.
 	repo := newMemUserRepo()
 	u := makeUser(t, "u@example.com", false, "password01")
 	repo.seed(u)
@@ -565,12 +572,48 @@ func TestUsers_Patch_PasswordFieldRejected(t *testing.T) {
 		"current_password": "password01",
 		"name_first":       "Renamed",
 	})
+	require.Equal(t, http.StatusConflict, rec.Code, "no kratos identity → 409, body has no_kratos_identity")
+	require.Contains(t, rec.Body.String(), "no_kratos_identity")
+
+	after, err := repo.FindByID(context.Background(), u.ID)
+	require.NoError(t, err)
+	// PasswordHash invariant — the actual M20 protection — must hold:
+	// the panel DB never persists a panel-side password change post-
+	// M20 because the kratos sync block returns 409 before existing
+	// is written back to the repo.
+	assert.Equal(t, u.PasswordHash, after.PasswordHash, "panel DB must not accept password PATCHes post-M20")
+	// NOTE: name_first mutates on `existing` BEFORE the kratos-sync
+	// block fires. In the production GORM repo a 409 short-circuits
+	// before repo.Update() is called, so the change never persists.
+	// The in-memory test repo here returns shared pointers from
+	// FindByID, so the mutation appears even though Update was never
+	// called — that's a rig artefact, not a bug. We don't assert on
+	// name_first here for that reason; the companion test
+	// TestUsers_Patch_NameFirstUpdates_NoPassword verifies the rename
+	// path independently.
+}
+
+func TestUsers_Patch_NameFirstUpdates_NoPassword(t *testing.T) {
+	t.Parallel()
+
+	// Companion to TestUsers_Patch_PasswordFieldRejected: a PATCH that
+	// omits the password field works the normal way for users with no
+	// Kratos identity (M20 only requires Kratos for password changes,
+	// not for profile field updates).
+	repo := newMemUserRepo()
+	u := makeUser(t, "u@example.com", false, "password01")
+	repo.seed(u)
+
+	r := buildRouter(repo, &auth.AccessClaims{UserID: u.ID})
+	rec := doJSON(t, r, http.MethodPatch, "/api/v1/users/"+u.ID, map[string]any{
+		"name_first": "Renamed",
+	})
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	after, err := repo.FindByID(context.Background(), u.ID)
 	require.NoError(t, err)
-	assert.Equal(t, u.PasswordHash, after.PasswordHash, "panel DB must not accept password PATCHes post-M20")
-	assert.Equal(t, "Renamed", after.NameFirst, "other fields still update")
+	assert.Equal(t, "Renamed", after.NameFirst)
+	assert.Equal(t, u.PasswordHash, after.PasswordHash, "name-only PATCH must not touch hash")
 }
 
 func TestUsers_Patch_OwnerCannotSetIsAdmin(t *testing.T) {

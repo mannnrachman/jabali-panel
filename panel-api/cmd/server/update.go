@@ -286,6 +286,28 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			}
 			return nil
 		}},
+		{"sync service-user dirs (ensure_user_and_dirs)", func() error {
+			// Mirror install.sh's ensure_user_and_dirs on every
+			// jabali update. Catches any dirs added to the function
+			// after the initial install — e.g. /var/lib/jabali-
+			// migrations (M35) shipped in 30041b57 didn't land on
+			// existing hosts because update.go didn't re-source
+			// the function. Round 6 QA flagged the missing dir +
+			// hand-created it; this step closes the gap.
+			//
+			// Idempotent: every sub-step is `install -d` or
+			// `usermod -aG` which is no-op when state already
+			// matches.
+			installSh := repoDir + "/install.sh"
+			if _, err := os.Stat(installSh); err != nil {
+				return nil
+			}
+			if err := run("", "bash", "-c",
+				"source "+installSh+" && ensure_user_and_dirs"); err != nil {
+				fmt.Printf("  (ensure_user_and_dirs failed: %v — continuing)\n", err)
+			}
+			return nil
+		}},
 		{"sync apparmor profiles", func() error {
 			// Re-render every jabali AppArmor profile from
 			// install/apparmor/ + reload distro system profiles

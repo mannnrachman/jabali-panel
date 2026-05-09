@@ -113,13 +113,21 @@ failed stage. Already-done stages are skipped.`,
 				return fmt.Errorf("destination user %s has no Linux username", user.ID)
 			}
 
-			// For now only cPanel is supported. Future kinds
-			// (directadmin, hestia, whm_pkgacct, imap_only) plug
-			// in by adding a switch arm here that builds the
-			// kind-specific callbacks.
-			if job.SourceKind != models.MigrationSourceCpanel {
-				return fmt.Errorf("source kind %q not yet supported by jabali migrate run; only %q",
-					job.SourceKind, models.MigrationSourceCpanel)
+			// cPanel + WHM-pkgacct share restore code-path: both
+			// produce cpmove-<user>.tar.gz with identical layout.
+			// WHM-pkgacct just skips the live-source SSH probe
+			// (operator pre-uploaded the tarball). Future
+			// directadmin / hestiacp / imap_only land here as
+			// they get per-area builders + tarball-pull wired.
+			switch job.SourceKind {
+			case models.MigrationSourceCpanel, models.MigrationSourceWHMpkgacct:
+				// supported — fall through
+			default:
+				return fmt.Errorf("source kind %q not yet supported by jabali migrate import; "+
+					"supported: %s, %s",
+					job.SourceKind,
+					models.MigrationSourceCpanel,
+					models.MigrationSourceWHMpkgacct)
 			}
 
 			extractDir := filepath.Join("/var/lib/jabali-migrations", job.ID, "extracted")

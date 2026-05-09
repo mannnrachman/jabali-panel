@@ -7,6 +7,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 )
 
@@ -171,6 +172,14 @@ func (r *migrationJobRepo) Delete(ctx context.Context, id string) error {
 
 func (r *migrationJobRepo) CreateStage(ctx context.Context, row *models.MigrationStage) error {
 	now := time.Now().UTC()
+	// Generate ULID when caller didn't supply one. Pre-fix bug: the
+	// runner constructs *MigrationStage without setting ID + relied
+	// on this helper to mint one; without that, gorm.Create insert
+	// hit 'Duplicate entry "" for key PRIMARY' on the second stage
+	// row of any job.
+	if row.ID == "" {
+		row.ID = ids.NewULID()
+	}
 	if row.CreatedAt.IsZero() {
 		row.CreatedAt = now
 	}

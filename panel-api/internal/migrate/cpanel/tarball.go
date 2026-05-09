@@ -200,15 +200,22 @@ func ParseTarball(tarballPath, extractDir string) (*ParsedTarball, error) {
 	if out.SourceUser == "" {
 		return nil, errors.New("ParseTarball: no cp/<user>/ top-level — not a cpmove tarball?")
 	}
-	// HomeDir lookup respects the detected wrapper prefix so
-	// disk paths reflect the actual extracted layout.
-	homeRel := filepath.Join("cp", out.SourceUser, "homedir")
-	if wrapperPrefix != "" {
-		homeRel = filepath.Join(strings.TrimRight(wrapperPrefix, string(filepath.Separator)), homeRel)
+	// HomeDir lookup respects the detected wrapper prefix + the
+	// two cPanel layouts: pkgacct cpmove (cp/<user>/homedir/) and
+	// full-backup wizard (homedir/ at top, cp/<user> as a file).
+	candidates := []string{
+		filepath.Join("cp", out.SourceUser, "homedir"),
+		"homedir",
 	}
-	if root := filepath.Join(extractDir, homeRel); existsDir(root) {
-		out.HomeDir = root
-		out.MailRoot = filepath.Join(root, "mail")
+	for _, rel := range candidates {
+		if wrapperPrefix != "" {
+			rel = filepath.Join(strings.TrimRight(wrapperPrefix, string(filepath.Separator)), rel)
+		}
+		if root := filepath.Join(extractDir, rel); existsDir(root) {
+			out.HomeDir = root
+			out.MailRoot = filepath.Join(root, "mail")
+			break
+		}
 	}
 	return out, nil
 }
@@ -216,19 +223,48 @@ func ParseTarball(tarballPath, extractDir string) (*ParsedTarball, error) {
 // classify slots a freshly-extracted file into the right area
 // slice. Path is the cleaned tarball-relative path; abs is the
 // on-disk extracted path.
+//
+// Two cPanel backup layouts handled:
+//
+//   pkgacct cpmove format (cp/<user>/...):
+//     cp/<user>/mysql/<db>.sql
+//     cp/<user>/dnszones/<dom>.db
+//     cp/<user>/cron/<user>
+//     cp/<user>/homedir/.ssh/authorized_keys
+//     cp/<user>/homedir/...
+//
+//   Full-backup wizard format (mysql/, dnszones/, homedir/ at root,
+//   cp/<user> as a FILE not a directory):
+//     mysql/<db>.sql
+//     dnszones/<dom>.db
+//     cron (top-level file)
+//     homedir/.ssh/authorized_keys
+//     homedir/...
+//     cp/<user>     (single file with account config)
+//
+// Both formats classify identically — area name + extension. cpmove
+// path uses parts[2:] (skip cp/<user>); full-backup uses parts[0:].
 func classify(p *ParsedTarball, path, abs string) {
 	parts := strings.Split(path, string(filepath.Separator))
-	if len(parts) < 3 || parts[0] != "cp" {
+	if len(parts) == 0 {
 		return
 	}
-	user := parts[1]
-	if user != p.SourceUser {
-		// Unexpected — second account hiding in same tarball.
-		// Skip + record.
-		p.Skipped = append(p.Skipped, "foreign_user:"+path)
+
+	var rest []string
+	switch {
+	case len(parts) >= 3 && parts[0] == "cp":
+		user := parts[1]
+		if user != p.SourceUser && p.SourceUser != "" {
+			p.Skipped = append(p.Skipped, "foreign_user:"+path)
+			return
+		}
+		rest = parts[2:]
+	case isFullBackupAreaTop(parts[0]):
+		rest = parts
+	default:
 		return
 	}
-	rest := parts[2:]
+
 	if len(rest) == 0 {
 		return
 	}
@@ -238,24 +274,29 @@ func classify(p *ParsedTarball, path, abs string) {
 			p.MySQLDumps = append(p.MySQLDumps, abs)
 		}
 	case "psql", "postgres":
-		// ADR-0094 §5: skip PG; M37 importer integration handles.
 		p.Skipped = append(p.Skipped, "postgres_unsupported:"+path)
 	case "dnszones":
 		if strings.HasSuffix(rest[len(rest)-1], ".db") {
 			p.ZoneFiles = append(p.ZoneFiles, abs)
 		}
 	case "cron":
-		// cPanel cron file is typically the username verbatim
-		// (cp/<user>/cron/<user>). Take any non-dir entry.
 		p.CronFiles = append(p.CronFiles, abs)
 	case "homedir":
-		// Watch for authorized_keys inside .ssh/. Only record the
-		// global home/.ssh/authorized_keys; per-domain SSH dirs
-		// aren't common on cPanel.
 		if len(rest) >= 3 && rest[len(rest)-2] == ".ssh" && rest[len(rest)-1] == "authorized_keys" {
 			p.SSHAuthorized = append(p.SSHAuthorized, abs)
 		}
 	}
+}
+
+// isFullBackupAreaTop reports whether `top` is one of the area dir
+// names cPanel's full-backup wizard places at the tarball root
+// (vs cpmove which nests under cp/<user>/).
+func isFullBackupAreaTop(top string) bool {
+	switch top {
+	case "mysql", "dnszones", "homedir", "cron", "psql", "postgres":
+		return true
+	}
+	return false
 }
 
 func existsDir(p string) bool {

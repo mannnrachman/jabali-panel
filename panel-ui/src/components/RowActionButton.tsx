@@ -22,7 +22,7 @@
 
 import type { ButtonProps } from "antd";
 import { Button } from "antd";
-import type { ReactNode } from "react";
+import { forwardRef, type ReactNode, type Ref } from "react";
 
 export interface RowActionButtonProps
   extends Omit<ButtonProps, "type" | "variant" | "color" | "icon"> {
@@ -34,20 +34,23 @@ export interface RowActionButtonProps
   color?: ButtonProps["color"];
 }
 
-export function RowActionButton({
-  icon,
-  children,
-  color = "primary",
-  ...rest
-}: RowActionButtonProps) {
-  return (
-    <Button
-      variant="filled"
-      color={rest.danger ? "danger" : color}
-      icon={icon}
-      {...rest}
-    >
-      {children}
-    </Button>
-  );
-}
+// forwardRef so AntD `<Dropdown>` (and `<Tooltip>`, `<Popconfirm>`)
+// can anchor + inject `onClick`/aria props on the underlying Button.
+// Without this the More-menu trigger looks like a plain button and
+// the dropdown popup never opens (rc-trigger silently no-ops when
+// it can't attach to a DOM node).
+export const RowActionButton = forwardRef<HTMLButtonElement, RowActionButtonProps>(
+  function RowActionButton({ icon, children, color = "primary", ...rest }, ref: Ref<HTMLButtonElement>) {
+    return (
+      <Button
+        ref={ref}
+        variant="filled"
+        color={rest.danger ? "danger" : color}
+        icon={icon}
+        {...rest}
+      >
+        {children}
+      </Button>
+    );
+  },
+);

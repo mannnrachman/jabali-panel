@@ -42,6 +42,7 @@ func newBackupCmd() *cobra.Command {
 	cmd.AddCommand(newBackupDestinationCmd())
 	cmd.AddCommand(newBackupScheduleCmd())
 	cmd.AddCommand(newBackupSchedulerCmd())
+	cmd.AddCommand(newBackupCopyRetiredCmd())
 	return cmd
 }
 

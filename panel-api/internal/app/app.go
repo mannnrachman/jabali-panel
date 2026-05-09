@@ -54,6 +54,7 @@ type Deps struct {
 	SSLCerts            repository.SSLCertificateRepository
 	BWDaily             repository.BWDailyRepository
 	DomainIPACLs        repository.DomainIPACLRepository
+	MigrationJobs       repository.MigrationJobRepository
 	AutomationTokens    repository.AutomationTokenRepository
 	PHPPools            repository.PHPPoolRepository
 	PHPPoolIniOverrides repository.PHPPoolIniOverrideRepository

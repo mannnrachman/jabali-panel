@@ -2824,6 +2824,11 @@ ensure_user_and_dirs() {
   # api anyway, but keep it world-readable for future direct serving).
   install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali-panel
   install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali-panel/branding
+  # M35 — migration importers. /var/lib/jabali-migrations holds long-lived
+  # per-job artefacts (downloaded source tarballs, extracted manifests,
+  # logs). 0750 root:jabali so the panel can read+write but other users
+  # can't crawl mid-import data.
+  install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali-migrations
 }
 
 # ---------- M25 step 1: jabali-sockets group --------------------------------

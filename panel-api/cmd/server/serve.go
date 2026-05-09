@@ -232,6 +232,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.SSLCerts = sslCertRepo
 		deps.BWDaily = repository.NewBWDailyRepository(sharedDB)
 		deps.DomainIPACLs = repository.NewDomainIPACLRepository(sharedDB)
+		// M35: migration importers — Step 1 wires the repo only.
+		// Steps 3-7 land per-source importer code that calls these
+		// methods; admin REST + UI in Step 8. Default-off until
+		// server_settings.migrations_enabled flips.
+		deps.MigrationJobs = repository.NewMigrationJobRepository(sharedDB)
 		deps.AutomationTokens = repository.NewAutomationTokenRepository(sharedDB)
 		deps.Databases = databaseRepo
 		deps.DatabaseUsers = databaseUserRepo

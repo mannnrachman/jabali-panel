@@ -16,12 +16,14 @@ review-time confusion.
 Branch: `m35/migration-importers`. Default mode: branch + ff-merge into
 `main` after every step.
 
-ADR target: **0085** (next free above ADR-0084 per-user-egress-firewall;
-prior reservation of 0079 collided with M33.2 mail-yara-async-scanner).
+ADR target: **0094** (0085 + intermediate slots already taken by
+M39 auditd, M40 AppArmor, M42 AIDE, M41 Snuffleupagus, M43 unified
+trust, M22 SSO-file rework, M27 ModSec removal, M44 automation).
 
-Migration high-water-mark on main: 000102 (post-M34). M35 takes
-000103..000105. If a parallel milestone lands a migration before M35
-ships, the wave-1 step renumbers to the next free contiguous range.
+Migration high-water-mark on main at Step 1 ship time: 000119 (M36
+domain_ip_acls). M35 takes **000120..000122**. If a parallel
+milestone lands a migration before downstream M35 steps ship,
+renumber to the next free contiguous range.
 
 **MariaDB FK collation requirement:** every CREATE TABLE Step 1 introduces
 that has a FOREIGN KEY back to `users(id)` MUST declare both
@@ -102,16 +104,16 @@ Wave D (8, 9): admin UI + runbook + E2E.
 ### Step 1: foundation — DB schema, dirs, ADR-0085
 
 **Files:**
-- `panel-api/internal/db/migrations/000103_create_migration_jobs.{up,down}.sql`
-- `panel-api/internal/db/migrations/000104_create_migration_stages.{up,down}.sql`
-- `panel-api/internal/db/migrations/000105_server_settings_migrations.{up,down}.sql`
+- `panel-api/internal/db/migrations/000120_create_migration_jobs.{up,down}.sql`
+- `panel-api/internal/db/migrations/000121_create_migration_stages.{up,down}.sql`
+- `panel-api/internal/db/migrations/000122_server_settings_migrations.{up,down}.sql`
 - `panel-api/internal/models/migration_job.go`
 - `panel-api/internal/repository/migration_job_repository.go` (+ tests)
 - `install.sh`: provision `/var/lib/jabali-migrations/` (root:jabali 0750)
   + the staging tmpfs directory `/run/jabali-migrations/<job-id>/`
 - `panel-api/cmd/server/migrate_run_cmd.go` — cobra subcommand the
   transient unit invokes
-- `docs/adr/0085-migration-importers.md`
+- `docs/adr/0094-migration-importers.md`
 
 Each CREATE TABLE that adds a FOREIGN KEY (target_user_id → users.id, or
 the migration_stages.job_id → migration_jobs.id self-FK) MUST end with:

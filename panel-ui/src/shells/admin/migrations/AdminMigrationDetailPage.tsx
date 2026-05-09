@@ -205,7 +205,7 @@ export const AdminMigrationDetailPage = () => {
         />
       </Card>
 
-      <DriveCard jobId={job.id} jobState={job.state} />
+      <DriveCard jobId={job.id} jobState={job.state} jobSourceKind={job.source_kind} />
 
       <Card size="small" title="Stage timeline">
         {stages.length === 0 ? (
@@ -321,9 +321,11 @@ export const AdminMigrationDetailPage = () => {
 function DriveCard({
   jobId,
   jobState,
+  jobSourceKind,
 }: {
   jobId: string;
   jobState: string;
+  jobSourceKind: string;
 }) {
   const queryClient = useQueryClient();
   const [secretsOpen, setSecretsOpen] = useState(false);
@@ -407,6 +409,62 @@ function DriveCard({
     },
   });
 
+  // WHM pkgacct (offline) flow swaps the SSH-pull half for a tarball
+  // upload. Detected by source_kind so the same DriveCard handles
+  // both flows without a parent-side fork.
+  const isOffline = jobSourceKind === "whm_pkgacct";
+
+  // Tarball status — drives the "Upload tarball" → "Tarball staged"
+  // UI swap. 5s poll while waiting for the upload to finish; once
+  // present, polling stops (no new state to wait for).
+  const tarballStatus = useQuery<{
+    present: boolean;
+    size_bytes?: number;
+    mtime?: string;
+  }>({
+    queryKey: ["admin-migrations", jobId, "tarball"],
+    enabled: isOffline && !isTerminal(jobState),
+    refetchInterval: (q) =>
+      q.state.data?.present ? false : 5_000,
+    queryFn: async () => {
+      const { data } = await apiClient.get(
+        `/admin/migrations/${jobId}/tarball`,
+      );
+      return data;
+    },
+  });
+
+  const uploadTarball = useMutation({
+    mutationFn: async (file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data } = await apiClient.post(
+        `/admin/migrations/${jobId}/tarball`,
+        fd,
+        {
+          headers: { "Content-Type": "multipart/form-data" },
+          // No timeout — multi-GB uploads need to run for as long as
+          // the network sustains them.
+          timeout: 0,
+        },
+      );
+      return data as { path: string; size_bytes: number };
+    },
+    onSuccess: (d) => {
+      message.success(
+        `Tarball uploaded (${(d.size_bytes / (1024 * 1024)).toFixed(1)} MiB)`,
+      );
+      queryClient.invalidateQueries({
+        queryKey: ["admin-migrations", jobId, "tarball"],
+      });
+    },
+    onError: (e: unknown) => {
+      message.error(
+        `Tarball upload failed: ${(e as Error)?.message ?? "unknown"}`,
+      );
+    },
+  });
+
   if (isTerminal(jobState)) {
     return null;
   }
@@ -414,28 +472,72 @@ function DriveCard({
   return (
     <Card size="small" title="Drive migration">
       <Space wrap>
-        <Button onClick={() => setSecretsOpen(true)}>1. Upload secrets…</Button>
-        <Button
-          type="primary"
-          loading={pullSource.isPending}
-          onClick={() => pullSource.mutate()}
-        >
-          2. Pull source
-        </Button>
+        {isOffline ? (
+          <>
+            <input
+              type="file"
+              accept=".tar,.tar.gz,.tgz,.tar.bz2,.tar.xz"
+              style={{ display: "none" }}
+              id={`tarball-input-${jobId}`}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) uploadTarball.mutate(f);
+                e.target.value = "";
+              }}
+            />
+            <Button
+              type={tarballStatus.data?.present ? "default" : "primary"}
+              loading={uploadTarball.isPending}
+              onClick={() =>
+                document
+                  .getElementById(`tarball-input-${jobId}`)
+                  ?.click()
+              }
+            >
+              {tarballStatus.data?.present
+                ? "Replace tarball…"
+                : "1. Upload tarball…"}
+            </Button>
+            {tarballStatus.data?.present && (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Staged:{" "}
+                {((tarballStatus.data.size_bytes ?? 0) / (1024 * 1024)).toFixed(
+                  1,
+                )}{" "}
+                MiB
+              </Typography.Text>
+            )}
+          </>
+        ) : (
+          <>
+            <Button onClick={() => setSecretsOpen(true)}>
+              1. Upload secrets…
+            </Button>
+            <Button
+              type="primary"
+              loading={pullSource.isPending}
+              onClick={() => pullSource.mutate()}
+            >
+              2. Pull source
+            </Button>
+          </>
+        )}
         <Button
           type="primary"
           loading={runImport.isPending}
+          disabled={isOffline && !tarballStatus.data?.present}
           onClick={() => setImportOpen(true)}
         >
-          3. Run import…
+          {isOffline ? "2. Run import…" : "3. Run import…"}
         </Button>
       </Space>
       <Typography.Paragraph
         type="secondary"
         style={{ marginTop: 12, marginBottom: 0, fontSize: 12 }}
       >
-        Each action runs detached as a transient systemd unit so it
-        survives a panel restart. Stage rows update on the 10s poll.
+        {isOffline
+          ? "Tarball streams to /var/lib/jabali-migrations/<id>/source.tar.gz on the panel host. Run import once the upload completes — it survives panel restart via a transient systemd unit. Stage rows update on the 10s poll."
+          : "Each action runs detached as a transient systemd unit so it survives a panel restart. Stage rows update on the 10s poll."}
       </Typography.Paragraph>
 
       <Modal

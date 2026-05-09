@@ -22,8 +22,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -67,6 +69,12 @@ func RegisterAdminMigrationRoutes(g *gin.RouterGroup, cfg AdminMigrationsHandler
 	rg.POST("/:id/secrets", h.uploadSecrets)
 	rg.POST("/:id/pull-source", h.runPullSource)
 	rg.POST("/:id/import", h.runImport)
+	// WHM pkgacct (offline) flow: operator uploads a pre-built tarball
+	// rather than pulling over SSH. Streams directly into the staging
+	// directory so multi-GB pkgacct dumps don't double-buffer through
+	// /tmp.
+	rg.POST("/:id/tarball", h.uploadTarball)
+	rg.GET("/:id/tarball", h.tarballStatus)
 }
 
 type adminMigrationsHandler struct{ cfg AdminMigrationsHandlerConfig }
@@ -501,4 +509,170 @@ func atoiNonNeg(s string) (int, error) {
 		n = n*10 + int(r-'0')
 	}
 	return n, nil
+}
+
+
+// migrationStagingDir returns the per-job staging dir used by both
+// SSH-pull (jabali migrate pull-source) and the offline tarball-
+// upload paths. Mirrored from migrate_pull_cmd.go so the SPA hits
+// the same convention the cobra runner expects.
+func migrationStagingDir(jobID string) string {
+	return "/var/lib/jabali-migrations/" + jobID
+}
+
+// uploadTarball — POST /admin/migrations/:id/tarball streams a
+// multipart/form-data 'file' part directly into the staging dir as
+// source.tar.gz (root:jabali-readable, panel-api owns the dir per
+// install.sh:2849). Streams via MultipartReader rather than
+// ParseMultipartForm so a multi-GB pkgacct dump doesn't double-
+// buffer through /tmp.
+//
+// Wire shape:
+//
+//	POST /admin/migrations/<id>/tarball
+//	Content-Type: multipart/form-data; boundary=...
+//	file: <pkgacct-cpmove-foo.tar.gz>
+//
+// Response: {path, size_bytes, sha256_truncated}.
+//
+// Refuses if job is in a terminal state OR an existing tarball is
+// already present (operator must DELETE /admin/migrations/<id> +
+// recreate, or destroy the job, to retry — re-uploading on top of
+// an extracted source dir would fight the runner).
+func (h *adminMigrationsHandler) uploadTarball(c *gin.Context) {
+	id := c.Param("id")
+	job, err := h.cfg.Jobs.FindByID(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if isTerminalMigrationState(job.State) {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  "terminal_state",
+			"detail": "cannot upload tarball to a terminal job (state=" + job.State + ")",
+		})
+		return
+	}
+	staging := migrationStagingDir(id)
+	if err := os.MkdirAll(staging, 0o750); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "mkdir_staging", "detail": err.Error()})
+		return
+	}
+	target := filepath.Join(staging, "source.tar.gz")
+	if _, err := os.Stat(target); err == nil {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  "tarball_exists",
+			"detail": "destroy the job (POST /admin/migrations/" + id + "/destroy after cancel) to clear the staging dir before re-uploading",
+		})
+		return
+	}
+
+	// Streaming upload — MultipartReader returns parts one-by-one so
+	// nothing buffers in memory or /tmp. 20 GiB cap on Body matches
+	// the upper bound of a typical cPanel full-backup tarball; smaller
+	// pkgacct dumps stream the same way.
+	const maxUploadBytes = 20 * 1024 * 1024 * 1024
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUploadBytes)
+	reader, err := c.Request.MultipartReader()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "not_multipart", "detail": err.Error()})
+		return
+	}
+	var (
+		wrote   int64
+		wrotten = false
+	)
+	for {
+		part, perr := reader.NextPart()
+		if perr == io.EOF {
+			break
+		}
+		if perr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "multipart_read", "detail": perr.Error()})
+			return
+		}
+		if part.FormName() != "file" {
+			_ = part.Close()
+			continue
+		}
+		tmp := target + ".part"
+		dst, oerr := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640)
+		if oerr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "open_tmp", "detail": oerr.Error()})
+			return
+		}
+		n, cerr := io.Copy(dst, part)
+		_ = part.Close()
+		if cerr != nil {
+			_ = dst.Close()
+			_ = os.Remove(tmp)
+			// MaxBytesReader hit returns http: request body too large;
+			// surface it as 413 so the client knows to split or compress.
+			if cerr.Error() == "http: request body too large" {
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+					"error":     "tarball_too_large",
+					"max_bytes": maxUploadBytes,
+				})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "stream_failed", "detail": cerr.Error()})
+			return
+		}
+		if err := dst.Close(); err != nil {
+			_ = os.Remove(tmp)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "close_tmp", "detail": err.Error()})
+			return
+		}
+		if err := os.Rename(tmp, target); err != nil {
+			_ = os.Remove(tmp)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "rename", "detail": err.Error()})
+			return
+		}
+		wrote = n
+		wrotten = true
+		break
+	}
+	if !wrotten {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_file_field", "detail": "expected one multipart part named 'file'"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"path":        target,
+		"size_bytes":  wrote,
+	})
+}
+
+// tarballStatus — GET /admin/migrations/:id/tarball reports whether a
+// tarball is staged + its size. SPA uses this to drive the upload-vs-
+// re-upload UI state on the detail page.
+func (h *adminMigrationsHandler) tarballStatus(c *gin.Context) {
+	id := c.Param("id")
+	if _, err := h.cfg.Jobs.FindByID(c.Request.Context(), id); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	target := filepath.Join(migrationStagingDir(id), "source.tar.gz")
+	st, err := os.Stat(target)
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.JSON(http.StatusOK, gin.H{"present": false})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "stat", "detail": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"present":    true,
+		"path":       target,
+		"size_bytes": st.Size(),
+		"mtime":      st.ModTime().UTC().Format(time.RFC3339),
+	})
 }

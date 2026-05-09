@@ -4,6 +4,7 @@ import (
 	"strings"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
@@ -257,176 +259,68 @@ type createDatabaseRequest struct {
 	Engine string `json:"engine,omitempty"`
 }
 
+// create is a thin REST wrapper around panel-api/internal/dbops.Create.
+// All validation, agent dispatch, prefix handling, quota enforcement,
+// and the panel-side row insert live in dbops; this handler is purely
+// HTTP envelope + status mapping (M41 ADR-0083 refactor).
 func (h *databaseHandler) create(c *gin.Context) {
 	claims := ginctx.Claims(c)
 	if claims == nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
-
 	var req createDatabaseRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
 		return
 	}
-
-	// Validate database name: ^[a-z][a-z0-9_]{0,30}$ (max 30 leaves room for username_ prefix)
-	if !databaseNameValid(req.Name) {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":  "invalid_database_name",
-			"detail": "database name must match regex ^[a-z][a-z0-9_]{0,30}$",
-		})
-		return
-	}
-
-	ctx := c.Request.Context()
-	targetUserID := claims.UserID
-
-	// Load user and check for package/quota
-	user, err := h.cfg.Users.FindByID(ctx, targetUserID)
-	if err != nil {
-		if isNotFound(err) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "user_not_found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-
-	// Non-admin users must have a username for the database prefix
-	if !claims.IsAdmin && (user.Username == nil || *user.Username == "") {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-
-	// Check quota
-	max := int64(0)
-	if user.PackageID != nil && *user.PackageID != "" {
-		pkg, err := h.cfg.Packages.FindByID(ctx, *user.PackageID)
-		if err == nil && pkg.MaxDatabases > 0 {
-			max = int64(pkg.MaxDatabases)
-			count, err := h.cfg.Databases.CountByUserID(ctx, targetUserID)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-				return
-			}
-			if count >= max {
-				c.JSON(http.StatusConflict, gin.H{
-					"error":    "quota_exceeded",
-					"resource": "databases",
-					"limit":    max,
-				})
-				return
-			}
-		}
-	}
-
-	// Compute final name with username prefix
-	var finalName string
-	if claims.IsAdmin {
-		finalName = req.Name
-	} else {
-		finalName = *user.Username + "_" + req.Name
-	}
-
-	// Check for collision on the FINAL (prefixed) name — that's what
-	// MariaDB sees and what we store in the row, so uniqueness is meaningful.
-	exists, err := h.cfg.Databases.ExistsByUserAndName(ctx, targetUserID, finalName)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-	if exists {
-		c.JSON(http.StatusConflict, gin.H{"error": "database_name_exists"})
-		return
-	}
-
-	// Call agent to create the database
 	if h.cfg.Agent == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-
-	// M37 engine dispatch. Empty defaults to mariadb (back-compat
-	// with pre-M37 clients). 'postgres' requires server_settings.
-	// postgres_enabled — fresh installs ship the service disabled.
-	engine := req.Engine
-	if engine == "" {
-		engine = "mariadb"
-	}
-	if engine != "mariadb" && engine != "postgres" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_engine", "detail": "engine must be 'mariadb' or 'postgres'"})
-		return
-	}
-	if engine == "postgres" {
-		if h.cfg.ServerSettings == nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "server_settings_unavailable"})
-			return
-		}
-		settings, sErr := h.cfg.ServerSettings.Get(ctx)
-		if sErr != nil || settings == nil || !settings.PostgresEnabled {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{
-				"error":  "postgres_disabled",
-				"detail": "PostgreSQL is not enabled. Set server_settings.postgres_enabled=true and ensure jabali-postgres service is running.",
-			})
-			return
-		}
-	}
-
-	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	if engine == "mariadb" {
-		_, err = h.cfg.Agent.Call(agentCtx, "db.create", map[string]any{
-			"db_name":   finalName,
-			"charset":   "utf8mb4",
-			"collation": "utf8mb4_unicode_ci",
-		})
-	} else {
-		// Postgres: owner is the postgres role corresponding to the
-		// hosting user. Wave A creates roles lazily via the
-		// db.postgres.create_role command; for now the database is
-		// owned by the postgres superuser and the user-side role is
-		// granted explicitly by the per-user grant flow.
-		_, err = h.cfg.Agent.Call(agentCtx, "db.postgres.create_db", map[string]any{
-			"db_name": finalName,
-			"owner":   "postgres",
-		})
-	}
+	row, err := dbops.Create(c.Request.Context(), dbops.Deps{
+		Users:          h.cfg.Users,
+		Packages:       h.cfg.Packages,
+		Databases:      h.cfg.Databases,
+		ServerSettings: h.cfg.ServerSettings,
+		Agent:          h.cfg.Agent,
+	}, dbops.CreateInput{
+		UserID:  claims.UserID,
+		RawName: req.Name,
+		Engine:  req.Engine,
+		AsAdmin: claims.IsAdmin,
+	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
+		dbopsRESTError(c, err)
 		return
 	}
+	c.JSON(http.StatusCreated, row)
+}
 
-	// Persist to database
-	now := time.Now().UTC()
-	charset := "utf8mb4"
-	collation := "utf8mb4_unicode_ci"
-	if engine == "postgres" {
-		charset = "UTF8"
-		collation = ""
-	}
-	d := &models.Database{
-		ID:        ids.NewULID(),
-		UserID:    targetUserID,
-		Name:      finalName,
-		Engine:    engine,
-		Charset:   charset,
-		Collation: collation,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	if err := h.cfg.Databases.Create(ctx, d); err != nil {
-		if isConflict(err) {
-			c.JSON(http.StatusConflict, gin.H{"error": "database_name_exists"})
-			return
-		}
+// dbopsRESTError translates dbops sentinels to HTTP status + JSON.
+func dbopsRESTError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, dbops.ErrNameInvalid):
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_database_name", "detail": err.Error()})
+	case errors.Is(err, dbops.ErrEngineInvalid):
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_engine", "detail": err.Error()})
+	case errors.Is(err, dbops.ErrUserNotFound):
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_not_found"})
+	case errors.Is(err, dbops.ErrUserNoUsername):
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
+	case errors.Is(err, dbops.ErrPostgresOff):
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "postgres_disabled", "detail": err.Error()})
+	case errors.Is(err, dbops.ErrQuotaExceeded):
+		c.JSON(http.StatusConflict, gin.H{"error": "quota_exceeded", "resource": "databases", "detail": err.Error()})
+	case errors.Is(err, dbops.ErrNameTaken):
+		c.JSON(http.StatusConflict, gin.H{"error": "database_name_exists"})
+	case errors.Is(err, dbops.ErrAgentFailed):
+		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": err.Error()})
+	case errors.Is(err, dbops.ErrNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 	}
-
-	c.JSON(http.StatusCreated, d)
 }
 
 func (h *databaseHandler) delete(c *gin.Context) {

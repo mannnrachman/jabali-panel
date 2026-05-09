@@ -2,46 +2,62 @@ package cpanel
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 )
 
 // MailImportResult is returned to the restore-stage caller.
+//
+// Two fill modes per call site:
+//
+//   - When agentCli is nil → walks the tree locally and records
+//     per-mailbox 'pending_manual' warnings (observation-only;
+//     legacy stub behaviour preserved for callers that don't
+//     want JMAP push).
+//   - When agentCli is non-nil → dispatches migration.import_mailboxes
+//     on the agent. Counts/bytes reflect what Stalwart actually
+//     ingested via Email/import.
 type MailImportResult struct {
-	// MaildirsFound is the per-mailbox count (one per
-	// home/mail/<domain>/<user>/Maildir/ tree).
-	MaildirsFound int
-	// MessagesFound is the total .eml + Maildir-flag-suffixed
-	// message count across every found Maildir.
-	MessagesFound int
-	// BytesFound is the sum of stat'd message sizes — drives the
-	// 'how much mail will need migrating' projection.
-	BytesFound int64
-	// Skipped is the runner-visible warnings list, prefixed with
-	// 'mailbox_pending_manual:' per Maildir + a final one-liner
-	// directing the operator to the runbook §2.6.
-	Skipped []string
+	MaildirsFound  int
+	MessagesFound  int
+	MessagesPushed int64
+	BytesFound     int64
+	BytesPushed    int64
+	Skipped        []string
+}
+
+// agentImportMailboxesResult mirrors panel-agent's
+// migrationImportMailboxesResult shape so we can decode the JSON
+// envelope coming back over the agent UDS.
+type agentImportMailboxesResult struct {
+	MailboxesProcessed int      `json:"mailboxes_processed"`
+	MessagesImported   int64    `json:"messages_imported"`
+	MessagesSkipped    int64    `json:"messages_skipped"`
+	BytesImported      int64    `json:"bytes_imported"`
+	Skipped            []string `json:"skipped,omitempty"`
 }
 
 // ImportMailboxes walks the homedir/mail/ tree of the parsed cpmove
-// tarball, counts mailboxes + messages + bytes, and records every
-// mailbox as a 'pending_manual' warning. It does NOT push messages
-// to Stalwart — JMAP push is multi-session work tracked under the
-// M35 follow-up list.
+// tarball + counts mailboxes/messages/bytes. When agentCli is non-
+// nil, additionally dispatches migration.import_mailboxes on the
+// agent which runs the JMAP Blob/upload + Email/import per message
+// against Stalwart. Idempotent on resume: Stalwart Email/import
+// dedupes on Message-ID, so re-running is a silent no-op for
+// already-imported messages.
 //
-// Why ship this stub now: the 'mailboxes are deferred' note in the
-// runbook is more actionable when the operator can see exact paths
-// + counts in the post-migration manifest_json. An empty mailbox
-// import (no observation surface at all) leaves the operator
-// guessing whether a mail-only account migrated correctly.
+// jobID is forwarded to the agent so its path-prefix validation
+// scopes the import to the right /var/lib/jabali-migrations/<id>/
+// staging tree.
 //
-// When the JMAP-push milestone lands, this function transitions to
-// pushing each .eml via Email/import. Wire shape (MailImportResult)
-// stays compatible — Skipped slice grows / shrinks based on
-// per-message push outcomes.
-func ImportMailboxes(_ context.Context, parsed *ParsedTarball) (*MailImportResult, error) {
+// agentCli nil → observation-only behaviour (legacy stub —
+// per-mailbox 'pending_manual' warnings recorded; no JMAP push).
+// Useful for tests + dry-run paths where Stalwart isn't reachable.
+func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.AgentInterface, jobID string) (*MailImportResult, error) {
 	if parsed == nil {
 		return nil, fmt.Errorf("ImportMailboxes: parsed nil")
 	}
@@ -94,10 +110,43 @@ func ImportMailboxes(_ context.Context, parsed *ParsedTarball) (*MailImportResul
 				email, n, b, userPath))
 		}
 	}
-	if res.MaildirsFound > 0 {
-		res.Skipped = append(res.Skipped,
-			"mailboxes_pending_manual:see runbook §2.6 — JMAP push not yet wired; "+
-				"recommended path is keep source SMTP active + cut over DNS MX after drain")
+	// Observation-only fast path: no agent → return the per-
+	// mailbox warning summary without dispatching JMAP.
+	if agentCli == nil {
+		if res.MaildirsFound > 0 {
+			res.Skipped = append(res.Skipped,
+				"mailboxes_pending_manual:agent unwired — observation-only mode")
+		}
+		return res, nil
+	}
+
+	// Agent path: hand the mail subtree to migration.import_mailboxes
+	// which handles per-message Blob/upload + Email/import via JMAP.
+	if jobID == "" {
+		res.Skipped = append(res.Skipped, "mailbox_skip:no_job_id_for_agent_dispatch")
+		return res, nil
+	}
+	raw, err := agentCli.Call(ctx, "migration.import_mailboxes", map[string]any{
+		"job_id":       jobID,
+		"src_mail_dir": mailRoot,
+	})
+	if err != nil {
+		// Don't fail the whole restore stage on a mail import
+		// failure — record + return so DBs/DNS/home are still
+		// declared done and the operator can re-run mail import
+		// in isolation later.
+		res.Skipped = append(res.Skipped, fmt.Sprintf("agent.migration.import_mailboxes: %v", err))
+		return res, nil
+	}
+	var ag agentImportMailboxesResult
+	if err := json.Unmarshal(raw, &ag); err != nil {
+		res.Skipped = append(res.Skipped, fmt.Sprintf("decode agent result: %v", err))
+		return res, nil
+	}
+	res.MessagesPushed = ag.MessagesImported
+	res.BytesPushed = ag.BytesImported
+	if len(ag.Skipped) > 0 {
+		res.Skipped = append(res.Skipped, ag.Skipped...)
 	}
 	return res, nil
 }

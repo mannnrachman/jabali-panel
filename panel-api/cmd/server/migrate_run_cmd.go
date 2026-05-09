@@ -291,13 +291,13 @@ func cpanelRestoreCallback(
 		// We walk the extracted tarball's homedir/mail/ subtree,
 		// which is also still readable in /var/lib/jabali-migrations/
 		// <job-id>/extracted/ for the operator's manual import path.
-		mailRes, err := cpanel.ImportMailboxes(ctx, p.parsed)
+		mailRes, err := cpanel.ImportMailboxes(ctx, p.parsed, sharedAgent, job.ID)
 		if err != nil {
 			return bytes, warnings, fmt.Errorf("mailboxes: %w", err)
 		}
 		warnings = append(warnings, fmt.Sprintf(
-			"mailboxes: maildirs=%d messages=%d bytes=%d (manual import — see runbook §2.6)",
-			mailRes.MaildirsFound, mailRes.MessagesFound, mailRes.BytesFound))
+			"mailboxes: maildirs=%d messages_found=%d messages_pushed=%d bytes_pushed=%d",
+			mailRes.MaildirsFound, mailRes.MessagesFound, mailRes.MessagesPushed, mailRes.BytesPushed))
 		warnings = append(warnings, mailRes.Skipped...)
 
 		return bytes, warnings, nil

@@ -283,6 +283,7 @@ function makeTreeNode(path: string, name: string): TreeNode {
     title: name,
     path,
     isLeaf: false,
+    icon: <FolderOutlined style={{ color: "#faad14", fontSize: 18 }} />,
   };
 }
 
@@ -413,6 +414,7 @@ export const FileManagerPage = () => {
         title: e.name,
         path: joinPath(node.path, e.name),
         isLeaf: !e.has_subdirs,
+        icon: <FolderOutlined style={{ color: '#faad14', fontSize: 18 }} />,
       }));
       setTreeData((prev) => updateTreeNode(prev, node.path, children));
     } catch (err) {
@@ -1198,9 +1200,9 @@ export const FileManagerPage = () => {
           showLine
           switcherIcon={({ expanded }: { expanded?: boolean }) =>
             expanded ? (
-              <FolderOpenOutlined style={{ color: "#faad14" }} />
+              <FolderOpenOutlined style={{ color: "#faad14", fontSize: 18 }} />
             ) : (
-              <FolderOutlined style={{ color: "#faad14" }} />
+              <FolderOutlined style={{ color: "#faad14", fontSize: 18 }} />
             )
           }
           onSelect={(keys) => {
@@ -1247,9 +1249,9 @@ export const FileManagerPage = () => {
             showLine
             switcherIcon={({ expanded }: { expanded?: boolean }) =>
               expanded ? (
-                <FolderOpenOutlined style={{ color: "#faad14" }} />
+                <FolderOpenOutlined style={{ color: "#faad14", fontSize: 18 }} />
               ) : (
-                <FolderOutlined style={{ color: "#faad14" }} />
+                <FolderOutlined style={{ color: "#faad14", fontSize: 18 }} />
               )
             }
             onSelect={(keys) => {
@@ -1506,9 +1508,9 @@ export const FileManagerPage = () => {
             showLine
             switcherIcon={({ expanded }: { expanded?: boolean }) =>
               expanded ? (
-                <FolderOpenOutlined style={{ color: "#faad14" }} />
+                <FolderOpenOutlined style={{ color: "#faad14", fontSize: 18 }} />
               ) : (
-                <FolderOutlined style={{ color: "#faad14" }} />
+                <FolderOutlined style={{ color: "#faad14", fontSize: 18 }} />
               )
             }
             onSelect={(keys) => {

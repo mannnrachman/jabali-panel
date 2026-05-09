@@ -26,6 +26,8 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/migrate"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/migrate/cpanel"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/migrate/directadmin"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/migrate/hestiacp"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/userops"
@@ -120,32 +122,88 @@ failed stage. Already-done stages are skipped.`,
 			// directadmin / hestiacp / imap_only land here as
 			// they get per-area builders + tarball-pull wired.
 			switch job.SourceKind {
-			case models.MigrationSourceCpanel, models.MigrationSourceWHMpkgacct:
+			case models.MigrationSourceCpanel,
+				models.MigrationSourceWHMpkgacct,
+				models.MigrationSourceDirectAdmin,
+				models.MigrationSourceHestia:
 				// supported — fall through
 			default:
 				return fmt.Errorf("source kind %q not yet supported by jabali migrate import; "+
-					"supported: %s, %s",
+					"supported: %s, %s, %s, %s",
 					job.SourceKind,
 					models.MigrationSourceCpanel,
-					models.MigrationSourceWHMpkgacct)
+					models.MigrationSourceWHMpkgacct,
+					models.MigrationSourceDirectAdmin,
+					models.MigrationSourceHestia)
 			}
 
 			extractDir := filepath.Join("/var/lib/jabali-migrations", job.ID, "extracted")
-			parsed, err := cpanel.ParseTarball(
-				filepath.Join("/var/lib/jabali-migrations", job.ID, fmt.Sprintf("cpmove-%s.tar.gz", job.SourceUser)),
-				extractDir,
-			)
-			if err != nil {
-				// Fall back to assuming the operator already
-				// extracted manually — let the writers walk the
-				// existing tree.
-				parsed = &cpanel.ParsedTarball{
-					ExtractDir: extractDir,
-					HomeDir:    filepath.Join(extractDir, "cp", job.SourceUser, "homedir"),
-					SourceUser: job.SourceUser,
+			var parsed *cpanel.ParsedTarball
+			switch job.SourceKind {
+			case models.MigrationSourceDirectAdmin:
+				// DA tar at /var/lib/jabali-migrations/<id>/
+				// user.<user>.<ts>.tar.gz (operator-supplied
+				// filename pattern matches DA system_backup_user
+				// output). Fall back to assumed-pre-extracted
+				// when ParseDATarball can't find a tar.
+				daTarPath := filepath.Join("/var/lib/jabali-migrations", job.ID,
+					fmt.Sprintf("user.%s.tar.gz", job.SourceUser))
+				if da, derr := directadmin.ParseDATarball(daTarPath, extractDir); derr == nil {
+					parsed = directadmin.ToCpanelParsed(da)
+				} else {
+					parsed = &cpanel.ParsedTarball{
+						ExtractDir: extractDir,
+						HomeDir:    filepath.Join(extractDir, job.SourceUser),
+						SourceUser: job.SourceUser,
+					}
+					fmt.Fprintf(cmd.ErrOrStderr(),
+						"warning: ParseDATarball failed (%v); using pre-extracted assumption\n", derr)
 				}
-				fmt.Fprintf(cmd.ErrOrStderr(),
-					"warning: ParseTarball failed (%v); falling back to assumed pre-extracted layout\n", err)
+			case models.MigrationSourceHestia:
+				// Hestia tar at /var/lib/jabali-migrations/<id>/
+				// <user>.<ts>.tar (or .tar.gz). Hestia parser produces
+				// a HestiaParsedTarball — for v1 we adapt the
+				// MySQLDumps subset to *cpanel.ParsedTarball so
+				// the cpanel restore writers can run; cron + ssh
+				// keys via tarball deferred (Hestia's layout
+				// doesn't contain a top-level cron/ or
+				// .ssh/authorized_keys file the cpanel writers
+				// recognise — operator hand-imports those today).
+				hTarPath := filepath.Join("/var/lib/jabali-migrations", job.ID,
+					fmt.Sprintf("%s.tar.gz", job.SourceUser))
+				if h, herr := hestiacp.ParseHestiaTarball(hTarPath, extractDir); herr == nil {
+					parsed = &cpanel.ParsedTarball{
+						ExtractDir: extractDir,
+						SourceUser: job.SourceUser,
+						MySQLDumps: h.MySQLDumps,
+					}
+					if h.SSHKeys != "" {
+						parsed.SSHAuthorized = []string{h.SSHKeys}
+					}
+				} else {
+					parsed = &cpanel.ParsedTarball{
+						ExtractDir: extractDir,
+						SourceUser: job.SourceUser,
+					}
+					fmt.Fprintf(cmd.ErrOrStderr(),
+						"warning: ParseHestiaTarball failed (%v); using pre-extracted assumption\n", herr)
+				}
+			default:
+				// cpanel + whm_pkgacct
+				p, err := cpanel.ParseTarball(
+					filepath.Join("/var/lib/jabali-migrations", job.ID, fmt.Sprintf("cpmove-%s.tar.gz", job.SourceUser)),
+					extractDir,
+				)
+				if err != nil {
+					p = &cpanel.ParsedTarball{
+						ExtractDir: extractDir,
+						HomeDir:    filepath.Join(extractDir, "cp", job.SourceUser, "homedir"),
+						SourceUser: job.SourceUser,
+					}
+					fmt.Fprintf(cmd.ErrOrStderr(),
+						"warning: ParseTarball failed (%v); falling back to assumed pre-extracted layout\n", err)
+				}
+				parsed = p
 			}
 
 			payload := &cpanelRunPayload{

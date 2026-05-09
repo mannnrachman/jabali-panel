@@ -3013,8 +3013,9 @@ build_backend() {
   install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" "$REPO_DIR/bin"
   local tmp_panel="$REPO_DIR/bin/jabali-panel.new"
   local tmp_agent="$REPO_DIR/bin/jabali-agent.new"
+  local tmp_sshshell="$REPO_DIR/bin/jabali-ssh-shell.new"
 
-  # One invocation of go, two binaries — shared module, shared build cache.
+  # One invocation of go, three binaries — shared module, shared build cache.
   sudo -u "$SERVICE_USER" -H env \
     PATH="$GO_ROOT/bin:/usr/bin:/bin" \
     HOME="$REPO_DIR" \
@@ -3022,11 +3023,16 @@ build_backend() {
     GOMODCACHE="$REPO_DIR/.cache/go-mod" \
     bash -c "cd '$REPO_DIR' && \
       go build -trimpath -ldflags '-s -w -X git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api.Version=$version' -o '$tmp_panel' ./panel-api/cmd/server && \
-      go build -trimpath -ldflags '-s -w -X main.version=$version' -o '$tmp_agent' ./panel-agent/cmd/jabali-agent"
+      go build -trimpath -ldflags '-s -w -X main.version=$version' -o '$tmp_agent' ./panel-agent/cmd/jabali-agent && \
+      go build -trimpath -ldflags '-s -w' -o '$tmp_sshshell' ./panel-agent/cmd/jabali-ssh-shell"
 
   install -m 0755 "$tmp_panel" "$BIN_PATH"
   install -m 0755 "$tmp_agent" "$AGENT_BIN_PATH"
-  rm -f "$tmp_panel" "$tmp_agent"
+  # M13 Step 1: jabali-ssh-shell ships at 0755 root:root. The wrapper
+  # falls back to /usr/sbin/nologin when sandbox dispatch isn't
+  # wired (Step 1 = skeleton; Step 2 + 3 wire bwrap + nspawn argv).
+  install -m 0755 "$tmp_sshshell" /usr/local/bin/jabali-ssh-shell
+  rm -f "$tmp_panel" "$tmp_agent" "$tmp_sshshell"
 
   # Ergonomic alias: `jabali ...` works the same as `jabali-panel ...`.
   # The cobra root command is already named "jabali"; this just saves
@@ -3035,7 +3041,33 @@ build_backend() {
 
   _ok "installed $BIN_PATH (version=$version)"
   _ok "installed $AGENT_BIN_PATH (version=$version)"
+  _ok "installed /usr/local/bin/jabali-ssh-shell (M13 Step 1 wrapper)"
   _ok "symlinked /usr/local/bin/jabali -> $BIN_PATH"
+}
+
+# ---------- M13 SSH shell sandbox prerequisites (ADR-pending) ------------
+#
+# install_ssh_sandbox_prereqs apt-installs the bubblewrap + systemd-
+# container packages M13 needs. Default-mode file
+# /etc/jabali/ssh-sandbox-mode lands at first install with mode
+# 'bubblewrap'; operator can flip to 'nspawn' via SQL or future CLI.
+# Idempotent on re-run. Per plan §0 #4: missing tooling → wrapper
+# falls back to nologin (never bash).
+install_ssh_sandbox_prereqs() {
+  _log "installing M13 SSH sandbox prerequisites (bubblewrap, systemd-container)"
+  apt-get install -y -qq --no-install-recommends bubblewrap systemd-container >/dev/null 2>&1 || \
+    _warn "bubblewrap / systemd-container apt install failed — wrapper will fall back to nologin until fixed"
+
+  install -d -m 0755 -o root -g root /etc/jabali
+  if [[ ! -f /etc/jabali/ssh-sandbox-mode ]]; then
+    echo "bubblewrap" > /etc/jabali/ssh-sandbox-mode
+    chmod 0644 /etc/jabali/ssh-sandbox-mode
+    _ok "created /etc/jabali/ssh-sandbox-mode (default: bubblewrap)"
+  fi
+
+  # Per-user image-pin dir for nspawn mode (currently unused; Step 3
+  # follow-up reads /etc/jabali/users/<user>/nspawn-image).
+  install -d -m 0755 -o root -g root /etc/jabali/users
 }
 
 # ---------- step 6: env file + systemd unit ---------------------------------
@@ -8288,6 +8320,7 @@ main() {
   install_sso_key
   install_sso_reaper_timer
   install_migration_secrets_reaper
+  install_ssh_sandbox_prereqs
   install_backup_foundation
   # Order matters: install_phpmyadmin extracts the tarball to
   # /opt/phpmyadmin/current, which the pma pool config references as

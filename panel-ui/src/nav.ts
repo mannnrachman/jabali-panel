@@ -34,6 +34,7 @@ import {
   ServerOutlined,
   SettingOutlined,
   ShieldCheckOutlined,
+  SwapOutlined,
   TeamOutlined,
 } from "@icons";
 import { createElement } from "react";
@@ -178,6 +179,12 @@ export const adminNav: NavItem[] = [
     label: "Automation API",
     icon: navIcon(KeyOutlined),
     path: "/jabali-admin/automation",
+  },
+  {
+    key: "migrations",
+    label: "Migrations",
+    icon: navIcon(SwapOutlined),
+    path: "/jabali-admin/migrations",
   },
 ];
 

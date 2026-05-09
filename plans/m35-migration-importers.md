@@ -158,9 +158,9 @@ correct owner/mode.
 ### Step 2: WAVE GATE — source-discovery contract + manifest schema
 
 **Files:**
-- `internal/migrate/discover.go` — interface every importer implements
-- `internal/migrate/manifest.go` — manifest.json schema (schema_version=1)
-- `internal/migrate/stage.go` — stage definitions + transition rules
+- `panel-api/internal/migrate/discover.go` — interface every importer implements
+- `panel-api/internal/migrate/manifest.go` — manifest.json schema (schema_version=1)
+- `panel-api/internal/migrate/stage.go` — stage definitions + transition rules
 
 Discovery contract (every source kind implements):
 ```go
@@ -200,7 +200,7 @@ on all four.
 
 ### Step 3 (Wave A): cPanel importer
 
-**Files:** `internal/migrate/cpanel/{discover,restore,fixperms,validate}.go`
+**Files:** `panel-api/internal/migrate/cpanel/{discover,restore,fixperms,validate}.go`
 
 cPanel specifics:
 - Discovery: `whmapi1 listaccts user=<u>` + `cpapi2 user.list_users` +
@@ -215,7 +215,7 @@ cPanel specifics:
 
 ### Step 4 (Wave A): DirectAdmin importer
 
-**Files:** `internal/migrate/directadmin/...`
+**Files:** `panel-api/internal/migrate/directadmin/...`
 
 DA specifics:
 - Discovery: `da-internal/sock` + `da_get_user.sh <user>`.
@@ -226,7 +226,7 @@ DA specifics:
 
 ### Step 5 (Wave B): HestiaCP importer
 
-**Files:** `internal/migrate/hestiacp/...`
+**Files:** `panel-api/internal/migrate/hestiacp/...`
 
 Hestia specifics:
 - Discovery: `v-list-user <u> json` + `v-list-user-domains` +
@@ -239,7 +239,7 @@ Hestia specifics:
 
 ### Step 6 (Wave B): WHM-pkgacct importer (file-only, no live source)
 
-**Files:** `internal/migrate/whm/...`
+**Files:** `panel-api/internal/migrate/whm/...`
 
 Use case: operator gets a `cpmove-<user>.tar.gz` produced by another
 person's WHM and uploads it to jabali2 directly. No SSH to the source.
@@ -250,7 +250,7 @@ person's WHM and uploads it to jabali2 directly. No SSH to the source.
 
 ### Step 7 (Wave C): IMAP sync importer (mail-only)
 
-**Files:** `internal/migrate/imapsync/...`
+**Files:** `panel-api/internal/migrate/imapsync/...`
 
 Use case: source is Plesk / Microsoft 365 / Google Workspace / arbitrary
 IMAP. Operator only needs mail moved.

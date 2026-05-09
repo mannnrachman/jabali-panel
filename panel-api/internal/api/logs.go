@@ -1,22 +1,15 @@
 package api
 
 import (
-	"bufio"
-	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
@@ -50,7 +43,6 @@ func RegisterLogRoutes(g *gin.RouterGroup, cfg LogHandlerConfig) {
 	logs.POST("/access", h.createAccess)
 	logs.DELETE("/access/:stream_key", h.deleteAccess)
 	logs.GET("/types", h.listTypes)
-	logs.GET("/stream/:stream_key", h.streamAccess)
 }
 
 // listTypes returns available log types and their descriptions
@@ -287,227 +279,5 @@ func isSafeDomainSegment(s string) bool {
 		}
 	}
 	return !strings.Contains(s, "..")
-}
-
-// resolveLogPath turns a stream's (LogType, DomainID) into an absolute file
-// path under /var/log/nginx/. Returns an error for unsupported log types or
-// any path that doesn't end up rooted under the nginx log directory after
-// Clean — defence-in-depth against a future code path that forgets to
-// validate domain names.
-func (h *logHandler) resolveLogPath(ctx context.Context, stream *models.LogAccessStream) (string, error) {
-	const baseDir = "/var/log/nginx"
-	var raw string
-	if stream.DomainID != nil {
-		if h.cfg.Domains == nil {
-			return "", fmt.Errorf("domain service not available")
-		}
-		domain, err := h.cfg.Domains.FindByID(ctx, *stream.DomainID)
-		if err != nil {
-			return "", fmt.Errorf("find domain: %w", err)
-		}
-		raw, err = logFilePathForDomain(domain.Name, stream.LogType)
-		if err != nil {
-			return "", err
-		}
-	} else {
-		switch stream.LogType {
-		case "access":
-			raw = filepath.Join(baseDir, "access.log")
-		case "error":
-			raw = filepath.Join(baseDir, "error.log")
-		default:
-			return "", fmt.Errorf("unsupported global log type: %s", stream.LogType)
-		}
-	}
-	clean := filepath.Clean(raw)
-	if !strings.HasPrefix(clean, baseDir+"/") {
-		return "", fmt.Errorf("path escapes log root: %s", clean)
-	}
-	return clean, nil
-}
-
-// streamAccess upgrades the request to a WebSocket and tails the log file
-// resolved from the stream record. Auth is the stream-key fallback (panel-
-// api hands out time-limited keys via POST /logs/access; only those keys
-// validate here). The Origin check pins the WS connection to the same Host
-// the request hit, so a victim's session cookie can't be paired with an
-// attacker-controlled WS URL via cross-origin hijack.
-//
-// Lifecycle: the spawned `tail -f` lives in its own process group so a
-// single Kill on the negative pgid cleans up children too. The handler
-// returns when EITHER the WS read loop sees a control frame (Close, ping
-// timeout) OR the scanner exits (file rotated, host shutdown). Both
-// outcomes signal the context cancel; the deferred kill + Wait drains the
-// subprocess.
-//
-// Wire shape (server → client, JSON text frames):
-//
-//	{"timestamp":"<RFC3339>","line":"<raw>","type":"<access|error>"}
-func (h *logHandler) streamAccess(c *gin.Context) {
-	streamKey := c.Param("stream_key")
-	if err := validateStreamKey(streamKey); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid stream key"})
-		return
-	}
-	stream, err := h.cfg.LogAccessStreams.FindByStreamKey(c.Request.Context(), streamKey)
-	if err != nil {
-		if err == repository.ErrNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "stream not found"})
-		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		}
-		return
-	}
-	if time.Now().After(stream.ExpiresAt) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "stream expired"})
-		return
-	}
-
-	logPath, err := h.resolveLogPath(c.Request.Context(), stream)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid log target", "detail": err.Error()})
-		return
-	}
-
-	upgrader := websocket.Upgrader{
-		HandshakeTimeout: 10 * time.Second,
-		ReadBufferSize:   1024,
-		WriteBufferSize:  4096,
-		// Same-origin gate. Browsers send Origin on WS upgrade; non-
-		// browser clients (curl, the CLI smoke test) usually omit it
-		// — we accept those because the stream-key + 15-min expiry
-		// is the real auth. The Origin check defends specifically
-		// against cookie-credential cross-origin abuse.
-		CheckOrigin: func(r *http.Request) bool {
-			origin := r.Header.Get("Origin")
-			if origin == "" {
-				return true
-			}
-			u, perr := url.Parse(origin)
-			if perr != nil {
-				return false
-			}
-			return strings.EqualFold(u.Host, r.Host)
-		},
-	}
-
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
-	if err != nil {
-		// Upgrader already wrote the HTTP error.
-		return
-	}
-	defer conn.Close()
-
-	h.streamLogTail(conn, stream.LogType, logPath)
-}
-
-// streamLogTail does the actual `tail -f` → WS pump. Extracted so unit
-// tests can mock the upgrader path independently.
-func (h *logHandler) streamLogTail(conn *websocket.Conn, logType, logPath string) {
-	const (
-		writeWait    = 5 * time.Second
-		pongWait     = 60 * time.Second
-		pingPeriod   = 30 * time.Second
-		maxLineBytes = 64 * 1024  // matches default bufio.Scanner cap
-		maxRateBytes = 5 * 1024 * 1024 // 5 MiB/s ceiling per stream
-	)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "tail", "-F", "-n", "10", logPath)
-	// Own process group so a Kill on -pgid sweeps children too. Without
-	// this, a panicking tail child can outlive the context cancel.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		_ = conn.WriteMessage(websocket.TextMessage,
-			[]byte(`{"error":"failed to start log streaming"}`))
-		return
-	}
-	if err := cmd.Start(); err != nil {
-		_ = conn.WriteMessage(websocket.TextMessage,
-			[]byte(`{"error":"failed to start log streaming"}`))
-		return
-	}
-	defer func() {
-		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-		}
-		_ = cmd.Wait()
-	}()
-
-	// WS keepalive — pong handler resets read deadline; a missed pong
-	// trips the ReadMessage in the reader goroutine and cancels ctx.
-	conn.SetReadLimit(512)
-	_ = conn.SetReadDeadline(time.Now().Add(pongWait))
-	conn.SetPongHandler(func(string) error {
-		_ = conn.SetReadDeadline(time.Now().Add(pongWait))
-		return nil
-	})
-
-	// Reader goroutine: turns Close / ping-timeout / network blip into
-	// a context cancel.
-	go func() {
-		defer cancel()
-		for {
-			if _, _, rerr := conn.ReadMessage(); rerr != nil {
-				return
-			}
-		}
-	}()
-
-	// Pinger goroutine: keeps the WS alive across NAT idle timeouts.
-	go func() {
-		t := time.NewTicker(pingPeriod)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
-				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-					return
-				}
-			}
-		}
-	}()
-
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 8*1024), maxLineBytes)
-	rateStart := time.Now()
-	rateBytes := 0
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-		// Per-second rate cap. Crude but bounded — protects the panel
-		// from a sudden access-log torrent (gzip-bomb test, scraper
-		// burst) that would otherwise pin the WS goroutine.
-		if elapsed := time.Since(rateStart); elapsed >= time.Second {
-			rateStart = time.Now()
-			rateBytes = 0
-		}
-		rateBytes += len(line)
-		if rateBytes > maxRateBytes {
-			continue
-		}
-		frame, _ := json.Marshal(map[string]any{
-			"timestamp": time.Now().UTC().Format(time.RFC3339Nano),
-			"line":      line,
-			"type":      logType,
-		})
-		_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
-		if err := conn.WriteMessage(websocket.TextMessage, frame); err != nil {
-			return
-		}
-	}
 }
 

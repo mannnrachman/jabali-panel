@@ -825,6 +825,15 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Key:  deps.SSOKey,
 			})
 		}
+		if deps.MigrationJobs != nil {
+			// M35 Step 8 read-only admin REST. Mutation
+			// endpoints (create/resume) land alongside the SPA
+			// once the JMAP-push + CreateUser orchestrator
+			// stabilise.
+			api.RegisterAdminMigrationRoutes(v1, api.AdminMigrationsHandlerConfig{
+				Jobs: deps.MigrationJobs,
+			})
+		}
 		if deps.Agent != nil {
 			admin := v1.Group("/admin", middleware.RequireAdmin())
 			api.RegisterPHPVersionAdminRoutes(admin, deps.Agent, deps.ServerSettings)

@@ -2440,26 +2440,44 @@ RESOLVEDEOF
     _log "wrote resolved.conf.d/zz-jabali-recursor.conf"
   fi
 
-  # --- systemd-resolved After=pdns-recursor drop-in ----------------
-  install -d -m 0755 /etc/systemd/system/systemd-resolved.service.d
-  local resolved_after_dropin=/etc/systemd/system/systemd-resolved.service.d/10-jabali-after.conf
-  local resolved_after_dropin_new="${resolved_after_dropin}.new"
-  cat > "$resolved_after_dropin_new" <<'RESAFTEREOF'
-# Managed by jabali-panel install.sh (M6.3, ADR-0047). Ensures
-# systemd-resolved doesn't start before pdns-recursor — the stub
-# at 127.0.0.53 forwards to 127.0.0.1:53 (recursor), so a live stub
-# with a dead recursor means every DNS query SERVFAILs.
-[Unit]
-After=pdns-recursor.service
-Wants=pdns-recursor.service
-RESAFTEREOF
-  if [[ -f "$resolved_after_dropin" ]] && cmp -s "$resolved_after_dropin" "$resolved_after_dropin_new"; then
-    rm -f "$resolved_after_dropin_new"
-  else
-    mv "$resolved_after_dropin_new" "$resolved_after_dropin"
-    chmod 0644 "$resolved_after_dropin"
+  # --- systemd-resolved After=pdns-recursor drop-in REMOVED ---------
+  # Earlier installs wrote /etc/systemd/system/systemd-resolved.service.d/
+  # 10-jabali-after.conf with `After=pdns-recursor.service` to delay
+  # resolved until the recursor was ready. That drop-in caused a fatal
+  # boot-time ordering cycle on every reboot:
+  #
+  #   resolved (Before=network.target via vendor unit)
+  #     ← After=pdns-recursor (this drop-in)
+  #     ← pdns-recursor.service
+  #         ← After=pdns.service (10-jabali-after.conf on the recursor)
+  #         ← pdns.service
+  #             ← network-online.target
+  #             ← network.target
+  #             ← systemd-resolved.service  *** cycle closes here ***
+  #
+  # systemd breaks cycles by deleting jobs from the start transaction.
+  # On the fleet host (mx.jabali-panel.com 2026-05-09 21:29 boot) this
+  # deleted the start jobs for systemd-resolved, mariadb, postgresql,
+  # AND network-online — bricking every dependent service (panel-api,
+  # Kratos, pdns itself, nginx 502s up the stack).
+  #
+  # Cure: don't override resolved's ordering at all. The resolv.conf
+  # stub points at 127.0.0.1 (recursor) via zz-jabali-recursor.conf;
+  # recursor typically resolves DNS in sub-second on cold boot, and
+  # any queries in that gap retry at the NSS layer. The "live stub
+  # with a dead recursor" race window is tolerable; a permanent boot
+  # failure is not.
+  #
+  # Below: unconditionally remove the legacy file on every install so
+  # `jabali update` heals already-broken hosts.
+  local resolved_legacy_dropin=/etc/systemd/system/systemd-resolved.service.d/10-jabali-after.conf
+  if [[ -e "$resolved_legacy_dropin" ]]; then
+    rm -f "$resolved_legacy_dropin"
+    # If the dir is now empty, drop it too — leaving an empty
+    # service.d/ confuses `systemd-delta` output.
+    rmdir /etc/systemd/system/systemd-resolved.service.d 2>/dev/null || true
     resolved_changed=1
-    _log "wrote systemd-resolved.service.d/10-jabali-after.conf"
+    _log "removed legacy systemd-resolved.service.d/10-jabali-after.conf (boot ordering cycle)"
   fi
 
   # --- daemon-reload only if ordering drop-ins changed --------------

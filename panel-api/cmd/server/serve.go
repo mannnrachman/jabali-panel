@@ -42,6 +42,7 @@ import (
 	// new source kind = adding one line here.
 	_ "git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/migrate/cpanel"
 	_ "git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/migrate/directadmin"
+	_ "git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/migrate/hestiacp"
 )
 
 const (

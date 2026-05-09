@@ -62,8 +62,12 @@ func (r *SnuffleupagusReconciler) Reconcile(ctx context.Context) error {
 	sha := hex.EncodeToString(sum[:])
 
 	if state.LastAppliedSha256 != nil && *state.LastAppliedSha256 == sha {
-		// No change. Skip the write + reload.
-		return nil
+		// DB says already applied — but verify the file on disk still matches.
+		// If someone edited active.rules manually (or the file is missing),
+		// we must re-apply regardless of the DB SHA.
+		if diskSHAMatches(snufActiveRulesPath, sha) {
+			return nil
+		}
 	}
 
 	// panel-api is ProtectSystem=strict (M25); /etc is read-only here.
@@ -94,6 +98,18 @@ func (r *SnuffleupagusReconciler) Reconcile(ctx context.Context) error {
 //   - mode=enforce:    concat the bundle as-is.
 // In all non-off modes the override list disables individual rules by
 // commenting them out at the end of the file.
+// diskSHAMatches returns true if the file at path exists and its SHA256
+// hex matches expected. Any read error (missing file, permission denied)
+// returns false so the caller re-renders.
+func diskSHAMatches(path, expected string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]) == expected
+}
+
 func renderActiveRules(mode models.SnuffleupagusMode, overrides []models.SnuffleupagusRuleOverride) ([]byte, error) {
 	var buf bytes.Buffer
 	buf.WriteString("# Jabali Snuffleupagus active rules -- RENDERED, do not edit.\n")

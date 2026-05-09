@@ -5949,14 +5949,19 @@ install_audit_exec() {
   rules_tmp=$(mktemp)
   cat >"$rules_tmp" <<'AUDIT_RULES'
 # Jabali — narrow-scoped suspicious-binary execve audit.
-# Tagged 'jabali_susp_exec' for ausearch -k pivots.
-# auid>=1000 = real users only (excludes daemon services).
-# auid!=4294967295 = exclude pre-PAM kernel threads.
-# /usr/bin/php tagged separately (legit cron noise vs webshell signal class).
+# jabali_susp_exec: real PAM-login users (auid>=1000, excludes auid sentinel).
+# jabali_web_exec:  web workers (PHP-FPM, cron) that never get a login auid;
+#                   match by effective uid>=1000 with no auid constraint.
+# On Debian 12 /bin is a symlink to usr/bin; audit rules match the path the
+# kernel sees at execve() time, which may be either prefix — list both.
 
+# --- login-session users (auid>=1000, auid!=4294967295) ---
 -a always,exit -F arch=b64 -S execve -F path=/bin/bash         -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec
 -a always,exit -F arch=b64 -S execve -F path=/bin/sh           -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec
 -a always,exit -F arch=b64 -S execve -F path=/bin/dash         -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/bash     -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/sh       -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/dash     -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec
 -a always,exit -F arch=b64 -S execve -F path=/usr/bin/wget     -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec
 -a always,exit -F arch=b64 -S execve -F path=/usr/bin/curl     -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec
 -a always,exit -F arch=b64 -S execve -F path=/usr/bin/nc       -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec
@@ -5965,6 +5970,21 @@ install_audit_exec() {
 -a always,exit -F arch=b64 -S execve -F path=/usr/bin/python3  -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec
 -a always,exit -F arch=b64 -S execve -F path=/usr/bin/perl     -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec
 -a always,exit -F arch=b64 -S execve -F path=/usr/bin/php      -F auid>=1000 -F auid!=4294967295 -k jabali_susp_exec_phpcli
+
+# --- web workers (PHP-FPM, cron): uid>=1000, no auid constraint ---
+-a always,exit -F arch=b64 -S execve -F path=/bin/bash         -F uid>=1000 -F auid=4294967295 -k jabali_web_exec
+-a always,exit -F arch=b64 -S execve -F path=/bin/sh           -F uid>=1000 -F auid=4294967295 -k jabali_web_exec
+-a always,exit -F arch=b64 -S execve -F path=/bin/dash         -F uid>=1000 -F auid=4294967295 -k jabali_web_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/bash     -F uid>=1000 -F auid=4294967295 -k jabali_web_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/sh       -F uid>=1000 -F auid=4294967295 -k jabali_web_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/dash     -F uid>=1000 -F auid=4294967295 -k jabali_web_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/wget     -F uid>=1000 -F auid=4294967295 -k jabali_web_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/curl     -F uid>=1000 -F auid=4294967295 -k jabali_web_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/nc       -F uid>=1000 -F auid=4294967295 -k jabali_web_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/ncat     -F uid>=1000 -F auid=4294967295 -k jabali_web_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/socat    -F uid>=1000 -F auid=4294967295 -k jabali_web_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/python3  -F uid>=1000 -F auid=4294967295 -k jabali_web_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/perl     -F uid>=1000 -F auid=4294967295 -k jabali_web_exec
 AUDIT_RULES
 
   # Idempotent: only re-render + reload if checksum changed.
@@ -5974,7 +5994,7 @@ AUDIT_RULES
       augenrules --load >/dev/null 2>&1 || \
         _warn "augenrules --load failed — auditd may need a restart"
     fi
-    _ok "auditd jabali-exec.rules installed (11 narrow rules, key=jabali_susp_exec)"
+    _ok "auditd jabali-exec.rules installed (28 rules: susp_exec + web_exec)"
   fi
   rm -f "$rules_tmp"
 

@@ -86,7 +86,7 @@ func BootstrapRecords(zoneID, zoneName string, srv *models.ServerSettings, idNew
 
 	out = append(out, mk("@", "TXT", BuildSPFString(srv), 0))
 
-	out = append(out, mk("_dmarc", "TXT", `"v=DMARC1; p=none"`, 0))
+	out = append(out, mk("_dmarc", "TXT", `"v=DMARC1; p=quarantine; sp=quarantine; adkim=r; aspf=r"`, 0))
 	return out
 }
 

@@ -1,13 +1,15 @@
-// security_audit — M39 (ADR-0085) thin shell-out to ausearch over the
-// narrow auditd rules installed by install_audit_exec(). Two commands:
+// security_audit — M39 (ADR-0085) reads auditd events for the narrow
+// rules installed by install_audit_exec(). Two commands:
 //
-//   security.audit.recent   — most recent N events tagged jabali_susp_exec
-//   security.audit.by_user  — same, filtered to a single auid (loginuid)
+//	security.audit.recent  — most recent N events tagged jabali_susp_exec / jabali_web_exec
+//	security.audit.by_user — same, filtered to a single uid/auid
 //
-// auditd's audit.log file is the storage; we do NOT mirror events into
-// MariaDB. The 11 narrow rules + auid>=1000 filter keep the volume low
-// enough that grepping the log on read is cheap.
-
+// We grep audit.log directly rather than shelling to ausearch; ausearch
+// has a known parsing bug with ENRICHED log format and returns "<no matches>"
+// even when events exist. Direct grep is also faster for the narrow key set.
+//
+// auditd's audit.log is the store; events are NOT mirrored into MariaDB.
+// The narrow key filters keep read-time grep cheap.
 package commands
 
 import (
@@ -24,10 +26,15 @@ import (
 )
 
 const auditCallTimeout = 15 * time.Second
+const auditLogPath = "/var/log/audit/audit.log"
+
+// auditUnsetAuid is the kernel sentinel for "no login UID" — set on web
+// workers (PHP-FPM), cron jobs, and any process that never went through
+// a PAM login session.
+const auditUnsetAuid = 4294967295
 
 // auditEvent is the parsed shape returned to panel-api. Field set
-// matches the panel-ui ExecAudit table columns; we keep the wire
-// contract minimal so future ausearch flag tweaks don't ripple.
+// matches the panel-ui ExecAudit table columns.
 type auditEvent struct {
 	Timestamp string `json:"ts"`
 	Auid      int    `json:"auid"`
@@ -45,7 +52,7 @@ type auditRecentRequest struct {
 type auditByUserRequest struct {
 	Username string `json:"username"`
 	Limit    int    `json:"limit,omitempty"`
-	// Since accepts ausearch --start syntax: "recent", "today", or RFC3339.
+	// Since: "recent" (last 10 min), "today", "yesterday", or RFC3339 timestamp.
 	Since string `json:"since,omitempty"`
 }
 
@@ -64,7 +71,7 @@ func mwAuditRecentHandler(ctx context.Context, raw json.RawMessage) (any, error)
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	events, err := runAusearch(ctx, "", "recent", limit)
+	events, err := runAuditLog(ctx, "", "recent", limit)
 	if err != nil {
 		return nil, err
 	}
@@ -91,51 +98,76 @@ func mwAuditByUserHandler(ctx context.Context, raw json.RawMessage) (any, error)
 	if since == "" {
 		since = "recent"
 	}
-	events, err := runAusearch(ctx, u.Uid, since, limit)
+	events, err := runAuditLog(ctx, u.Uid, since, limit)
 	if err != nil {
 		return nil, err
 	}
 	return auditEventsResponse{Events: events}, nil
 }
 
-// runAusearch invokes ausearch with our narrow key + optional auid
-// filter, returning the most recent `limit` events. Events older than
-// `since` are filtered by ausearch itself (--start <since>).
-func runAusearch(ctx context.Context, auidFilter, since string, limit int) ([]auditEvent, error) {
+// runAuditLog greps auditLogPath for both jabali audit keys and returns
+// the most recent `limit` events. uidFilter (when non-empty) restricts
+// results to a specific numeric UID (matched against both auid and uid
+// fields so PHP-FPM web workers are included).
+//
+// This replaces the previous ausearch shell-out which returned "<no matches>"
+// against ENRICHED-format audit logs despite events being present.
+func runAuditLog(ctx context.Context, uidFilter, since string, limit int) ([]auditEvent, error) {
 	ctx, cancel := context.WithTimeout(ctx, auditCallTimeout)
 	defer cancel()
 
-	args := []string{"-k", "jabali_susp_exec", "--raw", "--start", since}
-	if auidFilter != "" {
-		args = append(args, "-ua", auidFilter)
-	}
-
-	cmd := osexec.CommandContext(ctx, "ausearch", args...)
+	cmd := osexec.CommandContext(ctx, "grep", "-hE",
+		`key="jabali_(susp|web)_exec"`, auditLogPath)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, mwInternal("ausearch stdout pipe", err)
+		return nil, mwInternal("audit grep stdout pipe", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, mwInternal("ausearch start", err)
+		return nil, mwInternal("audit grep start", err)
 	}
 
-	events := parseAusearchRaw(stdout, limit)
+	var sinceTime time.Time
+	if since != "" && since != "all" {
+		now := time.Now().UTC()
+		switch since {
+		case "recent":
+			sinceTime = now.Add(-10 * time.Minute)
+		case "today":
+			sinceTime = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		case "yesterday":
+			y := now.AddDate(0, 0, -1)
+			sinceTime = time.Date(y.Year(), y.Month(), y.Day(), 0, 0, 0, 0, time.UTC)
+		default:
+			if t, err := time.Parse(time.RFC3339, since); err == nil {
+				sinceTime = t.UTC()
+			}
+		}
+	}
+
+	events := parseAuditLog(stdout, uidFilter, sinceTime, limit)
 
 	if err := cmd.Wait(); err != nil {
-		// ausearch returns non-zero when no matches found — not an error.
+		// grep exits 1 when no lines match — not an error for us.
 		if exitErr, ok := err.(*osexec.ExitError); ok && exitErr.ExitCode() == 1 {
 			return events, nil
 		}
-		return nil, mwInternal("ausearch wait", err)
+		return nil, mwInternal("audit grep wait", err)
 	}
 	return events, nil
 }
 
-func parseAusearchRaw(r io.Reader, limit int) []auditEvent {
+// parseAuditLog reads SYSCALL lines from r, applying time and UID filters,
+// and returns up to `limit` events newest-first.
+//
+// Username resolution: prefer auid (login UID from PAM session) but fall back
+// to uid (effective UID) when auid == auditUnsetAuid — this covers PHP-FPM
+// and other web workers that never go through a PAM login.
+func parseAuditLog(r io.Reader, uidFilter string, since time.Time, limit int) []auditEvent {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 
-	cache := map[int]string{}
+	auidCache := map[int]string{}
+	uidCache := map[int]string{}
 	var events []auditEvent
 
 	for scanner.Scan() {
@@ -144,18 +176,49 @@ func parseAusearchRaw(r io.Reader, limit int) []auditEvent {
 			continue
 		}
 		ev := parseSyscallLine(line)
-		if ev.Auid > 0 {
-			if u, ok := cache[ev.Auid]; ok {
+
+		// Time filter.
+		if !since.IsZero() {
+			if t, err := time.Parse(time.RFC3339, ev.Timestamp); err != nil || t.Before(since) {
+				continue
+			}
+		}
+
+		// UID filter — match against either auid or uid field.
+		procUID := parseIntField(line, " uid=") // note leading space to avoid ppid= match
+		if uidFilter != "" {
+			filterUID, err := strconv.Atoi(uidFilter)
+			if err != nil {
+				continue
+			}
+			matchesAuid := ev.Auid == filterUID
+			matchesUID := procUID == filterUID
+			if !matchesAuid && !matchesUID {
+				continue
+			}
+		}
+
+		// Username resolution.
+		if ev.Auid > 0 && ev.Auid != auditUnsetAuid {
+			if u, ok := auidCache[ev.Auid]; ok {
 				ev.Username = u
 			} else if uu, err := user.LookupId(strconv.Itoa(ev.Auid)); err == nil {
 				ev.Username = uu.Username
-				cache[ev.Auid] = uu.Username
+				auidCache[ev.Auid] = uu.Username
+			}
+		} else if procUID > 0 {
+			if u, ok := uidCache[procUID]; ok {
+				ev.Username = u
+			} else if uu, err := user.LookupId(strconv.Itoa(procUID)); err == nil {
+				ev.Username = uu.Username
+				uidCache[procUID] = uu.Username
 			}
 		}
+
 		events = append(events, ev)
 	}
 
-	// ausearch ordered oldest-first; trim from the head if oversized.
+	// audit.log is oldest-first; trim from the head if oversized.
 	if len(events) > limit {
 		events = events[len(events)-limit:]
 	}

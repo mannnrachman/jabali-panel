@@ -544,7 +544,7 @@ func staticEmailHints(domainName, selector, pubKey string) []domainEmailDNSHint 
 	hints := []domainEmailDNSHint{
 		{Purpose: "MX — delivers incoming mail to this host", Name: domainName + ".", Type: "MX", Value: "10 mail." + domainName + "."},
 		{Purpose: "SPF — authorises this host to send mail for the domain", Name: domainName + ".", Type: "TXT", Value: `v=spf1 mx ~all`},
-		{Purpose: "DMARC — tells receivers to reject unauthenticated mail", Name: "_dmarc." + domainName + ".", Type: "TXT", Value: "v=DMARC1; p=none"},
+		{Purpose: "DMARC — tells receivers to reject unauthenticated mail", Name: "_dmarc." + domainName + ".", Type: "TXT", Value: "v=DMARC1; p=quarantine; sp=quarantine; adkim=r; aspf=r"},
 		{Purpose: "autoconfig — Thunderbird / mobile client auto-discovery", Name: "autoconfig." + domainName + ".", Type: "CNAME", Value: "mail." + domainName + "."},
 		{Purpose: "_autodiscover._tcp — alternative auto-discovery flavour (Outlook)", Name: "_autodiscover._tcp." + domainName + ".", Type: "SRV", Value: "0 0 443 mail." + domainName + "."},
 	}

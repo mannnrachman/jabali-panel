@@ -1290,8 +1290,9 @@ export const FileManagerPage = () => {
         </Card>
         )}
 
-        <div
+        <Card
           style={{ flex: 1, minWidth: 0 }}
+          styles={{ body: { padding: 0 } }}
           // OS-file drop zone: dragging files in from the desktop/Finder
           // uploads them to the current folder. Custom DataTransfer types
           // (from row drags) are filtered out so we only preventDefault on
@@ -1375,7 +1376,7 @@ export const FileManagerPage = () => {
               })}
             />
           </Spin>
-        </div>
+        </Card>
       </div>
 
       {ctxMenu && (

@@ -21,7 +21,10 @@ import {
   message,
 } from "antd";
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
+import { apiClient } from "../../../apiClient";
+import { Sparkline } from "../../../components/Sparkline";
 import { useListQuery } from "../../../hooks/useQueries";
 import {
   type EgressDestination,
@@ -135,6 +138,10 @@ export const AdminSecurityEgress = () => {
             render={(_, r) => <UserDropsCell userID={r.id} />}
           />
           <Table.Column<UserRow>
+            title="Drops 24h"
+            render={(_, r) => <UserDrops24hSparkline userID={r.id} />}
+          />
+          <Table.Column<UserRow>
             title="Actions"
             render={(_, r) => (
               <Button size="small" onClick={() => setEditingUserID(r.id)}>
@@ -169,6 +176,23 @@ const UserDropsCell = ({ userID }: { userID: string }) => {
   const q = useUserEgressPolicy(userID);
   if (q.isLoading) return <span>—</span>;
   return <span>{q.data?.drop_count_24h ?? 0}</span>;
+};
+
+// UserDrops24hSparkline — M34 deep stats. 24 hourly buckets fetched
+// from /admin/users/:id/egress/drops-24h, rendered via the shared
+// inline-SVG Sparkline.
+const UserDrops24hSparkline = ({ userID }: { userID: string }) => {
+  const q = useQuery<{ buckets: { at: string; drops: number }[] }>({
+    queryKey: ["admin/users", userID, "egress/drops-24h"],
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/admin/users/${userID}/egress/drops-24h`);
+      return data;
+    },
+    refetchInterval: 5 * 60 * 1000,
+  });
+  if (q.isLoading || !q.data) return <span>—</span>;
+  const series = q.data.buckets.map((b) => ({ x: b.at, y: b.drops }));
+  return <Sparkline data={series} width={140} height={28} />;
 };
 
 type UserEgressDrawerProps = {

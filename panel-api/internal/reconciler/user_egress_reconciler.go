@@ -184,5 +184,23 @@ func (r *Reconciler) readUserEgressCounters(ctx context.Context, usernameToID ma
 			r.log.Debug("user-egress reconcile: SetDropCount failed",
 				"user", c.Username, "error", err)
 		}
+		// M34 deep stats — persist per-tick delta so admin Egress card
+		// renders a 24h sparkline. Insert is no-op when delta == 0.
+		if r.userEgressDropSamples != nil && delta > 0 {
+			if err := r.userEgressDropSamples.Insert(ctx, uid, now, delta); err != nil {
+				r.log.Debug("user-egress reconcile: drop-sample insert failed",
+					"user", c.Username, "error", err)
+			}
+		}
+	}
+
+	// Prune samples older than 25h once per counter-read tick. Cheap
+	// (one DELETE). 1h buffer past the 24h render window so a slow
+	// tick does not drop the in-progress hour.
+	if r.userEgressDropSamples != nil {
+		cutoff := now.Add(-25 * time.Hour)
+		if err := r.userEgressDropSamples.PruneOlderThan(ctx, cutoff); err != nil {
+			r.log.Debug("user-egress reconcile: drop-sample prune failed", "error", err)
+		}
 	}
 }

@@ -26,9 +26,13 @@ const maxAllowedExtras = 50
 // endpoints. All four repos are required; if any are nil the routes
 // stay unmounted (matches the conditional pattern from M18).
 type UserEgressHandlerConfig struct {
-	Users    repository.UserRepository
-	Policies repository.UserEgressPolicyRepository
-	Requests repository.UserEgressRequestRepository
+	Users       repository.UserRepository
+	Policies    repository.UserEgressPolicyRepository
+	Requests    repository.UserEgressRequestRepository
+	// DropSamples backs GET /admin/users/:id/egress/drops-24h —
+	// the M34 deep-stats sparkline. Optional; nil → endpoint
+	// returns 503.
+	DropSamples repository.UserEgressDropSampleRepository
 }
 
 // RegisterAdminUserEgressRoutes mounts the admin-side egress endpoints.
@@ -41,6 +45,7 @@ func RegisterAdminUserEgressRoutes(g *gin.RouterGroup, cfg UserEgressHandlerConf
 	g.POST("/egress-requests/:id/approve", h.approveRequest)
 	g.POST("/egress-requests/:id/deny", h.denyRequest)
 	g.GET("/egress-summary", h.summary)
+	g.GET("/users/:id/egress/drops-24h", h.adminDrops24h)
 }
 
 // RegisterMeEgressRoutes mounts the user-facing /me/egress endpoints.
@@ -464,4 +469,54 @@ func convertExtras(in []egressDestinationInput) []models.EgressDestination {
 		})
 	}
 	return out
+}
+
+// adminDrops24h returns 24 hourly buckets of dropped-packet counts
+// for the given user. Drives the sparkline on the admin Egress card.
+//
+// Bucketing happens here (not in SQL) because the per-tick samples
+// are at minute-ish granularity and the sparkline only wants 24
+// data points. Cheap: the query already caps at 24h × 60s ticks ≈
+// 1440 rows max per user.
+func (h *userEgressHandler) adminDrops24h(c *gin.Context) {
+	if h.cfg.DropSamples == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "drop-samples repo not wired"})
+		return
+	}
+	userID := c.Param("id")
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id required"})
+		return
+	}
+	now := time.Now().UTC()
+	rows, err := h.cfg.DropSamples.ListLast24h(c.Request.Context(), userID, now)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "list samples: " + err.Error()})
+		return
+	}
+
+	// Bucket into 24 hourly slots. Slot index = hours since
+	// (now - 24h), so [0]=oldest, [23]=current hour.
+	buckets := make([]uint64, 24)
+	bucketStart := now.Add(-24 * time.Hour)
+	for _, r := range rows {
+		offset := r.At.Sub(bucketStart)
+		idx := int(offset.Hours())
+		if idx < 0 {
+			continue
+		}
+		if idx > 23 {
+			idx = 23
+		}
+		buckets[idx] += r.Drops
+	}
+
+	out := make([]map[string]any, 24)
+	for i := 0; i < 24; i++ {
+		out[i] = map[string]any{
+			"at":    bucketStart.Add(time.Duration(i) * time.Hour).Format(time.RFC3339),
+			"drops": buckets[i],
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"user_id": userID, "buckets": out})
 }

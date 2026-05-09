@@ -110,8 +110,9 @@ type Deps struct {
 	// M34 per-user PHP-FPM egress firewall. Two repos backing the
 	// nftables socket-cgroupv2 reconciler + admin/user request flow
 	// (migrations 000100/000101, ADR-0084).
-	UserEgressPolicies  repository.UserEgressPolicyRepository
-	UserEgressRequests  repository.UserEgressRequestRepository
+	UserEgressPolicies    repository.UserEgressPolicyRepository
+	UserEgressRequests    repository.UserEgressRequestRepository
+	UserEgressDropSamples repository.UserEgressDropSampleRepository
 	// QuotaMount is the filesystem mount path /home lives on — passed
 	// on every M18 user.limits.{apply,clear,report} agent call so the
 	// agent can resolve `setquota -u <user> ... <mount>` without ever
@@ -818,9 +819,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		if deps.Users != nil && deps.UserEgressPolicies != nil && deps.UserEgressRequests != nil {
 			adminEgress := v1.Group("/admin", middleware.RequireAdmin())
 			cfg := api.UserEgressHandlerConfig{
-				Users:    deps.Users,
-				Policies: deps.UserEgressPolicies,
-				Requests: deps.UserEgressRequests,
+				Users:       deps.Users,
+				Policies:    deps.UserEgressPolicies,
+				Requests:    deps.UserEgressRequests,
+				DropSamples: deps.UserEgressDropSamples,
 			}
 			api.RegisterAdminUserEgressRoutes(adminEgress, cfg)
 			api.RegisterMeEgressRoutes(v1, cfg)

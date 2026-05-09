@@ -303,7 +303,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// the agent itself (apply errors out, reconciler logs + retries).
 		deps.UserEgressPolicies = repository.NewUserEgressPolicyRepository(sharedDB)
 		deps.UserEgressRequests = repository.NewUserEgressRequestRepository(sharedDB)
+		deps.UserEgressDropSamples = repository.NewUserEgressDropSampleRepository(sharedDB)
 		rec.WithUserEgressPolicies(deps.UserEgressPolicies)
+		rec.WithUserEgressDropSamples(deps.UserEgressDropSamples)
 		// M30 (ADR-0075): backup-restore workflow rows.
 		deps.BackupJobs = repository.NewBackupJobRepository(sharedDB)
 		// M30.2 (ADR-0080): destinations + schedules. backup_copy_jobs

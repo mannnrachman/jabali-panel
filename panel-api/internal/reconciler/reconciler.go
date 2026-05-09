@@ -86,6 +86,10 @@ type Reconciler struct {
 	// drop_count_24h. Both nil = pass skipped (test fixtures, hosts
 	// without nft socket cgroupv2 support).
 	userEgressPolicies repository.UserEgressPolicyRepository
+	// M34 deep stats — per-tick drop samples drive the 24h sparkline.
+	// Optional; nil disables sample persistence (drop_count_24h still
+	// updates on the policy row).
+	userEgressDropSamples repository.UserEgressDropSampleRepository
 }
 
 // WithPanelCertificate injects the M32 panel-cert repo + routability
@@ -103,6 +107,14 @@ func (r *Reconciler) WithPanelCertificate(repo repository.PanelCertificateReposi
 // entirely — no agent calls, no nft writes.
 func (r *Reconciler) WithUserEgressPolicies(repo repository.UserEgressPolicyRepository) *Reconciler {
 	r.userEgressPolicies = repo
+	return r
+}
+
+// WithUserEgressDropSamples injects the M34 deep-stats sample repo.
+// When set, the egress counter-read tick persists per-user drop deltas
+// into user_egress_drop_samples. Pruned to last 25h every tick.
+func (r *Reconciler) WithUserEgressDropSamples(repo repository.UserEgressDropSampleRepository) *Reconciler {
+	r.userEgressDropSamples = repo
 	return r
 }
 

@@ -42,6 +42,7 @@ func RegisterNotificationsDLQRoutes(g *gin.RouterGroup, cfg NotificationsDLQHand
 	h := &notificationsDLQHandler{cfg: cfg}
 	grp := g.Group("/admin/notifications/dlq", middleware.RequireAdmin())
 	grp.GET("", h.list)
+	grp.POST("/replay-all", h.replayAll)
 	grp.POST("/:id/replay", h.replay)
 	grp.DELETE("/:id", h.drop)
 	grp.DELETE("", h.clear)
@@ -144,6 +145,42 @@ func (h *notificationsDLQHandler) replay(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "replayed"})
+}
+
+func (h *notificationsDLQHandler) replayAll(c *gin.Context) {
+	ctx := c.Request.Context()
+	msgs, err := h.cfg.Redis.XRange(ctx, notifications.StreamDLQ, "-", "+").Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		h.cfg.Log.Error("dlq replay-all xrange failed", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "xrange failed"})
+		return
+	}
+	var replayed, skipped int
+	for _, m := range msgs {
+		cleaned := map[string]any{}
+		for k, v := range m.Values {
+			if k == "reason" || k == "orig_id" {
+				continue
+			}
+			cleaned[k] = v
+		}
+		if len(cleaned) == 0 {
+			// Legacy entry without preserved payload — drop it silently.
+			h.cfg.Redis.XDel(ctx, notifications.StreamDLQ, m.ID) //nolint:errcheck
+			skipped++
+			continue
+		}
+		pipe := h.cfg.Redis.TxPipeline()
+		pipe.XAdd(ctx, &redis.XAddArgs{Stream: notifications.StreamQueue, Values: cleaned})
+		pipe.XDel(ctx, notifications.StreamDLQ, m.ID)
+		if _, err := pipe.Exec(ctx); err != nil {
+			h.cfg.Log.Error("dlq replay-all pipeline failed", "id", m.ID, "err", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "replay pipeline failed"})
+			return
+		}
+		replayed++
+	}
+	c.JSON(http.StatusOK, gin.H{"replayed": replayed, "skipped": skipped})
 }
 
 func (h *notificationsDLQHandler) drop(c *gin.Context) {

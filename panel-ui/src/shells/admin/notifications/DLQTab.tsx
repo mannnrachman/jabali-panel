@@ -104,6 +104,27 @@ export const DLQTab = () => {
     }
   };
 
+  const [replayingAll, setReplayingAll] = useState(false);
+
+  const replayAll = async () => {
+    setReplayingAll(true);
+    try {
+      const { data } = await apiClient.post<{ replayed: number; skipped: number }>(
+        "/admin/notifications/dlq/replay-all",
+      );
+      const msg =
+        data.skipped > 0
+          ? `Replayed ${data.replayed}, skipped ${data.skipped} legacy entries`
+          : `Replayed ${data.replayed} envelopes`;
+      message.success(msg);
+      qc.invalidateQueries({ queryKey: ["notifications", "dlq"] });
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "Replay all failed");
+    } finally {
+      setReplayingAll(false);
+    }
+  };
+
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <Space wrap align="center" style={{ width: "100%", justifyContent: "space-between" }}>
@@ -120,17 +141,29 @@ export const DLQTab = () => {
             Refresh
           </Button>
           {total > 0 && (
-            <Popconfirm
-              title={`Clear all ${total} dead-letter entries?`}
-              description="This deletes every entry in the stream. Use only if you've already addressed the underlying failures (e.g. fixed a misconfigured channel)."
-              okText="Clear"
-              okButtonProps={{ danger: true }}
-              onConfirm={clearAll}
-            >
-              <Button danger icon={<DeleteOutlined />}>
-                Clear all
-              </Button>
-            </Popconfirm>
+            <>
+              <Popconfirm
+                title={`Replay all ${total} dead-letter entries?`}
+                description="Re-publishes every envelope to the main delivery queue. Legacy entries without a preserved payload will be dropped silently."
+                okText="Replay all"
+                onConfirm={replayAll}
+              >
+                <Button icon={<RedoOutlined />} loading={replayingAll}>
+                  Replay all
+                </Button>
+              </Popconfirm>
+              <Popconfirm
+                title={`Clear all ${total} dead-letter entries?`}
+                description="This deletes every entry in the stream. Use only if you've already addressed the underlying failures (e.g. fixed a misconfigured channel)."
+                okText="Clear"
+                okButtonProps={{ danger: true }}
+                onConfirm={clearAll}
+              >
+                <Button danger icon={<DeleteOutlined />}>
+                  Clear all
+                </Button>
+              </Popconfirm>
+            </>
           )}
         </Space>
       </Space>

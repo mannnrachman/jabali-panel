@@ -1,0 +1,62 @@
+# aa-smoke profile corpus (M40.1).
+#
+# Maps each profile name to the unix sockets that profile MUST be
+# able to dial in production. The runner (`make aa-smoke`) iterates
+# this list and runs `aa-exec -p <profile> -- aa-smoke <sockets>`
+# for each entry; any failed dial fails the make target.
+#
+# Path conventions:
+#   - jabali daemons: /run/jabali-<X>/<sock> per ADR-0050
+#   - upstream: keep the symlink-canonical /var/run/mysqld path
+#     (some MariaDB clients hard-code it). Profiles must allow both
+#     /run/mysqld/mysqld.sock + /var/run/mysqld/mysqld.sock.
+#
+# When you add a new profile or a new socket the daemon learns about,
+# add a row here. CI will catch the drift.
+
+profiles:
+  # M40.1 jabali-agent — privileged orchestrator. Talks to MariaDB
+  # (gmysql DSN), Redis, and the kratos admin socket via the M25
+  # unix-socket model.
+  - name: jabali-agent
+    sockets:
+      - /run/jabali/agent.sock
+      - /run/mysqld/mysqld.sock
+      - /var/run/mysqld/mysqld.sock
+      - /run/redis/redis.sock
+      - /run/jabali-kratos/admin.sock
+
+  # panel-api — the HTTP API. Talks to MariaDB, Redis, agent, kratos
+  # public + admin.
+  - name: jabali-panel
+    sockets:
+      - /run/jabali-panel/api.sock
+      - /run/jabali/agent.sock
+      - /run/mysqld/mysqld.sock
+      - /var/run/mysqld/mysqld.sock
+      - /run/redis/redis.sock
+      - /run/jabali-kratos/admin.sock
+      - /run/jabali-kratos/public.sock
+
+  # bulwark — public-facing webmail. Talks ONLY to panel-api.
+  - name: jabali-bulwark
+    sockets:
+      - /run/jabali-bulwark/bulwark.sock
+      - /run/jabali-panel/api.sock
+
+  # kratos — auth identity service. Talks to MariaDB; serves admin +
+  # public sockets.
+  - name: jabali-kratos
+    sockets:
+      - /run/jabali-kratos/admin.sock
+      - /run/jabali-kratos/public.sock
+      - /run/mysqld/mysqld.sock
+      - /var/run/mysqld/mysqld.sock
+
+  # stalwart — mail server. Talks to MariaDB for the SqlDirectory
+  # backend; serves admin-http on loopback TCP (not in this corpus —
+  # this corpus covers UNIX sockets only).
+  - name: stalwart-mail
+    sockets:
+      - /run/mysqld/mysqld.sock
+      - /var/run/mysqld/mysqld.sock

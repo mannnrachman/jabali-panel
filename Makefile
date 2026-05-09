@@ -79,3 +79,8 @@ test-e2e: ui-build ## Run Playwright E2E suite against the built SPA
 	cd $(UI_DIR) && npx playwright test --project=chromium --reporter=list
 
 test-all: test test-ui test-e2e ## Run everything: Go tests + vitest + Playwright
+
+# ---------- aa-smoke (M40.1 AppArmor profile verifier) ----------
+
+aa-smoke: ## Verify every loaded jabali AppArmor profile reaches its declared sockets (M40.1)
+	bash tools/aa-smoke/run.sh

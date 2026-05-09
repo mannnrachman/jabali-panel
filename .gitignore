@@ -66,3 +66,4 @@ logs/
 .envrc
 .direnv/
 .gitnexus
+tools/aa-smoke/aa-smoke

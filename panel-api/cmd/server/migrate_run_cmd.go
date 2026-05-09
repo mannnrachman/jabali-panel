@@ -240,7 +240,7 @@ failed stage. Already-done stages are skipped.`,
 					migrate.StageAnalyze:  cpanelAnalyzeCallback(),
 					migrate.StageValidate: validateStageCallback(usersRepo, domainsRepo, *user.Username),
 					migrate.StageRestore: cpanelRestoreCallback(
-						sshRepo, cronsRepo, dbsRepo,
+						sshRepo, cronsRepo, dbsRepo, domainsRepo,
 					),
 				},
 			}
@@ -328,6 +328,7 @@ func cpanelRestoreCallback(
 	sshRepo repository.SSHKeyRepository,
 	cronRepo repository.CronJobRepository,
 	dbsRepo repository.DatabaseRepository,
+	domainsRepo repository.DomainRepository,
 ) migrate.StageCallback {
 	return func(ctx context.Context, job *models.MigrationJob, payload any) (int64, []string, error) {
 		var _ agent.AgentInterface = sharedAgent // compile-time guard
@@ -374,11 +375,13 @@ func cpanelRestoreCallback(
 		warnings = append(warnings, fmt.Sprintf("home: bytes=%d files=%d", homeRes.BytesCopied, homeRes.Files))
 		warnings = append(warnings, homeRes.Skipped...)
 
-		// Mailboxes — observation-only stub (counts + paths recorded
-		// as pending_manual warnings; JMAP push is follow-up work).
-		// We walk the extracted tarball's homedir/mail/ subtree,
-		// which is also still readable in /var/lib/jabali-migrations/
-		// <job-id>/extracted/ for the operator's manual import path.
+		domainsRes, err := cpanel.ImportDomains(ctx, domainsRepo, sharedAgent, p.parsed, p.targetUserID, p.targetUsername)
+		if err != nil {
+			return bytes, warnings, fmt.Errorf("domains: %w", err)
+		}
+		warnings = append(warnings, fmt.Sprintf("domains: created=%d email_enabled=%d", domainsRes.Created, domainsRes.EmailEnabled))
+		warnings = append(warnings, domainsRes.Skipped...)
+
 		mailRes, err := cpanel.ImportMailboxes(ctx, p.parsed, sharedAgent, job.ID)
 		if err != nil {
 			return bytes, warnings, fmt.Errorf("mailboxes: %w", err)

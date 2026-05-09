@@ -57,11 +57,14 @@ func dbRestoreHandler(ctx context.Context, params json.RawMessage) (any, error) 
 		}
 	}
 
-	// Validate path is under /var/lib/jabali/restore/ (critical security check).
-	if !strings.HasPrefix(p.Path, "/var/lib/jabali/restore/") {
+	// Validate path is under an allowed restore directory.
+	// /var/lib/jabali/restore/    — interactive restores
+	// /var/lib/jabali-migrations/ — migration importer
+	if !strings.HasPrefix(p.Path, "/var/lib/jabali/restore/") &&
+		!strings.HasPrefix(p.Path, "/var/lib/jabali-migrations/") {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
-			Message: "restore path must be under /var/lib/jabali/restore/",
+			Message: "restore path must be under /var/lib/jabali/restore/ or /var/lib/jabali-migrations/",
 		}
 	}
 

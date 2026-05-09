@@ -1,4 +1,4 @@
-# AppArmor profile — jabali-panel (M40, ADR-0086)
+# AppArmor profile — jabali-panel (M40.1, ADR-0086)
 #
 # panel-api binary at /usr/local/bin/jabali-panel runs as root. It is
 # the HTTP API surface (port 8443 via nginx upstream socket), talks to
@@ -8,6 +8,10 @@
 #
 # Default mode on first install: complain. Operator flips to enforce
 # after the 7-day soak via `jabali apparmor flip-mature`.
+#
+# AA 4.x (Debian 13) enforces the `unix` mediation class separately
+# from `network unix`. Without explicit unix rules the daemon fails to
+# dial MariaDB / Redis / agent sockets even in complain mode.
 
 #include <tunables/global>
 
@@ -42,6 +46,10 @@ profile jabali-panel {
   network inet  stream,
   network inet6 stream,
   network unix  stream,
+
+  # AA 4.x unix mediation — stream sockets (MariaDB, Redis, agent wire,
+  # Kratos, bulwark, crowdsec LAPI).
+  unix (create, bind, listen, accept, connect, send, receive) type=stream,
 
   /usr/local/bin/jabali-panel mr,
   /etc/jabali/                 r,
@@ -131,7 +139,8 @@ profile jabali-panel {
   /tmp/                        r,
   /tmp/**                      rwlk,
 
-  # Bind own listener sockets (M25 unix-socket layout, ADR-0050).
+  # M25 unix-socket layout (ADR-0050).
+  # Bind own listener sockets.
   /run/jabali-panel/           rw,
   /run/jabali-panel/**         rw,
   # Connect upstreams.
@@ -147,6 +156,9 @@ profile jabali-panel {
   /run/mysqld/                 r,
   /run/mysqld/mysqld.sock      rw,
   /var/run/mysqld/mysqld.sock  rw,
+  # CrowdSec LAPI unix socket (M26, ADR-0050 amended).
+  /run/crowdsec/               r,
+  /run/crowdsec/api.sock       rw,
 
   # Static assets the embedded webui ships are read from /usr/local/share.
   /usr/local/share/jabali/**   r,

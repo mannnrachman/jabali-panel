@@ -1,9 +1,19 @@
-# AppArmor profile — jabali-bulwark (M40, ADR-0086)
+# AppArmor profile — jabali-bulwark (M40.1, ADR-0086)
 #
 # bulwark is the Node.js public-facing fronting daemon. Untrusted
 # input boundary; profile is tight: state dir + unix socket + outbound
 # TCP for relay/upstream calls. NO access to /etc/jabali/ panel
 # secrets — bulwark gets its own config from /etc/jabali-bulwark/.
+#
+# AA 4.x (Debian 13) enforces the `unix` mediation class separately
+# from `network unix`. Without explicit unix rules the Node.js process
+# fails to bind its own socket or connect to the panel-api upstream
+# socket even in complain mode.
+#
+# M40.1 socket path fix: M25 (ADR-0050) moved bulwark's socket into
+# a directory at /run/jabali-bulwark/bulwark.sock (not the flat
+# /run/jabali-bulwark.sock the M40 profile had). Similarly panel-api
+# lives at /run/jabali-panel/api.sock (not /run/jabali-panel.sock).
 
 #include <tunables/global>
 
@@ -35,6 +45,9 @@ profile jabali-bulwark /usr/local/bin/jabali-bulwark {
   network inet6 stream,
   network unix  stream,
 
+  # AA 4.x unix mediation — bind own socket + connect to panel-api upstream.
+  unix (create, bind, listen, accept, connect, send, receive) type=stream,
+
   /usr/local/bin/jabali-bulwark    mr,
   /usr/local/bin/node              mr,
   /usr/bin/node                    mr,
@@ -46,8 +59,13 @@ profile jabali-bulwark /usr/local/bin/jabali-bulwark {
   /var/log/jabali-bulwark/         rw,
   /var/log/jabali-bulwark/**       rwk,
 
-  /run/jabali-bulwark.sock         rw,
-  /run/jabali-panel.sock           rw,
+  # M25 unix-socket layout (ADR-0050).
+  # Own listener socket (nginx upstream: server unix:/run/jabali-bulwark/bulwark.sock).
+  /run/jabali-bulwark/             rw,
+  /run/jabali-bulwark/**           rw,
+  # panel-api upstream sockets (api + sso).
+  /run/jabali-panel/               r,
+  /run/jabali-panel/**             rw,
 
   /usr/lib/node_modules/           r,
   /usr/lib/node_modules/**         r,

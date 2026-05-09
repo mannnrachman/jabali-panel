@@ -1,7 +1,11 @@
-# AppArmor profile — stalwart-mail (M40, ADR-0086)
+# AppArmor profile — stalwart-mail (M40.1, ADR-0086)
 #
 # Stalwart is the M6 mail daemon. Listens on 25/465/587 (mail
 # submission + transport). State at /var/lib/stalwart-mail/.
+#
+# AA 4.x (Debian 13) enforces the `unix` mediation class separately
+# from `network unix`. Without explicit unix rules the daemon fails to
+# connect to MariaDB via /run/mysqld/mysqld.sock even in complain mode.
 
 #include <tunables/global>
 
@@ -24,7 +28,11 @@ profile stalwart-mail /opt/stalwart/stalwart {
   network inet6 stream,
   network unix  stream,
 
+  # AA 4.x unix mediation — stream sockets (MariaDB, admin/JMAP sockets).
+  unix (create, bind, listen, accept, connect, send, receive) type=stream,
+
   /usr/local/bin/stalwart       mr,
+  /opt/stalwart/stalwart        mr,
   /etc/stalwart/                r,
   /etc/stalwart/**              r,
 
@@ -38,6 +46,7 @@ profile stalwart-mail /opt/stalwart/stalwart {
   /etc/letsencrypt/archive/     r,
   /etc/letsencrypt/archive/**   r,
 
+  # M25 unix-socket layout (ADR-0050).
   /run/stalwart-admin.sock      rw,
   /run/stalwart-mail.sock       rw,
   /var/run/mysqld/mysqld.sock   rw,

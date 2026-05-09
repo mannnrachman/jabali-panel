@@ -1,7 +1,12 @@
-# AppArmor profile — kratos (M40, ADR-0086)
+# AppArmor profile — kratos (M40.1, ADR-0086)
 #
 # Ory Kratos identity service (M20). Two unix sockets (admin +
 # public per M25). MariaDB DSN over unix socket.
+#
+# AA 4.x (Debian 13) enforces the `unix` mediation class separately
+# from `network unix`. `abstractions/mysql` includes the MariaDB socket
+# path rules but not the AA 4.x `unix` access class; we must add it
+# explicitly so connect(2) to /run/mysqld/mysqld.sock succeeds.
 
 #include <tunables/global>
 
@@ -20,11 +25,14 @@ profile jabali-kratos /usr/local/bin/kratos {
   network inet6 stream,
   network unix  stream,
 
+  # AA 4.x unix mediation — stream sockets (MariaDB, Kratos admin+public,
+  # panel-api upstream connections).
+  unix (create, bind, listen, accept, connect, send, receive) type=stream,
+
   /usr/local/bin/kratos          mr,
   /etc/jabali-panel/kratos.yml        r,
   /etc/jabali-panel/                  r,
-  # Kratos reads the identity schema at boot; QA round 3 on .150
-  # surfaced this gap when the original profile blocked the file.
+  # Kratos reads the identity schema at boot.
   /etc/jabali-panel/kratos-identity-schema.json r,
   /etc/jabali/kratos/            r,
   /etc/jabali/kratos/**          r,
@@ -34,15 +42,10 @@ profile jabali-kratos /usr/local/bin/kratos {
   /var/log/kratos/               rw,
   /var/log/kratos/**             rwk,
 
-  # M25 unix-socket layout (per ADR-0050) — admin + public sockets
-  # live under /run/jabali-kratos/<name>.sock, NOT the legacy
-  # /run/kratos-{admin,public}.sock paths the original profile
-  # carried. Both kept here to keep the file historically complete;
-  # the legacy ones are no-ops on a current install.
-  /run/jabali-kratos/            r,
+  # M25 unix-socket layout (ADR-0050) — admin + public sockets under
+  # /run/jabali-kratos/<name>.sock.
+  /run/jabali-kratos/            rw,
   /run/jabali-kratos/**          rw,
-  /run/kratos-admin.sock         rw,
-  /run/kratos-public.sock        rw,
   /var/run/mysqld/mysqld.sock    rw,
   /run/mysqld/mysqld.sock        rw,
 

@@ -1,10 +1,17 @@
-# AppArmor profile — jabali-agent (M40, ADR-0086)
+# AppArmor profile — jabali-agent (M40.1, ADR-0086)
 #
 # panel-agent binary at /usr/local/bin/jabali-agent runs as root. The
 # privileged orchestrator: writes nginx vhosts, nft tables, audit
 # rules, php-fpm pools, systemd unit drop-ins; shells out to nft,
 # systemctl, maldet, yr, restic, certbot, etc. Profile is wider than
 # panel-api (broader cap set + named exec list) but still bounded.
+#
+# AA 4.x (Debian 13) enforces the `unix` mediation class separately
+# from `network unix`. Without explicit unix rules the daemon fails to
+# dial MariaDB / dbus / other unix sockets even in complain mode.
+# `unix (create, bind, listen, accept, connect, send, receive) type=stream,`
+# covers every unix stream socket operation. The dgram line handles
+# dbus abstract sockets.
 
 #include <tunables/global>
 
@@ -36,6 +43,11 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   network unix  stream,
   network unix  dgram,
   network netlink raw,
+
+  # AA 4.x unix mediation — stream sockets (MariaDB, agent wire, dbus, systemd).
+  unix (create, bind, listen, accept, connect, send, receive) type=stream,
+  # dgram — dbus abstract-namespace sockets (\0/tmp/dbus-*) and similar.
+  unix (create, bind, send, receive) type=dgram,
 
   /usr/local/bin/jabali-agent mr,
   /etc/jabali/                 r,
@@ -122,10 +134,6 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /sys/kernel/security/apparmor/.remove   w,
   /sys/module/apparmor/             r,
   /sys/module/apparmor/**           r,
-  /sys/kernel/security/apparmor/         r,
-  /sys/kernel/security/apparmor/**       r,
-  /sys/module/apparmor/                  r,
-  /sys/module/apparmor/**                r,
 
   # Named exec list — agent shells out to these. Each ix = inherit
   # this profile (so child stays confined under jabali-agent).

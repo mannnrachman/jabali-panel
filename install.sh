@@ -6239,56 +6239,23 @@ install_apparmor() {
 # Arg: $1 — 1 if first install (set complain), 0 to preserve existing
 # mode.
 # cleanup_apparmor_legacy removes profiles that were shipped in earlier
-# M40 releases but have since been parked (see install/apparmor/*.disabled).
-# All five jabali daemon profiles (agent, panel-api, bulwark, kratos,
-# stalwart-mail) are parked because:
-#   1. AA 4.x on Debian 13 enforces unix-socket mediation in a way the
-#      original profiles never accommodated — even in complain mode the
-#      gmysql DSN dial returns EACCES, so any daemon talking to MariaDB
-#      via /var/run/mysqld/mysqld.sock crashes at startup.
-#   2. Three of the four non-agent profiles never auto-attached anyway
-#      (declaration was `profile <name> flags=(complain)` with no path
-#      attach), so they were cosmetic at best.
-# Until profiles are re-authored against AA 4.x and verified per-daemon
-# via `aa-exec -p <name> -- <smoke command>`, this hook keeps existing
-# hosts converged toward "no jabali AA profiles loaded".
-# Idempotent.
+# releases but have since been superseded.
+#
+# M40.1 (ADR-0086 amended): all five jabali daemon profiles were
+# re-authored for AA 4.x unix-socket mediation and re-enabled; the
+# old *.disabled stubs are inert (apply_apparmor_profiles skips them).
+# No per-profile deletions needed here anymore — apply_apparmor_profiles
+# overwrites the on-disk files and apparmor_parser -r refreshes the
+# in-kernel policy.
+#
+# aa-remove-unknown is kept as a sweep for any prior-run stale state:
+# profiles whose on-disk file was removed in an earlier jabali update
+# but whose in-kernel entry was never unloaded. Idempotent.
 cleanup_apparmor_legacy() {
-  local restart_needed=0
-  local p
-  for p in \
-    /etc/apparmor.d/usr.local.bin.jabali-agent \
-    /etc/apparmor.d/usr.local.bin.jabali-bulwark \
-    /etc/apparmor.d/usr.local.bin.jabali-kratos \
-    /etc/apparmor.d/usr.local.bin.jabali-panel-api \
-    /etc/apparmor.d/usr.local.bin.stalwart-mail \
-  ; do
-    if [[ -f "$p" ]]; then
-      if command -v aa-disable >/dev/null 2>&1; then
-        aa-disable "$p" >/dev/null 2>&1 || true
-      fi
-      rm -f "$p"
-      restart_needed=1
-    fi
-  done
-  # aa-disable + rm leaves the profile loaded in kernel memory —
-  # only the on-disk file is gone. aa-remove-unknown sweeps every
-  # in-kernel profile whose backing file no longer exists, finally
-  # unloading them. Without this, jabali-* profiles stayed listed in
-  # `aa-status` after `jabali update` and the QA round 3 testers had
-  # to run aa-remove-unknown manually.
+  # aa-remove-unknown sweeps every in-kernel profile whose backing file
+  # no longer exists (stale from previous jabali update runs).
   if command -v aa-remove-unknown >/dev/null 2>&1; then
     aa-remove-unknown >/dev/null 2>&1 || true
-  fi
-  if [[ $restart_needed -eq 1 ]]; then
-    # Real unit names: jabali-webmail (bulwark binary), jabali-stalwart
-    # (Stalwart binary). Don't reference stalwart-mail.service or
-    # jabali-bulwark.service — they don't exist.
-    systemctl restart jabali-agent >/dev/null 2>&1 || true
-    systemctl restart jabali-panel >/dev/null 2>&1 || true
-    systemctl restart jabali-webmail >/dev/null 2>&1 || true
-    systemctl restart jabali-kratos >/dev/null 2>&1 || true
-    systemctl restart jabali-stalwart >/dev/null 2>&1 || true
   fi
 }
 
@@ -6337,10 +6304,10 @@ apply_apparmor_profiles() {
   # additions). Earlier `jabali-*` glob silently dropped stalwart-mail.
   for profile in "$src_dir"/usr.local.bin.*; do
     [[ -e "$profile" ]] || continue
-    # Skip parked/disabled profiles — see usr.local.bin.jabali-agent.disabled.
-    # AA 4.x's unix-socket mediation rejects our agent profile even in
-    # complain mode (mariadb gmysql connect returns EACCES); profile is
-    # parked until we author rules that AA 4.x accepts.
+    # Skip *.disabled stubs — these are the old M40 profiles that lacked
+    # AA 4.x unix-socket mediation rules. M40.1 re-authored all 5 profiles
+    # with explicit `unix (...) type=stream,` rules; the active (non-disabled)
+    # versions are the ones that should be loaded.
     case "$profile" in
       *.disabled) continue ;;
     esac

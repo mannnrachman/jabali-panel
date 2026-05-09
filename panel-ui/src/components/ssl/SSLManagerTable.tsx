@@ -261,7 +261,7 @@ export const SSLManagerTable = ({
                 color={STATUS_COLORS[status] || "default"}
                 icon={STATUS_ICONS[status]}
               >
-                {status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, " ")}
+                {status === "pending_acme_retry" ? "Pending" : status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, " ")}
               </Tag>
             </Tooltip>
             {hasError && (

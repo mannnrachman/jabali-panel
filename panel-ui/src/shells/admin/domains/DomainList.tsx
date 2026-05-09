@@ -74,7 +74,7 @@ const renderSSL = (ssl: SSLBadge | null | undefined) => {
     case "issuing":
     case "renewing":
     case "pending_acme_retry":
-      return <Tag color="gold">Issuing…</Tag>;
+      return <Tag color="green">Issuing…</Tag>;
     case "failed":
       return <Tag color="red">Failed</Tag>;
     case "revoked":

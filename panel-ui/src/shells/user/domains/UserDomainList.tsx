@@ -68,7 +68,7 @@ const getSSLTagColor = (state?: string): string => {
     case "issuing":
     case "renewing":
     case "pending_acme_retry":
-      return "gold";
+      return "green";
     case "failed":
     case "error":
     case "revoked":

@@ -84,6 +84,18 @@ func ParseTarball(tarballPath, extractDir string) (*ParsedTarball, error) {
 	tr := tar.NewReader(gz)
 	out := &ParsedTarball{ExtractDir: extractDir}
 
+	// wrapperPrefix is the leading component(s) before `cp/`,
+	// detected on the first cp/-containing entry. Some cPanel
+	// backup tooling (operator wrapping a cpmove inside a dated
+	// snapshot dir; older WHM scheduled-backup runs) emits
+	// `<wrapper>/cp/<user>/...` instead of canonical
+	// `cp/<user>/...`. We strip the wrapper for classification +
+	// SourceUser detection so the per-area slices populate
+	// regardless of wrapper depth. Real-world example surfaced in
+	// QA: backup-1.22.2026_18-11-23_<user>/cp/<user>/...
+	wrapperPrefix := ""
+	wrapperDetected := false
+
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -103,9 +115,33 @@ func ParseTarball(tarballPath, extractDir string) (*ParsedTarball, error) {
 			continue
 		}
 
-		// Glean source user from top-level cp/<user>/... entry.
-		if out.SourceUser == "" {
+		// Detect wrapper prefix on first entry containing a `cp/`
+		// segment. canonicalRel is the path the classifier sees +
+		// SourceUser detection uses; on canonical tarballs it
+		// equals `clean`; on wrapped tarballs it strips the
+		// wrapper. Extraction still uses `clean` so disk layout
+		// preserves the original tar structure.
+		if !wrapperDetected {
 			parts := strings.Split(clean, string(filepath.Separator))
+			for i := 0; i+1 < len(parts); i++ {
+				if parts[i] == "cp" {
+					wrapperPrefix = strings.Join(parts[:i], string(filepath.Separator))
+					if wrapperPrefix != "" {
+						wrapperPrefix += string(filepath.Separator)
+					}
+					wrapperDetected = true
+					break
+				}
+			}
+		}
+		canonicalRel := clean
+		if wrapperPrefix != "" {
+			canonicalRel = strings.TrimPrefix(clean, wrapperPrefix)
+		}
+
+		// Glean source user from canonical `cp/<user>/...` entry.
+		if out.SourceUser == "" {
+			parts := strings.Split(canonicalRel, string(filepath.Separator))
 			if len(parts) >= 2 && parts[0] == "cp" {
 				out.SourceUser = parts[1]
 			}
@@ -140,7 +176,13 @@ func ParseTarball(tarballPath, extractDir string) (*ParsedTarball, error) {
 			if err := w.Close(); err != nil {
 				return nil, fmt.Errorf("close %s: %w", dest, err)
 			}
-			classify(out, clean, dest)
+			// classify uses canonicalRel (wrapper-stripped) so the
+			// switch on parts[0]=="cp" matches when the tar
+			// nests cp/ inside a wrapper dir. dest stays the
+			// on-disk path (preserves wrapper layout) so the
+			// per-area writers operate on the actual extracted
+			// files.
+			classify(out, canonicalRel, dest)
 		case tar.TypeSymlink, tar.TypeLink:
 			// cPanel tarballs occasionally hard-link inside the
 			// homedir (legitimate). Skip both link types in v1 —
@@ -158,7 +200,13 @@ func ParseTarball(tarballPath, extractDir string) (*ParsedTarball, error) {
 	if out.SourceUser == "" {
 		return nil, errors.New("ParseTarball: no cp/<user>/ top-level — not a cpmove tarball?")
 	}
-	if root := filepath.Join(extractDir, "cp", out.SourceUser, "homedir"); existsDir(root) {
+	// HomeDir lookup respects the detected wrapper prefix so
+	// disk paths reflect the actual extracted layout.
+	homeRel := filepath.Join("cp", out.SourceUser, "homedir")
+	if wrapperPrefix != "" {
+		homeRel = filepath.Join(strings.TrimRight(wrapperPrefix, string(filepath.Separator)), homeRel)
+	}
+	if root := filepath.Join(extractDir, homeRel); existsDir(root) {
 		out.HomeDir = root
 		out.MailRoot = filepath.Join(root, "mail")
 	}

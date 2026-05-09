@@ -6344,6 +6344,18 @@ AIDE_CONF
 
   install -d -m 0755 /var/log/aide
 
+  # Disable Debian's stock /etc/cron.daily/aide. aide-common ships a
+  # cron job that runs aide check as the `_aide` user, which fails on
+  # our 0755 root:root log dir (Permission denied on aide.report.log
+  # — exit 17 every run). Our jabali-aide-check.timer covers the
+  # daily check + runs as root with the right ProtectSystem +
+  # ReadWritePaths hardening. Removing the stock cron prevents the
+  # competing failure path.
+  if [[ -f /etc/cron.daily/aide ]]; then
+    rm -f /etc/cron.daily/aide
+    _ok "removed Debian stock /etc/cron.daily/aide (jabali-aide-check.timer covers it)"
+  fi
+
   # Initial DB build — only if missing AND no in-progress marker.
   # AIDE 0.19.1 requires an explicit --config (no implicit /etc/aide/
   # aide.conf default any more), or --init exits with

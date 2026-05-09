@@ -139,7 +139,12 @@ func migrationImportHomeHandler(ctx context.Context, raw json.RawMessage) (any, 
 
 	// Build rsync argv. Trailing slash on source = copy contents
 	// not the directory itself.
-	args := []string{"-aH", "--info=stats2", "--delete-after"}
+	// --no-h forces raw byte counts in the stats2 summary.
+	// Without it rsync 3.x prints "Total transferred file size: 752.0M"
+	// which parseRsyncStats can't parse as int → byte count
+	// silently zeros (QA flagged: 752 MB restored, manifest
+	// reported bytes=0).
+	args := []string{"-aH", "--no-h", "--info=stats2", "--delete-after"}
 	for _, ex := range migrationHomeExcludes {
 		args = append(args, "--exclude="+ex)
 	}

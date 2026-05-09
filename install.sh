@@ -4939,6 +4939,55 @@ install_crowdsec() {
   else
     _warn "cscli lapi status non-zero — surface via 'cscli lapi status' for details"
   fi
+
+  # ---- idempotent firewall-bouncer API key management ----
+  # The package postinst auto-registers a bouncer against 127.0.0.1:8080
+  # (Stalwart's port). By the time postinst runs, LAPI is already moved to
+  # the Unix socket + $lapi_tcp, so auto-registration silently fails and the
+  # bouncer starts with a stale/empty key → "bouncer stream halted" on boot.
+  # Prune auto-created bouncers, mint a stable 'jabali-firewall' key, and
+  # patch the YAML config so the bouncer points at $lapi_tcp.
+  local fw_bouncer_conf="/etc/crowdsec/bouncers/${bouncer_pkg}.yaml"
+  if [[ -f "$fw_bouncer_conf" ]]; then
+    # Postinst auto-names follow "cs-firewall-bouncer-<epoch>" or
+    # "crowdsec-firewall-bouncer-<epoch>". Prune them — keeps
+    # `cscli bouncers list` honest and avoids stale-key accumulation.
+    while IFS= read -r stale; do
+      [[ -z "$stale" ]] && continue
+      _log "deleting auto-registered firewall bouncer '$stale'"
+      cscli bouncers delete "$stale" >/dev/null 2>&1 || true
+    done < <(
+      cscli bouncers list -o json 2>/dev/null \
+        | python3 -c 'import json,re,sys; [print(b["name"]) for b in json.load(sys.stdin) if re.match(r"^(cs|crowdsec)-firewall-bouncer-\w+$", b.get("name",""))]' 2>/dev/null
+    )
+
+    local fw_bouncer_name="jabali-firewall"
+    local fw_api_key
+    if cscli bouncers list -o json 2>/dev/null \
+        | python3 -c "import json,sys; [sys.exit(0) for b in json.load(sys.stdin) if b.get('name')=='$fw_bouncer_name'] or sys.exit(1)" 2>/dev/null; then
+      # Bouncer exists — reuse key from config; rotate if missing/blank.
+      fw_api_key="$(yq -r '.api_key // ""' "$fw_bouncer_conf" 2>/dev/null | tr -d '[:space:]')"
+      if [[ -z "$fw_api_key" ]]; then
+        _log "bouncer '$fw_bouncer_name' exists but api_key blank in conf — rotating"
+        cscli bouncers delete "$fw_bouncer_name" >/dev/null 2>&1 || true
+        fw_api_key="$(cscli bouncers add "$fw_bouncer_name" -o raw 2>/dev/null)"
+      fi
+    else
+      _log "registering '$fw_bouncer_name' bouncer with LAPI"
+      fw_api_key="$(cscli bouncers add "$fw_bouncer_name" -o raw 2>/dev/null)"
+    fi
+
+    if [[ -z "$fw_api_key" ]]; then
+      _warn "cscli bouncers add failed — $fw_bouncer_conf left unmanaged; check 'cscli bouncers list'"
+    else
+      yq -y -i ".api_key = \"$fw_api_key\" | .api_url = \"http://${lapi_tcp}/\"" "$fw_bouncer_conf"
+      systemctl restart "${bouncer_pkg}.service" 2>/dev/null \
+        || _warn "${bouncer_pkg}.service restart failed — check 'journalctl -u ${bouncer_pkg}'"
+      _ok "crowdsec-firewall-bouncer configured (jabali-firewall key, LAPI=$lapi_tcp)"
+    fi
+  else
+    _warn "$fw_bouncer_conf missing after package install — firewall bouncer may need manual key setup"
+  fi
 }
 
 install_crowdsec_appsec() {

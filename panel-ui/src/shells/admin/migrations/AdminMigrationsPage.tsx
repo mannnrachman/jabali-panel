@@ -10,8 +10,10 @@
 //
 // Backed by panel-api/internal/api/admin_migrations.go (commit
 // 5981541a).
+import { useState } from "react";
 import {
   Alert,
+  Button,
   Card,
   Empty,
   Popconfirm,
@@ -26,7 +28,8 @@ import { Link } from "react-router";
 
 import { apiClient } from "../../../apiClient";
 import { RowActionButton } from "../../../components/RowActionButton";
-import { DeleteOutlined, SwapOutlined } from "@icons";
+import { DeleteOutlined, PlusOutlined, SwapOutlined } from "@icons";
+import { CreateMigrationDrawer } from "./CreateMigrationDrawer";
 
 type MigrationJob = {
   id: string;
@@ -70,6 +73,7 @@ const SOURCE_BADGE: Record<string, { color: string; label: string }> = {
 
 export const AdminMigrationsPage = () => {
   const qc = useQueryClient();
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const list = useQuery<MigrationJobListResponse>({
     queryKey: ["admin-migrations"],
@@ -118,7 +122,19 @@ export const AdminMigrationsPage = () => {
         }
       />
 
-      <Card size="small" title="Migration jobs">
+      <Card
+        size="small"
+        title="Migration jobs"
+        extra={
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => setDrawerOpen(true)}
+          >
+            New migration
+          </Button>
+        }
+      >
         <Table<MigrationJob>
           dataSource={rows}
           rowKey="id"
@@ -242,6 +258,10 @@ export const AdminMigrationsPage = () => {
           </Typography.Text>
         </Space>
       </Card>
+      <CreateMigrationDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+      />
     </Space>
   );
 };

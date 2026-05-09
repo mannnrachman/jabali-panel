@@ -7,6 +7,8 @@
 //
 // Routes mounted under /admin/migrations:
 //   GET    /admin/migrations               list (paginated envelope)
+//   POST   /admin/migrations               create (state=pending; runner
+//                                          stays operator-driven via CLI)
 //   GET    /admin/migrations/:id           one job + recent stages
 //   GET    /admin/migrations/:id/stages    full stage timeline
 //   DELETE /admin/migrations/:id           soft-revoke (state→cancelled)
@@ -20,6 +22,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/migrate"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
@@ -42,6 +45,7 @@ func RegisterAdminMigrationRoutes(g *gin.RouterGroup, cfg AdminMigrationsHandler
 	rg := g.Group("/admin/migrations")
 	rg.Use(middleware.RequireAdmin())
 	rg.GET("", h.list)
+	rg.POST("", h.create)
 	rg.GET("/:id", h.get)
 	rg.GET("/:id/stages", h.stages)
 	rg.DELETE("/:id", h.cancel)
@@ -112,6 +116,81 @@ func (h *adminMigrationsHandler) stages(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": stages, "total": len(stages)})
 }
 
+// createMigrationRequest is the wire shape for POST /admin/migrations.
+type createMigrationRequest struct {
+	SourceKind string `json:"source_kind" binding:"required"`
+	SourceHost string `json:"source_host"`
+	SourceUser string `json:"source_user" binding:"required"`
+}
+
+// create inserts a fresh migration_jobs row with state='pending'.
+// Does NOT kick off the runner — runner stays operator-driven via
+// the cobra CLI ('jabali migrate import') so a misclick on the SPA
+// can't trigger a 30-min restore against an unprepared destination.
+//
+// Validates source_kind against the registered importers + the
+// offline whm_pkgacct kind so the operator can't create a row
+// for an unknown kind that the runner would later reject.
+func (h *adminMigrationsHandler) create(c *gin.Context) {
+	var req createMigrationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
+		return
+	}
+	if !isKnownSourceKind(req.SourceKind) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":  "unknown_source_kind",
+			"detail": "supported kinds: cpanel, whm_pkgacct, directadmin, hestiacp, imap_only",
+		})
+		return
+	}
+	// Refuse duplicates on the natural-key tuple — the UNIQUE on
+	// (source_host, source_user, source_kind) would 500 the
+	// gorm.Create otherwise.
+	if existing, _ := h.cfg.Jobs.FindBySource(c.Request.Context(),
+		req.SourceKind, req.SourceHost, req.SourceUser); existing != nil {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":          "duplicate_migration_job",
+			"existing_job_id": existing.ID,
+			"detail":         "A migration job already exists for this (source_host, source_user, source_kind). Resume via 'jabali migrate import --job-id ...' instead of recreating.",
+		})
+		return
+	}
+
+	row := &models.MigrationJob{
+		ID:         genULID(),
+		SourceKind: req.SourceKind,
+		SourceHost: req.SourceHost,
+		SourceUser: req.SourceUser,
+		State:      models.MigrationStatePending,
+	}
+	if err := h.cfg.Jobs.Create(c.Request.Context(), row); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, row)
+}
+
+// isKnownSourceKind gates against the closed set of source-kinds
+// the runner currently understands. Importer registry would also
+// answer this, but offline kinds (whm_pkgacct) aren't registered
+// — explicit allow-list is clearer.
+func isKnownSourceKind(s string) bool {
+	switch s {
+	case models.MigrationSourceCpanel,
+		models.MigrationSourceWHMpkgacct,
+		models.MigrationSourceDirectAdmin,
+		models.MigrationSourceHestia,
+		models.MigrationSourceIMAPOnly:
+		return true
+	}
+	return false
+}
+
+// genULID is hoisted so tests can swap in a deterministic ULID
+// generator without monkey-patching ids.NewULID at package level.
+var genULID = ulidNew
+
 // cancel soft-revokes a job — transitions to MigrationStateCancelled
 // when the current state allows. Already-terminal jobs (done /
 // failed / cancelled) return 409 so the operator knows the row was
@@ -164,6 +243,13 @@ func paginationParams(c *gin.Context) (page, pageSize int) {
 		}
 	}
 	return page, pageSize
+}
+
+// ulidNew defaults genULID to the panel's canonical ULID generator.
+// Kept as a package-level var (rather than a direct ids.NewULID
+// reference inline) so test paths can override.
+func ulidNew() string {
+	return ids.NewULID()
 }
 
 // atoiNonNeg is strconv.Atoi with a non-negative refusal so a

@@ -36,6 +36,11 @@ type ApplicationInstallRepository interface {
 	List(ctx context.Context, opts ListOptions) ([]models.ApplicationInstall, int64, error)
 	UpdateStatus(ctx context.Context, id, status string, lastError *string, version *string) error
 	Delete(ctx context.Context, id string) error
+	// ListReadyByUpdatedAtAsc returns ready installs ordered oldest-
+	// updated-first, capped to limit. Reconciler probe loop uses this
+	// for round-robin fairness — without it the probe always picks
+	// the same head-of-list installs first.
+	ListReadyByUpdatedAtAsc(ctx context.Context, limit int) ([]models.ApplicationInstall, error)
 }
 
 // WordPressInstallRepository is the pre-M19 alias. Same interface, kept
@@ -206,4 +211,20 @@ func (r *applicationInstallRepo) Delete(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (r *applicationInstallRepo) ListReadyByUpdatedAtAsc(ctx context.Context, limit int) ([]models.ApplicationInstall, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	var rows []models.ApplicationInstall
+	err := r.db.WithContext(ctx).
+		Where("status = ?", "ready").
+		Order("updated_at ASC").
+		Limit(limit).
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
 }

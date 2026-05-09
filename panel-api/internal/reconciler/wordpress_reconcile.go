@@ -78,45 +78,31 @@ func (r *Reconciler) reconcileWordPressInstalls(ctx context.Context) {
 // probeReadyWordPressInstalls checks ready WordPress installs for drift.
 // It limits probes to ProbeBatch per tick to avoid reconciler dominance.
 // Probes are round-robin by updated_at (oldest first) for fair revisit timing.
-func (r *Reconciler) probeReadyWordPressInstalls(ctx context.Context, installs []models.WordPressInstall) {
+//
+// `installs` is unused — we re-fetch a status='ready' / ORDER BY
+// updated_at ASC / LIMIT ProbeBatch slice straight from the repo so
+// the sort + filter happen in SQL. Keeping the param signature
+// stable for the caller.
+func (r *Reconciler) probeReadyWordPressInstalls(ctx context.Context, _ []models.WordPressInstall) {
 	if r.cfg.WordPress.ProbeBatch <= 0 {
 		return
 	}
 
-	// Filter ready installs and sort by updated_at ascending (oldest first).
-	var readyInstalls []models.WordPressInstall
-	for _, install := range installs {
-		if install.Status == "ready" {
-			readyInstalls = append(readyInstalls, install)
-		}
+	readyInstalls, err := r.wordPressInstalls.ListReadyByUpdatedAtAsc(ctx, r.cfg.WordPress.ProbeBatch)
+	if err != nil {
+		r.log.Warn("reconcile: list ready installs failed", "err", err)
+		return
 	}
-
 	if len(readyInstalls) == 0 {
 		return
 	}
 
-	// Simple sort by updated_at ascending. In practice, the DB query should
-	// return pre-sorted results, but we re-sort here to be explicit.
-	// TODO: Move sort to the repository query itself for efficiency.
+	r.log.Debug("reconcile: probing WordPress installs", "count", len(readyInstalls))
 
-	// Cap probes at ProbeBatch.
-	probeLimit := r.cfg.WordPress.ProbeBatch
-	if len(readyInstalls) < probeLimit {
-		probeLimit = len(readyInstalls)
-	}
-
-	r.log.Debug("reconcile: probing WordPress installs", "count", probeLimit, "total_ready", len(readyInstalls))
-
-	for i := 0; i < probeLimit; i++ {
-		install := readyInstalls[i]
-
+	for _, install := range readyInstalls {
 		// Probe docroot for wp-includes/version.php existence.
 		// TODO: Use agent.Call("fs.stat", ...) once available.
 		// For now, log a stub and skip probing.
 		r.log.Debug("reconcile: WordPress version.php probe stub (agent.fs.stat not yet available)", "id", install.ID, "domain_id", install.DomainID)
-
-		// If version is empty and we had a successful probe, we would parse
-		// version.php and call UpdateStatus with the parsed version.
-		// For now, this is a no-op until the agent command is available.
 	}
 }

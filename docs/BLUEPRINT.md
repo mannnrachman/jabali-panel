@@ -1356,4 +1356,12 @@ Use this table to navigate the codebase when adding a new capability:
 
 ---
 
+| M13.1.1: Bandwidth quota auto-suspend (opt-in) | 2026-05-09 | Builds on M13.1 ledger. New `server_settings.bandwidth_quota_enforce_enabled` toggle (default OFF) gates a per-tick reconciler that walks users with package quota > 0, sums month-to-date bytes via SumByDomainForUser, and on ≥ 100% sets every owned domain `is_enabled=false + is_quota_suspended=true`; on ≤ 80% reverses for is_quota_suspended-marked rows. Manual operator disables (is_quota_suspended=false) are NEVER auto-restored — that's why the column exists. Migration 000117 adds both columns. Admin Server Settings → Storage tab grows the toggle with a warning Alert ("notifications fire regardless; this only controls auto-disable"). Suspended domains tagged `Suspended (quota)` orange chip in admin Domains list. |
+
+| M40 cleanup follow-ups (QA round 3) | 2026-05-09 | Two install regressions surfaced + fixed: (1) `/var/lib/stalwart` ownership drift on reinstall — `install -d -o ... -g ...` only sets the dir itself, not its existing sub-tree; appended a recursive chown after install -d for /var/lib/stalwart + /etc/stalwart so RocksDB reopens cleanly across re-installs. (2) AppArmor jabali-* profiles stayed in kernel memory after `jabali update` even though cleanup_apparmor_legacy rm'd the on-disk file; appended `aa-remove-unknown` to the cleanup so kernel-loaded orphan profiles get unloaded too. Also amended parked `jabali-kratos.disabled` profile to capture the QA-team's manual fix (kratos-identity-schema.json + /run/jabali-kratos/* paths) for future M40.1 work. |
+
+| M44 + M13.1 + M40 cleanup follow-ups | 2026-05-09 | Smaller deltas not big enough for their own row: `agent.fs.stat` (privileged path-only stat — wires WP probe + WP health endpoint, replaces the always-false stub); `humanBytes` dedupe (3 local copies → src/utils/bytes); WordPress probe sort+filter moved to repo (`ListReadyByUpdatedAtAsc`); WS log-stream same-origin enforcement (closes the `CheckOrigin: return true` TODO). Plus the QA round 3 mock-Kratos-settings fixture so MyProfile spec doesn't race the auto-redirect. |
+
+---
+
 **Last updated:** 2026-05-09

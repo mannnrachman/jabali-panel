@@ -39,12 +39,18 @@ const stripHomePrefix = (path: string): string => {
   return path;
 };
 
-const renderDomainCell = (name: string, docRoot: string, isPanelPrimary?: boolean) => (
+const renderDomainCell = (
+  name: string,
+  docRoot: string,
+  isPanelPrimary?: boolean,
+  isQuotaSuspended?: boolean,
+) => (
   <div>
     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
       <GlobalOutlined />
       <span>{name}</span>
       {isPanelPrimary && <Tag color="purple">System</Tag>}
+      {isQuotaSuspended && <Tag color="orange">Suspended (quota)</Tag>}
     </div>
     <Typography.Text type="secondary">{stripHomePrefix(docRoot)}</Typography.Text>
   </div>
@@ -86,6 +92,7 @@ export type Domain = {
   doc_root: string;
   is_enabled: boolean;
   is_panel_primary?: boolean;
+  is_quota_suspended?: boolean;
   ssl_enabled?: boolean;
   ssl?: SSLBadge | null;
   bytes_30d?: number;
@@ -203,7 +210,7 @@ export const DomainList = () => {
               onSearch: (v) => query.setParams({ q: v, page: 1 }),
             })}
             render={(name: string, record: Domain) =>
-              renderDomainCell(name, record.doc_root, record.is_panel_primary)
+              renderDomainCell(name, record.doc_root, record.is_panel_primary, record.is_quota_suspended)
             }
           />
           <Table.Column<Domain>

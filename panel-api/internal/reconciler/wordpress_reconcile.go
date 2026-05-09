@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -100,9 +101,54 @@ func (r *Reconciler) probeReadyWordPressInstalls(ctx context.Context, _ []models
 	r.log.Debug("reconcile: probing WordPress installs", "count", len(readyInstalls))
 
 	for _, install := range readyInstalls {
-		// Probe docroot for wp-includes/version.php existence.
-		// TODO: Use agent.Call("fs.stat", ...) once available.
-		// For now, log a stub and skip probing.
-		r.log.Debug("reconcile: WordPress version.php probe stub (agent.fs.stat not yet available)", "id", install.ID, "domain_id", install.DomainID)
+		r.probeOneWordPressInstall(ctx, install)
+	}
+}
+
+// probeOneWordPressInstall stats <docroot>/<subdir>/wp-includes/version.php
+// via the agent. If the file is gone, the install drifted (manual
+// deletion, failed restore, etc.) — flip status to 'failed' so the
+// operator UI surfaces it instead of silently showing 'ready'.
+//
+// Stat failure that ISN'T file-not-found (permission denied, agent
+// unreachable) logs at warn but does not flip status — reconciler
+// retries next tick.
+func (r *Reconciler) probeOneWordPressInstall(ctx context.Context, install models.ApplicationInstall) {
+	if r.agent == nil || r.domains == nil {
+		return
+	}
+	dom, err := r.domains.FindByID(ctx, install.DomainID)
+	if err != nil || dom == nil || dom.DocRoot == "" {
+		return
+	}
+	subdir := install.Subdirectory
+	if subdir != "" && subdir[0] != '/' {
+		subdir = "/" + subdir
+	}
+	probePath := dom.DocRoot + subdir + "/wp-includes/version.php"
+
+	callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	raw, err := r.agent.Call(callCtx, "fs.stat", map[string]any{"path": probePath})
+	if err != nil {
+		r.log.Warn("reconcile: WordPress probe agent.fs.stat failed",
+			"id", install.ID, "path", probePath, "err", err)
+		return
+	}
+	var stat struct {
+		Exists bool `json:"exists"`
+	}
+	if err := json.Unmarshal(raw, &stat); err != nil {
+		r.log.Warn("reconcile: WordPress probe parse failed", "id", install.ID, "err", err)
+		return
+	}
+	if !stat.Exists {
+		errMsg := "wp-includes/version.php missing — install drifted"
+		r.log.Warn("reconcile: WordPress install drift detected; marking failed",
+			"id", install.ID, "path", probePath)
+		if err := r.wordPressInstalls.UpdateStatus(ctx, install.ID, "failed", &errMsg, nil); err != nil {
+			r.log.Error("reconcile: failed to flip drifted install to failed",
+				"id", install.ID, "err", err)
+		}
 	}
 }

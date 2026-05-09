@@ -949,12 +949,30 @@ func (h *wordPressHandler) health(c *gin.Context) {
 		return
 	}
 
-	// Stub response — Step 5 will define agent endpoint for actual health checks
-	// TODO: Implement health check via agent endpoint once WordPress probe is available
-	resp := healthResponse{
-		WPInstalled: false,
-		WPVersion:   "",
-		HTTPStatus:  0,
+	// Probe wp-includes/version.php existence via the agent's
+	// privileged fs.stat. Adds a quick sanity hit to the handler;
+	// downstream callers (UI status pill, monitoring scripts) get a
+	// real installed/missing read instead of the previous always-
+	// false stub.
+	resp := healthResponse{}
+	install, ferr := h.cfg.ApplicationInstalls.FindByID(ctx, installID)
+	if ferr == nil && install != nil && h.cfg.Agent != nil {
+		if dom, derr := h.cfg.Domains.FindByID(ctx, install.DomainID); derr == nil && dom != nil && dom.DocRoot != "" {
+			subdir := install.Subdirectory
+			if subdir != "" && subdir[0] != '/' {
+				subdir = "/" + subdir
+			}
+			probePath := dom.DocRoot + subdir + "/wp-includes/version.php"
+			statCtx, statCancel := context.WithTimeout(ctx, 5*time.Second)
+			defer statCancel()
+			raw, sErr := h.cfg.Agent.Call(statCtx, "fs.stat", map[string]any{"path": probePath})
+			if sErr == nil {
+				var stat struct{ Exists bool `json:"exists"` }
+				if json.Unmarshal(raw, &stat) == nil {
+					resp.WPInstalled = stat.Exists
+				}
+			}
+		}
 	}
 	c.JSON(http.StatusOK, resp)
 }

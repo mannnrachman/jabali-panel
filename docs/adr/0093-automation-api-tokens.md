@@ -115,11 +115,11 @@ Negative:
 - HMAC secret rotation requires revoke + remint (no in-place
   rotation). Acceptable for v1; v2 can add a key-set rotation
   flow.
-- No nonce/JTI store — replay protection is timestamp-window
-  only. Threat model assumes the secret is stored securely on
-  the caller side; if leaked, attackers can replay until the
-  next operator-driven revoke, but only within the 5-minute
-  window per individual replayed request.
+- ~~No nonce/JTI store~~ — **shipped 2026-05-09.** Redis SETNX
+  on `automation:replay:<kid>:<sig>` with TTL covering the skew
+  window + 1-min grace. A captured request cannot be replayed.
+  Redis-down fail-closed (503), not silently bypassed. Original
+  caveat preserved above for historical context.
 
 ## Future work
 

@@ -317,9 +317,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterAutomation(autoGroup, api.AutomationConfig{
 				AutomationTokens: deps.AutomationTokens,
 				Key:              deps.SSOKey,
-				Domains:          deps.Domains,
-				Users:            deps.Users,
-				Applications:     deps.WordPressInstalls,
+				// M44 replay defense — Redis SETNX gate against
+				// captured-request replay. Required in production.
+				Redis:        deps.Redis,
+				Domains:      deps.Domains,
+				Users:        deps.Users,
+				Applications: deps.WordPressInstalls,
 			})
 		}
 

@@ -9,9 +9,10 @@
 //   sig = hex(HMAC_SHA256(secret, METHOD || "\n" || PATH || "\n" || ts || "\n" || sha256(BODY)))
 //
 // Constant-time compares against the header sig. ts must be within a
-// 5-minute window of the server clock (catches replay against the
-// observable surface; full nonce defense is deferred per
-// plans/automation-api-tokens.md "Notes").
+// 5-minute window of the server clock; signatures already seen in
+// that window are rejected via Redis SETNX so a captured request
+// cannot be replayed (M44 replay defense, supersedes the original
+// "no nonce store" caveat in plans/automation-api-tokens.md).
 package middleware
 
 import (
@@ -20,6 +21,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -27,6 +29,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
@@ -37,6 +40,13 @@ const (
 	autoCtxTokenKey = "jabali_automation_token"
 	autoMaxSkew     = 5 * time.Minute
 	autoMaxBody     = 1 << 20 // 1 MiB cap on signed body — read-only API doesn't take bigger
+	// autoReplayTTL covers the skew window + 1-min grace so a sig
+	// arriving at the trailing edge can't be replayed mid-tick.
+	// Replay key shape: "automation:replay:<kid>:<sig>" — per-token
+	// scoping prevents one token's collision space from leaking
+	// across tenants. sig is already a 64-byte HMAC hex; no
+	// further hashing needed.
+	autoReplayTTL = autoMaxSkew + time.Minute
 )
 
 // AutomationToken returns the verified token from the context, or nil
@@ -57,7 +67,12 @@ func AutomationToken(c *gin.Context) *models.AutomationToken {
 //
 // Failure cases all 401 with a generic JSON error — no information
 // leak about why a particular request failed.
-func RequireAutomationHMAC(repo repository.AutomationTokenRepository, key *ssokey.Key) gin.HandlerFunc {
+// rdb is nullable. When nil, replay defense is skipped + a single
+// info log fires at first request (operator can decide whether to
+// wire Redis or accept the timestamp-only window). On a fresh
+// install Redis is always present (M14 dispatcher requires it),
+// so production paths exercise the SETNX gate.
+func RequireAutomationHMAC(repo repository.AutomationTokenRepository, key *ssokey.Key, rdb *redis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if repo == nil || key == nil {
 			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "automation api disabled"})
@@ -147,6 +162,37 @@ func RequireAutomationHMAC(repo repository.AutomationTokenRepository, key *ssoke
 			return
 		}
 
+		// Replay defense: SETNX (sig already verified at this point;
+		// scoped per-token to keep tenants isolated). 5-min window +
+		// 1-min grace TTL bounds memory: each request stamps one
+		// key that auto-expires.
+		//
+		// Redis-down → fail-closed: a missing replay store is a
+		// security regression, not 'best effort'. The middleware
+		// returns 503 so the caller knows the auth substrate is
+		// degraded rather than silently dropping the gate.
+		if rdb != nil {
+			rkey := fmtReplayKey(kid, sig)
+			rctx, rcancel := context.WithTimeout(c.Request.Context(), 1*time.Second)
+			ok, rerr := rdb.SetNX(rctx, rkey, "1", autoReplayTTL).Result()
+			rcancel()
+			if rerr != nil {
+				if !errors.Is(rerr, context.Canceled) && !errors.Is(rerr, context.DeadlineExceeded) {
+					c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "replay store unavailable"})
+					return
+				}
+				// On context-cancel from the request itself, the
+				// caller went away; don't manufacture a 503 they
+				// won't see — let gin clean up.
+				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "replay store unavailable"})
+				return
+			}
+			if !ok {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "replay detected"})
+				return
+			}
+		}
+
 		// Bump last-used best-effort. Don't block the request on the
 		// repo write — if it fails, the verified request still proceeds.
 		go func(id, ip string) {
@@ -177,6 +223,14 @@ func parseAutoAuthParams(s string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// fmtReplayKey builds the per-token replay key. Imported via
+// fmt at top of file; kept short here to avoid dragging fmt
+// just for this single Sprintf — use string concat which is
+// also faster.
+func fmtReplayKey(kid, sig string) string {
+	return "automation:replay:" + kid + ":" + sig
 }
 
 // RequireScope returns a middleware that 403s when the verified

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
@@ -31,8 +32,13 @@ import (
 type AutomationConfig struct {
 	AutomationTokens repository.AutomationTokenRepository
 	Key              *ssokey.Key
-	Domains          repository.DomainRepository
-	Users            repository.UserRepository
+	// Redis is the M44 replay-defense store. Required in production
+	// (the M14 dispatcher already needs Redis on every install, so
+	// this is a no-cost share). Nil disables the SETNX gate — only
+	// for tests / non-prod.
+	Redis           *redis.Client
+	Domains         repository.DomainRepository
+	Users           repository.UserRepository
 	Applications    repository.ApplicationInstallRepository
 }
 
@@ -41,7 +47,7 @@ func RegisterAutomation(rg *gin.RouterGroup, cfg AutomationConfig) {
 		return
 	}
 	g := rg.Group("/automation",
-		middleware.RequireAutomationHMAC(cfg.AutomationTokens, cfg.Key),
+		middleware.RequireAutomationHMAC(cfg.AutomationTokens, cfg.Key, cfg.Redis),
 	)
 
 	if cfg.Domains != nil {

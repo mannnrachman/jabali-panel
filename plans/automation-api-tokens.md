@@ -183,6 +183,8 @@ Sidebar entry under Admin → Automation (icon: KeyOutlined).
 - **Per-token IP allow-lists** are tempting; defer to v2 to keep the
   token shape tight. Operators that want IP gating use UFW or
   CrowdSec scenarios on the panel hostname + 80/443.
-- **No JTI / nonce store** — `ts` window + per-token last_used_at is
-  enough for our threat model. A real replay-defense system needs an
-  opaque nonce store and we're not paying that cost yet.
+- ~~**No JTI / nonce store**~~ — **shipped 2026-05-09.** Replay
+  defense added via Redis SETNX on `automation:replay:<kid>:<sig>`
+  with TTL = clock-skew window + 1 min grace. `RequireAutomationHMAC`
+  takes a `*redis.Client`; nil disables the gate (test/non-prod
+  only). Production fail-closed: Redis-down returns 503, not 200.

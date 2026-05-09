@@ -91,7 +91,7 @@ func signRequest(secret, method, path, ts, body string) string {
 func setupHMACRouter(repo *fakeAutoTokenRepo, k *ssokey.Key) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.GET("/p", RequireAutomationHMAC(repo, k), func(c *gin.Context) {
+	r.GET("/p", RequireAutomationHMAC(repo, k, nil), func(c *gin.Context) {
 		tok := AutomationToken(c)
 		c.JSON(http.StatusOK, gin.H{"name": tok.Name})
 	})
@@ -219,10 +219,10 @@ func TestRequireAutomationHMAC_PathSensitive(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.GET("/p", RequireAutomationHMAC(repo, k), func(c *gin.Context) {
+	r.GET("/p", RequireAutomationHMAC(repo, k, nil), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
-	r.GET("/q", RequireAutomationHMAC(repo, k), func(c *gin.Context) {
+	r.GET("/q", RequireAutomationHMAC(repo, k, nil), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 
@@ -246,7 +246,7 @@ func TestRequireScope_RejectsMissingScope(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.GET("/p",
-		RequireAutomationHMAC(repo, k),
+		RequireAutomationHMAC(repo, k, nil),
 		RequireScope("read:domains"),
 		func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{}) },
 	)
@@ -265,7 +265,7 @@ func TestRequireScope_AllowsExactMatch(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.GET("/p",
-		RequireAutomationHMAC(repo, k),
+		RequireAutomationHMAC(repo, k, nil),
 		RequireScope("read:domains"),
 		func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{}) },
 	)

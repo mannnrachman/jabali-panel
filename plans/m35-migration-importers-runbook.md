@@ -134,10 +134,16 @@ user_id+name), DNS upserts (pdns idempotent), home rsync
 2. Cron jobs all land Enabled=false. Operator reviews via
    `/jabali-panel/cron` and flips on the ones that pass the wp /
    php allowlist; rest need rewriting.
-3. Mailboxes are NOT imported in v1 (multi-session JMAP-push work
-   pending). Operator path: keep source SMTP active, set up an
-   SMTP forwarder on the destination domain, cut over DNS MX when
-   the source is fully drained.
+3. Mailboxes ARE imported via JMAP Email/import as of commit
+   `a5d2dc25` (per-area writer in cpanel/restore_mail.go +
+   panel-agent migration.import_mailboxes). Pre-requisites: the
+   destination user's mail domain must already exist in Stalwart
+   (run domain.email.enable on the destination domain BEFORE the
+   restore stage; the panel-side admin Mail tab does this). The
+   restore-stage runner reports messages_pushed + bytes_pushed in
+   the manifest_json warnings list. Idempotent: Stalwart's
+   Email/import dedupes on Message-ID, so resuming a partial
+   import is a no-op for already-ingested messages.
 
 ## 3. Inspection + cancellation
 
@@ -173,8 +179,12 @@ needed.
 
 ## 4. Acknowledged limitations
 
-- **Mailboxes** not imported in v1. Operator-driven SMTP forward
-  + cutover. Multi-session JMAP-push work tracked.
+- **Mailboxes** are imported via JMAP Email/import (a5d2dc25).
+  Per-mailbox failures (Stalwart auth, missing INBOX) record in
+  manifest_json and skip rather than failing the whole restore —
+  operator can re-run mail import in isolation later by re-running
+  the same `jabali migrate import` command (Stalwart dedupes on
+  Message-ID; already-imported messages no-op).
 - **PostgreSQL** databases skipped per ADR-0094 §5; warnings
   recorded in manifest. M37 importer integration imports them
   later.

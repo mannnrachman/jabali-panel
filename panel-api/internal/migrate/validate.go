@@ -1,0 +1,148 @@
+package migrate
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+)
+
+// ConflictKind enumerates pre-flight blockers. Operator must
+// resolve every blocker (rename target user, free up the domain,
+// or skip a colliding mailbox via Validate option) before restore
+// can run.
+type ConflictKind string
+
+const (
+	ConflictTargetUserExists  ConflictKind = "target_user_exists"
+	ConflictDomainTaken       ConflictKind = "domain_taken"
+	ConflictUsernameInvalid   ConflictKind = "username_invalid"
+)
+
+// Conflict is one row in the validation report. The Detail is a
+// short, operator-readable string suitable for surfacing in the
+// admin UI's conflict list.
+type Conflict struct {
+	Kind   ConflictKind `json:"kind"`
+	Detail string       `json:"detail"`
+}
+
+// ValidationReport summarises what restore would do + every
+// blocker we found. Empty Blockers ↔ ready to restore.
+type ValidationReport struct {
+	TargetUser  string     `json:"target_user"`
+	SourceUser  string     `json:"source_user"`
+	SourceKind  string     `json:"source_kind"`
+	Blockers    []Conflict `json:"blockers"`
+	Projections struct {
+		BytesTotal        int64 `json:"bytes_total"`
+		DomainsToCreate   int   `json:"domains_to_create"`
+		DBsToCreate       int   `json:"dbs_to_create"`
+		MailboxesToCreate int   `json:"mailboxes_to_create"`
+		CronToCreate      int   `json:"cron_to_create"`
+		SSHKeysToCreate   int   `json:"ssh_keys_to_create"`
+	} `json:"projections"`
+	// Warnings forwarded from the manifest plus any new ones
+	// the validator surfaced (e.g. quota projection > server cap).
+	Warnings []Warning `json:"warnings"`
+}
+
+// ValidateDeps wires the existing repos so Validate can run
+// against the live panel DB without depending on the full app.Deps.
+type ValidateDeps struct {
+	Users   repository.UserRepository
+	Domains repository.DomainRepository
+}
+
+// Validate runs pre-flight conflict detection against an
+// AccountManifest. Returns (report, nil) when complete (regardless
+// of whether report.Blockers is empty); returns (nil, err) only on
+// an unrecoverable infra error (DB down, etc.).
+//
+// targetUsername is the jabali-side username the operator picked
+// during the admin UI's "review manifest" step. It can match the
+// source username (most common — operator wants 1:1 mapping) or
+// differ when the source name collides with an existing jabali user.
+func Validate(ctx context.Context, deps ValidateDeps, m *AccountManifest, targetUsername string) (*ValidationReport, error) {
+	if m == nil {
+		return nil, errors.New("validate: manifest nil")
+	}
+	if deps.Users == nil || deps.Domains == nil {
+		return nil, errors.New("validate: deps not wired")
+	}
+
+	rpt := &ValidationReport{
+		TargetUser: targetUsername,
+		SourceUser: m.Source.User,
+		SourceKind: m.Source.Kind,
+		Warnings:   append([]Warning{}, m.Warnings...),
+	}
+	rpt.Projections.BytesTotal = m.Sizes.HomeBytes + m.Sizes.DBsBytes + m.Sizes.MailBytes + m.Sizes.LogsBytes
+	rpt.Projections.DomainsToCreate = len(m.Domains)
+	rpt.Projections.DBsToCreate = len(m.Databases)
+	rpt.Projections.MailboxesToCreate = len(m.Mailboxes)
+	rpt.Projections.CronToCreate = len(m.Cron)
+	rpt.Projections.SSHKeysToCreate = len(m.SSH)
+
+	// Username sanity. POSIX-compatible, 1-32 chars, lowercase,
+	// alnum or hyphen. Stricter than PHP-era panels — refuse
+	// anything that wouldn't survive a useradd.
+	if !isValidUnixUsername(targetUsername) {
+		rpt.Blockers = append(rpt.Blockers, Conflict{
+			Kind:   ConflictUsernameInvalid,
+			Detail: fmt.Sprintf("target username %q must be 1-32 chars, lowercase alnum + hyphen", targetUsername),
+		})
+	}
+
+	// Target user must NOT already exist — restore creates the user.
+	if u, err := deps.Users.FindByUsername(ctx, targetUsername); err == nil && u != nil {
+		rpt.Blockers = append(rpt.Blockers, Conflict{
+			Kind:   ConflictTargetUserExists,
+			Detail: fmt.Sprintf("user %q already exists in jabali; pick a different target username or delete the existing one", targetUsername),
+		})
+	} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
+		return nil, fmt.Errorf("validate: lookup target user: %w", err)
+	}
+
+	// Each domain must NOT exist anywhere in jabali (table has
+	// global UNIQUE on name).
+	for _, d := range m.Domains {
+		existing, err := deps.Domains.FindByName(ctx, d.Name)
+		if err != nil && !errors.Is(err, repository.ErrNotFound) {
+			return nil, fmt.Errorf("validate: lookup domain %q: %w", d.Name, err)
+		}
+		if existing != nil {
+			rpt.Blockers = append(rpt.Blockers, Conflict{
+				Kind:   ConflictDomainTaken,
+				Detail: fmt.Sprintf("domain %q already registered in jabali (owned by user %s); free it first or skip this domain in the manifest", d.Name, existing.UserID),
+			})
+		}
+	}
+
+	return rpt, nil
+}
+
+// isValidUnixUsername mirrors the rules useradd applies on Debian:
+// start with a lowercase letter, then lowercase / digits / hyphen,
+// 1..32 chars total. Rejects underscores (cPanel allows them, jabali
+// doesn't — restore stage rewrites underscores to hyphens and
+// records the rewrite as a warning).
+func isValidUnixUsername(s string) bool {
+	if len(s) == 0 || len(s) > 32 {
+		return false
+	}
+	if s[0] < 'a' || s[0] > 'z' {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9':
+		case r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}

@@ -28,7 +28,7 @@ type mailboxSetPasswordParams struct {
 	Email string `json:"email"`
 }
 
-func mailboxSetPasswordHandler(_ context.Context, params json.RawMessage) (any, error) {
+func mailboxSetPasswordHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	if len(params) == 0 {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "params required"}
 	}
@@ -42,6 +42,11 @@ func mailboxSetPasswordHandler(_ context.Context, params json.RawMessage) (any, 
 	if _, err := requireEmail(p.Email); err != nil {
 		return nil, err
 	}
+	// Same Stalwart cache primer as mailbox.create — forces the
+	// directory to re-query the new password_hash on next auth.
+	// ADR-0045 says SqlDirectory pulls without TTL but QA observed
+	// post-rotate auth failing until a follow-up call. Best-effort.
+	_, _ = accountIDByEmail(ctx, p.Email)
 	return okBody{Ok: true}, nil
 }
 

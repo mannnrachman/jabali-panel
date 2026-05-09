@@ -2829,6 +2829,12 @@ ensure_user_and_dirs() {
   # logs). 0750 root:jabali so the panel can read+write but other users
   # can't crawl mid-import data.
   install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali-migrations
+  # M35 ADR-0094 §"tracked risks": per-job source credentials live at
+  # /etc/jabali-panel/migration-secrets/<job-id>.env (root:jabali 0640).
+  # Wiped on job terminal state by the future-shipped reaper. Mode 0750
+  # on the parent dir prevents other users discovering the file list;
+  # files themselves are 0640 root:jabali so only the panel can read.
+  install -d -m 0750 -o root -g "$SERVICE_USER" /etc/jabali-panel/migration-secrets
 }
 
 # ---------- M25 step 1: jabali-sockets group --------------------------------

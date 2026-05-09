@@ -3,6 +3,7 @@ package cpanel
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -107,10 +108,16 @@ func (d *Discoverer) Connect(ctx context.Context, host, user string, secret migr
 	return s, nil
 }
 
-// loadSecret reads the per-job env file. Two recognised formats:
+// loadSecret reads the per-job env file. Three recognised formats:
 //
 //	SSH_PASSWORD=<plaintext>
-//	SSH_PRIVATE_KEY=<base64-encoded-PEM>
+//	SSH_PRIVATE_KEY=<single-line-PEM>     (legacy; works only when
+//	                                       the PEM body is one line)
+//	SSH_PRIVATE_KEY_B64=<base64-of-PEM>   (preferred — survives
+//	                                       multi-line OpenSSH PEM
+//	                                       keys; written by the
+//	                                       SPA's secrets-upload
+//	                                       endpoint).
 //
 // loadSecret returns auth methods for whichever is present. After
 // the file is read its in-memory copy is zeroed; subsequent
@@ -138,6 +145,17 @@ func loadSecret(path string) ([]ssh.AuthMethod, error) {
 			signer, perr := ssh.ParsePrivateKey([]byte(v))
 			if perr != nil {
 				return nil, fmt.Errorf("parse SSH_PRIVATE_KEY: %w", perr)
+			}
+			auths = append(auths, ssh.PublicKeys(signer))
+		case "SSH_PRIVATE_KEY_B64":
+			pem, derr := base64.StdEncoding.DecodeString(strings.TrimSpace(v))
+			if derr != nil {
+				return nil, fmt.Errorf("base64-decode SSH_PRIVATE_KEY_B64: %w", derr)
+			}
+			signer, perr := ssh.ParsePrivateKey(pem)
+			zero(pem)
+			if perr != nil {
+				return nil, fmt.Errorf("parse SSH_PRIVATE_KEY_B64: %w", perr)
 			}
 			auths = append(auths, ssh.PublicKeys(signer))
 		}

@@ -19,12 +19,16 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/migrate"
@@ -33,9 +37,13 @@ import (
 )
 
 // AdminMigrationsHandlerConfig is the dep set the routes need.
-// Jobs is required; nil disables route registration.
+// Jobs is required; nil disables route registration. Agent is
+// required for the three drive endpoints (secrets / pull-source /
+// import); when nil those three endpoints register but 503 because
+// the agent socket isn't reachable.
 type AdminMigrationsHandlerConfig struct {
-	Jobs repository.MigrationJobRepository
+	Jobs  repository.MigrationJobRepository
+	Agent agent.AgentInterface
 }
 
 // RegisterAdminMigrationRoutes mounts /admin/migrations* on g.
@@ -53,6 +61,12 @@ func RegisterAdminMigrationRoutes(g *gin.RouterGroup, cfg AdminMigrationsHandler
 	rg.GET("/:id/stages", h.stages)
 	rg.DELETE("/:id", h.cancel)
 	rg.POST("/:id/destroy", h.destroy)
+	// SPA-driven migration endpoints. Each writes/launches via the
+	// agent (transient systemd unit pattern, M29 §updates) so the
+	// long-running pull + import survive panel-api restarts.
+	rg.POST("/:id/secrets", h.uploadSecrets)
+	rg.POST("/:id/pull-source", h.runPullSource)
+	rg.POST("/:id/import", h.runImport)
 }
 
 type adminMigrationsHandler struct{ cfg AdminMigrationsHandlerConfig }
@@ -306,6 +320,173 @@ func paginationParams(c *gin.Context) (page, pageSize int) {
 // reference inline) so test paths can override.
 func ulidNew() string {
 	return ids.NewULID()
+}
+
+// uploadSecretsRequest — operator picks ONE of password / private-key
+// per ADR-0094. UI presents a tabbed form; either tab posts here.
+type uploadSecretsRequest struct {
+	SSHPassword   string `json:"ssh_password"`
+	SSHPrivateKey string `json:"ssh_private_key"`
+}
+
+// uploadSecrets — POST /admin/migrations/:id/secrets writes the per-job
+// env file via the agent (root-owned 0640). Job must exist + be in a
+// non-terminal state. Empty payload (neither password nor key) → 400.
+func (h *adminMigrationsHandler) uploadSecrets(c *gin.Context) {
+	id := c.Param("id")
+	job, err := h.cfg.Jobs.FindByID(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if isTerminalMigrationState(job.State) {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  "terminal_state",
+			"detail": "cannot upload secrets to a terminal job (state=" + job.State + ")",
+		})
+		return
+	}
+	var req uploadSecretsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
+		return
+	}
+	if req.SSHPassword == "" && req.SSHPrivateKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":  "missing_credential",
+			"detail": "ssh_password or ssh_private_key required",
+		})
+		return
+	}
+	if h.cfg.Agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unconfigured"})
+		return
+	}
+	h.callAgent(c, "migration.secrets_write", map[string]any{
+		"job_id":          id,
+		"ssh_password":    req.SSHPassword,
+		"ssh_private_key": req.SSHPrivateKey,
+	}, 10*time.Second)
+}
+
+// runPullSourceRequest — defaults: ssh_user="root".
+type runPullSourceRequest struct {
+	SSHUser string `json:"ssh_user"`
+}
+
+// runPullSource — POST /admin/migrations/:id/pull-source kicks off
+// `jabali migrate pull-source --job-id` under a transient systemd
+// unit. Refuses if the job has no manifest (manifest = source-side
+// discovery output; pull-source assumes discovery already ran). State
+// must be pending or pulling_failed.
+func (h *adminMigrationsHandler) runPullSource(c *gin.Context) {
+	id := c.Param("id")
+	job, err := h.cfg.Jobs.FindByID(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if isTerminalMigrationState(job.State) {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  "terminal_state",
+			"detail": "cannot pull a terminal job (state=" + job.State + ")",
+		})
+		return
+	}
+	var req runPullSourceRequest
+	_ = c.ShouldBindJSON(&req) // body optional
+	if h.cfg.Agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unconfigured"})
+		return
+	}
+	h.callAgent(c, "migration.pull_source_run", map[string]any{
+		"job_id":   id,
+		"ssh_user": req.SSHUser,
+	}, 10*time.Second)
+}
+
+// runImportRequest — TargetUser is required; the rest are optional.
+// When TargetEmail/TargetPassword are present + the user doesn't yet
+// exist, the import command auto-creates them (per M35 auto-create
+// flow added in 91ba51a9).
+type runImportRequest struct {
+	TargetUser      string `json:"target_user" binding:"required"`
+	TargetEmail     string `json:"target_email"`
+	TargetPassword  string `json:"target_password"`
+	TargetPackageID string `json:"target_package_id"`
+}
+
+func (h *adminMigrationsHandler) runImport(c *gin.Context) {
+	id := c.Param("id")
+	job, err := h.cfg.Jobs.FindByID(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if isTerminalMigrationState(job.State) {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  "terminal_state",
+			"detail": "cannot import a terminal job (state=" + job.State + ")",
+		})
+		return
+	}
+	var req runImportRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
+		return
+	}
+	if h.cfg.Agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unconfigured"})
+		return
+	}
+	h.callAgent(c, "migration.import_run", map[string]any{
+		"job_id":            id,
+		"target_user":       req.TargetUser,
+		"target_email":      req.TargetEmail,
+		"target_password":   req.TargetPassword,
+		"target_package_id": req.TargetPackageID,
+	}, 10*time.Second)
+}
+
+// callAgent — copy of admin_updates.go pattern. Hoisted as a method
+// so both add a context-deadline + uniform error envelope.
+func (h *adminMigrationsHandler) callAgent(c *gin.Context, cmd string, params any, timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
+	defer cancel()
+	raw, err := h.cfg.Agent.Call(ctx, cmd, params)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "details": err.Error()})
+		return
+	}
+	var data any
+	if err := json.Unmarshal(raw, &data); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_parse"})
+		return
+	}
+	c.JSON(http.StatusOK, data)
+}
+
+// isTerminalMigrationState — done / failed / cancelled. Prevents
+// re-running pull or import on a terminal job; operator must
+// destroy + recreate.
+func isTerminalMigrationState(s string) bool {
+	switch s {
+	case models.MigrationStateDone, models.MigrationStateFailed, models.MigrationStateCancelled:
+		return true
+	}
+	return false
 }
 
 // atoiNonNeg is strconv.Atoi with a non-negative refusal so a

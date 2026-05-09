@@ -831,7 +831,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			// once the JMAP-push + CreateUser orchestrator
 			// stabilise.
 			api.RegisterAdminMigrationRoutes(v1, api.AdminMigrationsHandlerConfig{
-				Jobs: deps.MigrationJobs,
+				Jobs:  deps.MigrationJobs,
+				Agent: deps.Agent,
 			})
 		}
 		if deps.Agent != nil {

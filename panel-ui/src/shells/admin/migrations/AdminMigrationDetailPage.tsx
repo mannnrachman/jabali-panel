@@ -5,19 +5,25 @@
 //
 // Polls every 10s when the job is in a non-terminal state so the
 // operator sees stages advance live while the cobra CLI runs.
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
+  Button,
   Card,
   Descriptions,
   Empty,
+  Form,
+  Input,
+  message,
+  Modal,
+  Radio,
   Space,
   Spin,
   Steps,
   Tag,
   Typography,
 } from "antd";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router";
 
 import { apiClient } from "../../../apiClient";
@@ -199,6 +205,8 @@ export const AdminMigrationDetailPage = () => {
         />
       </Card>
 
+      <DriveCard jobId={job.id} jobState={job.state} />
+
       <Card size="small" title="Stage timeline">
         {stages.length === 0 ? (
           <Empty description="No stage rows yet" />
@@ -296,5 +304,243 @@ export const AdminMigrationDetailPage = () => {
     </Space>
   );
 };
+
+/**
+ * DriveCard — three actions that drive a migration end-to-end:
+ *   1. Upload secrets   → POST /admin/migrations/:id/secrets
+ *                         (writes /etc/jabali-panel/migration-secrets/<id>.env)
+ *   2. Pull source      → POST /admin/migrations/:id/pull-source
+ *                         (transient unit jabali-migrate-pull-<id>.service)
+ *   3. Run import       → POST /admin/migrations/:id/import
+ *                         (transient unit jabali-migrate-import-<id>.service)
+ *
+ * Hidden once the job is in a terminal state — the agent endpoints
+ * 409 anyway, but UI omitting the buttons is clearer than a flashing
+ * error.
+ */
+function DriveCard({
+  jobId,
+  jobState,
+}: {
+  jobId: string;
+  jobState: string;
+}) {
+  const queryClient = useQueryClient();
+  const [secretsOpen, setSecretsOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [credKind, setCredKind] = useState<"password" | "private_key">(
+    "password",
+  );
+  const [secretsForm] = Form.useForm();
+  const [importForm] = Form.useForm();
+
+  const refresh = () =>
+    queryClient.invalidateQueries({ queryKey: ["admin-migrations", jobId] });
+
+  const uploadSecrets = useMutation({
+    mutationFn: async (vals: {
+      ssh_password?: string;
+      ssh_private_key?: string;
+    }) => {
+      const { data } = await apiClient.post(
+        `/admin/migrations/${jobId}/secrets`,
+        vals,
+      );
+      return data;
+    },
+    onSuccess: () => {
+      message.success("Secrets uploaded.");
+      setSecretsOpen(false);
+      secretsForm.resetFields();
+    },
+    onError: (e: unknown) => {
+      message.error(
+        `Secrets upload failed: ${(e as Error)?.message ?? "unknown"}`,
+      );
+    },
+  });
+
+  const pullSource = useMutation({
+    mutationFn: async () => {
+      const { data } = await apiClient.post(
+        `/admin/migrations/${jobId}/pull-source`,
+        { ssh_user: "root" },
+      );
+      return data as { unit?: string };
+    },
+    onSuccess: (d) => {
+      message.success(`Pull started: ${d?.unit ?? "(unit name unavailable)"}`);
+      refresh();
+    },
+    onError: (e: unknown) => {
+      message.error(
+        `Pull failed to start: ${(e as Error)?.message ?? "unknown"}`,
+      );
+    },
+  });
+
+  const runImport = useMutation({
+    mutationFn: async (vals: {
+      target_user: string;
+      target_email?: string;
+      target_password?: string;
+      target_package_id?: string;
+    }) => {
+      const { data } = await apiClient.post(
+        `/admin/migrations/${jobId}/import`,
+        vals,
+      );
+      return data as { unit?: string };
+    },
+    onSuccess: (d) => {
+      message.success(
+        `Import started: ${d?.unit ?? "(unit name unavailable)"}`,
+      );
+      setImportOpen(false);
+      importForm.resetFields();
+      refresh();
+    },
+    onError: (e: unknown) => {
+      message.error(
+        `Import failed to start: ${(e as Error)?.message ?? "unknown"}`,
+      );
+    },
+  });
+
+  if (isTerminal(jobState)) {
+    return null;
+  }
+
+  return (
+    <Card size="small" title="Drive migration">
+      <Space wrap>
+        <Button onClick={() => setSecretsOpen(true)}>1. Upload secrets…</Button>
+        <Button
+          type="primary"
+          loading={pullSource.isPending}
+          onClick={() => pullSource.mutate()}
+        >
+          2. Pull source
+        </Button>
+        <Button
+          type="primary"
+          loading={runImport.isPending}
+          onClick={() => setImportOpen(true)}
+        >
+          3. Run import…
+        </Button>
+      </Space>
+      <Typography.Paragraph
+        type="secondary"
+        style={{ marginTop: 12, marginBottom: 0, fontSize: 12 }}
+      >
+        Each action runs detached as a transient systemd unit so it
+        survives a panel restart. Stage rows update on the 10s poll.
+      </Typography.Paragraph>
+
+      <Modal
+        title="Upload SSH secrets"
+        open={secretsOpen}
+        onCancel={() => setSecretsOpen(false)}
+        onOk={() => secretsForm.submit()}
+        confirmLoading={uploadSecrets.isPending}
+        okText="Upload"
+      >
+        <Form
+          form={secretsForm}
+          layout="vertical"
+          onFinish={(vals: { secret: string }) => {
+            if (credKind === "password") {
+              uploadSecrets.mutate({ ssh_password: vals.secret });
+            } else {
+              uploadSecrets.mutate({ ssh_private_key: vals.secret });
+            }
+          }}
+        >
+          <Form.Item label="Credential type">
+            <Radio.Group
+              value={credKind}
+              onChange={(e) => setCredKind(e.target.value)}
+            >
+              <Radio.Button value="password">Password</Radio.Button>
+              <Radio.Button value="private_key">Private key</Radio.Button>
+            </Radio.Group>
+          </Form.Item>
+          {credKind === "password" ? (
+            <Form.Item
+              name="secret"
+              label="SSH password"
+              rules={[{ required: true, message: "required" }]}
+            >
+              <Input.Password autoComplete="new-password" />
+            </Form.Item>
+          ) : (
+            <Form.Item
+              name="secret"
+              label="Private key (PEM)"
+              rules={[{ required: true, message: "required" }]}
+            >
+              <Input.TextArea
+                rows={8}
+                placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+              />
+            </Form.Item>
+          )}
+        </Form>
+      </Modal>
+
+      <Modal
+        title="Run import"
+        open={importOpen}
+        onCancel={() => setImportOpen(false)}
+        onOk={() => importForm.submit()}
+        confirmLoading={runImport.isPending}
+        okText="Run import"
+      >
+        <Form
+          form={importForm}
+          layout="vertical"
+          onFinish={(vals) => runImport.mutate(vals)}
+        >
+          <Form.Item
+            name="target_user"
+            label="Destination username"
+            rules={[
+              { required: true, message: "required" },
+              {
+                pattern: /^[a-z][a-z0-9-]{0,31}$/,
+                message: "1-32 chars, lowercase, alnum + hyphen",
+              },
+            ]}
+          >
+            <Input placeholder="e.g. acme" />
+          </Form.Item>
+          <Form.Item
+            name="target_email"
+            label="Email (only if auto-creating)"
+          >
+            <Input placeholder="owner@example.com" />
+          </Form.Item>
+          <Form.Item
+            name="target_password"
+            label="Password (only if auto-creating, ≥10 chars)"
+          >
+            <Input.Password autoComplete="new-password" />
+          </Form.Item>
+          <Form.Item
+            name="target_package_id"
+            label="Package ID (only if auto-creating)"
+          >
+            <Input placeholder="ULID — leave blank for default package" />
+          </Form.Item>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Auto-create requires email + password. Pre-existing target
+            user matched by username works without these.
+          </Typography.Text>
+        </Form>
+      </Modal>
+    </Card>
+  );
+}
 
 export default AdminMigrationDetailPage;

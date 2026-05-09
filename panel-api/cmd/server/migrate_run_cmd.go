@@ -21,16 +21,18 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/bcrypt"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/migrate"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/migrate/cpanel"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/userops"
 )
 
 func newMigrateImportCmd() *cobra.Command {
-	var jobID, targetUser string
+	var jobID, targetUser, targetEmail, targetPassword, targetPackageID string
 	cmd := &cobra.Command{
 		Use:     "import",
 		Short:   "Run (or resume) a migration job through the four-stage pipeline",
@@ -63,7 +65,49 @@ failed stage. Already-done stages are skipped.`,
 			}
 			user, err := usersRepo.FindByUsername(ctx, targetUser)
 			if err != nil {
-				return fmt.Errorf("destination user %q lookup: %w", targetUser, err)
+				if !errors.Is(err, repository.ErrNotFound) {
+					return fmt.Errorf("destination user %q lookup: %w", targetUser, err)
+				}
+				// Auto-create when operator supplied --target-email
+				// + --target-password. Otherwise fail with helpful
+				// message pointing at the auto-create flags.
+				if targetEmail == "" || targetPassword == "" {
+					return fmt.Errorf("destination user %q does not exist. "+
+						"Pre-create via /admin/users OR pass --target-email + --target-password to auto-create",
+						targetUser)
+				}
+				cu := userops.CreateInput{
+					Email:    targetEmail,
+					Password: targetPassword,
+					Username: &targetUser,
+					IsAdmin:  false,
+				}
+				if targetPackageID != "" {
+					cu.PackageID = &targetPackageID
+				}
+				// KratosClient nil → userops skips the kratos atomic
+				// step (the panel row is still created cleanly).
+				// Operator path: send a kratos password-reset link
+				// post-migration; the identity gets lazy-created at
+				// first login. v2 lifts the boot-time kratosclient
+				// to a package var so the CLI can reuse it; for v1
+				// nil-skip is the safer default than rebuilding a
+				// kratosclient from config in cobra context.
+				res, cErr := userops.Create(ctx, userops.Deps{
+					Users:      usersRepo,
+					Packages:   repository.NewPackageRepository(sharedDB),
+					Agent:      sharedAgent,
+					BcryptCost: bcrypt.DefaultCost,
+				}, cu)
+				if cErr != nil {
+					return fmt.Errorf("auto-create destination user %q: %w", targetUser, cErr)
+				}
+				user = res.User
+				fmt.Fprintf(cmd.OutOrStdout(), "Auto-created destination user %s (id=%s)\n",
+					*user.Username, user.ID)
+				if res.ProvisionWarning != "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", res.ProvisionWarning)
+				}
 			}
 			if user.Username == nil {
 				return fmt.Errorf("destination user %s has no Linux username", user.ID)
@@ -118,9 +162,13 @@ failed stage. Already-done stages are skipped.`,
 		},
 	}
 	cmd.Flags().StringVar(&jobID, "job-id", "", "migration_jobs.id (ULID) — required")
-	cmd.Flags().StringVar(&targetUser, "target-user", "", "destination jabali username — must already exist")
+	cmd.Flags().StringVar(&targetUser, "target-user", "", "destination jabali username — auto-created if --target-email + --target-password supplied")
+	cmd.Flags().StringVar(&targetEmail, "target-email", "", "destination user email (only used when auto-creating)")
+	cmd.Flags().StringVar(&targetPassword, "target-password", "", "destination user password (only used when auto-creating; ≥10 chars)")
+	cmd.Flags().StringVar(&targetPackageID, "target-package-id", "", "hosting package ULID (only used when auto-creating)")
 	return cmd
 }
+
 
 // cpanelRunPayload is the opaque payload threaded through every
 // stage callback. The runner forwards it via WithContext.

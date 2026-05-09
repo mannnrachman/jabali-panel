@@ -128,7 +128,14 @@ returns a 409 conflict on duplicate.
   compatibility table (Step 9).
 - Per-source credential exposure: stored at
   `/etc/jabali-panel/migration-secrets/<job-id>.env` (root:jabali
-  0640). Wiped on job terminal state.
+  0640). **Wipe shipped 2026-05-09 in `89b0da31`:**
+  `jabali-migration-secrets-reap.timer` runs `jabali migrate
+  reap-secrets` daily 04:30 UTC + 15-min jitter; the cobra
+  subcommand walks `migration_jobs WHERE state IN
+  ('done','failed','cancelled')` + `os.Remove`s the matching
+  `.env` file. Operator can also invoke on demand. Service is
+  hardened with `ProtectSystem=strict` +
+  `ReadWritePaths=/etc/jabali-panel/migration-secrets`.
 
 ## References
 

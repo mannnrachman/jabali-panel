@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 
@@ -286,6 +287,12 @@ func repairSteps() []repairStep {
 			label: "systemd has unloaded unit-file changes on disk",
 			detect: detectDaemonReload,
 			fix:    fixDaemonReload,
+		},
+		{
+			id:    "orphan-slices",
+			label: "jabali-user-*.slice units exist for deleted unix users",
+			detect: detectOrphanSlices,
+			fix:    fixOrphanSlices,
 		},
 	}
 }
@@ -596,6 +603,69 @@ func detectDaemonReload(_ repairCtx) (bool, string, error) {
 
 func fixDaemonReload(_ repairCtx) error {
 	return run("", "systemctl", "daemon-reload")
+}
+
+// ---------- orphan-slices ----------
+//
+// Symptom: jabali-user-<username>.slice units linger after the unix user was
+// deleted (e.g. deleted before slice teardown was wired into userDeleteHandler).
+// Orphan slices consume cgroup resources and clutter `jabali server-status`.
+
+func orphanSliceUsernames() ([]string, error) {
+	out, err := exec.Command("systemctl", "list-units", "--all", "--no-legend", "jabali-user-*.slice").Output()
+	if err != nil {
+		return nil, err
+	}
+	var orphans []string
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		unit := fields[0]
+		if !strings.HasPrefix(unit, "jabali-user-") || !strings.HasSuffix(unit, ".slice") {
+			continue
+		}
+		username := strings.TrimSuffix(strings.TrimPrefix(unit, "jabali-user-"), ".slice")
+		if _, err := user.Lookup(username); err != nil {
+			orphans = append(orphans, username)
+		}
+	}
+	return orphans, nil
+}
+
+func detectOrphanSlices(_ repairCtx) (bool, string, error) {
+	orphans, err := orphanSliceUsernames()
+	if err != nil {
+		return false, "", err
+	}
+	if len(orphans) == 0 {
+		return false, "", nil
+	}
+	return true, strings.Join(orphans, ","), nil
+}
+
+func fixOrphanSlices(_ repairCtx) error {
+	orphans, err := orphanSliceUsernames()
+	if err != nil {
+		return err
+	}
+	for _, username := range orphans {
+		fmt.Printf("  removing orphan slice: %s\n", username)
+		_ = exec.Command("systemctl", "stop", "jabali-fpm@"+username+".service").Run()
+		_ = exec.Command("systemctl", "disable", "jabali-fpm@"+username+".service").Run()
+		_ = exec.Command("systemctl", "stop", "jabali-user-"+username+".slice").Run()
+		sliceUnit := "/etc/systemd/system/jabali-user-" + username + ".slice"
+		fpmDropinDir := "/etc/systemd/system/jabali-fpm@" + username + ".service.d"
+		fpmDropin := fpmDropinDir + "/slice.conf"
+		_ = os.Remove(sliceUnit)
+		_ = os.Remove(fpmDropin)
+		_ = os.Remove(fpmDropinDir) // rmdir; no-ops if non-empty or absent
+	}
+	if len(orphans) > 0 {
+		return run("", "systemctl", "daemon-reload")
+	}
+	return nil
 }
 
 // repairHint is appended to error messages from runUpdate so an operator

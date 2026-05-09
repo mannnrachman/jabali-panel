@@ -212,6 +212,40 @@ export async function mockApi(page: Page, initial: MockState): Promise<void> {
       body: JSON.stringify({ error: { code: 401, message: "no session" } }),
     });
   });
+  // MyProfile's Security card auto-initialises a Kratos settings
+  // flow on mount (initSettingsFlow → POST). Without a mock, the
+  // call hits real Kratos which 401s, the component then
+  // `window.location.assign('/login')`s, and any /profile assertion
+  // races against the redirect. Return a benign empty flow so the
+  // component stays on the page in its loading state.
+  await page.route("**/.ory/self-service/settings/api*", async (route) => {
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: "mock-settings-flow",
+        type: "api",
+        ui: { action: "", method: "POST", nodes: [] },
+      }),
+    });
+  });
+  await page.route("**/.ory/self-service/settings/browser*", async (route) => {
+    return route.fulfill({
+      status: 303,
+      headers: { Location: "/jabali-panel/profile?flow=mock-settings-flow" },
+    });
+  });
+  await page.route("**/.ory/self-service/settings/flows*", async (route) => {
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: "mock-settings-flow",
+        type: "browser",
+        ui: { action: "", method: "POST", nodes: [] },
+      }),
+    });
+  });
   await page.route("**/.ory/self-service/logout/browser", async (route) => {
     return route.fulfill({
       status: 200,

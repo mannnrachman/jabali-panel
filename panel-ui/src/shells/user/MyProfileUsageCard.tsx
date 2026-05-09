@@ -19,6 +19,7 @@ import {
 } from "@icons";
 
 import { apiClient } from "../../apiClient";
+import { humanBytes } from "../../utils/bytes";
 
 type Effective = {
   DiskQuotaMB: number;
@@ -248,14 +249,3 @@ function SimpleRow({ icon, iconBg, iconColor, label, value }: SimpleRowProps) {
   );
 }
 
-function humanBytes(b: number): string {
-  if (b <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let i = 0;
-  let n = b;
-  while (n >= 1024 && i < units.length - 1) {
-    n /= 1024;
-    i++;
-  }
-  return i === 0 ? `${Math.floor(n)} B` : `${n.toFixed(1)} ${units[i]}`;
-}

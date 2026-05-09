@@ -8,6 +8,7 @@ import { useState } from "react";
 
 import { apiClient } from "../../apiClient";
 import { useListQuery } from "../../hooks/useQueries";
+import { humanBytes as formatBytes } from "../../utils/bytes";
 
 type MyBackup = {
   id: string;
@@ -15,18 +16,6 @@ type MyBackup = {
   bytes_total: number;
   bytes_added: number;
   created_at: string;
-};
-
-const formatBytes = (n: number): string => {
-  if (!n) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let i = 0;
-  let v = n;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i += 1;
-  }
-  return `${v.toFixed(1)} ${units[i]}`;
 };
 
 const statusColor = (status: string): string => {

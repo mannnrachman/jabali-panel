@@ -60,11 +60,18 @@ type ValidateDeps struct {
 // of whether report.Blockers is empty); returns (nil, err) only on
 // an unrecoverable infra error (DB down, etc.).
 //
-// targetUsername is the jabali-side username the operator picked
-// during the admin UI's "review manifest" step. It can match the
-// source username (most common — operator wants 1:1 mapping) or
-// differ when the source name collides with an existing jabali user.
-func Validate(ctx context.Context, deps ValidateDeps, m *AccountManifest, targetUsername string) (*ValidationReport, error) {
+// targetUsername is the jabali-side username the operator picked.
+//
+// acceptExistingUserID is the optional ID of a user that's already
+// expected to exist for this migration — set when the CLI's auto-
+// create flow (jabali migrate import --target-email + --target-
+// password) has already minted the destination user before validate
+// runs. When the FindByUsername lookup returns a user with this ID,
+// the target_user_exists conflict is suppressed (it's the user we
+// just created, not a pre-existing one). Empty string preserves the
+// strict 'must not exist' check for live-source flows where
+// validate runs before user creation.
+func Validate(ctx context.Context, deps ValidateDeps, m *AccountManifest, targetUsername string, acceptExistingUserID string) (*ValidationReport, error) {
 	if m == nil {
 		return nil, errors.New("validate: manifest nil")
 	}
@@ -95,12 +102,20 @@ func Validate(ctx context.Context, deps ValidateDeps, m *AccountManifest, target
 		})
 	}
 
-	// Target user must NOT already exist — restore creates the user.
+	// Target user existence check. Strict mode (acceptExistingUserID
+	// == "") refuses any pre-existing user with the chosen username;
+	// auto-create mode (acceptExistingUserID set) accepts the user
+	// when its ID matches what the migration_jobs row recorded
+	// during pre-validate user creation. Non-matching ID still
+	// conflicts — operator picked a username that collides with
+	// some other user.
 	if u, err := deps.Users.FindByUsername(ctx, targetUsername); err == nil && u != nil {
-		rpt.Blockers = append(rpt.Blockers, Conflict{
-			Kind:   ConflictTargetUserExists,
-			Detail: fmt.Sprintf("user %q already exists in jabali; pick a different target username or delete the existing one", targetUsername),
-		})
+		if acceptExistingUserID == "" || u.ID != acceptExistingUserID {
+			rpt.Blockers = append(rpt.Blockers, Conflict{
+				Kind:   ConflictTargetUserExists,
+				Detail: fmt.Sprintf("user %q already exists in jabali; pick a different target username or delete the existing one", targetUsername),
+			})
+		}
 	} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return nil, fmt.Errorf("validate: lookup target user: %w", err)
 	}

@@ -110,6 +110,25 @@ failed stage. Already-done stages are skipped.`,
 				if res.ProvisionWarning != "" {
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", res.ProvisionWarning)
 				}
+				// Stamp migration_jobs.target_user_id so the
+				// validate stage's acceptExistingUserID gate
+				// recognises the auto-created user + doesn't
+				// flag target_user_exists.
+				if uErr := jobsRepo.UpdateTargetUser(ctx, job.ID, user.ID); uErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(),
+						"warning: stamp job.target_user_id: %v (validate may false-positive)\n", uErr)
+				} else {
+					job.TargetUserID = &user.ID
+				}
+			} else {
+				// Pre-existing user (operator pre-created via
+				// admin UI or 'jabali user create'). Stamp row
+				// so validate recognises it as ours.
+				if job.TargetUserID == nil || *job.TargetUserID != user.ID {
+					if uErr := jobsRepo.UpdateTargetUser(ctx, job.ID, user.ID); uErr == nil {
+						job.TargetUserID = &user.ID
+					}
+				}
 			}
 			if user.Username == nil {
 				return fmt.Errorf("destination user %s has no Linux username", user.ID)
@@ -267,9 +286,18 @@ func validateStageCallback(users repository.UserRepository, domains repository.D
 				User: job.SourceUser,
 			},
 		}
+		// Target-user-exists conflict suppressed when
+		// migration_jobs.target_user_id is set — auto-create flow
+		// ('jabali migrate import --target-email + --target-
+		// password') minted the user before the runner began, so
+		// finding it now isn't a conflict, it's our user.
+		acceptUserID := ""
+		if job.TargetUserID != nil {
+			acceptUserID = *job.TargetUserID
+		}
 		rpt, err := migrate.Validate(ctx, migrate.ValidateDeps{
 			Users: users, Domains: domains,
-		}, mf, targetUsername)
+		}, mf, targetUsername, acceptUserID)
 		if err != nil {
 			return 0, nil, fmt.Errorf("validate: %w", err)
 		}

@@ -33,6 +33,14 @@ export function AlertsBanner({ alerts }: Props) {
 // remediation page. Step 4 plan calls these out explicitly.
 function deriveLink(a: ServerAlert): { path: string; label: string } | null {
   switch (a.kind) {
+    case "queue":
+      // Both notification-stream "stuck" + DLQ-non-empty alerts land
+      // here. The DLQ tab on /jabali-admin/notifications shows the
+      // failed envelopes + the replay/discard controls; for the
+      // stream-stuck variant the same page renders a banner with the
+      // suspected cause. Either way, the dispatcher's UI is the
+      // remediation entry point.
+      return { path: "/jabali-admin/notifications/dlq", label: "Open Notification DLQ" };
     case "service":
       // pdns-recursor inactive → operator usually needs the security
       // page (firewall, restart) or the updates page. Default to

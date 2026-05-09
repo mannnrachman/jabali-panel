@@ -82,24 +82,39 @@ func bwQuotaPass(ctx context.Context, d Deps) {
 			d.Log.Warn("bandwidth_quota: sum failed", "user_id", u.ID, "err", err)
 			continue
 		}
-		var total uint64
-		for _, v := range bytesByDomain {
-			total += v
-		}
 
-		quotaBytes := uint64(pkg.BandwidthQuotaMB) * 1024 * 1024
-		if quotaBytes == 0 {
+		total, pct, kind, severity := classifyQuota(bytesByDomain, pkg.BandwidthQuotaMB)
+		if kind == "" {
 			continue
 		}
-		pct := float64(total) / float64(quotaBytes) * 100.0
-
-		switch {
-		case pct >= bwCritPercent:
-			fireBwQuotaEvent(ctx, d, u.ID, total, quotaBytes, pct, "bandwidth.quota.crit", "critical")
-		case pct >= bwWarnPercent:
-			fireBwQuotaEvent(ctx, d, u.ID, total, quotaBytes, pct, "bandwidth.quota.warn", "warning")
-		}
+		quotaBytes := uint64(pkg.BandwidthQuotaMB) * 1024 * 1024
+		fireBwQuotaEvent(ctx, d, u.ID, total, quotaBytes, pct, kind, severity)
 	}
+}
+
+// classifyQuota is the pure-logic core of bwQuotaPass: sums per-domain
+// bytes, computes the percent-of-quota, and returns the (kind, severity)
+// pair that fireBwQuotaEvent should publish — or empty strings when no
+// envelope should fire (under the warn threshold OR quota disabled).
+//
+// Extracted so the calculation can be tested without a live BWDaily
+// repo / Queue / History stub.
+func classifyQuota(bytesByDomain map[string]uint64, quotaMB uint32) (total uint64, pct float64, kind, severity string) {
+	for _, v := range bytesByDomain {
+		total += v
+	}
+	quotaBytes := uint64(quotaMB) * 1024 * 1024
+	if quotaBytes == 0 {
+		return total, 0, "", ""
+	}
+	pct = float64(total) / float64(quotaBytes) * 100.0
+	switch {
+	case pct >= bwCritPercent:
+		return total, pct, "bandwidth.quota.crit", "critical"
+	case pct >= bwWarnPercent:
+		return total, pct, "bandwidth.quota.warn", "warning"
+	}
+	return total, pct, "", ""
 }
 
 func fireBwQuotaEvent(ctx context.Context, d Deps, userID string, used, quota uint64, pct float64, kind, severity string) {

@@ -432,3 +432,45 @@ func TestRequireEmail(t *testing.T) {
 		})
 	}
 }
+
+// --- accountEnsureInRegistry -----------------------------------------
+
+func TestAccountEnsureInRegistry_CreatesDomainAndAccount(t *testing.T) {
+	srv := newJMAPServer(t, map[string]jmapHandler{
+		"x:Domain/query": jmapHandlerReturning(jmapQueryResult{}),
+		"x:Domain/set":   jmapHandlerReturning(jmapSetResult{Created: map[string]json.RawMessage{"#d1": json.RawMessage(`{"id":"dom-1"}`)}}),
+		"x:Account/set":  jmapHandlerReturning(jmapSetResult{Created: map[string]json.RawMessage{"#a1": json.RawMessage(`{"id":"acct-1"}`)}}),
+	})
+	defer srv.Close()
+	wireJMAP(t, srv)
+
+	if err := accountEnsureInRegistry(context.Background(), "alice@example.com"); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+}
+
+func TestAccountEnsureInRegistry_DomainExists_CreatesAccount(t *testing.T) {
+	srv := newJMAPServer(t, map[string]jmapHandler{
+		"x:Domain/query": jmapHandlerReturning(jmapQueryResult{IDs: []string{"dom-1"}}),
+		"x:Account/set":  jmapHandlerReturning(jmapSetResult{Created: map[string]json.RawMessage{"#a1": json.RawMessage(`{"id":"acct-1"}`)}}),
+	})
+	defer srv.Close()
+	wireJMAP(t, srv)
+
+	if err := accountEnsureInRegistry(context.Background(), "bob@example.com"); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+}
+
+func TestAccountEnsureInRegistry_AlreadyExists_IsNotAnError(t *testing.T) {
+	srv := newJMAPServer(t, map[string]jmapHandler{
+		"x:Domain/query": jmapHandlerReturning(jmapQueryResult{IDs: []string{"dom-1"}}),
+		"x:Account/set":  jmapHandlerReturning(jmapSetResult{NotCreated: map[string]json.RawMessage{"#a1": json.RawMessage(`{"type":"alreadyExists"}`)}}),
+	})
+	defer srv.Close()
+	wireJMAP(t, srv)
+
+	if err := accountEnsureInRegistry(context.Background(), "carol@example.com"); err != nil {
+		t.Fatalf("alreadyExists should not be an error, got: %v", err)
+	}
+}

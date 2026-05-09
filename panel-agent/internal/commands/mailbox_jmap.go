@@ -612,6 +612,65 @@ func requireEmail(raw string) (string, error) {
 	return strings.ToLower(raw), nil
 }
 
+// accountEnsureInRegistry creates the account in Stalwart's JMAP principal
+// registry if it doesn't already exist. The SQL directory is authoritative for
+// auth (ADR-0045), but JMAP operations (VacationResponse/set, Sieve scripts,
+// forwarders) require an accountId which only exists after the first
+// authentication — or after this call. Call from mailbox.create so downstream
+// features work without waiting for first-auth.
+//
+// The domain is also created in the registry when absent. Both operations are
+// idempotent: alreadyExists responses are treated as success.
+func accountEnsureInRegistry(ctx context.Context, email string) error {
+	at := strings.LastIndex(email, "@")
+	if at <= 0 || at == len(email)-1 {
+		return fmt.Errorf("accountEnsureInRegistry: malformed email %q", email)
+	}
+	localPart, domainName := email[:at], email[at+1:]
+
+	domainID, err := domainIDByName(ctx, domainName)
+	if err != nil {
+		return err
+	}
+	if domainID == "" {
+		domainID, err = createDomain(ctx, domainName)
+		if err != nil {
+			return err
+		}
+	}
+
+	args := map[string]any{
+		"create": map[string]any{
+			"#a1": map[string]any{
+				"name":     localPart,
+				"domainId": domainID,
+				"type":     "Individual",
+			},
+		},
+	}
+	var result jmapSetResult
+	if err := jmapCall(ctx, "x:Account/set", args, &result); err != nil {
+		return err
+	}
+	if _, ok := result.Created["#a1"]; ok {
+		return nil
+	}
+	if reason, ok := result.NotCreated["#a1"]; ok {
+		var r struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal(reason, &r)
+		if r.Type == "alreadyExists" {
+			return nil
+		}
+		return &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("stalwart x:Account/set create refused: %s", string(reason)),
+		}
+	}
+	return nil
+}
+
 // okBody is the trivial positive response shape shared by commands
 // whose ack carries no payload.
 type okBody struct {

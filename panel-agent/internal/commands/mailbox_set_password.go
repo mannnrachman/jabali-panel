@@ -42,11 +42,10 @@ func mailboxSetPasswordHandler(ctx context.Context, params json.RawMessage) (any
 	if _, err := requireEmail(p.Email); err != nil {
 		return nil, err
 	}
-	// Same Stalwart cache primer as mailbox.create — forces the
-	// directory to re-query the new password_hash on next auth.
-	// ADR-0045 says SqlDirectory pulls without TTL but QA observed
-	// post-rotate auth failing until a follow-up call. Best-effort.
-	_, _ = accountIDByEmail(ctx, p.Email)
+	// Ensure the account is in Stalwart's JMAP registry (covers
+	// mailboxes created pre-fix that have never authenticated).
+	// Best-effort; DB row is authoritative (ADR-0045).
+	_ = accountEnsureInRegistry(ctx, p.Email)
 	return okBody{Ok: true}, nil
 }
 

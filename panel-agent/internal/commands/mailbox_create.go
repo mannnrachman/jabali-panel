@@ -41,19 +41,12 @@ func mailboxCreateHandler(ctx context.Context, params json.RawMessage) (any, err
 	if _, err := requireEmail(p.Email); err != nil {
 		return nil, err
 	}
-	// Stalwart cache primer: a JMAP accountIDByEmail lookup forces
-	// SqlDirectory to query mailboxes for this email NOW. ADR-0045
-	// says the directory pulls on first auth without TTL, but QA
-	// surfaced UI-created mailboxes failing IMAP auth until a CLI
-	// 'jabali mailbox passwd' "fixed" them — suggesting Stalwart
-	// caches negative-lookups longer than ADR-0045 assumed. A
-	// dummy lookup post-DB-insert primes the directory; any
-	// negative-cache entry gets superseded by a positive one.
-	//
-	// Errors swallowed: the row is already authoritative.
-	// accountIDByEmail returning empty (no Stalwart principal yet)
-	// is expected for a fresh mailbox.
-	_, _ = accountIDByEmail(ctx, p.Email)
+	// Proactively register the account in Stalwart's JMAP principal
+	// registry so downstream JMAP operations (VacationResponse/set,
+	// Sieve scripts, forwarders) work immediately without waiting for
+	// first-auth. The DB row is already authoritative (ADR-0045);
+	// errors here are best-effort.
+	_ = accountEnsureInRegistry(ctx, p.Email)
 	return okBody{Ok: true}, nil
 }
 

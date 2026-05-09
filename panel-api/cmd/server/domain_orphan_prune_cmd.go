@@ -68,32 +68,8 @@ the Stalwart mail Domain row when applicable. It is irreversible.`,
 				knownDomain[d.Name] = true
 			}
 
-			// 3. Diff. Skip system sites that nginx/Debian keep around.
-			systemSites := map[string]bool{
-				"default":           true,
-				"default-ssl":       true,
-				"000-default":       true,
-				"000-default-ssl":   true,
-				"jabali-panel":      true, // panel itself
-				"jabali-panel-ssl":  true,
-				"jabali-pma":        true, // phpMyAdmin
-				"jabali-adminer":    true,
-				"jabali-webmail":    true,
-			}
-			orphans := make([]string, 0)
-			for _, site := range resp.Sites {
-				if systemSites[site] {
-					continue
-				}
-				// Strip the "-mail" suffix M6 webmail vhosts use; the
-				// underlying domain still owns the cleanup.
-				name := strings.TrimSuffix(site, "-mail")
-				if knownDomain[name] {
-					continue
-				}
-				orphans = append(orphans, site)
-			}
-			sort.Strings(orphans)
+			// 3. Diff via the pure-logic helper (testable in isolation).
+			orphans := computeOrphans(resp.Sites, knownDomain)
 
 			if jsonOutput {
 				return printJSON(map[string]any{
@@ -152,4 +128,38 @@ the Stalwart mail Domain row when applicable. It is irreversible.`,
 	}
 	cmd.Flags().BoolVar(&apply, "apply", false, "Actually delete orphans (default: dry-run)")
 	return cmd
+}
+
+// computeOrphans returns nginx site names that have no matching domain
+// row in the panel DB. System sites (default, jabali-panel, etc.) are
+// filtered out. M6 webmail vhosts named "<domain>-mail" are not
+// orphans when the underlying domain is known — the suffix is stripped
+// before the lookup.
+//
+// Pure function, no I/O — tested via TestComputeOrphans.
+func computeOrphans(agentSites []string, knownDomain map[string]bool) []string {
+	systemSites := map[string]bool{
+		"default":          true,
+		"default-ssl":      true,
+		"000-default":      true,
+		"000-default-ssl":  true,
+		"jabali-panel":     true, // panel itself
+		"jabali-panel-ssl": true,
+		"jabali-pma":       true, // phpMyAdmin
+		"jabali-adminer":   true,
+		"jabali-webmail":   true,
+	}
+	out := make([]string, 0, len(agentSites))
+	for _, site := range agentSites {
+		if systemSites[site] {
+			continue
+		}
+		name := strings.TrimSuffix(site, "-mail")
+		if knownDomain[name] {
+			continue
+		}
+		out = append(out, site)
+	}
+	sort.Strings(out)
+	return out
 }

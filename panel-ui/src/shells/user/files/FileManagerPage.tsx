@@ -53,6 +53,7 @@ import {
   FileTextOutlined,
   FileVolumeOutlined,
   FolderInputOutlined,
+  FolderAddOutlined,
   FolderOpenOutlined,
   FolderOutlined,
   LockOutlined,
@@ -283,7 +284,7 @@ function makeTreeNode(path: string, name: string): TreeNode {
     title: name,
     path,
     isLeaf: false,
-    icon: <FolderOutlined style={{ color: "#faad14", fontSize: 18 }} />,
+    icon: <FolderAddOutlined style={{ color: "#faad14", fontSize: 18 }} />,
   };
 }
 
@@ -414,7 +415,7 @@ export const FileManagerPage = () => {
         title: e.name,
         path: joinPath(node.path, e.name),
         isLeaf: !e.has_subdirs,
-        icon: <FolderOutlined style={{ color: '#faad14', fontSize: 18 }} />,
+        icon: <FolderAddOutlined style={{ color: '#faad14', fontSize: 18 }} />,
       }));
       setTreeData((prev) => updateTreeNode(prev, node.path, children));
     } catch (err) {
@@ -1202,13 +1203,15 @@ export const FileManagerPage = () => {
             expanded ? (
               <FolderOpenOutlined style={{ color: "#faad14", fontSize: 18 }} />
             ) : (
-              <FolderOutlined style={{ color: "#faad14", fontSize: 18 }} />
+              <FolderAddOutlined style={{ color: "#faad14", fontSize: 18 }} />
             )
           }
           onSelect={(keys) => {
             if (keys.length > 0) {
-              setCurrentPath(keys[0] as string);
-              setTreeDrawerOpen(false);
+              const key = keys[0] as string;
+              setExpandedKeys((prev) =>
+                prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+              );
             }
           }}
         />
@@ -1251,11 +1254,16 @@ export const FileManagerPage = () => {
               expanded ? (
                 <FolderOpenOutlined style={{ color: "#faad14", fontSize: 18 }} />
               ) : (
-                <FolderOutlined style={{ color: "#faad14", fontSize: 18 }} />
+                <FolderAddOutlined style={{ color: "#faad14", fontSize: 18 }} />
               )
             }
             onSelect={(keys) => {
-              if (keys.length > 0) setCurrentPath(keys[0] as string);
+              if (keys.length > 0) {
+                const key = keys[0] as string;
+                setExpandedKeys((prev) =>
+                  prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+                );
+              }
             }}
             // Tree nodes accept drops of table rows (move into this folder).
             // Hits the same handleMove path as the table row-on-row drop.
@@ -1510,7 +1518,7 @@ export const FileManagerPage = () => {
               expanded ? (
                 <FolderOpenOutlined style={{ color: "#faad14", fontSize: 18 }} />
               ) : (
-                <FolderOutlined style={{ color: "#faad14", fontSize: 18 }} />
+                <FolderAddOutlined style={{ color: "#faad14", fontSize: 18 }} />
               )
             }
             onSelect={(keys) => {

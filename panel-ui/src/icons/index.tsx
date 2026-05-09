@@ -47,6 +47,7 @@ import {
   FlaskConical,
   Folder,
   FolderOpen,
+  FolderPlus,
   Globe,
   Grip,
   HardDrive,
@@ -168,6 +169,7 @@ export const HardDriveUploadOutlined = shim(HardDriveUpload);
 export const BgColorsOutlined = shim(Palette);
 export const FolderOutlined = shim(Folder);
 export const FolderOpenOutlined = shim(FolderOpen);
+export const FolderAddOutlined = shim(FolderPlus);
 export const AppstoreOutlined = shim(LayoutGrid);
 export const PackageOpenOutlined = shim(PackageOpen);
 export const AppstoreAddOutlined = shim(SquarePlus);

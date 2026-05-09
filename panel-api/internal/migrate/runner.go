@@ -149,6 +149,12 @@ func (r *Runner) Run(ctx context.Context, jobID string) error {
 	if err := r.Jobs.UpdateState(ctx, job.ID, models.MigrationStateDone, nil); err != nil {
 		return r.fail(ctx, job, fmt.Errorf("final state update: %w", err))
 	}
+	// Wipe per-job source credentials immediately on terminal
+	// success (ADR-0094 §"tracked risks"). Daily reaper covers
+	// missed wipes; this immediate-wipe shortens credential
+	// lifetime from 'up to 24 hours' to 'milliseconds post job
+	// done' on the success path.
+	_ = WipeJobSecret(job.ID)
 	return nil
 }
 
@@ -167,6 +173,10 @@ func (r *Runner) fail(ctx context.Context, job *models.MigrationJob, cause error
 		_ = r.Jobs.UpdateState(fctx, job.ID, models.MigrationStateFailed, &emsg)
 		cancel()
 	}
+	// Same immediate-wipe rationale as the success path. ADR-0094.
+	// Best-effort: ignore the error so we never mask the original
+	// cause.
+	_ = WipeJobSecret(job.ID)
 	return cause
 }
 

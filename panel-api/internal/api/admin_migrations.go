@@ -223,6 +223,10 @@ func (h *adminMigrationsHandler) cancel(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+	// Same immediate-secrets-wipe as the runner's terminal paths
+	// (ADR-0094). Best-effort: failure to wipe surfaces in the
+	// daily reaper's next sweep.
+	_ = migrate.WipeJobSecret(id)
 	c.JSON(http.StatusOK, gin.H{"id": id, "state": models.MigrationStateCancelled})
 }
 

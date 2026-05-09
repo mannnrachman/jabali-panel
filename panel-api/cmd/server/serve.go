@@ -231,6 +231,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.DNSRecords = dnsRecordRepo
 		deps.SSLCerts = sslCertRepo
 		deps.BWDaily = repository.NewBWDailyRepository(sharedDB)
+		deps.DomainIPACLs = repository.NewDomainIPACLRepository(sharedDB)
 		deps.AutomationTokens = repository.NewAutomationTokenRepository(sharedDB)
 		deps.Databases = databaseRepo
 		deps.DatabaseUsers = databaseUserRepo
@@ -306,6 +307,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.UserEgressDropSamples = repository.NewUserEgressDropSampleRepository(sharedDB)
 		rec.WithUserEgressPolicies(deps.UserEgressPolicies)
 		rec.WithUserEgressDropSamples(deps.UserEgressDropSamples)
+		// M36: per-domain IP allow/deny ACLs. Reconciler threads ACLs into
+		// agent's domain.create payload; agent renders nginx directives
+		// inside the server block.
+		rec.WithDomainIPACLs(deps.DomainIPACLs)
 		// M30 (ADR-0075): backup-restore workflow rows.
 		deps.BackupJobs = repository.NewBackupJobRepository(sharedDB)
 		// M30.2 (ADR-0080): destinations + schedules. backup_copy_jobs

@@ -62,6 +62,21 @@ type domainCreateParams struct {
 	// back to defaultIndexTemplate below. Go text/template syntax with
 	// {{.Domain}}, {{.Username}}, {{.DocRoot}} placeholders.
 	DefaultIndexTemplate string `json:"default_index_template,omitempty"`
+
+	// M36 per-domain IP allow/deny rules. Already sorted by the panel
+	// (priority ASC, created_at ASC). Each rule renders as one nginx
+	// `allow <cidr>;` / `deny <cidr>;` directive in priority order
+	// inside the server block.
+	IPACLs []domainIPACLRule `json:"ip_acls,omitempty"`
+}
+
+// domainIPACLRule is one allow/deny entry. CIDR is canonicalised by
+// the panel (bare IP → /32 or /128). Action is "allow" or "deny" —
+// validated at the API boundary; agent rejects anything else as a
+// defensive measure.
+type domainIPACLRule struct {
+	CIDR   string `json:"cidr"`
+	Action string `json:"action"`
 }
 
 // domainCreateResponse is the output shape for domain.create.
@@ -130,6 +145,8 @@ server {
 {{ if .IsEnabled }}
     root {{.DocRoot}};
     {{.IndexDirective}}
+
+    {{.IPACLDirectives}}
 
     location / {
 {{ if .HasPHP }}
@@ -205,6 +222,11 @@ type vhostData struct {
 	// panel-api before reaching the agent) so the template stays simple.
 	ListenIPv4 string
 	ListenIPv6 string
+	// M36 IP allow/deny — pre-rendered nginx directives. One line per
+	// rule, "allow <cidr>;" or "deny <cidr>;", in priority order. Empty
+	// string when the domain has no ACLs (zero overhead). Sits inside
+	// the server block so it applies to every location.
+	IPACLDirectives string
 }
 
 // indexDirectiveFor maps the panel's index_priority enum to the concrete
@@ -280,7 +302,7 @@ func buildPHPValueParam(memLimit, uploadMax, postMax string, maxInputVars, maxEx
 // writeVhost generates and writes the nginx vhost configuration, then tests and reloads nginx.
 // This is the core logic shared by domain.create and domain.enable/disable.
 // If the config content is unchanged, nginx reload is skipped for efficiency.
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string) (string, error) {
 	// Generate vhost configuration
 	tmpl, err := template.New("vhost").Parse(vhostTemplate)
 	if err != nil {
@@ -298,6 +320,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		RuleDirectives:     ruleDirectives,
 		CustomDirectives:   customDirectives,
 		RateLimitDirectives: rateLimitDirectives,
+		IPACLDirectives:    ipACLDirectives,
 		IsEnabled:          isEnabled,
 		SSLCertPath:        sslCertPath,
 		SSLKeyPath:         sslKeyPath,
@@ -450,7 +473,8 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 	}
 
 	rateLimitDirectives := BuildRateLimitDirectives(p.DomainID, p.RateLimitRPS, p.ConnectionLimit)
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6)
+	ipACLDirectives := buildIPACLDirectives(p.IPACLs)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
@@ -547,4 +571,58 @@ func writeDefaultIndex(ctx context.Context, path, username, domain, docRoot, cus
 
 func init() {
 	Default.Register("domain.create", domainCreateHandler)
+}
+
+// buildIPACLDirectives renders the M36 per-domain ACL list into a
+// fragment of nginx directives — one line per rule. Inserted into the
+// vhost server block so allow/deny applies to every location.
+//
+// Sanitises both fields: only rules with action ∈ {allow, deny} and
+// CIDR matching a permissive ASCII subset (digits, dots, colons,
+// hex, slash) reach the file. Anything else is silently dropped.
+//
+// Empty input → empty string (zero overhead, no comment line).
+func buildIPACLDirectives(rules []domainIPACLRule) string {
+	if len(rules) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("# M36 per-domain ACLs (priority order)\n")
+	for _, r := range rules {
+		action := r.Action
+		if action != "allow" && action != "deny" {
+			continue
+		}
+		cidr := strings.TrimSpace(r.CIDR)
+		if !validACLCIDR(cidr) {
+			continue
+		}
+		sb.WriteString("    ")
+		sb.WriteString(action)
+		sb.WriteString(" ")
+		sb.WriteString(cidr)
+		sb.WriteString(";\n")
+	}
+	return sb.String()
+}
+
+// validACLCIDR is a defensive whitelist of characters allowed in a
+// CIDR string. The panel validates with net.ParseCIDR before storage,
+// so this is belt-and-braces against a corrupted DB row containing
+// shell/nginx metacharacters that could escape the directive.
+func validACLCIDR(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9':
+		case r >= 'a' && r <= 'f':
+		case r >= 'A' && r <= 'F':
+		case r == '.' || r == ':' || r == '/':
+		default:
+			return false
+		}
+	}
+	return true
 }

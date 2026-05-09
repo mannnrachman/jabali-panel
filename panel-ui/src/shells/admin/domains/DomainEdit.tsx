@@ -22,6 +22,7 @@ import { useOneQuery, useUpdateMutation } from "../../../hooks/useQueries";
 import { DomainBandwidthCard } from "../../../components/DomainBandwidthCard";
 import type { Domain } from "./DomainList";
 import { DomainEmailSection } from "./DomainEmailSection";
+import { DomainIPACLSection } from "./DomainIPACLSection";
 import { DomainListenIPSection } from "./DomainListenIPSection";
 import { DomainMailboxesSection } from "./DomainMailboxesSection";
 import { DomainSSLSection } from "./DomainSSLSection";
@@ -152,6 +153,9 @@ export const DomainEdit = () => {
             listenIPv4={domain.listen_ipv4 ?? null}
             listenIPv6={domain.listen_ipv6 ?? null}
           />
+
+          <Divider>IP Allow / Deny</Divider>
+          <DomainIPACLSection domainId={domain.id} />
 
           <Divider>Email</Divider>
           <DomainEmailSection domainId={domain.id} />

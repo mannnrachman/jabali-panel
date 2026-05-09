@@ -90,6 +90,10 @@ type Reconciler struct {
 	// Optional; nil disables sample persistence (drop_count_24h still
 	// updates on the policy row).
 	userEgressDropSamples repository.UserEgressDropSampleRepository
+	// M36 — per-domain IP allow/deny rules. Optional; when nil the
+	// agent dispatch omits the ip_acls field (no nginx directives
+	// rendered).
+	domainIPACLs repository.DomainIPACLRepository
 }
 
 // WithPanelCertificate injects the M32 panel-cert repo + routability
@@ -115,6 +119,15 @@ func (r *Reconciler) WithUserEgressPolicies(repo repository.UserEgressPolicyRepo
 // into user_egress_drop_samples. Pruned to last 25h every tick.
 func (r *Reconciler) WithUserEgressDropSamples(repo repository.UserEgressDropSampleRepository) *Reconciler {
 	r.userEgressDropSamples = repo
+	return r
+}
+
+// WithDomainIPACLs injects the M36 per-domain ACL repo. When set,
+// createDomainOnAgent fetches the domain's allow/deny rules and
+// includes them in the agent's domain.create payload so nginx
+// renders the directives inside the server block.
+func (r *Reconciler) WithDomainIPACLs(repo repository.DomainIPACLRepository) *Reconciler {
+	r.domainIPACLs = repo
 	return r
 }
 
@@ -1003,6 +1016,25 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 		"has_php":     hasPHP,
 		"php_version": phpVersion,
 		"is_enabled":  domain.IsEnabled,
+	}
+
+	// M36 per-domain IP ACLs. Fetch + thread to agent so nginx renders
+	// allow/deny directives inside the server block. Empty / unwired
+	// repo → no rules → agent renders no directives (zero overhead).
+	if r.domainIPACLs != nil {
+		aclCtx, aclCancel := context.WithTimeout(ctx, 3*time.Second)
+		acls, err := r.domainIPACLs.ListByDomain(aclCtx, domain.ID)
+		aclCancel()
+		if err == nil && len(acls) > 0 {
+			rules := make([]map[string]string, 0, len(acls))
+			for _, a := range acls {
+				rules = append(rules, map[string]string{
+					"cidr":   a.CIDR,
+					"action": a.Action,
+				})
+			}
+			params["ip_acls"] = rules
+		}
 	}
 
 	// Add PHP INI overrides (only if not NULL).

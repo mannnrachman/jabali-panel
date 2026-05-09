@@ -53,6 +53,7 @@ type Deps struct {
 	DNSRecords          repository.DNSRecordRepository
 	SSLCerts            repository.SSLCertificateRepository
 	BWDaily             repository.BWDailyRepository
+	DomainIPACLs        repository.DomainIPACLRepository
 	AutomationTokens    repository.AutomationTokenRepository
 	PHPPools            repository.PHPPoolRepository
 	PHPPoolIniOverrides repository.PHPPoolIniOverrideRepository
@@ -385,6 +386,19 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				// when unset, the listen-IP fields are 503 on PATCH and
 				// dropped from GET.
 				ManagedIPs: deps.ManagedIPs,
+			})
+		}
+		// M36 — per-domain IP allow/deny lists.
+		if deps.Domains != nil && deps.DomainIPACLs != nil {
+			var schedule func(string)
+			if deps.Reconciler != nil {
+				rec := deps.Reconciler
+				schedule = func(id string) { rec.Schedule(id) }
+			}
+			api.RegisterDomainIPACLRoutes(v1, api.DomainIPACLHandlerConfig{
+				Domains:   deps.Domains,
+				ACLs:      deps.DomainIPACLs,
+				Reconcile: schedule,
 			})
 		}
 		if deps.Databases != nil && deps.DatabaseUsers != nil {

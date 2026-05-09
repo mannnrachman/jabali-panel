@@ -294,6 +294,12 @@ func repairSteps() []repairStep {
 			detect: detectOrphanSlices,
 			fix:    fixOrphanSlices,
 		},
+		{
+			id:    "crowdsec-bouncer-key",
+			label: "crowdsec-firewall-bouncer crash-loops with stale LAPI key",
+			detect: detectCrowdSecBouncerKey,
+			fix:    fixCrowdSecBouncerKey,
+		},
 	}
 }
 
@@ -666,6 +672,87 @@ func fixOrphanSlices(_ repairCtx) error {
 		return run("", "systemctl", "daemon-reload")
 	}
 	return nil
+}
+
+// ---------- crowdsec-bouncer-key ----------
+//
+// Symptom: crowdsec-firewall-bouncer service loops in failed/activating state.
+// Journal shows "bouncer stream halted" or "Unauthorized". Root cause: the LAPI
+// database was reset or the installer re-seeded a new key, but the bouncer YAML
+// still carries the old key. The fix mirrors install.sh: delete the stale LAPI
+// registration, add a fresh one, patch the YAML, and restart the service.
+
+func crowdsecFirewallBouncerService() string {
+	for _, pkg := range []string{
+		"crowdsec-firewall-bouncer-nftables",
+		"crowdsec-firewall-bouncer-iptables",
+	} {
+		out, err := exec.Command("systemctl", "cat", pkg+".service").Output()
+		if err == nil && len(out) > 0 {
+			return pkg + ".service"
+		}
+	}
+	return ""
+}
+
+func detectCrowdSecBouncerKey(_ repairCtx) (bool, string, error) {
+	if _, err := exec.LookPath("cscli"); err != nil {
+		return false, "", nil // crowdsec not installed
+	}
+	svc := crowdsecFirewallBouncerService()
+	if svc == "" {
+		return false, "", nil // bouncer package not installed
+	}
+	out, _ := exec.Command("systemctl", "is-active", svc).Output()
+	if strings.TrimSpace(string(out)) == "active" {
+		return false, "", nil // running fine
+	}
+	// Only flag if the service is failed/activating (crash-loop). A service
+	// that was never started intentionally (inactive/disabled) is not ours
+	// to repair here.
+	subOut, _ := exec.Command("systemctl", "show", svc, "-p", "SubState").Output()
+	sub := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(subOut)), "SubState="))
+	if sub != "failed" && sub != "auto-restart" {
+		return false, "", nil
+	}
+	// Look for stale-key evidence in recent journal lines.
+	journal, _ := exec.Command("journalctl", "-u", svc, "-n", "80", "--no-pager").Output()
+	j := string(journal)
+	if strings.Contains(j, "stream halted") || strings.Contains(j, "Unauthorized") {
+		return true, fmt.Sprintf("%s crash-loop: stale LAPI key detected", svc), nil
+	}
+	return true, fmt.Sprintf("%s SubState=%s", svc, sub), nil
+}
+
+func fixCrowdSecBouncerKey(_ repairCtx) error {
+	svc := crowdsecFirewallBouncerService()
+	if svc == "" {
+		return fmt.Errorf("crowdsec-firewall-bouncer service not found")
+	}
+	pkg := strings.TrimSuffix(svc, ".service")
+	conf := "/etc/crowdsec/bouncers/" + pkg + ".yaml"
+	if _, err := os.Stat(conf); err != nil {
+		return fmt.Errorf("bouncer conf %s: %w", conf, err)
+	}
+	const bouncerName = "jabali-firewall"
+	// Prune stale LAPI registration (ignore error if it never existed).
+	_ = exec.Command("cscli", "bouncers", "delete", bouncerName).Run()
+	// Mint a fresh key.
+	keyOut, err := exec.Command("cscli", "bouncers", "add", bouncerName, "-o", "raw").Output()
+	if err != nil {
+		return fmt.Errorf("cscli bouncers add: %w", err)
+	}
+	apiKey := strings.TrimSpace(string(keyOut))
+	if apiKey == "" {
+		return fmt.Errorf("cscli bouncers add returned empty key")
+	}
+	// Patch api_key in the bouncer YAML.
+	if err := run("", "yq", "-y", "-i",
+		fmt.Sprintf(`.api_key = "%s"`, apiKey), conf); err != nil {
+		return fmt.Errorf("yq patch %s: %w", conf, err)
+	}
+	// Restart with fresh credentials.
+	return run("", "systemctl", "restart", svc)
 }
 
 // repairHint is appended to error messages from runUpdate so an operator

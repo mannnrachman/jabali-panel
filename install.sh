@@ -3113,8 +3113,39 @@ provision_tls_cert() {
   # on a cert for the OLD hostname, which every browser will reject.
   # Also detect missing mail.<hostname> SAN on an existing cert (common
   # on upgrade from pre-M6.4 installs).
+  #
+  # Regression guard (2026-05-09): on a host with a deployed Let's
+  # Encrypt panel cert (M32 / ADR-0066), the existing cert at
+  # $cert_file is the LE fullchain copied by
+  # /etc/letsencrypt/renewal-hooks/deploy/jabali-panel-cert.sh. That
+  # cert's issuer is "Let's Encrypt", not "Jabali Panel". The regen
+  # branch below was clobbering that LE cert with a fresh self-signed
+  # one any time the SAN-check failed (LE certs typically don't carry
+  # `mail.<cn>` SAN unless explicitly requested), turning a valid
+  # browser-trusted panel cert into a Firefox warning every install.sh
+  # run. Detect issuer first; if the active cert was issued by anyone
+  # other than the self-signed bootstrap (O="Jabali Panel"), leave it
+  # alone. The LE deploy-hook owns it from issuance through renewal.
   local need_regen=0
   if [[ -f "$cert_file" ]]; then
+    local cert_issuer_o=""
+    cert_issuer_o="$(openssl x509 -in "$cert_file" -noout -issuer 2>/dev/null \
+      | sed -n 's/.*O *= *\([^,/]*\).*/\1/p' | sed 's/[[:space:]]*$//')"
+    if [[ -n "$cert_issuer_o" && "$cert_issuer_o" != "Jabali Panel" ]]; then
+      _ok "panel cert issued by '$cert_issuer_o' (not self-signed) — preserving"
+      # Still drop a TLS_CERT line into ENV_FILE if missing so a fresh
+      # install on a host with a pre-existing LE cert wires Go's TLS
+      # listener correctly.
+      if ! grep -q '^TLS_CERT=' "$ENV_FILE" 2>/dev/null; then
+        cat >>"$ENV_FILE" <<EOF
+
+# TLS — Let's Encrypt cert deployed by jabali-panel-cert.sh hook.
+TLS_CERT=$cert_file
+TLS_KEY=$key_file
+EOF
+      fi
+      return 0
+    fi
     local cert_cn=""
     cert_cn="$(openssl x509 -in "$cert_file" -noout -subject 2>/dev/null \
       | sed -n 's/.*CN *= *\([^,/]*\).*/\1/p' | tr -d ' ')"

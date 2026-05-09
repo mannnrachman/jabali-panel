@@ -175,6 +175,8 @@ failed stage. Already-done stages are skipped.`,
 					parsed = &cpanel.ParsedTarball{
 						ExtractDir: extractDir,
 						SourceUser: job.SourceUser,
+						HomeDir:    h.WebRoot, // Hestia rsync target = web/<dom>/public_html/...
+						MailRoot:   h.MailRoot, // Hestia stores at mail/<dom>/<local>/Maildir
 						MySQLDumps: h.MySQLDumps,
 					}
 					if h.SSHKeys != "" {

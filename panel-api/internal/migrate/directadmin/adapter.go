@@ -32,6 +32,7 @@ func ToCpanelParsed(da *DAParsedTarball) *cpanel.ParsedTarball {
 		SourceUser: da.SourceUser,
 		ExtractDir: da.ExtractDir,
 		HomeDir:    da.HomeDir,
+		MailRoot:   da.MailRoot, // DA stores at <user>/email/, cpanel at <user>/mail/
 		MySQLDumps: da.MySQLDumps,
 		Skipped:    da.Skipped,
 	}

@@ -26,6 +26,12 @@ type ParsedTarball struct {
 	// HomeDir is .../homedir, the verbatim user home tree from the
 	// source. Empty when the tarball didn't include a homedir.
 	HomeDir string
+	// MailRoot is the absolute path to the per-domain Maildir
+	// parent. cpanel sets this to <HomeDir>/mail; DA sets it to
+	// <HomeDir>/email (DA's layout). Empty defaults to
+	// <HomeDir>/mail at ImportMailboxes time so cpanel callers
+	// don't need to set it.
+	MailRoot string
 	// MySQLDumps lists every per-database SQL file. cPanel layout:
 	// cp/<user>/mysql/<dbname>.sql.
 	MySQLDumps []string
@@ -154,6 +160,7 @@ func ParseTarball(tarballPath, extractDir string) (*ParsedTarball, error) {
 	}
 	if root := filepath.Join(extractDir, "cp", out.SourceUser, "homedir"); existsDir(root) {
 		out.HomeDir = root
+		out.MailRoot = filepath.Join(root, "mail")
 	}
 	return out, nil
 }

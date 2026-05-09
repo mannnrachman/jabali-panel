@@ -68,7 +68,14 @@ func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.
 		return res, nil
 	}
 
-	mailRoot := filepath.Join(parsed.HomeDir, "mail")
+	// MailRoot is set by per-importer parsers (cpanel: HomeDir/mail,
+	// DA: HomeDir/email via the directadmin adapter). Fallback to
+	// HomeDir/mail when caller didn't set it (legacy callers + cpanel
+	// pre-MailRoot tarballs).
+	mailRoot := parsed.MailRoot
+	if mailRoot == "" {
+		mailRoot = filepath.Join(parsed.HomeDir, "mail")
+	}
 	if !existsDir(mailRoot) {
 		res.Skipped = append(res.Skipped, "mailbox_skip:no_mail_subtree")
 		return res, nil
@@ -97,12 +104,13 @@ func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.
 				continue
 			}
 			userPath := filepath.Join(domPath, u.Name())
-			if !looksLikeMaildir(userPath) {
+			maildirPath, ok := looksLikeMaildir(userPath)
+			if !ok {
 				continue
 			}
 			res.MaildirsFound++
 			email := fmt.Sprintf("%s@%s", u.Name(), dom.Name())
-			n, b := countMaildirMessages(userPath)
+			n, b := countMaildirMessages(maildirPath)
 			res.MessagesFound += n
 			res.BytesFound += b
 			res.Skipped = append(res.Skipped, fmt.Sprintf(
@@ -152,14 +160,22 @@ func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.
 }
 
 // looksLikeMaildir checks for the Maildir-spec directory markers.
-// Conservative: requires at least 'cur' or 'new' as direct children.
-func looksLikeMaildir(path string) bool {
+// Returns the actual Maildir path (which may be `path` itself for
+// cpanel/Hestia layout, or `path/Maildir` for DA layout) and a
+// bool indicating whether a Maildir-shaped tree was found.
+func looksLikeMaildir(path string) (string, bool) {
 	for _, marker := range []string{"cur", "new"} {
 		if existsDir(filepath.Join(path, marker)) {
-			return true
+			return path, true
 		}
 	}
-	return false
+	dapath := filepath.Join(path, "Maildir")
+	for _, marker := range []string{"cur", "new"} {
+		if existsDir(filepath.Join(dapath, marker)) {
+			return dapath, true
+		}
+	}
+	return "", false
 }
 
 // countMaildirMessages walks cur/, new/, tmp/ inside a Maildir +

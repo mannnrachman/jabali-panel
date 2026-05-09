@@ -121,11 +121,12 @@ func migrationImportMailboxesHandler(ctx context.Context, raw json.RawMessage) (
 				continue
 			}
 			userPath := filepath.Join(domPath, u.Name())
-			if !looksLikeMailMaildir(userPath) {
+			maildirPath, ok := looksLikeMailMaildir(userPath)
+			if !ok {
 				continue
 			}
 			email := fmt.Sprintf("%s@%s", u.Name(), dom.Name())
-			n, b, skipped, err := importOneMailbox(subctx, email, userPath)
+			n, b, skipped, err := importOneMailbox(subctx, email, maildirPath)
 			if err != nil {
 				// Don't fail the whole job on one mailbox — record
 				// + skip. Operator inspects manifest_json + can
@@ -142,15 +143,26 @@ func migrationImportMailboxesHandler(ctx context.Context, raw json.RawMessage) (
 	return res, nil
 }
 
-// looksLikeMailMaildir requires cur/ or new/ direct children — same
-// conservatism as panel-side restore_mail.go.
-func looksLikeMailMaildir(path string) bool {
+// looksLikeMailMaildir checks for cur/ or new/ direct children
+// (cpanel + Hestia layout: <local>/{cur,new,tmp}). When that
+// fails, tries <local>/Maildir/{cur,new}/ — DA layout. Returns
+// the path that contains cur+new (either userPath or
+// userPath/Maildir) plus a bool indicating whether a Maildir-
+// shaped tree was found.
+func looksLikeMailMaildir(path string) (string, bool) {
 	for _, marker := range []string{"cur", "new"} {
 		if st, err := os.Stat(filepath.Join(path, marker)); err == nil && st.IsDir() {
-			return true
+			return path, true
 		}
 	}
-	return false
+	// DA: extra Maildir/ subdir.
+	dapath := filepath.Join(path, "Maildir")
+	for _, marker := range []string{"cur", "new"} {
+		if st, err := os.Stat(filepath.Join(dapath, marker)); err == nil && st.IsDir() {
+			return dapath, true
+		}
+	}
+	return "", false
 }
 
 // importOneMailbox pushes every .eml-shaped message in cur/ + new/

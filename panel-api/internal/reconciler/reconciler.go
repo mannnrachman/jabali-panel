@@ -16,6 +16,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/nginxrules"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/redirects"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler/phases"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
@@ -64,6 +65,11 @@ type Reconciler struct {
 	// legacy /etc/jabali-panel/restic-repo.password once every row
 	// has been migrated to per-destination password_enc.
 	backupDestinations repository.BackupDestinationRepository
+	// M13.1.1 — bandwidth quota auto-suspend. Both required for the
+	// reconcileBandwidthQuotaEnforce loop; nil on either disables the
+	// feature regardless of server_settings toggle.
+	bwDaily           repository.BWDailyRepository
+	notificationQueue *notifications.Queue
 	// M28 — operator-editable page templates. Used only to pipe the
 	// domain_default_index body into the agent's domain.create call
 	// so a fresh docroot gets the customised welcome page rather than
@@ -193,6 +199,15 @@ func (r *Reconciler) WithSSOTokens(ssoTokens repository.PhpMyAdminSSOTokenReposi
 // destination has its own per-row sealed password.
 func (r *Reconciler) WithBackupDestinations(repo repository.BackupDestinationRepository) *Reconciler {
 	r.backupDestinations = repo
+	return r
+}
+
+// WithBandwidthQuotaEnforce wires M13.1.1 quota-driven domain
+// suspension. Both bwDaily + notificationQueue required; nil on
+// either disables the loop entirely.
+func (r *Reconciler) WithBandwidthQuotaEnforce(bw repository.BWDailyRepository, q *notifications.Queue) *Reconciler {
+	r.bwDaily = bw
+	r.notificationQueue = q
 	return r
 }
 
@@ -335,6 +350,12 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// so an operator who rotates and walks away doesn't leave the
 	// shared key on disk.
 	r.reconcileResticLegacyPassword(ctx)
+
+	// M13.1.1 bandwidth-quota auto-suspend (opt-in via
+	// server_settings.bandwidth_quota_enforce_enabled). Walks users
+	// with package quota > 0, sums month-to-date bytes, suspends
+	// (or restores) their domains. Cheap noop when toggle is off.
+	r.reconcileBandwidthQuotaEnforce(ctx)
 
 	// M18 rate-limit zone fragment MUST converge BEFORE the domain loop:
 	// domain.create on the agent writes each vhost then runs `nginx -t`.

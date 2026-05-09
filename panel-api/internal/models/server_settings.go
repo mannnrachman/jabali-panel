@@ -99,6 +99,11 @@ type ServerSettings struct {
 	// agent quota.apply will fail and the panel will surface the error.
 	DiskQuotaEnabled bool `gorm:"column:disk_quota_enabled;type:tinyint(1);not null;default:0" json:"disk_quota_enabled"`
 
+	// Bandwidth-quota auto-suspend toggle (M13.1.1). When true, the
+	// reconciler disables every owned domain of a user whose monthly
+	// bytes ≥ BandwidthQuotaMB and re-enables when ≤ 80%. Off by default.
+	BandwidthQuotaEnforceEnabled bool `gorm:"column:bandwidth_quota_enforce_enabled;type:tinyint(1);not null;default:0" json:"bandwidth_quota_enforce_enabled"`
+
 	// File-manager upload cap (MB). Enforced by panel-api at request
 	// time via http.MaxBytesReader; nginx vhost client_max_body_size
 	// is set to the static ceiling (1G) so this is the operator-tunable

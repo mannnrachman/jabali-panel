@@ -140,6 +140,13 @@ type Domain struct {
 	// sites-enabled. Disabled domains still have their config on disk.
 	IsEnabled bool `gorm:"type:tinyint(1);not null;default:1" json:"is_enabled"`
 
+	// IsQuotaSuspended marks domains the M13.1.1 bandwidth reconciler
+	// disabled because their owning user crossed BandwidthQuotaMB.
+	// Disambiguates panel-driven disables from manual operator
+	// disables — only suspended-by-quota domains get auto-restored
+	// when usage drops back below the warn threshold.
+	IsQuotaSuspended bool `gorm:"column:is_quota_suspended;type:tinyint(1);not null;default:0;index:idx_domains_quota_suspended" json:"is_quota_suspended"`
+
 	// NginxCustomDirectives holds operator-provided nginx config snippets
 	// injected into the server block. Validated before save — dangerous
 	// directives (proxy_pass, lua_*) are rejected.

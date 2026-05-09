@@ -90,6 +90,7 @@ type updateServerSettingsRequest struct {
 	SSHUserPasswordAuth *bool   `json:"ssh_user_password_auth,omitempty"`
 	PanelBrandText      *string `json:"panel_brand_text,omitempty"`
 	DiskQuotaEnabled    *bool   `json:"disk_quota_enabled,omitempty"`
+	BandwidthQuotaEnforceEnabled *bool `json:"bandwidth_quota_enforce_enabled,omitempty"`
 	UploadMaxSizeMB     *uint32 `json:"upload_max_size_mb,omitempty"`
 
 	// M13 SSH shell sandbox.
@@ -182,6 +183,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.DiskQuotaEnabled != nil {
 		current.DiskQuotaEnabled = *req.DiskQuotaEnabled
+	}
+	if req.BandwidthQuotaEnforceEnabled != nil {
+		current.BandwidthQuotaEnforceEnabled = *req.BandwidthQuotaEnforceEnabled
 	}
 	if req.UploadMaxSizeMB != nil {
 		current.UploadMaxSizeMB = *req.UploadMaxSizeMB

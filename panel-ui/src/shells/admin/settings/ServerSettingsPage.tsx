@@ -72,6 +72,7 @@ type ServerSettings = {
   ssh_sandbox_mode: "bubblewrap" | "nspawn";
   default_nspawn_image_version: string;
   disk_quota_enabled: boolean;
+  bandwidth_quota_enforce_enabled: boolean;
   upload_max_size_mb: number;
   postgres_enabled: boolean;
   postgres_max_connections_per_user: number;
@@ -608,6 +609,7 @@ const StorageSettingsTab = () => {
     try {
       const resp = await apiClient.patch<ServerSettings>("/admin/settings", {
         disk_quota_enabled: values.disk_quota_enabled || false,
+        bandwidth_quota_enforce_enabled: values.bandwidth_quota_enforce_enabled || false,
         upload_max_size_mb: values.upload_max_size_mb || 1024,
       });
       notify({ type: "success", message: "Storage settings saved" });
@@ -681,6 +683,36 @@ const StorageSettingsTab = () => {
                     Only system UIDs ≥ 1000 ever get a setquota call, so root + system daemons stay
                     unlimited. Verify with <code>quotaon -p -a</code> before flipping this on; if no
                     quota is reported active, re-run install.sh or set it up manually.
+                  </>
+                }
+              />
+            </div>
+
+            <div style={{ marginTop: 24, marginBottom: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <Form.Item name="bandwidth_quota_enforce_enabled" valuePropName="checked" noStyle>
+                  <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
+                </Form.Item>
+                <Typography.Text>Bandwidth Quota Auto-Suspend (M13.1.1)</Typography.Text>
+              </div>
+              <Typography.Text type="secondary">
+                When enabled, the reconciler disables every owned domain of a user whose monthly
+                bandwidth ≥ <code>BandwidthQuotaMB</code> (package limit). Domains auto-restore once
+                usage drops back below 80%. Only panel-driven suspensions are auto-restored — manual
+                admin disables stay disabled.
+              </Typography.Text>
+              <Alert
+                style={{ marginTop: 12 }}
+                type="warning"
+                showIcon
+                message="Off by default — opt-in feature"
+                description={
+                  <>
+                    Bandwidth data flows from the M13.1 daily goaccess scan; on a fresh install
+                    the table is empty until the first 24 h cycle. The notification path
+                    (<code>bandwidth.quota.warn</code> / <code>.crit</code>) fires regardless
+                    of this toggle — the toggle ONLY controls whether the reconciler also
+                    flips <code>is_enabled=false</code> on the user's domains.
                   </>
                 }
               />

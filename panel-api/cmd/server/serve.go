@@ -222,6 +222,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// M30.2.x: backup destinations repo for the legacy
 		// shared-password purge pass.
 		rec.WithBackupDestinations(repository.NewBackupDestinationRepository(sharedDB))
+		// M13.1.1: bandwidth quota auto-suspend. Wires bw_daily repo +
+		// notifications queue so reconcileBandwidthQuotaEnforce can run.
+		rec.WithBandwidthQuotaEnforce(repository.NewBWDailyRepository(sharedDB), deps.NotificationQueue)
 		deps.ManagedIPs = managedIPRepo
 		deps.Reconciler = rec
 		deps.DNSZones = dnsZoneRepo

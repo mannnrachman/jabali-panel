@@ -14,6 +14,11 @@ func newMigrateCmd() *cobra.Command {
 		Short: "Database migration commands",
 	}
 	cmd.AddCommand(newMigrateUpCmd())
+	// M35 account-import subcommand. Namespaced under `migrate` so
+	// the parent `jabali migrate` reads as 'migration verbs' (one
+	// schema, one account-import). Different scope from `up` which
+	// runs golang-migrate DB-schema migrations.
+	cmd.AddCommand(newMigrateImportCmd())
 	return cmd
 }
 

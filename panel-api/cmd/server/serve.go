@@ -35,6 +35,12 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/services"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssokey"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/sso"
+
+	// M35 migration importer registry — blank imports run each
+	// importer's init() so the source-kind → Discoverer factory
+	// is available before the first admin REST call. Adding a
+	// new source kind = adding one line here.
+	_ "git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/migrate/cpanel"
 )
 
 const (

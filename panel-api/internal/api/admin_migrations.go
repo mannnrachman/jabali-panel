@@ -6,12 +6,14 @@
 // import); the REST adds a UI-friendly observation surface.
 //
 // Routes mounted under /admin/migrations:
-//   GET    /admin/migrations               list (paginated envelope)
-//   POST   /admin/migrations               create (state=pending; runner
-//                                          stays operator-driven via CLI)
-//   GET    /admin/migrations/:id           one job + recent stages
-//   GET    /admin/migrations/:id/stages    full stage timeline
-//   DELETE /admin/migrations/:id           soft-revoke (state→cancelled)
+//   GET    /admin/migrations                  list (paginated envelope)
+//   POST   /admin/migrations                  create (state=pending; runner
+//                                             stays operator-driven via CLI)
+//   GET    /admin/migrations/:id              one job + recent stages
+//   GET    /admin/migrations/:id/stages       full stage timeline
+//   DELETE /admin/migrations/:id              soft-revoke (state→cancelled)
+//   POST   /admin/migrations/:id/destroy      hard-delete row + secret + extracted dir
+//                                             (requires terminal state)
 //
 // Admin-gated. RequireAdmin already mounted by the parent group.
 package api
@@ -19,6 +21,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"os"
 
 	"github.com/gin-gonic/gin"
 
@@ -49,6 +52,7 @@ func RegisterAdminMigrationRoutes(g *gin.RouterGroup, cfg AdminMigrationsHandler
 	rg.GET("/:id", h.get)
 	rg.GET("/:id/stages", h.stages)
 	rg.DELETE("/:id", h.cancel)
+	rg.POST("/:id/destroy", h.destroy)
 }
 
 type adminMigrationsHandler struct{ cfg AdminMigrationsHandlerConfig }
@@ -228,6 +232,54 @@ func (h *adminMigrationsHandler) cancel(c *gin.Context) {
 	// daily reaper's next sweep.
 	_ = migrate.WipeJobSecret(id)
 	c.JSON(http.StatusOK, gin.H{"id": id, "state": models.MigrationStateCancelled})
+}
+
+// destroy hard-deletes a terminal-state migration_jobs row + wipes
+// the secrets file + removes /var/lib/jabali-migrations/<id>/.
+// Refuses non-terminal jobs to prevent accidental destruction of an
+// in-flight migration.
+//
+// Three side effects on success:
+//   - migration_jobs row deleted (FK CASCADE drops migration_stages)
+//   - /etc/jabali-panel/migration-secrets/<id>.env removed if present
+//   - /var/lib/jabali-migrations/<id>/ removed (extracted tarball,
+//     downloaded source tar, etc.)
+//
+// Each is best-effort: failure to wipe the FS dir doesn't roll back
+// the DB delete (operator can rm -rf the dir manually). Failure to
+// delete the DB row does fail the request.
+func (h *adminMigrationsHandler) destroy(c *gin.Context) {
+	id := c.Param("id")
+	job, err := h.cfg.Jobs.FindByID(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	switch job.State {
+	case models.MigrationStateDone, models.MigrationStateFailed, models.MigrationStateCancelled:
+		// allowed
+	default:
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  "non_terminal",
+			"detail": "destroy refused: cancel the job first (DELETE /admin/migrations/" + id + ") to transition to terminal state",
+		})
+		return
+	}
+	// DB row first — FK CASCADE drops migration_stages.
+	if err := h.cfg.Jobs.Delete(c.Request.Context(), id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": err.Error()})
+		return
+	}
+	// Filesystem side-effects best-effort. RemoveAll is OK to call
+	// on a non-existent path; doesn't error.
+	_ = migrate.WipeJobSecret(id)
+	stagingDir := "/var/lib/jabali-migrations/" + id
+	_ = os.RemoveAll(stagingDir)
+	c.JSON(http.StatusOK, gin.H{"id": id, "destroyed": true})
 }
 
 // paginationParams pulls ?page= + ?page_size= with sane defaults.

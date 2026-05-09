@@ -102,6 +102,22 @@ export const AdminMigrationsPage = () => {
     },
   });
 
+  const destroy = useMutation<void, unknown, { id: string }>({
+    mutationFn: async ({ id }) => {
+      await apiClient.post(`/admin/migrations/${id}/destroy`);
+    },
+    onSuccess: async () => {
+      message.success("Destroyed");
+      await qc.invalidateQueries({ queryKey: ["admin-migrations"] });
+    },
+    onError: (err) => {
+      const detail =
+        (err as { response?: { data?: { error?: string; detail?: string } } })
+          ?.response?.data?.detail;
+      message.error(detail ?? "Destroy failed");
+    },
+  });
+
   const rows = list.data?.data ?? [];
 
   return (
@@ -225,6 +241,23 @@ export const AdminMigrationsPage = () => {
                         color="default"
                       >
                         Cancel
+                      </RowActionButton>
+                    </Popconfirm>
+                  )}
+                  {terminal && (
+                    <Popconfirm
+                      title={`Destroy migration ${r.source_user}?`}
+                      description="Removes the DB row, secrets file, and /var/lib/jabali-migrations/<id>/ extracted dir. Operator-irreversible."
+                      onConfirm={() => destroy.mutate({ id: r.id })}
+                      okText="Destroy"
+                      okButtonProps={{ danger: true }}
+                    >
+                      <RowActionButton
+                        danger
+                        icon={<DeleteOutlined />}
+                        color="default"
+                      >
+                        Destroy
                       </RowActionButton>
                     </Popconfirm>
                   )}

@@ -48,6 +48,7 @@ func newDBCmd() *cobra.Command {
 		newDBListCmd(),
 		newDBCreateCmd(),
 		newDBDeleteCmd(),
+		newDBUserCmd(),
 	)
 	return cmd
 }

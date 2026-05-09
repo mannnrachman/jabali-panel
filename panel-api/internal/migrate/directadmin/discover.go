@@ -259,18 +259,64 @@ func (d *Discoverer) DescribeAccount(ctx context.Context, raw migrate.Session, a
 	if _, err := s.run(ctx, d.CommandTimeout, fmt.Sprintf("da admin user.show '%s'", strings.ReplaceAll(accountID, "'", `'\''`))); err != nil {
 		return nil, fmt.Errorf("user.show %q: %w", accountID, err)
 	}
-	return &migrate.AccountManifest{
+	m := &migrate.AccountManifest{
 		SchemaVersion: migrate.ManifestSchemaVersion,
 		Source: migrate.SourceRef{
 			Kind: models.MigrationSourceDirectAdmin,
 			Host: host,
 			User: accountID,
 		},
-		Warnings: []migrate.Warning{
-			{
-				Code:   "directadmin_per_area_builders_pending",
-				Detail: "DA importer Discoverer scaffold shipped; per-area builders (domains/dbs/mailboxes/cron/ssh) land in follow-up commits. Use the cpanel importer for accounts that have been re-exported as cpmove tarballs in the meantime.",
-			},
-		},
-	}, nil
+		Warnings: []migrate.Warning{},
+	}
+
+	// Per-area builders. Best-effort: each area's failure stashes a
+	// warning + sets firstErr but does NOT short-circuit. Domains is
+	// load-bearing — if it fails AND zero domains parsed, we return
+	// the error so the operator sees a hard fail.
+	var firstErr error
+
+	if doms, err := d.describeDomains(ctx, s, accountID); err != nil {
+		firstErr = fmt.Errorf("domains: %w", err)
+		m.Warnings = append(m.Warnings, migrate.Warning{
+			Code: "domains_failed", Detail: err.Error(),
+		})
+	} else {
+		m.Domains = doms
+	}
+
+	if dbs, warn, err := d.describeDatabases(ctx, s, accountID); err != nil {
+		if firstErr == nil {
+			firstErr = fmt.Errorf("databases: %w", err)
+		}
+		m.Warnings = append(m.Warnings, migrate.Warning{
+			Code: "databases_failed", Detail: err.Error(),
+		})
+	} else {
+		m.Databases = dbs
+		m.Warnings = append(m.Warnings, warn...)
+	}
+
+	if boxes, warn, err := d.describeMailboxes(ctx, s, accountID, m.Domains); err != nil {
+		m.Warnings = append(m.Warnings, migrate.Warning{
+			Code: "mailboxes_failed", Detail: err.Error(),
+		})
+		_ = warn
+	} else {
+		m.Mailboxes = boxes
+		m.Warnings = append(m.Warnings, warn...)
+	}
+
+	// Cron + SSH keys not exposed via 'da admin' CLI on DA. Land
+	// when the DA tarball parser ships in a follow-up — the cpanel
+	// writers (cron + ssh-keys) work against any extracted layout
+	// that has cron/<user> + .ssh/authorized_keys.
+	m.Warnings = append(m.Warnings, migrate.Warning{
+		Code:   "directadmin_cron_ssh_via_tarball",
+		Detail: "DA admin CLI doesn't expose cron + ssh keys; pull v-backup-user-style tarball + reuse cpanel writers (Step 4 follow-up).",
+	})
+
+	if firstErr != nil && len(m.Domains) == 0 {
+		return nil, firstErr
+	}
+	return m, nil
 }

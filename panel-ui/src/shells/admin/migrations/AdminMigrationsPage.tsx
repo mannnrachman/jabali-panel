@@ -22,6 +22,7 @@ import {
   message,
 } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router";
 
 import { apiClient } from "../../../apiClient";
 import { RowActionButton } from "../../../components/RowActionButton";
@@ -181,31 +182,37 @@ export const AdminMigrationsPage = () => {
           />
           <Table.Column<MigrationJob>
             title=""
-            width={120}
+            width={200}
             render={(_, r) => {
               const terminal =
                 r.state === "done" ||
                 r.state === "failed" ||
                 r.state === "cancelled";
-              if (terminal) {
-                return null;
-              }
               return (
-                <Popconfirm
-                  title={`Cancel migration ${r.source_user}?`}
-                  description="Stamps the DB row as cancelled. Does NOT kill an in-flight CLI process — Ctrl-C the cobra cmd separately."
-                  onConfirm={() => cancel.mutate({ id: r.id })}
-                  okText="Cancel job"
-                  okButtonProps={{ danger: true }}
-                >
-                  <RowActionButton
-                    danger
-                    icon={<DeleteOutlined />}
-                    color="default"
-                  >
-                    Cancel
-                  </RowActionButton>
-                </Popconfirm>
+                <Space size="small">
+                  <Link to={`/jabali-admin/migrations/${r.id}`}>
+                    <RowActionButton icon={<SwapOutlined />} color="default">
+                      View
+                    </RowActionButton>
+                  </Link>
+                  {!terminal && (
+                    <Popconfirm
+                      title={`Cancel migration ${r.source_user}?`}
+                      description="Stamps the DB row as cancelled. Does NOT kill an in-flight CLI process — Ctrl-C the cobra cmd separately."
+                      onConfirm={() => cancel.mutate({ id: r.id })}
+                      okText="Cancel job"
+                      okButtonProps={{ danger: true }}
+                    >
+                      <RowActionButton
+                        danger
+                        icon={<DeleteOutlined />}
+                        color="default"
+                      >
+                        Cancel
+                      </RowActionButton>
+                    </Popconfirm>
+                  )}
+                </Space>
               );
             }}
           />
@@ -240,16 +247,3 @@ export const AdminMigrationsPage = () => {
 };
 
 export default AdminMigrationsPage;
-
-const _supportedSourcesForUI: { value: string; label: string }[] = [
-  // SwapOutlined import keeps the icon available for a future
-  // 'New migration' drawer trigger button. Remove once that drawer
-  // ships. _supportedSourcesForUI is referenced by the unused-import
-  // shim below to keep the icon tree-shake-resistant.
-  { value: "cpanel", label: "cPanel" },
-];
-// Defensive use of imported icon so the bundler doesn't drop it
-// before the new-migration drawer commit lands.
-const _swapShim: typeof SwapOutlined = SwapOutlined;
-void _swapShim;
-void _supportedSourcesForUI;

@@ -28,6 +28,22 @@ func setupTempSystemdRoot(t *testing.T) string {
 	return dir
 }
 
+// stubKillProcess replaces killProcess with a no-op so tests don't
+// actually try to SIGHUP PID 1 (which fails with EPERM under any
+// non-root test runner). Mirrors the systemd-root + runCmd stubs.
+func stubKillProcess(t *testing.T) {
+	t.Helper()
+	testMutex.Lock()
+	orig := killProcess
+	killProcess = func(_ int, _ os.Signal) error { return nil }
+	testMutex.Unlock()
+	t.Cleanup(func() {
+		testMutex.Lock()
+		killProcess = orig
+		testMutex.Unlock()
+	})
+}
+
 // stubRunCmd replaces runCmd with a recorder that records the args of
 // every invocation and returns predetermined stdout/stderr.
 func stubRunCmd(t *testing.T) *[][]string {
@@ -101,6 +117,7 @@ func TestBuildLimitsDropinContent(t *testing.T) {
 
 func TestUserLimitsApply_WritesDropin(t *testing.T) {
 	root := setupTempSystemdRoot(t)
+	stubKillProcess(t)
 	calls := stubRunCmd(t)
 
 	params, _ := json.Marshal(userLimitsApplyParams{
@@ -162,6 +179,7 @@ func TestUserLimitsApply_WritesDropin(t *testing.T) {
 
 func TestUserLimitsApply_AllZeros_RemovesDropin(t *testing.T) {
 	root := setupTempSystemdRoot(t)
+	stubKillProcess(t)
 	_ = stubRunCmd(t)
 
 	// First apply real limits → drop-in gets created.
@@ -188,6 +206,7 @@ func TestUserLimitsApply_AllZeros_RemovesDropin(t *testing.T) {
 
 func TestUserLimitsApply_Idempotent(t *testing.T) {
 	setupTempSystemdRoot(t)
+	stubKillProcess(t)
 	calls := stubRunCmd(t)
 
 	params, _ := json.Marshal(userLimitsApplyParams{
@@ -240,6 +259,7 @@ func TestUserLimitsApply_BoundsValidation(t *testing.T) {
 
 func TestUserLimitsApply_NoQuotaMount_SkipsSetquota(t *testing.T) {
 	setupTempSystemdRoot(t)
+	stubKillProcess(t)
 	calls := stubRunCmd(t)
 	params, _ := json.Marshal(userLimitsApplyParams{
 		Username: "cgrouponly", MemoryLimitMB: 512,

@@ -144,6 +144,7 @@ func TestDatabaseUserRepository_Create(t *testing.T) {
 			sqlmock.AnyArg(), // id (uuid)
 			du.UserID,
 			du.Username,
+			sqlmock.AnyArg(), // engine (M37 — defaults to mariadb)
 			du.PasswordHash,
 			sqlmock.AnyArg(), // created_at
 			sqlmock.AnyArg(), // updated_at

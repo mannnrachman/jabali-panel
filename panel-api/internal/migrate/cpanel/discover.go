@@ -343,16 +343,66 @@ func (d *Discoverer) DescribeAccount(ctx context.Context, raw migrate.Session, a
 			Host: host,
 			User: accountID,
 		},
+		Warnings: []migrate.Warning{},
 	}
-	// Sub-step calls land here in follow-up commits:
-	//   - describeDomains (UAPI DomainInfo::list_domains)
-	//   - describeMailboxes (UAPI Email::list_pops)
-	//   - describeDatabases (UAPI Mysql::list_dbs)
-	//   - describeCron (UAPI Cron::list_cron)
-	//   - describeSSHKeys (UAPI SSH::listkeys)
-	//   - describeApps (walk public_html, detect WP/Joomla/Drupal)
-	// Step 3 ships the framework + connect/list path; per-area
-	// builders ship as Step 3a-3f follow-ups so each is reviewable
-	// in isolation.
+
+	// Per-area builders. We accumulate warnings rather than fail
+	// the whole describe on any single missing module — a host
+	// without Postgresql / SSH UAPI returns 'unknown function' on
+	// those calls, which is recoverable. A real connectivity
+	// failure (SSH dropped) bubbles back as the first error
+	// returned.
+	var firstErr error
+	stash := func(err error, area string) {
+		if err == nil {
+			return
+		}
+		m.Warnings = append(m.Warnings, migrate.Warning{
+			Code:   area + "_failed",
+			Detail: err.Error(),
+			At:     time.Now().UTC(),
+		})
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	if doms, err := d.describeDomains(ctx, s, accountID); err != nil {
+		stash(err, "domains")
+	} else {
+		m.Domains = doms
+	}
+	if boxes, err := d.describeMailboxes(ctx, s, accountID); err != nil {
+		stash(err, "mailboxes")
+	} else {
+		m.Mailboxes = boxes
+	}
+	if dbs, warn, err := d.describeDatabases(ctx, s, accountID); err != nil {
+		stash(err, "databases")
+	} else {
+		m.Databases = dbs
+		m.Warnings = append(m.Warnings, warn...)
+	}
+	if crons, err := d.describeCron(ctx, s, accountID); err != nil {
+		stash(err, "cron")
+	} else {
+		m.Cron = crons
+	}
+	if keys, err := d.describeSSHKeys(ctx, s, accountID); err != nil {
+		stash(err, "ssh")
+	} else {
+		m.SSH = keys
+	}
+	// Apps detection (WordPress / Joomla / Drupal walk of public_html)
+	// lands when restore-stage tarball parsing arrives — that path
+	// has the file tree locally + can do strong version-string
+	// matching without round-tripping over SSH.
+
+	// Domains is the load-bearing area; if it failed return the
+	// error so the operator sees a hard fail rather than a
+	// half-empty manifest. Other areas are advisory.
+	if firstErr != nil && len(m.Domains) == 0 {
+		return nil, firstErr
+	}
 	return m, nil
 }

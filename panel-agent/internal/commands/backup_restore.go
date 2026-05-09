@@ -410,10 +410,63 @@ func applyAccountRestore(
 			applied = append(applied, fmt.Sprintf("db → %s", db))
 
 		case backup.StageMail:
-			warnings = append(warnings,
-				fmt.Sprintf("mail staged at %s — apply manually via 'stalwart-cli apply' (auto-apply unsafe over running spool)",
-					filepath.Join(stagingRoot, "mail")))
+			mailStagingPath := filepath.Join(stagingRoot, "mail")
+			planPath := filepath.Join(mailStagingPath, "plan.json")
+			bodiesPath := filepath.Join(mailStagingPath, "bodies.tar")
 
+			if _, err := os.Stat(planPath); err != nil {
+				warnings = append(warnings, fmt.Sprintf("mail: plan.json missing at %s — skip", mailStagingPath))
+				continue
+			}
+
+			// Apply account config (mailboxes, aliases, rules) via the
+			// Stalwart HTTP API. Safe against a live instance: stalwart-cli
+			// apply operates over HTTP, not directly on the RocksDB store.
+			cliOK := false
+			if _, cliErr := exec.LookPath("stalwart-cli"); cliErr == nil {
+				adminURL, adminUser, adminPass := stalwartAdminCreds()
+				if adminURL != "" && adminUser != "" && adminPass != "" {
+					applyCmd := exec.CommandContext(ctx, "stalwart-cli",
+						"apply", planPath, "--quiet", "--no-color")
+					applyCmd.Env = append(os.Environ(),
+						"STALWART_URL="+adminURL,
+						"STALWART_USER="+adminUser,
+						"STALWART_PASSWORD="+adminPass,
+					)
+					if applyOut, applyErr := applyCmd.CombinedOutput(); applyErr != nil {
+						warnings = append(warnings,
+							fmt.Sprintf("mail: stalwart-cli apply failed: %v: %s",
+								applyErr, strings.TrimSpace(string(applyOut))))
+					} else {
+						applied = append(applied, fmt.Sprintf("mail → %s (account config)", username))
+						cliOK = true
+					}
+				} else {
+					warnings = append(warnings,
+						fmt.Sprintf("mail: Stalwart admin creds missing — account config not applied; "+
+							"run manually: STALWART_URL=http://127.0.0.1:18181 stalwart-cli apply %s", planPath))
+				}
+			} else {
+				warnings = append(warnings,
+					fmt.Sprintf("mail: stalwart-cli not found — account config not applied; "+
+						"run manually: stalwart-cli apply %s", planPath))
+			}
+
+			// bodies.tar is a full snapshot of /var/lib/stalwart (RocksDB,
+			// shared across all accounts). Per-user body extraction is not
+			// possible without stopping Stalwart — live extraction corrupts
+			// the store for every account on the host.
+			// To restore historical messages after applying account config:
+			//   systemctl stop stalwart-mail
+			//   tar -xf <bodies.tar> -C /
+			//   systemctl start stalwart-mail
+			if cliOK {
+				if _, err := os.Stat(bodiesPath); err == nil {
+					warnings = append(warnings,
+						fmt.Sprintf("mail: account config applied. Historical messages require manual restore: "+
+							"stop stalwart-mail, tar -xf %s -C /, start stalwart-mail", bodiesPath))
+				}
+			}
 		case backup.StageMeta, backup.StageDNS, backup.StageCron, backup.StageSSH,
 			backup.StageApps, backup.StagePHP:
 			// Metadata-only stages — informational, no apply.

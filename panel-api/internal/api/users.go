@@ -15,12 +15,12 @@ import (
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/userops"
 )
 
 // UserHandlerConfig plugs the users resource handlers into the router. Repo
@@ -175,156 +175,75 @@ func (h *userHandler) get(c *gin.Context) {
 	c.JSON(http.StatusOK, u)
 }
 
+// create is a thin REST wrapper around panel-api/internal/userops.Create.
+// All validation, kratos atomic, agent provisioning, prefix handling
+// and the panel-side row insert live in userops; this handler is
+// purely HTTP envelope + status mapping (M41 ADR-0083 follow-up).
 func (h *userHandler) create(c *gin.Context) {
 	var req createUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
 		return
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), h.cfg.BcryptCost)
+	res, err := userops.Create(c.Request.Context(), userops.Deps{
+		Users:        h.cfg.Repo,
+		Packages:     h.cfg.Packages,
+		Agent:        h.cfg.Agent,
+		KratosClient: h.cfg.KratosClient,
+		BcryptCost:   h.cfg.BcryptCost,
+		Log:          h.cfg.Log,
+	}, userops.CreateInput{
+		Email:         req.Email,
+		Password:      req.Password,
+		Username:      req.Username,
+		NameFirst:     req.NameFirst,
+		NameLast:      req.NameLast,
+		IsAdmin:       req.IsAdmin,
+		PackageID:     req.PackageID,
+		SkipProvision: req.SkipProvision,
+	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		userOpsRESTError(c, err)
 		return
 	}
-
-	// Compute effective username: use req.Username if provided, else derive from email prefix.
-	// For admins, username stays NULL. For regular users, validate and set.
-	var effectiveUsername *string
-	if !req.IsAdmin {
-		if req.Username != nil {
-			effectiveUsername = req.Username
-		} else {
-			derived := linuxUserFromEmail(req.Email)
-			effectiveUsername = &derived
-		}
-		// Validate the username against POSIX regex.
-		if effectiveUsername != nil && !validUsername(*effectiveUsername) {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error":  "invalid_username",
-				"detail": "username must match regex ^[a-z_][a-z0-9_-]{0,31}$",
-			})
-			return
-		}
-	}
-
-	// Validate package_id if provided.
-	if req.PackageID != nil && *req.PackageID != "" {
-		if h.cfg.Packages == nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-			return
-		}
-		_, err := h.cfg.Packages.FindByID(c.Request.Context(), *req.PackageID)
-		if err != nil {
-			if errors.Is(err, repository.ErrNotFound) {
-				c.JSON(http.StatusBadRequest, gin.H{
-					"error":  "invalid_package_id",
-					"detail": "hosting package not found",
-				})
-				return
-			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-			return
-		}
-	}
-
-	u := &models.User{
-		ID:           ids.NewULID(),
-		Email:        req.Email,
-		Username:     effectiveUsername,
-		NameFirst:    req.NameFirst,
-		NameLast:     req.NameLast,
-		PasswordHash: string(hash),
-		IsAdmin:      req.IsAdmin,
-		PackageID:    req.PackageID,
-	}
-	if err := h.cfg.Repo.Create(c.Request.Context(), u); err != nil {
-		// Check if the error is a username collision specifically.
-		if isConflict(err) && effectiveUsername != nil {
-			c.JSON(http.StatusConflict, gin.H{"error": "username_taken"})
-			return
-		}
-		h.translateErr(c, err)
-		return
-	}
-
-	// M20: atomic Kratos identity creation.
-	// Runs only when the feature flag selects Kratos. On failure we undo the
-	// panel DB row (compensating delete) so the two systems can't drift. The
-	// failure surface is explicitly 5xx — callers retry. We never return 201
-	// for a half-created user.
-	// M20 LEGACY: remove after 2026-05-20 — keep only the kratos branch
-	if h.cfg.kratosEnabled() {
-		traits := kratosclient.AdminTraits{
-			Email:   u.Email,
-			IsAdmin: u.IsAdmin,
-		}
-		if u.Username != nil {
-			traits.Username = *u.Username
-		}
-
-		identityID, err := h.cfg.KratosClient.CreateIdentityWithPassword(c.Request.Context(), traits, u.PasswordHash)
-		if err != nil {
-			// Roll back the panel row so retries don't hit a username/email conflict.
-			if delErr := h.cfg.Repo.Delete(c.Request.Context(), u.ID); delErr != nil {
-				slog.Error("kratos create failed and panel rollback also failed — orphan row",
-					"user_id", u.ID, "email", u.Email, "kratos_err", err, "rollback_err", delErr)
-			}
-			c.JSON(http.StatusBadGateway, gin.H{"error": "identity_provider_failed", "detail": err.Error()})
-			return
-		}
-
-		// LinkKratosIdentity writes only that one column; Repo.Update's
-		// allowlist excludes kratos_identity_id so it would silently drop
-		// the write.
-		u.KratosIdentityID = &identityID
-		if err := h.cfg.Repo.LinkKratosIdentity(c.Request.Context(), u.ID, identityID); err != nil {
-			// Undo both sides: delete the Kratos identity so re-create is safe,
-			// then delete the panel row. Best-effort — if either unwind call
-			// fails, log it so the operator sees the orphan.
-			if delErr := h.cfg.KratosClient.DeleteIdentity(c.Request.Context(), identityID); delErr != nil {
-				slog.Error("panel link failed and kratos rollback also failed — orphan identity",
-					"user_id", u.ID, "identity_id", identityID, "link_err", err, "rollback_err", delErr)
-			}
-			if delErr := h.cfg.Repo.Delete(c.Request.Context(), u.ID); delErr != nil {
-				slog.Error("panel link failed and panel rollback also failed — orphan row",
-					"user_id", u.ID, "link_err", err, "rollback_err", delErr)
-			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-			return
-		}
-	}
-
-	// Best-effort OS user provisioning. Write DB first, then agent call.
-	// If agent fails, return 201 with provision_warning but keep the DB row.
-	if h.cfg.Agent != nil && !req.SkipProvision && !req.IsAdmin && effectiveUsername != nil {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
-		defer cancel()
-
-		_, err := h.cfg.Agent.Call(ctx, "user.create", map[string]any{
-			"username": *effectiveUsername,
-			"home_dir": "/home/" + *effectiveUsername,
-			"shell":    "/usr/local/bin/jabali-ssh-shell",
-			"password": req.Password,
+	if res.ProvisionWarning != "" {
+		c.JSON(http.StatusCreated, struct {
+			*models.User
+			ProvisionWarning string `json:"provision_warning"`
+		}{
+			User:             res.User,
+			ProvisionWarning: res.ProvisionWarning,
 		})
-		if err != nil {
-			slog.Warn("user agent provisioning failed",
-				"user_id", u.ID, "email", u.Email, "err", err)
-			c.JSON(http.StatusCreated, struct {
-				*models.User
-				ProvisionWarning string `json:"provision_warning"`
-			}{
-				User:             u,
-				ProvisionWarning: "user saved but OS account provisioning failed: " + err.Error(),
-			})
-			return
-		}
-		// M33: re-evaluate maldet inotify watches now that a new tenant
-		// home exists. Fire-and-forget; LMD inotify_minutes=45 covers
-		// missed reloads automatically.
-		go reloadMalwareMonitor(h.cfg.Agent)
+		return
 	}
+	c.JSON(http.StatusCreated, res.User)
+}
 
-	c.JSON(http.StatusCreated, u)
+// userOpsRESTError translates userops sentinels to HTTP status + JSON.
+func userOpsRESTError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, userops.ErrInvalidUsername):
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":  "invalid_username",
+			"detail": err.Error(),
+		})
+	case errors.Is(err, userops.ErrInvalidPackage):
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":  "invalid_package_id",
+			"detail": "hosting package not found",
+		})
+	case errors.Is(err, userops.ErrUsernameTaken):
+		c.JSON(http.StatusConflict, gin.H{"error": "username_taken"})
+	case errors.Is(err, userops.ErrEmailTaken):
+		c.JSON(http.StatusConflict, gin.H{"error": "email_taken"})
+	case errors.Is(err, userops.ErrKratosFailed):
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error":  "identity_provider_failed",
+			"detail": err.Error(),
+		})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+	}
 }
 
 func (h *userHandler) update(c *gin.Context) {

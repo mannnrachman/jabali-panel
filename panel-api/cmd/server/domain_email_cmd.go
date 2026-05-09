@@ -56,6 +56,7 @@ func domainEmailSubcommands() []*cobra.Command {
 	return []*cobra.Command{
 		newDomainEmailEnableCmd(),
 		newDomainEmailDisableCmd(),
+		newDomainEmailDKIMRotateCmd(),
 	}
 }
 

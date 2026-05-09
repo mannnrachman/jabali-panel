@@ -134,6 +134,17 @@ func (s *Scheduler) Start(ctx context.Context) {
 	}
 }
 
+// TickOnce runs one enqueue + dispatch pass synchronously. Exposed
+// for the `jabali backup scheduler tick` CLI subcommand so an
+// operator can manually poke the scheduler without waiting for the
+// next 60s + 10s ticks. Production path stays the long-running
+// Start goroutine — TickOnce is for ops debugging + bootstrap-
+// script tests.
+func (s *Scheduler) TickOnce(ctx context.Context) {
+	s.tickEnqueue(ctx)
+	s.tickDispatch(ctx)
+}
+
 func (s *Scheduler) tickEnqueue(ctx context.Context) {
 	now := time.Now().UTC()
 	due, err := s.deps.Schedules.ListDue(ctx, now, MaxDuePerTick)

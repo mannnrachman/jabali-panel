@@ -6105,6 +6105,15 @@ cleanup_apparmor_legacy() {
       restart_needed=1
     fi
   done
+  # aa-disable + rm leaves the profile loaded in kernel memory —
+  # only the on-disk file is gone. aa-remove-unknown sweeps every
+  # in-kernel profile whose backing file no longer exists, finally
+  # unloading them. Without this, jabali-* profiles stayed listed in
+  # `aa-status` after `jabali update` and the QA round 3 testers had
+  # to run aa-remove-unknown manually.
+  if command -v aa-remove-unknown >/dev/null 2>&1; then
+    aa-remove-unknown >/dev/null 2>&1 || true
+  fi
   if [[ $restart_needed -eq 1 ]]; then
     # Real unit names: jabali-webmail (bulwark binary), jabali-stalwart
     # (Stalwart binary). Don't reference stalwart-mail.service or
@@ -6539,10 +6548,17 @@ install_stalwart() {
     usermod -a -G "$SERVICE_USER" jabali-mail
   fi
 
-  # Data + config dirs.
+  # Data + config dirs. `install -d` only changes the dir itself's
+  # ownership — any sub-files left from a prior install / migration
+  # carry their old owner and Stalwart's RocksDB will refuse to open
+  # the column families. Recursive chown is the durable fix
+  # (verified on QA round 3 where /var/lib/stalwart had a
+  # mixed-owner tree from a previous install attempt).
   install -d -m 0750 -o jabali-mail -g jabali-mail /var/lib/stalwart
   install -d -m 0750 -o jabali-mail -g jabali-mail /etc/stalwart
   install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" /etc/jabali-panel/dkim
+  chown -R jabali-mail:jabali-mail /var/lib/stalwart 2>/dev/null || true
+  chown -R jabali-mail:jabali-mail /etc/stalwart 2>/dev/null || true
 
   local stalwart_binary="/usr/local/bin/stalwart"
   local stalwart_install_dir="/opt/stalwart"

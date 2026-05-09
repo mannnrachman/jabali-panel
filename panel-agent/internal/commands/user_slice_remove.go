@@ -66,6 +66,11 @@ func userSliceRemoveHandler(ctx context.Context, params json.RawMessage) (any, e
 	// Stop slice unit (ignore "not loaded" errors)
 	_, _, _ = runCmdFn(ctx, "systemctl", "stop", fmt.Sprintf("jabali-user-%s.slice", p.Username))
 
+	// Terminate the user's systemd --user session and all remaining processes
+	// (sd-pam, any shells). Without this userdel exits 8 ("user currently
+	// logged in") even after the FPM service is stopped.
+	_, _, _ = runCmdFn(ctx, "loginctl", "terminate-user", p.Username)
+
 	// Remove unit files
 	sliceUnitPath := filepath.Join(root, fmt.Sprintf("jabali-user-%s.slice", p.Username))
 	fpmDropinDir := filepath.Join(root, fmt.Sprintf("jabali-fpm@%s.service.d", p.Username))

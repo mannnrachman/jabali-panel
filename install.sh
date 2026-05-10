@@ -4857,17 +4857,20 @@ install_crowdsec() {
   fi
 
   # Pre-flight: install appsec collections that jabali-appsec.yaml references
-  # via inband_rules wildcards (vpatch-*, generic-*, crs-*). CrowdSec refuses
-  # to start if any referenced rule pattern matches zero files. These cscli
-  # calls are LAPI-independent — they write hub files locally. Must run before
-  # the start/restart attempt below.
+  # via inband_rules wildcards (vpatch-*, generic-*). CrowdSec refuses to
+  # start if any referenced rule pattern matches zero files. These cscli calls
+  # are LAPI-independent — they write hub files locally. Must run before the
+  # start/restart attempt below.
   # Check actual rule FILES on disk, not cscli list metadata — the list can
   # report a collection as installed while the files are absent (partial
-  # install, aborted hub sync, etc.).
+  # install, aborted hub sync, etc.). In that case --force alone won't
+  # re-download; purge the stale metadata first.
+  # Note: crowdsecurity/appsec-crs (OWASP CRS) is intentionally excluded.
+  # Its hub data endpoint (hub-data.crowdsec.net/appsec/crs/crs-setup.conf)
+  # has returned HTTP 500 consistently; including it makes every fresh
+  # install fail. vpatch-* + generic-* provide adequate coverage.
   local _appsec_rules_dir="/etc/crowdsec/appsec-rules/crowdsecurity"
   if ! compgen -G "${_appsec_rules_dir}/vpatch-*" >/dev/null 2>&1; then
-    # --force alone skips re-download when hub metadata says "installed".
-    # Purge the stale metadata first so the install actually writes the files.
     cscli collections remove crowdsecurity/appsec-virtual-patching --purge 2>/dev/null || true
     _spin "cscli collections install appsec-virtual-patching (pre-flight)" \
       cscli collections install crowdsecurity/appsec-virtual-patching
@@ -4876,11 +4879,6 @@ install_crowdsec() {
     cscli collections remove crowdsecurity/appsec-generic-rules --purge 2>/dev/null || true
     _spin "cscli collections install appsec-generic-rules (pre-flight)" \
       cscli collections install crowdsecurity/appsec-generic-rules
-  fi
-  if ! compgen -G "${_appsec_rules_dir}/crs-*" >/dev/null 2>&1; then
-    cscli collections remove crowdsecurity/appsec-crs --purge 2>/dev/null || true
-    _spin "cscli collections install appsec-crs (pre-flight)" \
-      cscli collections install crowdsecurity/appsec-crs
   fi
 
   # Pick the firewall bouncer matching the kernel backend. Trixie+
@@ -5175,17 +5173,6 @@ install_crowdsec_appsec() {
       cscli collections install crowdsecurity/http-dos
   fi
 
-  # OWASP Core Rule Set (CRS) — generic XSS, SQLi, LFI, RCE, SSTI, etc.
-  # Virtual-patching covers known CVEs; CRS catches novel generic attacks
-  # that don't match any named CVE. Requires appsec-virtual-patching as
-  # a base (installed above). Rules load as crowdsecurity/crs-* via the
-  # jabali-appsec.yaml inband_rules wildcard below.
-  if ! compgen -G "${_appsec_rules_dir}/crs-*" >/dev/null 2>&1; then
-    cscli collections remove crowdsecurity/appsec-crs --purge 2>/dev/null || true
-    _spin "cscli collections install appsec-crs" \
-      cscli collections install crowdsecurity/appsec-crs
-  fi
-
   # 3. Jabali AppSec config — our own appsec-CONFIG file. Loads
   #    base-config + vpatch-* + generic-* plus carries the geoblock
   #    pre_eval hook. The agent rewrites this file on every admin Apply
@@ -5194,7 +5181,7 @@ install_crowdsec_appsec() {
   local configs_dir="/etc/crowdsec/appsec-configs"
   install -d -m 0755 "$configs_dir"
   local config_file="$configs_dir/jabali-appsec.yaml"
-  local desired_config=$'# Managed by jabali — M27 AppSec config.\n# DO NOT hand-edit. Set via the admin Security \xe2\x86\x92 CrowdSec tab OR\n# POST /api/v1/admin/security/crowdsec/appsec/geoblock.\n# jabali-mode: off\n# jabali-countries:\nname: crowdsecurity/jabali-appsec\ndefault_remediation: ban\ninband_rules:\n - crowdsecurity/vpatch-*\n - crowdsecurity/generic-*\n - crowdsecurity/crs-*\n'
+  local desired_config=$'# Managed by jabali — M27 AppSec config.\n# DO NOT hand-edit. Set via the admin Security \xe2\x86\x92 CrowdSec tab OR\n# POST /api/v1/admin/security/crowdsec/appsec/geoblock.\n# jabali-mode: off\n# jabali-countries:\nname: crowdsecurity/jabali-appsec\ndefault_remediation: ban\ninband_rules:\n - crowdsecurity/vpatch-*\n - crowdsecurity/generic-*\n'
   if [[ ! -f "$config_file" ]]; then
     _log "seeding $config_file (mode=off)"
     local tmp
@@ -5214,20 +5201,18 @@ install_crowdsec_appsec() {
       sed -i '/^[[:space:]]*-[[:space:]]\+crowdsecurity\/vpatch-\*[[:space:]]*$/a\ - crowdsecurity/generic-*' "$config_file"
     fi
   fi
-  # Append crs-* to existing installs that have the jabali-mode header
-  # (operator-managed file) but are missing the CRS entry. Skip
-  # operator-edited files that lack the header.
-  if grep -q '# jabali-mode:' "$config_file" && ! grep -q 'crowdsecurity/crs-\*' "$config_file"; then
-    if grep -qE '^[[:space:]]*-[[:space:]]+crowdsecurity/generic' "$config_file"; then
-      _log "appending crowdsecurity/crs-* to $config_file inband_rules"
-      sed -i '/^[[:space:]]*-[[:space:]]\+crowdsecurity\/generic-\*[[:space:]]*$/a\ - crowdsecurity/crs-*' "$config_file"
-    fi
+  # Migration: remove crowdsecurity/crs-* from inband_rules on existing
+  # installs. CrowdSec hub CDN returns HTTP 500 for crs-setup.conf, making
+  # every fresh install fail. vpatch-* + generic-* provide sufficient coverage.
+  if grep -q 'crowdsecurity/crs-\*' "$config_file"; then
+    _log "removing crowdsecurity/crs-* from $config_file inband_rules (hub CDN 500)"
+    sed -i '/crowdsecurity\/crs-\*/d' "$config_file"
   fi
   # Remove crowdsecurity/base-config from inband_rules on existing installs.
   # base-config is an appsec-CONFIG (lives in appsec-configs/), not an
   # appsec-rule. Putting it in inband_rules causes CrowdSec to look for a
   # rule with that name → not found → startup crash. The vpatch-* / generic-*
-  # / crs-* globs cover everything base-config would have loaded.
+  # The vpatch-* / generic-* globs cover everything base-config would have loaded.
   if grep -q 'crowdsecurity/base-config' "$config_file"; then
     _log "removing invalid crowdsecurity/base-config from $config_file inband_rules"
     sed -i '/crowdsecurity\/base-config/d' "$config_file"

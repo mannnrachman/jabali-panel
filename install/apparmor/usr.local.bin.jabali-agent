@@ -19,6 +19,10 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   #include <abstractions/base>
   #include <abstractions/nameservice>
   #include <abstractions/openssl>
+  # PAM — chpasswd, chage, usermod -p and similar tools call pam_authenticate.
+  # Without this abstraction they get EACCES on /etc/pam.d/<tool> and fail.
+  #include <abstractions/authentication>
+  #include <abstractions/wutmp>
 
   capability chown,
   capability dac_override,
@@ -78,23 +82,49 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /etc/jabali-panel/migration-secrets/** rw,
   # useradd (and usermod/userdel) read these at startup; inherited via ix.
   # /etc/.pwd.lock is the global useradd/passwd serialisation lock (flock).
-  # useradd writes temp files (e.g. /etc/group.<pid>) atomically before rename.
+  # useradd writes temp files (e.g. /etc/group.<pid>) atomically before rename:
+  #   1. write /etc/group.<pid>          (w on /etc/group.*)
+  #   2. link("/etc/group.<pid>",        (l on /etc/group.* — REQUIRED for hard-link)
+  #           "/etc/group.lock")
+  #   3. rename /etc/group → /etc/group- (rw on /etc/group-)
+  #   4. rename /etc/group.<pid> → /etc/group
+  # Without `l`, useradd fails with exit status 10 ("can't update group file").
+  # Observed in AppArmor audit log: DENIED operation="link" name="/etc/group.lock"
+  # requested_mask="l" (incident 2026-05-10).
   /etc/machine-id              r,
   /etc/login.defs              r,
   /etc/default/useradd         r,
+  # useradd copies /etc/skel/* into the new home dir.
+  /etc/skel/                   r,
+  /etc/skel/**                 r,
   /etc/.pwd.lock               rwk,
   /etc/passwd                  rw,
-  /etc/passwd.*                rw,
+  /etc/passwd.*                rwl,
+  /etc/passwd-                 rw,
+  /etc/passwd+                 rw,
   /etc/group                   rw,
-  /etc/group.*                 rw,
+  /etc/group.*                 rwl,
+  /etc/group-                  rw,
+  /etc/group+                  rw,
   /etc/shadow                  rw,
-  /etc/shadow.*                rw,
+  /etc/shadow.*                rwl,
+  /etc/shadow-                 rw,
+  /etc/shadow+                 rw,
+  # chpasswd uses /etc/nshadow as a temp file on some distros.
+  /etc/nshadow                 rw,
+  /etc/nshadow.*               rwl,
   /etc/gshadow                 rw,
-  /etc/gshadow.*               rw,
+  /etc/gshadow.*               rwl,
+  /etc/gshadow-                rw,
+  /etc/gshadow+                rw,
   /etc/subuid                  rw,
-  /etc/subuid.*                rw,
+  /etc/subuid.*                rwl,
+  /etc/subuid-                 rw,
+  /etc/subuid+                 rw,
   /etc/subgid                  rw,
-  /etc/subgid.*                rw,
+  /etc/subgid.*                rwl,
+  /etc/subgid-                 rw,
+  /etc/subgid+                 rw,
   /etc/mysql/                  r,
   /etc/mysql/**                r,
   /etc/aide/                   r,
@@ -133,10 +163,23 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /etc/systemd/system/jabali-*.service.d/** rw,
   /etc/systemd/system/user-*.slice.d/  rw,
   /etc/systemd/system/user-*.slice.d/** rw,
+  # Per-user login session drop-ins: userSliceEnsureHandler creates
+  # /etc/systemd/system/user@<uid>.service.d/ for lingering config.
+  /etc/systemd/system/user@*.service.d/  rw,
+  /etc/systemd/system/user@*.service.d/** rw,
+  # jabali-agent writes unit files atomically via os.WriteFile to a temp path
+  # then renames. systemd's atomic-write helper creates .tmp-XXXXXXXXXX in the
+  # same directory. Observed DENIED operation="mknod" name=
+  # "/etc/systemd/system/.tmp-3587386458" (incident 2026-05-10).
+  /etc/systemd/system/         rw,
+  /etc/systemd/system/.tmp-*   rw,
   /etc/letsencrypt/            r,
   /etc/letsencrypt/**          rw,
-  /etc/ssl/jabali-selfsigned/  r,
-  /etc/ssl/jabali-selfsigned/** r,
+  # Per-domain TLS certs/keys written here by cert_ensure agent handler.
+  # Observed DENIED operation="mkdir" name="/etc/ssl/jabali-selfsigned/<domain>/"
+  # (incident 2026-05-10) — was read-only, agent creates per-domain subdirs.
+  /etc/ssl/jabali-selfsigned/   rw,
+  /etc/ssl/jabali-selfsigned/** rw,
   /etc/stalwart/               r,
   /etc/stalwart/**             rw,
   /etc/powerdns/               r,
@@ -243,6 +286,7 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /usr/sbin/groupdel           ix,
   /usr/sbin/groupmod           ix,
   /usr/bin/passwd              ix,
+  /usr/sbin/chpasswd           ix,
   /usr/bin/chage               ix,
   /usr/bin/php*                ix,
   /usr/bin/wp                  ix,

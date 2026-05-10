@@ -1209,6 +1209,7 @@ export const FileManagerPage = () => {
           onSelect={(keys) => {
             if (keys.length > 0) {
               const key = keys[0] as string;
+              setCurrentPath(key);
               setExpandedKeys((prev) =>
                 prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
               );
@@ -1260,6 +1261,7 @@ export const FileManagerPage = () => {
             onSelect={(keys) => {
               if (keys.length > 0) {
                 const key = keys[0] as string;
+                setCurrentPath(key);
                 setExpandedKeys((prev) =>
                   prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
                 );

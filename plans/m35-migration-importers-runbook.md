@@ -1,9 +1,10 @@
 # M35 Migration importers — operator runbook
 
-**Scope:** Day-to-day runbook for operators running cPanel-source
-account migrations into jabali2. v1 covers cPanel only via the
-cobra CLI (`jabali migrate import`); admin REST is read-only;
-admin SPA + DA / Hestia / WHM / IMAP importers are roadmap.
+**Scope:** Day-to-day runbook for operators running account migrations
+into jabali2. v1 covers cPanel, DirectAdmin, HestiaCP, and WHM-pkgacct
+via the cobra CLI (`jabali migrate import`) and the admin SPA at
+`/jabali-admin/migrations`. IMAP-only source requires imapsync manually
+(operator path documented in § 2.x below).
 
 **Related:** ADR-0094, `plans/m35-migration-importers.md` (blueprint).
 
@@ -41,17 +42,23 @@ that doesn't collide with the source-side cPanel name if you want
 the source name preserved (e.g. cPanel `bob` → jabali `bob`); the
 runner accepts any valid POSIX username.
 
-### 2.2 Mint a migration_jobs row
+### 2.2 Create a migration job
 
-Until the admin SPA Step 8 lands, this is hand-SQL:
+**Via admin SPA** (preferred): open `/jabali-admin/migrations`, click
+**New Migration**, select source kind, fill host / credentials / source
+username, and submit. The drawer walks through the multi-step workflow.
 
+**Via CLI** (alternative for scripting / headless hosts): the API
+creates the job on the first `jabali migrate import` run when passed
+`--source-kind`, `--source-host`, `--source-user`, and `--target-user`.
+
+**Via SQL** (break-glass only):
 ```sql
 INSERT INTO migration_jobs
   (id, source_kind, source_host, source_user, state, started_at, created_at, updated_at)
 VALUES
   ('<NEW_ULID>', 'cpanel', 'src.example.com', 'bob', 'pending', NOW(6), NOW(6), NOW(6));
 ```
-
 The ULID can be generated via `jabali ulid` or any online ULID
 generator. Note the value — every subsequent step needs it.
 
@@ -191,13 +198,13 @@ needed.
 - **Kratos identity** not created by the runner (CreateUser
   orchestrator gap). Operator pre-creates user; password reset
   on first login lazy-creates the identity.
-- **DA / Hestia / WHM-pkgacct / IMAP-only** sources not yet
-  wired — runner refuses anything other than `cpanel`. Wave A
-  Step 4 ships DA next.
+- **IMAP-only** source is a v1 stub — runner returns a clear error
+  directing the operator to run imapsync manually (see § 2.x).
+  Native imapsync integration is a v1 follow-up.
 - **Resume loses agent-side mid-rsync state.** If `home` stage
   dies mid-rsync, resume re-runs rsync from scratch (rsync's
   own `--partial` would help but isn't on the agent invocation
-  yet — captured in Step 8 follow-up).
+  yet — v1 follow-up).
 
 ## 5. Recovery scenarios
 

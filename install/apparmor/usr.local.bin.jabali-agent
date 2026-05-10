@@ -254,6 +254,7 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /usr/sbin/nginx              ix,
   /bin/systemctl               ix,
   /usr/bin/systemctl           ix,
+  /usr/bin/loginctl            ix,
   /usr/bin/systemd-run         ix,
   /usr/sbin/sshd               ix,
   /usr/local/maldetect/maldet  ix,

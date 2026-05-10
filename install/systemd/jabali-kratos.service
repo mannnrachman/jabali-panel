@@ -22,7 +22,7 @@ Group=jabali-sockets
 # /etc/jabali-panel/kratos.yml (root:jabali 0640), dying at startup
 # with "permission denied". Mirror pattern already used by
 # jabali-stalwart.service for the same reason.
-SupplementaryGroups=jabali
+SupplementaryGroups=jabali mysql
 Slice=jabali.slice
 
 # RuntimeDirectory creates /run/jabali-kratos/ as jabali:jabali-sockets 0750

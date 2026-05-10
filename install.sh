@@ -5063,6 +5063,27 @@ install_crowdsec_appsec() {
       cscli collections install crowdsecurity/wordpress --force
   fi
 
+  # nginx collection — access log parsers required for the jabali-nginx-logs
+  # acquisition (step 5 below). Installs crowdsecurity/nginx-logs parser so
+  # CrowdSec can read COMBINED-format access logs.
+  if ! cscli collections list 2>/dev/null | grep -q 'crowdsecurity/nginx'; then
+    _spin "cscli collections install nginx" \
+      cscli collections install crowdsecurity/nginx
+  fi
+
+  # Extra WP scenarios not bundled in the wordpress collection.
+  # http-bf-wordpress_bf_xmlrpc: Hub warns some plugins use xmlrpc (not in
+  # collection by default). Jabali blocks xmlrpc.php at nginx (M43), so this
+  # scenario provides CrowdSec signal if that block is lifted or bypassed.
+  if ! cscli scenarios list 2>/dev/null | grep -q 'crowdsecurity/http-bf-wordpress_bf_xmlrpc'; then
+    _spin "cscli scenarios install http-bf-wordpress_bf_xmlrpc" \
+      cscli scenarios install crowdsecurity/http-bf-wordpress_bf_xmlrpc
+  fi
+  if ! cscli scenarios list 2>/dev/null | grep -q 'crowdsecurity/http-wordpress_rest_api_probing'; then
+    _spin "cscli scenarios install http-wordpress_rest_api_probing" \
+      cscli scenarios install crowdsecurity/http-wordpress_rest_api_probing
+  fi
+
   # 3. Jabali AppSec config — our own appsec-CONFIG file. Loads
   #    base-config + vpatch-* + generic-* plus carries the geoblock
   #    pre_eval hook. The agent rewrites this file on every admin Apply
@@ -5115,6 +5136,29 @@ install_crowdsec_appsec() {
     printf '%s' "$desired_acquis" >"$tmp"
     install -m 0644 -o root -g root "$tmp" "$acquis_file"
     rm -f "$tmp"
+  fi
+
+  # 5. Nginx access-log acquisition — feeds *.access.log (COMBINED format)
+  #    to the crowdsecurity/nginx parser installed above. Error logs are
+  #    intentionally excluded: they use a different format and caused ~96%
+  #    parse failures when the default acquis.yaml glob matched both
+  #    *.access.log and *.error.log.
+  local nginx_acquis_file="$acquis_dir/jabali-nginx-logs.yaml"
+  local desired_nginx_acquis=$'# Managed by jabali install.sh.\n# Per-domain nginx access logs in COMBINED format.\n# *.error.log intentionally excluded — different format.\nfilenames:\n  - /var/log/nginx/*.access.log\nlabels:\n  type: nginx\n'
+  if [[ ! -f "$nginx_acquis_file" ]] || ! cmp -s <(printf '%s' "$desired_nginx_acquis") "$nginx_acquis_file"; then
+    _log "writing $nginx_acquis_file"
+    local tmp2
+    tmp2="$(mktemp --tmpdir jabali-nginx-acquis.XXXXXX)"
+    printf '%s' "$desired_nginx_acquis" >"$tmp2"
+    install -m 0644 -o root -g root "$tmp2" "$nginx_acquis_file"
+    rm -f "$tmp2"
+  fi
+  # Narrow default CrowdSec acquis.yaml nginx glob if it still matches *.log
+  # (access + error together). Error log format breaks the nginx parser.
+  local default_acquis="/etc/crowdsec/acquis.yaml"
+  if [[ -f "$default_acquis" ]] && grep -q '/var/log/nginx/\*\.log' "$default_acquis"; then
+    _log "narrowing nginx glob in $default_acquis to *.access.log"
+    sed -i 's|/var/log/nginx/\*\.log|/var/log/nginx/*.access.log|g' "$default_acquis"
   fi
 
   # Remove legacy appsec.sock ExecStartPost lines if the previous

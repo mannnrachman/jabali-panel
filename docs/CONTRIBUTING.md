@@ -62,7 +62,7 @@ npm run dev                        # http://localhost:5173, proxies /api → :84
 | `make ui-install` | Install panel-ui npm deps (clean, reproducible) |
 | `make ui-build` | Build the panel-ui SPA (required before E2E — tests run against `dist/`) |
 | `make test-ui` | Run panel-ui unit tests (vitest) |
-| `make test-e2e` | Run Playwright E2E suite against the built SPA (auto-runs `ui-build` first) |
+| `make aa-smoke` | Verify every loaded jabali AppArmor profile reaches its declared sockets (M40.1) |
 | `make test-all` | Run everything: Go tests + vitest + Playwright |
 <!-- /AUTO-GENERATED -->
 

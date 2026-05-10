@@ -53,6 +53,61 @@ Full reindex on main after merging substantive structural changes (new package, 
 
 <!-- cbm:end -->
 
+---
+
+# MCP Tools — Use These First
+
+Four MCP categories are available in every session. Reach for them **before** falling back to built-in knowledge, grep, or manual browser checks.
+
+## Context7 — Live Library Docs
+
+Use **before** writing any code that calls a library API (GORM, Gin, antd, React, Stalwart JMAP, etc.). Training-data snapshots lag; Context7 returns version-pinned, current docs.
+
+```
+1. mcp__plugin_everything-claude-code_context7__resolve-library-id  → get library ID
+2. mcp__plugin_everything-claude-code_context7__query-docs           → fetch docs / examples
+```
+
+**Trigger**: any time you're about to write a call to an external package and you're not 100% certain of the current API signature or option names.
+
+## jabali-db — Live Database Queries
+
+Use to inspect live schema, verify migration results, or check data state — instead of guessing from migration files.
+
+```
+mcp__jabali-db__mysql_query   → run SELECT / SHOW / EXPLAIN against the local DB
+```
+
+**Trigger**: verifying migration ran, checking FK constraints, inspecting live data during debugging.
+
+## Chrome DevTools / claude-in-chrome — UI Validation
+
+Use after any UI change instead of saying "should work" or "test manually".
+
+```
+mcp__chrome-devtools__take_screenshot   → capture current state
+mcp__chrome-devtools__navigate_page     → open a URL
+mcp__chrome-devtools__evaluate_script   → run JS in page context
+mcp__claude-in-chrome__tabs_context_mcp → see open tabs before creating new ones
+```
+
+**Trigger**: after any `.tsx` change, after styling fixes, after API wiring changes that affect UI output.
+
+## antd / shadcn-ui — Component Docs
+
+Use before writing or customizing any antd or shadcn component. Avoid guessing prop names.
+
+```
+mcp__antd__antd_info    → component props + API
+mcp__antd__antd_demo    → runnable example
+mcp__antd__antd_token   → design tokens for theming
+mcp__shadcn-ui__get_component → shadcn component source + usage
+```
+
+**Trigger**: any new antd/shadcn component, any theming or token change.
+
+---
+
 ## Sub-agent mandate (applies to every agent spawned in this project)
 
 Any agent launched via the `Agent` tool in the jabali2 worktree MUST:

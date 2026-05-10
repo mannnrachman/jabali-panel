@@ -23,6 +23,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
 
+	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/migrate"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/migrate/cpanel"
@@ -57,9 +58,13 @@ failed stage. Already-done stages are skipped.`,
 			jobsRepo := repository.NewMigrationJobRepository(sharedDB)
 			usersRepo := repository.NewUserRepository(sharedDB)
 			dbsRepo := repository.NewDatabaseRepository(sharedDB)
+			dbUsersRepo := repository.NewDatabaseUserRepository(sharedDB)
+			dbGrantsRepo := repository.NewDatabaseUserGrantRepository(sharedDB)
 			cronsRepo := repository.NewCronJobRepository(sharedDB)
 			sshRepo := repository.NewSSHKeyRepository(sharedDB)
 			domainsRepo := repository.NewDomainRepository(sharedDB)
+			mbRepo := repository.NewMailboxRepository(sharedDB)
+			kc := kratosclient.NewClient(sharedCfg.Auth.Kratos.PublicURL, sharedCfg.Auth.Kratos.AdminURL)
 
 			job, err := jobsRepo.FindByID(ctx, jobID)
 			if err != nil {
@@ -240,7 +245,7 @@ failed stage. Already-done stages are skipped.`,
 					migrate.StageAnalyze:  cpanelAnalyzeCallback(),
 					migrate.StageValidate: validateStageCallback(usersRepo, domainsRepo, *user.Username),
 					migrate.StageRestore: cpanelRestoreCallback(
-						sshRepo, cronsRepo, dbsRepo, domainsRepo,
+						sshRepo, cronsRepo, dbsRepo, dbUsersRepo, dbGrantsRepo, domainsRepo, mbRepo, usersRepo, kc,
 					),
 				},
 			}
@@ -328,7 +333,12 @@ func cpanelRestoreCallback(
 	sshRepo repository.SSHKeyRepository,
 	cronRepo repository.CronJobRepository,
 	dbsRepo repository.DatabaseRepository,
+	dbUsersRepo repository.DatabaseUserRepository,
+	dbGrantsRepo repository.DatabaseUserGrantRepository,
 	domainsRepo repository.DomainRepository,
+	mbRepo repository.MailboxRepository,
+	usersRepo repository.UserRepository,
+	kc *kratosclient.Client,
 ) migrate.StageCallback {
 	return func(ctx context.Context, job *models.MigrationJob, payload any) (int64, []string, error) {
 		var _ agent.AgentInterface = sharedAgent // compile-time guard
@@ -353,7 +363,7 @@ func cpanelRestoreCallback(
 		warnings = append(warnings, fmt.Sprintf("cron: created=%d", cronRes.Created))
 		warnings = append(warnings, cronRes.Skipped...)
 
-		dbsRes, err := cpanel.ImportDatabases(ctx, dbsRepo, sharedAgent, p.parsed, p.targetUserID, p.targetUsername)
+		dbsRes, err := cpanel.ImportDatabases(ctx, dbsRepo, dbUsersRepo, dbGrantsRepo, sharedAgent, p.parsed, p.targetUserID, p.targetUsername)
 		if err != nil {
 			return bytes, warnings, fmt.Errorf("databases: %w", err)
 		}
@@ -382,7 +392,7 @@ func cpanelRestoreCallback(
 		warnings = append(warnings, fmt.Sprintf("domains: created=%d email_enabled=%d", domainsRes.Created, domainsRes.EmailEnabled))
 		warnings = append(warnings, domainsRes.Skipped...)
 
-		mailRes, err := cpanel.ImportMailboxes(ctx, p.parsed, sharedAgent, job.ID)
+		mailRes, err := cpanel.ImportMailboxes(ctx, p.parsed, sharedAgent, job.ID, mbRepo, domainsRepo)
 		if err != nil {
 			return bytes, warnings, fmt.Errorf("mailboxes: %w", err)
 		}
@@ -390,6 +400,17 @@ func cpanelRestoreCallback(
 			"mailboxes: maildirs=%d messages_found=%d messages_pushed=%d bytes_pushed=%d",
 			mailRes.MaildirsFound, mailRes.MessagesFound, mailRes.MessagesPushed, mailRes.BytesPushed))
 		warnings = append(warnings, mailRes.Skipped...)
+
+		// Ensure the migrated user has a Kratos identity so they can log in.
+		if kc != nil && usersRepo != nil {
+			targetUser, uErr := usersRepo.FindByID(ctx, p.targetUserID)
+			if uErr != nil {
+				warnings = append(warnings, fmt.Sprintf("kratos: load user %s: %v", p.targetUserID, uErr))
+			} else {
+				status, newID, _ := rebuildOne(ctx, kc, usersRepo, targetUser, "168h")
+				warnings = append(warnings, fmt.Sprintf("kratos: status=%s new_id=%s", status, newID))
+			}
+		}
 
 		return bytes, warnings, nil
 	}

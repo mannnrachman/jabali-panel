@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
@@ -40,6 +42,8 @@ var dbRestoreNameRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`)
 func ImportDatabases(
 	ctx context.Context,
 	dbsRepo repository.DatabaseRepository,
+	dbUsersRepo repository.DatabaseUserRepository,
+	dbGrantsRepo repository.DatabaseUserGrantRepository,
 	agentClient agent.AgentInterface,
 	parsed *ParsedTarball,
 	targetUserID, targetUsername string,
@@ -143,6 +147,68 @@ func ImportDatabases(
 			continue
 		}
 		res.Created++
+
+		// Best-effort: create a MariaDB user with the same name as
+		// the DB and GRANT ALL. Failure records a warning but never
+		// rolls back the already-restored DB.
+		if dbUsersRepo != nil && dbGrantsRepo != nil {
+			plainPwd := ids.NewULID()
+			hash, hashErr := bcrypt.GenerateFromPassword([]byte(plainPwd), bcrypt.DefaultCost)
+			if hashErr != nil {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("%s: bcrypt db user: %v", finalName, hashErr))
+			} else {
+				userCtx, userCancel := context.WithTimeout(ctx, 30*time.Second)
+				_, userErr := agentClient.Call(userCtx, "db_user.create", map[string]any{
+					"db_user_name": finalName,
+					"password":     plainPwd,
+				})
+				userCancel()
+				if userErr != nil {
+					res.Skipped = append(res.Skipped, fmt.Sprintf("%s: db_user.create: %v", finalName, userErr))
+				} else {
+					duRow := &models.DatabaseUser{
+						ID:           ids.NewULID(),
+						UserID:       targetUserID,
+						Username:     finalName,
+						Engine:       "mariadb",
+						PasswordHash: string(hash),
+						CreatedAt:    time.Now().UTC(),
+						UpdatedAt:    time.Now().UTC(),
+					}
+					if duErr := dbUsersRepo.Create(ctx, duRow); duErr != nil {
+						res.Skipped = append(res.Skipped, fmt.Sprintf("%s: database_users row: %v", finalName, duErr))
+					} else {
+						grantCtx, grantCancel := context.WithTimeout(ctx, 30*time.Second)
+						_, grantErr := agentClient.Call(grantCtx, "db_user.grant", map[string]any{
+							"db_name":      finalName,
+							"db_user_name": finalName,
+							"privileges":   []string{"ALL"},
+						})
+						grantCancel()
+						if grantErr != nil {
+							res.Skipped = append(res.Skipped, fmt.Sprintf("%s: db_user.grant: %v", finalName, grantErr))
+						} else {
+							gRow := &models.DatabaseUserGrant{
+								ID:             ids.NewULID(),
+								DatabaseID:     row.ID,
+								DatabaseUserID: duRow.ID,
+								GrantLevel:     "rw",
+								Privileges:     "ALL",
+								CreatedAt:      time.Now().UTC(),
+								UpdatedAt:      time.Now().UTC(),
+							}
+							if gErr := dbGrantsRepo.Create(ctx, gRow); gErr != nil {
+								res.Skipped = append(res.Skipped, fmt.Sprintf("%s: database_user_grants row: %v", finalName, gErr))
+							} else {
+								res.Skipped = append(res.Skipped, fmt.Sprintf(
+									"%s: db_user created (temp_pwd=%s) — change via panel",
+									finalName, plainPwd))
+							}
+						}
+					}
+				}
+			}
+		}
 	}
 	return res, nil
 }

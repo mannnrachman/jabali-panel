@@ -6654,6 +6654,14 @@ AIDE_CONF
 
   install -d -m 0755 /var/log/aide
 
+  # Remove aide-common's stock conf.d fragments — they cover Apache, Dovecot,
+  # Postfix, and other services Jabali doesn't run. Our standalone aide.conf
+  # has no @@include, so they're dead files; purging avoids confusion.
+  if compgen -G '/etc/aide/aide.conf.d/*' >/dev/null 2>&1; then
+    rm -f /etc/aide/aide.conf.d/*
+    _ok "removed stock /etc/aide/aide.conf.d/* fragments (unused by jabali config)"
+  fi
+
   # Disable Debian's stock /etc/cron.daily/aide. aide-common ships a
   # cron job that runs aide check as the `_aide` user, which fails on
   # our 0755 root:root log dir (Permission denied on aide.report.log

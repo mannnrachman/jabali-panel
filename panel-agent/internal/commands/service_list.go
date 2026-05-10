@@ -44,7 +44,7 @@ type ServiceListResponse struct {
 var BaseAllowedServices = []string{
 	"nginx",
 	"mariadb",
-	"postgresql", // M37 PG parity (ADR-0091). Stays masked until
+	"postgresql", // M37 PG parity (ADR-0091). Optional — hidden unless active.
 	"redis-server",
 	// Mail stack (M6). The jabali-branded names are what install.sh
 	// actually creates — the upstream's own "stalwart-mail.service" is
@@ -60,6 +60,14 @@ var BaseAllowedServices = []string{
 	"jabali-agent",
 	"ssh",  // Debian unit name for OpenSSH is ssh.service, not sshd.service
 	"cron", // cron.service on Debian (cronie on RHEL — not our target OS)
+}
+
+// optionalServices are included in the list only when active. Services that
+// jabali doesn't require but may co-exist with (e.g. postgresql installed by
+// another app) are hidden when inactive to avoid confusing operators.
+var optionalServices = map[string]bool{
+	"postgresql":   true,
+	"jabali-webmail": true,
 }
 
 // AllowedServices returns the agent-probe allow-list.
@@ -90,6 +98,12 @@ func serviceListHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 		// masks global php-fpm services per ADR-0025). Either way, showing
 		// it to the operator with a greyed-out Restart button is noise.
 		if status.LoadState == "not-found" || status.LoadState == "" || status.LoadState == "masked" {
+			continue
+		}
+		// Optional services (e.g. postgresql) are hidden unless active.
+		// They may be installed by co-resident apps that jabali doesn't
+		// manage; surfacing them as "inactive" just confuses operators.
+		if optionalServices[svc] && status.Active != "active" {
 			continue
 		}
 		services = append(services, status)

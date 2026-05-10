@@ -5079,10 +5079,6 @@ install_crowdsec_appsec() {
     _spin "cscli scenarios install http-bf-wordpress_bf_xmlrpc" \
       cscli scenarios install crowdsecurity/http-bf-wordpress_bf_xmlrpc
   fi
-  if ! cscli scenarios list 2>/dev/null | grep -q 'crowdsecurity/http-wordpress_rest_api_probing'; then
-    _spin "cscli scenarios install http-wordpress_rest_api_probing" \
-      cscli scenarios install crowdsecurity/http-wordpress_rest_api_probing
-  fi
 
   # 3. Jabali AppSec config — our own appsec-CONFIG file. Loads
   #    base-config + vpatch-* + generic-* plus carries the geoblock
@@ -6415,7 +6411,7 @@ apply_apparmor_profiles() {
     apparmor_parser -r "/etc/apparmor.d/$name" 2>/dev/null || \
       _warn "apparmor_parser -r failed for $name — check 'apparmor_parser -d /etc/apparmor.d/$name'"
 
-    if [[ $first_install -eq 1 ]] || [[ "$prev_mode" == "complain" ]]; then
+    if [[ $first_install -eq 1 ]] || [[ "$prev_mode" == "complain" ]] || [[ -z "$prev_mode" ]]; then
       aa-complain "/etc/apparmor.d/$name" >/dev/null 2>&1 || true
     elif [[ "$prev_mode" == "enforce" ]]; then
       aa-enforce "/etc/apparmor.d/$name" >/dev/null 2>&1 || true

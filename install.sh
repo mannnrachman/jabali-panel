@@ -5080,13 +5080,6 @@ install_crowdsec_appsec() {
       cscli scenarios install crowdsecurity/http-bf-wordpress_bf_xmlrpc
   fi
 
-  # phpMyAdmin collection — bf + enumeration scenarios. Jabali ships
-  # phpMyAdmin at /phpmyadmin (M7); protect it the same as WordPress.
-  if ! cscli collections list 2>/dev/null | grep -q 'crowdsecurity/phpmyadmin'; then
-    _spin "cscli collections install phpmyadmin" \
-      cscli collections install crowdsecurity/phpmyadmin
-  fi
-
   # 3. Jabali AppSec config — our own appsec-CONFIG file. Loads
   #    base-config + vpatch-* + generic-* plus carries the geoblock
   #    pre_eval hook. The agent rewrites this file on every admin Apply

@@ -726,7 +726,6 @@ POLICYEOF
     apt-get install -y -qq --no-install-recommends \
       git curl ca-certificates build-essential tar bzip2 unzip openssl gnupg \
       mariadb-server mariadb-client \
-      php-cli php-mysql php-curl php-xml php-mbstring php-gd php-zip \
       composer \
       rsync acl \
       systemd-resolved \
@@ -9055,7 +9054,6 @@ SQL
     restic
     sshpass
     composer
-    php-cli php-mysql php-curl php-xml php-mbstring php-gd php-zip
     crowdsec crowdsec-firewall-bouncer-nftables crowdsec-firewall-bouncer-iptables crowdsec-nginx-bouncer
     auditd audispd-plugins
     apparmor apparmor-utils apparmor-profiles-extra

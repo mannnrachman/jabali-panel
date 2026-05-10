@@ -8088,8 +8088,18 @@ install_kratos() {
   # Kratos emits ~2 JSON-log lines per migration (one per file, bidirectional).
   # On a fresh install that's hundreds of lines — silence the chatter and
   # surface the full log only on failure.
+  #
+  # aa-exec -p unconfined: on Ubuntu 24.04 / AppArmor 4.0, flags=(complain)
+  # still enforces unix-socket connect restrictions (EACCES on
+  # /var/run/mysqld/mysqld.sock even in an empty complain-mode profile).
+  # The migration is an admin one-shot, not the daemon, so run it unconfined.
+  # If AppArmor or aa-exec is absent the plain invocation is used as fallback.
+  local _kratos_migrate_cmd=("$kratos_binary" migrate sql -e -c "$kratos_config" --yes)
+  if [[ -d /sys/kernel/security/apparmor ]] && command -v aa-exec >/dev/null 2>&1; then
+    _kratos_migrate_cmd=(aa-exec -p unconfined -- "${_kratos_migrate_cmd[@]}")
+  fi
   local kratos_migrate_log="/tmp/jabali-kratos-migrate.$$.log"
-  if ! "$kratos_binary" migrate sql -e -c "$kratos_config" --yes >"$kratos_migrate_log" 2>&1; then
+  if ! "${_kratos_migrate_cmd[@]}" >"$kratos_migrate_log" 2>&1; then
     _err "Kratos database migrations failed — full output:"
     cat "$kratos_migrate_log" >&2
     rm -f "$kratos_migrate_log"

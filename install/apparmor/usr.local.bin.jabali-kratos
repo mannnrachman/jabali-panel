@@ -4,9 +4,9 @@
 # public per M25). MariaDB DSN over unix socket.
 #
 # AA 4.x (Debian 13) enforces the `unix` mediation class separately
-# from `network unix`. `abstractions/mysql` includes the MariaDB socket
-# path rules but not the AA 4.x `unix` access class; we must add it
-# explicitly so connect(2) to /run/mysqld/mysqld.sock succeeds.
+# from `network unix`. We list socket paths explicitly (matching the
+# stalwart-mail pattern) rather than including abstractions/mysql, which
+# can conflict or be absent on the target system.
 
 #include <tunables/global>
 
@@ -15,7 +15,6 @@ profile jabali-kratos /usr/local/bin/kratos {
   #include <abstractions/nameservice>
   #include <abstractions/openssl>
   #include <abstractions/ssl_certs>
-  #include <abstractions/mysql>
 
   capability net_bind_service,
   capability setuid,

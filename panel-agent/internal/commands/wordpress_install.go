@@ -493,6 +493,14 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 		}
 	}
 
+	// Block xmlrpc.php at the nginx layer. xmlrpc.php returns HTTP 200
+	// for valid XML payloads, so CrowdSec brute-force scenarios never
+	// trigger on it. Best-effort: install is already done, don't roll
+	// back on a snippet-write failure.
+	if wpDomain, domErr := DomainFromSiteURL(req.SiteURL); domErr == nil {
+		_ = writeWordPressXmlrpcBlock(ctx, wpDomain)
+	}
+
 	return wordpressInstallResp{
 		Version: version,
 	}, nil

@@ -32,6 +32,7 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
   const logsEndRef = useRef<HTMLDivElement>(null);
   const pausedLogsRef = useRef<string[]>([]);
   const goAccessFrameRef = useRef<HTMLIFrameElement>(null);
+  const scrollPosRef = useRef<{ top: number; left: number }>({ top: 0, left: 0 });
 
   const scrollToBottom = () => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -81,6 +82,13 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
         // the array unbounded would just leak memory.
         const logLine = event.data;
         if (logType === "goaccess") {
+          // Save scroll position before triggering the srcDoc update so
+          // the onLoad handler can restore it after the iframe reloads.
+          const iframe = goAccessFrameRef.current;
+          const el = iframe?.contentDocument?.scrollingElement;
+          if (el) {
+            scrollPosRef.current = { top: el.scrollTop, left: el.scrollLeft };
+          }
           setLogs([logLine]);
         } else {
           // Strip trailing CR/LF so the render-time join("\n") doesn't
@@ -172,7 +180,15 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
                 display: "block",
               }}
               title="GoAccess Dashboard"
-              sandbox="allow-scripts"
+              sandbox="allow-scripts allow-same-origin"
+              onLoad={() => {
+                const iframe = goAccessFrameRef.current;
+                const el = iframe?.contentDocument?.scrollingElement;
+                if (el && scrollPosRef.current.top > 0) {
+                  el.scrollTop = scrollPosRef.current.top;
+                  el.scrollLeft = scrollPosRef.current.left;
+                }
+              }}
             />
           )}
         </div>

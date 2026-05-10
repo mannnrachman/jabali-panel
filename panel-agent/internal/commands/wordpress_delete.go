@@ -100,6 +100,10 @@ func wordpressDeleteHandler(ctx context.Context, params json.RawMessage) (any, e
 		_ = cmd.Run()
 	}
 
+	// Remove the xmlrpc.php nginx deny snippet written at install time.
+	// Best-effort — a stale snippet causes no harm (it only denies xmlrpc).
+	_ = removeWordPressXmlrpcBlock(ctx, req.Domain)
+
 	// Restore the domain.create placeholder index.html so the docroot
 	// doesn't 403 after delete. Only if no index.html exists — don't
 	// clobber a user-uploaded one. Domain is optional in the request;

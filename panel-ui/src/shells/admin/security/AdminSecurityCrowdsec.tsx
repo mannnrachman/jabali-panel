@@ -45,6 +45,7 @@ import {
   ThunderboltOutlined,
   WarningOutlined,
   DeleteOutlined,
+  QuestionCircleOutlined,
 } from "@icons";
 import { RowActionButton } from "../../../components/RowActionButton";
 import { ISO3166_COUNTRIES } from "../../../data/iso3166";
@@ -1029,6 +1030,19 @@ const OPTION_LABEL: Record<string, string> = {
   console_management: "Console-managed decisions",
 };
 
+const OPTION_TOOLTIP: Record<string, string> = {
+  custom:
+    "Your own detection scenarios not from the CrowdSec Hub. Sharing helps CrowdSec improve detection, but exposes your private rule logic to the Console.",
+  manual:
+    "Bans and unbans you added by hand (e.g. via cscli decisions add). Forwarding makes them visible in the Console dashboard.",
+  tainted:
+    "Hub scenarios you have locally modified. CrowdSec marks these 'tainted' because they differ from the official version. Enable only if your modified logic is not sensitive.",
+  context:
+    "Extra metadata attached to each alert — such as HTTP paths, User-Agent strings, or POST body fragments. Useful for threat analysis but may contain PII; enable only if acceptable under your privacy policy.",
+  console_management:
+    "Allow the Console to push block and captcha decisions to this engine remotely. Required for centralised blocklist management from app.crowdsec.net.",
+};
+
 const ConsoleCard = () => {
   const enroll = useEnrollCrowdsecConsole();
   const disenroll = useDisenrollCrowdsecConsole();
@@ -1214,7 +1228,16 @@ const ConsoleCard = () => {
             dataIndex="name"
             title="Option"
             key="name"
-            render={(n: string) => OPTION_LABEL[n] ?? n}
+            render={(n: string) => (
+              <Space size={6}>
+                {OPTION_LABEL[n] ?? n}
+                {OPTION_TOOLTIP[n] && (
+                  <Tooltip title={OPTION_TOOLTIP[n]}>
+                    <QuestionCircleOutlined style={{ color: "var(--ant-color-text-secondary)", cursor: "help" }} />
+                  </Tooltip>
+                )}
+              </Space>
+            )}
           />
           <Table.Column<CrowdsecConsoleOption>
             dataIndex="description"

@@ -26,6 +26,7 @@ import {
   ChevronRight,
   ChevronUp,
   CircleAlert,
+  CircleHelp,
   Clock,
   Code,
   Copy,
@@ -226,6 +227,7 @@ export const CheckCircleTwoTone = shim(CheckCircle2);
 export const CloseOutlined = shim(X);
 export const CloseCircleOutlined = shim(CircleX);
 export const ExclamationCircleOutlined = shim(CircleAlert ?? AlertCircle);
+export const QuestionCircleOutlined = shim(CircleHelp);
 export const WarningOutlined = shim(AlertTriangle);
 export const LoadingOutlined = shim(Loader2, { spin: true });
 export const InboxOutlined = shim(Inbox);

@@ -58,12 +58,19 @@ logs/
 *.png
 !panel-ui/public/**/*.png
 !docs/**/*.png
-.claude/worktrees/
-.claude/scheduled_tasks.lock
-.claude/scheduled_tasks/
+# Claude Code local tooling — developer-machine only, never project artifacts
+.claude/
+AGENTS.md
 
 # direnv project-scoped env (DB creds etc.)
 .envrc
 .direnv/
 .gitnexus
 tools/aa-smoke/aa-smoke
+
+# Compiled binaries at repo root
+/jabali-ssh-shell
+
+# Ephemeral snapshot / report files from CI or manual runs
+*-page-snapshot.yml
+*-e2e-test-report.md

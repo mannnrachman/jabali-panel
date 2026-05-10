@@ -644,7 +644,7 @@ func accountEnsureInRegistry(ctx context.Context, email string) error {
 			"#a1": map[string]any{
 				"name":     localPart,
 				"domainId": domainID,
-				"type":     "Individual",
+				"@type":    "Individual",
 			},
 		},
 	}

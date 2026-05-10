@@ -6541,6 +6541,13 @@ apply_apparmor_profiles() {
       fi
     fi
 
+    # Remove any stale aa-disable symlink before reloading. aa-disable
+    # creates /etc/apparmor.d/disable/$name → ../etc/apparmor.d/$name;
+    # on upgrade runs where the profile was previously disabled the
+    # symlink causes "Followed too many links" when apparmor_parser or
+    # aa-complain try to re-read the profile.
+    rm -f "/etc/apparmor.d/disable/$name"
+
     install -m 0644 -o root -g root "$profile" "/etc/apparmor.d/$name"
     apparmor_parser -r "/etc/apparmor.d/$name" 2>/dev/null || \
       _warn "apparmor_parser -r failed for $name — check 'apparmor_parser -d /etc/apparmor.d/$name'"
@@ -8598,6 +8605,7 @@ main() {
   # fresh install that directory does not exist until the repo is cloned.
   install_apparmor
   install_aide
+  install_snuffleupagus
   protect_panel_docs
   # M25: source the socket-helper definitions now that the repo's install/
   # tree is on disk. Steps 2–5 will call verify_socket_perms /

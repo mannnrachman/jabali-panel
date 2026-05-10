@@ -4856,6 +4856,22 @@ install_crowdsec() {
     cscli hub update --error 2>&1 | sed 's/^/    /' || _warn "cscli hub update non-zero — surface via 'cscli hub update' for details"
   fi
 
+  # Pre-flight: install appsec collections that jabali-appsec.yaml references
+  # via inband_rules wildcards (vpatch-*, generic-*, crs-*). CrowdSec refuses
+  # to start if any referenced rule pattern matches zero files. These cscli
+  # calls are LAPI-independent — they write hub files locally. Must run before
+  # the start/restart attempt below.
+  local _cs_pre_collection
+  for _cs_pre_collection in \
+      crowdsecurity/appsec-virtual-patching \
+      crowdsecurity/appsec-generic-rules \
+      crowdsecurity/appsec-crs; do
+    if ! cscli collections list 2>/dev/null | grep -q "${_cs_pre_collection}"; then
+      _spin "cscli collections install ${_cs_pre_collection} (pre-flight)" \
+        cscli collections install "${_cs_pre_collection}" --force
+    fi
+  done
+
   # Pick the firewall bouncer matching the kernel backend. Trixie+
   # defaults to nftables; bookworm uses iptables. apt-cache check guards
   # against packaging drift (both variants exist in upstream repo).

@@ -6121,6 +6121,12 @@ install_audit_exec() {
 -a always,exit -F arch=b64 -S execve -F path=/usr/bin/socat    -F uid>=1000 -F auid=4294967295 -k jabali_web_exec
 -a always,exit -F arch=b64 -S execve -F path=/usr/bin/python3  -F uid>=1000 -F auid=4294967295 -k jabali_web_exec
 -a always,exit -F arch=b64 -S execve -F path=/usr/bin/perl     -F uid>=1000 -F auid=4294967295 -k jabali_web_exec
+
+# --- jabali daemon binary integrity: detect tamper (write) + unexpected exec ---
+-w /usr/local/bin/jabali            -p wx -k jabali_bin_tamper
+-w /usr/local/bin/jabali-agent      -p wx -k jabali_bin_tamper
+-w /usr/local/bin/jabali-panel-api  -p wx -k jabali_bin_tamper
+-w /usr/local/bin/jabali-kratos     -p wx -k jabali_bin_tamper
 AUDIT_RULES
 
   # Idempotent: only re-render + reload if checksum changed.
@@ -6130,7 +6136,7 @@ AUDIT_RULES
       augenrules --load >/dev/null 2>&1 || \
         _warn "augenrules --load failed — auditd may need a restart"
     fi
-    _ok "auditd jabali-exec.rules installed (28 rules: susp_exec + web_exec)"
+    _ok "auditd jabali-exec.rules installed (32 rules: susp_exec + web_exec + bin_tamper)"
   fi
   rm -f "$rules_tmp"
 

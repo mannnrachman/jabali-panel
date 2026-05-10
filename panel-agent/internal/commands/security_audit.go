@@ -105,7 +105,7 @@ func mwAuditByUserHandler(ctx context.Context, raw json.RawMessage) (any, error)
 	return auditEventsResponse{Events: events}, nil
 }
 
-// runAuditLog greps auditLogPath for both jabali audit keys and returns
+// runAuditLog greps auditLogPath for all jabali audit keys and returns
 // the most recent `limit` events. uidFilter (when non-empty) restricts
 // results to a specific numeric UID (matched against both auid and uid
 // fields so PHP-FPM web workers are included).
@@ -117,7 +117,7 @@ func runAuditLog(ctx context.Context, uidFilter, since string, limit int) ([]aud
 	defer cancel()
 
 	cmd := osexec.CommandContext(ctx, "grep", "-hE",
-		`key="jabali_(susp|web)_exec"`, auditLogPath)
+		`key="jabali_(susp|web)_exec|jabali_bin_tamper"`, auditLogPath)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, mwInternal("audit grep stdout pipe", err)

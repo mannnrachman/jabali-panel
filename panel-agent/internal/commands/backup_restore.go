@@ -419,6 +419,37 @@ func applyAccountRestore(
 				continue
 			}
 
+			// Ensure each domain from the backed-up mailboxes exists in
+			// Stalwart before applying the account plan. stalwart-cli apply
+			// fails with "domain not found" when the domain was never
+			// registered (fresh DR host or domain.email_enable not yet run).
+			// Items[*] are "user@domain" strings from the backup manifest.
+			if stalwartActive(ctx) {
+				seen := map[string]struct{}{}
+				for _, mb := range st.Items {
+					_, dom, ok := splitMailbox(mb)
+					if !ok || dom == "" {
+						continue
+					}
+					if _, already := seen[dom]; already {
+						continue
+					}
+					seen[dom] = struct{}{}
+					existingID, dErr := domainIDByName(ctx, dom)
+					if dErr != nil {
+						warnings = append(warnings,
+							fmt.Sprintf("mail: check domain %q in Stalwart: %v", dom, dErr))
+						continue
+					}
+					if existingID == "" {
+						if _, cErr := createDomain(ctx, dom); cErr != nil {
+							warnings = append(warnings,
+								fmt.Sprintf("mail: create domain %q in Stalwart: %v — apply may fail", dom, cErr))
+						}
+					}
+				}
+			}
+
 			// Apply account config (mailboxes, aliases, rules) via the
 			// Stalwart HTTP API. Safe against a live instance: stalwart-cli
 			// apply operates over HTTP, not directly on the RocksDB store.

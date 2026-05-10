@@ -1233,7 +1233,9 @@ const ConsoleCard = () => {
                 {OPTION_LABEL[n] ?? n}
                 {OPTION_TOOLTIP[n] && (
                   <Tooltip title={OPTION_TOOLTIP[n]}>
-                    <QuestionCircleOutlined style={{ color: "var(--ant-color-text-secondary)", cursor: "help" }} />
+                    <span style={{ color: "var(--ant-color-text-secondary)", cursor: "help" }}>
+                      <QuestionCircleOutlined />
+                    </span>
                   </Tooltip>
                 )}
               </Space>

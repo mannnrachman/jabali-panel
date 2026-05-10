@@ -5947,6 +5947,7 @@ Type=oneshot
 ExecStart=/usr/bin/bash -c '\
   set -e; \
   if [[ ! -d /opt/jabali/signature-base/.git ]]; then \
+    rm -rf /opt/jabali/signature-base; \
     git clone --depth=1 --quiet \
       https://github.com/Neo23x0/signature-base.git \
       /opt/jabali/signature-base; \

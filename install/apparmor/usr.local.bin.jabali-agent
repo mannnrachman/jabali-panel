@@ -67,15 +67,34 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   # DKIM private keys are written here by domain_email_enable.go / dkim_rotate.
   /etc/jabali-panel/dkim/      rw,
   /etc/jabali-panel/dkim/**    rw,
+  # PHP-FPM per-user pool configs written by reconciler.
+  /etc/jabali-panel/fpm/       rw,
+  /etc/jabali-panel/fpm/**     rw,
+  # Per-user PHP version selection written by user provisioning.
+  /etc/jabali-panel/user-phpver/   rw,
+  /etc/jabali-panel/user-phpver/** rw,
   # migration secrets written here by migration.secrets_write agent handler.
   /etc/jabali-panel/migration-secrets/   rw,
   /etc/jabali-panel/migration-secrets/** rw,
   # useradd (and usermod/userdel) read these at startup; inherited via ix.
   # /etc/.pwd.lock is the global useradd/passwd serialisation lock (flock).
+  # useradd writes temp files (e.g. /etc/group.<pid>) atomically before rename.
   /etc/machine-id              r,
   /etc/login.defs              r,
   /etc/default/useradd         r,
   /etc/.pwd.lock               rwk,
+  /etc/passwd                  rw,
+  /etc/passwd.*                rw,
+  /etc/group                   rw,
+  /etc/group.*                 rw,
+  /etc/shadow                  rw,
+  /etc/shadow.*                rw,
+  /etc/gshadow                 rw,
+  /etc/gshadow.*               rw,
+  /etc/subuid                  rw,
+  /etc/subuid.*                rw,
+  /etc/subgid                  rw,
+  /etc/subgid.*                rw,
   /etc/mysql/                  r,
   /etc/mysql/**                r,
   /etc/aide/                   r,
@@ -283,6 +302,7 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /usr/bin/cscli               ix,
   /usr/bin/cscli               mr,
   /usr/bin/ip                  ix,
+  /usr/sbin/ufw                ix,
   /usr/bin/node                ix,
   /usr/bin/pdns_control        ix,
   /usr/bin/rec_control         ix,

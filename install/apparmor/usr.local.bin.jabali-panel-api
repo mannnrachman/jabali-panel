@@ -125,6 +125,7 @@ profile jabali-panel {
   /usr/local/bin/go           rix,
   /usr/bin/go                 rix,
   /usr/local/bin/jabali-*     rix,
+  /usr/local/bin/kratos       Px -> jabali-kratos,
 
   /var/lib/jabali-panel/       rw,
   /var/lib/jabali-panel/**     rwk,

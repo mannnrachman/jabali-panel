@@ -5140,7 +5140,7 @@ install_crowdsec_appsec() {
   local configs_dir="/etc/crowdsec/appsec-configs"
   install -d -m 0755 "$configs_dir"
   local config_file="$configs_dir/jabali-appsec.yaml"
-  local desired_config=$'# Managed by jabali — M27 AppSec config.\n# DO NOT hand-edit. Set via the admin Security \xe2\x86\x92 CrowdSec tab OR\n# POST /api/v1/admin/security/crowdsec/appsec/geoblock.\n# jabali-mode: off\n# jabali-countries:\nname: crowdsecurity/jabali-appsec\ndefault_remediation: ban\ninband_rules:\n - crowdsecurity/base-config\n - crowdsecurity/vpatch-*\n - crowdsecurity/generic-*\n - crowdsecurity/crs-*\n'
+  local desired_config=$'# Managed by jabali — M27 AppSec config.\n# DO NOT hand-edit. Set via the admin Security \xe2\x86\x92 CrowdSec tab OR\n# POST /api/v1/admin/security/crowdsec/appsec/geoblock.\n# jabali-mode: off\n# jabali-countries:\nname: crowdsecurity/jabali-appsec\ndefault_remediation: ban\ninband_rules:\n - crowdsecurity/vpatch-*\n - crowdsecurity/generic-*\n - crowdsecurity/crs-*\n'
   if [[ ! -f "$config_file" ]]; then
     _log "seeding $config_file (mode=off)"
     local tmp
@@ -5168,6 +5168,15 @@ install_crowdsec_appsec() {
       _log "appending crowdsecurity/crs-* to $config_file inband_rules"
       sed -i '/^[[:space:]]*-[[:space:]]\+crowdsecurity\/generic-\*[[:space:]]*$/a\ - crowdsecurity/crs-*' "$config_file"
     fi
+  fi
+  # Remove crowdsecurity/base-config from inband_rules on existing installs.
+  # base-config is an appsec-CONFIG (lives in appsec-configs/), not an
+  # appsec-rule. Putting it in inband_rules causes CrowdSec to look for a
+  # rule with that name → not found → startup crash. The vpatch-* / generic-*
+  # / crs-* globs cover everything base-config would have loaded.
+  if grep -q 'crowdsecurity/base-config' "$config_file"; then
+    _log "removing invalid crowdsecurity/base-config from $config_file inband_rules"
+    sed -i '/crowdsecurity\/base-config/d' "$config_file"
   fi
 
   # Cleanup: M26-era /etc/crowdsec/appsec-rules/jabali-geoblock.yaml is

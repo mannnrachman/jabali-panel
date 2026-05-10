@@ -107,6 +107,7 @@ _cli_token=""
 _cli_debug=""
 _cli_uninstall=""
 _cli_yes=""
+_cli_purge_packages=""
 _positional=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -116,6 +117,7 @@ while [[ $# -gt 0 ]]; do
     --token)      _cli_token="${2:-}"; shift 2 ;;
     --debug)      _cli_debug=1; shift ;;
     --uninstall)  _cli_uninstall=1; shift ;;
+    --purge-packages) _cli_purge_packages=1; shift ;;
     --yes|-y)     _cli_yes=1; shift ;;
     --)           shift; while [[ $# -gt 0 ]]; do _positional+=("$1"); shift; done ;;
     --*)          printf 'install.sh: unknown flag: %s\n' "$1" >&2; exit 64 ;;
@@ -8670,9 +8672,9 @@ main() {
 # `install.sh --uninstall` tears down everything the installer creates, in
 # roughly the reverse order of main(). Best-effort: every step uses `|| true`
 # so a partial install (install failed mid-way) can still be cleaned up.
-# Leaves apt-installed OS packages (nginx, mariadb, pdns, php, …) INSTALLED —
-# they are shared with the rest of the OS and re-running install.sh will
-# reconfigure them. Destructive prompts (drop databases, remove /home users)
+# OS packages are left installed by default; pass --purge-packages to also
+# purge them (prompts interactively, or pair with --yes to auto-proceed).
+# Destructive prompts (drop databases, remove /home users)
 # ask for explicit confirmation unless --yes is given.
 uninstall() {
   [[ $EUID -eq 0 ]] || { printf 'install.sh --uninstall: must run as root\n' >&2; exit 1; }
@@ -9017,8 +9019,80 @@ SQL
     fi
   fi
 
+  # ── optional apt package removal ───────────────────────────────────────────
+  # Build the list from what install.sh actually installs. Generic OS
+  # primitives (git, curl, ca-certificates, build-essential, rsync, acl,
+  # tar, bzip2, unzip, openssl, gnupg, debootstrap, systemd-container,
+  # systemd-resolved) are intentionally excluded — they pre-date jabali on
+  # most hosts and apt autoremove won't touch anything not in the list anyway.
+  local -a _apt_pkgs=(
+    mariadb-server mariadb-client
+    nginx certbot python3-certbot-nginx
+    nodejs
+    pdns-server pdns-backend-mysql pdns-recursor bind9-dnsutils
+    redis-server redis-tools
+    quota quotatool xfsprogs
+    ufw yq
+    bubblewrap
+    yara
+    ed inotify-tools
+    restic
+    sshpass
+    composer
+    php-cli php-mysql php-curl php-xml php-mbstring php-gd php-zip
+    crowdsec crowdsec-firewall-bouncer-nftables crowdsec-firewall-bouncer-iptables crowdsec-nginx-bouncer
+    auditd audispd-plugins
+    apparmor apparmor-utils apparmor-profiles-extra
+    aide aide-common
+    goaccess
+  )
+  # Add per-minor PHP packages that are actually installed on this host.
+  local _pv
+  for _pv in /etc/php/*/fpm; do
+    [[ -d "$_pv" ]] || continue
+    local _minor
+    _minor="$(basename "$(dirname "$_pv")")"
+    _apt_pkgs+=("php${_minor}-fpm" "php${_minor}-cli")
+    local _ext
+    for _ext in mysql mbstring zip gd curl xml intl bcmath opcache; do
+      dpkg -l "php${_minor}-${_ext}" >/dev/null 2>&1 && _apt_pkgs+=("php${_minor}-${_ext}") || true
+    done
+  done
+
+  local _do_purge=0
+  if [[ "${_cli_purge_packages:-}" == "1" ]]; then
+    _do_purge=1
+  elif [[ "${_cli_yes:-}" != "1" ]]; then
+    echo
+    printf 'The following OS packages were installed by jabali:\n'
+    printf '  %s\n' "${_apt_pkgs[@]}" | sort -u
+    echo
+    local _ans_pkg
+    read -rp "Purge these packages from the system? [y/N]: " _ans_pkg
+    [[ "${_ans_pkg:-}" =~ ^[yY] ]] && _do_purge=1 || true
+  fi
+
+  if [[ "$_do_purge" == "1" ]]; then
+    _log "purging jabali-installed apt packages"
+    # Filter to only packages that are actually installed to keep the output clean.
+    local -a _installed_pkgs=()
+    local _p
+    for _p in "${_apt_pkgs[@]}"; do
+      dpkg -l "$_p" 2>/dev/null | grep -q '^ii' && _installed_pkgs+=("$_p") || true
+    done
+    if [[ ${#_installed_pkgs[@]} -gt 0 ]]; then
+      DEBIAN_FRONTEND=noninteractive apt-get purge -y "${_installed_pkgs[@]}" 2>/dev/null || true
+      DEBIAN_FRONTEND=noninteractive apt-get autoremove -y 2>/dev/null || true
+      _ok "apt packages purged"
+    else
+      _log "no jabali apt packages found installed — nothing to purge"
+    fi
+  else
+    _ok "OS packages (nginx, mariadb, pdns, php, node, …) left INSTALLED — remove with apt if desired"
+    _ok "  or re-run with: bash install.sh --uninstall --purge-packages"
+  fi
+
   _ok "jabali uninstall complete"
-  _ok "OS packages (nginx, mariadb, pdns, php, node, …) left INSTALLED — remove with apt if desired"
 }
 
 # Only execute main when this script is run directly (not sourced).

@@ -4866,16 +4866,21 @@ install_crowdsec() {
   # install, aborted hub sync, etc.).
   local _appsec_rules_dir="/etc/crowdsec/appsec-rules/crowdsecurity"
   if ! compgen -G "${_appsec_rules_dir}/vpatch-*" >/dev/null 2>&1; then
+    # --force alone skips re-download when hub metadata says "installed".
+    # Purge the stale metadata first so the install actually writes the files.
+    cscli collections remove crowdsecurity/appsec-virtual-patching --purge 2>/dev/null || true
     _spin "cscli collections install appsec-virtual-patching (pre-flight)" \
-      cscli collections install crowdsecurity/appsec-virtual-patching --force
+      cscli collections install crowdsecurity/appsec-virtual-patching
   fi
   if ! compgen -G "${_appsec_rules_dir}/generic-*" >/dev/null 2>&1; then
+    cscli collections remove crowdsecurity/appsec-generic-rules --purge 2>/dev/null || true
     _spin "cscli collections install appsec-generic-rules (pre-flight)" \
-      cscli collections install crowdsecurity/appsec-generic-rules --force
+      cscli collections install crowdsecurity/appsec-generic-rules
   fi
   if ! compgen -G "${_appsec_rules_dir}/crs-*" >/dev/null 2>&1; then
+    cscli collections remove crowdsecurity/appsec-crs --purge 2>/dev/null || true
     _spin "cscli collections install appsec-crs (pre-flight)" \
-      cscli collections install crowdsecurity/appsec-crs --force
+      cscli collections install crowdsecurity/appsec-crs
   fi
 
   # Pick the firewall bouncer matching the kernel backend. Trixie+
@@ -5097,6 +5102,7 @@ install_crowdsec_appsec() {
   # (the upstream crowdsec-nginx-bouncer package). Every vhost gets
   # AppSec evaluation automatically — no per-vhost snippet required.
   _log "configuring CrowdSec AppSec (server-wide geoblock rule)"
+  local _appsec_rules_dir="/etc/crowdsec/appsec-rules/crowdsecurity"
 
   # 1. GeoIP enricher — prereq for GeoIPEnrich expr.
   if ! cscli parsers list 2>/dev/null | grep -q 'crowdsecurity/geoip-enrich'; then
@@ -5109,13 +5115,15 @@ install_crowdsec_appsec() {
   #    SSTI / WordPress upload / no-user-agent detection (enabled by default
   #    2026-04-26 — see plans/m27-crowdsec-extensions.md). Both are free
   #    upstream collections.
-  if ! cscli collections list 2>/dev/null | grep -q 'crowdsecurity/appsec-virtual-patching'; then
+  if ! compgen -G "${_appsec_rules_dir}/vpatch-*" >/dev/null 2>&1; then
+    cscli collections remove crowdsecurity/appsec-virtual-patching --purge 2>/dev/null || true
     _spin "cscli collections install appsec-virtual-patching" \
       cscli collections install crowdsecurity/appsec-virtual-patching
   fi
-  if ! cscli collections list 2>/dev/null | grep -q 'crowdsecurity/appsec-generic-rules'; then
+  if ! compgen -G "${_appsec_rules_dir}/generic-*" >/dev/null 2>&1; then
+    cscli collections remove crowdsecurity/appsec-generic-rules --purge 2>/dev/null || true
     _spin "cscli collections install appsec-generic-rules" \
-      cscli collections install crowdsecurity/appsec-generic-rules --force
+      cscli collections install crowdsecurity/appsec-generic-rules
   fi
 
   # WordPress collection — wp-login brute force, xmlrpc abuse,
@@ -5172,7 +5180,8 @@ install_crowdsec_appsec() {
   # that don't match any named CVE. Requires appsec-virtual-patching as
   # a base (installed above). Rules load as crowdsecurity/crs-* via the
   # jabali-appsec.yaml inband_rules wildcard below.
-  if ! cscli collections list 2>/dev/null | grep -q 'crowdsecurity/appsec-crs'; then
+  if ! compgen -G "${_appsec_rules_dir}/crs-*" >/dev/null 2>&1; then
+    cscli collections remove crowdsecurity/appsec-crs --purge 2>/dev/null || true
     _spin "cscli collections install appsec-crs" \
       cscli collections install crowdsecurity/appsec-crs
   fi

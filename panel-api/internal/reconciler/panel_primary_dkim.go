@@ -1,19 +1,16 @@
-// panel_primary_dkim.go — M6.4 (ADR-0048) auto-provisioning of DKIM +
-// Stalwart domain + M6 DNS records for the is_panel_primary=1 row.
+// panel_primary_dkim.go — auto-provisioning of DKIM + Stalwart domain +
+// M6 DNS records for any domain row where email_enabled=1 but no DKIM
+// material exists yet.
 //
-// Why this is a reconciler responsibility: install.sh inserts the
-// domain row directly via the `jabali panel-primary ensure` CLI, which
-// bypasses the HTTP email-enable handler (and its EnableDomainEmailInline
-// helper that usually does this work). The reconciler is our DB-as-truth
-// convergence loop — catching any row with email_enabled=1 but no DKIM
-// material belongs here. Matches the same pattern the system uses for
-// PHP pool binding: the DB declares intent, the reconciler makes it so.
+// Why this is a reconciler responsibility: the DB is truth (ADR-0001).
+// email_enabled=1 is the default for every new domain (migration 000123),
+// so declaring intent in the DB is enough — the reconciler converges the
+// on-disk DKIM keypair + Stalwart domain registration + DNS records to
+// match. Operators never need to call domain.email_enable explicitly.
 //
-// Also fires for any row that lands in that state by any other route
-// (raw SQL edit, backup restore, migration), so the behavior is
-// scoped to `is_panel_primary=1` intentionally — we don't want to
-// surprise operators by auto-enabling email on a freshly-created
-// tenant domain they haven't confirmed.
+// Two entry points:
+//   - ensurePanelPrimaryDKIM — is_panel_primary=1 rows only (M6.4 / ADR-0048)
+//   - ensureTenantEmailEnabled — non-primary tenant domains (migration 000123)
 
 package reconciler
 
@@ -117,6 +114,79 @@ func (r *Reconciler) ensurePanelPrimaryDKIM(ctx context.Context, domain *models.
 	// bootstrap_pdns_self_zone at install time; syncPanelPrimaryEmailDNS
 	// adds MX/SPF/DKIM/DMARC inside that zone. Warnings are logged; DB
 	// state is already committed.
+	r.syncPanelPrimaryEmailDNS(ctx, domain.ID, selector, pubKey)
+}
+
+// ensureTenantEmailEnabled is the tenant-domain counterpart of
+// ensurePanelPrimaryDKIM. For any non-primary domain that has
+// email_enabled=1 but no DKIM material yet, it calls domain.email_enable
+// on the agent to generate the Ed25519 keypair, register the Stalwart
+// domain, and then syncs the M6 DNS records. No-op once provisioned.
+func (r *Reconciler) ensureTenantEmailEnabled(ctx context.Context, domain *models.Domain) {
+	if domain == nil || domain.IsPanelPrimary || !domain.EmailEnabled {
+		return
+	}
+	// Idempotent guard: DKIM already provisioned → nothing to do.
+	if domain.DkimSelector != nil && *domain.DkimSelector != "" {
+		return
+	}
+	if r.agent == nil {
+		r.log.Warn("tenant email enable: agent unconfigured; skipping", "domain", domain.Name)
+		return
+	}
+
+	agentCtx, cancel := context.WithTimeout(ctx, panelPrimaryEmailAgentTimeout)
+	defer cancel()
+	raw, err := r.agent.Call(agentCtx, "domain.email_enable", map[string]any{
+		"domain_id":   domain.ID,
+		"domain_name": domain.Name,
+	})
+	if err != nil {
+		r.log.Error("tenant email enable: agent domain.email_enable failed",
+			"domain", domain.Name, "err", err)
+		return
+	}
+
+	var resp struct {
+		Ok            bool   `json:"ok"`
+		DKIMSelector  string `json:"dkim_selector"`
+		DKIMPublicKey string `json:"dkim_public_key"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		r.log.Error("tenant email enable: agent response unmarshal",
+			"domain", domain.Name, "err", err)
+		return
+	}
+	if !resp.Ok || resp.DKIMSelector == "" || resp.DKIMPublicKey == "" {
+		r.log.Error("tenant email enable: agent returned incomplete response",
+			"domain", domain.Name,
+			"ok", resp.Ok,
+			"selector", resp.DKIMSelector,
+			"pubkey_len", len(resp.DKIMPublicKey))
+		return
+	}
+
+	selector := resp.DKIMSelector
+	pubKey := resp.DKIMPublicKey
+	now := time.Now().UTC()
+	if err := r.domains.UpdateEmailState(ctx, domain.ID, repository.DomainEmailState{
+		Enabled:        true,
+		DkimSelector:   &selector,
+		DkimPublicKey:  &pubKey,
+		EmailEnabledAt: &now,
+	}); err != nil {
+		r.log.Error("tenant email enable: UpdateEmailState failed",
+			"domain", domain.Name, "err", err)
+		return
+	}
+
+	domain.DkimSelector = &selector
+	domain.DkimPublicKey = &pubKey
+	domain.EmailEnabledAt = &now
+
+	r.log.Info("tenant email enable: provisioned",
+		"domain", domain.Name, "selector", selector)
+
 	r.syncPanelPrimaryEmailDNS(ctx, domain.ID, selector, pubKey)
 }
 

@@ -113,3 +113,20 @@ sp.disable_function.function("ini_set").param("option").value_r("error_reporting
 sp.disable_function.function("ini_set").param("option").value_r("display_errors").drop();
 sp.disable_function.function("ini_set").param("option").value("auto_prepend_file").drop();
 sp.disable_function.function("ini_set").param("option").value("auto_append_file").drop();
+
+# --- Reflection + indirect invocation vectors ---
+# call_user_func / call_user_func_array with a literal string naming a
+# banned OS-exec or eval function bypass the per-function bans above
+# because the call goes through zend_call_function after name lookup,
+# not through the direct symbol sp.disable_function intercepts. Block
+# the string-literal form of the most dangerous callables.
+sp.disable_function.function("call_user_func").param("function").value_r("^(system|exec|shell_exec|passthru|popen|proc_open|pcntl_exec|assert)$").drop();
+sp.disable_function.function("call_user_func_array").param("function").value_r("^(system|exec|shell_exec|passthru|popen|proc_open|pcntl_exec|assert)$").drop();
+# Reflection::invoke / ::invokeArgs bypass sp.disable_function entirely
+# because they route through the Reflection engine, not zend_call_function.
+# $r = new ReflectionFunction('system'); $r->invoke('id') is the canonical
+# webshell evasion pattern. Block both Function and Method flavours.
+sp.disable_function.function("ReflectionFunction::invoke").drop();
+sp.disable_function.function("ReflectionFunction::invokeArgs").drop();
+sp.disable_function.function("ReflectionMethod::invoke").drop();
+sp.disable_function.function("ReflectionMethod::invokeArgs").drop();

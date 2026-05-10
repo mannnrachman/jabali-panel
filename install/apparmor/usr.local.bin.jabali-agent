@@ -37,12 +37,22 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   # panel-api → agent → aa-{enforce,complain}) call apparmor_parser. The
   # set_mode handler is gated by allowedProfiles.
   capability mac_admin,
+  # useradd writes to audit log via libaudit.
+  capability audit_write,
 
   network inet  stream,
   network inet6 stream,
   network unix  stream,
   network unix  dgram,
   network netlink raw,
+
+  # ptrace read — `systemctl status` interrogates /proc/<pid>/attr under
+  # unconfined processes; agent inherits enforce profile so read is denied
+  # without this rule (observed: status tile dead on testserver 2026-05-10).
+  ptrace (read) peer=unconfined,
+  # signal HUP — nginx reload: agent sends SIGHUP to master process which
+  # runs unconfined (nginx not profiled).
+  signal (send) set=(hup) peer=unconfined,
 
   # AA 4.x unix mediation — stream sockets (MariaDB, agent wire, dbus, systemd).
   unix (create, bind, listen, accept, connect, send, receive) type=stream,
@@ -61,8 +71,13 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /etc/jabali-panel/migration-secrets/   rw,
   /etc/jabali-panel/migration-secrets/** rw,
   # useradd (and usermod/userdel) read these at startup; inherited via ix.
+  # /etc/.pwd.lock is the global useradd/passwd serialisation lock (flock).
+  /etc/machine-id              r,
   /etc/login.defs              r,
   /etc/default/useradd         r,
+  /etc/.pwd.lock               rwk,
+  /etc/mysql/                  r,
+  /etc/mysql/**                r,
   /etc/aide/                   r,
   /etc/aide/**                 r,
   /etc/apparmor/               r,
@@ -71,13 +86,18 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /etc/apparmor.d/**           rw,
   /usr/share/apparmor-features/    r,
   /usr/share/apparmor-features/**  r,
+  /usr/share/iproute2/             r,
+  /usr/share/iproute2/**           r,
+  /usr/share/mariadb/              r,
+  /usr/share/mariadb/**            r,
   /var/cache/apparmor/         rw,
   /var/cache/apparmor/**       rwk,
   /run/jabali-agent.sock       rw,
   /run/jabali-panel.sock       rw,
 
   # Reconciler-managed config trees (writes per ADR-0002 DB-as-truth).
-  /etc/nftables.d/jabali-*     rw,
+  /etc/nftables.d/             rw,
+  /etc/nftables.d/**           rw,
   /etc/audit/rules.d/jabali-*  rw,
   /etc/nginx/                  r,
   /etc/nginx/**                rw,
@@ -88,6 +108,10 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /etc/php/                    r,
   /etc/php/**                  rw,
   /etc/systemd/system/jabali-* rw,
+  # Drop-in dirs for jabali service units (e.g. jabali-foo.service.d/).
+  # The glob `jabali-*` matches files but not subdirs; explicit dir rules needed.
+  /etc/systemd/system/jabali-*.service.d/  rw,
+  /etc/systemd/system/jabali-*.service.d/** rw,
   /etc/systemd/system/user-*.slice.d/  rw,
   /etc/systemd/system/user-*.slice.d/** rw,
   /etc/letsencrypt/            r,
@@ -105,10 +129,17 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /etc/modsecurity/            r,
   /etc/modsecurity/**          rw,
 
+  /var/lib/crowdsec/data/      r,
+  /var/lib/crowdsec/data/**    r,
+
   /var/lib/jabali-*/           rw,
   /var/lib/jabali-*/**         rwk,
   /var/log/jabali-*/           rw,
   /var/log/jabali-*/**         rwk,
+  /var/log/journal/            r,
+  /var/log/journal/**          r,
+  /var/log/audit/              r,
+  /var/log/audit/**            r,
   /var/log/nginx/              rw,
   /var/log/nginx/**            rw,
   /var/lib/aide/               rw,
@@ -130,7 +161,8 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /proc/*/attr/apparmor/current r,
 
   /run/                        r,
-  /run/**                      rw,
+  # k (lock) permission needed for flock() on /run/jabali/ lock files.
+  /run/**                      rwk,
   # /var/run is a symlink to /run on Debian, but AppArmor evaluates
   # the syscall path verbatim — go-sql-driver dials
   # /var/run/mysqld/mysqld.sock (the upstream MariaDB convention) and
@@ -140,9 +172,11 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   # Mirror the /run/** allowance under /var/run/** so both legacy and
   # canonical paths work.
   /var/run/                    r,
-  /var/run/**                  rw,
+  /var/run/**                  rwk,
   /sys/fs/cgroup/              r,
   /sys/fs/cgroup/**            r,
+  # Transparent hugepage setting read by Go runtime / MariaDB client.
+  /sys/kernel/mm/transparent_hugepage/enabled r,
   # apparmor management surface (UI Flip button → set_mode handler).
   /sys/kernel/security/apparmor/    r,
   /sys/kernel/security/apparmor/**  r,
@@ -166,14 +200,20 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /usr/bin/clamscan            ix,
   /usr/bin/freshclam           ix,
   /usr/bin/restic              ix,
-  /usr/sbin/certbot            ix,
-  /usr/bin/certbot             ix,
+  # certbot is a Python app; inheriting the agent profile would require
+  # listing all of /usr/local/lib/python3.x. Run unconfined instead.
+  /usr/sbin/certbot            Ux,
+  /usr/bin/certbot             Ux,
   /usr/sbin/pdnsutil           ix,
   /usr/bin/git                 ix,
+  /usr/bin/quota               ix,
+  /usr/sbin/quota              ix,
   /usr/bin/setquota            ix,
   /usr/sbin/setquota           ix,
   /usr/bin/quotaon             ix,
   /usr/sbin/quotaon            ix,
+  /usr/bin/du                  ix,
+  /bin/du                      ix,
   /usr/bin/getfacl             ix,
   /usr/bin/setfacl             ix,
   /usr/bin/usermod             ix,
@@ -187,6 +227,11 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /usr/bin/chage               ix,
   /usr/bin/php*                ix,
   /usr/bin/wp                  ix,
+  /usr/bin/id                  ix,
+  /usr/bin/chsh                ix,
+  /usr/bin/journalctl          ix,
+  /usr/bin/grep                ix,
+  /bin/grep                    ix,
   /usr/bin/sudo                ix,
   /usr/bin/getent              ix,
   /usr/bin/sftp-server         ix,
@@ -227,9 +272,16 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /usr/bin/mariadb-dump        ix,
   /usr/bin/rsync               ix,
   /usr/bin/redis-cli           ix,
+  # stalwart-mail binary may be installed at /opt/stalwart/stalwart with
+  # /usr/local/bin/stalwart as a symlink. AppArmor resolves exec paths to
+  # the canonical target, so both paths must be listed.
+  /opt/stalwart/stalwart       ix,
   /usr/local/bin/jabali-*      ix,
   /usr/local/bin/kratos        ix,
+  # cscli inherits jabali-agent profile via ix; Go binary self-reads its
+  # own ELF (mmap) at startup — needs explicit mr in the inherited profile.
   /usr/bin/cscli               ix,
+  /usr/bin/cscli               mr,
   /usr/bin/ip                  ix,
   /usr/bin/node                ix,
   /usr/bin/pdns_control        ix,

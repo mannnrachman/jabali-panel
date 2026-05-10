@@ -50,6 +50,13 @@ profile jabali-kratos /usr/local/bin/kratos {
 
   /proc/sys/net/core/somaxconn   r,
   /proc/*/status                 r,
+  # Go runtime reads /proc/self/cgroup for cgroup-aware GC tuning.
+  /proc/*/cgroup                 r,
+
+  # Kratos (audit.log: 10 denials for /usr/local/go/bin/go). This likely
+  # arises if Kratos' process is started from a go toolchain context. Run
+  # go unconfined — the go compiler needs its own broad path set.
+  /usr/local/go/bin/go           Ux,
 
   deny /etc/shadow rwklx,
   deny /home/** rwlkx,

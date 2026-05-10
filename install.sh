@@ -5080,6 +5080,20 @@ install_crowdsec_appsec() {
       cscli scenarios install crowdsecurity/http-bf-wordpress_bf_xmlrpc
   fi
 
+  # WordPress AppSec WAF rules — virtual patching for 24+ WP CVEs. Inband
+  # rules are loaded automatically via the vpatch-* wildcard in jabali-appsec.yaml.
+  if ! cscli collections list 2>/dev/null | grep -q 'crowdsecurity/appsec-wordpress'; then
+    _spin "cscli collections install appsec-wordpress" \
+      cscli collections install crowdsecurity/appsec-wordpress
+  fi
+
+  # HTTP DoS detection — cache bypass, random URI flooding, UA switching.
+  # Behavioral (log-based); complements AppSec inband rules.
+  if ! cscli collections list 2>/dev/null | grep -q 'crowdsecurity/http-dos'; then
+    _spin "cscli collections install http-dos" \
+      cscli collections install crowdsecurity/http-dos
+  fi
+
   # 3. Jabali AppSec config — our own appsec-CONFIG file. Loads
   #    base-config + vpatch-* + generic-* plus carries the geoblock
   #    pre_eval hook. The agent rewrites this file on every admin Apply

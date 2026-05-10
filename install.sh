@@ -8684,10 +8684,20 @@ uninstall() {
 ============================================================
 This will remove:
   • jabali-* systemd units and their drop-ins
-  • /usr/local/bin/{jabali,jabali-panel,jabali-agent,kratos,stalwart,stalwart-cli}
-  • /etc/jabali-panel/, /etc/jabali/
-  • /var/lib/jabali-*, /var/lib/stalwart, /run/jabali*
-  • /opt/jabali-panel, /opt/jabali-webmail, /opt/stalwart, /opt/phpmyadmin
+  • drop-ins on crowdsec, redis-server, mariadb (jabali-written only)
+  • /usr/local/bin/{jabali,jabali-panel,jabali-agent,kratos,stalwart,stalwart-cli,wp,yr,jabali-notify-onfailure}
+  • /usr/local/libexec/jabali/
+  • /etc/jabali-panel/, /etc/jabali/, /etc/stalwart/
+  • /etc/profile.d/jabali-go.sh, /etc/apt/sources.list.d/sury-php.list + crowdsec.list
+  • /etc/sysctl.d/60-jabali-malware.conf, /etc/nftables.d/jabali-per-user-egress.nft
+  • /etc/crowdsec/acquis.d/jabali-*.yaml, /etc/crowdsec/appsec-configs/jabali-appsec.yaml
+  • /etc/audit/rules.d/jabali-exec.rules
+  • AppArmor profiles for jabali daemons + stalwart-mail
+  • PHP snuffleupagus ini files for every installed PHP minor
+  • /var/lib/jabali-*, /var/lib/stalwart, /run/jabali*, /var/lib/aide/, /var/log/aide/
+  • /opt/jabali/, /opt/jabali-panel, /opt/jabali-webmail, /opt/stalwart, /opt/phpmyadmin
+  • /usr/local/maldetect/, /var/log/maldet/, /var/lib/jabali-backups/
+  • /var/lib/jabali-uploads/, /var/lib/jabali-migrations/
   • systemd-resolved + pdns-recursor jabali drop-ins
   • /etc/ssh/sshd_config.d/jabali-sftp.conf
   • jabali PHP-FPM pools
@@ -8716,7 +8726,22 @@ EOF
     jabali-stalwart.service \
     jabali-webmail.service \
     jabali-sso-reaper.timer \
-    jabali-sso-reaper.service; do
+    jabali-sso-reaper.service \
+    jabali-maldet-monitor.service \
+    jabali-maldet-update-signatures.timer \
+    jabali-maldet-update-signatures.service \
+    jabali-signature-base-update.timer \
+    jabali-signature-base-update.service \
+    jabali-maldet-scan-daily.timer \
+    jabali-maldet-scan-daily.service \
+    jabali-malware-quarantine-purge.timer \
+    jabali-malware-quarantine-purge.service \
+    jabali-per-user-egress-flip.timer \
+    jabali-per-user-egress-flip.service \
+    jabali-per-user-egress-load.service \
+    jabali-aide-check.timer \
+    jabali-aide-check.service \
+    jabali-notify@.service; do
     systemctl stop    "$svc" 2>/dev/null || true
     systemctl disable "$svc" 2>/dev/null || true
   done
@@ -8743,6 +8768,21 @@ EOF
   rm -rf /etc/systemd/system/jabali-fpm@*
   rm -rf /etc/systemd/system/jabali-panel.service.d
   rm -rf /etc/systemd/system/jabali-agent.service.d
+  rm -f  /etc/systemd/system/jabali-maldet-monitor.service
+  rm -f  /etc/systemd/system/jabali-maldet-update-signatures.service
+  rm -f  /etc/systemd/system/jabali-maldet-update-signatures.timer
+  rm -f  /etc/systemd/system/jabali-signature-base-update.service
+  rm -f  /etc/systemd/system/jabali-signature-base-update.timer
+  rm -f  /etc/systemd/system/jabali-maldet-scan-daily.service
+  rm -f  /etc/systemd/system/jabali-maldet-scan-daily.timer
+  rm -f  /etc/systemd/system/jabali-malware-quarantine-purge.service
+  rm -f  /etc/systemd/system/jabali-malware-quarantine-purge.timer
+  rm -f  /etc/systemd/system/jabali-per-user-egress-load.service
+  rm -f  /etc/systemd/system/jabali-per-user-egress-flip.service
+  rm -f  /etc/systemd/system/jabali-per-user-egress-flip.timer
+  rm -f  /etc/systemd/system/jabali-aide-check.service
+  rm -f  /etc/systemd/system/jabali-aide-check.timer
+  rm -f  /etc/systemd/system/jabali-notify@.service
 
   # Drop-ins on shared system services — remove only the files WE wrote.
   rm -f /etc/systemd/system/pdns-recursor.service.d/10-jabali-after.conf
@@ -8752,12 +8792,19 @@ EOF
   rmdir --ignore-fail-on-non-empty /etc/systemd/system/systemd-resolved.service.d 2>/dev/null || true
   rm -f /etc/systemd/resolved.conf.d/jabali.conf
   rm -f /etc/systemd/resolved.conf.d/zz-jabali-recursor.conf
+  rm -f /etc/systemd/system/crowdsec.service.d/10-jabali-socket.conf
+  rmdir --ignore-fail-on-non-empty /etc/systemd/system/crowdsec.service.d 2>/dev/null || true
+  rm -f /etc/systemd/system/redis-server.service.d/10-jabali-socket.conf
+  rmdir --ignore-fail-on-non-empty /etc/systemd/system/redis-server.service.d 2>/dev/null || true
+  rm -f /etc/mysql/mariadb.conf.d/99-jabali-skip-networking.cnf
 
   systemctl daemon-reload 2>/dev/null || true
 
   # Restart shared services so they re-read without jabali drop-ins.
   systemctl restart systemd-resolved 2>/dev/null || true
   systemctl restart pdns-recursor    2>/dev/null || true
+  systemctl restart mariadb          2>/dev/null || true
+  systemctl restart redis-server     2>/dev/null || true
 
   _log "removing binaries"
   rm -f /usr/local/bin/jabali \
@@ -8765,16 +8812,44 @@ EOF
         /usr/local/bin/jabali-agent \
         /usr/local/bin/kratos \
         /usr/local/bin/stalwart \
-        /usr/local/bin/stalwart-cli
+        /usr/local/bin/stalwart-cli \
+        /usr/local/bin/wp \
+        /usr/local/bin/yr \
+        /usr/local/bin/jabali-notify-onfailure
+  rm -rf /usr/local/libexec/jabali
 
   _log "removing config files"
   rm -rf /etc/jabali-panel
   rm -rf /etc/jabali
+  rm -rf /etc/stalwart
   rm -f  /etc/nginx/conf.d/jabali-pma-logformat.conf
   rm -f  /etc/ssh/sshd_config.d/jabali-sftp.conf
   rm -f  /etc/sudoers.d/jabali-nspawn
   rm -f  /usr/local/bin/jabali-ssh-shell /usr/local/bin/jabali-nspawn-enter
   rm -rf /var/lib/jabali-nspawn
+  rm -f  /etc/profile.d/jabali-go.sh
+  rm -f  /etc/apt/sources.list.d/sury-php.list
+  rm -f  /usr/share/keyrings/sury-php.gpg
+  rm -f  /etc/apt/apt.conf.d/98-jabali-sury-ua.conf
+  rm -f  /etc/apt/sources.list.d/crowdsec.list
+  rm -f  /etc/apt/keyrings/crowdsec.gpg
+  rm -f  /etc/sysctl.d/60-jabali-malware.conf
+  sysctl --system >/dev/null 2>&1 || true
+  rm -f  /etc/nftables.d/jabali-per-user-egress.nft
+  rm -f  /etc/crowdsec/appsec-configs/jabali-appsec.yaml
+  rm -f  /etc/crowdsec/acquis.d/jabali-appsec.yaml
+  rm -f  /etc/crowdsec/acquis.d/jabali-nginx-logs.yaml
+  rm -f  /etc/crowdsec/acquis.d/jabali-sshd.yaml
+  rm -f  /etc/audit/rules.d/jabali-exec.rules
+  augenrules --load >/dev/null 2>&1 || true
+  rm -rf /etc/goaccess
+  rm -rf /etc/redis/redis.conf.d
+  # Remove the include line we appended to redis.conf.
+  if [[ -f /etc/redis/redis.conf ]]; then
+    sed -i '/# Added by jabali install\.sh — load drop-ins\./d' /etc/redis/redis.conf
+    sed -i '/include \/etc\/redis\/redis\.conf\.d\/\*\.conf/d'  /etc/redis/redis.conf
+  fi
+  rm -rf /usr/share/jabali
   # Validate sshd now that our drop-in is gone — best-effort.
   sshd -t 2>/dev/null && systemctl reload ssh 2>/dev/null || true
 
@@ -8792,6 +8867,31 @@ EOF
     [[ -x "$fpm" ]] && systemctl restart "$(basename "$fpm")" 2>/dev/null || true
   done
 
+  _log "removing AppArmor jabali profiles"
+  local _aa_profile
+  for _aa_profile in \
+    usr.local.bin.jabali-agent \
+    usr.local.bin.jabali-bulwark \
+    usr.local.bin.jabali-kratos \
+    usr.local.bin.jabali-panel-api \
+    usr.local.bin.stalwart-mail; do
+    if [[ -f "/etc/apparmor.d/$_aa_profile" ]]; then
+      apparmor_parser -R "/etc/apparmor.d/$_aa_profile" 2>/dev/null || true
+      rm -f "/etc/apparmor.d/$_aa_profile"
+    fi
+  done
+
+  _log "removing PHP snuffleupagus ini files"
+  local _phpv
+  for _phpv in /etc/php/*/mods-available; do
+    [[ -d "$_phpv" ]] || continue
+    local _minor
+    _minor="$(basename "$(dirname "$_phpv")")"
+    rm -f "/etc/php/$_minor/mods-available/jabali-snuffleupagus.ini"
+    rm -f "/etc/php/$_minor/fpm/conf.d/30-jabali-snuffleupagus.ini"
+    rm -f "/etc/php/$_minor/cli/conf.d/30-jabali-snuffleupagus.ini"
+  done
+
   _log "removing state + install directories"
   rm -rf /var/lib/jabali        \
          /var/lib/jabali-panel  \
@@ -8799,6 +8899,7 @@ EOF
          /var/lib/stalwart       \
          /run/jabali             \
          /run/jabali-panel       \
+         /opt/jabali             \
          /opt/jabali-panel       \
          /opt/jabali-webmail     \
          /opt/jabali-webmail.stage \
@@ -8807,7 +8908,14 @@ EOF
          /opt/stalwart.new        \
          /opt/stalwart.prev       \
          /opt/phpmyadmin          \
-         /var/www/jabali-disabled
+         /var/www/jabali-disabled \
+         /var/lib/jabali-backups  \
+         /var/lib/jabali-uploads  \
+         /var/lib/jabali-migrations \
+         /usr/local/maldetect     \
+         /var/log/maldet          \
+         /var/lib/aide            \
+         /var/log/aide
 
   # MariaDB: drop jabali databases + users. Try socket-auth first; if that
   # fails (root password set), ask for a password once.

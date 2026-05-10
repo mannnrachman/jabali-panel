@@ -432,15 +432,7 @@ export const CreateMigrationDrawer = ({
             type="warning"
             showIcon
             message="UI-driven import not yet available for this source type"
-            description={
-              <Typography.Paragraph style={{ marginBottom: 0 }}>
-                DirectAdmin, HestiaCP, and IMAP-only sources are scaffold-only
-                in this release. To import, use the CLI:{" "}
-                <Typography.Text code style={{ fontSize: 12 }}>
-                  jabali migrate import --job-id {created.id} --target-user &lt;user&gt;
-                </Typography.Text>
-              </Typography.Paragraph>
-            }
+            description="DirectAdmin, HestiaCP, and IMAP-only migrations are not yet fully supported in the UI. The job record has been created. Please contact support to complete the import."
           />
           <Button type="primary" onClick={handleDone}>
             Done

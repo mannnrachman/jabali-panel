@@ -281,29 +281,51 @@ export const AdminMigrationDetailPage = () => {
       )}
 
       {job.state === "failed" && (
-        <Alert
-          type="error"
-          showIcon
-          message="Migration failed"
-          description={
-            <Typography.Paragraph style={{ marginBottom: 0 }}>
-              Re-run via{" "}
-              <Typography.Text code>
-                jabali migrate import --job-id {job.id} --target-user{" "}
-                &lt;username&gt;
-              </Typography.Text>{" "}
-              to resume from the first failed stage. See{" "}
-              <Typography.Text code>
-                plans/m35-migration-importers-runbook.md
-              </Typography.Text>{" "}
-              §5 for recovery scenarios.
-            </Typography.Paragraph>
-          }
-        />
+        <FailedCard jobId={job.id} onDestroyed={() => navigate("/jabali-admin/migrations")} />
       )}
     </Space>
   );
 };
+
+function FailedCard({ jobId, onDestroyed }: { jobId: string; onDestroyed: () => void }) {
+  const destroy = useMutation({
+    mutationFn: async () => {
+      await apiClient.post(`/admin/migrations/${jobId}/destroy`);
+    },
+    onSuccess: () => {
+      message.success("Job destroyed — create a new migration to retry.");
+      onDestroyed();
+    },
+    onError: (e: unknown) => {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(detail ?? "Destroy failed");
+    },
+  });
+
+  return (
+    <Alert
+      type="error"
+      showIcon
+      message="Migration failed"
+      description={
+        <Space direction="vertical" size="small" style={{ marginTop: 8 }}>
+          <Typography.Text>
+            Check the stage timeline above for the error detail.
+            To retry, destroy this job and create a new migration from the list page.
+          </Typography.Text>
+          <Button
+            danger
+            size="small"
+            loading={destroy.isPending}
+            onClick={() => destroy.mutate()}
+          >
+            Destroy job and start over
+          </Button>
+        </Space>
+      }
+    />
+  );
+}
 
 /**
  * DriveCard — three actions that drive a migration end-to-end:

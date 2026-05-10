@@ -4926,6 +4926,19 @@ install_crowdsec() {
   local dropin="$dropin_dir/10-jabali-socket.conf"
   local desired_dropin=$'# Managed by jabali install.sh — M26. Do NOT hand-edit.\n# Pins CrowdSec LAPI to /run/crowdsec/api.sock so panel-api (group\n# jabali) can reach it via cscli without TCP loopback (ADR-0050).\n# ExecStartPost pins the socket to 0660 jabali (CrowdSec creates it\n# at 0755 by default which leaks connect(2) reach to any local user).\n[Service]\nRuntimeDirectory=crowdsec\nRuntimeDirectoryMode=0750\nGroup=jabali\nExecStartPost=/bin/sh -c \'until [ -S /run/crowdsec/api.sock ]; do sleep 0.1; done\'\nExecStartPost=/bin/chmod 0660 /run/crowdsec/api.sock\nExecStartPost=/bin/chgrp jabali /run/crowdsec/api.sock\n'
   install -d -m 0755 "$dropin_dir"
+
+  # Pre-clean bad appsec config before any start/restart attempt.
+  # jabali-appsec.yaml from a prior partial install may carry
+  # crowdsecurity/base-config in inband_rules. base-config is an
+  # appsec-CONFIG, not an appsec-rule — CrowdSec rejects it and fails
+  # to start. The definitive migration lives in install_crowdsec_appsec(),
+  # but that runs AFTER us; clean it here so the first start succeeds.
+  local _appsec_cfg="/etc/crowdsec/appsec-configs/jabali-appsec.yaml"
+  if [[ -f "$_appsec_cfg" ]] && grep -q 'crowdsecurity/base-config' "$_appsec_cfg"; then
+    _log "pre-cleaning crowdsecurity/base-config from $_appsec_cfg"
+    sed -i '/crowdsecurity\/base-config/d' "$_appsec_cfg"
+  fi
+
   if [[ ! -f "$dropin" ]] || ! cmp -s <(printf '%s' "$desired_dropin") "$dropin"; then
     _log "writing $dropin"
     local tmp
@@ -4934,9 +4947,17 @@ install_crowdsec() {
     install -m 0644 -o root -g root "$tmp" "$dropin"
     rm -f "$tmp"
     systemctl daemon-reload
-    systemctl restart crowdsec
+    if ! systemctl restart crowdsec; then
+      _err "CrowdSec failed to restart after drop-in update — last 30 journal lines:"
+      journalctl -u crowdsec -n 30 --no-pager >&2 || true
+      return 1
+    fi
   elif ! systemctl is-active --quiet crowdsec; then
-    systemctl start crowdsec
+    if ! systemctl start crowdsec; then
+      _err "CrowdSec failed to start — last 30 journal lines:"
+      journalctl -u crowdsec -n 30 --no-pager >&2 || true
+      return 1
+    fi
   else
     _log "crowdsec drop-in already current — no restart needed"
   fi

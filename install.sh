@@ -5122,6 +5122,16 @@ install_crowdsec_appsec() {
       cscli collections install crowdsecurity/http-dos
   fi
 
+  # OWASP Core Rule Set (CRS) — generic XSS, SQLi, LFI, RCE, SSTI, etc.
+  # Virtual-patching covers known CVEs; CRS catches novel generic attacks
+  # that don't match any named CVE. Requires appsec-virtual-patching as
+  # a base (installed above). Rules load as crowdsecurity/crs-* via the
+  # jabali-appsec.yaml inband_rules wildcard below.
+  if ! cscli collections list 2>/dev/null | grep -q 'crowdsecurity/appsec-crs'; then
+    _spin "cscli collections install appsec-crs" \
+      cscli collections install crowdsecurity/appsec-crs
+  fi
+
   # 3. Jabali AppSec config — our own appsec-CONFIG file. Loads
   #    base-config + vpatch-* + generic-* plus carries the geoblock
   #    pre_eval hook. The agent rewrites this file on every admin Apply
@@ -5130,7 +5140,7 @@ install_crowdsec_appsec() {
   local configs_dir="/etc/crowdsec/appsec-configs"
   install -d -m 0755 "$configs_dir"
   local config_file="$configs_dir/jabali-appsec.yaml"
-  local desired_config=$'# Managed by jabali — M27 AppSec config.\n# DO NOT hand-edit. Set via the admin Security \xe2\x86\x92 CrowdSec tab OR\n# POST /api/v1/admin/security/crowdsec/appsec/geoblock.\n# jabali-mode: off\n# jabali-countries:\nname: crowdsecurity/jabali-appsec\ndefault_remediation: ban\ninband_rules:\n - crowdsecurity/base-config\n - crowdsecurity/vpatch-*\n - crowdsecurity/generic-*\n'
+  local desired_config=$'# Managed by jabali — M27 AppSec config.\n# DO NOT hand-edit. Set via the admin Security \xe2\x86\x92 CrowdSec tab OR\n# POST /api/v1/admin/security/crowdsec/appsec/geoblock.\n# jabali-mode: off\n# jabali-countries:\nname: crowdsecurity/jabali-appsec\ndefault_remediation: ban\ninband_rules:\n - crowdsecurity/base-config\n - crowdsecurity/vpatch-*\n - crowdsecurity/generic-*\n - crowdsecurity/crs-*\n'
   if [[ ! -f "$config_file" ]]; then
     _log "seeding $config_file (mode=off)"
     local tmp
@@ -5148,6 +5158,15 @@ install_crowdsec_appsec() {
     if grep -qE '^[[:space:]]*-[[:space:]]+crowdsecurity/vpatch' "$config_file"; then
       _log "appending crowdsecurity/generic-* to $config_file inband_rules"
       sed -i '/^[[:space:]]*-[[:space:]]\+crowdsecurity\/vpatch-\*[[:space:]]*$/a\ - crowdsecurity/generic-*' "$config_file"
+    fi
+  fi
+  # Append crs-* to existing installs that have the jabali-mode header
+  # (operator-managed file) but are missing the CRS entry. Skip
+  # operator-edited files that lack the header.
+  if grep -q '# jabali-mode:' "$config_file" && ! grep -q 'crowdsecurity/crs-\*' "$config_file"; then
+    if grep -qE '^[[:space:]]*-[[:space:]]+crowdsecurity/generic' "$config_file"; then
+      _log "appending crowdsecurity/crs-* to $config_file inband_rules"
+      sed -i '/^[[:space:]]*-[[:space:]]\+crowdsecurity\/generic-\*[[:space:]]*$/a\ - crowdsecurity/crs-*' "$config_file"
     fi
   fi
 

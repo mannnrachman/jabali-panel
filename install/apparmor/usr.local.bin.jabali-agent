@@ -54,6 +54,12 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /etc/jabali/**               rw,
   /etc/jabali-panel/           r,
   /etc/jabali-panel/**         r,
+  # DKIM private keys are written here by domain_email_enable.go / dkim_rotate.
+  /etc/jabali-panel/dkim/      rw,
+  /etc/jabali-panel/dkim/**    rw,
+  # useradd (and usermod/userdel) read these at startup; inherited via ix.
+  /etc/login.defs              r,
+  /etc/default/useradd         r,
   /etc/aide/                   r,
   /etc/aide/**                 r,
   /etc/apparmor/               r,

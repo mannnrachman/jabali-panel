@@ -4861,16 +4861,22 @@ install_crowdsec() {
   # to start if any referenced rule pattern matches zero files. These cscli
   # calls are LAPI-independent — they write hub files locally. Must run before
   # the start/restart attempt below.
-  local _cs_pre_collection
-  for _cs_pre_collection in \
-      crowdsecurity/appsec-virtual-patching \
-      crowdsecurity/appsec-generic-rules \
-      crowdsecurity/appsec-crs; do
-    if ! cscli collections list 2>/dev/null | grep -q "${_cs_pre_collection}"; then
-      _spin "cscli collections install ${_cs_pre_collection} (pre-flight)" \
-        cscli collections install "${_cs_pre_collection}" --force
-    fi
-  done
+  # Check actual rule FILES on disk, not cscli list metadata — the list can
+  # report a collection as installed while the files are absent (partial
+  # install, aborted hub sync, etc.).
+  local _appsec_rules_dir="/etc/crowdsec/appsec-rules/crowdsecurity"
+  if ! compgen -G "${_appsec_rules_dir}/vpatch-*" >/dev/null 2>&1; then
+    _spin "cscli collections install appsec-virtual-patching (pre-flight)" \
+      cscli collections install crowdsecurity/appsec-virtual-patching --force
+  fi
+  if ! compgen -G "${_appsec_rules_dir}/generic-*" >/dev/null 2>&1; then
+    _spin "cscli collections install appsec-generic-rules (pre-flight)" \
+      cscli collections install crowdsecurity/appsec-generic-rules --force
+  fi
+  if ! compgen -G "${_appsec_rules_dir}/crs-*" >/dev/null 2>&1; then
+    _spin "cscli collections install appsec-crs (pre-flight)" \
+      cscli collections install crowdsecurity/appsec-crs --force
+  fi
 
   # Pick the firewall bouncer matching the kernel backend. Trixie+
   # defaults to nftables; bookworm uses iptables. apt-cache check guards

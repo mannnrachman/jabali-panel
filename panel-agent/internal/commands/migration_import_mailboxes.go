@@ -174,12 +174,18 @@ func looksLikeMailMaildir(path string) (string, bool) {
 // call would be a follow-up optimisation; v1 sequential import is
 // correct + bounded.
 func importOneMailbox(ctx context.Context, destEmail, maildir string) (int64, int64, []string, error) {
+	// Ensure domain + account exist in Stalwart before trying to import.
+	// accountEnsureInRegistry is idempotent: creates domain then account
+	// when absent, no-ops when they already exist.
+	if err := accountEnsureInRegistry(ctx, destEmail); err != nil {
+		return 0, 0, nil, fmt.Errorf("ensure Stalwart account %q: %w", destEmail, err)
+	}
 	accountID, err := accountIDByEmail(ctx, destEmail)
 	if err != nil {
 		return 0, 0, nil, fmt.Errorf("resolve account %q: %w", destEmail, err)
 	}
 	if accountID == "" {
-		return 0, 0, nil, fmt.Errorf("destination account %q not found in Stalwart — run domain.email.enable first", destEmail)
+		return 0, 0, nil, fmt.Errorf("destination account %q not found in Stalwart after ensure", destEmail)
 	}
 	inboxID, err := mailboxIDByRole(ctx, accountID, "inbox")
 	if err != nil {

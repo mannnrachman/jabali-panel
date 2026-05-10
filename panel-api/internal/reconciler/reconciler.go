@@ -493,6 +493,11 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 		// already ran at the top of ReconcileAll so every user has a
 		// pool; this associates it with pre-existing unbound domains.
 		r.ensureDomainPHPBinding(ctx, domain)
+		// Auto-provision DKIM keypair + Stalwart domain for any tenant
+		// domain with email_enabled=1 but no DKIM material yet. Since
+		// mig 000123 makes email_enabled the default, this replaces the
+		// former manual domain.email_enable operator step.
+		r.ensureTenantEmailEnabled(ctx, domain)
 		// Back-fill M6 DNS rows for tenants enabled before DKIM-emit
 		// code shipped (or whose insert failed mid-flight). No-op when
 		// the rows already exist; safe on every tick.

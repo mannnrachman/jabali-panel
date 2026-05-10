@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -545,7 +546,7 @@ func (h *dnsHandler) deleteRecord(c *gin.Context) {
 
 func isValidDNSType(t string) bool {
 	switch strings.ToUpper(t) {
-	case "A", "AAAA", "CNAME", "MX", "TXT", "NS":
+	case "A", "AAAA", "CNAME", "MX", "TXT", "NS", "SRV":
 		return true
 	}
 	return false
@@ -557,7 +558,7 @@ func validateDNSRecord(r *models.DNSRecord) error {
 	r.Content = strings.TrimSpace(r.Content)
 
 	if !isValidDNSType(r.Type) {
-		return fmt.Errorf("unsupported record type %q (allowed: A, AAAA, CNAME, MX, TXT, NS)", r.Type)
+		return fmt.Errorf("unsupported record type %q (allowed: A, AAAA, CNAME, MX, TXT, NS, SRV)", r.Type)
 	}
 	if r.Name == "" {
 		return fmt.Errorf("name required (use '@' for apex)")
@@ -597,6 +598,16 @@ func validateDNSRecord(r *models.DNSRecord) error {
 	case "TXT":
 		if len(r.Content) > 4000 {
 			return fmt.Errorf("TXT content exceeds 4000 chars")
+		}
+	case "SRV":
+		// content format: "priority weight port target"
+		fields := strings.Fields(r.Content)
+		if len(fields) != 4 {
+			return fmt.Errorf("SRV content must be \"priority weight port target\"")
+		}
+		port, err := strconv.Atoi(fields[2])
+		if err != nil || port < 1 || port > 65535 {
+			return fmt.Errorf("SRV port must be 1-65535")
 		}
 	}
 	return nil

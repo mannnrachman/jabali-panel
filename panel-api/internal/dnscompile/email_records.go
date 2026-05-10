@@ -82,5 +82,9 @@ func BuildEmailRecords(
 		mk(selector+"._domainkey", "TXT", `"`+dkimPublicKey+`"`, 0),
 		mk("autoconfig", "CNAME", mailTarget, 0),
 		mk("_autodiscover._tcp", "SRV", "0 0 443 "+mailTarget, 0),
+		mk("_caldavs._tcp", "SRV", "0 1 443 "+mailTarget, 0),
+		mk("_carddavs._tcp", "SRV", "0 1 443 "+mailTarget, 0),
+		mk("_caldav._tcp", "SRV", "0 1 80 "+mailTarget, 0),
+		mk("_carddav._tcp", "SRV", "0 1 80 "+mailTarget, 0),
 	}
 }

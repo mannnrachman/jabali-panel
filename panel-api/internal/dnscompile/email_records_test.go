@@ -30,7 +30,7 @@ func TestBuildEmailRecords_ShapeAndContent(t *testing.T) {
 		now,
 	)
 
-	require.Len(t, recs, 3, "M6 should inject 3 records — DKIM + autoconfig + autodiscover")
+	require.Len(t, recs, 7, "M6 should inject 7 records — DKIM + autoconfig + autodiscover + CalDAV/CardDAV SRV")
 
 	// Record 0 — DKIM TXT. Quoted content to match BootstrapRecords.
 	require.Equal(t, "jabali._domainkey", recs[0].Name)
@@ -49,6 +49,21 @@ func TestBuildEmailRecords_ShapeAndContent(t *testing.T) {
 	require.Equal(t, "_autodiscover._tcp", recs[2].Name)
 	require.Equal(t, "SRV", recs[2].Type)
 	require.Equal(t, "0 0 443 mail.example.com", recs[2].Content)
+
+	// Records 3-6 — CalDAV/CardDAV SRV for RFC 6764 (HTTPS on 443,
+	// plain HTTP on 80 as fallback).
+	require.Equal(t, "_caldavs._tcp", recs[3].Name)
+	require.Equal(t, "SRV", recs[3].Type)
+	require.Equal(t, "0 1 443 mail.example.com", recs[3].Content)
+	require.Equal(t, "_carddavs._tcp", recs[4].Name)
+	require.Equal(t, "SRV", recs[4].Type)
+	require.Equal(t, "0 1 443 mail.example.com", recs[4].Content)
+	require.Equal(t, "_caldav._tcp", recs[5].Name)
+	require.Equal(t, "SRV", recs[5].Type)
+	require.Equal(t, "0 1 80 mail.example.com", recs[5].Content)
+	require.Equal(t, "_carddav._tcp", recs[6].Name)
+	require.Equal(t, "SRV", recs[6].Type)
+	require.Equal(t, "0 1 80 mail.example.com", recs[6].Content)
 
 	// All three must be flagged Managed + ManagedBy="m6" so the
 	// delete-on-disable WHERE clause can find them without touching
@@ -83,7 +98,7 @@ func TestBuildEmailRecords_IDGeneratorCalledOncePerRecord(t *testing.T) {
 		require.False(t, seen[r.ID], "duplicate id %q", r.ID)
 		seen[r.ID] = true
 	}
-	require.Len(t, seen, 3)
+	require.Len(t, seen, 7)
 }
 
 // Sanity — the exported constants used across the package and the

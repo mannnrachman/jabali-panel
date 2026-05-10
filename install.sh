@@ -2996,6 +2996,25 @@ clone_or_update_repo() {
   _ok "repo at $(sudo -u "$SERVICE_USER" -H git -C "$REPO_DIR" rev-parse --short HEAD)"
 }
 
+protect_panel_docs() {
+  # Claude Code / AI-assistant config files (AGENTS.md, CLAUDE.md, .claude/)
+  # contain system architecture and agent orchestration rules. The repo clone
+  # is owned by the jabali service user (jabali:jabali 0644 by default), so
+  # any PHP webshell or compromised service user can read them. Restrict to
+  # root:root so neither the service user nor tenant PHP pools can access them.
+  for node in AGENTS.md CLAUDE.md .claude; do
+    local p="$REPO_DIR/$node"
+    [[ -e "$p" ]] || continue
+    chown -R root:root "$p"
+    if [[ -d "$p" ]]; then
+      find "$p" -type f -exec chmod 0600 {} \;
+      find "$p" -type d -exec chmod 0700 {} \;
+    else
+      chmod 0600 "$p"
+    fi
+  done
+}
+
 # ---------- step 5: build backend -------------------------------------------
 
 # ---------- step 5a: build React SPA -----------------------------------
@@ -8380,6 +8399,7 @@ main() {
   install_restart_drop_ins
   install_notify_template
   clone_or_update_repo
+  protect_panel_docs
   # M25: source the socket-helper definitions now that the repo's install/
   # tree is on disk. Steps 2–5 will call verify_socket_perms /
   # verify_no_all_interface_binds after each service-bind change. Sourced

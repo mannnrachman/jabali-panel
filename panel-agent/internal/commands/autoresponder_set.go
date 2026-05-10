@@ -44,8 +44,19 @@ func autoresponderSetHandler(ctx context.Context, params json.RawMessage) (any, 
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("resolve account: %v", err)}
 	}
 	if acctID == "" {
-		// Account hasn't authed yet; autoresponder can't be set.
-		return nil, &agentwire.AgentError{Code: agentwire.CodeNotFound, Message: "mailbox not yet registered with mail server"}
+		// Account not in Stalwart registry yet — proactively provision it,
+		// then retry. Handles mailboxes created before accountEnsureInRegistry
+		// was wired in, and races where the mailbox.create notify was lost.
+		if ensureErr := accountEnsureInRegistry(ctx, p.MailboxEmail); ensureErr != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeNotFound, Message: fmt.Sprintf("mailbox not registered and ensure failed: %v", ensureErr)}
+		}
+		acctID, err = accountIDByEmail(ctx, p.MailboxEmail)
+		if err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("resolve account after ensure: %v", err)}
+		}
+		if acctID == "" {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeNotFound, Message: "mailbox not registered with mail server"}
+		}
 	}
 
 	// VacationResponse is a singleton with fixed id "singleton" per JMAP RFC 8621.

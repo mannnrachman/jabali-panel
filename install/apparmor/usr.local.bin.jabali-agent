@@ -347,7 +347,7 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /usr/bin/cscli               ix,
   /usr/bin/cscli               mr,
   /usr/bin/ip                  ix,
-  /usr/sbin/ufw                ix,
+  /usr/sbin/ufw                Ux,
   /usr/bin/node                ix,
   /usr/bin/pdns_control        ix,
   /usr/bin/rec_control         ix,

@@ -300,6 +300,18 @@ func repairSteps() []repairStep {
 			detect: detectCrowdSecBouncerKey,
 			fix:    fixCrowdSecBouncerKey,
 		},
+		{
+			id:    "apparmor-profiles-missing",
+			label: "jabali AppArmor profiles absent from /etc/apparmor.d/",
+			detect: detectAppArmorProfilesMissing,
+			fix:    fixAppArmorProfilesMissing,
+		},
+		{
+			id:    "apparmor-profiles-disabled",
+			label: "jabali AppArmor profiles exist but are disabled",
+			detect: detectAppArmorProfilesDisabled,
+			fix:    fixAppArmorProfilesDisabled,
+		},
 	}
 }
 
@@ -753,6 +765,107 @@ func fixCrowdSecBouncerKey(_ repairCtx) error {
 	}
 	// Restart with fresh credentials.
 	return run("", "systemctl", "restart", svc)
+}
+
+// ---------- apparmor-profiles-missing ----------
+//
+// Symptom: the five jabali AppArmor profiles are absent from
+// /etc/apparmor.d/.  This happens when install_apparmor ran before
+// clone_or_update_repo (ordering bug fixed 2026-05-10) or when the
+// profiles were accidentally removed.  Fix: copy profiles from the
+// repo and load them in complain mode.
+
+var jabaliAAProfiles = []string{
+	"usr.local.bin.jabali-panel-api",
+	"usr.local.bin.jabali-agent",
+	"usr.local.bin.jabali-bulwark",
+	"usr.local.bin.jabali-kratos",
+	"usr.local.bin.stalwart-mail",
+}
+
+func detectAppArmorProfilesMissing(ctx repairCtx) (bool, string, error) {
+	if _, err := exec.LookPath("aa-status"); err != nil {
+		return false, "", nil // AppArmor not installed
+	}
+	missing := []string{}
+	for _, p := range jabaliAAProfiles {
+		if _, err := os.Stat("/etc/apparmor.d/" + p); err != nil {
+			missing = append(missing, p)
+		}
+	}
+	if len(missing) == 0 {
+		return false, "", nil
+	}
+	return true, fmt.Sprintf("%d jabali AppArmor profile(s) missing: %s",
+		len(missing), strings.Join(missing, ", ")), nil
+}
+
+func fixAppArmorProfilesMissing(ctx repairCtx) error {
+	srcDir := filepath.Join(ctx.repoDir, "install", "apparmor")
+	if _, err := os.Stat(srcDir); err != nil {
+		return fmt.Errorf("AppArmor profile source dir %s not found: %w", srcDir, err)
+	}
+	for _, p := range jabaliAAProfiles {
+		src := filepath.Join(srcDir, p)
+		dst := "/etc/apparmor.d/" + p
+		if _, err := os.Stat(src); err != nil {
+			continue // profile not in this repo version — skip
+		}
+		data, err := os.ReadFile(src)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", src, err)
+		}
+		if err := os.WriteFile(dst, data, 0o644); err != nil {
+			return fmt.Errorf("write %s: %w", dst, err)
+		}
+		// Load in complain mode (non-blocking for the running process).
+		_ = exec.Command("apparmor_parser", "-r", dst).Run()
+		_ = exec.Command("aa-complain", dst).Run()
+	}
+	return nil
+}
+
+// ---------- apparmor-profiles-disabled ----------
+//
+// Symptom: profiles exist under /etc/apparmor.d/ but aa-disable has
+// created symlinks in /etc/apparmor.d/disable/ — the profiles are on
+// disk but not enforced.  Fix: remove the disable symlinks and reload
+// in complain mode.
+
+func detectAppArmorProfilesDisabled(_ repairCtx) (bool, string, error) {
+	if _, err := exec.LookPath("aa-status"); err != nil {
+		return false, "", nil
+	}
+	disabled := []string{}
+	for _, p := range jabaliAAProfiles {
+		disablePath := "/etc/apparmor.d/disable/" + p
+		if _, err := os.Lstat(disablePath); err == nil {
+			disabled = append(disabled, p)
+		}
+	}
+	if len(disabled) == 0 {
+		return false, "", nil
+	}
+	return true, fmt.Sprintf("%d jabali AppArmor profile(s) disabled: %s",
+		len(disabled), strings.Join(disabled, ", ")), nil
+}
+
+func fixAppArmorProfilesDisabled(_ repairCtx) error {
+	for _, p := range jabaliAAProfiles {
+		disablePath := "/etc/apparmor.d/disable/" + p
+		profilePath := "/etc/apparmor.d/" + p
+		if _, err := os.Lstat(disablePath); err != nil {
+			continue
+		}
+		if err := os.Remove(disablePath); err != nil {
+			return fmt.Errorf("remove disable symlink %s: %w", disablePath, err)
+		}
+		if _, err := os.Stat(profilePath); err == nil {
+			_ = exec.Command("apparmor_parser", "-r", profilePath).Run()
+			_ = exec.Command("aa-complain", profilePath).Run()
+		}
+	}
+	return nil
 }
 
 // repairHint is appended to error messages from runUpdate so an operator

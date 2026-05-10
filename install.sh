@@ -5002,6 +5002,26 @@ install_crowdsec() {
       yq -y -i ".api_key = \"$fw_api_key\" | .api_url = \"http://${lapi_tcp}/\"" "$fw_bouncer_conf"
       systemctl restart "${bouncer_pkg}.service" 2>/dev/null \
         || _warn "${bouncer_pkg}.service restart failed — check 'journalctl -u ${bouncer_pkg}'"
+      # Post-restart health check: if the bouncer is still failing 3 s after
+      # restart (stale key from a previous install), rotate the key and retry.
+      sleep 3
+      if ! systemctl is-active --quiet "${bouncer_pkg}.service"; then
+        _warn "${bouncer_pkg}.service failed after restart — rotating LAPI key and retrying"
+        cscli bouncers delete "$fw_bouncer_name" >/dev/null 2>&1 || true
+        fw_api_key="$(cscli bouncers add "$fw_bouncer_name" -o raw 2>/dev/null)"
+        if [[ -n "$fw_api_key" ]]; then
+          yq -y -i ".api_key = \"$fw_api_key\" | .api_url = \"http://${lapi_tcp}/\"" "$fw_bouncer_conf"
+          systemctl restart "${bouncer_pkg}.service" 2>/dev/null || true
+          sleep 2
+          if systemctl is-active --quiet "${bouncer_pkg}.service"; then
+            _ok "crowdsec-firewall-bouncer recovered after key rotation"
+          else
+            _warn "crowdsec-firewall-bouncer still failing after key rotation — run 'jabali repair --auto' for diagnostics"
+          fi
+        else
+          _warn "cscli bouncers add failed during rotation — run 'jabali repair --auto'"
+        fi
+      fi
       _ok "crowdsec-firewall-bouncer configured (jabali-firewall key, LAPI=$lapi_tcp)"
     fi
   else
@@ -8474,12 +8494,15 @@ main() {
   install_malware_stack
   install_ufw
   install_per_user_egress
-  install_apparmor
-  install_aide
   install_goaccess
   install_restart_drop_ins
   install_notify_template
   clone_or_update_repo
+  # install_apparmor and install_aide run AFTER clone_or_update_repo because
+  # both functions source profile/unit files from $REPO_DIR/install/; on a
+  # fresh install that directory does not exist until the repo is cloned.
+  install_apparmor
+  install_aide
   protect_panel_docs
   # M25: source the socket-helper definitions now that the repo's install/
   # tree is on disk. Steps 2–5 will call verify_socket_perms /

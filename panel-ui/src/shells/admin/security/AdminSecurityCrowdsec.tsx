@@ -237,7 +237,6 @@ export const AdminSecurityCrowdsec = () => {
     "appsec",
     "bouncers",
     "hub",
-    "test",
   ] as const;
   type SubTab = (typeof subTabs)[number];
   const activeSub: SubTab = ((): SubTab => {
@@ -341,6 +340,7 @@ export const AdminSecurityCrowdsec = () => {
         message="What is CrowdSec?"
         description="Behaviour-based intrusion-prevention. Tails server logs (nginx, sshd, panel, mail), matches them against scenarios (brute-force, scanners, web exploits, credential stuffing), and emits IP decisions. Bouncers enforce them at the firewall (UFW), at nginx (AppSec WAF with OWASP CRS rules + optional captcha challenge), and against a crowdsourced blocklist of IPs flagged by the wider community in the last hours."
       />
+      <CrowdsecTestIPCard />
     </Space>
   );
 
@@ -464,7 +464,6 @@ export const AdminSecurityCrowdsec = () => {
           { key: "profiles", label: "Per-scenario", children: <ProfilesCard /> },
           { key: "appsec", label: "Block Country", children: <AppSecGeoblockCard /> },
           { key: "bouncers", label: "Bouncers", children: bouncersPanel },
-          { key: "test", label: "Test IP", children: <CrowdsecTestIPCard /> },
         ]}
       />
 

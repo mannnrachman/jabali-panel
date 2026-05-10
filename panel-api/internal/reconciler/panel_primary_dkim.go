@@ -17,6 +17,7 @@ package reconciler
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/dnscompile"
@@ -41,6 +42,10 @@ const panelPrimaryEmailAgentTimeout = 30 * time.Second
 // true but DkimSelector stays null, so this same code path fires again.
 func (r *Reconciler) ensurePanelPrimaryDKIM(ctx context.Context, domain *models.Domain) {
 	if domain == nil || !domain.IsPanelPrimary || !domain.EmailEnabled {
+		return
+	}
+	if !domainIsMailRoutable(domain.Name) {
+		r.log.Info("panel-primary DKIM: skipping reserved TLD (RFC 6761)", "domain", domain.Name)
 		return
 	}
 	// Idempotent guard: DKIM already provisioned → nothing to do.
@@ -124,6 +129,10 @@ func (r *Reconciler) ensurePanelPrimaryDKIM(ctx context.Context, domain *models.
 // domain, and then syncs the M6 DNS records. No-op once provisioned.
 func (r *Reconciler) ensureTenantEmailEnabled(ctx context.Context, domain *models.Domain) {
 	if domain == nil || domain.IsPanelPrimary || !domain.EmailEnabled {
+		return
+	}
+	if !domainIsMailRoutable(domain.Name) {
+		r.log.Info("tenant email enable: skipping reserved TLD (RFC 6761)", "domain", domain.Name)
 		return
 	}
 	// Idempotent guard: DKIM already provisioned → nothing to do.
@@ -263,6 +272,29 @@ func hasExistingM6DNSRecord(existing []models.DNSRecord, name, recType string) b
 		}
 	}
 	return false
+}
+
+
+// domainIsMailRoutable returns false for RFC 6761 reserved TLDs
+// (.local, .test, .localhost, .invalid, .example) that Stalwart refuses
+// with invalidPatch on Domain/set.
+func domainIsMailRoutable(hostname string) bool {
+	host := strings.ToLower(strings.TrimRight(strings.TrimSpace(hostname), "."))
+	if host == "" {
+		return false
+	}
+	lastDot := strings.LastIndex(host, ".")
+	var tld string
+	if lastDot < 0 {
+		tld = host
+	} else {
+		tld = host[lastDot+1:]
+	}
+	switch tld {
+	case "local", "localhost", "invalid", "test", "example":
+		return false
+	}
+	return true
 }
 
 // conflictingDNSRecord reports whether a non-M6 row is already at

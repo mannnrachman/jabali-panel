@@ -5071,6 +5071,14 @@ install_crowdsec_appsec() {
       cscli collections install crowdsecurity/nginx
   fi
 
+  # sshd collection — SSH brute-force detection (M26). Debian 13 ships sshd
+  # as a non-socket-activated service whose logs go to journald only (no
+  # /var/log/auth.log). The journalctl acquisition below feeds the parser.
+  if ! cscli collections list 2>/dev/null | grep -q 'crowdsecurity/sshd'; then
+    _spin "cscli collections install sshd" \
+      cscli collections install crowdsecurity/sshd
+  fi
+
   # Extra WP scenarios not bundled in the wordpress collection.
   # http-bf-wordpress_bf_xmlrpc: Hub warns some plugins use xmlrpc (not in
   # collection by default). Jabali blocks xmlrpc.php at nginx (M43), so this
@@ -5163,6 +5171,21 @@ install_crowdsec_appsec() {
     install -m 0644 -o root -g root "$tmp2" "$nginx_acquis_file"
     rm -f "$tmp2"
   fi
+  # 6. sshd journalctl acquisition — feeds sshd log events from journald.
+  #    Debian 13: sshd logs to journald only (no /var/log/auth.log).
+  #    _SYSTEMD_UNIT=ssh.service matches Debian's service name (ssh.service,
+  #    not sshd.service). type: syslog so crowdsecurity/sshd parser fires.
+  local sshd_acquis_file="$acquis_dir/jabali-sshd.yaml"
+  local desired_sshd_acquis=$'# Managed by jabali install.sh — M26 SSH brute-force detection.\n# Debian 13: sshd logs to journald only (no /var/log/auth.log).\n# ssh.service is the Debian unit name; Arch/Ubuntu use sshd.service.\nsource: journalctl\njournalctl_filter:\n  - "_SYSTEMD_UNIT=ssh.service"\n  - "_SYSTEMD_UNIT=sshd.service"\nlabels:\n  type: syslog\n'
+  if [[ ! -f "$sshd_acquis_file" ]] || ! cmp -s <(printf '%s' "$desired_sshd_acquis") "$sshd_acquis_file"; then
+    _log "writing $sshd_acquis_file"
+    local tmp3
+    tmp3="$(mktemp --tmpdir jabali-sshd-acquis.XXXXXX)"
+    printf '%s' "$desired_sshd_acquis" >"$tmp3"
+    install -m 0644 -o root -g root "$tmp3" "$sshd_acquis_file"
+    rm -f "$tmp3"
+  fi
+
   # Narrow default CrowdSec acquis.yaml nginx glob if it still matches *.log
   # (access + error together). Error log format breaks the nginx parser.
   local default_acquis="/etc/crowdsec/acquis.yaml"
@@ -8296,6 +8319,10 @@ EOF_RULES
 sp.configuration_file=/etc/jabali/snuffleupagus/active.rules
 EOF_CLI
     chmod 0644 /etc/jabali/snuffleupagus/cli.ini
+  fi
+  if [[ ! -f /etc/jabali/snuffleupagus/mode ]]; then
+    echo "simulation" > /etc/jabali/snuffleupagus/mode
+    chmod 0644 /etc/jabali/snuffleupagus/mode
   fi
 
   # Mirror the rule bundle into /usr/share/jabali/snuffleupagus/rules so

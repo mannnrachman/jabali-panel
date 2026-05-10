@@ -5244,7 +5244,11 @@ install_crowdsec_appsec() {
   fi
 
   # Reload or restart to pick up acquis + config changes.
-  systemctl reload crowdsec 2>/dev/null || systemctl restart crowdsec
+  if ! { systemctl reload crowdsec 2>/dev/null || systemctl restart crowdsec; }; then
+    _err "CrowdSec failed to reload/restart — last 30 journal lines:"
+    journalctl -u crowdsec -n 30 --no-pager >&2 || true
+    return 1
+  fi
 
   # Wait for AppSec TCP listener to come up — `ss -lnt sport = :7422`
   # is the signal the goroutine bound. Cap at 10s.

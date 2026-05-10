@@ -72,6 +72,10 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /etc/audit/rules.d/jabali-*  rw,
   /etc/nginx/                  r,
   /etc/nginx/**                rw,
+  # modules-enabled/*.conf are symlinks into modules-available; AppArmor
+  # dereferences to canonical path so the target dir must also be allowed.
+  /usr/share/nginx/            r,
+  /usr/share/nginx/**          r,
   /etc/php/                    r,
   /etc/php/**                  rw,
   /etc/systemd/system/jabali-* rw,

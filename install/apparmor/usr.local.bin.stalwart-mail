@@ -1,7 +1,7 @@
 # AppArmor profile — stalwart-mail (M40.1, ADR-0086)
 #
 # Stalwart is the M6 mail daemon. Listens on 25/465/587 (mail
-# submission + transport). State at /var/lib/stalwart-mail/.
+# submission + transport). State at /var/lib/stalwart/.
 #
 # AA 4.x (Debian 13) enforces the `unix` mediation class separately
 # from `network unix`. Without explicit unix rules the daemon fails to
@@ -36,10 +36,8 @@ profile stalwart-mail /opt/stalwart/stalwart {
   /etc/stalwart/                r,
   /etc/stalwart/**              r,
 
-  /var/lib/stalwart-mail/       rw,
-  /var/lib/stalwart-mail/**     rwk,
-  /var/log/stalwart-mail/       rw,
-  /var/log/stalwart-mail/**     rwk,
+  /var/lib/stalwart/            rw,
+  /var/lib/stalwart/**          rwk,
 
   /etc/letsencrypt/live/        r,
   /etc/letsencrypt/live/**      r,
@@ -54,6 +52,10 @@ profile stalwart-mail /opt/stalwart/stalwart {
 
   /proc/sys/net/core/somaxconn  r,
   /proc/*/status                r,
+
+  /etc/jabali-panel/stalwart-admin.token r,
+  /etc/jabali-panel/dkim/               r,
+  /etc/jabali-panel/dkim/**             r,
 
   deny /etc/jabali/** rwklx,
   deny /etc/shadow rwklx,

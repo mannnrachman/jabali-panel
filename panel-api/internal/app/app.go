@@ -618,6 +618,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterSecurityAppArmorRoutes(v1, deps.Agent)
 			// M42 (ADR-0087) AIDE FIM read-only status + manual check trigger.
 			api.RegisterSecurityAideRoutes(v1, deps.Agent)
+			// M43 (ADR-0089) Trust test bench — "would this IP be blocked?" admin endpoint.
+			api.RegisterSecurityTrustRoutes(v1, deps.Agent)
 			// M41 (ADR-0088) Snuffleupagus PHP hardening — status/mode/rules/incidents.
 			if deps.Snuffleupagus != nil {
 				api.RegisterSecuritySnuffleupagusRoutes(v1, api.SecuritySnuffleupagusConfig{

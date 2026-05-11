@@ -5,6 +5,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -17,6 +18,38 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 )
+
+// runWithStderr captures stderr alongside stdout so failed root-tool
+// invocations (cscli, ufw) bubble up an actionable message instead of
+// the bare "exit status 1" exec.Cmd.Output() returns. panel-api runs
+// as the `jabali` user, so cscli decisions list / ufw status will
+// EACCES on the LAPI credentials file / nft sockets — the captured
+// stderr is the only signal the operator gets.
+func runWithStderr(cmd *exec.Cmd) ([]byte, error) {
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if len(msg) > 256 {
+			msg = msg[:256] + "…"
+		}
+		if msg == "" {
+			return nil, err
+		}
+		return nil, &execErrWithStderr{err: err, stderr: msg}
+	}
+	return stdout.Bytes(), nil
+}
+
+type execErrWithStderr struct {
+	err    error
+	stderr string
+}
+
+func (e *execErrWithStderr) Error() string {
+	return e.err.Error() + ": " + e.stderr
+}
 
 // RegisterSecurityTrustRoutes mounts the M43 Trust admin endpoints.
 // Read-only — no decisions are created or modified.
@@ -59,7 +92,7 @@ func testCrowdSecVerdict(ctx context.Context, ip string) map[string]string {
 	if _, err := exec.LookPath("cscli"); err != nil {
 		return map[string]string{"layer": "crowdsec", "outcome": "unknown", "detail": "cscli not installed"}
 	}
-	out, err := exec.CommandContext(ctx, "cscli", "decisions", "list", "-i", ip, "-o", "json").Output()
+	out, err := runWithStderr(exec.CommandContext(ctx, "cscli", "decisions", "list", "-i", ip, "-o", "json"))
 	if err != nil {
 		return map[string]string{"layer": "crowdsec", "outcome": "unknown", "detail": "cscli error: " + err.Error()}
 	}
@@ -85,9 +118,9 @@ func testUfwVerdict(ctx context.Context, ip string) map[string]string {
 	if _, err := exec.LookPath("ufw"); err != nil {
 		return map[string]string{"layer": "ufw", "outcome": "unknown", "detail": "ufw not installed"}
 	}
-	out, err := exec.CommandContext(ctx, "ufw", "status", "numbered").Output()
+	out, err := runWithStderr(exec.CommandContext(ctx, "ufw", "status", "numbered"))
 	if err != nil {
-		return map[string]string{"layer": "ufw", "outcome": "unknown", "detail": "ufw error"}
+		return map[string]string{"layer": "ufw", "outcome": "unknown", "detail": "ufw error: " + err.Error()}
 	}
 	// Naive substring match — detects both bare IPs and CIDR strings
 	// that contain the IP. Good enough for the test bench; a real

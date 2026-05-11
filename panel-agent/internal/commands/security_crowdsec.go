@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -39,11 +40,24 @@ func runCscliJSON(ctx context.Context, args ...string) ([]byte, error) {
 	full := append([]string{}, args...)
 	full = append(full, "-o", "json")
 	cmd := exec.CommandContext(ctx, "cscli", full...)
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, err
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		// Surface cscli's own diagnostic (auth error, missing config,
+		// hub-not-loaded, etc) instead of the bare "exit status 1"
+		// that cmd.Output() returns. Trim to keep the agent-wire
+		// payload small.
+		msg := strings.TrimSpace(stderr.String())
+		if len(msg) > 512 {
+			msg = msg[:512] + "…(truncated)"
+		}
+		if msg == "" {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%v: %s", err, msg)
 	}
-	return out, nil
+	return stdout.Bytes(), nil
 }
 
 // ---- security.crowdsec.status ----------------------------------------------

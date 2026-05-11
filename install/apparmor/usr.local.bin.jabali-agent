@@ -360,19 +360,24 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /usr/bin/hostnamectl         ix,
   # apt + dpkg — php_version_install, php_ext_apply, postgres_lifecycle
   # all shell out to apt-get for package install/remove and to apt-cache
-  # / dpkg-query for capability probes. Without these the version pages
-  # in admin UI show "fork/exec /usr/bin/apt-get: permission denied".
-  /usr/bin/apt                 ix,
-  /usr/bin/apt-get             ix,
-  /usr/bin/apt-cache           ix,
-  /usr/bin/apt-key             ix,
-  /usr/bin/dpkg                ix,
-  /usr/bin/dpkg-query          ix,
-  /usr/sbin/dpkg-reconfigure   ix,
-  # phpenmod / phpdismod — PHP module enable/disable scripts shipped
-  # by php-common. Bash wrappers around symlink ops in /etc/php/*/mods-available.
-  /usr/sbin/phpenmod           ix,
-  /usr/sbin/phpdismod          ix,
+  # / dpkg-query for capability probes. Ux (unconfined exec) — apt/dpkg
+  # read a wide and shifting set of paths (/etc/apt/**, /var/cache/apt/**,
+  # /var/lib/dpkg/**, post-install maintainer scripts that touch arbitrary
+  # locations). Inheriting jabali-agent profile via ix breaks them on the
+  # first unlisted path (observed 2026-05-12: opendir /etc/apt/apt.conf.d
+  # EACCES, "Error reading the CPU table"). Same pattern as certbot below.
+  /usr/bin/apt                 Ux,
+  /usr/bin/apt-get             Ux,
+  /usr/bin/apt-cache           Ux,
+  /usr/bin/apt-key             Ux,
+  /usr/bin/dpkg                Ux,
+  /usr/bin/dpkg-query          Ux,
+  /usr/sbin/dpkg-reconfigure   Ux,
+  # phpenmod / phpdismod — bash wrappers around symlink ops in
+  # /etc/php/*/mods-available. ix would need every helper they call
+  # (test, ln, rm, basename). Ux keeps the profile small.
+  /usr/sbin/phpenmod           Ux,
+  /usr/sbin/phpdismod          Ux,
   # gpasswd — used by user provisioning to add jabali to supplementary
   # groups (jabali-sockets, www-data, etc).
   /usr/bin/gpasswd             ix,

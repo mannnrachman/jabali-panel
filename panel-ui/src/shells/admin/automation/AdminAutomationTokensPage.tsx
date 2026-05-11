@@ -25,6 +25,7 @@ import {
   Tag,
   Typography,
   message,
+  theme,
 } from "antd";
 import { KeyOutlined, PlusOutlined, DeleteOutlined } from "@icons";
 
@@ -58,6 +59,7 @@ function fmt(iso?: string | null): string {
 }
 
 export const AdminAutomationTokensPage = () => {
+  const { token } = theme.useToken();
   const qc = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [revealSecret, setRevealSecret] = useState<string | null>(null);
@@ -280,7 +282,7 @@ export const AdminAutomationTokensPage = () => {
           style={{ marginBottom: 16 }}
         />
         <Typography.Paragraph copyable={{ tooltips: ["Copy", "Copied"] }}>
-          <code style={{ wordBreak: "break-all", display: "block", padding: 12, background: "#fafafa", border: "1px solid #d9d9d9", borderRadius: 4 }}>
+          <code style={{ wordBreak: "break-all", display: "block", padding: 12, background: token.colorBgLayout, border: `1px solid ${token.colorBorder}`, borderRadius: token.borderRadius }}>
             {revealSecret}
           </code>
         </Typography.Paragraph>

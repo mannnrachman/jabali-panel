@@ -5149,6 +5149,16 @@ install_crowdsec_appsec() {
       cscli collections install crowdsecurity/sshd
   fi
 
+  if ! cscli collections list 2>/dev/null | grep -q 'crowdsecurity/linux'; then
+    _spin "cscli collections install linux" \
+      cscli collections install crowdsecurity/linux
+  fi
+
+  if ! cscli collections list 2>/dev/null | grep -q 'crowdsecurity/mysql'; then
+    _spin "cscli collections install mysql" \
+      cscli collections install crowdsecurity/mysql
+  fi
+
   # Extra WP scenarios not bundled in the wordpress collection.
   # http-bf-wordpress_bf_xmlrpc: Hub warns some plugins use xmlrpc (not in
   # collection by default). Jabali blocks xmlrpc.php at nginx (M43), so this

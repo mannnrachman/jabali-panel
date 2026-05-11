@@ -34,6 +34,7 @@ type HestiaParsedTarball struct {
 	MySQLDumps    []string // absolute paths to extracted db/<name>.sql files
 	UserConf      string   // <root>/user.conf
 	SSHKeys       string   // <root>/ssh_keys (when present)
+	CronFile      string   // <root>/conf/cron/<user> (when present)
 	Skipped       []string
 }
 
@@ -135,5 +136,9 @@ func classifyHestia(p *HestiaParsedTarball, path, abs string) {
 		p.UserConf = abs
 	case "ssh_keys":
 		p.SSHKeys = abs
+	case "conf":
+		if len(parts) >= 3 && parts[1] == "cron" && p.CronFile == "" {
+			p.CronFile = abs
+		}
 	}
 }

@@ -213,6 +213,9 @@ failed stage. Already-done stages are skipped.`,
 					if h.SSHKeys != "" {
 						parsed.SSHAuthorized = []string{h.SSHKeys}
 					}
+					if h.CronFile != "" {
+						parsed.CronFiles = []string{h.CronFile}
+					}
 				} else {
 					parsed = &cpanel.ParsedTarball{
 						ExtractDir: extractDir,

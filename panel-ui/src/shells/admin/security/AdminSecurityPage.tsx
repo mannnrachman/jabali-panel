@@ -10,7 +10,7 @@
 // it surfaced was a hierarchy explainer + 0/0 stat tiles + deeplinks.
 // Test-IP form folded into CrowdSec → Test IP sub-tab; explainer
 // lives in ADR-0089 + plans/m43-unified-trust-runbook.md.
-import { Card, Space, Typography } from "antd";
+import { Card, Grid, Space, Tooltip, Typography } from "antd";
 import { BugOutlined, LockOutlined, SafetyOutlined, ApiOutlined, ShieldCheckOutlined, SearchOutlined } from "@icons";
 import type { ReactNode } from "react";
 import { useSearchParams } from "react-router";
@@ -65,6 +65,12 @@ const isTabKey = (s: string | null): s is TabKey =>
   s !== null && (TAB_KEYS as readonly string[]).includes(s);
 
 export const AdminSecurityPage = () => {
+  const screens = Grid.useBreakpoint();
+  // 7 outer tabs + 10 inner CrowdSec subtabs = ~17 horizontal items.
+  // At mobile widths the tab bar overflows the viewport; AntD's "more"
+  // dropdown doesn't engage reliably with Card.tabList. Collapse labels
+  // to icons-only under md (768px); tooltip keeps the label discoverable.
+  const compactTabs = !(screens.md ?? true);
   const [params, setParams] = useSearchParams();
   // Backwards-compat redirect: ?tab=trust now points at the Test IP
   // sub-tab inside CrowdSec. Older bookmarks/notification deeplinks
@@ -117,7 +123,13 @@ export const AdminSecurityPage = () => {
       <Card
         tabList={TAB_KEYS.map((k) => ({
           key: k,
-          tab: (
+          tab: compactTabs ? (
+            <Tooltip title={TAB_LABELS[k]} placement="bottom">
+              <span style={{ display: "inline-flex", alignItems: "center" }}>
+                {TAB_ICONS[k]}
+              </span>
+            </Tooltip>
+          ) : (
             <Space size={6}>
               {TAB_ICONS[k]}
               {TAB_LABELS[k]}

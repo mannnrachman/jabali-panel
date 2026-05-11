@@ -453,6 +453,13 @@ export const AdminSecurityCrowdsec = () => {
       <Tabs
         activeKey={activeSub}
         onChange={onSubChange}
+        // Force horizontal scroll on overflow instead of letting the bar
+        // stretch beyond the card. Combined with the outer Security
+        // page collapsing top-tab labels to icons under md, 390px
+        // mobile shows the subtab bar scrollable without breaking
+        // labels char-per-line.
+        tabBarStyle={{ marginBottom: 12 }}
+        size={isDesktop ? "middle" : "small"}
         items={[
           { key: "overview", label: "Overview", children: overviewPanel },
           { key: "hub", label: "Hub", children: hubPanel },

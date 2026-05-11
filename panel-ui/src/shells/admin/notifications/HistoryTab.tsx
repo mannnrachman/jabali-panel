@@ -123,11 +123,19 @@ export const HistoryTab = () => {
 
   return (
     <div>
-      <Space style={{ marginBottom: 16, width: "100%", justifyContent: "space-between" }}>
+      <Space
+        wrap
+        style={{
+          marginBottom: 16,
+          width: "100%",
+          justifyContent: "space-between",
+          rowGap: 8,
+        }}
+      >
         <Typography.Text type="secondary">
           {total} total · {unread} unread
         </Typography.Text>
-        <Space>
+        <Space wrap>
           <Button
             size="small"
             icon={<CheckOutlined />}

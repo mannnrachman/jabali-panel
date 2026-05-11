@@ -8,7 +8,7 @@
 // the ?is_admin filter is applied before search/sort so the paginated
 // total stays correct per tab.
 import { useState } from "react";
-import { Button, Card, Input, Space, Table, Tag, Typography } from "antd";
+import { Badge, Button, Card, Input, Space, Table, Tag, Typography } from "antd";
 import { EditOutlined, SearchOutlined, TeamOutlined } from "@icons";
 
 import { RowActionButton } from "../../../components/RowActionButton";
@@ -319,18 +319,18 @@ export const UserList = () => {
           {
             key: "users",
             tab: (
-              <Space>
-                Users
-                <Tag>{usersCountQ.total}</Tag>
+              <Space size={6}>
+                <span>Users</span>
+                <Badge count={usersCountQ.total} showZero color="#999" />
               </Space>
             ),
           },
           {
             key: "admins",
             tab: (
-              <Space>
-                Administrators
-                <Tag>{adminsCountQ.total}</Tag>
+              <Space size={6}>
+                <span>Administrators</span>
+                <Badge count={adminsCountQ.total} showZero color="#999" />
               </Space>
             ),
           },

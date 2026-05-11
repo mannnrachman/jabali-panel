@@ -1,7 +1,7 @@
 // AdminBackupsPage — admin overview of every backup run.
 // Scheduler-fired jobs roll up under their run_id (one parent row,
 // expandable to per-user children). Manual creates render flat.
-import { Button, Card, Popconfirm, Space, Table, Tag, Tooltip, Typography, message } from "antd";
+import { Badge, Button, Card, Popconfirm, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import {
   CalendarCheckOutlined,
   DownloadOutlined,
@@ -417,10 +417,10 @@ export const AdminBackupsPage = () => {
           {
             key: "backups",
             tab: (
-              <Space>
+              <Space size={6}>
                 <RotateCcwOutlined />
-                Backups
-                <Tag>{runs.length + manual.length}</Tag>
+                <span>Backups</span>
+                <Badge count={runs.length + manual.length} showZero color="#999" />
               </Space>
             ),
           },

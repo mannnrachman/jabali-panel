@@ -36,7 +36,7 @@ type Destination = { id: string; name: string; kind: string; enabled: boolean };
 
 export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDrawerProps) => {
   const screens = Grid.useBreakpoint();
-  const isDesktop = screens.lg !== false;
+  const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
   const [form] = Form.useForm<FormValues>();
   const [submitting, setSubmitting] = useState(false);
   const kind = Form.useWatch("kind", form) ?? "account_backup";

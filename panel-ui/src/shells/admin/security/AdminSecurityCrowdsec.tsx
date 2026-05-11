@@ -199,7 +199,7 @@ export const AdminSecurityCrowdsec = () => {
   const [addOpen, setAddOpen] = useState(false);
   const [addForm] = Form.useForm<AddDecisionFormValues>();
   const screens = Grid.useBreakpoint();
-  const isDesktop = screens.lg !== false;
+  const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
 
   const submitAdd = async (values: AddDecisionFormValues) => {
     try {
@@ -747,7 +747,7 @@ const AllowlistsCard = () => {
   const [addOpen, setAddOpen] = useState(false);
   const [form] = Form.useForm<AllowlistFormValues>();
   const screens = Grid.useBreakpoint();
-  const isDesktop = screens.lg !== false;
+  const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
 
   const onSubmit = async (values: AllowlistFormValues) => {
     try {

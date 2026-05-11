@@ -52,7 +52,7 @@ const RESOURCE = "users";
 export function UserDrawer({ open, onClose, editingId }: UserDrawerProps) {
   const [form] = Form.useForm<UserFormInput>();
   const screens = Grid.useBreakpoint();
-  const isDesktop = screens.lg !== false;
+  const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
   const isEdit = Boolean(editingId);
 
   const { data: existing, isLoading } = useOneQuery<UserRecord>({

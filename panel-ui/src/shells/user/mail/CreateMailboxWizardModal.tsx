@@ -55,7 +55,7 @@ export const CreateMailboxWizardModal = ({
   const [form] = Form.useForm<FormValues>();
   const createMutation = useCreateMailbox();
   const screens = Grid.useBreakpoint();
-  const isDesktop = screens.lg !== false;
+  const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
 
   // Watching domain_id is what drives step-2 reveal. Form.useWatch
   // returns undefined until the user opens the Select and picks a

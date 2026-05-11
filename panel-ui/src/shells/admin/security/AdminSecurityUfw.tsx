@@ -78,7 +78,7 @@ export const AdminSecurityUfw = () => {
   const [addOpen, setAddOpen] = useState(false);
   const [addForm] = Form.useForm<AddRuleFormValues>();
   const screens = Grid.useBreakpoint();
-  const isDesktop = screens.lg !== false;
+  const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
 
   const submitAdd = async (values: AddRuleFormValues) => {
     try {

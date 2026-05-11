@@ -18,7 +18,7 @@ export interface UserDatabaseDrawerProps {
 export const UserDatabaseDrawer = ({ open, onClose }: UserDatabaseDrawerProps) => {
   const [form] = Form.useForm<UserDatabaseCreateInput>();
   const screens = Grid.useBreakpoint();
-  const isDesktop = screens.lg !== false;
+  const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
   // M37 Phase 4: hide the PostgreSQL engine option when the operator
   // hasn't enabled it server-wide. Backend rejects engine=postgres
   // with 400 in that state — letting the user pick it would just

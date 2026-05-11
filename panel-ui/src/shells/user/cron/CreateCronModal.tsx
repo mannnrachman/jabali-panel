@@ -50,7 +50,7 @@ export const CreateCronModal = ({
   );
   const { message: antMessage } = App.useApp();
   const screens = Grid.useBreakpoint();
-  const isDesktop = screens.lg !== false;
+  const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
 
   const isEditing = !!initial;
 

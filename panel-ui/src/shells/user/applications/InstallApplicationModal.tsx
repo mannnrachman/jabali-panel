@@ -331,7 +331,7 @@ export const InstallApplicationModal = ({
   const [result, setResult] = useState<CreatedResult | null>(null);
   const qc = useQueryClient();
   const screens = Grid.useBreakpoint();
-  const isDesktop = screens.lg !== false;
+  const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
 
   const selectedAppType = Form.useWatch("app_type", form) as string | undefined;
   const selectedDomainId = Form.useWatch("domain_id", form);

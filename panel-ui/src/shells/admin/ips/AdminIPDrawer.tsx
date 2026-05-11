@@ -68,7 +68,7 @@ export interface AdminIPDrawerProps {
 export function AdminIPDrawer({ open, onClose, editingId }: AdminIPDrawerProps) {
   const [form] = Form.useForm<FormValues>();
   const screens = Grid.useBreakpoint();
-  const isDesktop = screens.lg !== false;
+  const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
   const isEdit = Boolean(editingId);
   const [warnings, setWarnings] = useState<string[]>([]);
 

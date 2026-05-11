@@ -24,7 +24,7 @@ export const DatabaseUserDrawer = ({
 }: DatabaseUserDrawerProps) => {
   const [form] = Form.useForm<CreateInput>();
   const screens = Grid.useBreakpoint();
-  const isDesktop = screens.lg !== false;
+  const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
   const [submitting, setSubmitting] = useState(false);
   const [revealed, setRevealed] = useState<{ username: string; password: string } | null>(null);
   // M37 Phase 4: hide engine picker if PostgreSQL is not server-enabled.

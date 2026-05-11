@@ -56,7 +56,7 @@ const RESOURCE = "admin/notifications/channels";
 export function AdminChannelDrawer({ open, onClose, existing }: AdminChannelDrawerProps) {
   const [form] = Form.useForm<FormValues>();
   const screens = Grid.useBreakpoint();
-  const isDesktop = screens.lg !== false;
+  const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
   const create = useCreateMutation<NotificationChannel, Partial<FormValues>>({ resource: RESOURCE });
   const update = useUpdateMutation<NotificationChannel, Partial<FormValues>>({ resource: RESOURCE });
   const isEdit = Boolean(existing);

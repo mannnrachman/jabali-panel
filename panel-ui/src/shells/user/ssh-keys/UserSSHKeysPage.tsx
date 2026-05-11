@@ -63,7 +63,7 @@ export const UserSSHKeysPage = () => {
   const [loading, setLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const screens = Grid.useBreakpoint();
-  const isDesktop = screens.lg !== false;
+  const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
 
   // Fetch SSH keys using react-query
   const { data: listResponse = { items: [] }, isLoading, refetch } = useQuery({

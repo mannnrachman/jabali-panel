@@ -299,7 +299,10 @@ export async function initSettingsFlow(): Promise<SettingsInitResult> {
     );
     return { kind: "flow", flow: resp.data };
   } catch (err) {
-    const ax = err as AxiosError<{ error?: { id?: string } }>;
+    const ax = err as AxiosError<{
+      error?: { id?: string };
+      redirect_browser_to?: string;
+    }>;
     const status = ax.response?.status;
     const errorId = ax.response?.data?.error?.id;
     if (status === 403 && errorId === "session_refresh_required") {
@@ -307,6 +310,13 @@ export async function initSettingsFlow(): Promise<SettingsInitResult> {
     }
     if (status === 401) {
       return { kind: "unauthenticated" };
+    }
+    if (status === 422 || errorId === "browser_location_change_required") {
+      const target =
+        ax.response?.data?.redirect_browser_to ??
+        "/.ory/self-service/settings/browser";
+      window.location.assign(target);
+      return new Promise<SettingsInitResult>(() => {});
     }
     return { kind: "error", message: humanizeKratosError(ax) };
   }

@@ -70,18 +70,25 @@ failed stage. Already-done stages are skipped.`,
 			if err != nil {
 				return fmt.Errorf("load job: %w", err)
 			}
+			failJob := func(err error) error {
+				msg := err.Error()
+				if uErr := jobsRepo.UpdateState(ctx, job.ID, models.MigrationStateFailed, &msg); uErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: mark job failed: %v\n", uErr)
+				}
+				return err
+			}
 			user, err := usersRepo.FindByUsername(ctx, targetUser)
 			if err != nil {
 				if !errors.Is(err, repository.ErrNotFound) {
-					return fmt.Errorf("destination user %q lookup: %w", targetUser, err)
+					return failJob(fmt.Errorf("destination user %q lookup: %w", targetUser, err))
 				}
 				// Auto-create when operator supplied --target-email
 				// + --target-password. Otherwise fail with helpful
 				// message pointing at the auto-create flags.
 				if targetEmail == "" || targetPassword == "" {
-					return fmt.Errorf("destination user %q does not exist. "+
+					return failJob(fmt.Errorf("destination user %q does not exist. "+
 						"Pre-create via /admin/users OR pass --target-email + --target-password to auto-create",
-						targetUser)
+						targetUser))
 				}
 				cu := userops.CreateInput{
 					Email:    targetEmail,
@@ -107,7 +114,7 @@ failed stage. Already-done stages are skipped.`,
 					BcryptCost: bcrypt.DefaultCost,
 				}, cu)
 				if cErr != nil {
-					return fmt.Errorf("auto-create destination user %q: %w", targetUser, cErr)
+					return failJob(fmt.Errorf("auto-create destination user %q: %w", targetUser, cErr))
 				}
 				user = res.User
 				fmt.Fprintf(cmd.OutOrStdout(), "Auto-created destination user %s (id=%s)\n",
@@ -136,7 +143,7 @@ failed stage. Already-done stages are skipped.`,
 				}
 			}
 			if user.Username == nil {
-				return fmt.Errorf("destination user %s has no Linux username", user.ID)
+				return failJob(fmt.Errorf("destination user %s has no Linux username", user.ID))
 			}
 
 			// cPanel + WHM-pkgacct share restore code-path: both
@@ -152,13 +159,13 @@ failed stage. Already-done stages are skipped.`,
 				models.MigrationSourceHestia:
 				// supported — fall through
 			default:
-				return fmt.Errorf("source kind %q not yet supported by jabali migrate import; "+
+				return failJob(fmt.Errorf("source kind %q not yet supported by jabali migrate import; "+
 					"supported: %s, %s, %s, %s",
 					job.SourceKind,
 					models.MigrationSourceCpanel,
 					models.MigrationSourceWHMpkgacct,
 					models.MigrationSourceDirectAdmin,
-					models.MigrationSourceHestia)
+					models.MigrationSourceHestia))
 			}
 
 			extractDir := filepath.Join("/var/lib/jabali-migrations", job.ID, "extracted")

@@ -1,6 +1,6 @@
 # M13 — SSH shell sandbox (bubblewrap default; nspawn opt-in)
 
-**Status:** Plan drafted, not dispatched.
+**Status:** SHIPPED — all steps on main 2026-04-26; ADR-0067 ACCEPTED; E2E spec at panel-ui/tests/e2e/ssh-sandbox.spec.ts.
 **Goal:** Every hosting user gets `/usr/local/bin/jabali-ssh-shell` as
 login shell. SFTP users still hit `ForceCommand internal-sftp` (chroot
 path from M12 + 7480fff covers them). SSH-shell users land in one of two

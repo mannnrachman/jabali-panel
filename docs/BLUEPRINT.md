@@ -881,23 +881,25 @@ ADR-0052 (disclaimer sieve vs MtaHook decision matrix),
 
 **Depends on:** M1 (users), M9 (per-user slices)
 
-### M13: Stats & monitoring (PLANNED)
+### M13: SSH shell sandbox (SHIPPED 2026-04-26)
 
-**Goal:** Admins can view server resource usage (CPU, memory, disk, bandwidth) and per-domain
-  traffic stats in real-time.
+**Goal:** Every hosting user gets a restricted login shell (`jabali-ssh-shell`) that runs their
+  commands inside a sandbox — either bubblewrap (lightweight, default) or systemd-nspawn
+  (ephemeral container off a versioned image).  Fail-closed to `/usr/sbin/nologin`.
 
 **Deliverables:**
-- New migration: `create_metrics_snapshots.sql` (timestamp, cpu_usage, memory_usage, disk_usage)
-- GoAccess WebSocket tail (parse nginx logs in real-time, emit JSON to frontend)
-- Bandwidth meter (parse nginx access log, sum bytes_sent per domain)
-- Server metrics (CPU, memory, disk) via agent.system_info
-- In-process worker goroutine (pushes metrics every 10s to WebSocket hub)
-- API: `/ws/server-stats` (WebSocket), `/api/v1/metrics` (historical), `/api/v1/domains/{id}/traffic`
-- UI: admin dashboard with real-time charts (Chart.js or similar)
+- `jabali-ssh-shell` binary (Go): reads `ssh_sandbox_mode` + `default_nspawn_image_version` from DB
+- Bubblewrap mode: `bwrap` with stripped capabilities, `--unshare-all`, read-only system bind-mounts
+- nspawn mode: `systemd-nspawn` off `/var/lib/jabali/nspawn-images/<version>`, ephemeral overlay
+- Agent endpoint `GET /admin/system/nspawn-images` — lists available versioned images
+- Admin Server Settings → General → Shell Sandbox section: mode Select + conditional image Select
+- `ssh_sandbox_mode` + `default_nspawn_image_version` columns on `server_settings` (migration)
+- ADR-0067 (ACCEPTED): sandbox design decisions
+- E2E spec: `panel-ui/tests/e2e/ssh-sandbox.spec.ts` (4 mock-based tests)
 
-**Status:** Planned
+**Status:** Shipped (commits on main 2026-04-26; ADR-0067 ACCEPTED)
 
-**Depends on:** M2 (nginx vhosts)
+**Depends on:** M1 (users), M12 (SFTP/SSH key management)
 
 ### M14: Notifications (SHIPPED 2026-04-24)
 
@@ -1320,7 +1322,7 @@ Use this table to navigate the codebase when adding a new capability:
 | M10: WordPress | 2026-04-18 | `85ed8b4` through `main HEAD` |
 | M11: File Manager (AntD-native, superseded filebrowser) | 2026-04-19 | ADR-0030, Waves A–E in `main` |
 | M12: SFTP via openssh | 2026-04-18 | `aaa0c82` through `0256773` |
-| M13: Stats & monitoring | Planned | — |
+| M13: SSH shell sandbox | Shipped 2026-04-26 | ADR-0067; bubblewrap+nspawn modes; jabali-ssh-shell binary |
 | M14: Notifications | 2026-04-24 | ADRs 0056-0059; runbook `plans/m14-notifications-runbook.md` |
 | M15: Migration importers (renumbered → M35) | Renumbered 2026-04-29 | Original M15 number got reused for DNSSEC (shipped 2026-04-25). Migration importers re-tracked as M35 — see entry below. |
 | M16: Automation API | Planned | — |

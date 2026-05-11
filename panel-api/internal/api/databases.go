@@ -591,19 +591,3 @@ func (h *databaseHandler) restore(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// databaseNameValid validates a database name against the required pattern
-func databaseNameValid(name string) bool {
-	if len(name) < 2 || len(name) > 30 {
-		return false
-	}
-	// Must start with lowercase letter, followed by lowercase letters, digits, or underscores
-	if name[0] < 'a' || name[0] > 'z' {
-		return false
-	}
-	for _, ch := range name {
-		if !((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_') {
-			return false
-		}
-	}
-	return true
-}

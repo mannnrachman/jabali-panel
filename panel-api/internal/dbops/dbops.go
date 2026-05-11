@@ -65,9 +65,9 @@ type DeleteInput struct {
 }
 
 // nameRe is the per-spec database name regex shared by both callers.
-// Lowercase start, alnum + underscore, max 30 chars (leaves room
+// Lowercase start, alnum + underscore, 2-30 chars (leaves room
 // for the username prefix at insert time).
-var nameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,30}$`)
+var nameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{1,29}$`)
 
 // Sentinel errors. Callers use errors.Is to map to HTTP / exit code.
 var (
@@ -105,7 +105,7 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*models.Database, erro
 		return nil, fmt.Errorf("%w: user_id and name required", ErrNameInvalid)
 	}
 	if !nameRe.MatchString(in.RawName) {
-		return nil, fmt.Errorf("%w: name must match ^[a-z][a-z0-9_]{0,30}$", ErrNameInvalid)
+		return nil, fmt.Errorf("%w: name must match ^[a-z][a-z0-9_]{1,29}$ (2-30 chars)", ErrNameInvalid)
 	}
 	engine := in.Engine
 	if engine == "" {

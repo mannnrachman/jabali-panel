@@ -151,6 +151,7 @@ export const MailboxesTab = () => {
   return (
     <>
       <Table<MailboxRow>
+        scroll={{ x: "max-content" }}
         rowKey="id"
         loading={loading && rows.length === 0}
         dataSource={rows}
@@ -160,6 +161,7 @@ export const MailboxesTab = () => {
           {
             title: "Email",
             dataIndex: "email",
+            ellipsis: true,
             sorter: (a, b) => a.email.localeCompare(b.email),
             render: (v: string) => (
               <Typography.Text style={{ fontFamily: "monospace" }}>

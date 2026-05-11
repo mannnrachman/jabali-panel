@@ -177,6 +177,15 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   # "/etc/systemd/system/.tmp-3587386458" (incident 2026-05-10).
   /etc/systemd/system/         rw,
   /etc/systemd/system/.tmp-*   rw,
+  # Mask symlinks for distro-shipped units (php_version_install creates
+  # /etc/systemd/system/php8.4-fpm.service → /dev/null pre-apt-install
+  # so the distro's php-fpm doesn't start on boot — we use jabali-fpm@.
+  # Same pattern for other distro daemons we mask). Observed DENIED
+  # symlink "/etc/systemd/system/php8.4-fpm.service" (incident 2026-05-12).
+  /etc/systemd/system/*.service rwl,
+  /etc/systemd/system/*.socket  rwl,
+  /etc/systemd/system/*.timer   rwl,
+  /etc/systemd/system/*.target  rwl,
   /etc/letsencrypt/            r,
   /etc/letsencrypt/**          rw,
   # Per-domain TLS certs/keys written here by cert_ensure agent handler.

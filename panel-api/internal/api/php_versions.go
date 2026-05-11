@@ -174,6 +174,44 @@ func RegisterPHPVersionAdminRoutes(rg *gin.RouterGroup, cli agent.AgentInterface
 		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
 	})
 
+	// DELETE /php/versions/:version — uninstall a PHP version
+	php.DELETE("/versions/:version", func(c *gin.Context) {
+		version := c.Param("version")
+
+		if !isVersionSupported(version) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "unsupported version: " + version,
+			})
+			return
+		}
+
+		// Refuse to uninstall the current default PHP version. The
+		// reconciler wires every existing FPM pool through this version
+		// at start; removing it strands every pool. Operator must flip
+		// the default first.
+		if settingsRepo != nil {
+			settings, sErr := settingsRepo.Get(c.Request.Context())
+			if sErr == nil && settings != nil && settings.DefaultPHPVersion == version {
+				c.JSON(http.StatusConflict, gin.H{
+					"error":  "default_version_protected",
+					"detail": "cannot uninstall the current default PHP version; change the default first",
+				})
+				return
+			}
+		}
+
+		ctx, cancel := context.WithTimeout(c.Request.Context(), adminActionTimeout)
+		defer cancel()
+
+		raw, err := cli.Call(ctx, "php.version.uninstall", map[string]string{"version": version})
+		if err != nil {
+			status, body := translateAgentError(err)
+			c.JSON(status, body)
+			return
+		}
+		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
+	})
+
 	// POST /php/versions/:version/reload — reload a PHP-FPM service
 	php.POST("/versions/:version/reload", func(c *gin.Context) {
 		version := c.Param("version")

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Alert, notification, Spin, Table, Tag } from "antd";
+import { Alert, notification, Popconfirm, Space, Spin, Table, Tag } from "antd";
 import {
   CheckCircleOutlined,
+  DeleteOutlined,
   DownloadOutlined,
   ReloadOutlined,
 } from "@icons";
@@ -34,6 +35,7 @@ export const VersionsTab = () => {
     null
   );
   const [reloadingVersion, setReloadingVersion] = useState<string | null>(null);
+  const [uninstallingVersion, setUninstallingVersion] = useState<string | null>(null);
   const [settingDefaultVersion, setSettingDefaultVersion] = useState<string | null>(null);
   const [dismissedWarning, setDismissedWarning] = useState(false);
 
@@ -102,6 +104,32 @@ export const VersionsTab = () => {
       });
     } finally {
       setInstallingVersion(null);
+    }
+  };
+
+  const handleUninstall = async (version: string) => {
+    setUninstallingVersion(version);
+    try {
+      // apt-get purge --auto-remove on php<v>-* can take 30-120s on a
+      // host with many extensions. Match install's 5-min ceiling.
+      await apiClient.delete(`/admin/php/versions/${version}`, {
+        timeout: 5 * 60 * 1000,
+      });
+      notification.success({
+        message: `PHP ${version} uninstalled`,
+        duration: 3,
+      });
+      await fetchStatus();
+    } catch (error) {
+      const errorMsg =
+        error instanceof Error ? error.message : "Uninstall failed";
+      notification.error({
+        message: `Failed to uninstall PHP ${version}`,
+        description: errorMsg,
+        duration: 5,
+      });
+    } finally {
+      setUninstallingVersion(null);
     }
   };
 
@@ -250,21 +278,46 @@ export const VersionsTab = () => {
         />
         <Table.Column<PHPVersionStatus>
           title="Actions"
-          width={120}
+          width={220}
           render={(_: any, record: PHPVersionStatus) => {
             const isInstalling = installingVersion === record.version;
             const isReloading = reloadingVersion === record.version;
+            const isUninstalling = uninstallingVersion === record.version;
+            const isDefault = statusData?.default_version === record.version;
 
             if (record.installed) {
               return (
-                <RowActionButton
-                  icon={<ReloadOutlined />}
-                  onClick={() => handleReload(record.version)}
-                  loading={isReloading}
-                  disabled={isReloading}
-                >
-                  Reload
-                </RowActionButton>
+                <Space size="small" wrap>
+                  <RowActionButton
+                    icon={<ReloadOutlined />}
+                    onClick={() => handleReload(record.version)}
+                    loading={isReloading}
+                    disabled={isReloading || isUninstalling}
+                  >
+                    Reload
+                  </RowActionButton>
+                  {/* Uninstall hidden for the default version — agent
+                      blocks anyway, but better UX to hide than 409. */}
+                  {!isDefault && (
+                    <Popconfirm
+                      title={`Uninstall PHP ${record.version}?`}
+                      description="apt-get purge --auto-remove. Sites pinned to this version will break until you change their pool."
+                      okText="Uninstall"
+                      okButtonProps={{ danger: true }}
+                      cancelText="Cancel"
+                      onConfirm={() => handleUninstall(record.version)}
+                    >
+                      <RowActionButton
+                        icon={<DeleteOutlined />}
+                        danger
+                        loading={isUninstalling}
+                        disabled={isUninstalling || isReloading}
+                      >
+                        Uninstall
+                      </RowActionButton>
+                    </Popconfirm>
+                  )}
+                </Space>
               );
             } else {
               return (

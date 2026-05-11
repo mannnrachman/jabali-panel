@@ -357,6 +357,25 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /usr/bin/rec_control         ix,
   /usr/bin/redis-check-rdb     ix,
   /usr/bin/timedatectl         ix,
+  /usr/bin/hostnamectl         ix,
+  # apt + dpkg — php_version_install, php_ext_apply, postgres_lifecycle
+  # all shell out to apt-get for package install/remove and to apt-cache
+  # / dpkg-query for capability probes. Without these the version pages
+  # in admin UI show "fork/exec /usr/bin/apt-get: permission denied".
+  /usr/bin/apt                 ix,
+  /usr/bin/apt-get             ix,
+  /usr/bin/apt-cache           ix,
+  /usr/bin/apt-key             ix,
+  /usr/bin/dpkg                ix,
+  /usr/bin/dpkg-query          ix,
+  /usr/sbin/dpkg-reconfigure   ix,
+  # phpenmod / phpdismod — PHP module enable/disable scripts shipped
+  # by php-common. Bash wrappers around symlink ops in /etc/php/*/mods-available.
+  /usr/sbin/phpenmod           ix,
+  /usr/sbin/phpdismod          ix,
+  # gpasswd — used by user provisioning to add jabali to supplementary
+  # groups (jabali-sockets, www-data, etc).
+  /usr/bin/gpasswd             ix,
   /usr/sbin/aa-enforce         rix,
   /usr/sbin/aa-complain        rix,
   /usr/sbin/aa-status          rix,

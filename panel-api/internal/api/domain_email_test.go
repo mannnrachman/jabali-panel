@@ -277,10 +277,15 @@ func TestDomainEmail_Enable_InsertsM6DNSRecords(t *testing.T) {
 		}
 		got[rec.Type+":"+rec.Name] = rec.Content
 	}
-	require.Len(t, got, 3, "expected 3 M6 records, got %v", got)
+	// 7 M6 records: DKIM TXT + autoconfig CNAME + 5 SRVs
+	// (_autodiscover + _caldav/_caldavs + _carddav/_carddavs).
+	// CalDAV/CardDAV SRVs added in 034a57e1.
+	require.Len(t, got, 7, "expected 7 M6 records, got %v", got)
 	require.Equal(t, `"v=DKIM1;k=ed25519;p=AAAA"`, got["TXT:jabali._domainkey"])
 	require.Equal(t, "mail.example.com", got["CNAME:autoconfig"])
 	require.Equal(t, "0 0 443 mail.example.com", got["SRV:_autodiscover._tcp"])
+	require.Equal(t, "0 1 443 mail.example.com", got["SRV:_caldavs._tcp"])
+	require.Equal(t, "0 1 443 mail.example.com", got["SRV:_carddavs._tcp"])
 }
 
 // Disable must remove every ManagedBy="m6" row — and nothing else. We
@@ -366,7 +371,8 @@ func TestDomainEmail_Enable_UserOverride_Warns(t *testing.T) {
 			m6Count++
 		}
 	}
-	require.Equal(t, 2, m6Count, "user-edited autoconfig row blocks exactly one insert")
+	// 7 M6 records normally; user-edited autoconfig blocks 1 insert → 6.
+	require.Equal(t, 6, m6Count, "user-edited autoconfig row blocks exactly one insert")
 
 	// Warning must mention autoconfig so the operator knows what to
 	// fix; the exact wording isn't locked down to avoid brittleness.
@@ -403,7 +409,7 @@ func TestDomainEmail_Enable_Idempotent(t *testing.T) {
 			m6Count++
 		}
 	}
-	require.Equal(t, 3, m6Count, "re-enable must not duplicate rows")
+	require.Equal(t, 7, m6Count, "re-enable must not duplicate rows")
 }
 
 // TestEnableDomainEmailInline_HappyPath exercises the shared helper

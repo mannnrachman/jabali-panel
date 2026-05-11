@@ -232,6 +232,15 @@ func mapInsertErr(err error, effective *string) error {
 	if err == nil {
 		return nil
 	}
+	// Repository abstraction layer returns a typed sentinel for any
+	// unique-index collision. Treat as username/email collision based
+	// on whether an effective username was derived for this create.
+	if errors.Is(err, repository.ErrConflict) {
+		if effective != nil {
+			return fmt.Errorf("%w: %v", ErrUsernameTaken, *effective)
+		}
+		return ErrEmailTaken
+	}
 	s := err.Error()
 	if strings.Contains(s, "Duplicate entry") || strings.Contains(s, "1062") {
 		// Mariadb duplicate-key. Could be username OR email — the

@@ -6509,20 +6509,57 @@ install_apparmor() {
 
   rm -f /etc/jabali/.apparmor-disabled /etc/jabali/.apparmor-grub-pending
 
+  # Detect kernels missing unix-socket peer-label mediation. On Ubuntu
+  # 24.04 HWE (kernel 6.8) + AppArmor 4.0.1, the kernel ships af_unix
+  # network mediation but NOT the dedicated unix/ feature directory
+  # that enables proper peer-label checks. Symptom: attaching ANY
+  # profile (even one with only `capability, network, file,`) blocks
+  # connect() to unconfined unix-socket peers — kratos can't reach
+  # /run/mysqld/mysqld.sock, panel-api can't reach Kratos admin, etc.
+  # The daemon profiles are net-negative on these kernels: they break
+  # the daemons without providing meaningful confinement. Skip them.
+  # ADR-0086 amended 2026-05-11.
+  local apparmor_unix_bug=0
+  if [[ ! -d /sys/kernel/security/apparmor/features/unix ]]; then
+    apparmor_unix_bug=1
+    _warn "AppArmor kernel lacks unix/ socket-mediation feature"
+    _warn "  → host: $(uname -r) — common on Ubuntu 24.04 HWE"
+    _warn "  → ANY attached profile blocks unix-socket connect to unconfined peers"
+    _warn "  → skipping jabali daemon profiles; unloading any previously loaded"
+    _warn "  → tracked in ADR-0086; remove gate once kernel ships unix mediation"
+    touch /etc/jabali/.apparmor-unix-broken
+    # Unload any jabali daemon profile loaded by a prior install run
+    # (operator may have downgraded kernel after a clean install).
+    local stale
+    for stale in /etc/apparmor.d/usr.local.bin.jabali-* \
+                 /etc/apparmor.d/usr.local.bin.stalwart-mail; do
+      [[ -f "$stale" ]] || continue
+      apparmor_parser -R "$stale" 2>/dev/null || true
+    done
+  else
+    rm -f /etc/jabali/.apparmor-unix-broken
+  fi
+
   local first_install=0
   if [[ ! -f /etc/jabali/.apparmor-installed ]]; then
     first_install=1
   fi
 
   cleanup_apparmor_legacy
-  apply_apparmor_profiles "$first_install"
+  if [[ $apparmor_unix_bug -eq 0 ]]; then
+    apply_apparmor_profiles "$first_install"
+  fi
   apply_apparmor_system_profiles "$first_install"
 
   if [[ $first_install -eq 1 ]]; then
     date -u +%Y-%m-%dT%H:%M:%SZ > /etc/jabali/.apparmor-installed
   fi
 
-  _ok "AppArmor profiles applied ($(aa-status 2>/dev/null | grep -c 'jabali-') jabali profiles loaded)"
+  if [[ $apparmor_unix_bug -eq 1 ]]; then
+    _ok "AppArmor: jabali daemon profiles skipped (kernel missing unix/ mediation); $(aa-status 2>/dev/null | grep -c '^\s*/') system profiles active"
+  else
+    _ok "AppArmor profiles applied ($(aa-status 2>/dev/null | grep -c 'jabali-') jabali profiles loaded)"
+  fi
 }
 
 # apply_apparmor_system_profiles activates distro-supplied profiles for

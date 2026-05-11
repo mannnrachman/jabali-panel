@@ -1,10 +1,65 @@
 # ADR-0086 — AppArmor profiles for Jabali daemons (M40)
 
-**Status:** Accepted, all profiles parked pending re-author (Amendment 2026-05-09)
+**Status:** Accepted, kernel-feature gated (Amendment 2026-05-11)
 **Date:** 2026-04-30
 **Related:** ADR-0072 (malware stack), ADR-0084 (per-user egress
 firewall), ADR-0085 (narrow auditd exec audit),
 ADR-0092 (AA 4.x profile authoring patterns — empirical unix-socket rules).
+
+## Amendment 2026-05-11 — install-time gate on kernels missing unix/ feature
+
+Live install on Ubuntu 24.04 HWE (`6.8.0-101-generic` + AppArmor
+4.0.1) reproduced the exact M40.1 EACCES that the 2026-05-09 amendment
+described, even after the unix-socket rules were re-authored per
+ADR-0092. Multi-hour binary-search through every rule combination
+proved the rules themselves are not the lever:
+
+- Profile with `unix (create,bind,listen,accept,connect,send,receive) type=stream,` + `unix peer=(label=unconfined),` → EACCES on connect to `/run/mysqld/mysqld.sock`
+- Profile with explicit `unix (accept,connect,send,receive) type=stream peer=(label=unconfined),` (and `peer=(label=**)`, and `peer=(label=@{profile_name})`) → EACCES
+- Profile with ONLY `capability, network, file,` (no unix rules at all) → EACCES
+- Profile with `network unix stream, network inet stream, file, capability,` → EACCES
+- Profile completely removed (`apparmor_parser -R`) → connect SUCCEEDS
+
+Pattern: **any profile attached to a daemon that connects to an
+unconfined unix-socket peer blocks `connect()` with EACCES, regardless
+of profile content.**
+
+Root cause located in kernel features (`/sys/kernel/security/apparmor/features/`):
+
+- `network/af_unix` = yes  (AF_UNIX is a recognized address family)
+- `unix/` directory is **absent**  (no peer-label mediation feature)
+- Policy ABI tops out at `v9`  (newer kernels expose v10+ with unix/)
+
+When the kernel lacks the dedicated `unix/` feature directory, the
+parser still compiles the rule into kernel policy, but the kernel
+falls back to a default-deny path for unix-socket peer checks once
+ANY profile is attached. There is no profile-side workaround — the
+fix has to ship with the kernel.
+
+**Install-time gate (commit landed 2026-05-11):**
+
+`install_apparmor()` checks for `/sys/kernel/security/apparmor/features/unix/`
+before calling `apply_apparmor_profiles()`. When the directory is
+absent:
+
+- jabali daemon profiles are not loaded
+- any previously loaded jabali daemon profiles are unloaded (handles
+  the case where the host was clean-installed under a fixed kernel
+  and later booted into an HWE/regression kernel)
+- sentinel `/etc/jabali/.apparmor-unix-broken` is dropped for ops
+  visibility
+- `apply_apparmor_system_profiles()` still runs (mariadb/redis/pdns
+  profiles from `apparmor-profiles-extra` do not connect-out to
+  unconfined unix peers and are unaffected)
+
+The "defense-in-depth on a panel RCE" goal is unchanged. On kernels
+without the gate triggering, M40.1 profiles load and enforce. On
+gated kernels the daemons run unconfined — same posture they had
+before M40 shipped, and strictly better than the M40 attempt that
+broke kratos boot on every fresh Ubuntu 24.04 install.
+
+Remove the gate (and this amendment) once Ubuntu/Debian ship a
+kernel exposing the `unix/` feature directory.
 
 ## Amendment 2026-05-09 — all profiles parked, awaiting M40.1
 

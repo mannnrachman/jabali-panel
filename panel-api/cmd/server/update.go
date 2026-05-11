@@ -225,6 +225,22 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			postHEAD = post
 			return nil
 		}},
+		{"provision new software", func() error {
+			// install.sh's provision_new_software() is the canonical place
+			// for idempotent software additions (apt packages, cscli
+			// collections, wget downloads) that must reach existing hosts
+			// on every `jabali update`, not just fresh installs. Add new
+			// dependencies there; they will be picked up here automatically.
+			installSh := repoDir + "/install.sh"
+			if _, err := os.Stat(installSh); err != nil {
+				return nil // no install.sh — dev environment, skip
+			}
+			if err := run("", "bash", "-c",
+				"source "+installSh+" && provision_new_software"); err != nil {
+				fmt.Printf("  (provision_new_software failed: %v — continuing)\n", err)
+			}
+			return nil
+		}},
 	}
 
 	// Build/apply steps — run only when HEAD moved OR --force was passed.

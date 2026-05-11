@@ -8548,6 +8548,25 @@ install_audit_php_bypass() {
   fi
   rm -f "$rules_tmp"
 }
+
+# provision_new_software — idempotent, called by `jabali update` (prelude step)
+# so newly-required packages/collections reach existing hosts without a full
+# re-install. Add new software HERE; install.sh main() still calls the full
+# install_* functions, so fresh installs also get everything.
+provision_new_software() {
+  # CrowdSec collections. Guards are idempotent — safe to call even when
+  # crowdsec is not yet installed (cscli exits non-zero, guards skip).
+  if command -v cscli >/dev/null 2>&1; then
+    local _cols=(nginx sshd linux mysql)
+    for _col in "${_cols[@]}"; do
+      if ! cscli collections list 2>/dev/null | grep -q "crowdsecurity/${_col}"; then
+        _spin "cscli collections install ${_col}" \
+          cscli collections install "crowdsecurity/${_col}" || true
+      fi
+    done
+  fi
+}
+
 main() {
   print_banner
   preflight

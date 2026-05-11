@@ -23,7 +23,10 @@ export function UserLayout() {
   const { mode } = useThemeMode();
   const { token } = theme.useToken();
   const screens = Grid.useBreakpoint();
-  const isDesktop = screens.lg !== false;
+  // screens.lg is undefined on the first render before AntD measures the
+  // viewport. Fall back to window.innerWidth so mobile users see the
+  // hamburger on initial paint rather than the desktop Sider.
+  const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
 
   const selected = selectedNavKey(userNav, location.pathname);
 

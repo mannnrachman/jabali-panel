@@ -23,10 +23,10 @@ export function AdminLayout() {
   const { mode } = useThemeMode();
   const { token } = theme.useToken();
   const screens = Grid.useBreakpoint();
-  // lg is explicitly nullable (false | undefined) — fall back to desktop
-  // layout on first render before breakpoints resolve to avoid a drawer
-  // flash for users who actually sit on lg+.
-  const isDesktop = screens.lg !== false;
+  // screens.lg is undefined on the first render before AntD measures the
+  // viewport. Fall back to window.innerWidth so mobile users see the
+  // hamburger on initial paint rather than the desktop Sider.
+  const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
 
   const selected = selectedNavKey(adminNav, location.pathname);
 

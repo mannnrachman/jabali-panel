@@ -16,7 +16,7 @@ import { cloneElement, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 
-import { BellOutlined, DeleteOutlined } from "@icons";
+import { BellOutlined, CheckOutlined, DeleteOutlined } from "@icons";
 
 import { apiClient } from "../apiClient";
 import { useWebPushSubscription } from "../hooks/useWebPushSubscription";
@@ -254,30 +254,45 @@ export function NotificationBell() {
     <Dropdown
       menu={{ items }}
       trigger={["click"]}
-      // On narrow viewports anchor below+centred under the bell so
-      // the panel doesn't overshoot the viewport's left edge —
-      // bottomRight aligned right edges, which on a 304px screen
-      // pushed the panel content past x=0 (text clipped at "t logged
-      // in" instead of "Just logged in"). bottomRight stays for tablet+.
-      placement={isNarrow ? "bottom" : "bottomRight"}
+      // Always anchor right edge of popup to right edge of bell. On narrow
+      // viewports "bottom" (centered) overflows the right edge when the bell
+      // is near the right of the header. "bottomRight" keeps the popup inside
+      // the viewport as long as popup width ≤ bell's x offset from left, which
+      // holds for width=calc(100vw-16px) and any standard phone layout.
+      // adjustX/adjustY let AntD nudge the popup if it still clips.
+      placement="bottomRight"
       align={{ overflow: { adjustX: 1, adjustY: 1 } }}
       dropdownRender={(menu) => (
         <div style={contentStyle}>
           <div style={rowStyle}>
             <Space size={token.marginXS}>
               <BellOutlined />
-              <Typography.Text strong>Notifications</Typography.Text>
+              <Typography.Text strong style={{ whiteSpace: "nowrap" }}>
+                Notifications
+              </Typography.Text>
               {unread > 0 && <Badge count={unread} size="small" />}
             </Space>
             <Space size={token.marginXS}>
-              <Button
-                type="text"
-                size="small"
-                onClick={markAllRead}
-                disabled={unread === 0}
-              >
-                Mark all read
-              </Button>
+              {isNarrow ? (
+                <Tooltip title="Mark all read">
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<CheckOutlined />}
+                    onClick={markAllRead}
+                    disabled={unread === 0}
+                  />
+                </Tooltip>
+              ) : (
+                <Button
+                  type="text"
+                  size="small"
+                  onClick={markAllRead}
+                  disabled={unread === 0}
+                >
+                  Mark all read
+                </Button>
+              )}
               <Popconfirm
                 title="Clear all notifications?"
                 description="This deletes every notification in your inbox."
@@ -292,7 +307,7 @@ export function NotificationBell() {
                   icon={<DeleteOutlined />}
                   disabled={rows.length === 0}
                 >
-                  Clear
+                  {isNarrow ? null : "Clear"}
                 </Button>
               </Popconfirm>
             </Space>

@@ -8,6 +8,7 @@ import {
   Button,
   Card,
   Col,
+  Grid,
   Masonry,
   Row,
   Space,
@@ -46,41 +47,63 @@ interface StatCardProps {
   to: string;
 }
 
-const StatCard = ({ label, value, icon, iconBg, iconColor, to }: StatCardProps) => (
-  <Link to={to} style={{ display: "block", color: "inherit" }}>
-    <Card hoverable size="small" styles={{ body: { padding: 16 } }}>
-      <Space size={16} align="center" style={{ width: "100%" }}>
-        <div
-          style={{
-            width: 48,
-            height: 48,
-            borderRadius: 12,
-            background: iconBg,
-            color: iconColor,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 22,
-            flex: "0 0 48px",
-          }}
+const StatCard = ({ label, value, icon, iconBg, iconColor, to }: StatCardProps) => {
+  const screens = Grid.useBreakpoint();
+  // md=4 columns is too narrow for long labels — switch to centered vertical layout.
+  const compact = !!screens.md && !screens.lg;
+
+  return (
+    <Link to={to} style={{ display: "block", color: "inherit" }}>
+      <Card hoverable size="small" styles={{ body: { padding: compact ? 10 : 16 } }}>
+        <Space
+          direction={compact ? "vertical" : "horizontal"}
+          size={compact ? 4 : 16}
+          align="center"
+          style={{ width: "100%", justifyContent: compact ? "center" : undefined }}
         >
-          {icon}
-        </div>
-        <Space direction="vertical" size={2} style={{ minWidth: 0 }}>
-          <Typography.Text
-            type="secondary"
-            style={{ fontSize: 12, letterSpacing: 0.6, textTransform: "uppercase" }}
+          <div
+            style={{
+              width: compact ? 36 : 48,
+              height: compact ? 36 : 48,
+              borderRadius: compact ? 8 : 12,
+              background: iconBg,
+              color: iconColor,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: compact ? 18 : 22,
+              flex: compact ? undefined : "0 0 48px",
+            }}
           >
-            {label}
-          </Typography.Text>
-          <Typography.Title level={3} style={{ margin: 0, lineHeight: 1.1 }}>
-            {formatCount(value)}
-          </Typography.Title>
+            {icon}
+          </div>
+          <Space
+            direction="vertical"
+            size={2}
+            style={{ minWidth: 0, textAlign: compact ? "center" : undefined }}
+          >
+            <Typography.Title
+              level={compact ? 4 : 3}
+              style={{ margin: 0, lineHeight: 1.1 }}
+            >
+              {formatCount(value)}
+            </Typography.Title>
+            <Typography.Text
+              type="secondary"
+              style={{
+                fontSize: compact ? 10 : 12,
+                letterSpacing: compact ? 0 : 0.6,
+                textTransform: "uppercase",
+              }}
+            >
+              {label}
+            </Typography.Text>
+          </Space>
         </Space>
-      </Space>
-    </Card>
-  </Link>
-);
+      </Card>
+    </Link>
+  );
+};
 
 type DomainRow = {
   id: string;

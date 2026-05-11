@@ -60,6 +60,19 @@ func probePackage(pkg string) bool {
 	return cmd.Run() == nil
 }
 
+// runAptUpdate runs apt-get update to refresh the package index.
+func runAptUpdate() error {
+	cmd := exec.Command("apt-get", "update", "-qq")
+	cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("apt-get update failed: %w; output: %s", err, out.String())
+	}
+	return nil
+}
+
 // installPackages installs a list of apt packages with error handling.
 func installPackages(pkgs []string) error {
 	if len(pkgs) == 0 {
@@ -199,6 +212,17 @@ func phpVersionInstallHandler(ctx context.Context, params json.RawMessage) (any,
 			Installed:  isInstalledPHPVersion(p.Version),
 			FPMRunning: checkFPMRunning(p.Version),
 		}, nil
+	}
+
+	// Refresh apt index so probePackage sees newly-added repos (e.g. Sury).
+	// A stale cache causes probePackage to report php8.4-* as missing even
+	// when the Sury repo is configured, producing a misleading error before
+	// installation even starts.
+	if err := runAptUpdate(); err != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("apt-get update: %v", err),
+		}
 	}
 
 	// Build package list. mysql + mbstring + xml + curl + gd + zip are

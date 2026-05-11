@@ -360,30 +360,92 @@ type csMetricsResponse struct {
 }
 
 func csMetricsHandler(ctx context.Context, _ json.RawMessage) (any, error) {
-	// `cscli metrics -o json` returns a deeply nested object. We extract
-	// summary counters that map cleanly to the dashboard.
-	out, err := runCscliJSON(ctx, "metrics")
-	if err != nil {
-		return nil, csInternal("cscli metrics", err)
+	// `cscli metrics -o json` + `cscli decisions list` + `cscli alerts
+	// list` are independent — fan them out so the slowest call (usually
+	// decisions list after a Firehol import drops 100k+ rows into the
+	// table) doesn't serialize the other two.
+	//
+	// decisions list is bounded with --limit 100000 so a runaway hub
+	// pull doesn't push the page into a 30s+ timeout window. UI shows
+	// the count "as known"; the cap is generous enough that real
+	// active-ban counts don't exceed it under normal operation.
+
+	type result struct {
+		raw  map[string]any
+		dlen int
+		alen int
+		err  error
+		kind string
 	}
-	var raw map[string]any
-	_ = json.Unmarshal(out, &raw)
-	resp := csMetricsResponse{}
-	resp.Parsed = sumInt(raw, "parsers", "")
-	resp.Unparsed = sumInt(raw, "unparsed", "")
-	resp.Buckets = sumInt(raw, "buckets", "")
-	// active decisions + total alerts come from cscli decisions list / alerts list
-	if d, err := runCscliJSON(ctx, "decisions", "list"); err == nil {
+
+	resCh := make(chan result, 3)
+
+	go func() {
+		out, err := runCscliJSON(ctx, "metrics")
+		if err != nil {
+			resCh <- result{kind: "metrics", err: err}
+			return
+		}
+		var raw map[string]any
+		_ = json.Unmarshal(out, &raw)
+		resCh <- result{kind: "metrics", raw: raw}
+	}()
+
+	go func() {
+		d, err := runCscliJSON(ctx, "decisions", "list", "--limit", "100000")
+		if err != nil {
+			resCh <- result{kind: "decisions", err: err}
+			return
+		}
 		var entries []rawDecisionEntry
 		_ = json.Unmarshal(d, &entries)
+		count := 0
 		for _, e := range entries {
-			resp.DecisionsActive += len(e.Decisions)
+			count += len(e.Decisions)
 		}
-	}
-	if a, err := runCscliJSON(ctx, "alerts", "list"); err == nil {
+		resCh <- result{kind: "decisions", dlen: count}
+	}()
+
+	go func() {
+		a, err := runCscliJSON(ctx, "alerts", "list")
+		if err != nil {
+			resCh <- result{kind: "alerts", err: err}
+			return
+		}
 		var alerts []any
 		_ = json.Unmarshal(a, &alerts)
-		resp.AlertsTotal = len(alerts)
+		resCh <- result{kind: "alerts", alen: len(alerts)}
+	}()
+
+	resp := csMetricsResponse{}
+	// "metrics" is the only fatal one — without it the dashboard has
+	// no Parsed / Unparsed / Buckets to render. decisions + alerts
+	// counts default to 0 on their individual failure so a slow LAPI
+	// doesn't tank the whole tab.
+	var metricsErr error
+	for i := 0; i < 3; i++ {
+		r := <-resCh
+		switch r.kind {
+		case "metrics":
+			if r.err != nil {
+				metricsErr = r.err
+				continue
+			}
+			resp.Parsed = sumInt(r.raw, "parsers", "")
+			resp.Unparsed = sumInt(r.raw, "unparsed", "")
+			resp.Buckets = sumInt(r.raw, "buckets", "")
+		case "decisions":
+			if r.err == nil {
+				resp.DecisionsActive = r.dlen
+			}
+		case "alerts":
+			if r.err == nil {
+				resp.AlertsTotal = r.alen
+			}
+		}
+	}
+	if metricsErr != nil {
+		return nil, csInternal("cscli metrics", metricsErr)
 	}
 	return resp, nil
 }

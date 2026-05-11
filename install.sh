@@ -6685,11 +6685,27 @@ install_apparmor() {
   # The daemon profiles are net-negative on these kernels: they break
   # the daemons without providing meaningful confinement. Skip them.
   # ADR-0086 amended 2026-05-11.
+  # Two-condition gate:
+  #  1. /sys/kernel/security/apparmor/features/unix/ missing — kernel
+  #     definitely lacks the dedicated mediation feature dir.
+  #  2. AND kernel < 6.10 — narrow to the known-broken band (Ubuntu
+  #     24.04 HWE ships 6.8 with no unix dir + default-deny on any
+  #     profile attached). Kernels 6.10+ have the mediation patches
+  #     even if the dir naming differs across distros; surfacing
+  #     "profiles missing" on Debian 13's 6.12 was a false positive
+  #     reported by the operator on mx.jabali-panel.local.
   local apparmor_unix_bug=0
-  if [[ ! -d /sys/kernel/security/apparmor/features/unix ]]; then
+  local krn_major krn_minor
+  krn_major=$(uname -r | cut -d. -f1)
+  krn_minor=$(uname -r | cut -d. -f2)
+  # Strip any trailing non-digit garbage from kernel minor — Debian's
+  # 6.12.74+deb13+1-amd64 has 6.12 cleanly but err on the safe side.
+  krn_minor=${krn_minor%%[!0-9]*}
+  if [[ ! -d /sys/kernel/security/apparmor/features/unix ]] \
+     && (( krn_major < 6 || (krn_major == 6 && krn_minor < 10) )); then
     apparmor_unix_bug=1
     _warn "AppArmor kernel lacks unix/ socket-mediation feature"
-    _warn "  → host: $(uname -r) — common on Ubuntu 24.04 HWE"
+    _warn "  → host: $(uname -r) — known-broken combo (Ubuntu 24.04 HWE 6.8)"
     _warn "  → ANY attached profile blocks unix-socket connect to unconfined peers"
     _warn "  → skipping jabali daemon profiles; unloading any previously loaded"
     _warn "  → tracked in ADR-0086; remove gate once kernel ships unix mediation"

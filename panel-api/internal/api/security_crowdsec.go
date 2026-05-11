@@ -21,6 +21,15 @@ import (
 
 const csCallTimeout = 10 * time.Second
 
+// csMetricsTimeout is the wider ceiling for /metrics specifically.
+// cscli metrics fans out three sub-calls (metrics + decisions list +
+// alerts list); decisions list scans the LAPI's decision table which
+// grows to 100k+ rows after a Firehol import. 10s was too tight —
+// observed 30s+ stalls on /jabali-admin/security?sub=overview that
+// timed the UI out. 30s gives ample headroom; the agent handler also
+// caps its decisions enumeration at --limit 100000.
+const csMetricsTimeout = 30 * time.Second
+
 // validCrowdSecScopes mirrors the agent-side allow-list. Reject unknown
 // scope values at the API edge so the operator gets a clean 400 instead
 // of a generic agent error. See feedback_verify_wire_contract — keep
@@ -117,7 +126,7 @@ func RegisterSecurityCrowdSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterfac
 	})
 
 	g.GET("/bouncers", agentPassthrough(cli, "security.crowdsec.bouncers.list", nil, csCallTimeout))
-	g.GET("/metrics", agentPassthrough(cli, "security.crowdsec.metrics", nil, csCallTimeout))
+	g.GET("/metrics", agentPassthrough(cli, "security.crowdsec.metrics", nil, csMetricsTimeout))
 
 	g.GET("/hub", func(c *gin.Context) {
 		params := map[string]any{}

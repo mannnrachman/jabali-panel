@@ -69,6 +69,10 @@ func (m *mockWordPressInstallRepo) List(ctx context.Context, opts repository.Lis
 	return m.installs, int64(len(m.installs)), nil
 }
 
+func (m *mockWordPressInstallRepo) ListReadyByUpdatedAtAsc(_ context.Context, _ int) ([]models.WordPressInstall, error) {
+	return nil, nil
+}
+
 func (m *mockWordPressInstallRepo) UpdateStatus(ctx context.Context, id, status string, lastError *string, version *string) error {
 	m.updateCalls = append(m.updateCalls, struct {
 		id      string

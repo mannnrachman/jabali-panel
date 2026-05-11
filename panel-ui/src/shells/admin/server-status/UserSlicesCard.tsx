@@ -6,6 +6,7 @@
 import { Card, Table, Tag, Typography } from "antd";
 import { UserOutlined } from "@ant-design/icons";
 
+import { humanBytes } from "../../../utils/bytes";
 import type { UserSliceMetric, UserSlicesSlice } from "../../../hooks/useServerStatus";
 
 interface Props {
@@ -67,14 +68,3 @@ function cpuColor(pct: number): string {
   return "green";
 }
 
-function humanBytes(b: number): string {
-  if (!b) return "—";
-  const units = ["B", "KB", "MB", "GB"];
-  let v = b;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v.toFixed(v >= 100 ? 0 : 1)} ${units[i]}`;
-}

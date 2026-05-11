@@ -1,6 +1,7 @@
 import { Card, Progress, Table, Tag } from "antd";
 import { HddOutlined } from "@ant-design/icons";
 
+import { humanBytes } from "../../../utils/bytes";
 import type { Partition } from "../../../hooks/useServerStatus";
 
 interface Props {
@@ -69,14 +70,3 @@ function diskColor(pct: number): string {
   return "#52c41a";
 }
 
-function humanBytes(b: number): string {
-  if (!b) return "0";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let v = b;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v.toFixed(v >= 100 ? 0 : 1)} ${units[i]}`;
-}

@@ -6208,6 +6208,16 @@ install_ufw() {
   ufw default deny incoming >/dev/null
   ufw default allow outgoing >/dev/null
 
+  # Clean up legacy protocol-agnostic rules (e.g. "allow 8443" which
+  # opens both TCP and UDP) that may exist from pre-N/tcp install.sh
+  # runs. These create duplicate entries alongside the "allow N/tcp"
+  # rules added below, unnecessarily opening UDP on TCP-only ports.
+  # `ufw delete allow N` exits non-zero with "Could not delete
+  # non-existent rule" if absent — silence the error; idempotent.
+  for port in 22 80 443 8443 25 465 587 993 995 4190 53; do
+    ufw delete allow "$port" >/dev/null 2>&1 || true
+  done
+
   # Allow-list: SSH, web (panel + nginx), mail (Stalwart), DNS (PowerDNS
   # authoritative, TCP for AXFR + large UDP responses, UDP for normal
   # queries). MUST be in place BEFORE `ufw enable` runs in the same

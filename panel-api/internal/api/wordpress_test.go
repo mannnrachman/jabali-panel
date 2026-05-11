@@ -172,6 +172,10 @@ func (m *mockWordPressInstallRepo) GetByIDUnsafe(id string) *models.WordPressIns
 	return nil
 }
 
+func (m *mockWordPressInstallRepo) ListReadyByUpdatedAtAsc(_ context.Context, _ int) ([]models.ApplicationInstall, error) {
+	return nil, nil
+}
+
 // Test helper
 
 func wordPressRouter(userID string, isAdmin bool, wpRepo *mockWordPressInstallRepo, domainRepo *mockDomainRepo, dbRepo *mockDatabaseRepo, userRepo *mockUserRepo, pkgRepo *mockPackageRepo, ag *mockAgent) *gin.Engine {

@@ -17,8 +17,7 @@ vi.mock("./MyProfileUsageCard", () => ({ MyProfileUsageCard: () => null }));
 const FAKE_IDENTITY: identityMod.Identity = {
   id: "user-123",
   email: "test@example.com",
-  schema_id: "default",
-  schema_url: "",
+  isAdmin: false,
 };
 
 function baseFlow(extra: kratos.KratosNode[]): kratos.KratosFlow {

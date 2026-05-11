@@ -123,7 +123,7 @@ const GeneralSettingsTab = () => {
         // Fetch nspawn images for the default-image dropdown.
         try {
           const imgResp = await apiClient.get<{ images: NspawnImage[] }>(
-            "/admin/system/nspawn-images",
+            "/system/nspawn-images",
           );
           if (!cancelled) setNspawnImages(imgResp.data.images || []);
         } catch {

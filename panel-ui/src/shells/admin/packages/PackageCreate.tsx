@@ -60,7 +60,7 @@ export const PackageCreate = () => {
     (async () => {
       try {
         const resp = await apiClient.get<{ images: NspawnImage[] }>(
-          "/admin/system/nspawn-images",
+          "/system/nspawn-images",
         );
         if (!cancelled) setNspawnImages(resp.data.images || []);
       } catch {

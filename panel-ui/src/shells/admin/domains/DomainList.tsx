@@ -2,7 +2,7 @@
 // stays the same (DNS/Redirects/Index/Settings/Toggle/Edit/Delete);
 // only the hook and the two Refine action buttons change.
 import { useState } from "react";
-import { Card, Dropdown, Modal, Space, Table, Tag, Typography, notification } from "antd";
+import { Button, Card, Dropdown, Modal, Space, Table, Tag, Typography, notification } from "antd";
 import {
   DeleteOutlined,
   DownOutlined,
@@ -11,6 +11,7 @@ import {
   GlobalOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
+  PlusOutlined,
   SettingOutlined,
   SwapOutlined,
 } from "@icons";
@@ -181,6 +182,13 @@ export const DomainList = () => {
         <Typography.Title level={3} style={{ margin: 0 }}>
           <GlobalOutlined /> Domains
         </Typography.Title>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={() => navigate("create")}
+        >
+          Create Domain
+        </Button>
       </Space>
 
       <Card>

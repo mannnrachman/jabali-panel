@@ -60,6 +60,10 @@ profile jabali-agent /usr/local/bin/jabali-agent {
 
   # AA 4.x unix mediation — stream sockets (MariaDB, agent wire, dbus, systemd).
   unix (create, bind, listen, accept, connect, send, receive) type=stream,
+  # AA 4.x: complain mode still enforces unix peer-label checks. Explicit
+  # peer=(label=unconfined) allows connecting to MariaDB and other
+  # unconfined unix-socket daemons.
+  unix (connect, send, receive) type=stream peer=(label=unconfined),
   # dgram — dbus abstract-namespace sockets (\0/tmp/dbus-*) and similar.
   unix (create, bind, send, receive) type=dgram,
 

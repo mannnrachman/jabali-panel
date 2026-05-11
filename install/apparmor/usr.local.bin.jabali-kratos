@@ -27,6 +27,10 @@ profile jabali-kratos /usr/local/bin/kratos {
   # AA 4.x unix mediation — stream sockets (MariaDB, Kratos admin+public,
   # panel-api upstream connections).
   unix (create, bind, listen, accept, connect, send, receive) type=stream,
+  # AA 4.x: complain mode still enforces unix peer-label checks. Without
+  # this rule connecting to MariaDB (unconfined) is denied even in complain
+  # mode — the kratos service fails at startup with EACCES on mysqld.sock.
+  unix (connect, send, receive) type=stream peer=(label=unconfined),
 
   /usr/local/bin/kratos          mr,
   /etc/jabali-panel/kratos.yml        r,

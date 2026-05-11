@@ -47,6 +47,10 @@ profile jabali-bulwark /usr/local/bin/jabali-bulwark {
 
   # AA 4.x unix mediation — bind own socket + connect to panel-api upstream.
   unix (create, bind, listen, accept, connect, send, receive) type=stream,
+  # AA 4.x: complain mode still enforces unix peer-label checks. Explicit
+  # peer=(label=unconfined) allows connecting to panel-api upstream socket
+  # when that profile label differs from bulwark's label.
+  unix (connect, send, receive) type=stream peer=(label=unconfined),
 
   /usr/local/bin/jabali-bulwark    mr,
   /usr/local/bin/node              mr,

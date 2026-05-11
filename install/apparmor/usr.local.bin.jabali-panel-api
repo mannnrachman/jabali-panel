@@ -50,6 +50,10 @@ profile jabali-panel {
   # AA 4.x unix mediation — stream sockets (MariaDB, Redis, agent wire,
   # Kratos, bulwark, crowdsec LAPI).
   unix (create, bind, listen, accept, connect, send, receive) type=stream,
+  # AA 4.x: complain mode still enforces unix peer-label checks. Explicit
+  # peer=(label=unconfined) allows connecting to MariaDB, Redis, CrowdSec
+  # LAPI, and any other unconfined unix-socket daemon.
+  unix (connect, send, receive) type=stream peer=(label=unconfined),
 
   /usr/local/bin/jabali-panel mr,
   /etc/jabali/                 r,

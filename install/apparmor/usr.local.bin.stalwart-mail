@@ -30,6 +30,10 @@ profile stalwart-mail /opt/stalwart/stalwart {
 
   # AA 4.x unix mediation — stream sockets (MariaDB, admin/JMAP sockets).
   unix (create, bind, listen, accept, connect, send, receive) type=stream,
+  # AA 4.x: complain mode still enforces unix peer-label checks. Without
+  # this rule connecting to MariaDB (unconfined) is denied even in complain
+  # mode — stalwart fails at startup with EACCES on mysqld.sock.
+  unix (connect, send, receive) type=stream peer=(label=unconfined),
 
   /usr/local/bin/stalwart       mr,
   /opt/stalwart/stalwart        mr,

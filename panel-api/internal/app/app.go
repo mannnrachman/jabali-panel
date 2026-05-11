@@ -228,6 +228,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 	// a prior 401 with status=0ms, leaving the SPA stuck on a blank page
 	// after token expiry.
 	r.Use(middleware.NoCacheAPI())
+	r.Use(middleware.RequireContentType())
 
 	api.RegisterServiceInfoRoute(r)
 	api.RegisterHealthRoutes(r)

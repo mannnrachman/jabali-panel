@@ -593,7 +593,7 @@ func (h *databaseHandler) restore(c *gin.Context) {
 
 // databaseNameValid validates a database name against the required pattern
 func databaseNameValid(name string) bool {
-	if len(name) == 0 || len(name) > 30 {
+	if len(name) < 2 || len(name) > 30 {
 		return false
 	}
 	// Must start with lowercase letter, followed by lowercase letters, digits, or underscores

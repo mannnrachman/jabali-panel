@@ -16,7 +16,7 @@ export interface UserDomainDrawerProps {
 export const UserDomainDrawer = ({ open, onClose }: UserDomainDrawerProps) => {
   const [form] = Form.useForm<UserDomainCreateInput>();
   const screens = Grid.useBreakpoint();
-  const isDesktop = screens.lg !== false;
+  const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
 
   const createMutation = useCreateMutation<DomainCreated, UserDomainCreateInput>({
     resource: "domains",
@@ -49,7 +49,14 @@ export const UserDomainDrawer = ({ open, onClose }: UserDomainDrawerProps) => {
         <Form.Item
           label="Domain Name"
           name="name"
-          rules={[{ required: true, message: "Domain name is required" }]}
+          rules={[
+            { required: true, message: "Domain name is required" },
+            { max: 253, message: "Domain name cannot exceed 253 characters" },
+            {
+              pattern: /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$/,
+              message: "Enter a valid domain name (e.g. example.com)",
+            },
+          ]}
         >
           <Input placeholder="e.g., example.com" />
         </Form.Item>

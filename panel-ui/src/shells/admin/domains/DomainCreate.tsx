@@ -48,7 +48,14 @@ export const DomainCreate = () => {
         <Form.Item
           label="Name"
           name="name"
-          rules={[{ required: true, message: "Domain name is required" }]}
+          rules={[
+            { required: true, message: "Domain name is required" },
+            { max: 253, message: "Domain name cannot exceed 253 characters" },
+            {
+              pattern: /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$/,
+              message: "Enter a valid domain name (e.g. example.com)",
+            },
+          ]}
         >
           <Input placeholder="e.g., example.com" />
         </Form.Item>

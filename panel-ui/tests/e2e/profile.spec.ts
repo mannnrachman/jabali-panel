@@ -31,7 +31,13 @@ test.describe("user panel — MyProfile", () => {
     // asserting is that the page does NOT regress to in-panel password
     // fields (the M20 ban that the legacy "Manage account security" link
     // assertion existed to enforce).
-    await expect(page.getByRole("heading", { name: /^security$/i })).toBeVisible();
+    //
+    // AntD 6.x Card renders title as <div class="ant-card-head-title">
+    // not a heading element — match the class explicitly. getByRole
+    // ("heading") would never resolve.
+    await expect(
+      page.locator(".ant-card-head-title").filter({ hasText: /^Security$/ }),
+    ).toBeVisible();
 
     await expect(page.getByLabel(/current password/i)).toHaveCount(0);
     await expect(page.getByLabel(/^new password$/i)).toHaveCount(0);

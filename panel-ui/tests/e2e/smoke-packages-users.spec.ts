@@ -1,6 +1,13 @@
 import { test, expect } from '@playwright/test';
 
-const BASE_URL = 'https://mx.jabali-panel.local:8443';
+// Live-deployment smoke suite. Runs against a real panel-api on
+// E2E_BASE_URL. CI has no such host, so describe blocks below skip
+// unless the env var is set. Same gate pattern as limits.spec.ts /
+// admin-malware.spec.ts.
+const BASE_URL = process.env.E2E_BASE_URL || 'https://mx.jabali-panel.local:8443';
+const describe = process.env.E2E_BASE_URL ? test.describe : test.describe.skip;
+
+
 const ADMIN_EMAIL = 'admin@jabali.local';
 const ADMIN_PASS = 'ONbCTkgmn5HGuhGEOuCpigvv';
 
@@ -185,7 +192,7 @@ async function createUser(page: any, user: typeof TEST_USER, packageName: string
   await expect(page.locator('text=' + user.email).first()).toBeVisible();
 }
 
-test.describe('Smoke Tests - Packages and Users', () => {
+describe('Smoke Tests - Packages and Users', () => {
   test.afterAll(async ({ browser }) => {
     const page = await browser.newPage();
     await cleanup(page);
@@ -271,7 +278,7 @@ test.describe('Smoke Tests - Packages and Users', () => {
   });
 });
 
-test.describe('Bug Hunting - Edge Cases', () => {
+describe('Bug Hunting - Edge Cases', () => {
   test('Package name validation - empty name', async ({ page }) => {
     await loginAsAdmin(page);
     await page.goto(BASE_URL + '/jabali-admin/packages/create');

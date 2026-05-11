@@ -262,23 +262,31 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		{"sync systemd + shims", func() error {
 			// install.sh copies these on first install; the update path
 			// needs to re-copy them so unit file / shim changes land.
-			// Keep in sync with install_jabali_slices() and
-			// install_sso_reaper_timer() in install.sh.
-			return run("", "bash", "-c",
-				"set -e; "+
-					"install -d -m 0755 /usr/local/libexec/jabali; "+
-					"install -m 0755 "+repoDir+"/install/systemd/fpm-pre-start /usr/local/libexec/jabali/fpm-pre-start; "+
-					"install -m 0755 "+repoDir+"/install/systemd/fpm-exec /usr/local/libexec/jabali/fpm-exec; "+
-					"install -m 0644 "+repoDir+"/install/systemd/jabali.slice /etc/systemd/system/jabali.slice; "+
-					"install -m 0644 "+repoDir+"/install/systemd/jabali-user.slice /etc/systemd/system/jabali-user.slice; "+
-					"install -m 0644 "+repoDir+"/install/systemd/jabali-fpm@.service /etc/systemd/system/jabali-fpm@.service; "+
-					// M22 sso reaper (ADR-0040). Idempotent: install -m
-					// is a no-op when source matches target. enable --now
-					// is a no-op when the timer is already enabled+active.
-					"install -m 0644 "+repoDir+"/install/systemd/jabali-sso-reaper.service /etc/systemd/system/jabali-sso-reaper.service; "+
-					"install -m 0644 "+repoDir+"/install/systemd/jabali-sso-reaper.timer /etc/systemd/system/jabali-sso-reaper.timer; "+
-					"systemctl daemon-reload; "+
-					"systemctl enable --now jabali-sso-reaper.timer")
+			// Keep in sync with install_jabali_slices(),
+			// install_sso_reaper_timer(), and install_kratos() in install.sh.
+			script := `set -e
+install -d -m 0755 /usr/local/libexec/jabali
+install -m 0755 ` + repoDir + `/install/systemd/fpm-pre-start /usr/local/libexec/jabali/fpm-pre-start
+install -m 0755 ` + repoDir + `/install/systemd/fpm-exec /usr/local/libexec/jabali/fpm-exec
+install -m 0644 ` + repoDir + `/install/systemd/jabali.slice /etc/systemd/system/jabali.slice
+install -m 0644 ` + repoDir + `/install/systemd/jabali-user.slice /etc/systemd/system/jabali-user.slice
+install -m 0644 ` + repoDir + `/install/systemd/jabali-fpm@.service /etc/systemd/system/jabali-fpm@.service
+install -m 0644 ` + repoDir + `/install/systemd/jabali-sso-reaper.service /etc/systemd/system/jabali-sso-reaper.service
+install -m 0644 ` + repoDir + `/install/systemd/jabali-sso-reaper.timer /etc/systemd/system/jabali-sso-reaper.timer
+install -m 0644 ` + repoDir + `/install/systemd/jabali-notify@.service /etc/systemd/system/jabali-notify@.service
+install -m 0644 ` + repoDir + `/install/systemd/jabali-stalwart.service /etc/systemd/system/jabali-stalwart.service
+# jabali-kratos.service: sync with sha256 check so we restart only on change.
+sha_before_k=$(sha256sum /etc/systemd/system/jabali-kratos.service 2>/dev/null | awk '{print $1}' || echo "")
+install -m 0644 ` + repoDir + `/install/systemd/jabali-kratos.service /etc/systemd/system/jabali-kratos.service
+systemctl daemon-reload
+systemctl enable --now jabali-sso-reaper.timer
+sha_after_k=$(sha256sum /etc/systemd/system/jabali-kratos.service 2>/dev/null | awk '{print $1}' || echo "")
+if [ "$sha_before_k" != "$sha_after_k" ]; then
+  echo "  (jabali-kratos.service changed — restarting)"
+  systemctl restart jabali-kratos.service || true
+fi
+`
+			return run("", "bash", "-c", script)
 		}},
 		{"sync OnFailure + restart drop-ins", func() error {
 			// Re-render /etc/systemd/system/<unit>.service.d/10-jabali-restart.conf

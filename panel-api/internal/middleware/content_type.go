@@ -18,6 +18,13 @@ func RequireContentType() gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		// Body-less POSTs (e.g. action triggers where version is a URL param)
+		// carry no payload and therefore need no Content-Type.
+		if c.Request.ContentLength == 0 || c.Request.Body == nil || c.Request.Body == http.NoBody {
+			c.Next()
+			return
+		}
+
 		ct := c.GetHeader("Content-Type")
 		if !strings.HasPrefix(ct, "application/json") && !strings.HasPrefix(ct, "multipart/form-data") {
 			c.AbortWithStatusJSON(http.StatusUnsupportedMediaType, gin.H{

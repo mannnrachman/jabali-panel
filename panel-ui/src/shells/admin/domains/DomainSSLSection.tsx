@@ -149,7 +149,7 @@ export const DomainSSLSection = ({ domainId, sslEnabled, onToggled }: Props) => 
   const days = daysUntil(cert?.expires_at);
 
   return (
-    <Space orientation="vertical" style={{ width: "100%" }}>
+    <Space direction="vertical" style={{ width: "100%" }}>
       {!adminEmail && (
         <Alert
           type="warning"

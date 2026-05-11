@@ -78,7 +78,7 @@ export const DomainEmailSection = ({ domainId }: Props) => {
   const dkim = data.dkim_public_key ?? "";
 
   return (
-    <Space orientation="vertical" style={{ width: "100%" }} size="large">
+    <Space direction="vertical" style={{ width: "100%" }} size="large">
       <Space size="middle" align="center" wrap>
         <Switch checked={enabled} loading={flipping} onChange={onFlip} />
         <span>

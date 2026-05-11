@@ -29,7 +29,7 @@ export const RunNowResultModal = ({
       footer={null}
       width={700}
     >
-      <Space orientation="vertical" style={{ width: "100%" }}>
+      <Space direction="vertical" style={{ width: "100%" }}>
         <Alert
           title={isSuccess ? "Execution Successful" : "Execution Failed"}
           description={`Exit code: ${result.exit_code}`}

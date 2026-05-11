@@ -52,7 +52,7 @@ export function DatabaseUserPasswordModal({
       maskClosable={false}
       destroyOnClose
     >
-      <Space orientation="vertical" style={{ width: "100%" }} size="middle">
+      <Space direction="vertical" style={{ width: "100%" }} size="middle">
         <Alert
           type="warning"
           showIcon

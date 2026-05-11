@@ -232,7 +232,7 @@ export const QuickSetupModal = ({ open, onClose, onSuccess }: Props) => {
       )}
 
       {result && (
-        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
           <Alert
             type="success"
             showIcon

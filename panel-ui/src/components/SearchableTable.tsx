@@ -65,7 +65,7 @@ export function SearchableTableStringQ<T extends object>({
   }, [query, debounceMs]);
 
   return (
-    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <Input.Search
         placeholder={searchPlaceholder}
         allowClear

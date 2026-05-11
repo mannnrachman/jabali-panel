@@ -179,7 +179,7 @@ export const LoginPage = () => {
       }}
     >
       <Card style={{ width: "100%", maxWidth: 420 }}>
-        <Space orientation="vertical" size="large" style={{ width: "100%" }}>
+        <Space direction="vertical" size="large" style={{ width: "100%" }}>
           <div
             style={{
               display: "flex",

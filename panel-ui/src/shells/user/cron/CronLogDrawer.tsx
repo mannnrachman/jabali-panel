@@ -75,7 +75,7 @@ export const CronLogDrawer = ({
         </Space>
       }
     >
-      <Space orientation="vertical" style={{ width: "100%", marginBottom: 16 }}>
+      <Space direction="vertical" style={{ width: "100%", marginBottom: 16 }}>
         <Select
           style={{ width: 120 }}
           value={lines}

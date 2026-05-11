@@ -50,6 +50,15 @@ server {
   access_log /var/log/nginx/jabali-panel.access.log;
   error_log  /var/log/nginx/jabali-panel.error.log;
 
+  # Security headers
+  add_header Strict-Transport-Security "max-age=31536000" always;
+  add_header X-Frame-Options "DENY" always;
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header X-XSS-Protection "1; mode=block" always;
+  add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+  # CSP: unsafe-inline needed for AntD emotion CSS-in-JS; img allows Gravatar avatars.
+  add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://gravatar.com https://secure.gravatar.com https://www.gravatar.com; font-src 'self' data:; connect-src 'self' wss:; frame-ancestors 'none'; form-action 'self';" always;
+
   # M37: phpMyAdmin + Adminer share this vhost so the SSO redirect
   # (mint endpoint hands the browser a URL on the panel's :8443
   # origin) routes to the PHP backends instead of falling through

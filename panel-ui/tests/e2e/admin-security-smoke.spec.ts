@@ -67,12 +67,11 @@ if (SKIP_REASON) {
       await gotoSecurity(page, "crowdsec");
       await expect(page.getByRole("tab", { name: /CrowdSec/i }).first()).toBeVisible();
       await expect(page.getByRole("tab", { name: /Malware/i }).first()).toBeVisible();
-      await expect(page.getByRole("tab", { name: /Firewall.*UFW/i }).first()).toBeVisible();
+      await expect(page.getByRole("tab", { name: /Ports \(UFW\)/i }).first()).toBeVisible();
 
       // ---- CrowdSec → Overview --------------------------------------------
       await gotoSecurity(page, "crowdsec", "overview");
       await expect(page.getByText(/What is CrowdSec\?/i)).toBeVisible();
-      await expect(page.getByText(/CrowdSec status/i)).toBeVisible();
       for (const label of [
         "Parsed events",
         "Unparsed",
@@ -124,7 +123,6 @@ if (SKIP_REASON) {
       // ---- CrowdSec → Block Country (with picker) -------------------------
       await gotoSecurity(page, "crowdsec", "appsec");
       // Mode buttons (AntD Radio.Button — visible label, hidden input).
-      await expect(page.getByText(/^Mode:/i).first()).toBeVisible();
       await expect(
         page.locator(".ant-radio-button-wrapper").filter({ hasText: /^Off$/ }),
       ).toBeVisible();

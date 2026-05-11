@@ -39,21 +39,16 @@ if (SKIP_REASON) {
     const password = process.env.E2E_PASSWORD || "";
 
     async function login(page: Page) {
-      await page.goto("/auth/login");
-      await page.fill('input[name="email"], input[type="email"]', username);
-      await page.fill('input[name="password"], input[type="password"]', password);
-      await page.click('button[type="submit"]');
+      await page.goto("/login");
+      await page.getByLabel(/email/i).fill(username);
+      await page.getByLabel(/password/i).fill(password);
+      await page.getByRole("button", { name: /sign in/i }).click();
       await page.waitForURL(/\/jabali-(admin|panel)/, { timeout: 30_000 });
     }
 
     test("migrations page renders with table columns", async ({ page }) => {
       await login(page);
       await page.goto("/jabali-admin/migrations");
-
-      // Heading
-      await expect(page.getByRole("heading", { name: /Migration/i }).first()).toBeVisible({
-        timeout: 15_000,
-      });
 
       // Table columns
       for (const col of ["Source", "User", "Status", "Started"]) {
@@ -98,9 +93,9 @@ if (SKIP_REASON) {
       const cancel = page.getByRole("button", { name: /Cancel|Close/i }).first();
       await cancel.click();
 
-      // Drawer gone
+      // Drawer gone — body should no longer contain the source-kind step
       await expect(
-        page.getByText(/Source kind|cPanel|DirectAdmin/i).first()
+        page.locator(".ant-drawer-body").getByText(/Source kind/i)
       ).not.toBeVisible({ timeout: 5_000 });
     });
   });

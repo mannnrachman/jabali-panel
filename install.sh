@@ -5282,6 +5282,15 @@ install_crowdsec_appsec() {
     rm -f "$tmp3"
   fi
 
+  # Remove auto-generated setup.*.yaml acquis files — they duplicate jabali's
+  # own jabali-*.yaml configs and cause double-processing of SSH/nginx logs.
+  # cscli setup generates these on initial install but jabali owns acquis config.
+  for _setup_f in "$acquis_dir"/setup.*.yaml; do
+    [[ -f "$_setup_f" ]] || continue
+    _log "removing duplicate cscli-generated acquis: $_setup_f"
+    rm -f "$_setup_f"
+  done
+
   # Narrow default CrowdSec acquis.yaml nginx glob if it still matches *.log
   # (access + error together). Error log format breaks the nginx parser.
   local default_acquis="/etc/crowdsec/acquis.yaml"
@@ -8463,7 +8472,7 @@ EOF_CLI
     chmod 0644 /etc/jabali/snuffleupagus/cli.ini
   fi
   if [[ ! -f /etc/jabali/snuffleupagus/mode ]]; then
-    echo "simulation" > /etc/jabali/snuffleupagus/mode
+    echo "enforce" > /etc/jabali/snuffleupagus/mode
     chmod 0644 /etc/jabali/snuffleupagus/mode
   fi
 
@@ -8554,6 +8563,16 @@ install_audit_php_bypass() {
 # re-install. Add new software HERE; install.sh main() still calls the full
 # install_* functions, so fresh installs also get everything.
 provision_new_software() {
+  # Snuffleupagus: flip simulation → enforce on existing installs.
+  # Fresh installs already default to enforce (install_snuffleupagus).
+  local sp_mode_file="/etc/jabali/snuffleupagus/mode"
+  if [[ -f "$sp_mode_file" ]] && [[ "$(cat "$sp_mode_file")" == "simulation" ]]; then
+    _log "snuffleupagus: flipping simulation → enforce"
+    echo "enforce" > "$sp_mode_file"
+    systemctl restart php8.4-fpm php8.5-fpm 2>/dev/null || true
+    _ok "snuffleupagus mode set to enforce"
+  fi
+
   # CrowdSec collections. Guards are idempotent — safe to call even when
   # crowdsec is not yet installed (cscli exits non-zero, guards skip).
   if command -v cscli >/dev/null 2>&1; then

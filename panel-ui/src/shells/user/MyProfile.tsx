@@ -159,7 +159,7 @@ export function MyProfile() {
 
   return (
     <div style={{ maxWidth: 720, margin: "0 auto" }}>
-      <Space orientation="vertical" size="large" style={{ width: "100%" }}>
+      <Space direction="vertical" size="large" style={{ width: "100%" }}>
         <Typography.Title level={2} style={{ margin: 0 }}>
           My profile
         </Typography.Title>
@@ -246,7 +246,7 @@ function SettingsFlowForms({ flow, onSubmit }: SettingsFormsProps) {
   }
 
   return (
-    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       {topErrors.map((msg, i) => (
         <Alert key={i} type="error" showIcon message={msg} />
       ))}

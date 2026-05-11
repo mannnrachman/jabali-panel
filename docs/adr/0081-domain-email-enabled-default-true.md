@@ -1,4 +1,4 @@
-# ADR-0080 — Email enabled by default for new domains
+# ADR-0081 — Email enabled by default for new domains
 
 **Status:** Accepted — 2026-04-30
 

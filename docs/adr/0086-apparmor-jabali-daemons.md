@@ -3,7 +3,8 @@
 **Status:** Accepted, all profiles parked pending re-author (Amendment 2026-05-09)
 **Date:** 2026-04-30
 **Related:** ADR-0072 (malware stack), ADR-0084 (per-user egress
-firewall), ADR-0085 (narrow auditd exec audit).
+firewall), ADR-0085 (narrow auditd exec audit),
+ADR-0092 (AA 4.x profile authoring patterns — empirical unix-socket rules).
 
 ## Amendment 2026-05-09 — all profiles parked, awaiting M40.1
 

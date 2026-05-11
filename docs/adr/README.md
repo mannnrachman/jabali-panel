@@ -68,11 +68,21 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0077](0077-jabali-repair-self-heal.md) | `jabali repair` — host-state self-heal subcommand | Accepted |
 | [0078](0078-backup-destinations-and-schedules.md) | M30.1 Backup destinations + scheduled backups (renumbered 2026-04-28 from 0077) | Accepted |
 | [0079](0079-mail-yara-async-scanner.md) | M33.2 Mail YARA async scanner (JMAP-driven, in-process tick) | Accepted |
+| [0080](0080-per-destination-backup.md) | M30.2 Per-destination backup model | Accepted |
+| [0081](0081-domain-email-enabled-default-true.md) | Email enabled by default for new domains (migration 000104) | Accepted |
 | [0082](0082-ghost-domain-detector.md) | M38 Ghost Domain Detector — periodic DNS-alignment check | Accepted |
+| [0083](0083-shared-ops-packages.md) | M41 Shared ops packages for REST + CLI code reuse (dbops/cronops/sshkeyops) | Accepted |
 | [0084](0084-per-user-egress-firewall-cgroupv2.md) | M34 Per-user PHP-FPM egress firewall via nftables + cgroupv2 socket match | Proposed |
 | [0085](0085-narrow-scoped-auditd-exec-audit.md) | M39 Narrow-scoped auditd as L3 forensic exec audit (replaces Tetragon) | Accepted |
 | [0086](0086-apparmor-jabali-daemons.md) | M40 AppArmor profiles for jabali daemons + critical system services | Accepted |
 | [0087](0087-aide-system-fim.md) | M42 AIDE file integrity monitor for system binaries + configs | Accepted |
+| [0088](0088-snuffleupagus-php-hardening.md) | M41 Snuffleupagus PHP RCE hardening | Proposed |
+| [0089](0089-crowdsec-single-ip-trust-source.md) | M43 CrowdSec as single IP-trust source of truth | Accepted |
+| [0090](0090-2fa-totp-via-kratos-builtins.md) | 2FA TOTP + recovery codes via Kratos built-ins | Accepted |
+| [0091](0091-postgresql-parity-phase-1.md) | M37 PostgreSQL feature parity Phase 1 foundation | Accepted |
+| [0092](0092-apparmor-aa4-rules.md) | M40.1 AppArmor 4.x profile authoring patterns — empirical unix-socket rules | Accepted |
+| [0093](0093-automation-api-tokens.md) | M44 Automation API scoped tokens | Accepted |
+| [0094](0094-migration-importers.md) | M35 Migration importers (cPanel / DA / Hestia / WHM / IMAP) | Proposed |
 
 ## Decision Categories
 

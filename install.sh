@@ -726,7 +726,6 @@ POLICYEOF
     apt-get install -y -qq --no-install-recommends \
       git curl ca-certificates build-essential tar bzip2 unzip openssl gnupg \
       mariadb-server mariadb-client \
-      composer \
       rsync acl \
       systemd-resolved \
       quota quotatool xfsprogs \
@@ -921,6 +920,62 @@ EARLYDNS
       _warn "DNS still broken after resolved setup: 'getent hosts deb.debian.org' failed."
       _warn "Check: resolvectl status; cat /etc/systemd/resolved.conf.d/jabali.conf"
     fi
+  fi
+
+  # After the batch install, pin `php` / `php-config` / `phpize`
+  # update-alternatives to the jabali-configured version.  The Debian
+  # `php-cli` meta-package (pulled in transitively by some packages) registers
+  # `php.default → php8.4` at priority 100 which silently wins over Sury's
+  # php8.5 at priority 85, breaking WP-CLI, Composer, and any other `php`
+  # invocation. Explicit --set overrides priority arithmetic entirely.
+  local primary_version
+  primary_version="$(echo "$php_versions" | awk '{print $NF}')"
+  _log "pinning php alternatives to php${primary_version}"
+  for _alt in php phar; do
+    if [[ -f "/usr/bin/${_alt}${primary_version}" ]]; then
+      update-alternatives --set "$_alt" "/usr/bin/${_alt}${primary_version}" 2>/dev/null || true
+    fi
+  done
+  for _alt in php-config phpize; do
+    if [[ -f "/usr/bin/${_alt}${primary_version}" ]]; then
+      update-alternatives --set "$_alt" "/usr/bin/${_alt}${primary_version}" 2>/dev/null || true
+    fi
+  done
+
+  # If php8.4 was pulled in as a transitive dependency (e.g., old Debian
+  # `php-cli` meta-package) and 8.4 is NOT in JABALI_PHP_VERSIONS, purge it
+  # now so no stale binaries remain.
+  local _purge_versions=("8.4" "8.3" "8.2" "8.1" "8.0" "7.4")
+  for _pv in "${_purge_versions[@]}"; do
+    # Skip if this version is in the configured set
+    if echo "$php_versions" | grep -qw "$_pv"; then
+      continue
+    fi
+    if dpkg -l "php${_pv}-cli" 2>/dev/null | grep -q "^ii"; then
+      _log "purging stale php${_pv}-cli (not in JABALI_PHP_VERSIONS)"
+      apt-get purge -y -qq "php${_pv}*" 2>/dev/null || true
+      apt-get autoremove -y -qq 2>/dev/null || true
+    fi
+  done
+
+  # Install Composer from getcomposer.org using the configured PHP binary.
+  # Do NOT use the Debian `composer` apt package — it depends on php-cli meta
+  # which re-installs php8.4-cli and fights our update-alternatives settings.
+  if ! command -v composer >/dev/null 2>&1; then
+    _log "downloading composer installer from getcomposer.org"
+    local _composer_tmp
+    _composer_tmp="$(mktemp)"
+    if curl -fsSL -o "$_composer_tmp" https://getcomposer.org/installer; then
+      "php${primary_version}" "$_composer_tmp" \
+        --install-dir=/usr/local/bin --filename=composer --quiet
+      rm -f "$_composer_tmp"
+      _ok "composer installed at /usr/local/bin/composer"
+    else
+      rm -f "$_composer_tmp"
+      _warn "failed to download composer installer — composer will be unavailable"
+    fi
+  else
+    _ok "composer already present"
   fi
 
   _ok "base packages ready"
@@ -8573,9 +8628,35 @@ provision_new_software() {
   if [[ -f "$sp_mode_file" ]] && [[ "$(cat "$sp_mode_file")" == "simulation" ]]; then
     _log "snuffleupagus: flipping simulation → enforce"
     echo "enforce" > "$sp_mode_file"
-    systemctl restart php8.4-fpm php8.5-fpm 2>/dev/null || true
+    local _sp_php_versions="${JABALI_PHP_VERSIONS:-8.5}"
+    local _sp_fpm_units=()
+    for _spv in $_sp_php_versions; do
+      _sp_fpm_units+=("php${_spv}-fpm")
+    done
+    systemctl restart "${_sp_fpm_units[@]}" 2>/dev/null || true
     _ok "snuffleupagus mode set to enforce"
   fi
+
+  # Ensure php alternatives still point at the jabali-configured version.
+  # Idempotent and cheap — guards against any apt upgrade re-seeding the
+  # php-cli meta-package (and its php8.4 priority-100 registration).
+  local _upd_php_versions="${JABALI_PHP_VERSIONS:-8.5}"
+  local _upd_primary
+  _upd_primary="$(echo "$_upd_php_versions" | awk '{print $NF}')"
+  for _alt in php phar php-config phpize; do
+    if [[ -f "/usr/bin/${_alt}${_upd_primary}" ]]; then
+      update-alternatives --set "$_alt" "/usr/bin/${_alt}${_upd_primary}" 2>/dev/null || true
+    fi
+  done
+  # Purge any stale PHP versions not in JABALI_PHP_VERSIONS
+  for _pv in 8.4 8.3 8.2 8.1 8.0 7.4; do
+    if echo "$_upd_php_versions" | grep -qw "$_pv"; then continue; fi
+    if dpkg -l "php${_pv}-cli" 2>/dev/null | grep -q "^ii"; then
+      _log "provision: purging stale php${_pv} (not in JABALI_PHP_VERSIONS)"
+      apt-get purge -y -qq "php${_pv}*" 2>/dev/null || true
+      apt-get autoremove -y -qq 2>/dev/null || true
+    fi
+  done
 
   # AIDE: re-trigger DB init if the database is missing and no init is
   # already running. Covers hosts that had a failed or timed-out first
@@ -9190,7 +9271,6 @@ SQL
     ed inotify-tools
     restic
     sshpass
-    composer
     crowdsec crowdsec-firewall-bouncer-nftables crowdsec-firewall-bouncer-iptables crowdsec-nginx-bouncer
     auditd audispd-plugins
     apparmor apparmor-utils apparmor-profiles-extra
@@ -9242,6 +9322,8 @@ SQL
     _ok "OS packages (nginx, mariadb, pdns, php, node, …) left INSTALLED — remove with apt if desired"
     _ok "  or re-run with: bash install.sh --uninstall --purge-packages"
   fi
+
+  rm -f /usr/local/bin/composer
 
   _ok "jabali uninstall complete"
 }

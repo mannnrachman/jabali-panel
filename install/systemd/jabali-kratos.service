@@ -58,7 +58,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/etc/jabali-panel /run/jabali-kratos
+ReadWritePaths=/etc/jabali-panel /run/jabali-kratos /run/mysqld
 
 StandardOutput=journal
 StandardError=journal

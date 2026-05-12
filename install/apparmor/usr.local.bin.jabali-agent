@@ -330,7 +330,16 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /usr/bin/journalctl          ix,
   /usr/bin/grep                ix,
   /bin/grep                    ix,
-  /usr/bin/sudo                ix,
+  /usr/bin/sudo                Ux,
+  # sudo loads libsudo_util.so.0 from /usr/libexec/sudo/ + reads
+  # /etc/sudo.conf at start; capping the child with the agent
+  # profile blocks both. Ux unconfines the sudo child so its
+  # children (git, useradd, chown...) get evaluated against their
+  # own profiles or the root profile, mirroring the bare-systemd
+  # behavior before this AppArmor profile shipped. Inherit-mode
+  # (ix) would require copying the entire /usr/libexec/sudo +
+  # /etc/sudoers + ld.so + libc + libpcre2 + ... rule set inline,
+  # which becomes a maintenance hazard on every libsudo bump.
   /usr/bin/getent              ix,
   /usr/bin/sftp-server         ix,
   /usr/lib/openssh/sftp-server ix,

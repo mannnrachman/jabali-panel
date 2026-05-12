@@ -30,7 +30,7 @@ import { Link } from "react-router";
 
 import { apiClient } from "../../../apiClient";
 import { RowActionButton } from "../../../components/RowActionButton";
-import { DeleteOutlined, EditOutlined, PlusOutlined, RedoOutlined, SwapOutlined } from "@icons";
+import { DeleteOutlined, PlusOutlined, RedoOutlined, SwapOutlined } from "@icons";
 import { BulkWhmDrawer } from "./BulkWhmDrawer";
 import { CreateMigrationDrawer } from "./CreateMigrationDrawer";
 import { CreateMigrationWizard } from "./CreateMigrationWizard";
@@ -199,7 +199,14 @@ export const AdminMigrationsPage = () => {
     },
   });
 
-  const rows = list.data?.data ?? [];
+  // M35.8: drafts are operator-invisible. Wizard creates them as an
+  // internal scratchpad (secret-upload + discover-accounts both need
+  // a row to anchor secrets to), but the operator's mental model is
+  // "I either start a migration or I don't". Discard/Resume on draft
+  // rows confused users — they expected re-typing the connection
+  // form, not a Resume-from-state UI. Filter drafts out of the
+  // visible list; the daily reaper (24h TTL on drafts) sweeps them.
+  const rows = (list.data?.data ?? []).filter((r) => r.state !== "draft");
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
@@ -344,54 +351,17 @@ export const AdminMigrationsPage = () => {
             title=""
             width={200}
             render={(_, r) => {
-              const isDraft = r.state === "draft";
               const terminal =
                 r.state === "done" ||
                 r.state === "failed" ||
                 r.state === "cancelled";
               return (
                 <Space size="small">
-                  {isDraft ? (
-                    <RowActionButton
-                      icon={<EditOutlined />}
-                      color="primary"
-                      onClick={() => {
-                        // M35.4 Resume — reopen the wizard with this
-                        // draft's id. The wizard's mount-side effect
-                        // reads ?wizard=<id> from URL + restores state
-                        // (ADR-0095 decision 5).
-                        const u = new URL(window.location.href);
-                        u.searchParams.set("wizard", r.id);
-                        window.history.replaceState({}, "", u.toString());
-                        setWizardOpen(true);
-                      }}
-                    >
-                      Resume
+                  <Link to={`/jabali-admin/migrations/${r.id}`}>
+                    <RowActionButton icon={<SwapOutlined />} color="default">
+                      View
                     </RowActionButton>
-                  ) : (
-                    <Link to={`/jabali-admin/migrations/${r.id}`}>
-                      <RowActionButton icon={<SwapOutlined />} color="default">
-                        View
-                      </RowActionButton>
-                    </Link>
-                  )}
-                  {isDraft && (
-                    <Popconfirm
-                      title={`Discard draft ${r.source_user}?`}
-                      description="Hard-deletes the draft row. No secrets or extracted files have been written yet."
-                      onConfirm={() => destroy.mutate({ id: r.id })}
-                      okText="Discard"
-                      okButtonProps={{ danger: true }}
-                    >
-                      <RowActionButton
-                        danger
-                        icon={<DeleteOutlined />}
-                        color="default"
-                      >
-                        Discard
-                      </RowActionButton>
-                    </Popconfirm>
-                  )}
+                  </Link>
                   {r.state === "pending" && (
                     <Popconfirm
                       title={`Re-kick pull-source for ${r.source_user}?`}
@@ -407,7 +377,7 @@ export const AdminMigrationsPage = () => {
                       </RowActionButton>
                     </Popconfirm>
                   )}
-                  {!isDraft && !terminal && (
+                  {!terminal && (
                     <Popconfirm
                       title={`Cancel migration ${r.source_user}?`}
                       description="Stamps the DB row as cancelled. Does NOT kill an in-flight CLI process — Ctrl-C the cobra cmd separately."

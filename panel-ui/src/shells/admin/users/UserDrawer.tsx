@@ -18,6 +18,7 @@ import {
   useUpdateMutation,
 } from "../../../hooks/useQueries";
 import { useSelectQuery } from "../../../hooks/useSelectQuery";
+import { noXSS, maxLen } from "../../../utils/validation";
 
 type HostingPackage = {
   id: string;
@@ -186,10 +187,10 @@ export function UserDrawer({ open, onClose, editingId }: UserDrawerProps) {
             <PasswordInput autoComplete="new-password" />
           </Form.Item>
 
-          <Form.Item label="First name" name="name_first">
+          <Form.Item label="First name" name="name_first" rules={[noXSS, maxLen(64)]}>
             <Input />
           </Form.Item>
-          <Form.Item label="Last name" name="name_last">
+          <Form.Item label="Last name" name="name_last" rules={[noXSS, maxLen(64)]}>
             <Input />
           </Form.Item>
 

@@ -78,6 +78,22 @@ on a daily cadence; operator can also invoke directly.`,
 				page++
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "scanned=%d deleted=%d (dry-run=%v)\n", scanned, deleted, dryRun)
+			// ADR-0095 decision 5 — also reap draft migration_jobs
+			// older than 24h. Drafts are created by the wizard at Step
+			// 1; an operator who closes the tab without finishing
+			// leaves a row behind. 24h is a generous "not coming back"
+			// window. Hard-delete (no per-job secrets to wipe; secrets
+			// only land at Step 2 which flips state out of draft).
+			cutoff := time.Now().Add(-24 * time.Hour)
+			if dryRun {
+				fmt.Fprintf(cmd.OutOrStdout(), "[dry-run] would reap draft jobs older than %s\n", cutoff.Format(time.RFC3339))
+			} else {
+				if n, err := repo.CancelDraftsOlderThan(ctx, cutoff); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "reap drafts: %v\n", err)
+				} else if n > 0 {
+					fmt.Fprintf(cmd.OutOrStdout(), "reaped %d draft job(s) older than 24h\n", n)
+				}
+			}
 			return nil
 		},
 	}

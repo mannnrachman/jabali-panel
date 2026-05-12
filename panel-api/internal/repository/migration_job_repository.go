@@ -25,6 +25,17 @@ type MigrationJobRepository interface {
 	UpdateState(ctx context.Context, id, state string, lastError *string) error
 	UpdateManifest(ctx context.Context, id, manifestJSON string) error
 	UpdateTargetUser(ctx context.Context, id, targetUserID string) error
+	// PatchDraft updates source-host/user + target-user-id on a row
+	// still in state='draft'. ADR-0095 decision 5. Returns ErrNotFound
+	// if the row is missing OR in any non-draft state — callers map
+	// that to 409. Pass nil for any field to skip it.
+	PatchDraft(ctx context.Context, id string, sourceHost, sourceUser, targetUserID *string) error
+	// ListByBatch returns every job sharing a batch_id (ADR-0095
+	// decision 3 — bulk-WHM). Empty result on unknown batch.
+	ListByBatch(ctx context.Context, batchID string) ([]models.MigrationJob, error)
+	// CancelDraftsOlderThan deletes draft rows whose updated_at is
+	// older than the cutoff. Called by the secrets reaper timer.
+	CancelDraftsOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	Delete(ctx context.Context, id string) error
 
 	// Stages
@@ -157,6 +168,50 @@ func (r *migrationJobRepo) UpdateTargetUser(ctx context.Context, id, targetUserI
 		return ErrNotFound
 	}
 	return nil
+}
+
+// PatchDraft updates draft-only mutable fields. Caller passes nil to skip.
+func (r *migrationJobRepo) PatchDraft(ctx context.Context, id string, sourceHost, sourceUser, targetUserID *string) error {
+	updates := map[string]any{"updated_at": time.Now().UTC()}
+	if sourceHost != nil {
+		updates["source_host"] = *sourceHost
+	}
+	if sourceUser != nil {
+		updates["source_user"] = *sourceUser
+	}
+	if targetUserID != nil {
+		updates["target_user_id"] = *targetUserID
+	}
+	res := r.db.WithContext(ctx).
+		Model(&models.MigrationJob{}).
+		Where("id = ? AND state = ?", id, models.MigrationStateDraft).
+		Updates(updates)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ListByBatch returns all jobs with batch_id = ?.
+func (r *migrationJobRepo) ListByBatch(ctx context.Context, batchID string) ([]models.MigrationJob, error) {
+	var rows []models.MigrationJob
+	res := r.db.WithContext(ctx).
+		Where("batch_id = ?", batchID).
+		Order("created_at ASC").
+		Find(&rows)
+	return rows, res.Error
+}
+
+// CancelDraftsOlderThan hard-deletes draft rows that haven't moved in
+// `cutoff` (typically now-24h). Returns rows affected.
+func (r *migrationJobRepo) CancelDraftsOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
+	res := r.db.WithContext(ctx).
+		Where("state = ? AND updated_at < ?", models.MigrationStateDraft, cutoff).
+		Delete(&models.MigrationJob{})
+	return res.RowsAffected, res.Error
 }
 
 func (r *migrationJobRepo) Delete(ctx context.Context, id string) error {

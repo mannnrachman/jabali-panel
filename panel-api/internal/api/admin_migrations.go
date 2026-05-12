@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -75,6 +76,13 @@ func RegisterAdminMigrationRoutes(g *gin.RouterGroup, cfg AdminMigrationsHandler
 	// /tmp.
 	rg.POST("/:id/tarball", h.uploadTarball)
 	rg.GET("/:id/tarball", h.tarballStatus)
+
+	// ADR-0095 wizard endpoints.
+	rg.PATCH("/:id", h.patchDraft)
+	rg.POST("/bulk", h.bulkCreate)
+	rg.DELETE("/batches/:id", h.cancelBatch)
+	rg.POST("/:id/retry", h.retry)
+	rg.GET("/:id/stream", h.stream)
 }
 
 type adminMigrationsHandler struct{ cfg AdminMigrationsHandlerConfig }
@@ -674,4 +682,214 @@ func (h *adminMigrationsHandler) tarballStatus(c *gin.Context) {
 		"size_bytes": st.Size(),
 		"mtime":      st.ModTime().UTC().Format(time.RFC3339),
 	})
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0095 wizard endpoints
+// ---------------------------------------------------------------------------
+
+type patchDraftRequest struct {
+	SourceHost   *string `json:"source_host,omitempty"`
+	SourceUser   *string `json:"source_user,omitempty"`
+	TargetUserID *string `json:"target_user_id,omitempty"`
+}
+
+// patchDraft updates a draft-state job. Allows the wizard to keep the
+// row in sync as the operator moves through steps 2-4. PATCH on a job
+// in any non-draft state returns 409.
+func (h *adminMigrationsHandler) patchDraft(c *gin.Context) {
+	id := c.Param("id")
+	var req patchDraftRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
+		return
+	}
+	if err := h.cfg.Jobs.PatchDraft(c.Request.Context(), id, req.SourceHost, req.SourceUser, req.TargetUserID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusConflict, gin.H{"error": "not_draft", "detail": "job missing or not in draft state"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": err.Error()})
+		return
+	}
+	row, _ := h.cfg.Jobs.FindByID(c.Request.Context(), id)
+	c.JSON(http.StatusOK, row)
+}
+
+type bulkCreateRequest struct {
+	SourceKind string   `json:"source_kind" binding:"required"`
+	SourceHost string   `json:"source_host" binding:"required"`
+	Accounts   []string `json:"accounts"    binding:"required"`
+}
+
+type bulkCreateResponse struct {
+	BatchID string                `json:"batch_id"`
+	Jobs    []models.MigrationJob `json:"jobs"`
+}
+
+// bulkCreate fires off N draft jobs sharing a batch_id — one per
+// account name in `accounts`. Used by the WHM wizard after Step 3
+// account selection.
+func (h *adminMigrationsHandler) bulkCreate(c *gin.Context) {
+	var req bulkCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
+		return
+	}
+	if !isKnownSourceKind(req.SourceKind) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown_source_kind"})
+		return
+	}
+	if len(req.Accounts) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no_accounts", "detail": "accounts[] required"})
+		return
+	}
+	batchID := genULID()
+	out := make([]models.MigrationJob, 0, len(req.Accounts))
+	for _, acct := range req.Accounts {
+		row := &models.MigrationJob{
+			ID:         genULID(),
+			BatchID:    &batchID,
+			SourceKind: req.SourceKind,
+			SourceHost: req.SourceHost,
+			SourceUser: acct,
+			State:      models.MigrationStateDraft,
+		}
+		if err := h.cfg.Jobs.Create(c.Request.Context(), row); err != nil {
+			// Skip dupes silently — operator re-selected an account
+			// that already has an existing job under this host.
+			continue
+		}
+		out = append(out, *row)
+	}
+	c.JSON(http.StatusCreated, bulkCreateResponse{BatchID: batchID, Jobs: out})
+}
+
+// cancelBatch transitions every job in the batch to cancelled. Uses
+// the existing cancel semantics per job (soft-revoke).
+func (h *adminMigrationsHandler) cancelBatch(c *gin.Context) {
+	batchID := c.Param("id")
+	jobs, err := h.cfg.Jobs.ListByBatch(c.Request.Context(), batchID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": err.Error()})
+		return
+	}
+	if len(jobs) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "batch_not_found"})
+		return
+	}
+	cancelled := 0
+	for _, job := range jobs {
+		// Skip terminal-state jobs; cancel only live ones.
+		switch job.State {
+		case models.MigrationStateDone, models.MigrationStateFailed,
+			models.MigrationStateCancelled:
+			continue
+		}
+		if err := h.cfg.Jobs.UpdateState(c.Request.Context(), job.ID, models.MigrationStateCancelled, nil); err == nil {
+			cancelled++
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"batch_id": batchID, "cancelled": cancelled, "total": len(jobs)})
+}
+
+// retry re-runs the failed job. Default = resume from last-good stage
+// (?from_scratch=false). With ?from_scratch=true, wipes prior stage
+// rows + the extracted/ directory and starts from analyze.
+//
+// Phase-3 backend follow-up: actual stage idempotency audit + extracted
+// dir cleanup is gated on the runner. For now this endpoint flips the
+// job state back to pending + lets the existing pull-source / import
+// flow re-run; full-restart variant clears stage rows so the runner
+// sees them as un-attempted.
+func (h *adminMigrationsHandler) retry(c *gin.Context) {
+	id := c.Param("id")
+	fromScratch := c.Query("from_scratch") == "true"
+
+	row, err := h.cfg.Jobs.FindByID(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+		return
+	}
+	if row.State != models.MigrationStateFailed && row.State != models.MigrationStateCancelled {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  "not_retryable",
+			"detail": "retry only valid in failed/cancelled state",
+		})
+		return
+	}
+	if fromScratch {
+		// Wipe stage rows so the runner re-creates them from analyze.
+		// extracted/ cleanup happens server-side via the runner's
+		// "fresh-pull" guard (Phase 3 follow-up — for now the agent
+		// re-extracts onto the existing dir which the cpanel parser
+		// handles idempotently via tar -xkf).
+		stages, _ := h.cfg.Jobs.ListStages(c.Request.Context(), id)
+		for _, s := range stages {
+			_ = h.cfg.Jobs.UpdateStage(c.Request.Context(), s.ID, models.MigrationStatePending, 0, nil)
+		}
+	}
+	if err := h.cfg.Jobs.UpdateState(c.Request.Context(), id, models.MigrationStatePending, nil); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": err.Error()})
+		return
+	}
+	out, _ := h.cfg.Jobs.FindByID(c.Request.Context(), id)
+	c.JSON(http.StatusOK, gin.H{"job": out, "from_scratch": fromScratch})
+}
+
+// stream emits SSE updates while the job is non-terminal. Refresh
+// cadence: 2s — matches the runner's typical stage-completion
+// granularity without hammering the DB. Closes once terminal.
+//
+// ADR-0095 decision 4 — reuses nginx WS-proxy block already configured
+// for /api/v1/logs/stream/* (proxy_buffering off, long timeouts).
+func (h *adminMigrationsHandler) stream(c *gin.Context) {
+	id := c.Param("id")
+
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no") // disable nginx proxy_buffering
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "streaming_unsupported"})
+		return
+	}
+
+	emit := func() (terminal bool) {
+		job, err := h.cfg.Jobs.FindByID(c.Request.Context(), id)
+		if err != nil {
+			fmt.Fprintf(c.Writer, "event: error\ndata: %q\n\n", err.Error())
+			flusher.Flush()
+			return true
+		}
+		stages, _ := h.cfg.Jobs.ListStages(c.Request.Context(), id)
+		payload, _ := json.Marshal(gin.H{"job": job, "stages": stages})
+		fmt.Fprintf(c.Writer, "event: snapshot\ndata: %s\n\n", payload)
+		flusher.Flush()
+		switch job.State {
+		case models.MigrationStateDone,
+			models.MigrationStateFailed,
+			models.MigrationStateCancelled:
+			return true
+		}
+		return false
+	}
+
+	if emit() {
+		return // already terminal — single snapshot then close
+	}
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			return
+		case <-ticker.C:
+			if emit() {
+				return
+			}
+		}
+	}
 }

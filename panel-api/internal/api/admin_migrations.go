@@ -1094,8 +1094,34 @@ func (h *adminMigrationsHandler) submitDraft(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": err.Error()})
 		return
 	}
+	// Auto-kick the agent's pull-source runner. ADR-0095 decision 5
+	// closes the wizard → restore loop end-to-end: without this call
+	// the job sits in pending forever waiting for someone to POST
+	// /:id/pull-source explicitly. Failures here are non-fatal — the
+	// row already flipped to pending; the operator can retry the
+	// kick from the detail page.
+	if h.cfg.Agent != nil {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+		defer cancel()
+		if _, err := h.cfg.Agent.Call(ctx, "migration.pull_source_run", map[string]any{
+			"job_id":   id,
+			"ssh_user": "root",
+		}); err != nil {
+			// Job left in pending; operator can re-trigger via the
+			// detail page's pull-source button (existing endpoint).
+			// Include the agent error in the response so the SPA can
+			// surface a toast without polling.
+			out, _ := h.cfg.Jobs.FindByID(c.Request.Context(), id)
+			c.JSON(http.StatusAccepted, gin.H{
+				"job":          out,
+				"pull_started": false,
+				"pull_error":   err.Error(),
+			})
+			return
+		}
+	}
 	out, _ := h.cfg.Jobs.FindByID(c.Request.Context(), id)
-	c.JSON(http.StatusOK, out)
+	c.JSON(http.StatusOK, gin.H{"job": out, "pull_started": h.cfg.Agent != nil})
 }
 
 // accountSizeProbe is the cold-cache live SSH probe. ADR-0095 decision 6.

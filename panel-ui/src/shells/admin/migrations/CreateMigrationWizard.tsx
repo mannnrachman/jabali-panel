@@ -35,6 +35,7 @@ import {
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
+import { humanBytes } from "../../../utils/bytes";
 
 type DraftJob = {
   id: string;
@@ -175,16 +176,21 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
     },
   });
 
-  // ── single-account finalize: flip draft → pending ───────────────────
+  // ── single-account finalize: flip draft → pending via /:id/submit
   const finalize = useMutation({
     mutationFn: async () => {
       if (!draftId) throw new Error("no draft");
-      // No dedicated "submit draft" endpoint — re-create as pending
-      // via the existing create flow would conflict on the unique
-      // source tuple. Simplest: ask the operator to use the existing
-      // single-account drawer for non-WHM. M35.2 adds POST /:id/submit.
-      message.warning(
-        "Non-WHM single-account submit lands in M35.2. Use the 'New migration' button on the list page until then.",
+      await apiClient.post(`/admin/migrations/${draftId}/submit`);
+    },
+    onSuccess: () => {
+      message.success("Migration submitted — runner picks it up on next tick.");
+      onCreated?.(null);
+      handleClose();
+    },
+    onError: (e: unknown) => {
+      message.error(
+        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+          "Submit failed",
       );
     },
   });
@@ -359,6 +365,11 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
                       {a.domain && (
                         <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
                           {a.domain}
+                        </Typography.Text>
+                      )}
+                      {a.bytes_total > 0 && (
+                        <Typography.Text type="secondary" style={{ marginLeft: 8, fontVariantNumeric: "tabular-nums" }}>
+                          {humanBytes(a.bytes_total)}
                         </Typography.Text>
                       )}
                       {a.suspended && (

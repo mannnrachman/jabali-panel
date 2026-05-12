@@ -197,6 +197,44 @@ recovery for data drift on source.
 (~0.5 day). UI button + Popconfirm for full-restart variant
 (~0.5 day).
 
+#### Amendment 2026-05-12 — stage idempotency audit findings
+
+Walked each stage during the M35.1 implementation. Three stages
+(`analyze`, `fix_perms`, `validate`) are read-only or use idempotent
+ops (chown/chmod on the same paths). `restore` stage has ONE
+non-idempotent sub-step:
+
+**DB restore via `mysql <dbname> < dump.sql`** —
+`panel-agent/internal/commands/db_restore.go:82`. The CLI mysql
+client streams the dump verbatim. If the dump contains plain
+`CREATE TABLE ... (` (no `IF NOT EXISTS`) and `INSERT INTO ... VALUES`,
+a mid-restore failure leaves partial tables; resume-retry hits the
+duplicate CREATE on the first table and bails.
+
+Mitigations (in priority order):
+
+1. **Operator-facing (shipped)**: UI exposes "Retry from scratch"
+   as a secondary button. Documented in the ADR-0095 retry-resume
+   description that DB-restore failures should use from-scratch.
+2. **Backend (M35.2)**: db.restore handler issues `DROP DATABASE IF
+   EXISTS <dbname>; CREATE DATABASE <dbname>;` before streaming the
+   dump. Destructive on the destination DB but the destination is
+   always a freshly-provisioned target (per M35 spec — operators
+   restore INTO new accounts, not over existing ones).
+3. **Source-side (out of scope)**: have mariadb-dump emit
+   `--add-drop-table` on the source. Operators don't control that.
+
+Other restore ops are idempotent:
+- `rsync -aH --delete-after` syncs the dest tree to match source
+- `chown -R` is repeat-safe
+- `useradd` already guards via `id -u` check
+- Mailbox JMAP `Manual` upserts existing folders
+
+Retry-resume is therefore SAFE for failures in analyze/fix_perms/
+validate stages. For restore-stage failures, the UI's "Retry from
+scratch" path remains the operator-recommended action until M35.2
+adds the DROP+CREATE bracketing.
+
 ### 8. SSRF guards: deny private + DNS rebinding protection
 
 **Decision.** Every outbound dial from `internal/migrate/`

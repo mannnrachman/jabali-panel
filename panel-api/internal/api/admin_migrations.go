@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -84,6 +85,7 @@ func RegisterAdminMigrationRoutes(g *gin.RouterGroup, cfg AdminMigrationsHandler
 	rg.POST("/bulk", h.bulkCreate)
 	rg.DELETE("/batches/:id", h.cancelBatch)
 	rg.POST("/:id/retry", h.retry)
+	rg.POST("/:id/submit", h.submitDraft)
 	rg.GET("/:id/stream", h.stream)
 	rg.GET("/discover-accounts/:host/:user/size", h.discoverAccountSize)
 	rg.GET("/:id/discover-accounts", h.discoverAccounts)
@@ -1010,4 +1012,50 @@ func (h *adminMigrationsHandler) discoverAccounts(c *gin.Context) {
 		"accounts": accounts,
 		"total":    len(accounts),
 	})
+}
+
+// submitDraft flips a draft row to pending. ADR-0095 decision 5
+// closes the wizard loop: Step 4's "Submit" button on non-WHM flows
+// (cpanel/directadmin/hestiacp) hits this endpoint to graduate the
+// row out of draft. WHM bulk flows go via POST /bulk and never call
+// here — bulk-create writes drafts that the operator submits per-
+// account via the existing list page.
+//
+// Refuses any state other than draft (404 if missing, 409 if not
+// draft). Validates that source_host + source_user are real values
+// (the wizard seeds them with __draft_* placeholders at step 1 and
+// PATCHes the actual values at step 2; refusing __draft_* prefixes
+// catches the operator who tries to submit without completing
+// the connection step).
+func (h *adminMigrationsHandler) submitDraft(c *gin.Context) {
+	id := c.Param("id")
+	job, err := h.cfg.Jobs.FindByID(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if job.State != models.MigrationStateDraft {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  "not_draft",
+			"detail": "submit only valid in draft state; got " + job.State,
+		})
+		return
+	}
+	if strings.HasPrefix(job.SourceHost, "__draft_") || strings.HasPrefix(job.SourceUser, "__draft_") {
+		c.JSON(http.StatusPreconditionRequired, gin.H{
+			"error":  "draft_incomplete",
+			"detail": "PATCH source_host + source_user before submitting",
+		})
+		return
+	}
+	if err := h.cfg.Jobs.UpdateState(c.Request.Context(), id, models.MigrationStatePending, nil); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": err.Error()})
+		return
+	}
+	out, _ := h.cfg.Jobs.FindByID(c.Request.Context(), id)
+	c.JSON(http.StatusOK, out)
 }

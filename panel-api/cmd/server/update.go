@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -764,7 +765,29 @@ test -x node_modules/.bin/tsc || {
 	if err != nil {
 		return err
 	}
-	if lastBuilt == postHEAD && !force {
+	// Self-verify before honoring the marker. The marker says "HEAD
+	// was successfully built into the installed binary"; if the binary
+	// is OLDER than the HEAD commit (hand-replaced, half-applied prior
+	// build, marker hand-edited, …) the marker is lying and we must
+	// rebuild even when SHAs match. Catches the f08a97eb-class
+	// regression where source-on-disk and installed binary fell out of
+	// sync but the marker stayed pinned to HEAD, making `--force` the
+	// only escape — and any operator running an older CLI without the
+	// `&& !force` clause was permanently stuck.
+	binStale := false
+	if binInfo, statErr := os.Stat(defaultPanelBinPath); statErr == nil {
+		commitTimeRaw, _ := exec.Command("sudo", "-u", serviceUser,
+			"git", "-C", repoDir, "show", "-s", "--format=%cI", postHEAD).Output()
+		if ct := strings.TrimSpace(string(commitTimeRaw)); ct != "" {
+			if t, perr := time.Parse(time.RFC3339, ct); perr == nil && binInfo.ModTime().Before(t) {
+				binStale = true
+			}
+		}
+	} else {
+		// Binary missing entirely — rebuild.
+		binStale = true
+	}
+	if lastBuilt == postHEAD && !force && !binStale {
 		shortSHA := postHEAD
 		if len(shortSHA) >= 7 {
 			shortSHA = shortSHA[:7]
@@ -772,6 +795,9 @@ test -x node_modules/.bin/tsc || {
 		fmt.Printf("\n✓ Already up to date (HEAD=%s). Skipped rebuild.\n", shortSHA)
 		fmt.Println("  Run `jabali update --force` to rebuild and restart anyway.")
 		return nil
+	}
+	if binStale && !force && lastBuilt == postHEAD {
+		fmt.Println("  (last-built-sha matches HEAD but installed binary is older than the HEAD commit — forcing rebuild)")
 	}
 
 	for _, s := range buildSteps {

@@ -225,6 +225,15 @@ func rebuildOne(ctx context.Context, kc *kratosclient.Client, users repository.U
 	}
 
 	newID, err := kc.CreateIdentityWithPassword(ctx, traits, tempHash)
+	// 409 conflict with a recoverable id: reuse the existing
+	// identity. Happens when a previous destroy + remigration left
+	// an orphan Kratos row + the panel-side users.kratos_identity_id
+	// went NULL. Operator output stays "ok" because the user can
+	// still recover via the link below.
+	if errors.Is(err, kratosclient.ErrIdentityExisted) && newID != "" {
+		fmt.Fprintf(os.Stderr, "  ~ %s: existing Kratos identity reused (%s)\n", u.Email, newID)
+		err = nil
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  ! %s: CreateIdentityWithPassword: %v\n", u.Email, err)
 		return statusCreateFailed, "", ""

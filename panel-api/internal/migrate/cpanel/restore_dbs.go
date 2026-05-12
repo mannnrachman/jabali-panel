@@ -21,6 +21,21 @@ import (
 type DBImportResult struct {
 	Created int
 	Skipped []string
+	// Credentials captures (db_name → DBCredential) for each DB +
+	// user pair created during this restore pass. ImportAppConfigs
+	// reads it to rewrite WordPress/Drupal/Joomla/Magento config
+	// files in the user's homedir with the new (name, user, pass)
+	// triple so apps boot against the migrated MariaDB.
+	Credentials map[string]DBCredential
+}
+
+// DBCredential is one (db_name, db_user, db_pass) row the config-
+// rewrite step uses to splice values into wp-config.php and
+// friends.
+type DBCredential struct {
+	DBName   string
+	DBUser   string
+	Password string // plaintext temp_pwd printed in the manifest line
 }
 
 // dbRestoreNameRe mirrors the agent's db.restore validation
@@ -211,6 +226,18 @@ func ImportDatabases(
 								res.Skipped = append(res.Skipped, fmt.Sprintf(
 									"%s: db_user created (temp_pwd=%s) — change via panel",
 									finalName, plainPwd))
+								// Stash (name, user, plaintext-pwd) so the
+								// config-rewrite step can splice values
+								// into wp-config.php / configuration.php /
+								// settings.php / app/etc/env.php files.
+								if res.Credentials == nil {
+									res.Credentials = map[string]DBCredential{}
+								}
+								res.Credentials[finalName] = DBCredential{
+									DBName:   finalName,
+									DBUser:   finalName,
+									Password: plainPwd,
+								}
 							}
 						}
 					}

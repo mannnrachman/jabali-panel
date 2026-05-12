@@ -164,10 +164,11 @@ failed stage. Already-done stages are skipped.`,
 				// nil-skip is the safer default than rebuilding a
 				// kratosclient from config in cobra context.
 				res, cErr := userops.Create(ctx, userops.Deps{
-					Users:      usersRepo,
-					Packages:   repository.NewPackageRepository(sharedDB),
-					Agent:      sharedAgent,
-					BcryptCost: bcrypt.DefaultCost,
+					Users:        usersRepo,
+					Packages:     repository.NewPackageRepository(sharedDB),
+					Agent:        sharedAgent,
+					KratosClient: kc, // pass for atomic Kratos id provision
+					BcryptCost:   bcrypt.DefaultCost,
 				}, cu)
 				if cErr != nil {
 					return failJob(fmt.Errorf("auto-create destination user %q: %w", targetUser, cErr))
@@ -548,6 +549,22 @@ func cpanelRestoreCallback(
 		warnings = append(warnings, sslRes.Skipped...)
 
 		// M35.8 P2+P5: catch-all + subdomains + forwarders restore.
+		// M35.8 P8: rewrite WP/Drupal/Joomla/Magento config files
+		// with the new (db_name, db_user, db_pass) triples just
+		// created. ImportDatabases captured them in dbsRes.Credentials;
+		// the rewriter reads each per-domain docroot under
+		// /home/<u>/domains/<dom>/public_html and splices values in.
+		// Best-effort: missing app config = silent skip.
+		appRes, err := cpanel.ImportAppConfigs(ctx, sharedAgent, p.targetUserID, p.targetUsername, dbsRes.Credentials)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("appconfigs: %v", err))
+		} else {
+			warnings = append(warnings, fmt.Sprintf(
+				"appconfigs: wordpress=%d joomla=%d drupal=%d magento=%d",
+				appRes.WordPress, appRes.Joomla, appRes.Drupal, appRes.Magento))
+			warnings = append(warnings, appRes.Skipped...)
+		}
+
 		extrasRes, err := cpanel.ImportExtras(ctx, domainsRepo, mbRepo, fwdRepo, arRepo, filtersRepo, phpPoolsRepo, sharedAgent, p.parsed, p.targetUserID, p.targetUsername)
 		if err != nil {
 			return bytes, warnings, fmt.Errorf("extras: %w", err)

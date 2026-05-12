@@ -77,6 +77,17 @@ func (c *Client) CreateIdentityWithPassword(ctx context.Context, traits AdminTra
 
 	if resp.StatusCode != http.StatusCreated {
 		errBody, _ := io.ReadAll(resp.Body)
+		// 409 = duplicate traits. Look up the existing identity by
+		// email + return its id so the caller can stamp the panel
+		// row without manually cleaning Kratos. This is the
+		// migration-rerun + rebuild-kratos-orphan path: a previous
+		// destroy left the Kratos row behind, fresh create errors
+		// here. Caller wants the existing id, not a new one.
+		if resp.StatusCode == http.StatusConflict && traits.Email != "" {
+			if id, lookupErr := c.IdentityIDByEmail(ctx, traits.Email); lookupErr == nil && id != "" {
+				return id, ErrIdentityExisted
+			}
+		}
 		return "", fmt.Errorf("createidentitywithpassword: status %d: %s", resp.StatusCode, string(errBody))
 	}
 
@@ -89,6 +100,40 @@ func (c *Client) CreateIdentityWithPassword(ctx context.Context, traits AdminTra
 	}
 
 	return result.ID, nil
+}
+
+// ErrIdentityExisted is returned by CreateIdentityWithPassword when
+// Kratos rejected the create with 409 conflict (duplicate trait) but
+// we successfully looked up the existing identity by email. The
+// returned id IS valid + the caller should stamp the panel row.
+// Distinguished from a "real" error so callers can fast-path the
+// reuse without parsing strings.
+var ErrIdentityExisted = fmt.Errorf("kratos identity already exists for traits")
+
+// IdentityIDByEmail returns the Kratos identity id whose primary
+// trait email matches. Scans pages until found; "" + nil when no
+// match. Used by CreateIdentityWithPassword's 409 conflict path.
+func (c *Client) IdentityIDByEmail(ctx context.Context, email string) (string, error) {
+	wanted := lc(email)
+	if wanted == "" {
+		return "", nil
+	}
+	token := ""
+	for {
+		page, next, err := c.ListIdentitiesPage(ctx, 250, token)
+		if err != nil {
+			return "", err
+		}
+		for _, id := range page {
+			if lc(id.Traits.Email) == wanted {
+				return id.ID, nil
+			}
+		}
+		if next == "" {
+			return "", nil
+		}
+		token = next
+	}
 }
 
 // ErrIdentityNotFound is returned by GetIdentity when Kratos replies 404

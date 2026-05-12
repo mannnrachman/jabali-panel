@@ -166,6 +166,18 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*CreateResult, error) 
 			traits.Username = *u.Username
 		}
 		identityID, kErr := d.KratosClient.CreateIdentityWithPassword(ctx, traits, u.PasswordHash)
+		// ErrIdentityExisted = 409 conflict but we resolved the
+		// existing identity id by email lookup. Reuse it instead of
+		// rolling back the panel row — keeps migration reruns +
+		// destroy-then-recreate cycles idempotent. Operator can rotate
+		// the password via the panel afterward.
+		if errors.Is(kErr, kratosclient.ErrIdentityExisted) && identityID != "" {
+			if d.Log != nil {
+				d.Log.Warn("kratos identity already exists; reusing",
+					"user_id", u.ID, "email", u.Email, "kratos_id", identityID)
+			}
+			kErr = nil
+		}
 		if kErr != nil {
 			if delErr := d.Users.Delete(ctx, u.ID); delErr != nil && d.Log != nil {
 				d.Log.Error("kratos create failed AND panel rollback failed — orphan row",

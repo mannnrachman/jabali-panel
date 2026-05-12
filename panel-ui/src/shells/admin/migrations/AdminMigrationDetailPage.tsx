@@ -10,6 +10,7 @@ import {
   Alert,
   Button,
   Card,
+  Collapse,
   Descriptions,
   Empty,
   Form,
@@ -19,6 +20,7 @@ import {
   Radio,
   Space,
   Spin,
+  Statistic,
   Steps,
   Tag,
   Typography,
@@ -274,29 +276,7 @@ export const AdminMigrationDetailPage = () => {
         )}
       </Card>
 
-      {job.manifest_json && (
-        <Card
-          size="small"
-          title="Manifest / warnings (raw)"
-          extra={
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              raw manifest_json from migration_jobs row
-            </Typography.Text>
-          }
-        >
-          <Typography.Paragraph
-            style={{
-              fontFamily: "monospace",
-              fontSize: 12,
-              whiteSpace: "pre-wrap",
-              maxHeight: 320,
-              overflowY: "auto",
-            }}
-          >
-            {job.manifest_json}
-          </Typography.Paragraph>
-        </Card>
-      )}
+      {job.manifest_json && <RestoreSummary manifestJSON={job.manifest_json} />}
 
       {job.state === "failed" && (
         <FailedCard jobId={job.id} onDestroyed={() => navigate("/jabali-admin/migrations")} />
@@ -304,6 +284,207 @@ export const AdminMigrationDetailPage = () => {
     </Space>
   );
 };
+
+// RestoreSummary parses the manifest_json (an array of warning/info
+// strings emitted by the restore stage's per-area writers) into a
+// structured stat-card grid. The raw text sits in a collapsed
+// Accordion so the operator can still inspect every line when
+// diagnosing partial restores.
+function RestoreSummary({ manifestJSON }: { manifestJSON: string }) {
+  const parsed = useMemo(() => parseRestoreManifest(manifestJSON), [manifestJSON]);
+
+  return (
+    <Card size="small" title="Restore summary">
+      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+            gap: 16,
+          }}
+        >
+          <Statistic title="Home bytes" value={parsed.homeBytes} />
+          <Statistic title="Home files" value={parsed.homeFiles} />
+          <Statistic title="Databases" value={parsed.databasesCreated} />
+          <Statistic title="DB users" value={parsed.dbUsersCreated} />
+          <Statistic title="Domains" value={parsed.domainsCreated} />
+          <Statistic title="Email enabled" value={parsed.emailEnabled} />
+          <Statistic title="Mailboxes" value={parsed.mailboxesCreated} />
+          <Statistic title="Messages pushed" value={parsed.messagesPushed} />
+          <Statistic title="DNS zones" value={parsed.dnsZones} />
+          <Statistic title="DNS records" value={parsed.dnsRecords} />
+          <Statistic title="SSH keys" value={parsed.sshCreated} />
+          <Statistic title="Cron jobs" value={parsed.cronCreated} />
+        </div>
+
+        {parsed.kratosStatus && (
+          <Alert
+            type={parsed.kratosStatus === "ok" ? "success" : "warning"}
+            showIcon
+            message={`Kratos identity: ${parsed.kratosStatus}`}
+            description={
+              parsed.kratosNewID ? `new_id=${parsed.kratosNewID}` : undefined
+            }
+          />
+        )}
+
+        {parsed.warnings.length > 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            message={`${parsed.warnings.length} warning${parsed.warnings.length === 1 ? "" : "s"} during restore`}
+            description={
+              <ul style={{ margin: 0, paddingLeft: 18 }}>
+                {parsed.warnings.slice(0, 8).map((w, i) => (
+                  <li key={i} style={{ fontSize: 12 }}>{w}</li>
+                ))}
+                {parsed.warnings.length > 8 && (
+                  <li style={{ fontSize: 12, color: "rgba(0,0,0,0.45)" }}>
+                    …{parsed.warnings.length - 8} more — see raw manifest
+                  </li>
+                )}
+              </ul>
+            }
+          />
+        )}
+
+        <Collapse
+          ghost
+          items={[
+            {
+              key: "raw",
+              label: (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Raw manifest_json ({parsed.rawCount} entries)
+                </Typography.Text>
+              ),
+              children: (
+                <Typography.Paragraph
+                  style={{
+                    fontFamily: "monospace",
+                    fontSize: 12,
+                    whiteSpace: "pre-wrap",
+                    maxHeight: 320,
+                    overflowY: "auto",
+                    marginBottom: 0,
+                  }}
+                >
+                  {manifestJSON}
+                </Typography.Paragraph>
+              ),
+            },
+          ]}
+        />
+      </Space>
+    </Card>
+  );
+}
+
+// parseRestoreManifest walks the JSON-encoded array of strings the
+// restore stage writes to migration_jobs.manifest_json + extracts
+// the per-area counters the operator cares about. Unknown lines
+// land in warnings so nothing is silently dropped.
+type RestoreParsed = {
+  homeBytes: number;
+  homeFiles: number;
+  databasesCreated: number;
+  dbUsersCreated: number;
+  domainsCreated: number;
+  emailEnabled: number;
+  mailboxesCreated: number;
+  messagesPushed: number;
+  dnsZones: number;
+  dnsRecords: number;
+  sshCreated: number;
+  cronCreated: number;
+  kratosStatus: string;
+  kratosNewID: string;
+  warnings: string[];
+  rawCount: number;
+};
+
+function parseRestoreManifest(raw: string): RestoreParsed {
+  const out: RestoreParsed = {
+    homeBytes: 0,
+    homeFiles: 0,
+    databasesCreated: 0,
+    dbUsersCreated: 0,
+    domainsCreated: 0,
+    emailEnabled: 0,
+    mailboxesCreated: 0,
+    messagesPushed: 0,
+    dnsZones: 0,
+    dnsRecords: 0,
+    sshCreated: 0,
+    cronCreated: 0,
+    kratosStatus: "",
+    kratosNewID: "",
+    warnings: [],
+    rawCount: 0,
+  };
+
+  let lines: string[] = [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      lines = parsed.filter((x): x is string => typeof x === "string");
+    }
+  } catch {
+    // Manifest isn't valid JSON — surface the raw blob as one warning
+    // so the collapse panel below still shows the text.
+    lines = [raw];
+  }
+  out.rawCount = lines.length;
+
+  const num = (s: string): number => {
+    const n = parseInt(s, 10);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const kv = (line: string, key: string): string => {
+    const re = new RegExp(`\\b${key}=([^\\s,"]+)`);
+    const m = line.match(re);
+    return m ? m[1] : "";
+  };
+
+  for (const line of lines) {
+    if (line.startsWith("ssh: ")) {
+      out.sshCreated += num(kv(line, "created"));
+    } else if (line.startsWith("cron: ")) {
+      out.cronCreated += num(kv(line, "created"));
+    } else if (line.startsWith("databases: ")) {
+      out.databasesCreated += num(kv(line, "created"));
+    } else if (line.includes("db_user created")) {
+      out.dbUsersCreated += 1;
+    } else if (line.startsWith("home: ")) {
+      out.homeBytes += num(kv(line, "bytes"));
+      out.homeFiles += num(kv(line, "files"));
+    } else if (line.startsWith("domains: ")) {
+      out.domainsCreated += num(kv(line, "created"));
+      out.emailEnabled += num(kv(line, "email_enabled"));
+    } else if (line.startsWith("mailboxes: ")) {
+      out.mailboxesCreated += num(kv(line, "maildirs"));
+      out.messagesPushed += num(kv(line, "messages_pushed"));
+    } else if (line.includes("mailbox_rows: created")) {
+      // mailbox_rows: created <user>@<dom> (temp_pwd=... — change via panel)
+      out.mailboxesCreated += 1;
+    } else if (line.startsWith("dns: ")) {
+      out.dnsZones += num(kv(line, "zones"));
+      out.dnsRecords += num(kv(line, "records"));
+    } else if (line.startsWith("kratos: ")) {
+      out.kratosStatus = kv(line, "status");
+      out.kratosNewID = kv(line, "new_id");
+    } else if (
+      line.includes("not found") ||
+      line.includes("pending_manual") ||
+      line.includes("already imported") ||
+      line.startsWith("warning:") ||
+      line.startsWith("skip:")
+    ) {
+      out.warnings.push(line);
+    }
+  }
+  return out;
+}
 
 function FailedCard({ jobId, onDestroyed }: { jobId: string; onDestroyed: () => void }) {
   // ADR-0095 decision 7 — resume retry is the default; from-scratch

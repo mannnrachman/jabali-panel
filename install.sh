@@ -2833,13 +2833,24 @@ setup_certbot() {
 
 install_go() {
   if [[ -x "$GO_ROOT/bin/go" ]]; then
-    local cur
-    cur="$("$GO_ROOT/bin/go" version | awk '{print $3}')"
-    if [[ "$cur" == "go$GO_VERSION" ]]; then
+    # `go version` can fail silently on a half-installed or libc-mismatched
+    # binary (observed on mx.jabali-panel.local 2026-05-12: existing
+    # /usr/local/go/bin/go was -x but `go version` exited non-zero with
+    # empty stdout, killing install.sh via `set -e` + pipefail at the
+    # command substitution below). Run the version probe with `|| true`
+    # AND short-circuit on empty result so we always reach the reinstall
+    # path instead of bailing the whole script.
+    local cur=""
+    cur="$("$GO_ROOT/bin/go" version 2>/dev/null | awk '{print $3}' || true)"
+    if [[ -n "$cur" && "$cur" == "go$GO_VERSION" ]]; then
       _ok "Go $GO_VERSION already installed at $GO_ROOT"
       return
     fi
-    _log "replacing existing Go ($cur) with $GO_VERSION"
+    if [[ -n "$cur" ]]; then
+      _log "replacing existing Go ($cur) with $GO_VERSION"
+    else
+      _warn "$GO_ROOT/bin/go present but 'go version' empty/failed — reinstalling"
+    fi
     rm -rf "$GO_ROOT"
   fi
 

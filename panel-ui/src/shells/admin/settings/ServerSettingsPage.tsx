@@ -767,8 +767,8 @@ export const ServerSettingsPage = () => {
           {
             key: "general",
             tab: (
-              <span>
-                <SettingOutlined style={{ marginRight: 8 }} />
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+                <SettingOutlined />
                 General
               </span>
             ),
@@ -776,8 +776,8 @@ export const ServerSettingsPage = () => {
           {
             key: "storage",
             tab: (
-              <span>
-                <HddOutlined style={{ marginRight: 8 }} />
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+                <HddOutlined />
                 Storage
               </span>
             ),
@@ -785,8 +785,8 @@ export const ServerSettingsPage = () => {
           {
             key: "dns",
             tab: (
-              <span>
-                <GlobalOutlined style={{ marginRight: 8 }} />
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+                <GlobalOutlined />
                 DNS
               </span>
             ),
@@ -794,8 +794,8 @@ export const ServerSettingsPage = () => {
           {
             key: "email",
             tab: (
-              <span>
-                <MailOutlined style={{ marginRight: 8 }} />
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+                <MailOutlined />
                 Email
               </span>
             ),
@@ -803,8 +803,8 @@ export const ServerSettingsPage = () => {
           {
             key: "databases",
             tab: (
-              <span>
-                <DatabaseOutlined style={{ marginRight: 8 }} />
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+                <DatabaseOutlined />
                 Databases
               </span>
             ),
@@ -812,8 +812,8 @@ export const ServerSettingsPage = () => {
           {
             key: "branding",
             tab: (
-              <span>
-                <BgColorsOutlined style={{ marginRight: 8 }} />
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+                <BgColorsOutlined />
                 Branding
               </span>
             ),

@@ -89,6 +89,7 @@ func RegisterAdminMigrationRoutes(g *gin.RouterGroup, cfg AdminMigrationsHandler
 	rg.GET("/:id/stream", h.stream)
 	rg.GET("/discover-accounts/:host/:user/size", h.discoverAccountSize)
 	rg.GET("/:id/discover-accounts", h.discoverAccounts)
+	rg.GET("/:id/account-size/:user", h.accountSizeProbe)
 }
 
 type adminMigrationsHandler struct{ cfg AdminMigrationsHandlerConfig }
@@ -1058,4 +1059,97 @@ func (h *adminMigrationsHandler) submitDraft(c *gin.Context) {
 	}
 	out, _ := h.cfg.Jobs.FindByID(c.Request.Context(), id)
 	c.JSON(http.StatusOK, out)
+}
+
+// accountSizeProbe is the cold-cache live SSH probe. ADR-0095 decision 6.
+// Loads the draft job's secret, connects via Discoverer, asserts the
+// Discoverer implements migrate.SizeProber, calls AccountSize, upserts
+// the cache, returns the size.
+//
+// 5xx ladder:
+//   501 Not Implemented — Discoverer for this source_kind doesn't
+//       implement SizeProber. Falls back to "discovery returned 0".
+//   502 Bad Gateway     — SSH connect / du failed upstream.
+//   412 Precondition    — secret missing (POST /:id/secrets first).
+//   404 Not Found       — draft job missing.
+//   409 Conflict        — job not in draft/pending state.
+func (h *adminMigrationsHandler) accountSizeProbe(c *gin.Context) {
+	id := c.Param("id")
+	login := c.Param("user")
+
+	job, err := h.cfg.Jobs.FindByID(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if job.State != models.MigrationStateDraft && job.State != models.MigrationStatePending {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  "wrong_state",
+			"detail": "account-size only valid in draft/pending; got " + job.State,
+		})
+		return
+	}
+
+	// Cache hit first — operator may double-click + size cache TTL is 24h.
+	if h.cfg.SizeCache != nil {
+		if row, cerr := h.cfg.SizeCache.Get(c.Request.Context(), job.SourceHost, login, 24*time.Hour); cerr == nil {
+			c.JSON(http.StatusOK, gin.H{
+				"host":        job.SourceHost,
+				"source_user": login,
+				"size_bytes":  row.SizeBytes,
+				"fetched_at":  row.FetchedAt,
+				"from_cache":  true,
+			})
+			return
+		}
+	}
+
+	disc, err := migrate.Get(job.SourceKind)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no_discoverer", "detail": err.Error()})
+		return
+	}
+	prober, ok := disc.(migrate.SizeProber)
+	if !ok {
+		c.JSON(http.StatusNotImplemented, gin.H{
+			"error":  "size_probe_unsupported",
+			"detail": "Discoverer for " + job.SourceKind + " does not implement SizeProber",
+		})
+		return
+	}
+	secretPath := filepath.Join(migrate.SecretsDir, job.ID+".env")
+	if _, err := os.Stat(secretPath); err != nil {
+		c.JSON(http.StatusPreconditionRequired, gin.H{"error": "secret_missing"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	defer cancel()
+
+	sess, err := disc.Connect(ctx, job.SourceHost, job.SourceUser, migrate.SecretRef{Path: secretPath})
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "connect_failed", "detail": err.Error()})
+		return
+	}
+	defer func() { _ = disc.Close(ctx, sess) }()
+
+	size, err := prober.AccountSize(ctx, sess, login)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "probe_failed", "detail": err.Error()})
+		return
+	}
+
+	if h.cfg.SizeCache != nil {
+		_ = h.cfg.SizeCache.Upsert(c.Request.Context(), job.SourceHost, login, size)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"host":        job.SourceHost,
+		"source_user": login,
+		"size_bytes":  size,
+		"from_cache":  false,
+	})
 }

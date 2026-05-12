@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -426,3 +427,39 @@ func (d *Discoverer) DescribeAccount(ctx context.Context, raw migrate.Session, a
 	}
 	return m, nil
 }
+
+// AccountSize implements migrate.SizeProber. Runs `du -sb /home/<user>`
+// over the existing SSH session and returns the byte count. Single
+// round-trip; expected wall time ~5–30s depending on home size.
+//
+// Sanitizes the login as a defence in depth — listAccounts upstream
+// already returns valid cPanel usernames, but a defensive regex stops
+// any callsite from injecting shell metachars.
+func (d *Discoverer) AccountSize(ctx context.Context, raw migrate.Session, login string) (int64, error) {
+	s, ok := raw.(*session)
+	if !ok {
+		return 0, errors.New("AccountSize: wrong session type")
+	}
+	if !cpanelUserRe.MatchString(login) {
+		return 0, fmt.Errorf("AccountSize: invalid login %q", login)
+	}
+	// du -sb prints "<bytes>\t<path>" on stdout.
+	out, err := s.run(ctx, d.CommandTimeout, fmt.Sprintf("du -sb /home/%s 2>/dev/null", login))
+	if err != nil {
+		return 0, err
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 {
+		return 0, errors.New("AccountSize: empty du output")
+	}
+	n, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("AccountSize: parse %q: %w", fields[0], err)
+	}
+	return n, nil
+}
+
+// cpanelUserRe matches cPanel-shape usernames: 1-16 chars, letters/
+// digits/underscore, must start with a letter. Defence in depth
+// against shell injection through the du command above.
+var cpanelUserRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,15}$`)

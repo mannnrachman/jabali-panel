@@ -29,6 +29,14 @@ type Discoverer interface {
 	Close(ctx context.Context, s Session) error
 }
 
+// SizeProber is the optional capability for Discoverers that can
+// answer "how big is account X" cheaply (single du -sh / quota
+// lookup). Callers type-assert disc.(SizeProber); when not
+// implemented the lazy size endpoint returns 501. ADR-0095 decision 6.
+type SizeProber interface {
+	AccountSize(ctx context.Context, s Session, login string) (int64, error)
+}
+
 // Session is an opaque per-importer connection handle. Concrete
 // implementations live under internal/migrate/<kind>/.
 type Session interface {

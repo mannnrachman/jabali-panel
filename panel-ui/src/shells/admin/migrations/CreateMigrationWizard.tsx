@@ -17,7 +17,7 @@
 //
 // Single-account flow stays in CreateMigrationDrawer for now —
 // migrating it into the wizard is M35.2 work.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   Button,
@@ -77,6 +77,39 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
   const [credValue, setCredValue] = useState<string>("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
+  // ADR-0095 decision 5 — wizard URL persistence. When the drawer
+  // opens with ?wizard=<id> in the URL, fetch the draft row and
+  // restore state. The operator's mid-wizard tab refresh resumes
+  // where they left off; new wizards leave the param absent.
+  useEffect(() => {
+    if (!open) return;
+    if (draftId) return;
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    const w = url.searchParams.get("wizard");
+    if (!w) return;
+    void apiClient
+      .get<DraftJob>(`/admin/migrations/${w}`)
+      .then((r) => {
+        if (r.data.state === "draft") {
+          setDraftId(r.data.id);
+          setSourceKind(r.data.source_kind);
+          if (!r.data.source_host.startsWith("__draft_")) {
+            setSourceHost(r.data.source_host);
+          }
+          if (!r.data.source_user.startsWith("__draft_")) {
+            setSourceUser(r.data.source_user);
+          }
+          setStep(1); // jump past source-kind to connection step
+        }
+      })
+      .catch(() => {
+        // Drop the param — stale link from a reaped draft.
+        url.searchParams.delete("wizard");
+        window.history.replaceState({}, "", url.toString());
+      });
+  }, [open, draftId]);
+
   const reset = () => {
     setStep(0);
     setDraftId(null);
@@ -102,6 +135,14 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
     onSuccess: (d) => {
       setDraftId(d.id);
       setStep(1);
+      // ADR-0095 decision 5 — URL deep-link so a tab refresh mid-
+      // wizard restores the draft instead of starting over. Read at
+      // mount via useSearchParams (added below).
+      if (typeof window !== "undefined") {
+        const url = new URL(window.location.href);
+        url.searchParams.set("wizard", d.id);
+        window.history.replaceState({}, "", url.toString());
+      }
     },
     onError: (e: unknown) => {
       message.error(
@@ -197,6 +238,13 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
 
   const handleClose = () => {
     reset();
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("wizard")) {
+        url.searchParams.delete("wizard");
+        window.history.replaceState({}, "", url.toString());
+      }
+    }
     onClose();
   };
 

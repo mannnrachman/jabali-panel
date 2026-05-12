@@ -53,6 +53,13 @@ const (
 type migrationImportMailboxesParams struct {
 	JobID      string `json:"job_id"`
 	SrcMailDir string `json:"src_mail_dir"` // /var/lib/jabali-migrations/<id>/extracted/cp/<u>/homedir/mail
+	// OwnerEmail is the cPanel-owner's default mailbox address
+	// (<user>@<primary-domain>). Set when the operator wants the
+	// owner's INBOX + Maildir+ subfolders at the root of the
+	// mail/ tree imported under that address. When empty, the
+	// handler skips owner-mailbox detection — only per-domain
+	// dirs are processed.
+	OwnerEmail string `json:"owner_email,omitempty"`
 }
 
 type migrationImportMailboxesResult struct {
@@ -96,6 +103,24 @@ func migrationImportMailboxesHandler(ctx context.Context, raw json.RawMessage) (
 	defer cancel()
 
 	res := &migrationImportMailboxesResult{}
+
+	// Owner default mailbox — cPanel stores the user's primary
+	// mailbox directly under mail/{cur,new,tmp,.Drafts,...} rather
+	// than under a per-domain subdir. Import it under OwnerEmail
+	// when supplied so messages aren't silently dropped.
+	if p.OwnerEmail != "" {
+		if _, ok := looksLikeMailMaildir(srcAbs); ok {
+			n, b, skipped, err := importOneMailbox(subctx, p.OwnerEmail, srcAbs)
+			if err != nil {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("owner_mailbox %s: %v", p.OwnerEmail, err))
+			} else {
+				res.MailboxesProcessed++
+				res.MessagesImported += n
+				res.BytesImported += b
+				res.Skipped = append(res.Skipped, skipped...)
+			}
+		}
+	}
 
 	// Layout: cp/<user>/homedir/mail/<domain>/<localpart>/{cur,new,tmp}/
 	// SrcMailDir points at .../homedir/mail.
@@ -195,6 +220,53 @@ func importOneMailbox(ctx context.Context, destEmail, maildir string) (int64, in
 	var imported, bytes int64
 	var skipped []string
 
+	// Push INBOX (mailroot itself: cur/ + new/).
+	in, ib, isk := pushMaildirSlots(ctx, accountID, inboxID, maildir, &skipped)
+	imported += in
+	bytes += ib
+	skipped = append(skipped, isk...)
+
+	// Push every Maildir+ subfolder (.Drafts, .Junk, .Sent, .Trash,
+	// .spam, .Archive, …). Each is a sibling dir of cur/new at
+	// `<maildir>/.<Name>/{cur,new,tmp}`. The leading dot is the
+	// Maildir++ subfolder marker; the friendly name we use for the
+	// JMAP mailbox strips the dot + collapses nested dots to slashes
+	// per RFC 5256 §5.1.
+	entries, _ := os.ReadDir(maildir)
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		// Skip the Maildir spec dirs (none start with dot but defensive).
+		if e.Name() == "cur" || e.Name() == "new" || e.Name() == "tmp" {
+			continue
+		}
+		subDir := filepath.Join(maildir, e.Name())
+		// Maildir++: subfolder name is `.Parent.Child` → "Parent/Child".
+		raw := strings.TrimPrefix(e.Name(), ".")
+		friendly := strings.ReplaceAll(raw, ".", "/")
+		role := maildirSubfolderRole(raw)
+
+		mboxID, err := ensureMailbox(ctx, accountID, friendly, role)
+		if err != nil {
+			skipped = append(skipped, fmt.Sprintf("ensure mailbox %q: %v", friendly, err))
+			continue
+		}
+		sn, sb, ssk := pushMaildirSlots(ctx, accountID, mboxID, subDir, &skipped)
+		imported += sn
+		bytes += sb
+		skipped = append(skipped, ssk...)
+	}
+
+	return imported, bytes, skipped, nil
+}
+
+// pushMaildirSlots imports every .eml-shaped message under
+// <maildir>/cur + <maildir>/new into the named Stalwart mailbox.
+// Returns (messages_imported, bytes_imported, skipped).
+func pushMaildirSlots(ctx context.Context, accountID, mailboxID, maildir string, _ *[]string) (int64, int64, []string) {
+	var imported, bytes int64
+	var skipped []string
 	for _, sub := range []string{"cur", "new"} {
 		dir := filepath.Join(maildir, sub)
 		entries, err := os.ReadDir(dir)
@@ -216,7 +288,7 @@ func importOneMailbox(ctx context.Context, destEmail, maildir string) (int64, in
 				skipped = append(skipped, fmt.Sprintf("oversized:%s:%d", path, info.Size()))
 				continue
 			}
-			n, err := importOneMessage(ctx, accountID, inboxID, path, info.Size(), seenFlag, info.ModTime())
+			n, err := importOneMessage(ctx, accountID, mailboxID, path, info.Size(), seenFlag, info.ModTime())
 			if err != nil {
 				skipped = append(skipped, fmt.Sprintf("%s: %v", path, err))
 				continue
@@ -225,7 +297,105 @@ func importOneMailbox(ctx context.Context, destEmail, maildir string) (int64, in
 			bytes += n
 		}
 	}
-	return imported, bytes, skipped, nil
+	return imported, bytes, skipped
+}
+
+// maildirSubfolderRole maps cpanel/Hestia Maildir+ subfolder names
+// to their JMAP "role" attribute so Stalwart's clients render the
+// right icon + behavior. Empty string for unrecognised names →
+// Stalwart treats the mailbox as a plain user folder.
+func maildirSubfolderRole(name string) string {
+	switch strings.ToLower(name) {
+	case "drafts":
+		return "drafts"
+	case "sent":
+		return "sent"
+	case "trash":
+		return "trash"
+	case "junk", "spam":
+		return "junk"
+	case "archive", "archives":
+		return "archive"
+	}
+	return ""
+}
+
+// ensureMailbox looks up or creates a JMAP Mailbox under accountID
+// with the given friendly name + optional role. Idempotent: an
+// existing mailbox with matching role (when role is set) or matching
+// name (when role is empty) is reused.
+func ensureMailbox(ctx context.Context, accountID, name, role string) (string, error) {
+	// Try role-based lookup first when the subfolder mapped to a
+	// canonical role (drafts/sent/trash/junk/archive). Stalwart
+	// auto-creates Drafts/Sent/Trash on first use, so we'd otherwise
+	// race + create a duplicate.
+	if role != "" {
+		if id, err := mailboxIDByRole(ctx, accountID, role); err == nil && id != "" {
+			return id, nil
+		}
+	}
+	// Name-based lookup — covers custom subfolders + the fallback
+	// path when role is empty or the role mailbox doesn't exist yet.
+	if id, err := mailboxIDByName(ctx, accountID, name); err == nil && id != "" {
+		return id, nil
+	}
+	// Create.
+	createID := "newmbox"
+	body := map[string]any{
+		"name": name,
+	}
+	if role != "" {
+		body["role"] = role
+	}
+	args := map[string]any{
+		"accountId": accountID,
+		"create": map[string]any{
+			createID: body,
+		},
+	}
+	var result jmapSetResult
+	if err := jmapCall(ctx, "Mailbox/set", args, &result); err != nil {
+		return "", fmt.Errorf("Mailbox/set create: %w", err)
+	}
+	if reason, ok := result.NotCreated[createID]; ok {
+		// Race: another writer created the same mailbox between
+		// our lookup + create. Try the name lookup once more.
+		if id, err := mailboxIDByName(ctx, accountID, name); err == nil && id != "" {
+			return id, nil
+		}
+		return "", fmt.Errorf("Mailbox/set notCreated: %s", string(reason))
+	}
+	raw, ok := result.Created[createID]
+	if !ok {
+		return "", fmt.Errorf("Mailbox/set: no created entry for %q", createID)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &created); err != nil {
+		return "", fmt.Errorf("Mailbox/set decode: %w", err)
+	}
+	return created.ID, nil
+}
+
+// mailboxIDByName resolves a mailbox by its `name` property in the
+// given account. Returns "" + nil on no-match.
+func mailboxIDByName(ctx context.Context, accountID, name string) (string, error) {
+	args := map[string]any{
+		"accountId": accountID,
+		"filter":    map[string]any{"name": name},
+		"limit":     1,
+	}
+	var result struct {
+		IDs []string `json:"ids"`
+	}
+	if err := jmapCall(ctx, "Mailbox/query", args, &result); err != nil {
+		return "", err
+	}
+	if len(result.IDs) == 0 {
+		return "", nil
+	}
+	return result.IDs[0], nil
 }
 
 // mailboxIDByRole resolves the mailbox ID with the given role

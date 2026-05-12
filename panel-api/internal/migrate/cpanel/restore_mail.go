@@ -151,6 +151,7 @@ func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.
 	raw, err := agentCli.Call(ctx, "migration.import_mailboxes", map[string]any{
 		"job_id":       jobID,
 		"src_mail_dir": mailRoot,
+		"owner_email":  parsed.OwnerEmail, // empty → agent skips owner-mailbox detection
 	})
 	if err != nil {
 		// Don't fail the whole restore stage on a mail import

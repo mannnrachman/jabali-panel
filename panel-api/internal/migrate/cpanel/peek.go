@@ -28,6 +28,10 @@ type AccountMeta struct {
 	// Argon2/bcrypt), but recorded for operator visibility +
 	// future-side-by-side validation. Empty when shadow is absent.
 	PasswordHash string
+	// PrimaryDomain is the DNS= value from the cpanel userdata file
+	// (the cpanel-owner's main domain). Used to construct the
+	// owner-default-mailbox address (<user>@<PrimaryDomain>).
+	PrimaryDomain string
 }
 
 // PeekAccountMeta scans the extracted cpmove dir for an account's
@@ -79,23 +83,31 @@ func PeekAccountMeta(extractDir, sourceUser string) (*AccountMeta, error) {
 		}
 	}
 
-	// Email fallback — parse the userdata file for CONTACTEMAIL.
-	// In modern cpmove the file is `cp/<user>` (KEY=value lines).
-	if meta.Email == "" {
-		for _, root := range roots {
-			for _, candidate := range []string{
-				filepath.Join(root, "cp", sourceUser),
-				filepath.Join(root, "userdata"),
-				filepath.Join(root, "userdata", "main"),
-			} {
+	// Email + primary domain fallback — parse the userdata file for
+	// CONTACTEMAIL + DNS. In modern cpmove the file is `cp/<user>`
+	// (KEY=value lines).
+	for _, root := range roots {
+		for _, candidate := range []string{
+			filepath.Join(root, "cp", sourceUser),
+			filepath.Join(root, "userdata"),
+			filepath.Join(root, "userdata", "main"),
+		} {
+			if meta.Email == "" {
 				if email := extractKV(candidate, "CONTACTEMAIL"); email != "" {
 					meta.Email = email
-					break
 				}
 			}
-			if meta.Email != "" {
+			if meta.PrimaryDomain == "" {
+				if dom := extractKV(candidate, "DNS"); dom != "" {
+					meta.PrimaryDomain = dom
+				}
+			}
+			if meta.Email != "" && meta.PrimaryDomain != "" {
 				break
 			}
+		}
+		if meta.Email != "" && meta.PrimaryDomain != "" {
+			break
 		}
 	}
 

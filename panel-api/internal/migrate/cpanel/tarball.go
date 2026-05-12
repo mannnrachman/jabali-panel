@@ -50,6 +50,12 @@ type ParsedTarball struct {
 	// → /home/<target>/domains/<dom>/public_html in dest. Empty map
 	// or missing key falls back to /home/<target>/public_html/<dom>.
 	DocRoots map[string]string
+	// OwnerEmail is the cpanel-owner's default mailbox address
+	// (<sourceUser>@<primaryDomain>). When set, ImportMailboxes
+	// passes it through to the agent so the mail/{cur,new,tmp,...}
+	// tree at the top of the homedir mail/ root imports under this
+	// address (cpanel's default-mailbox convention).
+	OwnerEmail string
 	// CronFiles lists per-user crontab files (cp/<user>/cron/<user>).
 	CronFiles []string
 	// SSHAuthorized lists authorized_keys files found under the

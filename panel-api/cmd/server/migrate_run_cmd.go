@@ -327,6 +327,16 @@ failed stage. Already-done stages are skipped.`,
 				parsed = p
 			}
 
+			// Owner default mailbox: cpanel-side <user> @ primary domain.
+			// Agent's ImportMailboxes uses this to import the
+			// mail/{cur,new,tmp,.Drafts,...} root tree the cpanel owner
+			// reads as their default mailbox.
+			if parsed != nil && parsed.OwnerEmail == "" {
+				if meta != nil && meta.PrimaryDomain != "" {
+					parsed.OwnerEmail = job.SourceUser + "@" + meta.PrimaryDomain
+				}
+			}
+
 			payload := &cpanelRunPayload{
 				parsed:         parsed,
 				targetUserID:   user.ID,

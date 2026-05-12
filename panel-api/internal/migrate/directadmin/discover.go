@@ -120,7 +120,13 @@ func (d *Discoverer) Connect(ctx context.Context, host, user string, secret migr
 	// error. Either way the run() returning non-nil is the gate.
 	subctx, cancel := context.WithTimeout(ctx, d.CommandTimeout)
 	defer cancel()
-	if _, err := s.run(subctx, d.CommandTimeout, "da admin info"); err != nil {
+	// `da admin` prints the admin username on success; non-admin
+	// SSH user exits 1 ("admin: privileges required"). Non-empty
+	// stdout = root or admin. Earlier code used `da admin info`
+	// which doesn't exist on real DA installs (the binary errors
+	// "Unrecognized arguments [info]" — DA's `admin` subcommand
+	// takes no args).
+	if _, err := s.run(subctx, d.CommandTimeout, "da admin"); err != nil {
 		client.Close()
 		return nil, fmt.Errorf("directadmin.Connect: admin probe failed (need root or admin SSH user): %w", err)
 	}
@@ -229,9 +235,14 @@ func (d *Discoverer) ListAccounts(ctx context.Context, raw migrate.Session) ([]m
 	if !ok {
 		return nil, errors.New("ListAccounts: wrong session type")
 	}
-	out, err := s.run(ctx, d.CommandTimeout, "da admin user.list")
+	// DA doesn't ship a `da admin user.list` CLI — earlier code
+	// errored on every live source. Real path: enumerate
+	// /usr/local/directadmin/data/users/ (one dir per hosting
+	// user). The admin "user" itself shows up there + we filter
+	// it below.
+	out, err := s.run(ctx, d.CommandTimeout, "ls -1 /usr/local/directadmin/data/users/ 2>/dev/null")
 	if err != nil {
-		return nil, fmt.Errorf("da admin user.list: %w", err)
+		return nil, fmt.Errorf("list DA users: %w", err)
 	}
 	rows := []migrate.AccountSummary{}
 	for _, line := range strings.Split(string(out), "\n") {

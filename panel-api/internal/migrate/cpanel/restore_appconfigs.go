@@ -122,11 +122,10 @@ func rewriteOne(
 	if _, err := os.Stat(path); err != nil {
 		return 0, ""
 	}
-	relPath := strings.TrimPrefix(path, "/home/"+targetUsername+"/")
 	raw, err := agentCli.Call(ctx, "files.read", map[string]any{
 		"user_id":  targetUserID,
 		"username": targetUsername,
-		"path":     relPath,
+		"path":     path, // absolute — agent's filesafe.Resolve rejects relative
 	})
 	if err != nil {
 		return 0, fmt.Sprintf("appconfig_read_skip:%s:%v", path, err)
@@ -145,7 +144,7 @@ func rewriteOne(
 	if _, err := agentCli.Call(ctx, "files.write", map[string]any{
 		"user_id":  targetUserID,
 		"username": targetUsername,
-		"path":     relPath,
+		"path":     path,
 		"content":  updated,
 		"mode":     "overwrite",
 	}); err != nil {

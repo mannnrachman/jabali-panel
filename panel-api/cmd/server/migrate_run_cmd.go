@@ -150,7 +150,7 @@ failed stage. Already-done stages are skipped.`,
 			// produce cpmove-<user>.tar.gz with identical layout.
 			// WHM-pkgacct just skips the live-source SSH probe
 			// (operator pre-uploaded the tarball). Future
-			// directadmin / hestiacp / imap_only land here as
+			// directadmin / hestiacp land here as
 			// they get per-area builders + tarball-pull wired.
 			switch job.SourceKind {
 			case models.MigrationSourceCpanel,

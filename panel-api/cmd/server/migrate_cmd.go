@@ -21,7 +21,6 @@ func newMigrateCmd() *cobra.Command {
 	cmd.AddCommand(newMigrateImportCmd())
 	cmd.AddCommand(newMigrateReapSecretsCmd())
 	cmd.AddCommand(newMigratePullSourceCmd())
-	cmd.AddCommand(newMigrateImapsyncCmd())
 	return cmd
 }
 

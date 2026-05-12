@@ -1,0 +1,1 @@
+ALTER TABLE server_settings DROP COLUMN migration_allow_private_hosts;

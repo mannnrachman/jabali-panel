@@ -1,7 +1,7 @@
 // Package migrate is the per-source-panel importer framework (M35).
 //
 // Each source kind (cpanel, directadmin, hestiacp, whm_pkgacct,
-// imap_only) lives under internal/migrate/<kind>/ and implements the
+// lives under internal/migrate/<kind>/ and implements the
 // Discoverer interface in discover.go. Step 1 (DB foundation) and
 // Step 2 (this file + discover.go + stage.go) are the wave gate; per-
 // source code (Steps 3-7) builds on these contracts without

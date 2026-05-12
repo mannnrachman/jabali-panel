@@ -161,6 +161,14 @@ type ServerSettings struct {
 	PostgresEnabled               bool   `gorm:"column:postgres_enabled;type:tinyint(1);not null;default:0" json:"postgres_enabled"`
 	PostgresMaxConnectionsPerUser uint16 `gorm:"column:postgres_max_connections_per_user;type:smallint unsigned;not null;default:25" json:"postgres_max_connections_per_user"`
 
+	// MigrationAllowPrivateHosts — ADR-0095 decision 8. When TRUE the
+	// SSRF guard for /admin/migrations outbound dials permits RFC1918
+	// targets (10/8, 172.16/12, 192.168/16) as well as IPv6 ULA. DNS
+	// rebinding protection still applies. Loopback/link-local stays
+	// rejected regardless. Default off — flip only for VPN-tunneled
+	// migrations from internal legacy infra.
+	MigrationAllowPrivateHosts bool `gorm:"column:migration_allow_private_hosts;type:tinyint(1);not null;default:0" json:"migration_allow_private_hosts"`
+
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 

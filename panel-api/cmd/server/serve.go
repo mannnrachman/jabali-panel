@@ -43,7 +43,6 @@ import (
 	_ "git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/migrate/cpanel"
 	_ "git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/migrate/directadmin"
 	_ "git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/migrate/hestiacp"
-	_ "git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/migrate/imaponly"
 )
 
 const (

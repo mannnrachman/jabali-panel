@@ -68,7 +68,6 @@ const SOURCE_BADGE: Record<string, { color: string; label: string }> = {
   whm_pkgacct: { color: "purple", label: "WHM (pkgacct)" },
   directadmin: { color: "cyan", label: "DirectAdmin" },
   hestiacp: { color: "magenta", label: "HestiaCP" },
-  imap_only: { color: "gold", label: "IMAP-only" },
 };
 
 export const AdminMigrationsPage = () => {

@@ -166,7 +166,7 @@ func (h *adminMigrationsHandler) create(c *gin.Context) {
 	if !isKnownSourceKind(req.SourceKind) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":  "unknown_source_kind",
-			"detail": "supported kinds: cpanel, whm_pkgacct, directadmin, hestiacp, imap_only",
+			"detail": "supported kinds: cpanel, whm_pkgacct, directadmin, hestiacp",
 		})
 		return
 	}
@@ -206,8 +206,7 @@ func isKnownSourceKind(s string) bool {
 	case models.MigrationSourceCpanel,
 		models.MigrationSourceWHMpkgacct,
 		models.MigrationSourceDirectAdmin,
-		models.MigrationSourceHestia,
-		models.MigrationSourceIMAPOnly:
+		models.MigrationSourceHestia:
 		return true
 	}
 	return false

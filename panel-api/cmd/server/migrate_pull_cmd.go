@@ -105,8 +105,6 @@ live source SSH. Use scp directly for that kind.`,
 				localTar, err = pullHestia(ctx, sshUser, job, secret, localDir)
 			case models.MigrationSourceWHMpkgacct:
 				return errors.New("source kind whm_pkgacct is offline — scp the cpmove tarball into " + localDir + " manually")
-			case models.MigrationSourceIMAPOnly:
-				return errors.New("source kind imap_only doesn't have a tarball — use imapsync directly")
 			default:
 				return fmt.Errorf("unknown source kind %q", job.SourceKind)
 			}

@@ -10,12 +10,17 @@ const (
 	MigrationSourceDirectAdmin  = "directadmin"
 	MigrationSourceHestia       = "hestiacp"
 	MigrationSourceWHMpkgacct   = "whm_pkgacct"
-	MigrationSourceIMAPOnly     = "imap_only"
 )
 
 // MigrationState is the per-job lifecycle. Stage transitions are
 // pinned in internal/migrate/stage.go (Step 2 wave gate).
 const (
+	// MigrationStateDraft — ADR-0095 decision 5. Wizard creates the
+	// row at Step 1 in draft state; PATCH /admin/migrations/:id is
+	// allowed in this state only; transition draft → pending flips
+	// the runner on at Step 4 submit. Drafts older than 24h are
+	// reaped by jabali-migration-secrets-reap.timer.
+	MigrationStateDraft       = "draft"
 	MigrationStatePending     = "pending"
 	MigrationStateAnalyzing   = "analyzing"
 	MigrationStateFixPerms    = "fix_perms"
@@ -32,6 +37,9 @@ const (
 // key prevents two parallel attempts from racing on the same files.
 type MigrationJob struct {
 	ID            string     `gorm:"column:id;type:char(26);primaryKey" json:"id"`
+	// BatchID — ADR-0095 decision 3. NULL for single-account jobs.
+	// Non-NULL ULID groups every job created from one bulk-WHM submit.
+	BatchID       *string    `gorm:"column:batch_id;type:varchar(26);index" json:"batch_id,omitempty"`
 	SourceKind    string     `gorm:"column:source_kind;type:varchar(32);not null;uniqueIndex:uq_migration_source,priority:3" json:"source_kind"`
 	SourceHost    string     `gorm:"column:source_host;type:varchar(255);not null;uniqueIndex:uq_migration_source,priority:1" json:"source_host"`
 	SourceUser    string     `gorm:"column:source_user;type:varchar(64);not null;uniqueIndex:uq_migration_source,priority:2" json:"source_user"`

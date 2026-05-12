@@ -58,7 +58,6 @@ const SOURCE_OPTIONS = [
   { value: "whm_pkgacct", label: "WHM pkgacct (uploaded tarball)" },
   { value: "directadmin", label: "DirectAdmin (Discoverer scaffold only)" },
   { value: "hestiacp", label: "HestiaCP (Discoverer scaffold only)" },
-  { value: "imap_only", label: "IMAP-only (not yet wired)" },
 ];
 
 // ─── sub-step components ───────────────────────────────────────────────────────
@@ -368,7 +367,7 @@ export const CreateMigrationDrawer = ({
 
   const isScaffoldOnly =
     created &&
-    ["directadmin", "hestiacp", "imap_only"].includes(created.source_kind);
+    ["directadmin", "hestiacp"].includes(created.source_kind);
 
   return (
     <Drawer

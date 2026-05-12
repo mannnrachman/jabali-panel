@@ -58,7 +58,14 @@ export const NotificationsTabsPage = () => {
       </Space>
 
       <Card
-        tabList={TAB_KEYS.map((k) => ({ key: k, tab: TAB_LABELS[k] }))}
+        tabList={TAB_KEYS.map((k) => ({
+          key: k,
+          // <span> + white-space:nowrap so multi-word labels ("Web Push",
+          // "Dead Letter") don't wrap onto two lines at 390px mobile width.
+          // AntD's Card.tabList lets the tab cell grow with content when
+          // nowrap is applied; overflow stays in the tab bar's own scroll.
+          tab: <span style={{ whiteSpace: "nowrap" }}>{TAB_LABELS[k]}</span>,
+        }))}
         activeTabKey={activeKey}
         onTabChange={(k) => navigate(`/jabali-admin/notifications/${k}`)}
       >

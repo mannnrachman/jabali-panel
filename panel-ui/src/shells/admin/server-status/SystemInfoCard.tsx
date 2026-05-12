@@ -140,16 +140,26 @@ export function SystemInfoCard({ host, network, software, asOf }: Props) {
         pagination={false}
         scroll={{ x: "max-content" }}
         showHeader={false}
+        // No fixed column widths — let value (hostnames, IPv6 addrs,
+        // 50+ char processor model strings) stretch to its natural
+        // length. scroll x=max-content keeps the table within the card
+        // and adds horizontal scroll if the row exceeds viewport.
+        // Category Tag stays tight via its own width; property uses
+        // ellipsis only when actually overflowing, not preemptively.
         columns={[
           {
             dataIndex: "category",
-            width: 110,
             render: (_: unknown, r: Row) => (
               <Tag color={r.categoryColor}>{r.category}</Tag>
             ),
           },
-          { dataIndex: "property", width: 140 },
-          { dataIndex: "value" },
+          { dataIndex: "property" },
+          {
+            dataIndex: "value",
+            render: (v: unknown) => (
+              <span style={{ wordBreak: "break-all" }}>{String(v ?? "")}</span>
+            ),
+          },
         ]}
       />
     </Card>

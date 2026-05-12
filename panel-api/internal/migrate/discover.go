@@ -37,6 +37,26 @@ type SizeProber interface {
 	AccountSize(ctx context.Context, s Session, login string) (int64, error)
 }
 
+// AllowPrivateSetter is the optional capability for Discoverers that
+// honor the server_settings.migration_allow_private_hosts toggle. All
+// shipped Discoverers implement this; the helper ApplyAllowPrivate
+// type-asserts so callers don't have to do a per-kind switch.
+type AllowPrivateSetter interface {
+	SetAllowPrivate(bool)
+}
+
+// ApplyAllowPrivate sets the SSRF private-IP override on a freshly-
+// constructed Discoverer when it implements AllowPrivateSetter. No-op
+// otherwise — keeps the call site identical regardless of which kind
+// migrate.Get returned. Pull every-call-site loads server_settings +
+// passes the value here so toggling the DB column takes effect on the
+// next operation without a process restart.
+func ApplyAllowPrivate(d Discoverer, allow bool) {
+	if s, ok := d.(AllowPrivateSetter); ok {
+		s.SetAllowPrivate(allow)
+	}
+}
+
 // Session is an opaque per-importer connection handle. Concrete
 // implementations live under internal/migrate/<kind>/.
 type Session interface {

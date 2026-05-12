@@ -18,8 +18,10 @@ import {
   Empty,
   Popconfirm,
   Space,
+  Switch,
   Table,
   Tag,
+  Tooltip,
   Typography,
   message,
 } from "antd";
@@ -88,6 +90,39 @@ export const AdminMigrationsPage = () => {
       return data;
     },
     refetchInterval: 30_000, // poll while a job is in-flight
+  });
+
+  // M35.3 SSRF override toggle. server_settings.migration_allow_private_hosts
+  // gates whether the panel will SSH to RFC1918 / loopback targets during
+  // discover / pull-source. Default off (production-safe); operator flips
+  // for local-network test migrations. ADR-0095 decision 8.
+  const settings = useQuery<{ migration_allow_private_hosts?: boolean }>({
+    queryKey: ["admin-settings"],
+    queryFn: async () => {
+      const { data } = await apiClient.get("/admin/settings");
+      return data;
+    },
+  });
+  const toggleAllowPrivate = useMutation<void, unknown, { enabled: boolean }>({
+    mutationFn: async ({ enabled }) => {
+      await apiClient.patch("/admin/settings", {
+        migration_allow_private_hosts: enabled,
+      });
+    },
+    onSuccess: async (_d, vars) => {
+      message.success(
+        vars.enabled
+          ? "Private-host SSRF override ENABLED (restart panel + agent to pick up)"
+          : "Private-host SSRF override disabled",
+      );
+      await qc.invalidateQueries({ queryKey: ["admin-settings"] });
+    },
+    onError: (err) => {
+      const detail =
+        (err as { response?: { data?: { error?: string; detail?: string } } })
+          ?.response?.data?.detail;
+      message.error(detail ?? "Update failed");
+    },
   });
 
   const cancelBatch = useMutation<void, unknown, { batchId: string }>({
@@ -163,6 +198,23 @@ export const AdminMigrationsPage = () => {
         title="Migration jobs"
         extra={
           <Space wrap>
+            <Tooltip
+              title="Allow SSH to RFC1918 / loopback / link-local source hosts. Default off for production safety. Restart panel + agent after flipping to pick up the change."
+            >
+              <Space size={6}>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Allow private IPs
+                </Typography.Text>
+                <Switch
+                  size="small"
+                  loading={settings.isLoading || toggleAllowPrivate.isPending}
+                  checked={!!settings.data?.migration_allow_private_hosts}
+                  onChange={(checked) =>
+                    toggleAllowPrivate.mutate({ enabled: checked })
+                  }
+                />
+              </Space>
+            </Tooltip>
             <Button onClick={() => setBulkOpen(true)}>Bulk WHM (paste)</Button>
             <Button onClick={() => setWizardOpen(true)}>Wizard</Button>
             <Button

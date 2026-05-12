@@ -55,8 +55,12 @@ func New() *Discoverer {
 	}
 }
 
-// Compile-time interface assertion.
+// Compile-time interface assertions.
 var _ migrate.Discoverer = (*Discoverer)(nil)
+var _ migrate.AllowPrivateSetter = (*Discoverer)(nil)
+
+// SetAllowPrivate — see cpanel/discover.go for rationale.
+func (d *Discoverer) SetAllowPrivate(b bool) { d.AllowPrivate = b }
 
 type session struct {
 	client *ssh.Client

@@ -76,6 +76,7 @@ type ServerSettings = {
   upload_max_size_mb: number;
   postgres_enabled: boolean;
   postgres_max_connections_per_user: number;
+  migration_allow_private_hosts: boolean;
   updated_at: string;
 };
 

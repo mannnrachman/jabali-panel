@@ -107,6 +107,12 @@ type updateServerSettingsRequest struct {
 	// reconciler from starting the postgresql service.
 	PostgresEnabled               *bool   `json:"postgres_enabled,omitempty"`
 	PostgresMaxConnectionsPerUser *uint16 `json:"postgres_max_connections_per_user,omitempty"`
+
+	// M35 SSRF override. When true, migrate.ValidateHost accepts
+	// RFC1918 / loopback / link-local targets. Operator opts in for
+	// local-network test migrations; default-deny remains the safe
+	// production stance. ADR-0095 decision 8.
+	MigrationAllowPrivateHosts *bool `json:"migration_allow_private_hosts,omitempty"`
 }
 
 func (h *serverSettingsHandler) update(c *gin.Context) {
@@ -214,6 +220,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.PostgresEnabled != nil {
 		current.PostgresEnabled = *req.PostgresEnabled
+	}
+	if req.MigrationAllowPrivateHosts != nil {
+		current.MigrationAllowPrivateHosts = *req.MigrationAllowPrivateHosts
 	}
 	if req.PostgresMaxConnectionsPerUser != nil {
 		v := *req.PostgresMaxConnectionsPerUser

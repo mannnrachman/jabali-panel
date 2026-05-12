@@ -1019,6 +1019,15 @@ func (h *adminMigrationsHandler) discoverAccounts(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no_discoverer", "detail": err.Error()})
 		return
 	}
+	// Apply the SSRF private-host override from server_settings so the
+	// admin UI toggle takes effect on the next discover call without a
+	// process restart. Best-effort: settings repo unset or row missing
+	// falls back to the conservative default.
+	if h.cfg.Settings != nil {
+		if s, sErr := h.cfg.Settings.Get(c.Request.Context()); sErr == nil && s != nil {
+			migrate.ApplyAllowPrivate(disc, s.MigrationAllowPrivateHosts)
+		}
+	}
 	// Per-job secret file. Step 2 of the wizard POSTed it via
 	// /:id/secrets; existence here is the operator's "I'm ready to
 	// list accounts" gate.
@@ -1180,6 +1189,11 @@ func (h *adminMigrationsHandler) accountSizeProbe(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no_discoverer", "detail": err.Error()})
 		return
+	}
+	if h.cfg.Settings != nil {
+		if s, sErr := h.cfg.Settings.Get(c.Request.Context()); sErr == nil && s != nil {
+			migrate.ApplyAllowPrivate(disc, s.MigrationAllowPrivateHosts)
+		}
 	}
 	prober, ok := disc.(migrate.SizeProber)
 	if !ok {

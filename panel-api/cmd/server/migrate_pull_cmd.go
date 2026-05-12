@@ -71,6 +71,14 @@ live source SSH. Use scp directly for that kind.`,
 			defer cancel()
 
 			repo := repository.NewMigrationJobRepository(sharedDB)
+			settingsRepo := repository.NewServerSettingsRepository(sharedDB)
+			// Best-effort settings lookup. If the row is missing or
+			// errors, fall back to the conservative default (private-
+			// host SSRF blocked) — matches the pre-toggle behavior.
+			allowPrivate := false
+			if s, sErr := settingsRepo.Get(ctx); sErr == nil && s != nil {
+				allowPrivate = s.MigrationAllowPrivateHosts
+			}
 
 			// markPullFailed persists state=failed + last_error so the
 			// job row reflects the failure instead of sitting in pending
@@ -114,11 +122,11 @@ live source SSH. Use scp directly for that kind.`,
 			var localTar string
 			switch job.SourceKind {
 			case models.MigrationSourceCpanel:
-				localTar, err = pullCpanel(ctx, sshUser, job, secret, localDir)
+				localTar, err = pullCpanel(ctx, sshUser, job, secret, localDir, allowPrivate)
 			case models.MigrationSourceDirectAdmin:
-				localTar, err = pullDirectAdmin(ctx, sshUser, job, secret, localDir)
+				localTar, err = pullDirectAdmin(ctx, sshUser, job, secret, localDir, allowPrivate)
 			case models.MigrationSourceHestia:
-				localTar, err = pullHestia(ctx, sshUser, job, secret, localDir)
+				localTar, err = pullHestia(ctx, sshUser, job, secret, localDir, allowPrivate)
 			case models.MigrationSourceWHMpkgacct:
 				return markPullFailed(errors.New("source kind whm_pkgacct is offline — scp the cpmove tarball into " + localDir + " manually"))
 			default:
@@ -148,8 +156,9 @@ live source SSH. Use scp directly for that kind.`,
 	return cmd
 }
 
-func pullCpanel(ctx context.Context, sshUser string, job *models.MigrationJob, secret migrate.SecretRef, localDir string) (string, error) {
+func pullCpanel(ctx context.Context, sshUser string, job *models.MigrationJob, secret migrate.SecretRef, localDir string, allowPrivate bool) (string, error) {
 	d := cpanel.New()
+	d.AllowPrivate = allowPrivate
 	s, err := d.Connect(ctx, job.SourceHost, sshUser, secret)
 	if err != nil {
 		return "", fmt.Errorf("cpanel.Connect: %w", err)
@@ -166,8 +175,9 @@ func pullCpanel(ctx context.Context, sshUser string, job *models.MigrationJob, s
 	return localTar, nil
 }
 
-func pullDirectAdmin(ctx context.Context, sshUser string, job *models.MigrationJob, secret migrate.SecretRef, localDir string) (string, error) {
+func pullDirectAdmin(ctx context.Context, sshUser string, job *models.MigrationJob, secret migrate.SecretRef, localDir string, allowPrivate bool) (string, error) {
 	d := directadmin.New()
+	d.AllowPrivate = allowPrivate
 	s, err := d.Connect(ctx, job.SourceHost, sshUser, secret)
 	if err != nil {
 		return "", fmt.Errorf("directadmin.Connect: %w", err)
@@ -184,8 +194,9 @@ func pullDirectAdmin(ctx context.Context, sshUser string, job *models.MigrationJ
 	return localTar, nil
 }
 
-func pullHestia(ctx context.Context, sshUser string, job *models.MigrationJob, secret migrate.SecretRef, localDir string) (string, error) {
+func pullHestia(ctx context.Context, sshUser string, job *models.MigrationJob, secret migrate.SecretRef, localDir string, allowPrivate bool) (string, error) {
 	d := hestiacp.New()
+	d.AllowPrivate = allowPrivate
 	s, err := d.Connect(ctx, job.SourceHost, sshUser, secret)
 	if err != nil {
 		return "", fmt.Errorf("hestiacp.Connect: %w", err)

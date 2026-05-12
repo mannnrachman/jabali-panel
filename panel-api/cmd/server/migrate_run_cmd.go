@@ -447,6 +447,13 @@ func cpanelAnalyzeCallback() migrate.StageCallback {
 			}, nil
 		}
 		d := cpanel.New()
+		// Honor server_settings.migration_allow_private_hosts so the
+		// analyze stage's SSH dial matches what the discover/pull
+		// paths already use. Best-effort lookup; default safe.
+		settingsRepo := repository.NewServerSettingsRepository(sharedDB)
+		if s, sErr := settingsRepo.Get(ctx); sErr == nil && s != nil {
+			d.AllowPrivate = s.MigrationAllowPrivateHosts
+		}
 		s, err := d.Connect(ctx, job.SourceHost, "root", migrate.SecretRef{Path: secretPath})
 		if err != nil {
 			return 0, nil, fmt.Errorf("connect: %w", err)

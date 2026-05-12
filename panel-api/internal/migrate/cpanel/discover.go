@@ -43,8 +43,14 @@ func New() *Discoverer {
 	}
 }
 
-// Compile-time interface assertion.
+// Compile-time interface assertions.
 var _ migrate.Discoverer = (*Discoverer)(nil)
+var _ migrate.AllowPrivateSetter = (*Discoverer)(nil)
+
+// SetAllowPrivate honors the migrate.AllowPrivateSetter capability —
+// callers pull server_settings.migration_allow_private_hosts at request
+// time + apply via migrate.ApplyAllowPrivate.
+func (d *Discoverer) SetAllowPrivate(b bool) { d.AllowPrivate = b }
 
 type session struct {
 	client *ssh.Client

@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
@@ -172,6 +173,24 @@ failed stage. Already-done stages are skipped.`,
 					*user.Username, user.ID)
 				if res.ProvisionWarning != "" {
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", res.ProvisionWarning)
+				}
+				// Restore the source's Linux shadow hash directly onto
+				// /etc/shadow so the operator's source SSH/SFTP password
+				// works on the destination box unchanged. Kratos panel
+				// login keeps the random plaintext we just used because
+				// crypt(3) and Argon2 are incompatible.
+				if meta != nil && meta.PasswordHash != "" && sharedAgent != nil {
+					hashCtx, hashCancel := context.WithTimeout(ctx, 10*time.Second)
+					if _, perr := sharedAgent.Call(hashCtx, "user.password", map[string]any{
+						"username":      *user.Username,
+						"password_hash": meta.PasswordHash,
+					}); perr != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(),
+							"warning: source shadow-hash restore failed: %v\n", perr)
+					} else {
+						fmt.Printf("  → source Linux shadow hash restored on /etc/shadow (SSH/SFTP password unchanged from source)\n")
+					}
+					hashCancel()
 				}
 				// Stamp migration_jobs.target_user_id so the
 				// validate stage's acceptExistingUserID gate

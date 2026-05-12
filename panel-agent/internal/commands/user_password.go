@@ -10,10 +10,16 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 )
 
-// userPasswordParams is the input shape for user.password.
+// userPasswordParams is the input shape for user.password. Pass
+// either plaintext via Password OR a pre-hashed crypt(3) line via
+// PasswordHash (cpanel shadow's $6$SHA-512 entry). PasswordHash
+// runs chpasswd -e so the source's Linux SSH/SFTP password keeps
+// working on the destination without the operator handing the
+// plaintext to the customer again.
 type userPasswordParams struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username     string `json:"username"`
+	Password     string `json:"password,omitempty"`
+	PasswordHash string `json:"password_hash,omitempty"`
 }
 
 // userPasswordResponse is the output shape for user.password.
@@ -38,11 +44,11 @@ func userPasswordHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
-	// Reject if password is empty.
-	if p.Password == "" {
+	// Reject when neither password nor password_hash is supplied.
+	if p.Password == "" && p.PasswordHash == "" {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
-			Message: "password cannot be empty",
+			Message: "password or password_hash required",
 		}
 	}
 
@@ -63,9 +69,23 @@ func userPasswordHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
-	// Set password via chpasswd.
-	chpasswdCmd := exec.CommandContext(ctx, "chpasswd")
-	chpasswdCmd.Stdin = strings.NewReader(p.Username + ":" + p.Password + "\n")
+	// Choose chpasswd mode. PasswordHash takes precedence — operator
+	// migration code can pass both (plaintext for kratos, hash for
+	// /etc/shadow); this handler only updates /etc/shadow so hash
+	// wins when present.
+	var (
+		args  []string
+		input string
+	)
+	if p.PasswordHash != "" {
+		args = []string{"-e"}
+		input = p.Username + ":" + p.PasswordHash + "\n"
+	} else {
+		args = nil
+		input = p.Username + ":" + p.Password + "\n"
+	}
+	chpasswdCmd := exec.CommandContext(ctx, "chpasswd", args...)
+	chpasswdCmd.Stdin = strings.NewReader(input)
 	if err := chpasswdCmd.Run(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

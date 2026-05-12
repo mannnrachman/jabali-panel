@@ -29,6 +29,7 @@ import { Link } from "react-router";
 import { apiClient } from "../../../apiClient";
 import { RowActionButton } from "../../../components/RowActionButton";
 import { DeleteOutlined, PlusOutlined, SwapOutlined } from "@icons";
+import { BulkWhmDrawer } from "./BulkWhmDrawer";
 import { CreateMigrationDrawer } from "./CreateMigrationDrawer";
 
 type MigrationJob = {
@@ -73,6 +74,7 @@ const SOURCE_BADGE: Record<string, { color: string; label: string }> = {
 export const AdminMigrationsPage = () => {
   const qc = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const list = useQuery<MigrationJobListResponse>({
     queryKey: ["admin-migrations"],
@@ -141,13 +143,16 @@ export const AdminMigrationsPage = () => {
         size="small"
         title="Migration jobs"
         extra={
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => setDrawerOpen(true)}
-          >
-            New migration
-          </Button>
+          <Space wrap>
+            <Button onClick={() => setBulkOpen(true)}>Bulk WHM</Button>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => setDrawerOpen(true)}
+            >
+              New migration
+            </Button>
+          </Space>
         }
       >
         <Table<MigrationJob>
@@ -293,6 +298,11 @@ export const AdminMigrationsPage = () => {
       <CreateMigrationDrawer
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
+      />
+      <BulkWhmDrawer
+        open={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        onCreated={() => list.refetch()}
       />
     </Space>
   );

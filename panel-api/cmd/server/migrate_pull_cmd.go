@@ -71,24 +71,40 @@ live source SSH. Use scp directly for that kind.`,
 			defer cancel()
 
 			repo := repository.NewMigrationJobRepository(sharedDB)
+
+			// markPullFailed persists state=failed + last_error so the
+			// job row reflects the failure instead of sitting in pending
+			// forever. Called from every pre-stage error path below
+			// (Connect, secret-load, mkdir, tarball pull, extract).
+			// Mirrors the failJob() helper the import command uses for
+			// stage-machine failures.
+			markPullFailed := func(reason error) error {
+				msg := "pull-source: " + reason.Error()
+				if uErr := repo.UpdateState(ctx, jobID, models.MigrationStateFailed, &msg); uErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(),
+						"(warning: could not persist failure to migration_jobs: %v)\n", uErr)
+				}
+				return reason
+			}
+
 			job, err := repo.FindByID(ctx, jobID)
 			if err != nil {
 				return fmt.Errorf("load job: %w", err)
 			}
 			if job.SourceHost == "" {
-				return errors.New("job.source_host is empty — pull-source needs a live SSH target")
+				return markPullFailed(errors.New("job.source_host is empty — pull-source needs a live SSH target"))
 			}
 
 			secretPath := fmt.Sprintf("%s/%s.env", migrate.SecretsDir, jobID)
 			if _, err := os.Stat(secretPath); err != nil {
-				return fmt.Errorf("secrets file %s missing: %w (drop SSH_PASSWORD or SSH_PRIVATE_KEY there first)", secretPath, err)
+				return markPullFailed(fmt.Errorf("secrets file %s missing: %w (drop SSH_PASSWORD or SSH_PRIVATE_KEY there first)", secretPath, err))
 			}
 			secret := migrate.SecretRef{Path: secretPath}
 
 			// Local destination paths
 			localDir := filepath.Join("/var/lib/jabali-migrations", jobID)
 			if err := os.MkdirAll(localDir, 0o750); err != nil {
-				return fmt.Errorf("mkdir %s: %w", localDir, err)
+				return markPullFailed(fmt.Errorf("mkdir %s: %w", localDir, err))
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(),
@@ -104,23 +120,23 @@ live source SSH. Use scp directly for that kind.`,
 			case models.MigrationSourceHestia:
 				localTar, err = pullHestia(ctx, sshUser, job, secret, localDir)
 			case models.MigrationSourceWHMpkgacct:
-				return errors.New("source kind whm_pkgacct is offline — scp the cpmove tarball into " + localDir + " manually")
+				return markPullFailed(errors.New("source kind whm_pkgacct is offline — scp the cpmove tarball into " + localDir + " manually"))
 			default:
-				return fmt.Errorf("unknown source kind %q", job.SourceKind)
+				return markPullFailed(fmt.Errorf("unknown source kind %q", job.SourceKind))
 			}
 			if err != nil {
-				return err
+				return markPullFailed(err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "tarball pulled: %s\n", localTar)
 
 			// Extract.
 			extractDir := filepath.Join(localDir, "extracted")
 			if err := os.MkdirAll(extractDir, 0o750); err != nil {
-				return fmt.Errorf("mkdir extract dir: %w", err)
+				return markPullFailed(fmt.Errorf("mkdir extract dir: %w", err))
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "extracting to %s...\n", extractDir)
 			if err := extractTar(localTar, extractDir); err != nil {
-				return fmt.Errorf("extract: %w", err)
+				return markPullFailed(fmt.Errorf("extract: %w", err))
 			}
 			fmt.Fprintf(cmd.OutOrStdout(),
 				"done. next step: jabali migrate import --job-id %s --target-user <username>\n", jobID)

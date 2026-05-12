@@ -5237,6 +5237,19 @@ install_crowdsec_appsec() {
       cscli collections install crowdsecurity/http-dos
   fi
 
+  # Refresh every installed parser/scenario/collection to the hub's
+  # latest tag. Idempotent: skips items already at the newest version
+  # and only re-downloads what changed. Critical for sshd-logs which
+  # upstream rewrote v3.1+ to handle journald MESSAGE fields directly
+  # — an older shipped parser sees the bare journal text as a non-
+  # syslog line and emits 0/N parsed. Observed on mx.jabali-panel.local
+  # 2026-05-12 (45 lines read, 0 parsed). Pulling --force ensures the
+  # journald-aware parser is loaded.
+  _log "refreshing CrowdSec hub items (parsers/scenarios/collections)"
+  cscli hub update --error 2>&1 | sed 's/^/    /' || true
+  cscli hub upgrade --force 2>&1 | sed 's/^/    /' || \
+    _warn "cscli hub upgrade non-zero — operator can re-run manually"
+
   # 3. Jabali AppSec config — our own appsec-CONFIG file. Loads
   #    base-config + vpatch-* + generic-* plus carries the geoblock
   #    pre_eval hook. The agent rewrites this file on every admin Apply

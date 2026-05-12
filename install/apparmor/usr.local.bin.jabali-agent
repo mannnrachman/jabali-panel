@@ -272,6 +272,27 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /usr/sbin/sshd               ix,
   /usr/local/maldetect/maldet  ix,
   /usr/bin/yr                  ix,
+  # yr (YARA-X) actually ships at /usr/local/bin/yr per install.sh:5860
+  # (M33). The /usr/bin/ entry is a leftover from an earlier install
+  # layout — keep both so an operator who symlinks doesn't regress.
+  /usr/local/bin/yr            ix,
+  # signature-base — Neo23x0/signature-base + jabali custom rules.
+  # Cloned by install_malware_stack and refreshed on a timer; maldet
+  # exec'd by the agent reads every .yar under here at scan time. r
+  # only — agent never writes (timer-managed repo).
+  /opt/jabali/signature-base/    r,
+  /opt/jabali/signature-base/**  r,
+  # maldet's own sig dir, populated by lmd_init + the local custom
+  # symlinks. Lives outside the signature-base mirror because lmd's
+  # internal scan paths (sigs/, ignore_paths, etc) are owned by lmd.
+  /usr/local/maldetect/        r,
+  /usr/local/maldetect/**      r,
+  /usr/local/maldetect/sess/   rw,
+  /usr/local/maldetect/sess/** rw,
+  /usr/local/maldetect/tmp/    rw,
+  /usr/local/maldetect/tmp/**  rw,
+  /usr/local/maldetect/quarantine/   rw,
+  /usr/local/maldetect/quarantine/** rw,
   /usr/bin/yara                ix,
   /usr/bin/clamscan            ix,
   /usr/bin/freshclam           ix,

@@ -55,6 +55,7 @@ type Deps struct {
 	BWDaily             repository.BWDailyRepository
 	DomainIPACLs        repository.DomainIPACLRepository
 	MigrationJobs       repository.MigrationJobRepository
+	MigrationSizeCache  repository.MigrationAccountSizeCacheRepository
 	AutomationTokens    repository.AutomationTokenRepository
 	PHPPools            repository.PHPPoolRepository
 	PHPPoolIniOverrides repository.PHPPoolIniOverrideRepository
@@ -843,8 +844,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			// once the JMAP-push + CreateUser orchestrator
 			// stabilise.
 			api.RegisterAdminMigrationRoutes(v1, api.AdminMigrationsHandlerConfig{
-				Jobs:  deps.MigrationJobs,
-				Agent: deps.Agent,
+				Jobs:      deps.MigrationJobs,
+				SizeCache: deps.MigrationSizeCache,
+				Settings:  deps.ServerSettings,
+				Agent:     deps.Agent,
 			})
 		}
 		if deps.Agent != nil {

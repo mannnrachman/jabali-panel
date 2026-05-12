@@ -245,6 +245,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// methods; admin REST + UI in Step 8. Default-off until
 		// server_settings.migrations_enabled flips.
 		deps.MigrationJobs = repository.NewMigrationJobRepository(sharedDB)
+		deps.MigrationSizeCache = repository.NewMigrationAccountSizeCacheRepository(sharedDB)
 		deps.AutomationTokens = repository.NewAutomationTokenRepository(sharedDB)
 		deps.Databases = databaseRepo
 		deps.DatabaseUsers = databaseUserRepo

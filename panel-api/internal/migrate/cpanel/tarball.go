@@ -37,6 +37,19 @@ type ParsedTarball struct {
 	MySQLDumps []string
 	// ZoneFiles lists BIND-format zone files from cp/<user>/dnszones/.
 	ZoneFiles []string
+	// DomainNames is the fallback domain list when ZoneFiles is empty
+	// (DA + Hestia tarballs don't ship BIND zones). ImportDomains
+	// iterates DomainNames in that case and creates panel domain rows
+	// with synthesized docroots — DNS records are NOT auto-imported;
+	// operator must hand-import zones or accept the empty panel
+	// default zone. Populated by per-importer adapters (DA scans
+	// <HomeDir>/domains/*; Hestia scans <HomeDir>/web/*).
+	DomainNames []string
+	// DocRoots optionally overrides the default docroot for a name in
+	// DomainNames. DA: <HomeDir>/domains/<dom>/public_html on source
+	// → /home/<target>/domains/<dom>/public_html in dest. Empty map
+	// or missing key falls back to /home/<target>/public_html/<dom>.
+	DocRoots map[string]string
 	// CronFiles lists per-user crontab files (cp/<user>/cron/<user>).
 	CronFiles []string
 	// SSHAuthorized lists authorized_keys files found under the

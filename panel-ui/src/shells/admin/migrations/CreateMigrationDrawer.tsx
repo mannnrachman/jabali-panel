@@ -56,7 +56,7 @@ type DriveStep = CPanelStep | WHMStep;
 const SOURCE_OPTIONS = [
   { value: "cpanel", label: "cPanel (live SSH source)" },
   { value: "whm_pkgacct", label: "WHM pkgacct (uploaded tarball)" },
-  { value: "directadmin", label: "DirectAdmin (Discoverer scaffold only)" },
+  { value: "directadmin", label: "DirectAdmin (live SSH source)" },
   { value: "hestiacp", label: "HestiaCP (Discoverer scaffold only)" },
 ];
 

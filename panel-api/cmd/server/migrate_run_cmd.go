@@ -180,7 +180,7 @@ failed stage. Already-done stages are skipped.`,
 				daTarPath := filepath.Join("/var/lib/jabali-migrations", job.ID,
 					fmt.Sprintf("user.%s.tar.gz", job.SourceUser))
 				if da, derr := directadmin.ParseDATarball(daTarPath, extractDir); derr == nil {
-					parsed = directadmin.ToCpanelParsed(da)
+					parsed = directadmin.ToCpanelParsed(da, *user.Username)
 				} else {
 					parsed = &cpanel.ParsedTarball{
 						ExtractDir: extractDir,

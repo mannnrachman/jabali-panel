@@ -58,13 +58,13 @@ type DiscoveredAccount = {
 const SOURCE_OPTIONS = [
   { value: "whm_pkgacct", label: "WHM (bulk: many cPanel accounts)" },
   { value: "cpanel", label: "cPanel (single account)" },
-  // M35 ships cpanel + whm_pkgacct discovery + restore. directadmin
-  // and hestiacp Discoverers are scaffold-only — per-area builders
-  // (homedir / mail / db / dns) land in M35.3. Disabled in the
-  // wizard until then so operators don't pick a path that 502s on
-  // discover-accounts.
-  { value: "directadmin", label: "DirectAdmin (scaffold only — pending M35.3)", disabled: true },
-  { value: "hestiacp", label: "HestiaCP (scaffold only — pending M35.3)", disabled: true },
+  // DA shipped M35.3: live SSH discover + system_backup_user pull +
+  // tarball restore reuse cpanel writers via DAParsedTarball adapter.
+  // Hestia Discoverer + tarball parser exist but per-area DocRoots
+  // adapter is pending; keep disabled until M35.4 ships the same
+  // domain-dir-scan path Hestia needs.
+  { value: "directadmin", label: "DirectAdmin (single account)" },
+  { value: "hestiacp", label: "HestiaCP (scaffold only — pending M35.4)", disabled: true },
 ];
 
 interface Props {

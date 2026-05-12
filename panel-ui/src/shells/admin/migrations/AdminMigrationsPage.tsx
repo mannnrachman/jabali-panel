@@ -347,12 +347,12 @@ export const AdminMigrationsPage = () => {
             reuses cPanel restore code-path
           </Typography.Text>
           <Typography.Text>
-            <Tag color="orange">DirectAdmin</Tag> Discoverer scaffold only
-            (per-area builders pending fixture)
+            <Tag color="green">DirectAdmin</Tag> Live SSH discover +
+            system_backup_user tarball pull; restore via cpanel writers
           </Typography.Text>
           <Typography.Text>
             <Tag color="orange">HestiaCP</Tag> Discoverer scaffold only
-            (per-area builders pending fixture)
+            (DocRoots adapter pending M35.4)
           </Typography.Text>
           <Typography.Text>
             <Tag color="default">IMAP-only</Tag> Not yet wired

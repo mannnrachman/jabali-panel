@@ -35,6 +35,12 @@ type DAParsedTarball struct {
 	CronFile      string   // absolute path to extracted cron file (if present)
 	SSHAuthorized string   // absolute path to authorized_keys (if present)
 	MailRoot      string   // <user>/email/ — Maildir parent
+	// DomainDirs maps each domain name to its source-side
+	// <HomeDir>/domains/<dom>/ absolute path. Populated post-extract
+	// by scanning the directory; consumed by ToCpanelParsed to seed
+	// ParsedTarball.DomainNames + DocRoots so the cpanel
+	// ImportDomains writer can create panel rows without a BIND zone.
+	DomainDirs    map[string]string
 	Skipped       []string
 }
 
@@ -137,6 +143,22 @@ func ParseDATarball(tarballPath, extractDir string) (*DAParsedTarball, error) {
 	}
 	out.HomeDir = filepath.Join(extractDir, out.SourceUser)
 	out.MailRoot = filepath.Join(out.HomeDir, "email")
+	// Post-extract scan: every immediate child of <HomeDir>/domains/
+	// names a hosted domain. Stash for ToCpanelParsed → ImportDomains.
+	domainsRoot := filepath.Join(out.HomeDir, "domains")
+	if entries, derr := os.ReadDir(domainsRoot); derr == nil {
+		out.DomainDirs = make(map[string]string, len(entries))
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if name == "" || strings.HasPrefix(name, ".") {
+				continue
+			}
+			out.DomainDirs[name] = filepath.Join(domainsRoot, name)
+		}
+	}
 	return out, nil
 }
 

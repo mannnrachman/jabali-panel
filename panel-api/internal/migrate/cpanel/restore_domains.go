@@ -51,20 +51,56 @@ func ImportDomains(
 	mailDomains := scanMailDomains(parsed)
 	docRootBase := filepath.Join("/home", targetUsername, "public_html")
 
-	for _, zonePath := range parsed.ZoneFiles {
-		domainName := strings.TrimSuffix(filepath.Base(zonePath), ".db")
-		if domainName == "" {
-			res.Skipped = append(res.Skipped, fmt.Sprintf("domain_skip:empty_name_from_%s", zonePath))
-			continue
+	// Build (name, docRoot) pairs from whichever source the per-importer
+	// adapter populated. Prefer ZoneFiles (cpanel — richest signal: BIND
+	// zone present means DNS will round-trip). Fallback DomainNames
+	// covers DA + Hestia tarballs that don't ship BIND zones; docroots
+	// come from DocRoots map (per-importer-resolved on-disk paths)
+	// with default fallback to <home>/public_html/<dom>.
+	type domainEntry struct {
+		name    string
+		docRoot string
+	}
+	var entries []domainEntry
+	if len(parsed.ZoneFiles) > 0 {
+		for _, zonePath := range parsed.ZoneFiles {
+			domainName := strings.TrimSuffix(filepath.Base(zonePath), ".db")
+			if domainName == "" {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("domain_skip:empty_name_from_%s", zonePath))
+				continue
+			}
+			entries = append(entries, domainEntry{
+				name:    domainName,
+				docRoot: filepath.Join(docRootBase, domainName),
+			})
 		}
+	} else {
+		// DA: docroot = /home/<target>/domains/<dom>/public_html (DA layout).
+		// Override per-name via parsed.DocRoots when adapter mapped a
+		// source-side absolute path to a target-side one.
+		for _, name := range parsed.DomainNames {
+			if name == "" {
+				continue
+			}
+			dr := filepath.Join(docRootBase, name)
+			if parsed.DocRoots != nil {
+				if override, ok := parsed.DocRoots[name]; ok && override != "" {
+					dr = override
+				}
+			}
+			entries = append(entries, domainEntry{name: name, docRoot: dr})
+		}
+	}
 
+	for _, e := range entries {
+		domainName := e.name
 		if _, err := domainsRepo.FindByName(ctx, domainName); err == nil {
 			res.Skipped = append(res.Skipped, "domain_skip:already_exists:"+domainName)
 			continue
 		}
 
 		domainID := ids.NewULID()
-		docRoot := filepath.Join(docRootBase, domainName)
+		docRoot := e.docRoot
 
 		if _, err := agentCli.Call(ctx, "domain.create", map[string]any{
 			"domain_id":      domainID,

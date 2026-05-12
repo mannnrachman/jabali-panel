@@ -197,6 +197,11 @@ func pullCpanel(ctx context.Context, sshUser string, job *models.MigrationJob, s
 	if _, err := d.PullFile(ctx, s, remoteTar, localTar); err != nil {
 		return "", fmt.Errorf("PullFile: %w", err)
 	}
+	// M35.8: clean up source-side cpmove tarball so a multi-account
+	// migration doesn't accumulate GB on the source. Best-effort.
+	if rmErr := d.RemoveRemote(ctx, s, remoteTar); rmErr != nil {
+		fmt.Printf("  (warning: source-side rm %s failed: %v)\n", remoteTar, rmErr)
+	}
 	return localTar, nil
 }
 

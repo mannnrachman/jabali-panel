@@ -26,18 +26,31 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-const migrationSecretsDir = "/etc/jabali-panel/migration-secrets"
+const (
+	migrationSecretsDir = "/etc/jabali-panel/migration-secrets"
+	migrationStagingDir = "/var/lib/jabali-migrations"
+	// migrationStagingMaxAge — terminal jobs whose tarball + extracted
+	// tree have been on disk longer than this get reaped. 7 days gives
+	// the operator a generous window to download the cpmove for forensics
+	// or re-attempt a manual fixup before disk goes away. Override via
+	// `--staging-max-age` flag for one-shot operator runs.
+	migrationStagingMaxAge = 7 * 24 * time.Hour
+)
 
 func newMigrateReapSecretsCmd() *cobra.Command {
 	var dryRun bool
+	var stagingMaxAge time.Duration
 	cmd := &cobra.Command{
 		Use:   "reap-secrets",
-		Short: "Wipe per-job migration-secrets env files for terminal-state jobs",
+		Short: "Wipe per-job migration-secrets env files + stale tarball/extracted dirs",
 		Long: `Walks migration_jobs WHERE state IN
 ('done','failed','cancelled') and deletes the matching env file
-at /etc/jabali-panel/migration-secrets/<job-id>.env. Idempotent —
-missing files don't fail. Run by jabali-migration-secrets-reap.timer
-on a daily cadence; operator can also invoke directly.`,
+at /etc/jabali-panel/migration-secrets/<job-id>.env. Same pass
+removes the per-job tarball + extracted tree under
+/var/lib/jabali-migrations/<id>/ when the job's ended_at is older
+than --staging-max-age (default 7 days). Idempotent — missing
+files don't fail. Run by jabali-migration-secrets-reap.timer on a
+daily cadence; operator can also invoke directly.`,
 		PreRunE: requireDB,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
@@ -58,19 +71,41 @@ on a daily cadence; operator can also invoke directly.`,
 						continue
 					}
 					path := filepath.Join(migrationSecretsDir, row.ID+".env")
-					if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-						continue
+					if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+						if dryRun {
+							fmt.Fprintf(cmd.OutOrStdout(), "[dry-run] would remove %s (job state=%s)\n", path, row.State)
+							deleted++
+						} else if err := os.Remove(path); err != nil {
+							fmt.Fprintf(cmd.ErrOrStderr(), "remove %s: %v\n", path, err)
+						} else {
+							deleted++
+						}
 					}
-					if dryRun {
-						fmt.Fprintf(cmd.OutOrStdout(), "[dry-run] would remove %s (job state=%s)\n", path, row.State)
+					// Staging dir: tarball + extracted tree. Reap when
+					// the job has been terminal long enough (ended_at +
+					// stagingMaxAge < now). Operator can `--staging-max-age 0`
+					// to wipe immediately.
+					stagingPath := filepath.Join(migrationStagingDir, row.ID)
+					if info, sErr := os.Stat(stagingPath); sErr == nil && info.IsDir() {
+						ref := row.EndedAt
+						if ref == nil || ref.IsZero() {
+							ref = &row.UpdatedAt
+						}
+						age := time.Since(*ref)
+						if age < stagingMaxAge {
+							continue
+						}
+						if dryRun {
+							fmt.Fprintf(cmd.OutOrStdout(), "[dry-run] would rm -rf %s (state=%s age=%s)\n", stagingPath, row.State, age.Truncate(time.Hour))
+							deleted++
+							continue
+						}
+						if rErr := os.RemoveAll(stagingPath); rErr != nil {
+							fmt.Fprintf(cmd.ErrOrStderr(), "rm -rf %s: %v\n", stagingPath, rErr)
+							continue
+						}
 						deleted++
-						continue
 					}
-					if err := os.Remove(path); err != nil {
-						fmt.Fprintf(cmd.ErrOrStderr(), "remove %s: %v\n", path, err)
-						continue
-					}
-					deleted++
 				}
 				if int64(page*pageSize) >= total || len(rows) == 0 {
 					break
@@ -98,6 +133,8 @@ on a daily cadence; operator can also invoke directly.`,
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "List would-delete paths without removing them")
+	cmd.Flags().DurationVar(&stagingMaxAge, "staging-max-age", migrationStagingMaxAge,
+		"Reap /var/lib/jabali-migrations/<id>/ only when the job has been terminal at least this long (default 168h = 7d; pass 0 to wipe immediately)")
 	return cmd
 }
 

@@ -34,6 +34,25 @@ const PullChunk = 1 << 20 // 1 MiB
 // (uncompressed v1: cPanel honours the --backup flag for an
 // alternate path; we don't override). Stalls on disk-full + a few
 // other infra failures; the timeout above is the bound.
+// RemoveRemote rm's a single absolute path on the source over the
+// existing SSH session. Used after PullFile to clean the source-side
+// cpmove tarball — pkgacct leaves `/home/cpmove-<user>.tar.gz`
+// otherwise + a multi-account migration accumulates GB on the source
+// box. Path must be absolute + match the safe-prefix allowlist.
+func (d *Discoverer) RemoveRemote(ctx context.Context, raw interface{}, path string) error {
+	s, ok := raw.(*session)
+	if !ok || s == nil {
+		return errors.New("RemoveRemote: bad session")
+	}
+	// Allowlist — only paths created by Pkgacct.
+	if !strings.HasPrefix(path, "/home/cpmove-") || strings.Contains(path, "..") {
+		return fmt.Errorf("RemoveRemote: refuses non-cpmove path %q", path)
+	}
+	cmd := fmt.Sprintf("rm -f '%s'", shellQuote(path))
+	_, err := s.run(ctx, 30*time.Second, cmd)
+	return err
+}
+
 func (d *Discoverer) Pkgacct(ctx context.Context, raw interface{}, account string) (string, error) {
 	s, ok := raw.(*session)
 	if !ok || s == nil {

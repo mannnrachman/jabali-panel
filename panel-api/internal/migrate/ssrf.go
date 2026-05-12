@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // ADR-0095 decision 8: SSRF protection for migration outbound dials.
@@ -94,6 +96,23 @@ func (v *HostValidator) Dialer() *net.Dialer {
 			return nil
 		},
 	}
+}
+
+// DialTCP is the safe outbound entrypoint for every migrate/* package.
+// Combines ValidateHost (resolve + range check) with Dialer (peer-IP
+// re-check at connect time) in one call. Callers pass the operator
+// override flag pulled from server_settings.migration_allow_private_hosts.
+//
+// Returns a net.Conn ready for ssh.NewClientConn or any other higher-
+// level handshake. Caller owns the conn lifetime.
+func DialTCP(ctx context.Context, host string, port int, allowPrivate bool, timeout time.Duration) (net.Conn, error) {
+	v, err := ValidateHost(ctx, host, allowPrivate)
+	if err != nil {
+		return nil, err
+	}
+	d := v.Dialer()
+	d.Timeout = timeout
+	return d.DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 }
 
 func checkIP(ip net.IP, allowPrivate bool) error {

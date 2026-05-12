@@ -34,6 +34,9 @@ import (
 
 // Discoverer is the Hestia-side implementation of migrate.Discoverer.
 type Discoverer struct {
+	// AllowPrivate — ADR-0095 decision 8. When true, SSRF
+	// guard permits RFC1918 / ULA targets. Default false.
+	AllowPrivate bool
 	Port           int
 	CommandTimeout time.Duration
 }
@@ -73,8 +76,7 @@ func (d *Discoverer) Connect(ctx context.Context, host, user string, secret migr
 		Timeout:         15 * time.Second,
 	}
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
-	dialer := &net.Dialer{Timeout: 15 * time.Second}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	conn, err := migrate.DialTCP(ctx, host, port, d.AllowPrivate, 15*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("hestiacp.Connect: tcp dial %s: %w", addr, err)
 	}

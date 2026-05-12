@@ -45,8 +45,10 @@ import (
 // import); when nil those three endpoints register but 503 because
 // the agent socket isn't reachable.
 type AdminMigrationsHandlerConfig struct {
-	Jobs  repository.MigrationJobRepository
-	Agent agent.AgentInterface
+	Jobs      repository.MigrationJobRepository
+	SizeCache repository.MigrationAccountSizeCacheRepository
+	Settings  repository.ServerSettingsRepository
+	Agent     agent.AgentInterface
 }
 
 // RegisterAdminMigrationRoutes mounts /admin/migrations* on g.
@@ -83,6 +85,7 @@ func RegisterAdminMigrationRoutes(g *gin.RouterGroup, cfg AdminMigrationsHandler
 	rg.DELETE("/batches/:id", h.cancelBatch)
 	rg.POST("/:id/retry", h.retry)
 	rg.GET("/:id/stream", h.stream)
+	rg.GET("/discover-accounts/:host/:user/size", h.discoverAccountSize)
 }
 
 type adminMigrationsHandler struct{ cfg AdminMigrationsHandlerConfig }
@@ -892,4 +895,45 @@ func (h *adminMigrationsHandler) stream(c *gin.Context) {
 			}
 		}
 	}
+}
+
+// discoverAccountSize returns the size of one source account, hitting
+// the (host, source_user) cache first with a 24h TTL. ADR-0095
+// decision 6 — keeps Step 3 instant on re-discovery while letting the
+// initial probe cost ~5s per account.
+//
+// Phase 4 follow-up: this handler currently returns 503 from_cache=false
+// when the cache is cold — agent-side `du -sh /home/<user>` ssh probe
+// is not yet wired. Operator can pre-warm the cache via the agent's
+// system.disk_usage handler once the M35.2 wave adds the discoverer
+// hook.
+func (h *adminMigrationsHandler) discoverAccountSize(c *gin.Context) {
+	host := c.Param("host")
+	user := c.Param("user")
+	if h.cfg.SizeCache == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "size_cache_not_configured"})
+		return
+	}
+	row, err := h.cfg.SizeCache.Get(c.Request.Context(), host, user, 24*time.Hour)
+	if err == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"host":        host,
+			"source_user": user,
+			"size_bytes":  row.SizeBytes,
+			"fetched_at":  row.FetchedAt,
+			"from_cache":  true,
+		})
+		return
+	}
+	// Cold cache. Live probe deferred to M35.2 (needs Discoverer
+	// hook + per-source-kind du command). For now signal to the SPA
+	// that the operator can either skip the size column or wait for
+	// the M35.2 wave.
+	c.JSON(http.StatusServiceUnavailable, gin.H{
+		"host":        host,
+		"source_user": user,
+		"from_cache":  false,
+		"error":       "size_probe_not_wired",
+		"detail":      "Live size probe ships in M35.2; pre-warm the cache via 'jabali migrate discover-size <host> <user>' (CLI) until then.",
+	})
 }

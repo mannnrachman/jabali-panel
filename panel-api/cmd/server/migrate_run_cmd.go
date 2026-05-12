@@ -101,6 +101,20 @@ failed stage. Already-done stages are skipped.`,
 				targetEmail = meta.Email
 				fmt.Printf("  → target-email detected from cpmove: %s\n", targetEmail)
 			}
+			if targetEmail == "" {
+				// No contactemail file in the tarball (older pkgacct
+				// versions or pre-extracted blob) — synthesize
+				// <user>@<source-host> so auto-create can proceed.
+				// Operator can fix the address post-migration via
+				// /admin/users; the synthetic value is a placeholder,
+				// not a delivery target.
+				hostPart := job.SourceHost
+				if hostPart == "" {
+					hostPart = "migrated.local"
+				}
+				targetEmail = targetUser + "@" + hostPart
+				fmt.Printf("  → target-email synthesized (no contactemail in tarball): %s\n", targetEmail)
+			}
 			if targetPassword == "" {
 				// Generate a random strong password the operator can
 				// hand to the customer. Print ONCE — we never store

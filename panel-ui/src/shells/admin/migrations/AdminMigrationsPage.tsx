@@ -90,6 +90,22 @@ export const AdminMigrationsPage = () => {
     refetchInterval: 30_000, // poll while a job is in-flight
   });
 
+  const cancelBatch = useMutation<void, unknown, { batchId: string }>({
+    mutationFn: async ({ batchId }) => {
+      await apiClient.delete(`/admin/migrations/batches/${batchId}`);
+    },
+    onSuccess: async () => {
+      message.success("Batch cancelled");
+      await qc.invalidateQueries({ queryKey: ["admin-migrations"] });
+    },
+    onError: (err) => {
+      const detail =
+        (err as { response?: { data?: { error?: string; detail?: string } } })
+          ?.response?.data?.detail;
+      message.error(detail ?? "Batch cancel failed");
+    },
+  });
+
   const cancel = useMutation<void, unknown, { id: string }>({
     mutationFn: async ({ id }) => {
       await apiClient.delete(`/admin/migrations/${id}`);
@@ -196,9 +212,20 @@ export const AdminMigrationsPage = () => {
             dataIndex="batch_id"
             render={(b: string | null) =>
               b ? (
-                <Tag color="purple" style={{ fontFamily: "monospace", fontSize: 11 }}>
-                  {b.slice(-6)}
-                </Tag>
+                <Popconfirm
+                  title={`Cancel entire batch ${b.slice(-6)}?`}
+                  description="Cancels every non-terminal job sharing this batch_id."
+                  okText="Cancel batch"
+                  okButtonProps={{ danger: true }}
+                  onConfirm={() => cancelBatch.mutate({ batchId: b })}
+                >
+                  <Tag
+                    color="purple"
+                    style={{ fontFamily: "monospace", fontSize: 11, cursor: "pointer" }}
+                  >
+                    {b.slice(-6)}
+                  </Tag>
+                </Popconfirm>
               ) : (
                 <Typography.Text type="secondary" style={{ fontSize: 11 }}>
                   —

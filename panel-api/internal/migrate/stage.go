@@ -78,9 +78,17 @@ var jobTransitions = map[string]map[string]struct{}{
 		models.MigrationStateFailed:    {},
 		models.MigrationStateCancelled: {},
 	},
-	// Terminal states have no successors.
-	models.MigrationStateDone:      {},
-	models.MigrationStateFailed:    {},
+	// Done + Cancelled are terminal. Failed is RESUMABLE: the
+	// operator can rerun `jabali migrate import` after addressing the
+	// root cause (e.g. pull-source timeout or SSH flap) so the runner
+	// re-enters at analyze. retry-from-scratch wipes stage rows first
+	// + flips the row back to pending; this transition covers the
+	// gentler resume path that keeps any already-done stages.
+	models.MigrationStateDone: {},
+	models.MigrationStateFailed: {
+		models.MigrationStateAnalyzing: {},
+		models.MigrationStateCancelled: {},
+	},
 	models.MigrationStateCancelled: {},
 }
 

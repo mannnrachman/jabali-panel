@@ -167,10 +167,12 @@ func pullCpanel(ctx context.Context, sshUser string, job *models.MigrationJob, s
 		return "", fmt.Errorf("cpanel.Connect: %w", err)
 	}
 	defer func() { _ = d.Close(ctx, s) }()
+	fmt.Printf("  → running /scripts/pkgacct %s on source (may take many minutes for large accounts)...\n", job.SourceUser)
 	remoteTar, err := d.Pkgacct(ctx, s, job.SourceUser)
 	if err != nil {
 		return "", fmt.Errorf("pkgacct: %w", err)
 	}
+	fmt.Printf("  → tarball ready on source: %s — downloading...\n", remoteTar)
 	localTar := filepath.Join(localDir, fmt.Sprintf("cpmove-%s.tar.gz", job.SourceUser))
 	if _, err := d.PullFile(ctx, s, remoteTar, localTar); err != nil {
 		return "", fmt.Errorf("PullFile: %w", err)

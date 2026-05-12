@@ -20,6 +20,7 @@ import (
 type phpPoolApplyParams struct {
 	Username                   string `json:"username"`
 	PHPVersion                 string `json:"php_version"`
+	Additive                   bool   `json:"additive,omitempty"` // M35.8: keep other-version pools for this user
 	PmMode                     string `json:"pm_mode"`
 	PmMaxChildren              uint32 `json:"pm_max_children"`
 	ProcessIdleTimeoutSeconds  uint32 `json:"process_idle_timeout_seconds"`
@@ -99,22 +100,37 @@ func isForbiddenDirective(name string) bool {
 	return false
 }
 
-// globDeletePoolFiles removes all pool files for the given username across
-// all installed PHP versions. Returns a map of PHP versions whose pool files
-// were deleted (for subsequent reload).
-func globDeletePoolFiles(username string) (map[string]bool, error) {
+// globDeletePoolFiles removes pool files for the given username, optionally
+// keeping the named version intact. Pass excludeVersion="" for the legacy
+// wipe-all-versions behavior; pass a concrete version to leave that one
+// in place — used by M35.8 per-domain PHP restore so multi-version pools
+// for a single user coexist. Returns a map of PHP versions whose pool
+// files were deleted (for subsequent reload).
+func globDeletePoolFiles(username string, excludeVersion ...string) (map[string]bool, error) {
 	pattern := fmt.Sprintf("/etc/php/*/fpm/pool.d/jabali-%s.conf", username)
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		return nil, fmt.Errorf("glob failed: %w", err)
+	}
+	keep := map[string]bool{}
+	for _, v := range excludeVersion {
+		if v != "" {
+			keep[v] = true
+		}
 	}
 
 	deletedVersions := make(map[string]bool)
 	for _, path := range matches {
 		// Extract version from /etc/php/<version>/fpm/pool.d/...
 		parts := strings.Split(path, "/")
+		var version string
 		if len(parts) >= 3 && parts[1] == "etc" && parts[2] == "php" {
-			version := parts[3]
+			version = parts[3]
+		}
+		if keep[version] {
+			continue
+		}
+		if version != "" {
 			deletedVersions[version] = true
 		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -380,8 +396,18 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
-	// Delete stale pool files and collect versions that need reload.
-	_, err = globDeletePoolFiles(p.Username)
+	// Delete stale pool files for this user. Legacy callers (operator
+	// switches primary PHP version via the panel) wipe ALL (user, *)
+	// pool files so only one survives. M35.8 migration restore needs
+	// per-domain PHP — multiple versions co-exist; only the version
+	// being upserted should be deleted-and-rewritten. The `additive`
+	// flag toggles between the two: additive=true leaves other-version
+	// pools intact; additive=false (legacy default) wipes everything.
+	var keep []string
+	if p.Additive {
+		keep = append(keep, p.PHPVersion)
+	}
+	_, err = globDeletePoolFiles(p.Username, keep...)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

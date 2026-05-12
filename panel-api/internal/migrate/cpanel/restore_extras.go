@@ -19,14 +19,15 @@ package cpanel
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -40,8 +41,12 @@ type ExtrasResult struct {
 	ForwardersOrphaned    int      // alias lines whose local mailbox isn't in panel
 	AutorespondersCreated int      // vacation auto-replies restored (M6.5)
 	AutorespondersOrphaned int     // .autorespond entries whose mailbox isn't in panel
-	PHPVersionApplied     string   // jabali version chosen for the user pool ("" = skipped)
+	PHPVersionApplied     string   // first version applied at user-pool level (legacy)
+	PHPPoolsCreated       int      // distinct (user, version) FPM pools created (M35.8 P6)
+	PHPDomainsBound       int      // domains whose php_pool_id was set to a per-version pool
 	FTPAccountsObserved   int      // cpanel ftp accounts seen on source (record-only)
+	DKIMKeysPreserved     int      // legacy DKIM keys copied to sidecar storage
+	FiltersImported       int      // per-mailbox Sieve/cpanel inbox rules
 	Skipped               []string // human-readable reasons (mirrors other restore writers)
 }
 
@@ -54,6 +59,8 @@ func ImportExtras(
 	mailboxesRepo repository.MailboxRepository,
 	forwardersRepo repository.EmailForwarderRepository,
 	autoRespondersRepo repository.EmailAutoresponderRepository,
+	filtersRepo repository.EmailFilterRepository,
+	poolsRepo repository.PHPPoolRepository,
 	agentCli agent.AgentInterface,
 	parsed *ParsedTarball,
 	targetUserID, targetUsername string,
@@ -181,26 +188,121 @@ func ImportExtras(
 		}
 	}
 
-	// ---- P4: user-wide PHP version ----
-	// cpanel writes per-domain `<dom>.php-fpm.yaml` files containing
-	// `phpversion: ea-php82`. Jabali stores a single FPM pool per
-	// user (not per-domain), so we pick the source's primary-domain
-	// version + apply it via php.pool.apply. Other domains' versions
-	// land as warnings + the operator can fix post-migration.
-	if agentCli != nil {
-		if ver, mixed := detectPHPVersion(parsed); ver != "" {
-			_, err := agentCli.Call(ctx, "php.pool.apply", map[string]any{
-				"username":        targetUsername,
-				"php_version":     ver,
-				"pm_max_children": uint32(20), // jabali default; pool.apply clamps
-			})
-			if err != nil {
-				res.Skipped = append(res.Skipped, fmt.Sprintf("php_skip:%s:%v", ver, err))
-			} else {
-				res.PHPVersionApplied = ver
+	// ---- P4: per-domain PHP version ----
+	// cpanel writes per-domain `<dom>.php-fpm.yaml` with `phpversion:
+	// ea-php82`. Schema migration 000129 allows multiple FPM pools
+	// per user (one per version) so each domain can keep its source
+	// version. For each distinct version: ensure (user, version)
+	// pool exists via php.pool.apply, then bind every domain in
+	// that group to that pool via SetPHPPoolID.
+	if agentCli != nil && poolsRepo != nil && domainsRepo != nil {
+		byVersion := detectPHPVersionsPerDomain(parsed)
+		seenVersions := map[string]string{} // version → pool_id
+		for version, doms := range byVersion {
+			if version == "" {
+				continue
 			}
-			if len(mixed) > 0 {
-				res.Skipped = append(res.Skipped, fmt.Sprintf("php_mixed_versions:source had %v; using %s for user pool", mixed, ver))
+			// Look up or insert the (user, version) pool DB row first.
+			// Agent's php.pool.apply only writes FPM config; the panel
+			// row is the source of truth domains.SetPHPPoolID references.
+			pool, lookupErr := poolsRepo.FindByUserAndVersion(ctx, targetUserID, version)
+			if lookupErr != nil && !errors.Is(lookupErr, repository.ErrNotFound) {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("php_pool_lookup_skip:%s:%v", version, lookupErr))
+				continue
+			}
+			if pool == nil {
+				now := time.Now().UTC()
+				pool = &models.PHPPool{
+					ID:                        ids.NewULID(),
+					UserID:                    targetUserID,
+					PHPVersion:                version,
+					PmMode:                    "ondemand",
+					PmMaxChildren:             20,
+					ProcessIdleTimeoutSeconds: 60,
+					Status:                    "pending",
+					CreatedAt:                 now,
+					UpdatedAt:                 now,
+				}
+				if cErr := poolsRepo.Create(ctx, pool); cErr != nil {
+					res.Skipped = append(res.Skipped, fmt.Sprintf("php_pool_create_skip:%s:%v", version, cErr))
+					continue
+				}
+			}
+			// Ensure FPM pool exists at OS level.
+			if _, err := agentCli.Call(ctx, "php.pool.apply", map[string]any{
+				"username":        targetUsername,
+				"php_version":     version,
+				"pm_max_children": uint32(20),
+				"additive":        true, // M35.8 P6: per-domain PHP — keep other-version pools
+			}); err != nil {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("php_pool_apply_skip:%s:%v", version, err))
+				continue
+			}
+			res.PHPPoolsCreated++
+			seenVersions[version] = pool.ID
+			if res.PHPVersionApplied == "" {
+				res.PHPVersionApplied = version
+			}
+			// Bind every domain that runs this version.
+			for _, dom := range doms {
+				d, dErr := domainsRepo.FindByName(ctx, dom)
+				if dErr != nil || d == nil {
+					res.Skipped = append(res.Skipped, fmt.Sprintf("php_bind_skip:%s:no_domain_row", dom))
+					continue
+				}
+				if sErr := domainsRepo.SetPHPPoolID(ctx, d.ID, &pool.ID); sErr != nil {
+					res.Skipped = append(res.Skipped, fmt.Sprintf("php_bind_skip:%s:%v", dom, sErr))
+					continue
+				}
+				res.PHPDomainsBound++
+			}
+		}
+		_ = seenVersions // future: clean up orphan pools
+	}
+
+	// ---- P3.5: DKIM key preserve ----
+	// cpanel writes per-domain RSA DKIM private keys under
+	//   cpmove-<user>/domainkeys/<domain>   (newer)
+	//   <homedir>/etc/<domain>/dkim_keys.priv (legacy)
+	// jabali rotates to Ed25519 + selector "jabali" on email-enable,
+	// so signature continuity isn't preserved automatically. We
+	// copy the source key into a sidecar path the operator can wire
+	// into Stalwart for verifying pre-migration mail (DNS at the
+	// source selector must stay published or be re-published).
+	if agentCli != nil {
+		for _, root := range []string{
+			filepath.Join(parsed.ExtractDir, "cpmove-"+parsed.SourceUser, "domainkeys"),
+			filepath.Join(parsed.ExtractDir, "domainkeys"),
+		} {
+			entries, derr := os.ReadDir(root)
+			if derr != nil {
+				continue
+			}
+			for _, e := range entries {
+				if e.IsDir() {
+					continue
+				}
+				dom := e.Name()
+				if !strings.Contains(dom, ".") {
+					continue
+				}
+				keyBytes, rerr := os.ReadFile(filepath.Join(root, dom))
+				if rerr != nil || len(keyBytes) == 0 {
+					continue
+				}
+				if _, callErr := agentCli.Call(ctx, "dkim.import", map[string]any{
+					"domain":    dom,
+					"selector":  "default", // cpanel's per-domain selector
+					"algorithm": "rsa",
+					"key_pem":   string(keyBytes),
+				}); callErr != nil {
+					res.Skipped = append(res.Skipped, fmt.Sprintf("dkim_skip:%s:%v", dom, callErr))
+					continue
+				}
+				res.DKIMKeysPreserved++
+			}
+			if res.DKIMKeysPreserved > 0 {
+				break
 			}
 		}
 	}
@@ -216,6 +318,59 @@ func ImportExtras(
 				if n := countNonCommentLines(ftpPasswd); n > 0 {
 					res.FTPAccountsObserved += n
 					res.Skipped = append(res.Skipped, fmt.Sprintf("ftp_observed:%s count=%d (FTP deprecated — re-issue via SFTP keys)", f.Name(), n))
+				}
+			}
+		}
+	}
+
+	// ---- P1: per-mailbox Sieve filters ----
+	// cpanel layout:
+	//   <homedir>/etc/<dom>/<local>/filter.yaml   (per-mailbox)
+	//   <homedir>/etc/<dom>/managefilters/*.filter (global per-domain)
+	// We pick up the per-mailbox file + store as cpanel_raw (Sieve
+	// conversion is post-restore operator work).
+	if parsed.HomeDir != "" && filtersRepo != nil && mailboxesRepo != nil {
+		etcDir := filepath.Join(parsed.HomeDir, "etc")
+		if doms, derr := os.ReadDir(etcDir); derr == nil {
+			for _, d := range doms {
+				if !d.IsDir() || strings.HasPrefix(d.Name(), ".") {
+					continue
+				}
+				domName := d.Name()
+				users, uerr := os.ReadDir(filepath.Join(etcDir, domName))
+				if uerr != nil {
+					continue
+				}
+				for _, u := range users {
+					if !u.IsDir() {
+						continue
+					}
+					local := u.Name()
+					filterPath := filepath.Join(etcDir, domName, local, "filter.yaml")
+					b, rerr := os.ReadFile(filterPath)
+					if rerr != nil || len(b) == 0 {
+						continue
+					}
+					addr := local + "@" + domName
+					mb, mErr := mailboxesRepo.FindByEmail(ctx, addr)
+					if mErr != nil || mb == nil {
+						res.Skipped = append(res.Skipped, fmt.Sprintf("filter_orphan:%s (no local mailbox)", addr))
+						continue
+					}
+					raw := string(b)
+					f := &models.EmailFilter{
+						ID:        ids.NewULID(),
+						MailboxID: mb.ID,
+						Name:      "cpanel-import",
+						CpanelRaw: &raw,
+						Enabled:   true,
+						ManagedBy: "m35",
+					}
+					if cErr := filtersRepo.Create(ctx, f); cErr != nil {
+						res.Skipped = append(res.Skipped, fmt.Sprintf("filter_skip:%s:%v", addr, cErr))
+						continue
+					}
+					res.FiltersImported++
 				}
 			}
 		}
@@ -358,6 +513,45 @@ func parseAliases(path string) (string, []aliasForward, []string) {
 		warnings = append(warnings, fmt.Sprintf("aliases_scan_err:%s:%v", path, err))
 	}
 	return catchAll, forwards, warnings
+}
+
+// detectPHPVersionsPerDomain returns version → [domain1, domain2…]
+// — every distinct PHP version in the source userdata dir with the
+// list of domains using it. Used by the per-domain pool-bind path
+// in ImportExtras.
+func detectPHPVersionsPerDomain(parsed *ParsedTarball) map[string][]string {
+	roots := []string{
+		filepath.Join(parsed.ExtractDir, "cpmove-"+parsed.SourceUser, "userdata"),
+		filepath.Join(parsed.ExtractDir, "userdata"),
+		filepath.Join(parsed.ExtractDir, "cp", parsed.SourceUser, "userdata"),
+	}
+	out := map[string][]string{}
+	for _, root := range roots {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if !strings.HasSuffix(name, ".php-fpm.yaml") {
+				continue
+			}
+			domain := strings.TrimSuffix(name, ".php-fpm.yaml")
+			// Skip the cpanel internal "main" + the "*_SSL" sidecar files.
+			if domain == "" || strings.HasSuffix(domain, "_SSL") {
+				continue
+			}
+			ver := normalisePHPVersion(extractKV(filepath.Join(root, name), "phpversion"))
+			if ver == "" {
+				continue
+			}
+			out[ver] = append(out[ver], domain)
+		}
+		if len(out) > 0 {
+			break
+		}
+	}
+	return out
 }
 
 // detectPHPVersion scans <userdata>/*.php-fpm.yaml files for the

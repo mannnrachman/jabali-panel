@@ -30,7 +30,7 @@ import { Link } from "react-router";
 
 import { apiClient } from "../../../apiClient";
 import { RowActionButton } from "../../../components/RowActionButton";
-import { DeleteOutlined, EditOutlined, PlusOutlined, SwapOutlined } from "@icons";
+import { DeleteOutlined, EditOutlined, PlusOutlined, RedoOutlined, SwapOutlined } from "@icons";
 import { BulkWhmDrawer } from "./BulkWhmDrawer";
 import { CreateMigrationDrawer } from "./CreateMigrationDrawer";
 import { CreateMigrationWizard } from "./CreateMigrationWizard";
@@ -164,6 +164,22 @@ export const AdminMigrationsPage = () => {
         (err as { response?: { data?: { error?: string; detail?: string } } })
           ?.response?.data?.detail;
       message.error(detail ?? "Cancel failed");
+    },
+  });
+
+  const reKick = useMutation<void, unknown, { id: string }>({
+    mutationFn: async ({ id }) => {
+      await apiClient.post(`/admin/migrations/${id}/pull-source`);
+    },
+    onSuccess: async () => {
+      message.success("Pull-source re-dispatched");
+      await qc.invalidateQueries({ queryKey: ["admin-migrations"] });
+    },
+    onError: (err) => {
+      const detail =
+        (err as { response?: { data?: { error?: string; detail?: string } } })
+          ?.response?.data?.detail;
+      message.error(detail ?? "Re-kick failed");
     },
   });
 
@@ -373,6 +389,21 @@ export const AdminMigrationsPage = () => {
                         color="default"
                       >
                         Discard
+                      </RowActionButton>
+                    </Popconfirm>
+                  )}
+                  {r.state === "pending" && (
+                    <Popconfirm
+                      title={`Re-kick pull-source for ${r.source_user}?`}
+                      description="Re-dispatches the agent's pull-source runner. Use for rows that landed pending before auto-kick existed, or after a transient SSH/network blip."
+                      onConfirm={() => reKick.mutate({ id: r.id })}
+                      okText="Re-kick"
+                    >
+                      <RowActionButton
+                        icon={<RedoOutlined />}
+                        color="primary"
+                      >
+                        Re-kick
                       </RowActionButton>
                     </Popconfirm>
                   )}

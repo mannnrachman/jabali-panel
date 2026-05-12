@@ -440,6 +440,34 @@ function RestoreSummary({ manifestJSON }: { manifestJSON: string }) {
       iconBg: "#fff1f0",
       iconColor: "#cf1322",
     },
+    {
+      label: "Inbox filters",
+      value: parsed.filtersImported,
+      icon: <MailOutlined />,
+      iconBg: "#f9f0ff",
+      iconColor: "#722ed1",
+    },
+    {
+      label: "PHP pools",
+      value: parsed.phpPools,
+      icon: <DatabaseOutlined />,
+      iconBg: "#fffbe6",
+      iconColor: "#d4b106",
+    },
+    {
+      label: "PHP-bound domains",
+      value: parsed.phpDomainsBound,
+      icon: <GlobalOutlined />,
+      iconBg: "#fffbe6",
+      iconColor: "#d4b106",
+    },
+    {
+      label: "DKIM keys preserved",
+      value: parsed.dkimKeys,
+      icon: <SafetyOutlined />,
+      iconBg: "#fff7e6",
+      iconColor: "#fa8c16",
+    },
   ];
 
   return (
@@ -568,6 +596,10 @@ type RestoreParsed = {
   messagesPushed: number;
   forwardersCreated: number;
   autorespondersCreated: number;
+  filtersImported: number;
+  phpPools: number;
+  phpDomainsBound: number;
+  dkimKeys: number;
   catchallsSet: number;
   sslInstalled: number;
   phpVersion: string;
@@ -595,6 +627,10 @@ function parseRestoreManifest(raw: string): RestoreParsed {
     messagesPushed: 0,
     forwardersCreated: 0,
     autorespondersCreated: 0,
+    filtersImported: 0,
+    phpPools: 0,
+    phpDomainsBound: 0,
+    dkimKeys: 0,
     catchallsSet: 0,
     sslInstalled: 0,
     phpVersion: "",
@@ -666,6 +702,10 @@ function parseRestoreManifest(raw: string): RestoreParsed {
       out.subdomainsCreated += num(kv(line, "subdomains"));
       out.forwardersCreated += num(kv(line, "forwarders"));
       out.autorespondersCreated += num(kv(line, "autoresponders"));
+      out.filtersImported += num(kv(line, "filters"));
+      out.phpPools += num(kv(line, "php_pools"));
+      out.phpDomainsBound += num(kv(line, "php_domains_bound"));
+      out.dkimKeys += num(kv(line, "dkim_keys"));
       out.ftpAccounts += num(kv(line, "ftp_accounts"));
       if (!out.phpVersion) {
         out.phpVersion = kv(line, "php_version");

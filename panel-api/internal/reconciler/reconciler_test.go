@@ -531,6 +531,15 @@ func (f *fakePHPPoolRepo) FindByUserID(ctx context.Context, userID string) (*mod
 	return nil, repository.ErrNotFound
 }
 
+func (f *fakePHPPoolRepo) FindByUserAndVersion(ctx context.Context, userID, phpVersion string) (*models.PHPPool, error) {
+	for _, p := range f.pools {
+		if p.UserID == userID && p.PHPVersion == phpVersion {
+			return p, nil
+		}
+	}
+	return nil, repository.ErrNotFound
+}
+
 func (f *fakePHPPoolRepo) ListAll(ctx context.Context, opts repository.ListOptions) ([]models.PHPPool, int64, error) {
 	var result []models.PHPPool
 	for _, p := range f.pools {

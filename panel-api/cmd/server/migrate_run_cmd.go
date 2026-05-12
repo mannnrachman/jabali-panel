@@ -70,6 +70,8 @@ failed stage. Already-done stages are skipped.`,
 			mbRepo := repository.NewMailboxRepository(sharedDB)
 			fwdRepo := repository.NewEmailForwarderRepository(sharedDB)
 			arRepo := repository.NewEmailAutoresponderRepository(sharedDB)
+			filtersRepo := repository.NewEmailFilterRepository(sharedDB)
+			phpPoolsRepo := repository.NewPHPPoolRepository(sharedDB)
 			kc := kratosclient.NewClient(sharedCfg.Auth.Kratos.PublicURL, sharedCfg.Auth.Kratos.AdminURL)
 
 			job, err := jobsRepo.FindByID(ctx, jobID)
@@ -352,7 +354,7 @@ failed stage. Already-done stages are skipped.`,
 					migrate.StageAnalyze:  cpanelAnalyzeCallback(),
 					migrate.StageValidate: validateStageCallback(usersRepo, domainsRepo, *user.Username),
 					migrate.StageRestore: cpanelRestoreCallback(
-						sshRepo, cronsRepo, dbsRepo, dbUsersRepo, dbGrantsRepo, domainsRepo, mbRepo, fwdRepo, arRepo, usersRepo, kc,
+						sshRepo, cronsRepo, dbsRepo, dbUsersRepo, dbGrantsRepo, domainsRepo, mbRepo, fwdRepo, arRepo, filtersRepo, phpPoolsRepo, usersRepo, kc,
 					),
 				},
 			}
@@ -446,6 +448,8 @@ func cpanelRestoreCallback(
 	mbRepo repository.MailboxRepository,
 	fwdRepo repository.EmailForwarderRepository,
 	arRepo repository.EmailAutoresponderRepository,
+	filtersRepo repository.EmailFilterRepository,
+	phpPoolsRepo repository.PHPPoolRepository,
 	usersRepo repository.UserRepository,
 	kc *kratosclient.Client,
 ) migrate.StageCallback {
@@ -519,16 +523,19 @@ func cpanelRestoreCallback(
 		warnings = append(warnings, sslRes.Skipped...)
 
 		// M35.8 P2+P5: catch-all + subdomains + forwarders restore.
-		extrasRes, err := cpanel.ImportExtras(ctx, domainsRepo, mbRepo, fwdRepo, arRepo, sharedAgent, p.parsed, p.targetUserID, p.targetUsername)
+		extrasRes, err := cpanel.ImportExtras(ctx, domainsRepo, mbRepo, fwdRepo, arRepo, filtersRepo, phpPoolsRepo, sharedAgent, p.parsed, p.targetUserID, p.targetUsername)
 		if err != nil {
 			return bytes, warnings, fmt.Errorf("extras: %w", err)
 		}
 		warnings = append(warnings, fmt.Sprintf(
-			"extras: catchalls=%d subdomains=%d forwarders=%d forwarders_orphan=%d autoresponders=%d autoresponders_orphan=%d php_version=%s ftp_accounts=%d",
+			"extras: catchalls=%d subdomains=%d forwarders=%d forwarders_orphan=%d autoresponders=%d autoresponders_orphan=%d filters=%d php_pools=%d php_domains_bound=%d php_version=%s ftp_accounts=%d dkim_keys=%d",
 			extrasRes.CatchallsSet, extrasRes.SubdomainsCreated,
 			extrasRes.ForwardersCreated, extrasRes.ForwardersOrphaned,
 			extrasRes.AutorespondersCreated, extrasRes.AutorespondersOrphaned,
-			extrasRes.PHPVersionApplied, extrasRes.FTPAccountsObserved))
+			extrasRes.FiltersImported,
+			extrasRes.PHPPoolsCreated, extrasRes.PHPDomainsBound,
+			extrasRes.PHPVersionApplied, extrasRes.FTPAccountsObserved,
+			extrasRes.DKIMKeysPreserved))
 		warnings = append(warnings, extrasRes.Skipped...)
 
 		// Ensure the migrated user has a Kratos identity so they can log in.

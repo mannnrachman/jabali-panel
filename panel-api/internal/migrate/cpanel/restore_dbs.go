@@ -110,9 +110,17 @@ func ImportDatabases(
 		// per DB is generous; stuck-process kill is a separate
 		// concern handled by the transient unit's own timeout.
 		restoreCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+		// reset_before_restore=true: ADR-0095 amendment 2026-05-12
+		// stage idempotency. Migration restores partway, fails, then
+		// resume-retry re-streams the dump. CREATE TABLE inside the
+		// dump conflicts unless we DROP+CREATE the DB first. Migration
+		// targets are freshly-provisioned by jabali — destroying the
+		// DB is safe (M35 spec restores INTO new accounts, never over
+		// operator data).
 		_, err = agentClient.Call(restoreCtx, "db.restore", map[string]any{
-			"db_name": finalName,
-			"path":    dumpPath,
+			"db_name":              finalName,
+			"path":                 dumpPath,
+			"reset_before_restore": true,
 		})
 		cancel()
 		if err != nil {

@@ -16,6 +16,14 @@ import (
 type dbRestoreParams struct {
 	DBName string `json:"db_name"`
 	Path   string `json:"path"`
+	// ResetBeforeRestore — ADR-0095 amendment 2026-05-12. When true,
+	// the handler issues DROP DATABASE IF EXISTS + CREATE DATABASE
+	// before streaming the dump. Makes the restore idempotent under
+	// retry-resume (the M35.1 default retry path). Migration importer
+	// + retry-from-scratch set this; first-time restores against a
+	// freshly-provisioned DB don't need it. Default false keeps
+	// historic behaviour intact.
+	ResetBeforeRestore bool `json:"reset_before_restore,omitempty"`
 }
 
 // dbRestoreResponse is the output shape for db.restore.
@@ -77,6 +85,23 @@ func dbRestoreHandler(ctx context.Context, params json.RawMessage) (any, error) 
 		}
 	}
 	defer f.Close()
+
+	// If asked to reset, drop + recreate the DB FIRST so the dump
+	// can stream into an empty schema. Idempotent: DROP IF EXISTS is
+	// safe on a never-existed DB; CREATE always succeeds.
+	if p.ResetBeforeRestore {
+		resetSQL := fmt.Sprintf(
+			"DROP DATABASE IF EXISTS `%s`; CREATE DATABASE `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;",
+			p.DBName, p.DBName,
+		)
+		reset := exec.CommandContext(ctx, "mysql", "-e", resetSQL)
+		if out, err := reset.CombinedOutput(); err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("reset failed: %v: %s", err, string(out)),
+			}
+		}
+	}
 
 	// Run mysql with stdin from the file, database name as positional argument.
 	cmd := exec.CommandContext(ctx, "mysql", p.DBName)

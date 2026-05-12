@@ -740,24 +740,25 @@ func (h *adminMigrationsHandler) patchDraft(c *gin.Context) {
 		}
 		if errors.Is(err, repository.ErrConflict) {
 			// Another migration_job already owns this (host, user, kind)
-			// tuple. Tell the operator which existing job to resume
-			// instead of leaking the raw MySQL "Duplicate entry" 500.
+			// tuple. Look up the existing row so the wizard UI can
+			// offer "switch to existing draft" instead of forcing the
+			// operator to dig through the list page.
 			var existingID string
-			if req.SourceHost != nil && req.SourceUser != nil {
+			currentJob, _ := h.cfg.Jobs.FindByID(c.Request.Context(), id)
+			if currentJob != nil && req.SourceHost != nil && req.SourceUser != nil {
 				if existing, _ := h.cfg.Jobs.FindBySource(c.Request.Context(),
-					/* kind unknown here; look up via the job's source_kind */ "",
-					*req.SourceHost, *req.SourceUser); existing != nil {
+					currentJob.SourceKind, *req.SourceHost, *req.SourceUser); existing != nil && existing.ID != id {
 					existingID = existing.ID
 				}
 			}
-			detail := "another migration job already owns this (source_host, source_user, source_kind). Discard the existing draft or pick a different host/user."
-			if existingID != "" {
-				detail += " Existing job id: " + existingID
-			}
-			c.JSON(http.StatusConflict, gin.H{
+			body := gin.H{
 				"error":  "host_user_kind_in_use",
-				"detail": detail,
-			})
+				"detail": "another migration job already owns this (source_host, source_user, source_kind). Switch to the existing draft or pick a different host/user.",
+			}
+			if existingID != "" {
+				body["existing_job_id"] = existingID
+			}
+			c.JSON(http.StatusConflict, body)
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": err.Error()})

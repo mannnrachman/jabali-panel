@@ -25,6 +25,7 @@ import {
   Drawer,
   Form,
   Input,
+  Modal,
   Radio,
   Space,
   Spin,
@@ -175,11 +176,41 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
       // WHM goes to account picker; others skip straight to summary.
       setStep(sourceKind === "whm_pkgacct" ? 2 : 3);
     },
-    onError: (e: unknown) => {
-      message.error(
-        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
-          "Connection step failed",
-      );
+    onError: async (e: unknown) => {
+      const resp = (e as {
+        response?: {
+          data?: { error?: string; detail?: string; existing_job_id?: string };
+        };
+      })?.response?.data;
+      // ADR-0095 decision 5 — if the PATCH conflicts with an existing
+      // draft for the same (host, user, kind), surface a "Switch to
+      // existing draft" action instead of dead-ending the operator.
+      if (resp?.error === "host_user_kind_in_use" && resp.existing_job_id && draftId) {
+        const existing = resp.existing_job_id;
+        Modal.confirm({
+          title: "An existing draft already owns this source",
+          content:
+            "A migration job is already configured for this (host, user, source kind). Switch to that draft and discard the new one?",
+          okText: "Switch to existing",
+          cancelText: "Keep new — change host/user",
+          onOk: async () => {
+            // Hard-delete the placeholder draft we just created, then
+            // load the existing one via URL deep-link.
+            try {
+              await apiClient.post(`/admin/migrations/${draftId}/destroy`);
+            } catch {
+              // Best-effort — operator can clean up via list page.
+            }
+            if (typeof window !== "undefined") {
+              const url = new URL(window.location.href);
+              url.searchParams.set("wizard", existing);
+              window.location.replace(url.toString());
+            }
+          },
+        });
+        return;
+      }
+      message.error(resp?.detail ?? "Connection step failed");
     },
   });
 

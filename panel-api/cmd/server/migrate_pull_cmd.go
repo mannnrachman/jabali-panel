@@ -121,14 +121,17 @@ live source SSH. Use scp directly for that kind.`,
 
 			var localTar string
 			switch job.SourceKind {
-			case models.MigrationSourceCpanel:
+			case models.MigrationSourceCpanel, models.MigrationSourceWHMpkgacct:
+				// WHM = cpanel restore code-path. The wizard discovers
+				// accounts via `whmapi1 listaccts` then this command
+				// runs pkgacct per account through the same SSH
+				// session cpanel uses. Source row's SourceUser is the
+				// individual cPanel account from the discover step.
 				localTar, err = pullCpanel(ctx, sshUser, job, secret, localDir, allowPrivate)
 			case models.MigrationSourceDirectAdmin:
 				localTar, err = pullDirectAdmin(ctx, sshUser, job, secret, localDir, allowPrivate)
 			case models.MigrationSourceHestia:
 				localTar, err = pullHestia(ctx, sshUser, job, secret, localDir, allowPrivate)
-			case models.MigrationSourceWHMpkgacct:
-				return markPullFailed(errors.New("source kind whm_pkgacct is offline — scp the cpmove tarball into " + localDir + " manually"))
 			default:
 				return markPullFailed(fmt.Errorf("unknown source kind %q", job.SourceKind))
 			}

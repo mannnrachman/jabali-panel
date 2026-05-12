@@ -772,6 +772,14 @@ type bulkCreateRequest struct {
 	SourceKind string   `json:"source_kind" binding:"required"`
 	SourceHost string   `json:"source_host" binding:"required"`
 	Accounts   []string `json:"accounts"    binding:"required"`
+	// SourceJobID — optional. When set, the bulk handler copies the
+	// referenced job's secret env-file onto every newly created job
+	// + flips them to pending + auto-kicks pull-source. This is the
+	// wizard's "discover → select → restore" path: the discovery
+	// draft owns the SSH credentials; the bulk children inherit
+	// them so the operator doesn't re-upload N times. Without this,
+	// jobs land as drafts the operator must resume one-by-one.
+	SourceJobID string `json:"source_job_id"`
 }
 
 type bulkCreateResponse struct {
@@ -796,8 +804,35 @@ func (h *adminMigrationsHandler) bulkCreate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no_accounts", "detail": "accounts[] required"})
 		return
 	}
+	// When SourceJobID is set the bulk handler clones the source
+	// draft's secret env-file onto every child via the agent's
+	// migration.secrets_clone command (panel-api runs as jabali —
+	// cannot write to root-owned secrets dir). Empty falls back to
+	// legacy draft-create behavior so any caller not yet using the
+	// inheritance path keeps working.
+	inheritSecrets := req.SourceJobID != "" && h.cfg.Agent != nil
+	if inheritSecrets {
+		srcSecret := filepath.Join(migrate.SecretsDir, req.SourceJobID+".env")
+		if _, statErr := os.Stat(srcSecret); statErr != nil {
+			c.JSON(http.StatusPreconditionFailed, gin.H{
+				"error":  "source_secret_missing",
+				"detail": "no secret found for source_job_id=" + req.SourceJobID + " — re-upload SSH credentials in the wizard's Connection step before clicking Continue.",
+			})
+			return
+		}
+	}
+
+	finalState := models.MigrationStateDraft
+	if inheritSecrets {
+		finalState = models.MigrationStatePending
+	}
+
 	batchID := genULID()
 	out := make([]models.MigrationJob, 0, len(req.Accounts))
+	createdIDs := make([]string, 0, len(req.Accounts))
+
+	cloneCtx, cancelClone := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancelClone()
 	for _, acct := range req.Accounts {
 		row := &models.MigrationJob{
 			ID:         genULID(),
@@ -805,14 +840,40 @@ func (h *adminMigrationsHandler) bulkCreate(c *gin.Context) {
 			SourceKind: req.SourceKind,
 			SourceHost: req.SourceHost,
 			SourceUser: acct,
-			State:      models.MigrationStateDraft,
+			State:      finalState,
 		}
 		if err := h.cfg.Jobs.Create(c.Request.Context(), row); err != nil {
 			// Skip dupes silently — operator re-selected an account
 			// that already has an existing job under this host.
 			continue
 		}
+		if inheritSecrets {
+			if _, err := h.cfg.Agent.Call(cloneCtx, "migration.secrets_clone", map[string]any{
+				"src_job_id": req.SourceJobID,
+				"dst_job_id": row.ID,
+			}); err != nil {
+				// Demote to draft so the operator can hand-resume
+				// rather than leaving a pending job without a secret.
+				_ = h.cfg.Jobs.UpdateState(c.Request.Context(), row.ID, models.MigrationStateDraft, nil)
+				row.State = models.MigrationStateDraft
+			}
+		}
 		out = append(out, *row)
+		if row.State == models.MigrationStatePending {
+			createdIDs = append(createdIDs, row.ID)
+		}
+	}
+	// Auto-kick pull-source for each pending child. Same dispatch
+	// the single-account /submit handler uses.
+	if h.cfg.Agent != nil && len(createdIDs) > 0 {
+		kickCtx, cancelKick := context.WithTimeout(c.Request.Context(), 10*time.Second)
+		defer cancelKick()
+		for _, id := range createdIDs {
+			_, _ = h.cfg.Agent.Call(kickCtx, "migration.pull_source_run", map[string]any{
+				"job_id":   id,
+				"ssh_user": "root",
+			})
+		}
 	}
 	c.JSON(http.StatusCreated, bulkCreateResponse{BatchID: batchID, Jobs: out})
 }
@@ -1103,23 +1164,13 @@ func (h *adminMigrationsHandler) submitDraft(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": err.Error()})
 		return
 	}
-	// Auto-kick the agent's pull-source runner — but only for source
-	// kinds that pull over SSH (cpanel / directadmin / hestiacp).
-	// whm_pkgacct is OFFLINE: operator scp's a cpmove tarball into
-	// /var/lib/jabali-migrations/<id>/ then POSTs /:id/import (or
-	// uploads via /:id/tarball). Auto-kicking pull-source for WHM
-	// just returns the upstream "offline" error and confuses the UI.
-	// ADR-0094 §"per-source-kind support" carries the canonical list.
+	// Auto-kick the agent's pull-source runner for every SSH-based
+	// kind. WHM is no longer offline-only: pull-source runs pkgacct
+	// per account over the operator's WHM root SSH session (reuses
+	// the cpanel SSH path). Operators who genuinely need the offline
+	// tarball-upload path can still use the per-job /:id/tarball
+	// endpoint.
 	out, _ := h.cfg.Jobs.FindByID(c.Request.Context(), id)
-	if job.SourceKind == models.MigrationSourceWHMpkgacct {
-		c.JSON(http.StatusOK, gin.H{
-			"job":          out,
-			"pull_started": false,
-			"next_step":    "upload_tarball",
-			"detail":       "WHM (pkgacct) is offline-only. Upload a cpmove tarball via POST /admin/migrations/" + id + "/tarball OR scp it into /var/lib/jabali-migrations/" + id + "/, then POST /:id/import.",
-		})
-		return
-	}
 	if h.cfg.Agent != nil {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 		defer cancel()

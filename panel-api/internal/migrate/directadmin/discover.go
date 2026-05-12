@@ -21,6 +21,7 @@ package directadmin
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -147,10 +148,25 @@ func loadSecret(path string) ([]ssh.AuthMethod, error) {
 				return nil, fmt.Errorf("parse SSH_PRIVATE_KEY: %w", perr)
 			}
 			auths = append(auths, ssh.PublicKeys(signer))
+		case "SSH_PRIVATE_KEY_B64":
+			// Preferred key format — agent's secrets_write writes
+			// the operator-uploaded PEM as a single-line base64
+			// blob so multi-line OpenSSH PEMs survive the env-file
+			// round-trip. Mirrors cpanel/discover.go loadSecret.
+			pem, derr := base64.StdEncoding.DecodeString(strings.TrimSpace(v))
+			if derr != nil {
+				return nil, fmt.Errorf("base64-decode SSH_PRIVATE_KEY_B64: %w", derr)
+			}
+			signer, perr := ssh.ParsePrivateKey(pem)
+			zero(pem)
+			if perr != nil {
+				return nil, fmt.Errorf("parse SSH_PRIVATE_KEY_B64: %w", perr)
+			}
+			auths = append(auths, ssh.PublicKeys(signer))
 		}
 	}
 	if len(auths) == 0 {
-		return nil, errors.New("no SSH_PASSWORD or SSH_PRIVATE_KEY in secret file")
+		return nil, errors.New("no SSH_PASSWORD / SSH_PRIVATE_KEY / SSH_PRIVATE_KEY_B64 in secret file")
 	}
 	return auths, nil
 }

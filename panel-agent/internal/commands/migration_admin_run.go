@@ -53,8 +53,49 @@ type migrationSecretsWriteParams struct {
 
 func init() {
 	Default.Register("migration.secrets_write", migrationSecretsWriteHandler)
+	Default.Register("migration.secrets_clone", migrationSecretsCloneHandler)
 	Default.Register("migration.pull_source_run", migrationPullSourceRunHandler)
 	Default.Register("migration.import_run", migrationImportRunHandler)
+}
+
+// migrationSecretsCloneParams duplicates the env-file from src_job_id
+// into dst_job_id. Used by the bulk-create handler so every child
+// migration inherits the discovery draft's SSH credentials without
+// re-prompting the operator. ADR-0094 §"per-source-kind support".
+type migrationSecretsCloneParams struct {
+	SrcJobID string `json:"src_job_id"`
+	DstJobID string `json:"dst_job_id"`
+}
+
+func migrationSecretsCloneHandler(_ context.Context, raw json.RawMessage) (any, error) {
+	var p migrationSecretsCloneParams
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "malformed JSON: " + err.Error()}
+	}
+	if !migrationJobIDRe.MatchString(p.SrcJobID) {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "src_job_id must be 26-char alnum (ULID)"}
+	}
+	if !migrationJobIDRe.MatchString(p.DstJobID) {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "dst_job_id must be 26-char alnum (ULID)"}
+	}
+	src := filepath.Join(migrationSecretsBaseDir, p.SrcJobID+".env")
+	dst := filepath.Join(migrationSecretsBaseDir, p.DstJobID+".env")
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeNotFound, Message: "src secret not found: " + err.Error()}
+	}
+	if err := os.MkdirAll(migrationSecretsBaseDir, 0o750); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "mkdir secrets dir: " + err.Error()}
+	}
+	tmp := dst + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o640); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "write tmp: " + err.Error()}
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		_ = os.Remove(tmp)
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "rename: " + err.Error()}
+	}
+	return map[string]any{"ok": true}, nil
 }
 
 func migrationSecretsWriteHandler(_ context.Context, raw json.RawMessage) (any, error) {

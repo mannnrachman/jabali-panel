@@ -235,6 +235,12 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
           source_kind: "whm_pkgacct",
           source_host: sourceHost,
           accounts: [...selected],
+          // M35.4 auto-restore — the discovery draft owns the SSH
+          // creds; pass its id so each child inherits + lands in
+          // state=pending with pull-source auto-kicked. Without it,
+          // each row sits in draft and the operator must Resume one
+          // at a time.
+          source_job_id: draftId,
         },
       );
       return data;

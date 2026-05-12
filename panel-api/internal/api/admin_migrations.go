@@ -155,10 +155,14 @@ func (h *adminMigrationsHandler) stages(c *gin.Context) {
 }
 
 // createMigrationRequest is the wire shape for POST /admin/migrations.
+// State defaults to "pending" for backward compat; wizard flows pass
+// "draft" so the row can be incrementally populated via PATCH before
+// the runner picks it up. ADR-0095 decision 5.
 type createMigrationRequest struct {
 	SourceKind string `json:"source_kind" binding:"required"`
 	SourceHost string `json:"source_host"`
 	SourceUser string `json:"source_user" binding:"required"`
+	State      string `json:"state,omitempty"`
 }
 
 // create inserts a fresh migration_jobs row with state='pending'.
@@ -195,12 +199,16 @@ func (h *adminMigrationsHandler) create(c *gin.Context) {
 		return
 	}
 
+	state := models.MigrationStatePending
+	if req.State == models.MigrationStateDraft {
+		state = models.MigrationStateDraft
+	}
 	row := &models.MigrationJob{
 		ID:         genULID(),
 		SourceKind: req.SourceKind,
 		SourceHost: req.SourceHost,
 		SourceUser: req.SourceUser,
-		State:      models.MigrationStatePending,
+		State:      state,
 	}
 	if err := h.cfg.Jobs.Create(c.Request.Context(), row); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": err.Error()})

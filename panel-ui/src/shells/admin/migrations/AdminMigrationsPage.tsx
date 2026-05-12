@@ -31,6 +31,7 @@ import { RowActionButton } from "../../../components/RowActionButton";
 import { DeleteOutlined, PlusOutlined, SwapOutlined } from "@icons";
 import { BulkWhmDrawer } from "./BulkWhmDrawer";
 import { CreateMigrationDrawer } from "./CreateMigrationDrawer";
+import { CreateMigrationWizard } from "./CreateMigrationWizard";
 
 type MigrationJob = {
   id: string;
@@ -76,6 +77,7 @@ export const AdminMigrationsPage = () => {
   const qc = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   const list = useQuery<MigrationJobListResponse>({
     queryKey: ["admin-migrations"],
@@ -145,7 +147,8 @@ export const AdminMigrationsPage = () => {
         title="Migration jobs"
         extra={
           <Space wrap>
-            <Button onClick={() => setBulkOpen(true)}>Bulk WHM</Button>
+            <Button onClick={() => setBulkOpen(true)}>Bulk WHM (paste)</Button>
+            <Button onClick={() => setWizardOpen(true)}>Wizard</Button>
             <Button
               type="primary"
               icon={<PlusOutlined />}
@@ -318,6 +321,11 @@ export const AdminMigrationsPage = () => {
       <BulkWhmDrawer
         open={bulkOpen}
         onClose={() => setBulkOpen(false)}
+        onCreated={() => list.refetch()}
+      />
+      <CreateMigrationWizard
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
         onCreated={() => list.refetch()}
       />
     </Space>

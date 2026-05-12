@@ -490,13 +490,38 @@ func cpanelRestoreCallback(
 		warnings = append(warnings, fmt.Sprintf("dns: zones=%d records=%d", dnsRes.Zones, dnsRes.Records))
 		warnings = append(warnings, dnsRes.Skipped...)
 
-		homeRes, err := cpanel.ImportHome(ctx, sharedAgent, p.parsed, job.ID, p.targetUsername)
+		// M35.8 P7: per-domain rsync split. cpanel ships all sites
+		// under <homedir>/public_html/(<addon>/) flat layout; jabali
+		// uses /home/<user>/domains/<dom>/public_html/. ImportHomeSplit
+		// reads per-domain documentroot from cpmove userdata YAML and
+		// dispatches one rsync per docroot, then a final pass for the
+		// rest of the homedir (mail/ etc/ application_backups/) minus
+		// public_html. Falls back to the legacy whole-homedir rsync
+		// when no userdata YAML is present.
+		hsRes, err := cpanel.ImportHomeSplit(ctx, sharedAgent, p.parsed, job.ID, p.targetUsername)
 		if err != nil {
-			return bytes, warnings, fmt.Errorf("home: %w", err)
+			return bytes, warnings, fmt.Errorf("home_split: %w", err)
 		}
-		bytes += homeRes.BytesCopied
-		warnings = append(warnings, fmt.Sprintf("home: bytes=%d files=%d", homeRes.BytesCopied, homeRes.Files))
-		warnings = append(warnings, homeRes.Skipped...)
+		var fallback bool
+		for _, sk := range hsRes.Skipped {
+			if strings.HasPrefix(sk, "home_split_skip:no_userdata_yaml") {
+				fallback = true
+				break
+			}
+		}
+		if fallback || hsRes.DomainsCopied == 0 {
+			homeRes, err := cpanel.ImportHome(ctx, sharedAgent, p.parsed, job.ID, p.targetUsername)
+			if err != nil {
+				return bytes, warnings, fmt.Errorf("home: %w", err)
+			}
+			bytes += homeRes.BytesCopied
+			warnings = append(warnings, fmt.Sprintf("home: bytes=%d files=%d (legacy full-homedir mode)", homeRes.BytesCopied, homeRes.Files))
+			warnings = append(warnings, homeRes.Skipped...)
+		} else {
+			bytes += hsRes.BytesCopied
+			warnings = append(warnings, fmt.Sprintf("home: bytes=%d files=%d domains=%d (per-domain split)", hsRes.BytesCopied, hsRes.Files, hsRes.DomainsCopied))
+			warnings = append(warnings, hsRes.Skipped...)
+		}
 
 		domainsRes, err := cpanel.ImportDomains(ctx, domainsRepo, sharedAgent, p.parsed, p.targetUserID, p.targetUsername)
 		if err != nil {

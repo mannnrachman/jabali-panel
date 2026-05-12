@@ -29,6 +29,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
@@ -62,6 +63,17 @@ type migrationImportHomeParams struct {
 	JobID    string `json:"job_id"`
 	SrcDir   string `json:"src_dir"`   // absolute, must live under migrationStagingRoot
 	DestUser string `json:"dest_user"` // resolved via getent — must exist + have a home
+	// DestSubpath — optional. When set, rsync lands at
+	// <homedir>/<DestSubpath>/ instead of <homedir>/ directly. The
+	// agent mkdir -p's the path + chown's it to the dest user
+	// before rsync. Used by M35.8 per-domain docroot split so
+	// /home/<user>/domains/<dom>/public_html/ gets the right files.
+	DestSubpath string `json:"dest_subpath,omitempty"`
+	// ExtraExcludes — optional rsync --exclude additions on top of
+	// the built-in migrationHomeExcludes set. Used for nested-
+	// domain exclusion ("don't copy the addon's public_html when
+	// rsyncing the parent's").
+	ExtraExcludes []string `json:"extra_excludes,omitempty"`
 }
 
 type migrationImportHomeResult struct {
@@ -144,12 +156,47 @@ func migrationImportHomeHandler(ctx context.Context, raw json.RawMessage) (any, 
 	// which parseRsyncStats can't parse as int → byte count
 	// silently zeros (QA flagged: 752 MB restored, manifest
 	// reported bytes=0).
-	args := []string{"-aH", "--no-h", "--info=stats2", "--delete-after"}
+	// --delete-after with a constrained scope would wipe content the
+	// previous per-domain rsync wrote. Drop --delete-after when a
+	// DestSubpath is supplied (per-domain mode) so multiple calls
+	// accumulate cleanly without trashing each other's output.
+	rsyncFlags := "-aH"
+	args := []string{rsyncFlags, "--no-h", "--info=stats2"}
+	if p.DestSubpath == "" {
+		args = append(args, "--delete-after")
+	}
 	for _, ex := range migrationHomeExcludes {
 		args = append(args, "--exclude="+ex)
 	}
+	for _, ex := range p.ExtraExcludes {
+		if strings.TrimSpace(ex) == "" {
+			continue
+		}
+		args = append(args, "--exclude="+ex)
+	}
+	dest := u.HomeDir + "/"
+	if p.DestSubpath != "" {
+		// Defense: refuse absolute or escape paths.
+		clean := strings.TrimLeft(filepath.Clean(p.DestSubpath), "/")
+		if clean == "" || strings.Contains(clean, "..") {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInvalidArgument,
+				Message: fmt.Sprintf("dest_subpath invalid: %q", p.DestSubpath),
+			}
+		}
+		dest = filepath.Join(u.HomeDir, clean) + "/"
+		// mkdir -p with target ownership so rsync doesn't write the
+		// new dirs as root.
+		if mkErr := os.MkdirAll(dest, 0o755); mkErr != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("mkdir %s: %v", dest, mkErr),
+			}
+		}
+		_ = exec.CommandContext(subctx, "chown", "-R", fmt.Sprintf("%d:%d", uid, gid), dest).Run()
+	}
 	srcWithSlash := strings.TrimRight(srcAbs, "/") + "/"
-	args = append(args, srcWithSlash, u.HomeDir+"/")
+	args = append(args, srcWithSlash, dest)
 
 	cmd := exec.CommandContext(subctx, "rsync", args...)
 	out, err := cmd.CombinedOutput()

@@ -288,12 +288,28 @@ export const AdminMigrationDetailPage = () => {
 };
 
 function FailedCard({ jobId, onDestroyed }: { jobId: string; onDestroyed: () => void }) {
+  // ADR-0095 decision 7 — resume retry is the default; from-scratch
+  // is the secondary action for data-drift cases.
+  const retry = useMutation({
+    mutationFn: async (fromScratch: boolean) => {
+      await apiClient.post(
+        `/admin/migrations/${jobId}/retry${fromScratch ? "?from_scratch=true" : ""}`,
+      );
+    },
+    onSuccess: () => {
+      message.success("Retry queued — runner will pick up the job on the next tick.");
+    },
+    onError: (e: unknown) => {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(detail ?? "Retry failed");
+    },
+  });
   const destroy = useMutation({
     mutationFn: async () => {
       await apiClient.post(`/admin/migrations/${jobId}/destroy`);
     },
     onSuccess: () => {
-      message.success("Job destroyed — create a new migration to retry.");
+      message.success("Job destroyed.");
       onDestroyed();
     },
     onError: (e: unknown) => {
@@ -310,17 +326,35 @@ function FailedCard({ jobId, onDestroyed }: { jobId: string; onDestroyed: () => 
       description={
         <Space direction="vertical" size="small" style={{ marginTop: 8 }}>
           <Typography.Text>
-            Check the stage timeline above for the error detail.
-            To retry, destroy this job and create a new migration from the list page.
+            Check the stage timeline above for the error detail. Retry
+            resumes from the last successful stage; "from scratch" wipes
+            stage progress and re-runs from analyze.
           </Typography.Text>
-          <Button
-            danger
-            size="small"
-            loading={destroy.isPending}
-            onClick={() => destroy.mutate()}
-          >
-            Destroy job and start over
-          </Button>
+          <Space wrap>
+            <Button
+              type="primary"
+              size="small"
+              loading={retry.isPending}
+              onClick={() => retry.mutate(false)}
+            >
+              Retry (resume)
+            </Button>
+            <Button
+              size="small"
+              loading={retry.isPending}
+              onClick={() => retry.mutate(true)}
+            >
+              Retry from scratch
+            </Button>
+            <Button
+              danger
+              size="small"
+              loading={destroy.isPending}
+              onClick={() => destroy.mutate()}
+            >
+              Destroy job
+            </Button>
+          </Space>
         </Space>
       }
     />

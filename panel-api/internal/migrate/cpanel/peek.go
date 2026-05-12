@@ -54,38 +54,58 @@ func PeekAccountMeta(extractDir, sourceUser string) (*AccountMeta, error) {
 
 	meta := &AccountMeta{}
 
-	// Email — dedicated file first (cpmove layout).
-	for _, p := range []string{
-		filepath.Join(extractDir, "cp", sourceUser, "contactemail"),
-		filepath.Join(extractDir, "contactemail"),
-	} {
-		if b, err := os.ReadFile(p); err == nil {
-			meta.Email = strings.TrimSpace(string(b))
+	// Candidate root dirs. cpanel pkgacct emits several layouts in
+	// the wild:
+	//   cpmove-<user>/<everything>   (modern, cpanel 11.100+)
+	//   cp/<user>/<everything>       (legacy cpmove)
+	//   <everything>                 (full-backup wizard / pre-extracted)
+	// Probe each.
+	roots := []string{
+		filepath.Join(extractDir, "cpmove-"+sourceUser),
+		filepath.Join(extractDir, "cp", sourceUser),
+		extractDir,
+	}
+
+	// Email — dedicated file first.
+	for _, root := range roots {
+		for _, name := range []string{"contactemail", ".contactemail"} {
+			if b, err := os.ReadFile(filepath.Join(root, name)); err == nil {
+				meta.Email = strings.TrimSpace(string(b))
+				break
+			}
+		}
+		if meta.Email != "" {
 			break
 		}
 	}
 
-	// Email fallback — parse userdata file for CONTACTEMAIL line.
-	// cpanel's userdata is key:value (yaml-ish); we just grep the
-	// line.
+	// Email fallback — parse the userdata file for CONTACTEMAIL.
+	// In modern cpmove the file is `cp/<user>` (KEY=value lines).
 	if meta.Email == "" {
-		for _, p := range []string{
-			filepath.Join(extractDir, "cp", sourceUser),
-			filepath.Join(extractDir, "userdata"),
-		} {
-			if email := extractKV(p, "CONTACTEMAIL"); email != "" {
-				meta.Email = email
+		for _, root := range roots {
+			for _, candidate := range []string{
+				filepath.Join(root, "cp", sourceUser),
+				filepath.Join(root, "userdata"),
+				filepath.Join(root, "userdata", "main"),
+			} {
+				if email := extractKV(candidate, "CONTACTEMAIL"); email != "" {
+					meta.Email = email
+					break
+				}
+			}
+			if meta.Email != "" {
 				break
 			}
 		}
 	}
 
-	// Shadow hash — file is a single-line shadow entry:
-	//   <user>:<hash>:<lastchange>:0:99999:7:::
-	for _, p := range []string{
-		filepath.Join(extractDir, "cp", sourceUser, "shadow"),
-		filepath.Join(extractDir, "shadow"),
-	} {
+	// Shadow hash. Two formats:
+	//   - full shadow line: <user>:<hash>:<lastchange>:0:99999:7:::
+	//   - bare hash:        $6$...   (cpanel's modern cpmove writes
+	//                                 cpmove-<user>/shadow as the
+	//                                 hash directly, no colons).
+	for _, root := range roots {
+		p := filepath.Join(root, "shadow")
 		if hash := extractShadowHash(p, sourceUser); hash != "" {
 			meta.PasswordHash = hash
 			break
@@ -132,10 +152,11 @@ func splitKV(line string) (string, string, bool) {
 	return "", "", false
 }
 
-// extractShadowHash returns the hash field of a shadow-format line
-// for the named user. Format:
+// extractShadowHash returns a usable crypt(3) hash from a shadow-
+// style file. Two formats supported:
 //
 //	<user>:<hash>:<lastchange>:<min>:<max>:<warn>:<inactive>:<expire>:
+//	<hash>     (cpanel cpmove writes the bare hash, no colons)
 func extractShadowHash(path, user string) string {
 	f, err := os.Open(path)
 	if err != nil {
@@ -144,7 +165,14 @@ func extractShadowHash(path, user string) string {
 	defer f.Close()
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
-		line := sc.Text()
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		// Bare hash — typical for cpanel's cpmove-<user>/shadow.
+		if !strings.Contains(line, ":") && strings.HasPrefix(line, "$") {
+			return line
+		}
 		fields := strings.SplitN(line, ":", 3)
 		if len(fields) < 2 {
 			continue

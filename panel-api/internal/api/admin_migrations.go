@@ -316,8 +316,10 @@ func (h *adminMigrationsHandler) destroy(c *gin.Context) {
 		return
 	}
 	switch job.State {
-	case models.MigrationStateDone, models.MigrationStateFailed, models.MigrationStateCancelled:
-		// allowed
+	case models.MigrationStateDone, models.MigrationStateFailed, models.MigrationStateCancelled, models.MigrationStateDraft:
+		// allowed — drafts have no extracted dir or secret to clean
+		// up via cancel-first; hard-delete is the right semantic
+		// (ADR-0095 decision 5 wizard "Discard" path).
 	default:
 		c.JSON(http.StatusConflict, gin.H{
 			"error":  "non_terminal",
@@ -734,6 +736,28 @@ func (h *adminMigrationsHandler) patchDraft(c *gin.Context) {
 	if err := h.cfg.Jobs.PatchDraft(c.Request.Context(), id, req.SourceHost, req.SourceUser, req.TargetUserID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			c.JSON(http.StatusConflict, gin.H{"error": "not_draft", "detail": "job missing or not in draft state"})
+			return
+		}
+		if errors.Is(err, repository.ErrConflict) {
+			// Another migration_job already owns this (host, user, kind)
+			// tuple. Tell the operator which existing job to resume
+			// instead of leaking the raw MySQL "Duplicate entry" 500.
+			var existingID string
+			if req.SourceHost != nil && req.SourceUser != nil {
+				if existing, _ := h.cfg.Jobs.FindBySource(c.Request.Context(),
+					/* kind unknown here; look up via the job's source_kind */ "",
+					*req.SourceHost, *req.SourceUser); existing != nil {
+					existingID = existing.ID
+				}
+			}
+			detail := "another migration job already owns this (source_host, source_user, source_kind). Discard the existing draft or pick a different host/user."
+			if existingID != "" {
+				detail += " Existing job id: " + existingID
+			}
+			c.JSON(http.StatusConflict, gin.H{
+				"error":  "host_user_kind_in_use",
+				"detail": detail,
+			})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": err.Error()})

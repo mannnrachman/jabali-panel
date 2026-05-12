@@ -3,8 +3,10 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
@@ -187,6 +189,16 @@ func (r *migrationJobRepo) PatchDraft(ctx context.Context, id string, sourceHost
 		Where("id = ? AND state = ?", id, models.MigrationStateDraft).
 		Updates(updates)
 	if res.Error != nil {
+		// Map 1062 (unique-key violation on (host, user, kind))
+		// to repository.ErrConflict so the handler returns 409
+		// instead of leaking the raw "Duplicate entry" 500.
+		var my *mysql.MySQLError
+		if errors.As(res.Error, &my) && my.Number == 1062 {
+			return ErrConflict
+		}
+		if strings.Contains(res.Error.Error(), "Duplicate entry") {
+			return ErrConflict
+		}
 		return res.Error
 	}
 	if res.RowsAffected == 0 {

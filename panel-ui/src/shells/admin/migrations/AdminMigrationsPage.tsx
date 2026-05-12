@@ -34,6 +34,7 @@ import { CreateMigrationDrawer } from "./CreateMigrationDrawer";
 
 type MigrationJob = {
   id: string;
+  batch_id: string | null;
   source_kind: string;
   source_host: string;
   source_user: string;
@@ -186,6 +187,21 @@ export const AdminMigrationsPage = () => {
                 {s}
               </Typography.Text>
             )}
+          />
+          <Table.Column<MigrationJob>
+            title="Batch"
+            dataIndex="batch_id"
+            render={(b: string | null) =>
+              b ? (
+                <Tag color="purple" style={{ fontFamily: "monospace", fontSize: 11 }}>
+                  {b.slice(-6)}
+                </Tag>
+              ) : (
+                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                  —
+                </Typography.Text>
+              )
+            }
           />
           <Table.Column<MigrationJob>
             title="Source user"

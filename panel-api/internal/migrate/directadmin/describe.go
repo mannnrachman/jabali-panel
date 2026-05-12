@@ -59,14 +59,23 @@ func parseINI(raw []byte) map[string]string {
 // PHP version) comes from a follow-up `user.show <user> -d
 // <domain>` call which DA documents as the per-domain query.
 func (d *Discoverer) describeDomains(ctx context.Context, s *session, account string) ([]migrate.DomainSpec, error) {
-	out, err := s.run(ctx, d.CommandTimeout,
-		fmt.Sprintf("da admin user.show '%s'", shellEscape(account)))
+	// Read /usr/local/directadmin/data/users/<user>/{user.conf,
+	// domains.list, domains/<dom>.conf}. DA's per-user state lives
+	// in flat KEY=value files; no daemon round-trip needed. The
+	// older code shelled out to phantom `da admin user.show <user>`
+	// + `da admin user.show -d <dom>` which don't exist on real
+	// DA installs (verified live, May 2026).
+	userConf, err := s.run(ctx, d.CommandTimeout,
+		fmt.Sprintf("cat /usr/local/directadmin/data/users/%s/user.conf 2>/dev/null", shellEscape(account)))
 	if err != nil {
-		return nil, fmt.Errorf("da admin user.show %s: %w", account, err)
+		return nil, fmt.Errorf("read DA user.conf %s: %w", account, err)
 	}
-	attrs := parseINI(out)
+	attrs := parseDAConf(userConf)
 	primary := attrs["domain"]
-	allDomains := splitCSV(attrs["domains"])
+
+	domsList, _ := s.run(ctx, d.CommandTimeout,
+		fmt.Sprintf("cat /usr/local/directadmin/data/users/%s/domains.list 2>/dev/null", shellEscape(account)))
+	allDomains := splitLines(domsList)
 	if primary == "" && len(allDomains) > 0 {
 		primary = allDomains[0]
 	}
@@ -77,29 +86,60 @@ func (d *Discoverer) describeDomains(ctx context.Context, s *session, account st
 			Name:      dom,
 			DocRoot:   fmt.Sprintf("/home/%s/domains/%s/public_html", account, dom),
 			IsPrimary: dom == primary,
-			HasPHP:    true, // DA defaults; overridden below if user.show -d returns explicit version
+			HasPHP:    true,
 		}
-		// Per-domain attrs — best-effort. Failure records a
-		// warning instead of failing the whole describe.
 		dout, derr := s.run(ctx, d.CommandTimeout,
-			fmt.Sprintf("da admin user.show '%s' -d '%s'",
+			fmt.Sprintf("cat /usr/local/directadmin/data/users/%s/domains/%s.conf 2>/dev/null",
 				shellEscape(account), shellEscape(dom)))
 		if derr == nil {
-			dattrs := parseINI(dout)
-			if v, ok := dattrs["php_ver"]; ok && v != "" {
+			dattrs := parseDAConf(dout)
+			if v := dattrs["php1_select"]; v != "" {
+				spec.PHPVer = v // DA newer field
+			} else if v := dattrs["php_ver"]; v != "" {
 				spec.PHPVer = v
 			}
-			if v, ok := dattrs["public_html"]; ok && v != "" {
+			if v := dattrs["public_html"]; v != "" {
 				spec.DocRoot = v
 			}
-			// 'php=ON' / 'php=OFF' → HasPHP boolean
-			if v, ok := dattrs["php"]; ok {
-				spec.HasPHP = strings.EqualFold(v, "on")
+			if v := dattrs["php"]; v != "" {
+				spec.HasPHP = strings.EqualFold(v, "on") || strings.EqualFold(v, "yes")
 			}
 		}
 		rows = append(rows, spec)
 	}
 	return rows, nil
+}
+
+// parseDAConf parses DA's KEY=value file format. Whitespace-tolerant,
+// blank/comment lines skipped. Same shape as parseINI but renamed
+// to reflect the new file-read source.
+func parseDAConf(b []byte) map[string]string {
+	out := map[string]string{}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		i := strings.Index(line, "=")
+		if i <= 0 {
+			continue
+		}
+		out[strings.TrimSpace(line[:i])] = strings.TrimSpace(line[i+1:])
+	}
+	return out
+}
+
+// splitLines returns non-blank/non-comment lines.
+func splitLines(b []byte) []string {
+	var out []string
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
 }
 
 // splitCSV splits a comma-separated value string with whitespace
@@ -127,30 +167,31 @@ func splitCSV(s string) []string {
 // prefix can be applied (cpanel/restore_dbs.go does the same
 // transform — DA reuses that writer once the tarball parser ships).
 func (d *Discoverer) describeDatabases(ctx context.Context, s *session, account string) ([]migrate.DatabaseSpec, []migrate.Warning, error) {
+	// Use DA's stashed admin creds at /usr/local/directadmin/conf/my.cnf
+	// + SHOW DATABASES LIKE '<user>_%' to enumerate. Reliable across
+	// DA minors; doesn't depend on phantom `da admin db.list` CLI.
 	out, err := s.run(ctx, d.CommandTimeout,
-		fmt.Sprintf("da admin db.list '%s'", shellEscape(account)))
+		fmt.Sprintf("mysql --defaults-file=/usr/local/directadmin/conf/my.cnf -BN -e \"SHOW DATABASES\" 2>/dev/null | grep %s || true",
+			shellQuoteForGrep("^"+account+"_")))
 	if err != nil {
-		// db.list is sometimes named differently across DA minors
-		// (database.list, db_list). Record a warning + return
-		// empty rather than failing the whole describe.
 		return nil, []migrate.Warning{{
 			Code:   "directadmin_db_list_failed",
-			Detail: fmt.Sprintf("da admin db.list %q failed: %v — DA minor may use a different command name", account, err),
+			Detail: fmt.Sprintf("mysql SHOW DATABASES failed for %q: %v", account, err),
 			At:     time.Now().UTC(),
 		}}, nil
 	}
 	specs := []migrate.DatabaseSpec{}
-	for _, line := range strings.Split(string(out), "\n") {
-		name := strings.TrimSpace(line)
-		if name == "" || strings.HasPrefix(name, "#") {
-			continue
-		}
-		specs = append(specs, migrate.DatabaseSpec{
-			Engine: "mysql",
-			Name:   name,
-		})
+	for _, name := range splitLines(out) {
+		specs = append(specs, migrate.DatabaseSpec{Engine: "mysql", Name: name})
 	}
 	return specs, nil, nil
+}
+
+// shellQuoteForGrep produces a grep -E safe regex literal in single
+// quotes. account is whitelisted (looksLikeDAUsername) so we don't
+// need to escape regex metachars.
+func shellQuoteForGrep(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // describeMailboxes walks every domain via 'da admin pop.list
@@ -163,20 +204,28 @@ func (d *Discoverer) describeMailboxes(ctx context.Context, s *session, account 
 	rows := []migrate.MailboxSpec{}
 	warnings := []migrate.Warning{}
 	for _, dom := range domains {
+		// DA stores mailbox accounts at /etc/virtual/<dom>/passwd
+		// (one local-part:hash:uid:gid line per mailbox). Cheaper
+		// + format-stable across DA minors than the phantom
+		// `da admin pop.list` CLI the old code shelled out to.
 		out, err := s.run(ctx, d.CommandTimeout,
-			fmt.Sprintf("da admin pop.list '%s'", shellEscape(dom.Name)))
+			fmt.Sprintf("cat /etc/virtual/%s/passwd 2>/dev/null", shellEscape(dom.Name)))
 		if err != nil {
 			warnings = append(warnings, migrate.Warning{
-				Code:   "directadmin_pop_list_failed",
-				Detail: fmt.Sprintf("pop.list %s: %v", dom.Name, err),
+				Code:   "directadmin_virtual_passwd_failed",
+				Detail: fmt.Sprintf("read /etc/virtual/%s/passwd: %v", dom.Name, err),
 				At:     time.Now().UTC(),
 			})
 			continue
 		}
 		for _, line := range strings.Split(string(out), "\n") {
-			local := strings.TrimSpace(line)
-			if local == "" || strings.HasPrefix(local, "#") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
 				continue
+			}
+			local := line
+			if i := strings.Index(line, ":"); i > 0 {
+				local = line[:i]
 			}
 			rows = append(rows, migrate.MailboxSpec{
 				Address: fmt.Sprintf("%s@%s", local, dom.Name),

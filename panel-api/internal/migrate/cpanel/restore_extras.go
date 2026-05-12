@@ -34,11 +34,13 @@ import (
 // ExtrasResult is the per-area counter set returned from ImportExtras.
 // Counters are summed into the parent restore manifest by the caller.
 type ExtrasResult struct {
-	CatchallsSet       int      // domains where catchall_target was written
-	SubdomainsCreated  int      // panel domain rows added from SUB_DOMAINS
-	ForwardersCreated  int      // mail forwarder rows added (M6.5)
-	ForwardersOrphaned int      // alias lines whose local mailbox isn't in panel
-	Skipped            []string // human-readable reasons (mirrors other restore writers)
+	CatchallsSet         int      // domains where catchall_target was written
+	SubdomainsCreated    int      // panel domain rows added from SUB_DOMAINS
+	ForwardersCreated    int      // mail forwarder rows added (M6.5)
+	ForwardersOrphaned   int      // alias lines whose local mailbox isn't in panel
+	AutorespondersCreated int     // vacation auto-replies restored (M6.5)
+	AutorespondersOrphaned int    // .autorespond entries whose mailbox isn't in panel
+	Skipped              []string // human-readable reasons (mirrors other restore writers)
 }
 
 // ImportExtras walks the parsed cpmove + reads cpanel meta files for
@@ -49,6 +51,7 @@ func ImportExtras(
 	domainsRepo repository.DomainRepository,
 	mailboxesRepo repository.MailboxRepository,
 	forwardersRepo repository.EmailForwarderRepository,
+	autoRespondersRepo repository.EmailAutoresponderRepository,
 	agentCli agent.AgentInterface,
 	parsed *ParsedTarball,
 	targetUserID, targetUsername string,
@@ -176,7 +179,91 @@ func ImportExtras(
 		}
 	}
 
+	// ---- P2.5: per-mailbox autoresponders ----
+	// cpanel layout: <homedir>/.autorespond/<address>.{conf,yaml}
+	if parsed.HomeDir != "" && autoRespondersRepo != nil && mailboxesRepo != nil {
+		respDir := filepath.Join(parsed.HomeDir, ".autorespond")
+		if files, derr := os.ReadDir(respDir); derr == nil {
+			for _, f := range files {
+				if f.IsDir() {
+					continue
+				}
+				name := f.Name()
+				// strip .conf / .yaml — leaving the address
+				addr := strings.TrimSuffix(strings.TrimSuffix(name, ".conf"), ".yaml")
+				if !strings.Contains(addr, "@") {
+					continue
+				}
+				mb, mErr := mailboxesRepo.FindByEmail(ctx, addr)
+				if mErr != nil || mb == nil {
+					res.AutorespondersOrphaned++
+					res.Skipped = append(res.Skipped, fmt.Sprintf("autoresponder_orphan:%s (no local mailbox)", addr))
+					continue
+				}
+				ar := parseAutoresponder(filepath.Join(respDir, name), mb.ID)
+				if ar == nil {
+					res.Skipped = append(res.Skipped, fmt.Sprintf("autoresponder_skip:%s parse failed", addr))
+					continue
+				}
+				if uErr := autoRespondersRepo.Update(ctx, ar); uErr != nil {
+					res.Skipped = append(res.Skipped, fmt.Sprintf("autoresponder_skip:db:%s:%v", addr, uErr))
+					continue
+				}
+				res.AutorespondersCreated++
+			}
+		}
+	}
+
 	return res, nil
+}
+
+// parseAutoresponder reads a cpanel .autorespond/<addr>.{conf,yaml}
+// file + builds an EmailAutoresponder row. Both formats share the
+// same "Header: value" / blank line / body shape; YAML adds quoting
+// which we strip.
+func parseAutoresponder(path, mailboxID string) *models.EmailAutoresponder {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	parts := strings.SplitN(string(raw), "\n\n", 2)
+	headerBlock := parts[0]
+	var bodyPart string
+	if len(parts) == 2 {
+		bodyPart = parts[1]
+	}
+	var subject string
+	for _, line := range strings.Split(headerBlock, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		i := strings.Index(line, ":")
+		if i <= 0 {
+			continue
+		}
+		k := strings.TrimSpace(line[:i])
+		v := strings.Trim(strings.TrimSpace(line[i+1:]), `"'`)
+		if strings.EqualFold(k, "subject") {
+			subject = v
+		}
+	}
+	body := strings.TrimSpace(bodyPart)
+	if body == "" && subject == "" {
+		return nil
+	}
+	ar := &models.EmailAutoresponder{
+		MailboxID: mailboxID,
+		Enabled:   true,
+		ManagedBy: "m35",
+	}
+	if subject != "" {
+		ar.Subject = &subject
+	}
+	if body != "" {
+		ar.TextBody = &body
+	}
+	return ar
 }
 
 // aliasForward is one forwarder row out of an aliases file:

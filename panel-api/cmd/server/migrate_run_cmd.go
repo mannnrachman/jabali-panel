@@ -69,6 +69,7 @@ failed stage. Already-done stages are skipped.`,
 			domainsRepo := repository.NewDomainRepository(sharedDB)
 			mbRepo := repository.NewMailboxRepository(sharedDB)
 			fwdRepo := repository.NewEmailForwarderRepository(sharedDB)
+			arRepo := repository.NewEmailAutoresponderRepository(sharedDB)
 			kc := kratosclient.NewClient(sharedCfg.Auth.Kratos.PublicURL, sharedCfg.Auth.Kratos.AdminURL)
 
 			job, err := jobsRepo.FindByID(ctx, jobID)
@@ -351,7 +352,7 @@ failed stage. Already-done stages are skipped.`,
 					migrate.StageAnalyze:  cpanelAnalyzeCallback(),
 					migrate.StageValidate: validateStageCallback(usersRepo, domainsRepo, *user.Username),
 					migrate.StageRestore: cpanelRestoreCallback(
-						sshRepo, cronsRepo, dbsRepo, dbUsersRepo, dbGrantsRepo, domainsRepo, mbRepo, fwdRepo, usersRepo, kc,
+						sshRepo, cronsRepo, dbsRepo, dbUsersRepo, dbGrantsRepo, domainsRepo, mbRepo, fwdRepo, arRepo, usersRepo, kc,
 					),
 				},
 			}
@@ -444,6 +445,7 @@ func cpanelRestoreCallback(
 	domainsRepo repository.DomainRepository,
 	mbRepo repository.MailboxRepository,
 	fwdRepo repository.EmailForwarderRepository,
+	arRepo repository.EmailAutoresponderRepository,
 	usersRepo repository.UserRepository,
 	kc *kratosclient.Client,
 ) migrate.StageCallback {
@@ -508,17 +510,24 @@ func cpanelRestoreCallback(
 			mailRes.MaildirsFound, mailRes.MessagesFound, mailRes.MessagesPushed, mailRes.BytesPushed))
 		warnings = append(warnings, mailRes.Skipped...)
 
-		// M35.8 P2+P5: catch-all + subdomains + record-only warnings
-		// for the M6.5-blocked forwarders/autoresponders/filters and
-		// the deferred custom-SSL / per-domain-PHP / FTP areas.
-		extrasRes, err := cpanel.ImportExtras(ctx, domainsRepo, mbRepo, fwdRepo, sharedAgent, p.parsed, p.targetUserID, p.targetUsername)
+		// M35.8 P3: per-domain custom SSL certs from apache_tls/.
+		sslRes, err := cpanel.ImportSSL(ctx, sharedAgent, p.parsed)
+		if err != nil {
+			return bytes, warnings, fmt.Errorf("ssl: %w", err)
+		}
+		warnings = append(warnings, fmt.Sprintf("ssl: installed=%d", sslRes.Installed))
+		warnings = append(warnings, sslRes.Skipped...)
+
+		// M35.8 P2+P5: catch-all + subdomains + forwarders restore.
+		extrasRes, err := cpanel.ImportExtras(ctx, domainsRepo, mbRepo, fwdRepo, arRepo, sharedAgent, p.parsed, p.targetUserID, p.targetUsername)
 		if err != nil {
 			return bytes, warnings, fmt.Errorf("extras: %w", err)
 		}
 		warnings = append(warnings, fmt.Sprintf(
-			"extras: catchalls=%d subdomains=%d forwarders=%d forwarders_orphan=%d",
+			"extras: catchalls=%d subdomains=%d forwarders=%d forwarders_orphan=%d autoresponders=%d autoresponders_orphan=%d",
 			extrasRes.CatchallsSet, extrasRes.SubdomainsCreated,
-			extrasRes.ForwardersCreated, extrasRes.ForwardersOrphaned))
+			extrasRes.ForwardersCreated, extrasRes.ForwardersOrphaned,
+			extrasRes.AutorespondersCreated, extrasRes.AutorespondersOrphaned))
 		warnings = append(warnings, extrasRes.Skipped...)
 
 		// Ensure the migrated user has a Kratos identity so they can log in.

@@ -506,6 +506,18 @@ func cpanelRestoreCallback(
 			mailRes.MaildirsFound, mailRes.MessagesFound, mailRes.MessagesPushed, mailRes.BytesPushed))
 		warnings = append(warnings, mailRes.Skipped...)
 
+		// M35.8 P2+P5: catch-all + subdomains + record-only warnings
+		// for the M6.5-blocked forwarders/autoresponders/filters and
+		// the deferred custom-SSL / per-domain-PHP / FTP areas.
+		extrasRes, err := cpanel.ImportExtras(ctx, domainsRepo, sharedAgent, p.parsed, p.targetUserID, p.targetUsername)
+		if err != nil {
+			return bytes, warnings, fmt.Errorf("extras: %w", err)
+		}
+		warnings = append(warnings, fmt.Sprintf(
+			"extras: catchalls=%d subdomains=%d forwarders_pending=%d",
+			extrasRes.CatchallsSet, extrasRes.SubdomainsCreated, extrasRes.ForwardersLogged))
+		warnings = append(warnings, extrasRes.Skipped...)
+
 		// Ensure the migrated user has a Kratos identity so they can log in.
 		if kc != nil && usersRepo != nil {
 			targetUser, uErr := usersRepo.FindByID(ctx, p.targetUserID)

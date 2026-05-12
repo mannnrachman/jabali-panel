@@ -99,10 +99,17 @@ func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.
 		if !dom.IsDir() {
 			continue
 		}
-		domPath := filepath.Join(mailRoot, dom.Name())
+		// Skip owner-Maildir slots/subfolders + cpanel metadata files
+		// living alongside per-domain dirs. Same rule as
+		// insertMailboxPanelRows below.
+		name := dom.Name()
+		if strings.HasPrefix(name, ".") || name == "cur" || name == "new" || name == "tmp" {
+			continue
+		}
+		domPath := filepath.Join(mailRoot, name)
 		users, err := os.ReadDir(domPath)
 		if err != nil {
-			res.Skipped = append(res.Skipped, fmt.Sprintf("mail_read_domain %s: %v", dom.Name(), err))
+			res.Skipped = append(res.Skipped, fmt.Sprintf("mail_read_domain %s: %v", name, err))
 			continue
 		}
 		for _, u := range users {
@@ -115,13 +122,14 @@ func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.
 				continue
 			}
 			res.MaildirsFound++
-			email := fmt.Sprintf("%s@%s", u.Name(), dom.Name())
 			n, b := countMaildirMessages(maildirPath)
 			res.MessagesFound += n
 			res.BytesFound += b
-			res.Skipped = append(res.Skipped, fmt.Sprintf(
-				"mailbox_pending_manual:%s msgs=%d bytes=%d path=%s",
-				email, n, b, userPath))
+			// No per-mailbox 'pending_manual' line — the counter
+			// totals (MessagesFound + later MessagesPushed) tell
+			// the operator what landed; per-mailbox detail only
+			// matters in the failure branch below, which appends
+			// agent error context when push actually failed.
 		}
 	}
 	// Observation-only fast path: no agent → return the per-
@@ -193,9 +201,22 @@ func insertMailboxPanelRows(
 		if !dom.IsDir() {
 			continue
 		}
-		domain, dErr := domainsRepo.FindByName(ctx, dom.Name())
+		name := dom.Name()
+		// cPanel <homedir>/mail/ holds the OWNER's Maildir slots
+		// alongside per-domain mailbox dirs:
+		//   mail/example.com/<local>/Maildir/...    ← per-domain
+		//   mail/.Drafts | .Junk | .Sent | .Trash | .spam
+		//                                           ← owner Maildir subfolders
+		//   mail/cur | new | tmp                    ← owner Maildir slots
+		//   mail/.mailbox_format.cpanel             ← metadata file
+		// Skip the owner-Maildir entries so the panel-row insert
+		// doesn't 8x-warn on each restore.
+		if strings.HasPrefix(name, ".") || name == "cur" || name == "new" || name == "tmp" {
+			continue
+		}
+		domain, dErr := domainsRepo.FindByName(ctx, name)
 		if dErr != nil {
-			msgs = append(msgs, fmt.Sprintf("mailbox_rows: domain %s not found in panel: %v", dom.Name(), dErr))
+			msgs = append(msgs, fmt.Sprintf("mailbox_rows: domain %s not found in panel: %v", name, dErr))
 			continue
 		}
 		usersDir := filepath.Join(mailRoot, dom.Name())

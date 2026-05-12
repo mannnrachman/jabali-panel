@@ -156,8 +156,13 @@ export function SystemInfoCard({ host, network, software, asOf }: Props) {
           { dataIndex: "property" },
           {
             dataIndex: "value",
-            render: (v: unknown) => (
-              <span style={{ wordBreak: "break-all" }}>{String(v ?? "")}</span>
+            // value is React.ReactNode (<code>hostname</code>, <Tag>...</Tag>,
+            // etc.) — render as-is + wrap in a wordBreak span so long
+            // IPv6/processor strings can break inside the cell when the
+            // table scrolls horizontally. Stringifying broke the e2e
+            // hostname assertion (getByText 'mx.jabali-panel.local').
+            render: (v: React.ReactNode) => (
+              <span style={{ wordBreak: "break-all" }}>{v}</span>
             ),
           },
         ]}

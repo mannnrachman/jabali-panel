@@ -5,7 +5,7 @@
 //
 // Polls every 10s when the job is in a non-terminal state so the
 // operator sees stages advance live while the cobra CLI runs.
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Button,
@@ -20,17 +20,29 @@ import {
   Radio,
   Space,
   Spin,
-  Statistic,
   Steps,
   Tag,
   Typography,
 } from "antd";
+import {
+  ClockCircleOutlined,
+  DatabaseOutlined,
+  FileOutlined,
+  GlobalOutlined,
+  HddOutlined,
+  InboxOutlined,
+  KeyOutlined,
+  MailOutlined,
+  SafetyOutlined,
+  UserOutlined,
+} from "@icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useMigrationStream } from "../../../hooks/useMigrationStream";
 import { useNavigate, useParams } from "react-router";
 
 import { apiClient } from "../../../apiClient";
+import { humanBytes as formatBytes } from "../../../utils/bytes";
 
 type MigrationJob = {
   id: string;
@@ -293,34 +305,155 @@ export const AdminMigrationDetailPage = () => {
 function RestoreSummary({ manifestJSON }: { manifestJSON: string }) {
   const parsed = useMemo(() => parseRestoreManifest(manifestJSON), [manifestJSON]);
 
+  const stats: Array<{
+    label: string;
+    value: number;
+    icon: ReactNode;
+    iconBg: string;
+    iconColor: string;
+    fmt?: (n: number) => string;
+  }> = [
+    {
+      label: "Home bytes",
+      value: parsed.homeBytes,
+      icon: <HddOutlined />,
+      iconBg: "#fff7e6",
+      iconColor: "#fa8c16",
+      fmt: formatBytes,
+    },
+    {
+      label: "Home files",
+      value: parsed.homeFiles,
+      icon: <FileOutlined />,
+      iconBg: "#fff7e6",
+      iconColor: "#fa8c16",
+    },
+    {
+      label: "Databases",
+      value: parsed.databasesCreated,
+      icon: <DatabaseOutlined />,
+      iconBg: "#e6f4ff",
+      iconColor: "#1677ff",
+    },
+    {
+      label: "DB users",
+      value: parsed.dbUsersCreated,
+      icon: <UserOutlined />,
+      iconBg: "#e6f4ff",
+      iconColor: "#1677ff",
+    },
+    {
+      label: "Domains",
+      value: parsed.domainsCreated,
+      icon: <GlobalOutlined />,
+      iconBg: "#f0f5ff",
+      iconColor: "#2f54eb",
+    },
+    {
+      label: "Email enabled",
+      value: parsed.emailEnabled,
+      icon: <MailOutlined />,
+      iconBg: "#f9f0ff",
+      iconColor: "#722ed1",
+    },
+    {
+      label: "Mailboxes",
+      value: parsed.mailboxesCreated,
+      icon: <InboxOutlined />,
+      iconBg: "#f9f0ff",
+      iconColor: "#722ed1",
+    },
+    {
+      label: "Messages pushed",
+      value: parsed.messagesPushed,
+      icon: <MailOutlined />,
+      iconBg: "#f9f0ff",
+      iconColor: "#722ed1",
+    },
+    {
+      label: "DNS zones",
+      value: parsed.dnsZones,
+      icon: <GlobalOutlined />,
+      iconBg: "#e6fffb",
+      iconColor: "#13c2c2",
+    },
+    {
+      label: "DNS records",
+      value: parsed.dnsRecords,
+      icon: <GlobalOutlined />,
+      iconBg: "#e6fffb",
+      iconColor: "#13c2c2",
+    },
+    {
+      label: "SSH keys",
+      value: parsed.sshCreated,
+      icon: <KeyOutlined />,
+      iconBg: "#f6ffed",
+      iconColor: "#52c41a",
+    },
+    {
+      label: "Cron jobs",
+      value: parsed.cronCreated,
+      icon: <ClockCircleOutlined />,
+      iconBg: "#f6ffed",
+      iconColor: "#52c41a",
+    },
+  ];
+
   return (
     <Card size="small" title="Restore summary">
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-            gap: 16,
+            gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+            gap: 12,
           }}
         >
-          <Statistic title="Home bytes" value={parsed.homeBytes} />
-          <Statistic title="Home files" value={parsed.homeFiles} />
-          <Statistic title="Databases" value={parsed.databasesCreated} />
-          <Statistic title="DB users" value={parsed.dbUsersCreated} />
-          <Statistic title="Domains" value={parsed.domainsCreated} />
-          <Statistic title="Email enabled" value={parsed.emailEnabled} />
-          <Statistic title="Mailboxes" value={parsed.mailboxesCreated} />
-          <Statistic title="Messages pushed" value={parsed.messagesPushed} />
-          <Statistic title="DNS zones" value={parsed.dnsZones} />
-          <Statistic title="DNS records" value={parsed.dnsRecords} />
-          <Statistic title="SSH keys" value={parsed.sshCreated} />
-          <Statistic title="Cron jobs" value={parsed.cronCreated} />
+          {stats.map((s) => (
+            <Card key={s.label} size="small" styles={{ body: { padding: 12 } }}>
+              <Space size={12} align="center" style={{ width: "100%" }}>
+                <div
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 10,
+                    background: s.iconBg,
+                    color: s.iconColor,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 20,
+                    flex: "0 0 40px",
+                  }}
+                >
+                  {s.icon}
+                </div>
+                <Space direction="vertical" size={0} style={{ minWidth: 0 }}>
+                  <Typography.Text
+                    type="secondary"
+                    style={{
+                      fontSize: 11,
+                      letterSpacing: 0.5,
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {s.label}
+                  </Typography.Text>
+                  <Typography.Title level={4} style={{ margin: 0, lineHeight: 1.1 }}>
+                    {s.fmt ? s.fmt(s.value) : s.value.toLocaleString()}
+                  </Typography.Title>
+                </Space>
+              </Space>
+            </Card>
+          ))}
         </div>
 
         {parsed.kratosStatus && (
           <Alert
             type={parsed.kratosStatus === "ok" ? "success" : "warning"}
             showIcon
+            icon={<SafetyOutlined />}
             message={`Kratos identity: ${parsed.kratosStatus}`}
             description={
               parsed.kratosNewID ? `new_id=${parsed.kratosNewID}` : undefined
@@ -335,14 +468,11 @@ function RestoreSummary({ manifestJSON }: { manifestJSON: string }) {
             message={`${parsed.warnings.length} warning${parsed.warnings.length === 1 ? "" : "s"} during restore`}
             description={
               <ul style={{ margin: 0, paddingLeft: 18 }}>
-                {parsed.warnings.slice(0, 8).map((w, i) => (
-                  <li key={i} style={{ fontSize: 12 }}>{w}</li>
-                ))}
-                {parsed.warnings.length > 8 && (
-                  <li style={{ fontSize: 12, color: "rgba(0,0,0,0.45)" }}>
-                    …{parsed.warnings.length - 8} more — see raw manifest
+                {parsed.warnings.map((w, i) => (
+                  <li key={i} style={{ fontSize: 12, wordBreak: "break-word" }}>
+                    {w}
                   </li>
-                )}
+                ))}
               </ul>
             }
           />

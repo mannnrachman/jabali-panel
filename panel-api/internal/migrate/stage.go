@@ -45,6 +45,15 @@ var ErrIllegalTransition = errors.New("illegal migration state transition")
 // path; pending → cancelled lets operators kill a never-started job
 // from the admin UI without spinning up the transient unit first.
 var jobTransitions = map[string]map[string]struct{}{
+	// Draft is wizard-only — operator can submit (→ pending) or
+	// cancel before the row ever reaches the runner. ADR-0095
+	// decision 5. delete-instead-of-cancel is also valid via the
+	// REST DELETE → destroy path; cancel is here for UI symmetry
+	// (same red "Cancel" button across all non-terminal rows).
+	models.MigrationStateDraft: {
+		models.MigrationStatePending:   {},
+		models.MigrationStateCancelled: {},
+	},
 	models.MigrationStatePending: {
 		models.MigrationStateAnalyzing: {},
 		models.MigrationStateCancelled: {},

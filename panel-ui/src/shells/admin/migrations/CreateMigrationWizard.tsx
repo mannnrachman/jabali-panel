@@ -57,8 +57,13 @@ type DiscoveredAccount = {
 const SOURCE_OPTIONS = [
   { value: "whm_pkgacct", label: "WHM (bulk: many cPanel accounts)" },
   { value: "cpanel", label: "cPanel (single account)" },
-  { value: "directadmin", label: "DirectAdmin" },
-  { value: "hestiacp", label: "HestiaCP" },
+  // M35 ships cpanel + whm_pkgacct discovery + restore. directadmin
+  // and hestiacp Discoverers are scaffold-only — per-area builders
+  // (homedir / mail / db / dns) land in M35.3. Disabled in the
+  // wizard until then so operators don't pick a path that 502s on
+  // discover-accounts.
+  { value: "directadmin", label: "DirectAdmin (scaffold only — pending M35.3)", disabled: true },
+  { value: "hestiacp", label: "HestiaCP (scaffold only — pending M35.3)", disabled: true },
 ];
 
 interface Props {
@@ -126,8 +131,8 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
     mutationFn: async () => {
       const { data } = await apiClient.post<DraftJob>("/admin/migrations", {
         source_kind: sourceKind,
-        source_host: sourceHost || `__draft_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-        source_user: sourceUser || `__draft_${Math.random().toString(36).slice(2, 10)}`,
+        source_host: sourceHost || `__draft_${(crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`).replace(/-/g, "").slice(0, 24)}`,
+        source_user: sourceUser || `__draft_${(crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`).replace(/-/g, "").slice(0, 24)}`,
         state: "draft",
       });
       return data;
@@ -162,8 +167,8 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
       });
       const body: Record<string, string> =
         credKind === "password"
-          ? { password: credValue }
-          : { private_key: credValue };
+          ? { ssh_password: credValue }
+          : { ssh_private_key: credValue };
       await apiClient.post(`/admin/migrations/${draftId}/secrets`, body);
     },
     onSuccess: () => {
@@ -282,7 +287,7 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
             style={{ display: "flex", flexDirection: "column", gap: 8 }}
           >
             {SOURCE_OPTIONS.map((o) => (
-              <Radio key={o.value} value={o.value}>
+              <Radio key={o.value} value={o.value} disabled={o.disabled}>
                 {o.label}
               </Radio>
             ))}
@@ -290,7 +295,20 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
           <Button
             type="primary"
             loading={createDraft.isPending}
-            onClick={() => createDraft.mutate()}
+            onClick={() => {
+              // ADR-0095 decision 5 — if URL restored an existing draft
+              // (?wizard=<id> on mount populated draftId), skip the
+              // create POST and jump straight to step 1. Re-POSTing
+              // would either 409 on the natural-key tuple (the
+              // placeholder strings collide if Math.random hashes the
+              // same prefix) OR leak a second draft row the operator
+              // can't see.
+              if (draftId) {
+                setStep(1);
+                return;
+              }
+              createDraft.mutate();
+            }}
           >
             Next: connection
           </Button>

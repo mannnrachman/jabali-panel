@@ -266,6 +266,7 @@ export const AdminMigrationsPage = () => {
             title=""
             width={200}
             render={(_, r) => {
+              const isDraft = r.state === "draft";
               const terminal =
                 r.state === "done" ||
                 r.state === "failed" ||
@@ -277,7 +278,24 @@ export const AdminMigrationsPage = () => {
                       View
                     </RowActionButton>
                   </Link>
-                  {!terminal && (
+                  {isDraft && (
+                    <Popconfirm
+                      title={`Discard draft ${r.source_user}?`}
+                      description="Hard-deletes the draft row. No secrets or extracted files have been written yet."
+                      onConfirm={() => destroy.mutate({ id: r.id })}
+                      okText="Discard"
+                      okButtonProps={{ danger: true }}
+                    >
+                      <RowActionButton
+                        danger
+                        icon={<DeleteOutlined />}
+                        color="default"
+                      >
+                        Discard
+                      </RowActionButton>
+                    </Popconfirm>
+                  )}
+                  {!isDraft && !terminal && (
                     <Popconfirm
                       title={`Cancel migration ${r.source_user}?`}
                       description="Stamps the DB row as cancelled. Does NOT kill an in-flight CLI process — Ctrl-C the cobra cmd separately."

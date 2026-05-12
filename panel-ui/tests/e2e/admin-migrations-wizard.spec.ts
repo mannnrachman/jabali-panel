@@ -12,7 +12,7 @@ test.describe("admin migrations — CreateMigrationWizard (M35.1)", () => {
     // Capture state across route handlers.
     let draftBody: { source_kind?: string; state?: string } | null = null;
     let patchBody: { source_host?: string; source_user?: string } | null = null;
-    let secretsBody: { password?: string } | null = null;
+    let secretsBody: { ssh_password?: string; ssh_private_key?: string } | null = null;
     let bulkBody: { accounts?: string[]; source_host?: string } | null = null;
 
     // Most-specific routes first — Playwright matches in registration
@@ -125,7 +125,7 @@ test.describe("admin migrations — CreateMigrationWizard (M35.1)", () => {
     // visibility first, THEN inspect the captured request bodies.
     await expect(page.getByText(/found 3 accounts/i)).toBeVisible({ timeout: 10_000 });
     expect(patchBody?.source_host).toBe("whm.example.com");
-    expect(secretsBody?.password).toBe("hunter2");
+    expect(secretsBody?.ssh_password).toBe("hunter2");
     await page.getByRole("checkbox", { name: /alice/i }).check();
     await page.getByRole("checkbox", { name: /bob/i }).check();
     await page.getByRole("button", { name: /next: review 2 accounts/i }).click();

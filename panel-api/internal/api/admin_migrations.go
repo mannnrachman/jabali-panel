@@ -192,12 +192,24 @@ func (h *adminMigrationsHandler) create(c *gin.Context) {
 	// Refuse duplicates on the natural-key tuple — the UNIQUE on
 	// (source_host, source_user, source_kind) would 500 the
 	// gorm.Create otherwise.
+	//
+	// EXCEPTION (ADR-0095 decision 5 wizard idempotency): when the
+	// caller is asking for state=draft AND the existing row IS also
+	// draft, return the existing row as 200 OK instead of 409. The
+	// wizard hits this when its placeholder generation collides with
+	// a prior stranded draft (rare but observed on mx.jabali-panel
+	// .local 2026-05-12). Operators on the existing-row path can
+	// always cancel-then-recreate explicitly.
 	if existing, _ := h.cfg.Jobs.FindBySource(c.Request.Context(),
 		req.SourceKind, req.SourceHost, req.SourceUser); existing != nil {
+		if req.State == models.MigrationStateDraft && existing.State == models.MigrationStateDraft {
+			c.JSON(http.StatusOK, existing)
+			return
+		}
 		c.JSON(http.StatusConflict, gin.H{
-			"error":          "duplicate_migration_job",
+			"error":           "duplicate_migration_job",
 			"existing_job_id": existing.ID,
-			"detail":         "A migration job already exists for this (source_host, source_user, source_kind). Resume via 'jabali migrate import --job-id ...' instead of recreating.",
+			"detail":          "A migration job already exists for this (source_host, source_user, source_kind). Resume via 'jabali migrate import --job-id ...' instead of recreating.",
 		})
 		return
 	}

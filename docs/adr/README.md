@@ -83,6 +83,7 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0092](0092-apparmor-aa4-rules.md) | M40.1 AppArmor 4.x profile authoring patterns — empirical unix-socket rules | Accepted |
 | [0093](0093-automation-api-tokens.md) | M44 Automation API scoped tokens | Accepted |
 | [0094](0094-migration-importers.md) | M35 Migration importers (cPanel / DA / Hestia / WHM / IMAP) | Proposed |
+| [0095](0095-m35-migration-gui-design-decisions.md) | M35.1 Migration GUI design decisions (wizard, SSE, SSRF, retry, batch) | Proposed |
 
 ## Decision Categories
 

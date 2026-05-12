@@ -69,7 +69,7 @@ test.describe("admin migrations — DirectAdmin enabled (M35.3)", () => {
     expect(draftBody!.state).toBe("draft");
   });
 
-  test("Hestia radio stays disabled (M35.4 pending)", async ({ page }) => {
+  test("Hestia radio is enabled (M35.4 shipped)", async ({ page }) => {
     await mockApi(page, { me: admin });
     await page.route("**/api/v1/admin/migrations*", async (route) => {
       const req = route.request();
@@ -90,6 +90,6 @@ test.describe("admin migrations — DirectAdmin enabled (M35.3)", () => {
 
     const hestiaRadio = page.locator('input[type="radio"][value="hestiacp"]');
     await expect(hestiaRadio).toBeVisible({ timeout: 5_000 });
-    await expect(hestiaRadio).toBeDisabled();
+    await expect(hestiaRadio).toBeEnabled();
   });
 });

@@ -34,10 +34,11 @@ import (
 // ExtrasResult is the per-area counter set returned from ImportExtras.
 // Counters are summed into the parent restore manifest by the caller.
 type ExtrasResult struct {
-	CatchallsSet      int      // domains where catchall_target was written
-	SubdomainsCreated int      // panel domain rows added from SUB_DOMAINS
-	ForwardersLogged  int      // alias lines that would be forwarders if M6.5 schema allowed
-	Skipped           []string // human-readable reasons (mirrors other restore writers)
+	CatchallsSet       int      // domains where catchall_target was written
+	SubdomainsCreated  int      // panel domain rows added from SUB_DOMAINS
+	ForwardersCreated  int      // mail forwarder rows added (M6.5)
+	ForwardersOrphaned int      // alias lines whose local mailbox isn't in panel
+	Skipped            []string // human-readable reasons (mirrors other restore writers)
 }
 
 // ImportExtras walks the parsed cpmove + reads cpanel meta files for
@@ -46,6 +47,8 @@ type ExtrasResult struct {
 func ImportExtras(
 	ctx context.Context,
 	domainsRepo repository.DomainRepository,
+	mailboxesRepo repository.MailboxRepository,
+	forwardersRepo repository.EmailForwarderRepository,
 	agentCli agent.AgentInterface,
 	parsed *ParsedTarball,
 	targetUserID, targetUsername string,
@@ -119,7 +122,7 @@ func ImportExtras(
 				}
 				domName := d.Name()
 				aliasFile := filepath.Join(etcDir, domName, "aliases")
-				ct, fwd, sk := parseAliases(aliasFile)
+				ct, fwds, sk := parseAliases(aliasFile)
 				if ct != "" {
 					dom, err := domainsRepo.FindByName(ctx, domName)
 					if err != nil {
@@ -130,9 +133,43 @@ func ImportExtras(
 						res.CatchallsSet++
 					}
 				}
-				if fwd > 0 {
-					res.ForwardersLogged += fwd
-					res.Skipped = append(res.Skipped, fmt.Sprintf("forwarders_pending_manual:%s count=%d (M6.5 schema needs mailbox_id; restore via panel after manual mailbox setup)", domName, fwd))
+				// Forwarder rows — M6.5 EmailForwarder needs both
+				// MailboxID + DomainID. Look up by `<local>@<dom>` to
+				// find the source mailbox; skip the line when no
+				// matching panel mailbox exists (cpanel allows forwards
+				// without a local mailbox, jabali doesn't).
+				for _, f := range fwds {
+					if mailboxesRepo == nil || forwardersRepo == nil {
+						res.Skipped = append(res.Skipped, "forwarders_skip:repos_unwired")
+						break
+					}
+					local := f.Local
+					target := f.Target
+					if local == "" || target == "" {
+						continue
+					}
+					srcEmail := local + "@" + domName
+					mb, mErr := mailboxesRepo.FindByEmail(ctx, srcEmail)
+					if mErr != nil || mb == nil {
+						res.ForwardersOrphaned++
+						res.Skipped = append(res.Skipped, fmt.Sprintf("forwarder_orphan:%s→%s (no local mailbox)", srcEmail, target))
+						continue
+					}
+					fwd := &models.EmailForwarder{
+						ID:        ids.NewULID(),
+						MailboxID: mb.ID,
+						DomainID:  mb.DomainID,
+						Type:      "external",
+						LocalPart: &local,
+						Target:    target,
+						Enabled:   true,
+						ManagedBy: "m35",
+					}
+					if cErr := forwardersRepo.Create(ctx, fwd); cErr != nil {
+						res.Skipped = append(res.Skipped, fmt.Sprintf("forwarder_skip:create:%s→%s:%v", srcEmail, target, cErr))
+						continue
+					}
+					res.ForwardersCreated++
 				}
 				res.Skipped = append(res.Skipped, sk...)
 			}
@@ -142,18 +179,24 @@ func ImportExtras(
 	return res, nil
 }
 
+// aliasForward is one forwarder row out of an aliases file:
+// `<local>@<domain>: <target>` → Local="<local>", Target="<target>".
+type aliasForward struct {
+	Local  string
+	Target string
+}
+
 // parseAliases reads a cpanel-style aliases file. Returns
-// (catchAllTarget, forwarderCount, perLineWarnings). Comment lines
-// (`#…`) and blank lines are skipped; lines without `:` are skipped.
-func parseAliases(path string) (string, int, []string) {
+// (catchAllTarget, forwarderRows, perLineWarnings).
+func parseAliases(path string) (string, []aliasForward, []string) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", 0, nil
+		return "", nil, nil
 	}
 	defer f.Close()
 
 	var catchAll string
-	var fwdCount int
+	var forwards []aliasForward
 	var warnings []string
 
 	sc := bufio.NewScanner(f)
@@ -162,31 +205,30 @@ func parseAliases(path string) (string, int, []string) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		// Cpanel default-mailbox-handling lines look like
-		//   :defaultaddress: :fail: No Such User Here
-		// or
-		//   :fail: No Such User Here
-		// Ignore everything that doesn't have the simple "key: value" shape.
+		// Skip cpanel meta-lines that begin with `:` (e.g. ":fail:").
+		if strings.HasPrefix(line, ":") {
+			continue
+		}
 		i := strings.Index(line, ":")
 		if i <= 0 {
 			continue
 		}
 		key := strings.TrimSpace(line[:i])
-		val := strings.TrimSpace(line[i+1:])
+		val := strings.Trim(strings.TrimSpace(line[i+1:]), `"'`)
 		if key == "*" {
-			// Drop quoting if present.
-			catchAll = strings.Trim(val, `"'`)
+			catchAll = val
 			continue
 		}
-		// Anything else is a per-address forwarder — record-only for now.
-		_ = key
-		_ = val
-		fwdCount++
+		// `key` may be `local` or `local@domain`. Normalise to local.
+		if at := strings.IndexByte(key, '@'); at > 0 {
+			key = key[:at]
+		}
+		forwards = append(forwards, aliasForward{Local: key, Target: val})
 	}
 	if err := sc.Err(); err != nil {
 		warnings = append(warnings, fmt.Sprintf("aliases_scan_err:%s:%v", path, err))
 	}
-	return catchAll, fwdCount, warnings
+	return catchAll, forwards, warnings
 }
 
 // findUserdataFile probes the same locations PeekAccountMeta uses

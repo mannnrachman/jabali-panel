@@ -68,6 +68,7 @@ failed stage. Already-done stages are skipped.`,
 			sshRepo := repository.NewSSHKeyRepository(sharedDB)
 			domainsRepo := repository.NewDomainRepository(sharedDB)
 			mbRepo := repository.NewMailboxRepository(sharedDB)
+			fwdRepo := repository.NewEmailForwarderRepository(sharedDB)
 			kc := kratosclient.NewClient(sharedCfg.Auth.Kratos.PublicURL, sharedCfg.Auth.Kratos.AdminURL)
 
 			job, err := jobsRepo.FindByID(ctx, jobID)
@@ -350,7 +351,7 @@ failed stage. Already-done stages are skipped.`,
 					migrate.StageAnalyze:  cpanelAnalyzeCallback(),
 					migrate.StageValidate: validateStageCallback(usersRepo, domainsRepo, *user.Username),
 					migrate.StageRestore: cpanelRestoreCallback(
-						sshRepo, cronsRepo, dbsRepo, dbUsersRepo, dbGrantsRepo, domainsRepo, mbRepo, usersRepo, kc,
+						sshRepo, cronsRepo, dbsRepo, dbUsersRepo, dbGrantsRepo, domainsRepo, mbRepo, fwdRepo, usersRepo, kc,
 					),
 				},
 			}
@@ -442,6 +443,7 @@ func cpanelRestoreCallback(
 	dbGrantsRepo repository.DatabaseUserGrantRepository,
 	domainsRepo repository.DomainRepository,
 	mbRepo repository.MailboxRepository,
+	fwdRepo repository.EmailForwarderRepository,
 	usersRepo repository.UserRepository,
 	kc *kratosclient.Client,
 ) migrate.StageCallback {
@@ -509,13 +511,14 @@ func cpanelRestoreCallback(
 		// M35.8 P2+P5: catch-all + subdomains + record-only warnings
 		// for the M6.5-blocked forwarders/autoresponders/filters and
 		// the deferred custom-SSL / per-domain-PHP / FTP areas.
-		extrasRes, err := cpanel.ImportExtras(ctx, domainsRepo, sharedAgent, p.parsed, p.targetUserID, p.targetUsername)
+		extrasRes, err := cpanel.ImportExtras(ctx, domainsRepo, mbRepo, fwdRepo, sharedAgent, p.parsed, p.targetUserID, p.targetUsername)
 		if err != nil {
 			return bytes, warnings, fmt.Errorf("extras: %w", err)
 		}
 		warnings = append(warnings, fmt.Sprintf(
-			"extras: catchalls=%d subdomains=%d forwarders_pending=%d",
-			extrasRes.CatchallsSet, extrasRes.SubdomainsCreated, extrasRes.ForwardersLogged))
+			"extras: catchalls=%d subdomains=%d forwarders=%d forwarders_orphan=%d",
+			extrasRes.CatchallsSet, extrasRes.SubdomainsCreated,
+			extrasRes.ForwardersCreated, extrasRes.ForwardersOrphaned))
 		warnings = append(warnings, extrasRes.Skipped...)
 
 		// Ensure the migrated user has a Kratos identity so they can log in.

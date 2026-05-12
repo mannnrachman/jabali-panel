@@ -257,10 +257,44 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
   const finalize = useMutation({
     mutationFn: async () => {
       if (!draftId) throw new Error("no draft");
-      await apiClient.post(`/admin/migrations/${draftId}/submit`);
+      const { data } = await apiClient.post<{
+        job: DraftJob;
+        pull_started: boolean;
+        next_step?: string;
+        detail?: string;
+      }>(`/admin/migrations/${draftId}/submit`);
+      return data;
     },
-    onSuccess: () => {
-      message.success("Migration submitted — runner picks it up on next tick.");
+    onSuccess: (data) => {
+      if (data?.next_step === "upload_tarball") {
+        Modal.info({
+          title: "Migration submitted — manual upload required",
+          width: 560,
+          content: (
+            <div>
+              <p>
+                WHM (pkgacct) is offline-only — Jabali can't SSH into
+                a WHM server and pull every account in one shot. For
+                each account you submitted, scp the cpmove tarball
+                into the staging directory:
+              </p>
+              <pre style={{ fontSize: 11 }}>
+{`scp cpmove-<user>.tar.gz \
+  root@mx.jabali-panel.local:/var/lib/jabali-migrations/${draftId}/`}
+              </pre>
+              <p>
+                Then click the row's <b>Import</b> button on the list
+                page. Alternative: POST the tarball to{" "}
+                <code>/admin/migrations/{draftId}/tarball</code>.
+              </p>
+            </div>
+          ),
+        });
+      } else if (data?.pull_started) {
+        message.success("Migration submitted — runner pulling now.");
+      } else {
+        message.success("Migration submitted.");
+      }
       onCreated?.(null);
       handleClose();
     },

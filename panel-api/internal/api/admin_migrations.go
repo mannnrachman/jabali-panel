@@ -1094,12 +1094,23 @@ func (h *adminMigrationsHandler) submitDraft(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": err.Error()})
 		return
 	}
-	// Auto-kick the agent's pull-source runner. ADR-0095 decision 5
-	// closes the wizard → restore loop end-to-end: without this call
-	// the job sits in pending forever waiting for someone to POST
-	// /:id/pull-source explicitly. Failures here are non-fatal — the
-	// row already flipped to pending; the operator can retry the
-	// kick from the detail page.
+	// Auto-kick the agent's pull-source runner — but only for source
+	// kinds that pull over SSH (cpanel / directadmin / hestiacp).
+	// whm_pkgacct is OFFLINE: operator scp's a cpmove tarball into
+	// /var/lib/jabali-migrations/<id>/ then POSTs /:id/import (or
+	// uploads via /:id/tarball). Auto-kicking pull-source for WHM
+	// just returns the upstream "offline" error and confuses the UI.
+	// ADR-0094 §"per-source-kind support" carries the canonical list.
+	out, _ := h.cfg.Jobs.FindByID(c.Request.Context(), id)
+	if job.SourceKind == models.MigrationSourceWHMpkgacct {
+		c.JSON(http.StatusOK, gin.H{
+			"job":          out,
+			"pull_started": false,
+			"next_step":    "upload_tarball",
+			"detail":       "WHM (pkgacct) is offline-only. Upload a cpmove tarball via POST /admin/migrations/" + id + "/tarball OR scp it into /var/lib/jabali-migrations/" + id + "/, then POST /:id/import.",
+		})
+		return
+	}
 	if h.cfg.Agent != nil {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 		defer cancel()
@@ -1107,11 +1118,6 @@ func (h *adminMigrationsHandler) submitDraft(c *gin.Context) {
 			"job_id":   id,
 			"ssh_user": "root",
 		}); err != nil {
-			// Job left in pending; operator can re-trigger via the
-			// detail page's pull-source button (existing endpoint).
-			// Include the agent error in the response so the SPA can
-			// surface a toast without polling.
-			out, _ := h.cfg.Jobs.FindByID(c.Request.Context(), id)
 			c.JSON(http.StatusAccepted, gin.H{
 				"job":          out,
 				"pull_started": false,
@@ -1120,7 +1126,6 @@ func (h *adminMigrationsHandler) submitDraft(c *gin.Context) {
 			return
 		}
 	}
-	out, _ := h.cfg.Jobs.FindByID(c.Request.Context(), id)
 	c.JSON(http.StatusOK, gin.H{"job": out, "pull_started": h.cfg.Agent != nil})
 }
 

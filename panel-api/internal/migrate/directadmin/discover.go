@@ -101,6 +101,14 @@ func (d *Discoverer) Connect(ctx context.Context, host, user string, secret migr
 	c, ch, reqs, err := ssh.NewClientConn(conn, addr, cfg)
 	if err != nil {
 		conn.Close()
+		// Go ssh client filters our offered methods against the
+		// server's advertised list. "attempted methods [none]"
+		// means we offered something (e.g. password) but the
+		// server didn't accept that method — usually source has
+		// PasswordAuthentication=no. Surface a concrete hint.
+		if strings.Contains(err.Error(), "attempted methods [none]") {
+			return nil, fmt.Errorf("directadmin.Connect: source SSH server rejected the supplied auth method (likely PasswordAuthentication=no — upload an SSH PRIVATE KEY in the wizard's Connection step instead): %w", err)
+		}
 		return nil, fmt.Errorf("directadmin.Connect: ssh handshake: %w", err)
 	}
 	client := ssh.NewClient(c, ch, reqs)

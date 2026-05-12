@@ -104,6 +104,9 @@ func (d *Discoverer) Connect(ctx context.Context, host, user string, secret migr
 	c, ch, reqs, err := ssh.NewClientConn(conn, addr, cfg)
 	if err != nil {
 		conn.Close()
+		if strings.Contains(err.Error(), "attempted methods [none]") {
+			return nil, fmt.Errorf("cpanel.Connect: source SSH server rejected the supplied auth method (likely PasswordAuthentication=no — upload an SSH PRIVATE KEY in the wizard's Connection step instead): %w", err)
+		}
 		return nil, fmt.Errorf("cpanel.Connect: ssh handshake: %w", err)
 	}
 	client := ssh.NewClient(c, ch, reqs)

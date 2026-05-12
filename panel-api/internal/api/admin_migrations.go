@@ -86,6 +86,7 @@ func RegisterAdminMigrationRoutes(g *gin.RouterGroup, cfg AdminMigrationsHandler
 	rg.POST("/:id/retry", h.retry)
 	rg.GET("/:id/stream", h.stream)
 	rg.GET("/discover-accounts/:host/:user/size", h.discoverAccountSize)
+	rg.GET("/:id/discover-accounts", h.discoverAccounts)
 }
 
 type adminMigrationsHandler struct{ cfg AdminMigrationsHandlerConfig }
@@ -935,5 +936,70 @@ func (h *adminMigrationsHandler) discoverAccountSize(c *gin.Context) {
 		"from_cache":  false,
 		"error":       "size_probe_not_wired",
 		"detail":      "Live size probe ships in M35.2; pre-warm the cache via 'jabali migrate discover-size <host> <user>' (CLI) until then.",
+	})
+}
+
+// discoverAccounts — GET /admin/migrations/:id/discover-accounts.
+// Connects to the source via the existing per-job secret + Discoverer.
+// Returns []migrate.AccountSummary (login/domain/email/bytes_total) —
+// the SPA's account-picker step consumes this. ADR-0095 decision 3
+// (bulk-WHM) + decision 6 (size column from cheap whmapi1 listaccts;
+// per-account du-sh remains a separate lazy endpoint).
+//
+// Refuses unless job state ∈ {draft, pending} — once the runner has
+// started no point re-listing source-side accounts.
+func (h *adminMigrationsHandler) discoverAccounts(c *gin.Context) {
+	id := c.Param("id")
+	job, err := h.cfg.Jobs.FindByID(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if job.State != models.MigrationStateDraft && job.State != models.MigrationStatePending {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  "wrong_state",
+			"detail": "discover-accounts only valid in draft/pending; got " + job.State,
+		})
+		return
+	}
+	disc, err := migrate.Get(job.SourceKind)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no_discoverer", "detail": err.Error()})
+		return
+	}
+	// Per-job secret file. Step 2 of the wizard POSTed it via
+	// /:id/secrets; existence here is the operator's "I'm ready to
+	// list accounts" gate.
+	secretPath := filepath.Join(migrate.SecretsDir, job.ID+".env")
+	if _, err := os.Stat(secretPath); err != nil {
+		c.JSON(http.StatusPreconditionRequired, gin.H{
+			"error":  "secret_missing",
+			"detail": "POST /:id/secrets first",
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+
+	sess, err := disc.Connect(ctx, job.SourceHost, job.SourceUser, migrate.SecretRef{Path: secretPath})
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "connect_failed", "detail": err.Error()})
+		return
+	}
+	defer func() { _ = disc.Close(ctx, sess) }()
+
+	accounts, err := disc.ListAccounts(ctx, sess)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "list_failed", "detail": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"accounts": accounts,
+		"total":    len(accounts),
 	})
 }

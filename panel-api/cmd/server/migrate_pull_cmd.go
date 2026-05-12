@@ -59,7 +59,7 @@ extracts under .../extracted/.
 
 WHM-pkgacct is offline by design — operator-uploaded tarball, no
 live source SSH. Use scp directly for that kind.`,
-		PreRunE: requireDB,
+		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if jobID == "" {
 				return errors.New("--job-id is required")
@@ -149,8 +149,28 @@ live source SSH. Use scp directly for that kind.`,
 			if err := extractTar(localTar, extractDir); err != nil {
 				return markPullFailed(fmt.Errorf("extract: %w", err))
 			}
-			fmt.Fprintf(cmd.OutOrStdout(),
-				"done. next step: jabali migrate import --job-id %s --target-user <username>\n", jobID)
+			fmt.Fprintf(cmd.OutOrStdout(), "tarball extracted at %s\n", extractDir)
+			// Auto-kick import via the agent so the operator's "discover →
+			// select → continue" expectation lands at done, not at pending-
+			// with-tarball. CLI defaults (above) for target user/email/
+			// password mean import doesn't need flags when source provides
+			// contactemail. Best-effort: a dispatch failure leaves the job
+			// in pending so manual `jabali migrate import` still works.
+			if sharedAgent != nil {
+				kickCtx, kickCancel := context.WithTimeout(ctx, 10*time.Second)
+				defer kickCancel()
+				if _, err := sharedAgent.Call(kickCtx, "migration.import_run", map[string]any{
+					"job_id":      jobID,
+					"target_user": job.SourceUser,
+				}); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(),
+						"  (warning: could not auto-kick import: %v — run `jabali migrate import --job-id %s` manually)\n",
+						err, jobID)
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(),
+						"  → import dispatched (systemd unit jabali-migrate-import-%s.service)\n", jobID)
+				}
+			}
 			return nil
 		},
 	}

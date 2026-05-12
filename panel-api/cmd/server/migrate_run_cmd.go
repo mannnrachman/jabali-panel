@@ -14,11 +14,14 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
@@ -50,8 +53,8 @@ Resume: re-run the same command after fixing the cause of any
 failed stage. Already-done stages are skipped.`,
 		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if jobID == "" || targetUser == "" {
-				return errors.New("--job-id and --target-user are required")
+			if jobID == "" {
+				return errors.New("--job-id is required")
 			}
 			ctx := cmd.Context()
 
@@ -77,6 +80,40 @@ failed stage. Already-done stages are skipped.`,
 				}
 				return err
 			}
+
+			// Default-from-source resolution. Operator can still pass
+			// --target-user / --target-email / --target-password to
+			// override; absent values fall through to:
+			//   user → job.SourceUser (always present)
+			//   email → cpmove contactemail file or CONTACTEMAIL kv
+			//   password → 16-char random (printed to stdout once
+			//              so the operator can hand it to the user)
+			// Source's crypt(3) shadow hash isn't reusable (Kratos
+			// expects Argon2/bcrypt) but is surfaced so the operator
+			// can verify the hash style before sending a reset link.
+			extractDir := filepath.Join("/var/lib/jabali-migrations", jobID, "extracted")
+			meta, _ := cpanel.PeekAccountMeta(extractDir, job.SourceUser)
+			if targetUser == "" {
+				targetUser = job.SourceUser
+				fmt.Printf("  → target-user defaulted from source: %s\n", targetUser)
+			}
+			if targetEmail == "" && meta != nil && meta.Email != "" {
+				targetEmail = meta.Email
+				fmt.Printf("  → target-email detected from cpmove: %s\n", targetEmail)
+			}
+			if targetPassword == "" {
+				// Generate a random strong password the operator can
+				// hand to the customer. Print ONCE — we never store
+				// this in the DB.
+				if pw, perr := randomPassword(16); perr == nil {
+					targetPassword = pw
+					fmt.Printf("  → target-password auto-generated: %s   (share with customer; reset via Kratos when needed)\n", targetPassword)
+					if meta != nil && meta.PasswordHash != "" {
+						fmt.Printf("    (source had a crypt(3) hash but Kratos uses Argon2; original password not recoverable)\n")
+					}
+				}
+			}
+
 			user, err := usersRepo.FindByUsername(ctx, targetUser)
 			if err != nil {
 				if !errors.Is(err, repository.ErrNotFound) {
@@ -168,7 +205,8 @@ failed stage. Already-done stages are skipped.`,
 					models.MigrationSourceHestia))
 			}
 
-			extractDir := filepath.Join("/var/lib/jabali-migrations", job.ID, "extracted")
+			// extractDir is already resolved earlier (above the user
+			// resolution block) — re-use the same value here.
 			var parsed *cpanel.ParsedTarball
 			switch job.SourceKind {
 			case models.MigrationSourceDirectAdmin:
@@ -519,4 +557,23 @@ func jsonMarshal(v any) (string, error) {
 		return "", err
 	}
 	return string(b), nil
+}
+
+// randomPassword returns an N-byte URL-safe random string trimmed
+// of any padding. Strong enough for a one-time generated user
+// password the operator hands to the customer; the customer is
+// expected to rotate via Kratos.
+func randomPassword(n int) (string, error) {
+	if n < 12 {
+		n = 16
+	}
+	raw := make([]byte, n)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("rand.Read: %w", err)
+	}
+	s := base64.RawURLEncoding.EncodeToString(raw)
+	if len(s) > n {
+		s = s[:n]
+	}
+	return strings.ReplaceAll(s, "_", "x"), nil
 }

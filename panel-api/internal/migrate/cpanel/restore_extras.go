@@ -34,13 +34,15 @@ import (
 // ExtrasResult is the per-area counter set returned from ImportExtras.
 // Counters are summed into the parent restore manifest by the caller.
 type ExtrasResult struct {
-	CatchallsSet         int      // domains where catchall_target was written
-	SubdomainsCreated    int      // panel domain rows added from SUB_DOMAINS
-	ForwardersCreated    int      // mail forwarder rows added (M6.5)
-	ForwardersOrphaned   int      // alias lines whose local mailbox isn't in panel
-	AutorespondersCreated int     // vacation auto-replies restored (M6.5)
-	AutorespondersOrphaned int    // .autorespond entries whose mailbox isn't in panel
-	Skipped              []string // human-readable reasons (mirrors other restore writers)
+	CatchallsSet          int      // domains where catchall_target was written
+	SubdomainsCreated     int      // panel domain rows added from SUB_DOMAINS
+	ForwardersCreated     int      // mail forwarder rows added (M6.5)
+	ForwardersOrphaned    int      // alias lines whose local mailbox isn't in panel
+	AutorespondersCreated int      // vacation auto-replies restored (M6.5)
+	AutorespondersOrphaned int     // .autorespond entries whose mailbox isn't in panel
+	PHPVersionApplied     string   // jabali version chosen for the user pool ("" = skipped)
+	FTPAccountsObserved   int      // cpanel ftp accounts seen on source (record-only)
+	Skipped               []string // human-readable reasons (mirrors other restore writers)
 }
 
 // ImportExtras walks the parsed cpmove + reads cpanel meta files for
@@ -175,6 +177,46 @@ func ImportExtras(
 					res.ForwardersCreated++
 				}
 				res.Skipped = append(res.Skipped, sk...)
+			}
+		}
+	}
+
+	// ---- P4: user-wide PHP version ----
+	// cpanel writes per-domain `<dom>.php-fpm.yaml` files containing
+	// `phpversion: ea-php82`. Jabali stores a single FPM pool per
+	// user (not per-domain), so we pick the source's primary-domain
+	// version + apply it via php.pool.apply. Other domains' versions
+	// land as warnings + the operator can fix post-migration.
+	if agentCli != nil {
+		if ver, mixed := detectPHPVersion(parsed); ver != "" {
+			_, err := agentCli.Call(ctx, "php.pool.apply", map[string]any{
+				"username":        targetUsername,
+				"php_version":     ver,
+				"pm_max_children": uint32(20), // jabali default; pool.apply clamps
+			})
+			if err != nil {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("php_skip:%s:%v", ver, err))
+			} else {
+				res.PHPVersionApplied = ver
+			}
+			if len(mixed) > 0 {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("php_mixed_versions:source had %v; using %s for user pool", mixed, ver))
+			}
+		}
+	}
+
+	// ---- P6: FTP accounts (record-only) ----
+	if parsed.HomeDir != "" {
+		if files, derr := os.ReadDir(filepath.Join(parsed.HomeDir, "etc")); derr == nil {
+			for _, f := range files {
+				if !f.IsDir() {
+					continue
+				}
+				ftpPasswd := filepath.Join(parsed.HomeDir, "etc", f.Name(), "passwd")
+				if n := countNonCommentLines(ftpPasswd); n > 0 {
+					res.FTPAccountsObserved += n
+					res.Skipped = append(res.Skipped, fmt.Sprintf("ftp_observed:%s count=%d (FTP deprecated — re-issue via SFTP keys)", f.Name(), n))
+				}
 			}
 		}
 	}
@@ -316,6 +358,100 @@ func parseAliases(path string) (string, []aliasForward, []string) {
 		warnings = append(warnings, fmt.Sprintf("aliases_scan_err:%s:%v", path, err))
 	}
 	return catchAll, forwards, warnings
+}
+
+// detectPHPVersion scans <userdata>/*.php-fpm.yaml files for the
+// `phpversion: ea-php82` line + returns (primaryVersion, otherVersions).
+// "primary" = the most-frequent version (operator can fix outliers
+// after migration). Empty string when no .php-fpm.yaml found.
+func detectPHPVersion(parsed *ParsedTarball) (string, []string) {
+	// userdata dir lives next to the cp/<user> file inside the
+	// extracted wrapper. Same probe set PeekAccountMeta uses.
+	roots := []string{
+		filepath.Join(parsed.ExtractDir, "cpmove-"+parsed.SourceUser, "userdata"),
+		filepath.Join(parsed.ExtractDir, "userdata"),
+		filepath.Join(parsed.ExtractDir, "cp", parsed.SourceUser, "userdata"),
+	}
+	versions := map[string]int{}
+	for _, root := range roots {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !strings.HasSuffix(e.Name(), ".php-fpm.yaml") {
+				continue
+			}
+			if v := normalisePHPVersion(extractKV(filepath.Join(root, e.Name()), "phpversion")); v != "" {
+				versions[v]++
+			}
+		}
+		if len(versions) > 0 {
+			break
+		}
+	}
+	if len(versions) == 0 {
+		return "", nil
+	}
+	// Most-frequent wins; ties pick lexicographically lower so reruns
+	// are deterministic.
+	primary := ""
+	bestCount := 0
+	for v, c := range versions {
+		if c > bestCount || (c == bestCount && (primary == "" || v < primary)) {
+			primary = v
+			bestCount = c
+		}
+	}
+	var others []string
+	for v := range versions {
+		if v != primary {
+			others = append(others, v)
+		}
+	}
+	return primary, others
+}
+
+// normalisePHPVersion maps cpanel's "ea-php82" / "ea-php-rpm-7.4" /
+// raw "8.2" strings to jabali's "<major>.<minor>" form so
+// php.pool.apply accepts them. Empty string on unparseable input.
+func normalisePHPVersion(raw string) string {
+	raw = strings.TrimSpace(raw)
+	raw = strings.TrimPrefix(raw, "ea-php")
+	raw = strings.TrimPrefix(raw, "ea-")
+	raw = strings.TrimPrefix(raw, "php-")
+	raw = strings.TrimPrefix(raw, "php")
+	raw = strings.TrimPrefix(raw, "-rpm-")
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	// "82" → "8.2"; already-dotted "8.2" passes through.
+	if !strings.Contains(raw, ".") && len(raw) == 2 {
+		return string(raw[0]) + "." + string(raw[1])
+	}
+	return raw
+}
+
+// countNonCommentLines tallies non-blank, non-#-prefixed lines in
+// a file. Used for FTP-account counting where the source's
+// /etc/<dom>/passwd is a colon-separated user list.
+func countNonCommentLines(path string) int {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	n := 0
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		n++
+	}
+	return n
 }
 
 // findUserdataFile probes the same locations PeekAccountMeta uses

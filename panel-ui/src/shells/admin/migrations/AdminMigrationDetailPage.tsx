@@ -398,6 +398,48 @@ function RestoreSummary({ manifestJSON }: { manifestJSON: string }) {
       iconBg: "#f6ffed",
       iconColor: "#52c41a",
     },
+    {
+      label: "Subdomains",
+      value: parsed.subdomainsCreated,
+      icon: <GlobalOutlined />,
+      iconBg: "#f0f5ff",
+      iconColor: "#2f54eb",
+    },
+    {
+      label: "Forwarders",
+      value: parsed.forwardersCreated,
+      icon: <MailOutlined />,
+      iconBg: "#f9f0ff",
+      iconColor: "#722ed1",
+    },
+    {
+      label: "Autoresponders",
+      value: parsed.autorespondersCreated,
+      icon: <MailOutlined />,
+      iconBg: "#f9f0ff",
+      iconColor: "#722ed1",
+    },
+    {
+      label: "Catch-alls",
+      value: parsed.catchallsSet,
+      icon: <InboxOutlined />,
+      iconBg: "#f9f0ff",
+      iconColor: "#722ed1",
+    },
+    {
+      label: "SSL certs",
+      value: parsed.sslInstalled,
+      icon: <SafetyOutlined />,
+      iconBg: "#f6ffed",
+      iconColor: "#52c41a",
+    },
+    {
+      label: "FTP observed",
+      value: parsed.ftpAccounts,
+      icon: <KeyOutlined />,
+      iconBg: "#fff1f0",
+      iconColor: "#cf1322",
+    },
   ];
 
   return (
@@ -520,9 +562,16 @@ type RestoreParsed = {
   databasesCreated: number;
   dbUsersCreated: number;
   domainsCreated: number;
+  subdomainsCreated: number;
   emailEnabled: number;
   mailboxesCreated: number;
   messagesPushed: number;
+  forwardersCreated: number;
+  autorespondersCreated: number;
+  catchallsSet: number;
+  sslInstalled: number;
+  phpVersion: string;
+  ftpAccounts: number;
   dnsZones: number;
   dnsRecords: number;
   sshCreated: number;
@@ -540,9 +589,16 @@ function parseRestoreManifest(raw: string): RestoreParsed {
     databasesCreated: 0,
     dbUsersCreated: 0,
     domainsCreated: 0,
+    subdomainsCreated: 0,
     emailEnabled: 0,
     mailboxesCreated: 0,
     messagesPushed: 0,
+    forwardersCreated: 0,
+    autorespondersCreated: 0,
+    catchallsSet: 0,
+    sslInstalled: 0,
+    phpVersion: "",
+    ftpAccounts: 0,
     dnsZones: 0,
     dnsRecords: 0,
     sshCreated: 0,
@@ -603,6 +659,17 @@ function parseRestoreManifest(raw: string): RestoreParsed {
     } else if (line.startsWith("kratos: ")) {
       out.kratosStatus = kv(line, "status");
       out.kratosNewID = kv(line, "new_id");
+    } else if (line.startsWith("ssl: ")) {
+      out.sslInstalled += num(kv(line, "installed"));
+    } else if (line.startsWith("extras: ")) {
+      out.catchallsSet += num(kv(line, "catchalls"));
+      out.subdomainsCreated += num(kv(line, "subdomains"));
+      out.forwardersCreated += num(kv(line, "forwarders"));
+      out.autorespondersCreated += num(kv(line, "autoresponders"));
+      out.ftpAccounts += num(kv(line, "ftp_accounts"));
+      if (!out.phpVersion) {
+        out.phpVersion = kv(line, "php_version");
+      }
     } else if (
       line.includes("not found") ||
       line.includes("pending_manual") ||

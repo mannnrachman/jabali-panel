@@ -524,10 +524,11 @@ func cpanelRestoreCallback(
 			return bytes, warnings, fmt.Errorf("extras: %w", err)
 		}
 		warnings = append(warnings, fmt.Sprintf(
-			"extras: catchalls=%d subdomains=%d forwarders=%d forwarders_orphan=%d autoresponders=%d autoresponders_orphan=%d",
+			"extras: catchalls=%d subdomains=%d forwarders=%d forwarders_orphan=%d autoresponders=%d autoresponders_orphan=%d php_version=%s ftp_accounts=%d",
 			extrasRes.CatchallsSet, extrasRes.SubdomainsCreated,
 			extrasRes.ForwardersCreated, extrasRes.ForwardersOrphaned,
-			extrasRes.AutorespondersCreated, extrasRes.AutorespondersOrphaned))
+			extrasRes.AutorespondersCreated, extrasRes.AutorespondersOrphaned,
+			extrasRes.PHPVersionApplied, extrasRes.FTPAccountsObserved))
 		warnings = append(warnings, extrasRes.Skipped...)
 
 		// Ensure the migrated user has a Kratos identity so they can log in.

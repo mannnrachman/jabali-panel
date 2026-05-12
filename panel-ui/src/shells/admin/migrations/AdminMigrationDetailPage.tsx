@@ -24,6 +24,8 @@ import {
   Typography,
 } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
+import { useMigrationStream } from "../../../hooks/useMigrationStream";
 import { useNavigate, useParams } from "react-router";
 
 import { apiClient } from "../../../apiClient";
@@ -89,6 +91,22 @@ export const AdminMigrationDetailPage = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
+  // ADR-0095 decision 4: prefer SSE for live updates. useQuery still
+  // runs as the initial fetch + the source of truth for mutation
+  // invalidations, but its refetch cadence drops to 60s — SSE drives
+  // real-time snapshots and writes through queryClient.setQueryData
+  // so every consumer of the query key stays in sync.
+  const queryClientForStream = useQueryClient();
+  const stream = useMigrationStream(id ?? null);
+  useEffect(() => {
+    if (stream.data && id) {
+      queryClientForStream.setQueryData<DetailResponse>(
+        ["admin-migrations", id],
+        stream.data,
+      );
+    }
+  }, [stream.data, id, queryClientForStream]);
+
   const detail = useQuery<DetailResponse>({
     queryKey: ["admin-migrations", id],
     queryFn: async () => {
@@ -98,12 +116,12 @@ export const AdminMigrationDetailPage = () => {
       return data;
     },
     enabled: !!id,
+    // 60s fallback poll — SSE delivers updates in real time at 2s
+    // cadence; this is just a safety net if the EventSource drops.
     refetchInterval: (q) => {
       const data = q.state.data as DetailResponse | undefined;
-      // Stop polling once terminal — saves a tick / sec on a busy
-      // operator's open page.
       if (!data) return 5_000;
-      return isTerminal(data.job.state) ? false : 10_000;
+      return isTerminal(data.job.state) ? false : 60_000;
     },
   });
 

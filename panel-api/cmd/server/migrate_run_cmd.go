@@ -216,6 +216,20 @@ failed stage. Already-done stages are skipped.`,
 					if h.CronFile != "" {
 						parsed.CronFiles = []string{h.CronFile}
 					}
+					// M35.4 Hestia DomainNames+DocRoots fallback for
+					// ImportDomains (no BIND zones in Hestia tarball).
+					// Target docroot mirrors the source layout:
+					//   /home/<target>/web/<dom>/public_html
+					// ImportHome rsync runs first + lands content there.
+					if len(h.DomainDirs) > 0 {
+						parsed.DomainNames = make([]string, 0, len(h.DomainDirs))
+						parsed.DocRoots = make(map[string]string, len(h.DomainDirs))
+						for name := range h.DomainDirs {
+							parsed.DomainNames = append(parsed.DomainNames, name)
+							parsed.DocRoots[name] = filepath.Join(
+								"/home", *user.Username, "web", name, "public_html")
+						}
+					}
 				} else {
 					parsed = &cpanel.ParsedTarball{
 						ExtractDir: extractDir,

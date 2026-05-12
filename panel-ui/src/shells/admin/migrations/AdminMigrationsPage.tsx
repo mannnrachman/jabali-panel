@@ -10,7 +10,7 @@
 //
 // Backed by panel-api/internal/api/admin_migrations.go (commit
 // 5981541a).
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   Button,
@@ -30,7 +30,7 @@ import { Link } from "react-router";
 
 import { apiClient } from "../../../apiClient";
 import { RowActionButton } from "../../../components/RowActionButton";
-import { DeleteOutlined, PlusOutlined, SwapOutlined } from "@icons";
+import { DeleteOutlined, EditOutlined, PlusOutlined, SwapOutlined } from "@icons";
 import { BulkWhmDrawer } from "./BulkWhmDrawer";
 import { CreateMigrationDrawer } from "./CreateMigrationDrawer";
 import { CreateMigrationWizard } from "./CreateMigrationWizard";
@@ -80,6 +80,16 @@ export const AdminMigrationsPage = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
+
+  // M35.4 — auto-open wizard on landing if URL carries ?wizard=<id>.
+  // Resume-draft buttons + bulk-create redirect both rely on this.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const u = new URL(window.location.href);
+    if (u.searchParams.has("wizard")) {
+      setWizardOpen(true);
+    }
+  }, []);
 
   const list = useQuery<MigrationJobListResponse>({
     queryKey: ["admin-migrations"],
@@ -325,11 +335,30 @@ export const AdminMigrationsPage = () => {
                 r.state === "cancelled";
               return (
                 <Space size="small">
-                  <Link to={`/jabali-admin/migrations/${r.id}`}>
-                    <RowActionButton icon={<SwapOutlined />} color="default">
-                      View
+                  {isDraft ? (
+                    <RowActionButton
+                      icon={<EditOutlined />}
+                      color="primary"
+                      onClick={() => {
+                        // M35.4 Resume — reopen the wizard with this
+                        // draft's id. The wizard's mount-side effect
+                        // reads ?wizard=<id> from URL + restores state
+                        // (ADR-0095 decision 5).
+                        const u = new URL(window.location.href);
+                        u.searchParams.set("wizard", r.id);
+                        window.history.replaceState({}, "", u.toString());
+                        setWizardOpen(true);
+                      }}
+                    >
+                      Resume
                     </RowActionButton>
-                  </Link>
+                  ) : (
+                    <Link to={`/jabali-admin/migrations/${r.id}`}>
+                      <RowActionButton icon={<SwapOutlined />} color="default">
+                        View
+                      </RowActionButton>
+                    </Link>
+                  )}
                   {isDraft && (
                     <Popconfirm
                       title={`Discard draft ${r.source_user}?`}
@@ -403,8 +432,8 @@ export const AdminMigrationsPage = () => {
             system_backup_user tarball pull; restore via cpanel writers
           </Typography.Text>
           <Typography.Text>
-            <Tag color="orange">HestiaCP</Tag> Discoverer scaffold only
-            (DocRoots adapter pending M35.4)
+            <Tag color="green">HestiaCP</Tag> Live SSH discover +
+            v-backup-user tarball pull; restore via cpanel writers
           </Typography.Text>
           <Typography.Text>
             <Tag color="default">IMAP-only</Tag> Not yet wired

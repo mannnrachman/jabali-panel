@@ -58,13 +58,12 @@ type DiscoveredAccount = {
 const SOURCE_OPTIONS = [
   { value: "whm_pkgacct", label: "WHM (bulk: many cPanel accounts)" },
   { value: "cpanel", label: "cPanel (single account)" },
-  // DA shipped M35.3: live SSH discover + system_backup_user pull +
-  // tarball restore reuse cpanel writers via DAParsedTarball adapter.
-  // Hestia Discoverer + tarball parser exist but per-area DocRoots
-  // adapter is pending; keep disabled until M35.4 ships the same
-  // domain-dir-scan path Hestia needs.
+  // M35.3 shipped DA; M35.4 shipped Hestia. Both reuse cpanel writers
+  // via DomainNames+DocRoots fallback (no BIND zones in their tarballs)
+  // — see directadmin.ToCpanelParsed + the Hestia branch in
+  // migrate_run_cmd.go.
   { value: "directadmin", label: "DirectAdmin (single account)" },
-  { value: "hestiacp", label: "HestiaCP (scaffold only — pending M35.4)", disabled: true },
+  { value: "hestiacp", label: "HestiaCP (single account)" },
 ];
 
 interface Props {
@@ -352,7 +351,11 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
             style={{ display: "flex", flexDirection: "column", gap: 8 }}
           >
             {SOURCE_OPTIONS.map((o) => (
-              <Radio key={o.value} value={o.value} disabled={o.disabled}>
+              <Radio
+                key={o.value}
+                value={o.value}
+                disabled={"disabled" in o ? Boolean(o.disabled) : false}
+              >
                 {o.label}
               </Radio>
             ))}

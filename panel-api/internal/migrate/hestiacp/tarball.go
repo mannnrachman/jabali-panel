@@ -35,6 +35,11 @@ type HestiaParsedTarball struct {
 	UserConf      string   // <root>/user.conf
 	SSHKeys       string   // <root>/ssh_keys (when present)
 	CronFile      string   // <root>/conf/cron/<user> (when present)
+	// DomainDirs maps each domain name to its source-side
+	// <WebRoot>/<dom>/ absolute path. Populated post-extract by
+	// scanning the dir; M35.4 consumer feeds the cpanel ImportDomains
+	// writer via the Hestia adapter branch in migrate_run_cmd.go.
+	DomainDirs    map[string]string
 	Skipped       []string
 }
 
@@ -119,6 +124,23 @@ func ParseHestiaTarball(tarballPath, extractDir string) (*HestiaParsedTarball, e
 	}
 	out.WebRoot = filepath.Join(extractDir, "web")
 	out.MailRoot = filepath.Join(extractDir, "mail")
+	// Post-extract scan: every immediate child of <WebRoot> names a
+	// hosted domain. Feeds DomainNames+DocRoots in the adapter so
+	// cpanel.ImportDomains can create panel rows + nginx vhosts
+	// without a BIND zone (Hestia tarballs don't ship zones).
+	if entries, derr := os.ReadDir(out.WebRoot); derr == nil {
+		out.DomainDirs = make(map[string]string, len(entries))
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if name == "" || strings.HasPrefix(name, ".") {
+				continue
+			}
+			out.DomainDirs[name] = filepath.Join(out.WebRoot, name)
+		}
+	}
 	return out, nil
 }
 

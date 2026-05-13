@@ -86,7 +86,29 @@ import type { UploadDrawerHandle } from "./UploadDrawer";
 // files page doesn't pay that cost. The editor only mounts when the
 // user actually clicks Edit on a file. Suspense fallback below keeps
 // the modal from flashing an empty pane while the chunk is fetched.
-const Editor = lazy(() => import("@monaco-editor/react"));
+//
+// We MUST self-host monaco — the default @monaco-editor/react loader
+// fetches the AMD bundle from cdn.jsdelivr.net which is blocked by
+// the panel's strict CSP (script-src 'self' 'unsafe-inline'). Pass
+// the bundled monaco-editor module to loader.config so no network
+// fetch happens; the chunk lives inside our own vite-built bundle.
+const Editor = lazy(async () => {
+  const [{ loader }, monaco, EditorWorker] = await Promise.all([
+    import("@monaco-editor/react"),
+    import("monaco-editor"),
+    import("monaco-editor/esm/vs/editor/editor.worker?worker"),
+  ]);
+  // Monaco resolves language workers via self.MonacoEnvironment. We
+  // only need the base editor worker for plain-text editing of
+  // wp-config.php / .htaccess / etc.; JSON / CSS / HTML / TS
+  // language workers are deliberately not wired so the bundle stays
+  // small (~500KB instead of ~3MB).
+  (self as unknown as { MonacoEnvironment: { getWorker: () => Worker } }).MonacoEnvironment = {
+    getWorker: () => new EditorWorker.default(),
+  };
+  loader.config({ monaco });
+  return import("@monaco-editor/react");
+});
 
 const { Text } = Typography;
 

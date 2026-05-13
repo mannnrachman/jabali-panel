@@ -294,11 +294,15 @@ func (d *Discoverer) DescribeAccount(ctx context.Context, raw migrate.Session, a
 	if s.client != nil {
 		host = s.client.RemoteAddr().String()
 	}
-	// Validate the account exists on the source (cheap probe before
-	// per-area builders ship). `da admin user.show <user>` returns
-	// non-zero exit on unknown user.
-	if _, err := s.run(ctx, d.CommandTimeout, fmt.Sprintf("da admin user.show '%s'", strings.ReplaceAll(accountID, "'", `'\''`))); err != nil {
-		return nil, fmt.Errorf("user.show %q: %w", accountID, err)
+	// Validate the account exists on the source by stat'ing the
+	// DA-side user.conf file. `da admin user.show` doesn't exist as
+	// a CLI verb (only `da admin` for self-identification) so the
+	// previous shellout always failed with "Unrecognized arguments".
+	probeCmd := fmt.Sprintf("test -f /usr/local/directadmin/data/users/'%s'/user.conf",
+		strings.ReplaceAll(accountID, "'", `'\''`))
+	if _, err := s.run(ctx, d.CommandTimeout, probeCmd); err != nil {
+		return nil, fmt.Errorf("user %q not found on source (no /usr/local/directadmin/data/users/%s/user.conf): %w",
+			accountID, accountID, err)
 	}
 	m := &migrate.AccountManifest{
 		SchemaVersion: migrate.ManifestSchemaVersion,

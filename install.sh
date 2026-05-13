@@ -3122,25 +3122,27 @@ protect_panel_docs() {
 # ---------- step 5a: build React SPA -----------------------------------
 
 ensure_build_swap() {
-  # Frontend build (vite + node) peaks at ~1.5 GB resident. On a 2-4 GB
+  # Frontend build (vite + node) peaks at ~1.5 GB resident. On a low-RAM
   # host without swap the OOM killer fires mid-build, leaving the install
   # half-complete + the operator with a cryptic 'Killed' from npm. Add a
-  # 2 GB swap file when the host has <4 GB RAM and <2 GB swap is already
+  # 2 GB swap file when the host has <6 GB RAM and <2 GB swap is already
   # active. Idempotent: re-runs skip when swap is sufficient.
-  local mem_kb want_swap_kb cur_swap_kb mem_gb
+  local mem_kb want_swap_kb cur_swap_kb mem_mb
   mem_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
   cur_swap_kb=$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
-  mem_gb=$((mem_kb / 1024 / 1024))
-  if [[ $mem_gb -ge 4 ]]; then
+  mem_mb=$((mem_kb / 1024))
+  _log "build-swap: host has ${mem_mb}MB RAM + ${cur_swap_kb}kB swap (threshold: <6144MB → add 2GB swap)"
+  if [[ $mem_mb -ge 6144 ]]; then
+    _log "build-swap: sufficient RAM (${mem_mb}MB), skipping swap provision"
     return 0
   fi
   want_swap_kb=2097152  # 2 GB
   if [[ $cur_swap_kb -ge $want_swap_kb ]]; then
-    _log "build-swap: ${cur_swap_kb}kB already active, sufficient"
+    _log "build-swap: ${cur_swap_kb}kB swap already active, sufficient"
     return 0
   fi
   local swap_file=/var/swap.jabali
-  _log "build-swap: host has ${mem_gb}GB RAM + ${cur_swap_kb}kB swap; provisioning 2 GB swap at $swap_file"
+  _log "build-swap: provisioning 2 GB swap at $swap_file (this can take 30-60s on slow disks)"
   # Clean up any half-baked prior attempt before re-creating.
   if [[ -e "$swap_file" ]]; then
     swapoff "$swap_file" 2>/dev/null || true
@@ -3186,7 +3188,7 @@ build_frontend() {
   sudo -u "$SERVICE_USER" -H env \
     HOME="$REPO_DIR" \
     PATH="/usr/bin:/bin" \
-    NODE_OPTIONS="--max-old-space-size=1500" \
+    NODE_OPTIONS="--max-old-space-size=1024" \
     bash -c "cd '$REPO_DIR/panel-ui' && npm run build"
   _ok "panel-ui built → $REPO_DIR/panel-ui/dist/"
 }

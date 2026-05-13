@@ -354,3 +354,33 @@ func truncateStderr(stderr string, maxBytes int) string {
 	// Keep the last maxBytes characters (the tail)
 	return stderr[len(stderr)-maxBytes:]
 }
+
+
+// ExtractActionableDetail pulls the "Domain: X / Type: Y / Detail: Z"
+// block certbot prints right before "Some challenges have failed."
+// Returns the multi-line string when found, "" otherwise. Used by
+// ssl_issue + ssl_panel_issue handlers so the panel UI's last_error
+// Modal carries text the operator can act on without VPS shell
+// access to /var/log/letsencrypt/letsencrypt.log.
+func ExtractActionableDetail(stderr string) string {
+	lines := strings.Split(stderr, "\n")
+	var out []string
+	capture := false
+	for _, line := range lines {
+		trim := strings.TrimSpace(line)
+		if strings.HasPrefix(trim, "Domain:") || strings.HasPrefix(trim, "Type:") || strings.HasPrefix(trim, "Detail:") || strings.HasPrefix(trim, "Hint:") {
+			capture = true
+			out = append(out, trim)
+			continue
+		}
+		if capture {
+			// continuation lines are indented; stop on first blank or
+			// non-indented line.
+			if trim == "" || (len(line) > 0 && line[0] != ' ' && line[0] != '\t') {
+				break
+			}
+			out = append(out, trim)
+		}
+	}
+	return strings.Join(out, " | ")
+}

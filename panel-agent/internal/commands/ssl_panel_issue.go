@@ -118,9 +118,14 @@ func sslPanelIssueHandler(ctx context.Context, params json.RawMessage) (any, err
 			"reason": result.Reason,
 			"stderr": result.Stderr,
 		})
+		actionable := certbot.ExtractActionableDetail(result.Stderr)
+		msg := fmt.Sprintf("certbot panel issue failed: %v", err)
+		if actionable != "" {
+			msg = fmt.Sprintf("certbot panel issue failed (%s): %s", result.Reason, actionable)
+		}
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("certbot panel issue failed: %v", err),
+			Message: msg,
 			Details: json.RawMessage(details),
 		}
 	}

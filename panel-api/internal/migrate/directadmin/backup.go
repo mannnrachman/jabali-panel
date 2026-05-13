@@ -119,7 +119,7 @@ if [ -s "$USERDIR/databases.list" ]; then
   DBS=$(awk 'NF' "$USERDIR/databases.list")
 fi
 if [ -z "$DBS" ] && [ -d "$USERDIR/databases" ]; then
-  DBS=$(find "$USERDIR/databases" -maxdepth 1 -type f -printf '%f\n' 2>/dev/null | \
+  DBS=$(find "$USERDIR/databases" -maxdepth 1 -type f -printf '%%f\n' 2>/dev/null | \
         sed -e 's/\.conf$//' -e 's/\.list$//' | awk 'NF' | sort -u)
 fi
 if [ -z "$DBS" ] && [ -n "$MYSQL_AUTH" ]; then

@@ -2901,6 +2901,11 @@ ensure_user_and_dirs() {
 
   install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" "$REPO_DIR"
   install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$(dirname "$ENV_FILE")"
+  # Working folder root (server_settings.working_folder default).
+  # Migration staging + backup repo subdirs live underneath; admin can
+  # retarget via Settings → Storage after install.
+  install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali
+  install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali/migrations
   install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali/backups
   install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali/restore
   # M28 — operator-uploaded panel logos. Owned by the service user so
@@ -2909,11 +2914,23 @@ ensure_user_and_dirs() {
   # api anyway, but keep it world-readable for future direct serving).
   install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali-panel
   install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali-panel/branding
-  # M35 — migration importers. /var/lib/jabali-migrations holds long-lived
-  # per-job artefacts (downloaded source tarballs, extracted manifests,
-  # logs). 0750 root:jabali so the panel can read+write but other users
-  # can't crawl mid-import data.
-  install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali-migrations
+  # M35 — migration importers. Legacy path /var/lib/jabali-migrations
+  # is kept as a symlink to the new working_folder/migrations subdir so
+  # existing callsites that hardcode the old path keep working. Real
+  # storage lives under <working_folder>/migrations.
+  if [ ! -L /var/lib/jabali-migrations ] && [ ! -e /var/lib/jabali-migrations ]; then
+    ln -s /var/lib/jabali/migrations /var/lib/jabali-migrations
+  elif [ ! -L /var/lib/jabali-migrations ] && [ -d /var/lib/jabali-migrations ]; then
+    # Pre-existing real dir from older installs — keep it in place; the
+    # working_folder helper resolves to legacy when admin hasn't changed
+    # the default. Operator may rsync + relink manually.
+    :
+  fi
+  # Legacy backup path symlink — same treatment so M30 callsites that
+  # hardcode /var/lib/jabali-backups keep working.
+  if [ ! -L /var/lib/jabali-backups ] && [ ! -e /var/lib/jabali-backups ]; then
+    ln -s /var/lib/jabali/backups /var/lib/jabali-backups
+  fi
   # M35 ADR-0094 §"tracked risks": per-job source credentials live at
   # /etc/jabali-panel/migration-secrets/<job-id>.env (root:jabali 0640).
   # Wiped on job terminal state by the future-shipped reaper. Mode 0750

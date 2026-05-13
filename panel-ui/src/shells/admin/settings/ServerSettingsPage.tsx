@@ -77,6 +77,7 @@ type ServerSettings = {
   postgres_enabled: boolean;
   postgres_max_connections_per_user: number;
   migration_allow_private_hosts: boolean;
+  working_folder: string;
   updated_at: string;
 };
 
@@ -612,6 +613,7 @@ const StorageSettingsTab = () => {
         disk_quota_enabled: values.disk_quota_enabled || false,
         bandwidth_quota_enforce_enabled: values.bandwidth_quota_enforce_enabled || false,
         upload_max_size_mb: values.upload_max_size_mb || 1024,
+        working_folder: (values.working_folder || "").trim() || "/var/lib/jabali",
       });
       notify({ type: "success", message: "Storage settings saved" });
       form.setFieldsValue(resp.data);
@@ -654,6 +656,43 @@ const StorageSettingsTab = () => {
                 addonAfter="MB"
               />
             </Form.Item>
+          </Col>
+        </Row>
+      </Card>
+
+      <Card title="Working Folder" style={{ marginBottom: 16 }}>
+        <Row gutter={16}>
+          <Col xs={24}>
+            <Form.Item
+              label="Working Folder"
+              name="working_folder"
+              rules={[
+                { required: true, message: "Required" },
+                {
+                  validator: async (_, v: string) => {
+                    if (!v) return;
+                    if (!v.startsWith("/")) throw new Error("Must be an absolute path");
+                    if (v.includes("..")) throw new Error("Must not contain '..'");
+                  },
+                },
+              ]}
+              tooltip="Base directory for migration staging trees + backup repositories. Default /var/lib/jabali. Subdirs created on first use: <working_folder>/migrations and <working_folder>/backups. Retarget to a larger disk by changing this + symlinking the legacy /var/lib/jabali-migrations + /var/lib/jabali-backups paths underneath."
+            >
+              <Input placeholder="/var/lib/jabali" />
+            </Form.Item>
+            <Alert
+              type="info"
+              showIcon
+              message="Disk size matters"
+              description={
+                <>
+                  Migrations can stage 5+ GB per account; backups grow without bound until
+                  retention prunes. Point at a dedicated data volume in production
+                  (e.g. <code>/mnt/storage/jabali</code>) so a runaway migration doesn't fill
+                  the root partition.
+                </>
+              }
+            />
           </Col>
         </Row>
       </Card>

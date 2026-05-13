@@ -113,6 +113,12 @@ type updateServerSettingsRequest struct {
 	// local-network test migrations; default-deny remains the safe
 	// production stance. ADR-0095 decision 8.
 	MigrationAllowPrivateHosts *bool `json:"migration_allow_private_hosts,omitempty"`
+
+	// WorkingFolder is the on-disk base for migrations + backups.
+	// Default '/var/lib/jabali'. Must be an absolute path. Operator
+	// retargets to a larger disk by setting + symlinking the legacy
+	// jabali-migrations / jabali-backups dirs underneath.
+	WorkingFolder *string `json:"working_folder,omitempty"`
 }
 
 func (h *serverSettingsHandler) update(c *gin.Context) {
@@ -233,6 +239,13 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 			v = 1000
 		}
 		current.PostgresMaxConnectionsPerUser = v
+	}
+	if req.WorkingFolder != nil {
+		v := strings.TrimSpace(*req.WorkingFolder)
+		if v == "" {
+			v = "/var/lib/jabali"
+		}
+		current.WorkingFolder = v
 	}
 
 	// Validate — reject obviously bad input so we don't persist garbage.
@@ -398,6 +411,17 @@ func validateServerSettings(s *models.ServerSettings) error {
 	}
 	if s.DefaultNspawnImageVersion != "" && !isImageNamePattern(s.DefaultNspawnImageVersion) {
 		return fmt.Errorf("default_nspawn_image_version: must match [a-z0-9-]+")
+	}
+	// WorkingFolder must be absolute. install.sh ensures /var/lib/
+	// jabali exists at first boot; operator who points elsewhere is
+	// responsible for pre-creating + ACLing that dir.
+	if s.WorkingFolder != "" {
+		if !strings.HasPrefix(s.WorkingFolder, "/") {
+			return fmt.Errorf("working_folder: must be an absolute path")
+		}
+		if strings.Contains(s.WorkingFolder, "..") {
+			return fmt.Errorf("working_folder: must not contain '..'")
+		}
 	}
 	return nil
 }

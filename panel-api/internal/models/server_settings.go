@@ -169,6 +169,18 @@ type ServerSettings struct {
 	// migrations from internal legacy infra.
 	MigrationAllowPrivateHosts bool `gorm:"column:migration_allow_private_hosts;type:tinyint(1);not null;default:0" json:"migration_allow_private_hosts"`
 
+	// WorkingFolder is the base directory used by migrations + backups
+	// (migration 000131). Default '/var/lib/jabali' — operators retarget
+	// to a larger disk when /var partition is small.
+	// Subdirs (created on first use):
+	//   <working_folder>/migrations/<job-id>/ — extracted source tarballs
+	//   <working_folder>/backups/repo         — restic repo
+	//   <working_folder>/backups/logs/        — per-job backup logs
+	// Legacy /var/lib/jabali-migrations + /var/lib/jabali-backups paths
+	// remain valid agent-side; install.sh symlinks them under the new
+	// working_folder so existing data survives schema upgrade.
+	WorkingFolder string `gorm:"column:working_folder;type:varchar(255);not null;default:'/var/lib/jabali'" json:"working_folder"`
+
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 

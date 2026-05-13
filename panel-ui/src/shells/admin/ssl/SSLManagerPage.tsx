@@ -2,6 +2,7 @@ import { Card, Typography } from "antd";
 import { ShieldCheckOutlined } from "@icons";
 
 import { SSLManagerTable } from "../../../components/ssl/SSLManagerTable";
+import { PanelSSLCard } from "../settings/PanelSSLCard";
 
 export const SSLManagerPage = () => {
   return (
@@ -10,7 +11,15 @@ export const SSLManagerPage = () => {
         <ShieldCheckOutlined /> SSL Manager
       </Typography.Title>
 
-      <Card>
+      {/* Panel cert lives alongside customer-domain certs so the
+          operator has one place to inspect / re-issue every cert
+          managed by the panel. PanelSSLCard owns its own data
+          loading + state via usePanelCertificate. */}
+      <div style={{ marginBottom: 16 }}>
+        <PanelSSLCard />
+      </div>
+
+      <Card title="Domain Certificates">
         <SSLManagerTable
           endpoint="/admin/ssl-certificates"
           showOwner={true}

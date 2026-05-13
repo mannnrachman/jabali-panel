@@ -3125,32 +3125,32 @@ ensure_swap() {
   # Frontend build (vite + node) peaks at ~1.5 GB resident. On a low-RAM
   # host without swap the OOM killer fires mid-build, leaving the install
   # half-complete + the operator with a cryptic 'Killed' from npm. Add a
-  # 4 GB swap file when the host has <6 GB RAM and <2 GB swap is already
+  # 2 GB swap file ONLY when the host has ≤2 GB RAM and <2 GB swap is
   # active. Idempotent: re-runs skip when swap is sufficient.
   local mem_kb want_swap_kb cur_swap_kb mem_mb
   mem_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
   cur_swap_kb=$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
   mem_mb=$((mem_kb / 1024))
-  _log "build-swap: host has ${mem_mb}MB RAM + ${cur_swap_kb}kB swap (threshold: <6144MB → add 2GB swap)"
-  if [[ $mem_mb -ge 6144 ]]; then
-    _log "build-swap: sufficient RAM (${mem_mb}MB), skipping swap provision"
+  _log "build-swap: host has ${mem_mb}MB RAM + ${cur_swap_kb}kB swap (threshold: ≤2048MB → add 2GB swap)"
+  if [[ $mem_mb -gt 2048 ]]; then
+    _log "build-swap: ${mem_mb}MB RAM > 2GB, no swap needed"
     return 0
   fi
-  want_swap_kb=4194304  # 4 GB
+  want_swap_kb=2097152  # 2 GB
   if [[ $cur_swap_kb -ge $want_swap_kb ]]; then
     _log "build-swap: ${cur_swap_kb}kB swap already active, sufficient"
     return 0
   fi
   local swap_file=/var/swap.jabali
-  _log "build-swap: provisioning 4 GB swap at $swap_file (this can take 30-60s on slow disks)"
+  _log "build-swap: provisioning 2 GB swap at $swap_file (this can take 30-60s on slow disks)"
   # Clean up any half-baked prior attempt before re-creating.
   if [[ -e "$swap_file" ]]; then
     swapoff "$swap_file" 2>/dev/null || true
     rm -f "$swap_file"
   fi
-  if ! fallocate -l 4G "$swap_file" 2>/dev/null; then
+  if ! fallocate -l 2G "$swap_file" 2>/dev/null; then
     # fallocate fails on tmpfs / unsupported FS — fall back to dd.
-    dd if=/dev/zero of="$swap_file" bs=1M count=4096 status=none \
+    dd if=/dev/zero of="$swap_file" bs=1M count=2048 status=none \
       || { _warn "swap provision failed — vite build may OOM on this host"; return 0; }
   fi
   chmod 0600 "$swap_file"
@@ -3169,7 +3169,7 @@ ensure_swap() {
   # without trading interactive latency for it.
   echo 'vm.swappiness=10' > /etc/sysctl.d/99-jabali-swappiness.conf
   sysctl -w vm.swappiness=10 >/dev/null 2>&1 || true
-  _ok "build-swap: 4 GB active at $swap_file (persists via /etc/fstab); vm.swappiness=10"
+  _ok "build-swap: 2 GB active at $swap_file (persists via /etc/fstab); vm.swappiness=10"
 }
 
 build_frontend() {

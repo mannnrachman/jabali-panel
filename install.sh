@@ -9510,6 +9510,13 @@ SQL
   local u
   for u in jabali-webmail jabali-mail stalwart jabali; do
     if id "$u" >/dev/null 2>&1; then
+      # Kill any lingering processes + systemd-logind sessions so userdel
+      # doesn't refuse with 'user is currently used by process N'.
+      # Best-effort: ignore errors when nothing to kill.
+      loginctl terminate-user "$u" 2>/dev/null || true
+      pkill -KILL -u "$u" 2>/dev/null || true
+      # Tiny grace window so systemd reaps the session/scope before userdel.
+      sleep 1
       # userdel -r would remove home; we pass --force for idempotence but NOT -r
       # because jabali's home is /opt/jabali-panel which we already rm -rf'd.
       userdel --force "$u" 2>/dev/null && _log "removed user $u" || _warn "could not remove user $u"

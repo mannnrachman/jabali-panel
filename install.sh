@@ -9038,6 +9038,22 @@ EOF
   if declare -f install_audit_exec >/dev/null 2>&1; then
     install_audit_exec
   fi
+
+  # M40 AppArmor profiles — re-installs profile files + reloads parser.
+  # Idempotent: profile compare + skip-on-identical means steady-state
+  # cost is one filesystem stat per profile. Requires REPO_DIR (set by
+  # clone_or_update_repo, which jabali update's full flow runs before
+  # this prelude).
+  if declare -f install_apparmor >/dev/null 2>&1 && [[ -d "${REPO_DIR:-/opt/jabali-panel}/install/apparmor" ]]; then
+    install_apparmor
+  fi
+
+  # M42 AIDE config + systemd units — re-writes /etc/aide/aide.conf
+  # + jabali-aide-check unit files when the exclude list grows. DB
+  # init only fires when /var/lib/aide/aide.db is missing.
+  if declare -f install_aide >/dev/null 2>&1; then
+    install_aide
+  fi
 }
 
 main() {

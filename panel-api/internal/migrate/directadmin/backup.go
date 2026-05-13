@@ -91,24 +91,102 @@ if grep -q "^$ACCT:" /etc/shadow 2>/dev/null; then
   awk -F: -v u="$ACCT" '$1==u {print $2}' /etc/shadow > "$TMP/cpmove-$ACCT/shadow"
 fi
 
-# 2. mysql/ — dump every database named <user>_* using DA's stashed
-#    admin creds. The .sql files match the cpanel cpmove naming so
-#    cpanel.ImportDatabases picks them up.
+# 2. mysql/ — dump every database owned by this DA user. DA registers
+#    them under /usr/local/directadmin/data/users/<u>/databases.list
+#    (one db per line); fall back to grep '^<user>_' on SHOW DATABASES
+#    when the file is missing.
 if [ -r "$DACNF" ]; then
-  for db in $(mysql --defaults-file="$DACNF" -BN -e "SHOW DATABASES" | grep "^${ACCT}_" || true); do
+  DBS=""
+  if [ -s "$USERDIR/databases.list" ]; then
+    DBS=$(awk 'NF' "$USERDIR/databases.list")
+  fi
+  if [ -z "$DBS" ]; then
+    DBS=$(mysql --defaults-file="$DACNF" -BN -e "SHOW DATABASES" | grep "^${ACCT}_" || true)
+  fi
+  for db in $DBS; do
     mysqldump --defaults-file="$DACNF" --skip-lock-tables --single-transaction "$db" > "$TMP/cpmove-$ACCT/mysql/$db.sql" || true
   done
 fi
 
 # 3. homedir/ — rsync /home/<user>/ → cpmove-<user>/homedir/.
-#    Skip the per-domain dirs cpanel doesn't have; cpanel.ImportHomeSplit
-#    expects flat public_html/... layout (DA's <user>/domains/<dom>/
-#    is similar enough that the adapter handles it).
+#    cpanel.ImportHomeSplit walks <HomeDir>/domains/<dom>/public_html/
+#    which matches DA's per-site layout. Keep .ssh/authorized_keys
+#    so cpanel.ImportSSHKeys can pick it up (otherwise it'd be
+#    swept by migration_home excludes on the agent side, but the
+#    agent ALSO excludes .ssh — so include it via the tarball + the
+#    cpanel.ImportSSHKeys path which reads the file directly).
 if [ -d "$HOMEDIR" ]; then
   rsync -aH --exclude=.lock --exclude=.cache "$HOMEDIR/" "$TMP/cpmove-$ACCT/homedir/" 2>&1 | tail -5
 fi
 
-# 4. tar it.
+# 4. cron/<user> — DA stores crontabs at /var/spool/cron/$ACCT
+#    (Debian) or /var/spool/cron/crontabs/$ACCT (CentOS); copy
+#    whichever exists. cpanel.ImportCron walks cp/<user>/cron/<user>.
+mkdir -p "$TMP/cpmove-$ACCT/cron"
+for cf in "/var/spool/cron/$ACCT" "/var/spool/cron/crontabs/$ACCT"; do
+  if [ -r "$cf" ]; then
+    cp "$cf" "$TMP/cpmove-$ACCT/cron/$ACCT"
+    break
+  fi
+done
+
+# 5. dnszones/<dom>.db — DA's BIND zones live in /var/named/<dom>.db
+#    (or /etc/bind/zones/ when DA configured that way). Copy each
+#    one referenced in domains.list so cpanel.ImportDomains picks
+#    up the full domain list (even without contents — ImportDomains
+#    only needs the .db filename to derive the domain name).
+mkdir -p "$TMP/cpmove-$ACCT/dnszones"
+if [ -s "$USERDIR/domains.list" ]; then
+  while read -r DOM; do
+    [ -z "$DOM" ] && continue
+    for z in "/var/named/$DOM.db" "/etc/bind/zones/$DOM.db" "/var/named/db.$DOM"; do
+      if [ -r "$z" ]; then
+        cp "$z" "$TMP/cpmove-$ACCT/dnszones/$DOM.db"
+        break
+      fi
+    done
+    # If BIND zone not on disk, emit an empty stub so ImportDomains
+    # still creates the panel row + nginx vhost (DNS records would
+    # be re-derived from the panel's own defaults).
+    [ -f "$TMP/cpmove-$ACCT/dnszones/$DOM.db" ] || touch "$TMP/cpmove-$ACCT/dnszones/$DOM.db"
+  done < "$USERDIR/domains.list"
+fi
+
+# 6. SSL — DA stores per-domain cert + key at
+#    /usr/local/directadmin/data/users/$ACCT/domains/$DOM.cert and
+#    .key. Pack into apache_tls/<dom>/ so cpanel.ImportSSL picks
+#    them up (matches cpmove apache_tls layout).
+mkdir -p "$TMP/cpmove-$ACCT/apache_tls"
+if [ -s "$USERDIR/domains.list" ]; then
+  while read -r DOM; do
+    [ -z "$DOM" ] && continue
+    crt="$USERDIR/domains/$DOM.cert"
+    key="$USERDIR/domains/$DOM.key"
+    cab="$USERDIR/domains/$DOM.cacert"
+    if [ -r "$crt" ] || [ -r "$key" ]; then
+      mkdir -p "$TMP/cpmove-$ACCT/apache_tls/$DOM"
+      [ -r "$crt" ] && cp "$crt" "$TMP/cpmove-$ACCT/apache_tls/$DOM/combined"
+      [ -r "$key" ] && cp "$key" "$TMP/cpmove-$ACCT/apache_tls/$DOM/key"
+      [ -r "$cab" ] && cp "$cab" "$TMP/cpmove-$ACCT/apache_tls/$DOM/cabundle"
+    fi
+  done < "$USERDIR/domains.list"
+fi
+
+# 7. Mail — DA stores per-domain mail config at /etc/virtual/<dom>/.
+#    Pack into etc/<dom>/ so a future cpanel.ImportMailboxes
+#    enrichment can read forwarders / aliases / passwd.
+mkdir -p "$TMP/cpmove-$ACCT/etc"
+if [ -s "$USERDIR/domains.list" ]; then
+  while read -r DOM; do
+    [ -z "$DOM" ] && continue
+    if [ -d "/etc/virtual/$DOM" ]; then
+      mkdir -p "$TMP/cpmove-$ACCT/etc/$DOM"
+      cp -a "/etc/virtual/$DOM/." "$TMP/cpmove-$ACCT/etc/$DOM/" 2>/dev/null || true
+    fi
+  done < "$USERDIR/domains.list"
+fi
+
+# 8. tar it.
 tar -czf "$OUT" -C "$TMP" "cpmove-$ACCT"
 rm -rf "$TMP"
 echo "$OUT"

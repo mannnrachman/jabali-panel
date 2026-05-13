@@ -300,6 +300,34 @@ failed stage. Already-done stages are skipped.`,
 					fmt.Sprintf("user.%s.tar.gz", job.SourceUser))
 				if cp, perr := cpanel.ParseTarball(daTarPath, extractDir); perr == nil {
 					parsed = cp
+					// DA's BackupUser-synthesised cpmove doesn't emit
+					// dnszones/ or userdata/, so cpanel.ImportDomains
+					// would see zero domains. Walk the extracted
+					// homedir/domains/* (DA's per-site layout) and
+					// populate DomainNames + DocRoots so the panel
+					// creates one domain row + one nginx vhost per
+					// hosted site. Per-domain rsync split (M35.8 P7)
+					// uses DocRoots to land each public_html in the
+					// right /home/<user>/domains/<dom>/ subtree.
+					if parsed.HomeDir != "" {
+						daDomainsRoot := filepath.Join(parsed.HomeDir, "domains")
+						if entries, derr := os.ReadDir(daDomainsRoot); derr == nil {
+							if parsed.DocRoots == nil {
+								parsed.DocRoots = map[string]string{}
+							}
+							for _, e := range entries {
+								if !e.IsDir() {
+									continue
+								}
+								name := e.Name()
+								if name == "" || strings.HasPrefix(name, ".") {
+									continue
+								}
+								parsed.DomainNames = append(parsed.DomainNames, name)
+								parsed.DocRoots[name] = filepath.Join("/home", *user.Username, "domains", name, "public_html")
+							}
+						}
+					}
 				} else {
 					// Pre-extracted fallback — operator dropped the
 					// cpmove tree under `<extractDir>/cp/<user>/`

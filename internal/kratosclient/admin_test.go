@@ -678,3 +678,77 @@ func TestRemoveSecondFactor_ReturnsErrIdentityNotFoundOn404(t *testing.T) {
 		t.Fatalf("err = %v, want ErrIdentityNotFound", err)
 	}
 }
+
+func TestSetIdentityState_SendsReplacePatch(t *testing.T) {
+	t.Parallel()
+	var capturedBody []byte
+	var capturedCT, capturedPath, capturedMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedMethod = r.Method
+		capturedPath = r.URL.Path
+		capturedBody, _ = io.ReadAll(r.Body)
+		capturedCT = r.Header.Get("Content-Type")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"abc","state":"inactive"}`))
+	}))
+	defer srv.Close()
+
+	c := newAdminClient(srv)
+	if err := c.SetIdentityState(context.Background(), "abc", "inactive"); err != nil {
+		t.Fatalf("SetIdentityState: %v", err)
+	}
+	if capturedMethod != http.MethodPatch {
+		t.Errorf("method = %s, want PATCH", capturedMethod)
+	}
+	if capturedPath != "/admin/identities/abc" {
+		t.Errorf("path = %s, want /admin/identities/abc", capturedPath)
+	}
+	if capturedCT != "application/json-patch+json" {
+		t.Errorf("Content-Type = %q, want application/json-patch+json", capturedCT)
+	}
+	var patch []map[string]any
+	if err := json.Unmarshal(capturedBody, &patch); err != nil {
+		t.Fatalf("patch body not valid JSON: %v (%s)", err, capturedBody)
+	}
+	if len(patch) != 1 || patch[0]["op"] != "replace" || patch[0]["path"] != "/state" || patch[0]["value"] != "inactive" {
+		t.Errorf("patch body wrong: %+v", patch[0])
+	}
+}
+
+func TestSetIdentityState_RejectsBadState(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("server should not be hit on bad state")
+	}))
+	defer srv.Close()
+	c := newAdminClient(srv)
+	for _, bad := range []string{"", "ACTIVE", "Pending", "junk"} {
+		if err := c.SetIdentityState(context.Background(), "abc", bad); err == nil {
+			t.Errorf("expected error for state=%q", bad)
+		}
+	}
+}
+
+func TestSetIdentityState_NotFoundReturnsSentinel(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := newAdminClient(srv)
+	err := c.SetIdentityState(context.Background(), "missing", "active")
+	if !errors.Is(err, ErrIdentityNotFound) {
+		t.Fatalf("err = %v, want ErrIdentityNotFound", err)
+	}
+}
+
+func TestSetIdentityState_EmptyIDFails(t *testing.T) {
+	t.Parallel()
+	c := newAdminClient(httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("server should not be hit on empty id")
+		w.WriteHeader(http.StatusInternalServerError)
+	})))
+	if err := c.SetIdentityState(context.Background(), "", "active"); err == nil {
+		t.Fatal("expected error on empty identity id")
+	}
+}

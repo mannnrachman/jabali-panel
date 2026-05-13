@@ -9525,6 +9525,64 @@ SQL
   fi
 
   # ── optional apt package removal ───────────────────────────────────────────
+  # Pre-purge: nuke jabali-owned drop-ins under third-party /etc dirs.
+  # Without this, apt-get purge nginx (etc.) bails out because dpkg
+  # refuses to remove conffiles that don't match its tracking list,
+  # AND leftover sites-enabled symlinks make a re-install of nginx
+  # crash at boot when our drop-ins reference vanished upstreams.
+  _log "stripping jabali-owned drop-ins from third-party /etc trees"
+  # nginx — stop first so we don't break running config mid-purge.
+  systemctl stop nginx 2>/dev/null || true
+  # Per-domain vhosts + bulwark + per-domain mail + every jabali-* file.
+  find /etc/nginx/sites-available -maxdepth 1 -type f \
+    \( -name 'jabali-*' -o -name '*-mail.conf' -o -name '*.conf' \) \
+    2>/dev/null | while read -r _vh; do
+      # Only remove files that mention "jabali" or our managed
+      # bulwark upstream — never touch operator-authored vhosts.
+      if grep -q -E 'jabali_(panel_api|bulwark)|jabali-' "$_vh" 2>/dev/null; then
+        rm -f "$_vh"
+        rm -f "/etc/nginx/sites-enabled/$(basename "$_vh")"
+      fi
+    done
+  rm -f  /etc/nginx/sites-available/includes/phpmyadmin.conf 2>/dev/null || true
+  rmdir  /etc/nginx/sites-available/includes 2>/dev/null || true
+  rm -f  /etc/nginx/snippets/jabali-*.conf 2>/dev/null || true
+  rm -f  /etc/nginx/conf.d/jabali-*.conf 2>/dev/null || true
+  rm -f  /etc/nginx/conf.d/crowdsec_nginx.conf 2>/dev/null || true
+  # Strip the sites-enabled include we added on first install — left
+  # over even after we remove the symlinks under sites-enabled/.
+  if [[ -f /etc/nginx/nginx.conf ]]; then
+    sed -i '/include \/etc\/nginx\/sites-enabled\/\*.conf;/d' /etc/nginx/nginx.conf
+  fi
+
+  # MariaDB / mysql drop-ins beyond skip-networking (which the systemd
+  # block above already removed).
+  rm -f /etc/mysql/mariadb.conf.d/9?-jabali-*.cnf 2>/dev/null || true
+
+  # CrowdSec scenarios + parsers + bouncer config we wrote.
+  rm -rf /etc/crowdsec/parsers/s00-raw/jabali-*.yaml 2>/dev/null || true
+  rm -rf /etc/crowdsec/scenarios/jabali-*.yaml 2>/dev/null || true
+  rm -rf /etc/crowdsec/profiles.d 2>/dev/null || true
+  rm -f  /etc/crowdsec/bouncers/jabali-*.yaml 2>/dev/null || true
+
+  # PowerDNS — install_powerdns wrote a stack of drop-ins under
+  # /etc/powerdns/pdns.d/ + /etc/powerdns/recursor.d/.
+  rm -f /etc/powerdns/pdns.d/0?-jabali-*.conf 2>/dev/null || true
+  rm -f /etc/powerdns/recursor.forwards 2>/dev/null || true
+  rm -f /etc/powerdns/recursor.d/zz-jabali-recursor.conf 2>/dev/null || true
+
+  # Redis include + drop-in dir (config dir purge handled above; this
+  # picks up any stragglers).
+  rm -rf /etc/redis/redis.conf.d 2>/dev/null || true
+
+  # PHP per-version drop-ins outside the snuffleupagus + pool blocks.
+  local _phpv2
+  for _phpv2 in /etc/php/*/fpm; do
+    [[ -d "$_phpv2" ]] || continue
+    rm -f "$_phpv2"/conf.d/3?-jabali-*.ini 2>/dev/null || true
+    rm -f "$(dirname "$_phpv2")"/cli/conf.d/3?-jabali-*.ini 2>/dev/null || true
+  done
+
   # Build the list from what install.sh actually installs. Generic OS
   # primitives (git, curl, ca-certificates, build-essential, rsync, acl,
   # tar, bzip2, unzip, openssl, gnupg, debootstrap, systemd-container,
@@ -9584,8 +9642,22 @@ SQL
       dpkg -l "$_p" 2>/dev/null | grep -q '^ii' && _installed_pkgs+=("$_p") || true
     done
     if [[ ${#_installed_pkgs[@]} -gt 0 ]]; then
-      DEBIAN_FRONTEND=noninteractive apt-get purge -y "${_installed_pkgs[@]}" 2>/dev/null || true
-      DEBIAN_FRONTEND=noninteractive apt-get autoremove -y 2>/dev/null || true
+      # Recover from any half-broken package state first; otherwise
+      # apt-get purge can refuse to proceed (commonly seen when a
+      # previous nginx install was killed mid-config-reload).
+      DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>/dev/null || true
+      DEBIAN_FRONTEND=noninteractive apt-get install -f -y 2>/dev/null || true
+      DEBIAN_FRONTEND=noninteractive apt-get purge -y \
+        -o Dpkg::Options::="--force-confdef" \
+        -o Dpkg::Options::="--force-confnew" \
+        "${_installed_pkgs[@]}" 2>/dev/null || true
+      # Hard fallback for any package that survived apt-get purge —
+      # dpkg --purge ignores dep order + forces conffile removal.
+      for _p in "${_installed_pkgs[@]}"; do
+        dpkg -l "$_p" 2>/dev/null | grep -q '^.[ic]' && \
+          DEBIAN_FRONTEND=noninteractive dpkg --purge --force-all "$_p" 2>/dev/null || true
+      done
+      DEBIAN_FRONTEND=noninteractive apt-get autoremove --purge -y 2>/dev/null || true
       _ok "apt packages purged"
     else
       _log "no jabali apt packages found installed — nothing to purge"

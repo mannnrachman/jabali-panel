@@ -93,20 +93,52 @@ fi
 
 # 2. mysql/ — dump every database owned by this DA user. DA registers
 #    them under /usr/local/directadmin/data/users/<u>/databases.list
-#    (one db per line); fall back to grep '^<user>_' on SHOW DATABASES
-#    when the file is missing.
-if [ -r "$DACNF" ]; then
-  DBS=""
-  if [ -s "$USERDIR/databases.list" ]; then
-    DBS=$(awk 'NF' "$USERDIR/databases.list")
+#    (one db per line on old DA) OR /usr/local/directadmin/data/users/
+#    <u>/databases/ (directory of per-db files on newer DA). Fall back
+#    to enumerating SHOW DATABASES filtered by '^<user>_' (DA enforces
+#    user_<name> prefix on customer DBs).
+#
+#    Credentials probe: try multiple known DA stash paths (mysql.conf
+#    on newer DA, my.cnf on older), then fall back to root socket auth
+#    (works when local MariaDB uses unix_socket auth — common on DA
+#    boxes running as root anyway).
+MYSQL_AUTH=""
+for _cnf in /usr/local/directadmin/conf/mysql.conf \
+            /usr/local/directadmin/conf/my.cnf; do
+  if [ -r "$_cnf" ] && mysql --defaults-file="$_cnf" -BN -e "SELECT 1" >/dev/null 2>&1; then
+    MYSQL_AUTH="--defaults-file=$_cnf"
+    break
   fi
-  if [ -z "$DBS" ]; then
-    DBS=$(mysql --defaults-file="$DACNF" -BN -e "SHOW DATABASES" | grep "^${ACCT}_" || true)
-  fi
-  for db in $DBS; do
-    mysqldump --defaults-file="$DACNF" --skip-lock-tables --single-transaction "$db" > "$TMP/cpmove-$ACCT/mysql/$db.sql" || true
-  done
+done
+if [ -z "$MYSQL_AUTH" ] && mysql -u root -BN -e "SELECT 1" >/dev/null 2>&1; then
+  MYSQL_AUTH="-u root"
 fi
+
+DBS=""
+if [ -s "$USERDIR/databases.list" ]; then
+  DBS=$(awk 'NF' "$USERDIR/databases.list")
+fi
+if [ -z "$DBS" ] && [ -d "$USERDIR/databases" ]; then
+  DBS=$(find "$USERDIR/databases" -maxdepth 1 -type f -printf '%f\n' 2>/dev/null | \
+        sed -e 's/\.conf$//' -e 's/\.list$//' | awk 'NF' | sort -u)
+fi
+if [ -z "$DBS" ] && [ -n "$MYSQL_AUTH" ]; then
+  DBS=$(mysql $MYSQL_AUTH -BN -e "SHOW DATABASES" | grep "^${ACCT}_" || true)
+fi
+DBS_ENUMERATED=$(echo "$DBS" | awk 'NF' | wc -l)
+if [ -z "$MYSQL_AUTH" ]; then
+  echo "WARN: no MariaDB credentials found (tried mysql.conf, my.cnf, root-socket) — skipping $DBS_ENUMERATED databases" >&2
+fi
+for db in $DBS; do
+  [ -z "$db" ] && continue
+  if [ -n "$MYSQL_AUTH" ]; then
+    if ! mysqldump $MYSQL_AUTH --skip-lock-tables --single-transaction \
+         "$db" > "$TMP/cpmove-$ACCT/mysql/$db.sql" 2>/dev/null; then
+      echo "WARN: mysqldump $db failed" >&2
+      rm -f "$TMP/cpmove-$ACCT/mysql/$db.sql"
+    fi
+  fi
+done
 
 # 3. homedir/ — rsync /home/<user>/ → cpmove-<user>/homedir/.
 #    cpanel.ImportHomeSplit walks <HomeDir>/domains/<dom>/public_html/

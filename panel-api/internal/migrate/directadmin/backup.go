@@ -165,7 +165,16 @@ if [ -s "$USERDIR/domains.list" ]; then
     cab="$USERDIR/domains/$DOM.cacert"
     if [ -r "$crt" ] || [ -r "$key" ]; then
       mkdir -p "$TMP/cpmove-$ACCT/apache_tls/$DOM"
-      [ -r "$crt" ] && cp "$crt" "$TMP/cpmove-$ACCT/apache_tls/$DOM/combined"
+      # cpanel.ImportSSL reads 'combined' first and short-circuits on a
+      # non-empty value, splitting it back into cert+key by PEM block
+      # type. cat cert + key into combined so the key extraction path
+      # finds the PRIVATE KEY block; also write the standalone 'key'
+      # file as a fallback for any future writer that prefers it.
+      if [ -r "$crt" ] && [ -r "$key" ]; then
+        cat "$crt" "$key" > "$TMP/cpmove-$ACCT/apache_tls/$DOM/combined"
+      elif [ -r "$crt" ]; then
+        cp "$crt" "$TMP/cpmove-$ACCT/apache_tls/$DOM/combined"
+      fi
       [ -r "$key" ] && cp "$key" "$TMP/cpmove-$ACCT/apache_tls/$DOM/key"
       [ -r "$cab" ] && cp "$cab" "$TMP/cpmove-$ACCT/apache_tls/$DOM/cabundle"
     fi

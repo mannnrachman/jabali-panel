@@ -99,7 +99,7 @@ export const AdminMigrationsPage = () => {
       );
       return data;
     },
-    refetchInterval: 30_000, // poll while a job is in-flight
+    refetchInterval: 5_000, // pull every 5s — operators expect live state during pull/import bursts
   });
 
   // M35.3 SSRF override toggle. server_settings.migration_allow_private_hosts

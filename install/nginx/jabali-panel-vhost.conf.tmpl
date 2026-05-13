@@ -28,9 +28,8 @@ upstream jabali_panel_api {
 }
 
 server {
-  listen 8443 ssl;
+  listen 8443 ssl http2;
   listen [::]:8443 ssl;
-  http2 on;
   server_name _;
 
   ssl_certificate     ${SSL_CERT_PATH};

@@ -13,7 +13,6 @@
 
 server {
   ${LISTEN_443}
-  http2 on;
   server_name mail.${DOMAIN};
 
   ssl_certificate ${SSL_CERT_PATH};

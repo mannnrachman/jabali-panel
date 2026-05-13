@@ -133,11 +133,11 @@ const vhostTemplate = `server {
 }
 
 server {
-{{ if .ListenIPv4 }}    listen {{.ListenIPv4}}:443 ssl;
-{{ else }}    listen 443 ssl;
-{{ end }}{{ if .ListenIPv6 }}    listen [{{.ListenIPv6}}]:443 ssl;
-{{ else }}    listen [::]:443 ssl;
-{{ end }}    http2 on;
+{{ if .ListenIPv4 }}    listen {{.ListenIPv4}}:443 ssl http2;
+{{ else }}    listen 443 ssl http2;
+{{ end }}{{ if .ListenIPv6 }}    listen [{{.ListenIPv6}}]:443 ssl http2;
+{{ else }}    listen [::]:443 ssl http2;
+{{ end }}    # http2 on; — folded into listen directive for nginx<1.25 compat
     server_name {{.Domain}} www.{{.Domain}};
     ssl_certificate {{.SSLCertPath}};
     ssl_certificate_key {{.SSLKeyPath}};

@@ -40,6 +40,8 @@ func (m *mockDomainRepo) Update(ctx context.Context, d *models.Domain) error {
 	return nil
 }
 
+func (m *mockDomainRepo) BulkSetEnabledByUserID(_ context.Context, _ string, _ bool) (int64, error) { return 0, nil }
+
 func (m *mockDomainRepo) Delete(ctx context.Context, id string) error {
 	delete(m.domains, id)
 	return nil

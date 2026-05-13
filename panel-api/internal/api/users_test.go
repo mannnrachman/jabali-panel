@@ -209,6 +209,8 @@ func (m *memUserRepo) FindAdminsByEmail(_ context.Context) ([]*models.User, erro
 	return admins, nil
 }
 
+func (m *memUserRepo) SetSuspended(_ context.Context, _ string, _ bool, _ string) error { return nil }
+
 func (m *memUserRepo) Delete(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -61,6 +61,7 @@ func (*fakeRebuildUserRepo) CountAdmins(context.Context) (int64, error)        {
 func (*fakeRebuildUserRepo) FindAdminsByEmail(context.Context) ([]*models.User, error) {
 	return nil, nil
 }
+func (*fakeRebuildUserRepo) SetSuspended(context.Context, string, bool, string) error { return nil }
 func (*fakeRebuildUserRepo) Delete(context.Context, string) error { return nil }
 
 // fakeKratos routes POST /admin/identities → returns a new UUID; POST

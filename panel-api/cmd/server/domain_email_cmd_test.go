@@ -77,6 +77,7 @@ func (*fakeDomainRepo) List(context.Context, repository.ListOptions) ([]models.D
 func (*fakeDomainRepo) ListByUserID(context.Context, string, repository.ListOptions) ([]models.Domain, int64, error) {
 	return nil, 0, nil
 }
+func (*fakeDomainRepo) BulkSetEnabledByUserID(context.Context, string, bool) (int64, error) { return 0, nil }
 func (*fakeDomainRepo) Update(context.Context, *models.Domain) error { return nil }
 func (*fakeDomainRepo) Delete(context.Context, string) error         { return nil }
 func (*fakeDomainRepo) CountByUserID(context.Context, string) (int64, error) {

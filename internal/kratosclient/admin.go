@@ -317,6 +317,47 @@ func (c *Client) SetPassword(ctx context.Context, identityID, passwordHash strin
 // (or neither) was previously enrolled. 404 on the identity itself is
 // returned as ErrIdentityNotFound so the caller can render a clean
 // 404 to the operator.
+// SetIdentityState flips Kratos identity.state between "active" and
+// "inactive" via PATCH /admin/identities/{id}. Inactive identities are
+// rejected at /sessions/whoami (no new session) and existing sessions
+// are invalidated at next request — so flipping to inactive logs the
+// user out of panel + webmail + every Kratos-fronted UI within ~1 req.
+//
+// Used by the admin user-suspend endpoint. Returns ErrIdentityNotFound
+// for 404 so the caller can render a clean 404 instead of a 5xx.
+func (c *Client) SetIdentityState(ctx context.Context, identityID, state string) error {
+	if identityID == "" {
+		return fmt.Errorf("setidentitystate: identityID is empty")
+	}
+	if state != "active" && state != "inactive" {
+		return fmt.Errorf("setidentitystate: state must be active|inactive, got %q", state)
+	}
+	patch := []map[string]any{{"op": "replace", "path": "/state", "value": state}}
+	body, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("setidentitystate: marshal: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPatch,
+		c.adminURL+"/admin/identities/"+url.PathEscape(identityID), bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("setidentitystate: request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json-patch+json")
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("setidentitystate: do: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrIdentityNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		errBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("setidentitystate: status %d: %s", resp.StatusCode, string(errBody))
+	}
+	return nil
+}
+
 func (c *Client) RemoveSecondFactor(ctx context.Context, identityID string) error {
 	if identityID == "" {
 		return fmt.Errorf("removesecondfactor: identityID is empty")

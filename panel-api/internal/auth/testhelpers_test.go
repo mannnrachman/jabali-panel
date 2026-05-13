@@ -123,6 +123,8 @@ func (f *fakeUserRepo) FindAdminsByEmail(_ context.Context) ([]*models.User, err
 	return admins, nil
 }
 
+func (f *fakeUserRepo) SetSuspended(_ context.Context, _ string, _ bool, _ string) error { return nil }
+
 func (f *fakeUserRepo) Delete(_ context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

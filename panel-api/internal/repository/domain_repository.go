@@ -19,6 +19,12 @@ type DomainRepository interface {
 	List(ctx context.Context, opts ListOptions) ([]models.Domain, int64, error)
 	ListByUserID(ctx context.Context, userID string, opts ListOptions) ([]models.Domain, int64, error)
 	Update(ctx context.Context, d *models.Domain) error
+	// BulkSetEnabledByUserID flips domains.is_enabled for every row
+	// owned by the user. Returns the count of changed rows. Used by
+	// the admin user-suspend handler so a single API call takes every
+	// site offline. Reconciler picks up the flip on the next tick and
+	// removes (or restores) the nginx sites-enabled symlinks.
+	BulkSetEnabledByUserID(ctx context.Context, userID string, enabled bool) (int64, error)
 	Delete(ctx context.Context, id string) error
 	CountByUserID(ctx context.Context, userID string) (int64, error)
 	// CountByPHPPoolID returns the number of domains currently bound to
@@ -251,6 +257,20 @@ func (r *domainRepo) Update(ctx context.Context, d *models.Domain) error {
 		return translate(err)
 	}
 	return nil
+}
+
+func (r *domainRepo) BulkSetEnabledByUserID(ctx context.Context, userID string, enabled bool) (int64, error) {
+	res := r.db.WithContext(ctx).
+		Model(&models.Domain{}).
+		Where("user_id = ?", userID).
+		Updates(map[string]any{
+			"is_enabled": enabled,
+			"updated_at": time.Now().UTC(),
+		})
+	if res.Error != nil {
+		return 0, translate(res.Error)
+	}
+	return res.RowsAffected, nil
 }
 
 func (r *domainRepo) Delete(ctx context.Context, id string) error {

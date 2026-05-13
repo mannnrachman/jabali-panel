@@ -22,6 +22,7 @@ import { UserDeleteAction } from "./UserDeleteAction";
 import { UserDrawer } from "./UserDrawer";
 import { UserDiskUsage } from "./UserDiskUsage";
 import { UserReset2FAAction } from "./UserReset2FAAction";
+import { UserSuspendAction } from "./UserSuspendAction";
 
 type User = {
   id: string;
@@ -31,6 +32,7 @@ type User = {
   name_first: string;
   name_last: string;
   is_admin: boolean;
+  suspended?: boolean;
   // Hosting package the user is provisioned against; NULL for admins.
   package_id?: string | null;
   created_at: string;
@@ -63,6 +65,13 @@ function RowActions({
         Edit
       </RowActionButton>
       <UserReset2FAAction userId={user.id} userEmail={user.email} />
+      {!user.is_admin && (
+        <UserSuspendAction
+          userId={user.id}
+          userEmail={user.email}
+          suspended={!!user.suspended}
+        />
+      )}
       <UserDeleteAction recordItemId={user.id} userEmail={user.email} />
     </Space>
   );
@@ -141,7 +150,7 @@ function UsersShellTable({
       }}
       onChange={handleTableChange}
     >
-      <Table.Column
+      <Table.Column<User>
         dataIndex="email"
         title="Email"
         key="email"
@@ -165,6 +174,16 @@ function UsersShellTable({
             />
           </div>
         )}
+        render={(email: string, r: User) =>
+          r.suspended ? (
+            <span>
+              {email}{" "}
+              <Tag color="error">Suspended</Tag>
+            </span>
+          ) : (
+            email
+          )
+        }
       />
       <Table.Column<User>
         dataIndex="username"

@@ -70,6 +70,7 @@ func (f *fakeUsersRepo) CountAdmins(context.Context) (int64, error) {
 func (f *fakeUsersRepo) FindAdminsByEmail(context.Context) ([]*models.User, error) {
 	panic("FindAdminsByEmail not expected from middleware")
 }
+func (f *fakeUsersRepo) SetSuspended(context.Context, string, bool, string) error { return nil }
 func (f *fakeUsersRepo) Delete(context.Context, string) error {
 	panic("Delete not expected from middleware")
 }

@@ -134,6 +134,7 @@ func (m *MockDomainRepository) FindByID(ctx context.Context, id string) (*models
 	return args.Get(0).(*models.Domain), args.Error(1)
 }
 
+func (m *MockDomainRepository) BulkSetEnabledByUserID(_ context.Context, _ string, _ bool) (int64, error) { return 0, nil }
 func (m *MockDomainRepository) Update(ctx context.Context, domain *models.Domain) error {
 	args := m.Called(ctx, domain)
 	return args.Error(0)

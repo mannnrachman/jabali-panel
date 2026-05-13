@@ -71,6 +71,16 @@ type User struct {
 	// compensating-delete race can't FK-fail the panel insert.
 	KratosIdentityID *string `gorm:"type:varchar(64);uniqueIndex:ux_users_kratos_identity_id" json:"kratos_identity_id,omitempty"`
 
+	// Suspended marks a user as administratively offline (migration
+	// 000132). Admin suspend POSTs flip the flag + push Kratos identity
+	// state=inactive (blocks panel + webmail login) + flip every owned
+	// domains.is_enabled=0 (reconciler drops the nginx symlink so sites
+	// serve 404). SuspendedAt + SuspendReason are operator-facing audit
+	// fields surfaced in the admin UI.
+	Suspended      bool       `gorm:"column:suspended;type:tinyint(1);not null;default:0;index:idx_users_suspended" json:"suspended"`
+	SuspendedAt    *time.Time `gorm:"column:suspended_at;type:datetime(6)"                                            json:"suspended_at,omitempty"`
+	SuspendReason  string     `gorm:"column:suspend_reason;type:varchar(255);not null;default:''"                     json:"suspend_reason"`
+
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }

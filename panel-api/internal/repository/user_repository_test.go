@@ -46,6 +46,9 @@ func TestUserRepository_Create(t *testing.T) {
 			sqlmock.AnyArg(), // pgadmin_password_enc — GORM emits []byte{} for nil slice
 			nil,              // pgadmin_provisioned_at
 			nil,              // kratos_identity_id (M20)
+			false,            // suspended (migration 000132)
+			nil,              // suspended_at
+			"",               // suspend_reason
 			sqlmock.AnyArg(), // created_at
 			sqlmock.AnyArg(), // updated_at
 		).

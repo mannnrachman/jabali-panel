@@ -97,6 +97,8 @@ func (f *fakeDomainRepo) Update(ctx context.Context, d *models.Domain) error {
 	return nil
 }
 
+func (f *fakeDomainRepo) BulkSetEnabledByUserID(_ context.Context, _ string, _ bool) (int64, error) { return 0, nil }
+
 func (f *fakeDomainRepo) Delete(ctx context.Context, id string) error {
 	delete(f.domains, id)
 	return nil
@@ -454,6 +456,8 @@ func (f *fakeUserRepo) LinkKratosIdentity(ctx context.Context, userID, kratosID 
 	u.KratosIdentityID = &kratosID
 	return nil
 }
+
+func (f *fakeUserRepo) SetSuspended(_ context.Context, _ string, _ bool, _ string) error { return nil }
 
 func (f *fakeUserRepo) Delete(ctx context.Context, id string) error {
 	delete(f.users, id)

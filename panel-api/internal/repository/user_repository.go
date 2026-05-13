@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
@@ -47,6 +48,10 @@ type UserRepository interface {
 	// FindAdminsByEmail returns all admin users. Panel-internal admin
 	// lookups (e.g., to send them a system alert).
 	FindAdminsByEmail(ctx context.Context) ([]*models.User, error)
+	// SetSuspended flips users.suspended + stamps suspended_at +
+	// suspend_reason. Kept separate from Update so the profile-edit
+	// path can't accidentally lift / apply a suspension.
+	SetSuspended(ctx context.Context, id string, suspended bool, reason string) error
 	Delete(ctx context.Context, id string) error
 }
 
@@ -213,6 +218,32 @@ func (r *userRepo) FindAdminsByEmail(ctx context.Context) ([]*models.User, error
 		return nil, translate(err)
 	}
 	return admins, nil
+}
+
+func (r *userRepo) SetSuspended(ctx context.Context, id string, suspended bool, reason string) error {
+	patch := map[string]any{
+		"suspended":  suspended,
+		"updated_at": time.Now().UTC(),
+	}
+	if suspended {
+		now := time.Now().UTC()
+		patch["suspended_at"] = &now
+		patch["suspend_reason"] = reason
+	} else {
+		patch["suspended_at"] = gorm.Expr("NULL")
+		patch["suspend_reason"] = ""
+	}
+	res := r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Where("id = ?", id).
+		Updates(patch)
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (r *userRepo) Delete(ctx context.Context, id string) error {

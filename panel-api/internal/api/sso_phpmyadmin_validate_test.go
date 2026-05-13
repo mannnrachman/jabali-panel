@@ -317,6 +317,8 @@ func (m *mockUserRepoValidate) FindAdminsByEmail(ctx context.Context) ([]*models
 	return nil, nil
 }
 
+func (m *mockUserRepoValidate) SetSuspended(_ context.Context, _ string, _ bool, _ string) error { return nil }
+
 func (m *mockUserRepoValidate) Delete(ctx context.Context, id string) error {
 	return nil
 }

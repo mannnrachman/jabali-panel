@@ -1,0 +1,121 @@
+// UserSuspendAction — admin button to toggle a user's online state.
+// Suspending flips users.suspended=1, pushes the Kratos identity to
+// state=inactive (blocks panel + webmail + every Kratos-fronted UI
+// on next request) and bulk-disables every owned domain (reconciler
+// drops the nginx sites-enabled symlinks on next tick so all sites
+// serve 404). Unsuspending reverses all three. Reason is operator-
+// facing audit text visible on the row.
+import { useState } from "react";
+import { Button, Input, Modal, message } from "antd";
+import { PauseCircleOutlined, PlayCircleOutlined } from "@icons";
+import { useQueryClient } from "@tanstack/react-query";
+
+import { apiClient } from "../../../apiClient";
+
+interface UserSuspendActionProps {
+  userId: string;
+  userEmail: string;
+  suspended: boolean;
+}
+
+export const UserSuspendAction = ({
+  userId,
+  userEmail,
+  suspended,
+}: UserSuspendActionProps) => {
+  const qc = useQueryClient();
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [reason, setReason] = useState("");
+
+  const handleSubmit = async () => {
+    setIsLoading(true);
+    try {
+      const endpoint = suspended ? "unsuspend" : "suspend";
+      const body = suspended ? undefined : { reason };
+      const res = await apiClient.post<{
+        ok: boolean;
+        domains_disabled?: number;
+        domains_enabled?: number;
+        kratos_warning?: string;
+        domain_warning?: string;
+      }>(`/admin/users/${encodeURIComponent(userId)}/${endpoint}`, body);
+      const data = res.data;
+      if (suspended) {
+        message.success(
+          `Unsuspended "${userEmail}" — ${data.domains_enabled ?? 0} domain(s) re-enabled.`,
+        );
+      } else {
+        message.success(
+          `Suspended "${userEmail}" — ${data.domains_disabled ?? 0} domain(s) disabled.`,
+        );
+      }
+      if (data.kratos_warning) {
+        message.warning(`Kratos: ${data.kratos_warning}`);
+      }
+      if (data.domain_warning) {
+        message.warning(`Domains: ${data.domain_warning}`);
+      }
+      qc.invalidateQueries({ queryKey: ["list", "users"] });
+      setIsModalOpen(false);
+      setReason("");
+    } catch (err: unknown) {
+      const errMsg =
+        (err as { response?: { data?: { detail?: string; error?: string } } })
+          ?.response?.data?.detail ??
+        (err as { response?: { data?: { error?: string } } })?.response?.data
+          ?.error ??
+        (err instanceof Error ? err.message : "Action failed");
+      message.error(errMsg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <Button
+        variant="filled"
+        color={suspended ? "primary" : "danger"}
+        icon={suspended ? <PlayCircleOutlined /> : <PauseCircleOutlined />}
+        onClick={() => setIsModalOpen(true)}
+      >
+        {suspended ? "Unsuspend" : "Suspend"}
+      </Button>
+      <Modal
+        title={suspended ? "Unsuspend user?" : "Suspend user?"}
+        open={isModalOpen}
+        onCancel={() => setIsModalOpen(false)}
+        onOk={handleSubmit}
+        confirmLoading={isLoading}
+        okText={suspended ? "Unsuspend" : "Suspend"}
+        okButtonProps={{ danger: !suspended }}
+      >
+        {suspended ? (
+          <p>
+            Restores access for <strong>{userEmail}</strong>. The Kratos
+            identity is reactivated and every owned domain is re-enabled.
+          </p>
+        ) : (
+          <>
+            <p>
+              Takes <strong>{userEmail}</strong> offline:
+            </p>
+            <ul>
+              <li>Kratos identity → inactive (blocks panel + webmail login)</li>
+              <li>All owned domains disabled (sites serve 404)</li>
+            </ul>
+            <p>Optional reason (visible in the user list):</p>
+            <Input.TextArea
+              rows={2}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. non-payment, ToS violation"
+              maxLength={255}
+            />
+          </>
+        )}
+      </Modal>
+    </>
+  );
+};

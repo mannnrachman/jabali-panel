@@ -3162,7 +3162,14 @@ ensure_swap() {
   if ! grep -qF "$swap_file" /etc/fstab 2>/dev/null; then
     echo "$swap_file none swap sw 0 0" >> /etc/fstab
   fi
-  _ok "build-swap: 2 GB active at $swap_file (persists via /etc/fstab)"
+  # vm.swappiness=10 — only swap when really under pressure. Default 60
+  # is too aggressive on a low-RAM VPS: kernel pages anonymous memory
+  # out while file cache is still warm, causing the panel to stall on
+  # paging-in mid-request. 10 keeps the swap file as an OOM safety net
+  # without trading interactive latency for it.
+  echo 'vm.swappiness=10' > /etc/sysctl.d/99-jabali-swappiness.conf
+  sysctl -w vm.swappiness=10 >/dev/null 2>&1 || true
+  _ok "build-swap: 2 GB active at $swap_file (persists via /etc/fstab); vm.swappiness=10"
 }
 
 build_frontend() {
@@ -9535,6 +9542,8 @@ EOF
     rm -f /var/swap.jabali 2>/dev/null || true
     sed -i '\#^/var/swap\.jabali #d' /etc/fstab 2>/dev/null || true
   fi
+  rm -f /etc/sysctl.d/99-jabali-swappiness.conf 2>/dev/null || true
+  sysctl --system >/dev/null 2>&1 || true
 
   _log "removing state + install directories"
   rm -rf /var/lib/jabali        \

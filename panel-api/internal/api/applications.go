@@ -878,6 +878,18 @@ func createPrestaShopInstallAndKickAgent(parentCtx context.Context, args prestas
 }
 
 
+
+// pickAdminUsername prefers the agent-detected WP admin login (from
+// wp_users) over the operator's email. Empty / missing detection
+// falls back to the operator email so the row at least has SOMETHING
+// non-empty (magic_link.go refuses empty admin_username).
+func pickAdminUsername(detected, fallback string) string {
+	if detected != "" {
+		return detected
+	}
+	return fallback
+}
+
 // scan walks the user's homedir for unregistered WordPress / Joomla /
 // Drupal / Magento installs + INSERTs an application_installs row for
 // each match not already tracked. Triggered from the operator UI's
@@ -911,10 +923,11 @@ func (h *applicationsHandler) scan(c *gin.Context) {
 	}
 	var resp struct {
 		Hits []struct {
-			Domain       string `json:"domain"`
-			Subdirectory string `json:"subdirectory"`
-			AppType      string `json:"app_type"`
-			Version      string `json:"version"`
+			Domain        string `json:"domain"`
+			Subdirectory  string `json:"subdirectory"`
+			AppType       string `json:"app_type"`
+			Version       string `json:"version"`
+			AdminUsername string `json:"admin_username"`
 		} `json:"hits"`
 	}
 	if jErr := json.Unmarshal(raw, &resp); jErr != nil {
@@ -974,7 +987,7 @@ func (h *applicationsHandler) scan(c *gin.Context) {
 			UserID:        user.ID,
 			DomainID:      dom.ID,
 			DBID:          nil,
-			AdminUsername: claims.Email, // operator can rename later
+			AdminUsername: pickAdminUsername(hit.AdminUsername, claims.Email),
 			AdminEmail:    claims.Email,
 			Locale:        "en_US",
 			Subdirectory:  hit.Subdirectory,

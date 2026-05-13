@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"regexp"
@@ -25,10 +26,11 @@ type appScanParams struct {
 // appScanHit is one detected install. Fields map 1:1 onto the panel's
 // ApplicationInstall row the handler will INSERT.
 type appScanHit struct {
-	Domain       string `json:"domain"`        // panel-side domain name (the docroot's parent dir)
-	Subdirectory string `json:"subdirectory"`  // "" for docroot root, e.g. "blog" for blog/
-	AppType      string `json:"app_type"`      // wordpress | joomla | drupal | magento
-	Version      string `json:"version,omitempty"`
+	Domain        string `json:"domain"`        // panel-side domain name (the docroot's parent dir)
+	Subdirectory  string `json:"subdirectory"`  // "" for docroot root, e.g. "blog" for blog/
+	AppType       string `json:"app_type"`      // wordpress | joomla | drupal | magento
+	Version       string `json:"version,omitempty"`
+	AdminUsername string `json:"admin_username,omitempty"` // best-effort detection (WP: wp_users)
 }
 
 type appScanResponse struct {
@@ -91,12 +93,16 @@ func detectAt(domain, subdir, dir string) *appScanHit {
 	// wp-config one level up but keep wp-load).
 	if fileExists(filepath.Join(dir, "wp-config.php")) ||
 		fileExists(filepath.Join(dir, "wp-load.php")) {
-		return &appScanHit{
+		hit := &appScanHit{
 			Domain:       domain,
 			Subdirectory: subdir,
 			AppType:      "wordpress",
 			Version:      readWPVersion(dir),
 		}
+		if admin := detectWPAdmin(dir); admin != "" {
+			hit.AdminUsername = admin
+		}
+		return hit
 	}
 	// Joomla: configuration.php + libraries/src/Version.php (4.x)
 	// or libraries/joomla/version.php (3.x).
@@ -184,4 +190,69 @@ func dirExists(p string) bool {
 
 func init() {
 	Default.Register("app.scan", appScanHandler)
+}
+
+
+// detectWPAdmin parses wp-config.php for DB_NAME + $table_prefix +
+// queries the local MariaDB (agent connects as root via unix socket)
+// for the first administrator user. Empty string on any failure —
+// the SSO template's WP_User_Query fallback handles missing admin
+// names so this is opportunistic enrichment, never load-bearing.
+func detectWPAdmin(docroot string) string {
+	cfg, err := os.ReadFile(filepath.Join(docroot, "wp-config.php"))
+	if err != nil {
+		return ""
+	}
+	dbName := wpConfigGrab(cfg, "DB_NAME")
+	prefix := wpConfigGrabPrefix(cfg)
+	if dbName == "" || prefix == "" {
+		return ""
+	}
+	// Only allow [a-z0-9_] in both — these become part of a SQL
+	// identifier (back-tick quoted but defence-in-depth).
+	if !safeMySQLIdent(dbName) || !safeMySQLIdent(prefix) {
+		return ""
+	}
+	q := fmt.Sprintf(
+		"SELECT u.user_login FROM `%s`.`%susers` u JOIN `%s`.`%susermeta` m ON u.ID = m.user_id WHERE m.meta_key = '%scapabilities' AND m.meta_value LIKE '%%\"administrator\"%%' ORDER BY u.ID ASC LIMIT 1",
+		dbName, prefix, dbName, prefix, prefix,
+	)
+	out, err := exec.Command("mysql", "-BN", "-e", q).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+var (
+	wpConfigDefineRe = regexp.MustCompile(`define\s*\(\s*['"](DB_NAME|DB_USER|DB_PASSWORD|DB_HOST)['"]\s*,\s*['"]([^'"]*)['"]\s*\)`)
+	wpConfigPrefixRe = regexp.MustCompile(`\$table_prefix\s*=\s*['"]([A-Za-z0-9_]+)['"]`)
+)
+
+func wpConfigGrab(cfg []byte, key string) string {
+	for _, m := range wpConfigDefineRe.FindAllSubmatch(cfg, -1) {
+		if string(m[1]) == key {
+			return string(m[2])
+		}
+	}
+	return ""
+}
+
+func wpConfigGrabPrefix(cfg []byte) string {
+	if m := wpConfigPrefixRe.FindSubmatch(cfg); len(m) == 2 {
+		return string(m[1])
+	}
+	return ""
+}
+
+func safeMySQLIdent(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_') {
+			return false
+		}
+	}
+	return true
 }

@@ -20,7 +20,7 @@ import {
   Typography,
 } from "antd";
 import { DeleteOutlined, PlusOutlined } from "@icons";
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 
 import { apiClient } from "../../../../apiClient";
 import { RowActionButton } from "../../../../components/RowActionButton";
@@ -183,6 +183,8 @@ export const ForwardersTab = () => {
         />
       </div>
 
+      <DomainScopedForwarders />
+
       <Modal
         open={open}
         title="Add forwarder"
@@ -245,3 +247,68 @@ export const ForwardersTab = () => {
     </>
   );
 };
+
+
+interface DomainScopedForwarder {
+  id: string;
+  domain_id: string;
+  domain_name: string;
+  type: string;
+  local_part: string;
+  target: string;
+  enabled: boolean;
+  managed_by: string;
+  created_at: string;
+}
+
+function DomainScopedForwarders() {
+  // Surfaces NULL-mailbox forwarders the M35 DA importer left behind
+  // (pure-redirect aliases from /etc/virtual/<dom>/aliases). Stalwart
+  // push is deferred to a future domain-scoped reconciler phase;
+  // until then this is read-only — rows visible so the operator
+  // knows what was imported, but edits go through manual SQL.
+  const { data, isLoading } = useQuery<{ data: DomainScopedForwarder[] }>({
+    queryKey: ["mail", "forwarders", "domain-scoped"],
+    queryFn: async () => {
+      const res = await apiClient.get("/mail/forwarders/domain-scoped");
+      return res.data;
+    },
+    refetchOnWindowFocus: false,
+  });
+  const rows = data?.data ?? [];
+  if (!isLoading && rows.length === 0) {
+    return null;
+  }
+  return (
+    <div style={{ marginTop: 32 }}>
+      <Typography.Title level={4} style={{ margin: 0, marginBottom: 8 }}>
+        Imported aliases (read-only)
+      </Typography.Title>
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+        Pure-redirect aliases imported from a source server (M35 DA
+        migration). Stalwart-side delivery for these is a deferred
+        follow-up — rows shown for visibility.
+      </Typography.Paragraph>
+      <Table<DomainScopedForwarder>
+        rowKey="id"
+        loading={isLoading}
+        dataSource={rows}
+        pagination={{ pageSize: 20 }}
+        scroll={{ x: "max-content" }}
+        columns={[
+          {
+            title: "Source",
+            render: (_, r) => `${r.local_part}@${r.domain_name}`,
+          },
+          { title: "Target", dataIndex: "target" },
+          {
+            title: "Source",
+            dataIndex: "managed_by",
+            width: 160,
+            render: (v: string) => <Tag>{v}</Tag>,
+          },
+        ]}
+      />
+    </div>
+  );
+}

@@ -158,7 +158,7 @@ user_id+name), DNS upserts (pdns idempotent), home rsync
 
 ```sh
 curl -k -H "Cookie: ory_kratos_session=..." \
-  https://testserver:8443/api/v1/admin/migrations | jq
+  https://<vm-host>:8443/api/v1/admin/migrations | jq
 ```
 
 Returns `{data: [...], total: N, page: 1, page_size: 50}`.

@@ -52,7 +52,7 @@ profile jabali-agent /usr/local/bin/jabali-agent {
 
   # ptrace read — `systemctl status` interrogates /proc/<pid>/attr under
   # unconfined processes; agent inherits enforce profile so read is denied
-  # without this rule (observed: status tile dead on testserver 2026-05-10).
+  # without this rule (observed: status tile dead on mx VM 2026-05-10).
   ptrace (read) peer=unconfined,
   # signal HUP — nginx reload: agent sends SIGHUP to master process which
   # runs unconfined (nginx not profiled).
@@ -445,7 +445,7 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   # D-Bus / systemd manager. Without these the agent's `systemctl show`
   # / `systemctl restart` calls hit "Failed to connect to bus: Permission
   # denied" once the profile flips from complain to enforce — observed
-  # 2026-05-07 on testserver (Server Status services tile dead, agent
+  # 2026-05-07 on mx VM (Server Status services tile dead, agent
   # wire returned the bus error wrapped in the services sub-call).
   # `dbus,` allows full D-Bus access; access-control boundary remains
   # the Unix socket (only the jabali group can connect to the agent),

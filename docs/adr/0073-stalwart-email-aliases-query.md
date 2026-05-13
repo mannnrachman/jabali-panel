@@ -7,7 +7,7 @@ Amends: ADR-0045 (Stalwart bootstrap), ADR-0051 (M6.5 DB-as-truth)
 
 ## Context
 
-VM smoke on `testserver` (mx.jabali-panel.com, 2026-04-27) confirmed
+VM smoke on `mx.jabali-panel.com` ( 2026-04-27) confirmed
 the M6.5 forwarder/alias feature ships through to the database
 (`email_forwarders` row created on `jabali mailbox forwarder add`) but
 is never observed by Stalwart. Sending to an alias returns
@@ -89,7 +89,7 @@ Two findings drove this ADR:
 
 ## Verification
 
-VM smoke transcript on testserver post-fix:
+VM smoke transcript on mx post-fix:
 
 ```
 jabali mailbox forwarder add bob@123123.com --type alias --local sales

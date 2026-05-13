@@ -68,5 +68,5 @@ document the bind-address strategy.
 ## Verification
 
 Bulwark `POST /api/auth/session` with bad credentials returns `401`
-(was `502` pre-fix). Live-verified on testserver `mx.jabali-panel.com`
+(was `502` pre-fix). Live-verified on `mx.jabali-panel.com`
 on 2026-04-27 against mailbox `dsfsdfdsf@jabali.site`.

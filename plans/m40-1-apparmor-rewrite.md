@@ -9,7 +9,7 @@
 
 ## Why
 
-M40 shipped 5 jabali daemon profiles. Live audit on testserver (mx)
+M40 shipped 5 jabali daemon profiles. Live audit on mx
 2026-05-09 found:
 
 1. AA 4.x on Debian 13 returns EACCES for every Unix-socket

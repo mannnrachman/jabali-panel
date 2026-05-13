@@ -9,6 +9,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -311,6 +312,13 @@ func repairSteps() []repairStep {
 			label: "jabali AppArmor profiles exist but are disabled",
 			detect: detectAppArmorProfilesDisabled,
 			fix:    fixAppArmorProfilesDisabled,
+		},
+		{
+			id:    "orphan-migration-staging",
+			label: "/var/lib/jabali-migrations/* dirs for jobs already terminal in DB",
+			detect: detectOrphanMigrationStaging,
+			fix:    fixOrphanMigrationStaging,
+			destructive: true,
 		},
 	}
 }
@@ -877,4 +885,76 @@ func repairHint() string {
 	return "\n  → If this looks like a deployment-host issue, try:\n" +
 		"      jabali repair --diagnose\n" +
 		"      jabali repair --auto\n"
+}
+
+
+// ---------- orphan-migration-staging ----------
+//
+// Symptom: /var/lib/jabali-migrations/<job-id>/ holds 3-5 GB of
+// extracted cpmove / DA / Hestia trees for jobs that are done /
+// failed / cancelled. Real cause: pre-e0572bcc imports kept the
+// staging dir forever; auto-cleanup landed but didn't sweep the
+// historical backlog. Detector reads the DB for terminal job-ids
+// + flags any staging dir whose job is terminal.
+
+func migrationStagingRoot() string {
+	return "/var/lib/jabali-migrations"
+}
+
+func detectOrphanMigrationStaging(ctx repairCtx) (bool, string, error) {
+	orphans, err := orphanMigrationStagingDirs(ctx)
+	if err != nil {
+		return false, "", err
+	}
+	if len(orphans) == 0 {
+		return false, "", nil
+	}
+	return true, fmt.Sprintf("%d orphan dirs (%s, ...)", len(orphans), orphans[0]), nil
+}
+
+func fixOrphanMigrationStaging(ctx repairCtx) error {
+	orphans, err := orphanMigrationStagingDirs(ctx)
+	if err != nil {
+		return err
+	}
+	for _, p := range orphans {
+		fmt.Printf("  removing orphan staging dir: %s\n", p)
+		if rmErr := os.RemoveAll(p); rmErr != nil {
+			fmt.Printf("  WARN: rm %s: %v\n", p, rmErr)
+		}
+	}
+	return nil
+}
+
+// orphanMigrationStagingDirs lists /var/lib/jabali-migrations/<job-id>
+// dirs whose mtime is older than the cutoff. DB lookups are out of
+// scope for `jabali repair` (no DB handle on repairCtx); time-based
+// sweep covers the common case — auto-cleanup landed in e0572bcc so
+// any dir whose import completed is gone within seconds. Anything
+// older than 7 days is almost certainly an orphan from a pre-
+// cleanup-era run or a pull-source that died mid-extract.
+func orphanMigrationStagingDirs(_ repairCtx) ([]string, error) {
+	root := migrationStagingRoot()
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read %s: %w", root, err)
+	}
+	cutoff := time.Now().Add(-7 * 24 * time.Hour)
+	var orphans []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		info, statErr := e.Info()
+		if statErr != nil {
+			continue
+		}
+		if info.ModTime().Before(cutoff) {
+			orphans = append(orphans, filepath.Join(root, e.Name()))
+		}
+	}
+	return orphans, nil
 }

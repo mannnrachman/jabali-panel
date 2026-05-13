@@ -1332,21 +1332,25 @@ type sslSelfSignResult struct {
 // once email is enabled so Bulwark's server-side JMAP verify fetch
 // hits a trusted cert. Empty slice for domains without email.
 //
-// autoconfig.<domain> is intentionally OFF the default list. It is
-// ONLY used by Outlook + Thunderbird auto-configuration probes — the
-// webmail UI and JMAP API don't need it — and pdns doesn't auto-add an
-// A record for it when email is enabled. Including it in the SAN
-// list unconditionally caused every fresh-install cert to fail with
-// 'NXDOMAIN looking up A for autoconfig.<domain>' (incident
-// 2026-04-26: jabali.site stuck pending_acme_retry on first VPS).
-// Re-introduce it only after pdns auto-creates the corresponding A
-// record OR with an opt-in toggle so admins who set the DNS by hand
-// can request the SAN.
+// autoconfig.<domain> is included once pdns auto-creates the
+// matching CNAME (via dnscompile/email_records.go → 'autoconfig
+// CNAME mail.<zone>'). Webmail vhost server_name covers both
+// mail.<domain> + autoconfig.<domain> so ACME HTTP-01 challenges
+// land on the right vhost + the issued cert SAN matches Thunderbird
+// + Outlook auto-config probes. Originally dropped on incident
+// 2026-04-26 (jabali.site stuck pending_acme_retry) because the
+// CNAME wasn't yet wired; M32 follow-up restores it now that the
+// DNS side ships the record by default.
+//
+// autodiscover.<domain> is NOT yet on the list — pdns auto-creates
+// only the SRV record, not the A/CNAME hostname Outlook fetches
+// directly. Re-introduce after dnscompile/email_records.go adds the
+// matching CNAME.
 func sanHostnamesForDomain(d *models.Domain) []string {
 	if d == nil || !d.EmailEnabled {
 		return nil
 	}
-	return []string{"mail." + d.Name}
+	return []string{"mail." + d.Name, "autoconfig." + d.Name}
 }
 
 // acmeRetryInterval is how long to wait between ACME (Let's Encrypt) attempts

@@ -49,7 +49,7 @@ server {
 {{ end }}{{ if .ListenIPv6 }}  listen [{{.ListenIPv6}}]:443 ssl;
 {{ else }}  listen [::]:443 ssl;
 {{ end }}  http2 on;
-  server_name mail.{{.DomainName}};
+  server_name mail.{{.DomainName}} autoconfig.{{.DomainName}};
 
   ssl_certificate {{.SSLCertPath}};
   ssl_certificate_key {{.SSLKeyPath}};
@@ -113,7 +113,7 @@ server {
 {{ else }}  listen 80;
 {{ end }}{{ if .ListenIPv6 }}  listen [{{.ListenIPv6}}]:80;
 {{ else }}  listen [::]:80;
-{{ end }}  server_name mail.{{.DomainName}};
+{{ end }}  server_name mail.{{.DomainName}} autoconfig.{{.DomainName}};
 
   # ACME HTTP-01 webroot. Must be a location block — a server-level
   # redirect fires in nginx SERVER_REWRITE phase BEFORE FIND_CONFIG,

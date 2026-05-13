@@ -76,7 +76,7 @@ func TestWebmailVhostApply_WritesAndReloads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read vhost: %v", err)
 	}
-	if !strings.Contains(string(b), "server_name mail.example.com;") {
+	if !strings.Contains(string(b), "server_name mail.example.com autoconfig.example.com;") {
 		t.Errorf("vhost missing server_name: %s", string(b))
 	}
 	if !strings.Contains(string(b), "/etc/letsencrypt/live/example.com/fullchain.pem") {

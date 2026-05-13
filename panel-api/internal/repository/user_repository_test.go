@@ -101,3 +101,68 @@ func TestUserRepository_FindByEmail_NotFound(t *testing.T) {
 	assert.ErrorIs(t, err, repository.ErrNotFound)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestUserRepository_SetSuspended_True(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := repository.NewUserRepository(gdb)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE .users. SET`).
+		WithArgs(
+			"non-payment",      // suspend_reason
+			sqlmock.AnyArg(),    // suspended (true)
+			sqlmock.AnyArg(),    // suspended_at (ptr to now)
+			sqlmock.AnyArg(),    // updated_at
+			"01HRCWR7CKMCBEDF2PYQ7G0D2J",
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err := repo.SetSuspended(context.Background(), "01HRCWR7CKMCBEDF2PYQ7G0D2J", true, "non-payment")
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUserRepository_SetSuspended_False_ClearsFields(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := repository.NewUserRepository(gdb)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE .users. SET`).
+		WithArgs(
+			sqlmock.AnyArg(),    // suspend_reason ('')
+			sqlmock.AnyArg(),    // suspended (false)
+			sqlmock.AnyArg(),    // updated_at — suspended_at = NULL renders inline
+			"01HRCWR7CKMCBEDF2PYQ7G0D2J",
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err := repo.SetSuspended(context.Background(), "01HRCWR7CKMCBEDF2PYQ7G0D2J", false, "")
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUserRepository_SetSuspended_NotFound(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := repository.NewUserRepository(gdb)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE .users. SET`).
+		WillReturnResult(sqlmock.NewResult(0, 0)) // zero rows affected → ErrNotFound
+	mock.ExpectCommit()
+
+	err := repo.SetSuspended(context.Background(), "missing-id-zzzzzzzzzzzzzzzz", true, "reason")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, repository.ErrNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

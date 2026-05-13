@@ -6,6 +6,7 @@ import (
 	"errors"
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
@@ -93,3 +94,44 @@ func TestBackupJob_ListForUser_FiltersAndCounts(t *testing.T) {
 	require.Empty(t, rows)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestBackupJobRepository_ListByStatusSince(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockBackupDB(t)
+	defer raw.Close()
+
+	repo := NewBackupJobRepository(gdb)
+	since := time.Date(2026, 5, 13, 11, 30, 0, 0, time.UTC)
+	mock.ExpectQuery("SELECT \\* FROM `backup_jobs` WHERE status = \\? AND finished_at >= \\? ORDER BY finished_at ASC LIMIT \\?").
+		WithArgs(models.BackupJobStatusFailed, since, 200).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "kind", "status"}).
+			AddRow("j1", "u1", "account_backup", models.BackupJobStatusFailed))
+
+	rows, err := repo.ListByStatusSince(context.Background(), models.BackupJobStatusFailed, since, 200)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "j1", rows[0].ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestBackupJobRepository_ListByStatusSince_ZeroLimitDefaults(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockBackupDB(t)
+	defer raw.Close()
+
+	repo := NewBackupJobRepository(gdb)
+	since := time.Date(2026, 5, 13, 11, 30, 0, 0, time.UTC)
+	// limit=0 → impl defaults to 200; verify the LIMIT clause matches.
+	mock.ExpectQuery("SELECT \\* FROM `backup_jobs` WHERE status = \\? AND finished_at >= \\? ORDER BY finished_at ASC LIMIT \\?").
+		WithArgs(models.BackupJobStatusFailed, since, 200).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	rows, err := repo.ListByStatusSince(context.Background(), models.BackupJobStatusFailed, since, 0)
+	require.NoError(t, err)
+	require.Empty(t, rows)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// silence unused-imports warnings on the time package if other tests
+// later drop their reference.
+var _ = errors.New

@@ -615,21 +615,30 @@ func cpanelAnalyzeCallback() migrate.StageCallback {
 				"analyze_skip:operator_supplied_tarball — restore stage will use the pre-extracted tree",
 			}, nil
 		}
-		d := cpanel.New()
+		// Pick the right Discoverer based on source kind. Pre-M35.8
+		// this stage hard-wired cpanel.New() which caused DA jobs
+		// to error with "uapi: command not found" — uapi is a
+		// cpanel-only CLI. migrate.Get returns the registered
+		// per-kind factory; whm_pkgacct shares cpanel's impl per
+		// the registry init.
+		disc, err := migrate.Get(job.SourceKind)
+		if err != nil {
+			return 0, nil, fmt.Errorf("no_discoverer:%s:%w", job.SourceKind, err)
+		}
 		// Honor server_settings.migration_allow_private_hosts so the
 		// analyze stage's SSH dial matches what the discover/pull
 		// paths already use. Best-effort lookup; default safe.
 		settingsRepo := repository.NewServerSettingsRepository(sharedDB)
 		if s, sErr := settingsRepo.Get(ctx); sErr == nil && s != nil {
-			d.AllowPrivate = s.MigrationAllowPrivateHosts
+			migrate.ApplyAllowPrivate(disc, s.MigrationAllowPrivateHosts)
 		}
-		s, err := d.Connect(ctx, job.SourceHost, "root", migrate.SecretRef{Path: secretPath})
+		s, err := disc.Connect(ctx, job.SourceHost, "root", migrate.SecretRef{Path: secretPath})
 		if err != nil {
 			return 0, nil, fmt.Errorf("connect: %w", err)
 		}
-		defer func() { _ = d.Close(ctx, s) }()
+		defer func() { _ = disc.Close(ctx, s) }()
 
-		mf, err := d.DescribeAccount(ctx, s, job.SourceUser)
+		mf, err := disc.DescribeAccount(ctx, s, job.SourceUser)
 		if err != nil {
 			return 0, nil, fmt.Errorf("describe %s: %w", job.SourceUser, err)
 		}

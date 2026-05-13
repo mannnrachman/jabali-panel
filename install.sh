@@ -9454,6 +9454,29 @@ EOF
   systemctl restart mariadb          2>/dev/null || true
   systemctl restart redis-server     2>/dev/null || true
 
+  # DNS safety net — without it the host can lose internet access.
+  # /etc/resolv.conf likely still points at /run/systemd/resolve/stub-
+  # resolv.conf, which forwards to a recursor we just stopped + a
+  # systemd-resolved with no DNS= (we removed our drop-in). Probe a
+  # known-good hostname; if it fails, replace /etc/resolv.conf with a
+  # static Cloudflare + Quad9 fallback so the operator's shell still
+  # works post-uninstall. Operator can put their own DNS back later.
+  if ! getent hosts cloudflare.com >/dev/null 2>&1; then
+    _warn "DNS broken post-uninstall — writing static fallback to /etc/resolv.conf"
+    # If the path is a symlink (resolved stub), unlink it before writing.
+    [[ -L /etc/resolv.conf ]] && rm -f /etc/resolv.conf
+    cat > /etc/resolv.conf <<'RESOLV'
+# Restored by jabali install.sh --uninstall.
+# systemd-resolved no longer has jabali drop-ins, recursor is gone.
+# Replace these with your operator-managed resolvers when ready.
+nameserver 1.1.1.1
+nameserver 9.9.9.9
+options edns0
+RESOLV
+    chmod 0644 /etc/resolv.conf
+    _ok "DNS fallback written — host now resolves via Cloudflare + Quad9"
+  fi
+
   _log "removing binaries"
   rm -f /usr/local/bin/jabali \
         /usr/local/bin/jabali-panel \
@@ -9501,6 +9524,11 @@ EOF
   rm -rf /usr/share/jabali
   # Validate sshd now that our drop-in is gone — best-effort.
   sshd -t 2>/dev/null && systemctl reload ssh 2>/dev/null || true
+
+  # Sweep jabali-specific log files outside the dirs we already rm -rf'd.
+  rm -f /var/log/php-fpm-pma.log* 2>/dev/null || true
+  rm -f /var/log/php-fpm-shukivaknin.log* 2>/dev/null || true
+  rm -f /var/log/jabali-update.log* 2>/dev/null || true
 
   _log "removing PHP-FPM jabali pools"
   local pdir poolf
@@ -9573,6 +9601,11 @@ EOF
          /var/lib/jabali-backups  \
          /var/lib/jabali-uploads  \
          /var/lib/jabali-migrations \
+         /var/lib/jabali-panel-acme \
+         /var/lib/jabali-restic-state \
+         /var/log/jabali-panel    \
+         /var/log/jabali-bulwark  \
+         /var/log/jabali-agent    \
          /usr/local/maldetect     \
          /var/log/maldet          \
          /var/lib/aide            \

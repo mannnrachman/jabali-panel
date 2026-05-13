@@ -140,15 +140,32 @@ for db in $DBS; do
   fi
 done
 
-# 3. homedir/ — rsync /home/<user>/ → cpmove-<user>/homedir/.
-#    cpanel.ImportHomeSplit walks <HomeDir>/domains/<dom>/public_html/
-#    which matches DA's per-site layout. Keep .ssh/authorized_keys
-#    so cpanel.ImportSSHKeys can pick it up (otherwise it'd be
-#    swept by migration_home excludes on the agent side, but the
-#    agent ALSO excludes .ssh — so include it via the tarball + the
-#    cpanel.ImportSSHKeys path which reads the file directly).
-if [ -d "$HOMEDIR" ]; then
-  rsync -aH --exclude=.lock --exclude=.cache "$HOMEDIR/" "$TMP/cpmove-$ACCT/homedir/" 2>&1 | tail -5
+# 3. homedir is INTENTIONALLY OMITTED from this tarball — the restore
+#    stage rsyncs per-domain directly source→dest over SSH, which lets
+#    rsync resume on transient failures and skips re-transfer of files
+#    that already match on the destination. Bundling home into a tar
+#    also forced a full re-pull on every retry.
+#
+#    Emit a small manifest of every domain's docroot on the source so
+#    the restore stage knows what to rsync. One line per domain:
+#      <domain>\t<absolute-public_html-path>
+#    Restore reads this + dispatches agent.migration.rsync_remote_home
+#    once per row.
+if [ -s "$USERDIR/domains.list" ]; then
+  while read -r DOM; do
+    [ -z "$DOM" ] && continue
+    DOC_ROOT="$HOMEDIR/domains/$DOM/public_html"
+    if [ -d "$DOC_ROOT" ]; then
+      printf '%%s\t%%s\n' "$DOM" "$DOC_ROOT" >> "$TMP/cpmove-$ACCT/domains-paths.txt"
+    fi
+  done < "$USERDIR/domains.list"
+fi
+# Still bundle ~/.ssh/authorized_keys so cpanel.ImportSSHKeys picks it
+# up without a separate rsync round-trip — tiny file, no impact on
+# tarball size.
+if [ -r "$HOMEDIR/.ssh/authorized_keys" ]; then
+  mkdir -p "$TMP/cpmove-$ACCT/homedir/.ssh"
+  cp "$HOMEDIR/.ssh/authorized_keys" "$TMP/cpmove-$ACCT/homedir/.ssh/authorized_keys"
 fi
 
 # 4. cron/<user> — DA stores crontabs at /var/spool/cron/$ACCT

@@ -603,6 +603,59 @@ func cpanelRestoreCallback(
 		warnings = append(warnings, fmt.Sprintf("dns: zones=%d records=%d", dnsRes.Zones, dnsRes.Records))
 		warnings = append(warnings, dnsRes.Skipped...)
 
+		// DA flow (2026-05-14 rework): backup tarball intentionally
+		// EXCLUDES the home tree. domains-paths.txt manifest inside
+		// the tar lists one source-side docroot per domain. Dispatch
+		// agent.migration.rsync_remote_home once per row — pull
+		// straight from source over SSH instead of tar middleware.
+		// Survives transient failures (rsync resumes) + skips files
+		// already on dest.
+		daHomeHandled := false
+		if job.SourceKind == models.MigrationSourceDirectAdmin {
+			manifest := filepath.Join(p.parsed.ExtractDir, "cpmove-"+p.parsed.SourceUser, "domains-paths.txt")
+			if raw, rerr := os.ReadFile(manifest); rerr == nil && len(raw) > 0 {
+				secretPath := fmt.Sprintf("/etc/jabali-panel/migration-secrets/%s.env", job.ID)
+				totalBytes := int64(0)
+				domCount := 0
+				for _, line := range strings.Split(string(raw), "\n") {
+					line = strings.TrimSpace(line)
+					if line == "" {
+						continue
+					}
+					parts := strings.SplitN(line, "\t", 2)
+					if len(parts) != 2 {
+						continue
+					}
+					dom, srcPath := parts[0], parts[1]
+					destPath := filepath.Join("/home", p.targetUsername, "domains", dom, "public_html")
+					rawResp, rerr := sharedAgent.Call(ctx, "migration.rsync_remote_home", map[string]any{
+						"job_id":      job.ID,
+						"host":        job.SourceHost,
+						"ssh_user":    "root",
+						"secret_path": secretPath,
+						"src_path":    srcPath,
+						"dest_path":   destPath,
+						"dest_user":   p.targetUsername,
+					})
+					if rerr != nil {
+						warnings = append(warnings, fmt.Sprintf("home_rsync_remote: %s: %v", dom, rerr))
+						continue
+					}
+					var rs struct {
+						BytesCopied int64 `json:"bytes_copied"`
+						Files       int64 `json:"files"`
+					}
+					_ = json.Unmarshal(rawResp, &rs)
+					totalBytes += rs.BytesCopied
+					domCount++
+				}
+				bytes += totalBytes
+				warnings = append(warnings, fmt.Sprintf("home: bytes=%d domains=%d (direct-rsync source→dest, no tar middleware)", totalBytes, domCount))
+				daHomeHandled = true
+			}
+			warnings = append(warnings, "home_rsync_remote_skip:no_domains-paths.txt_manifest — falling back to tar-bundled homedir")
+		}
+
 		// M35.8 P7: per-domain rsync split. cpanel ships all sites
 		// under <homedir>/public_html/(<addon>/) flat layout; jabali
 		// uses /home/<user>/domains/<dom>/public_html/. ImportHomeSplit
@@ -611,29 +664,31 @@ func cpanelRestoreCallback(
 		// rest of the homedir (mail/ etc/ application_backups/) minus
 		// public_html. Falls back to the legacy whole-homedir rsync
 		// when no userdata YAML is present.
-		hsRes, err := cpanel.ImportHomeSplit(ctx, sharedAgent, p.parsed, job.ID, p.targetUsername)
-		if err != nil {
-			return bytes, warnings, fmt.Errorf("home_split: %w", err)
-		}
-		var fallback bool
-		for _, sk := range hsRes.Skipped {
-			if strings.HasPrefix(sk, "home_split_skip:no_userdata_yaml") {
-				fallback = true
-				break
-			}
-		}
-		if fallback || hsRes.DomainsCopied == 0 {
-			homeRes, err := cpanel.ImportHome(ctx, sharedAgent, p.parsed, job.ID, p.targetUsername)
+		if !daHomeHandled {
+			hsRes, err := cpanel.ImportHomeSplit(ctx, sharedAgent, p.parsed, job.ID, p.targetUsername)
 			if err != nil {
-				return bytes, warnings, fmt.Errorf("home: %w", err)
+				return bytes, warnings, fmt.Errorf("home_split: %w", err)
 			}
-			bytes += homeRes.BytesCopied
-			warnings = append(warnings, fmt.Sprintf("home: bytes=%d files=%d (legacy full-homedir mode)", homeRes.BytesCopied, homeRes.Files))
-			warnings = append(warnings, homeRes.Skipped...)
-		} else {
-			bytes += hsRes.BytesCopied
-			warnings = append(warnings, fmt.Sprintf("home: bytes=%d files=%d domains=%d (per-domain split)", hsRes.BytesCopied, hsRes.Files, hsRes.DomainsCopied))
-			warnings = append(warnings, hsRes.Skipped...)
+			var fallback bool
+			for _, sk := range hsRes.Skipped {
+				if strings.HasPrefix(sk, "home_split_skip:no_userdata_yaml") {
+					fallback = true
+					break
+				}
+			}
+			if fallback || hsRes.DomainsCopied == 0 {
+				homeRes, err := cpanel.ImportHome(ctx, sharedAgent, p.parsed, job.ID, p.targetUsername)
+				if err != nil {
+					return bytes, warnings, fmt.Errorf("home: %w", err)
+				}
+				bytes += homeRes.BytesCopied
+				warnings = append(warnings, fmt.Sprintf("home: bytes=%d files=%d (legacy full-homedir mode)", homeRes.BytesCopied, homeRes.Files))
+				warnings = append(warnings, homeRes.Skipped...)
+			} else {
+				bytes += hsRes.BytesCopied
+				warnings = append(warnings, fmt.Sprintf("home: bytes=%d files=%d domains=%d (per-domain split)", hsRes.BytesCopied, hsRes.Files, hsRes.DomainsCopied))
+				warnings = append(warnings, hsRes.Skipped...)
+			}
 		}
 
 		domainsRes, err := cpanel.ImportDomains(ctx, domainsRepo, sharedAgent, p.parsed, p.targetUserID, p.targetUsername)

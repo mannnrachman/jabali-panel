@@ -724,7 +724,7 @@ POLICYEOF
   # `command -v` / package-present checks now that the packages land here.
   _spin "apt install system packages (this is the long one)" \
     apt-get install -y -qq --no-install-recommends \
-      git curl ca-certificates build-essential tar bzip2 unzip openssl gnupg \
+      git curl ca-certificates build-essential tar bzip2 unzip openssl gnupg sudo \
       mariadb-server mariadb-client \
       rsync acl \
       systemd-resolved \
@@ -3010,6 +3010,18 @@ EOF
 # ---------- step 4: clone / update repo -------------------------------------
 
 clone_or_update_repo() {
+  # Hard gate: sudo must be installed before we reach for sudo -u jabali.
+  # install_base_packages adds it to the apt batch, but a minimal LXC /
+  # docker image without sudo + a half-completed install batch can land
+  # us here without the binary. Surface a clear error instead of the
+  # opaque "git clone failed (check connectivity, cert trust, ...)"
+  # message _die emits later.
+  if ! command -v sudo >/dev/null 2>&1; then
+    _log "sudo not found — installing on demand"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends sudo \
+      || _die "sudo missing and apt-get install sudo failed — install sudo manually + re-run"
+  fi
+
   # Re-verify DNS before reaching for a git remote. Earlier steps in the
   # install (ufw activate, systemd-resolved restart during install_kratos'
   # config flip, crowdsec profile reload) have been observed to drop the

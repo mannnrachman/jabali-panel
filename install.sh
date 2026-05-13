@@ -9020,6 +9020,18 @@ EOF
     _log "provision: re-running install_malware_stack to refresh drop-ins"
     install_malware_stack
   fi
+
+  # logrotate drop-in — refreshed every update so new log paths added in
+  # later releases land on existing hosts. Cheap: cmp -s short-circuits
+  # when the file is byte-identical.
+  if declare -f install_logrotate >/dev/null 2>&1; then
+    install_logrotate
+  fi
+
+  # OnFailure notifier template + helper script — same logic.
+  if declare -f install_notify_template >/dev/null 2>&1; then
+    install_notify_template
+  fi
 }
 
 main() {

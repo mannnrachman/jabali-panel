@@ -3189,14 +3189,22 @@ build_frontend() {
   # Cheap to regenerate (seconds).
   rm -rf "$REPO_DIR/panel-ui/node_modules/.vite"
 
-  # Cap V8 heap at 1500 MB so the build can't push past total
-  # host RAM and trigger the OOM killer on small VPSes. vite peaks
-  # around 1.2 GB; 1.5 GB ceiling leaves headroom for syscall buffers.
+  # Cap V8 heap at 1024 MB so the build can't push past total host
+  # RAM + trigger the OOM killer on small VPSes. Vite peaks around
+  # 1.2 GB on the panel-ui bundle; 1 GB ceiling leaves V8 enough
+  # room for the bundle graph + closures, and the swap file picks
+  # up the spillover.
+  #
+  # nice -n 19 + ionice -c 3 (idle): the build is interactive-only
+  # during install, so a low CPU + I/O priority lets in-flight
+  # service installs (MariaDB postinst, CrowdSec hub-data fetch,
+  # PHP-FPM enable) win contention. Adds ~5-10s to total build
+  # time on a fully-loaded box; ~0s on an idle one.
   sudo -u "$SERVICE_USER" -H env \
     HOME="$REPO_DIR" \
     PATH="/usr/bin:/bin" \
     NODE_OPTIONS="--max-old-space-size=1024" \
-    bash -c "cd '$REPO_DIR/panel-ui' && npm run build"
+    bash -c "cd '$REPO_DIR/panel-ui' && nice -n 19 ionice -c 3 npm run build"
   _ok "panel-ui built → $REPO_DIR/panel-ui/dist/"
 }
 

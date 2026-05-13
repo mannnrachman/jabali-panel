@@ -83,8 +83,23 @@ func (r *migrationJobRepo) FindByID(ctx context.Context, id string) (*models.Mig
 
 func (r *migrationJobRepo) FindBySource(ctx context.Context, sourceKind, sourceHost, sourceUser string) (*models.MigrationJob, error) {
 	var row models.MigrationJob
+	// M35.8: collision check matches only ACTIVELY-OWNED rows.
+	// - drafts are wizard-internal scratchpads, hidden from the UI
+	// - done / failed / cancelled rows are terminal; the source is
+	//   free again from the operator's perspective
+	// Without this, an operator would see "existing draft owns this
+	// source" pointing at a row the UI doesn't even surface, with
+	// no way to switch / dismiss. Reaper cleans drafts >24h; terminal
+	// rows persist for audit but don't block reruns.
 	err := r.db.WithContext(ctx).
-		Where("source_kind = ? AND source_host = ? AND source_user = ?", sourceKind, sourceHost, sourceUser).
+		Where("source_kind = ? AND source_host = ? AND source_user = ? AND state NOT IN ?",
+			sourceKind, sourceHost, sourceUser,
+			[]string{
+				models.MigrationStateDraft,
+				models.MigrationStateDone,
+				models.MigrationStateFailed,
+				models.MigrationStateCancelled,
+			}).
 		First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrNotFound

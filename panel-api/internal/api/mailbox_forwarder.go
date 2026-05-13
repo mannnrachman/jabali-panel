@@ -90,7 +90,13 @@ func (h *forwarderHandler) listAll(c *gin.Context) {
 	}
 	items := make([]forwarderResponse, 0, len(fwds))
 	for _, f := range fwds {
-		mb, err := h.cfg.Mailboxes.FindByID(ctx, f.MailboxID)
+		if f.MailboxID == nil {
+			// Domain-scoped DA-imported forwarder; M65 mailbox-keyed UI
+			// can't render it. Skip — future domain-scoped endpoint will
+			// surface these.
+			continue
+		}
+		mb, err := h.cfg.Mailboxes.FindByID(ctx, *f.MailboxID)
 		if err != nil {
 			continue
 		}
@@ -132,7 +138,7 @@ func (h *forwarderHandler) create(c *gin.Context) {
 	}
 	f := &models.EmailForwarder{
 		ID:        ids.NewULID(),
-		MailboxID: mb.ID,
+		MailboxID: &mb.ID,
 		DomainID:  dom.ID,
 		Type:      req.Type,
 		Target:    req.Target,
@@ -162,7 +168,11 @@ func (h *forwarderHandler) del(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	_, _, err = h.loadMailbox(ctx, f.MailboxID, claims)
+	if f.MailboxID == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "domain_scoped_forwarder"})
+		return
+	}
+	_, _, err = h.loadMailbox(ctx, *f.MailboxID, claims)
 	if err != nil {
 		h.writeErr(c, err)
 		return
@@ -181,7 +191,7 @@ func (h *forwarderHandler) resolve(_ context.Context, f models.EmailForwarder, m
 	}
 	return forwarderResponse{
 		ID:           f.ID,
-		MailboxID:    f.MailboxID,
+		MailboxID:    func() string { if f.MailboxID != nil { return *f.MailboxID }; return "" }(),
 		MailboxEmail: mb.LocalPart + "@" + dom.Name,
 		DomainID:     f.DomainID,
 		DomainName:   dom.Name,

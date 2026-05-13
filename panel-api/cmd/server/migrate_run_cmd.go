@@ -692,6 +692,20 @@ func cpanelRestoreCallback(
 			extrasRes.DKIMKeysPreserved))
 		warnings = append(warnings, extrasRes.Skipped...)
 
+		// DA forwarder import — walks etc/<dom>/aliases staged by
+		// BackupUser + inserts standalone EmailForwarder rows
+		// (MailboxID=NULL). Stalwart push deferred to a domain-scoped
+		// reconciler phase.
+		if job.SourceKind == models.MigrationSourceDirectAdmin {
+			fwdRes, ferr := directadmin.ImportForwarders(ctx, fwdRepo, domainsRepo, p.parsed.ExtractDir, p.parsed.SourceUser)
+			if ferr != nil {
+				warnings = append(warnings, fmt.Sprintf("da_forwarders: %v", ferr))
+			} else {
+				warnings = append(warnings, fmt.Sprintf("da_forwarders: inserted=%d", fwdRes.Inserted))
+				warnings = append(warnings, fwdRes.Skipped...)
+			}
+		}
+
 		// Ensure the migrated user has a Kratos identity so they can log in.
 		if kc != nil && usersRepo != nil {
 			targetUser, uErr := usersRepo.FindByID(ctx, p.targetUserID)

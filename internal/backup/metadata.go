@@ -226,7 +226,7 @@ type MetadataMailbox struct {
 // belongs to a (domain, mailbox) pair.
 type MetadataForwarder struct {
 	ID        string  `json:"id"`
-	MailboxID string  `json:"mailbox_id"`
+	MailboxID *string `json:"mailbox_id,omitempty"`
 	Type      string  `json:"type"` // alias | external
 	LocalPart *string `json:"local_part,omitempty"`
 	Target    string  `json:"target"`

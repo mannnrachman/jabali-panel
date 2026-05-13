@@ -296,7 +296,7 @@ func newMailboxForwarderAddCmd() *cobra.Command {
 
 			f := &models.EmailForwarder{
 				ID:        ids.NewULID(),
-				MailboxID: mb.ID,
+				MailboxID: &mb.ID,
 				DomainID:  dom.ID,
 				Type:      fwdType,
 				Enabled:   true,

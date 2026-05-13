@@ -169,7 +169,7 @@ func ImportExtras(
 					}
 					fwd := &models.EmailForwarder{
 						ID:        ids.NewULID(),
-						MailboxID: mb.ID,
+						MailboxID: &mb.ID,
 						DomainID:  mb.DomainID,
 						Type:      "external",
 						LocalPart: &local,

@@ -10,7 +10,7 @@ import "time"
 // Type 'external': Mail to local_part@domain is forwarded to target (an outside email).
 type EmailForwarder struct {
 	ID        string    `gorm:"type:char(26);primaryKey" json:"id"`
-	MailboxID string    `gorm:"type:char(26);not null;index:ix_email_forwarders_mailbox" json:"mailbox_id"`
+	MailboxID *string   `gorm:"type:char(26);index:ix_email_forwarders_mailbox" json:"mailbox_id,omitempty"`
 	DomainID  string    `gorm:"type:char(26);not null;index:ix_email_forwarders_domain" json:"domain_id"`
 	Type      string    `gorm:"type:enum('alias','external');not null" json:"type"`
 	LocalPart *string   `gorm:"type:varchar(64)" json:"local_part"` // NULL for type='external'

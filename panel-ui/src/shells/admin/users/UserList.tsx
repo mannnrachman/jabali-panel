@@ -8,7 +8,7 @@
 // the ?is_admin filter is applied before search/sort so the paginated
 // total stays correct per tab.
 import { useState } from "react";
-import { Badge, Button, Card, Input, Space, Table, Tag, Typography } from "antd";
+import { Badge, Button, Card, Input, Space, Table, Tag, Tooltip, Typography } from "antd";
 import { EditOutlined, SearchOutlined, TeamOutlined } from "@icons";
 
 import { RowActionButton } from "../../../components/RowActionButton";
@@ -33,6 +33,8 @@ type User = {
   name_last: string;
   is_admin: boolean;
   suspended?: boolean;
+  suspended_at?: string | null;
+  suspend_reason?: string;
   // Hosting package the user is provisioned against; NULL for admins.
   package_id?: string | null;
   created_at: string;
@@ -178,7 +180,19 @@ function UsersShellTable({
           r.suspended ? (
             <span>
               {email}{" "}
-              <Tag color="error">Suspended</Tag>
+              <Tooltip
+                title={
+                  <>
+                    <div>
+                      <b>Suspended</b>
+                      {r.suspended_at ? ` on ${new Date(r.suspended_at).toLocaleString()}` : ""}
+                    </div>
+                    {r.suspend_reason ? <div>Reason: {r.suspend_reason}</div> : null}
+                  </>
+                }
+              >
+                <Tag color="error">Suspended</Tag>
+              </Tooltip>
             </span>
           ) : (
             email

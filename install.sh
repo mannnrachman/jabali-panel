@@ -3121,7 +3121,7 @@ protect_panel_docs() {
 
 # ---------- step 5a: build React SPA -----------------------------------
 
-ensure_build_swap() {
+ensure_swap() {
   # Frontend build (vite + node) peaks at ~1.5 GB resident. On a low-RAM
   # host without swap the OOM killer fires mid-build, leaving the install
   # half-complete + the operator with a cryptic 'Killed' from npm. Add a
@@ -3166,7 +3166,7 @@ ensure_build_swap() {
 }
 
 build_frontend() {
-  ensure_build_swap
+  ensure_swap
   _log "building panel-ui (npm ci + npm run build)"
   # npm ci needs lock + no partial node_modules. Run as the service user so
   # the node_modules cache sits in the project dir, not /root.
@@ -9114,6 +9114,11 @@ EOF
 main() {
   print_banner
   preflight
+  # Swap MUST land before install_base_packages — apt + CrowdSec hub
+  # downloads + npm ci all pull 100MB+ into RAM, OOM-killing each
+  # other on a 2 GB VPS. ensure_swap is idempotent + cheap on hosts
+  # with enough RAM.
+  ensure_swap
   prompt_server_settings
   install_base_packages
   # NTP / time sync — must run before anything that depends on accurate

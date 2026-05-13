@@ -2876,7 +2876,13 @@ ensure_user_and_dirs() {
   if ! id "$SERVICE_USER" >/dev/null 2>&1; then
     _log "creating system user '$SERVICE_USER'"
     useradd --system --home-dir "$REPO_DIR" --shell /usr/sbin/nologin --groups www-data \
-      --comment "Jabali Panel service user" "$SERVICE_USER"
+      --comment "Jabali Panel service user" "$SERVICE_USER" \
+      || _die "useradd $SERVICE_USER failed — check 'cat /etc/passwd | grep $SERVICE_USER' and 'getent group www-data'"
+    # Defence-in-depth: confirm the user actually landed. Some host
+    # NSS configs (LDAP-backed passwd) accept useradd but the local
+    # /etc/passwd row never persists; downstream sudo -u jabali fails.
+    id "$SERVICE_USER" >/dev/null 2>&1 \
+      || _die "$SERVICE_USER missing after useradd — check NSS chain in /etc/nsswitch.conf"
   else
     _ok "user '$SERVICE_USER' exists"
     # Ensure service user is in www-data group so it can stat

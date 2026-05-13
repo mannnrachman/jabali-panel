@@ -3125,7 +3125,7 @@ ensure_swap() {
   # Frontend build (vite + node) peaks at ~1.5 GB resident. On a low-RAM
   # host without swap the OOM killer fires mid-build, leaving the install
   # half-complete + the operator with a cryptic 'Killed' from npm. Add a
-  # 2 GB swap file when the host has <6 GB RAM and <2 GB swap is already
+  # 4 GB swap file when the host has <6 GB RAM and <2 GB swap is already
   # active. Idempotent: re-runs skip when swap is sufficient.
   local mem_kb want_swap_kb cur_swap_kb mem_mb
   mem_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
@@ -3136,21 +3136,21 @@ ensure_swap() {
     _log "build-swap: sufficient RAM (${mem_mb}MB), skipping swap provision"
     return 0
   fi
-  want_swap_kb=2097152  # 2 GB
+  want_swap_kb=4194304  # 4 GB
   if [[ $cur_swap_kb -ge $want_swap_kb ]]; then
     _log "build-swap: ${cur_swap_kb}kB swap already active, sufficient"
     return 0
   fi
   local swap_file=/var/swap.jabali
-  _log "build-swap: provisioning 2 GB swap at $swap_file (this can take 30-60s on slow disks)"
+  _log "build-swap: provisioning 4 GB swap at $swap_file (this can take 30-60s on slow disks)"
   # Clean up any half-baked prior attempt before re-creating.
   if [[ -e "$swap_file" ]]; then
     swapoff "$swap_file" 2>/dev/null || true
     rm -f "$swap_file"
   fi
-  if ! fallocate -l 2G "$swap_file" 2>/dev/null; then
+  if ! fallocate -l 4G "$swap_file" 2>/dev/null; then
     # fallocate fails on tmpfs / unsupported FS — fall back to dd.
-    dd if=/dev/zero of="$swap_file" bs=1M count=2048 status=none \
+    dd if=/dev/zero of="$swap_file" bs=1M count=4096 status=none \
       || { _warn "swap provision failed — vite build may OOM on this host"; return 0; }
   fi
   chmod 0600 "$swap_file"
@@ -3169,7 +3169,7 @@ ensure_swap() {
   # without trading interactive latency for it.
   echo 'vm.swappiness=10' > /etc/sysctl.d/99-jabali-swappiness.conf
   sysctl -w vm.swappiness=10 >/dev/null 2>&1 || true
-  _ok "build-swap: 2 GB active at $swap_file (persists via /etc/fstab); vm.swappiness=10"
+  _ok "build-swap: 4 GB active at $swap_file (persists via /etc/fstab); vm.swappiness=10"
 }
 
 build_frontend() {
@@ -3189,7 +3189,7 @@ build_frontend() {
   # Cheap to regenerate (seconds).
   rm -rf "$REPO_DIR/panel-ui/node_modules/.vite"
 
-  # Cap V8 heap at 1024 MB so the build can't push past total host
+  # Cap V8 heap at 2048 MB so the build can't push past total host
   # RAM + trigger the OOM killer on small VPSes. Vite peaks around
   # 1.2 GB on the panel-ui bundle; 1 GB ceiling leaves V8 enough
   # room for the bundle graph + closures, and the swap file picks
@@ -3203,7 +3203,7 @@ build_frontend() {
   sudo -u "$SERVICE_USER" -H env \
     HOME="$REPO_DIR" \
     PATH="/usr/bin:/bin" \
-    NODE_OPTIONS="--max-old-space-size=1024" \
+    NODE_OPTIONS="--max-old-space-size=2048" \
     bash -c "cd '$REPO_DIR/panel-ui' && nice -n 19 ionice -c 3 npm run build"
   _ok "panel-ui built → $REPO_DIR/panel-ui/dist/"
 }

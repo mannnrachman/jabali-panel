@@ -8,7 +8,7 @@
 // the ?is_admin filter is applied before search/sort so the paginated
 // total stays correct per tab.
 import { useState } from "react";
-import { Badge, Button, Card, Input, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { Badge, Button, Card, Input, Segmented, Space, Table, Tag, Tooltip, Typography } from "antd";
 import { EditOutlined, SearchOutlined, TeamOutlined } from "@icons";
 
 import { RowActionButton } from "../../../components/RowActionButton";
@@ -92,11 +92,18 @@ function UsersShellTable({
   showDiskUsageColumn,
   onEdit,
 }: UsersTableProps) {
+  const [suspendFilter, setSuspendFilter] = useState<"all" | "active" | "suspended">(
+    "all",
+  );
+  const extraParams: Record<string, string> = { is_admin: String(isAdmin) };
+  if (suspendFilter === "active") extraParams.suspended = "false";
+  if (suspendFilter === "suspended") extraParams.suspended = "true";
+
   const query = useTableURL<User>({
     resource: "users",
     defaultSort: "created_at",
     defaultOrder: "desc",
-    extraParams: { is_admin: String(isAdmin) },
+    extraParams,
   });
   // Package lookup — single /packages list, reused across both tabs
   // via TanStack Query's cache. Admins don't have packages so the
@@ -138,6 +145,21 @@ function UsersShellTable({
   };
 
   return (
+    <div>
+      <div style={{ marginBottom: 12 }}>
+        <Segmented<"all" | "active" | "suspended">
+          options={[
+            { label: "All", value: "all" },
+            { label: "Active", value: "active" },
+            { label: "Suspended", value: "suspended" },
+          ]}
+          value={suspendFilter}
+          onChange={(v) => {
+            setSuspendFilter(v);
+            query.setParams({ page: 1 });
+          }}
+        />
+      </div>
     <SearchableTableStringQ<User>
       rowKey="id"
       loading={query.isLoading}
@@ -292,6 +314,7 @@ function UsersShellTable({
         render={(_: unknown, r: User) => <RowActions user={r} onEdit={onEdit} />}
       />
     </SearchableTableStringQ>
+    </div>
   );
 }
 

@@ -137,6 +137,9 @@ func (r *userRepo) List(ctx context.Context, opts ListOptions) ([]models.User, i
 	if opts.IsAdmin != nil {
 		base = base.Where("is_admin = ?", *opts.IsAdmin)
 	}
+	if opts.Suspended != nil {
+		base = base.Where("suspended = ?", *opts.Suspended)
+	}
 
 	// Count honours the search filter (so paginated total stays correct for
 	// a filtered set) but ignores sort/offset/limit — those apply to the

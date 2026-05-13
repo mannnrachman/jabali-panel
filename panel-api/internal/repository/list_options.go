@@ -29,6 +29,8 @@ type ListOptions struct {
 	// ListOptions end-to-end and adding a parallel filter struct for one
 	// repo isn't worth the duplication.
 	IsAdmin *bool
+	// Suspended — user-repo-only; non-nil restricts to suspended/active.
+	Suspended *bool
 }
 
 // ListCols tells applyListOptions which columns are searchable (free-text

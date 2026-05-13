@@ -159,6 +159,16 @@ func (h *userHandler) list(c *gin.Context) {
 		f := false
 		opts.IsAdmin = &f
 	}
+	// Optional ?suspended=true|false filter. Admin Users page chips
+	// All / Active / Suspended map to absent / false / true respectively.
+	switch c.Query("suspended") {
+	case "true":
+		t := true
+		opts.Suspended = &t
+	case "false":
+		f := false
+		opts.Suspended = &f
+	}
 	users, total, err := h.cfg.Repo.List(c.Request.Context(), opts)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})

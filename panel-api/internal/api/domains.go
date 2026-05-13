@@ -512,6 +512,17 @@ func (h *domainHandler) create(c *gin.Context) {
 		return
 	}
 
+	// Suspended users can't acquire new domains — a fresh vhost would
+	// be live + reachable while the panel/SFTP/login stays locked,
+	// defeating the suspend cascade. Operator must unsuspend first.
+	if user.Suspended {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  "user_suspended",
+			"detail": "user is suspended — unsuspend before adding domains",
+		})
+		return
+	}
+
 	// Username should always be set for non-admin users.
 	if user.Username == nil || *user.Username == "" {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})

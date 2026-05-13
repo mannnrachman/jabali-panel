@@ -130,12 +130,22 @@ func InstallApplication(ctx context.Context, deps ApplicationHandlerConfig, p In
 	}
 
 	var osUser string
-	if u, uErr := deps.Users.FindByID(ctx, p.UserID); uErr == nil && u != nil && u.Username != nil {
-		osUser = *u.Username
+	var suspended bool
+	if u, uErr := deps.Users.FindByID(ctx, p.UserID); uErr == nil && u != nil {
+		if u.Username != nil {
+			osUser = *u.Username
+		}
+		suspended = u.Suspended
 	}
 	if osUser == "" {
 		slog.ErrorContext(ctx, "applications create: user has no linux username", "user_id", p.UserID)
 		return nil, newInstallErr(http.StatusConflict, "user_not_provisioned", "")
+	}
+	// Refuse app installs on suspended users — domain.create already
+	// refuses, but the app surface has its own user lookup so guard
+	// here too. Operator must unsuspend first.
+	if suspended {
+		return nil, newInstallErr(http.StatusConflict, "user_suspended", "user is suspended — unsuspend before installing applications")
 	}
 
 	now := time.Now().UTC()

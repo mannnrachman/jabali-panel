@@ -66,6 +66,21 @@ const SOURCE_OPTIONS = [
   { value: "hestiacp", label: "HestiaCP (single account)" },
 ];
 
+// Source kinds that expose a usable ListAccounts on the source —
+// the wizard offers Step 3 (account picker) for these. WHM bulk-
+// pickets all selected accounts at once; DA + Hestia let the operator
+// pick one (or many; bulk works because the discoverer drives N
+// children sharing one secret env). `cpanel` is single-account by
+// design (no admin CLI to enumerate).
+const MULTI_ACCOUNT_KINDS = new Set([
+  "whm_pkgacct",
+  "directadmin",
+  "hestiacp",
+]);
+function isMultiAccount(kind: string) {
+  return MULTI_ACCOUNT_KINDS.has(kind);
+}
+
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -173,7 +188,7 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
     },
     onSuccess: () => {
       // WHM goes to account picker; others skip straight to summary.
-      setStep(sourceKind === "whm_pkgacct" ? 2 : 3);
+      setStep(isMultiAccount(sourceKind) ? 2 : 3);
     },
     onError: async (e: unknown) => {
       const resp = (e as {
@@ -232,7 +247,7 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
       const { data } = await apiClient.post<{ batch_id: string }>(
         "/admin/migrations/bulk",
         {
-          source_kind: "whm_pkgacct",
+          source_kind: sourceKind,
           source_host: sourceHost,
           accounts: [...selected],
           // M35.4 auto-restore — the discovery draft owns the SSH
@@ -338,7 +353,7 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
         items={[
           { title: "Source" },
           { title: "Connection" },
-          { title: sourceKind === "whm_pkgacct" ? "Accounts" : "Skip" },
+          { title: isMultiAccount(sourceKind) ? "Accounts" : "Skip" },
           { title: "Review" },
         ]}
       />
@@ -444,7 +459,7 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
               disabled={!sourceHost || !sourceUser || !credValue}
               onClick={() => submitConnection.mutate()}
             >
-              {sourceKind === "whm_pkgacct" ? "Next: discover accounts" : "Next: review"}
+              {isMultiAccount(sourceKind) ? "Next: discover accounts" : "Next: review"}
             </Button>
           </Space>
         </Space>
@@ -552,7 +567,7 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
                 </div>
                 <div>
                   <b>Accounts:</b>{" "}
-                  {sourceKind === "whm_pkgacct"
+                  {isMultiAccount(sourceKind)
                     ? `${selected.size} selected`
                     : "single account"}
                 </div>
@@ -560,10 +575,10 @@ export const CreateMigrationWizard = ({ open, onClose, onCreated }: Props) => {
             }
           />
           <Space>
-            <Button onClick={() => setStep(sourceKind === "whm_pkgacct" ? 2 : 1)}>
+            <Button onClick={() => setStep(isMultiAccount(sourceKind) ? 2 : 1)}>
               Back
             </Button>
-            {sourceKind === "whm_pkgacct" ? (
+            {isMultiAccount(sourceKind) ? (
               <Button
                 type="primary"
                 loading={bulk.isPending}

@@ -40,6 +40,7 @@ import (
 
 func newMigrateImportCmd() *cobra.Command {
 	var jobID, targetUser, targetEmail, targetPassword, targetPackageID string
+	var keepStaging bool
 	cmd := &cobra.Command{
 		Use:     "import",
 		Short:   "Run (or resume) a migration job through the four-stage pipeline",
@@ -436,10 +437,31 @@ failed stage. Already-done stages are skipped.`,
 				},
 			}
 			runner.WithContext(payload)
-			return runner.Run(ctx, job.ID)
+			runErr := runner.Run(ctx, job.ID)
+			// Staging-dir cleanup. Re-load the job so we see the
+			// terminal state the runner just stamped (done / failed).
+			// Operator can suppress via --keep-staging when debugging.
+			if !keepStaging {
+				if j, lerr := jobsRepo.FindByID(ctx, job.ID); lerr == nil && j != nil {
+					switch j.State {
+					case models.MigrationStateDone, models.MigrationStateFailed, models.MigrationStateCancelled:
+						stagingDir := filepath.Join("/var/lib/jabali-migrations", job.ID)
+						if rmErr := os.RemoveAll(stagingDir); rmErr != nil {
+							fmt.Fprintf(cmd.ErrOrStderr(),
+								"warning: staging cleanup failed for %s: %v\n", stagingDir, rmErr)
+						} else {
+							fmt.Fprintf(cmd.OutOrStdout(),
+								"staging dir %s removed (state=%s; pass --keep-staging to retain for debug)\n",
+								stagingDir, j.State)
+						}
+					}
+				}
+			}
+			return runErr
 		},
 	}
 	cmd.Flags().StringVar(&jobID, "job-id", "", "migration_jobs.id (ULID) — required")
+	cmd.Flags().BoolVar(&keepStaging, "keep-staging", false, "do NOT delete /var/lib/jabali-migrations/<job-id>/ after run (debug aid)")
 	cmd.Flags().StringVar(&targetUser, "target-user", "", "destination jabali username — auto-created if --target-email + --target-password supplied")
 	cmd.Flags().StringVar(&targetEmail, "target-email", "", "destination user email (only used when auto-creating)")
 	cmd.Flags().StringVar(&targetPassword, "target-password", "", "destination user password (only used when auto-creating; ≥10 chars)")

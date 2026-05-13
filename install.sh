@@ -7205,6 +7205,25 @@ RESTARTCONF
 #
 # Idempotent: writes the helper script + template unit unconditionally,
 # only daemon-reloads when content changed.
+install_logrotate() {
+  _log "installing logrotate drop-in"
+  local src="${REPO_DIR}/install/logrotate/jabali"
+  local dst="/etc/logrotate.d/jabali"
+  if [[ ! -f "$src" ]]; then
+    _warn "logrotate template missing at $src — skipping"
+    return 0
+  fi
+  if [[ ! -f "$dst" ]] || ! cmp -s "$src" "$dst"; then
+    install -m 0644 -o root -g root "$src" "$dst"
+    _ok "wrote $dst"
+  fi
+  # Validate syntax now so a broken drop-in surfaces at install time,
+  # not 24 hours later on cron tick. -d = debug mode (parse only).
+  if ! logrotate -d "$dst" >/dev/null 2>&1; then
+    _warn "logrotate parse failed for $dst — review syntax"
+  fi
+}
+
 install_notify_template() {
   _log "installing OnFailure notifier (M14)"
 
@@ -9062,6 +9081,7 @@ main() {
   install_per_user_egress
   install_goaccess
   install_restart_drop_ins
+  install_logrotate
   install_notify_template
   clone_or_update_repo
   # install_apparmor and install_aide run AFTER clone_or_update_repo because
@@ -9330,6 +9350,7 @@ EOF
   rm -rf /etc/jabali
   rm -rf /etc/stalwart
   rm -f  /etc/nginx/conf.d/jabali-pma-logformat.conf
+  rm -f  /etc/logrotate.d/jabali
   rm -f  /etc/ssh/sshd_config.d/jabali-sftp.conf
   rm -f  /etc/sudoers.d/jabali-nspawn
   rm -f  /usr/local/bin/jabali-ssh-shell /usr/local/bin/jabali-nspawn-enter

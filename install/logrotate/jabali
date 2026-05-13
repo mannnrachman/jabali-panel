@@ -1,0 +1,84 @@
+# Jabali — logrotate drop-in.
+#
+# Covers log files NOT covered by the upstream package logrotate drop-
+# ins (nginx ships its own; letsencrypt ships its own). Each jabali-
+# managed log path gets:
+#   - daily rotation
+#   - keep 14 days of history
+#   - gzip after 1 day
+#   - missingok / notifempty so a fresh host without the file doesn't
+#     log a rotation failure
+#   - copytruncate where the writer holds the file open (php-fpm) so
+#     we don't have to reload the daemon
+#
+# Re-running install.sh re-installs this file unchanged; logrotate
+# itself picks it up on its daily cron tick.
+
+/var/log/jabali-bulwark/*.log
+/var/log/jabali-panel/*.log
+/var/log/jabali-agent/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su root root
+}
+
+/var/log/php-fpm-pma.log
+/var/log/php-fpm-*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su www-data www-data
+    postrotate
+        # PHP-FPM reopens its log on SIGUSR1 — sends to every running
+        # version on the host. copytruncate already keeps the writes
+        # flowing during rotation so SIGUSR1 is belt-and-braces only.
+        for unit in /etc/init.d/php*-fpm; do
+            [ -x "$unit" ] && systemctl kill -s USR1 "$(basename "$unit")" 2>/dev/null || true
+        done
+    endscript
+}
+
+/var/log/maldet/*.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su root root
+}
+
+/var/log/aide/*.log {
+    weekly
+    rotate 12
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su root root
+}
+
+/var/log/nginx/jabali-pma.access.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    sharedscripts
+    postrotate
+        # nginx default logrotate sends USR1; ours rides alongside.
+        [ ! -f /var/run/nginx.pid ] || kill -USR1 "$(cat /var/run/nginx.pid)"
+    endscript
+}

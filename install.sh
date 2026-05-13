@@ -9032,6 +9032,12 @@ EOF
   if declare -f install_notify_template >/dev/null 2>&1; then
     install_notify_template
   fi
+
+  # M39 auditd rules — rules file write + augenrules --load. Idempotent
+  # via cmp -s + 'rules unchanged' early return.
+  if declare -f install_audit_exec >/dev/null 2>&1; then
+    install_audit_exec
+  fi
 }
 
 main() {

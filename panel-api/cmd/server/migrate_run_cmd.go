@@ -329,6 +329,20 @@ failed stage. Already-done stages are skipped.`,
 							}
 						}
 					}
+					// DA stores per-user maildirs at <HomeDir>/imap/<dom>/
+					// <local>/Maildir (not cpanel's <HomeDir>/mail/ layout).
+					// Override MailRoot so cpanel.ImportMailboxes walks the
+					// right tree + insertMailboxPanelRows creates one
+					// panel mailbox row per (dom, local). Forwarders /
+					// autoresponders / DKIM staged under etc/<dom>/ by
+					// BackupUser are NOT consumed yet (separate writer
+					// pending).
+					if parsed.HomeDir != "" {
+						daMailRoot := filepath.Join(parsed.HomeDir, "imap")
+						if st, derr := os.Stat(daMailRoot); derr == nil && st.IsDir() {
+							parsed.MailRoot = daMailRoot
+						}
+					}
 				} else {
 					// Pre-extracted fallback — operator dropped the
 					// cpmove tree under `<extractDir>/cp/<user>/`

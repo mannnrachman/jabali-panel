@@ -953,8 +953,8 @@ func insertForwarder(ctx context.Context, domainID string, f backup.MetadataForw
 		"INSERT IGNORE INTO jabali_panel.email_forwarders "+
 			"(id, mailbox_id, domain_id, type, local_part, target, enabled, "+
 			"managed_by, created_at, updated_at) "+
-			"VALUES ('%s','%s','%s','%s',%s,'%s',%d,'m6.5',NOW(),NOW())",
-		sqlEscape(f.ID), sqlEscape(f.MailboxID), sqlEscape(domainID),
+			"VALUES ('%s',%s,'%s','%s',%s,'%s',%d,'m6.5',NOW(),NOW())",
+		sqlEscape(f.ID), optStringPtr(f.MailboxID), sqlEscape(domainID),
 		sqlEscape(f.Type), optStringPtr(f.LocalPart), sqlEscape(f.Target),
 		boolToInt(f.Enabled))
 	return runMariaDBStmt(ctx, stmt)

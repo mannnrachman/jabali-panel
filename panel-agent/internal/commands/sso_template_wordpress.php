@@ -55,9 +55,26 @@ require_once __JABALI_WP_LOAD_PATH__;
 $admin_username = __JABALI_ADMIN_USERNAME__;
 $user = get_user_by('login', $admin_username);
 if (!$user || !user_can($user, 'manage_options')) {
-    error_log('jabali-sso: admin lookup failed for install __JABALI_INSTALL_ID__');
-    http_response_code(500);
-    exit;
+    // Migrated / scan-discovered installs may not carry the real
+    // admin_username on the panel row. Fall back to the first user
+    // with administrator role on this site (WP_User_Query honours
+    // the wp_options table → works on single-site + multisite).
+    $q = new WP_User_Query([
+        'role'    => 'administrator',
+        'number'  => 1,
+        'orderby' => 'ID',
+        'order'   => 'ASC',
+    ]);
+    $candidates = $q->get_results();
+    if (!empty($candidates)) {
+        $user = $candidates[0];
+    }
+    if (!$user || !user_can($user, 'manage_options')) {
+        error_log('jabali-sso: no administrator user on site for install __JABALI_INSTALL_ID__');
+        http_response_code(500);
+        exit;
+    }
+    error_log('jabali-sso: admin_username mismatch, fell back to first administrator (' . $user->user_login . ') for install __JABALI_INSTALL_ID__');
 }
 
 // 6. Sign the operator in. Don't set "remember me" — one-shot session.

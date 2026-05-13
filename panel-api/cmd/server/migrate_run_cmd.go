@@ -86,6 +86,40 @@ failed stage. Already-done stages are skipped.`,
 				return err
 			}
 
+			// DA preflight pivot: SSH principals (root/admin) aren't
+			// hosting accounts on DA. Resolve the real account up
+			// front so target-user creation + cpmove paths use the
+			// correct ID. Single-tenant → auto-pick; multi-tenant →
+			// fail with the visible list. Skipped silently when the
+			// preflight SSH dial fails (analyze stage will surface).
+			if job.SourceKind == models.MigrationSourceDirectAdmin &&
+				(job.SourceUser == "root" || job.SourceUser == "admin") {
+				if pivoted, perr := preflightDAPivot(ctx, job); perr == nil && pivoted != "" && pivoted != job.SourceUser {
+					if uErr := jobsRepo.UpdateSourceUser(ctx, job.ID, pivoted); uErr == nil {
+						fmt.Printf("  → DA source-user pivoted from %q to %q (real hosting account)\n",
+							job.SourceUser, pivoted)
+						job.SourceUser = pivoted
+						// If a target user was previously stamped with the SSH-
+						// principal username (root/admin), clear the FK so the
+						// downstream auto-create path provisions a fresh user
+						// matching the pivoted account. The orphaned panel
+						// user row stays — operator removes manually via
+						// /admin/users to avoid silent collateral deletion.
+						if job.TargetUserID != nil {
+							if u, lookupErr := usersRepo.FindByID(ctx, *job.TargetUserID); lookupErr == nil &&
+								u != nil && u.Username != nil &&
+								(*u.Username == "root" || *u.Username == "admin") {
+								if uErr := jobsRepo.ClearTargetUser(ctx, job.ID); uErr == nil {
+									fmt.Printf("  → cleared stale target_user_id (was %q); auto-create will re-key to %q\n",
+										*u.Username, pivoted)
+									job.TargetUserID = nil
+								}
+							}
+						}
+					}
+				}
+			}
+
 			// Default-from-source resolution. Operator can still pass
 			// --target-user / --target-email / --target-password to
 			// override; absent values fall through to:
@@ -712,4 +746,43 @@ func randomPassword(n int) (string, error) {
 		s = s[:n]
 	}
 	return strings.ReplaceAll(s, "_", "x"), nil
+}
+
+// preflightDAPivot is a one-shot Connect+ListAccounts dance against
+// a DA source whose source_user is the SSH principal (root/admin)
+// rather than a real hosting account. Returns the auto-picked
+// account when the source has exactly one hosting user; "" + nil
+// when the source has zero or multiple accounts (caller leaves the
+// job alone so analyze surfaces a clear error to the operator).
+//
+// Best-effort: if the secret file is missing or SSH dial fails,
+// returns "" + nil so the CLI doesn't fail before analyze even
+// starts. Analyze stage will hit the same wall + report properly.
+func preflightDAPivot(ctx context.Context, job *models.MigrationJob) (string, error) {
+	secretPath := fmt.Sprintf("/etc/jabali-panel/migration-secrets/%s.env", job.ID)
+	if _, err := os.Stat(secretPath); err != nil {
+		return "", nil
+	}
+	disc := directadmin.New()
+	// Honor server_settings.migration_allow_private_hosts so private
+	// IP source hosts work the same as in the analyze stage.
+	settingsRepo := repository.NewServerSettingsRepository(sharedDB)
+	if s, sErr := settingsRepo.Get(ctx); sErr == nil && s != nil {
+		migrate.ApplyAllowPrivate(disc, s.MigrationAllowPrivateHosts)
+	}
+	subctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	s, err := disc.Connect(subctx, job.SourceHost, "root", migrate.SecretRef{Path: secretPath})
+	if err != nil {
+		return "", nil
+	}
+	defer func() { _ = disc.Close(subctx, s) }()
+	accounts, err := disc.ListAccounts(subctx, s)
+	if err != nil {
+		return "", nil
+	}
+	if len(accounts) == 1 {
+		return accounts[0].ID, nil
+	}
+	return "", nil
 }

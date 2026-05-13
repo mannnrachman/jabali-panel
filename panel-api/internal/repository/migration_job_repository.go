@@ -27,6 +27,7 @@ type MigrationJobRepository interface {
 	UpdateState(ctx context.Context, id, state string, lastError *string) error
 	UpdateManifest(ctx context.Context, id, manifestJSON string) error
 	UpdateTargetUser(ctx context.Context, id, targetUserID string) error
+	ClearTargetUser(ctx context.Context, id string) error
 	UpdateSourceUser(ctx context.Context, id, sourceUser string) error
 	// PatchDraft updates source-host/user + target-user-id on a row
 	// still in state='draft'. ADR-0095 decision 5. Returns ErrNotFound
@@ -183,6 +184,27 @@ func (r *migrationJobRepo) UpdateSourceUser(ctx context.Context, id, sourceUser 
 		Updates(map[string]any{
 			"source_user": sourceUser,
 			"updated_at":  time.Now().UTC(),
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ClearTargetUser sets migration_jobs.target_user_id to NULL.
+// Used by the DA preflight pivot to drop a stale FK pointing at a
+// panel user named after the SSH principal (root/admin) so the
+// downstream auto-create path provisions a fresh user matching
+// the pivoted hosting account.
+func (r *migrationJobRepo) ClearTargetUser(ctx context.Context, id string) error {
+	res := r.db.WithContext(ctx).Model(&models.MigrationJob{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"target_user_id": gorm.Expr("NULL"),
+			"updated_at":     time.Now().UTC(),
 		})
 	if res.Error != nil {
 		return res.Error

@@ -282,23 +282,37 @@ failed stage. Already-done stages are skipped.`,
 			var parsed *cpanel.ParsedTarball
 			switch job.SourceKind {
 			case models.MigrationSourceDirectAdmin:
-				// DA tar at /var/lib/jabali-migrations/<id>/
-				// user.<user>.<ts>.tar.gz (operator-supplied
-				// filename pattern matches DA system_backup_user
-				// output). Fall back to assumed-pre-extracted
-				// when ParseDATarball can't find a tar.
+				// DA pull-stage runs jabali's BackupUser script on the
+				// source, which synthesises a cpmove-shaped tarball
+				// (`cpmove-<user>/{cp,homedir,mysql}/`) so the cpanel
+				// restore writers consume it unchanged. The pulled
+				// file lands at user.<user>.tar.gz under the staging
+				// dir.
+				//
+				// Use cpanel.ParseTarball — NOT directadmin.ParseDA-
+				// Tarball — because the bytes on disk are cpmove
+				// layout, not DA's native system-backup-user layout.
+				// ParseDATarball would mis-identify SourceUser as
+				// "cpmove-<user>" and point HomeDir at the wrapper
+				// dir, so the per-domain rsync split would chase
+				// `extracted/<user>/domains/...` which doesn't exist.
 				daTarPath := filepath.Join("/var/lib/jabali-migrations", job.ID,
 					fmt.Sprintf("user.%s.tar.gz", job.SourceUser))
-				if da, derr := directadmin.ParseDATarball(daTarPath, extractDir); derr == nil {
-					parsed = directadmin.ToCpanelParsed(da, *user.Username)
+				if cp, perr := cpanel.ParseTarball(daTarPath, extractDir); perr == nil {
+					parsed = cp
 				} else {
+					// Pre-extracted fallback — operator dropped the
+					// cpmove tree under `<extractDir>/cp/<user>/`
+					// out of band (`tar -xzf` before kicking the
+					// job).
 					parsed = &cpanel.ParsedTarball{
 						ExtractDir: extractDir,
-						HomeDir:    filepath.Join(extractDir, job.SourceUser),
+						HomeDir:    filepath.Join(extractDir, "cp", job.SourceUser, "homedir"),
 						SourceUser: job.SourceUser,
 					}
 					fmt.Fprintf(cmd.ErrOrStderr(),
-						"warning: ParseDATarball failed (%v); using pre-extracted assumption\n", derr)
+						"warning: cpanel.ParseTarball failed on DA tarball %s (%v); using pre-extracted cp/<user>/ assumption\n",
+						daTarPath, perr)
 				}
 			case models.MigrationSourceHestia:
 				// Hestia tar at /var/lib/jabali-migrations/<id>/

@@ -1,13 +1,12 @@
 -- M35.8: drop the UNIQUE on (source_host, source_user, source_kind).
 -- Originally added in 000120 to prevent two parallel actively-running
 -- migrations for the same source. But it also blocks:
---   - re-running after a destroyed terminal job (operator wants to
---     retry from scratch)
+--   - re-running after a destroyed terminal job
 --   - the wizard re-creating a draft for a host/user that already has
---     a hidden draft (each wizard run is independent + the prior
---     draft is hidden from UI)
+--     a hidden draft
 -- The collision-block is now enforced application-side in
--- migration_job_repository.FindBySource which scopes to actively-
--- owned states (pending/analyzing/fix_perms/validating/restoring).
--- Drafts + done/failed/cancelled coexist freely.
-ALTER TABLE migration_jobs DROP INDEX uq_migration_source;
+-- migration_job_repository.FindBySource scoped to actively-owned states.
+--
+-- IF EXISTS makes re-running on hosts where the operator already
+-- hand-dropped the index a no-op.
+ALTER TABLE migration_jobs DROP INDEX IF EXISTS uq_migration_source;

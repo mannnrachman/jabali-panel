@@ -97,6 +97,18 @@ func (h *userHandler) suspend(c *gin.Context) {
 		domainWarn = "domain_bulk_disable_failed: " + dErr.Error()
 	}
 
+	// Step 4 — agent-side OS cascade: remove from jabali-sftp group +
+	// lock Linux password so SFTP + SSH-password auth are refused.
+	// Best-effort; surfaces as a warning instead of failing the suspend.
+	var osWarn string
+	if user.Username != nil && *user.Username != "" && h.cfg.Agent != nil {
+		if _, err := h.cfg.Agent.Call(ctx, "user.suspend", map[string]any{
+			"username": *user.Username,
+		}); err != nil {
+			osWarn = "user_os_suspend_failed: " + err.Error()
+		}
+	}
+
 	resp := gin.H{
 		"ok":               true,
 		"domains_disabled": disabled,
@@ -106,6 +118,9 @@ func (h *userHandler) suspend(c *gin.Context) {
 	}
 	if domainWarn != "" {
 		resp["domain_warning"] = domainWarn
+	}
+	if osWarn != "" {
+		resp["os_warning"] = osWarn
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -162,6 +177,16 @@ func (h *userHandler) unsuspend(c *gin.Context) {
 		domainWarn = "domain_bulk_enable_failed: " + dErr.Error()
 	}
 
+	// Agent-side OS reverse cascade: re-add jabali-sftp group + unlock.
+	var osWarn string
+	if user.Username != nil && *user.Username != "" && h.cfg.Agent != nil {
+		if _, err := h.cfg.Agent.Call(ctx, "user.unsuspend", map[string]any{
+			"username": *user.Username,
+		}); err != nil {
+			osWarn = "user_os_unsuspend_failed: " + err.Error()
+		}
+	}
+
 	resp := gin.H{
 		"ok":              true,
 		"domains_enabled": enabled,
@@ -171,6 +196,9 @@ func (h *userHandler) unsuspend(c *gin.Context) {
 	}
 	if domainWarn != "" {
 		resp["domain_warning"] = domainWarn
+	}
+	if osWarn != "" {
+		resp["os_warning"] = osWarn
 	}
 	c.JSON(http.StatusOK, resp)
 }

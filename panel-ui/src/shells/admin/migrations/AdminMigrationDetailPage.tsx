@@ -697,6 +697,10 @@ function parseRestoreManifest(raw: string): RestoreParsed {
       out.kratosNewID = kv(line, "new_id");
     } else if (line.startsWith("ssl: ")) {
       out.sslInstalled += num(kv(line, "installed"));
+    } else if (line.startsWith("da_forwarders: ")) {
+      // DA migration ships pure-redirect aliases as standalone
+      // EmailForwarder rows with MailboxID=NULL (M35 import).
+      out.forwardersCreated += num(kv(line, "inserted"));
     } else if (line.startsWith("extras: ")) {
       out.catchallsSet += num(kv(line, "catchalls"));
       out.subdomainsCreated += num(kv(line, "subdomains"));

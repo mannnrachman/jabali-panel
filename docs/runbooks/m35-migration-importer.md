@@ -113,18 +113,60 @@ failed / cancelled) stay untouched.
 
 ---
 
-## Draft reaper
+## Reaper
 
 `jabali migrate reap-secrets` (run daily by
-`jabali-migration-secrets-reap.timer` at 04:30 UTC) does TWO things:
+`jabali-migration-secrets-reap.timer` at 04:30 UTC) does FOUR
+things:
 
 1. Deletes `/etc/jabali-panel/migration-secrets/<id>.env` for any
    job in a terminal state.
 2. Hard-deletes any `state=draft` job whose `updated_at` is older
    than 24h. Drafts hold no secrets (those are written at Step 2,
    which flips the row to a non-draft state) so deletion is safe.
+3. Removes `/var/lib/jabali-migrations/<id>/{cpmove-*.tar.gz,extracted/}`
+   for terminal jobs whose `ended_at + --staging-max-age (default
+   7d)` has passed. Pass `--staging-max-age 0` to wipe immediately.
+4. Source-side: `cpanel.RemoveRemote` ssh-rms the
+   `/home/cpmove-<user>.tar.gz` that pkgacct produced. Runs in-
+   line after `PullFile` so a multi-account WHM bulk doesn't
+   accumulate GBs on the source.
 
 Operator can `--dry-run` to preview without deleting.
+
+## Wizard defaults (M35.6 — M35.8)
+
+`jabali migrate import` with no `--target-*` flags resolves:
+
+| Slot | Source | Stored where | Note |
+|---|---|---|---|
+| Username | `job.SourceUser` | panel `users.username` + Linux | same as source |
+| Email | cpmove `contactemail` or `CONTACTEMAIL=` in `cp/<user>` userdata; falls back to `<sourceuser>@<sourcehost>` | panel `users.email` | |
+| SSH/SFTP password | source `/etc/shadow` `$6$…` hash | dest `/etc/shadow` via `chpasswd -e` | same as source (M35.7) |
+| Panel/Kratos login | random 16-char (printed once) | Kratos Argon2 | source crypt(3) hash format-incompatible — Kratos 409 conflict reuses existing identity (M35.8) |
+
+## Restore stage area writers (in dispatch order)
+
+| # | Area | Agent cmd | Effect |
+|---|---|---|---|
+| 1 | SSH keys | DB only | `.ssh/authorized_keys` rows |
+| 2 | Cron | DB only | crontab rows |
+| 3 | Databases | `db.create` + `db.restore` (idempotent reset) | MariaDB import; `Credentials` map captured for #8 |
+| 4 | Home split | `migration.import_home` × N | per-domain rsync to `/home/<u>/domains/<dom>/public_html/` with nested-domain excludes + final rest-of-homedir rsync (M35.8 P7) |
+| 5 | Domains | `domain.create` | nginx vhost with docroot `/home/<u>/domains/<dom>/public_html`; email enable + DKIM regen |
+| 6 | Mailboxes | `migration.import_mailboxes` | JMAP push of INBOX + Maildir+ subfolders (Drafts/Junk/Sent/Trash/Spam/Archive) + cpanel owner mailbox at `<u>@<primary-domain>` |
+| 7 | SSL custom | `ssl.install_custom` | source `apache_tls/<dom>/` → `/etc/letsencrypt/live/<dom>/{fullchain,privkey}.pem` + nginx reload |
+| 8 | App configs | `files.read` + `files.write` | rewrites wp-config.php / configuration.php / sites/default/settings.php / app/etc/env.php with new `(db_name, db_user, db_pass)` from #3 |
+| 9 | Extras | mixed | catch-all + subdomains + forwarders + autoresponders + sieve filters + per-domain PHP pools + DKIM legacy key preserve + FTP observation |
+| 10 | Kratos | `kratos.create_identity` | panel-login identity; 409 conflict reuses existing |
+
+## Override knobs
+
+- UI **Allow private IPs** toggle → flips `server_settings.migration_allow_private_hosts` (SSRF override applied at request-time)
+- `--target-user / --target-email / --target-password` flags override auto-detect
+- **Re-kick** button on pending rows = re-POST `/admin/migrations/:id/pull-source` (rows stuck pre-auto-kick deploy)
+- Hidden states: drafts (wizard-internal scratchpad) never appear in UI; daily reaper sweeps after 24h
+- `FindBySource` collision check (M35.8) skips drafts + terminal rows — only blocks fresh wizard runs on actively-running jobs
 
 ---
 
@@ -174,5 +216,43 @@ DB.
 ### "ssrf: private (RFC1918 / ULA) rejected"
 Source server is on an internal network. Either:
 - Add a public DNS entry pointing at the source, or
-- Flip `server_settings.migration_allow_private_hosts=1` and
-  restart panel-api (operator accepts the SSRF risk).
+- Flip the **Allow private IPs** toggle in the Migrations admin
+  page (writes `server_settings.migration_allow_private_hosts=1`).
+  Override is honored at request-time — no panel restart needed.
+
+### "source SSH server rejected the supplied auth method (likely PasswordAuthentication=no)"
+Source's `sshd_config` has `PasswordAuthentication no` (advertises
+publickey only). Re-run the wizard, pick **SSH key** at Step 2,
+paste the private key that's authorized on the source.
+
+### "uapi: command not found" on analyze stage
+Pre-M35.8 the analyze callback hard-wired the cpanel Discoverer
+regardless of source kind. Fixed in commit `6664e565` — analyze
+now uses `migrate.Get(job.SourceKind)`. Re-run `jabali update` if
+you see this on a DA / Hestia / WHM job.
+
+### "another migration job already owns this (source_host, source_user, source_kind)" with empty list view
+A hidden draft or terminal row matched the (host, user, kind)
+triple. Pre-M35.8 collision check matched any state. Fixed in
+commit `fced6d43`: collision skips draft + done + failed +
+cancelled. If still seen after deploy, manual cleanup:
+`mysql -uroot jabali_panel -e "DELETE FROM migration_jobs WHERE state='draft'"`.
+
+### DirectAdmin "Unrecognized arguments [info]" / `da admin user.show` errors
+DA scaffold was written against guessed CLI verbs that don't
+exist on real DA. Rewritten against real `/usr/local/directadmin/data/users/<u>/`
+file layout in commit `c92e0ed8`. Probe is `da admin` (no args);
+listing reads `domains.list` + `databases` come from
+`mysql --defaults-file=/usr/local/directadmin/conf/my.cnf`.
+
+### WP "Error establishing a database connection" after migration
+appconfig rewrite step had a path-validation bug (`agent.files.*`
+needs absolute paths). Fixed in `63028cfc`. After update,
+manifest line `appconfigs: wordpress=N joomla=N drupal=N magento=N`
+should report N>0 for any docroot with a matching app file.
+
+### Kratos 409 conflict on `jabali user password` after migration
+Orphan Kratos identity from a prior destroy/rerun cycle. Fixed in
+`9f83e8d0`: `CreateIdentityWithPassword` returns `ErrIdentityExisted`
++ recovered id; userops.Create + rebuildOne now reuse it. Re-run
+`jabali admin rebuild-kratos` after deploying the fix.

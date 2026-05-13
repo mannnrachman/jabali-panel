@@ -5670,171 +5670,37 @@ EOF
   systemctl reload crowdsec 2>/dev/null || true
 }
 
-# install_crowdsec_blocklists — periodic URL-based blocklist ingestion.
+# install_crowdsec_blocklists — REMOVED 2026-05-14.
 #
-# CrowdSec's CAPI ships a curated community blocklist by default
-# (pulled by every enrolled instance via `cscli capi register`).
-# THIS function adds Firehol's public threat-intel feeds on top:
-# they're high-signal, license-friendly (CC0/CC-BY), and cover
-# attack patterns the CAPI blocklist alone doesn't see well.
+# Replaced by CrowdSec's first-party blocklist catalog at
+# https://app.crowdsec.net/blocklists/ — operator enrolls the engine
+# via `cscli console enroll` then subscribes to lists in the web UI.
+# Central catalog covers Firehol (level1/2/proxies/xroxy/botscout)
+# + CrowdSec-curated lists + community feeds; updates sync to every
+# enrolled engine automatically. No local URL-fetcher needed.
 #
-# Lists are fetched daily via systemd timer and imported into
-# CrowdSec's decisions table with a 26h ban duration — slightly
-# longer than the timer cadence so an IP only drops out of the ban
-# table if Firehol drops it AND the next refresh runs.
-#
-# IPs that overlap with the LAPI's allowlist (jabali_allowlist —
-# M27 admin-managed plus loopback + RFC1918) are skipped by
-# CrowdSec's allowlist plumbing on decision insert. No special
-# guard needed here.
-#
-# Subscription to specific app.crowdsec.net community blocklists
-# (e.g. the user-pointed 65a56c070469607d9badb811) is STILL a
-# web-console step: `cscli console enroll <key>` then toggle in
-# the console UI. There is no first-party cscli to subscribe to
-# arbitrary community-blocklist IDs.
+# This function now ONLY tears down the legacy
+# jabali-firehol-blocklists.{timer,service} on hosts that ran an
+# earlier install.sh.
 install_crowdsec_blocklists() {
-  if ! command -v cscli >/dev/null 2>&1; then
-    _warn "cscli missing — skipping firehol blocklist setup"
-    return 0
-  fi
-
+  local svc=/etc/systemd/system/jabali-firehol-blocklists.service
+  local tmr=/etc/systemd/system/jabali-firehol-blocklists.timer
   local script=/usr/local/bin/jabali-fetch-firehol-blocklists
-  cat >"${script}.new" <<'BLOCKLIST_FETCH'
-#!/usr/bin/env bash
-# Managed by jabali install.sh — DO NOT hand-edit.
-# Fetches selected Firehol IP lists and imports them into CrowdSec
-# decisions with a 26h ban window. Re-import is idempotent: cscli
-# de-dupes overlapping IPs by source+value.
-set -euo pipefail
-
-# Curated subset of github.com/firehol/blocklist-ipsets.
-# Each entry: <list-name> <URL>. Reason in CrowdSec decisions table
-# becomes "firehol:<list-name>" so operators can attribute via
-# `cscli decisions list --reason firehol:...`.
-LISTS=(
-  "level1|https://iplists.firehol.org/files/firehol_level1.netset"
-  "level2|https://iplists.firehol.org/files/firehol_level2.netset"
-  "botscout_7d|https://iplists.firehol.org/files/firehol_botscout_7d.netset"
-  "greensnow|https://iplists.firehol.org/files/firehol_greensnow.netset"
-  "cybercrime|https://iplists.firehol.org/files/firehol_cybercrime.netset"
-  "cruzit_web_attacks|https://iplists.firehol.org/files/firehol_cruzit_web_attacks.netset"
-  "anonymous|https://iplists.firehol.org/files/firehol_anonymous.netset"
-)
-
-TMPDIR=$(mktemp -d -t jabali-firehol-XXXXXX)
-trap 'rm -rf "$TMPDIR"' EXIT
-
-total=0
-for entry in "${LISTS[@]}"; do
-  name="${entry%%|*}"
-  url="${entry#*|}"
-  tmp="$TMPDIR/$name.txt"
-
-  # 60s connect + 120s total. Firehol's CDN can be slow but never
-  # >2min for a netset (<10MB).
-  if ! curl -fsSL --connect-timeout 60 --max-time 120 \
-       --retry 2 --retry-delay 5 \
-       -o "$tmp" "$url"; then
-    echo "firehol-import: fetch failed for $name — skipping" >&2
-    continue
+  if [[ -f "$tmr" || -f "$svc" || -f "$script" ]]; then
+    _log "removing legacy jabali-firehol-blocklists.{timer,service} (CrowdSec console catalog replaces it)"
+    systemctl disable --now jabali-firehol-blocklists.timer 2>/dev/null || true
+    systemctl stop jabali-firehol-blocklists.service 2>/dev/null || true
+    rm -f "$tmr" "$svc" "$script"
+    systemctl daemon-reload 2>/dev/null || true
+    # Drop existing firehol decisions so they expire immediately
+    # rather than lingering 26h. Best-effort; not critical.
+    if command -v cscli >/dev/null 2>&1; then
+      cscli decisions delete --origin "firehol" >/dev/null 2>&1 || true
+    fi
+    _ok "legacy firehol blocklist stack removed"
   fi
-
-  # Strip comments + empty lines. Firehol files use # for comments.
-  grep -v '^#' "$tmp" | grep -v '^$' >"$tmp.clean" || true
-  count=$(wc -l <"$tmp.clean")
-  if [[ "$count" -eq 0 ]]; then
-    echo "firehol-import: $name empty — skipping" >&2
-    continue
-  fi
-
-  # Import as a single batch. --format values reads one IP/CIDR per
-  # line; --duration 26h is the ban window (slightly longer than
-  # the daily timer cadence so a one-day Firehol glitch doesn't
-  # immediately drop everyone). --reason carries the list name for
-  # forensics + dashboards.
-  if cscli decisions import \
-       --input "$tmp.clean" \
-       --format values \
-       --duration 26h \
-       --reason "firehol:$name" \
-       --type ban >/dev/null 2>&1; then
-    total=$((total + count))
-    echo "firehol-import: $name → $count entries"
-  else
-    echo "firehol-import: cscli import failed for $name" >&2
-  fi
-done
-
-echo "firehol-import: total $total decisions imported across ${#LISTS[@]} lists"
-BLOCKLIST_FETCH
-  install -m 0755 -o root -g root "${script}.new" "$script"
-  rm -f "${script}.new"
-
-  # systemd service — oneshot, runs the fetcher once.
-  local service=/etc/systemd/system/jabali-firehol-blocklists.service
-  cat >"${service}.new" <<'BLOCKLIST_SERVICE'
-[Unit]
-Description=Jabali Firehol blocklist refresh into CrowdSec
-After=network-online.target crowdsec.service
-Wants=network-online.target
-Requires=crowdsec.service
-
-[Service]
-Type=oneshot
-User=root
-Group=root
-ExecStart=/usr/local/bin/jabali-fetch-firehol-blocklists
-# 5min hard cap — should usually take <90s. Anything longer means
-# upstream is broken; surface as a unit failure instead of hanging.
-TimeoutStartSec=300
-# Drop privs we don't need. Importing into CrowdSec is a TCP-loopback
-# call to LAPI; no special caps required beyond network.
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=yes
-PrivateTmp=yes
-ReadWritePaths=/var/lib/crowdsec
-BLOCKLIST_SERVICE
-  cat >>"${service}.new" <<EOF
-
-[Install]
-WantedBy=multi-user.target
-EOF
-  install -m 0644 -o root -g root "${service}.new" "$service"
-  rm -f "${service}.new"
-
-  # systemd timer — daily at 04:17 UTC (off-peak, no thundering herd
-  # against Firehol's CDN). Persistent=true catches catch-up runs on
-  # boot if the host was off when the timer was due.
-  local timer=/etc/systemd/system/jabali-firehol-blocklists.timer
-  cat >"${timer}.new" <<'BLOCKLIST_TIMER'
-[Unit]
-Description=Jabali Firehol blocklist refresh (daily)
-
-[Timer]
-OnCalendar=*-*-* 04:17:00
-RandomizedDelaySec=900
-Persistent=true
-Unit=jabali-firehol-blocklists.service
-
-[Install]
-WantedBy=timers.target
-BLOCKLIST_TIMER
-  install -m 0644 -o root -g root "${timer}.new" "$timer"
-  rm -f "${timer}.new"
-
-  systemctl daemon-reload >/dev/null 2>&1 || true
-  systemctl enable --now jabali-firehol-blocklists.timer >/dev/null 2>&1 || true
-
-  # First run on install/update so the operator sees immediate
-  # entries in cscli decisions list. Best-effort: a Firehol outage
-  # on install day shouldn't fail the whole install.
-  systemctl start jabali-firehol-blocklists.service >/dev/null 2>&1 || \
-    _warn "jabali-firehol-blocklists initial run failed — timer will retry tomorrow"
-
-  _ok "Firehol blocklists timer installed (daily @ 04:17 UTC)"
 }
+
 
 cleanup_modsecurity() {
   # ADR-0055 SUPERSEDED 2026-04-26 — CrowdSec AppSec covers the WAF role.
@@ -9123,6 +8989,12 @@ EOF
   if declare -f install_aide >/dev/null 2>&1; then
     install_aide
   fi
+
+  # Strip legacy jabali-firehol-blocklists.{timer,service} on existing
+  # hosts — replaced by CrowdSec console blocklist catalog.
+  if declare -f install_crowdsec_blocklists >/dev/null 2>&1; then
+    install_crowdsec_blocklists
+  fi
 }
 
 main() {
@@ -9430,6 +9302,9 @@ EOF
   rm -f  /etc/systemd/system/jabali-aide-check.service
   rm -f  /etc/systemd/system/jabali-aide-check.timer
   rm -f  /etc/systemd/system/jabali-notify@.service
+  rm -f  /etc/systemd/system/jabali-firehol-blocklists.service
+  rm -f  /etc/systemd/system/jabali-firehol-blocklists.timer
+  rm -f  /usr/local/bin/jabali-fetch-firehol-blocklists
 
   # Drop-ins on shared system services — remove only the files WE wrote.
   rm -f /etc/systemd/system/pdns-recursor.service.d/10-jabali-after.conf

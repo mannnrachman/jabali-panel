@@ -129,6 +129,20 @@ live source SSH. Use scp directly for that kind.`,
 				// individual cPanel account from the discover step.
 				localTar, err = pullCpanel(ctx, sshUser, job, secret, localDir, allowPrivate)
 			case models.MigrationSourceDirectAdmin:
+				// DA preflight pivot: SSH principal (root/admin) is almost
+				// never a DA hosting account. Auto-resolve the real account
+				// so BackupUser targets it + the tarball file lands at
+				// user.<real>.tar.gz to match what analyze + restore expect.
+				if job.SourceUser == "root" || job.SourceUser == "admin" {
+					if pivoted, perr := preflightDAPivot(ctx, job); perr == nil && pivoted != "" && pivoted != job.SourceUser {
+						if uErr := repo.UpdateSourceUser(ctx, job.ID, pivoted); uErr == nil {
+							fmt.Fprintf(cmd.OutOrStdout(),
+								"  → DA source-user pivoted from %q to %q (real hosting account)\n",
+								job.SourceUser, pivoted)
+							job.SourceUser = pivoted
+						}
+					}
+				}
 				localTar, err = pullDirectAdmin(ctx, sshUser, job, secret, localDir, allowPrivate)
 			case models.MigrationSourceHestia:
 				localTar, err = pullHestia(ctx, sshUser, job, secret, localDir, allowPrivate)

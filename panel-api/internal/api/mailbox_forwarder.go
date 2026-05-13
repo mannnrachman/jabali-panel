@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -63,6 +64,10 @@ func RegisterMailboxForwarderRoutes(g *gin.RouterGroup, cfg MailboxForwarderHand
 	g.GET("/mail/forwarders", h.listAll)
 	g.POST("/mailboxes/:mbid/forwarders", h.create)
 	g.DELETE("/forwarders/:id", h.del)
+	// Domain-scoped (NULL mailbox) forwarders — M35 DA importer leaves
+	// /etc/virtual/<dom>/aliases entries here. Read-only for now;
+	// Stalwart push deferred to a follow-up reconciler phase.
+	g.GET("/mail/forwarders/domain-scoped", h.listDomainScoped)
 }
 
 func (h *forwarderHandler) loadMailbox(ctx context.Context, id string, claims *auth.AccessClaims) (*models.Mailbox, *models.Domain, error) {
@@ -213,4 +218,53 @@ func (h *forwarderHandler) writeErr(c *gin.Context, err error) {
 		return
 	}
 	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+}
+
+// domainScopedForwarderResponse is the row shape for the NULL-
+// mailbox list. No mailbox_email — the entry redirects without a
+// source account.
+type domainScopedForwarderResponse struct {
+	ID          string `json:"id"`
+	DomainID    string `json:"domain_id"`
+	DomainName  string `json:"domain_name"`
+	Type        string `json:"type"`
+	LocalPart   string `json:"local_part"`
+	Target      string `json:"target"`
+	Enabled     bool   `json:"enabled"`
+	ManagedBy   string `json:"managed_by"`
+	CreatedAt   string `json:"created_at"`
+}
+
+func (h *forwarderHandler) listDomainScoped(c *gin.Context) {
+	ctx := c.Request.Context()
+	claims := ginctx.Claims(c)
+	fwds, _, err := h.cfg.Forwarders.ListAll(ctx, repository.ListOptions{Limit: 1000})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	items := make([]domainScopedForwarderResponse, 0)
+	for _, f := range fwds {
+		if f.MailboxID != nil {
+			continue
+		}
+		dom, err := h.cfg.Domains.FindByID(ctx, f.DomainID)
+		if err != nil {
+			continue
+		}
+		if !claims.IsAdmin && dom.UserID != claims.UserID {
+			continue
+		}
+		lp := ""
+		if f.LocalPart != nil {
+			lp = *f.LocalPart
+		}
+		items = append(items, domainScopedForwarderResponse{
+			ID: f.ID, DomainID: f.DomainID, DomainName: dom.Name,
+			Type: f.Type, LocalPart: lp, Target: f.Target,
+			Enabled: f.Enabled, ManagedBy: f.ManagedBy,
+			CreatedAt: f.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"data": items, "total": int64(len(items)), "page": 1, "page_size": len(items)})
 }

@@ -9639,9 +9639,16 @@ SQL
   rm -f /etc/powerdns/recursor.forwards 2>/dev/null || true
   rm -f /etc/powerdns/recursor.d/zz-jabali-recursor.conf 2>/dev/null || true
 
-  # Redis include + drop-in dir (config dir purge handled above; this
-  # picks up any stragglers).
-  rm -rf /etc/redis/redis.conf.d 2>/dev/null || true
+  # Redis — always purge unconditionally. jabali is the only consumer
+  # on a panel host, so leaving it behind serves no operator use case.
+  # Stop first so dpkg doesn't have to send SIGTERM mid-purge.
+  systemctl stop redis-server 2>/dev/null || true
+  systemctl disable redis-server 2>/dev/null || true
+  DEBIAN_FRONTEND=noninteractive apt-get purge -y \
+    -o Dpkg::Options::="--force-confdef" \
+    -o Dpkg::Options::="--force-confnew" \
+    redis-server redis-tools 2>/dev/null || true
+  rm -rf /etc/redis /var/lib/redis /var/log/redis /run/redis 2>/dev/null || true
 
   # PHP per-version drop-ins outside the snuffleupagus + pool blocks.
   local _phpv2

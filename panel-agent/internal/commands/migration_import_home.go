@@ -210,16 +210,39 @@ func migrationImportHomeHandler(ctx context.Context, raw json.RawMessage) (any, 
 	bytesCopied, files := parseRsyncStats(string(out))
 
 	// Chown the entire destination tree so files land owned by the
-	// destination user even though the source tarball preserved
-	// source-side numeric uids.
+	// destination user EVEN though the source tarball preserved
+	// source-side numeric uids. Group = www-data (not the user's
+	// own primary group) so nginx (running as www-data) can
+	// traverse + read docroot content. The cpanel rsync inherited
+	// source-side group=<user>, which on jabali means nginx hits
+	// 403 on every site request (`drwxr-x---` with group=user
+	// excludes www-data). Same convention user.create already
+	// applies to a fresh /home/<user>/.
+	wwwData, lookupErr := user.LookupGroup("www-data")
+	groupID := gid // fallback: keep the user's primary group
+	if lookupErr == nil {
+		if g, perr := strconv.Atoi(wwwData.Gid); perr == nil {
+			groupID = g
+		}
+	}
+	chownTarget := dest
+	if p.DestSubpath == "" {
+		chownTarget = u.HomeDir
+	}
 	chownCmd := exec.CommandContext(subctx, "chown", "-R",
-		fmt.Sprintf("%d:%d", uid, gid), u.HomeDir)
+		fmt.Sprintf("%d:%d", uid, groupID), chownTarget)
 	if cout, cerr := chownCmd.CombinedOutput(); cerr != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
 			Message: fmt.Sprintf("chown failed: %v: %s", cerr, truncate(string(cout), 1024)),
 		}
 	}
+	// Apply group-rx on directories + group-r on files so nginx
+	// (in the www-data group) can traverse + read. Same trick the
+	// install.sh user-create script + reconciler use on fresh
+	// /home/<user>/ trees.
+	_ = exec.CommandContext(subctx, "find", chownTarget, "-type", "d", "-exec", "chmod", "g+rx", "{}", "+").Run()
+	_ = exec.CommandContext(subctx, "find", chownTarget, "-type", "f", "-exec", "chmod", "g+r", "{}", "+").Run()
 
 	return migrationImportHomeResult{
 		BytesCopied: bytesCopied,

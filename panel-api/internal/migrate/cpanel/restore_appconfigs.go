@@ -35,11 +35,12 @@ import (
 
 // AppConfigsResult tallies per-app rewrites.
 type AppConfigsResult struct {
-	WordPress int      // wp-config.php files rewritten
-	Joomla    int      // configuration.php files rewritten
-	Drupal    int      // settings.php files rewritten
-	Magento   int      // app/etc/env.php files rewritten
-	Skipped   []string // human-readable reasons (file unreadable, no match, etc.)
+	WordPress     int      // wp-config.php files rewritten
+	Joomla        int      // configuration.php files rewritten
+	Drupal        int      // settings.php files rewritten
+	Magento       int      // app/etc/env.php files rewritten
+	CachesCleared int      // cache directories wiped (WP Rocket / LiteSpeed / W3TC / Joomla / Drupal etc.)
+	Skipped       []string // human-readable reasons (file unreadable, no match, etc.)
 }
 
 // ImportAppConfigs walks every domain docroot under
@@ -103,8 +104,73 @@ func ImportAppConfigs(
 		} else if sk != "" {
 			res.Skipped = append(res.Skipped, sk)
 		}
+
+		// Cache-plugin / framework-cache cleanup. cpanel-side
+		// caches reference the SOURCE host's URL, hash IDs that
+		// don't exist post-rsync, or absolute paths from the source
+		// box. Easier to nuke + let the app regenerate on next
+		// request than to chase per-plugin invalidation APIs.
+		for _, victim := range cachePathsForDocroot(docroot) {
+			if _, err := os.Stat(victim); err != nil {
+				continue
+			}
+			// Best-effort RemoveAll via agent.files.delete (operator
+			// scoped, audited). Direct os.RemoveAll would write as
+			// jabali user; agent dispatch makes sure the per-user
+			// scope guard runs + the audit log records the wipe.
+			_, derr := agentCli.Call(ctx, "files.delete", map[string]any{
+				"user_id":  targetUserID,
+				"username": targetUsername,
+				"path":     victim,
+			})
+			if derr != nil {
+				// Fall back to direct RemoveAll — this code path
+				// runs as the panel-api user which has rwx on
+				// /home/<user>/... via the www-data group.
+				if rmErr := os.RemoveAll(victim); rmErr != nil {
+					res.Skipped = append(res.Skipped, fmt.Sprintf("cache_clear_skip:%s:%v", victim, rmErr))
+					continue
+				}
+			}
+			res.CachesCleared++
+		}
 	}
 	return res, nil
+}
+
+// cachePathsForDocroot returns every known cache-plugin / framework
+// cache dir relative to a per-domain docroot. Order doesn't matter;
+// missing entries are skipped silently. Updates as new plugins
+// surface in operator field reports.
+func cachePathsForDocroot(docroot string) []string {
+	return []string{
+		// WordPress
+		filepath.Join(docroot, "wp-content", "cache"),
+		filepath.Join(docroot, "wp-content", "advanced-cache.php"),
+		filepath.Join(docroot, "wp-content", "wp-cache-config.php"),
+		filepath.Join(docroot, "wp-content", "object-cache.php"),
+		filepath.Join(docroot, "wp-content", "wp-rocket-config"),
+		filepath.Join(docroot, "wp-content", "litespeed"),
+		filepath.Join(docroot, "wp-content", "w3tc-config"),
+		filepath.Join(docroot, "wp-content", "plugins", "wp-fastest-cache", "cache"),
+		filepath.Join(docroot, "wp-content", "uploads", "cache"),
+		// Joomla
+		filepath.Join(docroot, "cache"),
+		filepath.Join(docroot, "administrator", "cache"),
+		filepath.Join(docroot, "tmp"),
+		// Drupal (8+: per-files-dir cache; legacy: cache/ dir at root)
+		filepath.Join(docroot, "sites", "default", "files", "css"),
+		filepath.Join(docroot, "sites", "default", "files", "js"),
+		filepath.Join(docroot, "sites", "default", "files", "php"),
+		filepath.Join(docroot, "sites", "default", "files", "styles"),
+		// Magento 2 var/cache + var/page_cache + generated/
+		filepath.Join(docroot, "..", "var", "cache"),
+		filepath.Join(docroot, "..", "var", "page_cache"),
+		filepath.Join(docroot, "..", "generated"),
+		// Generic CDN-pull cache plugins (Hyper Cache, Comet Cache, …)
+		filepath.Join(docroot, "wp-content", "plugins", "hyper-cache", "cache"),
+		filepath.Join(docroot, "wp-content", "plugins", "comet-cache", "cache"),
+	}
 }
 
 // rewriteOne reads `path` via agent.files.read, runs the rewriter,

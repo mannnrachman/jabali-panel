@@ -8978,6 +8978,17 @@ EOF
     systemctl reload crowdsec 2>/dev/null || systemctl restart crowdsec 2>/dev/null || true
     _ok "crowdsec sshd acquis updated — SSH brute-force detection restored"
   fi
+
+  # M33 malware stack — re-run on every update so drop-in conf changes
+  # (inotify_docroot, monitor unit, custom YARA rules) propagate to
+  # existing hosts. Idempotent: marker file at
+  # /usr/local/maldetect/.jabali-installed-${LMD_VERSION} short-circuits
+  # the LMD tarball download; apt + drop-in steps skip when nothing
+  # needs replacing.
+  if declare -f install_malware_stack >/dev/null 2>&1; then
+    _log "provision: re-running install_malware_stack to refresh drop-ins"
+    install_malware_stack
+  fi
 }
 
 main() {

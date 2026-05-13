@@ -114,6 +114,23 @@ live source SSH. Use scp directly for that kind.`,
 			if err := os.MkdirAll(localDir, 0o750); err != nil {
 				return markPullFailed(fmt.Errorf("mkdir %s: %w", localDir, err))
 			}
+			// Re-pull: wipe prior extract tree + any prior-source-user
+			// tarballs. The DA preflight pivot can change job.SourceUser
+			// between attempts, leaving user.<old>.tar.gz on disk that
+			// the restore stage's cpanel.ParseTarball might consume
+			// instead of the new one. Cheap: directory is per-job-id
+			// + only this run is writing it.
+			extractCleanup := filepath.Join(localDir, "extracted")
+			if err := os.RemoveAll(extractCleanup); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"warning: clear stale extract dir %s: %v\n", extractCleanup, err)
+			}
+			matches, _ := filepath.Glob(filepath.Join(localDir, "user.*.tar.gz"))
+			matches2, _ := filepath.Glob(filepath.Join(localDir, "cpmove-*.tar.gz"))
+			matches3, _ := filepath.Glob(filepath.Join(localDir, "*.tar"))
+			for _, m := range append(append(matches, matches2...), matches3...) {
+				_ = os.Remove(m)
+			}
 
 			fmt.Fprintf(cmd.OutOrStdout(),
 				"connecting to %s@%s (kind=%s)...\n",

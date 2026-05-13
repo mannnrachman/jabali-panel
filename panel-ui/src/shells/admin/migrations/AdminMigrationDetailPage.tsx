@@ -867,9 +867,12 @@ function DriveCard({
       refresh();
     },
     onError: (e: unknown) => {
-      message.error(
-        `Pull failed to start: ${(e as Error)?.message ?? "unknown"}`,
-      );
+      const detail =
+        (e as { response?: { data?: { details?: string; error?: string } } })?.response?.data?.details ??
+        (e as { response?: { data?: { error?: string } } })?.response?.data?.error ??
+        (e as Error)?.message ??
+        "unknown";
+      message.error(`Pull failed to start: ${detail}`);
     },
   });
 

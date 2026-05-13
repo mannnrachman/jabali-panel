@@ -174,6 +174,10 @@ func migrationPullSourceRunHandler(ctx context.Context, raw json.RawMessage) (an
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "ssh_user looks unsafe"}
 	}
 	unit := fmt.Sprintf("jabali-migrate-pull-%s.service", p.JobID)
+	// Stop any still-running prior attempt + reset failed-state so the
+	// transient unit name is free. Both best-effort; systemd-run below
+	// is the gate that actually errors if the unit can't be created.
+	_ = exec.CommandContext(ctx, "systemctl", "stop", "--quiet", unit).Run()
 	_ = exec.CommandContext(ctx, "systemctl", "reset-failed", unit).Run()
 	startedAt := time.Now().UTC()
 	cmd := exec.CommandContext(ctx, "systemd-run",

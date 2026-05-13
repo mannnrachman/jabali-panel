@@ -3121,7 +3121,50 @@ protect_panel_docs() {
 
 # ---------- step 5a: build React SPA -----------------------------------
 
+ensure_build_swap() {
+  # Frontend build (vite + node) peaks at ~1.5 GB resident. On a 2-4 GB
+  # host without swap the OOM killer fires mid-build, leaving the install
+  # half-complete + the operator with a cryptic 'Killed' from npm. Add a
+  # 2 GB swap file when the host has <4 GB RAM and <2 GB swap is already
+  # active. Idempotent: re-runs skip when swap is sufficient.
+  local mem_kb want_swap_kb cur_swap_kb mem_gb
+  mem_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+  cur_swap_kb=$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+  mem_gb=$((mem_kb / 1024 / 1024))
+  if [[ $mem_gb -ge 4 ]]; then
+    return 0
+  fi
+  want_swap_kb=2097152  # 2 GB
+  if [[ $cur_swap_kb -ge $want_swap_kb ]]; then
+    _log "build-swap: ${cur_swap_kb}kB already active, sufficient"
+    return 0
+  fi
+  local swap_file=/var/swap.jabali
+  _log "build-swap: host has ${mem_gb}GB RAM + ${cur_swap_kb}kB swap; provisioning 2 GB swap at $swap_file"
+  # Clean up any half-baked prior attempt before re-creating.
+  if [[ -e "$swap_file" ]]; then
+    swapoff "$swap_file" 2>/dev/null || true
+    rm -f "$swap_file"
+  fi
+  if ! fallocate -l 2G "$swap_file" 2>/dev/null; then
+    # fallocate fails on tmpfs / unsupported FS — fall back to dd.
+    dd if=/dev/zero of="$swap_file" bs=1M count=2048 status=none \
+      || { _warn "swap provision failed — vite build may OOM on this host"; return 0; }
+  fi
+  chmod 0600 "$swap_file"
+  mkswap "$swap_file" >/dev/null 2>&1 \
+    || { _warn "mkswap on $swap_file failed — vite build may OOM on this host"; rm -f "$swap_file"; return 0; }
+  swapon "$swap_file" \
+    || { _warn "swapon $swap_file failed — vite build may OOM on this host"; rm -f "$swap_file"; return 0; }
+  # /etc/fstab entry so swap survives reboot.
+  if ! grep -qF "$swap_file" /etc/fstab 2>/dev/null; then
+    echo "$swap_file none swap sw 0 0" >> /etc/fstab
+  fi
+  _ok "build-swap: 2 GB active at $swap_file (persists via /etc/fstab)"
+}
+
 build_frontend() {
+  ensure_build_swap
   _log "building panel-ui (npm ci + npm run build)"
   # npm ci needs lock + no partial node_modules. Run as the service user so
   # the node_modules cache sits in the project dir, not /root.
@@ -3137,9 +3180,13 @@ build_frontend() {
   # Cheap to regenerate (seconds).
   rm -rf "$REPO_DIR/panel-ui/node_modules/.vite"
 
+  # Cap V8 heap at 1500 MB so the build can't push past total
+  # host RAM and trigger the OOM killer on small VPSes. vite peaks
+  # around 1.2 GB; 1.5 GB ceiling leaves headroom for syscall buffers.
   sudo -u "$SERVICE_USER" -H env \
     HOME="$REPO_DIR" \
     PATH="/usr/bin:/bin" \
+    NODE_OPTIONS="--max-old-space-size=1500" \
     bash -c "cd '$REPO_DIR/panel-ui' && npm run build"
   _ok "panel-ui built → $REPO_DIR/panel-ui/dist/"
 }
@@ -9471,6 +9518,16 @@ EOF
     rm -f "/etc/php/$_minor/fpm/conf.d/30-jabali-snuffleupagus.ini"
     rm -f "/etc/php/$_minor/cli/conf.d/30-jabali-snuffleupagus.ini"
   done
+
+  # Disable build-swap before tearing down /var. Best-effort: a host
+  # rebooted between install + uninstall may have the swap re-mounted
+  # via /etc/fstab; peel it off cleanly so the rm -f below doesn't
+  # fail with EBUSY.
+  if [[ -e /var/swap.jabali ]]; then
+    swapoff /var/swap.jabali 2>/dev/null || true
+    rm -f /var/swap.jabali 2>/dev/null || true
+    sed -i '\#^/var/swap\.jabali #d' /etc/fstab 2>/dev/null || true
+  fi
 
   _log "removing state + install directories"
   rm -rf /var/lib/jabali        \

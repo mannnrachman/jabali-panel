@@ -725,6 +725,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			BWDaily:            deps.BWDaily,
 			Domains:            deps.Domains,
 			Packages:           deps.Packages,
+			BackupJobs:         deps.BackupJobs,
 		})
 	}
 

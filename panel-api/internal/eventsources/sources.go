@@ -91,6 +91,9 @@ type Deps struct {
 	BWDaily  repository.BWDailyRepository
 	Domains  repository.DomainRepository
 	Packages repository.PackageRepository
+	// M14 backup_fail watcher. Nil disables the source — tests +
+	// minimal installs without M30 backups skip the goroutine.
+	BackupJobs repository.BackupJobRepository
 }
 
 // Start boots every configured source in its own goroutine. Each
@@ -125,8 +128,9 @@ func Start(ctx context.Context, d Deps) {
 	go runPanelLogTail(ctx, d)
 	go runBandwidthQuota(ctx, d)
 	go runExecAuditBurst(ctx, d)
-	// domain_expiry + backup_fail are stubs — see the stub files in
-	// this package.
+	go runBackupFail(ctx, d)
+	// domain_expiry remains a stub — WHOIS pipeline lives outside the
+	// panel-api process today (M15 future work).
 }
 
 // shouldFire returns true when no history row for eventKind with the

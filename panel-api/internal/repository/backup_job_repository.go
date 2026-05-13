@@ -42,6 +42,13 @@ type BackupJobRepository interface {
 	ListRuns(ctx context.Context, limit, offset int) ([]BackupRunSummary, int64, error)
 	ListByRun(ctx context.Context, runID string) ([]models.BackupJob, error)
 	ListManual(ctx context.Context, limit, offset int) ([]models.BackupJob, int64, error)
+
+	// ListByStatusSince returns rows whose status matches AND
+	// finished_at >= since. Used by the M14 backup_fail event source
+	// to drain newly-failed jobs into the notification dispatcher.
+	// Limit caps the scan so a wave of failures from a stuck backend
+	// can't blow up memory.
+	ListByStatusSince(ctx context.Context, status string, since time.Time, limit int) ([]models.BackupJob, error)
 }
 
 // BackupRunSummary aggregates one logical scheduler tick (run_id) into
@@ -300,4 +307,21 @@ func (r *backupJobRepo) MarkFinished(
 		return ErrNotFound
 	}
 	return nil
+}
+
+
+// ListByStatusSince implements BackupJobRepository.
+func (r *backupJobRepo) ListByStatusSince(ctx context.Context, status string, since time.Time, limit int) ([]models.BackupJob, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	var rows []models.BackupJob
+	if err := r.db.WithContext(ctx).
+		Where("status = ? AND finished_at >= ?", status, since).
+		Order("finished_at ASC").
+		Limit(limit).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }

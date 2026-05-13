@@ -298,11 +298,35 @@ func (d *Discoverer) DescribeAccount(ctx context.Context, raw migrate.Session, a
 	// DA-side user.conf file. `da admin user.show` doesn't exist as
 	// a CLI verb (only `da admin` for self-identification) so the
 	// previous shellout always failed with "Unrecognized arguments".
+	//
+	// When the operator typed an SSH-side principal (`root`, `admin`)
+	// rather than an actual hosting account, fall back to a single-
+	// account auto-pick so the common single-tenant case Just Works.
+	// Multi-account sources error with the visible list so the
+	// operator can re-run the wizard with the right ID.
 	probeCmd := fmt.Sprintf("test -f /usr/local/directadmin/data/users/'%s'/user.conf",
 		strings.ReplaceAll(accountID, "'", `'\''`))
 	if _, err := s.run(ctx, d.CommandTimeout, probeCmd); err != nil {
-		return nil, fmt.Errorf("user %q not found on source (no /usr/local/directadmin/data/users/%s/user.conf): %w",
-			accountID, accountID, err)
+		// accountID not a hosting user. Auto-detect.
+		accounts, listErr := d.ListAccounts(ctx, s)
+		if listErr != nil {
+			return nil, fmt.Errorf("user %q not found on source (no /usr/local/directadmin/data/users/%s/user.conf) and auto-detect failed: %w",
+				accountID, accountID, listErr)
+		}
+		switch len(accounts) {
+		case 0:
+			return nil, fmt.Errorf("no DA hosting accounts found on source (looked in /usr/local/directadmin/data/users/); supplied %q is not a hosting user", accountID)
+		case 1:
+			// Single-tenant DA — silently pivot to the only account.
+			accountID = accounts[0].ID
+		default:
+			names := make([]string, 0, len(accounts))
+			for _, a := range accounts {
+				names = append(names, a.ID)
+			}
+			return nil, fmt.Errorf("user %q is not a DA hosting account; pick one of: %s",
+				accountID, strings.Join(names, ", "))
+		}
 	}
 	m := &migrate.AccountManifest{
 		SchemaVersion: migrate.ManifestSchemaVersion,

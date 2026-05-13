@@ -27,6 +27,7 @@ type MigrationJobRepository interface {
 	UpdateState(ctx context.Context, id, state string, lastError *string) error
 	UpdateManifest(ctx context.Context, id, manifestJSON string) error
 	UpdateTargetUser(ctx context.Context, id, targetUserID string) error
+	UpdateSourceUser(ctx context.Context, id, sourceUser string) error
 	// PatchDraft updates source-host/user + target-user-id on a row
 	// still in state='draft'. ADR-0095 decision 5. Returns ErrNotFound
 	// if the row is missing OR in any non-draft state — callers map
@@ -161,6 +162,27 @@ func (r *migrationJobRepo) UpdateManifest(ctx context.Context, id, manifestJSON 
 		Updates(map[string]any{
 			"manifest_json": manifestJSON,
 			"updated_at":    time.Now().UTC(),
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateSourceUser overwrites migration_jobs.source_user for the
+// given id. Used by DA analyze auto-pivot: when the operator typed
+// `root` / `admin` (SSH user) but the actual hosting account on the
+// source is something else, analyze resolves the true account name
+// and persists it so downstream backup/restore stages target it.
+func (r *migrationJobRepo) UpdateSourceUser(ctx context.Context, id, sourceUser string) error {
+	res := r.db.WithContext(ctx).Model(&models.MigrationJob{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"source_user": sourceUser,
+			"updated_at":  time.Now().UTC(),
 		})
 	if res.Error != nil {
 		return res.Error

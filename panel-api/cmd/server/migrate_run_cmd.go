@@ -352,7 +352,7 @@ failed stage. Already-done stages are skipped.`,
 				Jobs:  jobsRepo,
 				Agent: sharedAgent,
 				StageCallbacks: map[string]migrate.StageCallback{
-					migrate.StageAnalyze:  cpanelAnalyzeCallback(),
+					migrate.StageAnalyze:  cpanelAnalyzeCallback(jobsRepo),
 					migrate.StageValidate: validateStageCallback(usersRepo, domainsRepo, *user.Username),
 					migrate.StageRestore: cpanelRestoreCallback(
 						sshRepo, cronsRepo, dbsRepo, dbUsersRepo, dbGrantsRepo, domainsRepo, mbRepo, fwdRepo, arRepo, filtersRepo, phpPoolsRepo, usersRepo, kc,
@@ -606,7 +606,7 @@ func cpanelRestoreCallback(
 // operator-driven workflow today often has the cpmove tarball
 // already on disk + no need to re-run discovery. Restore stage
 // works without analyze having succeeded.
-func cpanelAnalyzeCallback() migrate.StageCallback {
+func cpanelAnalyzeCallback(jobsRepo repository.MigrationJobRepository) migrate.StageCallback {
 	return func(ctx context.Context, job *models.MigrationJob, payload any) (int64, []string, error) {
 		secretPath := fmt.Sprintf("/etc/jabali-panel/migration-secrets/%s.env", job.ID)
 		if _, err := osStat(secretPath); err != nil {
@@ -641,6 +641,16 @@ func cpanelAnalyzeCallback() migrate.StageCallback {
 		mf, err := disc.DescribeAccount(ctx, s, job.SourceUser)
 		if err != nil {
 			return 0, nil, fmt.Errorf("describe %s: %w", job.SourceUser, err)
+		}
+		// Persist analyze-time pivot: DA's single-account auto-pick
+		// (root → only hosting user) needs to propagate so downstream
+		// backup/restore stages target the real account. Best-effort:
+		// failure here just leaves the row with the SSH user, which
+		// surfaces as a backup-stage failure operator can see.
+		if mf.Source.User != "" && mf.Source.User != job.SourceUser {
+			if uErr := jobsRepo.UpdateSourceUser(ctx, job.ID, mf.Source.User); uErr == nil {
+				job.SourceUser = mf.Source.User
+			}
 		}
 		// Persist manifest to migration_jobs.manifest_json so resume
 		// + validate + restore can read without re-doing discovery.

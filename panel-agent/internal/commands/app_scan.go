@@ -1,0 +1,187 @@
+// app.scan — walk /home/<user>/domains/*/public_html/ (+ depth-1
+// subdirs) for known CMS / app signatures + return what we found.
+// Panel-side handler matches against the existing application_installs
+// table + INSERTs any unregistered hits.
+
+package commands
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/user"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
+)
+
+type appScanParams struct {
+	Username string `json:"username"`
+}
+
+// appScanHit is one detected install. Fields map 1:1 onto the panel's
+// ApplicationInstall row the handler will INSERT.
+type appScanHit struct {
+	Domain       string `json:"domain"`        // panel-side domain name (the docroot's parent dir)
+	Subdirectory string `json:"subdirectory"`  // "" for docroot root, e.g. "blog" for blog/
+	AppType      string `json:"app_type"`      // wordpress | joomla | drupal | magento
+	Version      string `json:"version,omitempty"`
+}
+
+type appScanResponse struct {
+	Hits []appScanHit `json:"hits"`
+}
+
+func appScanHandler(_ context.Context, raw json.RawMessage) (any, error) {
+	var p appScanParams
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "parse: " + err.Error()}
+	}
+	if !usernameRegex.MatchString(p.Username) {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "invalid username"}
+	}
+	u, err := user.Lookup(p.Username)
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeNotFound, Message: "user not in /etc/passwd"}
+	}
+	domainsRoot := filepath.Join(u.HomeDir, "domains")
+	entries, err := os.ReadDir(domainsRoot)
+	if err != nil {
+		// No domains dir = nothing to scan, not an error.
+		return appScanResponse{}, nil
+	}
+	var hits []appScanHit
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dom := e.Name()
+		docroot := filepath.Join(domainsRoot, dom, "public_html")
+		// Docroot itself.
+		if h := detectAt(dom, "", docroot); h != nil {
+			hits = append(hits, *h)
+		}
+		// Depth-1 subdirs (max 100 to bound scan cost on bloated sites).
+		subEntries, _ := os.ReadDir(docroot)
+		count := 0
+		for _, sub := range subEntries {
+			if count >= 100 {
+				break
+			}
+			if !sub.IsDir() || strings.HasPrefix(sub.Name(), ".") {
+				continue
+			}
+			count++
+			subPath := filepath.Join(docroot, sub.Name())
+			if h := detectAt(dom, sub.Name(), subPath); h != nil {
+				hits = append(hits, *h)
+			}
+		}
+	}
+	return appScanResponse{Hits: hits}, nil
+}
+
+// detectAt inspects a single directory for known signatures.
+// Returns nil when nothing matches.
+func detectAt(domain, subdir, dir string) *appScanHit {
+	// WordPress: wp-config.php OR wp-load.php (some installs move
+	// wp-config one level up but keep wp-load).
+	if fileExists(filepath.Join(dir, "wp-config.php")) ||
+		fileExists(filepath.Join(dir, "wp-load.php")) {
+		return &appScanHit{
+			Domain:       domain,
+			Subdirectory: subdir,
+			AppType:      "wordpress",
+			Version:      readWPVersion(dir),
+		}
+	}
+	// Joomla: configuration.php + libraries/src/Version.php (4.x)
+	// or libraries/joomla/version.php (3.x).
+	if fileExists(filepath.Join(dir, "configuration.php")) &&
+		(dirExists(filepath.Join(dir, "libraries", "src")) ||
+			dirExists(filepath.Join(dir, "libraries", "joomla"))) {
+		return &appScanHit{
+			Domain:       domain,
+			Subdirectory: subdir,
+			AppType:      "joomla",
+			Version:      readJoomlaVersion(dir),
+		}
+	}
+	// Drupal: sites/default/settings.php + core/lib/Drupal.php (8+)
+	// or includes/bootstrap.inc (7.x).
+	if fileExists(filepath.Join(dir, "sites", "default", "settings.php")) &&
+		(fileExists(filepath.Join(dir, "core", "lib", "Drupal.php")) ||
+			fileExists(filepath.Join(dir, "includes", "bootstrap.inc"))) {
+		return &appScanHit{
+			Domain:       domain,
+			Subdirectory: subdir,
+			AppType:      "drupal",
+			Version:      readDrupalVersion(dir),
+		}
+	}
+	// Magento 2: app/etc/env.php + composer.json with "magento/product-community-edition".
+	if fileExists(filepath.Join(dir, "app", "etc", "env.php")) &&
+		fileExists(filepath.Join(dir, "composer.json")) {
+		return &appScanHit{
+			Domain:       domain,
+			Subdirectory: subdir,
+			AppType:      "magento",
+		}
+	}
+	return nil
+}
+
+var (
+	wpVersionRe     = regexp.MustCompile(`\$wp_version\s*=\s*['"]([^'"]+)['"]`)
+	drupalVersionRe = regexp.MustCompile(`const\s+VERSION\s*=\s*['"]([^'"]+)['"]`)
+	joomla4Re       = regexp.MustCompile(`MAJOR_VERSION\s*=\s*(\d+)[\s\S]+?MINOR_VERSION\s*=\s*(\d+)[\s\S]+?PATCH_VERSION\s*=\s*(\d+)`)
+)
+
+func readWPVersion(dir string) string {
+	b, err := os.ReadFile(filepath.Join(dir, "wp-includes", "version.php"))
+	if err != nil {
+		return ""
+	}
+	if m := wpVersionRe.FindSubmatch(b); len(m) == 2 {
+		return string(m[1])
+	}
+	return ""
+}
+
+func readDrupalVersion(dir string) string {
+	b, err := os.ReadFile(filepath.Join(dir, "core", "lib", "Drupal.php"))
+	if err != nil {
+		return ""
+	}
+	if m := drupalVersionRe.FindSubmatch(b); len(m) == 2 {
+		return string(m[1])
+	}
+	return ""
+}
+
+func readJoomlaVersion(dir string) string {
+	b, err := os.ReadFile(filepath.Join(dir, "libraries", "src", "Version.php"))
+	if err != nil {
+		// Joomla 3.x fallback
+		b, err = os.ReadFile(filepath.Join(dir, "libraries", "joomla", "version.php"))
+		if err != nil {
+			return ""
+		}
+	}
+	if m := joomla4Re.FindSubmatch(b); len(m) == 4 {
+		return fmt.Sprintf("%s.%s.%s", m[1], m[2], m[3])
+	}
+	return ""
+}
+
+func dirExists(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && info.IsDir()
+}
+
+func init() {
+	Default.Register("app.scan", appScanHandler)
+}

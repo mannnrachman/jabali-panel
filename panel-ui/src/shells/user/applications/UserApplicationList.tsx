@@ -24,6 +24,7 @@ import {
   DeleteOutlined,
   CopyOutlined,
   LoginOutlined,
+  SearchOutlined,
 } from "@icons";
 import { useQueryClient } from "@tanstack/react-query";
 import type { SorterResult } from "antd/es/table/interface";
@@ -177,6 +178,47 @@ export const UserApplicationList = () => {
   const [cloneOpen, setCloneOpen] = useState(false);
   const [cloningId, setCloningId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
+
+  const handleScan = async () => {
+    setScanning(true);
+    try {
+      const res = await apiClient.post<{
+        scanned: number;
+        added: number;
+        report?: Array<{
+          domain: string;
+          subdirectory: string;
+          app_type: string;
+          version?: string;
+          action: string;
+        }>;
+      }>("/applications/scan");
+      const { scanned, added } = res.data;
+      if (added > 0) {
+        message.success(
+          `Found ${scanned} app${scanned === 1 ? "" : "s"}, registered ${added} new.`,
+        );
+      } else if (scanned > 0) {
+        message.info(`Found ${scanned} app${scanned === 1 ? "" : "s"}, all already registered.`);
+      } else {
+        message.info("No applications found on disk.");
+      }
+      qc.invalidateQueries({ queryKey: ["list", "applications"] });
+      tableQuery.refetch();
+    } catch (err) {
+      const msg =
+        (err as { response?: { data?: { detail?: string; error?: string } } })
+          ?.response?.data?.detail ??
+        (err as { response?: { data?: { error?: string } } })?.response?.data
+          ?.error ??
+        (err as { message?: string })?.message ??
+        "Scan failed";
+      message.error(msg);
+    } finally {
+      setScanning(false);
+    }
+  };
 
   // Poll the list while any row is transitional (pending/installing/
   // cloning/deleting). Five-second cadence matches what Refine's old
@@ -250,13 +292,24 @@ export const UserApplicationList = () => {
         <Typography.Title level={3} style={{ margin: 0 }}>
           <AppstoreOutlined /> Applications
         </Typography.Title>
-        <Button
-          type="primary"
-          icon={<PlusSquareOutlined />}
-          onClick={() => setInstallOpen(true)}
-        >
-          Install application
-        </Button>
+        <Space>
+          <Tooltip title="Detect WordPress, Joomla, Drupal, and Magento installs on disk that aren't yet tracked by the panel.">
+            <Button
+              icon={<SearchOutlined />}
+              loading={scanning}
+              onClick={handleScan}
+            >
+              Scan for Applications
+            </Button>
+          </Tooltip>
+          <Button
+            type="primary"
+            icon={<PlusSquareOutlined />}
+            onClick={() => setInstallOpen(true)}
+          >
+            Install application
+          </Button>
+        </Space>
       </Space>
 
       <InstallApplicationModal

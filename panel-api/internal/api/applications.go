@@ -73,6 +73,7 @@ func RegisterApplicationRoutes(g *gin.RouterGroup, cfg ApplicationHandlerConfig)
 
 	apps := g.Group("/applications")
 	apps.POST("", h.create)
+	apps.POST("/scan", h.scan)
 	apps.GET("", wp.list)
 	apps.GET("/:id", wp.get)
 	apps.DELETE("/:id", wp.delete)
@@ -876,3 +877,131 @@ func createPrestaShopInstallAndKickAgent(parentCtx context.Context, args prestas
 	cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
 }
 
+
+// scan walks the user's homedir for unregistered WordPress / Joomla /
+// Drupal / Magento installs + INSERTs an application_installs row for
+// each match not already tracked. Triggered from the operator UI's
+// "Scan for Applications" button on /jabali-panel/applications.
+//
+// Idempotent: re-scans skip every (domain_id, subdirectory, app_type)
+// triple that already exists. Returns the count of NEW rows + the
+// list of detected (added + skipped) for the UI to display.
+func (h *applicationsHandler) scan(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	if h.cfg.Agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unwired"})
+		return
+	}
+	user, err := h.cfg.Users.FindByID(c.Request.Context(), claims.UserID)
+	if err != nil || user == nil || user.Username == nil || *user.Username == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "user_lookup", "detail": "panel user has no Linux username"})
+		return
+	}
+
+	raw, err := h.cfg.Agent.Call(c.Request.Context(), "app.scan", map[string]any{
+		"username": *user.Username,
+	})
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_error", "detail": err.Error()})
+		return
+	}
+	var resp struct {
+		Hits []struct {
+			Domain       string `json:"domain"`
+			Subdirectory string `json:"subdirectory"`
+			AppType      string `json:"app_type"`
+			Version      string `json:"version"`
+		} `json:"hits"`
+	}
+	if jErr := json.Unmarshal(raw, &resp); jErr != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_decode", "detail": jErr.Error()})
+		return
+	}
+
+	type scanReport struct {
+		Domain       string `json:"domain"`
+		Subdirectory string `json:"subdirectory"`
+		AppType      string `json:"app_type"`
+		Version      string `json:"version,omitempty"`
+		Action       string `json:"action"` // "added" | "skipped_already_present" | "skipped_no_domain"
+		InstallID    string `json:"install_id,omitempty"`
+	}
+	var report []scanReport
+	added := 0
+	for _, hit := range resp.Hits {
+		// Resolve domain → panel domain id; skip when domain not in panel DB
+		// (operator may have removed it, or the docroot dir survived a
+		// domain.delete).
+		dom, dErr := h.cfg.Domains.FindByName(c.Request.Context(), hit.Domain)
+		if dErr != nil || dom == nil {
+			report = append(report, scanReport{
+				Domain: hit.Domain, Subdirectory: hit.Subdirectory,
+				AppType: hit.AppType, Action: "skipped_no_domain",
+			})
+			continue
+		}
+		// Owner check — multi-tenant panel mustn't claim an app under
+		// someone else's domain.
+		if dom.UserID != user.ID {
+			report = append(report, scanReport{
+				Domain: hit.Domain, Subdirectory: hit.Subdirectory,
+				AppType: hit.AppType, Action: "skipped_domain_owned_by_other_user",
+			})
+			continue
+		}
+		// Existing-install check.
+		existing, _ := h.cfg.ApplicationInstalls.FindByDomainAndSubdirectoryAndAppType(
+			c.Request.Context(), dom.ID, hit.Subdirectory, hit.AppType)
+		if existing != nil {
+			report = append(report, scanReport{
+				Domain: hit.Domain, Subdirectory: hit.Subdirectory,
+				AppType: hit.AppType, Version: hit.Version,
+				Action: "skipped_already_present", InstallID: existing.ID,
+			})
+			continue
+		}
+		// Insert a `discovered` row. status=ready so the row is
+		// usable immediately; admin_email + admin_username default
+		// to the panel user (operator can edit via the existing
+		// /:id update path). DB FK is nil because the discovered
+		// install already wired its own DB outside the panel.
+		install := &models.ApplicationInstall{
+			ID:            genULID(),
+			UserID:        user.ID,
+			DomainID:      dom.ID,
+			DBID:          nil,
+			AdminUsername: claims.Email, // operator can rename later
+			AdminEmail:    claims.Email,
+			Locale:        "en_US",
+			Subdirectory:  hit.Subdirectory,
+			Status:        "ready",
+			AppType:       hit.AppType,
+		}
+		if hit.Version != "" {
+			install.Version = &hit.Version
+		}
+		if cErr := h.cfg.ApplicationInstalls.Create(c.Request.Context(), install); cErr != nil {
+			report = append(report, scanReport{
+				Domain: hit.Domain, Subdirectory: hit.Subdirectory,
+				AppType: hit.AppType, Version: hit.Version,
+				Action: "skipped_db_error",
+			})
+			continue
+		}
+		added++
+		report = append(report, scanReport{
+			Domain: hit.Domain, Subdirectory: hit.Subdirectory,
+			AppType: hit.AppType, Version: hit.Version,
+			Action: "added", InstallID: install.ID,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"scanned": len(resp.Hits),
+		"added":   added,
+		"report":  report,
+	})
+}

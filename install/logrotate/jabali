@@ -43,7 +43,6 @@
     su root adm
 }
 
-/var/log/php-fpm-pma.log
 /var/log/php-fpm-*.log {
     daily
     rotate 14

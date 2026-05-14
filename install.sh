@@ -9080,6 +9080,24 @@ EOF
     systemctl restart jabali-kratos 2>/dev/null || true
   fi
 
+  # CrowdSec console enrollment marker. Hosts that enrolled before
+  # the marker code existed (any release < 2026-05-15) have a valid
+  # CAPI registration but no /etc/jabali/.cs-console-enrolled — UI
+  # then shows the enroll form even though `cscli capi status` says
+  # OK. Detect that gap and seed the marker so the UI flips to
+  # "Enrolled" on next refresh, no operator action needed.
+  if command -v cscli >/dev/null 2>&1 \
+      && [[ -f /etc/crowdsec/online_api_credentials.yaml ]] \
+      && [[ ! -f /etc/jabali/.cs-console-enrolled ]]; then
+    if cscli capi status >/dev/null 2>&1; then
+      install -d -m 0755 /etc/jabali
+      printf 'enrolled_at: %s\nseeded_by: install.sh\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        > /etc/jabali/.cs-console-enrolled
+      chmod 0644 /etc/jabali/.cs-console-enrolled
+      _log "seeded /etc/jabali/.cs-console-enrolled (CAPI OK, marker missing)"
+    fi
+  fi
+
   # OnFailure notifier template + helper script — same logic.
   if declare -f install_notify_template >/dev/null 2>&1; then
     install_notify_template

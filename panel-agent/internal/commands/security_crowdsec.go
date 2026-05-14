@@ -332,7 +332,10 @@ type csBouncersListResponse struct {
 func csBouncersListHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 	out, err := runCscliJSON(ctx, "bouncers", "list")
 	if err != nil {
-		return nil, csInternal("cscli bouncers list", err)
+		// LAPI not yet reachable (fresh box pre-init, db migration in
+		// progress, or stopped service) — return empty rather than 502
+		// so the UI's Bouncers section renders a clean "no bouncers".
+		return csBouncersListResponse{Bouncers: []csBouncer{}}, nil
 	}
 	resp := csBouncersListResponse{Bouncers: []csBouncer{}}
 	var raw []struct {
@@ -1311,6 +1314,26 @@ func csConsoleEnrollHandler(ctx context.Context, params json.RawMessage) (any, e
 		args = append(args, "--name", n)
 	}
 	args = append(args, key)
+
+	// Pre-flight: `cscli console enroll` requires
+	// /etc/crowdsec/online_api_credentials.yaml (the CAPI machine_id).
+	// crowdsec's Debian post-install normally runs `cscli capi register`
+	// — but reinstalls, missing post-install hooks, or first-boot ordering
+	// can leave that file absent and the enroll then dies with
+	//   "failed to load Local API: loading online client credentials".
+	// Register once on the fly so the operator can enroll without dropping
+	// to a root shell.
+	if _, statErr := os.Stat(onlineCredsPath); os.IsNotExist(statErr) {
+		regCmd := exec.CommandContext(ctx, "cscli", "capi", "register")
+		if regOut, regErr := regCmd.CombinedOutput(); regErr != nil {
+			return nil, csInternal(fmt.Sprintf("cscli capi register (prereq): %s",
+				strings.TrimSpace(string(regOut))), regErr)
+		}
+		// CAPI register writes the creds + asks crowdsec to reload. Soft
+		// fail if the service isn't managed here.
+		_ = exec.CommandContext(ctx, "systemctl", "reload", "crowdsec").Run()
+	}
+
 	cmd := exec.CommandContext(ctx, "cscli", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1346,7 +1369,10 @@ var consoleOptionDescriptions = map[string]string{
 func csConsoleStatusHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 	out, err := runCscliJSON(ctx, "console", "status")
 	if err != nil {
-		return nil, csInternal("cscli console status", err)
+		// Pre-CAPI-register (missing /etc/crowdsec/online_api_credentials.yaml)
+		// or any other transient cscli failure — return an empty list so
+		// the UI renders the enroll form instead of a 502.
+		return map[string]any{"items": []csConsoleOption{}}, nil
 	}
 	// v1.7.x ships {option: bool} — flat map. Descriptions only appear
 	// in the human-formatted table, so we emit them from our own

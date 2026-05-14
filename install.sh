@@ -6808,6 +6808,29 @@ install_apparmor() {
 # profiles whose on-disk file was removed in an earlier jabali update
 # but whose in-kernel entry was never unloaded. Idempotent.
 cleanup_apparmor_legacy() {
+  # M40.2 — drop the kratos AppArmor profile. AA 4.x on Ubuntu 24.04
+  # (kernel 6.8) has a complain-mode regression where unix-stream
+  # mediation returns EACCES on connect() even though the profile is
+  # complain and audit.log is empty. Reproduces 100% on a host where
+  # the profile is loaded; aa-disable instantly fixes it. We've
+  # decided the security upside of confining kratos (already in a
+  # systemd Group=jabali-sockets + NoNewPrivileges sandbox + DSN-
+  # over-unix-socket) is smaller than the operational pain of every
+  # fresh Ubuntu 24.04 install crash-spinning on db ping. Revisit
+  # when AA 4.x complain-mode unix mediation is fixed upstream.
+  local stale_kratos=/etc/apparmor.d/usr.local.bin.jabali-kratos
+  if [[ -f "$stale_kratos" ]]; then
+    # aa-disable creates a symlink under /etc/apparmor.d/disable/
+    # which apparmor_parser then skips. Remove the on-disk profile
+    # afterwards so a future apply_apparmor_profiles pass doesn't
+    # re-install it.
+    aa-disable "$stale_kratos" 2>/dev/null || true
+    rm -f /etc/apparmor.d/disable/usr.local.bin.jabali-kratos
+    rm -f "$stale_kratos"
+    # Force-unload the in-kernel profile too; aa-disable on its own
+    # only blocks future loads.
+    apparmor_parser -R /dev/stdin <<<'profile jabali-kratos /usr/local/bin/kratos { }' 2>/dev/null || true
+  fi
   # aa-remove-unknown sweeps every in-kernel profile whose backing file
   # no longer exists (stale from previous jabali update runs).
   if command -v aa-remove-unknown >/dev/null 2>&1; then

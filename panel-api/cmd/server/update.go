@@ -1,10 +1,15 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -131,6 +136,68 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			return "", fmt.Errorf("read %s: %w", lastBuiltSHAPath, err)
 		}
 		return strings.TrimSpace(string(b)), nil
+	}
+
+	// ---- per-artifact skip helpers --------------------------------------
+	//
+	// HEAD-level diff is too coarse: every README tweak re-runs npm ci,
+	// vite, and both go builds. Per-artifact tracker hashes each
+	// step's real input set against /var/lib/jabali-panel/last-built-
+	// <name>; skip the step when inputs AND the produced artifact are
+	// unchanged. --force bypasses every per-artifact skip.
+	//
+	// gitPathSHA returns the blob/tree SHA git already keeps for a
+	// path under HEAD (free — no extra hashing). compositeSHA folds
+	// many such shas into a single deterministic fingerprint.
+	gitPathSHA := func(path string) (string, error) {
+		out, err := exec.Command("sudo", "-u", serviceUser,
+			"git", "-C", repoDir, "rev-parse", "HEAD:"+path).Output()
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+	compositeSHA := func(paths ...string) string {
+		lines := make([]string, 0, len(paths))
+		for _, p := range paths {
+			sha, err := gitPathSHA(p)
+			if err != nil {
+				lines = append(lines, p+":<missing>")
+				continue
+			}
+			lines = append(lines, p+":"+sha)
+		}
+		sort.Strings(lines)
+		sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+		return hex.EncodeToString(sum[:])
+	}
+	artifactSHAPath := func(name string) string {
+		return filepath.Join("/var/lib/jabali-panel", "last-built-"+name)
+	}
+	// artifactUnchanged returns true if --force is OFF, the prior sha
+	// matches, and the produced artifact still exists. Missing target
+	// always forces rebuild — covers post-uninstall + repair paths.
+	artifactUnchanged := func(name, want, targetFile string) bool {
+		if force {
+			return false
+		}
+		if targetFile != "" {
+			if _, err := os.Stat(targetFile); err != nil {
+				return false
+			}
+		}
+		b, err := os.ReadFile(artifactSHAPath(name))
+		if err != nil {
+			return false
+		}
+		return strings.TrimSpace(string(b)) == want
+	}
+	writeArtifactSHA := func(name, sha string) {
+		_ = os.MkdirAll("/var/lib/jabali-panel", 0o755)
+		tmp := artifactSHAPath(name) + ".tmp"
+		if err := os.WriteFile(tmp, []byte(sha+"\n"), 0o644); err == nil {
+			_ = os.Rename(tmp, artifactSHAPath(name))
+		}
 	}
 
 	// writeLastBuiltSHA persists the given SHA atomically (temp + rename)
@@ -485,6 +552,13 @@ fi
 					"[ -f /etc/jabali/default-nspawn-image ] || { echo debian-12-v1 > /etc/jabali/default-nspawn-image; chmod 0644 /etc/jabali/default-nspawn-image; }")
 		}},
 		{"npm ci", func() error {
+			// Skip when package-lock.json + package.json unchanged AND
+			// node_modules/.bin/tsc still present.
+			want := compositeSHA("panel-ui/package-lock.json", "panel-ui/package.json")
+			if artifactUnchanged("npm", want, repoDir+"/panel-ui/node_modules/.bin/tsc") {
+				fmt.Println("  (npm ci skipped: lockfile unchanged + node_modules intact)")
+				return nil
+			}
 			// Wipe node_modules before npm ci. npm ci's docs promise it
 			// does this itself, but in practice it dies with
 			//   ENOTEMPTY: directory not empty, rmdir '.../node_modules/vite'
@@ -504,7 +578,7 @@ fi
 			//      and retry once — empirically the second attempt
 			//      lands clean. Two failures in a row points at a real
 			//      package-lock issue and we surface that.
-			return asUser(repoDir+"/panel-ui", "bash", "-c", `set -e
+			err := asUser(repoDir+"/panel-ui", "bash", "-c", `set -e
 trash="node_modules.stale.$$"
 if [ -d node_modules ]; then
   mv node_modules "$trash"
@@ -522,8 +596,30 @@ test -x node_modules/.bin/tsc || {
   exit 1
 }
 `)
+			if err != nil {
+				return err
+			}
+			writeArtifactSHA("npm", want)
+			return nil
 		}},
 		{"build frontend", func() error {
+			// Skip when every input to vite (src + public + index.html
+			// + vite.config + tsconfigs + lockfile) is unchanged AND
+			// dist/index.html still present.
+			want := compositeSHA(
+				"panel-ui/src",
+				"panel-ui/public",
+				"panel-ui/index.html",
+				"panel-ui/vite.config.ts",
+				"panel-ui/tsconfig.json",
+				"panel-ui/tsconfig.app.json",
+				"panel-ui/tsconfig.node.json",
+				"panel-ui/package-lock.json",
+			)
+			if artifactUnchanged("vite", want, repoDir+"/panel-ui/dist/index.html") {
+				fmt.Println("  (vite build skipped: src + config + lockfile unchanged + dist intact)")
+				return nil
+			}
 			// vite's emptyDir unlinks every file under dist/ before
 			// writing the new bundle. If any prior build left root-owned
 			// artifacts there (e.g. a legacy update ran as root, or an
@@ -538,29 +634,87 @@ test -x node_modules/.bin/tsc || {
 					return err
 				}
 			}
-			return asUser(repoDir+"/panel-ui", "npm", "run", "build")
-		}},
-		{"build panel-api", func() error {
-			return asUser(repoDir, goBin, "build", "-trimpath", "-ldflags", "-s -w",
-				"-o", repoDir+"/bin/jabali-panel.new", "./panel-api/cmd/server")
-		}},
-		{"build panel-agent", func() error {
-			return asUser(repoDir, goBin, "build", "-trimpath", "-ldflags", "-s -w",
-				"-o", repoDir+"/bin/jabali-agent.new", "./panel-agent/cmd/jabali-agent")
-		}},
-		{"install binaries", func() error {
-			if err := run("", "install", "-m", "0755", repoDir+"/bin/jabali-panel.new", defaultPanelBinPath); err != nil {
+			if err := asUser(repoDir+"/panel-ui", "npm", "run", "build"); err != nil {
 				return err
 			}
-			if err := run("", "install", "-m", "0755", repoDir+"/bin/jabali-agent.new", defaultAgentBinPath); err != nil {
-				return err
+			writeArtifactSHA("vite", want)
+			return nil
+		}},
+		{"build panel-api + panel-agent (parallel)", func() error {
+			// Both Go binaries are independent: same go module + cache,
+			// no shared output. Run concurrently — on a 2-vCPU VPS this
+			// halves wall-clock from ~60s → ~30s for a cold rebuild.
+			// Per-binary skip checks identical to the npm/vite ones.
+			apiInputs := compositeSHA("panel-api", "agentwire", "go.mod", "go.sum")
+			agentInputs := compositeSHA("panel-agent", "agentwire", "go.mod", "go.sum")
+			apiSkip := artifactUnchanged("panel-api-bin", apiInputs, defaultPanelBinPath)
+			agentSkip := artifactUnchanged("panel-agent-bin", agentInputs, defaultAgentBinPath)
+			if apiSkip {
+				fmt.Println("  (panel-api skipped: sources unchanged + binary intact)")
+			}
+			if agentSkip {
+				fmt.Println("  (panel-agent skipped: sources unchanged + binary intact)")
+			}
+			if apiSkip && agentSkip {
+				return nil
+			}
+			var wg sync.WaitGroup
+			var apiErr, agentErr error
+			if !apiSkip {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					apiErr = asUser(repoDir, goBin, "build", "-trimpath", "-ldflags", "-s -w",
+						"-o", repoDir+"/bin/jabali-panel.new", "./panel-api/cmd/server")
+				}()
+			}
+			if !agentSkip {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					agentErr = asUser(repoDir, goBin, "build", "-trimpath", "-ldflags", "-s -w",
+						"-o", repoDir+"/bin/jabali-agent.new", "./panel-agent/cmd/jabali-agent")
+				}()
+			}
+			wg.Wait()
+			if apiErr != nil {
+				return fmt.Errorf("panel-api: %w", apiErr)
+			}
+			if agentErr != nil {
+				return fmt.Errorf("panel-agent: %w", agentErr)
+			}
+			// Persist the sha only on the side we just rebuilt; skipped
+			// side keeps its existing sha file untouched.
+			if !apiSkip {
+				writeArtifactSHA("panel-api-bin", apiInputs)
+			}
+			if !agentSkip {
+				writeArtifactSHA("panel-agent-bin", agentInputs)
+			}
+			return nil
+		}},
+		{"install binaries", func() error {
+			// Skip per-binary when its .new file is absent — the parallel
+			// build step short-circuited that side because its inputs
+			// hadn't changed. The currently-installed binary stays.
+			apiNew := repoDir + "/bin/jabali-panel.new"
+			agentNew := repoDir + "/bin/jabali-agent.new"
+			if _, err := os.Stat(apiNew); err == nil {
+				if err := run("", "install", "-m", "0755", apiNew, defaultPanelBinPath); err != nil {
+					return err
+				}
+				_ = os.Remove(apiNew)
+			}
+			if _, err := os.Stat(agentNew); err == nil {
+				if err := run("", "install", "-m", "0755", agentNew, defaultAgentBinPath); err != nil {
+					return err
+				}
+				_ = os.Remove(agentNew)
 			}
 			// Idempotent ergonomic alias: `jabali` → `jabali-panel`.
 			// install.sh creates this on fresh installs; update.go refreshes it
 			// on every upgrade in case it got clobbered.
 			_ = run("", "ln", "-sf", defaultPanelBinPath, "/usr/local/bin/jabali")
-			_ = os.Remove(repoDir + "/bin/jabali-panel.new")
-			_ = os.Remove(repoDir + "/bin/jabali-agent.new")
 			return nil
 		}},
 		{"run migrations", func() error {

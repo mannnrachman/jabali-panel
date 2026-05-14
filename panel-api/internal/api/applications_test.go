@@ -509,7 +509,7 @@ func TestValidateInstallParams_TableDriven(t *testing.T) {
 }
 
 // Compile-time guard: the legacy alias keeps existing wiring valid.
-var _ WordPressHandlerConfig = ApplicationHandlerConfig{}
+var _ ApplicationHandlerConfig = ApplicationHandlerConfig{}
 
 // Use context to keep imports tight in case future tests need it.
 var _ = context.Background

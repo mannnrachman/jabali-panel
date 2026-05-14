@@ -758,7 +758,6 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Agent:               deps.Agent,
 				Apps:                deps.Apps,
 			}
-			api.RegisterWordPressRoutes(v1, appCfg)
 			api.RegisterApplicationRoutes(v1, appCfg)
 
 		// Log access routes (M13)

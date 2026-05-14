@@ -23,9 +23,8 @@ import (
 
 // ApplicationHandlerConfig bundles the repositories and services every
 // per-app HTTP handler needs. M19 generalised this from the old
-// WordPressHandlerConfig — the legacy WordPress routes still see the
-// same struct via the type alias below, so existing wiring + tests
-// compile unchanged through the M19 release window.
+// WordPressHandlerConfig; M19.1 dropped the alias once every caller had
+// switched.
 type ApplicationHandlerConfig struct {
 	ApplicationInstalls repository.ApplicationInstallRepository
 	Databases           repository.DatabaseRepository
@@ -47,27 +46,11 @@ type ApplicationHandlerConfig struct {
 	// threaded through to the agent at install time.)
 }
 
-// WordPressHandlerConfig is the pre-M19 alias retained so old wiring
-// (panel-api/cmd/server/serve.go, wordpress_test.go fixtures) compiles
-// unchanged. M19.1 deletes the alias once every caller has switched.
-type WordPressHandlerConfig = ApplicationHandlerConfig
-
-// RegisterWordPressRoutes registers the legacy /wordpress-installs
-// routes. M19 added the parallel /applications surface — see
-// RegisterApplicationRoutes in applications.go. Both surfaces remain
-// mounted through M19; the UI in step 5 cuts over to /applications.
-func RegisterWordPressRoutes(g *gin.RouterGroup, cfg ApplicationHandlerConfig) {
-	h := &wordPressHandler{cfg: cfg}
-
-	installs := g.Group("/wordpress-installs")
-	installs.POST("", h.create)
-	installs.GET("", h.list)
-	installs.GET("/:id", h.get)
-	installs.DELETE("/:id", h.delete)
-	installs.POST("/:id/clone", h.clone)
-	installs.POST("/:id/health", h.health)
-}
-
+// wordPressHandler keeps the original create/list/get/delete/clone/health
+// methods that the M19 /applications surface delegates to (see
+// RegisterApplicationRoutes in applications.go). The standalone
+// /wordpress-installs route group was removed in M19.1; the only
+// remaining surface is /applications.
 type wordPressHandler struct{ cfg ApplicationHandlerConfig }
 
 // ---- Request/Response types ----
@@ -1019,7 +1002,7 @@ func buildSiteURL(domain string, useWWW bool, subdirectory string) string {
 	return u
 }
 
-func createInstallAndKickAgent(parentCtx context.Context, args installKickArgs, cfg WordPressHandlerConfig) {
+func createInstallAndKickAgent(parentCtx context.Context, args installKickArgs, cfg ApplicationHandlerConfig) {
 	// Use independent context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1092,7 +1075,7 @@ func createInstallAndKickAgent(parentCtx context.Context, args installKickArgs, 
 // database user, grants, install record). If the agent file-removal
 // fails we flip status to failed but still allow a future retry.
 // Non-empty osUser+docroot are required; the handler pre-fills them.
-func createDeleteAndKickAgent(parentCtx context.Context, installID, appType, subdirectory, databaseID, dbUserID, osUser, docroot, domainName, dbUserUsername string, cfg WordPressHandlerConfig) {
+func createDeleteAndKickAgent(parentCtx context.Context, installID, appType, subdirectory, databaseID, dbUserID, osUser, docroot, domainName, dbUserUsername string, cfg ApplicationHandlerConfig) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -1175,7 +1158,7 @@ func createDeleteAndKickAgent(parentCtx context.Context, installID, appType, sub
 }
 
 // createCloneAndKickAgent clones WordPress asynchronously.
-func createCloneAndKickAgent(parentCtx context.Context, cloneInstallID, sourceDomainID, destDomainID, destDatabaseID, dstSubdirectory string, useWWW bool, cfg WordPressHandlerConfig) {
+func createCloneAndKickAgent(parentCtx context.Context, cloneInstallID, sourceDomainID, destDomainID, destDatabaseID, dstSubdirectory string, useWWW bool, cfg ApplicationHandlerConfig) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 

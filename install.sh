@@ -152,13 +152,25 @@ export JABALI_DEBUG
 # EUID==0); if touch fails (fallback for weird jails / testing) we try
 # /tmp and emit a warning later. Mode 0600 — the log may echo hostnames,
 # IPs, and package lists but never secrets (we redact/avoid passwords).
-LOG_FILE="/root/jabali_install-$(date +%Y-%m-%d_%H-%M-%S).log"
+# Canonical log dir for everything jabali writes locally. logrotate
+# drop-in (install/logrotate/jabali) rotates /var/log/jabali/*.log
+# weekly, keeps 8. Falls back to /tmp on a weird jail where /var/log
+# isn't writable so we still get a post-mortem trail.
+LOG_DIR="/var/log/jabali"
+mkdir -p "$LOG_DIR" 2>/dev/null || true
+chmod 0750 "$LOG_DIR" 2>/dev/null || true
+LOG_FILE="$LOG_DIR/install-$(date +%Y-%m-%d_%H-%M-%S).log"
 if ! touch "$LOG_FILE" 2>/dev/null; then
   LOG_FILE="/tmp/jabali_install-$(date +%Y-%m-%d_%H-%M-%S).log"
   touch "$LOG_FILE" 2>/dev/null || LOG_FILE=""
 fi
 if [[ -n "$LOG_FILE" ]]; then
   chmod 0600 "$LOG_FILE" 2>/dev/null || true
+  # Keep a stable "latest" symlink so docs/runbooks can reference
+  # /var/log/jabali/install.log without a timestamp.
+  if [[ "$LOG_FILE" == "$LOG_DIR/"* ]]; then
+    ln -sfn "$(basename "$LOG_FILE")" "$LOG_DIR/install.log" 2>/dev/null || true
+  fi
 fi
 
 if [[ -n "$JABALI_DEBUG" ]]; then
@@ -7160,6 +7172,11 @@ install_logrotate() {
     _warn "logrotate template missing at $src — skipping"
     return 0
   fi
+  # Ensure /var/log/jabali exists with sane perms — install.sh's own
+  # bootstrap mkdir runs before this function may have re-fired (jabali
+  # update path), so make this idempotent here too.
+  install -d -m 0750 -o root -g adm /var/log/jabali 2>/dev/null || \
+    install -d -m 0750 -o root -g root /var/log/jabali
   if [[ ! -f "$dst" ]] || ! cmp -s "$src" "$dst"; then
     install -m 0644 -o root -g root "$src" "$dst"
     _ok "wrote $dst"
@@ -9477,6 +9494,7 @@ RESOLV
          /var/lib/jabali-migrations \
          /var/lib/jabali-panel-acme \
          /var/lib/jabali-restic-state \
+         /var/log/jabali           \
          /var/log/jabali-panel    \
          /var/log/jabali-bulwark  \
          /var/log/jabali-agent    \

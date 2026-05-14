@@ -27,6 +27,22 @@
     su root root
 }
 
+# /var/log/jabali/ — canonical dir for install logs and any future
+# operator-facing log a jabali script writes locally. install.sh
+# writes install-<ts>.log per run; weekly rotation keeps 8 weeks of
+# history (long enough to diagnose a regression after a quiet box).
+# nocreate because each install run touches its own timestamped file.
+/var/log/jabali/*.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    nocreate
+    su root adm
+}
+
 /var/log/php-fpm-pma.log
 /var/log/php-fpm-*.log {
     daily

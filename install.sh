@@ -1773,6 +1773,29 @@ install_mariadb_skip_networking() {
     _die "MariaDB :3306 is not loopback-only after drop-in — bind-address did not take effect"
   fi
   _ok "MariaDB :3306 bound to 127.0.0.1 only (loopback-only mode)"
+
+  # Belt-and-braces ACL — grant jabali rwx on the socket dir + file
+  # regardless of group membership state.
+  ensure_mariadb_socket_acl_for_jabali
+}
+
+# ensure_mariadb_socket_acl_for_jabali — POSIX ACL fallback so the
+# jabali user can connect to /run/mysqld/mysqld.sock even when the
+# usermod -aG mysql route hasn't taken effect on already-running
+# processes. systemd's SupplementaryGroups=mysql in
+# jabali-kratos.service is the primary path; this ACL is fallback.
+ensure_mariadb_socket_acl_for_jabali() {
+  command -v setfacl >/dev/null 2>&1 || { _warn "acl tools missing — apt install acl"; return 0; }
+  [[ -d /run/mysqld ]] && setfacl -m u:"$SERVICE_USER":rx /run/mysqld 2>/dev/null || true
+  [[ -S /run/mysqld/mysqld.sock ]] && setfacl -m u:"$SERVICE_USER":rw /run/mysqld/mysqld.sock 2>/dev/null || true
+
+  # tmpfiles.d so the ACL reapplies on boot (tmpfs wipes ACLs).
+  local tmpfiles=/etc/tmpfiles.d/jabali-mariadb-socket-acl.conf
+  local desired=$'# Managed by jabali install.sh — M25.1 socket ACL fallback.\nA+ /run/mysqld         - - - - u:'"$SERVICE_USER"':rx\n'
+  if [[ ! -f "$tmpfiles" ]] || ! cmp -s <(printf '%s' "$desired") "$tmpfiles"; then
+    printf '%s' "$desired" > "$tmpfiles"
+    systemd-tmpfiles --create "$tmpfiles" 2>/dev/null || true
+  fi
 }
 
 # ---------- step 2.5: Redis (notification dispatcher + future WP cache) ------
@@ -9021,10 +9044,17 @@ EOF
   fi
 
   # Kratos↔MariaDB unix socket (M25.1) — ensure jabali user is in
-  # mysql group. Idempotent. Self-heals existing hosts that pre-date
-  # the M25.1 socket DSN.
+  # mysql group + POSIX ACL on socket as fallback. Idempotent.
   if declare -f ensure_jabali_in_mysql_group >/dev/null 2>&1; then
     ensure_jabali_in_mysql_group
+  fi
+  if declare -f ensure_mariadb_socket_acl_for_jabali >/dev/null 2>&1; then
+    ensure_mariadb_socket_acl_for_jabali
+    # Restart kratos so it picks up the ACL on its next connect
+    # attempt (already-running kratos had EACCES cached at startup
+    # but ping retries every few seconds, so a kick is faster than
+    # waiting).
+    systemctl restart jabali-kratos 2>/dev/null || true
   fi
 
   # OnFailure notifier template + helper script — same logic.

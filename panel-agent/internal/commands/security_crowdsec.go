@@ -1388,36 +1388,60 @@ const onlineCredsPath = "/etc/crowdsec/online_api_credentials.yaml"
 
 func csConsoleEnrollmentHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 	resp := csConsoleEnrollmentResp{}
-	body, err := os.ReadFile(onlineCredsPath)
-	if err != nil {
-		// File missing → not enrolled. Other I/O errors also report
-		// not-enrolled (best-effort, no need to surface the io error).
-		return resp, nil
-	}
-	// Parse minimal YAML: we want url + login. Avoid pulling a YAML
-	// dep just for two fields — split lines, strip whitespace.
-	for _, line := range strings.Split(string(body), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "url:") {
-			resp.URL = strings.TrimSpace(strings.TrimPrefix(line, "url:"))
-		}
-		if strings.HasPrefix(line, "login:") {
-			resp.Login = strings.TrimSpace(strings.TrimPrefix(line, "login:"))
-		}
-	}
-	if resp.Login == "" {
-		// File present but empty/malformed. Treat as not-enrolled so
-		// the UI shows the enroll form rather than a stale "enrolled".
-		return csConsoleEnrollmentResp{}, nil
-	}
-	resp.Enrolled = true
-	// Best-effort CAPI auth probe. cscli exits 0 when auth succeeds.
-	// Suppress combined output — UI only consumes the bool.
+
+	// Truth source for *console* enrollment is `cscli console status -o json`.
+	// The online_api_credentials.yaml machine_id is auto-created by
+	// `cscli capi register` on every fresh crowdsec install and would
+	// falsely show "Enrolled as <machine_id>" even when the operator
+	// never linked this engine to app.crowdsec.net.
 	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	statusOut, statusErr := exec.CommandContext(probeCtx, "cscli", "console", "status", "-o", "json").Output()
+	enrolledViaConsole := false
+	if statusErr == nil {
+		// Parse the cscli output. Two shapes observed across versions:
+		//   { "options": [...], "enrolled": true, ... }
+		//   [ {"name":"manual_decisions","enabled":true}, ... ]   (older)
+		var blob map[string]any
+		if jerr := json.Unmarshal(statusOut, &blob); jerr == nil {
+			if v, ok := blob["enrolled"].(bool); ok {
+				enrolledViaConsole = v
+			}
+		}
+		// Fallback heuristic: presence of "Enrolled" keyword in text output.
+		if !enrolledViaConsole {
+			if strings.Contains(string(statusOut), `"enrolled":true`) {
+				enrolledViaConsole = true
+			}
+		}
+	}
+
+	// Best-effort CAPI auth probe — distinct from console enrollment.
 	if err := exec.CommandContext(probeCtx, "cscli", "capi", "status").Run(); err == nil {
 		resp.CAPIOK = true
 	}
+
+	if !enrolledViaConsole {
+		// Not console-enrolled. Return zero-value (Enrolled=false) so UI
+		// shows the enroll form. CAPIOK still surfaces for the diag chip.
+		return resp, nil
+	}
+
+	// Console-enrolled. Pull human-readable login/url from credentials file
+	// for the UI label. File is the same machine_id, but operator now
+	// understands it as "the identifier this engine reports to console".
+	if body, rerr := os.ReadFile(onlineCredsPath); rerr == nil {
+		for _, line := range strings.Split(string(body), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "url:") {
+				resp.URL = strings.TrimSpace(strings.TrimPrefix(line, "url:"))
+			}
+			if strings.HasPrefix(line, "login:") {
+				resp.Login = strings.TrimSpace(strings.TrimPrefix(line, "login:"))
+			}
+		}
+	}
+	resp.Enrolled = true
 	return resp, nil
 }
 

@@ -2917,6 +2917,19 @@ ensure_user_and_dirs() {
     usermod -aG adm "$SERVICE_USER" 2>/dev/null || true
   fi
 
+  # mysql group: Kratos + panel-api connect to MariaDB via
+  # /run/mysqld/mysqld.sock (M25.1 unix-socket lockdown). On Ubuntu
+  # the socket is 0660 mysql:mysql by default — Debian relaxes it to
+  # 0777 so this isn't strictly needed there, but adding the
+  # supplementary group is the only thing that lets Ubuntu hosts
+  # connect at all. jabali-kratos.service already lists
+  # SupplementaryGroups=mysql; this usermod is belt-and-braces for
+  # any future caller (psql/pgloader/migration tooling) that runs
+  # as the bare jabali user outside a systemd unit.
+  if getent group mysql >/dev/null 2>&1; then
+    usermod -aG mysql "$SERVICE_USER" 2>/dev/null || true
+  fi
+
   install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" "$REPO_DIR"
   install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$(dirname "$ENV_FILE")"
   # Working folder root (server_settings.working_folder default).
@@ -8257,6 +8270,11 @@ _install_bulwark_env() {
 # ---------- step 8: Kratos identity provider (M20) ---------------------------
 
 install_kratos() {
+  # M25.1 DSN went unix-socket; Kratos needs mysql group on Ubuntu
+  # where the socket is 0660 mysql:mysql. Do this BEFORE the unit may
+  # start so the first ExecStart already has the supplementary group.
+  ensure_jabali_in_mysql_group
+
   # Kratos binary: vendored SHA-256 verification pattern matching wp-cli + phpmyadmin.
   local kratos_version="26.2.0"
   _log "installing Ory Kratos identity provider (v${kratos_version})"
@@ -8538,6 +8556,28 @@ install_kratos() {
   fi
 
   _ok "Kratos identity provider installed and running"
+}
+
+# ensure_jabali_in_mysql_group — usermod -aG mysql jabali, idempotent.
+# Called from install_kratos preflight + provision_new_software so an
+# already-installed host that pre-dates the M25.1 socket-DSN era picks
+# up the membership on the next `jabali update`.
+ensure_jabali_in_mysql_group() {
+  if ! getent group mysql >/dev/null 2>&1; then
+    return 0
+  fi
+  if id -nG "$SERVICE_USER" 2>/dev/null | tr ' ' '\n' | grep -qx mysql; then
+    return 0
+  fi
+  _log "adding $SERVICE_USER to mysql group (Kratos DSN unix socket)"
+  usermod -aG mysql "$SERVICE_USER" 2>/dev/null || _warn "usermod -aG mysql $SERVICE_USER failed"
+  # systemd unit's SupplementaryGroups already lists mysql, but the
+  # /etc/group write must be visible before we restart Kratos so the
+  # next start picks up the membership.
+  systemctl daemon-reload 2>/dev/null || true
+  if systemctl is-active jabali-kratos >/dev/null 2>&1; then
+    systemctl restart jabali-kratos 2>/dev/null || _warn "restart jabali-kratos failed"
+  fi
 }
 
 
@@ -8978,6 +9018,13 @@ EOF
   # when the file is byte-identical.
   if declare -f install_logrotate >/dev/null 2>&1; then
     install_logrotate
+  fi
+
+  # Kratos↔MariaDB unix socket (M25.1) — ensure jabali user is in
+  # mysql group. Idempotent. Self-heals existing hosts that pre-date
+  # the M25.1 socket DSN.
+  if declare -f ensure_jabali_in_mysql_group >/dev/null 2>&1; then
+    ensure_jabali_in_mysql_group
   fi
 
   # OnFailure notifier template + helper script — same logic.

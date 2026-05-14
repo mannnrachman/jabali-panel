@@ -610,50 +610,106 @@ func cpanelRestoreCallback(
 		// straight from source over SSH instead of tar middleware.
 		// Survives transient failures (rsync resumes) + skips files
 		// already on dest.
-		daHomeHandled := false
-		if job.SourceKind == models.MigrationSourceDirectAdmin {
+		// Source-of-truth for the per-domain (dom, src-path) list:
+		//   - DA:         cpmove-<user>/domains-paths.txt
+		//                 (absolute source paths, written by BackupUser)
+		//   - cpanel/WHM: cpmove-<user>/userdata/<dom> YAMLs
+		//                 (documentroot line; absolute on source)
+		type rsyncPair struct{ Dom, SrcPath string }
+		var rsyncRows []rsyncPair
+		switch job.SourceKind {
+		case models.MigrationSourceDirectAdmin:
 			manifest := filepath.Join(p.parsed.ExtractDir, "cpmove-"+p.parsed.SourceUser, "domains-paths.txt")
-			if raw, rerr := os.ReadFile(manifest); rerr == nil && len(raw) > 0 {
-				secretPath := fmt.Sprintf("/etc/jabali-panel/migration-secrets/%s.env", job.ID)
-				totalBytes := int64(0)
-				domCount := 0
+			if raw, rerr := os.ReadFile(manifest); rerr == nil {
 				for _, line := range strings.Split(string(raw), "\n") {
 					line = strings.TrimSpace(line)
 					if line == "" {
 						continue
 					}
 					parts := strings.SplitN(line, "\t", 2)
-					if len(parts) != 2 {
-						continue
+					if len(parts) == 2 {
+						rsyncRows = append(rsyncRows, rsyncPair{Dom: parts[0], SrcPath: parts[1]})
 					}
-					dom, srcPath := parts[0], parts[1]
-					destPath := filepath.Join("/home", p.targetUsername, "domains", dom, "public_html")
-					rawResp, rerr := sharedAgent.Call(ctx, "migration.rsync_remote_home", map[string]any{
-						"job_id":      job.ID,
-						"host":        job.SourceHost,
-						"ssh_user":    "root",
-						"secret_path": secretPath,
-						"src_path":    srcPath,
-						"dest_path":   destPath,
-						"dest_user":   p.targetUsername,
-					})
-					if rerr != nil {
-						warnings = append(warnings, fmt.Sprintf("home_rsync_remote: %s: %v", dom, rerr))
-						continue
-					}
-					var rs struct {
-						BytesCopied int64 `json:"bytes_copied"`
-						Files       int64 `json:"files"`
-					}
-					_ = json.Unmarshal(rawResp, &rs)
-					totalBytes += rs.BytesCopied
-					domCount++
 				}
-				bytes += totalBytes
-				warnings = append(warnings, fmt.Sprintf("home: bytes=%d domains=%d (direct-rsync source→dest, no tar middleware)", totalBytes, domCount))
-				daHomeHandled = true
 			}
-			warnings = append(warnings, "home_rsync_remote_skip:no_domains-paths.txt_manifest — falling back to tar-bundled homedir")
+		case models.MigrationSourceCpanel, models.MigrationSourceWHMpkgacct:
+			for _, root := range []string{
+				filepath.Join(p.parsed.ExtractDir, "cpmove-"+p.parsed.SourceUser, "userdata"),
+				filepath.Join(p.parsed.ExtractDir, "userdata"),
+				filepath.Join(p.parsed.ExtractDir, "cp", p.parsed.SourceUser, "userdata"),
+			} {
+				entries, derr := os.ReadDir(root)
+				if derr != nil {
+					continue
+				}
+				for _, e := range entries {
+					if e.IsDir() {
+						continue
+					}
+					name := e.Name()
+					if strings.HasSuffix(name, ".php-fpm.yaml") ||
+						strings.HasSuffix(name, ".php-fpm.yaml.transferred") ||
+						strings.HasSuffix(name, "_SSL") ||
+						name == "main" || name == "cache.json" || name == "scope" {
+						continue
+					}
+					body, rerr := os.ReadFile(filepath.Join(root, name))
+					if rerr != nil {
+						continue
+					}
+					dom := name
+					var docroot string
+					for _, ln := range strings.Split(string(body), "\n") {
+						ln = strings.TrimSpace(ln)
+						if strings.HasPrefix(ln, "documentroot:") {
+							docroot = strings.TrimSpace(strings.TrimPrefix(ln, "documentroot:"))
+							docroot = strings.Trim(docroot, `'"`)
+						}
+						if strings.HasPrefix(ln, "servername:") {
+							dom = strings.Trim(strings.TrimSpace(strings.TrimPrefix(ln, "servername:")), `'"`)
+						}
+					}
+					if docroot == "" || dom == "" {
+						continue
+					}
+					rsyncRows = append(rsyncRows, rsyncPair{Dom: dom, SrcPath: docroot})
+				}
+				if len(rsyncRows) > 0 {
+					break
+				}
+			}
+		}
+		daHomeHandled := false
+		if len(rsyncRows) > 0 {
+			secretPath := fmt.Sprintf("/etc/jabali-panel/migration-secrets/%s.env", job.ID)
+			totalBytes := int64(0)
+			domCount := 0
+			for _, r := range rsyncRows {
+				destPath := filepath.Join("/home", p.targetUsername, "domains", r.Dom, "public_html")
+				rawResp, rerr := sharedAgent.Call(ctx, "migration.rsync_remote_home", map[string]any{
+					"job_id":      job.ID,
+					"host":        job.SourceHost,
+					"ssh_user":    "root",
+					"secret_path": secretPath,
+					"src_path":    r.SrcPath,
+					"dest_path":   destPath,
+					"dest_user":   p.targetUsername,
+				})
+				if rerr != nil {
+					warnings = append(warnings, fmt.Sprintf("home_rsync_remote: %s: %v", r.Dom, rerr))
+					continue
+				}
+				var rs struct {
+					BytesCopied int64 `json:"bytes_copied"`
+					Files       int64 `json:"files"`
+				}
+				_ = json.Unmarshal(rawResp, &rs)
+				totalBytes += rs.BytesCopied
+				domCount++
+			}
+			bytes += totalBytes
+			warnings = append(warnings, fmt.Sprintf("home: bytes=%d domains=%d (direct-rsync source→dest, no tar middleware)", totalBytes, domCount))
+			daHomeHandled = true
 		}
 
 		// M35.8 P7: per-domain rsync split. cpanel ships all sites

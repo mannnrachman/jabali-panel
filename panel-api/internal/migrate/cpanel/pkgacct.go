@@ -72,7 +72,11 @@ func (d *Discoverer) Pkgacct(ctx context.Context, raw interface{}, account strin
 	// 2>/dev/null so the SSH session's stderr buffer doesn't grow
 	// unbounded over the long run. stdout is the produced-path
 	// summary line.
-	cmd := fmt.Sprintf("/scripts/pkgacct '%s' 2>/dev/null", shellQuote(account))
+	// --skiphomedir: 2026-05-14 rework. Restore stage rsyncs per-domain
+	// directly from source over SSH; bundling /home/<user>/ into the
+	// pkgacct tarball just doubles bandwidth + breaks rsync resume.
+	// cPanel pkgacct supports the flag since WHM 11.x.
+	cmd := fmt.Sprintf("/scripts/pkgacct --skiphomedir '%s' 2>/dev/null", shellQuote(account))
 	out, err := s.run(subctx, PkgacctTimeout, cmd)
 	if err != nil {
 		return "", fmt.Errorf("pkgacct: %w", err)

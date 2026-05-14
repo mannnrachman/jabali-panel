@@ -95,6 +95,25 @@ export function useCrowdsecBouncers() {
   });
 }
 
+export type CrowdsecBlocklist = {
+  name: string;
+  count: number;
+  latest_end: string;
+};
+
+export function useCrowdsecBlocklists() {
+  return useQuery({
+    queryKey: ["security", "crowdsec", "blocklists"],
+    queryFn: async () => {
+      const { data } = await apiClient.get<{
+        blocklists: CrowdsecBlocklist[];
+        total: number;
+      }>(`${BASE}/blocklists`);
+      return data;
+    },
+  });
+}
+
 export function useCrowdsecHub() {
   return useQuery({
     queryKey: ["security", "crowdsec", "hub"],

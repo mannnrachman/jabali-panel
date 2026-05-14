@@ -58,6 +58,7 @@ import {
   useCrowdsecAlert,
   useCrowdsecAlerts,
   useCrowdsecAllowlists,
+  useCrowdsecBlocklists,
   useCrowdsecBouncers,
   useCrowdsecDecisions,
   useCrowdsecHub,
@@ -470,6 +471,7 @@ export const AdminSecurityCrowdsec = () => {
           { key: "captcha", label: "Captcha", children: <CaptchaRemediationCard /> },
           { key: "profiles", label: "Per-scenario", children: <ProfilesCard /> },
           { key: "appsec", label: "Block Country", children: <AppSecGeoblockCard /> },
+          { key: "blocklists", label: "Blocklists", children: <BlocklistsCard /> },
           { key: "bouncers", label: "Bouncers", children: bouncersPanel },
         ]}
       />
@@ -746,6 +748,62 @@ type AllowlistFormValues = {
 };
 
 const ALLOWLIST_IP_OR_CIDR = /^[0-9a-fA-F:.]+(\/\d{1,3})?$/;
+
+// BlocklistsCard — community blocklists currently contributing active
+// decisions to this engine. Subscriptions live at app.crowdsec.net.
+const BlocklistsCard = () => {
+  const q = useCrowdsecBlocklists();
+  const data = q.data?.blocklists ?? [];
+  const total = q.data?.total ?? 0;
+
+  return (
+    <Card
+      title="Community blocklists (active decisions)"
+      extra={
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          Total blocked: {total.toLocaleString()}
+        </Typography.Text>
+      }
+    >
+      <Alert
+        type="info"
+        showIcon
+        message="Subscribe / unsubscribe at app.crowdsec.net → Blocklists. New subscriptions pull within ~15 minutes."
+        style={{ marginBottom: 12 }}
+      />
+      <Table<{ name: string; count: number; latest_end: string }>
+        size="small"
+        loading={q.isPending}
+        rowKey="name"
+        dataSource={data}
+        pagination={false}
+        locale={{ emptyText: "No blocklist decisions on this engine yet." }}
+        scroll={{ x: "max-content" }}
+        columns={[
+          {
+            title: "Blocklist",
+            dataIndex: "name",
+            key: "name",
+            render: (v: string) => <Typography.Text code>{v}</Typography.Text>,
+          },
+          {
+            title: "Active decisions",
+            dataIndex: "count",
+            key: "count",
+            align: "right",
+            render: (v: number) => v.toLocaleString(),
+          },
+          {
+            title: "Latest expiry",
+            dataIndex: "latest_end",
+            key: "latest_end",
+            render: (v: string) => (v ? new Date(v).toLocaleString() : "—"),
+          },
+        ]}
+      />
+    </Card>
+  );
+};
 
 const AllowlistsCard = () => {
   const allowlists = useCrowdsecAllowlists();

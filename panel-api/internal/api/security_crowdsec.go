@@ -126,6 +126,7 @@ func RegisterSecurityCrowdSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterfac
 	})
 
 	g.GET("/bouncers", agentPassthrough(cli, "security.crowdsec.bouncers.list", nil, csCallTimeout))
+	g.GET("/blocklists", agentPassthrough(cli, "security.crowdsec.blocklists.list", nil, csCallTimeout))
 	g.GET("/metrics", agentPassthrough(cli, "security.crowdsec.metrics", nil, csMetricsTimeout))
 
 	g.GET("/hub", func(c *gin.Context) {

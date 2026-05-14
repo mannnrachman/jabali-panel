@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -349,6 +350,69 @@ func csBouncersListHandler(ctx context.Context, _ json.RawMessage) (any, error) 
 			resp.Bouncers = append(resp.Bouncers, csBouncer(r))
 		}
 	}
+	return resp, nil
+}
+
+// ---- security.crowdsec.blocklists.list --------------------------------------
+
+// csBlocklistEntry summarises one community blocklist as seen from the
+// engine's perspective: its scenario name + how many active decisions
+// it currently contributes. Subscriptions themselves are managed at
+// app.crowdsec.net; this view tells the operator which lists are
+// actually pulling IPs onto their box right now.
+type csBlocklistEntry struct {
+	Name      string `json:"name"`       // scenario, e.g. "lists:firehol_level1"
+	Count     int    `json:"count"`      // active decisions from this list
+	LatestEnd string `json:"latest_end"` // last decision expiry seen for the list
+}
+
+type csBlocklistsResponse struct {
+	Blocklists []csBlocklistEntry `json:"blocklists"`
+	Total      int                `json:"total"`
+}
+
+// csBlocklistsListHandler aggregates `cscli decisions list --origin lists
+// --limit 100000 -o json` by scenario. Big blocklists (firehol_level1,
+// crowdsec-community) push 50–100k rows; the limit is high enough to
+// cover the common operator catalogue without slamming LAPI.
+func csBlocklistsListHandler(ctx context.Context, _ json.RawMessage) (any, error) {
+	resp := csBlocklistsResponse{Blocklists: []csBlocklistEntry{}}
+	out, err := runCscliJSON(ctx, "decisions", "list", "--origin", "lists",
+		"--limit", "100000")
+	if err != nil {
+		// LAPI down / no creds / no subscriptions — empty list, not 502.
+		return resp, nil
+	}
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" || trimmed == "null" || trimmed == "[]" {
+		return resp, nil
+	}
+	var raw []rawDecisionEntry
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return resp, nil
+	}
+	agg := map[string]*csBlocklistEntry{}
+	for _, entry := range raw {
+		for _, d := range entry.Decisions {
+			e, ok := agg[d.Scenario]
+			if !ok {
+				e = &csBlocklistEntry{Name: d.Scenario}
+				agg[d.Scenario] = e
+			}
+			e.Count++
+			if d.Until > e.LatestEnd {
+				e.LatestEnd = d.Until
+			}
+		}
+	}
+	for _, e := range agg {
+		resp.Blocklists = append(resp.Blocklists, *e)
+		resp.Total += e.Count
+	}
+	// Sort: largest list first so operator sees the heavy hitter at top.
+	sort.Slice(resp.Blocklists, func(i, j int) bool {
+		return resp.Blocklists[i].Count > resp.Blocklists[j].Count
+	})
 	return resp, nil
 }
 
@@ -1543,6 +1607,7 @@ func init() {
 	Default.Register("security.crowdsec.decisions.add", csDecisionsAddHandler)
 	Default.Register("security.crowdsec.decisions.delete", csDecisionsDeleteHandler)
 	Default.Register("security.crowdsec.bouncers.list", csBouncersListHandler)
+	Default.Register("security.crowdsec.blocklists.list", csBlocklistsListHandler)
 	Default.Register("security.crowdsec.metrics", csMetricsHandler)
 	Default.Register("security.crowdsec.hub.list", csHubListHandler)
 	Default.Register("security.crowdsec.hub.install", csHubInstallHandler)

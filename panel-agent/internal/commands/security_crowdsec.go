@@ -372,46 +372,47 @@ type csBlocklistsResponse struct {
 }
 
 // csBlocklistsListHandler aggregates every active decision by
-// (origin, scenario). Earlier version filtered --origin lists and
-// always returned empty on hosts where blocklists were pulled via
-// `cscli decisions import` (origin=cscli-import) or via CAPI direct
-// (origin=CAPI). Operator wants to see *all* sources contributing
-// to active bans, not just upstream-list subscriptions.
+// (origin, scenario). Queries cscli per-origin because the bare
+// `cscli decisions list -o json` groups by alert and reports each
+// outer alert's top-level origin only — so CAPI decisions inside a
+// firehol-import alert never appear. Querying with --origin <X>
+// instead returns every matching decision regardless of which
+// alert it lives under. Operator gets a complete picture: CAPI
+// (Central API pulls), lists (community blocklist scenarios),
+// cscli-import (manual firehol bulk import), crowdsec (local
+// detection), console (decisions pushed from app.crowdsec.net),
+// manual (cscli decisions add).
 //
-// Name format: "<origin>/<scenario>" so two different scenarios from
-// the same origin (e.g. CAPI/crowdsecurity/http-probing vs
-// CAPI/crowdsecurity/ssh-bf) show as distinct rows.
+// Name format: "<origin>/<scenario>".
 func csBlocklistsListHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 	resp := csBlocklistsResponse{Blocklists: []csBlocklistEntry{}}
-	out, err := runCscliJSON(ctx, "decisions", "list", "--limit", "100000")
-	if err != nil {
-		// LAPI down / no creds / no decisions — empty list, not 502.
-		return resp, nil
-	}
-	trimmed := strings.TrimSpace(string(out))
-	if trimmed == "" || trimmed == "null" || trimmed == "[]" {
-		return resp, nil
-	}
-	var raw []rawDecisionEntry
-	if err := json.Unmarshal(out, &raw); err != nil {
-		return resp, nil
-	}
+	origins := []string{"CAPI", "lists", "cscli-import", "crowdsec", "console", "manual"}
 	agg := map[string]*csBlocklistEntry{}
-	for _, entry := range raw {
-		for _, d := range entry.Decisions {
-			origin := d.Origin
-			if origin == "" {
-				origin = "unknown"
-			}
-			key := origin + "/" + d.Scenario
-			e, ok := agg[key]
-			if !ok {
-				e = &csBlocklistEntry{Name: key}
-				agg[key] = e
-			}
-			e.Count++
-			if d.Until > e.LatestEnd {
-				e.LatestEnd = d.Until
+	for _, origin := range origins {
+		out, err := runCscliJSON(ctx, "decisions", "list", "--origin", origin, "--limit", "100000")
+		if err != nil {
+			continue
+		}
+		trimmed := strings.TrimSpace(string(out))
+		if trimmed == "" || trimmed == "null" || trimmed == "[]" {
+			continue
+		}
+		var raw []rawDecisionEntry
+		if err := json.Unmarshal(out, &raw); err != nil {
+			continue
+		}
+		for _, entry := range raw {
+			for _, d := range entry.Decisions {
+				key := origin + "/" + d.Scenario
+				e, ok := agg[key]
+				if !ok {
+					e = &csBlocklistEntry{Name: key}
+					agg[key] = e
+				}
+				e.Count++
+				if d.Until > e.LatestEnd {
+					e.LatestEnd = d.Until
+				}
 			}
 		}
 	}
@@ -419,7 +420,6 @@ func csBlocklistsListHandler(ctx context.Context, _ json.RawMessage) (any, error
 		resp.Blocklists = append(resp.Blocklists, *e)
 		resp.Total += e.Count
 	}
-	// Sort: largest source first so operator sees the heavy hitter at top.
 	sort.Slice(resp.Blocklists, func(i, j int) bool {
 		return resp.Blocklists[i].Count > resp.Blocklists[j].Count
 	})

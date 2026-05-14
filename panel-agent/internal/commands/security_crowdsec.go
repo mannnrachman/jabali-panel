@@ -1351,7 +1351,10 @@ func csConsoleEnrollHandler(ctx context.Context, params json.RawMessage) (any, e
 	// returns only the share-options flags, not enrolled/not.
 	_ = os.MkdirAll("/etc/jabali", 0o755)
 	now := time.Now().UTC().Format(time.RFC3339)
-	_ = os.WriteFile(consoleEnrollmentMarker, []byte("enrolled_at: "+now+"\nkey_name: "+p.Name+"\n"), 0o600)
+	// 0644 so the agent (runs as jabali) can stat+read this marker on
+	// the next status query. Contents are non-sensitive — timestamp +
+	// optional human label, no key material.
+	_ = os.WriteFile(consoleEnrollmentMarker, []byte("enrolled_at: "+now+"\nkey_name: "+p.Name+"\n"), 0o644)
 	// crowdsec restart picks up the new enrollment. Soft-fail if the
 	// service isn't under our init (dev containers).
 	_ = exec.CommandContext(ctx, "systemctl", "reload", "crowdsec").Run()

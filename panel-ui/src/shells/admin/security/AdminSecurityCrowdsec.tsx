@@ -759,7 +759,7 @@ const BlocklistsCard = () => {
 
   return (
     <Card
-      title="Community blocklists (active decisions)"
+      title="Active decision sources"
       extra={
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
           Total blocked: {total.toLocaleString()}
@@ -769,7 +769,7 @@ const BlocklistsCard = () => {
       <Alert
         type="info"
         showIcon
-        message="Subscribe / unsubscribe at app.crowdsec.net → Blocklists. New subscriptions pull within ~15 minutes."
+        message="Aggregates every active decision by (origin/scenario). CAPI = pulled from app.crowdsec.net; cscli-import = manually imported; crowdsec = local detection. Subscribe to community blocklists at app.crowdsec.net → Blocklists."
         style={{ marginBottom: 12 }}
       />
       <Table<{ name: string; count: number; latest_end: string }>
@@ -778,7 +778,7 @@ const BlocklistsCard = () => {
         rowKey="name"
         dataSource={data}
         pagination={false}
-        locale={{ emptyText: "No blocklist decisions on this engine yet." }}
+        locale={{ emptyText: "No active decisions on this engine yet." }}
         scroll={{ x: "max-content" }}
         columns={[
           {

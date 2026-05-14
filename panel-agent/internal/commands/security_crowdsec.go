@@ -371,16 +371,21 @@ type csBlocklistsResponse struct {
 	Total      int                `json:"total"`
 }
 
-// csBlocklistsListHandler aggregates `cscli decisions list --origin lists
-// --limit 100000 -o json` by scenario. Big blocklists (firehol_level1,
-// crowdsec-community) push 50–100k rows; the limit is high enough to
-// cover the common operator catalogue without slamming LAPI.
+// csBlocklistsListHandler aggregates every active decision by
+// (origin, scenario). Earlier version filtered --origin lists and
+// always returned empty on hosts where blocklists were pulled via
+// `cscli decisions import` (origin=cscli-import) or via CAPI direct
+// (origin=CAPI). Operator wants to see *all* sources contributing
+// to active bans, not just upstream-list subscriptions.
+//
+// Name format: "<origin>/<scenario>" so two different scenarios from
+// the same origin (e.g. CAPI/crowdsecurity/http-probing vs
+// CAPI/crowdsecurity/ssh-bf) show as distinct rows.
 func csBlocklistsListHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 	resp := csBlocklistsResponse{Blocklists: []csBlocklistEntry{}}
-	out, err := runCscliJSON(ctx, "decisions", "list", "--origin", "lists",
-		"--limit", "100000")
+	out, err := runCscliJSON(ctx, "decisions", "list", "--limit", "100000")
 	if err != nil {
-		// LAPI down / no creds / no subscriptions — empty list, not 502.
+		// LAPI down / no creds / no decisions — empty list, not 502.
 		return resp, nil
 	}
 	trimmed := strings.TrimSpace(string(out))
@@ -394,10 +399,15 @@ func csBlocklistsListHandler(ctx context.Context, _ json.RawMessage) (any, error
 	agg := map[string]*csBlocklistEntry{}
 	for _, entry := range raw {
 		for _, d := range entry.Decisions {
-			e, ok := agg[d.Scenario]
+			origin := d.Origin
+			if origin == "" {
+				origin = "unknown"
+			}
+			key := origin + "/" + d.Scenario
+			e, ok := agg[key]
 			if !ok {
-				e = &csBlocklistEntry{Name: d.Scenario}
-				agg[d.Scenario] = e
+				e = &csBlocklistEntry{Name: key}
+				agg[key] = e
 			}
 			e.Count++
 			if d.Until > e.LatestEnd {
@@ -409,7 +419,7 @@ func csBlocklistsListHandler(ctx context.Context, _ json.RawMessage) (any, error
 		resp.Blocklists = append(resp.Blocklists, *e)
 		resp.Total += e.Count
 	}
-	// Sort: largest list first so operator sees the heavy hitter at top.
+	// Sort: largest source first so operator sees the heavy hitter at top.
 	sort.Slice(resp.Blocklists, func(i, j int) bool {
 		return resp.Blocklists[i].Count > resp.Blocklists[j].Count
 	})

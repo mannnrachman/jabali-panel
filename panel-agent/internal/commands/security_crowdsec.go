@@ -1337,13 +1337,31 @@ func csConsoleEnrollHandler(ctx context.Context, params json.RawMessage) (any, e
 	cmd := exec.CommandContext(ctx, "cscli", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, csInternal(fmt.Sprintf("cscli console enroll: %s", strings.TrimSpace(string(out))), err)
+		// "Instance already enrolled" is a soft success — operator
+		// re-pasted the same key. Treat as enrolled.
+		txt := strings.TrimSpace(string(out))
+		if !strings.Contains(txt, "already enrolled") {
+			return nil, csInternal(fmt.Sprintf("cscli console enroll: %s", txt), err)
+		}
 	}
+	// Persist a local marker so the enrollment status handler can
+	// distinguish CAPI-registered (auto, every fresh install) from
+	// console-enrolled (operator action). cscli has no API to read
+	// console enrollment state — `cscli console status -o json`
+	// returns only the share-options flags, not enrolled/not.
+	_ = os.MkdirAll("/etc/jabali", 0o755)
+	now := time.Now().UTC().Format(time.RFC3339)
+	_ = os.WriteFile(consoleEnrollmentMarker, []byte("enrolled_at: "+now+"\nkey_name: "+p.Name+"\n"), 0o600)
 	// crowdsec restart picks up the new enrollment. Soft-fail if the
 	// service isn't under our init (dev containers).
 	_ = exec.CommandContext(ctx, "systemctl", "reload", "crowdsec").Run()
 	return map[string]any{"pending": true}, nil
 }
+
+// consoleEnrollmentMarker is our own breadcrumb (cscli won't tell us).
+// Written by csConsoleEnrollHandler, read by csConsoleEnrollmentHandler,
+// removed by csConsoleDisenrollHandler.
+const consoleEnrollmentMarker = "/etc/jabali/.cs-console-enrolled"
 
 // csConsoleStatusHandler wraps `cscli console status -o json`.
 // Returns a list of {name, enabled, description} option entries.
@@ -1415,34 +1433,22 @@ const onlineCredsPath = "/etc/crowdsec/online_api_credentials.yaml"
 func csConsoleEnrollmentHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 	resp := csConsoleEnrollmentResp{}
 
-	// Truth source for *console* enrollment is `cscli console status -o json`.
-	// The online_api_credentials.yaml machine_id is auto-created by
-	// `cscli capi register` on every fresh crowdsec install and would
-	// falsely show "Enrolled as <machine_id>" even when the operator
-	// never linked this engine to app.crowdsec.net.
-	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	statusOut, statusErr := exec.CommandContext(probeCtx, "cscli", "console", "status", "-o", "json").Output()
+	// Console-enrollment truth source. cscli has no API for "is this
+	// engine enrolled" — `cscli console status -o json` returns only
+	// the share-flags ({custom: bool, manual: bool, ...}), no enrolled
+	// field. And online_api_credentials.yaml's login: is the CAPI
+	// machine_id, auto-created on every fresh crowdsec install whether
+	// or not the operator console-enrolled. Our own marker file at
+	// /etc/jabali/.cs-console-enrolled is dropped by the enroll
+	// handler when it succeeds → reliable signal.
 	enrolledViaConsole := false
-	if statusErr == nil {
-		// Parse the cscli output. Two shapes observed across versions:
-		//   { "options": [...], "enrolled": true, ... }
-		//   [ {"name":"manual_decisions","enabled":true}, ... ]   (older)
-		var blob map[string]any
-		if jerr := json.Unmarshal(statusOut, &blob); jerr == nil {
-			if v, ok := blob["enrolled"].(bool); ok {
-				enrolledViaConsole = v
-			}
-		}
-		// Fallback heuristic: presence of "Enrolled" keyword in text output.
-		if !enrolledViaConsole {
-			if strings.Contains(string(statusOut), `"enrolled":true`) {
-				enrolledViaConsole = true
-			}
-		}
+	if _, err := os.Stat(consoleEnrollmentMarker); err == nil {
+		enrolledViaConsole = true
 	}
 
 	// Best-effort CAPI auth probe — distinct from console enrollment.
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	if err := exec.CommandContext(probeCtx, "cscli", "capi", "status").Run(); err == nil {
 		resp.CAPIOK = true
 	}
@@ -1480,6 +1486,7 @@ func csConsoleDisenrollHandler(ctx context.Context, _ json.RawMessage) (any, err
 	if err := os.Remove(onlineCredsPath); err != nil && !os.IsNotExist(err) {
 		return nil, csInternal("remove online_api_credentials.yaml", err)
 	}
+	_ = os.Remove(consoleEnrollmentMarker)
 	// Reload (not restart) so accepted signals keep flowing. Best-effort
 	// — dev containers without systemd ignore the failure.
 	_ = exec.CommandContext(ctx, "systemctl", "reload", "crowdsec").Run()

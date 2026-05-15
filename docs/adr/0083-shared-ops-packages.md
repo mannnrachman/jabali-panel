@@ -1,12 +1,12 @@
-# ADR-0083 — Shared ops packages for REST + CLI code reuse (M41)
+# ADR-0083 — Shared ops packages for REST + CLI code reuse (M44)
 
 **Status:** Accepted — 2026-04-29
-**Deciders:** shuki (plan + review), ADR target noted in M41 plan and BLUEPRINT.md
+**Deciders:** shuki (plan + review), ADR target noted in M44 plan and BLUEPRINT.md
 **Related:** ADR-0003 (one write path — CLI is thin HTTP client for user-facing ops), ADR-0001 (privileged ops via Go agent)
 
 ## Context
 
-M41 added operator CLI commands that mirror REST API resources: database
+M44 added operator CLI commands that mirror REST API resources: database
 create/delete, cron add/remove/list, SSH key add/remove. The REST handlers
 already contained 218–660 lines of non-trivial validation, ULID generation,
 agent dispatch, and rollback logic. The naïve CLI implementation strategy —
@@ -57,7 +57,7 @@ dispatch calls, and cascade cleanup live in the ops package.
 `dbops` shipped in commit `0a8fd3c3`: `databases.go` (REST handler) and
 `db_cmd.go` (cobra command) are already thin wrappers over
 `panel-api/internal/dbops/`. `cronops` and `sshkeyops` follow the same shape
-as the remaining M41 waves complete.
+as the remaining M44 waves complete.
 
 ## Alternatives Considered
 
@@ -75,7 +75,7 @@ as the remaining M41 waves complete.
 - **Pros:** No new package; each command self-contained.
 - **Cons:** Every constraint added to the REST handler must be duplicated
   in the CLI. Empirically, validation drift causes operator commands to
-  accept inputs the API rejects, or vice versa. M41 plan notes 218–660 LOC
+  accept inputs the API rejects, or vice versa. M44 plan notes 218–660 LOC
   of validation already written; duplicating it is a maintenance liability.
 - **Why not:** Drift is load-bearing; the risk materializes quickly in a
   multi-developer, multi-worktree codebase.

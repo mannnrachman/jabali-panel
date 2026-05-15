@@ -1,4 +1,4 @@
-# M41 — Operator CLI extensions (db / cron / sshkey CRUD)
+# M44 — Operator CLI extensions (db / cron / sshkey CRUD)
 
 **Goal.** Add `jabali db`, `jabali cron`, and `jabali sshkey` cobra
 subcommands so an operator can seed databases, cron jobs, and SSH
@@ -17,7 +17,7 @@ into `main` after every step.
 ADR target: **0083** (still free at time of plan refresh 2026-04-29;
 M34 took 0084 and M33.2 took 0079, so 0083 is unblocked).
 
-No new migrations. M41 is pure CLI + refactor work — not affected by
+No new migrations. M44 is pure CLI + refactor work — not affected by
 M34's CHAR(26)/COLLATE scar (no new FK-bearing tables) but the shared
 `internal/dbops/`, `internal/cronops/`, `internal/sshkeyops/` packages
 must preserve the existing repository column types unchanged.
@@ -33,7 +33,7 @@ Each of the three target REST handlers is non-trivial:
 | `internal/api/ssh_keys.go`  | 218 | OpenSSH key parsing, fingerprint + algorithm checks, label uniqueness per user, agent.ssh.authorized_keys.write atomic-rename |
 
 Copy-pasting that validation into a cobra subcommand for each guarantees
-drift the next time a REST handler picks up a new check. M41 takes the
+drift the next time a REST handler picks up a new check. M44 takes the
 slower, correct path: extract the create / update / delete flows into
 shared `internal/<area>ops/` packages and have BOTH the REST handler
 and the CLI call them. ADR-0083 captures the rationale.
@@ -160,7 +160,7 @@ user@host` succeeds for the SFTP gateway.
 
 ## Out of scope
 
-- New REST endpoints — M41 is a refactor + CLI surface, not a
+- New REST endpoints — M44 is a refactor + CLI surface, not a
   feature expansion.
 - PostgreSQL CLI surface — gated behind M37; CLI rejects
   `--engine postgres` until M37 lands.
@@ -177,7 +177,7 @@ user@host` succeeds for the SFTP gateway.
 
 Refreshed 2026-04-29 after M34 shipped at 0084 and M33.2 at 0079
 (blowing up the original assumption). Holes in the ADR sequence at
-0080, 0081, 0083 remain free; M41 keeps 0083 because M36 plan claims
-0080 and M37 plan claims 0081. Whichever of {M35, M36, M37, M41} ships
+0080, 0081, 0083 remain free; M44 keeps 0083 because M36 plan claims
+0080 and M37 plan claims 0081. Whichever of {M35, M36, M37, M44} ships
 first claims its declared number; the rest renumber on merge if
 collisions emerge.

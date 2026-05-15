@@ -6771,14 +6771,9 @@ install_apparmor() {
     _warn "  → skipping jabali daemon profiles; unloading any previously loaded"
     _warn "  → tracked in ADR-0086; remove gate once kernel ships unix mediation"
     touch /etc/jabali/.apparmor-unix-broken
-    # Unload any jabali daemon profile loaded by a prior install run
-    # (operator may have downgraded kernel after a clean install).
-    local stale
-    for stale in /etc/apparmor.d/usr.local.bin.jabali-* \
-                 /etc/apparmor.d/usr.local.bin.stalwart-mail; do
-      [[ -f "$stale" ]] || continue
-      apparmor_parser -R "$stale" 2>/dev/null || true
-    done
+    # Durably disable (not just -R unload) so the system
+    # apparmor.service never re-loads them on the next reload/boot.
+    apparmor_durably_disable_jabali /etc/apparmor.d
   else
     rm -f /etc/jabali/.apparmor-unix-broken
   fi
@@ -6819,6 +6814,43 @@ install_apparmor() {
 #
 # Arg: $1 — 1 if first install (set complain), 0 to preserve existing
 # mode.
+# apparmor_durably_disable_jabali — make every jabali daemon profile
+# (incl. stalwart-mail and any stray *.test variant) survive a system
+# apparmor.service reload as DISABLED. `apparmor_parser -R` alone is
+# transient: the profile file stays in /etc/apparmor.d/ so the next
+# boot / `systemctl reload apparmor` / apt apparmor-trigger re-parses
+# and re-loads it, silently re-EACCESing unix-socket connect() on a
+# kernel that lacks features/unix (the broken-mediation gate's whole
+# reason). The durable mechanism is apparmor's standard skip dir:
+# a symlink /etc/apparmor.d/disable/<name> -> ../<name> makes the
+# parser AND the service init skip that profile on every future parse.
+#
+# Arg $1: apparmor.d dir (default /etc/apparmor.d) — parameterised so
+# the contract is unit-testable in a sandbox without root.
+apparmor_durably_disable_jabali() {
+  local aad="${1:-/etc/apparmor.d}"
+  local prof base
+  mkdir -p "$aad/disable"
+  for prof in "$aad"/usr.local.bin.jabali-* \
+              "$aad"/usr.local.bin.stalwart-mail \
+              "$aad"/usr.local.bin.jabali-*.test; do
+    [[ -e "$prof" ]] || continue
+    base="$(basename "$prof")"
+    # Stray *.test variants exist only to confuse the parser — the
+    # apparmor.service globs *.test too on some distros. Delete them
+    # outright rather than disable-symlinking a throwaway.
+    if [[ "$base" == *.test ]]; then
+      rm -f "$prof"
+      continue
+    fi
+    # Durable skip: relative symlink back to the profile file.
+    ln -sf "../$base" "$aad/disable/$base"
+    # Immediate in-kernel unload (transient, but the symlink above
+    # keeps it off across reloads). Stubbed in the unit test.
+    apparmor_parser -R "$prof" 2>/dev/null || true
+  done
+}
+
 # cleanup_apparmor_legacy removes profiles that were shipped in earlier
 # releases but have since been superseded.
 #

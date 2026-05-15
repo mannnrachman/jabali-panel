@@ -409,40 +409,37 @@ func csBlocklistsListHandler(ctx context.Context, _ json.RawMessage) (any, error
 	blocklistsCacheMu.Unlock()
 
 	resp := csBlocklistsResponse{Blocklists: []csBlocklistEntry{}}
-	// Single cscli pass. Each alert in the response carries .source.origin
-	// (the source that triggered the alert) + .decisions[] (per-decision
-	// records). For our aggregation we use the per-decision origin/scenario
-	// pair because alerts can be heterogeneous (one alert spawning bans
-	// from multiple sources). No --limit cap; crowdsec returns alert
-	// rows not flat decisions, so the payload stays small.
-	out, err := runCscliJSON(ctx, "decisions", "list")
-	if err != nil {
-		return resp, nil
-	}
-	trimmed := strings.TrimSpace(string(out))
-	if trimmed == "" || trimmed == "null" || trimmed == "[]" {
-		return resp, nil
-	}
-	var raw []rawDecisionEntry
-	if err := json.Unmarshal(out, &raw); err != nil {
-		return resp, nil
-	}
+	// Bare `cscli decisions list` returns 0 on some hosts when alerts
+	// have aged out but their decisions are still active (cscli queries
+	// via alerts table). Workaround: query each known origin serially
+	// with a generous --limit. 60s cache keeps re-renders cheap.
+	origins := []string{"CAPI", "lists", "cscli-import", "crowdsec", "console", "manual"}
 	agg := map[string]*csBlocklistEntry{}
-	for _, entry := range raw {
-		for _, d := range entry.Decisions {
-			origin := d.Origin
-			if origin == "" {
-				origin = "unknown"
-			}
-			key := origin + "/" + d.Scenario
-			e, ok := agg[key]
-			if !ok {
-				e = &csBlocklistEntry{Name: key}
-				agg[key] = e
-			}
-			e.Count++
-			if d.Until > e.LatestEnd {
-				e.LatestEnd = d.Until
+	for _, origin := range origins {
+		out, err := runCscliJSON(ctx, "decisions", "list", "--origin", origin, "--limit", "100000")
+		if err != nil {
+			continue
+		}
+		trimmed := strings.TrimSpace(string(out))
+		if trimmed == "" || trimmed == "null" || trimmed == "[]" {
+			continue
+		}
+		var raw []rawDecisionEntry
+		if err := json.Unmarshal(out, &raw); err != nil {
+			continue
+		}
+		for _, entry := range raw {
+			for _, d := range entry.Decisions {
+				key := origin + "/" + d.Scenario
+				e, ok := agg[key]
+				if !ok {
+					e = &csBlocklistEntry{Name: key}
+					agg[key] = e
+				}
+				e.Count++
+				if d.Until > e.LatestEnd {
+					e.LatestEnd = d.Until
+				}
 			}
 		}
 	}

@@ -254,3 +254,91 @@ shows the rsync exit code + truncated stderr. Common causes:
 | Schema | migrations 000120-122 |
 | ADR | `docs/adr/0094-migration-importers.md` |
 | Blueprint | `plans/m35-migration-importers.md` |
+
+## 7. Smoke test (DA + cPanel + WHM)
+
+Validates the direct-rsync flow shipped 2026-05-14 (homedir excluded
+from the cpmove tarball; restore stage rsyncs each domain's docroot
+source→dest over SSH). Run on the jabali destination box.
+
+### 7.1 Common prep
+
+```sh
+# Enable migrations (default off)
+sudo mariadb -e "UPDATE jabali.server_settings SET migrations_enabled=1"
+
+# Pre-create destination user (runner refuses if absent)
+jabali user create --email bob@dest.test --username bob
+
+# Stage SSH secret for the source box (root:jabali 0640)
+sudo mkdir -p /etc/jabali-panel/migration-secrets
+JOB=$(jabali ulid)
+echo "SSH_PASSWORD=<source-root-pw>" \
+  | sudo tee /etc/jabali-panel/migration-secrets/$JOB.env
+sudo chown root:jabali /etc/jabali-panel/migration-secrets/$JOB.env
+sudo chmod 0640 /etc/jabali-panel/migration-secrets/$JOB.env
+echo "JOB=$JOB"
+```
+
+Key-based auth alternative: `SSH_PRIVATE_KEY_B64=<base64-PEM>` instead
+of `SSH_PASSWORD`.
+
+### 7.2 Run — one per source kind
+
+```sh
+# DirectAdmin
+jabali migrate import --job-id $JOB \
+  --source-kind directadmin --source-host da.source.test \
+  --source-user dauser --target-user bob --wait
+
+# cPanel
+jabali migrate import --job-id $JOB \
+  --source-kind cpanel --source-host cp.source.test \
+  --source-user cpuser --target-user bob --wait
+
+# WHM (pkgacct --skiphomedir)
+jabali migrate import --job-id $JOB \
+  --source-kind whm --source-host whm.source.test \
+  --source-user whmuser --target-user bob --wait
+```
+
+### 7.3 Verify
+
+```sh
+SESS=<ory_kratos_session>
+curl -k -H "Cookie: ory_kratos_session=$SESS" \
+  https://localhost:8443/api/v1/admin/migrations/$JOB \
+  | jq '.state, .stages, .manifest_json'
+
+# Backup tarball must NOT carry the homedir bulk (the fix)
+ls -la /var/lib/jabali/migrations/$JOB/
+
+# Each domain docroot rsynced direct source->dest
+ls /home/bob/domains/<domain>/public_html/
+
+# DB created + app config rewritten with the new triple
+sudo mariadb -e "SHOW DATABASES" | grep bob
+grep DB_NAME /home/bob/domains/<domain>/public_html/wp-config.php
+```
+
+### 7.4 Pass criteria
+
+- `migration_jobs.state = done`, zero `failed` stages.
+- cpmove tarball excludes `homedir/` bulk — only the
+  `domains-paths.txt` manifest + `.ssh/authorized_keys` inside.
+- `manifest_json` warnings contain a line of the form
+  `home: bytes=<N> domains=<N> (direct-rsync source→dest, no tar
+  middleware)`.
+- Each migrated domain's `public_html` is populated.
+- App config files (wp-config.php / configuration.php /
+  settings.php) point at the freshly-created jabali DB triple.
+- SSH keys / cron / SSL / forwarders imported. Cron rows land
+  `Enabled=false` — operator reviews then flips.
+
+### 7.5 Source-kind specifics
+
+| Kind | Homedir-skip mechanism | Docroot manifest |
+|---|---|---|
+| DirectAdmin | `BackupUser` script omits homedir rsync | `cpmove-<u>/domains-paths.txt` (absolute source paths) |
+| cPanel | n/a (tarball, but restore reads userdata) | `cpmove-<u>/userdata/<dom>` YAML `documentroot:` |
+| WHM | `/scripts/pkgacct --skiphomedir` | same userdata YAML path |

@@ -46,6 +46,7 @@ import {
   WarningOutlined,
   DeleteOutlined,
   QuestionCircleOutlined,
+  ReloadOutlined,
 } from "@icons";
 import { RowActionButton } from "../../../components/RowActionButton";
 import { ISO3166_COUNTRIES } from "../../../data/iso3166";
@@ -59,6 +60,7 @@ import {
   useCrowdsecAlerts,
   useCrowdsecAllowlists,
   useCrowdsecBlocklists,
+  useRefreshCrowdsecBlocklists,
   useCrowdsecBouncers,
   useCrowdsecDecisions,
   useCrowdsecHub,
@@ -754,6 +756,7 @@ const ALLOWLIST_IP_OR_CIDR = /^[0-9a-fA-F:.]+(\/\d{1,3})?$/;
 // decisions to this engine. Subscriptions live at app.crowdsec.net.
 const BlocklistsCard = () => {
   const q = useCrowdsecBlocklists();
+  const refresh = useRefreshCrowdsecBlocklists();
   const data = q.data?.blocklists ?? [];
   const total = q.data?.total ?? 0;
 
@@ -761,9 +764,19 @@ const BlocklistsCard = () => {
     <Card
       title="Active decision sources"
       extra={
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          Total blocked: {total.toLocaleString()}
-        </Typography.Text>
+        <Space size={12}>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Total blocked: {total.toLocaleString()}
+          </Typography.Text>
+          <Button
+            size="small"
+            icon={<ReloadOutlined />}
+            loading={refresh.isPending}
+            onClick={() => refresh.mutate()}
+          >
+            Refresh
+          </Button>
+        </Space>
       }
     >
       <Alert

@@ -101,6 +101,22 @@ export type CrowdsecBlocklist = {
   latest_end: string;
 };
 
+export function useRefreshCrowdsecBlocklists() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const { data } = await apiClient.post<{
+        blocklists: CrowdsecBlocklist[];
+        total: number;
+      }>(`${BASE}/blocklists/refresh`);
+      return data;
+    },
+    onSuccess: (data) => {
+      qc.setQueryData(["security", "crowdsec", "blocklists"], data);
+    },
+  });
+}
+
 export function useCrowdsecBlocklists() {
   return useQuery({
     queryKey: ["security", "crowdsec", "blocklists"],

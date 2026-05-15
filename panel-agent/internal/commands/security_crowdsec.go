@@ -408,6 +408,21 @@ func csBlocklistsListHandler(_ context.Context, _ json.RawMessage) (any, error) 
 	return blocklistsCacheValue, nil
 }
 
+// csBlocklistsRefreshHandler forces a synchronous snapshot refresh.
+// Throttled: refuses with cached data if the last refresh ran less
+// than 30s ago — operator-spam-proof.
+func csBlocklistsRefreshHandler(ctx context.Context, _ json.RawMessage) (any, error) {
+	blocklistsCacheMu.RLock()
+	tooRecent := time.Since(blocklistsCacheUpdated) < 30*time.Second && !blocklistsCacheUpdated.IsZero()
+	blocklistsCacheMu.RUnlock()
+	if !tooRecent {
+		blocklistsRefreshOnce(ctx)
+	}
+	blocklistsCacheMu.RLock()
+	defer blocklistsCacheMu.RUnlock()
+	return blocklistsCacheValue, nil
+}
+
 // blocklistsRefreshOnce does one cscli pass + replaces the cache atomically.
 // Errors are swallowed — keep the last good snapshot on transient failures.
 func blocklistsRefreshOnce(ctx context.Context) {
@@ -1666,6 +1681,7 @@ func init() {
 	Default.Register("security.crowdsec.decisions.delete", csDecisionsDeleteHandler)
 	Default.Register("security.crowdsec.bouncers.list", csBouncersListHandler)
 	Default.Register("security.crowdsec.blocklists.list", csBlocklistsListHandler)
+	Default.Register("security.crowdsec.blocklists.refresh", csBlocklistsRefreshHandler)
 	Default.Register("security.crowdsec.metrics", csMetricsHandler)
 	Default.Register("security.crowdsec.hub.list", csHubListHandler)
 	Default.Register("security.crowdsec.hub.install", csHubInstallHandler)

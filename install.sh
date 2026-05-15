@@ -8951,6 +8951,22 @@ install_audit_php_bypass() {
 # so newly-required packages/collections reach existing hosts without a full
 # re-install. Add new software HERE; install.sh main() still calls the full
 # install_* functions, so fresh installs also get everything.
+# ensure_crowdsec_firewall_bouncer_lapi_url — heal hosts that were
+# installed before LAPI moved off the stock 127.0.0.1:8080 (Stalwart's
+# port). The package postinst writes 8080 → bouncer crash-loops with
+# "bouncer stream halted". Fresh installs are correct via
+# install_crowdsec; this provision-time fix-up is for old boxes.
+ensure_crowdsec_firewall_bouncer_lapi_url() {
+  local cfg=/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml
+  [[ -f "$cfg" ]] || return 0
+  if grep -qE '^api_url:[[:space:]]+http://127\.0\.0\.1:8080/?$' "$cfg"; then
+    _log "patching firewall-bouncer api_url 8080 -> 8081"
+    sed -i 's|^api_url:[[:space:]]\+http://127\.0\.0\.1:8080/\?|api_url: http://127.0.0.1:8081/|' "$cfg"
+    systemctl restart crowdsec-firewall-bouncer 2>/dev/null || \
+      _warn "restart crowdsec-firewall-bouncer failed; check journalctl"
+  fi
+}
+
 migrate_nginx_http2_directive() {
   # nginx ≥ 1.25 deprecates `listen ... ssl http2` in favour of a
   # separate `http2 on;` directive. Strip the legacy "http2" token from
@@ -9100,6 +9116,11 @@ EOF
   # nginx http2-on migration — silences deprecation warnings on 1.25+.
   if declare -f migrate_nginx_http2_directive >/dev/null 2>&1; then
     migrate_nginx_http2_directive
+  fi
+
+  # crowdsec firewall-bouncer api_url heal (stale 8080 from older installs).
+  if declare -f ensure_crowdsec_firewall_bouncer_lapi_url >/dev/null 2>&1; then
+    ensure_crowdsec_firewall_bouncer_lapi_url
   fi
 
   # Kratos↔MariaDB unix socket (M25.1) — ensure jabali user is in

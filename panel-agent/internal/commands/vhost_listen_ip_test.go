@@ -107,10 +107,10 @@ func TestVhostListenIP_SSLBlockMirrorsHTTP(t *testing.T) {
 		[]string{
 			"listen 203.0.113.50:80;",
 			"listen [2001:db8::99]:80;",
-			"listen 203.0.113.50:443 ssl http2;",
-			"listen [2001:db8::99]:443 ssl http2;",
+			"listen 203.0.113.50:443 ssl;",
+			"listen [2001:db8::99]:443 ssl;",
 		},
-		[]string{"listen 443 ssl http2;", "listen [::]:443 ssl http2;"},
+		[]string{"listen 443 ssl;", "listen [::]:443 ssl;"},
 	)
 }
 
@@ -119,7 +119,7 @@ func TestVhostListenIP_SSLBlockMirrorsHTTP(t *testing.T) {
 func TestVhostListenIP_SSLBlockFallback(t *testing.T) {
 	out := renderVhost(t, "", "", true)
 	assertContainsNotContains(t, out,
-		[]string{"listen 443 ssl http2;", "listen [::]:443 ssl http2;"},
+		[]string{"listen 443 ssl;", "listen [::]:443 ssl;"},
 		[]string{"listen :443", "listen []:443"},
 	)
 }

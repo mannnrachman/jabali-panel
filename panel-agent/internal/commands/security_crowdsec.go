@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
@@ -387,33 +388,52 @@ type csBlocklistsResponse struct {
 func csBlocklistsListHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 	resp := csBlocklistsResponse{Blocklists: []csBlocklistEntry{}}
 	origins := []string{"CAPI", "lists", "cscli-import", "crowdsec", "console", "manual"}
-	agg := map[string]*csBlocklistEntry{}
-	for _, origin := range origins {
-		out, err := runCscliJSON(ctx, "decisions", "list", "--origin", origin, "--limit", "100000")
-		if err != nil {
-			continue
-		}
-		trimmed := strings.TrimSpace(string(out))
-		if trimmed == "" || trimmed == "null" || trimmed == "[]" {
-			continue
-		}
-		var raw []rawDecisionEntry
-		if err := json.Unmarshal(out, &raw); err != nil {
-			continue
-		}
-		for _, entry := range raw {
-			for _, d := range entry.Decisions {
-				key := origin + "/" + d.Scenario
-				e, ok := agg[key]
-				if !ok {
-					e = &csBlocklistEntry{Name: key}
-					agg[key] = e
-				}
-				e.Count++
-				if d.Until > e.LatestEnd {
-					e.LatestEnd = d.Until
+
+	// 22k+ decisions per origin makes each cscli call ~2-4s; 6 origins
+	// serial = ~18s, which blows the 10s panel-api timeout. Run them
+	// in parallel, merge under a single mutex.
+	type result struct{ entries map[string]*csBlocklistEntry }
+	results := make([]result, len(origins))
+	var wg sync.WaitGroup
+	for i, origin := range origins {
+		wg.Add(1)
+		go func(i int, origin string) {
+			defer wg.Done()
+			results[i] = result{entries: map[string]*csBlocklistEntry{}}
+			out, err := runCscliJSON(ctx, "decisions", "list", "--origin", origin, "--limit", "100000")
+			if err != nil {
+				return
+			}
+			trimmed := strings.TrimSpace(string(out))
+			if trimmed == "" || trimmed == "null" || trimmed == "[]" {
+				return
+			}
+			var raw []rawDecisionEntry
+			if err := json.Unmarshal(out, &raw); err != nil {
+				return
+			}
+			for _, entry := range raw {
+				for _, d := range entry.Decisions {
+					key := origin + "/" + d.Scenario
+					e, ok := results[i].entries[key]
+					if !ok {
+						e = &csBlocklistEntry{Name: key}
+						results[i].entries[key] = e
+					}
+					e.Count++
+					if d.Until > e.LatestEnd {
+						e.LatestEnd = d.Until
+					}
 				}
 			}
+		}(i, origin)
+	}
+	wg.Wait()
+
+	agg := map[string]*csBlocklistEntry{}
+	for _, r := range results {
+		for k, e := range r.entries {
+			agg[k] = e
 		}
 	}
 	for _, e := range agg {

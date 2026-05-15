@@ -385,55 +385,65 @@ type csBlocklistsResponse struct {
 // manual (cscli decisions add).
 //
 // Name format: "<origin>/<scenario>".
+// blocklistsCache is a tiny in-process TTL cache so a UI refresh
+// doesn't re-melt crowdsec. The earlier per-origin parallel-fan-out
+// version spiked the crowdsec daemon to ~300% CPU and 1.6M decisions
+// scanned per UI hit. The single bare cscli call is much cheaper:
+// crowdsec returns a small alert-grouped JSON instead of per-decision
+// rows.
+var (
+	blocklistsCacheMu      sync.Mutex
+	blocklistsCacheValue   csBlocklistsResponse
+	blocklistsCacheUpdated time.Time
+)
+
+const blocklistsCacheTTL = 60 * time.Second
+
 func csBlocklistsListHandler(ctx context.Context, _ json.RawMessage) (any, error) {
-	resp := csBlocklistsResponse{Blocklists: []csBlocklistEntry{}}
-	origins := []string{"CAPI", "lists", "cscli-import", "crowdsec", "console", "manual"}
-
-	// 22k+ decisions per origin makes each cscli call ~2-4s; 6 origins
-	// serial = ~18s, which blows the 10s panel-api timeout. Run them
-	// in parallel, merge under a single mutex.
-	type result struct{ entries map[string]*csBlocklistEntry }
-	results := make([]result, len(origins))
-	var wg sync.WaitGroup
-	for i, origin := range origins {
-		wg.Add(1)
-		go func(i int, origin string) {
-			defer wg.Done()
-			results[i] = result{entries: map[string]*csBlocklistEntry{}}
-			out, err := runCscliJSON(ctx, "decisions", "list", "--origin", origin, "--limit", "100000")
-			if err != nil {
-				return
-			}
-			trimmed := strings.TrimSpace(string(out))
-			if trimmed == "" || trimmed == "null" || trimmed == "[]" {
-				return
-			}
-			var raw []rawDecisionEntry
-			if err := json.Unmarshal(out, &raw); err != nil {
-				return
-			}
-			for _, entry := range raw {
-				for _, d := range entry.Decisions {
-					key := origin + "/" + d.Scenario
-					e, ok := results[i].entries[key]
-					if !ok {
-						e = &csBlocklistEntry{Name: key}
-						results[i].entries[key] = e
-					}
-					e.Count++
-					if d.Until > e.LatestEnd {
-						e.LatestEnd = d.Until
-					}
-				}
-			}
-		}(i, origin)
+	blocklistsCacheMu.Lock()
+	if time.Since(blocklistsCacheUpdated) < blocklistsCacheTTL && blocklistsCacheUpdated != (time.Time{}) {
+		resp := blocklistsCacheValue
+		blocklistsCacheMu.Unlock()
+		return resp, nil
 	}
-	wg.Wait()
+	blocklistsCacheMu.Unlock()
 
+	resp := csBlocklistsResponse{Blocklists: []csBlocklistEntry{}}
+	// Single cscli pass. Each alert in the response carries .source.origin
+	// (the source that triggered the alert) + .decisions[] (per-decision
+	// records). For our aggregation we use the per-decision origin/scenario
+	// pair because alerts can be heterogeneous (one alert spawning bans
+	// from multiple sources). No --limit cap; crowdsec returns alert
+	// rows not flat decisions, so the payload stays small.
+	out, err := runCscliJSON(ctx, "decisions", "list")
+	if err != nil {
+		return resp, nil
+	}
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" || trimmed == "null" || trimmed == "[]" {
+		return resp, nil
+	}
+	var raw []rawDecisionEntry
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return resp, nil
+	}
 	agg := map[string]*csBlocklistEntry{}
-	for _, r := range results {
-		for k, e := range r.entries {
-			agg[k] = e
+	for _, entry := range raw {
+		for _, d := range entry.Decisions {
+			origin := d.Origin
+			if origin == "" {
+				origin = "unknown"
+			}
+			key := origin + "/" + d.Scenario
+			e, ok := agg[key]
+			if !ok {
+				e = &csBlocklistEntry{Name: key}
+				agg[key] = e
+			}
+			e.Count++
+			if d.Until > e.LatestEnd {
+				e.LatestEnd = d.Until
+			}
 		}
 	}
 	for _, e := range agg {
@@ -443,6 +453,11 @@ func csBlocklistsListHandler(ctx context.Context, _ json.RawMessage) (any, error
 	sort.Slice(resp.Blocklists, func(i, j int) bool {
 		return resp.Blocklists[i].Count > resp.Blocklists[j].Count
 	})
+
+	blocklistsCacheMu.Lock()
+	blocklistsCacheValue = resp
+	blocklistsCacheUpdated = time.Now()
+	blocklistsCacheMu.Unlock()
 	return resp, nil
 }
 

@@ -104,6 +104,10 @@ func main() {
 	// (see /etc/jabali/maldet/post-scan-hook.sh). The earlier 5s
 	// sessionwatcher poll was removed once the hook contract landed.
 
+	// CrowdSec blocklists snapshot refresher — 5-min ticker so the
+	// Security UI reads pre-computed data without per-click cscli.
+	commands.StartBlocklistsRefresher(ctx)
+
 	if err := srv.Serve(ctx); err != nil {
 		log.Error("agent serve failed", "err", err)
 		os.Exit(1)

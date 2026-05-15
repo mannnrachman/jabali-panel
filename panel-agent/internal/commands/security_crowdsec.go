@@ -385,34 +385,33 @@ type csBlocklistsResponse struct {
 // manual (cscli decisions add).
 //
 // Name format: "<origin>/<scenario>".
-// blocklistsCache is a tiny in-process TTL cache so a UI refresh
-// doesn't re-melt crowdsec. The earlier per-origin parallel-fan-out
-// version spiked the crowdsec daemon to ~300% CPU and 1.6M decisions
-// scanned per UI hit. The single bare cscli call is much cheaper:
-// crowdsec returns a small alert-grouped JSON instead of per-decision
-// rows.
+// blocklistsCache holds a pre-computed snapshot updated by a
+// background goroutine started at agent boot. UI hits the handler →
+// returns the cached snapshot in microseconds, never triggers cscli.
+// The refresher itself runs every 5 minutes (or on-demand at boot).
+//
+// Rationale: 22k+ decisions × 6 origins × every UI tab click was
+// melting crowdsec at ~300% CPU. Background refresh decouples UI
+// frequency from cscli load. Empty result during boot warm-up is
+// fine — UI shows "no active decisions yet" until first tick.
 var (
-	blocklistsCacheMu      sync.Mutex
+	blocklistsCacheMu      sync.RWMutex
 	blocklistsCacheValue   csBlocklistsResponse
 	blocklistsCacheUpdated time.Time
 )
 
-const blocklistsCacheTTL = 60 * time.Second
+const blocklistsRefreshInterval = 5 * time.Minute
 
-func csBlocklistsListHandler(ctx context.Context, _ json.RawMessage) (any, error) {
-	blocklistsCacheMu.Lock()
-	if time.Since(blocklistsCacheUpdated) < blocklistsCacheTTL && blocklistsCacheUpdated != (time.Time{}) {
-		resp := blocklistsCacheValue
-		blocklistsCacheMu.Unlock()
-		return resp, nil
-	}
-	blocklistsCacheMu.Unlock()
+func csBlocklistsListHandler(_ context.Context, _ json.RawMessage) (any, error) {
+	blocklistsCacheMu.RLock()
+	defer blocklistsCacheMu.RUnlock()
+	return blocklistsCacheValue, nil
+}
 
+// blocklistsRefreshOnce does one cscli pass + replaces the cache atomically.
+// Errors are swallowed — keep the last good snapshot on transient failures.
+func blocklistsRefreshOnce(ctx context.Context) {
 	resp := csBlocklistsResponse{Blocklists: []csBlocklistEntry{}}
-	// Bare `cscli decisions list` returns 0 on some hosts when alerts
-	// have aged out but their decisions are still active (cscli queries
-	// via alerts table). Workaround: query each known origin serially
-	// with a generous --limit. 60s cache keeps re-renders cheap.
 	origins := []string{"CAPI", "lists", "cscli-import", "crowdsec", "console", "manual"}
 	agg := map[string]*csBlocklistEntry{}
 	for _, origin := range origins {
@@ -450,12 +449,29 @@ func csBlocklistsListHandler(ctx context.Context, _ json.RawMessage) (any, error
 	sort.Slice(resp.Blocklists, func(i, j int) bool {
 		return resp.Blocklists[i].Count > resp.Blocklists[j].Count
 	})
-
 	blocklistsCacheMu.Lock()
 	blocklistsCacheValue = resp
 	blocklistsCacheUpdated = time.Now()
 	blocklistsCacheMu.Unlock()
-	return resp, nil
+}
+
+// StartBlocklistsRefresher kicks off the background refresh goroutine.
+// Called once by the agent's main on startup.
+func StartBlocklistsRefresher(ctx context.Context) {
+	go func() {
+		// Initial pull, then tick.
+		blocklistsRefreshOnce(ctx)
+		t := time.NewTicker(blocklistsRefreshInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				blocklistsRefreshOnce(ctx)
+			}
+		}
+	}()
 }
 
 // ---- security.crowdsec.metrics ---------------------------------------------

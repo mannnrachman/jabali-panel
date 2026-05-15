@@ -111,6 +111,12 @@ export function useCrowdsecBlocklists() {
       }>(`${BASE}/blocklists`);
       return data;
     },
+    // Server-side snapshot refreshes every 5 minutes. Match that here
+    // so we don't pound the agent on every tab switch / window focus,
+    // but still pick up new data without operator interaction.
+    staleTime: 5 * 60_000,
+    refetchInterval: 5 * 60_000,
+    refetchOnWindowFocus: false,
   });
 }
 

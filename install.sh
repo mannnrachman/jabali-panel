@@ -5624,16 +5624,18 @@ install_crowdsec_nginx_bouncer() {
     return
   fi
 
-  # Rewrite bouncer config. API_URL empty = skip LAPI polling;
-  # APPSEC_URL + ALWAYS_SEND_TO_APPSEC=true = every request goes
-  # through AppSec pre_eval. APPSEC_FAILURE_ACTION=passthrough means
-  # an AppSec outage doesn't 403 every request.
+  # Rewrite bouncer config. API_URL points at LAPI loopback so the
+  # bouncer heartbeats up to CrowdSec Central (otherwise console flags
+  # "no working remediation components"). APPSEC_URL +
+  # ALWAYS_SEND_TO_APPSEC=true = every request goes through AppSec
+  # pre_eval too. APPSEC_FAILURE_ACTION=passthrough means an AppSec
+  # outage doesn't 403 every request.
   local desired_conf
   desired_conf=$(cat <<EOF
 # Managed by jabali install.sh — M26 AppSec enforcement.
 # DO NOT hand-edit. Re-run install.sh to rotate API_KEY.
 ENABLED=true
-API_URL=
+API_URL=http://127.0.0.1:8081/
 API_KEY=$api_key
 USE_TLS_AUTH=false
 CACHE_EXPIRATION=1
@@ -8967,6 +8969,25 @@ ensure_crowdsec_firewall_bouncer_lapi_url() {
   fi
 }
 
+# ensure_crowdsec_nginx_bouncer_lapi_url — heal nginx-bouncer configs
+# that shipped with API_URL= (empty). Console flags engines without a
+# polling remediation component as broken. Repoint at LAPI loopback so
+# the bouncer heartbeats up to CrowdSec Central.
+ensure_crowdsec_nginx_bouncer_lapi_url() {
+  local cfg=/etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf
+  [[ -f "$cfg" ]] || return 0
+  if grep -qE '^API_URL=[[:space:]]*$' "$cfg"; then
+    _log "patching nginx-bouncer API_URL (empty -> http://127.0.0.1:8081/)"
+    sed -i 's|^API_URL=[[:space:]]*$|API_URL=http://127.0.0.1:8081/|' "$cfg"
+    if nginx -t >/dev/null 2>&1; then
+      systemctl reload nginx 2>/dev/null || \
+        _warn "nginx reload failed after bouncer api_url heal"
+    else
+      _warn "nginx -t failed after bouncer api_url heal — check config"
+    fi
+  fi
+}
+
 migrate_nginx_http2_directive() {
   # nginx ≥ 1.25 deprecates `listen ... ssl http2` in favour of a
   # separate `http2 on;` directive. Strip the legacy "http2" token from
@@ -9121,6 +9142,12 @@ EOF
   # crowdsec firewall-bouncer api_url heal (stale 8080 from older installs).
   if declare -f ensure_crowdsec_firewall_bouncer_lapi_url >/dev/null 2>&1; then
     ensure_crowdsec_firewall_bouncer_lapi_url
+  fi
+
+  # crowdsec nginx-bouncer api_url heal (empty -> LAPI loopback so the
+  # bouncer heartbeats to console).
+  if declare -f ensure_crowdsec_nginx_bouncer_lapi_url >/dev/null 2>&1; then
+    ensure_crowdsec_nginx_bouncer_lapi_url
   fi
 
   # Kratos↔MariaDB unix socket (M25.1) — ensure jabali user is in

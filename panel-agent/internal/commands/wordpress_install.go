@@ -90,9 +90,26 @@ func buildSystemdRunCmd(ctx context.Context, osUser string, args ...string) *exe
 		"--uid=" + osUser,
 		"--gid=" + osUser,
 		"--slice=jabali-user-" + osUser + ".slice",
+		// Pin PATH inside the transient unit. systemd-run does NOT
+		// inherit the agent's PATH; the manager default can omit
+		// /usr/local/bin on minimal builds, so a bare `wp` (symlink
+		// at /usr/local/bin/wp) intermittently failed with
+		// "Failed to find executable wp: No such file or directory".
+		// The explicit PATH also lets wp-cli's #!/usr/bin/env php
+		// shebang resolve the php alternative.
+		"--setenv=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"--pipe",
 		"--wait",
 		"--collect",
+	}
+	// Resolve args[0] to an absolute path from the agent's own PATH
+	// (agent runs as root with the full PATH) so the transient unit
+	// never depends on its own PATH for the primary binary. Bare-name
+	// fallback + caller-supplied absolute paths pass straight through.
+	if len(args) > 0 && !filepath.IsAbs(args[0]) {
+		if resolved, lpErr := exec.LookPath(args[0]); lpErr == nil {
+			args = append([]string{resolved}, args[1:]...)
+		}
 	}
 	cmdArgs = append(cmdArgs, args...)
 	return exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)

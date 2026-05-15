@@ -4035,9 +4035,8 @@ server {
 }
 
 server {
-    listen 443 ssl default_server;
-    listen [::]:443 ssl default_server;
-    http2 on;
+    listen 443 ssl default_server http2;
+    listen [::]:443 ssl default_server http2;
     server_name _;
 
     ssl_certificate     ${tls_cert};
@@ -9015,35 +9014,6 @@ ensure_crowdsec_nginx_bouncer_lapi_url() {
   fi
 }
 
-migrate_nginx_http2_directive() {
-  # nginx ≥ 1.25 deprecates `listen ... ssl http2` in favour of a
-  # separate `http2 on;` directive. Strip the legacy "http2" token from
-  # any listen line in our generated vhosts + insert `http2 on;` once
-  # per server{} block. Idempotent — skips files that already have
-  # http2 on; and no legacy http2 token in listen.
-  local f changed=0
-  shopt -s nullglob
-  for f in /etc/nginx/sites-enabled/*.conf /etc/nginx/sites-available/*.conf; do
-    [[ -f "$f" ]] || continue
-    if grep -q 'listen .* ssl .*http2' "$f"; then
-      # Drop the legacy token. Replace `ssl http2` → `ssl`.
-      sed -i -E 's/(listen [^;]*ssl)([^;]*) http2;/\1\2;/g' "$f"
-      # Insert `http2 on;` after the first listen-ssl line in each
-      # server{} block, but only if it isn't already there.
-      if ! grep -q 'http2 on;' "$f"; then
-        awk '
-          BEGIN { added = 0 }
-          /server[[:space:]]*{/ { added = 0 }
-          { print }
-          /listen [^;]*ssl[^;]*;/ && added == 0 { print "    http2 on;"; added = 1 }
-        ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-      fi
-      changed=1
-    fi
-  done
-  [[ "$changed" == "1" ]] && _log "migrated nginx vhosts to http2-on directive"
-  return 0
-}
 
 provision_new_software() {
   # Snuffleupagus: flip simulation → enforce on existing installs.
@@ -9161,10 +9131,6 @@ EOF
     install_logrotate
   fi
 
-  # nginx http2-on migration — silences deprecation warnings on 1.25+.
-  if declare -f migrate_nginx_http2_directive >/dev/null 2>&1; then
-    migrate_nginx_http2_directive
-  fi
 
   # crowdsec firewall-bouncer api_url heal (stale 8080 from older installs).
   if declare -f ensure_crowdsec_firewall_bouncer_lapi_url >/dev/null 2>&1; then

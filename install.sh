@@ -4325,7 +4325,7 @@ install_wp_cli() {
   local wp_archive="/tmp/wp-cli-${wp_version}.phar"
 
   # Idempotency: if already installed, skip download + verify.
-  if [[ -f "$wp_phar" && -L "$wp_link" ]]; then
+  if [[ -f "$wp_phar" && -L "$wp_link" && -L /usr/local/bin/wp ]]; then
     _ok "wp-cli $wp_version already installed at $wp_root"
     return
   fi
@@ -4367,6 +4367,30 @@ install_wp_cli() {
   ln -s "$wp_link" /usr/local/bin/wp
 
   _ok "wp-cli extracted and symlinked"
+}
+
+# ensure_wpcli_symlink — (re)create the PATH-visible wp symlink.
+# install_wpcli's idempotency guard only checks /opt/wp-cli/{phar,
+# current}; if the external <bindir>/wp link is deleted (uninstall
+# residue, manual rm) it early-returns and never rebuilds it, and
+# install_wpcli isn't called from provision_new_software so a plain
+# `jabali update` can't self-heal -> every app install fails at
+# `wp core download` ("Failed to find executable wp"). This heal IS
+# called from provision so existing hosts recover on update.
+# Args: $1 wp_root (default /opt/wp-cli), $2 bindir (default
+# /usr/local/bin) — parameterised for sandbox unit testing.
+ensure_wpcli_symlink() {
+  local wp_root="${1:-/opt/wp-cli}"
+  local bindir="${2:-/usr/local/bin}"
+  local cur="$wp_root/current"
+  # Only act when wp-cli is actually installed under wp_root.
+  [[ -e "$cur" ]] || return 0
+  if [[ -L "$bindir/wp" && "$(readlink "$bindir/wp")" == "$cur" ]]; then
+    return 0
+  fi
+  mkdir -p "$bindir"
+  ln -sf "$cur" "$bindir/wp"
+  _log "healed wp-cli PATH symlink: $bindir/wp -> $cur"
 }
 
 # ---------- step 7: phpMyAdmin + SSO support --------------------------------
@@ -9175,6 +9199,9 @@ EOF
   # mysql group + POSIX ACL on socket as fallback. Idempotent.
   if declare -f ensure_jabali_in_mysql_group >/dev/null 2>&1; then
     ensure_jabali_in_mysql_group
+  fi
+  if declare -f ensure_wpcli_symlink >/dev/null 2>&1; then
+    ensure_wpcli_symlink
   fi
   if declare -f ensure_mariadb_socket_acl_for_jabali >/dev/null 2>&1; then
     ensure_mariadb_socket_acl_for_jabali

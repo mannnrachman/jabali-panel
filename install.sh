@@ -5759,25 +5759,52 @@ cleanup_modsecurity() {
   # the dead nginx module + CRS rules + main include on `jabali update`.
   # Idempotent: bails fast when packages already gone and no leftover files.
   local pkgs_present=0
-  if dpkg -l 2>/dev/null | grep -qE '^ii\s+(libnginx-mod-http-modsecurity|modsecurity-crs)\s'; then
+  # Match the full ModSecurity package set, not just the nginx module:
+  # libmodsecurity3*, libmodsecurity-dev, libnginx-mod-http-modsecurity,
+  # modsecurity-crs. The t64 ABI rename (libmodsecurity3 → libmodsecurity3t64
+  # on Debian 13 / Ubuntu 24.04) means the version-suffixed name varies —
+  # match the libmodsecurity3 prefix.
+  if dpkg -l 2>/dev/null | grep -qE '^ii\s+(libnginx-mod-http-modsecurity|modsecurity-crs|libmodsecurity-dev|libmodsecurity3)'; then
     pkgs_present=1
   fi
-  if [[ "$pkgs_present" == "0" && ! -d /etc/nginx/modsec && ! -e /etc/nginx/modsecurity.conf ]]; then
+  local leftover_files=0
+  if [[ -d /etc/nginx/modsec ]] \
+      || [[ -e /etc/nginx/modsecurity.conf ]] \
+      || [[ -e /etc/nginx/modsecurity_includes.conf ]] \
+      || [[ -e /etc/nginx/sites-available/default-modsecurity.conf ]]; then
+    leftover_files=1
+  fi
+  if [[ "$pkgs_present" == "0" && "$leftover_files" == "0" ]]; then
     return 0
   fi
 
   _log "removing ModSecurity (ADR-0055 superseded by CrowdSec AppSec)"
   if [[ "$pkgs_present" == "1" ]]; then
-    DEBIAN_FRONTEND=noninteractive apt-get -y \
-      -o Dpkg::Lock::Timeout=300 \
-      remove --purge libnginx-mod-http-modsecurity modsecurity-crs >/dev/null 2>&1 || true
+    # libmodsecurity3* is the runtime lib; the t64 variant name differs
+    # per distro, so resolve the installed name dynamically and purge
+    # the whole set in one apt transaction.
+    local modsec_pkgs
+    modsec_pkgs="$(dpkg-query -W -f='${Package}\n' 2>/dev/null \
+      | grep -E '^(libnginx-mod-http-modsecurity|modsecurity-crs|libmodsecurity-dev|libmodsecurity3)' \
+      | tr '\n' ' ')"
+    if [[ -n "${modsec_pkgs// }" ]]; then
+      DEBIAN_FRONTEND=noninteractive apt-get -y \
+        -o Dpkg::Lock::Timeout=300 \
+        remove --purge $modsec_pkgs >/dev/null 2>&1 || true
+      apt-get -y autoremove >/dev/null 2>&1 || true
+    fi
   fi
 
   # Sweep leftover nginx config + module symlinks. The apt purge usually
   # handles modules-enabled/*.conf already, but operators sometimes
-  # symlinked manually — wipe both.
+  # symlinked manually — wipe both. The *_includes.conf and
+  # sites-available/default-modsecurity.conf are M26-era jabali drops
+  # that the package purge does NOT own.
   rm -f /etc/nginx/modules-enabled/*modsecurity* 2>/dev/null || true
   rm -f /etc/nginx/modsecurity.conf 2>/dev/null || true
+  rm -f /etc/nginx/modsecurity_includes.conf 2>/dev/null || true
+  rm -f /etc/nginx/sites-available/default-modsecurity.conf 2>/dev/null || true
+  rm -f /etc/nginx/sites-enabled/default-modsecurity.conf 2>/dev/null || true
   rm -rf /etc/nginx/modsec 2>/dev/null || true
   rm -rf /etc/modsecurity 2>/dev/null || true
 

@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
@@ -398,6 +399,12 @@ var (
 	blocklistsCacheMu      sync.RWMutex
 	blocklistsCacheValue   csBlocklistsResponse
 	blocklistsCacheUpdated time.Time
+	// blocklistsRefreshing guards the synchronous Refresh-button path:
+	// the 30s throttle is a check-then-act, so without an in-flight
+	// CAS two concurrent Refresh clicks both pass the throttle and
+	// fire two parallel cscli storms — the exact thundering-herd the
+	// cache exists to prevent.
+	blocklistsRefreshing atomic.Bool
 )
 
 const blocklistsRefreshInterval = 5 * time.Minute
@@ -415,7 +422,11 @@ func csBlocklistsRefreshHandler(ctx context.Context, _ json.RawMessage) (any, er
 	blocklistsCacheMu.RLock()
 	tooRecent := time.Since(blocklistsCacheUpdated) < 30*time.Second && !blocklistsCacheUpdated.IsZero()
 	blocklistsCacheMu.RUnlock()
-	if !tooRecent {
+	// CAS in-flight guard. Only the goroutine that flips false->true
+	// runs the refresh; concurrent Refresh clicks fall through to the
+	// cached snapshot instead of stacking parallel cscli runs.
+	if !tooRecent && blocklistsRefreshing.CompareAndSwap(false, true) {
+		defer blocklistsRefreshing.Store(false)
 		blocklistsRefreshOnce(ctx)
 	}
 	blocklistsCacheMu.RLock()

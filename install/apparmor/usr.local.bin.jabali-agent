@@ -325,6 +325,18 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /usr/bin/chage               ix,
   /usr/bin/php*                ix,
   /usr/bin/wp                  ix,
+  # MariaDB client family. Without these db.create / db.backup /
+  # db.size / db.mysqladmin.ensure fail under enforce with
+  # "ERROR 2002 (HY000): Can't connect ... mysqld.sock (13)" — the
+  # EACCES is AA refusing the exec, not a socket-perm issue
+  # (mariadbd is unconfined; /run/** rwk already covers the socket).
+  # Debian ships both mysql* compat + mariadb* canonical names.
+  /usr/bin/mysql               ix,
+  /usr/bin/mariadb             ix,
+  /usr/bin/mysqldump           ix,
+  /usr/bin/mariadb-dump        ix,
+  /usr/bin/mysqladmin          ix,
+  /usr/bin/mariadb-admin       ix,
   /usr/bin/id                  ix,
   /usr/bin/chsh                ix,
   /usr/bin/journalctl          ix,

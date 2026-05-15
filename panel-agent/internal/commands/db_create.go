@@ -106,10 +106,11 @@ func dbCreateHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	)
 
 	cmd := exec.CommandContext(ctx, "mysql", "-e", sql)
-	if err := cmd.Run(); err != nil {
+	out, runErr := cmd.CombinedOutput()
+	if runErr != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
-			Message: "failed to create database",
+			Message: fmt.Sprintf("failed to create database: %v: %s", runErr, strings.TrimSpace(string(out))),
 		}
 	}
 

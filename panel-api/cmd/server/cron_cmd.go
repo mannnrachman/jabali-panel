@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/cronvalidate"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
@@ -18,6 +19,46 @@ import (
 
 func cronJobRepoFromDB() repository.CronJobRepository {
 	return repository.NewCronJobRepository(sharedDB)
+}
+
+// ownedDocrootsForUser mirrors cronHandler.ownedDocroots — the
+// allow-list path validator needs the user's domain docroots so a
+// wp/php cron command can only point at a path the user owns.
+// Without this the CLI write path bypasses the same allow-list the
+// REST handler enforces (M44 / ADR-0083 single-source invariant).
+func ownedDocrootsForUser(ctx context.Context, userID string) ([]string, error) {
+	domains, _, err := repository.NewDomainRepository(sharedDB).
+		ListByUserID(ctx, userID, repository.ListOptions{Limit: 1000})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(domains))
+	for _, d := range domains {
+		if d.DocRoot != "" {
+			out = append(out, d.DocRoot)
+		}
+	}
+	return out, nil
+}
+
+// validateCronInputs runs the exact cronvalidate gate the REST
+// handler uses (name -> schedule -> command). Returns a cobra-friendly
+// error so the CLI exits non-zero with the validator's reason.
+func validateCronInputs(ctx context.Context, userID, name, schedule, command string) error {
+	if err := cronvalidate.ValidateCronName(name); err != nil {
+		return fmt.Errorf("invalid name: %w", err)
+	}
+	if err := cronvalidate.ValidateSchedule(schedule); err != nil {
+		return fmt.Errorf("invalid schedule: %w", err)
+	}
+	docroots, err := ownedDocrootsForUser(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("resolve owned docroots: %w", err)
+	}
+	if _, err := cronvalidate.ValidateCommand(command, docroots); err != nil {
+		return fmt.Errorf("invalid command: %w", err)
+	}
+	return nil
 }
 
 func newCronCmd() *cobra.Command {
@@ -107,6 +148,9 @@ func newCronAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := validateCronInputs(ctx, u.ID, name, schedule, command); err != nil {
+				return err
+			}
 			job := &models.CronJob{
 				ID:       ids.NewULID(),
 				UserID:   u.ID,
@@ -185,6 +229,12 @@ func newCronUpdateCmd() *cobra.Command {
 			}
 			if !changed {
 				return fmt.Errorf("no changes specified")
+			}
+			// Re-validate the resulting row through the same gate the
+			// REST PATCH handler uses — an update can introduce a
+			// disallowed command/schedule just like a create.
+			if err := validateCronInputs(ctx, job.UserID, job.Name, job.Schedule, job.Command); err != nil {
+				return err
 			}
 			if err := repo.Update(ctx, job); err != nil {
 				return fmt.Errorf("update cron job: %w", err)

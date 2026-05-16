@@ -6,23 +6,15 @@ Tracking file for non-blocking bugs that have been investigated but deferred. Ne
 
 ## Open
 
-### KI-2 — AppArmor broken-mediation gate not durable across `jabali update`
-
-**Opened:** 2026-05-16
-**Severity:** MEDIUM (no data loss; recurs as a hard feature break until manually disabled — surfaced 3× this session on mx.jabali-panel.local).
-**Scope:** install.sh `install_apparmor` gate + `apparmor_durably_disable_jabali`; hosts whose kernel lacks `/sys/kernel/security/apparmor/features/unix` (Debian 13 / 6.12, Ubuntu 24.04 HWE / 6.8).
-**Discovered by:** M45 root-terminal blank-UI + recurring db.create EACCES debugging.
-**Failure signature:** on a features/unix-absent kernel, `jabali-agent` is `(enforce)` again after a `jabali update` (`aa-status | grep jabali-agent`). Confined root agent then EACCESes unconfined-peer unix connects: `ERROR 2002 ... mysqld.sock (13)` (WordPress/app install dies at db.create) and `open …<id>.cast: permission denied` (root terminal session opens→closes ~10ms, blank UI).
-**Root cause:** `4ae81d2b` makes the gate fire on features/unix absence and `5d703c46` adds durable `/etc/apparmor.d/disable/<name>` symlinks, but a subsequent `jabali update` → `provision_new_software` → `install_apparmor` re-applies + re-enforces the profile (the durable-disable symlink is removed/overwritten in the apply path before the gate re-evaluates, or the gate's marker check races the apply). Net: the disable does not persist a full update cycle on .150.
-**Why-not-production-impact:** the per-profile content fix (`da7e3b2f` added `/var/log/jabali/terminal/**`; `461e8704` added the mysql client family) means the profile is *correct* where mediation works; on broken-mediation kernels the operator workaround is one command and `jabali repair`/manual `aa-disable` clears it. Not data-affecting.
-**Fix sketch:** in `install_apparmor`, evaluate the features/unix gate BEFORE `apply_apparmor_profiles`, and when broken make the disable terminal — skip apply entirely AND ensure the `/etc/apparmor.d/disable/<name>` symlink + in-kernel `-R` both run last, after any cleanup that could strip them. Add a post-condition assert (`aa-status` must not list `jabali-*`) that loudly warns if a profile is still loaded when the gate fired.
-**Reproduction:** on a Debian 13 / 6.12 host (no `/sys/kernel/security/apparmor/features/unix`): `jabali update`; `sudo aa-status | grep jabali-agent` → shows `(enforce)`; open root terminal → blank, agent log `open …cast: permission denied`.
-**Blocks:** nothing (M45 + db.create both work once the profile is disabled; that path is documented).
-**Close when:** two consecutive `jabali update` runs on a 6.12 / no-features-unix host leave zero `jabali-*` profiles loaded, verified by an install.sh post-condition assert.
+(none)
 
 ---
 
+## Closed
+
 ### KI-1 — Login.test.tsx: 4 failing tests (`useThemeMode must be used inside ThemeModeProvider`)
+
+Closed 2026-05-16 in `3db12b7e` (`fix(test): wrap LoginPage test in ThemeModeProvider`, committed 2026-04-26 — already on `origin/main`; this file just wasn't updated). Verified: `Login.test.tsx` 4/4 pass and the full panel-ui vitest suite is 14 files / 83 tests green, no regression.
 
 **Opened:** 2026-04-23
 **Severity:** LOW (pre-existing on `origin/main` before M24 shipped, no production impact — tests are wrong, app works).
@@ -78,12 +70,6 @@ cd panel-ui && npx vitest run src/pages/Login.test.tsx --reporter=basic
 **Blocks:** Nothing currently. CI job `panel-ui vitest` tolerates these failures via whatever test-tolerance config is in place (or they're being ignored — worth auditing as part of the fix).
 
 **Close when:** All 4 tests pass on `origin/main` without the rest of the suite regressing.
-
----
-
-## Closed
-
-(none yet)
 
 ---
 

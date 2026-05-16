@@ -143,6 +143,13 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 		DefaultOn:   true,
 	},
 	{
+		Kind:        "security.root_terminal.opened",
+		Label:       "Root web terminal opened",
+		Description: "An admin opened the in-panel root shell (M45). Highest-trust action; every byte is recorded to /var/log/jabali/terminal/<id>.cast.",
+		Severity:    "critical",
+		DefaultOn:   true,
+	},
+	{
 		Kind:        "security.decision.fired",
 		Label:       "Security decision fired",
 		Description: "Aggregated drop/throttle from any decision brain (UFW, nginx limit_req, CrowdSec). One envelope per polling window when activity exceeds 0.",

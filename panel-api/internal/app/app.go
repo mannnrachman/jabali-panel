@@ -44,6 +44,7 @@ type Deps struct {
 	AdminerSSOTokens repository.AdminerSSOTokenRepository
 	AdminerSSO       *sso.AdminerService
 	LogAccessStreams    repository.LogAccessStreamRepository
+	TerminalSessions    repository.TerminalSessionRepository
 	Agent               agent.AgentInterface
 	Reconciler          *reconciler.Reconciler
 	ServerSettings      repository.ServerSettingsRepository
@@ -853,6 +854,19 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			admin := v1.Group("/admin", middleware.RequireAdmin())
 			api.RegisterPHPVersionAdminRoutes(admin, deps.Agent, deps.ServerSettings)
 			api.RegisterPHPExtensionAdminRoutes(admin, deps.Agent)
+		}
+
+		// M45 root web terminal (ADR-0096). Off by default; the handler
+		// re-checks server_settings.root_terminal_enabled on every mint
+		// + WS upgrade. Mounted under the admin RequireAdmin group.
+		if deps.TerminalSessions != nil && deps.ServerSettings != nil {
+			tadmin := v1.Group("/admin", middleware.RequireAdmin())
+			api.RegisterTerminalRoutes(tadmin, api.TerminalHandlerConfig{
+				Sessions:       deps.TerminalSessions,
+				ServerSettings: deps.ServerSettings,
+				Notifications:  deps.NotificationQueue,
+				Log:            deps.Log,
+			})
 		}
 		// M34 per-user PHP-FPM egress firewall — admin + user routes share
 		// the same handler config; admin half mounts under /admin

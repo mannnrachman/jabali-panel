@@ -333,6 +333,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.BackupSchedules = repository.NewBackupScheduleRepository(sharedDB)
 		deps.PhpMyAdminSSOTokens = phpMyAdminSSOTokenRepo
 		deps.LogAccessStreams = logAccessStreamRepo
+		deps.TerminalSessions = repository.NewTerminalSessionRepository(sharedDB)
 		deps.PHPPools = phpPoolRepo
 		deps.PHPPoolIniOverrides = phpPoolIniOverrideRepo
 		deps.WordPressInstalls = wordpressInstallRepo

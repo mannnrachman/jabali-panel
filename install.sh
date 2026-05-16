@@ -4369,6 +4369,36 @@ install_wp_cli() {
   _ok "wp-cli extracted and symlinked"
 }
 
+# ensure_snuffleupagus_bundle_synced — mirror the repo rule bundle into
+# /usr/share so SnuffleupagusReconciler (which prefers /usr/share and
+# only falls back to the repo when /usr/share is ABSENT) renders the
+# CURRENT rules on an existing host. install_snuffleupagus does this on
+# fresh installs only; without this provision heal a shipped rule change
+# (e.g. the phar:// wrappers_whitelist fix) never reaches existing hosts
+# on `jabali update`. panel-api restart later in the update re-runs the
+# reconciler, regenerating active.rules from the refreshed bundle.
+# Args: $1 repo rules dir, $2 /usr/share bundle dir (defaults wired for
+# prod; parameterised for sandbox unit testing).
+ensure_snuffleupagus_bundle_synced() {
+  local src="${1:-${REPO_DIR:-/opt/jabali-panel}/install/snuffleupagus/rules}"
+  local dst="${2:-/usr/share/jabali/snuffleupagus/rules}"
+  [[ -d "$src" ]] || return 0
+  mkdir -p "$dst"
+  local changed=0 f base
+  for f in "$src"/*.rules; do
+    [[ -e "$f" ]] || continue
+    base="$(basename "$f")"
+    if [[ ! -f "$dst/$base" ]] || ! cmp -s "$f" "$dst/$base"; then
+      install -m 0644 "$f" "$dst/$base" && changed=1
+    fi
+  done
+  if [[ -f "$src/README.md" ]]; then
+    install -m 0644 "$src/README.md" "$dst/README.md" 2>/dev/null || true
+  fi
+  [[ "$changed" == "1" ]] && _log "snuffleupagus rule bundle re-synced to $dst"
+  return 0
+}
+
 # ensure_wpcli_symlink — (re)create the PATH-visible wp symlink.
 # install_wpcli's idempotency guard only checks /opt/wp-cli/{phar,
 # current}; if the external <bindir>/wp link is deleted (uninstall
@@ -9202,6 +9232,9 @@ EOF
   fi
   if declare -f ensure_wpcli_symlink >/dev/null 2>&1; then
     ensure_wpcli_symlink
+  fi
+  if declare -f ensure_snuffleupagus_bundle_synced >/dev/null 2>&1; then
+    ensure_snuffleupagus_bundle_synced
   fi
   if declare -f ensure_mariadb_socket_acl_for_jabali >/dev/null 2>&1; then
     ensure_mariadb_socket_acl_for_jabali

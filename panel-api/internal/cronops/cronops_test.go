@@ -39,6 +39,13 @@ type fakeCronRepo struct {
 
 func (f *fakeCronRepo) Create(_ context.Context, j *models.CronJob) error { f.created = j; return nil }
 func (f *fakeCronRepo) Delete(_ context.Context, id string) error         { f.deleted = id; return nil }
+func (f *fakeCronRepo) FindByID(_ context.Context, id string) (*models.CronJob, error) {
+	if f.created != nil && f.created.ID == id {
+		return f.created, nil
+	}
+	return nil, repository.ErrNotFound
+}
+func (f *fakeCronRepo) Update(_ context.Context, j *models.CronJob) error { f.created = j; return nil }
 
 type fakeAgent struct {
 	called bool

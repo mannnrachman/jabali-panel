@@ -186,6 +186,12 @@ export const adminNav: NavItem[] = [
     icon: navIcon(SwapOutlined),
     path: "/jabali-admin/migrations",
   },
+  {
+    key: "terminal",
+    label: "Terminal",
+    icon: navIcon(CodeOutlined),
+    path: "/jabali-admin/terminal",
+  },
 ];
 
 export const userNav: NavItem[] = [

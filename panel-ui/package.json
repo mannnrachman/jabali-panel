@@ -2,7 +2,7 @@
   "name": "jabali-panel-ui",
   "private": true,
   "version": "0.2.10",
-  "description": "Jabali Panel SPA — React + TanStack Query + Ant Design",
+  "description": "Jabali Panel SPA \u2014 React + TanStack Query + Ant Design",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -31,7 +31,9 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-icons": "^5.6.0",
-    "react-router": "^7.1.1"
+    "react-router": "^7.1.1",
+    "@xterm/xterm": "^6.0.0",
+    "@xterm/addon-fit": "^0.11.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",

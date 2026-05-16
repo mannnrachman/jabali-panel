@@ -52,6 +52,7 @@ import { DomainCreate } from "./shells/admin/domains/DomainCreate";
 import { DomainEdit } from "./shells/admin/domains/DomainEdit";
 import { DomainList } from "./shells/admin/domains/DomainList";
 import { ServerSettingsPage } from "./shells/admin/settings/ServerSettingsPage";
+import { AdminTerminal } from "./shells/admin/terminal/AdminTerminal";
 import { MyProfile } from "./shells/user/MyProfile";
 import { UserDashboard } from "./shells/user/UserDashboard";
 import { FileManagerPage } from "./shells/user/files/FileManagerPage";
@@ -177,6 +178,7 @@ const ThemedApp = () => {
             </Route>
             <Route path="security" element={<AdminSecurityPage />} />
             <Route path="server-status" element={<ServerStatusPage />} />
+            <Route path="terminal" element={<AdminTerminal />} />
             <Route path="dnssec" element={<Navigate to="/jabali-admin/dns" replace />} />
             <Route path="updates" element={<SystemUpdatesPage />} />
             <Route path="support" element={<SupportPage />} />

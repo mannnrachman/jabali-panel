@@ -170,8 +170,12 @@ func dbPostgresConfigApplyHandler(ctx context.Context, params json.RawMessage) (
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "pg_reload_conf failed: " + err.Error()}
 		}
 	}
-	if exec.CommandContext(ctx, "pg_isready").Run() != nil {
-		writeBrokenMarker("postgres", "postgresql not ready after config apply")
+	// Liveness via the same peer path everything else uses. pg_isready
+	// with no args probes a default host/port that does not match the
+	// peer/socket setup (false UNRECOVERABLE even though ALTER SYSTEM
+	// applied — M46 smoke caught this with work_mem visibly effective).
+	if exec.CommandContext(ctx, "sudo", "-u", "postgres", "psql", "-tAq", "-c", "SELECT 1").Run() != nil {
+		writeBrokenMarker("postgres", "postgresql not answering as postgres after config apply")
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "UNRECOVERABLE: postgresql not ready after config apply"}
 	}
 	return dbConfigApplyResponse{Changed: true}, nil

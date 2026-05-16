@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -77,6 +78,8 @@ func RegisterDatabaseAdminOpsRoutes(g *gin.RouterGroup, cfg DatabaseAdminOpsHand
 	if cfg.AdminerSSO != nil {
 		grp.POST("/sso/adminer", h.ssoAdminerAdmin)
 	}
+	grp.POST("/maintenance", h.runMaintenance)
+	grp.GET("/maintenance/:id", h.maintenanceStatus)
 }
 
 // sameOriginOK is a lightweight CSRF guard (ADR-0099): the request must
@@ -403,6 +406,98 @@ func (h *databaseAdminOpsHandler) ssoPhpMyAdminAdmin(c *gin.Context) {
 	c.JSON(http.StatusOK, ssoRedirectResponse{
 		RedirectURL: panelBaseURL(c) + "/phpmyadmin/sso.php?token=" + token,
 	})
+}
+
+// ---- M46 Step 5: maintenance (ADR-0100) — InnoDB-honest ----
+
+type runMaintenanceRequest struct {
+	Engine string `json:"engine"`
+	Scope  string `json:"scope"` // "all" or a db name
+}
+
+// runMaintenance starts an async optimize/analyze job. One job per
+// engine at a time (409 otherwise). Survives panel restart via
+// db_admin_jobs so a page reload doesn't lose the run.
+func (h *databaseAdminOpsHandler) runMaintenance(c *gin.Context) {
+	ctx := c.Request.Context()
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	var req runMaintenanceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+		return
+	}
+	if !dbEngineValid(req.Engine) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_engine"})
+		return
+	}
+	if req.Scope == "" {
+		req.Scope = "all"
+	}
+	if h.cfg.Agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
+		return
+	}
+	// 409 guard: refuse to enqueue a parallel run for this engine.
+	if _, err := h.cfg.DBAdmin.RunningJob(ctx, req.Engine); err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "maintenance_already_running"})
+		return
+	}
+	job := &models.DBAdminJob{
+		Engine: req.Engine, Kind: "maintenance", Scope: req.Scope,
+		Status: "running", ActorUserID: claims.UserID,
+	}
+	if err := h.cfg.DBAdmin.CreateJob(ctx, job); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+
+	cmd := "db.maintenance"
+	if req.Engine == "postgres" {
+		cmd = "db.postgres.maintenance"
+	}
+	// Detached: the request returns immediately with the job id; the
+	// run continues on a background context (request ctx dies on
+	// return). 30-min ceiling covers large optimize/vacuum.
+	go func(jobID, agentCmd, engine, scope, actor string) {
+		bg, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		raw, aerr := h.cfg.Agent.Call(bg, agentCmd, map[string]any{"scope": scope})
+		status, summary := "ok", ""
+		if aerr != nil {
+			status, summary = "error", aerr.Error()
+		} else {
+			var r struct {
+				Summary string `json:"summary"`
+			}
+			_ = json.Unmarshal(raw, &r)
+			summary = r.Summary
+		}
+		_ = h.cfg.DBAdmin.FinishJob(context.Background(), jobID, status, summary)
+		h.audit(context.Background(), actor, engine, "maintenance", scope, status, "")
+		h.publish(context.Background(), notifications.Envelope{
+			EventKind: "db.admin.maintenance_finished",
+			Severity:  map[bool]string{true: "warning", false: "info"}[status == "error"],
+			Title:     "Database maintenance " + status,
+			Body:      engine + " maintenance (" + scope + ") finished: " + status,
+			Deeplink:  "/jabali-admin/settings",
+			UserID:    actor,
+		})
+	}(job.ID, cmd, req.Engine, req.Scope, claims.UserID)
+
+	c.JSON(http.StatusAccepted, gin.H{"job_id": job.ID, "status": "running"})
+}
+
+func (h *databaseAdminOpsHandler) maintenanceStatus(c *gin.Context) {
+	job, err := h.cfg.DBAdmin.GetJob(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+		return
+	}
+	c.JSON(http.StatusOK, job)
 }
 
 func (h *databaseAdminOpsHandler) ssoAdminerAdmin(c *gin.Context) {

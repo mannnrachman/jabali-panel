@@ -5,7 +5,12 @@
 //
 // Icons go through the @icons shim (CONVENTIONS) — never
 // @ant-design/icons.
-import { DatabaseOutlined, KeyOutlined, SettingOutlined } from "@icons";
+import {
+  DatabaseOutlined,
+  KeyOutlined,
+  SettingOutlined,
+  ToolOutlined,
+} from "@icons";
 import {
   Button,
   Card,
@@ -354,13 +359,131 @@ function AdminDbConsoleSection() {
   );
 }
 
+interface MaintenanceJob {
+  id: string;
+  status: "running" | "ok" | "error";
+  summary?: string;
+  engine: string;
+  scope: string;
+}
+
+function MaintenanceSection() {
+  const [engine, setEngine] = useState<Engine>("mariadb");
+  const [running, setRunning] = useState(false);
+  const [job, setJob] = useState<MaintenanceJob | null>(null);
+
+  const poll = async (id: string) => {
+    for (let i = 0; i < 120; i++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      try {
+        const res = await apiClient.get<MaintenanceJob>(
+          `/admin/databases/maintenance/${id}`,
+        );
+        setJob(res.data);
+        if (res.data.status !== "running") return;
+      } catch {
+        /* keep polling */
+      }
+    }
+  };
+
+  const run = async () => {
+    setRunning(true);
+    setJob(null);
+    try {
+      const res = await apiClient.post<{ job_id: string }>(
+        "/admin/databases/maintenance",
+        { engine, scope: "all" },
+      );
+      void poll(res.data.job_id);
+      message.success("Maintenance started.");
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response
+        ?.status;
+      message.error(
+        status === 409
+          ? "A maintenance job is already running for this engine."
+          : `Could not start maintenance: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+      );
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <Card
+      title={
+        <Space>
+          <ToolOutlined />
+          Maintenance (optimize &amp; analyze)
+        </Space>
+      }
+      style={{ marginBottom: 16 }}
+    >
+      <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+        Runs <code>OPTIMIZE</code> + <code>ANALYZE</code> (MariaDB) or{" "}
+        <code>VACUUM (ANALYZE)</code> + <code>REINDEX</code> (PostgreSQL)
+        across all databases. Note: classic “repair” is a no-op on InnoDB
+        (almost every database here) — this reclaims space and refreshes
+        planner statistics, it does not “repair” InnoDB tables.
+      </Typography.Paragraph>
+      <Space wrap style={{ marginBottom: 12 }}>
+        <Segmented
+          options={[
+            { label: "MariaDB", value: "mariadb" },
+            { label: "PostgreSQL", value: "postgres" },
+          ]}
+          value={engine}
+          onChange={(v) => setEngine(v as Engine)}
+        />
+        <Button
+          type="primary"
+          loading={running || job?.status === "running"}
+          onClick={run}
+        >
+          Run maintenance (all {engine} databases)
+        </Button>
+        {job && (
+          <Tag
+            color={
+              job.status === "ok"
+                ? "green"
+                : job.status === "error"
+                  ? "red"
+                  : "blue"
+            }
+          >
+            {job.status}
+          </Tag>
+        )}
+      </Space>
+      {job?.summary && (
+        <Typography.Paragraph
+          code
+          style={{
+            whiteSpace: "pre-wrap",
+            maxHeight: 220,
+            overflow: "auto",
+            fontSize: 12,
+          }}
+        >
+          {job.summary}
+        </Typography.Paragraph>
+      )}
+    </Card>
+  );
+}
+
 export function DatabaseAdminSections() {
   return (
     <>
       <RootPasswordSection />
       <ConfigTunerSection />
       <AdminDbConsoleSection />
-      {/* M46 Steps 5–6 append maintenance / processes sections here. */}
+      <MaintenanceSection />
+      {/* M46 Step 6 appends the processes section here. */}
     </>
   );
 }

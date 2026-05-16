@@ -155,10 +155,14 @@ func (h *cronHandler) linuxUsername(ctx context.Context, userID string) (string,
 	if err != nil {
 		return "", err
 	}
-	if u == nil || u.Username == nil || *u.Username == "" {
-		return "", errors.New("user has no linux account")
+	uname := ""
+	if u != nil && u.Username != nil {
+		uname = *u.Username
 	}
-	return *u.Username, nil
+	if err := cronvalidate.ValidateLinuxAccount(uname); err != nil {
+		return "", err
+	}
+	return uname, nil
 }
 
 func (h *cronHandler) fetchAndAuthorize(ctx context.Context, c *gin.Context, id string) (*models.CronJob, bool) {

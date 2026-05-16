@@ -44,9 +44,16 @@ func ownedDocrootsForUser(ctx context.Context, userID string) ([]string, error) 
 // validateCronInputs runs the exact cronvalidate gate the REST
 // handler uses (name -> schedule -> command). Returns a cobra-friendly
 // error so the CLI exits non-zero with the validator's reason.
-func validateCronInputs(ctx context.Context, userID, name, schedule, command string) error {
+func validateCronInputs(ctx context.Context, userID, username, name, schedule, command string) error {
 	if err := cronvalidate.ValidateCronName(name); err != nil {
 		return fmt.Errorf("invalid name: %w", err)
+	}
+	// Drift fix (ADR-0083): REST cron.create 409s when the target
+	// user has no Linux account; the CLI must reject identically or
+	// it creates an enabled job the reconciler can never materialise.
+	// Pure check — caller supplies the resolved Linux username.
+	if err := cronvalidate.ValidateLinuxAccount(username); err != nil {
+		return fmt.Errorf("invalid user: %w", err)
 	}
 	if err := cronvalidate.ValidateSchedule(schedule); err != nil {
 		return fmt.Errorf("invalid schedule: %w", err)
@@ -148,7 +155,7 @@ func newCronAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := validateCronInputs(ctx, u.ID, name, schedule, command); err != nil {
+			if err := validateCronInputs(ctx, u.ID, derefStr(u.Username), name, schedule, command); err != nil {
 				return err
 			}
 			job := &models.CronJob{
@@ -233,7 +240,11 @@ func newCronUpdateCmd() *cobra.Command {
 			// Re-validate the resulting row through the same gate the
 			// REST PATCH handler uses — an update can introduce a
 			// disallowed command/schedule just like a create.
-			if err := validateCronInputs(ctx, job.UserID, job.Name, job.Schedule, job.Command); err != nil {
+			cu, cuErr := userRepo().FindByID(ctx, job.UserID)
+			if cuErr != nil {
+				return fmt.Errorf("load user: %w", cuErr)
+			}
+			if err := validateCronInputs(ctx, job.UserID, derefStr(cu.Username), job.Name, job.Schedule, job.Command); err != nil {
 				return err
 			}
 			if err := repo.Update(ctx, job); err != nil {

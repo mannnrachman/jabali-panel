@@ -110,6 +110,13 @@ type ServerSettings struct {
 	// knob. Migration 000073. 0 falls back to the compile-time default.
 	UploadMaxSizeMB uint32 `gorm:"column:upload_max_size_mb;type:int unsigned;not null;default:1024" json:"upload_max_size_mb"`
 
+	// M45 root web terminal (ADR-0096). Off by default — when false the
+	// token-mint endpoint 403s and the UI hides the Terminal tab. True
+	// unrestricted root PTY; flipping it true is an explicit audited
+	// operator decision. Every session is byte-recorded to
+	// /var/log/jabali/terminal/<id>.cast and M14-notified on open.
+	RootTerminalEnabled bool `gorm:"column:root_terminal_enabled;type:tinyint(1);not null;default:0" json:"root_terminal_enabled"`
+
 	// M13 SSH shell sandbox (ADR-0067).
 	// SSHSandboxMode ∈ {"bubblewrap", "nspawn"}. Default bubblewrap on
 	// fresh installs. Wrapper at /usr/local/bin/jabali-ssh-shell reads

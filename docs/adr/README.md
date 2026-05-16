@@ -133,3 +133,4 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 ### Related Documents
 - `docs/runbooks/dns-secondary-nameserver.md` — Secondary nameserver setup (references ADR-0011)
 - `BLUEPRINT.md` — Feature roadmap and milestones
+| [0096](0096-root-web-terminal.md) | Root web terminal in admin panel | accepted | 2026-05-16 |

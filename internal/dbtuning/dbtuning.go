@@ -85,20 +85,37 @@ func parseBytes(s string) (float64, error) {
 	if s == "" {
 		return 0, fmt.Errorf("empty")
 	}
-	mult := 1.0
-	switch s[len(s)-1] {
-	case 'K', 'k':
-		mult, s = 1<<10, s[:len(s)-1]
-	case 'M', 'm':
-		mult, s = 1<<20, s[:len(s)-1]
-	case 'G', 'g':
-		mult, s = 1<<30, s[:len(s)-1]
-	case 'T', 't':
-		mult, s = 1<<40, s[:len(s)-1]
+	// Split leading number from a trailing unit token. Handles both
+	// MariaDB single-letter (512M, 1G) and PostgreSQL two-letter
+	// (8MB, 4096kB, 4GB) byte units — the latter regressed pg config
+	// (M46 smoke: "work_mem: not a number").
+	i := 0
+	for i < len(s) && (s[i] == '.' || (s[i] >= '0' && s[i] <= '9')) {
+		i++
 	}
-	n, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	numStr := strings.TrimSpace(s[:i])
+	unit := strings.ToLower(strings.TrimSpace(s[i:]))
+	if numStr == "" {
+		return 0, fmt.Errorf("not a number")
+	}
+	n, err := strconv.ParseFloat(numStr, 64)
 	if err != nil {
 		return 0, fmt.Errorf("not a number")
+	}
+	mult := 1.0
+	switch unit {
+	case "", "b":
+		mult = 1
+	case "k", "kb":
+		mult = 1 << 10
+	case "m", "mb":
+		mult = 1 << 20
+	case "g", "gb":
+		mult = 1 << 30
+	case "t", "tb":
+		mult = 1 << 40
+	default:
+		return 0, fmt.Errorf("bad unit %q", unit)
 	}
 	return n * mult, nil
 }

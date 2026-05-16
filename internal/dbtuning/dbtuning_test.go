@@ -84,3 +84,29 @@ func TestListEngineScoped(t *testing.T) {
 		t.Fatal("postgres allowlist empty")
 	}
 }
+
+func TestParseBytesUnits(t *testing.T) {
+	ok := map[string]float64{
+		"256": 256, "256B": 256, "8MB": 8 << 20, "4096kB": 4096 << 10,
+		"4GB": 4 << 30, "512M": 512 << 20, "1G": 1 << 30, "2T": 2 << 40,
+		"128 MB": 128 << 20,
+	}
+	for in, want := range ok {
+		got, err := parseBytes(in)
+		if err != nil || got != want {
+			t.Fatalf("parseBytes(%q)=%v,%v want %v", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"", "MB", "8XB", "abc", "8 9 M"} {
+		if _, err := parseBytes(bad); err == nil {
+			t.Fatalf("parseBytes(%q) should error", bad)
+		}
+	}
+	// The regression: pg byte keys with two-letter units must validate.
+	if err := Validate("postgres", "work_mem", "8MB"); err != nil {
+		t.Fatalf("work_mem=8MB must be valid: %v", err)
+	}
+	if err := Validate("mariadb", "innodb_buffer_pool_size", "512M"); err != nil {
+		t.Fatalf("innodb_buffer_pool_size=512M must be valid: %v", err)
+	}
+}

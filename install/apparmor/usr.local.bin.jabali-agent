@@ -211,6 +211,13 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /var/lib/jabali-*/**         rwk,
   /var/log/jabali-*/           rw,
   /var/log/jabali-*/**         rwk,
+  # M45 root-terminal asciinema recordings. The jabali-*/ globs
+  # above use a DASH so they do NOT match /var/log/jabali/terminal/
+  # — without these the root PTY broker's cast open() is denied
+  # (EACCES even as root) and every session dies ~10ms in.
+  /var/log/jabali/             rw,
+  /var/log/jabali/terminal/    rw,
+  /var/log/jabali/terminal/**  rwk,
   /var/log/journal/            r,
   /var/log/journal/**          r,
   /var/log/audit/              r,

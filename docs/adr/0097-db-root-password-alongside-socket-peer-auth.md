@@ -1,7 +1,7 @@
 # ADR-0097 — DB root/superuser password *alongside* socket/peer auth
 
 **Date**: 2026-05-16
-**Status**: proposed
+**Status**: accepted
 **Deciders**: shuki (requested + chose Option A), Claude (design)
 **Related**: ADR-0050 (unix-socket model), ADR-0071 (MariaDB loopback-only), M7 (databases), M46
 

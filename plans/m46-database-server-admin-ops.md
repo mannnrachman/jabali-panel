@@ -1,7 +1,7 @@
 # M46 — Database Server Admin Ops (Server Settings ▸ Databases tab)
 
 **Branch:** `m46/database-server-admin-ops`
-**Status:** Blueprint — advisor-reviewed, B1–B11 folded. Ready to execute Step 0.
+**Status:** SHIPPED on branch 2026-05-16 (all 7 steps). Live-VM smoke pending (192.168.100.150).
 **Next free migration:** `000135`
 **Next free ADR:** `0097` (0096 = M45 root web terminal; README ADR index is stale, missing 0096 — fix in Step 7)
 **Milestone #:** M46 (M45 = root web terminal, highest on `main`)

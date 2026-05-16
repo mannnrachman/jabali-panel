@@ -1,7 +1,7 @@
 # ADR-0098 — Curated, reconciler-converged DB config tuner
 
 **Date**: 2026-05-16
-**Status**: proposed
+**Status**: accepted
 **Deciders**: shuki (requested + chose curated allowlist), Claude (design)
 **Related**: ADR-0002 (DB is source of truth), ADR-0004 (reconciler convergence), ADR-0009 (nginx file-per-vhost), M46
 

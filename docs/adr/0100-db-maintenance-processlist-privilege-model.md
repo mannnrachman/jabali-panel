@@ -1,7 +1,7 @@
 # ADR-0100 — DB maintenance + processlist privilege model
 
 **Date**: 2026-05-16
-**Status**: proposed
+**Status**: accepted
 **Deciders**: shuki (requested), Claude (design)
 **Related**: ADR-0019 (per-database grants only), ADR-0050 (unix-socket model), ADR-0097 (root pw alongside socket), M46
 

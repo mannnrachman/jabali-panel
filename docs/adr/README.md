@@ -84,6 +84,11 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0093](0093-automation-api-tokens.md) | M44 Automation API scoped tokens | Accepted |
 | [0094](0094-migration-importers.md) | M35 Migration importers (cPanel / DA / Hestia / WHM / IMAP) | Proposed |
 | [0095](0095-m35-migration-gui-design-decisions.md) | M35.1 Migration GUI design decisions (wizard, SSE, SSRF, retry, batch) | Proposed |
+| [0096](0096-root-web-terminal.md) | Root web terminal in admin panel | Accepted |
+| [0097](0097-db-root-password-alongside-socket-peer-auth.md) | M46 DB root/superuser password alongside socket/peer auth | Accepted |
+| [0098](0098-curated-reconciler-converged-db-config-tuner.md) | M46 Curated reconciler-converged DB config tuner | Accepted |
+| [0099](0099-admin-scoped-privileged-db-web-access.md) | M46 Admin-scoped privileged DB web access (phpMyAdmin/Adminer) | Accepted |
+| [0100](0100-db-maintenance-processlist-privilege-model.md) | M46 DB maintenance + processlist privilege model | Accepted |
 
 ## Decision Categories
 
@@ -133,4 +138,3 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 ### Related Documents
 - `docs/runbooks/dns-secondary-nameserver.md` — Secondary nameserver setup (references ADR-0011)
 - `BLUEPRINT.md` — Feature roadmap and milestones
-| [0096](0096-root-web-terminal.md) | Root web terminal in admin panel | accepted | 2026-05-16 |

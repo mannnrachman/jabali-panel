@@ -5,17 +5,24 @@
 //
 // Icons go through the @icons shim (CONVENTIONS) — never
 // @ant-design/icons.
-import { KeyOutlined } from "@icons";
+import { KeyOutlined, SettingOutlined } from "@icons";
 import {
   Button,
   Card,
+  Form,
+  Input,
+  InputNumber,
   Modal,
   Popconfirm,
+  Segmented,
+  Select,
+  Skeleton,
   Space,
+  Tag,
   Typography,
   message,
 } from "antd";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { apiClient } from "../../../apiClient";
 
@@ -124,12 +131,182 @@ function RootPasswordSection() {
   );
 }
 
+interface ConfigParam {
+  name: string;
+  kind: "int" | "bytes" | "bool" | "float";
+  min: number;
+  max: number;
+  unit: string;
+  restart_required: boolean;
+  default: string;
+  help: string;
+  value: string;
+}
+
+function ConfigTunerSection() {
+  const [engine, setEngine] = useState<Engine>("mariadb");
+  const [params, setParams] = useState<ConfigParam[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form] = Form.useForm();
+
+  const load = async (e: Engine) => {
+    setLoading(true);
+    setParams(null);
+    try {
+      const res = await apiClient.get<{ data: ConfigParam[] }>(
+        `/admin/databases/config?engine=${e}`,
+      );
+      setParams(res.data.data);
+      form.setFieldsValue(
+        Object.fromEntries(res.data.data.map((p) => [p.name, p.value])),
+      );
+    } catch (err) {
+      message.error(
+        `Could not load ${e} config: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load(engine);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engine]);
+
+  const apply = async () => {
+    const values = form.getFieldsValue();
+    const settings: Record<string, string> = {};
+    for (const p of params ?? []) {
+      const v = values[p.name];
+      if (v !== undefined && v !== null && String(v) !== "") {
+        settings[p.name] = String(v);
+      }
+    }
+    setSaving(true);
+    try {
+      await apiClient.put("/admin/databases/config", { engine, settings });
+      message.success(`${engine} configuration applied.`);
+      void load(engine);
+    } catch (err) {
+      message.error(
+        `Apply failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const anyRestart = (params ?? []).some((p) => p.restart_required);
+
+  return (
+    <Card
+      title={
+        <Space>
+          <SettingOutlined />
+          Database configuration
+        </Space>
+      }
+      style={{ marginBottom: 16 }}
+    >
+      <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+        Curated, range-checked tuning only — no raw config editing. Changes
+        are validated and rolled back automatically if the server fails to
+        come back up. Keys marked <Tag color="orange">restart</Tag> bounce
+        the service: every site’s DB connections drop for a few seconds.
+      </Typography.Paragraph>
+
+      <Segmented
+        options={[
+          { label: "MariaDB", value: "mariadb" },
+          { label: "PostgreSQL", value: "postgres" },
+        ]}
+        value={engine}
+        onChange={(v) => setEngine(v as Engine)}
+        style={{ marginBottom: 16 }}
+      />
+
+      {loading || params == null ? (
+        <Skeleton active paragraph={{ rows: 6 }} />
+      ) : (
+        <Form form={form} layout="vertical">
+          {params.map((p) => (
+            <Form.Item
+              key={p.name}
+              name={p.name}
+              label={
+                <Space size={4}>
+                  <code>{p.name}</code>
+                  {p.unit && (
+                    <Typography.Text type="secondary">
+                      ({p.unit})
+                    </Typography.Text>
+                  )}
+                  {p.restart_required && <Tag color="orange">restart</Tag>}
+                </Space>
+              }
+              help={p.help}
+            >
+              {p.kind === "bool" ? (
+                <Select
+                  options={
+                    engine === "mariadb"
+                      ? [
+                          { value: "0", label: "Off (0)" },
+                          { value: "1", label: "On (1)" },
+                        ]
+                      : [
+                          { value: "off", label: "off" },
+                          { value: "on", label: "on" },
+                        ]
+                  }
+                  style={{ maxWidth: 220 }}
+                />
+              ) : p.kind === "int" || p.kind === "float" ? (
+                <InputNumber
+                  min={p.min}
+                  max={p.max}
+                  step={p.kind === "float" ? 0.1 : 1}
+                  style={{ maxWidth: 260 }}
+                />
+              ) : (
+                <Input
+                  style={{ maxWidth: 260 }}
+                  placeholder={`${p.default} (bytes; K/M/G suffix ok)`}
+                />
+              )}
+            </Form.Item>
+          ))}
+
+          <Popconfirm
+            title={`Apply ${engine} configuration?`}
+            description={
+              anyRestart
+                ? "Some changed keys require a service restart — DB connections will drop briefly."
+                : "Configuration will be reloaded."
+            }
+            okText="Apply"
+            onConfirm={apply}
+          >
+            <Button type="primary" loading={saving}>
+              Apply {engine} configuration
+            </Button>
+          </Popconfirm>
+        </Form>
+      )}
+    </Card>
+  );
+}
+
 export function DatabaseAdminSections() {
   return (
     <>
       <RootPasswordSection />
-      {/* M46 Steps 3–6 append config / maintenance / processes /
-          admin-SSO sections here. */}
+      <ConfigTunerSection />
+      {/* M46 Steps 5–6 append maintenance / processes sections here. */}
     </>
   );
 }

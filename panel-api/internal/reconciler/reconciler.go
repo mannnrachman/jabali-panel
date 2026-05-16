@@ -37,6 +37,7 @@ type Reconciler struct {
 	sso            sso.SSOInterface
 	cfg            *config.Config
 	agent          agent.AgentInterface
+	dbAdmin        repository.DBAdminRepository
 	log            *slog.Logger
 	interval       time.Duration
 	// queue holds domain IDs to reconcile out-of-band (non-blocking enqueue)
@@ -582,6 +583,11 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// declaration from the fragment. Both calls are content-hash
 	// gated so the no-change case is a cheap file-read.
 	r.ReconcileNginxRateLimits(ctx)
+
+	// M46: converge curated DB tuning from db_tuning_settings.
+	// Idempotent — the agent no-ops when the rendered drop-in is
+	// byte-identical, so steady state is a cheap file read.
+	r.reconcileDBTuning(ctx)
 
 	return nil
 }

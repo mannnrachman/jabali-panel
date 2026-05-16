@@ -14,10 +14,12 @@ import (
 	"encoding/base64"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/dbtuning"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
@@ -42,6 +44,8 @@ func RegisterDatabaseAdminOpsRoutes(g *gin.RouterGroup, cfg DatabaseAdminOpsHand
 	grp := g.Group("/admin/databases")
 	grp.Use(middleware.RequireAdmin())
 	grp.POST("/root-password", h.rootPassword)
+	grp.GET("/config", h.getConfig)
+	grp.PUT("/config", h.putConfig)
 }
 
 type databaseAdminOpsHandler struct{ cfg DatabaseAdminOpsHandlerConfig }
@@ -151,4 +155,150 @@ func (h *databaseAdminOpsHandler) rootPassword(c *gin.Context) {
 		UserID:    claims.UserID,
 	})
 	c.JSON(http.StatusOK, rootPasswordResponse{Password: pw})
+}
+
+// ---- M46 Step 3: curated config tuner (ADR-0098) ----
+
+type configParamOut struct {
+	Name            string  `json:"name"`
+	Kind            string  `json:"kind"`
+	Min             float64 `json:"min"`
+	Max             float64 `json:"max"`
+	Unit            string  `json:"unit"`
+	RestartRequired bool    `json:"restart_required"`
+	Default         string  `json:"default"`
+	Help            string  `json:"help"`
+	Value           string  `json:"value"` // current persisted value, or default if unset
+}
+
+// getConfig returns the allowlist for an engine plus the currently
+// persisted value (or default) for each key. No secrets involved.
+func (h *databaseAdminOpsHandler) getConfig(c *gin.Context) {
+	engine := c.Query("engine")
+	if !dbEngineValid(engine) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_engine"})
+		return
+	}
+	rows, err := h.cfg.DBAdmin.ListTuning(c.Request.Context(), engine)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	persisted := make(map[string]string, len(rows))
+	for _, r := range rows {
+		persisted[r.Param] = r.Value
+	}
+	out := make([]configParamOut, 0)
+	for _, p := range dbtuning.List(engine) {
+		v := p.Default
+		if pv, ok := persisted[p.Name]; ok {
+			v = pv
+		}
+		out = append(out, configParamOut{
+			Name: p.Name, Kind: string(p.Kind), Min: p.Min, Max: p.Max,
+			Unit: p.Unit, RestartRequired: p.RestartRequired,
+			Default: p.Default, Help: p.Help, Value: v,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out, "total": len(out)})
+}
+
+type putConfigRequest struct {
+	Engine   string            `json:"engine"`
+	Settings map[string]string `json:"settings"`
+}
+
+// putConfig validates the desired set against the allowlist, persists
+// it (DB = source of truth, ADR-0098), then dispatches the agent apply
+// over the FULL desired set so the rendered file is complete.
+func (h *databaseAdminOpsHandler) putConfig(c *gin.Context) {
+	ctx := c.Request.Context()
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	var req putConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+		return
+	}
+	if !dbEngineValid(req.Engine) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_engine"})
+		return
+	}
+	if err := dbtuning.ValidateSet(req.Engine, req.Settings); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_value", "detail": err.Error()})
+		return
+	}
+	if h.cfg.Agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
+		return
+	}
+
+	// Persist first (source of truth), then build the full desired
+	// set from everything persisted for this engine.
+	for k, v := range req.Settings {
+		if err := h.cfg.DBAdmin.UpsertTuning(ctx, req.Engine, k, v); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+	}
+	rows, err := h.cfg.DBAdmin.ListTuning(ctx, req.Engine)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	desired := make(map[string]string, len(rows))
+	for _, r := range rows {
+		desired[r.Param] = r.Value
+	}
+
+	cmd := "db.config.apply"
+	if req.Engine == "postgres" {
+		cmd = "db.postgres.config.apply"
+	}
+	agentCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	_, aerr := h.cfg.Agent.Call(agentCtx, cmd, map[string]any{
+		"settings":         desired,
+		"restart_required": dbtuning.RestartRequired(req.Engine, desired),
+	})
+	if aerr != nil {
+		if strings.Contains(aerr.Error(), "UNRECOVERABLE") {
+			h.audit(ctx, claims.UserID, req.Engine, "config.apply", "", "error", "unrecoverable")
+			h.publish(ctx, notifications.Envelope{
+				EventKind: "db.admin.config_apply_failed_unrecoverable",
+				Severity:  "critical",
+				Title:     "DATABASE DOWN after config apply",
+				Body:      req.Engine + " did not recover after a config change AND rollback. Manual intervention required (see /var/lib/jabali-agent/db-config-broken.json).",
+				Deeplink:  "/jabali-admin/settings",
+			})
+			c.JSON(http.StatusBadGateway, gin.H{"error": "unrecoverable", "detail": aerr.Error()})
+			return
+		}
+		h.audit(ctx, claims.UserID, req.Engine, "config.apply", "", "error", "agent rejected")
+		h.publish(ctx, notifications.Envelope{
+			EventKind: "db.admin.config_applied",
+			Severity:  "warning",
+			Title:     "Database config change rejected",
+			Body:      "The " + req.Engine + " config change was rejected/rolled back: " + aerr.Error(),
+			Deeplink:  "/jabali-admin/settings",
+			UserID:    claims.UserID,
+		})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed", "detail": aerr.Error()})
+		return
+	}
+
+	_ = h.cfg.DBAdmin.MarkTuningApplied(ctx, req.Engine, claims.UserID, time.Now().UTC())
+	h.audit(ctx, claims.UserID, req.Engine, "config.apply", "", "ok", "")
+	h.publish(ctx, notifications.Envelope{
+		EventKind: "db.admin.config_applied",
+		Severity:  "info",
+		Title:     "Database config applied",
+		Body:      "Applied " + req.Engine + " tuning from the admin panel.",
+		Deeplink:  "/jabali-admin/settings",
+		UserID:    claims.UserID,
+	})
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

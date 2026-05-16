@@ -18,7 +18,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
@@ -71,9 +70,12 @@ func dbConfigApplyHandler(ctx context.Context, params json.RawMessage) (any, err
 		return dbConfigApplyResponse{Changed: false}, nil
 	}
 
-	// Best-effort pre-validation (MariaDB 10.6+ --validate-config).
-	// Unknown-flag / older server → skip; the probe + rollback below
-	// is the real safety net.
+	// NB: deliberately NO mariadbd --validate-config pre-check — it is
+	// not a pure parser; it boots storage engines and blocks on the
+	// live server's aria_log_control lock (false [ERROR] + 30s hang).
+	// ADR-0098 safety = dbtuning allowlist (already applied above) +
+	// backup .bak → atomic swap → health probe → auto-rollback → B7
+	// marker. Temp file below is only for the atomic rename.
 	tmp, err := os.CreateTemp(filepath.Dir(mariaTuningDropIn), ".zz-jabali-tuning-*.cnf")
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "create temp: " + err.Error()}
@@ -86,23 +88,6 @@ func dbConfigApplyHandler(ctx context.Context, params json.RawMessage) (any, err
 	}
 	tmp.Close()
 	_ = os.Chmod(tmpName, 0o644)
-	// --user=mysql: mariadbd refuses to even --validate-config when
-	// invoked as root ("Please consult the Knowledge Base ... run as
-	// root!" → [ERROR] Aborting), which is NOT a config problem. Only
-	// hard-reject on a genuine [ERROR] that is not that root refusal
-	// and not an unknown-flag (older server). Otherwise fall through
-	// to the backup+swap+probe+rollback safety net.
-	if out, verr := exec.CommandContext(ctx, "mariadbd", "--user=mysql",
-		"--defaults-extra-file="+tmpName, "--validate-config").CombinedOutput(); verr != nil &&
-		strings.Contains(string(out), "[ERROR]") &&
-		!strings.Contains(string(out), "consult the Knowledge Base") &&
-		!strings.Contains(string(out), "unknown option") &&
-		!strings.Contains(string(out), "validate-config") {
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInvalidArgument,
-			Message: "config rejected by mariadbd --validate-config: " + strings.TrimSpace(string(out)),
-		}
-	}
 
 	// Back up the current drop-in (if any), then atomic-swap.
 	bak := mariaTuningDropIn + ".bak"

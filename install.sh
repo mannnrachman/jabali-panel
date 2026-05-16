@@ -6191,6 +6191,17 @@ YARA_EX
     ln -sf /opt/jabali/signature-base/yara \
       /usr/local/maldetect/sigs/custom.yara.d/signature-base
   fi
+  # git clone runs under install.sh umask 077 -> the tree is 0700 dirs /
+  # 0600 files. The M33.2 mailscan tick spawns a `yr` subprocess as the
+  # unprivileged `jabali` user against these rules; a 0700 tree makes
+  # that scan silently load zero custom rules. Make the rule tree
+  # world-traversable/readable (public Neo23x0 signatures, no secrets).
+  # Unconditional + idempotent: the clone above is skipped when .git
+  # exists, so an existing 0700 host only heals here. a+rX = dirs +rx,
+  # files +r, never +x on data files.
+  if [[ -d /opt/jabali/signature-base ]]; then
+    chmod -R a+rX /opt/jabali/signature-base 2>/dev/null || true
+  fi
   # admin-editable YARA dir — /etc/jabali/yara/ already exists from
   # earlier install (legacy path used by upload UI). Symlink so files
   # written there are scanned without an extra copy step.

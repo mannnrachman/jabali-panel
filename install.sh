@@ -6615,6 +6615,25 @@ AUDIT_RULES
   fi
   rm -f "$rules_tmp"
 
+  # Kernel cmdline: without audit=1, a host booted while systemd (PID 1)
+  # held the audit netlink registers systemd/journald as the audit
+  # consumer; auditd starts + loads rules + reports `enabled 1` but the
+  # kernel never routes syscall records to it -> ZERO syscall events
+  # despite a correct-looking config (observed live mx.jabali-panel.local
+  # 2026-05-16: 0 SYSCALL today, fresh -w watch silent, no never/exclude,
+  # /proc/cmdline lacked audit=1). audit_backlog_limit raises the early-
+  # boot queue so events aren't lost before auditd attaches. Mirrors the
+  # AppArmor GRUB pattern; reboot-gated via a sentinel (cannot take
+  # effect until the operator reboots). Idempotent.
+  if [[ -f /etc/default/grub ]] && ! grep -qE 'audit=1' /etc/default/grub; then
+    sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\([^"]*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 audit=1 audit_backlog_limit=8192"/' /etc/default/grub
+    update-grub >/dev/null 2>&1 || true
+    touch /etc/jabali/.audit-grub-pending
+    _warn "auditd: audit=1 added to GRUB — REBOOT required for syscall auditing (sentinel /etc/jabali/.audit-grub-pending)"
+  elif grep -qE 'audit=1' /proc/cmdline 2>/dev/null; then
+    rm -f /etc/jabali/.audit-grub-pending
+  fi
+
   systemctl enable --now auditd >/dev/null 2>&1 || \
     _warn "auditd enable/start failed — check 'systemctl status auditd'"
 }

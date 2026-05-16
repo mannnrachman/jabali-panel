@@ -42,22 +42,25 @@ func dbMaintenanceHandler(ctx context.Context, params json.RawMessage) (any, err
 	if !validMaintenanceScope(p.Scope) {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "invalid scope"}
 	}
-	args := []string{"--optimize", "--analyze"}
-	if p.Scope == "all" {
-		args = append(args, "--all-databases")
-	} else {
-		args = append(args, "--databases", p.Scope)
+	scopeArgs := []string{"--all-databases"}
+	if p.Scope != "all" {
+		scopeArgs = []string{"--databases", p.Scope}
 	}
-	out, err := exec.CommandContext(ctx, "mariadb-check", args...).CombinedOutput()
-	summary := strings.TrimSpace(string(out))
-	if err != nil {
-		// mysqlcheck exits non-zero on table-level notes too; surface
-		// output but mark it errored so the operator can inspect.
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: "mysqlcheck failed: " + dbmTruncate(summary, 800),
+	// mariadb-check rejects contradicting ops in one call
+	// ("doesn't support multiple contradicting commands"). Run
+	// --optimize then --analyze sequentially.
+	var sb strings.Builder
+	for _, op := range []string{"--optimize", "--analyze"} {
+		o, e := exec.CommandContext(ctx, "mariadb-check", append([]string{op}, scopeArgs...)...).CombinedOutput()
+		sb.WriteString(op + ":\n" + strings.TrimSpace(string(o)) + "\n")
+		if e != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: "mariadb-check " + op + " failed: " + dbmTruncate(sb.String(), 800),
+			}
 		}
 	}
+	summary := strings.TrimSpace(sb.String())
 	if summary == "" {
 		summary = "OK — optimize + analyze completed (InnoDB tables: optimize is a rebuild+analyze; 'repair' is a no-op for InnoDB and was not attempted)."
 	}

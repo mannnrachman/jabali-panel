@@ -86,8 +86,16 @@ func dbConfigApplyHandler(ctx context.Context, params json.RawMessage) (any, err
 	}
 	tmp.Close()
 	_ = os.Chmod(tmpName, 0o644)
-	if out, verr := exec.CommandContext(ctx, "mariadbd",
+	// --user=mysql: mariadbd refuses to even --validate-config when
+	// invoked as root ("Please consult the Knowledge Base ... run as
+	// root!" → [ERROR] Aborting), which is NOT a config problem. Only
+	// hard-reject on a genuine [ERROR] that is not that root refusal
+	// and not an unknown-flag (older server). Otherwise fall through
+	// to the backup+swap+probe+rollback safety net.
+	if out, verr := exec.CommandContext(ctx, "mariadbd", "--user=mysql",
 		"--defaults-extra-file="+tmpName, "--validate-config").CombinedOutput(); verr != nil &&
+		strings.Contains(string(out), "[ERROR]") &&
+		!strings.Contains(string(out), "consult the Knowledge Base") &&
 		!strings.Contains(string(out), "unknown option") &&
 		!strings.Contains(string(out), "validate-config") {
 		return nil, &agentwire.AgentError{

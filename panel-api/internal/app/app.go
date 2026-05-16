@@ -37,6 +37,7 @@ type Deps struct {
 	Databases           repository.DatabaseRepository
 	DatabaseUsers       repository.DatabaseUserRepository
 	DatabaseUserGrants  repository.DatabaseUserGrantRepository
+	DBAdmin             repository.DBAdminRepository
 	Mailboxes           repository.MailboxRepository
 	MailboxSSOTokens    repository.MailboxSSOTokenRepository
 	PhpMyAdminSSOTokens repository.PhpMyAdminSSOTokenRepository
@@ -540,6 +541,16 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterPostgresAdminRoutes(v1, api.PostgresAdminHandlerConfig{
 				Agent: deps.Agent,
 				Log:   deps.Log,
+			})
+		}
+		// M46: database server admin ops (root pw, config, maintenance,
+		// processes, admin SSO). Lives in the existing Databases tab.
+		if deps.DBAdmin != nil {
+			api.RegisterDatabaseAdminOpsRoutes(v1, api.DatabaseAdminOpsHandlerConfig{
+				Agent:   deps.Agent,
+				DBAdmin: deps.DBAdmin,
+				Log:     deps.Log,
+				Queue:   deps.NotificationQueue,
 			})
 		}
 		if deps.PageTemplates != nil {

@@ -50,6 +50,7 @@ function useNotify() {
 import { apiClient } from "../../../apiClient";
 import { BrandingCard } from "./BrandingCard";
 import { DatabasesCard } from "./DatabasesCard";
+import { DatabaseAdminSections } from "./DatabaseAdminSections";
 import { DNSResolversCard } from "./DNSResolversCard";
 import { EmailCard } from "./EmailCard";
 import { PageTemplatesCard } from "./PageTemplatesCard";
@@ -896,7 +897,12 @@ export const ServerSettingsPage = () => {
         {activeTab === "storage" && <StorageSettingsTab />}
         {activeTab === "dns" && <DNSSettingsTab />}
         {activeTab === "email" && <EmailCard />}
-        {activeTab === "databases" && <DatabasesCard />}
+        {activeTab === "databases" && (
+          <>
+            <DatabasesCard />
+            <DatabaseAdminSections />
+          </>
+        )}
         {activeTab === "branding" && <BrandingSettingsTab />}
       </Card>
     </div>

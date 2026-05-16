@@ -145,6 +145,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		databaseRepo := repository.NewDatabaseRepository(sharedDB)
 		databaseUserRepo := repository.NewDatabaseUserRepository(sharedDB)
 		databaseUserGrantRepo := repository.NewDatabaseUserGrantRepository(sharedDB)
+		dbAdminRepo := repository.NewDBAdminRepository(sharedDB)
 		mailboxRepo := repository.NewMailboxRepository(sharedDB)
 		mailboxSSOTokenRepo := repository.NewMailboxSSOTokenRepository(sharedDB)
 
@@ -181,6 +182,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.ServerSettings = serverSettingsRepo
 		deps.PageTemplates = pageTemplateRepo
 		deps.NotificationEventSettings = notificationEventSettingRepo
+		deps.DBAdmin = dbAdminRepo
 		sshKeyRepo := repository.NewSSHKeyRepository(sharedDB)
 		deps.SSHKeys = sshKeyRepo
 

@@ -80,6 +80,8 @@ func RegisterDatabaseAdminOpsRoutes(g *gin.RouterGroup, cfg DatabaseAdminOpsHand
 	}
 	grp.POST("/maintenance", h.runMaintenance)
 	grp.GET("/maintenance/:id", h.maintenanceStatus)
+	grp.GET("/processes", h.listProcesses)
+	grp.POST("/processes/kill", h.killProcess)
 }
 
 // sameOriginOK is a lightweight CSRF guard (ADR-0099): the request must
@@ -406,6 +408,95 @@ func (h *databaseAdminOpsHandler) ssoPhpMyAdminAdmin(c *gin.Context) {
 	c.JSON(http.StatusOK, ssoRedirectResponse{
 		RedirectURL: panelBaseURL(c) + "/phpmyadmin/sso.php?token=" + token,
 	})
+}
+
+// ---- M46 Step 6: show processes + kill (ADR-0100) ----
+
+type dbProcRow struct {
+	ID      string `json:"id"`
+	User    string `json:"user"`
+	Host    string `json:"host"`
+	DB      string `json:"db"`
+	Command string `json:"command"`
+	Time    string `json:"time"`
+	State   string `json:"state"`
+	Info    string `json:"info"`
+}
+
+func (h *databaseAdminOpsHandler) listProcesses(c *gin.Context) {
+	engine := c.Query("engine")
+	if !dbEngineValid(engine) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_engine"})
+		return
+	}
+	if h.cfg.Agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
+		return
+	}
+	cmd := "db.processlist"
+	if engine == "postgres" {
+		cmd = "db.postgres.activity"
+	}
+	actx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	raw, err := h.cfg.Agent.Call(actx, cmd, map[string]any{})
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed"})
+		return
+	}
+	var r struct {
+		Processes []dbProcRow `json:"processes"`
+	}
+	if err := json.Unmarshal(raw, &r); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "bad_agent_response"})
+		return
+	}
+	// List envelope per CONVENTIONS (feedback_verify_wire_contract).
+	c.JSON(http.StatusOK, gin.H{
+		"data": r.Processes, "total": len(r.Processes), "page": 1, "page_size": len(r.Processes),
+	})
+}
+
+type killProcessRequest struct {
+	Engine string `json:"engine"`
+	ID     string `json:"id"`
+}
+
+func (h *databaseAdminOpsHandler) killProcess(c *gin.Context) {
+	ctx := c.Request.Context()
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	var req killProcessRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+		return
+	}
+	if !dbEngineValid(req.Engine) || req.ID == "" {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_request"})
+		return
+	}
+	if h.cfg.Agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
+		return
+	}
+	cmd := "db.kill"
+	if req.Engine == "postgres" {
+		cmd = "db.postgres.terminate"
+	}
+	actx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	if _, err := h.cfg.Agent.Call(actx, cmd, map[string]any{"id": req.ID}); err != nil {
+		h.audit(ctx, claims.UserID, req.Engine, "process.kill", req.ID, "error", "")
+		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed"})
+		return
+	}
+	// Audited (actor + target pid). No M14 — process-kill is too noisy
+	// to notify on (ADR-0100).
+	h.audit(ctx, claims.UserID, req.Engine, "process.kill", req.ID, "ok", "")
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 // ---- M46 Step 5: maintenance (ADR-0100) — InnoDB-honest ----

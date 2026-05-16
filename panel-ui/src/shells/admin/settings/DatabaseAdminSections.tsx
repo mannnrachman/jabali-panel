@@ -23,6 +23,7 @@ import {
   Select,
   Skeleton,
   Space,
+  Table,
   Tag,
   Typography,
   message,
@@ -476,6 +477,126 @@ function MaintenanceSection() {
   );
 }
 
+interface DbProc {
+  id: string;
+  user: string;
+  host: string;
+  db: string;
+  command: string;
+  time: string;
+  state: string;
+  info: string;
+}
+
+function ProcessesSection() {
+  const [engine, setEngine] = useState<Engine>("mariadb");
+  const [rows, setRows] = useState<DbProc[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const refresh = async (e: Engine) => {
+    setLoading(true);
+    try {
+      const res = await apiClient.get<{ data: DbProc[] }>(
+        `/admin/databases/processes?engine=${e}`,
+      );
+      setRows(res.data.data ?? []);
+    } catch {
+      /* transient; keep last view */
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refresh(engine);
+    const t = setInterval(() => void refresh(engine), 3000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engine]);
+
+  const kill = async (id: string) => {
+    try {
+      await apiClient.post("/admin/databases/processes/kill", { engine, id });
+      message.success(`Signalled ${id}.`);
+      void refresh(engine);
+    } catch (err) {
+      message.error(
+        `Kill failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
+
+  return (
+    <Card
+      title={
+        <Space>
+          <DatabaseOutlined />
+          Database processes
+        </Space>
+      }
+      extra={
+        <Segmented
+          options={[
+            { label: "MariaDB", value: "mariadb" },
+            { label: "PostgreSQL", value: "postgres" },
+          ]}
+          value={engine}
+          onChange={(v) => setEngine(v as Engine)}
+        />
+      }
+      style={{ marginBottom: 16 }}
+    >
+      <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+        Live server processes (auto-refreshes every 3s).{" "}
+        {engine === "mariadb" ? "KILL" : "pg_terminate_backend"} ends the
+        connection — every kill is audited.
+      </Typography.Paragraph>
+      <Table<DbProc>
+        rowKey="id"
+        size="small"
+        loading={loading}
+        dataSource={rows}
+        pagination={false}
+        scroll={{ x: "max-content", y: 320 }}
+      >
+        <Table.Column dataIndex="id" title="ID" />
+        <Table.Column dataIndex="user" title="User" />
+        <Table.Column dataIndex="host" title="Host" />
+        <Table.Column dataIndex="db" title="DB" />
+        {engine === "mariadb" && (
+          <Table.Column dataIndex="command" title="Command" />
+        )}
+        {engine === "mariadb" && (
+          <Table.Column dataIndex="time" title="Time" />
+        )}
+        <Table.Column dataIndex="state" title="State" />
+        <Table.Column
+          dataIndex="info"
+          title="Query"
+          render={(v: string) => (
+            <span style={{ fontFamily: "monospace", fontSize: 12 }}>{v}</span>
+          )}
+        />
+        <Table.Column
+          title="Actions"
+          render={(_, row: DbProc) => (
+            <Popconfirm
+              title={`Kill ${row.id}?`}
+              okText="Kill"
+              okButtonProps={{ danger: true }}
+              onConfirm={() => kill(row.id)}
+            >
+              <Button danger size="small">
+                Kill
+              </Button>
+            </Popconfirm>
+          )}
+        />
+      </Table>
+    </Card>
+  );
+}
+
 export function DatabaseAdminSections() {
   return (
     <>
@@ -483,7 +604,7 @@ export function DatabaseAdminSections() {
       <ConfigTunerSection />
       <AdminDbConsoleSection />
       <MaintenanceSection />
-      {/* M46 Step 6 appends the processes section here. */}
+      <ProcessesSection />
     </>
   );
 }

@@ -11,11 +11,11 @@ import (
 	"golang.org/x/time/rate"
 	"gorm.io/gorm"
 
+	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/apps"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
@@ -42,76 +42,76 @@ type Deps struct {
 	MailboxSSOTokens    repository.MailboxSSOTokenRepository
 	PhpMyAdminSSOTokens repository.PhpMyAdminSSOTokenRepository
 	// M37 Phase 4: Adminer SSO bridge for both engines.
-	AdminerSSOTokens repository.AdminerSSOTokenRepository
-	AdminerSSO       *sso.AdminerService
-	LogAccessStreams    repository.LogAccessStreamRepository
-	TerminalSessions    repository.TerminalSessionRepository
-	Agent               agent.AgentInterface
-	Reconciler          *reconciler.Reconciler
-	ServerSettings      repository.ServerSettingsRepository
-	PageTemplates       repository.PageTemplateRepository
+	AdminerSSOTokens          repository.AdminerSSOTokenRepository
+	AdminerSSO                *sso.AdminerService
+	LogAccessStreams          repository.LogAccessStreamRepository
+	TerminalSessions          repository.TerminalSessionRepository
+	Agent                     agent.AgentInterface
+	Reconciler                *reconciler.Reconciler
+	ServerSettings            repository.ServerSettingsRepository
+	PageTemplates             repository.PageTemplateRepository
 	NotificationEventSettings repository.NotificationEventSettingRepository
-	DNSZones            repository.DNSZoneRepository
-	DNSRecords          repository.DNSRecordRepository
-	SSLCerts            repository.SSLCertificateRepository
-	BWDaily             repository.BWDailyRepository
-	DomainIPACLs        repository.DomainIPACLRepository
-	MigrationJobs       repository.MigrationJobRepository
-	MigrationSizeCache  repository.MigrationAccountSizeCacheRepository
-	AutomationTokens    repository.AutomationTokenRepository
-	PHPPools            repository.PHPPoolRepository
-	PHPPoolIniOverrides repository.PHPPoolIniOverrideRepository
-	WordPressInstalls   repository.WordPressInstallRepository
+	DNSZones                  repository.DNSZoneRepository
+	DNSRecords                repository.DNSRecordRepository
+	SSLCerts                  repository.SSLCertificateRepository
+	BWDaily                   repository.BWDailyRepository
+	DomainIPACLs              repository.DomainIPACLRepository
+	MigrationJobs             repository.MigrationJobRepository
+	MigrationSizeCache        repository.MigrationAccountSizeCacheRepository
+	AutomationTokens          repository.AutomationTokenRepository
+	PHPPools                  repository.PHPPoolRepository
+	PHPPoolIniOverrides       repository.PHPPoolIniOverrideRepository
+	WordPressInstalls         repository.WordPressInstallRepository
 	// ManagedIPs is the M24 IP-pool repo. NewWithDeps registers
 	// /admin/ips + /user/ips + /internal/agent/managed-ips when set;
 	// nil keeps the routes off (lets existing test harnesses pass).
-	ManagedIPs          repository.ManagedIPRepository
+	ManagedIPs repository.ManagedIPRepository
 	// Apps is the M19 application registry — descriptors for every
 	// installable app (WordPress, future DokuWiki, etc.). Step 3 will
 	// hand this to the generic /applications handlers. NewWithDeps
 	// builds a default-populated registry when this is nil so the
 	// existing test wiring (`Deps{}`) keeps working without each
 	// caller knowing about the registry.
-	Apps                *apps.Registry
-	CronJobs            repository.CronJobRepository
-	SSHKeys             repository.SSHKeyRepository
-	LimitOverrides      repository.UserLimitOverrideRepository
+	Apps           *apps.Registry
+	CronJobs       repository.CronJobRepository
+	SSHKeys        repository.SSHKeyRepository
+	LimitOverrides repository.UserLimitOverrideRepository
 	// M6.5 email feature repositories. Autoresponders/Forwarders/MailboxShares
 	// reconcile jabali intent → Stalwart via the phase registry (ADR-0051).
-	Autoresponders      repository.EmailAutoresponderRepository
-	Forwarders          repository.EmailForwarderRepository
-	MailboxShares       repository.MailboxShareRepository
+	Autoresponders repository.EmailAutoresponderRepository
+	Forwarders     repository.EmailForwarderRepository
+	MailboxShares  repository.MailboxShareRepository
 	// DNSSECKeys caches DNSSEC public-key metadata (ADR-0076).
-	DNSSECKeys          repository.DNSSECKeyRepository
+	DNSSECKeys repository.DNSSECKeyRepository
 	// PanelCerts is the M32 singleton panel_certificate repo. NewWithDeps
 	// registers /admin/panel-certificate when set; nil keeps the routes
 	// off (lab installs / older test wiring).
-	PanelCerts          repository.PanelCertificateRepository
+	PanelCerts repository.PanelCertificateRepository
 	// M33 malware detection repos (ADR-0072). All five are wired
 	// together — nil on any disables RegisterSecurityMalwareRoutes.
 	// M30 backup-restore (ADR-0075). Nil disables the /admin/backups
 	// + /me/backups routes; UI surfaces an empty state.
-	BackupJobs          repository.BackupJobRepository
+	BackupJobs repository.BackupJobRepository
 	// M30.1 backup destinations + schedules (ADR-0078). All three nil
 	// disables the /admin/backup-destinations + /admin/backup-schedules
 	// routes (UI tabs hidden) and the in-process scheduler / copy
 	// worker / finalizer goroutines.
-	BackupDestinations  repository.BackupDestinationRepository
-	BackupSchedules     repository.BackupScheduleRepository
-	MalwareQuarantine   repository.MalwareQuarantineRepository
-	MalwareEvents       repository.MalwareEventRepository
-	YARARules           repository.YARACustomRuleRepository
-	MalwareSettings     repository.MalwareSettingsRepository
+	BackupDestinations repository.BackupDestinationRepository
+	BackupSchedules    repository.BackupScheduleRepository
+	MalwareQuarantine  repository.MalwareQuarantineRepository
+	MalwareEvents      repository.MalwareEventRepository
+	YARARules          repository.YARACustomRuleRepository
+	MalwareSettings    repository.MalwareSettingsRepository
 	// M33.2 mail YARA scanner — async tick walks Stalwart mailboxes via
 	// JMAP, scans attachments with yr, quarantines hits. Off by default;
 	// enabled via malware_settings.mail_scan_enabled. ADR-0079.
-	MailScanState       repository.MailScanStateRepository
-	MailScanFailures    repository.MailScanFailureRepository
+	MailScanState    repository.MailScanStateRepository
+	MailScanFailures repository.MailScanFailureRepository
 	// MalwareUserScans tracks per-user manual-scan jobs (mig 000097).
 	// Upserted at scan start by the panel-api startScan handler;
 	// finalised by the post-scan-hook ingest path. Drives the Manual
 	// Scan UI's Last scanned + Status columns.
-	MalwareUserScans    repository.MalwareUserScanRepository
+	MalwareUserScans repository.MalwareUserScanRepository
 	// M34 per-user PHP-FPM egress firewall. Two repos backing the
 	// nftables socket-cgroupv2 reconciler + admin/user request flow
 	// (migrations 000100/000101, ADR-0084).
@@ -124,16 +124,16 @@ type Deps struct {
 	// defaulting to the disruptive `-a` flag. Resolved at startup via
 	// internal/limits.QuotaMountFor("/home"); empty string disables
 	// the disk-quota half of the limits pipeline (dev boxes).
-	QuotaMount          string
-	SSO                 *sso.Service
-	SSOKey              *ssokey.Key
-	Log                 *slog.Logger
+	QuotaMount string
+	SSO        *sso.Service
+	SSOKey     *ssokey.Key
+	Log        *slog.Logger
 	// Redis is the shared *redis.Client for the notification dispatcher
 	// (ADR-0056) and future WordPress object-cache (ADR-0059). Wired in
 	// serve.go against cfg.Redis.URL; nil when Redis is disabled (tests,
 	// or an operator who set Redis.URL=""). Handlers that need it must
 	// guard for nil and return 503 rather than panic.
-	Redis               *redis.Client
+	Redis *redis.Client
 	// M14 notification repos. Wired by serve.go when sharedDB is set;
 	// used by both the /admin/notifications admin API (added later) and
 	// the dispatcher goroutine that drains the Redis stream.
@@ -155,7 +155,7 @@ type Deps struct {
 	Snuffleupagus           repository.SnuffleupagusRepository
 	SnuffleupagusReconciler *reconciler.SnuffleupagusReconciler
 	SnuffleupagusBundleDir  string
-	DB *gorm.DB
+	DB                      *gorm.DB
 }
 
 // Default tier: chosen so a reasonable SPA (polling, a few concurrent
@@ -547,10 +547,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// processes, admin SSO). Lives in the existing Databases tab.
 		if deps.DBAdmin != nil {
 			api.RegisterDatabaseAdminOpsRoutes(v1, api.DatabaseAdminOpsHandlerConfig{
-				Agent:   deps.Agent,
-				DBAdmin: deps.DBAdmin,
-				Log:     deps.Log,
-				Queue:   deps.NotificationQueue,
+				Agent:      deps.Agent,
+				DBAdmin:    deps.DBAdmin,
+				Log:        deps.Log,
+				Queue:      deps.NotificationQueue,
+				SSO:        deps.SSO,
+				AdminerSSO: deps.AdminerSSO,
 			})
 		}
 		if deps.PageTemplates != nil {
@@ -772,20 +774,20 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			}
 			api.RegisterApplicationRoutes(v1, appCfg)
 
-		// Log access routes (M13)
-		if deps.LogAccessStreams != nil && deps.Domains != nil && deps.Users != nil {
-			api.RegisterLogRoutes(v1, api.LogHandlerConfig{
-				LogAccessStreams: deps.LogAccessStreams,
-				Domains:          deps.Domains,
-				Users:            deps.Users,
-			})
-			// WebSocket log streaming routes
-			api.RegisterLogStreamRoutes(v1, api.LogStreamHandlerConfig{
-				LogAccessStreams: deps.LogAccessStreams,
-				Domains:          deps.Domains,
-				Log:              deps.Log,
-			})
-		}
+			// Log access routes (M13)
+			if deps.LogAccessStreams != nil && deps.Domains != nil && deps.Users != nil {
+				api.RegisterLogRoutes(v1, api.LogHandlerConfig{
+					LogAccessStreams: deps.LogAccessStreams,
+					Domains:          deps.Domains,
+					Users:            deps.Users,
+				})
+				// WebSocket log streaming routes
+				api.RegisterLogStreamRoutes(v1, api.LogStreamHandlerConfig{
+					LogAccessStreams: deps.LogAccessStreams,
+					Domains:          deps.Domains,
+					Log:              deps.Log,
+				})
+			}
 		}
 
 		// Magic-link admin login (ADR-0040): mint-only. The agent-written

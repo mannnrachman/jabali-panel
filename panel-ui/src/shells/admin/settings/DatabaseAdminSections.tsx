@@ -5,7 +5,7 @@
 //
 // Icons go through the @icons shim (CONVENTIONS) — never
 // @ant-design/icons.
-import { KeyOutlined, SettingOutlined } from "@icons";
+import { DatabaseOutlined, KeyOutlined, SettingOutlined } from "@icons";
 import {
   Button,
   Card,
@@ -301,11 +301,65 @@ function ConfigTunerSection() {
   );
 }
 
+function AdminDbConsoleSection() {
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const open = async (path: string, label: string) => {
+    setBusy(label);
+    try {
+      const res = await apiClient.post<{ redirect_url: string }>(path, {});
+      window.open(res.data.redirect_url, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      message.error(
+        `Could not open ${label}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Card
+      title={
+        <Space>
+          <DatabaseOutlined />
+          Database console (all databases)
+        </Space>
+      }
+      style={{ marginBottom: 16 }}
+    >
+      <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+        Opens a privileged session that can see and edit{" "}
+        <strong>every database on this server</strong>. This is a
+        root-equivalent web shell — single-use, short-lived, admin-only,
+        and audited. Treat it accordingly.
+      </Typography.Paragraph>
+      <Space wrap>
+        <Button
+          loading={busy === "phpMyAdmin"}
+          onClick={() => open("/admin/databases/sso/phpmyadmin", "phpMyAdmin")}
+        >
+          Open phpMyAdmin (all MariaDB)
+        </Button>
+        <Button
+          loading={busy === "Adminer"}
+          onClick={() => open("/admin/databases/sso/adminer", "Adminer")}
+        >
+          Open Adminer (all PostgreSQL)
+        </Button>
+      </Space>
+    </Card>
+  );
+}
+
 export function DatabaseAdminSections() {
   return (
     <>
       <RootPasswordSection />
       <ConfigTunerSection />
+      <AdminDbConsoleSection />
       {/* M46 Steps 5–6 append maintenance / processes sections here. */}
     </>
   );

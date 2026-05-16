@@ -28,12 +28,37 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
+// ssoAdminAllSentinel is stored as the token's DatabaseID for an
+// admin-scope SSO handoff. The per-user SSO path ALWAYS carries a real
+// DatabaseID, so the validate handlers' early sentinel branch (ADR-0099)
+// cannot regress it. pmaAdminPasswordFile / pgSuperuserPasswordFile are
+// the agent-written 0640 root:jabali secret files the validator reads.
+const (
+	ssoAdminAllSentinel     = "__M46_ADMIN_ALL__"
+	pmaAdminPasswordFile    = "/etc/jabali-panel/pma-admin.password"
+	pgSuperuserPasswordFile = "/etc/jabali-panel/postgres.password"
+)
+
 type DatabaseAdminOpsHandlerConfig struct {
 	Agent   agent.AgentInterface
 	DBAdmin repository.DBAdminRepository
 	Log     *slog.Logger
 	// Queue is optional — M14 events are best-effort; nil disables them.
 	Queue *notifications.Queue
+	// SSO / AdminerSSO power the admin all-DBs handoff (ADR-0099).
+	// Optional — nil disables the corresponding admin-SSO route.
+	// Minimal interfaces so *sso.Service / *sso.AdminerService satisfy
+	// them without this package depending on their concrete shape.
+	SSO        adminTokenMinter
+	AdminerSSO adminerTokenMinter
+}
+
+type adminTokenMinter interface {
+	MintToken(ctx context.Context, userID, databaseID, dbName string) (string, error)
+}
+
+type adminerTokenMinter interface {
+	MintAdminerToken(ctx context.Context, userID, databaseID, engine string) (string, error)
 }
 
 func RegisterDatabaseAdminOpsRoutes(g *gin.RouterGroup, cfg DatabaseAdminOpsHandlerConfig) {
@@ -46,6 +71,34 @@ func RegisterDatabaseAdminOpsRoutes(g *gin.RouterGroup, cfg DatabaseAdminOpsHand
 	grp.POST("/root-password", h.rootPassword)
 	grp.GET("/config", h.getConfig)
 	grp.PUT("/config", h.putConfig)
+	if cfg.SSO != nil {
+		grp.POST("/sso/phpmyadmin", h.ssoPhpMyAdminAdmin)
+	}
+	if cfg.AdminerSSO != nil {
+		grp.POST("/sso/adminer", h.ssoAdminerAdmin)
+	}
+}
+
+// sameOriginOK is a lightweight CSRF guard (ADR-0099): the request must
+// originate from the panel itself. Mirrors the per-user SSO handler's
+// intent without importing its unexported helpers.
+func sameOriginOK(c *gin.Context) bool {
+	origin := c.GetHeader("Origin")
+	if origin == "" {
+		// Some browsers omit Origin on top-level navigations; fall back
+		// to Referer host match.
+		ref := c.GetHeader("Referer")
+		return ref == "" || strings.Contains(ref, c.Request.Host)
+	}
+	return strings.Contains(origin, c.Request.Host)
+}
+
+func panelBaseURL(c *gin.Context) string {
+	scheme := "https"
+	if p := c.GetHeader("X-Forwarded-Proto"); p == "http" {
+		scheme = "http"
+	}
+	return scheme + "://" + c.Request.Host
 }
 
 type databaseAdminOpsHandler struct{ cfg DatabaseAdminOpsHandlerConfig }
@@ -301,4 +354,77 @@ func (h *databaseAdminOpsHandler) putConfig(c *gin.Context) {
 		UserID:    claims.UserID,
 	})
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// ---- M46 Step 4: admin all-DBs phpMyAdmin / Adminer SSO (ADR-0099) ----
+//
+// Honest: these mint a handoff into a root-equivalent DB web shell.
+// The control is the gating — RequireAdmin (group middleware) +
+// same-origin + the single-use short-TTL token + scope=admin audit —
+// NOT a trimmed grant. The token carries the ssoAdminAllSentinel as
+// its DatabaseID; the validate handlers branch on that BEFORE the
+// per-user shadow path, so per-user SSO is byte-unchanged.
+
+type ssoRedirectResponse struct {
+	RedirectURL string `json:"redirect_url"`
+}
+
+func (h *databaseAdminOpsHandler) ssoPhpMyAdminAdmin(c *gin.Context) {
+	ctx := c.Request.Context()
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	if !sameOriginOK(c) {
+		h.audit(ctx, claims.UserID, "mariadb", "sso.admin", "phpmyadmin", "forbidden", "same_origin")
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+	if h.cfg.Agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
+		return
+	}
+	// Ensure the privileged shadow exists / rotate its password.
+	actx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	if _, err := h.cfg.Agent.Call(actx, "db.pma_admin.ensure", map[string]any{}); err != nil {
+		h.audit(ctx, claims.UserID, "mariadb", "sso.admin", "phpmyadmin", "error", "ensure failed")
+		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed"})
+		return
+	}
+	token, err := h.cfg.SSO.MintToken(ctx, claims.UserID, ssoAdminAllSentinel, "")
+	if err != nil {
+		h.audit(ctx, claims.UserID, "mariadb", "sso.admin", "phpmyadmin", "error", "mint failed")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	h.audit(ctx, claims.UserID, "mariadb", "sso.admin", "phpmyadmin", "ok", "scope=admin")
+	c.JSON(http.StatusOK, ssoRedirectResponse{
+		RedirectURL: panelBaseURL(c) + "/phpmyadmin/sso.php?token=" + token,
+	})
+}
+
+func (h *databaseAdminOpsHandler) ssoAdminerAdmin(c *gin.Context) {
+	ctx := c.Request.Context()
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	if !sameOriginOK(c) {
+		h.audit(ctx, claims.UserID, "postgres", "sso.admin", "adminer", "forbidden", "same_origin")
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+	token, err := h.cfg.AdminerSSO.MintAdminerToken(ctx, claims.UserID, ssoAdminAllSentinel, "postgres")
+	if err != nil {
+		h.audit(ctx, claims.UserID, "postgres", "sso.admin", "adminer", "error", "mint failed")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	h.audit(ctx, claims.UserID, "postgres", "sso.admin", "adminer", "ok", "scope=admin")
+	c.JSON(http.StatusOK, ssoRedirectResponse{
+		RedirectURL: panelBaseURL(c) + "/jabali-adminer/?token=" + token,
+	})
 }

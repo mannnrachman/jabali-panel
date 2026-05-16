@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -101,6 +103,28 @@ func (h *ssoPhpMyAdminValidateHandler) validate(c *gin.Context) {
 		h.cfg.Log.ErrorContext(ctx, "consume token failed", "err", err)
 		h.auditLog(ctx, "", "", hashPrefix, "unauthorized")
 		c.JSON(http.StatusInternalServerError, ssoErrorResponse{Error: "internal"})
+		return
+	}
+
+	// M46 ADR-0099: admin all-DBs handoff. Per-user tokens ALWAYS
+	// carry a real DatabaseID, so this early branch never affects
+	// the per-user path below.
+	if token.DatabaseID == ssoAdminAllSentinel {
+		pw, rerr := os.ReadFile(pmaAdminPasswordFile)
+		if rerr != nil {
+			h.cfg.Log.ErrorContext(ctx, "pma admin secret read failed", "err", rerr)
+			c.JSON(http.StatusInternalServerError, ssoErrorResponse{Error: "internal"})
+			return
+		}
+		h.auditLog(ctx, token.UserID, token.DatabaseID, hashPrefix, "validated:admin")
+		c.JSON(http.StatusOK, ssoValidateResponse{
+			User:     "jabali_pma_admin",
+			Password: strings.TrimSpace(string(pw)),
+			Host:     "localhost",
+			Port:     3306,
+			Socket:   mariaDBSocketPath,
+			// OnlyDB/DB empty → phpMyAdmin shows ALL databases.
+		})
 		return
 	}
 

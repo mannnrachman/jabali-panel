@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -45,15 +47,17 @@ func RegisterSSOAdminerValidateRoutes(g *gin.RouterGroup, cfg SSOAdminerValidate
 	g.POST("/sso/adminer/validate", h.validate)
 }
 
-type ssoAdminerValidateHandler struct{ cfg SSOAdminerValidateHandlerConfig }
+type ssoAdminerValidateHandler struct {
+	cfg SSOAdminerValidateHandlerConfig
+}
 
 type ssoAdminerValidateRequest struct {
 	Token string `json:"token" binding:"required"`
 }
 
 type ssoAdminerValidateResponse struct {
-	Driver   string `json:"driver"`             // server (mariadb) | pgsql
-	Server   string `json:"server"`             // socket dir or host:port
+	Driver   string `json:"driver"` // server (mariadb) | pgsql
+	Server   string `json:"server"` // socket dir or host:port
 	Username string `json:"username"`
 	Password string `json:"password"`
 	DB       string `json:"db"`
@@ -85,6 +89,27 @@ func (h *ssoAdminerValidateHandler) validate(c *gin.Context) {
 		}
 		h.cfg.Log.ErrorContext(ctx, "consume adminer token failed", "err", err)
 		c.JSON(http.StatusInternalServerError, ssoErrorResponse{Error: "internal"})
+		return
+	}
+
+	// M46 ADR-0099: admin all-DBs handoff (Postgres superuser via
+	// Adminer). Per-user tokens carry a real DatabaseID, so this
+	// early branch never affects the per-user path below.
+	if token.DatabaseID == ssoAdminAllSentinel {
+		pw, rerr := os.ReadFile(pgSuperuserPasswordFile)
+		if rerr != nil {
+			h.cfg.Log.ErrorContext(ctx, "pg superuser secret read failed", "err", rerr)
+			c.JSON(http.StatusInternalServerError, ssoErrorResponse{Error: "internal"})
+			return
+		}
+		h.audit(ctx, token.UserID, token.DatabaseID, token.Engine, hashPrefix, "validated:admin")
+		c.JSON(http.StatusOK, ssoAdminerValidateResponse{
+			Driver:   "pgsql",
+			Server:   pgLoopbackHost,
+			Username: "postgres",
+			Password: strings.TrimSpace(string(pw)),
+			// DB empty → Adminer lists all databases.
+		})
 		return
 	}
 

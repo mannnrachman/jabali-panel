@@ -88,6 +88,15 @@ function RootPasswordSection() {
         ))}
       </Space>
 
+      <Typography.Paragraph
+        type="secondary"
+        style={{ marginTop: 12, marginBottom: 0, fontSize: 12 }}
+      >
+        Per-database <em>user</em> passwords (not the root/superuser) are
+        rotated from the Databases page — each database user has a
+        reveal-once “Password” action there.
+      </Typography.Paragraph>
+
       <Modal
         open={revealed != null}
         title={

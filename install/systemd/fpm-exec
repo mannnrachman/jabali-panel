@@ -3,7 +3,18 @@
 set -euo pipefail
 
 user="${1:?usage: fpm-exec <user>}"
-ver=$(cat "/etc/jabali-panel/user-phpver/${user}")
+# Read the PHP version from the per-user runtime dir, NOT from
+# /etc/jabali-panel/user-phpver/<user>. fpm-pre-start (ExecStartPre,
+# runs as root via "+") resolved+validated the pin and published it
+# here, into a dir this hosting user owns. Reading it out of
+# /etc/jabali-panel as the unprivileged user is what crash-looped this
+# unit when that root:jabali parent was mode 0750
+# (tools/test-fpm-exec-traversal.sh). pre-start already fails the unit
+# (as root, with a clear message) before we get here if the pin is bad.
+verfile="/run/php/jabali-${user}/phpver"
+[[ -r "$verfile" ]] || { echo "fpm-exec: missing runtime version $verfile (fpm-pre-start should have written it)" >&2; exit 1; }
+ver=$(cat "$verfile")
+[[ "$ver" =~ ^[0-9]+\.[0-9]+$ ]] || { echo "fpm-exec: malformed version '$ver' in $verfile" >&2; exit 1; }
 
 # --nodaemonize (-F) keeps php-fpm in foreground so systemd supervises
 # it with Type=simple. --fpm-config points at the per-user FPM config

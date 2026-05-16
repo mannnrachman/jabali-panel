@@ -2027,7 +2027,15 @@ PG_DROPIN
   # postgres is provisioned + which DSN to use.
   local pg_pw_file=/etc/jabali-panel/postgres.password
   if [[ ! -f "$pg_pw_file" ]]; then
-    install -d -m 0750 -o root -g "$SERVICE_USER" /etc/jabali-panel
+    # 0755 (not 0750): /etc/jabali-panel must be traversable by every
+    # OS hosting user. fpm-pre-start/agent read per-user config under it
+    # while running as User=<hosting-user> (not root, not group jabali).
+    # Sensitive children carry their own restrictive modes
+    # (postgres.password 0640, migration-secrets 0750, restic-remotes
+    # 0700, sso.key 0600, dkim 0750), so a traversable parent leaks
+    # nothing. A 0750 parent crash-loops every per-user FPM (see
+    # ensure_jabali_panel_dir_traversable + tools/test-fpm-exec-traversal.sh).
+    install -d -m 0755 -o root -g "$SERVICE_USER" /etc/jabali-panel
     umask 077
     openssl rand -hex 32 >"$pg_pw_file"
     chmod 0640 "$pg_pw_file"
@@ -9102,7 +9110,32 @@ ensure_crowdsec_nginx_bouncer_lapi_url() {
 }
 
 
+# Heal the /etc/jabali-panel directory mode on every `jabali update`.
+#
+# The dir is created 0755 now, but earlier installer versions created
+# it 0750 root:jabali, and the only places that loosened it to 0755
+# were buried inside install_powerdns + the sso-key step. A partial
+# provision path that skipped those left it 0750, which the unprivileged
+# per-user FPM cannot traverse -> jabali-fpm@<user> crash-loops -> every
+# hosted PHP site 502s. This ensure_* runs unconditionally from
+# provision_new_software so existing 0750 hosts self-heal on update,
+# independent of which install_* functions run. Idempotent.
+ensure_jabali_panel_dir_traversable() {
+  [[ -d /etc/jabali-panel ]] || return 0
+  local cur
+  cur="$(stat -c '%a' /etc/jabali-panel 2>/dev/null || echo '')"
+  if [[ "$cur" != "755" ]]; then
+    chmod 0755 /etc/jabali-panel
+    _log "provision: healed /etc/jabali-panel mode ${cur:-?} -> 755 (per-user FPM traversal)"
+  fi
+}
+
 provision_new_software() {
+  # Heal /etc/jabali-panel traversal FIRST — a 0750 parent here means
+  # every per-user PHP-FPM is crash-looping right now; fix it before
+  # anything else in the provision chain touches PHP.
+  ensure_jabali_panel_dir_traversable
+
   # Snuffleupagus: flip simulation → enforce on existing installs.
   # Fresh installs already default to enforce (install_snuffleupagus).
   local sp_mode_file="/etc/jabali/snuffleupagus/mode"

@@ -43,6 +43,16 @@ mkdir -p "$userrundir"
 chown "${os_user}:www-data" "$userrundir"
 chmod 0750 "$userrundir"
 
+# Publish the resolved PHP version into the per-user runtime dir so the
+# unprivileged ExecStart (fpm-exec) never has to read it back out of
+# /etc/jabali-panel/user-phpver/<user>. That parent is root:jabali and
+# a single mis-set mode (0750) there used to crash-loop this unit for
+# every hosting user. This shim runs as root (ExecStartPre "+") and can
+# always read the pin; fpm-exec then only reads this user-owned file.
+printf '%s' "$ver" > "$userrundir/phpver"
+chown "${os_user}:${os_group}" "$userrundir/phpver"
+chmod 0440 "$userrundir/phpver"
+
 # Pre-create the FPM error log owned by the effective OS user. The
 # per-user config writes error_log to /var/log/php-fpm-<user>.log but
 # /var/log is root-owned, so FPM (which drops to User=<os_user> after

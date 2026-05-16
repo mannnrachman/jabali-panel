@@ -54,21 +54,34 @@ pass "C1: /etc/jabali-panel created 0755"
 # ---- C2: provision_new_software heals the dir mode every update ----
 grep -Eq '^ensure_jabali_panel_dir_traversable\(\)' "$INSTALL_SH" \
   || fail "C2: ensure_jabali_panel_dir_traversable() not defined"
-# It must actually assert 0755 on the dir.
-awk '/^ensure_jabali_panel_dir_traversable\(\)/,/^}/' "$INSTALL_SH" \
-  | grep -Eq 'chmod 0755 /etc/jabali-panel( |$|")' \
+# It must actually assert 0755 on the dir. NB: capture awk output to a
+# var first — `awk | grep -q` under `set -o pipefail` makes grep close
+# the pipe early, SIGPIPE-kills awk (exit 141), and pipefail then fails
+# the pipeline even on a match (feedback_sigpipe_silent_exit).
+ensure_block="$(awk '/^ensure_jabali_panel_dir_traversable\(\)/,/^}/' "$INSTALL_SH")"
+grep -Eq 'chmod 0755 /etc/jabali-panel( |$|")' <<<"$ensure_block" \
   || fail "C2: ensure_jabali_panel_dir_traversable() does not chmod 0755 /etc/jabali-panel"
 # And provision_new_software must call it.
-awk '/^provision_new_software\(\)/,/^}/' "$INSTALL_SH" \
-  | grep -Eq 'ensure_jabali_panel_dir_traversable' \
+provision_block="$(awk '/^provision_new_software\(\)/,/^}/' "$INSTALL_SH")"
+grep -Eq 'ensure_jabali_panel_dir_traversable' <<<"$provision_block" \
   || fail "C2: provision_new_software does not call ensure_jabali_panel_dir_traversable"
 pass "C2: provision_new_software heals /etc/jabali-panel mode every update"
 
-# ---- C3: fpm-exec never touches /etc/jabali-panel -----------------
-if grep -q '/etc/jabali-panel' "$FPM_EXEC"; then
-  fail "C3: fpm-exec still references /etc/jabali-panel (not decoupled from the 0750 parent)"
-fi
-pass "C3: fpm-exec does not reference /etc/jabali-panel"
+# ---- C3: fpm-exec never READS the phpver pin out of
+#      /etc/jabali-panel/user-phpver as the unprivileged user.
+#      (Passing /etc/jabali-panel/fpm/<user>.conf to php-fpm via
+#      --fpm-config is legitimate and unavoidable; that file is 0644
+#      and the parent is 0755 per C1/C2, so php-fpm reads it fine. The
+#      bug was the *phpver cat*, which must be gone.) -----------------
+# Check executable code only — comments may legitimately name the old
+# path to explain the fix. Strip comment lines first (capture to var:
+# no pipe under pipefail, see C2 note).
+fpm_exec_code="$(grep -vE '^[[:space:]]*#' "$FPM_EXEC")"
+grep -Eq 'cat[^|]*/etc/jabali-panel/user-phpver|cat[^|]*user-phpver/\$\{?user' <<<"$fpm_exec_code" \
+  && fail "C3: fpm-exec code still cats /etc/jabali-panel/user-phpver/<user> (the 0750 crash-loop read)" || true
+grep -q '/etc/jabali-panel/user-phpver' <<<"$fpm_exec_code" \
+  && fail "C3: fpm-exec code still references /etc/jabali-panel/user-phpver" || true
+pass "C3: fpm-exec code no longer reads the phpver pin from /etc/jabali-panel"
 
 # ---- C4: fpm-exec reads ver from the per-user runtime dir ----------
 grep -Eq '/run/php/jabali-\$\{?user\}?/phpver' "$FPM_EXEC" \
@@ -76,9 +89,18 @@ grep -Eq '/run/php/jabali-\$\{?user\}?/phpver' "$FPM_EXEC" \
 pass "C4: fpm-exec reads ver from /run/php/jabali-<user>/phpver"
 
 # ---- C5: fpm-pre-start writes that runtime phpver file -------------
-grep -Eq '/run/php/jabali-\$\{?user\}?/phpver' "$FPM_PRE" \
-  || fail "C5: fpm-pre-start does not write /run/php/jabali-<user>/phpver"
-pass "C5: fpm-pre-start writes /run/php/jabali-<user>/phpver"
+# fpm-pre-start may write the literal path or via its $userrundir var
+# (userrundir="/run/php/jabali-${user}"). Accept either, but require
+# both that the runtime dir is that path AND a phpver file is written
+# into it, AND that pre-start runs as root (ExecStartPre "+" — it must
+# be able to read the protected pin to publish it).
+grep -Eq 'userrundir="/run/php/jabali-\$\{?user\}?"' "$FPM_PRE" \
+  || fail "C5: fpm-pre-start userrundir is not /run/php/jabali-<user>"
+grep -Eq '(/run/php/jabali-\$\{?user\}?/phpver|\$\{?userrundir\}?/phpver)' "$FPM_PRE" \
+  || fail "C5: fpm-pre-start does not write the phpver file into the user runtime dir"
+grep -q 'printf .* "\$ver" > "\$userrundir/phpver"' "$FPM_PRE" \
+  || fail "C5: fpm-pre-start does not write the validated \$ver into \$userrundir/phpver"
+pass "C5: fpm-pre-start publishes /run/php/jabali-<user>/phpver"
 
 # ---- Behavioral sandbox: prove the decoupled read works even when
 #      /etc/jabali-panel is totally unreadable (0000) ----------------

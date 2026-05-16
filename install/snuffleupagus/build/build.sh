@@ -67,6 +67,13 @@ make -j"$(nproc)"
 
 # Install.
 mkdir -p "$OUT_DIR"
+# 0755, NOT the caller's umask-077 default of 0700: the per-user
+# php-fpm master runs as User=<hosting-user> and must traverse this
+# path to dlopen snuffleupagus.so at startup. A 0700 root dir here
+# silently prevents the extension from loading on ALL web traffic
+# (CLI/`php-fpm -i` as root still see it, masking the bug). The .so is
+# a public compiled extension, no secrets.
+chmod 0755 /usr/lib/php/jabali-snuffleupagus "$OUT_DIR"
 install -m 0755 modules/snuffleupagus.so "$OUT_SO"
 echo "${SNUF_VERSION}+${SNUF_SHA256}" > "$STAMP_FILE"
 

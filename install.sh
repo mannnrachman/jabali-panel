@@ -9022,6 +9022,13 @@ EOF_CLI
 extension=/usr/lib/php/jabali-snuffleupagus/$minor/snuffleupagus.so
 sp.configuration_file=/etc/jabali/snuffleupagus/active.rules
 EOF_MOD
+    # 0644, NOT the install.sh umask-077 default of 0600: the per-user
+    # php-fpm master starts as User=<hosting-user> and parses conf.d at
+    # startup. A 0600 root:root ini is silently skipped by that
+    # unprivileged parse -> snuffleupagus.so never loads on web traffic
+    # -> zero PHP defense regardless of mode. The ini holds no secrets
+    # (extension path + config_file path), like every other conf.d ini.
+    chmod 0644 "/etc/php/$minor/mods-available/jabali-snuffleupagus.ini"
     ln -sf "../../mods-available/jabali-snuffleupagus.ini" \
       "/etc/php/$minor/fpm/conf.d/30-jabali-snuffleupagus.ini"
     ln -sf "../../mods-available/jabali-snuffleupagus.ini" \
@@ -9120,6 +9127,40 @@ ensure_crowdsec_nginx_bouncer_lapi_url() {
 # hosted PHP site 502s. This ensure_* runs unconditionally from
 # provision_new_software so existing 0750 hosts self-heal on update,
 # independent of which install_* functions run. Idempotent.
+# Heal Snuffleupagus loadability on every `jabali update`.
+#
+# The per-user php-fpm master runs as User=<hosting-user> and parses
+# conf.d + dlopen's the extension at startup. Two paths get created
+# under install.sh's umask 077 and must be world-traversable/readable
+# or the extension SILENTLY does not load on web traffic (root-context
+# `php-fpm -i` still shows it, masking the bug -> zero PHP defense):
+#   - /usr/lib/php/jabali-snuffleupagus[/<minor>]  (build.sh, 0700)
+#   - /etc/php/<minor>/mods-available/jabali-snuffleupagus.ini (0600)
+# build.sh is idempotent (skips when the .so exists) so an existing
+# 0700 host never re-runs the in-build chmod; heal here. Idempotent.
+ensure_snuffleupagus_loadable() {
+  [[ -d /usr/lib/php/jabali-snuffleupagus ]] || return 0
+  local changed=0 d ini cur
+  if [[ "$(stat -c '%a' /usr/lib/php/jabali-snuffleupagus 2>/dev/null)" != "755" ]]; then
+    chmod 0755 /usr/lib/php/jabali-snuffleupagus && changed=1
+  fi
+  for d in /usr/lib/php/jabali-snuffleupagus/*/; do
+    [[ -d "$d" ]] || continue
+    if [[ "$(stat -c '%a' "$d" 2>/dev/null)" != "755" ]]; then
+      chmod 0755 "$d" && changed=1
+    fi
+  done
+  for ini in /etc/php/*/mods-available/jabali-snuffleupagus.ini; do
+    [[ -f "$ini" ]] || continue
+    cur="$(stat -c '%a' "$ini" 2>/dev/null)"
+    if [[ "$cur" != "644" ]]; then
+      chmod 0644 "$ini" && changed=1
+    fi
+  done
+  [[ "$changed" == "1" ]] && _log "provision: healed Snuffleupagus loadability (lib dir 0755 / ini 0644)"
+  return 0
+}
+
 ensure_jabali_panel_dir_traversable() {
   [[ -d /etc/jabali-panel ]] || return 0
   local cur
@@ -9135,6 +9176,7 @@ provision_new_software() {
   # every per-user PHP-FPM is crash-looping right now; fix it before
   # anything else in the provision chain touches PHP.
   ensure_jabali_panel_dir_traversable
+  ensure_snuffleupagus_loadable
 
   # Snuffleupagus: flip simulation → enforce on existing installs.
   # Fresh installs already default to enforce (install_snuffleupagus).

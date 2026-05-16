@@ -11,8 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/cronvalidate"
-	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/cronops"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -21,51 +20,15 @@ func cronJobRepoFromDB() repository.CronJobRepository {
 	return repository.NewCronJobRepository(sharedDB)
 }
 
-// ownedDocrootsForUser mirrors cronHandler.ownedDocroots — the
-// allow-list path validator needs the user's domain docroots so a
-// wp/php cron command can only point at a path the user owns.
-// Without this the CLI write path bypasses the same allow-list the
-// REST handler enforces (M44 / ADR-0083 single-source invariant).
-func ownedDocrootsForUser(ctx context.Context, userID string) ([]string, error) {
-	domains, _, err := repository.NewDomainRepository(sharedDB).
-		ListByUserID(ctx, userID, repository.ListOptions{Limit: 1000})
-	if err != nil {
-		return nil, err
+// cronopsCLIDeps wires the shared Cron Job Intake (ADR-0083/0101)
+// for the CLI: same module the REST handler uses.
+func cronopsCLIDeps() cronops.Deps {
+	return cronops.Deps{
+		Users:    userRepo(),
+		Domains:  repository.NewDomainRepository(sharedDB),
+		CronJobs: cronJobRepoFromDB(),
+		Agent:    sharedAgent,
 	}
-	out := make([]string, 0, len(domains))
-	for _, d := range domains {
-		if d.DocRoot != "" {
-			out = append(out, d.DocRoot)
-		}
-	}
-	return out, nil
-}
-
-// validateCronInputs runs the exact cronvalidate gate the REST
-// handler uses (name -> schedule -> command). Returns a cobra-friendly
-// error so the CLI exits non-zero with the validator's reason.
-func validateCronInputs(ctx context.Context, userID, username, name, schedule, command string) error {
-	if err := cronvalidate.ValidateCronName(name); err != nil {
-		return fmt.Errorf("invalid name: %w", err)
-	}
-	// Drift fix (ADR-0083): REST cron.create 409s when the target
-	// user has no Linux account; the CLI must reject identically or
-	// it creates an enabled job the reconciler can never materialise.
-	// Pure check — caller supplies the resolved Linux username.
-	if err := cronvalidate.ValidateLinuxAccount(username); err != nil {
-		return fmt.Errorf("invalid user: %w", err)
-	}
-	if err := cronvalidate.ValidateSchedule(schedule); err != nil {
-		return fmt.Errorf("invalid schedule: %w", err)
-	}
-	docroots, err := ownedDocrootsForUser(ctx, userID)
-	if err != nil {
-		return fmt.Errorf("resolve owned docroots: %w", err)
-	}
-	if _, err := cronvalidate.ValidateCommand(command, docroots); err != nil {
-		return fmt.Errorf("invalid command: %w", err)
-	}
-	return nil
 }
 
 func newCronCmd() *cobra.Command {
@@ -155,24 +118,22 @@ func newCronAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := validateCronInputs(ctx, u.ID, derefStr(u.Username), name, schedule, command); err != nil {
-				return err
-			}
-			job := &models.CronJob{
-				ID:       ids.NewULID(),
+			// Thin adapter over cronops — same Cron Job Intake the
+			// REST API uses. ADR-0101: applied synchronously.
+			job, err := cronops.Create(ctx, cronopsCLIDeps(), cronops.CreateInput{
 				UserID:   u.ID,
 				Name:     name,
 				Command:  command,
 				Schedule: schedule,
 				Enabled:  !disabled,
-			}
-			if err := cronJobRepoFromDB().Create(ctx, job); err != nil {
-				return fmt.Errorf("create cron job: %w", err)
+			})
+			if err != nil {
+				return err
 			}
 			if jsonOutput {
 				return printJSON(job)
 			}
-			fmt.Printf("Created cron job %s (%s) for %s. Reconciler tick (≤60s) writes the systemd timer.\n",
+			fmt.Printf("Created cron job %s (%s) for %s (applied).\n",
 				job.ID, job.Name, derefStr(u.Username))
 			return nil
 		},
@@ -213,47 +174,43 @@ func newCronUpdateCmd() *cobra.Command {
 				}
 				return fmt.Errorf("find: %w", err)
 			}
+			var patch cronops.UpdatePatch
 			changed := false
 			if cmd.Flags().Changed("name") {
-				job.Name = name
+				patch.Name = &name
 				changed = true
 			}
 			if cmd.Flags().Changed("schedule") {
-				job.Schedule = schedule
+				patch.Schedule = &schedule
 				changed = true
 			}
 			if cmd.Flags().Changed("command") {
-				job.Command = command
+				patch.Command = &command
 				changed = true
 			}
 			if enable {
-				job.Enabled = true
+				v := true
+				patch.Enabled = &v
 				changed = true
 			}
 			if disable {
-				job.Enabled = false
+				v := false
+				patch.Enabled = &v
 				changed = true
 			}
 			if !changed {
 				return fmt.Errorf("no changes specified")
 			}
-			// Re-validate the resulting row through the same gate the
-			// REST PATCH handler uses — an update can introduce a
-			// disallowed command/schedule just like a create.
-			cu, cuErr := userRepo().FindByID(ctx, job.UserID)
-			if cuErr != nil {
-				return fmt.Errorf("load user: %w", cuErr)
-			}
-			if err := validateCronInputs(ctx, job.UserID, derefStr(cu.Username), job.Name, job.Schedule, job.Command); err != nil {
+			// Delegate validate+persist+apply to cronops (the find
+			// above stays for the not-found UX + change detection).
+			updated, err := cronops.Update(ctx, cronopsCLIDeps(), job.ID, patch)
+			if err != nil {
 				return err
 			}
-			if err := repo.Update(ctx, job); err != nil {
-				return fmt.Errorf("update cron job: %w", err)
-			}
 			if jsonOutput {
-				return printJSON(job)
+				return printJSON(updated)
 			}
-			fmt.Printf("Updated cron job %s. Reconciler will reapply on next tick.\n", job.ID)
+			fmt.Printf("Updated cron job %s (applied).\n", updated.ID)
 			return nil
 		},
 	}

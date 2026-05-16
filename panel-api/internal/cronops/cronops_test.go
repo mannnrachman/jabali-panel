@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"testing"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/cronvalidate"
@@ -150,5 +151,44 @@ func TestCreate_DisabledDoesNotApply(t *testing.T) {
 	}
 	if ag.called {
 		t.Fatal("disabled job must NOT agent-apply at intake")
+	}
+}
+
+// Wire-contract guard for the canonical cron.apply / cron.remove
+// structs (relocated here from api per ADR-0101). panel-agent
+// cron.* parse these exact JSON keys — drift = silent runtime
+// validation failure (feedback_cross_boundary_contracts). Change
+// this AND panel-agent/internal/commands/cron_*.go together.
+func TestCronWireShape(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		payload any
+		want    []string
+	}{
+		{"cron.apply", applyParams{UserID: "u", Username: "s", JobID: "j", Name: "n", Command: "wp cron", Schedule: "0 * * * *", OwnedDocroots: []string{"/x"}},
+			[]string{"command", "job_id", "name", "owned_docroots", "schedule", "user_id", "username"}},
+		{"cron.remove", removeParams{UserID: "u", Username: "s", JobID: "j"},
+			[]string{"job_id", "user_id", "username"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, _ := json.Marshal(tc.payload)
+			var m map[string]any
+			if err := json.Unmarshal(b, &m); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			got := make([]string, 0, len(m))
+			for k := range m {
+				got = append(got, k)
+			}
+			sort.Strings(got)
+			if len(got) != len(tc.want) {
+				t.Fatalf("key count: got %v want %v", got, tc.want)
+			}
+			for i, k := range got {
+				if k != tc.want[i] {
+					t.Fatalf("key[%d]=%q want %q", i, k, tc.want[i])
+				}
+			}
+		})
 	}
 }

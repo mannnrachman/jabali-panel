@@ -108,6 +108,13 @@ func main() {
 	// Security UI reads pre-computed data without per-click cscli.
 	commands.StartBlocklistsRefresher(ctx)
 
+	// M45 root web terminal PTY broker — separate UDS sibling of the
+	// agentwire socket, root:<jabali-sockets> 0660. Gated off by
+	// default panel-api-side; unreachable except by the jabali-group
+	// panel-api process.
+	ptySock := filepath.Join(filepath.Dir(*socketPath), "agent-pty.sock")
+	commands.StartTerminalPTYBroker(ctx, ptySock, *socketGID, "/var/log/jabali/terminal", log)
+
 	if err := srv.Serve(ctx); err != nil {
 		log.Error("agent serve failed", "err", err)
 		os.Exit(1)

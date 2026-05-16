@@ -7347,6 +7347,11 @@ install_logrotate() {
   # update path), so make this idempotent here too.
   install -d -m 0750 -o root -g adm /var/log/jabali 2>/dev/null || \
     install -d -m 0750 -o root -g root /var/log/jabali
+  # M45: root-terminal recordings dir. The agent PTY broker also
+  # mkdirs this at session open; pre-creating it root:root 0750 gives
+  # the logrotate /var/log/jabali/terminal/*.cast stanza a valid
+  # parent on a host that has never opened a session.
+  install -d -m 0750 -o root -g root /var/log/jabali/terminal 2>/dev/null || true
   if [[ ! -f "$dst" ]] || ! cmp -s "$src" "$dst"; then
     install -m 0644 -o root -g root "$src" "$dst"
     _ok "wrote $dst"

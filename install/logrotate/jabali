@@ -43,6 +43,23 @@
     su root adm
 }
 
+# M45 root-terminal asciinema recordings (ADR-0096). One .cast per
+# session, root:root 0640 (written by the root agent PTY broker). These
+# can contain secrets the admin typed — keep 26 weeks for incident
+# response, compress aggressively, never recreate (agent makes each
+# file on session open). su root root because the files are root-owned,
+# not adm-group like the install logs.
+/var/log/jabali/terminal/*.cast {
+    weekly
+    rotate 26
+    compress
+    delaycompress
+    missingok
+    notifempty
+    nocreate
+    su root root
+}
+
 /var/log/php-fpm-*.log {
     daily
     rotate 14

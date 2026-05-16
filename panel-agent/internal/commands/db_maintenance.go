@@ -48,7 +48,7 @@ func dbMaintenanceHandler(ctx context.Context, params json.RawMessage) (any, err
 	} else {
 		args = append(args, "--databases", p.Scope)
 	}
-	out, err := exec.CommandContext(ctx, "mysqlcheck", args...).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "mariadb-check", args...).CombinedOutput()
 	summary := strings.TrimSpace(string(out))
 	if err != nil {
 		// mysqlcheck exits non-zero on table-level notes too; surface

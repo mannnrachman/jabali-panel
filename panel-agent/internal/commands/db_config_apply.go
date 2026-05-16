@@ -40,7 +40,7 @@ const (
 )
 
 func mysqlPing(ctx context.Context) bool {
-	return exec.CommandContext(ctx, "mysqladmin", "--protocol=socket", "ping").Run() == nil
+	return exec.CommandContext(ctx, "mariadb-admin", "--protocol=socket", "ping").Run() == nil
 }
 
 func writeBrokenMarker(engine, detail string) {

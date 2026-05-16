@@ -84,6 +84,13 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   # migration secrets written here by migration.secrets_write agent handler.
   /etc/jabali-panel/migration-secrets/   rw,
   /etc/jabali-panel/migration-secrets/** rw,
+  # M46: DB root/superuser + pma-admin break-glass secrets + the
+  # writeSecretFile tmp files (tmp+atomic-rename) at the
+  # /etc/jabali-panel TOP level (r-only above). ADR-0097/0099.
+  /etc/jabali-panel/mysql-root.password   rwk,
+  /etc/jabali-panel/pma-admin.password    rwk,
+  /etc/jabali-panel/postgres.password     rwk,
+  /etc/jabali-panel/.jabali-secret-*      rwk,
   # useradd (and usermod/userdel) read these at startup; inherited via ix.
   # /etc/.pwd.lock is the global useradd/passwd serialisation lock (flock).
   # useradd writes temp files (e.g. /etc/group.<pid>) atomically before rename:
@@ -131,6 +138,9 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /etc/subgid+                 rw,
   /etc/mysql/                  r,
   /etc/mysql/**                r,
+  # M46: curated config tuner managed drop-in + .bak + temp (ADR-0098).
+  /etc/mysql/mariadb.conf.d/    rw,
+  /etc/mysql/mariadb.conf.d/**  rwk,
   /etc/aide/                   r,
   /etc/aide/**                 r,
   /etc/apparmor/               r,
@@ -344,6 +354,9 @@ profile jabali-agent /usr/local/bin/jabali-agent {
   /usr/bin/mariadb-dump        ix,
   /usr/bin/mysqladmin          ix,
   /usr/bin/mariadb-admin       ix,
+  # M46: mariadb-check (maintenance), mariadbd (config --validate-config)
+  /usr/bin/mariadb-check       ix,
+  /usr/sbin/mariadbd           ix,
   /usr/bin/id                  ix,
   /usr/bin/chsh                ix,
   /usr/bin/journalctl          ix,

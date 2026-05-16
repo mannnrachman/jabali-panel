@@ -64,3 +64,18 @@ controlled by the **gating**, not the grant:
 - New agent command `db.pma_admin.ensure`; one new secret file.
 - If the admin account is ever abused, `db_admin_audit scope=admin`
   rows are the forensic trail.
+
+## Amendment 2026-05-16 (live-VM smoke)
+
+The sentinel-DatabaseID design assumed the SSO token tables would
+accept an arbitrary `database_id`. They did not: `phpmyadmin_sso_tokens`
+(`fk_sso_db`) and `adminer_sso_tokens` (auto-named) both had
+`FOREIGN KEY (database_id) REFERENCES databases(id) ON DELETE CASCADE`,
+so minting an admin token with `__M46_ADMIN_ALL__` failed the FK →
+HTTP 500 ("mint failed"). Migration `000136` drops both FKs
+(dynamically, via information_schema, so it is portable across
+fresh installs). Per-user SSO safety is preserved: that path still
+`FindByID`s the real database and 404s if absent, and every SSO token
+is single-use with a ~5-min TTL — the ON-DELETE-CASCADE the FK
+provided was marginal given that lifetime. Decision unchanged; only
+the storage constraint was corrected.

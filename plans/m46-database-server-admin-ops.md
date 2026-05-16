@@ -3,7 +3,7 @@
 **Branch:** `m46/database-server-admin-ops`
 **Status:** Blueprint — advisor-reviewed, B1–B11 folded. Ready to execute Step 0.
 **Next free migration:** `000135`
-**Next free ADR:** `0096`
+**Next free ADR:** `0097` (0096 = M45 root web terminal; README ADR index is stale, missing 0096 — fix in Step 7)
 **Milestone #:** M46 (M45 = root web terminal, highest on `main`)
 
 ---
@@ -40,7 +40,7 @@ the panel's own access path:
 - `db_create`, `backup_databases`, `db_restore`, `db_size`, maintenance (#5), processlist (#6) all connect **root-over-socket / postgres-over-peer**. Nothing in M46 may make panel/agent depend on a password to reach the DB.
 
 **User decision: Option A.** Add/rotate a root (MariaDB) / superuser (Postgres)
-password that *coexists* with socket/peer auth. ADR-0096 records this and
+password that *coexists* with socket/peer auth. ADR-0097 records this and
 **amends, does not supersede**, the socket-auth assumption (the invariant
 stays; we add an *additional* credential).
 
@@ -84,12 +84,14 @@ idempotent pair, and "never echo mysql stderr (may contain password)".
 
 ## 3. ADRs (drafts land in Step 0, status Proposed; Accepted in Step 7)
 
+ADR numbers **0097–0100** (0096 is M45 root web terminal — verified on disk).
+
 | ADR | Title | Decision |
 |-----|-------|----------|
-| 0096 | Root/superuser password alongside socket/peer auth | Option A. MariaDB: the §2-B1 dual-`VIA` statement, socket-first, with the 4 mandatory guards. Postgres: `ALTER ROLE postgres WITH PASSWORD`, peer untouched. Secret at rest: MariaDB → new `/etc/jabali-panel/mysql-root.password` (`root:jabali` 0640) mirroring the pg file; written via **tmp + atomic rename** (B11); never in DB, never in API responses (reveal-once only). The install.sh:1660 validator and the socket/peer panel path are explicitly preserved. |
-| 0097 | Curated, reconciler-converged DB config tuner | Allowlist of known-safe keys only — no raw editor (typo → mariadbd won't start → panel loses its own DB → unfixable from UI; this is exactly why cPanel curates). DB (`db_tuning_settings`) is the **source of truth**; the reconciler renders config from the table every tick and reloads only on divergence (B3, ADR-0002/0004 parity with nginx-file-per-vhost). MariaDB → managed drop-in `/etc/mysql/mariadb.conf.d/zz-jabali-tuning.cnf`; Postgres → `ALTER SYSTEM SET` → `postgresql.auto.conf` (reversible via `RESET`). Dry-run validate before apply; auto-rollback; rollback-of-rollback path (B7). |
-| 0098 | Admin-scoped **privileged** DB web access (phpMyAdmin/Adminer all-DBs) | Honest framing (B4): **this is a privileged web shell over every database on the box.** The MariaDB admin shadow is effectively `ALL PRIVILEGES ON *.*` (minus account-mgmt meta) — that is inherent to "see and edit all DBs incl. future ones", not a weakness to grant-trim. The threat model is controlled by the **gating**, not the grant: `RequireAdmin` + same-origin (Origin/Referer) CSRF + single-use short-TTL token + a distinct audit line `scope=admin`. Postgres: Adminer as `postgres` superuser via existing peer/secret. Separate endpoints from the per-user SSO; per-user ownership check intentionally absent. |
-| 0099 | DB maintenance + processlist privilege model | Maintenance / processlist / KILL run **agent-side root-over-socket (MariaDB) / postgres-over-peer (Postgres)**. `jabali_panel` is NOT granted `PROCESS`/`SUPER`/superuser (no schema migration touches its grants). `KILL` / `pg_terminate_backend` audited with actor + target id. Concurrency: one maintenance job per engine at a time, enforced by the jobs table (B10 → 409). |
+| 0097 | Root/superuser password alongside socket/peer auth | Option A. MariaDB: the §2-B1 dual-`VIA` statement, socket-first, with the 4 mandatory guards. Postgres: `ALTER ROLE postgres WITH PASSWORD`, peer untouched. Secret at rest: MariaDB → new `/etc/jabali-panel/mysql-root.password` (`root:jabali` 0640) mirroring the pg file; written via **tmp + atomic rename** (B11); never in DB, never in API responses (reveal-once only). The install.sh:1660 validator and the socket/peer panel path are explicitly preserved. |
+| 0098 | Curated, reconciler-converged DB config tuner | Allowlist of known-safe keys only — no raw editor (typo → mariadbd won't start → panel loses its own DB → unfixable from UI; this is exactly why cPanel curates). DB (`db_tuning_settings`) is the **source of truth**; the reconciler renders config from the table every tick and reloads only on divergence (B3, ADR-0002/0004 parity with nginx-file-per-vhost). MariaDB → managed drop-in `/etc/mysql/mariadb.conf.d/zz-jabali-tuning.cnf`; Postgres → `ALTER SYSTEM SET` → `postgresql.auto.conf` (reversible via `RESET`). Dry-run validate before apply; auto-rollback; rollback-of-rollback path (B7). |
+| 0099 | Admin-scoped **privileged** DB web access (phpMyAdmin/Adminer all-DBs) | Honest framing (B4): **this is a privileged web shell over every database on the box.** The MariaDB admin shadow is effectively `ALL PRIVILEGES ON *.*` (minus account-mgmt meta) — that is inherent to "see and edit all DBs incl. future ones", not a weakness to grant-trim. The threat model is controlled by the **gating**, not the grant: `RequireAdmin` + same-origin (Origin/Referer) CSRF + single-use short-TTL token + a distinct audit line `scope=admin`. Postgres: Adminer as `postgres` superuser via existing peer/secret. Separate endpoints from the per-user SSO; per-user ownership check intentionally absent. |
+| 0100 | DB maintenance + processlist privilege model | Maintenance / processlist / KILL run **agent-side root-over-socket (MariaDB) / postgres-over-peer (Postgres)**. `jabali_panel` is NOT granted `PROCESS`/`SUPER`/superuser (no schema migration touches its grants). `KILL` / `pg_terminate_backend` audited with actor + target id. Concurrency: one maintenance job per engine at a time, enforced by the jobs table (B10 → 409). |
 
 ---
 
@@ -106,7 +108,7 @@ Execute **inline** (`feedback_never_agents`); briefs are cold-start-complete.
   - `db_admin_audit` — `id` ULID PK, `ts`, `actor_user_id`, `engine`, `action`, `target`, `outcome`. Retention (B9): pruned >180d by an existing reconciler housekeeping pass (or documented operator-pruned in the runbook if no housekeeping hook is cheap).
 - `agentwire/`: req/resp structs for every new command (Steps 1/3/5/6). Enumerate property KINDS not just names — tagged-enum vs bare string, required-at-create (`feedback_schema_enumerate_kinds_not_names`). `omitempty` on server-assigned fields (`feedback_go_json_omitempty_create`).
 - M14 event sources (B8) decided here: emit `db.admin.root_password_rotated`, `db.admin.config_applied` (ok/fail), `db.admin.config_apply_failed_unrecoverable` (critical, B7), `db.admin.maintenance_finished`. **No** event for process-kill (too noisy).
-- Write ADR drafts 0096–0099 (status **Proposed**).
+- Write ADR drafts 0097–0100 (status **Proposed**).
 - Branch-local; no behaviour change.
 
 ### Step 1 — Root/superuser password (feature #1)
@@ -126,7 +128,7 @@ Execute **inline** (`feedback_never_agents`); briefs are cold-start-complete.
 
 ### Step 4 — Admin all-DBs phpMyAdmin / Adminer SSO (feature #4)
 - Reuse SSO token repo + sso.php / Adminer plugin (Step-0 patterns from `db_mysqladmin_ensure`, B2). New privileged path:
-  - MariaDB: agent `db.pma_admin.ensure` creates `jabali_pma_admin@localhost` with `ALL PRIVILEGES ON *.*` (honest per ADR-0098), pw via tmp+rename secret file.
+  - MariaDB: agent `db.pma_admin.ensure` creates `jabali_pma_admin@localhost` with `ALL PRIVILEGES ON *.*` (honest per ADR-0099), pw via tmp+rename secret file.
   - Postgres: Adminer as `postgres` superuser via existing peer/secret.
 - panel-api: `POST /api/v1/admin/databases/sso/phpmyadmin` + `/sso/adminer`, `RequireAdmin`, **no per-DB ownership check**, same-origin CSRF + single-use short-TTL token retained, audit `scope=admin`.
 - UI: "Open phpMyAdmin (all databases)" / "Open Adminer (all databases)" → new tab to returned redirect URL.
@@ -138,7 +140,7 @@ Execute **inline** (`feedback_never_agents`); briefs are cold-start-complete.
 - UI: "Maintenance (Optimize & Analyze)" section — engine + all/pick-DB + run, live status (poll pattern from `DatabasesCard.handleInstall`), last-run summary, honest InnoDB copy.
 
 ### Step 6 — Show Database Processes (feature #6)
-- Agent `db.processlist` (MariaDB `SHOW FULL PROCESSLIST`, root socket) + `db.kill {id}` (`KILL <id>`). `db.postgres.activity` (`SELECT … FROM pg_stat_activity`) + `db.postgres.terminate {pid}` (`pg_terminate_backend`). No new `jabali_panel` privilege (ADR-0099).
+- Agent `db.processlist` (MariaDB `SHOW FULL PROCESSLIST`, root socket) + `db.kill {id}` (`KILL <id>`). `db.postgres.activity` (`SELECT … FROM pg_stat_activity`) + `db.postgres.terminate {pid}` (`pg_terminate_backend`). No new `jabali_panel` privilege (ADR-0100).
 - panel-api: `GET /api/v1/admin/databases/processes?engine=` (list envelope `{data,total,page,page_size}` — `feedback_verify_wire_contract`) + `POST …/processes/kill {engine,id}`. Kill audited (actor+target).
 - UI: auto-refresh table (poll ~3s while tab visible), per-row kill behind `Popconfirm` using `RowDeleteButton`, `scroll={{x:"max-content"}}` (M23).
 
@@ -147,7 +149,7 @@ Execute **inline** (`feedback_never_agents`); briefs are cold-start-complete.
 - Vitest: DatabasesCard sections render + mutation success/error.
 - Playwright: admin → Databases tab; config form loads; processes table renders (mock agent). Run before declaring green.
 - Runbook `plans/m46-database-server-admin-ops-runbook.md`: root-pw recovery, config rollback + the `db-config-broken.json` unrecoverable path, maintenance expectations (InnoDB), audit retention.
-- ADRs 0096–0099 → Accepted; update `docs/adr/README.md`, `docs/BLUEPRINT.md` (table + section), `docs/ENV.md` (new files/vars), `CONVENTIONS.md` pointer row if `internal/dbtuning` is shared.
+- ADRs 0097–0100 → Accepted; **also add the missing 0096 (M45 root terminal) row to `docs/adr/README.md`** (currently stale); update `docs/adr/README.md`, `docs/BLUEPRINT.md` (table + section), `docs/ENV.md` (new files/vars), `CONVENTIONS.md` pointer row if `internal/dbtuning` is shared.
 - Memory: `project_m46_database_admin_ops.md` + one MEMORY.md line (≤200 chars).
 
 ---
@@ -157,7 +159,7 @@ Execute **inline** (`feedback_never_agents`); briefs are cold-start-complete.
 - List envelope `{data,total,page,page_size}` (`feedback_verify_wire_contract`).
 - Route family pattern; all routes `RequireAdmin`; nothing mounts off `v1` for the agent (no internal routes here).
 - Reveal-once password response mirrors M7 `database_users.rotatePassword`.
-- No raw config editor (lockout class bug — ADR-0097).
+- No raw config editor (lockout class bug — ADR-0098).
 - Migration = schema only (`feedback_migration_data_seed_ordering`); `utf8mb4_unicode_ci` on FK-bearing CREATE TABLE (`feedback_mariadb_collation_fk`); avoid MariaDB 11.4+ reserved words in identifiers/aliases (`feedback_mariadb_reserved_words`); test migration on pinned MariaDB 11.x.
 - Agent never opens outbound; all shell args sanitised; never echo mysql stderr.
 - GORM params only; ULID PKs; `%w` wrap; `slog`; `set -e`/SIGPIPE-safe in any bash (`feedback_sigpipe_silent_exit`).
@@ -168,7 +170,7 @@ Execute **inline** (`feedback_never_agents`); briefs are cold-start-complete.
 ## 6. Residual risks (carry into execution, not blockers)
 
 1. MariaDB version skew: §2-B1 form is 10.4+; pinned targets are 11.4/11.8 — fine, but Step 1 still runs the `SHOW CREATE USER` guard so a surprise older box fails loud, not silent.
-2. Admin PMA shadow = root-equivalent web access (ADR-0098 states this plainly). Accept; mitigation is the gating, not the grant.
+2. Admin PMA shadow = root-equivalent web access (ADR-0099 states this plainly). Accept; mitigation is the gating, not the grant.
 3. InnoDB "repair" honesty handled by the Step 5 rename + summary copy.
 4. Config restart blast radius: every site's DB connection drops on a MariaDB restart — UI copy says so; prefer `reload` where the key allows, `restart` only when required.
 5. `db_tuning_settings` KV vs JSON columns on `server_settings`: KV chosen for engine×param sparsity + per-param `applied_at`/reconciler diffing. If Step 3 finds the converger simpler with a JSON blob, that's an allowed in-step deviation (note it in the ADR).

@@ -55,7 +55,18 @@ sp.disable_function.function("putenv").param("assignment").value_r("GCONV_").dro
 sp.disable_function.function("file_put_contents").param("filename").value_r("\\.php$").drop();
 
 # --- Stream wrapper allowlist ---
-sp.wrappers_whitelist.list("file,php,http,https,data");
+# phar is REQUIRED: jabali ships + drives wp-cli as a .phar
+# (/opt/wp-cli/wp-cli-*.phar) for every WordPress/app install. On
+# deb.sury.org PHP builds snuffleupagus enforces this whitelist at the
+# engine wrapper-registry level (NOT gated by snuffleupagus.enabled),
+# so omitting phar strips phar:// and breaks `wp core download` with
+# "Unable to find the wrapper phar". The phar-deserialization RCE
+# vector is independently mitigated: phar.readonly=On is pinned on
+# every host (blocks attacker phar creation); allowing the read-side
+# phar:// wrapper for the trusted jabali-shipped archive is safe.
+# Debian-native PHP didn't strip it (masked this on .150; .com sury
+# build broke).
+sp.wrappers_whitelist.list("file,php,http,https,data,phar");
 
 # --- M41 enrichment: HIGH-value upstream rules (2026-05-03) ---
 

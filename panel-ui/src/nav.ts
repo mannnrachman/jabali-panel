@@ -18,6 +18,7 @@ import {
   ChartBarOutlined,
   CloudServerOutlined,
   CodeOutlined,
+  SquareTerminalOutlined,
   DownloadOutlined,
   FileTextOutlined,
   LifeBuoyOutlined,
@@ -189,7 +190,7 @@ export const adminNav: NavItem[] = [
   {
     key: "terminal",
     label: "Terminal",
-    icon: navIcon(CodeOutlined),
+    icon: navIcon(SquareTerminalOutlined),
     path: "/jabali-admin/terminal",
   },
 ];

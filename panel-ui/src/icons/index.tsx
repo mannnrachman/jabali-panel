@@ -29,6 +29,7 @@ import {
   CircleHelp,
   Clock,
   Code,
+  SquareTerminal,
   Copy,
   Database,
   Download,
@@ -163,6 +164,7 @@ export const GlobalOutlined = shim(Globe);
 export const EthernetPortOutlined = shim(EthernetPort);
 export const LockOutlined = shim(Lock);
 export const CodeOutlined = shim(Code);
+export const SquareTerminalOutlined = shim(SquareTerminal);
 export const DatabaseOutlined = shim(Database);
 export const HddOutlined = shim(HardDrive);
 export const HardDriveDownloadOutlined = shim(HardDriveDownload);

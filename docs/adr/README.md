@@ -89,6 +89,7 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0098](0098-curated-reconciler-converged-db-config-tuner.md) | M46 Curated reconciler-converged DB config tuner | Accepted |
 | [0099](0099-admin-scoped-privileged-db-web-access.md) | M46 Admin-scoped privileged DB web access (phpMyAdmin/Adminer) | Accepted |
 | [0100](0100-db-maintenance-processlist-privilege-model.md) | M46 DB maintenance + processlist privilege model | Accepted |
+| [0105](0105-unified-audit-log.md) | M49 Unified audit log (append-only hash-chained, M14-sourced, admin + per-user scope) | Proposed |
 
 ## Decision Categories
 

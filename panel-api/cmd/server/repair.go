@@ -320,6 +320,12 @@ func repairSteps() []repairStep {
 			fix:    fixOrphanMigrationStaging,
 			destructive: true,
 		},
+		{
+			id:     "nginx-config-invalid",
+			label:  "jabali-default/jabali-panel.conf has `http2 on;` on nginx<1.25.1 (nginx -t fails, reloads rejected)",
+			detect: detectNginxConfigInvalid,
+			fix:    fixNginxConfigInvalid,
+		},
 	}
 }
 

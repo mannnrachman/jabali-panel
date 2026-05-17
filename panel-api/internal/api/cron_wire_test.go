@@ -15,25 +15,15 @@ import (
 // If this test fails, change it AND the matching struct in
 // panel-agent/internal/commands/cron_*.go together. Never one without
 // the other.
+//
+// cron.apply / cron.remove canonical structs moved to internal/cronops
+// (ADR-0101); their wire-shape guard lives in cronops_test.go.
 func TestCronAgentParamsWireShape(t *testing.T) {
 	cases := []struct {
 		name    string
 		payload any
 		want    []string
 	}{
-		{
-			name: "cron.apply",
-			payload: cronApplyAgentParams{
-				UserID:        "u",
-				Username:      "shuki",
-				JobID:         "j",
-				Name:          "n",
-				Command:       "wp cron event run --path=/x",
-				Schedule:      "0 * * * *",
-				OwnedDocroots: []string{"/x"},
-			},
-			want: []string{"command", "job_id", "name", "owned_docroots", "schedule", "user_id", "username"},
-		},
 		{
 			name:    "cron.remove",
 			payload: cronRemoveAgentParams{UserID: "u", Username: "shuki", JobID: "j"},

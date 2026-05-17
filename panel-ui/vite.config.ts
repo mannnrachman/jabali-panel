@@ -43,6 +43,13 @@ export default defineConfig(({ mode }) => {
       globals: true,
       environment: "happy-dom",
       setupFiles: ["./src/test/setup.ts"],
+      // CI runners vary in speed (the act_runner host has been
+      // resource-starved); the default 5s timeout flakes fast tests
+      // (e.g. a 497ms-local test exceeding 5s on a contended runner).
+      // 20s is a vast margin that still surfaces a genuinely slow-test
+      // regression.
+      testTimeout: 20000,
+      hookTimeout: 20000,
       // Exclude Playwright E2E tests — those run via `npx playwright test`.
       exclude: ["tests/e2e/**", "node_modules/**"],
       css: false,

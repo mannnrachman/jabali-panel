@@ -16,7 +16,7 @@ security-sensitive actions, with **two scoped views over one store**:
 |------------|--------|
 | Admin forensics view | `GET /api/v1/admin/audit` (RequireAdmin): every event, raw action/target, filter actor/subject/action/result/time/source-IP |
 | Per-user activity view | `GET /api/v1/me/activity` (RequireKratosSession): ONLY rows whose `subject_user_id` = caller — their own actions + actions taken *on* their account; curated/redacted; compromise-detection surface |
-| Recorder | One-write-path: middleware records mutating API calls + explicit high-value domain events; emitted via the M14 bus (no parallel pipeline) |
+| Recorder | One-write-path: middleware records mutating API calls + explicit high-value domain events; published to a dedicated `jabali:audit:queue` Redis stream → single-writer chain consumer (NOT the M14 Envelope — see §6 design correction). M14 fans out only the alert-worthy subset |
 | Tamper-evidence | Per-row `prev_hash` chain (single-writer); cheap integrity for incident/compliance |
 | Retention | Append-only; prune job by age (notifications-style); no UPDATE/DELETE ever |
 | Surface | Admin "Audit Log" page + user-shell "Account Activity" page (`SearchableTable`, list envelope); `jabali audit query` CLI |
@@ -34,10 +34,18 @@ security-sensitive actions, with **two scoped views over one store**:
   login (ADR-0016), automation-token mint/revoke (M44), DB-admin ops
   (M46 — fold `db_admin_audit` in), security toggles
   (CrowdSec/UFW/AppArmor/egress).
-- **M14-sourced, never blocks the request.** Emit async (goroutine,
-  the M44 `BumpLastUsed` discipline). A dropped audit event must
-  never fail or slow the user action; the bus + consumer-group
-  persists it (M14 already does this for notifications).
+- **Dedicated audit stream, never blocks the request.** The recorder
+  publishes a full structured audit record to its own Redis stream
+  `jabali:audit:queue` (M14 dispatcher *shape*, own wire — NOT the
+  notification `Envelope`, which has no structured payload; see §6).
+  Async (M44 `BumpLastUsed` discipline) — never fails/slows the user
+  action. **Redis-down fallback:** buffered direct-DB insert off the
+  request goroutine (`prev_hash`/`row_hash` NULL, back-filled by the
+  consumer on recovery) so audit is never silently lost — audit is
+  fail-*open-but-recorded*, not fail-closed. M14 (`Queue.Publish`) is
+  used **only** to fan out the alert-worthy subset (impersonation,
+  break-glass, security toggles) as a *separate* notification — the
+  audit record never depends on M14.
 - **Dual scope, server-enforced.** `subject_user_id` on every row.
   `/me/activity` is subject-scoped via a **repo method**, never a
   client filter param (the `RequireOwner`/domain-404 discipline that
@@ -65,7 +73,7 @@ security-sensitive actions, with **two scoped views over one store**:
 
 | ADR | Title |
 |-----|-------|
-| 0105 | Unified audit log: append-only hash-chained `audit_events`, M14-bus-sourced one-write-path recorder, dual admin/subject scope, impersonation-visibility default-on toggle, M46 `db_admin_audit` fold-in |
+| 0105 | Unified audit log: append-only hash-chained `audit_events`, one-write-path recorder over a dedicated `jabali:audit:queue` stream (M14 alert-subset only — design corrected 2026-05-17), dual admin/subject scope, impersonation-visibility default-on toggle, M46 `db_admin_audit` fold-in |
 
 ## 4. Wave / step plan (8 steps, inline)
 
@@ -75,7 +83,8 @@ security-sensitive actions, with **two scoped views over one store**:
    result[ok|denied|error], source_ip, request_id, prev_hash,
    row_hash, meta JSON). Fold-in plan for `db_admin_audit`
    (migrate rows → drop or alias-view). Schema only + collation.
-1. `internal/audit` pkg — `Recorder` (Emit async via M14 bus),
+1. `internal/audit` pkg — `Recorder` (async publish to
+   `jabali:audit:queue` + buffered DB fallback when Redis is down),
    hash-chain computer (single-writer consumer), typed event
    constructors; narrow seams; sqlmock repo. No middleware wiring yet.
 2. Recorder middleware on mutating routes (POST/PATCH/PUT/DELETE):
@@ -85,10 +94,11 @@ security-sensitive actions, with **two scoped views over one store**:
 3. Domain emitters wired: impersonation (ADR-0015), break-glass
    (ADR-0016), token mint/revoke (M44), security toggles, M46
    db-admin → unified store. M46 parallel-table read path retired.
-4. Hash-chain consumer: single goroutine consumes the M14 audit
-   stream, computes `prev_hash`→`row_hash`, persists. Gap/restart
-   safe (chain head in DB; lost==0 invariant like the M44 replay
-   store fail-closed posture).
+4. Hash-chain consumer: single goroutine consumes `jabali:audit:queue`,
+   computes `prev_hash`→`row_hash`, persists; on startup also
+   back-fills `row_hash` for any rows the Redis-down DB fallback
+   inserted with NULL hashes (chain stays contiguous). Gap/restart
+   safe (chain head in DB).
 5. Admin API + UI: `GET /admin/audit` (filters, list envelope) +
    admin "Audit Log" `SearchableTable` page. Actor vs subject
    rendered ("admin X did Y to user Z").
@@ -113,12 +123,28 @@ cross-tenant/IDOR trap → server-side subject scope via repo method,
 blank-subject = invisible (safe-fail), mirrored on the
 domain-404/RequireOwner pattern that survived live testing; fold-in
 not fork (M41 dbops "write once" discipline vs the M46 parallel
-table); list envelope; schema-only migration + collation; M14 bus
-reuse not a second pipeline; honest v1 scope (sensitive mutations +
+table); list envelope; schema-only migration + collation; M14
+dispatcher *pattern* reuse (own stream, same proven shape — not the
+notification Envelope, not a new daemon) + M14 for alert fan-out
+only; honest v1 scope (sensitive mutations +
 auth/security events, NOT every GET; structured fields, no free-text);
 branch-only; inline.
 
 ## 6. Open risks for advisor
+
+### Resolved pre-implementation (2026-05-17 code-grounded review)
+
+- **R0 — "emit via M14 bus" was wrong.** `notifications.Envelope`
+  is notification-shaped (no structured payload; extending its wire
+  is a documented breaking change). **Resolved:** dedicated
+  `jabali:audit:queue` stream (M14 *shape*, own wire) + single-writer
+  chain consumer + Redis-down buffered-DB fallback; M14 used only to
+  fan out the alert subset. ADR-0105 §Decision corrected (with
+  struck-through provenance) + Alternatives updated. This is the
+  category of error the pre-advisor gate exists to catch — caught
+  before Step 1 code.
+
+### Open
 
 1. **Chain integrity vs throughput.** A single-writer hash-chain
    serialises audit persistence. Mitigate: the chain consumer is the

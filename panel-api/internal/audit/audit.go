@@ -18,6 +18,7 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -182,7 +183,7 @@ func (q *AuditQueue) Read(ctx context.Context, consumer string, batch int, block
 		Count:    int64(batch),
 		Block:    block,
 	}).Result()
-	if err == redis.Nil {
+	if errors.Is(err, redis.Nil) {
 		return nil, nil
 	}
 	return res, err

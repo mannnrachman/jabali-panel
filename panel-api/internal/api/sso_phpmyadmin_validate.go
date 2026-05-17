@@ -9,12 +9,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssoadmin"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
@@ -52,8 +51,13 @@ type ssoValidateResponse struct {
 	// cfgupdate) rather than TCP. M25.1: once `skip-networking` lands
 	// in my.cnf, Host/Port become advisory only.
 	Socket string `json:"socket,omitempty"`
-	OnlyDB string `json:"only_db,omitempty"`
-	DB     string `json:"db,omitempty"`
+	// db/only_db: NO omitempty — install/phpmyadmin/sso.php:105
+	// isset()-requires both keys present and :112 is_string. The
+	// admin-all-DBs branch sends them empty (= all databases);
+	// omitempty would drop them → "unexpected validator payload"
+	// (M46 admin-phpMyAdmin SSO bug). Per-user always sets db.Name.
+	OnlyDB string `json:"only_db"`
+	DB     string `json:"db"`
 }
 
 // mariaDBSocketPath is the Debian/MariaDB default and what install.sh
@@ -110,16 +114,16 @@ func (h *ssoPhpMyAdminValidateHandler) validate(c *gin.Context) {
 	// carry a real DatabaseID, so this early branch never affects
 	// the per-user path below.
 	if token.DatabaseID == ssoAdminAllSentinel {
-		pw, rerr := os.ReadFile(pmaAdminPasswordFile)
-		if rerr != nil {
-			h.cfg.Log.ErrorContext(ctx, "pma admin secret read failed", "err", rerr)
+		cred, cerr := ssoadmin.AdminCredential("mariadb")
+		if cerr != nil {
+			h.cfg.Log.ErrorContext(ctx, "pma admin credential resolve failed", "err", cerr)
 			c.JSON(http.StatusInternalServerError, ssoErrorResponse{Error: "internal"})
 			return
 		}
 		h.auditLog(ctx, token.UserID, token.DatabaseID, hashPrefix, "validated:admin")
 		c.JSON(http.StatusOK, ssoValidateResponse{
-			User:     "jabali_pma_admin",
-			Password: strings.TrimSpace(string(pw)),
+			User:     cred.Username,
+			Password: cred.Password,
 			Host:     "localhost",
 			Port:     3306,
 			Socket:   mariaDBSocketPath,

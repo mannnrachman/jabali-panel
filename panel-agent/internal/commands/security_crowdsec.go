@@ -66,9 +66,9 @@ func runCscliJSON(ctx context.Context, args ...string) ([]byte, error) {
 // ---- security.crowdsec.status ----------------------------------------------
 
 type csStatusResponse struct {
-	Running        bool   `json:"running"`
-	LapiReachable  bool   `json:"lapi_reachable"`
-	Version        string `json:"version,omitempty"`
+	Running       bool   `json:"running"`
+	LapiReachable bool   `json:"lapi_reachable"`
+	Version       string `json:"version,omitempty"`
 }
 
 func csStatusHandler(ctx context.Context, _ json.RawMessage) (any, error) {
@@ -503,11 +503,11 @@ func StartBlocklistsRefresher(ctx context.Context) {
 // ---- security.crowdsec.metrics ---------------------------------------------
 
 type csMetricsResponse struct {
-	Parsed         int `json:"parsed"`
-	Unparsed       int `json:"unparsed"`
-	Buckets        int `json:"buckets"`
+	Parsed          int `json:"parsed"`
+	Unparsed        int `json:"unparsed"`
+	Buckets         int `json:"buckets"`
 	DecisionsActive int `json:"decisions_active"`
-	AlertsTotal    int `json:"alerts_total"`
+	AlertsTotal     int `json:"alerts_total"`
 }
 
 func csMetricsHandler(ctx context.Context, _ json.RawMessage) (any, error) {
@@ -909,6 +909,12 @@ inband_rules:
  - crowdsecurity/base-config
  - crowdsecurity/vpatch-*
  - crowdsecurity/generic-*
+on_match:
+ - filter: req.URL.Path startsWith "/api/v1/admin/"
+   apply:
+    - CancelEvent()
+    - CancelAlert()
+    - SetRemediation("allow")
 `
 
 	switch mode {

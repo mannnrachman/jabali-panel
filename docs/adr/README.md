@@ -91,6 +91,7 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0100](0100-db-maintenance-processlist-privilege-model.md) | M46 DB maintenance + processlist privilege model | Accepted |
 | [0101](0101-cron-intake-synchronous-apply.md) | Cron Job Intake owns synchronous agent-apply (amends 0083) | Accepted |
 | [0102](0102-appsec-exempt-authenticated-admin-api.md) | Authenticated admin API exempt from AppSec WAF (ADR-0060/0063 related) | Accepted |
+| [0106](0106-unified-audit-log.md) | M49 Unified audit log (append-only hash-chained, dedicated audit stream, admin + per-user scope) | Proposed |
 
 ## Decision Categories
 

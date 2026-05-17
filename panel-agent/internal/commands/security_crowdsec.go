@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/appseccfg"
 )
 
 // M26 Step 2 (ADR-0053). CrowdSec LAPI surface for the admin Security
@@ -66,9 +67,9 @@ func runCscliJSON(ctx context.Context, args ...string) ([]byte, error) {
 // ---- security.crowdsec.status ----------------------------------------------
 
 type csStatusResponse struct {
-	Running        bool   `json:"running"`
-	LapiReachable  bool   `json:"lapi_reachable"`
-	Version        string `json:"version,omitempty"`
+	Running       bool   `json:"running"`
+	LapiReachable bool   `json:"lapi_reachable"`
+	Version       string `json:"version,omitempty"`
 }
 
 func csStatusHandler(ctx context.Context, _ json.RawMessage) (any, error) {
@@ -503,11 +504,11 @@ func StartBlocklistsRefresher(ctx context.Context) {
 // ---- security.crowdsec.metrics ---------------------------------------------
 
 type csMetricsResponse struct {
-	Parsed         int `json:"parsed"`
-	Unparsed       int `json:"unparsed"`
-	Buckets        int `json:"buckets"`
+	Parsed          int `json:"parsed"`
+	Unparsed        int `json:"unparsed"`
+	Buckets         int `json:"buckets"`
 	DecisionsActive int `json:"decisions_active"`
-	AlertsTotal    int `json:"alerts_total"`
+	AlertsTotal     int `json:"alerts_total"`
 }
 
 func csMetricsHandler(ctx context.Context, _ json.RawMessage) (any, error) {
@@ -874,61 +875,21 @@ func csAppSecGeoblockSetHandler(ctx context.Context, params json.RawMessage) (an
 // The two `# jabali-...` markers at the top let the get handler parse
 // (mode, countries) back out without a YAML round-trip.
 func renderAppSecGeoblockRule(mode string, countries []string) string {
-	// Empty-string tolerance in the list is intentional: GeoIPEnrich
-	// returns "" for private IPs (RFC 1918, loopback). Without "" in
-	// the list, operators who turn on "allow [FR]" would immediately
-	// lock out their own health checks from localhost.
-	csv := strings.Join(countries, ",")
-	// Build expr list per mode. Allow-mode appends "" so private IPs
-	// (RFC 1918, loopback — GeoIPEnrich returns "") still pass.
-	// Deny-mode does NOT append "" — we never want to deny unresolvable.
-	allowExpr := `""`
-	denyExpr := ""
-	if len(countries) > 0 {
-		quoted := make([]string, len(countries))
-		for i, c := range countries {
-			quoted[i] = `"` + c + `"`
-		}
-		allowExpr = strings.Join(quoted, ", ") + `, ""`
-		denyExpr = strings.Join(quoted, ", ")
-	}
-
-	// Common header + base appsec-config skeleton. inband_rules block
-	// loads the upstream vpatch-* CVE rules, base-config, and generic-*
-	// CRS-style rules (SSTI / WordPress upload / no-user-agent — enabled
-	// by default 2026-04-26). pre_eval is appended below per-mode
-	// (off = no pre_eval).
-	header := `# Managed by jabali — M27 AppSec config.
-# DO NOT hand-edit. Set via the admin Security → CrowdSec tab OR
-# POST /api/v1/admin/security/crowdsec/appsec/geoblock.
-# jabali-mode: ` + mode + `
-# jabali-countries: ` + csv + `
-name: crowdsecurity/jabali-appsec
-default_remediation: ban
-inband_rules:
- - crowdsecurity/base-config
- - crowdsecurity/vpatch-*
- - crowdsecurity/generic-*
-`
-
-	switch mode {
-	case "off":
-		// No pre_eval block — vpatch rules still evaluate, geoblock inert.
-		return header
-	case "allow":
-		return header + `pre_eval:
- - filter: IsInBand == true && GeoIPEnrich(req.RemoteAddr)?.Country.IsoCode not in [` + allowExpr + `]
-   apply:
-    - DropRequest("Forbidden Country (jabali allow-list)")
-`
-	case "deny":
-		return header + `pre_eval:
- - filter: IsInBand == true && GeoIPEnrich(req.RemoteAddr)?.Country.IsoCode in [` + denyExpr + `]
-   apply:
-    - DropRequest("Forbidden Country (jabali deny-list)")
-`
-	}
-	return header
+	// Single source: internal/appseccfg (ADR-0083 sibling; the
+	// ADR-0102 admin-API allowlist is now canonical here, not a
+	// second hand-written copy that drifts vs install.sh). The agent
+	// uses its fixed inband set; install.sh presence-gates its own
+	// set through the same Render().
+	return appseccfg.Render(appseccfg.Opts{
+		Mode:      mode,
+		Countries: countries,
+		Inband: []string{
+			"crowdsecurity/base-config",
+			"crowdsecurity/vpatch-*",
+			"crowdsecurity/generic-*",
+		},
+		AdminAllowlist: true,
+	})
 }
 
 // ---- M27 Step 2: security.crowdsec.allowlists.{list,add,remove} -----------

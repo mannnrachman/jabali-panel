@@ -24,6 +24,11 @@ type sslPanelIssueParams struct {
 	ExtraHostnames []string `json:"extra_hostnames,omitempty"`
 	Email          string   `json:"email"`
 	Staging        bool     `json:"staging,omitempty"`
+	// Kind (ADR-0105) routes the deploy-hook to the right target:
+	// "" / "hostname" → panel.{crt,key} (+ reload panel/bulwark);
+	// "mail" → panel-mail.{crt,key} (+ restart stalwart).
+	Kind        string `json:"kind,omitempty"`
+	CertPEMPath string `json:"cert_pem_path,omitempty"`
 }
 
 // sslPanelIssueResponse mirrors the agent's ssl.issue shape so callers
@@ -54,13 +59,17 @@ const panelDeployHook = "/etc/letsencrypt/renewal-hooks/deploy/jabali-panel-cert
 // runDeployHookFn is a package-level seam so unit tests can stub
 // out the actual exec.Command without spawning processes. Production
 // wiring is exec.Command + cmd.Run().
-var runDeployHookFn = func(ctx context.Context, hostname string) error {
+var runDeployHookFn = func(ctx context.Context, hostname, kind string) error {
+	if kind == "" {
+		kind = "hostname"
+	}
 	cmd := exec.CommandContext(ctx, panelDeployHook)
 	// certbot sets RENEWED_LINEAGE on real renewals; for first-issue
-	// we replicate the contract so the hook script doesn't have to
-	// special-case its caller.
+	// we replicate the contract + pass the kind so the hook routes
+	// to the right deploy target (ADR-0105).
 	cmd.Env = append(os.Environ(),
 		"RENEWED_LINEAGE=/etc/letsencrypt/live/"+hostname,
+		"JABALI_PANEL_CERT_KIND="+kind,
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -133,7 +142,7 @@ func sslPanelIssueHandler(ctx context.Context, params json.RawMessage) (any, err
 	// Run the deploy-hook directly. Certbot only fires deploy-hooks
 	// on renewals, NOT on first-issue, so the agent triggers it once
 	// the cert lineage exists.
-	if err := runDeployHookFn(ctx, p.Hostname); err != nil {
+	if err := runDeployHookFn(ctx, p.Hostname, p.Kind); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
 			Message: err.Error(),

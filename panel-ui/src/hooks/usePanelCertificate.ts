@@ -1,15 +1,18 @@
 // usePanelCertificate — TanStack Query for /admin/panel-certificate
-// (M32, ADR-0066).
+// (M32, ADR-0105).
 //
-// The endpoint returns the singleton panel_certificate row PLUS a live
-// routability decision (computed on the panel-api side every request)
-// so the UI's "Use Let's Encrypt" toggle can render its enabled state
-// without a separate request.
+// Post-split the endpoint returns BOTH panel certs (kind=hostname and
+// kind=mail), each with its own live routability decision. The UI
+// renders a status row per kind; the single Use-LE/staging toggle
+// (on the hostname row) governs both.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../apiClient";
 
+export type PanelCertKind = "hostname" | "mail";
+
 export interface PanelCertificate {
+  kind: PanelCertKind;
   id: number;
   hostname: string;
   status:
@@ -32,16 +35,20 @@ export interface PanelCertificate {
   routable_reason?: string;
 }
 
+interface PanelCertListResponse {
+  certs: PanelCertificate[];
+}
+
 const QK = ["admin", "panel-certificate"] as const;
 
 export function usePanelCertificate() {
-  return useQuery<PanelCertificate>({
+  return useQuery<PanelCertificate[]>({
     queryKey: QK,
     queryFn: async () => {
-      const r = await apiClient.get<PanelCertificate>(
+      const r = await apiClient.get<PanelCertListResponse>(
         "/admin/panel-certificate",
       );
-      return r.data;
+      return r.data?.certs ?? [];
     },
     refetchInterval: 30_000,
     refetchIntervalInBackground: false,
@@ -58,8 +65,8 @@ export function usePanelCertificateToggle() {
       );
       return r.data;
     },
-    onSuccess: (data) => {
-      qc.setQueryData(QK, data);
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: QK });
     },
   });
 }
@@ -67,14 +74,14 @@ export function usePanelCertificateToggle() {
 export function usePanelCertificateIssue() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async () => {
+    mutationFn: async (kind: PanelCertKind = "hostname") => {
       const r = await apiClient.post<PanelCertificate>(
-        "/admin/panel-certificate/issue",
+        `/admin/panel-certificate/issue?kind=${encodeURIComponent(kind)}`,
       );
       return r.data;
     },
-    onSuccess: (data) => {
-      qc.setQueryData(QK, data);
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: QK });
     },
   });
 }

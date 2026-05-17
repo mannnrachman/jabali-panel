@@ -14,108 +14,113 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-func TestPanelCertificateRepository_Get_NotFound(t *testing.T) {
+const pcSelect = `SELECT \* FROM .panel_certificate. WHERE kind = .? ORDER BY .* LIMIT`
+
+func TestPanelCert_GetByKind_NotFound(t *testing.T) {
 	t.Parallel()
 	gdb, mock, raw := newMockDB(t)
 	defer raw.Close()
-
 	repo := repository.NewPanelCertificateRepository(gdb)
 
-	mock.ExpectQuery(`SELECT \* FROM .panel_certificate. WHERE .panel_certificate.\..id. = .? ORDER BY .panel_certificate.\..id. LIMIT .?`).
-		WithArgs(1, 1).
-		WillReturnError(gorm.ErrRecordNotFound)
+	mock.ExpectQuery(pcSelect).WithArgs("mail", 1).WillReturnError(gorm.ErrRecordNotFound)
 
-	_, err := repo.Get(context.Background())
+	_, err := repo.GetByKind(context.Background(), models.PanelCertKindMail)
 	require.Error(t, err)
 	assert.Equal(t, repository.ErrNotFound, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPanelCertificateRepository_EnsureDefault_Creates(t *testing.T) {
+func TestPanelCert_Get_IsHostnameKind(t *testing.T) {
 	t.Parallel()
 	gdb, mock, raw := newMockDB(t)
 	defer raw.Close()
-
 	repo := repository.NewPanelCertificateRepository(gdb)
 
-	// EnsureDefault first calls Get → ErrRecordNotFound
-	mock.ExpectQuery(`SELECT \* FROM .panel_certificate. WHERE .panel_certificate.\..id. = .? ORDER BY .panel_certificate.\..id. LIMIT .?`).
-		WithArgs(1, 1).
-		WillReturnError(gorm.ErrRecordNotFound)
+	rows := sqlmock.NewRows([]string{"kind", "id", "hostname", "status", "cert_pem_path"}).
+		AddRow("hostname", 1, "panel.example.com", "issued", "/etc/jabali/tls/panel.crt")
+	mock.ExpectQuery(pcSelect).WithArgs("hostname", 1).WillReturnRows(rows)
 
-	// Then Create inserts. MariaDB dialect uses INSERT ... RETURNING id.
-	mock.ExpectBegin()
-	mock.ExpectQuery(`INSERT INTO .panel_certificate.`).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
-	mock.ExpectCommit()
-
-	row, err := repo.EnsureDefault(context.Background(), "panel.example.com")
+	got, err := repo.Get(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, uint8(1), row.ID)
-	assert.Equal(t, "panel.example.com", row.Hostname)
-	assert.Equal(t, models.PanelCertStatusSelfSigned, row.Status)
-	assert.Equal(t, "/etc/jabali/tls/panel.crt", row.CertPEMPath)
-	require.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestPanelCertificateRepository_EnsureDefault_ReturnsExisting(t *testing.T) {
-	t.Parallel()
-	gdb, mock, raw := newMockDB(t)
-	defer raw.Close()
-
-	repo := repository.NewPanelCertificateRepository(gdb)
-
-	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{
-		"id", "hostname", "status", "cert_pem_path",
-		"issued_at", "expires_at", "last_error", "attempt_count",
-		"next_retry_at", "staging", "use_le", "updated_at",
-	}).AddRow(1, "panel.example.com", "issued", "/etc/jabali/tls/panel.crt",
-		now, now.Add(90*24*time.Hour), "", 0, nil, false, true, now)
-
-	mock.ExpectQuery(`SELECT \* FROM .panel_certificate. WHERE .panel_certificate.\..id. = .? ORDER BY .panel_certificate.\..id. LIMIT .?`).
-		WithArgs(1, 1).
-		WillReturnRows(rows)
-
-	got, err := repo.EnsureDefault(context.Background(), "panel.example.com")
-	require.NoError(t, err)
+	assert.Equal(t, "hostname", got.Kind)
 	assert.Equal(t, "issued", got.Status)
-	assert.True(t, got.UseLE)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPanelCertificateRepository_MarkIssued(t *testing.T) {
+func TestPanelCert_EnsureDefault_CreatesBothKinds(t *testing.T) {
 	t.Parallel()
 	gdb, mock, raw := newMockDB(t)
 	defer raw.Close()
+	repo := repository.NewPanelCertificateRepository(gdb)
 
+	// hostname kind: not found -> create
+	mock.ExpectQuery(pcSelect).WithArgs("hostname", 1).WillReturnError(gorm.ErrRecordNotFound)
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO .panel_certificate.`).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+	// mail kind: not found -> create
+	mock.ExpectQuery(pcSelect).WithArgs("mail", 1).WillReturnError(gorm.ErrRecordNotFound)
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO .panel_certificate.`).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	host, err := repo.EnsureDefault(context.Background(), "panel.example.com")
+	require.NoError(t, err)
+	assert.Equal(t, "hostname", host.Kind)
+	assert.Equal(t, "panel.example.com", host.Hostname)
+	assert.Equal(t, "/etc/jabali/tls/panel.crt", host.CertPEMPath)
+	assert.Equal(t, models.PanelCertStatusSelfSigned, host.Status)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPanelCert_ListAll(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+	repo := repository.NewPanelCertificateRepository(gdb)
+
+	rows := sqlmock.NewRows([]string{"kind", "id", "hostname", "status"}).
+		AddRow("hostname", 1, "panel.example.com", "issued").
+		AddRow("mail", 1, "mail.panel.example.com", "pending_acme")
+	mock.ExpectQuery(`SELECT \* FROM .panel_certificate. ORDER BY kind`).WillReturnRows(rows)
+
+	got, err := repo.ListAll(context.Background())
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, "hostname", got[0].Kind)
+	assert.Equal(t, "mail", got[1].Kind)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPanelCert_MarkIssuedKind_Mail(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
 	repo := repository.NewPanelCertificateRepository(gdb)
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`UPDATE .panel_certificate. SET .* WHERE id = ?`).
+	mock.ExpectExec(`UPDATE .panel_certificate. SET .* WHERE kind = ?`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	issued := time.Date(2026, 4, 26, 10, 0, 0, 0, time.UTC)
-	expires := issued.Add(90 * 24 * time.Hour)
-	err := repo.MarkIssued(context.Background(), issued, expires)
+	iss := time.Date(2026, 5, 17, 10, 0, 0, 0, time.UTC)
+	err := repo.MarkIssuedKind(context.Background(), models.PanelCertKindMail, iss, iss.Add(90*24*time.Hour))
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPanelCertificateRepository_MarkPendingRetry(t *testing.T) {
+func TestPanelCert_MarkPendingRetry_Hostname(t *testing.T) {
 	t.Parallel()
 	gdb, mock, raw := newMockDB(t)
 	defer raw.Close()
-
 	repo := repository.NewPanelCertificateRepository(gdb)
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`UPDATE .panel_certificate. SET .* WHERE id = ?`).
+	mock.ExpectExec(`UPDATE .panel_certificate. SET .* WHERE kind = ?`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	err := repo.MarkPendingRetry(context.Background(), "rate limited", 3*time.Hour)
+	err := repo.MarkPendingRetry(context.Background(), "mail DNS not pointed at server", 3*time.Hour)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

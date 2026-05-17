@@ -48,6 +48,12 @@ type AuditEventRepository interface {
 	// returns ErrNotFound (effectively "already sealed / not found")
 	// rather than ever overwriting a sealed row. Consumer-only.
 	SetHashes(ctx context.Context, id, prevHash, rowHash string) error
+
+	// ListUnsealed returns rows with a NULL row_hash (inserted by the
+	// recorder's Redis-down DB fallback), oldest-first and capped at
+	// limit — the chain consumer's back-fill work queue. Read-only;
+	// append-only-safe.
+	ListUnsealed(ctx context.Context, limit int) ([]models.AuditEvent, error)
 }
 
 // Column allowlists for the audit_events list views. Empty-key-proof
@@ -163,4 +169,20 @@ func (r *auditEventRepo) SetHashes(ctx context.Context, id, prevHash, rowHash st
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (r *auditEventRepo) ListUnsealed(ctx context.Context, limit int) ([]models.AuditEvent, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	var rows []models.AuditEvent
+	err := r.db.WithContext(ctx).
+		Where("row_hash IS NULL").
+		Order("ts ASC, id ASC").
+		Limit(limit).
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
 }

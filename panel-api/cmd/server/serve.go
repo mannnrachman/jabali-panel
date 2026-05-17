@@ -18,6 +18,7 @@ import (
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/limits"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/app"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/audit"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/db"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/backupfinalizer"
@@ -201,6 +202,17 @@ func runServe(cmd *cobra.Command, args []string) error {
 			// command and in-process event sources (Step 4 below) write to
 			// the identical Redis stream the dispatcher drains.
 			deps.NotificationQueue = notifications.NewQueue(redisClient)
+
+			// M49 — unified audit log (ADR-0106). Recorder is the one
+			// write path (recorder middleware + domain emitters);
+			// Consumer is the single-writer hash-chain sealer of
+			// jabali:audit:queue. Same nil-without-Redis posture as
+			// NotificationQueue. sharedDB/sharedLog are in scope here
+			// (used by the repo wiring just above).
+			auditRepo := repository.NewAuditEventRepository(sharedDB)
+			aq := audit.NewAuditQueue(redisClient)
+			deps.AuditRecorder = audit.NewRecorder(aq, auditRepo, sharedLog)
+			deps.AuditConsumer = audit.NewConsumer(aq, auditRepo, sharedLog)
 		}
 
 		// Reconciler: database as source of truth, agent state as derived state.
@@ -596,6 +608,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	defer cancel() // Ensure cancel is called on all exit paths
 	if deps.Reconciler != nil {
 		go deps.Reconciler.Start(ctx)
+	}
+	// M49 — single-writer audit hash-chain consumer (ADR-0106).
+	// Mirrors the reconciler: long-lived goroutine bound to ctx.
+	if deps.AuditConsumer != nil {
+		go deps.AuditConsumer.Start(ctx)
 	}
 	// M13.1: daily goaccess-driven bandwidth scan. Self-scoping —
 	// no-op on hosts where any of agent / domain repo / bw repo

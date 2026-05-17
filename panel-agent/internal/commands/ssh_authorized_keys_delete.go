@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 )
@@ -40,19 +41,31 @@ func sshAuthorizedKeysDeleteHandler(ctx context.Context, params json.RawMessage)
 		}
 	}
 
-	homeDir := u.HomeDir
-	sshDir := filepath.Join(homeDir, ".ssh")
+	sshDir := filepath.Join(u.HomeDir, ".ssh")
 	authorizedKeysPath := filepath.Join(sshDir, "authorized_keys")
 
-	// Attempt to remove the authorized_keys file
-	if err := os.Remove(authorizedKeysPath); err != nil {
-		// Ignore "file not found" errors; that's idempotent
-		if !os.IsNotExist(err) {
+	// "delete" means remove jabali's managed block ONLY — never the
+	// whole file. Operator keys outside the markers survive (incident
+	// 2026-05-17: the every-tick reconciler delete was wiping operator
+	// SSH access on every jabali host).
+	existing, rerr := readAuthorizedKeys(authorizedKeysPath)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if existing == "" {
+		return &sshAuthorizedKeysDeleteResponse{Username: p.Username, Deleted: true}, nil
+	}
+	remainder := applyManagedBlock(existing, nil)
+	if strings.TrimSpace(remainder) == "" {
+		// Nothing but the jabali block was present — clean removal.
+		if err := os.Remove(authorizedKeysPath); err != nil && !os.IsNotExist(err) {
 			return nil, &agentwire.AgentError{
 				Code:    agentwire.CodeInternal,
 				Message: fmt.Sprintf("failed to delete authorized_keys: %v", err),
 			}
 		}
+	} else if werr := writeAuthorizedKeysAtomic(u, sshDir, authorizedKeysPath, remainder); werr != nil {
+		return nil, werr
 	}
 
 	return &sshAuthorizedKeysDeleteResponse{

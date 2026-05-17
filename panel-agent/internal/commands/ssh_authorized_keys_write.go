@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
-	"strings"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
 )
@@ -43,47 +42,19 @@ func sshAuthorizedKeysWriteHandler(ctx context.Context, params json.RawMessage) 
 		}
 	}
 
-	homeDir := u.HomeDir
-	sshDir := filepath.Join(homeDir, ".ssh")
+	sshDir := filepath.Join(u.HomeDir, ".ssh")
 	authorizedKeysPath := filepath.Join(sshDir, "authorized_keys")
-	tmpPath := filepath.Join(sshDir, "authorized_keys.tmp")
 
-	// Ensure $HOME/.ssh/ exists with correct ownership and mode (0700)
-	if err := ensureSSHDir(sshDir, u); err != nil {
-		return nil, err
+	// Preserve any operator / break-glass keys: jabali only owns its
+	// delimited block (ADR — incident 2026-05-17). Read current file,
+	// re-render only the managed block, keep everything else verbatim.
+	existing, rerr := readAuthorizedKeys(authorizedKeysPath)
+	if rerr != nil {
+		return nil, rerr
 	}
-
-	// Prepare the keys content: join with newlines, ensure trailing newline
-	content := strings.Join(p.Keys, "\n")
-	if len(content) > 0 && !strings.HasSuffix(content, "\n") {
-		content += "\n"
-	}
-
-	// Write to temporary file
-	if err := os.WriteFile(tmpPath, []byte(content), 0600); err != nil {
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("failed to write temp file: %v", err),
-		}
-	}
-
-	// Chown the temporary file
-	uid, gid := parseUID(u)
-	if err := os.Chown(tmpPath, uid, gid); err != nil {
-		_ = os.Remove(tmpPath) // Best effort cleanup
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("failed to chown temp file: %v", err),
-		}
-	}
-
-	// Atomic rename
-	if err := os.Rename(tmpPath, authorizedKeysPath); err != nil {
-		_ = os.Remove(tmpPath) // Best effort cleanup
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("failed to rename authorized_keys: %v", err),
-		}
+	content := applyManagedBlock(existing, p.Keys)
+	if werr := writeAuthorizedKeysAtomic(u, sshDir, authorizedKeysPath, content); werr != nil {
+		return nil, werr
 	}
 
 	return &sshAuthorizedKeysWriteResponse{

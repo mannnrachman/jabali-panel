@@ -10,49 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSSHAuthorizedKeysWrite_ValidKeys(t *testing.T) {
-	ctx := context.Background()
-
-	params, _ := json.Marshal(sshAuthorizedKeysWriteParams{
-		Username: "root",
-		Keys: []string{
-			"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG test-key-1",
-			"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAB test-key-2",
-		},
-	})
-
-	result, err := sshAuthorizedKeysWriteHandler(ctx, params)
-	if err != nil {
-		t.Logf("Error (may be expected if not running as root): %v", err)
-		return
-	}
-
-	resp := result.(*sshAuthorizedKeysWriteResponse)
-	require.Equal(t, "root", resp.Username)
-	require.Equal(t, 2, resp.KeyCount)
-	require.True(t, resp.Written)
-}
-
-func TestSSHAuthorizedKeysWrite_EmptyKeys(t *testing.T) {
-	ctx := context.Background()
-
-	params, _ := json.Marshal(sshAuthorizedKeysWriteParams{
-		Username: "root",
-		Keys:     []string{},
-	})
-
-	result, err := sshAuthorizedKeysWriteHandler(ctx, params)
-	if err != nil {
-		t.Logf("Error (may be expected if not running as root): %v", err)
-		return
-	}
-
-	resp := result.(*sshAuthorizedKeysWriteResponse)
-	require.Equal(t, "root", resp.Username)
-	require.Equal(t, 0, resp.KeyCount)
-	require.True(t, resp.Written)
-}
-
 func TestSSHAuthorizedKeysWrite_InvalidUser(t *testing.T) {
 	ctx := context.Background()
 

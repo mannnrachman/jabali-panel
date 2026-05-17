@@ -35,9 +35,7 @@ import (
 // cannot regress it. pmaAdminPasswordFile / pgSuperuserPasswordFile are
 // the agent-written 0640 root:jabali secret files the validator reads.
 const (
-	ssoAdminAllSentinel     = "__M46_ADMIN_ALL__"
-	pmaAdminPasswordFile    = "/etc/jabali-panel/pma-admin.password"
-	pgSuperuserPasswordFile = "/etc/jabali-panel/postgres.password"
+	ssoAdminAllSentinel = "__M46_ADMIN_ALL__"
 )
 
 type DatabaseAdminOpsHandlerConfig struct {

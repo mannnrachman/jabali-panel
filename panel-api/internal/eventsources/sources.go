@@ -113,6 +113,7 @@ func Start(ctx context.Context, d Deps) {
 	go runCertRenew(ctx, d)
 	go runDiskFull(ctx, d)
 	go runServiceDown(ctx, d)
+	go runNginxConfig(ctx, d)
 	go runCrowdSec(ctx, d)
 	go runLoadHigh(ctx, d)
 	go runSystemUpdate(ctx, d)

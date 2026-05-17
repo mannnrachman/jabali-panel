@@ -408,7 +408,7 @@ var (
 	blocklistsRefreshing atomic.Bool
 )
 
-const blocklistsRefreshInterval = 5 * time.Minute
+const blocklistsRefreshInterval = 30 * time.Minute
 
 func csBlocklistsListHandler(_ context.Context, _ json.RawMessage) (any, error) {
 	blocklistsCacheMu.RLock()
@@ -438,41 +438,11 @@ func csBlocklistsRefreshHandler(ctx context.Context, _ json.RawMessage) (any, er
 // blocklistsRefreshOnce does one cscli pass + replaces the cache atomically.
 // Errors are swallowed — keep the last good snapshot on transient failures.
 func blocklistsRefreshOnce(ctx context.Context) {
-	resp := csBlocklistsResponse{Blocklists: []csBlocklistEntry{}}
-	origins := []string{"CAPI", "lists", "cscli-import", "crowdsec", "console", "manual"}
-	agg := map[string]*csBlocklistEntry{}
-	for _, origin := range origins {
-		out, err := runCscliJSON(ctx, "decisions", "list", "--origin", origin, "--limit", "100000")
-		if err != nil {
-			continue
-		}
-		trimmed := strings.TrimSpace(string(out))
-		if trimmed == "" || trimmed == "null" || trimmed == "[]" {
-			continue
-		}
-		var raw []rawDecisionEntry
-		if err := json.Unmarshal(out, &raw); err != nil {
-			continue
-		}
-		for _, entry := range raw {
-			for _, d := range entry.Decisions {
-				key := origin + "/" + d.Scenario
-				e, ok := agg[key]
-				if !ok {
-					e = &csBlocklistEntry{Name: key}
-					agg[key] = e
-				}
-				e.Count++
-				if d.Until > e.LatestEnd {
-					e.LatestEnd = d.Until
-				}
-			}
-		}
-	}
-	for _, e := range agg {
-		resp.Blocklists = append(resp.Blocklists, *e)
-		resp.Total += e.Count
-	}
+	// Raw-CSV snapshot (security_crowdsec_blocklist.go) — replaces the
+	// old 6×(100k JSON objects) every-5-min pass that pegged crowdsec
+	// at 100% CPU. Errors inside are swallowed; keep the last good
+	// snapshot on transient failure.
+	resp := refreshBlocklistsSnapshot(ctx)
 	sort.Slice(resp.Blocklists, func(i, j int) bool {
 		return resp.Blocklists[i].Count > resp.Blocklists[j].Count
 	})

@@ -1,4 +1,4 @@
-# ADR-0105 — Unified audit log (M49)
+# ADR-0106 — Unified audit log (M49)
 
 **Date**: 2026-05-17
 **Status**: proposed

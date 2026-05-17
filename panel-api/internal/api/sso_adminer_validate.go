@@ -16,13 +16,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/sso"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssoadmin"
 )
 
 // pgLoopbackHost is what the Adminer pgsql driver dials. We connect
@@ -96,9 +95,9 @@ func (h *ssoAdminerValidateHandler) validate(c *gin.Context) {
 	// Adminer). Per-user tokens carry a real DatabaseID, so this
 	// early branch never affects the per-user path below.
 	if token.DatabaseID == ssoAdminAllSentinel {
-		pw, rerr := os.ReadFile(pgSuperuserPasswordFile)
-		if rerr != nil {
-			h.cfg.Log.ErrorContext(ctx, "pg superuser secret read failed", "err", rerr)
+		cred, cerr := ssoadmin.AdminCredential("postgres")
+		if cerr != nil {
+			h.cfg.Log.ErrorContext(ctx, "pg superuser credential resolve failed", "err", cerr)
 			c.JSON(http.StatusInternalServerError, ssoErrorResponse{Error: "internal"})
 			return
 		}
@@ -106,8 +105,8 @@ func (h *ssoAdminerValidateHandler) validate(c *gin.Context) {
 		c.JSON(http.StatusOK, ssoAdminerValidateResponse{
 			Driver:   "pgsql",
 			Server:   pgLoopbackHost,
-			Username: "postgres",
-			Password: strings.TrimSpace(string(pw)),
+			Username: cred.Username,
+			Password: cred.Password,
 			// DB empty → Adminer lists all databases.
 		})
 		return

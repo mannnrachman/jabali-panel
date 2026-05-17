@@ -98,3 +98,37 @@ func TestSSLPanelIssue_MissingWebroot(t *testing.T) {
 		t.Errorf("expected FailedPrecondition or Internal, got %s", ae.Code)
 	}
 }
+
+// Wire contract (feedback_verify_wire_contract): the exact JSON the
+// reconciler's reconcileOnePanelCert sends for the mail kind must
+// unmarshal into sslPanelIssueParams with kind + cert_pem_path
+// populated. Pins panel-api↔panel-agent so a tag rename can't
+// silently route the mail cert to the hostname deploy target.
+func TestSSLPanelIssueParams_KindWireContract(t *testing.T) {
+	// Byte-identical to reconciler r.agent.Call(... "ssl.panel.issue" ...).
+	payload := `{"hostname":"mail.mx.example.com","extra_hostnames":[],"email":"admin@example.com","staging":false,"kind":"mail","cert_pem_path":"/etc/jabali/tls/panel-mail.crt"}`
+	var p sslPanelIssueParams
+	if err := json.Unmarshal([]byte(payload), &p); err != nil {
+		t.Fatalf("unmarshal reconciler payload: %v", err)
+	}
+	if p.Hostname != "mail.mx.example.com" {
+		t.Errorf("hostname = %q", p.Hostname)
+	}
+	if p.Kind != "mail" {
+		t.Errorf("kind = %q, want mail (deploy-hook routes panel-mail.{crt,key} + stalwart)", p.Kind)
+	}
+	if p.CertPEMPath != "/etc/jabali/tls/panel-mail.crt" {
+		t.Errorf("cert_pem_path = %q", p.CertPEMPath)
+	}
+
+	// Back-compat: an older caller (or the hostname kind) omits kind →
+	// empty, which the deploy-hook + runDeployHookFn default to
+	// "hostname" (panel.{crt,key}).
+	var legacy sslPanelIssueParams
+	if err := json.Unmarshal([]byte(`{"hostname":"mx.example.com","email":"a@b.co"}`), &legacy); err != nil {
+		t.Fatalf("unmarshal legacy payload: %v", err)
+	}
+	if legacy.Kind != "" {
+		t.Errorf("legacy kind = %q, want empty (defaults to hostname)", legacy.Kind)
+	}
+}

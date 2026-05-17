@@ -1,4 +1,4 @@
--- M49: unified audit log (ADR-0105).
+-- M49: unified audit log (ADR-0106).
 -- Schema only + a one-time fold-in BACKFILL of pre-existing rows from
 -- db_admin_audit (created by 000135, runs before this). The backfill is
 -- NOT seeding app-data: on a fresh install db_admin_audit is empty so
@@ -16,10 +16,10 @@
 -- recorder); M50 drops the view. Step 0 breaks no reader and no writer.
 
 -- Append-only audit timeline. DB is the source of truth (ADR-0002);
--- one recorder writes via the M14 bus (ADR-0105), two server-scoped
+-- one recorder writes via the M14 bus (ADR-0106), two server-scoped
 -- views read (admin: all; /me/activity: subject_user_id = caller).
 -- NO UPDATE/DELETE of rows anywhere — retention is a whole-partition
--- drop past N days (ADR-0105), never a selective delete. There is
+-- drop past N days (ADR-0106), never a selective delete. There is
 -- deliberately no updated_at: an append-only row is never updated.
 CREATE TABLE audit_events (
   id              CHAR(26)     NOT NULL PRIMARY KEY,                  -- ULID

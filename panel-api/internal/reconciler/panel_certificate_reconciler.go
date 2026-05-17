@@ -8,24 +8,14 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 )
 
-// reconcilePanelCertificate is M32's reconciler hook. Runs once per
-// ReconcileAll tick. Owns the state machine for the singleton
-// panel_certificate row and dispatches ssl.panel.issue when LE is
-// enabled and the routability gate clears.
-//
-// Decision table (per tick):
-//
-//	use_le=0                                                    → noop
-//	hostname empty / admin_email empty                          → noop (admin must finish General settings first)
-//	routability gate fails                                       → noop, log reason
-//	status=self_signed       → set pending_acme + dispatch
-//	status=pending_acme_retry + next_retry_at <= now → dispatch
-//	status=issued + expires_at within 30d                       → noop (certbot's own timer renews; deploy-hook updates row)
-//	all other states                                            → noop
-//
-// On agent success: MarkIssued (status=issued, attempt_count=0).
-// On agent failure: MarkPendingRetry (status=pending_acme_retry,
-// attempt_count++, next_retry_at=now+3h).
+// reconcilePanelCertificate is M32's reconciler hook. Post ADR-0105 it
+// drives TWO independent rows — the panel hostname cert and the panel
+// mail (mail.<hostname>) cert — through the same state machine. The
+// mail row's routability preflight is on mail.<hostname>; when it
+// fails the mail row parks in pending_acme_retry with a clear reason
+// and the hostname row is processed completely independently (mail
+// can never block the hostname cert). Both kinds share the single
+// admin "Use Let's Encrypt" intent (the hostname row's use_le).
 func (r *Reconciler) reconcilePanelCertificate(ctx context.Context) {
 	if r.panelCerts == nil || r.panelCertRoutability == nil || r.serverSettings == nil {
 		return
@@ -37,90 +27,108 @@ func (r *Reconciler) reconcilePanelCertificate(ctx context.Context) {
 		return
 	}
 
-	row, err := r.panelCerts.EnsureDefault(ctx, settings.Hostname)
-	if err != nil {
-		r.log.Warn("panel-cert reconcile failed to load row", "error", err)
+	if _, err := r.panelCerts.EnsureDefault(ctx, settings.Hostname); err != nil {
+		r.log.Warn("panel-cert reconcile failed to ensure rows", "error", err)
 		return
 	}
-	if !row.UseLE {
+	hostRow, err := r.panelCerts.GetByKind(ctx, models.PanelCertKindHostname)
+	if err != nil {
+		r.log.Warn("panel-cert reconcile failed to load hostname row", "error", err)
+		return
+	}
+	// Single admin intent: the hostname row's use_le toggle governs
+	// both certs.
+	if !hostRow.UseLE {
+		return
+	}
+	if settings.Hostname == "" || settings.AdminEmail == "" {
+		r.log.Debug("panel-cert reconcile skipped: hostname or admin_email empty")
+		return
+	}
+
+	for _, kind := range []string{models.PanelCertKindHostname, models.PanelCertKindMail} {
+		row, gerr := r.panelCerts.GetByKind(ctx, kind)
+		if gerr != nil {
+			r.log.Warn("panel-cert reconcile load row", "kind", kind, "error", gerr)
+			continue
+		}
+		r.reconcileOnePanelCert(ctx, kind, row, settings.AdminEmail, settings.PublicIPv4)
+	}
+}
+
+// reconcileOnePanelCert runs the ADR-0066 state machine for one kind.
+// name is the cert subject for this kind (row.Hostname — the panel
+// hostname for kind=hostname, mail.<hostname> for kind=mail). All row
+// transitions use the per-kind repo variants so the two rows never
+// clobber each other.
+func (r *Reconciler) reconcileOnePanelCert(ctx context.Context, kind string, row *models.PanelCertificate, adminEmail, publicIPv4 string) {
+	name := row.Hostname
+	if name == "" {
 		return
 	}
 
 	switch row.Status {
 	case models.PanelCertStatusSelfSigned:
-		// First time the admin enabled use_le on a routable hostname.
-		// Fall through to dispatch.
+		// First attempt — fall through to dispatch.
 	case models.PanelCertStatusPendingACMERetry:
 		if row.NextRetryAt == nil || row.NextRetryAt.After(time.Now()) {
 			return
 		}
 	case models.PanelCertStatusPendingACME:
-		// In-flight or stale-lock. The dispatch path sets status=pending_acme
-		// before calling the agent, then transitions to issued / pending_acme_retry
-		// on result. If panel-api crashed (or the agent call hung past
-		// the dispatch context's 3-minute deadline) the row is stuck —
-		// the reconciler would otherwise skip it forever.
-		//
-		// Treat the row as stale and retry once UpdatedAt is older than
-		// 10 minutes (3× the dispatch timeout). Younger rows are still
-		// in flight and we keep skipping.
 		if time.Since(row.UpdatedAt) < 10*time.Minute {
 			return
 		}
-		r.log.Warn("panel-cert: stale pending_acme lock, retrying", "hostname", settings.Hostname, "stuck_for", time.Since(row.UpdatedAt))
-		// Fall through to dispatch path.
+		r.log.Warn("panel-cert: stale pending_acme lock, retrying", "kind", kind, "name", name, "stuck_for", time.Since(row.UpdatedAt))
 	case models.PanelCertStatusIssued:
-		// certbot's daily timer handles renewal; deploy-hook updates
-		// the row out-of-band. The reconciler is only the "first
-		// issue" + "retry on failure" driver.
 		return
 	case models.PanelCertStatusFailed:
-		// Terminal until admin clears it via the toggle UI. M32.1
-		// surfaces a Reset button.
 		return
 	}
 
-	if settings.Hostname == "" || settings.AdminEmail == "" {
-		r.log.Debug("panel-cert reconcile skipped: hostname or admin_email empty")
-		return
-	}
-	gate, err := r.panelCertRoutability.Check(ctx, settings.Hostname, settings.PublicIPv4)
+	gate, err := r.panelCertRoutability.Check(ctx, name, publicIPv4)
 	if err != nil {
-		r.log.Warn("panel-cert routability check errored", "error", err)
+		r.log.Warn("panel-cert routability check errored", "kind", kind, "name", name, "error", err)
 		return
 	}
 	if !gate.Routable {
-		r.log.Debug("panel-cert reconcile skipped: not routable", "reason", gate.Reason)
+		// Mail kind not pointed at this server (e.g. mail.<hostname>
+		// is Cloudflare-fronted) — park the MAIL row with a clear
+		// reason on its own retry schedule. The hostname row is
+		// untouched: mail never blocks the panel hostname cert.
+		reason := "not routable: " + gate.Reason
+		if kind == models.PanelCertKindMail {
+			reason = "mail DNS not pointed at this server (" + name + " -> " + gate.Reason + ")"
+		}
+		r.log.Debug("panel-cert reconcile parked: not routable", "kind", kind, "name", name, "reason", gate.Reason)
+		_ = r.panelCerts.MarkPendingRetryKind(ctx, kind, reason, 3*time.Hour)
 		return
 	}
 
-	// Mark in-flight before the agent call so a concurrent reconciler
-	// tick (or the REST issue endpoint) doesn't double-dispatch.
+	// Mark in-flight (per kind) before the agent call so a concurrent
+	// tick / REST issue doesn't double-dispatch this kind.
 	row.Status = models.PanelCertStatusPendingACME
 	if err := r.panelCerts.Upsert(ctx, row); err != nil {
-		r.log.Warn("panel-cert reconcile pre-dispatch upsert failed", "error", err)
+		r.log.Warn("panel-cert reconcile pre-dispatch upsert failed", "kind", kind, "error", err)
 		return
 	}
 
 	dispatchCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
-	// extra_hostnames left empty: the mail.<panel-hostname> SAN was in
-	// the original M32 plan but every fresh install fails because the
-	// DNS record for mail.<panel-hostname> doesn't exist by default —
-	// the operator's DNS provider hosts the panel hostname zone, not
-	// pdns. Bulwark on the panel hostname is reachable through the
-	// /webmail redirect (ADR-0048) and through per-domain
-	// mail.<user-domain> certs. Re-introduce the SAN as opt-in once
-	// the DNS provisioning side lands.
+	// kind + cert_pem_path are forward-compat for the per-kind deploy
+	// target (Wave 3 agent wiring honours them; older agents ignore
+	// unknown fields). extra_hostnames stays empty — each kind is a
+	// single-name cert, independence is the whole point of ADR-0105.
 	raw, agentErr := r.agent.Call(dispatchCtx, "ssl.panel.issue", map[string]any{
-		"hostname":        settings.Hostname,
+		"hostname":        name,
 		"extra_hostnames": []string{},
-		"email":           settings.AdminEmail,
+		"email":           adminEmail,
 		"staging":         row.Staging,
+		"kind":            kind,
+		"cert_pem_path":   row.CertPEMPath,
 	})
 	if agentErr != nil {
-		r.log.Warn("panel-cert ssl.panel.issue failed", "error", agentErr, "hostname", settings.Hostname)
-		_ = r.panelCerts.MarkPendingRetry(ctx, agentErr.Error(), 3*time.Hour)
+		r.log.Warn("panel-cert ssl.panel.issue failed", "kind", kind, "name", name, "error", agentErr)
+		_ = r.panelCerts.MarkPendingRetryKind(ctx, kind, agentErr.Error(), 3*time.Hour)
 		return
 	}
 
@@ -129,19 +137,18 @@ func (r *Reconciler) reconcilePanelCertificate(ctx context.Context) {
 		ExpiresAt string `json:"expires_at"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
-		r.log.Warn("panel-cert agent response unmarshal failed", "error", err)
-		_ = r.panelCerts.MarkPendingRetry(ctx, "agent response unmarshal: "+err.Error(), 3*time.Hour)
+		_ = r.panelCerts.MarkPendingRetryKind(ctx, kind, "agent response unmarshal: "+err.Error(), 3*time.Hour)
 		return
 	}
 	issuedAt, err1 := time.Parse(time.RFC3339, resp.IssuedAt)
 	expiresAt, err2 := time.Parse(time.RFC3339, resp.ExpiresAt)
 	if err1 != nil || err2 != nil {
-		_ = r.panelCerts.MarkPendingRetry(ctx, "agent response timestamp parse failed", 3*time.Hour)
+		_ = r.panelCerts.MarkPendingRetryKind(ctx, kind, "agent response timestamp parse failed", 3*time.Hour)
 		return
 	}
-	if err := r.panelCerts.MarkIssued(ctx, issuedAt, expiresAt); err != nil {
-		r.log.Warn("panel-cert MarkIssued failed", "error", err)
+	if err := r.panelCerts.MarkIssuedKind(ctx, kind, issuedAt, expiresAt); err != nil {
+		r.log.Warn("panel-cert MarkIssued failed", "kind", kind, "error", err)
 		return
 	}
-	r.log.Info("panel-cert issued", "hostname", settings.Hostname, "expires_at", expiresAt)
+	r.log.Info("panel-cert issued", "kind", kind, "name", name, "expires_at", expiresAt)
 }

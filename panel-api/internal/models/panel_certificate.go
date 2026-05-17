@@ -28,11 +28,28 @@ const (
 	PanelCertStatusFailed           = "failed"
 )
 
+// Panel cert kinds. Two independent rows (ADR-0105): the panel
+// hostname cert and the panel mail (mail.<hostname>) cert. Each owns
+// the full status state machine + its own cert path / retry.
+const (
+	PanelCertKindHostname = "hostname"
+	PanelCertKindMail     = "mail"
+)
+
+// PanelMailHostname is the mail SAN derived from the panel hostname.
+func PanelMailHostname(hostname string) string {
+	if hostname == "" {
+		return ""
+	}
+	return "mail." + hostname
+}
+
 // PanelCertificate is the singleton (id=1) row tracking the panel
 // hostname's TLS cert lifecycle. Empty fields on first boot are
 // seeded by the application; the migration only creates the table.
 type PanelCertificate struct {
-	ID            uint8      `gorm:"primaryKey;default:1"                              json:"id"`
+	Kind          string     `gorm:"primaryKey;type:varchar(16);not null;default:'hostname'" json:"kind"`
+	ID            uint8      `gorm:"type:tinyint unsigned;not null;default:1"          json:"id"`
 	Hostname      string     `gorm:"type:varchar(253);not null;default:''"             json:"hostname"`
 	Status        string     `gorm:"type:varchar(32);not null;default:'self_signed'"   json:"status"`
 	CertPEMPath   string     `gorm:"type:varchar(255);not null;default:'/etc/jabali/tls/panel.crt'" json:"cert_pem_path"`

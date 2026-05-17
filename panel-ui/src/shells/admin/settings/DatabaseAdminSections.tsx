@@ -573,8 +573,25 @@ function ProcessesSection() {
         <Table.Column
           dataIndex="info"
           title="Query"
+          width={380}
           render={(v: string) => (
-            <span style={{ fontFamily: "monospace", fontSize: 12 }}>{v}</span>
+            // Bounded + ellipsis so a long query can't blow out the
+            // card width (the Query column was clipping at the edge);
+            // full text on hover via the native title tooltip.
+            <span
+              title={v}
+              style={{
+                fontFamily: "monospace",
+                fontSize: 12,
+                display: "block",
+                maxWidth: 360,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {v}
+            </span>
           )}
         />
         <Table.Column

@@ -5521,6 +5521,14 @@ install_crowdsec_appsec() {
   [[ -f "$_ar/crs-exclusion-plugin-wordpress.yaml" ]] && _inband+=("crowdsecurity/crs-exclusion-plugin-wordpress")
   local _inband_yaml="" _r
   for _r in "${_inband[@]}"; do _inband_yaml+=" - ${_r}"$'\n'; done
+  # ADR-0102: the authenticated admin API (/api/v1/admin/*) is
+  # RequireAdmin+Kratos-gated and legitimately carries SQL-ish bodies
+  # (DB config tuner, DB console). AppSec SQLi/CRS body-inspection
+  # false-positives there (403). Exempt the prefix via the documented
+  # on_match allow pattern. The agent geoblock regenerator
+  # (security_crowdsec.go) emits the SAME block so a geoblock toggle
+  # cannot wipe it.
+  local _onmatch_yaml=$'on_match:\n - filter: req.URL.Path startsWith "/api/v1/admin/"\n   apply:\n    - CancelEvent()\n    - CancelAlert()\n    - SetRemediation("allow")\n'
 
   if [[ ! -f "$config_file" ]]; then
     _log "seeding $config_file (mode=off, inband=${_inband[*]})"
@@ -5529,6 +5537,7 @@ install_crowdsec_appsec() {
     {
       printf '%s' $'# Managed by jabali \xe2\x80\x94 M27 AppSec config.\n# DO NOT hand-edit. Set via the admin Security \xe2\x86\x92 CrowdSec tab OR\n# POST /api/v1/admin/security/crowdsec/appsec/geoblock.\n# jabali-mode: off\n# jabali-countries:\nname: crowdsecurity/jabali-appsec\ndefault_remediation: ban\ninband_rules:\n'
       printf '%s' "$_inband_yaml"
+      printf '%s' "$_onmatch_yaml"
     } >"$tmp"
     install -m 0644 -o root -g root "$tmp" "$config_file"
     rm -f "$tmp"
@@ -5554,6 +5563,15 @@ install_crowdsec_appsec() {
       install -m 0644 -o root -g root "$tmp" "$config_file"
       rm -f "$tmp"
     fi
+  fi
+
+  # ADR-0102: ensure the admin-API AppSec allowlist exists even on a
+  # pre-fix file (the reconcile above only rewrites inband_rules).
+  # Idempotent; top-level on_match key, coexists with any agent
+  # pre_eval (geoblock) block. Re-applied every jabali update.
+  if [[ -f "$config_file" ]] && ! grep -q 'startsWith "/api/v1/admin/"' "$config_file"; then
+    _log "appending ADR-0102 admin-API AppSec allowlist to $config_file"
+    printf '%s' "$_onmatch_yaml" >>"$config_file"
   fi
 
   # Cleanup: M26-era /etc/crowdsec/appsec-rules/jabali-geoblock.yaml is

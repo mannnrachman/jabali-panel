@@ -121,7 +121,16 @@ func BootstrapAdmin(ctx context.Context, users repository.UserRepository, opt Bo
 		IsAdmin: u.IsAdmin,
 	}
 	identityID, err := opt.Kratos.CreateIdentityWithPassword(ctx, traits, u.PasswordHash)
-	if err != nil {
+	// ErrIdentityExisted (Kratos 409) returns a VALID existing identity
+	// id — Kratos already had an identity for these traits (stale
+	// bootstrap env after a hostname change, migration rerun, or a
+	// prior destroy that left the Kratos row behind). Adopt it: stamp
+	// the panel row with the existing id instead of rolling back and
+	// crash-looping the panel on every boot. Idempotent. Incident
+	// 2026-05-17 (mx): JABALI_BOOTSTRAP_ADMIN_EMAIL=admin@jabali.local
+	// lingered while the real admin was admin@jabali.com → panel-api
+	// exit 1 every boot → 502 until the env was hand-fixed.
+	if err != nil && !errors.Is(err, kratosclient.ErrIdentityExisted) {
 		if delErr := users.Delete(ctx, u.ID); delErr != nil {
 			slog.Error("bootstrap: kratos create failed AND panel rollback also failed — orphan panel row",
 				"user_id", u.ID, "email", u.Email, "kratos_err", err, "rollback_err", delErr)

@@ -64,6 +64,7 @@ type ServerStatusEnvelope struct {
 	Processes  *json.RawMessage    `json:"processes,omitempty"`
 	UserSlices *json.RawMessage    `json:"user_slices,omitempty"`
 	Software   *json.RawMessage    `json:"software,omitempty"`
+	Nginx      *json.RawMessage    `json:"nginx,omitempty"`
 	Queues     *QueuesSlice        `json:"queues,omitempty"`
 	Errors     map[string]string   `json:"errors,omitempty"`
 	Alerts     []ServerStatusAlert `json:"alerts"`
@@ -137,6 +138,7 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 	call("services", "system.service_details", nil)
 	call("user_slices", "system.user_slices", nil)
 	call("software", "system.software", nil)
+	call("nginx", "nginx.test", nil)
 
 	// M31.1 — Redis queue depths run in parallel with the agent calls.
 	// Three XLEN/XPending pipelines, each with its own short timeout so
@@ -207,6 +209,10 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 		raw := v
 		env.Software = &raw
 	}
+	if v, ok := results["nginx"]; ok {
+		raw := v
+		env.Nginx = &raw
+	}
 	if queues != nil {
 		env.Queues = queues
 	}
@@ -245,6 +251,18 @@ func synthesizeAlerts(results map[string]json.RawMessage, errMap map[string]stri
 	var alerts []ServerStatusAlert
 
 	for name, msg := range errMap {
+		if name == "nginx" {
+			// Invalid nginx config = whole-vhost outage on the box
+			// (reloads rejected, stale config served). Dedicated
+			// critical, not the generic agent-warning. Self-heal:
+			// `jabali repair --auto` (nginx-config-invalid detector).
+			alerts = append(alerts, ServerStatusAlert{
+				Level:  "critical",
+				Kind:   "nginx",
+				Detail: "nginx config invalid — reloads rejected; run `jabali repair --auto`: " + msg,
+			})
+			continue
+		}
 		alerts = append(alerts, ServerStatusAlert{
 			Level:  "warning",
 			Kind:   "agent",

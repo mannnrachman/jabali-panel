@@ -1,7 +1,7 @@
 # M49 — Unified Audit Log (admin + per-user activity)
 
 **Status:** Blueprint (pre-advisor)
-**ADR target:** 0105 (verify free at write-time; 0103=M47, 0104=M48 reserved)
+**ADR target:** 0106 (0105 taken by M32.x panel-cert-split on gitea main; 0103=M47, 0104=M48 reserved)
 **Milestone #:** M49 (M46 highest shipped; M47 email-deliverability, M48 staging in-plan)
 **Depends on:** M14 (notification dispatcher / Redis streams — event source),
 M20 (Kratos identity — actor resolution), `ginctx` (request-scoped Claims +
@@ -73,7 +73,7 @@ security-sensitive actions, with **two scoped views over one store**:
 
 | ADR | Title |
 |-----|-------|
-| 0105 | Unified audit log: append-only hash-chained `audit_events`, one-write-path recorder over a dedicated `jabali:audit:queue` stream (M14 alert-subset only — design corrected 2026-05-17), dual admin/subject scope, impersonation-visibility default-on toggle, M46 `db_admin_audit` fold-in |
+| 0106 | Unified audit log: append-only hash-chained `audit_events`, one-write-path recorder over a dedicated `jabali:audit:queue` stream (M14 alert-subset only — design corrected 2026-05-17), dual admin/subject scope, impersonation-visibility default-on toggle, M46 `db_admin_audit` fold-in |
 
 ## 4. Wave / step plan (8 steps, inline)
 
@@ -139,7 +139,7 @@ branch-only; inline.
   is a documented breaking change). **Resolved:** dedicated
   `jabali:audit:queue` stream (M14 *shape*, own wire) + single-writer
   chain consumer + Redis-down buffered-DB fallback; M14 used only to
-  fan out the alert subset. ADR-0105 §Decision corrected (with
+  fan out the alert subset. ADR-0106 §Decision corrected (with
   struck-through provenance) + Alternatives updated. This is the
   category of error the pre-advisor gate exists to catch — caught
   before Step 1 code.

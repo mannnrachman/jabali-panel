@@ -71,16 +71,27 @@ func (h *adminPanelCertHandler) get(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "settings_load_failed", "details": err.Error()})
 		return
 	}
-	row, err := h.cfg.PanelCerts.EnsureDefault(ctx, settings.Hostname)
+	if _, err := h.cfg.PanelCerts.EnsureDefault(ctx, settings.Hostname); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "panel_cert_load_failed", "details": err.Error()})
+		return
+	}
+	rows, err := h.cfg.PanelCerts.ListAll(ctx)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "panel_cert_load_failed", "details": err.Error()})
 		return
 	}
-	res := panelCertGetResponse{PanelCertificate: row}
-	rr, _ := h.cfg.Routability.Check(ctx, settings.Hostname, settings.PublicIPv4)
-	res.Routable = rr.Routable
-	res.RoutableReason = rr.Reason
-	c.JSON(http.StatusOK, res)
+	// Per-kind routability: the hostname row checks the panel
+	// hostname; the mail row checks mail.<hostname> — so the UI shows
+	// each cert's own reachability independently (ADR-0105).
+	certs := make([]panelCertGetResponse, 0, len(rows))
+	for _, row := range rows {
+		res := panelCertGetResponse{PanelCertificate: row}
+		rr, _ := h.cfg.Routability.Check(ctx, row.Hostname, settings.PublicIPv4)
+		res.Routable = rr.Routable
+		res.RoutableReason = rr.Reason
+		certs = append(certs, res)
+	}
+	c.JSON(http.StatusOK, gin.H{"certs": certs})
 }
 
 // panelCertToggleRequest is intentionally pointer-typed so callers
@@ -142,6 +153,14 @@ func (h *adminPanelCertHandler) toggle(c *gin.Context) {
 // the result without waiting on the reconciler tick.
 func (h *adminPanelCertHandler) issue(c *gin.Context) {
 	ctx := c.Request.Context()
+	kind := c.Query("kind")
+	if kind == "" {
+		kind = models.PanelCertKindHostname
+	}
+	if kind != models.PanelCertKindHostname && kind != models.PanelCertKindMail {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_kind", "details": "kind must be hostname or mail"})
+		return
+	}
 	settings, err := h.cfg.ServerSettings.Get(ctx)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "settings_load_failed"})
@@ -155,69 +174,69 @@ func (h *adminPanelCertHandler) issue(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_admin_email", "details": "set Server Settings → General → Admin email first (required for Let's Encrypt registration)"})
 		return
 	}
-	rr, _ := h.cfg.Routability.Check(ctx, settings.Hostname, settings.PublicIPv4)
-	if !rr.Routable {
-		c.JSON(http.StatusFailedDependency, gin.H{"error": "not_routable", "details": rr.Reason})
-		return
-	}
-	row, err := h.cfg.PanelCerts.EnsureDefault(ctx, settings.Hostname)
-	if err != nil {
+	if _, err := h.cfg.PanelCerts.EnsureDefault(ctx, settings.Hostname); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "panel_cert_load_failed"})
 		return
 	}
+	row, err := h.cfg.PanelCerts.GetByKind(ctx, kind)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "panel_cert_load_failed", "details": err.Error()})
+		return
+	}
+	// Per-kind routability: mail checks mail.<hostname>. A failure
+	// here parks ONLY this kind — the other cert is untouched.
+	rr, _ := h.cfg.Routability.Check(ctx, row.Hostname, settings.PublicIPv4)
+	if !rr.Routable {
+		_ = h.cfg.PanelCerts.MarkPendingRetryKind(ctx, kind, "not routable: "+rr.Reason, 3*time.Hour)
+		c.JSON(http.StatusFailedDependency, gin.H{"error": "not_routable", "details": rr.Reason})
+		return
+	}
 
-	// Move the row into pending_acme so a concurrent reconciler tick
-	// doesn't double-fire the agent call.
 	row.Status = models.PanelCertStatusPendingACME
 	if err := h.cfg.PanelCerts.Upsert(ctx, row); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "panel_cert_save_failed"})
 		return
 	}
-
 	if h.cfg.Agent == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
 		return
 	}
 	dispatchCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
-	// See panel_certificate_reconciler.go for why extra_hostnames is
-	// empty — mail.<panel-hostname> DNS isn't auto-provisioned, so
-	// including it as a SAN unconditionally fails every fresh install.
 	raw, agentErr := h.cfg.Agent.Call(dispatchCtx, "ssl.panel.issue", map[string]any{
-		"hostname":        settings.Hostname,
+		"hostname":        row.Hostname,
 		"extra_hostnames": []string{},
 		"email":           settings.AdminEmail,
 		"staging":         row.Staging,
+		"kind":            kind,
+		"cert_pem_path":   row.CertPEMPath,
 	})
 	if agentErr != nil {
-		_ = h.cfg.PanelCerts.MarkPendingRetry(ctx, agentErr.Error(), 3*time.Hour)
+		_ = h.cfg.PanelCerts.MarkPendingRetryKind(ctx, kind, agentErr.Error(), 3*time.Hour)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "issue_failed", "details": agentErr.Error()})
 		return
 	}
-
-	// Parse the agent envelope back into the shape we know — the
-	// agent returns issued_at + expires_at as ISO8601Z strings.
 	var resp struct {
 		IssuedAt  string `json:"issued_at"`
 		ExpiresAt string `json:"expires_at"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
-		_ = h.cfg.PanelCerts.MarkPendingRetry(ctx, "failed to parse agent response: "+err.Error(), 3*time.Hour)
+		_ = h.cfg.PanelCerts.MarkPendingRetryKind(ctx, kind, "failed to parse agent response: "+err.Error(), 3*time.Hour)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_parse_failed"})
 		return
 	}
 	issuedAt, err1 := time.Parse(time.RFC3339, resp.IssuedAt)
 	expiresAt, err2 := time.Parse(time.RFC3339, resp.ExpiresAt)
 	if err1 != nil || err2 != nil {
-		_ = h.cfg.PanelCerts.MarkPendingRetry(ctx, "failed to parse agent timestamps", 3*time.Hour)
+		_ = h.cfg.PanelCerts.MarkPendingRetryKind(ctx, kind, "failed to parse agent timestamps", 3*time.Hour)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_timestamp_parse_failed"})
 		return
 	}
-	if err := h.cfg.PanelCerts.MarkIssued(ctx, issuedAt, expiresAt); err != nil {
+	if err := h.cfg.PanelCerts.MarkIssuedKind(ctx, kind, issuedAt, expiresAt); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "mark_issued_failed", "details": err.Error()})
 		return
 	}
-	updated, _ := h.cfg.PanelCerts.Get(ctx)
+	updated, _ := h.cfg.PanelCerts.GetByKind(ctx, kind)
 	if updated == nil {
 		updated = row
 	}

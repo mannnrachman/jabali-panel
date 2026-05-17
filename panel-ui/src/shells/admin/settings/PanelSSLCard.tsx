@@ -1,7 +1,9 @@
-// PanelSSLCard — admin Server Settings panel for the panel-hostname's
-// TLS cert (M32, ADR-0066). Embeds inside the General tab so the
-// hostname/admin-email cards above it are visually adjacent — both
-// inputs feed the routability gate this card checks.
+// PanelSSLCard — admin panel for the panel's TLS certs (M32, ADR-0105).
+//
+// Post-split there are TWO independent certs: the panel hostname cert
+// and the panel mail (mail.<hostname>) cert. Each gets its own status
+// row + Retry; mail can never block the hostname cert. The single
+// Use-LE / staging toggle (the hostname row's flags) governs both.
 import {
   CheckCircleOutlined,
   CloseOutlined,
@@ -20,6 +22,7 @@ import {
   notification,
 } from "antd";
 import {
+  type PanelCertKind,
   type PanelCertificate,
   usePanelCertificate,
   usePanelCertificateIssue,
@@ -56,6 +59,65 @@ function expiryHint(c: PanelCertificate): string | null {
   return `Expires in ${days} days`;
 }
 
+function CertRow({
+  label,
+  cert,
+  onRetry,
+  retrying,
+}: {
+  label: string;
+  cert: PanelCertificate;
+  onRetry: () => void;
+  retrying: boolean;
+}) {
+  const expiry = expiryHint(cert);
+  return (
+    <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 12 }}>
+      <Space direction="vertical" size={6} style={{ width: "100%" }}>
+        <Space wrap>
+          <Typography.Text strong style={{ minWidth: 72, display: "inline-block" }}>
+            {label}
+          </Typography.Text>
+          <code>{cert.hostname || "<unset>"}</code>
+        </Space>
+        <Space wrap>
+          {statusTag(cert)}
+          {cert.routable ? (
+            <Tag icon={<CheckCircleOutlined />} color="success">
+              Routable
+            </Tag>
+          ) : (
+            <Tag icon={<CloseOutlined />}>
+              Not routable
+              {cert.routable_reason ? ` — ${cert.routable_reason}` : ""}
+            </Tag>
+          )}
+          {expiry && (
+            <Tag color={expiry === "Expired" ? "error" : undefined}>{expiry}</Tag>
+          )}
+          <Popconfirm
+            title={`Issue the ${label.toLowerCase()} cert now?`}
+            onConfirm={onRetry}
+          >
+            <Button size="small" icon={<ReloadOutlined />} loading={retrying}>
+              Issue / retry
+            </Button>
+          </Popconfirm>
+        </Space>
+        {(cert.status === "pending_acme_retry" || cert.status === "failed") &&
+          cert.last_error && (
+            <Alert
+              type="warning"
+              showIcon
+              message={`${label} — last attempt failed (attempt ${cert.attempt_count})`}
+              description={cert.last_error}
+            />
+          )}
+      </Space>
+    </div>
+  );
+}
+
 export function PanelSSLCard() {
   const q = usePanelCertificate();
   const toggle = usePanelCertificateToggle();
@@ -76,8 +138,27 @@ export function PanelSSLCard() {
       </Card>
     );
   }
-  const c = q.data;
-  const expiry = expiryHint(c);
+  const certs = q.data;
+  const host =
+    certs.find((c) => c.kind === "hostname") ?? certs[0];
+  const mail = certs.find((c) => c.kind === "mail");
+  if (!host) {
+    return (
+      <Card title="Panel SSL" style={{ marginBottom: 16 }}>
+        <Alert type="info" message="Panel certificate not initialised yet." showIcon />
+      </Card>
+    );
+  }
+
+  const doIssue = (kind: PanelCertKind) =>
+    issue.mutate(kind, {
+      onSuccess: () => notification.success({ message: `${kind} cert: issued` }),
+      onError: (e) =>
+        notification.error({
+          message: `${kind} cert: issue failed`,
+          description: String((e as Error).message),
+        }),
+    });
 
   return (
     <Card
@@ -99,32 +180,18 @@ export function PanelSSLCard() {
       }
     >
       <Space direction="vertical" size={12} style={{ width: "100%" }}>
-        <Space wrap>
-          {statusTag(c)}
-          {c.routable ? (
-            <Tag icon={<CheckCircleOutlined />} color="success">
-              Public-routable
-            </Tag>
-          ) : (
-            <Tag icon={<CloseOutlined />}>
-              Not routable
-              {c.routable_reason ? ` — ${c.routable_reason}` : ""}
-            </Tag>
-          )}
-          {expiry && <Tag color={expiry === "Expired" ? "error" : undefined}>{expiry}</Tag>}
-        </Space>
-
         <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
-          Replace the panel&apos;s self-signed certificate with a Let&apos;s
-          Encrypt cert covering <code>{c.hostname || "<hostname>"}</code> and{" "}
-          <code>mail.{c.hostname || "<hostname>"}</code>. Self-signed remains
-          the fallback if issuance fails.
+          Two independent Let&apos;s Encrypt certs for the panel:{" "}
+          <code>{host.hostname || "<hostname>"}</code> (panel hostname) and{" "}
+          <code>{mail?.hostname || `mail.${host.hostname || "<hostname>"}`}</code>{" "}
+          (mail). Each issues + retries on its own — the mail cert never
+          blocks the hostname cert. Self-signed remains the fallback.
         </Typography.Paragraph>
 
         <Space wrap>
           <Switch
-            checked={c.use_le}
-            disabled={!c.routable && !c.use_le}
+            checked={host.use_le}
+            disabled={!host.routable && !host.use_le}
             loading={toggle.isPending}
             onChange={(v) => {
               toggle.mutate(
@@ -133,8 +200,8 @@ export function PanelSSLCard() {
                   onSuccess: () =>
                     notification.success({
                       message: v
-                        ? "Let's Encrypt enabled — issuance will run on the next reconciler tick"
-                        : "Let's Encrypt disabled — existing cert stays in place until expiry",
+                        ? "Let's Encrypt enabled — issuance runs on the next reconciler tick"
+                        : "Let's Encrypt disabled — existing certs stay until expiry",
                     }),
                   onError: (e) =>
                     notification.error({
@@ -145,13 +212,13 @@ export function PanelSSLCard() {
               );
             }}
           />
-          <Typography.Text>Use Let&apos;s Encrypt for this hostname</Typography.Text>
+          <Typography.Text>Use Let&apos;s Encrypt for the panel</Typography.Text>
         </Space>
 
         <Space wrap>
           <Switch
-            checked={c.staging}
-            disabled={!c.use_le}
+            checked={host.staging}
+            disabled={!host.use_le}
             loading={toggle.isPending}
             onChange={(v) => toggle.mutate({ staging: v })}
           />
@@ -161,42 +228,18 @@ export function PanelSSLCard() {
           </Typography.Text>
         </Space>
 
-        {c.use_le && (c.status === "pending_acme_retry" || c.status === "failed") && (
-          <Alert
-            type="warning"
-            showIcon
-            message="Last attempt failed"
-            description={
-              <>
-                <div>
-                  {c.last_error || "No error captured."}
-                </div>
-                <div style={{ marginTop: 4 }}>
-                  Attempt {c.attempt_count}. Reconciler will retry every 3 hours;
-                  click Retry now to bypass the backoff.
-                </div>
-              </>
-            }
-            action={
-              <Popconfirm
-                title="Force a Let's Encrypt issuance now?"
-                onConfirm={() =>
-                  issue.mutate(undefined, {
-                    onSuccess: () =>
-                      notification.success({ message: "Issued" }),
-                    onError: (e) =>
-                      notification.error({
-                        message: "Issue failed",
-                        description: String((e as Error).message),
-                      }),
-                  })
-                }
-              >
-                <Button size="small" loading={issue.isPending}>
-                  Retry now
-                </Button>
-              </Popconfirm>
-            }
+        <CertRow
+          label="Hostname"
+          cert={host}
+          retrying={issue.isPending}
+          onRetry={() => doIssue("hostname")}
+        />
+        {mail && (
+          <CertRow
+            label="Mail"
+            cert={mail}
+            retrying={issue.isPending}
+            onRetry={() => doIssue("mail")}
           />
         )}
       </Space>

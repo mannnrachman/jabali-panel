@@ -137,6 +137,40 @@ func (h *databaseAdminOpsHandler) publish(ctx context.Context, env notifications
 	}
 }
 
+// agentAction describes one privileged DB agent op. runAgentAction is
+// the single place the timeout + Agent.Call + audit(BOTH outcomes)
+// dance lives — it was copy-pasted across the M46 handlers with
+// audit-on-failure applied inconsistently (the bug class the smoke
+// campaign hit). Deep seam: small struct, concentrates the plumbing;
+// callers shrink to "build spec, map result".
+type agentAction struct {
+	Actor, Engine, Action, Target string
+	Cmd                           string
+	Params                        any
+	Timeout                       time.Duration
+	ErrDetail                     string                  // audit detail on failure
+	OKEvent                       *notifications.Envelope // optional M14 on success
+}
+
+func (h *databaseAdminOpsHandler) runAgentAction(ctx context.Context, a agentAction) (json.RawMessage, error) {
+	to := a.Timeout
+	if to == 0 {
+		to = 30 * time.Second
+	}
+	actx, cancel := context.WithTimeout(ctx, to)
+	defer cancel()
+	raw, err := h.cfg.Agent.Call(actx, a.Cmd, a.Params)
+	if err != nil {
+		h.audit(ctx, a.Actor, a.Engine, a.Action, a.Target, "error", a.ErrDetail)
+		return nil, err
+	}
+	h.audit(ctx, a.Actor, a.Engine, a.Action, a.Target, "ok", "")
+	if a.OKEvent != nil {
+		h.publish(ctx, *a.OKEvent)
+	}
+	return raw, nil
+}
+
 // genPassword returns a 32-char URL-safe random secret (192 bits).
 func genPassword() (string, error) {
 	b := make([]byte, 24)
@@ -192,24 +226,23 @@ func (h *databaseAdminOpsHandler) rootPassword(c *gin.Context) {
 	if req.Engine == "postgres" {
 		cmd = "db.postgres.superuser.set_password"
 	}
-	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	if _, err := h.cfg.Agent.Call(agentCtx, cmd, map[string]any{"new_password": pw}); err != nil {
+	if _, err := h.runAgentAction(ctx, agentAction{
+		Actor: claims.UserID, Engine: req.Engine, Action: "root_password.rotate",
+		Cmd: cmd, Params: map[string]any{"new_password": pw}, Timeout: 30 * time.Second,
+		ErrDetail: "agent call failed",
+		OKEvent: &notifications.Envelope{
+			EventKind: "db.admin.root_password_rotated",
+			Severity:  "warning",
+			Title:     "Database root password rotated",
+			Body:      "The " + req.Engine + " root/superuser password was rotated from the admin panel.",
+			Deeplink:  "/jabali-admin/settings",
+			UserID:    claims.UserID,
+		},
+	}); err != nil {
 		h.cfg.Log.Error("root password agent call failed", "engine", req.Engine, "err", err)
-		h.audit(ctx, claims.UserID, req.Engine, "root_password.rotate", "", "error", "agent call failed")
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed"})
 		return
 	}
-
-	h.audit(ctx, claims.UserID, req.Engine, "root_password.rotate", "", "ok", "")
-	h.publish(ctx, notifications.Envelope{
-		EventKind: "db.admin.root_password_rotated",
-		Severity:  "warning",
-		Title:     "Database root password rotated",
-		Body:      "The " + req.Engine + " root/superuser password was rotated from the admin panel.",
-		Deeplink:  "/jabali-admin/settings",
-		UserID:    claims.UserID,
-	})
 	c.JSON(http.StatusOK, rootPasswordResponse{Password: pw})
 }
 
@@ -484,16 +517,16 @@ func (h *databaseAdminOpsHandler) killProcess(c *gin.Context) {
 	if req.Engine == "postgres" {
 		cmd = "db.postgres.terminate"
 	}
-	actx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	if _, err := h.cfg.Agent.Call(actx, cmd, map[string]any{"id": req.ID}); err != nil {
-		h.audit(ctx, claims.UserID, req.Engine, "process.kill", req.ID, "error", "")
+	// Audited (actor + target pid) on BOTH outcomes via the shared
+	// dispatch. No M14 — process-kill is too noisy (ADR-0100).
+	if _, err := h.runAgentAction(ctx, agentAction{
+		Actor: claims.UserID, Engine: req.Engine, Action: "process.kill",
+		Target: req.ID, Cmd: cmd, Params: map[string]any{"id": req.ID},
+		Timeout: 15 * time.Second,
+	}); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed"})
 		return
 	}
-	// Audited (actor + target pid). No M14 — process-kill is too noisy
-	// to notify on (ADR-0100).
-	h.audit(ctx, claims.UserID, req.Engine, "process.kill", req.ID, "ok", "")
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 

@@ -51,8 +51,13 @@ type ssoValidateResponse struct {
 	// cfgupdate) rather than TCP. M25.1: once `skip-networking` lands
 	// in my.cnf, Host/Port become advisory only.
 	Socket string `json:"socket,omitempty"`
-	OnlyDB string `json:"only_db,omitempty"`
-	DB     string `json:"db,omitempty"`
+	// db/only_db: NO omitempty — install/phpmyadmin/sso.php:105
+	// isset()-requires both keys present and :112 is_string. The
+	// admin-all-DBs branch sends them empty (= all databases);
+	// omitempty would drop them → "unexpected validator payload"
+	// (M46 admin-phpMyAdmin SSO bug). Per-user always sets db.Name.
+	OnlyDB string `json:"only_db"`
+	DB     string `json:"db"`
 }
 
 // mariaDBSocketPath is the Debian/MariaDB default and what install.sh

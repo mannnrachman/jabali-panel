@@ -18,6 +18,7 @@ import (
 // bootstrap path produces (email, is_admin, hash prefix).
 type fakeKratos struct {
 	createdID         string
+	existedID         string
 	createErr         error
 	deleteCalled      bool
 	deleteErr         error
@@ -29,6 +30,9 @@ type fakeKratos struct {
 func (f *fakeKratos) CreateIdentityWithPassword(_ context.Context, traits kratosclient.AdminTraits, hash string) (string, error) {
 	f.lastTraits = traits
 	f.lastPasswordHash = hash
+	if f.existedID != "" {
+		return f.existedID, kratosclient.ErrIdentityExisted
+	}
 	if f.createErr != nil {
 		return "", f.createErr
 	}
@@ -132,4 +136,30 @@ func TestBootstrapAdmin_LegacyMode_DoesNotTouchKratos(t *testing.T) {
 	u, err := users.FindByEmail(context.Background(), "admin@example.com")
 	require.NoError(t, err)
 	assert.Nil(t, u.KratosIdentityID, "panel row's kratos_identity_id must be NULL in legacy mode")
+}
+
+// Kratos already holds an identity for these traits (stale bootstrap
+// env after a hostname change, migration rerun, prior destroy). The
+// 409 path returns a VALID id + ErrIdentityExisted — BootstrapAdmin
+// must ADOPT it (stamp the panel row), NOT treat it as fatal and
+// crash-loop the panel on every boot. Incident 2026-05-17 (mx):
+// JABALI_BOOTSTRAP_ADMIN_EMAIL=admin@jabali.local lingered while the
+// real admin was admin@jabali.com; panel-api exit-1 looped → 502.
+func TestBootstrapAdmin_Kratos_AdoptsExistingIdentity(t *testing.T) {
+	t.Parallel()
+	users := newFakeUserRepo()
+	k := &fakeKratos{existedID: "kratos-uuid-pre-existing"}
+
+	res, err := auth.BootstrapAdmin(context.Background(), users, auth.BootstrapOptions{
+		Email: "admin@jabali.local", Password: "strongpass", BcryptCost: testCost,
+		Kratos: k,
+	})
+	require.NoError(t, err, "ErrIdentityExisted must be adopted, never fatal")
+	assert.Equal(t, "kratos-uuid-pre-existing", res.KratosIdentityID,
+		"BootstrapResult must surface the adopted Kratos identity id")
+
+	u, ferr := users.FindByEmail(context.Background(), "admin@jabali.local")
+	require.NoError(t, ferr, "panel row must be kept + linked, NOT rolled back")
+	require.NotNil(t, u.KratosIdentityID, "panel row must be linked to the adopted identity")
+	assert.Equal(t, "kratos-uuid-pre-existing", *u.KratosIdentityID)
 }

@@ -10,7 +10,7 @@
 --
 -- `id` is kept as a plain column (no longer PK / no singleton CHECK)
 -- to avoid churning the model + existing tests; `kind` is the new PK.
-ALTER TABLE panel_certificate DROP CHECK panel_certificate_singleton;
+ALTER TABLE panel_certificate DROP CONSTRAINT panel_certificate_singleton;
 ALTER TABLE panel_certificate ADD COLUMN kind VARCHAR(16) NOT NULL DEFAULT 'hostname';
 ALTER TABLE panel_certificate DROP PRIMARY KEY;
 ALTER TABLE panel_certificate ADD PRIMARY KEY (kind);

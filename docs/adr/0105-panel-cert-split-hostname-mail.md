@@ -1,6 +1,6 @@
 # ADR-0105: Panel cert split — independent hostname + mail certs
 
-**Status:** Proposed (amends ADR-0066)
+**Status:** Accepted (amends ADR-0066)
 **Date:** 2026-05-17
 
 ## Context

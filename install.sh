@@ -3798,11 +3798,20 @@ EOF
 # ---------- step 6b: seed admin credentials ---------------------------------
 
 seed_admin_env() {
-  # If bootstrap vars are already set (e.g. re-run), don't regenerate —
-  # the panel's BootstrapAdmin is idempotent and will detect the existing
-  # admin row.
-  if grep -q '^JABALI_BOOTSTRAP_ADMIN_EMAIL=' "$ENV_FILE" 2>/dev/null; then
-    _ok "admin bootstrap vars already in $ENV_FILE"
+  # The panel-admin account is seeded ONCE, on a genuine first install.
+  # A marker (`.admin-seeded`) plus the panel.env var make every later
+  # run — including a re-run of this installer or `jabali update --force`
+  # on an already-provisioned box — a silent no-op. Without the marker,
+  # boxes whose panel.env predates this var (installed before the
+  # interactive prompt shipped) would re-prompt on every re-provision;
+  # the operator on `puzzle` hit exactly that and mistook the prompt
+  # for an SSL/ACME email.
+  local _marker="/etc/jabali/.admin-seeded"
+  if grep -q '^JABALI_BOOTSTRAP_ADMIN_EMAIL=' "$ENV_FILE" 2>/dev/null \
+     || [[ -f "$_marker" ]]; then
+    _ok "panel admin already seeded — skipping (re-run / update is a no-op)"
+    mkdir -p "$(dirname "$_marker")" 2>/dev/null || true
+    : > "$_marker" 2>/dev/null || true
     return
   fi
 
@@ -3817,7 +3826,20 @@ seed_admin_env() {
     local _def_email="admin@${_def_host}"
     if exec 3</dev/tty 2>/dev/null; then
       local _ans
-      printf 'Admin login email [%s]: ' "$_def_email" > /dev/tty
+      # Unambiguous wording + a visually separated banner so this is
+      # never mistaken for the SSL/ACME contact email that the cert
+      # steps just printed right above it.
+      {
+        printf '\n'
+        printf '  +-------------------------------------------------------+\n'
+        printf '  |  PANEL ADMIN ACCOUNT (first install only)             |\n'
+        printf '  +-------------------------------------------------------+\n'
+        printf '  This is the email you will use to LOG IN to the jabali\n'
+        printf '  web panel at https://%s:8443/\n' "$_def_host"
+        printf '  It is NOT an SSL / ACME / Let'"'"'s Encrypt contact address.\n'
+        printf '  Press Enter to accept the default.\n\n'
+        printf 'Panel admin login email [%s]: ' "$_def_email"
+      } > /dev/tty
       read -r _ans <&3 || true
       exec 3<&-
       admin_email="${_ans:-$_def_email}"
@@ -3833,13 +3855,17 @@ seed_admin_env() {
   local admin_pass
   admin_pass="$(openssl rand -base64 18)"
 
-  _log "seeding admin bootstrap credentials"
+  _log "seeding panel admin bootstrap credentials (login email: $admin_email)"
   cat >>"$ENV_FILE" <<EOF
 
 # Admin bootstrap (consumed once on first boot, safe to leave).
 JABALI_BOOTSTRAP_ADMIN_EMAIL=$admin_email
 JABALI_BOOTSTRAP_ADMIN_PASSWORD=$admin_pass
 EOF
+  # Drop the marker so no future re-provision re-prompts, even if
+  # panel.env is later rewritten.
+  mkdir -p "$(dirname "$_marker")" 2>/dev/null || true
+  : > "$_marker" 2>/dev/null || true
 
   # Store the generated password so the final banner can display it.
   JABALI_SEED_EMAIL="$admin_email"

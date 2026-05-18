@@ -352,6 +352,15 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			ServerSettings: deps.ServerSettings,
 		})
 
+		// M49 — unified audit log read surface (ADR-0106):
+		// /admin/audit (RequireAdmin) + /me/activity (subject-scoped).
+		if deps.DB != nil {
+			api.RegisterAuditRoutes(v1, api.AuditHandlerConfig{
+				Repo: repository.NewAuditEventRepository(deps.DB),
+				Log:  deps.Log,
+			})
+		}
+
 		if deps.Users != nil {
 			api.RegisterUserRoutes(v1, api.UserHandlerConfig{
 				Repo:            deps.Users,

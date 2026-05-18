@@ -3806,7 +3806,30 @@ seed_admin_env() {
     return
   fi
 
-  local admin_email="admin@jabali.local"
+  # Admin email: env override > interactive /dev/tty prompt > a sane
+  # default of admin@<hostname>. NEVER admin@jabali.local — `.local` is
+  # an invalid ACME account email AND mismatched bootstrap email caused
+  # the mx 502 crash-loop (BootstrapAdmin then re-mints + 409s).
+  local _def_host admin_email _email_re='^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'
+  _def_host="$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo localhost)"
+  admin_email="${JABALI_BOOTSTRAP_ADMIN_EMAIL:-${JABALI_ADMIN_EMAIL:-}}"
+  if [[ -z "$admin_email" ]]; then
+    local _def_email="admin@${_def_host}"
+    if exec 3</dev/tty 2>/dev/null; then
+      local _ans
+      printf 'Admin login email [%s]: ' "$_def_email" > /dev/tty
+      read -r _ans <&3 || true
+      exec 3<&-
+      admin_email="${_ans:-$_def_email}"
+    else
+      admin_email="$_def_email"
+      _log "no TTY — admin email defaulting to $admin_email (override: JABALI_BOOTSTRAP_ADMIN_EMAIL)"
+    fi
+  fi
+  if [[ ! "$admin_email" =~ $_email_re ]]; then
+    _warn "admin email '$admin_email' looks invalid — using admin@${_def_host}"
+    admin_email="admin@${_def_host}"
+  fi
   local admin_pass
   admin_pass="$(openssl rand -base64 18)"
 
@@ -9694,21 +9717,29 @@ main() {
 
   # Display credentials if this was a fresh install.
   if [[ -n "${JABALI_SEED_EMAIL:-}" ]]; then
-    local panel_host="${PANEL_ADDR%:*}"
-    local panel_port="${PANEL_ADDR##*:}"
-    [[ "$panel_host" == "0.0.0.0" || -z "$panel_host" ]] && panel_host="$(hostname -I | awk '{print $1}')"
+    # The panel is reached via nginx on :8443 (TLS); PANEL_ADDR is the
+    # internal unix socket and must NOT be shown to the operator.
+    local panel_host panel_url
+    panel_host="${JABALI_HOSTNAME:-$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo localhost)}"
+    panel_url="https://${panel_host}:8443/"
 
+    # Plain ASCII, left-aligned, no right border — box-drawing glyphs are
+    # multi-byte so printf %-Ns padding (counts bytes) drifts the border
+    # with value length. This can't misalign and is log-safe.
     echo ""
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║                     JABALI PANEL                           ║"
-    echo "╠══════════════════════════════════════════════════════════════╣"
-    echo "║                                                            ║"
-    printf "║  URL:      https://%-39s ║\n" "${panel_host}:${panel_port}"
-    printf "║  Email:    %-48s ║\n" "$JABALI_SEED_EMAIL"
-    printf "║  Password: %-48s ║\n" "$JABALI_SEED_PASS"
-    echo "║                                                            ║"
-    echo "║  Change this password immediately after first login.       ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo "============================================================"
+    echo "  JABALI PANEL  —  installed"
+    echo "============================================================"
+    echo ""
+    printf "  URL:       %s\n" "$panel_url"
+    printf "  Email:     %s\n" "$JABALI_SEED_EMAIL"
+    printf "  Password:  %s\n" "$JABALI_SEED_PASS"
+    echo ""
+    echo "  > Change this password immediately after first login."
+    echo "  > Panel is behind nginx on :8443 (HTTPS). Until a"
+    echo "    Let's Encrypt cert issues for ${panel_host}, the"
+    echo "    browser will warn about the self-signed fallback."
+    echo "============================================================"
     echo ""
   fi
 }

@@ -135,9 +135,12 @@ func (h *auditHandler) enrichNames(ctx context.Context, rows []models.AuditEvent
 	}
 }
 
-// meActivity — the caller's own activity feed. Subject scope is the
-// session identity, enforced in the repo (ListBySubject); a blank
-// subject would match nothing (safe-fail), never cross-tenant.
+// meActivity — the caller's own activity feed: events they ACTED plus
+// events about their account, scoped to the session identity in the
+// repo (ListByActorOrSubject) — never a client filter. Subject-only
+// showed an empty feed because the generic recorder subject-tags only
+// /api/v1/me/* routes; actor-or-subject is what "see all his last
+// actions" actually means. A blank identity matches nothing.
 func (h *auditHandler) meActivity(c *gin.Context) {
 	claims := ginctx.Claims(c)
 	if claims == nil || claims.UserID == "" {
@@ -145,7 +148,7 @@ func (h *auditHandler) meActivity(c *gin.Context) {
 		return
 	}
 	page, pageSize, opts := parseListOptions(c, defaultAuditPageSize, maxAuditPageSize)
-	rows, total, err := h.cfg.Repo.ListBySubject(c.Request.Context(), claims.UserID, opts)
+	rows, total, err := h.cfg.Repo.ListByActorOrSubject(c.Request.Context(), claims.UserID, opts)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return

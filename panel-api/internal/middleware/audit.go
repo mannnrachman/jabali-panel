@@ -87,9 +87,34 @@ func AuditRecord(rec audit.Recorder) gin.HandlerFunc {
 			actorUserID, actorKind, subject,
 			c.Request.Method+" "+route,
 			targetType, targetID, result,
-			c.ClientIP(), ginctx.RequestID(c),
+			clientIP(c), ginctx.RequestID(c),
 		))
 	}
+}
+
+// clientIP resolves the real caller IP for the audit row.
+//
+// panel-api is reachable ONLY through the local nginx over a unix
+// socket (/run/jabali-panel/api.sock). For a unix-socket peer Go sets
+// RemoteAddr to "@"/"" — gin can't parse it as an IP, so its trusted-
+// proxy gate never consults the forwarded headers and c.ClientIP()
+// returns "" (every audit row then showed "—"). nginx sets X-Real-IP
+// to $remote_addr — the actual TCP peer, proxy-authoritative and NOT
+// client-spoofable given the socket-only bind. Prefer it, then the
+// first X-Forwarded-For hop, then gin's value as a last resort.
+func clientIP(c *gin.Context) string {
+	if xr := strings.TrimSpace(c.GetHeader("X-Real-IP")); xr != "" {
+		return xr
+	}
+	if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
+		if i := strings.IndexByte(xff, ','); i >= 0 {
+			xff = xff[:i]
+		}
+		if xff = strings.TrimSpace(xff); xff != "" {
+			return xff
+		}
+	}
+	return c.ClientIP()
 }
 
 // deriveTarget is best-effort and informational only (target is not a

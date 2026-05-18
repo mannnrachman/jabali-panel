@@ -107,12 +107,6 @@ export const AdminAuditList = () => {
             key="result"
             render={resultTag}
           />
-          <Table.Column
-            dataIndex="source_ip"
-            title="Source IP"
-            key="source_ip"
-            render={(ip?: string) => (ip ? <code>{ip}</code> : dash)}
-          />
         </SearchableTableStringQ>
       </Card>
     </div>

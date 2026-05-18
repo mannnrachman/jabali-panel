@@ -38,6 +38,18 @@ type AuditEventRepository interface {
 	// a user's activity feed.
 	ListBySubject(ctx context.Context, subjectUserID string, opts ListOptions) ([]models.AuditEvent, int64, error)
 
+	// ListByActorOrSubject is the per-user "Account Activity" scope:
+	// rows the user ACTED (actor_user_id) OR rows about their account
+	// (subject_user_id). The generic recorder only subject-tags
+	// /api/v1/me/* routes, so a subject-only filter showed the user an
+	// empty feed even though they had clearly acted — this also matches
+	// the original intent ("a unified log so he can see all his last
+	// actions"). userID is the session identity, resolved server-side
+	// by the handler — NEVER a client filter (the IDOR scar). A blank
+	// userID matches nothing: actor/subject are NULL or a ULID, never
+	// the empty string.
+	ListByActorOrSubject(ctx context.Context, userID string, opts ListOptions) ([]models.AuditEvent, int64, error)
+
 	// LatestRowHash returns the row_hash of the most recent sealed
 	// (chained) row, or "" when the chain has no sealed row yet
 	// (genesis). The chain consumer feeds this in as the next row's
@@ -135,6 +147,33 @@ func (r *auditEventRepo) ListBySubject(ctx context.Context, subjectUserID string
 	// subjectUserID would match no rows (safe-fail) rather than
 	// returning everything.
 	base := r.db.WithContext(ctx).Model(&models.AuditEvent{}).Where("subject_user_id = ?", subjectUserID)
+
+	countQ := applyListOptions(base.Session(&gorm.Session{}), ListOptions{Search: opts.Search}, auditEventListCols)
+	if err := countQ.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if opts.Sort == "" && opts.Order == "" {
+		opts.Order = "desc"
+	}
+	q := applyListOptions(base.Session(&gorm.Session{}), opts, auditEventListCols)
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
+}
+
+func (r *auditEventRepo) ListByActorOrSubject(ctx context.Context, userID string, opts ListOptions) ([]models.AuditEvent, int64, error) {
+	var (
+		rows  []models.AuditEvent
+		total int64
+	)
+	// Scope applied HERE, server-side, from the session identity —
+	// never a client-supplied filter (IDOR scar). actor OR subject so
+	// the user sees actions they performed AND actions taken on their
+	// account. A blank userID matches nothing (actor/subject are NULL
+	// or a ULID, never "").
+	base := r.db.WithContext(ctx).Model(&models.AuditEvent{}).
+		Where("actor_user_id = ? OR subject_user_id = ?", userID, userID)
 
 	countQ := applyListOptions(base.Session(&gorm.Session{}), ListOptions{Search: opts.Search}, auditEventListCols)
 	if err := countQ.Count(&total).Error; err != nil {

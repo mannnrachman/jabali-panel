@@ -1,8 +1,21 @@
 # ADR-0106 — Unified audit log (M49)
 
 **Date**: 2026-05-17
-**Status**: proposed
+**Status**: accepted
 **Deciders**: shuki (requested), Claude (design)
+**Implementation**: backend SHIPPED + merged to gitea `main`
+(Steps 0–5 + 7: schema/migration 000138, `internal/audit` recorder +
+single-writer chain consumer, recorder middleware, token/M46 db-admin
+typed emitters, `/admin/audit` + `/me/activity` read API, `jabali
+audit query|verify|prune` CLI + retention — PRs #20/#22/#23/#24/#25,
+each loop-verified then Gitea-CI-gated; ADR-0105/migration-000137
+collision with the parallel M32.x work reconciled by renumber).
+**Pending**: Step 6 — the admin "Audit Log" + user "Account Activity"
+SPA pages (panel-ui). Step 3b-ii (impersonation/break-glass typed
+emitters) is moot: no impersonation/break-glass implementation exists
+in this codebase line; security-toggle auditing is already covered by
+the generic recorder middleware. The `ImpersonationStart/Stop` +
+`BreakGlassLogin` constructors are reserved for if/when those land.
 **Related**: ADR-0002 (DB is source of truth), ADR-0003 (one write path),
 ADR-0015 (admin impersonation JWT claim), ADR-0016 (break-glass CLI login),
 ADR-0056 (M14 notification dispatcher / Redis streams), ADR-0093 (automation

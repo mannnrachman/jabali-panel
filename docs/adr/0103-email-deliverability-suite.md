@@ -57,3 +57,27 @@ existing stack — not a new MTA:
   on a live Stalwart before Steps 1/4.
 - Migration 000139 (re-checked next-free vs Gitea main, not the
   mirror — the collision scar).
+
+## Advisor amendments (2026-05-18)
+
+- **Stalwart wire surface is a Wave-1 gate, not assumed.** The
+  `:8446` figure in this ADR is a candidate, not verified — Stalwart
+  0.16.0 returns 404 to unauthenticated mgmt requests (anti-
+  enumeration). Before Step 1, the M6 install code is read to find
+  the `stalwart-admin.token` path + the listener carrying
+  `protocol="http"`, then the surface is live-confirmed and this ADR
+  is amended with a concrete **version + port + endpoint** table.
+  Endpoint shape (Context7, 0.15; verify 0.16 prefix): `GET
+  /queue/messages` → `{data:{items,total,status}}`, `POST
+  /queue/retry`, DELETE cancel.
+- **MTA-STS (Step 7) splits into 7a (per-domain DNS+vhost+LE-cert
+  scaffolding — an LE-rate-limit growth axis) and 7b (policy state
+  machine + promotion gating).** Rollback: `mode=none` is reversible
+  but bounded by the cached `max_age` (RFC 8461 §5.1); default
+  `max_age` starts small (86400).
+- **Retention:** `dmarc_aggregate`/`tlsrpt_aggregate` default 90-day,
+  pruned app-side via a timer (Steps 6/8); migration 000139 notes it.
+- **RBL set is fixed at blueprint time** (Spamhaus ZEN, SpamCop,
+  Barracuda BRBL, SURBL; paid via operator-configured creds only;
+  cache ≥1 h, poll 4–6 h). **PTR is informational only** (provider-
+  controlled; show current vs expected, no "fix" action).

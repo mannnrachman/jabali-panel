@@ -5738,6 +5738,20 @@ install_crowdsec_nginx_bouncer() {
   # benefit.
   _log "configuring crowdsec-nginx-bouncer (AppSec enforcement)"
 
+  # crowdsec-nginx-bouncer is Lua-based (lua_package_path +
+  # access_by_lua_block in /etc/nginx/conf.d/crowdsec_nginx.conf). The
+  # nginx Lua module + lua-resty libs are only apt *Recommends*, so an
+  # apt-autoremove (notably after a prior --uninstall --purge-packages)
+  # strips them; a reinstall with --no-install-recommends then leaves
+  # nginx -t failing with `unknown directive "lua_package_path"` and
+  # aborts the install. Install them explicitly + idempotently,
+  # independent of the bouncer's own install state — the bouncer can be
+  # "already installed" while the Lua module was autoremoved out from
+  # under it (feedback_deps_in_installer).
+  _spin "apt install nginx Lua deps (crowdsec bouncer)" \
+    apt-get install -y -qq --no-install-recommends \
+      libnginx-mod-http-lua lua-resty-core lua-resty-lrucache
+
   if ! dpkg -s crowdsec-nginx-bouncer >/dev/null 2>&1; then
     _spin "apt install crowdsec-nginx-bouncer" \
       apt-get install -y -qq --no-install-recommends crowdsec-nginx-bouncer

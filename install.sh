@@ -9757,6 +9757,13 @@ EOF
   rm -rf /etc/systemd/system/jabali-fpm@*
   rm -rf /etc/systemd/system/jabali-panel.service.d
   rm -rf /etc/systemd/system/jabali-agent.service.d
+  # jabali drops 10-jabali-restart.conf into third-party units too
+  # (nginx, crowdsec, redis-server, mariadb). Sweep every one, drop
+  # now-empty *.service.d dirs, reload so a leftover drop-in can't keep
+  # a third-party unit pinned to jabali restart policy after uninstall.
+  find /etc/systemd/system -maxdepth 2 -type f -name '10-jabali-restart.conf' -delete 2>/dev/null || true
+  find /etc/systemd/system -maxdepth 1 -type d -name '*.service.d' -empty -delete 2>/dev/null || true
+  systemctl daemon-reload 2>/dev/null || true
   rm -f  /etc/systemd/system/jabali-maldet-monitor.service
   rm -f  /etc/systemd/system/jabali-maldet-update-signatures.service
   rm -f  /etc/systemd/system/jabali-maldet-update-signatures.timer
@@ -9956,6 +9963,12 @@ RESOLV
          /var/lib/aide            \
          /var/log/aide
 
+  # /var/log/jabali (the active install log dir) was just rm -rf'd above;
+  # blank LOG_FILE so the run-wrapper's `tee -a "$LOG_FILE"` and the
+  # logger stop spamming "No such file or directory" for every remaining
+  # uninstall step (accounts / home / apt purge).
+  LOG_FILE=""
+
   # MariaDB: drop jabali databases + users. Try socket-auth first; if that
   # fails (root password set), ask for a password once.
   local mysql_root_cmd=""
@@ -10087,7 +10100,12 @@ SQL
   rmdir  /etc/nginx/sites-available/includes 2>/dev/null || true
   rm -f  /etc/nginx/snippets/jabali-*.conf 2>/dev/null || true
   rm -f  /etc/nginx/conf.d/jabali-*.conf 2>/dev/null || true
-  rm -f  /etc/nginx/conf.d/crowdsec_nginx.conf 2>/dev/null || true
+  # NOTE: /etc/nginx/conf.d/crowdsec_nginx.conf is OWNED by the
+  # crowdsec-nginx-bouncer apt package — deleting it here breaks that
+  # package's purge postrm (it warns "remove manually or NGINX will not
+  # restart") and leaves nginx un-`nginx -t`-able until the bouncer is
+  # gone, cascading dpkg failures through the whole purge. Let
+  # `apt-get purge crowdsec-nginx-bouncer` own its own conffile.
   # Strip the sites-enabled include we added on first install — left
   # over even after we remove the symlinks under sites-enabled/.
   if [[ -f /etc/nginx/nginx.conf ]]; then

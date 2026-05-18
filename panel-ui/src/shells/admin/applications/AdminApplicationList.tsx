@@ -5,13 +5,15 @@
 //
 // Status badge styling is inlined from UserApplicationList to keep
 // coupling low and avoid tight dependency on that component.
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Card,
   Input,
   Space,
   Table,
   Tag,
+  Popconfirm,
   Tooltip,
   Typography,
   message,
@@ -21,6 +23,7 @@ import {
   LoadingOutlined,
   CheckCircleOutlined,
   ExclamationCircleOutlined,
+  DeleteOutlined,
   LoginOutlined,
   SearchOutlined,
 } from "@icons";
@@ -30,6 +33,7 @@ import type { SorterResult } from "antd/es/table/interface";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useTableURL } from "../../../hooks/useTableURL";
 import { useMagicLink } from "../../../hooks/useMagicLink";
+import { apiClient } from "../../../apiClient";
 import { CmsIcon } from "../../user/applications/CmsIcon";
 
 type ApplicationInstall = {
@@ -85,7 +89,27 @@ const AdminActionsCell = ({
   record,
   canLogin,
 }: AdminActionsCellProps) => {
+  const qc = useQueryClient();
+  const [deleting, setDeleting] = useState(false);
   const { mint: mintMagicLink, loading: magicLinkLoading, error: magicLinkError } = useMagicLink(record.id);
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      await apiClient.delete(`/applications/${record.id}`);
+      message.success(
+        `Deleting ${record.domain_name || record.domain_id}\u2026`,
+      );
+      qc.invalidateQueries({ queryKey: ["list", "applications"] });
+      qc.invalidateQueries({ queryKey: ["list", "databases"] });
+    } catch (err) {
+      message.error(
+        (err as Error)?.message ?? "Failed to delete application",
+      );
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const handleMagicLink = async () => {
     try {
@@ -114,6 +138,21 @@ const AdminActionsCell = ({
           </RowActionButton>
         </Tooltip>
       )}
+      <Popconfirm
+        title="Delete this application?"
+        description={`Permanently removes ${record.domain_name || record.domain_id} and its data. This cannot be undone.`}
+        okText="Delete"
+        okButtonProps={{ danger: true }}
+        onConfirm={handleDelete}
+      >
+        <RowActionButton
+          icon={<DeleteOutlined />}
+          color="danger"
+          loading={deleting}
+        >
+          Delete
+        </RowActionButton>
+      </Popconfirm>
     </Space>
   );
 };

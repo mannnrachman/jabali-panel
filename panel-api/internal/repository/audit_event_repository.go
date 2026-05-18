@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -54,6 +55,19 @@ type AuditEventRepository interface {
 	// limit — the chain consumer's back-fill work queue. Read-only;
 	// append-only-safe.
 	ListUnsealed(ctx context.Context, limit int) ([]models.AuditEvent, error)
+
+	// AllForVerify returns every row in total chain order (ts ASC,
+	// id ASC) for `jabali audit verify`. v1 is unbounded — fine at
+	// panel scale; a very large log would need chunked streaming
+	// verification (future, tracked in ADR-0106 §risks).
+	AllForVerify(ctx context.Context) ([]models.AuditEvent, error)
+
+	// PruneOlderThan deletes rows with ts < cutoff and returns the
+	// count. ADR-0106's eventual target is a whole-partition DROP
+	// (audit_events isn't partitioned in 000138); this bounded DELETE
+	// is the honest v1. The prune itself is recorded as an audit
+	// event by the caller (never a silent selective delete).
+	PruneOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 }
 
 // Column allowlists for the audit_events list views. Empty-key-proof
@@ -185,4 +199,25 @@ func (r *auditEventRepo) ListUnsealed(ctx context.Context, limit int) ([]models.
 		return nil, err
 	}
 	return rows, nil
+}
+
+func (r *auditEventRepo) AllForVerify(ctx context.Context) ([]models.AuditEvent, error) {
+	var rows []models.AuditEvent
+	err := r.db.WithContext(ctx).
+		Order("ts ASC, id ASC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+func (r *auditEventRepo) PruneOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
+	res := r.db.WithContext(ctx).
+		Where("ts < ?", cutoff).
+		Delete(&models.AuditEvent{})
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
 }

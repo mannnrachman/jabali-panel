@@ -4,41 +4,27 @@
 // AdminIPList, minus the create/edit/delete surface. Backed by
 // GET /api/v1/admin/audit (RequireAdmin). The list envelope
 // {data,total,page,page_size} is read via query.items/query.total.
+//
+// Timestamps render in the server timezone (Server Settings →
+// Timezone). Actor shows the resolved username (API batch-resolves the
+// ULID). The Action cell opens a modal with the full recorded detail.
 import { Card, Space, Table, Tag, Typography } from "antd";
 import { SafetyOutlined } from "@icons";
 
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
+import {
+  AuditActionCell,
+  type AuditRow,
+  dash,
+  fmtTSInTz,
+  resultTag,
+  useServerTz,
+} from "../../../components/AuditEventDetail";
 import { useTableURL } from "../../../hooks/useTableURL";
 
-type AuditEvent = {
-  id: string;
-  ts: string;
-  actor_user_id?: string;
-  actor_kind: string;
-  subject_user_id?: string;
-  action: string;
-  target_type: string;
-  target_id: string;
-  result: "ok" | "denied" | "error";
-  source_ip?: string;
-  request_id?: string;
-};
-
-const resultTag = (r: AuditEvent["result"]) => (
-  <Tag color={r === "ok" ? "green" : r === "denied" ? "gold" : "red"}>{r}</Tag>
-);
-
-const fmtTS = (ts: string) => {
-  const d = new Date(ts);
-  return Number.isNaN(d.getTime())
-    ? ts
-    : d.toISOString().replace("T", " ").replace(/\.\d+Z$/, "Z");
-};
-
-const dash = <Typography.Text type="secondary">—</Typography.Text>;
-
 export const AdminAuditList = () => {
-  const query = useTableURL<AuditEvent>({
+  const tz = useServerTz();
+  const query = useTableURL<AuditRow>({
     resource: "admin/audit",
     defaultSort: "ts",
     defaultOrder: "desc",
@@ -57,7 +43,7 @@ export const AdminAuditList = () => {
       </Space>
 
       <Card>
-        <SearchableTableStringQ<AuditEvent>
+        <SearchableTableStringQ<AuditRow>
           rowKey="id"
           loading={query.isLoading}
           dataSource={query.items}
@@ -73,30 +59,35 @@ export const AdminAuditList = () => {
         >
           <Table.Column
             dataIndex="ts"
-            title="When (UTC)"
+            title={`When (${tz})`}
             key="ts"
-            render={(ts: string) => <code>{fmtTS(ts)}</code>}
+            render={(ts: string) => <code>{fmtTSInTz(ts, tz)}</code>}
           />
           <Table.Column
             title="Actor"
             key="actor"
-            render={(_: unknown, r: AuditEvent) => (
+            render={(_: unknown, r: AuditRow) => (
               <span>
                 <Tag>{r.actor_kind}</Tag>
-                {r.actor_user_id ? <code>{r.actor_user_id}</code> : null}
+                {r.actor_name ? (
+                  r.actor_name
+                ) : r.actor_user_id ? (
+                  <code>{r.actor_user_id}</code>
+                ) : null}
               </span>
             )}
           />
           <Table.Column
-            dataIndex="action"
             title="Action"
             key="action"
-            render={(a: string) => <code>{a}</code>}
+            render={(_: unknown, r: AuditRow) => (
+              <AuditActionCell row={r} tz={tz} />
+            )}
           />
           <Table.Column
             title="Target"
             key="target"
-            render={(_: unknown, r: AuditEvent) =>
+            render={(_: unknown, r: AuditRow) =>
               r.target_type || r.target_id ? (
                 <code>
                   {r.target_type}/{r.target_id}

@@ -51,6 +51,14 @@ type AuditEvent struct {
 	PrevHash      *string         `gorm:"type:char(64)" json:"prev_hash,omitempty"` // NULL = pre-chain (folded/historical/fallback-pending)
 	RowHash       *string         `gorm:"type:char(64)" json:"row_hash,omitempty"`  // set by the single-writer chain consumer
 	Meta          json.RawMessage `gorm:"type:json" json:"meta,omitempty"`          // structured context only; NEVER secrets/bodies
+
+	// Denormalized for the read API ONLY — never a column (gorm:"-"),
+	// never persisted, never used for scoping. The list handler batch-
+	// resolves ActorUserID/SubjectUserID to a display name (username,
+	// falling back to email) so the UI renders "alice" instead of a
+	// raw ULID — one lookup per page, no N+1 (M13.1 convention).
+	ActorName   *string `gorm:"-" json:"actor_name,omitempty"`
+	SubjectName *string `gorm:"-" json:"subject_name,omitempty"`
 }
 
 func (AuditEvent) TableName() string { return "audit_events" }

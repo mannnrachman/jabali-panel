@@ -6,38 +6,27 @@
 // enforced SERVER-SIDE in the repo (never a client filter), so this
 // only ever shows the caller's own rows. Same useTableURL +
 // SearchableTableStringQ shape as the admin view, friendlier columns.
+//
+// Timestamps render in the viewer's browser timezone: the server tz
+// lives behind an admin-only endpoint, and the column header names the
+// tz so the rendered time is never ambiguous.
 import { Card, Space, Table, Tag, Typography } from "antd";
 import { FileTextOutlined } from "@icons";
 
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
+import {
+  AuditActionCell,
+  type AuditRow,
+  browserTz,
+  dash,
+  fmtTSInTz,
+  resultTag,
+} from "../../../components/AuditEventDetail";
 import { useTableURL } from "../../../hooks/useTableURL";
 
-type Activity = {
-  id: string;
-  ts: string;
-  actor_kind: string;
-  action: string;
-  target_type: string;
-  target_id: string;
-  result: "ok" | "denied" | "error";
-  source_ip?: string;
-};
-
-const resultTag = (r: Activity["result"]) => (
-  <Tag color={r === "ok" ? "green" : r === "denied" ? "gold" : "red"}>{r}</Tag>
-);
-
-const fmtTS = (ts: string) => {
-  const d = new Date(ts);
-  return Number.isNaN(d.getTime())
-    ? ts
-    : d.toISOString().replace("T", " ").replace(/\.\d+Z$/, "Z");
-};
-
-const dash = <Typography.Text type="secondary">—</Typography.Text>;
-
 export const AccountActivity = () => {
-  const query = useTableURL<Activity>({
+  const tz = browserTz();
+  const query = useTableURL<AuditRow>({
     resource: "me/activity",
     defaultSort: "ts",
     defaultOrder: "desc",
@@ -60,7 +49,7 @@ export const AccountActivity = () => {
           Recent activity on your account. If you see something you did
           not do, change your password and contact your administrator.
         </Typography.Paragraph>
-        <SearchableTableStringQ<Activity>
+        <SearchableTableStringQ<AuditRow>
           rowKey="id"
           loading={query.isLoading}
           dataSource={query.items}
@@ -76,27 +65,29 @@ export const AccountActivity = () => {
         >
           <Table.Column
             dataIndex="ts"
-            title="When (UTC)"
+            title={`When (${tz})`}
             key="ts"
-            render={(ts: string) => <code>{fmtTS(ts)}</code>}
+            render={(ts: string) => <code>{fmtTSInTz(ts, tz)}</code>}
           />
           <Table.Column
-            dataIndex="action"
             title="What"
             key="action"
-            render={(a: string, r: Activity) => (
-              <span>
-                {r.actor_kind === "admin" ? (
-                  <Tag color="blue">by admin</Tag>
-                ) : null}
-                <code>{a}</code>
-              </span>
+            render={(_: unknown, r: AuditRow) => (
+              <AuditActionCell
+                row={r}
+                tz={tz}
+                prefix={
+                  r.actor_kind === "admin" ? (
+                    <Tag color="blue">by admin</Tag>
+                  ) : null
+                }
+              />
             )}
           />
           <Table.Column
             title="Target"
             key="target"
-            render={(_: unknown, r: Activity) =>
+            render={(_: unknown, r: AuditRow) =>
               r.target_type || r.target_id ? (
                 <code>
                   {r.target_type}/{r.target_id}

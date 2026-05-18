@@ -150,13 +150,18 @@ test.describe("users CRUD (admin)", () => {
     await page.locator(".ant-notification").waitFor({ state: "hidden", timeout: 10_000 });
 
     const victimRow = page.getByRole("row", { name: /doomed@test\.local/ });
-    // Delete is the trailing icon button in the actions cell.
-    await victimRow.getByRole("button", { name: /delete/i }).click();
+    // Reset 2FA / Suspend / Delete now live behind a per-row "Actions"
+    // dropdown (PR#40). Open it, then click the Delete item — the AntD
+    // menu renders in a portal at the document root, so the Delete
+    // button is no longer scoped to the row. `/^delete$/i` avoids the
+    // footer "Delete user" confirm button.
+    await victimRow.getByRole("button", { name: /actions/i }).click();
+    await page.getByRole("button", { name: /^delete$/i }).click();
 
     // UserDeleteAction opens an AntD Modal titled `Delete user "<email>"?`
     // with a two-checkbox choice and a "Delete user" confirm button in the
-    // footer. Scope the click to that dialog so we don't re-hit the icon
-    // button in the row.
+    // footer. Scope the click to that dialog so we don't re-hit the
+    // Delete trigger in the dropdown menu.
     const confirmDialog = page.getByRole("dialog", { name: /delete user/i });
     await confirmDialog.getByRole("button", { name: /^delete user$/i }).click();
 

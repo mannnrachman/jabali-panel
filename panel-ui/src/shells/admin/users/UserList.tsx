@@ -8,8 +8,8 @@
 // the ?is_admin filter is applied before search/sort so the paginated
 // total stays correct per tab.
 import { useState } from "react";
-import { Badge, Button, Card, Input, Segmented, Space, Table, Tag, Tooltip, Typography } from "antd";
-import { EditOutlined, SearchOutlined, TeamOutlined } from "@icons";
+import { Badge, Button, Card, Dropdown, Input, Segmented, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { EditOutlined, MoreOutlined, SearchOutlined, TeamOutlined } from "@icons";
 
 import { RowActionButton } from "../../../components/RowActionButton";
 import type { SorterResult } from "antd/es/table/interface";
@@ -66,15 +66,47 @@ function RowActions({
       <RowActionButton icon={<EditOutlined />} onClick={() => onEdit(user.id)}>
         Edit
       </RowActionButton>
-      <UserReset2FAAction userId={user.id} userEmail={user.email} />
-      {!user.is_admin && (
-        <UserSuspendAction
-          userId={user.id}
-          userEmail={user.email}
-          suspended={!!user.suspended}
-        />
-      )}
-      <UserDeleteAction recordItemId={user.id} userEmail={user.email} />
+      <Dropdown
+        trigger={["click"]}
+        placement="bottomRight"
+        menu={{
+          items: [
+            {
+              key: "reset2fa",
+              label: (
+                <UserReset2FAAction userId={user.id} userEmail={user.email} />
+              ),
+            },
+            ...(!user.is_admin
+              ? [
+                  {
+                    key: "suspend",
+                    label: (
+                      <UserSuspendAction
+                        userId={user.id}
+                        userEmail={user.email}
+                        suspended={!!user.suspended}
+                      />
+                    ),
+                  },
+                ]
+              : []),
+            {
+              key: "delete",
+              label: (
+                <UserDeleteAction
+                  recordItemId={user.id}
+                  userEmail={user.email}
+                />
+              ),
+            },
+          ],
+        }}
+      >
+        <RowActionButton icon={<MoreOutlined />} color="default">
+          Actions
+        </RowActionButton>
+      </Dropdown>
     </Space>
   );
 }

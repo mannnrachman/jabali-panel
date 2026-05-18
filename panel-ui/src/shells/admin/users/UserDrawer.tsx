@@ -52,6 +52,9 @@ const RESOURCE = "users";
 
 export function UserDrawer({ open, onClose, editingId }: UserDrawerProps) {
   const [form] = Form.useForm<UserFormInput>();
+  // Drive the Username required-mark: a Linux account (hence a
+  // username) is mandatory for every non-admin user.
+  const isAdminWatched = Form.useWatch("is_admin", form);
   const screens = Grid.useBreakpoint();
   const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
   const isEdit = Boolean(editingId);
@@ -144,6 +147,7 @@ export function UserDrawer({ open, onClose, editingId }: UserDrawerProps) {
             <Form.Item
               label="Username"
               name="username"
+              required={!isAdminWatched}
               tooltip="Linux account name. Lowercase letters and digits, 3–32 chars, must start with a letter. Leave blank for admin-only accounts."
               dependencies={["is_admin"]}
               rules={[

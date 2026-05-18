@@ -20,6 +20,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/audit"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
@@ -32,6 +33,9 @@ import (
 type AdminAutomationTokensConfig struct {
 	Repo repository.AutomationTokenRepository
 	Key  *ssokey.Key
+	// Audit is the M49 unified audit recorder (ADR-0106). Optional —
+	// nil disables emission (the recorder itself is fire-and-forget).
+	Audit audit.Recorder
 }
 
 // RegisterAdminAutomationTokens mounts the admin endpoints behind
@@ -112,6 +116,13 @@ func (h *adminAutoTokensHandler) create(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "create token: " + err.Error()})
 		return
 	}
+	if h.cfg.Audit != nil {
+		actor := ""
+		if creator != nil {
+			actor = *creator
+		}
+		h.cfg.Audit.Record(audit.TokenMint(actor, tok.ID, tok.Name, []string(tok.Scopes), c.ClientIP(), ginctx.RequestID(c)))
+	}
 	c.JSON(http.StatusCreated, gin.H{
 		"id":         tok.ID,
 		"name":       tok.Name,
@@ -143,6 +154,13 @@ func (h *adminAutoTokensHandler) revoke(c *gin.Context) {
 	if err := h.cfg.Repo.Revoke(ctx, id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "revoke: " + err.Error()})
 		return
+	}
+	if h.cfg.Audit != nil {
+		actor := ""
+		if cl := ginctx.Claims(c); cl != nil {
+			actor = cl.UserID
+		}
+		h.cfg.Audit.Record(audit.TokenRevoke(actor, id, c.ClientIP(), ginctx.RequestID(c)))
 	}
 	c.JSON(http.StatusOK, gin.H{"id": id, "revoked": true})
 }

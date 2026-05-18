@@ -22,6 +22,7 @@ import (
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/dbtuning"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/audit"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
@@ -50,6 +51,10 @@ type DatabaseAdminOpsHandlerConfig struct {
 	// them without this package depending on their concrete shape.
 	SSO        adminTokenMinter
 	AdminerSSO adminerTokenMinter
+	// Recorder is the M49 unified audit recorder (ADR-0106). M46
+	// db-admin ops dual-write here (fold-in); db_admin_audit stays a
+	// one-release alias-view. Optional — nil disables emission.
+	Recorder audit.Recorder
 }
 
 type adminTokenMinter interface {
@@ -125,6 +130,22 @@ func (h *databaseAdminOpsHandler) audit(ctx context.Context, actor, engine, acti
 		Detail:      detail,
 	}); err != nil {
 		h.cfg.Log.Error("db admin audit write failed", "action", action, "err", err)
+	}
+	// M49 fold-in (ADR-0106): mirror the privileged db-admin action
+	// into the unified audit log. Server-scoped (no subject) → admin
+	// view only. db_admin_audit above remains the one-release
+	// alias-view; this makes audit_events the going-forward source.
+	if h.cfg.Recorder != nil {
+		res := models.AuditResultOK
+		switch outcome {
+		case "error":
+			res = models.AuditResultError
+		case "forbidden", "denied":
+			res = models.AuditResultDenied
+		}
+		h.cfg.Recorder.Record(audit.APIMutation(
+			actor, models.AuditActorAdmin, "",
+			"db.admin."+action, "database", target, res, "", ""))
 	}
 }
 

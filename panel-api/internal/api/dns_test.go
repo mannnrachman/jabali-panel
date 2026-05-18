@@ -788,6 +788,45 @@ func TestUpdateRecordManagedARecord(t *testing.T) {
 	assert.Equal(t, "192.168.1.2", recordResp["content"])
 }
 
+
+func TestUpdateRecordManagedMXBlocked(t *testing.T) {
+	r, domainRepo, zoneRepo, recordRepo, _ := dnsRouter("user1", false)
+
+	domain := &models.Domain{ID: "test-domain-id", UserID: "user1", Name: "example.com"}
+	domainRepo.Create(context.Background(), domain)
+
+	zoneID := ids.NewULID()
+	zone := &models.DNSZone{
+		ID: zoneID, DomainID: "test-domain-id", Name: "example.com",
+		Serial: 1, RefreshSeconds: 3600, RetrySeconds: 600,
+		ExpireSeconds: 604800, MinimumTTL: 3600, IsEnabled: true,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	zoneRepo.Create(context.Background(), zone)
+
+	recordID := ids.NewULID()
+	record := &models.DNSRecord{
+		ID: recordID, ZoneID: zoneID, Name: "@", Type: "MX",
+		Content: "mail.example.com.", TTL: 3600, Priority: 10,
+		Managed: true, IsEnabled: true,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	recordRepo.Create(context.Background(), record)
+
+	// Editing a jabali-managed MX must be blocked (reconciler-owned;
+	// used to "succeed" then silently revert).
+	body, _ := json.Marshal(map[string]interface{}{"content": "mx.evil.local."})
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/dns/records/"+recordID, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	assert.Equal(t, "record_managed", resp["error"])
+}
+
 func TestDeleteRecordManagedNSForbidden(t *testing.T) {
 	r, domainRepo, zoneRepo, recordRepo, _ := dnsRouter("user1", false)
 

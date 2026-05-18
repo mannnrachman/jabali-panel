@@ -115,3 +115,51 @@ main, never the github mirror.
 5. Promoting MTA-STS testing→enforce is operator-gated + irreversible-
    ish for senders mid-flight; typed confirm + a documented rollback
    (mode=none) — mirror the M48 destructive-op discipline.
+
+## 7. Advisor review — folded (2026-05-18)
+
+1. **Stalwart surface = WAVE-1 GATE (do not bake `:8446`).** Live
+   probe inconclusive: Stalwart 0.16.0 on mx exposes HTTP listeners
+   `:8446` + `:18181` (NOT the `:8080` doc-default — jabali M6
+   rebinds); unauthenticated requests return **404 (anti-enumeration,
+   not 401)** so the port/path/auth cannot be confirmed without the
+   jabali Stalwart admin credential. Context7 gives the endpoint
+   *shape*: `GET /queue/messages` → `{data:{items,total,status}}`,
+   `POST /queue/retry` (ids/sender/domain/before/after/time),
+   DELETE cancel — but 0.16 may `/api/`-prefix. **Resolution
+   procedure before Step 1:** read the M6 install code (where it
+   writes `stalwart-admin.token` + which `[server.listener.*]` has
+   `protocol="http"` management role), then live-confirm with the
+   real token. ADR-0103 must then carry a **verified Stalwart
+   version + port + endpoint table**. Wave 0 (migration) is
+   port-independent and proceeds regardless.
+2. **Split Step 7 (MTA-STS) → 7a/7b.** 7a = scaffolding *per managed
+   domain*: DNS A `mta-sts.<d>` (M15 PDNS), nginx vhost serving
+   `/.well-known/mta-sts.txt`, LE cert for each `mta-sts.<d>`
+   (**LE-rate-limit + operational growth axis** — one cert per
+   domain; consider SAN-on-domain-cert vs dedicated; decide in 7a).
+   7b = policy state machine (`none|testing|enforce`), `max_age`,
+   reconciler diff, operator promotion gating.
+3. **MTA-STS rollback wording (corrected).** `mode=none` is fully
+   reversible, but senders honoring `testing`/`enforce` keep the
+   cached policy until the current `max_age` expires (RFC 8461 §5.1).
+   Typed-confirm on promotion MUST display the effective rollback
+   ETA. Default `max_age` small (86400) before 604800+.
+4. **Retention (schema decision now).** `dmarc_aggregate` +
+   `tlsrpt_aggregate` grow unbounded (reporter×domain×window×source).
+   Default **90-day retention**; prune via a reconciler/systemd timer
+   added in Steps 6/8; migration 000139 carries a `-- retention: 90d,
+   pruned app-side` note + a memory entry so a future milestone does
+   not allocate a reactive "audit-table-cleanup".
+5. **RBL set (concrete now).** Free baseline: Spamhaus ZEN, SpamCop,
+   Barracuda BRBL, SURBL. Auth-at-volume (Spamhaus DQS >100k/day) →
+   ship free baseline + operator-configurable paid creds; paid lists
+   otherwise out of scope. Cache TTL ≥ 1 h per IP; poll every 4–6 h
+   (NOT per-minute). Step 5 must not defer "which RBLs" to impl.
+6. **PTR is informational, not actionable.** Reverse DNS is set by
+   the upstream provider, not the panel. The score widget shows
+   current vs expected PTR + a "set via your provider" hint — never
+   a "fix PTR" button (panel can't, erodes score trust).
+7. **Process:** M49 is still landing migrations/ADRs on main —
+   re-verify `000139` next-free and ADR-0103 via
+   `git ls-tree origin/main` at Wave-0 commit time, not before.

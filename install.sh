@@ -102,6 +102,49 @@ ENV_FILE="/etc/jabali/panel.env"
 # parsing. This way `bash -s -- --hostname=foo` and the old
 # `bash -s -- <TOKEN>` both do the right thing.
 
+usage() {
+  cat <<'USAGE_EOF'
+Jabali Panel installer.
+
+USAGE
+  install.sh [INSTALL FLAGS]
+      Install or re-run (idempotent) on a fresh Debian 13 / Ubuntu 24.04
+      root shell. Typically piped:
+        curl -fsSL <repo>/install.sh | bash -s -- [flags]
+
+  install.sh --uninstall [--purge-packages] [--yes]
+      Remove Jabali: jabali-* units + drop-ins, /usr/local/bin/jabali*,
+      /etc/jabali*, /etc/stalwart, /var/lib/jabali-*, /opt/jabali*, AppArmor
+      profiles, crowdsec/audit/nftables/sshd drop-ins, etc. Prompts before
+      destroying unless --yes.
+
+INSTALL FLAGS (all optional, combinable)
+  --hostname <fqdn>    Server hostname; skips the TTY prompt.
+                       (env: JABALI_HOSTNAME). --hostname=<fqdn> also works.
+  --token <gitea>      Private-repo access token (env: JABALI_GITEA_TOKEN).
+                       Legacy: the first positional arg is also a token.
+  --debug              Verbose: no spinner, stream wrapped commands,
+                       set -x with line-tagged PS4 (env: JABALI_DEBUG=1).
+  -y, --yes            Assume "yes" for prompts (non-interactive).
+
+UNINSTALL FLAGS
+  --uninstall          Remove Jabali (see above). Confirms unless --yes.
+  --purge-packages     With --uninstall: also apt-purge the OS packages
+                       Jabali pulled in (nginx, mariadb, crowdsec, php...).
+  -y, --yes            Skip the uninstall confirmation prompt.
+
+ENV EQUIVALENTS
+  JABALI_HOSTNAME, JABALI_GITEA_TOKEN, JABALI_DEBUG=1
+
+EXAMPLES
+  curl -fsSL <repo>/install.sh | bash -s -- --hostname=panel.example.com
+  curl -fsSL <repo>/install.sh | bash -s -- --hostname p.ex.com --token <TOK>
+  bash install.sh --uninstall                      # interactive confirm
+  bash install.sh --uninstall --purge-packages --yes
+  bash install.sh --help
+USAGE_EOF
+}
+
 _cli_hostname=""
 _cli_token=""
 _cli_debug=""
@@ -119,6 +162,7 @@ while [[ $# -gt 0 ]]; do
     --uninstall)  _cli_uninstall=1; shift ;;
     --purge-packages) _cli_purge_packages=1; shift ;;
     --yes|-y)     _cli_yes=1; shift ;;
+    -h|--help)    usage; exit 0 ;;
     --)           shift; while [[ $# -gt 0 ]]; do _positional+=("$1"); shift; done ;;
     --*)          printf 'install.sh: unknown flag: %s\n' "$1" >&2; exit 64 ;;
     *)            _positional+=("$1"); shift ;;

@@ -15,7 +15,8 @@ import { FileTextOutlined } from "@icons";
 
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import {
-  AuditActionCell,
+  AuditActionLabel,
+  AuditDetail,
   type AuditRow,
   browserTz,
   dash,
@@ -62,6 +63,11 @@ export const AccountActivity = () => {
             total: query.total,
           }}
           scroll={{ x: "max-content" }}
+          expandable={{
+            expandedRowRender: (r: AuditRow) => (
+              <AuditDetail row={r} tz={tz} />
+            ),
+          }}
         >
           <Table.Column
             dataIndex="ts"
@@ -73,9 +79,8 @@ export const AccountActivity = () => {
             title="What"
             key="action"
             render={(_: unknown, r: AuditRow) => (
-              <AuditActionCell
+              <AuditActionLabel
                 row={r}
-                tz={tz}
                 prefix={
                   r.actor_kind === "admin" ? (
                     <Tag color="blue">by admin</Tag>

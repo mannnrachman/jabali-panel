@@ -13,7 +13,8 @@ import { SafetyOutlined } from "@icons";
 
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import {
-  AuditActionCell,
+  AuditActionLabel,
+  AuditDetail,
   type AuditRow,
   dash,
   fmtTSInTz,
@@ -56,6 +57,11 @@ export const AdminAuditList = () => {
             total: query.total,
           }}
           scroll={{ x: "max-content" }}
+          expandable={{
+            expandedRowRender: (r: AuditRow) => (
+              <AuditDetail row={r} tz={tz} />
+            ),
+          }}
         >
           <Table.Column
             dataIndex="ts"
@@ -80,9 +86,7 @@ export const AdminAuditList = () => {
           <Table.Column
             title="Action"
             key="action"
-            render={(_: unknown, r: AuditRow) => (
-              <AuditActionCell row={r} tz={tz} />
-            )}
+            render={(_: unknown, r: AuditRow) => <AuditActionLabel row={r} />}
           />
           <Table.Column
             title="Target"

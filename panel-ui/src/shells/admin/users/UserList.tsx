@@ -8,8 +8,8 @@
 // the ?is_admin filter is applied before search/sort so the paginated
 // total stays correct per tab.
 import { useState } from "react";
-import { Badge, Button, Card, Input, Segmented, Space, Table, Tag, Tooltip, Typography } from "antd";
-import { EditOutlined, SearchOutlined, TeamOutlined } from "@icons";
+import { Badge, Button, Card, Dropdown, Input, Segmented, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { EditOutlined, MoreOutlined, SearchOutlined, TeamOutlined } from "@icons";
 
 import { RowActionButton } from "../../../components/RowActionButton";
 import type { SorterResult } from "antd/es/table/interface";
@@ -66,15 +66,46 @@ function RowActions({
       <RowActionButton icon={<EditOutlined />} onClick={() => onEdit(user.id)}>
         Edit
       </RowActionButton>
-      <UserReset2FAAction userId={user.id} userEmail={user.email} />
-      {!user.is_admin && (
-        <UserSuspendAction
-          userId={user.id}
-          userEmail={user.email}
-          suspended={!!user.suspended}
-        />
-      )}
-      <UserDeleteAction recordItemId={user.id} userEmail={user.email} />
+      <Dropdown
+        trigger={["click"]}
+        placement="bottomRight"
+        popupRender={() => (
+          <div
+            style={{
+              background: "var(--ant-color-bg-elevated, #1f1f1f)",
+              padding: 8,
+              borderRadius: 8,
+              boxShadow: "0 6px 16px rgba(0,0,0,.45)",
+            }}
+          >
+            {/* Each action is a self-contained Button+Modal (modals
+                portal to <body>, so they work from inside the popup).
+                Stacked, full-width, so it reads as an action menu. */}
+            <Space
+              direction="vertical"
+              size={6}
+              style={{ minWidth: 168, width: "100%" }}
+            >
+              <UserReset2FAAction userId={user.id} userEmail={user.email} />
+              {!user.is_admin && (
+                <UserSuspendAction
+                  userId={user.id}
+                  userEmail={user.email}
+                  suspended={!!user.suspended}
+                />
+              )}
+              <UserDeleteAction
+                recordItemId={user.id}
+                userEmail={user.email}
+              />
+            </Space>
+          </div>
+        )}
+      >
+        <RowActionButton icon={<MoreOutlined />} color="default">
+          Actions
+        </RowActionButton>
+      </Dropdown>
     </Space>
   );
 }

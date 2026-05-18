@@ -77,7 +77,15 @@ async function cleanup(page: any) {
       if (await searchInput.isVisible().catch(() => false)) {
         await searchInput.fill(TEST_USER.email);
         await page.waitForTimeout(1000);
-        
+
+        // Row actions (Suspend/Delete/Reset 2FA) now live behind an
+        // "Actions" dropdown; open it before reaching for Delete.
+        const actionsBtn = page.locator('button:has-text("Actions")').first();
+        if (await actionsBtn.isVisible().catch(() => false)) {
+          await actionsBtn.click();
+          await page.waitForTimeout(300);
+        }
+
         // Click delete if found
         const deleteBtn = page.locator('button:has-text("Delete")').first();
         if (await deleteBtn.isVisible().catch(() => false)) {

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -8,6 +9,7 @@ import (
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -34,10 +36,13 @@ const (
 )
 
 // AuditHandlerConfig — Repo is required (panic at boot if nil, per the
-// route-family convention: programmer error, not a 500).
+// route-family convention: programmer error, not a 500). Users is
+// OPTIONAL: when set, the read handlers batch-resolve actor/subject
+// IDs to a display name; when nil, rows still render with raw IDs.
 type AuditHandlerConfig struct {
-	Repo repository.AuditEventRepository
-	Log  *slog.Logger
+	Repo  repository.AuditEventRepository
+	Users repository.UserRepository
+	Log   *slog.Logger
 }
 
 type auditHandler struct{ cfg AuditHandlerConfig }
@@ -62,12 +67,72 @@ func (h *auditHandler) adminList(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+	h.enrichNames(c.Request.Context(), rows)
 	c.JSON(http.StatusOK, gin.H{
 		"data":      rows,
 		"total":     total,
 		"page":      page,
 		"page_size": pageSize,
 	})
+}
+
+// enrichNames batch-resolves the page's actor/subject user IDs to a
+// display name (username, falling back to email) and writes it onto
+// ActorName/SubjectName so the UI can show "alice" instead of a raw
+// ULID. ONE lookup per page (no N+1) per the M13.1 denormalize
+// convention. Display-only — scoping stays server-side in the repo,
+// and a lookup failure never fails the audit read (raw IDs still
+// render). No-op when Users is unconfigured.
+func (h *auditHandler) enrichNames(ctx context.Context, rows []models.AuditEvent) {
+	if h.cfg.Users == nil || len(rows) == 0 {
+		return
+	}
+	idset := make(map[string]struct{})
+	for i := range rows {
+		if rows[i].ActorUserID != nil && *rows[i].ActorUserID != "" {
+			idset[*rows[i].ActorUserID] = struct{}{}
+		}
+		if rows[i].SubjectUserID != nil && *rows[i].SubjectUserID != "" {
+			idset[*rows[i].SubjectUserID] = struct{}{}
+		}
+	}
+	if len(idset) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(idset))
+	for id := range idset {
+		ids = append(ids, id)
+	}
+	users, err := h.cfg.Users.FindByIDs(ctx, ids)
+	if err != nil {
+		if h.cfg.Log != nil {
+			h.cfg.Log.Warn("audit: actor-name enrichment failed", "err", err)
+		}
+		return
+	}
+	name := make(map[string]string, len(users))
+	for i := range users {
+		u := users[i]
+		dn := u.Email
+		if u.Username != nil && *u.Username != "" {
+			dn = *u.Username
+		}
+		name[u.ID] = dn
+	}
+	for i := range rows {
+		if rows[i].ActorUserID != nil {
+			if dn, ok := name[*rows[i].ActorUserID]; ok {
+				v := dn
+				rows[i].ActorName = &v
+			}
+		}
+		if rows[i].SubjectUserID != nil {
+			if dn, ok := name[*rows[i].SubjectUserID]; ok {
+				v := dn
+				rows[i].SubjectName = &v
+			}
+		}
+	}
 }
 
 // meActivity — the caller's own activity feed. Subject scope is the
@@ -85,6 +150,7 @@ func (h *auditHandler) meActivity(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+	h.enrichNames(c.Request.Context(), rows)
 	c.JSON(http.StatusOK, gin.H{
 		"data":      rows,
 		"total":     total,

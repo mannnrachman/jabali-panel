@@ -356,8 +356,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// /admin/audit (RequireAdmin) + /me/activity (subject-scoped).
 		if deps.DB != nil {
 			api.RegisterAuditRoutes(v1, api.AuditHandlerConfig{
-				Repo: repository.NewAuditEventRepository(deps.DB),
-				Log:  deps.Log,
+				Repo:  repository.NewAuditEventRepository(deps.DB),
+				Users: deps.Users, // optional: resolves actor/subject IDs → name
+				Log:   deps.Log,
 			})
 		}
 

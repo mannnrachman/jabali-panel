@@ -566,6 +566,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Queue:      deps.NotificationQueue,
 				SSO:        deps.SSO,
 				AdminerSSO: deps.AdminerSSO,
+				Recorder:   deps.AuditRecorder,
 			})
 		}
 		if deps.PageTemplates != nil {
@@ -860,8 +861,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// middleware (HMAC is the auth there, no Kratos session).
 		if deps.AutomationTokens != nil && deps.SSOKey != nil {
 			api.RegisterAdminAutomationTokens(v1, api.AdminAutomationTokensConfig{
-				Repo: deps.AutomationTokens,
-				Key:  deps.SSOKey,
+				Repo:  deps.AutomationTokens,
+				Key:   deps.SSOKey,
+				Audit: deps.AuditRecorder,
 			})
 		}
 		if deps.MigrationJobs != nil {

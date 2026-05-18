@@ -896,6 +896,21 @@ test -x node_modules/.bin/tsc || {
 			}
 			return nil
 		}},
+		{"self-heal nginx http2-on (PR#16/ADR-0066)", func() error {
+			// jabali update mirrors install.sh halves but does NOT
+			// re-render the nginx server-scope vhosts, so a host that
+			// rendered the brief `http2 on;` template (an unknown
+			// directive on nginx<1.25.1 -> `nginx -t` fails) stays
+			// broken across every update. Run the idempotent
+			// nginx-config-invalid repair (foldHTTP2: `http2 on;` ->
+			// `listen ... ssl http2`) so update self-heals it.
+			// Detect-gated: no-op + no reload when already valid.
+			if broken, detail, derr := detectNginxConfigInvalid(repairCtx{}); derr == nil && broken {
+				fmt.Printf("  nginx-config-invalid: %s -- folding http2\n", detail)
+				return fixNginxConfigInvalid(repairCtx{})
+			}
+			return nil
+		}},
 	}
 
 	for _, s := range prelude {

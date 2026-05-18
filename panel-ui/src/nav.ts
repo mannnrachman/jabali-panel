@@ -115,6 +115,12 @@ export const adminNav: NavItem[] = [
     path: "/jabali-admin/logs",
   },
   {
+    key: "audit",
+    label: "Audit Log",
+    icon: navIcon(SafetyOutlined),
+    path: "/jabali-admin/audit",
+  },
+  {
     key: "settings",
     label: "Server Settings",
     icon: navIcon(SettingOutlined),
@@ -237,6 +243,12 @@ export const userNav: NavItem[] = [
     label: "Logs & Statistics",
     icon: navIcon(FileTextOutlined),
     path: "/jabali-panel/logs",
+  },
+  {
+    key: "activity",
+    label: "Account Activity",
+    icon: navIcon(FileTextOutlined),
+    path: "/jabali-panel/activity",
   },
   {
     key: "ssh-keys",

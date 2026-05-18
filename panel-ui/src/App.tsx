@@ -35,6 +35,8 @@ import { ThemeModeProvider, useThemeMode } from "./theme/ThemeModeContext";
 import { Dashboard } from "./shells/admin/Dashboard";
 import { UserList } from "./shells/admin/users/UserList";
 import { AdminIPList } from "./shells/admin/ips/AdminIPList";
+import { AdminAuditList } from "./shells/admin/audit/AdminAuditList";
+import { AccountActivity } from "./shells/user/activity/AccountActivity";
 import { NotificationsTabsPage } from "./shells/admin/notifications/NotificationsTabsPage";
 import { useApplyBrandingToTitle } from "./hooks/useBranding";
 import { AdminSecurityPage } from "./shells/admin/security/AdminSecurityPage";
@@ -171,6 +173,7 @@ const ThemedApp = () => {
             </Route>
             <Route path="applications" element={<AdminApplicationList />} />
             <Route path="logs" element={<LogsPage />} />
+            <Route path="audit" element={<AdminAuditList />} />
             <Route path="ips">
               <Route index element={<AdminIPList />} />
               <Route path="create" element={<Navigate to="/jabali-admin/ips" replace />} />
@@ -232,6 +235,7 @@ const ThemedApp = () => {
             <Route path="php-settings" element={<UserPHPSettingsPage />} />
             <Route path="files" element={<FileManagerPage />} />
             <Route path="logs" element={<UserLogsPage />} />
+            <Route path="activity" element={<AccountActivity />} />
             <Route path="applications" element={<UserApplicationList />} />
             <Route path="ssh-keys" element={<UserSSHKeysPage />} />
             <Route path="cron" element={<UserCronList />} />

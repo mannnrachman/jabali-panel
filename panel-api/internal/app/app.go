@@ -15,6 +15,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/api"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/apps"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/audit"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/config"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/notifications"
@@ -146,6 +147,15 @@ type Deps struct {
 	// write to this Queue. Nil when Redis is not configured; handlers
 	// must 503 rather than panic.
 	NotificationQueue *notifications.Queue
+	// AuditRecorder is the M49 one-write-path into the unified audit
+	// log (ADR-0106): the recorder middleware + domain emitters call
+	// Record(). Nil when Redis is not configured (same posture as
+	// NotificationQueue); middleware.AuditRecord no-ops on nil.
+	AuditRecorder audit.Recorder
+	// AuditConsumer is the single-writer hash-chain consumer of
+	// jabali:audit:queue. serve.go starts it as a goroutine alongside
+	// the reconciler; nil without Redis.
+	AuditConsumer *audit.Consumer
 	// DB is the raw GORM handle. Most handlers go through typed repos
 	// — this is only here for tiny one-off endpoints that need a
 	// COUNT(*) across multiple tables (e.g. /admin/counts on the
@@ -334,6 +344,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// M14 — fire one admin.login envelope per Kratos session.
 		// Redis SETNX dedupes; downgrades to no-op without Redis/queue.
 		v1.Use(middleware.TrackAdminLogin(deps.Redis, deps.NotificationQueue, deps.Log))
+		// M49 — record one audit event per mutating request (never
+		// the body). No-op when AuditRecorder is nil (no Redis).
+		v1.Use(middleware.AuditRecord(deps.AuditRecorder))
 		api.RegisterMeRoutes(v1, api.MeHandlerConfig{
 			Users:          deps.Users,
 			ServerSettings: deps.ServerSettings,

@@ -427,11 +427,20 @@ func (h *dnsHandler) updateRecord(c *gin.Context) {
 		return
 	}
 
-	// Check if record is managed and read-only (SOA/NS)
-	if record.Managed && (record.Type == "SOA" || record.Type == "NS") {
+	// Reconciler-owned records. SOA/NS are zone infrastructure;
+	// MX/SRV are written + reconciled by the M6 mail setup
+	// (DB-as-truth) — editing them here used to "succeed" then get
+	// silently reverted on the next reconcile pass. Managed A
+	// records stay editable (operator may repoint the apex).
+	if record.Managed &&
+		(record.Type == "SOA" || record.Type == "NS" ||
+			record.Type == "MX" || record.Type == "SRV") {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":  "record_managed",
-			"detail": "Cannot modify managed SOA or NS records",
+			"error": "record_managed",
+			"detail": "This " + record.Type + " record is managed by jabali" +
+				" (zone/mail automation) and is reconciled automatically." +
+				" Change it via the related Email/Domain settings, not here" +
+				" — direct edits are reverted.",
 		})
 		return
 	}
@@ -521,11 +530,17 @@ func (h *dnsHandler) deleteRecord(c *gin.Context) {
 		return
 	}
 
-	// Check if record is managed and read-only (SOA/NS)
-	if record.Managed && (record.Type == "SOA" || record.Type == "NS") {
+	// Reconciler-owned (see update handler): SOA/NS zone infra +
+	// MX/SRV mail records. Managed A stays deletable-by-owner intent
+	// is moot here too — these are jabali-owned.
+	if record.Managed &&
+		(record.Type == "SOA" || record.Type == "NS" ||
+			record.Type == "MX" || record.Type == "SRV") {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":  "record_managed",
-			"detail": "Cannot delete managed SOA or NS records",
+			"error": "record_managed",
+			"detail": "This " + record.Type + " record is managed by jabali" +
+				" (zone/mail automation) and cannot be deleted directly" +
+				" — remove it via the related Email/Domain settings.",
 		})
 		return
 	}

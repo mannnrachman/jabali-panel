@@ -9873,15 +9873,17 @@ RESOLV
   fi
 
   _log "removing binaries"
+  # Glob jabali-* so helper scripts (jabali-goaccess-generator,
+  # jabali-spam-rules-refresh, jabali-ssh-shell, jabali-nspawn-enter,
+  # jabali-notify-onfailure, ...) are swept too — the old enumerated
+  # list missed them. Non-jabali-prefixed binaries stay explicit.
   rm -f /usr/local/bin/jabali \
-        /usr/local/bin/jabali-panel \
-        /usr/local/bin/jabali-agent \
+        /usr/local/bin/jabali-* \
         /usr/local/bin/kratos \
         /usr/local/bin/stalwart \
         /usr/local/bin/stalwart-cli \
         /usr/local/bin/wp \
-        /usr/local/bin/yr \
-        /usr/local/bin/jabali-notify-onfailure
+        /usr/local/bin/yr
   rm -rf /usr/local/libexec/jabali
 
   _log "removing config files"
@@ -10135,11 +10137,25 @@ SQL
     2>/dev/null | while read -r _vh; do
       # Only remove files that mention "jabali" or our managed
       # bulwark upstream — never touch operator-authored vhosts.
-      if grep -q -E 'jabali_(panel_api|bulwark)|jabali-' "$_vh" 2>/dev/null; then
+      if [[ "$(basename "$_vh")" == jabali-* ]] || grep -q -E 'jabali_(panel_api|bulwark)|jabali-' "$_vh" 2>/dev/null; then
         rm -f "$_vh"
         rm -f "/etc/nginx/sites-enabled/$(basename "$_vh")"
       fi
     done
+  # jabali's default vhost is jabali-default.conf, symlinked into
+  # sites-enabled as `default.conf` — the basename-symlink removal in
+  # the loop misses it, leaving the `http2 on;` default that fails
+  # `nginx -t` on nginx<1.25.1 and cascades the apt phase. Remove it
+  # by name + sweep any dangling or jabali-targeted symlink left in
+  # sites-enabled.
+  rm -f /etc/nginx/sites-available/jabali-default.conf 2>/dev/null || true
+  for _l in /etc/nginx/sites-enabled/*; do
+    [[ -L "$_l" ]] || continue
+    _t="$(readlink -f "$_l" 2>/dev/null || true)"
+    if [[ -z "$_t" || ! -e "$_t" || "$_t" == */jabali-*.conf ]]; then
+      rm -f "$_l"
+    fi
+  done
   rm -f  /etc/nginx/sites-available/includes/phpmyadmin.conf 2>/dev/null || true
   rmdir  /etc/nginx/sites-available/includes 2>/dev/null || true
   rm -f  /etc/nginx/snippets/jabali-*.conf 2>/dev/null || true

@@ -5271,16 +5271,23 @@ install_crowdsec() {
   # coverage is re-enabled, but every step below is best-effort +
   # presence-gated: a future hub regression degrades to vpatch+generic
   # and CrowdSec still starts (never references a missing rule).
+  # Track any cscli hub mutation in this function; we reload crowdsec
+  # once at the end (see end of function) instead of after every step.
+  # Without this `jabali update` left cscli's "Run reload" hint to the
+  # operator after every hub change.
+  local _cs_dirty=0
   local _appsec_rules_dir="/etc/crowdsec/appsec-rules/crowdsecurity"
   if ! compgen -G "${_appsec_rules_dir}/vpatch-*" >/dev/null 2>&1; then
     cscli collections remove crowdsecurity/appsec-virtual-patching --purge 2>/dev/null || true
     _spin "cscli collections install appsec-virtual-patching (pre-flight)" \
       cscli collections install crowdsecurity/appsec-virtual-patching
+    _cs_dirty=1
   fi
   if ! compgen -G "${_appsec_rules_dir}/generic-*" >/dev/null 2>&1; then
     cscli collections remove crowdsecurity/appsec-generic-rules --purge 2>/dev/null || true
     _spin "cscli collections install appsec-generic-rules (pre-flight)" \
       cscli collections install crowdsecurity/appsec-generic-rules
+    _cs_dirty=1
   fi
   # 2026-05-16: CRS-class generic LFI/SQLi/XSS coverage. The hub-data
   # 500 that previously broke crs installs is resolved and base-config
@@ -5294,16 +5301,25 @@ install_crowdsec() {
   # separate latent path bug that merely forces a harmless reinstall.)
   local _ard="/etc/crowdsec/appsec-rules"
   if [[ ! -f "$_ard/crs.yaml" ]]; then
-    cscli appsec-rules install crowdsecurity/crs 2>/dev/null \
-      || _warn "appsec crowdsecurity/crs install failed (hub?) — AppSec degrades to vpatch+generic"
+    if cscli appsec-rules install crowdsecurity/crs 2>/dev/null; then
+      _cs_dirty=1
+    else
+      _warn "appsec crowdsecurity/crs install failed (hub?) — AppSec degrades to vpatch+generic"
+    fi
   fi
   if [[ ! -f "$_ard/base-config.yaml" ]]; then
-    cscli appsec-rules install crowdsecurity/base-config 2>/dev/null \
-      || _warn "appsec crowdsecurity/base-config install failed — AppSec degrades to vpatch+generic"
+    if cscli appsec-rules install crowdsecurity/base-config 2>/dev/null; then
+      _cs_dirty=1
+    else
+      _warn "appsec crowdsecurity/base-config install failed — AppSec degrades to vpatch+generic"
+    fi
   fi
   if [[ ! -f "$_ard/crs-exclusion-plugin-wordpress.yaml" ]]; then
-    cscli appsec-rules install crowdsecurity/crs-exclusion-plugin-wordpress 2>/dev/null \
-      || _warn "appsec crs WordPress exclusion install failed — CRS may false-positive on wp-admin"
+    if cscli appsec-rules install crowdsecurity/crs-exclusion-plugin-wordpress 2>/dev/null; then
+      _cs_dirty=1
+    else
+      _warn "appsec crs WordPress exclusion install failed — CRS may false-positive on wp-admin"
+    fi
   fi
 
   # Pick the firewall bouncer matching the kernel backend. Trixie+
@@ -5819,6 +5835,16 @@ install_crowdsec_appsec() {
     _ok "CrowdSec AppSec live at 127.0.0.1:7422"
   else
     _warn "CrowdSec AppSec listener did not appear on :7422 — check journalctl -u crowdsec"
+  fi
+
+  # Reload crowdsec once if any hub mutation happened in this function.
+  # cscli writes hub state but does not signal crowdsec; without this
+  # the operator was left running `systemctl reload crowdsec` by hand
+  # after every `jabali update` that touched the hub (recurring scar:
+  # PR #45 deploy-hook / #49 appsec-config / #54 db-user-import).
+  if [[ ${_cs_dirty:-0} -eq 1 ]]; then
+    _log "crowdsec: hub mutated by install_crowdsec_appsec — reloading"
+    systemctl reload crowdsec 2>/dev/null || systemctl restart crowdsec 2>/dev/null || true
   fi
 }
 
@@ -9504,14 +9530,27 @@ provision_new_software() {
 
   # CrowdSec collections. Guards are idempotent — safe to call even when
   # crowdsec is not yet installed (cscli exits non-zero, guards skip).
+  # _cs_dirty tracks whether ANY cscli mutation happened so we end the
+  # block with a `systemctl reload crowdsec` — cscli mutates the hub
+  # state but does not signal crowdsec itself, and the operator was
+  # left holding cscli's "Run reload" hint after every `jabali update`
+  # that installed a collection. Same recurring scar class as the
+  # deploy-hook / appsec-config refresh (PR #45 / #49 / #54).
   if command -v cscli >/dev/null 2>&1; then
+    local _cs_dirty=0
     local _cols=(nginx sshd linux mysql)
     for _col in "${_cols[@]}"; do
       if ! cscli collections list 2>/dev/null | grep -q "crowdsecurity/${_col}"; then
-        _spin "cscli collections install ${_col}" \
-          cscli collections install "crowdsecurity/${_col}" || true
+        if _spin "cscli collections install ${_col}" \
+             cscli collections install "crowdsecurity/${_col}"; then
+          _cs_dirty=1
+        fi
       fi
     done
+    if [[ $_cs_dirty -eq 1 ]]; then
+      _log "crowdsec: hub changed — reloading"
+      systemctl reload crowdsec 2>/dev/null || systemctl restart crowdsec 2>/dev/null || true
+    fi
   fi
 
   # CrowdSec sshd acquis: migrate old _SYSTEMD_UNIT filter to

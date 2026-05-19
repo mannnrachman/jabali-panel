@@ -142,10 +142,22 @@ func sslPanelIssueHandler(ctx context.Context, params json.RawMessage) (any, err
 	// Run the deploy-hook directly. Certbot only fires deploy-hooks
 	// on renewals, NOT on first-issue, so the agent triggers it once
 	// the cert lineage exists.
-	if err := runDeployHookFn(ctx, p.Hostname, p.Kind); err != nil {
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: err.Error(),
+	//
+	// EXCEPT when certbot kept an existing still-valid cert
+	// (result.Skipped): nothing changed on disk, so re-running the
+	// hook only causes a needless service churn — and for the
+	// hostname kind that churn is `systemctl restart jabali-panel`,
+	// i.e. the panel-cert self-restart deadlock (the reconciler that
+	// called us IS jabali-panel; the restart SIGTERMs it mid-RPC so
+	// it never records status=issued, and re-dispatches forever).
+	// The reply below still carries the existing cert's dates, so the
+	// reconciler converges to issued without any restart.
+	if !result.Skipped {
+		if err := runDeployHookFn(ctx, p.Hostname, p.Kind); err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: err.Error(),
+			}
 		}
 	}
 

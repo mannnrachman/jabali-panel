@@ -62,7 +62,19 @@ case "$kind" in
     install -m 0640 -o root -g jabali "$src/fullchain.pem" "$dst_dir/panel.crt"
     install -m 0640 -o root -g jabali "$src/privkey.pem"   "$dst_dir/panel.key"
     systemctl reload nginx           || echo "jabali-panel-cert.sh: nginx reload failed (continuing)" >&2
-    systemctl restart jabali-panel   || echo "jabali-panel-cert.sh: jabali-panel restart failed (continuing)" >&2
+    # --no-block on jabali-panel: this hook is invoked synchronously by
+    # the panel-agent ssl.panel.issue command, whose CALLER is
+    # jabali-panel's own panel-cert reconciler. A blocking
+    # `systemctl restart jabali-panel` SIGTERMs the panel mid-RPC, so
+    # the reconciler never reaches MarkIssued and the row stays
+    # pending_acme forever — every tick re-dispatches, re-runs this
+    # hook, re-kills the panel (observed on mx: clean SIGTERM every
+    # ~10 min, NRestarts=0, row never leaving pending_acme). --no-block
+    # queues the restart so the agent reply propagates and the
+    # reconciler commits status=issued BEFORE systemd fires it; the
+    # panel then restarts into an already-issued row and does not
+    # re-dispatch. jabali-bulwark is not the caller — synchronous.
+    systemctl restart --no-block jabali-panel || echo "jabali-panel-cert.sh: jabali-panel restart failed (continuing)" >&2
     systemctl restart jabali-bulwark || echo "jabali-panel-cert.sh: jabali-bulwark restart failed (continuing)" >&2
     ;;
 esac

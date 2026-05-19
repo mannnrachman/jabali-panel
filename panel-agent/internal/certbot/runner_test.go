@@ -97,6 +97,58 @@ func TestRenewSkipped(t *testing.T) {
 	}
 }
 
+// TestIssueSkippedWhenCertKept covers the panel-cert self-restart
+// deadlock fix: when certbot keeps an existing still-valid cert
+// (`--keep-until-expiring` no-op), Issue must report Skipped=true so
+// ssl.panel.issue does NOT re-run the deploy-hook (which restarts
+// jabali-panel — the reconciler that called it). A plain successful
+// issuance (no keep message) must stay Skipped=false (asserted by
+// TestIssueHappyPath).
+func TestIssueSkippedWhenCertKept(t *testing.T) {
+	tmp := t.TempDir()
+	certbotPath := filepath.Join(tmp, "certbot")
+	script := fmt.Sprintf(`#!/bin/bash
+if [[ "$1" == "certonly" ]]; then
+  domain="${6}"
+  mkdir -p "%s/letsencrypt/live/$domain"
+  cat > "%s/letsencrypt/live/$domain/fullchain.pem" << 'EOF'
+%s
+EOF
+  cat > "%s/letsencrypt/live/$domain/privkey.pem" << 'EOF'
+-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg9r2Zcg3Q2D6+IRAc
+1lixKYEJ6KFDCGv2GeLkF/sTrOGhRANCAATxBHvBCGCdtLTn5LmLVR8PJ/lDx8X/
+ZRKRupd0Ey0vLHb7PkHYTJwXQxG3LpTdZ9EVYxGUAKW8gHdmxJP7SB1a
+-----END PRIVATE KEY-----
+EOF
+  echo "Certificate not yet due for renewal; no action taken."
+  exit 0
+fi
+exit 1
+`, tmp, tmp, string(createTestCertPEM(t)), tmp)
+	if err := os.WriteFile(certbotPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake certbot: %v", err)
+	}
+	runner := NewRunner()
+	runner.Binary = certbotPath
+	runner.LERoot = filepath.Join(tmp, "letsencrypt")
+	runner.OpenSSL = "openssl"
+
+	result, err := runner.Issue("example.com", "/var/www/example", "admin@example.com", false, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("result is nil")
+	}
+	if !result.Skipped {
+		t.Error("Issue should report Skipped=true when certbot kept the existing cert")
+	}
+	if result.CertPath == "" || result.IssuedAt.IsZero() {
+		t.Error("kept cert should still return CertPath + IssuedAt so the reconciler can mark issued")
+	}
+}
+
 // TestRevokeHappyPath tests successful certificate revocation.
 func TestRevokeHappyPath(t *testing.T) {
 	tmp := t.TempDir()

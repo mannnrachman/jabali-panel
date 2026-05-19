@@ -95,6 +95,24 @@ func (r *Runner) Issue(domain, webroot, email string, staging bool, extraHostnam
 
 	err := cmd.Run()
 	stderrText := stderr.String()
+	// certbot prints these to stdout when --keep-until-expiring finds an
+	// existing cert that is still valid: nothing was renewed, so the
+	// on-disk cert (and whatever is already deployed) is unchanged. The
+	// caller uses this to skip the deploy-hook — re-running it would
+	// needlessly restart jabali-panel on every reconcile tick (the
+	// panel-cert self-restart deadlock).
+	noopCertbot := func(out string) bool {
+		for _, m := range []string{
+			"not yet due for renewal",
+			"Keeping the existing certificate",
+			"no action taken",
+		} {
+			if strings.Contains(out, m) {
+				return true
+			}
+		}
+		return false
+	}(stdout.String() + "\n" + stderrText)
 
 	// Classify the error if present
 	reason := ""
@@ -122,13 +140,14 @@ func (r *Runner) Issue(domain, webroot, email string, staging bool, extraHostnam
 		}, fmt.Errorf("failed to read issued certificate: %w", certErr)
 	}
 
-	// Success
+	// Success. Skipped=true when certbot kept an existing still-valid
+	// cert (no renewal); the caller then skips the deploy-hook.
 	return &Result{
 		CertPath:  cert.CertPath,
 		KeyPath:   cert.KeyPath,
 		IssuedAt:  cert.IssuedAt,
 		ExpiresAt: cert.ExpiresAt,
-		Skipped:   false,
+		Skipped:   noopCertbot,
 		Reason:    "",
 	}, nil
 }

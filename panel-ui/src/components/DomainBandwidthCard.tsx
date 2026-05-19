@@ -56,7 +56,8 @@ export function DomainBandwidthCard({ domainId }: DomainBandwidthCardProps) {
     );
   }
 
-  const series = q.data.daily.map((p) => ({ x: p.day, y: p.bytes_total }));
+  // Defensive: a nil slice from the API marshals as JSON null.
+  const series = (q.data.daily ?? []).map((p) => ({ x: p.day, y: p.bytes_total }));
 
   return (
     <Card title="Bandwidth (last 30 days)">

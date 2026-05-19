@@ -789,8 +789,11 @@ func TestUpdateRecordManagedARecord(t *testing.T) {
 }
 
 
-func TestUpdateRecordManagedMXBlocked(t *testing.T) {
-	r, domainRepo, zoneRepo, recordRepo, _ := dnsRouter("user1", false)
+// ADR-0107: editing a jabali-managed MX is allowed; the edit is
+// authoritative and demotes the row to operator-owned (Managed=false)
+// so no reconciler reverts it. (Was blocked pre-ADR-0107.)
+func TestUpdateRecordManagedMXEditableDemotes(t *testing.T) {
+	r, domainRepo, zoneRepo, recordRepo, reconciler := dnsRouter("user1", false)
 
 	domain := &models.Domain{ID: "test-domain-id", UserID: "user1", Name: "example.com"}
 	domainRepo.Create(context.Background(), domain)
@@ -805,26 +808,31 @@ func TestUpdateRecordManagedMXBlocked(t *testing.T) {
 	zoneRepo.Create(context.Background(), zone)
 
 	recordID := ids.NewULID()
+	m6 := "m6"
 	record := &models.DNSRecord{
 		ID: recordID, ZoneID: zoneID, Name: "@", Type: "MX",
 		Content: "mail.example.com.", TTL: 3600, Priority: 10,
-		Managed: true, IsEnabled: true,
+		Managed: true, ManagedBy: &m6, IsEnabled: true,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	recordRepo.Create(context.Background(), record)
 
-	// Editing a jabali-managed MX must be blocked (reconciler-owned;
-	// used to "succeed" then silently revert).
-	body, _ := json.Marshal(map[string]interface{}{"content": "mx.evil.local."})
+	body, _ := json.Marshal(map[string]interface{}{"content": "mx.riva.local."})
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/dns/records/"+recordID, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 1, len(reconciler.scheduled))
 	var resp map[string]interface{}
 	json.NewDecoder(w.Body).Decode(&resp)
-	assert.Equal(t, "record_managed", resp["error"])
+	rec := resp["record"].(map[string]interface{})
+	assert.Equal(t, "mx.riva.local.", rec["content"])
+	// Demoted to operator-owned so the reconciler hands off.
+	assert.Equal(t, false, rec["managed"])
+	_, hasManagedBy := rec["managed_by"]
+	assert.False(t, hasManagedBy, "managed_by must be cleared (omitempty) on operator edit")
 }
 
 func TestDeleteRecordManagedNSForbidden(t *testing.T) {

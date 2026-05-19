@@ -427,20 +427,23 @@ func (h *dnsHandler) updateRecord(c *gin.Context) {
 		return
 	}
 
-	// Reconciler-owned records. SOA/NS are zone infrastructure;
-	// MX/SRV are written + reconciled by the M6 mail setup
-	// (DB-as-truth) — editing them here used to "succeed" then get
-	// silently reverted on the next reconcile pass. Managed A
-	// records stay editable (operator may repoint the apex).
-	if record.Managed &&
-		(record.Type == "SOA" || record.Type == "NS" ||
-			record.Type == "MX" || record.Type == "SRV") {
+	// SOA / NS are zone infrastructure, NOT content records: PowerDNS
+	// regenerates the SOA serial on every change (a hand-edit is a
+	// no-op it overwrites), and the apex NS set must point at jabali's
+	// authoritative nameservers or the entire zone stops resolving.
+	// Those two stay panel-owned. EVERYTHING else (MX/SRV/A/AAAA/TXT/
+	// CNAME) is freely editable: an operator/admin edit is
+	// authoritative — see the demote-to-operator-owned step after the
+	// updates are applied, which makes the reconciler hand off so the
+	// edit persists and converges into PowerDNS (ADR-0107).
+	if record.Managed && (record.Type == "SOA" || record.Type == "NS") {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "record_managed",
-			"detail": "This " + record.Type + " record is managed by jabali" +
-				" (zone/mail automation) and is reconciled automatically." +
-				" Change it via the related Email/Domain settings, not here" +
-				" — direct edits are reverted.",
+			"detail": "This " + record.Type + " record is zone" +
+				" infrastructure managed by jabali's nameserver" +
+				" (the SOA serial is auto-generated; the apex NS set" +
+				" must point at the jabali nameservers). It is not" +
+				" directly editable.",
 		})
 		return
 	}
@@ -473,6 +476,17 @@ func (h *dnsHandler) updateRecord(c *gin.Context) {
 		})
 		return
 	}
+
+	// An operator/admin edit is authoritative (ADR-0107). Demote the
+	// row to operator-owned (Managed=false, ManagedBy=NULL) so every
+	// reconciler path — bootstrap apex converge, migrateBootstrapShape,
+	// M6 email ensure — hands off (they all gate on Managed=true and a
+	// matching ManagedBy). The edited value becomes the desired state
+	// the DNS reconciler pushes into PowerDNS, and nothing reverts it.
+	// The model already anticipates exactly this ("…by flipping
+	// Managed to false from the API", models/dns.go).
+	record.Managed = false
+	record.ManagedBy = nil
 
 	// Persist update
 	if err := h.cfg.Records.Update(c.Request.Context(), record); err != nil {
@@ -530,17 +544,18 @@ func (h *dnsHandler) deleteRecord(c *gin.Context) {
 		return
 	}
 
-	// Reconciler-owned (see update handler): SOA/NS zone infra +
-	// MX/SRV mail records. Managed A stays deletable-by-owner intent
-	// is moot here too — these are jabali-owned.
-	if record.Managed &&
-		(record.Type == "SOA" || record.Type == "NS" ||
-			record.Type == "MX" || record.Type == "SRV") {
+	// Only SOA/NS are undeletable (zone infrastructure — see update
+	// handler / ADR-0107). MX/SRV/etc may be deleted by the operator;
+	// a feature that genuinely requires a record (e.g. M6 mail
+	// autoconfig SRV while email is enabled) will legitimately
+	// re-create it on the next reconcile — that is correct
+	// convergence, not a reverted edit.
+	if record.Managed && (record.Type == "SOA" || record.Type == "NS") {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "record_managed",
-			"detail": "This " + record.Type + " record is managed by jabali" +
-				" (zone/mail automation) and cannot be deleted directly" +
-				" — remove it via the related Email/Domain settings.",
+			"detail": "This " + record.Type + " record is zone" +
+				" infrastructure managed by jabali's nameserver and" +
+				" cannot be deleted directly.",
 		})
 		return
 	}

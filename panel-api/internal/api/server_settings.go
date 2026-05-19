@@ -317,7 +317,16 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	// affects root/admin) and /etc/ssh/sshd_config.d/jabali-sftp.conf (M12
 	// Match Group block, affects hosting users), validates with sshd -t,
 	// and reloads sshd. See ADR-0028 for the M12 jabali-sftp design.
-	if (current.SSHPort != prevSSHPort ||
+	// Re-apply when ANY SSH-section field is in the request, even if
+	// its value matches the DB row. Without this an operator hitting a
+	// drifted file (DB=1, file=no) couldn't fix it by re-submitting —
+	// `current==prev` short-circuited the agent.Call. With this,
+	// re-saving Server Settings always re-syncs the file. The startup
+	// reconcile in serve.go handles the boot-time case; this handles
+	// the operator-driven re-sync without forcing a toggle off→on.
+	sshFieldTouched := req.SSHPort != nil || req.SSHPasswordAuth != nil || req.SSHUserPasswordAuth != nil
+	if (sshFieldTouched ||
+		current.SSHPort != prevSSHPort ||
 		current.SSHPasswordAuth != prevSSHPasswordAuth ||
 		current.SSHUserPasswordAuth != prevSSHUserPasswordAuth) && h.cfg.Agent != nil {
 		go func() {

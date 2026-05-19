@@ -71,12 +71,18 @@ func Render(o Opts) string {
 		b.WriteString(" - " + r + "\n")
 	}
 
-	// ADR-0102: the authenticated admin API is RequireAdmin+Kratos
-	// gated and legitimately SQL-ish (DB config tuner / DB console);
-	// AppSec body-inspecting it false-positives. Exempt the prefix.
+	// ADR-0102 (amended 2026-05-19): the ENTIRE panel API (/api/v1/)
+	// is Kratos-session-gated, same-origin SPA control plane — not
+	// public web attack surface. The CRS generic ruleset false-
+	// positives on legitimate REST: rule 911100 "Method not allowed
+	// by policy" blocks every PATCH/PUT/DELETE (DNS records, etc.),
+	// and body-inspection flags JSON/ULID payloads. Narrowing to
+	// /api/v1/admin/ left the SPA's own mutations (e.g.
+	// PATCH /api/v1/dns/records/:id) WAF-blocked with an opaque 403.
+	// Exempt the whole prefix; public vhosts keep full AppSec.
 	if o.AdminAllowlist {
 		b.WriteString(`on_match:
- - filter: req.URL.Path startsWith "/api/v1/admin/"
+ - filter: req.URL.Path startsWith "/api/v1/"
    apply:
     - CancelEvent()
     - CancelAlert()

@@ -261,6 +261,15 @@ type Domain struct {
 	DNSSECEnabled   bool       `gorm:"column:dnssec_enabled;type:tinyint(1);not null;default:0" json:"dnssec_enabled"`
 	DNSSECEnabledAt *time.Time `gorm:"column:dnssec_enabled_at;type:datetime(6)" json:"dnssec_enabled_at,omitempty"`
 
+	// CacheEnabled (migration 000140, ADR-0108) is the per-domain
+	// opt-in nginx FastCGI micro-cache switch. Off by default; the
+	// reconciler passes it into domain.create and the agent renders
+	// the cache + bypass directives into the vhost. Pinned column tag:
+	// the GORM initialism-splitter would otherwise be fine here, but
+	// we pin it to match the DNSSEC/SSL toggles and the
+	// gorm-column-tags scar.
+	CacheEnabled bool `gorm:"column:cache_enabled;type:tinyint(1);not null;default:0" json:"cache_enabled"`
+
 	// M38 Ghost Domain Detector — periodic DNS-alignment state.
 	// GhostState is one of: unchecked / ok / mismatch / nxdomain / error.
 	// GhostCheckedAt is the last detector-pass timestamp; NULL for

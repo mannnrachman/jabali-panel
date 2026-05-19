@@ -1027,6 +1027,10 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 		"has_php":     hasPHP,
 		"php_version": phpVersion,
 		"is_enabled":  domain.IsEnabled,
+		// ADR-0108 per-domain nginx FastCGI micro-cache opt-in. The
+		// agent renders the cache + bypass directives only when true;
+		// false ⇒ vhost byte-identical to the pre-0108 shape.
+		"cache_enabled": domain.CacheEnabled,
 	}
 
 	// M36 per-domain IP ACLs. Fetch + thread to agent so nginx renders

@@ -491,6 +491,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			Domains: deps.Domains,
 			Keys:    deps.DNSSECKeys,
 		})
+		// Per-domain nginx FastCGI micro-cache toggle (ADR-0108).
+		api.RegisterDomainCacheRoutes(v1, api.DomainCacheHandlerConfig{
+			Agent:      deps.Agent,
+			Domains:    deps.Domains,
+			Reconciler: deps.Reconciler,
+		})
 		// Admin: System Updates (M29). Thin proxy to agent's system.* commands.
 		api.RegisterAdminUpdatesRoutes(v1, api.AdminUpdatesHandlerConfig{
 			Agent: deps.Agent,

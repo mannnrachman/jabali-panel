@@ -26,6 +26,7 @@ import { DomainIPACLSection } from "./DomainIPACLSection";
 import { DomainListenIPSection } from "./DomainListenIPSection";
 import { DomainMailboxesSection } from "./DomainMailboxesSection";
 import { DomainSSLSection } from "./DomainSSLSection";
+import { DomainCacheSection } from "./DomainCacheSection";
 
 export type DomainEditInput = {
   is_enabled?: boolean;
@@ -144,6 +145,9 @@ export const DomainEdit = () => {
               qc.invalidateQueries({ queryKey: ["one", "domains", id] })
             }
           />
+
+          <Divider>Caching</Divider>
+          <DomainCacheSection domainId={domain.id} />
 
           <Divider>Listen IPs</Divider>
           <DomainListenIPSection

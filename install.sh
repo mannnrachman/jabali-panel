@@ -4010,6 +4010,37 @@ install_nginx_websocket_map() {
   _ok "nginx WebSocket map installed: $dst"
 }
 
+# ---------- ADR-0108: per-domain FastCGI micro-cache keyzone ----------
+# Ships the shared keyzone (http context). Per-domain vhosts reference
+# `fastcgi_cache jabali_fcgi;` only when the domain opts in; the zone
+# MUST exist first or `nginx -t` fails. Idempotent; also re-applied on
+# every `jabali update` (update.go) — the recurring "jabali update
+# doesn't refresh host config" scar (PR#45/#49).
+install_nginx_fastcgi_cache() {
+  _log "installing nginx FastCGI micro-cache keyzone (ADR-0108)"
+
+  local src="${REPO_DIR}/install/nginx/jabali-fastcgi-cache.conf"
+  local dst="/etc/nginx/conf.d/jabali-fastcgi-cache.conf"
+  if [[ ! -f "$src" ]]; then
+    _die "fastcgi-cache snippet not found at $src"
+  fi
+
+  # Cache storage: nginx workers run as www-data; 0700 owner-only is
+  # enough (only nginx reads/writes it). install -d is idempotent.
+  install -d -m 0700 -o www-data -g www-data /var/cache/nginx/jabali
+
+  install -m 0644 "$src" "$dst"
+
+  if ! nginx -t 2>&1 | grep -q "successful"; then
+    nginx -t 2>&1 >&2 || true
+    _die "nginx configuration test failed (fastcgi cache keyzone)"
+  fi
+
+  systemctl reload nginx || systemctl restart nginx
+
+  _ok "nginx FastCGI cache keyzone installed: $dst"
+}
+
 # ---------- M25 Step 4: nginx panel vhost (TLS terminator on :8443) -----
 
 install_nginx_panel_vhost() {
@@ -9742,6 +9773,7 @@ main() {
   # WebSocket map snippet — must be installed BEFORE any vhost references
   # $connection_upgrade, since nginx -t will fail otherwise.
   install_nginx_websocket_map
+  install_nginx_fastcgi_cache
   # M25 Step 4: install the nginx vhost on :8443 that terminates TLS and
   # proxies to the panel-api Unix socket. Runs AFTER install_nginx_default_vhost
   # so the http{} context (defined by Debian's stock nginx.conf) and the

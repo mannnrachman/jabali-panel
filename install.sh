@@ -5614,14 +5614,17 @@ install_crowdsec_appsec() {
   [[ -f "$_ar/crs-exclusion-plugin-wordpress.yaml" ]] && _inband+=("crowdsecurity/crs-exclusion-plugin-wordpress")
   local _inband_yaml="" _r
   for _r in "${_inband[@]}"; do _inband_yaml+=" - ${_r}"$'\n'; done
-  # ADR-0102: the authenticated admin API (/api/v1/admin/*) is
-  # RequireAdmin+Kratos-gated and legitimately carries SQL-ish bodies
-  # (DB config tuner, DB console). AppSec SQLi/CRS body-inspection
-  # false-positives there (403). Exempt the prefix via the documented
-  # on_match allow pattern. The agent geoblock regenerator
-  # (security_crowdsec.go) emits the SAME block so a geoblock toggle
+  # ADR-0102 (amended 2026-05-19): the ENTIRE panel API (/api/v1/)
+  # is Kratos-session-gated, same-origin SPA control plane. The CRS
+  # generic ruleset false-positives on legitimate REST — rule 911100
+  # "Method not allowed by policy" 403s every PATCH/PUT/DELETE (DNS
+  # records etc.); narrowing to /api/v1/admin/ left the SPA'"'"'s own
+  # mutations WAF-blocked with an opaque 403 (whole-session red
+  # herring on mx). Exempt the whole prefix; public vhosts keep full
+  # AppSec. The agent geoblock regenerator (security_crowdsec.go →
+  # appseccfg.Render) emits the SAME block so a geoblock toggle
   # cannot wipe it.
-  local _onmatch_yaml=$'on_match:\n - filter: req.URL.Path startsWith "/api/v1/admin/"\n   apply:\n    - CancelEvent()\n    - CancelAlert()\n    - SetRemediation("allow")\n'
+  local _onmatch_yaml=$'on_match:\n - filter: req.URL.Path startsWith "/api/v1/"\n   apply:\n    - CancelEvent()\n    - CancelAlert()\n    - SetRemediation("allow")\n'
 
   if [[ ! -f "$config_file" ]]; then
     _log "seeding $config_file (mode=off, inband=${_inband[*]})"

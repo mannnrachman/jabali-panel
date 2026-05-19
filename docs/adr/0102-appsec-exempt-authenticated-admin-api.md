@@ -89,3 +89,34 @@ AppSec coverage. Non-admin SQLi must still be blocked — verified.
   single-source it (e.g. a shared `internal/appseccfg` template) so
   the two copies cannot drift (`feedback_cross_boundary_contracts`
   class).
+
+
+---
+
+## Amendment 2026-05-19 — scope broadened to the whole panel API (`/api/v1/`)
+
+The original `/api/v1/admin/` prefix was too narrow. The SPA's own
+authenticated mutations live under non-admin prefixes (e.g.
+`PATCH /api/v1/dns/records/:id`). CRS rule **911100 "Method is not
+allowed by policy"** blocks every `PATCH`/`PUT`/`DELETE` (anomaly
+score 5 → 949110 inbound-anomaly block → 403) at the nginx lua
+bouncer, *before* jabali-panel — so the panel never logs it and the
+failure presents as an opaque "Request failed with status code 403"
+in the UI. This burned an entire debugging session on `mx`
+(misattributed to dns.go authz, stale sessions, the cert restart-loop)
+until the nginx access log + `cscli alerts` (kind=waf, the operator's
+own IP, every PATCH timestamp) pinned it.
+
+The entire `/api/v1/` surface is Kratos-session-gated, same-origin
+SPA control plane with its own RBAC + GORM-parameterised queries — not
+the public web attack surface the CRS generic ruleset targets. The
+`on_match` allow filter is therefore broadened to
+`req.URL.Path startsWith "/api/v1/"`. Public vhosts (tenant websites
+on :80/:443) keep full AppSec — verified on mx: a public-path
+`?id=1 UNION SELECT …` still returns 403 while `/api/v1/` PATCH passes
+AppSec (→ panel auth, no longer WAF 403).
+
+Writers kept in lockstep (cross-boundary-contract scar): canonical
+`internal/appseccfg/Render` (agent geoblock regenerator delegates to
+it) + the `install.sh install_crowdsec_appsec` heredoc + the
+`appseccfg_test` golden. **Status: accepted (amended).**

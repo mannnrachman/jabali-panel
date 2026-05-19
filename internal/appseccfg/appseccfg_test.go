@@ -32,12 +32,12 @@ func TestRender_HeaderAndInband(t *testing.T) {
 	mustContain(t, out, "inband_rules:\n - crowdsecurity/base-config\n - crowdsecurity/vpatch-*\n - crowdsecurity/generic-*\n", "inband list in order")
 	// ADR-0102: admin API allowlist present.
 	mustContain(t, out, `on_match:
- - filter: req.URL.Path startsWith "/api/v1/admin/"
+ - filter: req.URL.Path startsWith "/api/v1/"
    apply:
     - CancelEvent()
     - CancelAlert()
     - SetRemediation("allow")
-`, "ADR-0102 admin allowlist")
+`, "ADR-0102 panel-API allowlist (amended: whole /api/v1/)")
 	if strings.Contains(out, "pre_eval:") {
 		t.Fatalf("mode=off must NOT emit pre_eval:\n%s", out)
 	}

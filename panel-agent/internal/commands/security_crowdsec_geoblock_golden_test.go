@@ -16,7 +16,7 @@ func TestRenderAppSecGeoblockRule_Golden(t *testing.T) {
 		"# jabali-mode: off\n",
 		"name: crowdsecurity/jabali-appsec\ndefault_remediation: ban\n",
 		"inband_rules:\n - crowdsecurity/base-config\n - crowdsecurity/vpatch-*\n - crowdsecurity/generic-*\n",
-		"on_match:\n - filter: req.URL.Path startsWith \"/api/v1/admin/\"\n   apply:\n    - CancelEvent()\n    - CancelAlert()\n    - SetRemediation(\"allow\")\n",
+		"on_match:\n - filter: req.URL.Path startsWith \"/api/v1/\"\n   apply:\n    - CancelEvent()\n    - CancelAlert()\n    - SetRemediation(\"allow\")\n",
 	} {
 		if !strings.Contains(off, want) {
 			t.Fatalf("off mode missing %q\n%s", want, off)

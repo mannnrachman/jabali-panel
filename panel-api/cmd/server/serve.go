@@ -609,6 +609,41 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if deps.Reconciler != nil {
 		go deps.Reconciler.Start(ctx)
 	}
+
+	// Startup ssh-config reconcile (fix for the DB↔file desync scar).
+	// system.set_ssh_config is normally only called when the operator
+	// flips an SSH-section field in Server Settings AND the value
+	// changed vs the DB row. If the on-disk
+	// /etc/ssh/sshd_config.d/jabali-sftp.conf ever drifts from the DB
+	// (panel restart killed the fire-and-forget goroutine before it
+	// could write; hand-edit; agent rewrote with stale state during a
+	// concurrent flow) re-toggling the UI is a NO-OP because the DB
+	// matches the new value already → no diff → no agent call → file
+	// stays stale forever. Self-heal once at boot: load the DB row,
+	// dispatch system.set_ssh_config — idempotent + safe (the agent
+	// runs `sshd -t` before reload and rolls back on failure).
+	if deps.ServerSettings != nil && sharedAgent != nil {
+		go func() {
+			rctx, rcancel := context.WithTimeout(ctx, 30*time.Second)
+			defer rcancel()
+			st, gerr := deps.ServerSettings.Get(rctx)
+			if gerr != nil || st == nil {
+				return // boot-time, repo may not be ready; reconciler ticks pick it up later
+			}
+			if _, err := sharedAgent.Call(rctx, "system.set_ssh_config", map[string]any{
+				"port":               st.SSHPort,
+				"password_auth":      st.SSHPasswordAuth,
+				"user_password_auth": st.SSHUserPasswordAuth,
+			}); err != nil {
+				log.Warn("startup ssh-config reconcile failed (file may be out of sync with DB)", "err", err)
+			} else {
+				log.Info("startup ssh-config reconcile ok",
+					"port", st.SSHPort,
+					"password_auth", st.SSHPasswordAuth,
+					"user_password_auth", st.SSHUserPasswordAuth)
+			}
+		}()
+	}
 	// M49 — single-writer audit hash-chain consumer (ADR-0106).
 	// Mirrors the reconciler: long-lived goroutine bound to ctx.
 	if deps.AuditConsumer != nil {

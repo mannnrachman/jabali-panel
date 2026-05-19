@@ -633,6 +633,22 @@ func cpanelRestoreCallback(
 				}
 			}
 		case models.MigrationSourceCpanel, models.MigrationSourceWHMpkgacct:
+			// The remote-rsync home pull below requires an SSH source
+			// (host + per-job secret env). It belongs ONLY to the
+			// online `jabali migrate pull-source` flow. An OFFLINE
+			// restore (`jabali migrate restore` / tarball upload) has
+			// job.SourceHost == "" and ships the home tree INSIDE the
+			// cpmove (cpmove-<user>/homedir/). For offline, leave
+			// rsyncRows empty so daHomeHandled stays false and the
+			// local ImportHomeSplit/ImportHome (tarball copy) runs —
+			// without this gate offline restores called
+			// migration.rsync_remote_home with an empty host →
+			// invalid_argument → home bytes=0 (silent: job still
+			// marked done). DA is intentionally remote-only (its
+			// tarball excludes the home tree) and not gated here.
+			if job.SourceHost == "" {
+				break
+			}
 			for _, root := range []string{
 				filepath.Join(p.parsed.ExtractDir, "cpmove-"+p.parsed.SourceUser, "userdata"),
 				filepath.Join(p.parsed.ExtractDir, "userdata"),

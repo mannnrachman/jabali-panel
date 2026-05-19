@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"strings"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,9 +25,14 @@ type userLimitsClearParams struct {
 }
 
 type userLimitsClearResponse struct {
-	Username     string `json:"username"`
-	DropinRemoved bool  `json:"dropin_removed"`
-	QuotaCleared bool   `json:"quota_cleared"`
+	Username           string `json:"username"`
+	DropinRemoved      bool   `json:"dropin_removed"`
+	QuotaCleared       bool   `json:"quota_cleared"`
+	// QuotaSkippedReason: empty on success; "quota_disabled_on_fs"
+	// when the host's filesystem doesn't have quotas enabled (the
+	// common operator-disabled-disk_quota_enabled case). Lets the
+	// panel surface state in diagnostics without re-deriving it.
+	QuotaSkippedReason string `json:"quota_skipped_reason,omitempty"`
 }
 
 func userLimitsClearHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -77,11 +83,38 @@ func userLimitsClearHandler(ctx context.Context, params json.RawMessage) (any, e
 	if p.QuotaMount != "" {
 		// Clear the quota: 0 0 0 0 means no soft, no hard, no inode
 		// limits — user becomes unbounded on this mount.
-		if _, _, err := runCmdFn(ctx, "setquota",
+		_, stderr, err := runCmdFn(ctx, "setquota",
 			"-u", p.Username,
 			"0", "0", "0", "0",
 			p.QuotaMount,
-		); err != nil {
+		)
+		if err != nil {
+			// Tolerate the benign "quota not enabled on this FS"
+			// failure: many hosts run with disk_quota_enabled=0 (and
+			// /home mounted `noquota`), where setquota cannot operate
+			// at all. The reconciler dispatches user.limits.clear
+			// every ~60s per user — without this guard, every tick
+			// emitted a WARN line per user in `journalctl
+			// -u jabali-panel`. Soft-success when stderr matches a
+			// known quota-disabled signature; real failures still
+			// surface as CodeInternal.
+			lower := strings.ToLower(string(stderr))
+			// Real-shape patterns from setquota across versions/distros.
+			// Add new strings here (lowercased) as ops encounter them.
+			quotaDisabled :=
+				strings.Contains(lower, "no quota enabled") ||
+					strings.Contains(lower, "not all specified mountpoints are using quota") ||
+					strings.Contains(lower, "cannot find filesystem mount point") ||
+					strings.Contains(lower, "error getting quota information") ||
+					strings.Contains(lower, "quota was not enabled") ||
+					strings.Contains(lower, "quota file not found") ||
+					strings.Contains(lower, "not a quotacommand") ||
+					(strings.Contains(lower, "no such file or directory") && strings.Contains(lower, "aquota"))
+			if quotaDisabled {
+				resp.QuotaCleared = false
+				resp.QuotaSkippedReason = "quota_disabled_on_fs"
+				return resp, nil
+			}
 			return nil, &agentwire.AgentError{
 				Code:    agentwire.CodeInternal,
 				Message: fmt.Sprintf("setquota clear: %v", err),

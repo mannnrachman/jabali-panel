@@ -343,6 +343,16 @@ install -m 0644 ` + repoDir + `/install/systemd/jabali-sso-reaper.service /etc/s
 install -m 0644 ` + repoDir + `/install/systemd/jabali-sso-reaper.timer /etc/systemd/system/jabali-sso-reaper.timer
 install -m 0644 ` + repoDir + `/install/systemd/jabali-notify@.service /etc/systemd/system/jabali-notify@.service
 install -m 0644 ` + repoDir + `/install/systemd/jabali-stalwart.service /etc/systemd/system/jabali-stalwart.service
+# certbot panel-cert deploy-hook. install.sh drops this on first
+# install; the update path MUST re-copy it or hook changes never
+# reach existing hosts. This gap shipped a stale pre-ADR-0105 hook
+# on mx: the kind=mail reconcile ran the old hook (no kind branch),
+# which wrote the MAIL lineage into /etc/jabali/tls/panel.crt, so
+# nginx :8443 served a cert valid only for mail.<hostname>
+# (ERR_CERT_COMMON_NAME_INVALID). Same gap also kept the --no-block
+# self-restart fix from ever reaching deployed hosts.
+install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
+install -m 0755 ` + repoDir + `/install/letsencrypt/jabali-panel-cert.sh /etc/letsencrypt/renewal-hooks/deploy/jabali-panel-cert.sh
 # jabali-kratos.service: sync with sha256 check so we restart only on change.
 sha_before_k=$(sha256sum /etc/systemd/system/jabali-kratos.service 2>/dev/null | awk '{print $1}' || echo "")
 install -m 0644 ` + repoDir + `/install/systemd/jabali-kratos.service /etc/systemd/system/jabali-kratos.service

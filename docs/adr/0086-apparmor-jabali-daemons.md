@@ -271,3 +271,35 @@ On 192.168.100.150:
    profiles (FP-free baseline before flip-mature).
 4. `jabali apparmor flip-mature --profile jabali-bulwark` flips
    bulwark to enforce; subsequent panel actions unaffected.
+
+
+---
+
+## Amendment 2026-05-19 (M40.3) — jabali-agent profile DROPPED
+
+Same AA 4.x complain-mode regression that dropped the kratos profile
+(M40.2, `ae6d669a`). On Debian 13 / Ubuntu 24.04, a confined process
+gets `EACCES` on a unix-stream `connect()` even with the profile in
+**complain** mode and an explicit
+`unix (connect,send,receive) type=stream peer=(label=unconfined)` rule,
+when the peer (mariadbd) is unconfined. `audit.log` shows no `DENIED`.
+
+Live impact (mx, 2026-05-19): `jabali-agent` →
+`pdns.ReadEnvAndConnect()` → `dial unix /var/run/mysqld/mysqld.sock:
+connect: permission denied` → `pdns.Default()` nil → **every
+`dns.zone.upsert`/`delete` failed** ("powerdns backend not available")
+→ all DNS record edits broken, while pdns itself was healthy.
+`aa-disable` + `systemctl restart jabali-agent` → "pdns backend
+connected" immediately.
+
+Decision: drop `install/apparmor/usr.local.bin.jabali-agent`;
+`cleanup_apparmor_legacy` disables + force-unloads + removes the stale
+profile on existing hosts (every `jabali update`). **Complain mode
+enforces nothing (logs only)** — dropping a complain profile is zero
+real-protection loss vs the prior state; it only removed a liability
+that broke the MariaDB socket connect. jabali-agent remains hardened
+by its systemd unit (`NoNewPrivileges`, `ProtectSystem`,
+socket-group gating) and the auditd `jabali_bin_tamper` watch. Revert
+when AA 4.x complain-mode unix mediation is fixed upstream. Profiles
+still shipped: jabali-panel, jabali-bulwark, stalwart-mail.
+**Status: accepted (amended).**

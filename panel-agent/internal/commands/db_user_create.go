@@ -13,8 +13,19 @@ import (
 // dbUserCreateParams is the input shape for db_user.create.
 type dbUserCreateParams struct {
 	DBUserName string `json:"db_user_name"`
-	Password   string `json:"password"`
+	// Password is the plaintext for normal panel-driven creation.
+	Password   string `json:"password,omitempty"`
+	// PasswordHash is the mysql_native_password old-style hash
+	// (`*` + 40 hex). Set ONLY by the M35 migration importer when
+	// recreating the source-side MySQL user from a cpmove `mysql.sql`
+	// grant so the migrated app's hardcoded creds keep working with
+	// zero config rewrite. Mutually exclusive with Password.
+	PasswordHash string `json:"password_hash,omitempty"`
 }
+
+// nativePwdHashRe pins the supported hash format (mysql_native_password).
+var nativePwdHashRe = regexp.MustCompile(`^\*[0-9A-Fa-f]{40}$`)
+
 
 // dbUserCreateResponse is the output shape for db_user.create.
 type dbUserCreateResponse struct {
@@ -43,10 +54,16 @@ func dbUserCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
-	if p.Password == "" {
+	if (p.Password == "" && p.PasswordHash == "") || (p.Password != "" && p.PasswordHash != "") {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
-			Message: "password cannot be empty",
+			Message: "exactly one of password or password_hash must be provided",
+		}
+	}
+	if p.PasswordHash != "" && !nativePwdHashRe.MatchString(p.PasswordHash) {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: "invalid password_hash format (expected mysql_native_password '*' + 40 hex)",
 		}
 	}
 
@@ -59,22 +76,33 @@ func dbUserCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
-	// Escape the password literal.
-	escapedPassword, err := EscapeMariaDBLiteral(p.Password)
-	if err != nil {
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInvalidArgument,
-			Message: "invalid password",
+	// Build the CREATE USER command. IF NOT EXISTS makes the M35
+	// importer's repeat invocations idempotent (a re-run / resume
+	// must not 1396 ER_CANNOT_USER on an already-created compat user).
+	var sql string
+	if p.PasswordHash != "" {
+		// Migration-compat path. Hash format already validated above;
+		// no escaping needed (hex + '*' is shell+SQL-safe and the
+		// MariaDB grammar requires literal single-quotes around it).
+		sql = fmt.Sprintf(
+			"CREATE USER IF NOT EXISTS %s@'localhost' IDENTIFIED BY PASSWORD '%s'",
+			escapedUsername,
+			p.PasswordHash,
+		)
+	} else {
+		escapedPassword, perr := EscapeMariaDBLiteral(p.Password)
+		if perr != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInvalidArgument,
+				Message: "invalid password",
+			}
 		}
+		sql = fmt.Sprintf(
+			"CREATE USER IF NOT EXISTS %s@'localhost' IDENTIFIED BY %s",
+			escapedUsername,
+			escapedPassword,
+		)
 	}
-
-	// Build the CREATE USER command.
-	// Form: CREATE USER '<name>'@'localhost' IDENTIFIED BY '<password>';
-	sql := fmt.Sprintf(
-		"CREATE USER %s@'localhost' IDENTIFIED BY %s",
-		escapedUsername,
-		escapedPassword,
-	)
 
 	cmd := exec.CommandContext(ctx, "mysql", "-e", sql)
 	if err := cmd.Run(); err != nil {

@@ -77,6 +77,13 @@ func ImportDatabases(
 	}
 
 	res := &DBImportResult{}
+	// Source→destination DB-name map, populated as each dump is imported.
+	// Used after the loop to translate the cpmove `mysql.sql` grants
+	// (which name the source DB) → the namespaced destination DB names
+	// when we recreate the original cPanel MySQL users (ADR-0094
+	// compat-user path, fix for the "migrated app sees Access denied"
+	// scar).
+	sourceToFinalDB := map[string]string{}
 	for _, dumpPath := range parsed.MySQLDumps {
 		base := strings.TrimSuffix(filepath.Base(dumpPath), ".sql")
 		// Strip the cPanel-side username prefix if present
@@ -94,6 +101,11 @@ func ImportDatabases(
 			res.Skipped = append(res.Skipped, fmt.Sprintf("%s: derived name %q rejects validator", dumpPath, finalName))
 			continue
 		}
+		// Remember the source→destination mapping for the compat-user
+		// grant translation below. `base` is the literal cpmove DB
+		// name (`<cpacct>_<dbname>`) which is also how mysql.sql
+		// names the DB in its GRANT lines.
+		sourceToFinalDB[base] = finalName
 
 		// Idempotent collision check — resume after partial
 		// failure no-ops on an already-imported DB.
@@ -245,5 +257,77 @@ func ImportDatabases(
 			}
 		}
 	}
+
+	// ADR-0094 amendment 2026-05-20: recreate the ORIGINAL cPanel
+	// MySQL users on the destination, preserving their NAME and
+	// password HASH from cpmove's `mysql.sql`. Without this the
+	// migrated app's hardcoded creds (db.php / wp-config.php /
+	// settings.php) all 1045 Access-denied — jabali had only created
+	// a namespaced `<target>_<db>` user with a fresh random password
+	// (see DBCredential above), forcing the operator to either edit
+	// every db.php by hand or `CREATE USER … IDENTIFIED BY '<orig-pw>'`
+	// in mysql. Now: the source user(s) are imported alongside the
+	// panel-managed one with their ORIGINAL hash + grants → migrated
+	// apps Just Work, zero config rewrite. Only `@localhost` entries
+	// are kept (jabali is single-host); the panel-managed user above
+	// remains for UI-driven password rotation.
+	grantsPath := filepath.Join(parsed.ExtractDir, "cpmove-"+parsed.SourceUser, "mysql.sql")
+	if compatUsers, gerr := ParseMySQLGrants(grantsPath); gerr == nil && len(compatUsers) > 0 {
+		compatCreated := 0
+		for _, u := range compatUsers {
+			if !IsNativePasswordHash(u.Hash) {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("compat_user %s: skipped — unsupported hash format", u.Name))
+				continue
+			}
+			ucCtx, ucCancel := context.WithTimeout(ctx, 30*time.Second)
+			_, ucErr := agentClient.Call(ucCtx, "db_user.create", map[string]any{
+				"db_user_name":  u.Name,
+				"password_hash": u.Hash,
+			})
+			ucCancel()
+			if ucErr != nil {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("compat_user %s: db_user.create: %v", u.Name, ucErr))
+				continue
+			}
+			grantedDBs := 0
+			for _, g := range u.Grant {
+				finalDB, ok := sourceToFinalDB[g.SourceDB]
+				if !ok || finalDB == "" {
+					// The grant references a DB whose dump didn't
+					// import (rare — operator-excluded? skipped by
+					// validator?). Best-effort: skip.
+					res.Skipped = append(res.Skipped, fmt.Sprintf(
+						"compat_user %s: skip grant on source DB %q (no destination mapping)",
+						u.Name, g.SourceDB))
+					continue
+				}
+				privs := g.Privs
+				if len(privs) == 0 {
+					privs = []string{"ALL"}
+				}
+				gCtx, gCancel := context.WithTimeout(ctx, 30*time.Second)
+				_, gErr := agentClient.Call(gCtx, "db_user.grant", map[string]any{
+					"db_name":      finalDB,
+					"db_user_name": u.Name,
+					"privileges":   privs,
+				})
+				gCancel()
+				if gErr != nil {
+					res.Skipped = append(res.Skipped, fmt.Sprintf(
+						"compat_user %s: db_user.grant on %s: %v", u.Name, finalDB, gErr))
+					continue
+				}
+				grantedDBs++
+			}
+			compatCreated++
+			res.Skipped = append(res.Skipped, fmt.Sprintf(
+				"compat_user %s: created with original password hash + %d grant(s) (migrated apps with hardcoded creds keep working)",
+				u.Name, grantedDBs))
+		}
+		if compatCreated > 0 {
+			res.Skipped = append(res.Skipped, fmt.Sprintf("compat_users: created=%d (ADR-0094 amendment)", compatCreated))
+		}
+	}
+
 	return res, nil
 }

@@ -7147,6 +7147,28 @@ cleanup_apparmor_legacy() {
     # only blocks future loads.
     apparmor_parser -R /dev/stdin <<<'profile jabali-kratos /usr/local/bin/kratos { }' 2>/dev/null || true
   fi
+  # M40.3 — drop the jabali-agent AppArmor profile, SAME AA 4.x
+  # Debian-13/Ubuntu-24.04 complain-mode bug as kratos (M40.2): a
+  # unix-stream connect() to MariaDB's mysqld.sock returns EACCES even
+  # though the profile is loaded in complain mode WITH an explicit
+  # `unix (connect,send,receive) type=stream peer=(label=unconfined)`
+  # rule and mariadbd is unconfined. Verified on mx 2026-05-19:
+  # `pdns.ReadEnvAndConnect()` -> "connect: permission denied" -> the
+  # agent's pdns client stays nil -> every dns.zone.upsert/delete
+  # returns "powerdns backend not available", so ALL DNS edits fail.
+  # aa-disable + restart instantly fixed it. complain mode enforces
+  # nothing (logs only), so dropping a complain profile is ZERO real
+  # protection loss vs the prior state — it only removed a liability
+  # that broke MariaDB connect. Agent stays hardened by its systemd
+  # unit (NoNewPrivileges, ProtectSystem, socket-group gating). Revert
+  # when AA 4.x complain-mode unix mediation is fixed upstream.
+  local stale_agent=/etc/apparmor.d/usr.local.bin.jabali-agent
+  if [[ -f "$stale_agent" ]]; then
+    aa-disable "$stale_agent" 2>/dev/null || true
+    rm -f /etc/apparmor.d/disable/usr.local.bin.jabali-agent
+    rm -f "$stale_agent"
+    apparmor_parser -R /dev/stdin <<<'profile jabali-agent /usr/local/bin/jabali-agent { }' 2>/dev/null || true
+  fi
   # aa-remove-unknown sweeps every in-kernel profile whose backing file
   # no longer exists (stale from previous jabali update runs).
   if command -v aa-remove-unknown >/dev/null 2>&1; then

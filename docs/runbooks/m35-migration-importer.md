@@ -7,6 +7,16 @@ GUI shipped via ADR-0094 + ADR-0095.
 
 ## TL;DR — three flows
 
+> **Fastest path — offline cpmove you already have on the box:**
+> ```
+> sudo jabali migrate restore --cpanel --file /path/cpmove-<user>.tar.gz \
+>      [--target-email you@dom --target-password '<≥10 chars>']
+> ```
+> One command: creates the job, stages the tarball, runs the full
+> pipeline. Source account read from the filename; target defaults to
+> it. Re-run to resume. No UI / no job-id needed.
+
+
 | When | Entry point | Endpoint shape |
 |---|---|---|
 | Single cPanel / DA / Hestia account, you already know host+user+password | List page → **New migration** | POST `/admin/migrations` + per-step driver |

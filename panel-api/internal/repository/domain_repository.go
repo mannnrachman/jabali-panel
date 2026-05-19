@@ -78,6 +78,9 @@ type DomainRepository interface {
 	// allowlist; enabling without a timestamp or disabling without clearing
 	// the timestamp is a bug waiting to happen.
 	UpdateDNSSECEnabled(ctx context.Context, id string, enabled bool) error
+	// UpdateCacheEnabled writes domains.cache_enabled (ADR-0108).
+	// Dedicated method: cache_enabled is not in Update()'s allowlist.
+	UpdateCacheEnabled(ctx context.Context, id string, enabled bool) error
 	// UpdateGhostState writes the M38 ghost-detector columns
 	// (ghost_state + ghost_checked_at + ghost_detail) atomically.
 	// Dedicated method because none of the three are in Update()'s
@@ -480,6 +483,20 @@ func (r *domainRepo) UpdateDNSSECEnabled(ctx context.Context, id string, enabled
 	res := r.db.WithContext(ctx).Model(&models.Domain{}).
 		Where("id = ?", id).
 		Updates(updates)
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateCacheEnabled writes domains.cache_enabled (ADR-0108).
+func (r *domainRepo) UpdateCacheEnabled(ctx context.Context, id string, enabled bool) error {
+	res := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Where("id = ?", id).
+		Update("cache_enabled", enabled)
 	if res.Error != nil {
 		return translate(res.Error)
 	}

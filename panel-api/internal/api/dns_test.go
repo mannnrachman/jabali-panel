@@ -159,6 +159,10 @@ func (m *mockDomainRepo) UpdateDisclaimer(ctx context.Context, id string, enable
 	return nil
 }
 
+func (m *mockDomainRepo) UpdateCacheEnabled(ctx context.Context, id string, enabled bool) error {
+	return nil
+}
+
 func (m *mockDomainRepo) UpdateDNSSECEnabled(ctx context.Context, id string, enabled bool) error {
 	d, ok := m.domains[id]
 	if !ok {

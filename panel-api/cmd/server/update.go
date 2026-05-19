@@ -398,6 +398,40 @@ fi
 			}
 			return nil
 		}},
+		{"sync nginx fastcgi-cache keyzone", func() error {
+			// ADR-0108: the shared FastCGI keyzone (http context) must
+			// exist before any per-domain vhost references
+			// `fastcgi_cache jabali_fcgi;`, or `nginx -t` fails and the
+			// reload is refused. install.sh ships it on fresh install;
+			// the update path MUST re-copy it or hosts that enable
+			// caching get a broken nginx config (the recurring
+			// "jabali update doesn't refresh host config" scar —
+			// PR#45/#49). Static file copy + dir; reload only when the
+			// conf changed AND `nginx -t` passes (fail-safe: never
+			// reload a broken config).
+			src := repoDir + "/install/nginx/jabali-fastcgi-cache.conf"
+			if _, err := os.Stat(src); err != nil {
+				return nil // dev tree without the asset — skip
+			}
+			dst := "/etc/nginx/conf.d/jabali-fastcgi-cache.conf"
+			before, _ := os.ReadFile(dst)
+			want, _ := os.ReadFile(src)
+			script := "install -d -m 0700 -o www-data -g www-data /var/cache/nginx/jabali; " +
+				"install -m 0644 " + src + " " + dst
+			if err := run("", "bash", "-c", script); err != nil {
+				fmt.Printf("  (fastcgi-cache keyzone install failed: %v — continuing)\n", err)
+				return nil
+			}
+			if string(before) != string(want) {
+				if err := run("", "bash", "-c", "nginx -t"); err != nil {
+					fmt.Printf("  (nginx -t failed after fastcgi-cache keyzone: %v — NOT reloading)\n", err)
+					return nil
+				}
+				fmt.Println("  (jabali-fastcgi-cache.conf changed — reloading nginx)")
+				_ = run("", "bash", "-c", "systemctl reload nginx || systemctl restart nginx || true")
+			}
+			return nil
+		}},
 		{"sync OnFailure + restart drop-ins", func() error {
 			// Re-render /etc/systemd/system/<unit>.service.d/10-jabali-restart.conf
 			// for every critical service (nginx/mariadb/pdns/redis/crowdsec/

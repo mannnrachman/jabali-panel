@@ -217,6 +217,10 @@ func (f *fakeDomainRepo) UpdateDisclaimer(ctx context.Context, id string, enable
 	return nil
 }
 
+func (f *fakeDomainRepo) UpdateCacheEnabled(ctx context.Context, id string, enabled bool) error {
+	return nil
+}
+
 func (f *fakeDomainRepo) UpdateDNSSECEnabled(ctx context.Context, id string, enabled bool) error {
 	d, ok := f.domains[id]
 	if !ok {

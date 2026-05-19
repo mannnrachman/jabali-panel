@@ -106,6 +106,10 @@ func (*fakeDomainRepo) UpdateDisclaimer(context.Context, string, bool, *string) 
 	return nil
 }
 
+func (*fakeDomainRepo) UpdateCacheEnabled(context.Context, string, bool) error {
+	return nil
+}
+
 func (*fakeDomainRepo) UpdateDNSSECEnabled(context.Context, string, bool) error {
 	return nil
 }

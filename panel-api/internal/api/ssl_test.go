@@ -226,6 +226,11 @@ func (m *MockDomainRepository) UpdateDisclaimer(ctx context.Context, id string, 
 	return args.Error(0)
 }
 
+func (m *MockDomainRepository) UpdateCacheEnabled(ctx context.Context, id string, enabled bool) error {
+	args := m.Called(ctx, id, enabled)
+	return args.Error(0)
+}
+
 func (m *MockDomainRepository) UpdateDNSSECEnabled(ctx context.Context, id string, enabled bool) error {
 	args := m.Called(ctx, id, enabled)
 	return args.Error(0)

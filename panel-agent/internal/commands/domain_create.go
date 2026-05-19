@@ -32,6 +32,9 @@ type domainCreateParams struct {
 	// (true) or a branded "site disabled" placeholder (false). Pointer
 	// so omitted fields default to true (backwards compat).
 	IsEnabled    *bool  `json:"is_enabled"`
+	// CacheEnabled (ADR-0108) — per-domain nginx FastCGI micro-cache
+	// opt-in. false ⇒ vhost byte-identical to the pre-0108 shape.
+	CacheEnabled bool   `json:"cache_enabled"`
 	SSLCertPath  string `json:"ssl_cert_path"`
 	SSLKeyPath   string `json:"ssl_key_path"`
 	// PHP INI overrides: omitted if not set on the domain.
@@ -158,7 +161,13 @@ server {
         try_files $uri $uri/ =404;
 {{ end }}
     }
-
+{{ if .CacheEnabled }}
+    location ~* \.(?:css|js|jpe?g|png|gif|ico|svg|webp|woff2?|ttf|eot)$ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+        access_log off;
+    }
+{{ end }}
 {{ if .HasPHP }}
     location ~ \.php$ {
         fastcgi_pass unix:/run/php/jabali-{{.Username}}/fpm.sock;
@@ -166,6 +175,21 @@ server {
         include fastcgi_params;
 {{ if .PHPValueParam }}
         fastcgi_param PHP_VALUE "{{.PHPValueParam}}";
+{{ end }}
+{{ if .CacheEnabled }}
+        set $jabali_skip 0;
+        if ($request_method = POST) { set $jabali_skip 1; }
+        if ($query_string != "") { set $jabali_skip 1; }
+        if ($request_uri ~* "/wp-admin/|/wp-login|/xmlrpc\.php|/wp-cron\.php|/cart|/checkout|/my-account|/wc-api/|/edd-api/") { set $jabali_skip 1; }
+        if ($http_cookie ~* "comment_author|wordpress_[a-f0-9]+|wp-postpass|wordpress_logged_in|woocommerce_items_in_cart|woocommerce_cart_hash|edd_items_in_cart|PHPSESSID") { set $jabali_skip 1; }
+        fastcgi_cache {{.CacheKeyZone}};
+        fastcgi_cache_key "$scheme$request_method$host$request_uri";
+        fastcgi_cache_valid 200 301 302 {{.CacheTTL}};
+        fastcgi_cache_bypass $jabali_skip;
+        fastcgi_no_cache $jabali_skip;
+        fastcgi_cache_use_stale error timeout updating http_500 http_503;
+        fastcgi_cache_lock on;
+        add_header X-Jabali-Cache $upstream_cache_status always;
 {{ end }}
     }
 {{ end }}
@@ -230,6 +254,12 @@ type vhostData struct {
 	// string when the domain has no ACLs (zero overhead). Sits inside
 	// the server block so it applies to every location.
 	IPACLDirectives string
+	// ADR-0108 FastCGI micro-cache. All three are panel/agent-controlled
+	// (never user data). When CacheEnabled is false the template emits
+	// none of the cache/static directives → byte-identical to pre-0108.
+	CacheEnabled bool
+	CacheKeyZone string
+	CacheTTL     string
 }
 
 // indexDirectiveFor maps the panel's index_priority enum to the concrete
@@ -305,7 +335,7 @@ func buildPHPValueParam(memLimit, uploadMax, postMax string, maxInputVars, maxEx
 // writeVhost generates and writes the nginx vhost configuration, then tests and reloads nginx.
 // This is the core logic shared by domain.create and domain.enable/disable.
 // If the config content is unchanged, nginx reload is skipped for efficiency.
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string, cacheEnabled bool) (string, error) {
 	// Generate vhost configuration
 	tmpl, err := template.New("vhost").Parse(vhostTemplate)
 	if err != nil {
@@ -336,6 +366,9 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		PHPValueParam:      buildPHPValueParam(phpMemLimit, phpUploadMax, phpPostMax, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime),
 		ListenIPv4:         listenIPv4,
 		ListenIPv6:         listenIPv6,
+		CacheEnabled:       cacheEnabled,
+		CacheKeyZone:       "jabali_fcgi",
+		CacheTTL:           "60s",
 	}
 
 	var vhostConfig bytes.Buffer
@@ -477,7 +510,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 
 	rateLimitDirectives := BuildRateLimitDirectives(p.DomainID, p.RateLimitRPS, p.ConnectionLimit)
 	ipACLDirectives := buildIPACLDirectives(p.IPACLs)
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

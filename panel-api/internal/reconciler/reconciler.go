@@ -1,6 +1,7 @@
 package reconciler
 
 import (
+	"strings"
 	"context"
 	"encoding/json"
 	"errors"
@@ -453,7 +454,14 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// domains. Logged only when the domain is newly-added or disabled so
 	// the steady-state reconcile stays quiet.
 	for name, domain := range enabledDomains {
-		if !agentSites[name] {
+		// Panel-primary rows (is_panel_primary=1) are mail-only and
+		// intentionally skipped further down (the continue at the
+		// IsPanelPrimary branch) — they are NEVER added to the agent's
+		// site list, so logging "creating missing" for them every
+		// reconciler tick was pure spam ("puzzle.linux-hosting.net"
+		// loop). Only log for real tenant domains where the missing
+		// state is actionable.
+		if !agentSites[name] && !domain.IsPanelPrimary {
 			r.log.Info("reconcile: creating missing domain", "domain", name)
 		}
 		r.reconcileDNSZone(ctx, domain)
@@ -529,17 +537,31 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	}
 
 	// Well-known nginx vhosts that ship with the distro — not managed by
-	// the panel, not interesting to log.
+	// the panel, not interesting to log. Also: the panel's OWN API vhost
+	// (`jabali-panel` on :8443) and any `<domain>-mail` vhost (derived
+	// from email-enabled tenant domains and managed via
+	// reconcileWebmailVhosts below — never a standalone domain row).
+	// Before this list / the `-mail` suffix skip, every reconciler tick
+	// printed N+1 WARN lines for sites that are intentional, just not
+	// tracked as domain rows.
 	knownSystemSites := map[string]bool{
 		"default":         true,
 		"default-ssl":     true,
 		"000-default":     true,
 		"000-default-ssl": true,
+		"jabali-panel":    true,
 	}
 
 	// 3. Orphan in agent set (no DB row) -> log warning but don't auto-delete
 	for site := range agentSites {
 		if knownSystemSites[site] {
+			continue
+		}
+		// Derived mail vhosts (`<domain>-mail`) are written by
+		// reconcileWebmailVhosts when a tenant domain has email
+		// enabled. They have no domain row of their own and are
+		// not orphans.
+		if strings.HasSuffix(site, "-mail") {
 			continue
 		}
 		if _, found := enabledDomains[site]; !found {

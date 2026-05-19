@@ -141,7 +141,11 @@ func (r *Reconciler) ReconcileSSHKeysForUser(ctx context.Context, userID string)
 		}); err != nil {
 			return fmt.Errorf("write authorized_keys: %w", err)
 		}
-		r.log.InfoContext(ctx, "reconcile ssh keys: wrote authorized_keys",
+		// Demoted to Debug: this fires every reconcile tick (~60s) for
+		// every user with keys, regardless of whether the agent
+		// actually rewrote the file. Operators don't need to see a
+		// per-tick scroll at INFO; debug surfaces it when investigating.
+		r.log.DebugContext(ctx, "reconcile ssh keys: wrote authorized_keys",
 			"user_id", userID, "username", *user.Username, "key_count", len(keys))
 	} else {
 		// Delete authorized_keys file (user has no keys)
@@ -150,7 +154,16 @@ func (r *Reconciler) ReconcileSSHKeysForUser(ctx context.Context, userID string)
 		}); err != nil {
 			return fmt.Errorf("delete authorized_keys: %w", err)
 		}
-		r.log.InfoContext(ctx, "reconcile ssh keys: deleted authorized_keys",
+		// Demoted to Debug AND reworded. Agent ssh.authorized_keys.delete
+		// is the strip-managed-block path (PR #19) — it removes ONLY
+		// the jabali marker block, preserving any operator keys
+		// outside it (or removes the file if jabali was the sole
+		// content). The old "deleted authorized_keys" message at INFO
+		// scrolled every ~60s per keyless user and read as if jabali
+		// were nuking operator SSH access on every tick — exactly the
+		// scar PR #19 fixed in the agent, but the log line never
+		// caught up. See [[project_ssh_authorized_keys_destruction]].
+		r.log.DebugContext(ctx, "reconcile ssh keys: synced empty key set (jabali managed block cleared; operator keys preserved)",
 			"user_id", userID, "username", *user.Username)
 	}
 

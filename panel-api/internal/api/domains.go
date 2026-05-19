@@ -1315,6 +1315,14 @@ func (h *domainHandler) bandwidth(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+	// Go marshals a nil slice as JSON `null`, not `[]`. The SPA's
+	// DomainBandwidthCard does `data.daily.map(...)` (data is truthy,
+	// daily is null) → TypeError → the whole DomainEdit page renders
+	// blank (no error boundary). A domain with no bw_daily rows yet
+	// (fresh / pre-goaccess-scan) must return an empty array.
+	if daily == nil {
+		daily = []repository.DailyPoint{}
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"domain_id":      dom.ID,

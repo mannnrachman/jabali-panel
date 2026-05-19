@@ -366,6 +366,38 @@ fi
 `
 			return run("", "bash", "-c", script)
 		}},
+		{"reconcile crowdsec appsec config", func() error {
+			// install_crowdsec_appsec is the canonical writer of
+			// /etc/crowdsec/appsec-configs/jabali-appsec.yaml. Its
+			// on_match reconcile migrates a stale allowlist prefix to
+			// the current /api/v1/ (ADR-0107) — but it only runs on
+			// fresh install unless invoked here. Without this step a
+			// host that ran `jabali update` kept the old
+			// /api/v1/admin/ allowlist, so every panel PATCH/PUT/DELETE
+			// 403'd at the CrowdSec WAF (the production symptom on the
+			// second server). Idempotent: seeds only if absent,
+			// reconciles inband + on_match in place, rewrites acquis
+			// only on diff. Reload crowdsec only if the config changed.
+			installSh := repoDir + "/install.sh"
+			if _, err := os.Stat(installSh); err != nil {
+				return nil
+			}
+			cfg := "/etc/crowdsec/appsec-configs/jabali-appsec.yaml"
+			before, _ := os.ReadFile(cfg)
+			if err := run("", "bash", "-c",
+				"source "+installSh+" && install_crowdsec_appsec"); err != nil {
+				fmt.Printf("  (install_crowdsec_appsec failed: %v — continuing)\n", err)
+				return nil
+			}
+			after, _ := os.ReadFile(cfg)
+			if string(before) != string(after) {
+				fmt.Println("  (jabali-appsec.yaml changed — reloading crowdsec)")
+				if err := run("", "bash", "-c", "systemctl reload crowdsec 2>/dev/null || systemctl restart crowdsec || true"); err != nil {
+					fmt.Printf("  (crowdsec reload failed: %v — continuing)\n", err)
+				}
+			}
+			return nil
+		}},
 		{"sync OnFailure + restart drop-ins", func() error {
 			// Re-render /etc/systemd/system/<unit>.service.d/10-jabali-restart.conf
 			// for every critical service (nginx/mariadb/pdns/redis/crowdsec/

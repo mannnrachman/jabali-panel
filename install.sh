@@ -5661,13 +5661,27 @@ install_crowdsec_appsec() {
     fi
   fi
 
-  # ADR-0102: ensure the admin-API AppSec allowlist exists even on a
-  # pre-fix file (the reconcile above only rewrites inband_rules).
-  # Idempotent; top-level on_match key, coexists with any agent
-  # pre_eval (geoblock) block. Re-applied every jabali update.
-  if [[ -f "$config_file" ]] && ! grep -q 'startsWith "/api/v1/admin/"' "$config_file"; then
-    _log "appending ADR-0102 admin-API AppSec allowlist to $config_file"
-    printf '%s' "$_onmatch_yaml" >>"$config_file"
+  # ADR-0102 / ADR-0107: ensure the panel-API AppSec allowlist is the
+  # CURRENT desired prefix, even on a pre-existing file (the inband
+  # reconcile above never touches on_match). The earlier code grep'd
+  # the OLD literal ("/api/v1/admin/") as the presence test, so a host
+  # carrying the stale prefix was treated as "already correct" and the
+  # ADR-0107 widening (/api/v1/) never reached it on jabali update —
+  # every panel PATCH/PUT/DELETE kept 403'ing at the WAF. Now: if the
+  # exact desired filter line is absent, MIGRATE it in place (rewrite
+  # the filter value, preserving header / inband / agent pre_eval) or
+  # append a fresh on_match block if the file has none. Idempotent;
+  # re-applied every jabali update (update.go runs this function).
+  local _desired_path="/api/v1/"
+  local _desired_filter=" - filter: req.URL.Path startsWith \"${_desired_path}\""
+  if [[ -f "$config_file" ]] && ! grep -qF "$_desired_filter" "$config_file"; then
+    if grep -q '^on_match:' "$config_file"; then
+      _log "reconciling on_match allowlist to ${_desired_path} in $config_file"
+      sed -i 's#^\([[:space:]]*-[[:space:]]*filter:[[:space:]]*req\.URL\.Path[[:space:]]*startsWith[[:space:]]*\)"[^"]*"#\1"'"${_desired_path}"'"#' "$config_file"
+    else
+      _log "appending panel-API AppSec allowlist to $config_file"
+      printf '%s' "$_onmatch_yaml" >>"$config_file"
+    fi
   fi
 
   # Cleanup: M26-era /etc/crowdsec/appsec-rules/jabali-geoblock.yaml is

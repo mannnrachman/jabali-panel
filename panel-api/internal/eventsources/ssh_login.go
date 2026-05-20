@@ -50,6 +50,13 @@ func runSSHLogin(ctx context.Context, d Deps) {
 			return
 		}
 		if err := tailSSHJournal(ctx, d); err != nil && ctx.Err() == nil {
+			// SIGTERM to the journalctl child races our ctx propagation
+			// at shutdown — the child returns "signal: terminated" before
+			// our ctx.Done() fires. Treat that as graceful and exit silently
+			// (the WARN was firing once per panel-api restart for no actionable reason).
+			if isShutdownChildExit(err) {
+				return
+			}
 			d.Log.Warn("eventsources: ssh_login journal tail exited", "err", err, "retry_in", backoff)
 			select {
 			case <-ctx.Done():
@@ -187,4 +194,18 @@ func parseAcceptedLine(msg string) (user, ip, method string) {
 		return "", "", ""
 	}
 	return fields[3], fields[5], fields[1]
+}
+
+
+// isShutdownChildExit returns true when err looks like the journalctl
+// child got killed (SIGTERM/SIGKILL). At panel-api shutdown the parent
+// signals the child before our context propagates, so we briefly see
+// the child exit error with our ctx still uncancelled. Demote to a
+// silent exit — the WARN was once-per-restart noise.
+func isShutdownChildExit(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "signal: terminated") || strings.Contains(s, "signal: killed")
 }

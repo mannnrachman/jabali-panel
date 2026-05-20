@@ -81,6 +81,12 @@ type DomainRepository interface {
 	// UpdateCacheEnabled writes domains.cache_enabled (ADR-0108).
 	// Dedicated method: cache_enabled is not in Update()'s allowlist.
 	UpdateCacheEnabled(ctx context.Context, id string, enabled bool) error
+	// UpdateMTASTSEnabled writes domains.mta_sts_enabled (ADR-0109). On
+	// enable, also bumps mta_sts_id to the current unix timestamp so the
+	// TXT record id rotates (forces caches to refetch). On disable, the
+	// id is left intact — re-enabling later picks up a fresh id anyway,
+	// and keeping it lets ops correlate older TXT snapshots.
+	UpdateMTASTSEnabled(ctx context.Context, id string, enabled bool) (newID uint64, err error)
 	// UpdateGhostState writes the M38 ghost-detector columns
 	// (ghost_state + ghost_checked_at + ghost_detail) atomically.
 	// Dedicated method because none of the three are in Update()'s
@@ -504,6 +510,29 @@ func (r *domainRepo) UpdateCacheEnabled(ctx context.Context, id string, enabled 
 		return ErrNotFound
 	}
 	return nil
+}
+
+// UpdateMTASTSEnabled writes domains.mta_sts_enabled + mta_sts_id
+// in lockstep (ADR-0109). Enabling stamps id = now-unix so the TXT
+// record rotates; disabling flips the flag but leaves id untouched
+// (re-enabling later rebumps it anyway).
+func (r *domainRepo) UpdateMTASTSEnabled(ctx context.Context, id string, enabled bool) (uint64, error) {
+	updates := map[string]any{"mta_sts_enabled": enabled}
+	var newID uint64
+	if enabled {
+		newID = uint64(time.Now().UTC().Unix())
+		updates["mta_sts_id"] = newID
+	}
+	res := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Where("id = ?", id).
+		Updates(updates)
+	if res.Error != nil {
+		return 0, translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return 0, ErrNotFound
+	}
+	return newID, nil
 }
 
 func (r *domainRepo) UpdateGhostState(ctx context.Context, id, state string, checkedAt time.Time, detail *string) error {

@@ -110,6 +110,10 @@ func (*fakeDomainRepo) UpdateCacheEnabled(context.Context, string, bool) error {
 	return nil
 }
 
+func (*fakeDomainRepo) UpdateMTASTSEnabled(context.Context, string, bool) (uint64, error) {
+	return 0, nil
+}
+
 func (*fakeDomainRepo) UpdateDNSSECEnabled(context.Context, string, bool) error {
 	return nil
 }

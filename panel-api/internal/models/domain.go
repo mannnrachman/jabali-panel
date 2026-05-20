@@ -270,6 +270,20 @@ type Domain struct {
 	// gorm-column-tags scar.
 	CacheEnabled bool `gorm:"column:cache_enabled;type:tinyint(1);not null;default:0" json:"cache_enabled"`
 
+	// MTA-STS per-domain opt-in (migration 000141, ADR-0109). When
+	// flipped on, the reconciler ensures:
+	//   - /var/www/jabali-mta-sts/<domain>/.well-known/mta-sts.txt
+	//     (the policy file nginx serves)
+	//   - /etc/nginx/sites-available/<domain>-mta-sts.conf vhost
+	//   - mta-sts.<domain> SAN on the domain's TLS cert
+	//   - mta-sts.<domain> A + _mta-sts.<domain> TXT DNS records
+	// MTASTSId is the policy version cookie embedded in the TXT
+	// record ("v=STSv1; id=<this>"). Bumped on every enable / mode
+	// change so receivers invalidate cached policies. Column tags
+	// pinned to match the DNSSEC/Cache toggles.
+	MTASTSEnabled bool   `gorm:"column:mta_sts_enabled;type:tinyint(1);not null;default:0" json:"mta_sts_enabled"`
+	MTASTSId      uint64 `gorm:"column:mta_sts_id;type:bigint unsigned;not null;default:0" json:"mta_sts_id"`
+
 	// M38 Ghost Domain Detector — periodic DNS-alignment state.
 	// GhostState is one of: unchecked / ok / mismatch / nxdomain / error.
 	// GhostCheckedAt is the last detector-pass timestamp; NULL for

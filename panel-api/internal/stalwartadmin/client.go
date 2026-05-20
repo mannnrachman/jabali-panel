@@ -119,6 +119,88 @@ func (c *Client) Query(ctx context.Context, typeName string, filters ...string) 
 	return json.RawMessage(stdout), nil
 }
 
+// Create POSTs a new object. payload is the JSON value Stalwart's
+// schema expects for the type. Returns the upstream-assigned id
+// parsed from stalwart-cli's "Created <Type> <id>" stdout. Callers
+// persist the id so subsequent updates / deletes target the right
+// object. See project_stalwart_mtaouthound_throttle_pin for shapes.
+func (c *Client) Create(ctx context.Context, typeName string, payload any) (string, error) {
+	if err := validateTypeName(typeName); err != nil {
+		return "", err
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("stalwartadmin: marshal: %w", err)
+	}
+	args := []string{
+		"--url", c.URL,
+		"--user", c.User,
+		"--password", c.Password,
+		"create", typeName, "--json", string(body),
+	}
+	stdout, stderr, err := c.invoke(ctx, args)
+	if err != nil {
+		return "", fmt.Errorf("stalwart-cli create %s: %w; stderr=%s", typeName, err, strings.TrimSpace(string(stderr)))
+	}
+	out := strings.TrimSpace(string(stdout))
+	prefix := "Created " + typeName + " "
+	if !strings.HasPrefix(out, prefix) {
+		return "", fmt.Errorf("stalwartadmin: unexpected create output %q", out)
+	}
+	id := strings.TrimSpace(strings.TrimPrefix(out, prefix))
+	if id == "" {
+		return "", fmt.Errorf("stalwartadmin: empty id in create output %q", out)
+	}
+	return id, nil
+}
+
+// Update mutates an existing object by id. payload may be partial.
+func (c *Client) Update(ctx context.Context, typeName, id string, payload any) error {
+	if err := validateTypeName(typeName); err != nil {
+		return err
+	}
+	if err := validateID(id); err != nil {
+		return err
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("stalwartadmin: marshal: %w", err)
+	}
+	args := []string{
+		"--url", c.URL,
+		"--user", c.User,
+		"--password", c.Password,
+		"update", typeName, id, "--json", string(body),
+	}
+	_, stderr, err := c.invoke(ctx, args)
+	if err != nil {
+		return fmt.Errorf("stalwart-cli update %s %s: %w; stderr=%s", typeName, id, err, strings.TrimSpace(string(stderr)))
+	}
+	return nil
+}
+
+// Delete removes one object by id. Stalwart's CLI accepts
+// comma-separated --ids; we pass a single id to keep the surface narrow.
+func (c *Client) Delete(ctx context.Context, typeName, id string) error {
+	if err := validateTypeName(typeName); err != nil {
+		return err
+	}
+	if err := validateID(id); err != nil {
+		return err
+	}
+	args := []string{
+		"--url", c.URL,
+		"--user", c.User,
+		"--password", c.Password,
+		"delete", typeName, "--ids", id,
+	}
+	_, stderr, err := c.invoke(ctx, args)
+	if err != nil {
+		return fmt.Errorf("stalwart-cli delete %s %s: %w; stderr=%s", typeName, id, err, strings.TrimSpace(string(stderr)))
+	}
+	return nil
+}
+
 // Get fetches a single object by id. Pass `singleton` for the singleton
 // types (Authentication, MtaSts, etc).
 func (c *Client) Get(ctx context.Context, typeName, id string) (json.RawMessage, error) {

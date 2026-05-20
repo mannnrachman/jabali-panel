@@ -65,6 +65,9 @@ type Deps struct {
 	DMARCAggregate           repository.DMARCAggregateRepository
 	TLSRPTAggregate          repository.TLSRPTAggregateRepository
 	ARFReports               repository.ARFReportRepository
+	// M47 Wave 3 outbound throttle config.
+	MailOutboundPolicies repository.MailOutboundPolicyRepository
+	StalwartAdminThrottle api.ThrottleDispatcher
 	BWDaily                   repository.BWDailyRepository
 	DomainIPACLs              repository.DomainIPACLRepository
 	MigrationJobs             repository.MigrationJobRepository
@@ -540,6 +543,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			TLSRPTAggregate: deps.TLSRPTAggregate,
 			ARFReports:      deps.ARFReports,
 			ServerSettings:  deps.ServerSettings,
+		})
+		// M47 Wave 3 — admin outbound-throttle CRUD.
+		api.RegisterAdminMailThrottlesRoutes(v1, api.AdminMailThrottlesHandlerConfig{
+			Policies:       deps.MailOutboundPolicies,
+			ThrottleClient: deps.StalwartAdminThrottle,
 		})
 		// Admin: process kill (Server Status page). POST /admin/processes/:pid/kill.
 		api.RegisterAdminProcessesRoutes(v1, api.AdminProcessesHandlerConfig{

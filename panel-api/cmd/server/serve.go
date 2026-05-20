@@ -149,6 +149,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		dmarcAggregateRepo := repository.NewDMARCAggregateRepository(sharedDB)
 		tlsRptAggregateRepo := repository.NewTLSRPTAggregateRepository(sharedDB)
 		arfReportRepo := repository.NewARFReportRepository(sharedDB)
+		mailOutboundPolicyRepo := repository.NewMailOutboundPolicyRepository(sharedDB)
 		databaseRepo := repository.NewDatabaseRepository(sharedDB)
 		databaseUserRepo := repository.NewDatabaseUserRepository(sharedDB)
 		databaseUserGrantRepo := repository.NewDatabaseUserGrantRepository(sharedDB)
@@ -254,6 +255,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// M13.1.1: bandwidth quota auto-suspend. Wires bw_daily repo +
 		// notifications queue so reconcileBandwidthQuotaEnforce can run.
 		rec.WithBandwidthQuotaEnforce(repository.NewBWDailyRepository(sharedDB), deps.NotificationQueue)
+		// M47 Wave 3 throttle reconcile — needs both repo + Stalwart CUD client.
+		if sc, ok := deps.StalwartAdmin.(*stalwartadmin.Client); ok {
+			rec.WithMailThrottles(mailOutboundPolicyRepo, sc)
+		}
 		deps.ManagedIPs = managedIPRepo
 		deps.Reconciler = rec
 		deps.DNSZones = dnsZoneRepo
@@ -263,6 +268,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.DMARCAggregate = dmarcAggregateRepo
 		deps.TLSRPTAggregate = tlsRptAggregateRepo
 		deps.ARFReports = arfReportRepo
+		deps.MailOutboundPolicies = mailOutboundPolicyRepo
+		// Same *stalwartadmin.Client satisfies the inline-delete dispatcher.
+		if sc, ok := deps.StalwartAdmin.(*stalwartadmin.Client); ok {
+			deps.StalwartAdminThrottle = sc
+		}
 		// M47 Wave 4/6/8 ingest — stalwart-cli subprocess client.
 		// Auth via the same recovery-admin secret panel-agent uses.
 		if stalwartUser, stalwartPass, ok := readStalwartAdminCreds(); ok {

@@ -162,10 +162,24 @@ server {
 {{ end }}
     }
 {{ if .CacheEnabled }}
+    # Long-cache static assets (immutable content; 30 days).
     location ~* \.(?:css|js|jpe?g|png|gif|ico|svg|webp|woff2?|ttf|eot)$ {
         expires 30d;
         add_header Cache-Control "public, immutable";
         access_log off;
+    }
+    # Short-cache static HTML (60s, matches FastCGI micro-cache TTL).
+    # Without this, a domain with cache_enabled=true but a static
+    # site (no PHP) responds with no Cache-Control header at all —
+    # third-party caching audits (e.g. requestmetrics.com) flag
+    # "no Cache-Control" + "heuristic freshness" warnings even
+    # though caching IS enabled on the domain. PHP responses still
+    # get the server-side FastCGI cache via the location ~ \.php$
+    # block below (with X-Jabali-Cache header). Plain HTML hits
+    # only this; it does not enable server-side caching.
+    location ~* \.html?$ {
+        expires 60s;
+        add_header Cache-Control "public, max-age=60" always;
     }
 {{ end }}
 {{ if .HasPHP }}

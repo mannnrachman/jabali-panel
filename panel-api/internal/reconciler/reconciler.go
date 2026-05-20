@@ -1023,18 +1023,21 @@ func (r *Reconciler) ensureDomainPHPBinding(ctx context.Context, domain *models.
 		return
 	}
 
-	// Bind domain to the user's pool.
-	domain.PHPPoolID = &pool.ID
-
-	// Persist the binding.
+	// Bind domain to the user's pool. Use the dedicated repo method —
+	// the generic Update has php_pool_id off its allowlist, so a call
+	// there silently drops the binding, the DB row stays NULL, and the
+	// reconciler re-binds on every tick (3 domains x 60 ticks/hr =
+	// 180 no-op log lines/hr; the actual log is benign but indicates
+	// the column never gets persisted at all).
 	updateCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	if err := r.domains.Update(updateCtx, domain); err != nil {
+	if err := r.domains.UpdatePHPPoolID(updateCtx, domain.ID, &pool.ID); err != nil {
 		cancel()
 		r.log.Error("ensure domain PHP binding: failed to update domain",
 			"domain_id", domain.ID, "domain", domain.Name, "pool_id", pool.ID, "err", err)
 		return
 	}
 	cancel()
+	domain.PHPPoolID = &pool.ID // reflect in the in-memory copy for the rest of the pass
 
 	r.log.Info("ensure domain PHP binding: auto-bound domain to pool",
 		"domain_id", domain.ID, "domain", domain.Name, "pool_id", pool.ID)

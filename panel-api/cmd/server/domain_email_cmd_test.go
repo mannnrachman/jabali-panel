@@ -118,6 +118,10 @@ func (*fakeDomainRepo) UpdateMTASTSAppliedID(context.Context, string, uint64) er
 	return nil
 }
 
+func (*fakeDomainRepo) UpdatePHPPoolID(context.Context, string, *string) error {
+	return nil
+}
+
 func (*fakeDomainRepo) UpdateDNSSECEnabled(context.Context, string, bool) error {
 	return nil
 }

@@ -93,6 +93,13 @@ type DomainRepository interface {
 	// disable, but that path uses UpdateMTASTSEnabled(false) which
 	// doesn't touch this column on its own.
 	UpdateMTASTSAppliedID(ctx context.Context, id string, appliedID uint64) error
+	// UpdatePHPPoolID writes domains.php_pool_id. Dedicated method
+	// because the column isn't in Update()'s allowlist (the comment
+	// there explicitly notes PHP-pool binding has its own writer).
+	// Pass nil to unbind. Bug: ensureDomainPHPBinding previously called
+	// the generic Update which silently dropped the column, so the row
+	// stayed NULL and the reconciler re-bound on every tick.
+	UpdatePHPPoolID(ctx context.Context, id string, poolID *string) error
 	// UpdateGhostState writes the M38 ghost-detector columns
 	// (ghost_state + ghost_checked_at + ghost_detail) atomically.
 	// Dedicated method because none of the three are in Update()'s
@@ -547,6 +554,20 @@ func (r *domainRepo) UpdateMTASTSAppliedID(ctx context.Context, id string, appli
 	res := r.db.WithContext(ctx).Model(&models.Domain{}).
 		Where("id = ?", id).
 		Update("mta_sts_applied_id", appliedID)
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdatePHPPoolID writes domains.php_pool_id (nil = unbind).
+func (r *domainRepo) UpdatePHPPoolID(ctx context.Context, id string, poolID *string) error {
+	res := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Where("id = ?", id).
+		Update("php_pool_id", poolID)
 	if res.Error != nil {
 		return translate(res.Error)
 	}

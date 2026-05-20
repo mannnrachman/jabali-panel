@@ -234,6 +234,15 @@ func (f *fakeDomainRepo) UpdateMTASTSAppliedID(ctx context.Context, id string, a
 	return nil
 }
 
+func (f *fakeDomainRepo) UpdatePHPPoolID(ctx context.Context, id string, poolID *string) error {
+	d, ok := f.domains[id]
+	if !ok {
+		return &notFoundErr{}
+	}
+	d.PHPPoolID = poolID
+	return nil
+}
+
 func (f *fakeDomainRepo) UpdateDNSSECEnabled(ctx context.Context, id string, enabled bool) error {
 	d, ok := f.domains[id]
 	if !ok {

@@ -63,7 +63,11 @@ func Render(o Opts) string {
 	b.WriteString("# DO NOT hand-edit. Set via the admin Security → CrowdSec tab OR\n")
 	b.WriteString("# POST /api/v1/admin/security/crowdsec/appsec/geoblock.\n")
 	b.WriteString("# jabali-mode: " + mode + "\n")
-	b.WriteString("# jabali-countries: " + csv + "\n")
+	if csv == "" {
+		b.WriteString("# jabali-countries:\n")
+	} else {
+		b.WriteString("# jabali-countries: " + csv + "\n")
+	}
 	b.WriteString("name: crowdsecurity/jabali-appsec\n")
 	b.WriteString("default_remediation: ban\n")
 	b.WriteString("inband_rules:\n")

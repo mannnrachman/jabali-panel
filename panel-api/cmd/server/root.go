@@ -94,6 +94,7 @@ func newRootCmd() *cobra.Command {
 		newBackupCmd(),
 		newRepairCmd(),
 		newPerUserEgressCmd(),
+		newAppSecCmd(),
 		newAppArmorCmd(),
 		newAideCmd(),
 		newUfwCmd(),

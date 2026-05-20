@@ -5637,98 +5637,30 @@ install_crowdsec_appsec() {
   cscli hub upgrade --force 2>&1 | sed 's/^/    /' || \
     _warn "cscli hub upgrade non-zero — operator can re-run manually"
 
-  # 3. Jabali AppSec config — our own appsec-CONFIG file. Loads
-  #    base-config + vpatch-* + generic-* plus carries the geoblock
-  #    pre_eval hook. The agent rewrites this file on every admin Apply
-  #    (see panel-agent's csAppSecGeoblockSetHandler). Shipped initial
-  #    state has NO pre_eval block (mode=off — geoblock stays opt-in).
-  local configs_dir="/etc/crowdsec/appsec-configs"
-  install -d -m 0755 "$configs_dir"
-  local config_file="$configs_dir/jabali-appsec.yaml"
-  # Presence-gated inband_rules. Include a rule pattern ONLY when its
-  # files exist on disk, so CrowdSec never references a missing rule
-  # (startup crash). vpatch-*/generic-* are always present (pre-flight
-  # hard-installs them); base-config/crs/crs-exclusion are best-effort.
-  # This REPLACES the old blind sed-strip of crs-*/base-config (correct
-  # only under the pre-2026-05 hub layout). The inband list is
-  # reconciled to disk on EVERY pass so a host whose hub regressed
-  # (crs files vanished between updates) gets the dead line removed and
-  # crowdsec keeps starting.
-  local _ar="/etc/crowdsec/appsec-rules"  # flat symlinks; -f follows
-  local -a _inband=("crowdsecurity/vpatch-*" "crowdsecurity/generic-*")
-  [[ -f "$_ar/base-config.yaml" ]] && _inband+=("crowdsecurity/base-config")
-  [[ -f "$_ar/crs.yaml" ]] && _inband+=("crowdsecurity/crs")
-  [[ -f "$_ar/crs-exclusion-plugin-wordpress.yaml" ]] && _inband+=("crowdsecurity/crs-exclusion-plugin-wordpress")
-  local _inband_yaml="" _r
-  for _r in "${_inband[@]}"; do _inband_yaml+=" - ${_r}"$'\n'; done
-  # ADR-0102 (amended 2026-05-19): the ENTIRE panel API (/api/v1/)
-  # is Kratos-session-gated, same-origin SPA control plane. The CRS
-  # generic ruleset false-positives on legitimate REST — rule 911100
-  # "Method not allowed by policy" 403s every PATCH/PUT/DELETE (DNS
-  # records etc.); narrowing to /api/v1/admin/ left the SPA'"'"'s own
-  # mutations WAF-blocked with an opaque 403 (whole-session red
-  # herring on mx). Exempt the whole prefix; public vhosts keep full
-  # AppSec. The agent geoblock regenerator (security_crowdsec.go →
-  # appseccfg.Render) emits the SAME block so a geoblock toggle
-  # cannot wipe it.
-  local _onmatch_yaml=$'on_match:\n - filter: req.URL.Path startsWith "/api/v1/"\n   apply:\n    - CancelEvent()\n    - CancelAlert()\n    - SetRemediation("allow")\n'
-
-  if [[ ! -f "$config_file" ]]; then
-    _log "seeding $config_file (mode=off, inband=${_inband[*]})"
-    local tmp
-    tmp="$(mktemp --tmpdir jabali-appsec-config.XXXXXX)"
-    {
-      printf '%s' $'# Managed by jabali \xe2\x80\x94 M27 AppSec config.\n# DO NOT hand-edit. Set via the admin Security \xe2\x86\x92 CrowdSec tab OR\n# POST /api/v1/admin/security/crowdsec/appsec/geoblock.\n# jabali-mode: off\n# jabali-countries:\nname: crowdsecurity/jabali-appsec\ndefault_remediation: ban\ninband_rules:\n'
-      printf '%s' "$_inband_yaml"
-      printf '%s' "$_onmatch_yaml"
-    } >"$tmp"
-    install -m 0644 -o root -g root "$tmp" "$config_file"
-    rm -f "$tmp"
+  # 3. Jabali AppSec config (ADR-0102 / ADR-0107 / ADR-0083 single-
+  # source). The whole schema — header, presence-gated inband_rules,
+  # the panel-API on_match allowlist, the per-mode geoblock pre_eval —
+  # is rendered by ONE Go function (`internal/appseccfg.Render`,
+  # called via `jabali appsec render-config --reconcile`). The agent
+  # geoblock handler calls the SAME Render so the two writers can
+  # never drift (the original `feedback_cross_boundary_contracts` scar
+  # plans/appsec-config-single-source.md was written for).
+  #
+  # --reconcile reads the operator header (jabali-mode/jabali-countries)
+  # from the existing file and preserves it; on a fresh install the
+  # defaults are mode=off / no countries. Inband is presence-gated by
+  # stat()ing /etc/crowdsec/appsec-rules/. Write-on-diff (prints
+  # "unchanged" when nothing changed); `_cs_dirty=1` triggers the
+  # crowdsec reload at the end of this function (PR #55).
+  install -d -m 0755 /etc/crowdsec/appsec-configs
+  local _appsec_out
+  if _appsec_out="$(/usr/local/bin/jabali-panel appsec render-config --reconcile 2>&1)"; then
+    _log "jabali-appsec config: ${_appsec_out}"
+    if [[ "$_appsec_out" != "unchanged" ]]; then
+      _cs_dirty=1
+    fi
   else
-    # Existing file: rewrite ONLY the inband_rules block to match disk;
-    # preserve the operator header (jabali-mode/countries), name,
-    # default_remediation, and any agent-injected pre_eval block that
-    # follows the rule list (csAppSecGeoblockSetHandler).
-    local cur want
-    cur="$(awk '/^inband_rules:/{f=1;next} f&&/^[[:space:]]*-[[:space:]]/{print;next} f{f=0} END{}' "$config_file" \
-      | sed 's/^[[:space:]]*-[[:space:]]*//;s/[[:space:]]*$//' | sort | tr '\n' ',')"
-    want="$(printf '%s\n' "${_inband[@]}" | sort | tr '\n' ',')"
-    if [[ "$cur" != "$want" ]]; then
-      _log "reconciling $config_file inband_rules to on-disk set (${_inband[*]})"
-      local tmp
-      tmp="$(mktemp --tmpdir jabali-appsec-config.XXXXXX)"
-      awk -v repl="$_inband_yaml" '
-        /^inband_rules:/ { print; printf "%s", repl; inb=1; next }
-        inb && /^[[:space:]]*-[[:space:]]/ { next }
-        inb { inb=0 }
-        { print }
-      ' "$config_file" >"$tmp"
-      install -m 0644 -o root -g root "$tmp" "$config_file"
-      rm -f "$tmp"
-    fi
-  fi
-
-  # ADR-0102 / ADR-0107: ensure the panel-API AppSec allowlist is the
-  # CURRENT desired prefix, even on a pre-existing file (the inband
-  # reconcile above never touches on_match). The earlier code grep'd
-  # the OLD literal ("/api/v1/admin/") as the presence test, so a host
-  # carrying the stale prefix was treated as "already correct" and the
-  # ADR-0107 widening (/api/v1/) never reached it on jabali update —
-  # every panel PATCH/PUT/DELETE kept 403'ing at the WAF. Now: if the
-  # exact desired filter line is absent, MIGRATE it in place (rewrite
-  # the filter value, preserving header / inband / agent pre_eval) or
-  # append a fresh on_match block if the file has none. Idempotent;
-  # re-applied every jabali update (update.go runs this function).
-  local _desired_path="/api/v1/"
-  local _desired_filter=" - filter: req.URL.Path startsWith \"${_desired_path}\""
-  if [[ -f "$config_file" ]] && ! grep -qF "$_desired_filter" "$config_file"; then
-    if grep -q '^on_match:' "$config_file"; then
-      _log "reconciling on_match allowlist to ${_desired_path} in $config_file"
-      sed -i 's#^\([[:space:]]*-[[:space:]]*filter:[[:space:]]*req\.URL\.Path[[:space:]]*startsWith[[:space:]]*\)"[^"]*"#\1"'"${_desired_path}"'"#' "$config_file"
-    else
-      _log "appending panel-API AppSec allowlist to $config_file"
-      printf '%s' "$_onmatch_yaml" >>"$config_file"
-    fi
+    _warn "jabali-panel appsec render-config failed: ${_appsec_out}"
   fi
 
   # Cleanup: M26-era /etc/crowdsec/appsec-rules/jabali-geoblock.yaml is

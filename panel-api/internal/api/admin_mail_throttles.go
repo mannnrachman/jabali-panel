@@ -20,6 +20,8 @@ package api
 import (
 	"context"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -28,6 +30,27 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
+
+// scopeRefDomainRe + scopeRefEmailRe pre-empt Stalwart Expression
+// injection. The reconciler builds expressions like
+// `sender_domain == '<scope_ref>'` and embeds scope_ref verbatim.
+// Without these guards an admin could insert a value with a single
+// quote and turn the throttle's match into always-fire (or
+// always-skip), silently breaking the cap.
+var (
+	scopeRefDomainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$`)
+	scopeRefEmailRe  = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$`)
+)
+
+func validateScopeRef(scope, ref string) bool {
+	switch scope {
+	case models.OutboundScopeUser:
+		return scopeRefEmailRe.MatchString(ref) && !strings.ContainsAny(ref, "'\\")
+	case models.OutboundScopeDomain:
+		return scopeRefDomainRe.MatchString(ref) && !strings.ContainsAny(ref, "'\\")
+	}
+	return false
+}
 
 // AdminMailThrottlesHandlerConfig — single dep.
 type AdminMailThrottlesHandlerConfig struct {
@@ -100,9 +123,15 @@ func (h *adminMailThrottlesHandler) create(c *gin.Context) {
 	}
 	if req.Scope == models.OutboundScopeGlobal {
 		req.ScopeRef = nil
-	} else if req.ScopeRef == nil || *req.ScopeRef == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "scope_ref required for non-global scope"})
-		return
+	} else {
+		if req.ScopeRef == nil || *req.ScopeRef == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "scope_ref required for non-global scope"})
+			return
+		}
+		if !validateScopeRef(req.Scope, *req.ScopeRef) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "scope_ref must be a valid " + req.Scope + " (email for user, FQDN for domain; no quotes/backslashes)"})
+			return
+		}
 	}
 	enabled := true
 	if req.Enabled != nil {

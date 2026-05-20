@@ -45,13 +45,57 @@ type MtaOutboundThrottlePayload struct {
 }
 
 // NewAlwaysFireMatch is the "no condition — apply to every message"
-// match block. Wave 3 uses this for every throttle; conditional
-// matching (e.g. "only when sender domain == foo.com") needs the
-// Stalwart Expression grammar pinned separately.
+// match block. Used by global-scope throttles.
 func NewAlwaysFireMatch() MtaThrottleMatch {
 	return MtaThrottleMatch{
 		Match: map[string]any{},
 		Else:  "true",
+	}
+}
+
+// matchRule mirrors the per-key rule entry inside Stalwart's
+// Expression `match` object: {"if": <bool-expr>, "then": <value>}.
+// Pinned via live spike on .150 against MtaStageData
+// (`{"match":{"0":{"if":"local_port == 25","then":"true"}},"else":"false"}`)
+// and re-verified by create->get round-trip on MtaOutboundThrottle.
+type matchRule struct {
+	If   string `json:"if"`
+	Then string `json:"then"`
+}
+
+// NewSenderFilterMatch fires the throttle ONLY when sender equals the
+// given email address. Drives Wave 3 v2 per-user throttles:
+// scope=user, scope_ref="<full email>".
+//
+// The single quotes around the address are part of Stalwart's
+// expression literal syntax (verified on .150). The address is
+// embedded verbatim - caller MUST sanitise it before building the
+// throttle so an attacker can't inject `' || 1==1 || sender == '` and
+// turn the throttle into always-fire.
+func NewSenderFilterMatch(senderAddress string) MtaThrottleMatch {
+	return MtaThrottleMatch{
+		Match: map[string]any{
+			"0": matchRule{
+				If:   "sender == '" + senderAddress + "'",
+				Then: "true",
+			},
+		},
+		Else: "false",
+	}
+}
+
+// NewSenderDomainFilterMatch fires the throttle ONLY when the sender's
+// domain part equals the given domain. Drives Wave 3 v2 per-domain
+// throttles: scope=domain, scope_ref="<domain>".
+func NewSenderDomainFilterMatch(domain string) MtaThrottleMatch {
+	return MtaThrottleMatch{
+		Match: map[string]any{
+			"0": matchRule{
+				If:   "sender_domain == '" + domain + "'",
+				Then: "true",
+			},
+		},
+		Else: "false",
 	}
 }
 

@@ -13,6 +13,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -48,10 +49,11 @@ type deliverabilityComponent struct {
 }
 
 type deliverabilityResponse struct {
-	Score      int                       `json:"score"`        // 0-100, 100 = clean
-	Severity   string                    `json:"severity"`     // ok|warning|critical
-	GeneratedAt time.Time                `json:"generated_at"`
-	Components []deliverabilityComponent `json:"components"`
+	Score       int                       `json:"score"`        // 0-100, 100 = clean
+	Severity    string                    `json:"severity"`     // ok|warning|critical
+	GeneratedAt time.Time                 `json:"generated_at"`
+	Domain      string                    `json:"domain,omitempty"` // empty = server-wide
+	Components  []deliverabilityComponent `json:"components"`
 }
 
 func (h *adminMailDeliverabilityHandler) score(c *gin.Context) {
@@ -59,10 +61,17 @@ func (h *adminMailDeliverabilityHandler) score(c *gin.Context) {
 	now := time.Now().UTC()
 	since := now.Add(-7 * 24 * time.Hour)
 
-	resp := deliverabilityResponse{Score: 100, GeneratedAt: now}
+	// Optional ?domain= narrows DMARC/TLS-RPT buckets to one domain --
+	// the per-domain widget (Wave 9b). Server-wide score is the default
+	// when absent. RBL stays server-wide regardless (the IP is shared
+	// across all hosted domains). ARF is filtered by original_mail_from
+	// match when present.
+	domain := strings.TrimSpace(c.Query("domain"))
+
+	resp := deliverabilityResponse{Score: 100, GeneratedAt: now, Domain: domain}
 
 	// RBL: each listing burns 25; zero if no RBL repo wired.
-	if h.cfg.MailRBLStates != nil && h.cfg.ServerSettings != nil {
+	if domain == "" && h.cfg.MailRBLStates != nil && h.cfg.ServerSettings != nil {
 		if s, err := h.cfg.ServerSettings.Get(ctx); err == nil && s != nil && s.PublicIPv4 != "" {
 			rows, _ := h.cfg.MailRBLStates.ListByIP(ctx, s.PublicIPv4)
 			listed := int64(0)
@@ -85,7 +94,7 @@ func (h *adminMailDeliverabilityHandler) score(c *gin.Context) {
 	// "any". Implementation: callers can scope per domain in a future
 	// per-domain widget; v1 is server-wide.
 	if h.cfg.DMARCAggregate != nil {
-		failed, _ := h.cfg.DMARCAggregate.CountFailuresSince(ctx, "", since)
+		failed, _ := h.cfg.DMARCAggregate.CountFailuresSince(ctx, domain, since)
 		ded := componentDed(int(failed), 5, 25)
 		resp.Components = append(resp.Components, deliverabilityComponent{
 			Name: "dmarc_dkim_failures", Value: failed, Deduction: ded,
@@ -95,7 +104,7 @@ func (h *adminMailDeliverabilityHandler) score(c *gin.Context) {
 	}
 	// TLS-RPT: failure session count last 7d.
 	if h.cfg.TLSRPTAggregate != nil {
-		failed, _ := h.cfg.TLSRPTAggregate.CountFailuresSince(ctx, "", since)
+		failed, _ := h.cfg.TLSRPTAggregate.CountFailuresSince(ctx, domain, since)
 		ded := componentDed(int(failed), 10, 25)
 		resp.Components = append(resp.Components, deliverabilityComponent{
 			Name: "tlsrpt_failures", Value: failed, Deduction: ded,

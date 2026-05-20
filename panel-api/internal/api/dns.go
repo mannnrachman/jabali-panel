@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -362,6 +363,12 @@ func (h *dnsHandler) createRecord(c *gin.Context) {
 		return
 	}
 
+	// Conflict check: CNAME exclusivity + exact-duplicate rejection.
+	if err := checkDNSRecordConflict(c.Request.Context(), h.cfg.Records, zone.ID, record, ""); err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "record_conflict", "detail": err.Error()})
+		return
+	}
+
 	// Persist record
 	if err := h.cfg.Records.Create(c.Request.Context(), record); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
@@ -474,6 +481,12 @@ func (h *dnsHandler) updateRecord(c *gin.Context) {
 			"error":  "invalid_record",
 			"detail": err.Error(),
 		})
+		return
+	}
+
+	// Conflict check (skip self via excludeID).
+	if err := checkDNSRecordConflict(c.Request.Context(), h.cfg.Records, record.ZoneID, record, record.ID); err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "record_conflict", "detail": err.Error()})
 		return
 	}
 
@@ -638,6 +651,53 @@ func validateDNSRecord(r *models.DNSRecord) error {
 		port, err := strconv.Atoi(fields[2])
 		if err != nil || port < 1 || port > 65535 {
 			return fmt.Errorf("SRV port must be 1-65535")
+		}
+	}
+	return nil
+}
+
+
+// checkDNSRecordConflict enforces RFC 1034 §3.6.2 (CNAME exclusivity)
+// and prevents exact-duplicate rows.
+//
+// Rules:
+//   1. Exact duplicate (same zone+name+type+content) → rejected.
+//   2. CNAME at a name MUST be the only record at that name.
+//      - Adding CNAME when ANY other record (A/AAAA/MX/TXT/SRV/CNAME)
+//        already exists at the same name → rejected.
+//      - Adding A/AAAA/MX/TXT/SRV when a CNAME already exists at the
+//        same name → rejected.
+//   3. Multiple CNAMEs at the same name → rejected (only one allowed).
+//
+// excludeID is the record being updated (skip self-conflict on edit);
+// pass "" on create.
+func checkDNSRecordConflict(ctx context.Context, records repository.DNSRecordRepository, zoneID string, candidate *models.DNSRecord, excludeID string) error {
+	existing, err := records.ListByZoneID(ctx, zoneID)
+	if err != nil {
+		return fmt.Errorf("list records for conflict check: %w", err)
+	}
+	candName := strings.ToLower(strings.TrimSpace(candidate.Name))
+	candType := strings.ToUpper(strings.TrimSpace(candidate.Type))
+	candContent := strings.TrimSpace(candidate.Content)
+	for _, e := range existing {
+		if e.ID == excludeID {
+			continue
+		}
+		eName := strings.ToLower(strings.TrimSpace(e.Name))
+		eType := strings.ToUpper(strings.TrimSpace(e.Type))
+		if eName != candName {
+			continue
+		}
+		// Rule 1: exact duplicate.
+		if eType == candType && strings.TrimSpace(e.Content) == candContent {
+			return fmt.Errorf("duplicate record: %s %s %q already exists", candidate.Name, candidate.Type, candidate.Content)
+		}
+		// Rule 2 + 3: CNAME exclusivity.
+		if candType == "CNAME" {
+			return fmt.Errorf("CNAME at %q conflicts with existing %s record (CNAME must be the only record at its name, RFC 1034 §3.6.2)", candidate.Name, e.Type)
+		}
+		if eType == "CNAME" {
+			return fmt.Errorf("cannot add %s at %q because a CNAME already exists there (CNAME must be the only record at its name, RFC 1034 §3.6.2)", candidate.Type, candidate.Name)
 		}
 	}
 	return nil

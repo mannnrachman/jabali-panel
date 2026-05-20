@@ -96,8 +96,17 @@ func (r *Reconciler) reconcileCronJobs(ctx context.Context) {
 		}
 	}
 
-	r.log.Info("reconcile: cron jobs pass complete",
-		"applied", applied, "removed", removed, "orphans_removed", orphans)
+	// Demote to Debug when nothing changed — this fires every tick
+	// (~60s) and was the dominant remaining log noise after the
+	// per-tick-storm cleanup work. INFO when something actually
+	// happened (apply/remove/orphan-removal) stays visible.
+	if applied == 0 && removed == 0 && orphans == 0 {
+		r.log.Debug("reconcile: cron jobs pass complete (no-op)",
+			"applied", applied, "removed", removed, "orphans_removed", orphans)
+	} else {
+		r.log.Info("reconcile: cron jobs pass complete",
+			"applied", applied, "removed", removed, "orphans_removed", orphans)
+	}
 }
 
 func (r *Reconciler) ownedDocrootsFor(ctx context.Context, userID string) ([]string, error) {

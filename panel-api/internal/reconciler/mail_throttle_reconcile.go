@@ -103,41 +103,42 @@ func (r *Reconciler) stampThrottleResult(ctx context.Context, rowID, stalwartID 
 }
 
 // throttlePayloadFor maps one mail_outbound_policy row to the Stalwart
-// wire shape. We use the HOUR bucket — Stalwart can express multiple
-// rate windows per object, but v1 keeps it to one (per-hour) for
-// simplicity; per-day enforcement is a follow-up (would need a paired
-// throttle row OR a richer Stalwart Rate shape).
+// wire shape. Stalwart's rate object accepts ONE window per object;
+// hourly wins when both are set.
 //
 // Scope:
-//   - global → no key (applies to every message)
-//   - user   → key=sender (limits per source mailbox)
-//   - domain → key=senderDomain
+//   - global -> no key + always-fire match (server-wide cap)
+//   - user   -> key=sender + match `sender == '<scope_ref>'`
+//   - domain -> key=senderDomain + match `sender_domain == '<scope_ref>'`
 //
-// We pass an always-fire match because per-tenant filtering via
-// Stalwart Expression grammar is unpinned — see
-// project_stalwart_mtaouthound_throttle_pin.
+// scope_ref MUST be sanitised by the API handler — the literal is
+// embedded verbatim into Stalwart's Expression string and a stray
+// quote would degrade the throttle into always-fire.
 func throttlePayloadFor(row *models.MailOutboundPolicy) stalwartadmin.MtaOutboundThrottlePayload {
 	keyMap := map[string]bool{}
+	match := stalwartadmin.NewAlwaysFireMatch()
 	switch row.Scope {
 	case models.OutboundScopeUser:
 		keyMap[stalwartadmin.ThrottleKeySender] = true
+		if row.ScopeRef != nil && *row.ScopeRef != "" {
+			match = stalwartadmin.NewSenderFilterMatch(*row.ScopeRef)
+		}
 	case models.OutboundScopeDomain:
 		keyMap[stalwartadmin.ThrottleKeySenderDomain] = true
+		if row.ScopeRef != nil && *row.ScopeRef != "" {
+			match = stalwartadmin.NewSenderDomainFilterMatch(*row.ScopeRef)
+		}
 	}
-	// Choose the larger of hourly/daily — Stalwart only accepts one
-	// rate per object. v1: hourly wins; daily is logged but not
-	// enforced. v2: split into two objects.
 	rate := stalwartadmin.HourlyRate(uint64(row.MaxPerHour))
 	if row.MaxPerHour == 0 && row.MaxPerDay > 0 {
 		rate = stalwartadmin.DailyRate(uint64(row.MaxPerDay))
 	}
-	desc := throttleDescription(row)
 	return stalwartadmin.MtaOutboundThrottlePayload{
-		Description: desc,
+		Description: throttleDescription(row),
 		Enable:      row.Enabled,
 		Key:         keyMap,
 		Rate:        rate,
-		Match:       stalwartadmin.NewAlwaysFireMatch(),
+		Match:       match,
 	}
 }
 

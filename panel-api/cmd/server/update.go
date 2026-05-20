@@ -710,11 +710,39 @@ test -x node_modules/.bin/tsc || {
 					return err
 				}
 			}
-			if err := asUser(repoDir+"/panel-ui", "npm", "run", "build"); err != nil {
-				return err
+			// viteBuild wraps `npm run build` with NODE_OPTIONS so
+			// node's V8 heap cap matches the host. Without a cap, V8
+			// trusts /proc/meminfo and tries to grow up to ~1.5GB on
+			// a 1GB-RAM VM — kernel OOM-killer SIGKILLs the process
+			// (exit 137) mid-bundle. Capping at 50% of MemTotal keeps
+			// node within budget; transient garbage pressure rises but
+			// the build actually completes.
+			viteBuild := func() error {
+				bashCmd := "NODE_OPTIONS=\"--max-old-space-size=$(awk '/MemTotal/{print int($2*0.5/1024)}' /proc/meminfo)\" npm run build"
+				return asUser(repoDir+"/panel-ui", "bash", "-c", bashCmd)
 			}
-			writeArtifactSHA("vite", want)
-			return nil
+			buildErr := viteBuild()
+			if buildErr == nil {
+				writeArtifactSHA("vite", want)
+				return nil
+			}
+			// Retry once after creating swap when the first attempt
+			// died with exit 137 (SIGKILL — almost always OOM-killer
+			// on small VMs). Idempotent: skips if any swap already
+			// active OR the swap file already exists.
+			if strings.Contains(buildErr.Error(), "exit status 137") || strings.Contains(buildErr.Error(), "killed") {
+				if swapErr := ensureBuildSwap(); swapErr != nil {
+					fmt.Printf("  (vite build OOM-killed; swap helper failed: %v)\n", swapErr)
+					return buildErr
+				}
+				fmt.Println("  (vite build OOM-killed; added 2G swap, retrying once)")
+				if err2 := viteBuild(); err2 != nil {
+					return err2
+				}
+				writeArtifactSHA("vite", want)
+				return nil
+			}
+			return buildErr
 		}},
 		{"build panel-api + panel-agent (parallel)", func() error {
 			// Both Go binaries are independent: same go module + cache,

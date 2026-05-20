@@ -235,6 +235,10 @@ func (m *MockDomainRepository) UpdateMTASTSEnabled(context.Context, string, bool
 	return 0, nil
 }
 
+func (m *MockDomainRepository) UpdateMTASTSAppliedID(context.Context, string, uint64) error {
+	return nil
+}
+
 func (m *MockDomainRepository) UpdateDNSSECEnabled(ctx context.Context, id string, enabled bool) error {
 	args := m.Called(ctx, id, enabled)
 	return args.Error(0)

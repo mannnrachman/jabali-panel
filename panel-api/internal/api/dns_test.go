@@ -177,6 +177,10 @@ func (m *mockDomainRepo) UpdateMTASTSEnabled(ctx context.Context, id string, ena
 	return newID, nil
 }
 
+func (m *mockDomainRepo) UpdateMTASTSAppliedID(context.Context, string, uint64) error {
+	return nil
+}
+
 func (m *mockDomainRepo) UpdateDNSSECEnabled(ctx context.Context, id string, enabled bool) error {
 	d, ok := m.domains[id]
 	if !ok {

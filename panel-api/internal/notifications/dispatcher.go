@@ -306,7 +306,11 @@ func (d *Dispatcher) process(ctx context.Context, msg redis.XMessage) {
 	if len(targets) == 0 {
 		// No enabled channel matched. The bell row above is the
 		// only delivery; ACK + delete so the queue doesn't grow.
-		d.log.Info("no target channels for event; bell only", "event", env.EventKind)
+		// Bell delivery is the silent default. Demoted to Debug —
+		// operator hasn't configured any email/Slack/ntfy channels.
+		// Used to fire INFO per event = log noise on a fresh install
+		// where every event hits this path.
+		d.log.Debug("no target channels for event; bell only", "event", env.EventKind)
 		if err := d.queue.AckAndDelete(ctx, msg.ID); err != nil {
 			d.log.Error("ack failed on no-target path", "id", msg.ID, "err", err)
 		}

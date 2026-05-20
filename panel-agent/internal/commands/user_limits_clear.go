@@ -68,17 +68,23 @@ func userLimitsClearHandler(ctx context.Context, params json.RawMessage) (any, e
 		}
 	}
 
-	// Reload either way — if the drop-in existed, systemd needs to
-	// forget it; if not, it's a cheap no-op.
-	// SIGHUP to PID 1 → systemd daemon-reload. See user_limits_apply
-	// for the rationale (libdbus auth fails inside the agent's ns).
-	if err := killProcess(1, syscall.SIGHUP); err != nil {
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("kill -HUP 1: %v", err),
+	// SIGHUP + sleep only when we actually removed a drop-in.
+	// Reconciler calls user.limits.clear per-tick for every user
+	// without a package; sending SIGHUP 1 per call when the drop-in
+	// has been absent forever wastes a systemd daemon-reload + 250ms
+	// sleep per user per tick (puzzle: 3 users x 60 ticks/hr = 180
+	// no-op SIGHUPs/hr after PR #78 still left this path leaking).
+	// File-absent case is identical pre/post = no kernel change to
+	// reload for.
+	if resp.DropinRemoved {
+		if err := killProcess(1, syscall.SIGHUP); err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("kill -HUP 1: %v", err),
+			}
 		}
+		time.Sleep(250 * time.Millisecond)
 	}
-	time.Sleep(250 * time.Millisecond)
 
 	if p.QuotaMount != "" {
 		// Clear the quota: 0 0 0 0 means no soft, no hard, no inode

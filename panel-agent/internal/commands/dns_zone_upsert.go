@@ -84,11 +84,22 @@ func dnsZoneUpsertHandler(ctx context.Context, params json.RawMessage) (any, err
 		return nil, err
 	}
 
-	// Signal PowerDNS to reload. NOTIFY is how slave NSes learn of
-	// changes; even with no slaves, it's a cheap way to poke pdns.
-	// Ignore exit code — if pdns_control isn't reachable we've still
-	// committed the SQL change and the next scheduled reload will pick
-	// it up.
+	// Signal PowerDNS:
+	//   1. purge <zone>$ — invalidate the in-process query/packet cache
+	//      for this zone (the '$' suffix targets the zone + all names
+	//      under it). Without this, pdns serves the OLD answer from
+	//      cache for the next cache-ttl seconds (default 20s) AND/OR
+	//      the record TTL — operators see stale dig answers even after
+	//      the SQL backend has the new value (incident 2026-05-21:
+	//      user updated autoconfig CNAME via panel UI, dig at ns1 still
+	//      returned old value 3h later because the cache entry was
+	//      kept-alive by repeated queries and never evicted).
+	//   2. notify <zone> — tells slave NSes to AXFR. Cheap no-op when
+	//      there are no slaves.
+	// Both are best-effort: if pdns_control isn't reachable, the SQL
+	// change is still committed and a real pdns restart will pick up
+	// the change.
+	_ = exec.CommandContext(ctx, "pdns_control", "purge", p.Zone+"$").Run()
 	_ = exec.CommandContext(ctx, "pdns_control", "notify", p.Zone).Run()
 
 	return dnsZoneUpsertResponse{Zone: p.Zone, ZoneID: zoneID, Records: len(recs)}, nil

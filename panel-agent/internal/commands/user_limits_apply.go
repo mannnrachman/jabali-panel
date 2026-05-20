@@ -141,9 +141,28 @@ func userLimitsApplyHandler(ctx context.Context, params json.RawMessage) (any, e
 		}
 	}
 
-	// Reload: always, so newly-written drop-ins take effect AND any
-	// idempotent retry also triggers the kernel-state verification
-	// below. Cheap operation — milliseconds on a quiet host.
+	// Skip the SIGHUP + verify + setquota dance when nothing changed —
+	// the reconciler calls this every tick (~60s) per user, so on a 3-
+	// user host the previous always-reload path fired 180 daemon-reloads
+	// + 180 setquotas per hour for steady state. The kernel still
+	// matches what we last wrote, so a no-op verify gains nothing.
+	// Drift detection still works on the next REAL change (forced via
+	// content diff). Tradeoff: external kernel forget (someone
+	// remounted -o noquota) won't auto-heal until the operator triggers
+	// a real change. Acceptable.
+	if noChange {
+		return &userLimitsApplyResponse{
+			Username:      p.Username,
+			DropinPath:    dropinPath,
+			CgroupApplied: true,
+			NoChange:      true,
+		}, nil
+	}
+
+	// Reload: always when content changed, so newly-written drop-ins
+	// take effect AND any idempotent retry also triggers the kernel-
+	// state verification below. Cheap operation — milliseconds on a
+	// quiet host.
 	// Direct \`systemctl daemon-reload\` from jabali-agent fails with
 	// 'Failed to connect to bus: Permission denied' — the agent's
 	// PrivateTmp + ProtectKernel* combo breaks libdbus's auth

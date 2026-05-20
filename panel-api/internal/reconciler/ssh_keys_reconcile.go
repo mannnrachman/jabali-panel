@@ -39,6 +39,29 @@ func desiredSSHKeysHash(keys []string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// desiredSSHFullHash combines every user-state input the reconcile pass
+// dispatches to the agent: keys + sshEnabled + nspawn pin + username.
+// When this hash matches the cached one AND we're within
+// sshKeysReDispatchInterval, we skip ALL six per-user agent calls (set_shell,
+// home_chown, join/leave sftp group, join/leave sandbox group, write_nspawn_pin,
+// authorized_keys write/delete) — not just the keys op the v1 cache covered.
+// This was the next per-tick chatter source after PR #61: even with the keys
+// op gated, 3 users x 5 unconditional IPCs/tick = 15 agent round-trips/min for
+// no diff. Self-heals on the next interval to catch drift (manual chsh, gpasswd).
+func desiredSSHFullHash(username string, sshEnabled bool, pin string, keys []string) string {
+	sorted := append([]string(nil), keys...)
+	sort.Strings(sorted)
+	parts := []string{
+		"u=" + username,
+		"ssh=" + strconv.FormatBool(sshEnabled),
+		"pin=" + pin,
+		"n=" + strconv.Itoa(len(sorted)),
+		"k=" + strings.Join(sorted, "\n"),
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "|")))
+	return hex.EncodeToString(sum[:])
+}
+
 // ReconcileSSHKeysForUser syncs the user's SSH keys to authorized_keys.
 // Skips silently if user has no Linux username (admin-only or pending).
 // Adds user to jabali-sftp group, then writes or deletes authorized_keys.
@@ -59,6 +82,59 @@ func (r *Reconciler) ReconcileSSHKeysForUser(ctx context.Context, userID string)
 		return nil
 	}
 
+	// Compute the full per-user state we'll dispatch (sshEnabled,
+	// pin) and the desired key list, BEFORE any agent call. Lets us
+	// hash-gate every IPC below — without this, set_shell /
+	// home_chown / group_method / sandbox_group / write_nspawn_pin
+	// were re-dispatched every tick even when the inputs hadn't
+	// changed (3 users x 5 calls/tick = 15 no-op IPCs/min on puzzle).
+	sshEnabled := false
+	var pkgPin *string
+	if r.packages != nil && user.PackageID != nil && *user.PackageID != "" {
+		pkg, pkgErr := r.packages.FindByID(ctx, *user.PackageID)
+		if pkgErr == nil && pkg != nil {
+			sshEnabled = pkg.SSHEnabled
+			pkgPin = pkg.NspawnImageVersion
+		}
+	}
+
+	// Fetch user's SSH keys early so the hash incorporates them too.
+	keysEarly, err := r.sshKeys.ListByUserID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("list ssh keys: %w", err)
+	}
+	desiredLines := make([]string, 0, len(keysEarly))
+	for _, key := range keysEarly {
+		desiredLines = append(desiredLines, key.PublicKey)
+	}
+
+	// Compute the pin we'd actually write so its included in the hash.
+	pinPreview := ""
+	if pkgPin != nil {
+		pinPreview = *pkgPin
+	}
+	if sshEnabled && pinPreview == "" && r.serverSettings != nil {
+		if sset, sErr := r.serverSettings.Get(ctx); sErr == nil && sset != nil && sset.DefaultNspawnImageVersion != "" {
+			pinPreview = sset.DefaultNspawnImageVersion
+		}
+	}
+	if !sshEnabled {
+		pinPreview = ""
+	}
+
+	fullHash := desiredSSHFullHash(*user.Username, sshEnabled, pinPreview, desiredLines)
+
+	// Combined-hash gate. When everything matches AND we re-dispatched
+	// within sshKeysReDispatchInterval, skip ALL six agent IPCs below.
+	// Drift heals on the next interval pass (15 min force-resync).
+	if v, ok := r.sshKeysDispatchCache.Load(userID); ok {
+		if st, okT := v.(sshKeysDispatchState); okT &&
+			st.Hash == fullHash &&
+			time.Since(st.At) < sshKeysReDispatchInterval {
+			return nil
+		}
+	}
+
 	// M13: ensure the wrapper is the user's login shell. Defense-in-depth
 	// for SFTP users (ForceCommand internal-sftp wins) and the actual
 	// sandbox entry point for SSH-shell users. Idempotent — agent skips
@@ -75,20 +151,11 @@ func (r *Reconciler) ReconcileSSHKeysForUser(ctx context.Context, userID string)
 	}
 
 	// Group membership gates SSH access mode:
-	//   ssh_enabled=true  → leave jabali-sftp group → real shell login
-	//   ssh_enabled=false → join jabali-sftp group  → SFTP-only (Match block)
+	//   ssh_enabled=true  -> leave jabali-sftp group -> real shell login
+	//   ssh_enabled=false -> join jabali-sftp group  -> SFTP-only (Match block)
 	// SSHEnabled lives on the hosting package, not the per-user overrides
 	// table. Missing package (no package_id, or package fetch fails)
 	// keeps the safe default (SFTP-only).
-	sshEnabled := false
-	var pkgPin *string
-	if r.packages != nil && user.PackageID != nil && *user.PackageID != "" {
-		pkg, pkgErr := r.packages.FindByID(ctx, *user.PackageID)
-		if pkgErr == nil && pkg != nil {
-			sshEnabled = pkg.SSHEnabled
-			pkgPin = pkg.NspawnImageVersion
-		}
-	}
 	// Order matters: when going SFTP→SSH we must restore <u>:<u> 0750 on
 	// /home/<u> BEFORE leaving jabali-sftp; when going SSH→SFTP we must
 	// flip to root:<u> 0751 BEFORE joining (sshd refuses to chroot into a
@@ -129,57 +196,17 @@ func (r *Reconciler) ReconcileSSHKeysForUser(ctx context.Context, userID string)
 			"user_id", userID, "username", *user.Username, "method", sandboxGroupMethod, "error", err)
 	}
 
-	// M13 nspawn pin: take the package's pin first, fall back to server
-	// default. The materialized file under /etc/jabali/users/<u>/ is what
-	// jabali-nspawn-enter consults at SSH connect time. SFTP-only users
-	// have the pin file removed (defensive — sandbox group is also gone,
-	// so the pin is moot, but keep state tidy).
-	pin := ""
-	if pkgPin != nil {
-		pin = *pkgPin
-	}
-	if sshEnabled && pin == "" && r.serverSettings != nil {
-		if s, sErr := r.serverSettings.Get(ctx); sErr == nil && s != nil && s.DefaultNspawnImageVersion != "" {
-			pin = s.DefaultNspawnImageVersion
-		}
-	}
-	if !sshEnabled {
-		pin = "" // remove file
-	}
+	// M13 nspawn pin (pre-computed as pinPreview above; reuse so the
+	// hash and the agent call agree on the exact value).
 	if _, err := r.agent.Call(ctx, "ssh.user.write_nspawn_pin", map[string]interface{}{
 		"username": *user.Username,
-		"image":    pin,
+		"image":    pinPreview,
 	}); err != nil {
 		r.log.WarnContext(ctx, "reconcile ssh keys: write_nspawn_pin failed",
 			"user_id", userID, "username", *user.Username, "error", err)
 	}
 
-	// Fetch user's SSH keys
-	keys, err := r.sshKeys.ListByUserID(ctx, userID)
-	if err != nil {
-		return fmt.Errorf("list ssh keys: %w", err)
-	}
-
-	// Build desired key lines (sorted-stable hash). Empty list = the
-	// "delete (strip-block)" branch; non-empty = the write branch.
-	desiredLines := make([]string, 0, len(keys))
-	for _, key := range keys {
-		desiredLines = append(desiredLines, key.PublicKey)
-	}
-	desiredHash := desiredSSHKeysHash(desiredLines)
-
-	// Hash-cache gate: skip the agent IPC when the desired state
-	// hasn't changed since the last dispatch AND we re-dispatched
-	// within sshKeysReDispatchInterval. Saves N-users-per-minute
-	// no-op agent calls (the per-tick chatter that motivated PR #57's
-	// log demote). Self-heals on the next interval to catch drift.
-	if v, ok := r.sshKeysDispatchCache.Load(userID); ok {
-		if st, okT := v.(sshKeysDispatchState); okT &&
-			st.Hash == desiredHash &&
-			time.Since(st.At) < sshKeysReDispatchInterval {
-			return nil // no-op skip
-		}
-	}
+	keys := keysEarly // alias to original name so the rest of the fn unchanged
 
 	if len(keys) > 0 {
 		if _, err := r.agent.Call(ctx, "ssh.authorized_keys.write", map[string]interface{}{
@@ -213,7 +240,7 @@ func (r *Reconciler) ReconcileSSHKeysForUser(ctx context.Context, userID string)
 			"user_id", userID, "username", *user.Username)
 	}
 	// Record the successful dispatch so the next tick can short-circuit.
-	r.sshKeysDispatchCache.Store(userID, sshKeysDispatchState{Hash: desiredHash, At: time.Now()})
+	r.sshKeysDispatchCache.Store(userID, sshKeysDispatchState{Hash: fullHash, At: time.Now()})
 
 	return nil
 }

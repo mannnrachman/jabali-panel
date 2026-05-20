@@ -5276,7 +5276,13 @@ install_crowdsec() {
   # Without this `jabali update` left cscli's "Run reload" hint to the
   # operator after every hub change.
   local _cs_dirty=0
-  local _appsec_rules_dir="/etc/crowdsec/appsec-rules/crowdsecurity"
+  # Flat per-rule layout — enabled rules symlink into
+  # /etc/crowdsec/appsec-rules/<name>.yaml (no crowdsecurity/ subdir).
+  # The previous path pointed at a non-existent subdir, so the
+  # presence-gate ALWAYS failed and every `jabali update` purged then
+  # re-downloaded all 170 vpatch rules — minutes of work for no diff.
+  # Fixed 2026-05-20.
+  local _appsec_rules_dir="/etc/crowdsec/appsec-rules"
   if ! compgen -G "${_appsec_rules_dir}/vpatch-*" >/dev/null 2>&1; then
     cscli collections remove crowdsecurity/appsec-virtual-patching --purge 2>/dev/null || true
     _spin "cscli collections install appsec-virtual-patching (pre-flight)" \
@@ -5541,7 +5547,9 @@ install_crowdsec_appsec() {
   # (the upstream crowdsec-nginx-bouncer package). Every vhost gets
   # AppSec evaluation automatically — no per-vhost snippet required.
   _log "configuring CrowdSec AppSec (server-wide geoblock rule)"
-  local _appsec_rules_dir="/etc/crowdsec/appsec-rules/crowdsecurity"
+  # Flat rules dir — fixed 2026-05-20. Stale crowdsecurity/ subdir
+  # path made every `jabali update` purge+reinstall 170 vpatch rules.
+  local _appsec_rules_dir="/etc/crowdsec/appsec-rules"
 
   # 1. GeoIP enricher — prereq for GeoIPEnrich expr.
   if ! cscli parsers list 2>/dev/null | grep -q 'crowdsecurity/geoip-enrich'; then

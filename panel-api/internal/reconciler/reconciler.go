@@ -68,6 +68,9 @@ type Reconciler struct {
 	// legacy /etc/jabali-panel/restic-repo.password once every row
 	// has been migrated to per-destination password_enc.
 	backupDestinations repository.BackupDestinationRepository
+	// M47 Wave 3 — outbound throttle reconcile.
+	outboundPolicies repository.MailOutboundPolicyRepository
+	stalwartAdmin    ThrottleStalwartClient
 	// M13.1.1 — bandwidth quota auto-suspend. Both required for the
 	// reconcileBandwidthQuotaEnforce loop; nil on either disables the
 	// feature regardless of server_settings toggle.
@@ -147,6 +150,14 @@ func (r *Reconciler) WithDomainIPACLs(repo repository.DomainIPACLRepository) *Re
 // the agent falls back to its compiled-in template.
 func (r *Reconciler) WithPageTemplates(repo repository.PageTemplateRepository) *Reconciler {
 	r.pageTemplates = repo
+	return r
+}
+
+// WithMailThrottles wires the M47 Wave 3 outbound-throttle reconciler.
+// Both args are required — nil disables the pass entirely.
+func (r *Reconciler) WithMailThrottles(repo repository.MailOutboundPolicyRepository, sc ThrottleStalwartClient) *Reconciler {
+	r.outboundPolicies = repo
+	r.stalwartAdmin = sc
 	return r
 }
 
@@ -621,6 +632,11 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// Idempotent — the agent no-ops when the rendered drop-in is
 	// byte-identical, so steady state is a cheap file read.
 	r.reconcileDBTuning(ctx)
+
+	// M47 Wave 3: converge outbound throttle rows into Stalwart's
+	// MtaOutboundThrottle objects. Each row's stalwart_id tracks
+	// the upstream id so updates target the right object.
+	r.reconcileMailThrottles(ctx)
 
 	return nil
 }

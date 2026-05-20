@@ -42,6 +42,7 @@ import { useApplyBrandingToTitle } from "./hooks/useBranding";
 import { AdminSecurityPage } from "./shells/admin/security/AdminSecurityPage";
 import { ServerStatusPage } from "./shells/admin/server-status/ServerStatusPage";
 import { MailDeliverabilityPage } from "./shells/admin/mail/MailDeliverabilityPage";
+import { MailThrottlesPage } from "./shells/admin/mail/MailThrottlesPage";
 import { SystemUpdatesPage } from "./shells/admin/updates/SystemUpdatesPage";
 import { SupportPage } from "./shells/admin/support/SupportPage";
 import { AdminAutomationTokensPage } from "./shells/admin/automation/AdminAutomationTokensPage";
@@ -183,6 +184,7 @@ const ThemedApp = () => {
             <Route path="security" element={<AdminSecurityPage />} />
             <Route path="server-status" element={<ServerStatusPage />} />
             <Route path="mail/deliverability" element={<MailDeliverabilityPage />} />
+            <Route path="mail/throttles" element={<MailThrottlesPage />} />
             <Route path="terminal" element={<AdminTerminal />} />
             <Route path="dnssec" element={<Navigate to="/jabali-admin/dns" replace />} />
             <Route path="updates" element={<SystemUpdatesPage />} />

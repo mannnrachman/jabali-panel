@@ -2,11 +2,42 @@ package reconciler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 )
+
+// sshKeysDispatchState is what each user's sshKeysDispatchCache entry
+// holds. Hash covers the sorted desired key set (or a sentinel for
+// "no keys"); At is when we last dispatched the agent for this user.
+type sshKeysDispatchState struct {
+	Hash string
+	At   time.Time
+}
+
+// sshKeysReDispatchInterval forces a re-dispatch even when the hash
+// matches, so any out-of-band drift in `~/.ssh/authorized_keys`
+// (operator hand-edit, agent restart partial state) is corrected on
+// a bounded schedule.
+const sshKeysReDispatchInterval = 15 * time.Minute
+
+// desiredSSHKeysHash computes a stable hash of the desired authorized_keys
+// state. Sorts lines first so the order in the DB doesn't matter; encodes
+// the count separately so an empty key-list hashes distinctly from a
+// hypothetical zero-length line.
+func desiredSSHKeysHash(keys []string) string {
+	sorted := append([]string(nil), keys...)
+	sort.Strings(sorted)
+	body := strings.Join(sorted, "\n") + "\nn=" + strconv.Itoa(len(sorted))
+	sum := sha256.Sum256([]byte(body))
+	return hex.EncodeToString(sum[:])
+}
 
 // ReconcileSSHKeysForUser syncs the user's SSH keys to authorized_keys.
 // Skips silently if user has no Linux username (admin-only or pending).
@@ -129,15 +160,31 @@ func (r *Reconciler) ReconcileSSHKeysForUser(ctx context.Context, userID string)
 		return fmt.Errorf("list ssh keys: %w", err)
 	}
 
-	if len(keys) > 0 {
-		// Write authorized_keys file
-		lines := make([]string, len(keys))
-		for i, key := range keys {
-			lines[i] = key.PublicKey
+	// Build desired key lines (sorted-stable hash). Empty list = the
+	// "delete (strip-block)" branch; non-empty = the write branch.
+	desiredLines := make([]string, 0, len(keys))
+	for _, key := range keys {
+		desiredLines = append(desiredLines, key.PublicKey)
+	}
+	desiredHash := desiredSSHKeysHash(desiredLines)
+
+	// Hash-cache gate: skip the agent IPC when the desired state
+	// hasn't changed since the last dispatch AND we re-dispatched
+	// within sshKeysReDispatchInterval. Saves N-users-per-minute
+	// no-op agent calls (the per-tick chatter that motivated PR #57's
+	// log demote). Self-heals on the next interval to catch drift.
+	if v, ok := r.sshKeysDispatchCache.Load(userID); ok {
+		if st, okT := v.(sshKeysDispatchState); okT &&
+			st.Hash == desiredHash &&
+			time.Since(st.At) < sshKeysReDispatchInterval {
+			return nil // no-op skip
 		}
+	}
+
+	if len(keys) > 0 {
 		if _, err := r.agent.Call(ctx, "ssh.authorized_keys.write", map[string]interface{}{
 			"username": *user.Username,
-			"keys":     lines,
+			"keys":     desiredLines,
 		}); err != nil {
 			return fmt.Errorf("write authorized_keys: %w", err)
 		}
@@ -148,7 +195,6 @@ func (r *Reconciler) ReconcileSSHKeysForUser(ctx context.Context, userID string)
 		r.log.DebugContext(ctx, "reconcile ssh keys: wrote authorized_keys",
 			"user_id", userID, "username", *user.Username, "key_count", len(keys))
 	} else {
-		// Delete authorized_keys file (user has no keys)
 		if _, err := r.agent.Call(ctx, "ssh.authorized_keys.delete", map[string]interface{}{
 			"username": *user.Username,
 		}); err != nil {
@@ -166,6 +212,8 @@ func (r *Reconciler) ReconcileSSHKeysForUser(ctx context.Context, userID string)
 		r.log.DebugContext(ctx, "reconcile ssh keys: synced empty key set (jabali managed block cleared; operator keys preserved)",
 			"user_id", userID, "username", *user.Username)
 	}
+	// Record the successful dispatch so the next tick can short-circuit.
+	r.sshKeysDispatchCache.Store(userID, sshKeysDispatchState{Hash: desiredHash, At: time.Now()})
 
 	return nil
 }

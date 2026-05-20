@@ -376,39 +376,56 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		return "", fmt.Errorf("template execute failed: %w", err)
 	}
 
-	// Write vhost configuration atomically (temp file + rename)
 	configPath := filepath.Join("/etc/nginx/sites-available", domain+".conf")
-	tmpFile := configPath + ".tmp"
+	enabledPath := filepath.Join("/etc/nginx/sites-enabled", domain+".conf")
+	wantBytes := vhostConfig.Bytes()
 
-	if err := os.WriteFile(tmpFile, vhostConfig.Bytes(), 0644); err != nil {
-		return "", fmt.Errorf("write config failed: %w", err)
+	// Content-hash gate. The reconciler calls writeVhost on EVERY
+	// per-domain pass (~60s ticks). Without this gate, every tick
+	// rewrites every vhost + reloads nginx — puzzle's diagnostic
+	// saw 181 reloads/hr = constant Lua reinit = ~340 MB PSS bloat.
+	// Check before write: if the live file already matches AND the
+	// symlink already points at it, no write + no reload needed.
+	existingBytes, readErr := os.ReadFile(configPath)
+	linkOK := false
+	if target, lerr := os.Readlink(enabledPath); lerr == nil && target == configPath {
+		linkOK = true
+	}
+	if readErr == nil && bytes.Equal(existingBytes, wantBytes) && linkOK {
+		return configPath, nil
 	}
 
+	// Write vhost configuration atomically (temp file + rename).
+	tmpFile := configPath + ".tmp"
+	if err := os.WriteFile(tmpFile, wantBytes, 0644); err != nil {
+		return "", fmt.Errorf("write config failed: %w", err)
+	}
 	if err := os.Rename(tmpFile, configPath); err != nil {
 		os.Remove(tmpFile)
 		return "", fmt.Errorf("rename config failed: %w", err)
 	}
 
-	// Create symlink to sites-enabled (always present for enabled or disabled domains)
-	enabledPath := filepath.Join("/etc/nginx/sites-enabled", domain+".conf")
-	os.Remove(enabledPath) // Remove if already exists
-	if err := os.Symlink(configPath, enabledPath); err != nil {
-		return "", fmt.Errorf("symlink failed: %w", err)
+	// Create symlink to sites-enabled (always present for enabled or disabled domains).
+	if !linkOK {
+		os.Remove(enabledPath) // Remove if already exists
+		if err := os.Symlink(configPath, enabledPath); err != nil {
+			return "", fmt.Errorf("symlink failed: %w", err)
+		}
 	}
 
-	// Test nginx configuration
+	// Test nginx configuration.
 	testCmd := exec.CommandContext(ctx, "nginx", "-t")
 	var testOutput bytes.Buffer
 	testCmd.Stdout = &testOutput
 	testCmd.Stderr = &testOutput
 	if err := testCmd.Run(); err != nil {
-		// Clean up on test failure
+		// Clean up on test failure.
 		os.Remove(enabledPath)
 		os.Remove(configPath)
 		return "", fmt.Errorf("nginx test failed: %s", testOutput.String())
 	}
 
-	// Reload nginx
+	// Reload nginx.
 	reloadCmd := exec.CommandContext(ctx, "systemctl", "reload", "nginx")
 	var reloadOutput bytes.Buffer
 	reloadCmd.Stdout = &reloadOutput

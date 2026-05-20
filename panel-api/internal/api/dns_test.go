@@ -181,6 +181,10 @@ func (m *mockDomainRepo) UpdateMTASTSAppliedID(context.Context, string, uint64) 
 	return nil
 }
 
+func (m *mockDomainRepo) UpdatePHPPoolID(context.Context, string, *string) error {
+	return nil
+}
+
 func (m *mockDomainRepo) UpdateDNSSECEnabled(ctx context.Context, id string, enabled bool) error {
 	d, ok := m.domains[id]
 	if !ok {

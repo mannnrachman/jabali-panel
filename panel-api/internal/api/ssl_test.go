@@ -239,6 +239,10 @@ func (m *MockDomainRepository) UpdateMTASTSAppliedID(context.Context, string, ui
 	return nil
 }
 
+func (m *MockDomainRepository) UpdatePHPPoolID(context.Context, string, *string) error {
+	return nil
+}
+
 func (m *MockDomainRepository) UpdateDNSSECEnabled(ctx context.Context, id string, enabled bool) error {
 	args := m.Called(ctx, id, enabled)
 	return args.Error(0)

@@ -55,6 +55,10 @@ type Deps struct {
 	DNSZones                  repository.DNSZoneRepository
 	DNSRecords                repository.DNSRecordRepository
 	SSLCerts                  repository.SSLCertificateRepository
+	// MailRBLStates (M47 Wave 5) backs the curated-RBL eventsource
+	// that probes the server's outbound IPv4 against a free RBL
+	// baseline and fires mail.rbl.{listed,cleared} on transitions.
+	MailRBLStates            repository.MailRBLStateRepository
 	BWDaily                   repository.BWDailyRepository
 	DomainIPACLs              repository.DomainIPACLRepository
 	MigrationJobs             repository.MigrationJobRepository

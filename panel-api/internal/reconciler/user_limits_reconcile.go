@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -205,22 +206,36 @@ func (r *Reconciler) ReconcileNginxRateLimits(ctx context.Context) {
 
 	ctxCall, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if _, err := r.agent.Call(ctxCall, "nginx.ratelimits.apply", map[string]any{
+	raw, err := r.agent.Call(ctxCall, "nginx.ratelimits.apply", map[string]any{
 		"domains":      bundle,
-		"zone_size_kb": 0, // 0 → agent default (10 MB)
-	}); err != nil {
+		"zone_size_kb": 0, // 0 -> agent default (10 MB)
+	})
+	if err != nil {
 		r.log.Warn("reconcile nginx-ratelimits: apply failed", "err", err, "count", len(bundle))
 		return
 	}
-	// Reload nginx only when at least one domain opted in — every
-	// reload causes briefly-interrupted connections. No domains with
-	// limits = no change to the fragment = no reload needed.
-	if len(bundle) > 0 {
-		reloadCtx, reloadCancel := context.WithTimeout(ctx, 10*time.Second)
-		defer reloadCancel()
-		if _, err := r.agent.Call(reloadCtx, "nginx.reload", nil); err != nil {
-			r.log.Warn("reconcile nginx-ratelimits: reload failed", "err", err)
-		}
+	// Reload nginx ONLY when the agent's idempotent compare flipped
+	// the fragment. Without this gate, every tick with at least one
+	// rate-limited domain reloaded nginx (puzzle saw 181 reloads/hr
+	// -- Lua state reinit on each, ~340 MB PSS as old workers
+	// drained). The agent's nginx.ratelimits.apply already returns
+	// no_change=true when the rendered fragment matches the live
+	// file; trust that signal.
+	var resp struct {
+		NoChange bool `json:"no_change"`
+	}
+	if jerr := json.Unmarshal(raw, &resp); jerr != nil {
+		r.log.Debug("reconcile nginx-ratelimits: missing no_change in agent response; reloading defensively", "err", jerr)
+	} else if resp.NoChange {
+		return
+	}
+	if len(bundle) == 0 {
+		return
+	}
+	reloadCtx, reloadCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer reloadCancel()
+	if _, err := r.agent.Call(reloadCtx, "nginx.reload", nil); err != nil {
+		r.log.Warn("reconcile nginx-ratelimits: reload failed", "err", err)
 	}
 }
 

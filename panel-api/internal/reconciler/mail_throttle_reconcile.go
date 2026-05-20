@@ -48,73 +48,110 @@ func (r *Reconciler) reconcileMailThrottles(ctx context.Context) {
 	}
 }
 
+// reconcileMailThrottleOne converges BOTH rate windows independently.
+// One mail_outbound_policy row can produce up to two Stalwart
+// MtaOutboundThrottle objects: one for the hourly cap (StalwartID),
+// one for the daily cap (StalwartIDDaily). Either, both, or neither
+// can be active depending on max_per_hour / max_per_day. The
+// reconciler treats each window as its own state machine.
 func (r *Reconciler) reconcileMailThrottleOne(ctx context.Context, row *models.MailOutboundPolicy) {
+	r.reconcileThrottleWindow(ctx, row, throttleWindowHourly)
+	r.reconcileThrottleWindow(ctx, row, throttleWindowDaily)
+}
+
+type throttleWindow int
+
+const (
+	throttleWindowHourly throttleWindow = iota
+	throttleWindowDaily
+)
+
+func (r *Reconciler) reconcileThrottleWindow(ctx context.Context, row *models.MailOutboundPolicy, w throttleWindow) {
+	var count uint
+	var currentID string
+	switch w {
+	case throttleWindowHourly:
+		count = row.MaxPerHour
+		currentID = row.StalwartID
+	case throttleWindowDaily:
+		count = row.MaxPerDay
+		currentID = row.StalwartIDDaily
+	}
+	wantActive := row.Enabled && count > 0
+
 	switch {
-	case row.Enabled && row.StalwartID == "":
-		r.throttleCreate(ctx, row)
-	case row.Enabled && row.StalwartID != "":
-		r.throttleUpdate(ctx, row)
-	case !row.Enabled && row.StalwartID != "":
-		r.throttleDelete(ctx, row)
+	case wantActive && currentID == "":
+		r.throttleWindowCreate(ctx, row, w)
+	case wantActive && currentID != "":
+		r.throttleWindowUpdate(ctx, row, w, currentID)
+	case !wantActive && currentID != "":
+		r.throttleWindowDelete(ctx, row, w, currentID)
 	}
 }
 
-func (r *Reconciler) throttleCreate(ctx context.Context, row *models.MailOutboundPolicy) {
+func (r *Reconciler) throttleWindowCreate(ctx context.Context, row *models.MailOutboundPolicy, w throttleWindow) {
 	cctx, cancel := context.WithTimeout(ctx, mailThrottleCallTimeout)
 	defer cancel()
-	payload := throttlePayloadFor(row)
+	payload := throttlePayloadForWindow(row, w)
 	id, err := r.stalwartAdmin.Create(cctx, "MtaOutboundThrottle", payload)
-	r.stampThrottleResult(ctx, row.ID, id, err)
+	r.stampThrottleWindowResult(ctx, row.ID, w, id, err)
 }
 
-func (r *Reconciler) throttleUpdate(ctx context.Context, row *models.MailOutboundPolicy) {
+func (r *Reconciler) throttleWindowUpdate(ctx context.Context, row *models.MailOutboundPolicy, w throttleWindow, currentID string) {
 	cctx, cancel := context.WithTimeout(ctx, mailThrottleCallTimeout)
 	defer cancel()
-	payload := throttlePayloadFor(row)
-	err := r.stalwartAdmin.Update(cctx, "MtaOutboundThrottle", row.StalwartID, payload)
-	r.stampThrottleResult(ctx, row.ID, row.StalwartID, err)
+	payload := throttlePayloadForWindow(row, w)
+	err := r.stalwartAdmin.Update(cctx, "MtaOutboundThrottle", currentID, payload)
+	r.stampThrottleWindowResult(ctx, row.ID, w, currentID, err)
 }
 
-func (r *Reconciler) throttleDelete(ctx context.Context, row *models.MailOutboundPolicy) {
+func (r *Reconciler) throttleWindowDelete(ctx context.Context, row *models.MailOutboundPolicy, w throttleWindow, currentID string) {
 	cctx, cancel := context.WithTimeout(ctx, mailThrottleCallTimeout)
 	defer cancel()
-	err := r.stalwartAdmin.Delete(cctx, "MtaOutboundThrottle", row.StalwartID)
+	err := r.stalwartAdmin.Delete(cctx, "MtaOutboundThrottle", currentID)
 	if err != nil {
-		r.stampThrottleResult(ctx, row.ID, row.StalwartID, err)
+		r.stampThrottleWindowResult(ctx, row.ID, w, currentID, err)
 		return
 	}
-	// Successful delete clears the upstream id so the next enable
-	// re-creates from scratch.
-	r.stampThrottleResult(ctx, row.ID, "", nil)
+	r.stampThrottleWindowResult(ctx, row.ID, w, "", nil)
 }
 
-func (r *Reconciler) stampThrottleResult(ctx context.Context, rowID, stalwartID string, callErr error) {
+func (r *Reconciler) stampThrottleWindowResult(ctx context.Context, rowID string, w throttleWindow, stalwartID string, callErr error) {
 	var lastErr *string
 	if callErr != nil {
 		msg := callErr.Error()
 		lastErr = &msg
-		r.log.Warn("mail-throttle: apply failed", "row", rowID, "err", callErr)
+		r.log.Warn("mail-throttle: apply failed", "row", rowID, "window", throttleWindowName(w), "err", callErr)
 	} else {
-		r.log.Info("mail-throttle: applied", "row", rowID, "stalwart_id", stalwartID)
+		r.log.Info("mail-throttle: applied", "row", rowID, "window", throttleWindowName(w), "stalwart_id", stalwartID)
 	}
-	if err := r.outboundPolicies.UpdateApplyState(ctx, rowID, stalwartID, lastErr); err != nil {
-		r.log.Warn("mail-throttle: state stamp failed", "row", rowID, "err", err)
+	var err error
+	if w == throttleWindowHourly {
+		err = r.outboundPolicies.UpdateApplyState(ctx, rowID, stalwartID, lastErr)
+	} else {
+		err = r.outboundPolicies.UpdateApplyStateDaily(ctx, rowID, stalwartID, lastErr)
+	}
+	if err != nil {
+		r.log.Warn("mail-throttle: state stamp failed", "row", rowID, "window", throttleWindowName(w), "err", err)
 	}
 }
 
-// throttlePayloadFor maps one mail_outbound_policy row to the Stalwart
-// wire shape. Stalwart's rate object accepts ONE window per object;
-// hourly wins when both are set.
-//
-// Scope:
-//   - global -> no key + always-fire match (server-wide cap)
-//   - user   -> key=sender + match `sender == '<scope_ref>'`
-//   - domain -> key=senderDomain + match `sender_domain == '<scope_ref>'`
+func throttleWindowName(w throttleWindow) string {
+	if w == throttleWindowDaily {
+		return "daily"
+	}
+	return "hourly"
+}
+
+// throttlePayloadForWindow renders one Stalwart MtaOutboundThrottle
+// payload for either the hourly or daily window of a policy row.
+// Scope keying + Expression match are identical across windows; only
+// rate differs.
 //
 // scope_ref MUST be sanitised by the API handler — the literal is
 // embedded verbatim into Stalwart's Expression string and a stray
 // quote would degrade the throttle into always-fire.
-func throttlePayloadFor(row *models.MailOutboundPolicy) stalwartadmin.MtaOutboundThrottlePayload {
+func throttlePayloadForWindow(row *models.MailOutboundPolicy, w throttleWindow) stalwartadmin.MtaOutboundThrottlePayload {
 	keyMap := map[string]bool{}
 	match := stalwartadmin.NewAlwaysFireMatch()
 	switch row.Scope {
@@ -129,12 +166,14 @@ func throttlePayloadFor(row *models.MailOutboundPolicy) stalwartadmin.MtaOutboun
 			match = stalwartadmin.NewSenderDomainFilterMatch(*row.ScopeRef)
 		}
 	}
-	rate := stalwartadmin.HourlyRate(uint64(row.MaxPerHour))
-	if row.MaxPerHour == 0 && row.MaxPerDay > 0 {
+	var rate stalwartadmin.MtaThrottleRate
+	if w == throttleWindowDaily {
 		rate = stalwartadmin.DailyRate(uint64(row.MaxPerDay))
+	} else {
+		rate = stalwartadmin.HourlyRate(uint64(row.MaxPerHour))
 	}
 	return stalwartadmin.MtaOutboundThrottlePayload{
-		Description: throttleDescription(row),
+		Description: throttleDescription(row, w),
 		Enable:      row.Enabled,
 		Key:         keyMap,
 		Rate:        rate,
@@ -142,10 +181,10 @@ func throttlePayloadFor(row *models.MailOutboundPolicy) stalwartadmin.MtaOutboun
 	}
 }
 
-func throttleDescription(row *models.MailOutboundPolicy) string {
+func throttleDescription(row *models.MailOutboundPolicy, w throttleWindow) string {
 	ref := "-"
 	if row.ScopeRef != nil {
 		ref = *row.ScopeRef
 	}
-	return fmt.Sprintf("jabali %s/%s h=%d d=%d", row.Scope, ref, row.MaxPerHour, row.MaxPerDay)
+	return fmt.Sprintf("jabali %s/%s/%s h=%d d=%d", row.Scope, ref, throttleWindowName(w), row.MaxPerHour, row.MaxPerDay)
 }

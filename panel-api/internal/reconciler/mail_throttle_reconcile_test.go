@@ -108,6 +108,18 @@ func (f *fakeOutboundPolicyRepo) UpdateApplyState(_ context.Context, id, stalwar
 	return nil
 }
 
+func (f *fakeOutboundPolicyRepo) UpdateApplyStateDaily(_ context.Context, id, stalwartIDDaily string, lastErr *string) error {
+	var le string
+	if lastErr != nil {
+		le = *lastErr
+	}
+	f.stamped = append(f.stamped, stampCall{rowID: id, stalwartID: stalwartIDDaily, lastErr: le})
+	if r, ok := f.rows[id]; ok {
+		r.StalwartIDDaily = stalwartIDDaily
+	}
+	return nil
+}
+
 func newFakeOutboundPolicyRepo() *fakeOutboundPolicyRepo {
 	return &fakeOutboundPolicyRepo{rows: map[string]*models.MailOutboundPolicy{}}
 }
@@ -198,7 +210,7 @@ func TestThrottlePayloadFor_ScopeKeyMapping(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.scope, func(t *testing.T) {
 			row := &models.MailOutboundPolicy{Scope: c.scope, MaxPerHour: 10, Enabled: true}
-			p := throttlePayloadFor(row)
+			p := throttlePayloadForWindow(row, throttleWindowHourly)
 			for _, k := range c.want {
 				if !p.Key[k] {
 					t.Errorf("scope=%s missing key=%s; full key map=%v", c.scope, k, p.Key)

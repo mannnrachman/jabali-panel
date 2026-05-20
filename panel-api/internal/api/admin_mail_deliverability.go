@@ -114,7 +114,7 @@ func (h *adminMailDeliverabilityHandler) score(c *gin.Context) {
 	}
 	// ARF: abuse-feedback report count last 7d.
 	if h.cfg.ARFReports != nil {
-		count, _ := h.cfg.ARFReports.CountSince(ctx, since)
+		count, _ := h.cfg.ARFReports.CountForDomainSince(ctx, domain, since)
 		ded := componentDed(int(count), 1, 25)
 		resp.Components = append(resp.Components, deliverabilityComponent{
 			Name: "abuse_reports", Value: count, Deduction: ded,

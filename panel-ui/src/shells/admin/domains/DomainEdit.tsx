@@ -27,6 +27,7 @@ import { DomainListenIPSection } from "./DomainListenIPSection";
 import { DomainMailboxesSection } from "./DomainMailboxesSection";
 import { DomainSSLSection } from "./DomainSSLSection";
 import { DomainCacheSection } from "./DomainCacheSection";
+import { DomainMTASTSSection } from "./DomainMTASTSSection";
 
 export type DomainEditInput = {
   is_enabled?: boolean;
@@ -148,6 +149,9 @@ export const DomainEdit = () => {
 
           <Divider>Caching</Divider>
           <DomainCacheSection domainId={domain.id} />
+
+          <Divider>MTA-STS</Divider>
+          <DomainMTASTSSection domainId={domain.id} />
 
           <Divider>Listen IPs</Divider>
           <DomainListenIPSection

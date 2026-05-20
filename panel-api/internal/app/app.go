@@ -501,6 +501,15 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			Domains:    deps.Domains,
 			Reconciler: deps.Reconciler,
 		})
+		// Per-domain MTA-STS toggle (M47 Wave 7b, ADR-0109).
+		api.RegisterDomainMTAStsRoutes(v1, api.DomainMTAStsHandlerConfig{
+			Agent:          deps.Agent,
+			Domains:        deps.Domains,
+			DNSZones:       deps.DNSZones,
+			DNSRecords:     deps.DNSRecords,
+			ServerSettings: deps.ServerSettings,
+			Reconciler:     deps.Reconciler,
+		})
 		// Admin: System Updates (M29). Thin proxy to agent's system.* commands.
 		api.RegisterAdminUpdatesRoutes(v1, api.AdminUpdatesHandlerConfig{
 			Agent: deps.Agent,

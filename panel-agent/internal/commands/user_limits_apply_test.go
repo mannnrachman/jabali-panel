@@ -225,10 +225,11 @@ func TestUserLimitsApply_Idempotent(t *testing.T) {
 	if !r2.(*userLimitsApplyResponse).NoChange {
 		t.Error("second apply should have NoChange=true")
 	}
-	// setquota is called both times regardless (simple, cheap op) but
-	// daemon-reload also both times — verify no explosion on retry.
-	if len(*calls) < 2 {
-		t.Errorf("expected at least 2 runCmd calls, got %d", len(*calls))
+	// PR perf/user-limits-apply-noop-skip: noChange now early-returns
+	// BEFORE setquota + SIGHUP. Pin the saving — only the first apply
+	// runs setquota, the second is a pure no-op.
+	if len(*calls) != 1 {
+		t.Errorf("expected exactly 1 runCmd call (setquota on the first apply only), got %d", len(*calls))
 	}
 }
 

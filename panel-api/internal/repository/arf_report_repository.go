@@ -24,6 +24,11 @@ type ARFReportRepository interface {
 	ExistsForStalwartID(ctx context.Context, stalwartID string) (bool, error)
 	ListSince(ctx context.Context, since time.Time, limit int) ([]models.ARFReport, error)
 	CountSince(ctx context.Context, since time.Time) (int64, error)
+	// CountForDomainSince filters by the domain part of original_mail_from
+	// (the sender domain that received the spam complaint). Empty
+	// domain matches every report (= CountSince behaviour) so callers
+	// can use one method for server-wide + per-domain.
+	CountForDomainSince(ctx context.Context, domain string, since time.Time) (int64, error)
 	PruneOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	// MostRecentReceivedAt returns the highest received_at we already
 	// stored, used as the cursor for the next Stalwart query. Zero
@@ -92,6 +97,23 @@ func (r *arfRepo) CountSince(ctx context.Context, since time.Time) (int64, error
 	var count int64
 	if err := r.db.WithContext(ctx).Model(&models.ARFReport{}).
 		Where("received_at >= ?", since).
+		Count(&count).Error; err != nil {
+		return 0, translate(err)
+	}
+	return count, nil
+}
+
+// CountForDomainSince filters by the original_mail_from local-part's
+// domain. We MATCH at '@<domain>' suffix so subdomains of the same
+// apex don't inflate the count for the parent (a Gmail complaint for
+// foo@mail.example.com hits mail.example.com, not example.com).
+func (r *arfRepo) CountForDomainSince(ctx context.Context, domain string, since time.Time) (int64, error) {
+	if domain == "" {
+		return r.CountSince(ctx, since)
+	}
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&models.ARFReport{}).
+		Where("received_at >= ? AND original_mail_from LIKE ?", since, "%@"+domain).
 		Count(&count).Error; err != nil {
 		return 0, translate(err)
 	}

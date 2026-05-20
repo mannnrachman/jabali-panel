@@ -25,6 +25,9 @@ type MailOutboundPolicyRepository interface {
 	// the upstream-assigned id (or unchanged on update). lastError nil
 	// = success.
 	UpdateApplyState(ctx context.Context, id, stalwartID string, lastError *string) error
+	// UpdateApplyStateDaily stamps the SECOND (daily) Stalwart id +
+	// last_applied_at. last_error is shared with the hourly path.
+	UpdateApplyStateDaily(ctx context.Context, id, stalwartIDDaily string, lastError *string) error
 }
 
 type mailOutboundPolicyRepo struct{ db *gorm.DB }
@@ -126,6 +129,21 @@ func (r *mailOutboundPolicyRepo) UpdateApplyState(ctx context.Context, id, stalw
 			"stalwart_id":     stalwartID,
 			"last_applied_at": now,
 			"last_error":      lastError,
+		})
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	return nil
+}
+
+func (r *mailOutboundPolicyRepo) UpdateApplyStateDaily(ctx context.Context, id, stalwartIDDaily string, lastError *string) error {
+	now := time.Now().UTC()
+	res := r.db.WithContext(ctx).Model(&models.MailOutboundPolicy{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"stalwart_id_daily": stalwartIDDaily,
+			"last_applied_at":   now,
+			"last_error":        lastError,
 		})
 	if res.Error != nil {
 		return translate(res.Error)

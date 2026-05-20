@@ -22,6 +22,10 @@ type MailOutboundPolicy struct {
 	MaxPerDay     uint       `gorm:"column:max_per_day;type:int unsigned;not null;default:0" json:"max_per_day"`
 	Enabled       bool       `gorm:"column:enabled;type:tinyint(1);not null;default:1" json:"enabled"`
 	StalwartID    string     `gorm:"column:stalwart_id;type:varchar(64);not null;default:''" json:"stalwart_id"`
+	// StalwartIDDaily tracks the SECOND Stalwart throttle when both
+	// hourly + daily caps are set (mig 000146 / ADR-0112 v3). Empty
+	// when only one rate window is active.
+	StalwartIDDaily string `gorm:"column:stalwart_id_daily;type:varchar(64);not null;default:''" json:"stalwart_id_daily"`
 	LastAppliedAt *time.Time `gorm:"column:last_applied_at;type:datetime(6)" json:"last_applied_at,omitempty"`
 	LastError     *string    `gorm:"column:last_error;type:text" json:"last_error,omitempty"`
 	CreatedAt     time.Time  `gorm:"column:created_at;type:datetime(6);not null;default:CURRENT_TIMESTAMP(6)" json:"created_at"`

@@ -19,7 +19,7 @@ func TestThrottlePayloadFor_PerUserEmitsSenderFilter(t *testing.T) {
 	row := &models.MailOutboundPolicy{
 		Scope: models.OutboundScopeUser, ScopeRef: &addr, MaxPerHour: 50, Enabled: true,
 	}
-	p := throttlePayloadFor(row)
+	p := throttlePayloadForWindow(row, throttleWindowHourly)
 	body, _ := json.Marshal(p.Match)
 	if !strings.Contains(string(body), "sender == 'user@example.com'") {
 		t.Errorf("user-scope payload missing sender filter\nmatch=%s", body)
@@ -34,7 +34,7 @@ func TestThrottlePayloadFor_PerDomainEmitsSenderDomainFilter(t *testing.T) {
 	row := &models.MailOutboundPolicy{
 		Scope: models.OutboundScopeDomain, ScopeRef: &dom, MaxPerHour: 500, Enabled: true,
 	}
-	p := throttlePayloadFor(row)
+	p := throttlePayloadForWindow(row, throttleWindowHourly)
 	body, _ := json.Marshal(p.Match)
 	if !strings.Contains(string(body), "sender_domain == 'example.com'") {
 		t.Errorf("domain-scope payload missing sender_domain filter\nmatch=%s", body)
@@ -49,7 +49,7 @@ func TestThrottlePayloadFor_GlobalKeepsAlwaysFire(t *testing.T) {
 	row := &models.MailOutboundPolicy{
 		Scope: models.OutboundScopeGlobal, MaxPerHour: 10000, Enabled: true,
 	}
-	p := throttlePayloadFor(row)
+	p := throttlePayloadForWindow(row, throttleWindowHourly)
 	body, _ := json.Marshal(p.Match)
 	if string(body) != `{"match":{},"else":"true"}` {
 		t.Errorf("global-scope match should be always-fire, got %s", body)
@@ -67,7 +67,7 @@ func TestThrottlePayloadFor_UserScopeWithoutRefFallsBackToAlwaysFire(t *testing.
 	row := &models.MailOutboundPolicy{
 		Scope: models.OutboundScopeUser, ScopeRef: nil, MaxPerHour: 10, Enabled: true,
 	}
-	p := throttlePayloadFor(row)
+	p := throttlePayloadForWindow(row, throttleWindowHourly)
 	body, _ := json.Marshal(p.Match)
 	if string(body) != `{"match":{},"else":"true"}` {
 		t.Errorf("user scope without scope_ref should fall back to always-fire, got %s", body)

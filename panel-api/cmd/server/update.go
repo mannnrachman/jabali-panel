@@ -432,6 +432,42 @@ fi
 			}
 			return nil
 		}},
+		{"clean stale TLS env from panel.env (M25 socket lockdown)", func() error {
+			// Hosts that ran jabali update before M25 still carry
+			// TLS_CERT + TLS_KEY in /etc/jabali/panel.env from when
+			// panel-api listened on https://0.0.0.0:443. Post-M25 the
+			// addr is unix:/run/jabali-panel/api.sock and nginx
+			// terminates TLS upstream — the env vars are no-ops and
+			// trigger a per-restart WARN log. Comment them out so a
+			// re-enable is a one-line uncomment for the operator.
+			const panelEnv = "/etc/jabali/panel.env"
+			b, err := os.ReadFile(panelEnv)
+			if err != nil {
+				return nil // file absent on fresh installs; not an error
+			}
+			src := string(b)
+			if !strings.Contains(src, "PANEL_ADDR=unix:") {
+				return nil // addr is TCP; keep TLS active
+			}
+			lines := strings.Split(src, "\n")
+			changed := false
+			for i, ln := range lines {
+				trim := strings.TrimSpace(ln)
+				if strings.HasPrefix(trim, "TLS_CERT=") || strings.HasPrefix(trim, "TLS_KEY=") {
+					lines[i] = "# " + ln + "   # auto-disabled by jabali update: addr is unix socket"
+					changed = true
+				}
+			}
+			if !changed {
+				return nil
+			}
+			if err := os.WriteFile(panelEnv, []byte(strings.Join(lines, "\n")), 0o640); err != nil {
+				fmt.Printf("  (clean stale TLS env: write failed: %v)\n", err)
+				return nil
+			}
+			fmt.Println("  (commented stale TLS_CERT/TLS_KEY in panel.env; restart panel to drop warn)")
+			return nil
+		}},
 		{"sync OnFailure + restart drop-ins", func() error {
 			// Re-render /etc/systemd/system/<unit>.service.d/10-jabali-restart.conf
 			// for every critical service (nginx/mariadb/pdns/redis/crowdsec/

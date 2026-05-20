@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"strings"
+	"sync"
 	"context"
 	"encoding/json"
 	"errors"
@@ -96,6 +97,14 @@ type Reconciler struct {
 	// agent dispatch omits the ip_acls field (no nginx directives
 	// rendered).
 	domainIPACLs repository.DomainIPACLRepository
+	// sshKeysDispatchCache: per-user hash of last-applied SSH keys +
+	// timestamp. Lets ReconcileSSHKeysForUser skip the agent IPC when
+	// the desired state hasn't changed since the last dispatch. Self-
+	// heals every sshKeysReDispatchInterval to catch drift even when
+	// the hash matches. Keyed by user ID; value type
+	// sshKeysDispatchState. sync.Map = lock-free for the common
+	// "many readers, one writer per key" pattern.
+	sshKeysDispatchCache sync.Map
 }
 
 // WithPanelCertificate injects the M32 panel-cert repo + routability

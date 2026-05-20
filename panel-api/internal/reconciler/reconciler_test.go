@@ -1981,4 +1981,25 @@ func TestSANHostnamesForDomain(t *testing.T) {
 			}
 		}
 	})
+	t.Run("mta_sts only", func(t *testing.T) {
+		d := &models.Domain{Name: "example.com", MTASTSEnabled: true}
+		got := sanHostnamesForDomain(d)
+		want := []string{"mta-sts.example.com"}
+		if len(got) != 1 || got[0] != want[0] {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+	t.Run("email + mta_sts", func(t *testing.T) {
+		d := &models.Domain{Name: "example.com", EmailEnabled: true, MTASTSEnabled: true}
+		got := sanHostnamesForDomain(d)
+		want := []string{"mail.example.com", "autoconfig.example.com", "mta-sts.example.com"}
+		if len(got) != len(want) {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+		for i, w := range want {
+			if got[i] != w {
+				t.Errorf("[%d]: got %q, want %q", i, got[i], w)
+			}
+		}
+	})
 }

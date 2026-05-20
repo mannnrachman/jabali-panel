@@ -163,8 +163,18 @@ func (m *mockDomainRepo) UpdateCacheEnabled(ctx context.Context, id string, enab
 	return nil
 }
 
-func (m *mockDomainRepo) UpdateMTASTSEnabled(context.Context, string, bool) (uint64, error) {
-	return 0, nil
+func (m *mockDomainRepo) UpdateMTASTSEnabled(ctx context.Context, id string, enabled bool) (uint64, error) {
+	d, ok := m.domains[id]
+	if !ok {
+		return 0, repository.ErrNotFound
+	}
+	d.MTASTSEnabled = enabled
+	var newID uint64
+	if enabled {
+		newID = uint64(time.Now().UTC().Unix())
+		d.MTASTSId = newID
+	}
+	return newID, nil
 }
 
 func (m *mockDomainRepo) UpdateDNSSECEnabled(ctx context.Context, id string, enabled bool) error {

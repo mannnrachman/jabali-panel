@@ -1379,10 +1379,22 @@ type sslSelfSignResult struct {
 // directly. Re-introduce after dnscompile/email_records.go adds the
 // matching CNAME.
 func sanHostnamesForDomain(d *models.Domain) []string {
-	if d == nil || !d.EmailEnabled {
+	if d == nil {
 		return nil
 	}
-	return []string{"mail." + d.Name, "autoconfig." + d.Name}
+	var out []string
+	if d.EmailEnabled {
+		out = append(out, "mail."+d.Name, "autoconfig."+d.Name)
+	}
+	// M47 Wave 7 / ADR-0109: mta-sts.<domain> must be a SAN on the
+	// domain's TLS cert so the agent-served MTA-STS vhost can present
+	// a valid CA-signed chain (RFC 8461 §3.3 hard requirement). Once
+	// the SAN is in place, the Wave 7c reconciler step writes the
+	// vhost and the policy becomes live.
+	if d.MTASTSEnabled {
+		out = append(out, "mta-sts."+d.Name)
+	}
+	return out
 }
 
 // acmeRetryInterval is how long to wait between ACME (Let's Encrypt) attempts

@@ -94,6 +94,10 @@ type Deps struct {
 	// M14 backup_fail watcher. Nil disables the source — tests +
 	// minimal installs without M30 backups skip the goroutine.
 	BackupJobs repository.BackupJobRepository
+	// M47 Wave 5 mail-RBL monitor. ServerSettings + MailRBLStates
+	// both required (ServerSettings provides the public IPv4 to
+	// probe; MailRBLStates is where transitions are persisted).
+	MailRBLStates repository.MailRBLStateRepository
 }
 
 // Start boots every configured source in its own goroutine. Each
@@ -130,6 +134,7 @@ func Start(ctx context.Context, d Deps) {
 	go runBandwidthQuota(ctx, d)
 	go runExecAuditBurst(ctx, d)
 	go runBackupFail(ctx, d)
+	go runMailRBL(ctx, d)
 	// domain_expiry remains a stub — WHOIS pipeline lives outside the
 	// panel-api process today (M15 future work).
 }

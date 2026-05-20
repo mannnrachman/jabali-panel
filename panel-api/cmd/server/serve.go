@@ -143,6 +143,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		dnsZoneRepo := repository.NewDNSZoneRepository(sharedDB)
 		dnsRecordRepo := repository.NewDNSRecordRepository(sharedDB)
 		sslCertRepo := repository.NewSSLCertificateRepository(sharedDB)
+		mailRBLStateRepo := repository.NewMailRBLStateRepository(sharedDB)
 		databaseRepo := repository.NewDatabaseRepository(sharedDB)
 		databaseUserRepo := repository.NewDatabaseUserRepository(sharedDB)
 		databaseUserGrantRepo := repository.NewDatabaseUserGrantRepository(sharedDB)
@@ -253,6 +254,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.DNSZones = dnsZoneRepo
 		deps.DNSRecords = dnsRecordRepo
 		deps.SSLCerts = sslCertRepo
+		deps.MailRBLStates = mailRBLStateRepo
 		deps.BWDaily = repository.NewBWDailyRepository(sharedDB)
 		deps.DomainIPACLs = repository.NewDomainIPACLRepository(sharedDB)
 		// M35: migration importers — Step 1 wires the repo only.
@@ -743,6 +745,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			UserEgressPolicies: deps.UserEgressPolicies,
 			ServerSettings:     deps.ServerSettings,
 			Snuffleupagus:      deps.Snuffleupagus,
+			MailRBLStates:      deps.MailRBLStates,
 			BWDaily:            deps.BWDaily,
 			Domains:            deps.Domains,
 			Packages:           deps.Packages,

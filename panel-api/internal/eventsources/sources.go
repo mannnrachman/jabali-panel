@@ -52,6 +52,14 @@ type HistoryLookup interface {
 	ListRecentByEvent(ctx context.Context, kind string, since time.Time) ([]models.NotificationHistory, error)
 }
 
+
+// StalwartQueryClient is the narrow Stalwart-admin slice the M47
+// Wave 4/6/8 ingest sources need — just Query (Get / Create / Update
+// aren't needed here; the ingest is read-only).
+type StalwartQueryClient interface {
+	Query(ctx context.Context, typeName string, filters ...string) (json.RawMessage, error)
+}
+
 // Deps bundles the collaborators every source needs. Zero-valued fields
 // are legal — sources check and skip themselves when a dependency is
 // missing rather than panicking, so on a minimal install (no SSL certs
@@ -98,6 +106,15 @@ type Deps struct {
 	// both required (ServerSettings provides the public IPv4 to
 	// probe; MailRBLStates is where transitions are persisted).
 	MailRBLStates repository.MailRBLStateRepository
+
+	// M47 Wave 4/6/8 ingest sources. StalwartAdmin is the
+	// stalwart-cli subprocess wrapper; nil disables all three
+	// ingest goroutines. Each ingest also needs its own repo:
+	// DMARCAggregate / TLSRPTAggregate / ARFReports.
+	StalwartAdmin   StalwartQueryClient
+	DMARCAggregate  repository.DMARCAggregateRepository
+	TLSRPTAggregate repository.TLSRPTAggregateRepository
+	ARFReports      repository.ARFReportRepository
 }
 
 // Start boots every configured source in its own goroutine. Each
@@ -135,6 +152,9 @@ func Start(ctx context.Context, d Deps) {
 	go runExecAuditBurst(ctx, d)
 	go runBackupFail(ctx, d)
 	go runMailRBL(ctx, d)
+	go runMailDmarcIngest(ctx, d)
+	go runMailTlsRptIngest(ctx, d)
+	go runMailAbuseIngest(ctx, d)
 	// domain_expiry remains a stub — WHOIS pipeline lives outside the
 	// panel-api process today (M15 future work).
 }

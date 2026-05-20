@@ -20,6 +20,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/reconciler"
+	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/eventsources"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/sso"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ssokey"
@@ -59,6 +60,11 @@ type Deps struct {
 	// that probes the server's outbound IPv4 against a free RBL
 	// baseline and fires mail.rbl.{listed,cleared} on transitions.
 	MailRBLStates            repository.MailRBLStateRepository
+	// M47 Wave 4/6/8 ingest sources.
+	StalwartAdmin            eventsources.StalwartQueryClient
+	DMARCAggregate           repository.DMARCAggregateRepository
+	TLSRPTAggregate          repository.TLSRPTAggregateRepository
+	ARFReports               repository.ARFReportRepository
 	BWDaily                   repository.BWDailyRepository
 	DomainIPACLs              repository.DomainIPACLRepository
 	MigrationJobs             repository.MigrationJobRepository
@@ -526,6 +532,14 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// Admin: Service controls (M31). Mounts POST /admin/services/:name/:action.
 		api.RegisterAdminServicesRoutes(v1, api.AdminServicesHandlerConfig{
 			Agent: deps.Agent,
+		})
+		// M47 Wave 9 — admin Mail deliverability score card.
+		api.RegisterAdminMailDeliverabilityRoutes(v1, api.AdminMailDeliverabilityHandlerConfig{
+			MailRBLStates:   deps.MailRBLStates,
+			DMARCAggregate:  deps.DMARCAggregate,
+			TLSRPTAggregate: deps.TLSRPTAggregate,
+			ARFReports:      deps.ARFReports,
+			ServerSettings:  deps.ServerSettings,
 		})
 		// Admin: process kill (Server Status page). POST /admin/processes/:pid/kill.
 		api.RegisterAdminProcessesRoutes(v1, api.AdminProcessesHandlerConfig{

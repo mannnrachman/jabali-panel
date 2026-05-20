@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/eventsources"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/mailscan"
+	stalwartadmin "git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/stalwartadmin"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/internal/kratosclient"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/models"
 	"git.linux-hosting.co.il/shukivaknin/jabali2/panel-api/internal/notifications"
@@ -144,6 +146,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		dnsRecordRepo := repository.NewDNSRecordRepository(sharedDB)
 		sslCertRepo := repository.NewSSLCertificateRepository(sharedDB)
 		mailRBLStateRepo := repository.NewMailRBLStateRepository(sharedDB)
+		dmarcAggregateRepo := repository.NewDMARCAggregateRepository(sharedDB)
+		tlsRptAggregateRepo := repository.NewTLSRPTAggregateRepository(sharedDB)
+		arfReportRepo := repository.NewARFReportRepository(sharedDB)
 		databaseRepo := repository.NewDatabaseRepository(sharedDB)
 		databaseUserRepo := repository.NewDatabaseUserRepository(sharedDB)
 		databaseUserGrantRepo := repository.NewDatabaseUserGrantRepository(sharedDB)
@@ -255,6 +260,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.DNSRecords = dnsRecordRepo
 		deps.SSLCerts = sslCertRepo
 		deps.MailRBLStates = mailRBLStateRepo
+		deps.DMARCAggregate = dmarcAggregateRepo
+		deps.TLSRPTAggregate = tlsRptAggregateRepo
+		deps.ARFReports = arfReportRepo
+		// M47 Wave 4/6/8 ingest — stalwart-cli subprocess client.
+		// Auth via the same recovery-admin secret panel-agent uses.
+		if stalwartUser, stalwartPass, ok := readStalwartAdminCreds(); ok {
+			deps.StalwartAdmin = stalwartadmin.NewClient(stalwartUser, stalwartPass)
+		}
 		deps.BWDaily = repository.NewBWDailyRepository(sharedDB)
 		deps.DomainIPACLs = repository.NewDomainIPACLRepository(sharedDB)
 		// M35: migration importers — Step 1 wires the repo only.
@@ -781,6 +794,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 			ServerSettings:     deps.ServerSettings,
 			Snuffleupagus:      deps.Snuffleupagus,
 			MailRBLStates:      deps.MailRBLStates,
+			StalwartAdmin:      deps.StalwartAdmin,
+			DMARCAggregate:     deps.DMARCAggregate,
+			TLSRPTAggregate:    deps.TLSRPTAggregate,
+			ARFReports:         deps.ARFReports,
 			BWDaily:            deps.BWDaily,
 			Domains:            deps.Domains,
 			Packages:           deps.Packages,
@@ -979,3 +996,30 @@ func startHTTPRedirect(httpsAddr string, log interface{ Debug(string, ...any) })
 		log.Debug("HTTP→HTTPS redirect listener failed", "err", err)
 	}
 }
+
+// readStalwartAdminCreds parses STALWART_RECOVERY_ADMIN from
+// /etc/jabali-panel/stalwart.env (the same env file panel-agent's
+// mail.* commands read). Format: STALWART_RECOVERY_ADMIN=user:secret.
+// Returns ok=false when the file is missing or malformed — callers
+// should leave StalwartAdmin nil so the ingest sources skip themselves.
+func readStalwartAdminCreds() (user, password string, ok bool) {
+	data, err := os.ReadFile("/etc/jabali-panel/stalwart.env")
+	if err != nil {
+		return "", "", false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		const k = "STALWART_RECOVERY_ADMIN="
+		if !strings.HasPrefix(line, k) {
+			continue
+		}
+		rest := strings.TrimPrefix(line, k)
+		idx := strings.IndexByte(rest, ':')
+		if idx <= 0 || idx == len(rest)-1 {
+			return "", "", false
+		}
+		return rest[:idx], rest[idx+1:], true
+	}
+	return "", "", false
+}
+

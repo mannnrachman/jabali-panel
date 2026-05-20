@@ -11,11 +11,17 @@
 
 name: CI
 
+# CI runs ONLY on pull_request — push-to-main triggers were duplicating
+# every PR's check (PR branch CI runs first + passes, then merge commit
+# triggers a redundant rerun on main which Gitea then cancels when the
+# next PR lands). The PR-branch run already proves the merge will be
+# green; the redundant main-branch run cluttered the Actions page with
+# orange cancelled icons that looked like failures.
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  # Allow manual re-run from the Actions UI if needed for audit.
+  workflow_dispatch:
 
 # Concurrency group per ref keeps PR pushes from piling up stale in-flight
 # jobs on the runner (push a new version, the old run auto-cancels). BUT

@@ -274,7 +274,7 @@ func (r *domainRepo) Update(ctx context.Context, d *models.Domain) error {
 	if err := r.db.WithContext(ctx).Model(d).Where("id = ?", d.ID).Select(
 		"name", "doc_root", "is_enabled", "nginx_custom_directives",
 		"redirect_all_to", "redirect_all_type", "page_redirects",
-		"index_priority", "ssl_enabled", "updated_at",
+		"index_priority", "ssl_enabled", "is_quota_suspended", "updated_at",
 	).Updates(d).Error; err != nil {
 		return translate(err)
 	}

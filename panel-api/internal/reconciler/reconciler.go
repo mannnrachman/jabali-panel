@@ -495,6 +495,8 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 		sslCtx, sslCancel := context.WithTimeout(ctx, 2*time.Minute)
 		r.reconcileSSLForDomain(sslCtx, domain)
 		sslCancel()
+		// M47 Wave 7c — converge mta-sts vhost (idempotent diff-aware).
+		r.reconcileMTAStsForDomain(ctx, domain)
 		// Auto-bind unbound domains to their owner's pool BEFORE the
 		// agent RPC. Without this, a newly-created domain renders an
 		// nginx vhost with no "location ~ \\.php$" block and the browser

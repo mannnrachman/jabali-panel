@@ -225,6 +225,15 @@ func (f *fakeDomainRepo) UpdateMTASTSEnabled(context.Context, string, bool) (uin
 	return 0, nil
 }
 
+func (f *fakeDomainRepo) UpdateMTASTSAppliedID(ctx context.Context, id string, appliedID uint64) error {
+	d, ok := f.domains[id]
+	if !ok {
+		return &notFoundErr{}
+	}
+	d.MTASTSAppliedId = appliedID
+	return nil
+}
+
 func (f *fakeDomainRepo) UpdateDNSSECEnabled(ctx context.Context, id string, enabled bool) error {
 	d, ok := f.domains[id]
 	if !ok {

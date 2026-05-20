@@ -87,6 +87,12 @@ type DomainRepository interface {
 	// id is left intact — re-enabling later picks up a fresh id anyway,
 	// and keeping it lets ops correlate older TXT snapshots.
 	UpdateMTASTSEnabled(ctx context.Context, id string, enabled bool) (newID uint64, err error)
+	// UpdateMTASTSAppliedID records the id the agent successfully
+	// applied via mail.mtasts.apply (ADR-0109 / Wave 7c). Idempotent
+	// no-op when applied == 0 — the reconciler uses 0 only after a
+	// disable, but that path uses UpdateMTASTSEnabled(false) which
+	// doesn't touch this column on its own.
+	UpdateMTASTSAppliedID(ctx context.Context, id string, appliedID uint64) error
 	// UpdateGhostState writes the M38 ghost-detector columns
 	// (ghost_state + ghost_checked_at + ghost_detail) atomically.
 	// Dedicated method because none of the three are in Update()'s
@@ -533,6 +539,21 @@ func (r *domainRepo) UpdateMTASTSEnabled(ctx context.Context, id string, enabled
 		return 0, ErrNotFound
 	}
 	return newID, nil
+}
+
+// UpdateMTASTSAppliedID stamps the applied policy id. Called by the
+// reconciler after a successful mail.mtasts.apply (ADR-0109).
+func (r *domainRepo) UpdateMTASTSAppliedID(ctx context.Context, id string, appliedID uint64) error {
+	res := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Where("id = ?", id).
+		Update("mta_sts_applied_id", appliedID)
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (r *domainRepo) UpdateGhostState(ctx context.Context, id, state string, checkedAt time.Time, detail *string) error {

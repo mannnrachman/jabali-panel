@@ -283,6 +283,11 @@ type Domain struct {
 	// pinned to match the DNSSEC/Cache toggles.
 	MTASTSEnabled bool   `gorm:"column:mta_sts_enabled;type:tinyint(1);not null;default:0" json:"mta_sts_enabled"`
 	MTASTSId      uint64 `gorm:"column:mta_sts_id;type:bigint unsigned;not null;default:0" json:"mta_sts_id"`
+	// MTASTSAppliedId tracks the policy version last ACKed by
+	// mail.mtasts.apply (M47 Wave 7c). The reconciler dispatches the
+	// agent call whenever applied_id != MTASTSId so the vhost reload
+	// happens at most once per id rotation. Migration 000142.
+	MTASTSAppliedId uint64 `gorm:"column:mta_sts_applied_id;type:bigint unsigned;not null;default:0" json:"mta_sts_applied_id"`
 
 	// M38 Ghost Domain Detector — periodic DNS-alignment state.
 	// GhostState is one of: unchecked / ok / mismatch / nxdomain / error.

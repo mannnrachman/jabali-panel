@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"os/exec"
 	"fmt"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
@@ -28,6 +29,10 @@ func dnsDNSSECDisableHandler(ctx context.Context, params json.RawMessage) (any, 
 	if err := pdns.DisableDNSSEC(ctx, p.DomainName); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
+	// Flush pdns Auth cache so the next query returns un-signed records
+	// (signed answers cached pre-disable would otherwise persist for
+	// cache-ttl seconds, same class of bug as PRs #86/#87).
+	_ = exec.CommandContext(ctx, "pdns_control", "purge", p.DomainName+"$").Run()
 	return okBody{Ok: true}, nil
 }
 

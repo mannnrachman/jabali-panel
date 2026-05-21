@@ -168,7 +168,11 @@ server {
         add_header Cache-Control "public, immutable";
         access_log off;
     }
-    # Short-cache static HTML (60s, matches FastCGI micro-cache TTL).
+    # Short-cache static HTML (300s / 5 min). Long enough to satisfy
+    # third-party freshness audits, short enough that edits surface
+    # within minutes; ETag + Last-Modified still give instant 304
+    # revalidation on unchanged content. PHP responses use the
+    # separate FastCGI micro-cache (60s) below, not this block.
     # Without this, a domain with cache_enabled=true but a static
     # site (no PHP) responds with no Cache-Control header at all —
     # third-party caching audits (e.g. requestmetrics.com) flag
@@ -178,8 +182,8 @@ server {
     # block below (with X-Jabali-Cache header). Plain HTML hits
     # only this; it does not enable server-side caching.
     location ~* \.html?$ {
-        expires 60s;
-        add_header Cache-Control "public, max-age=60" always;
+        expires 5m;
+        add_header Cache-Control "public, max-age=300" always;
     }
 {{ end }}
 {{ if .HasPHP }}

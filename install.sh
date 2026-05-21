@@ -9726,6 +9726,14 @@ main() {
   install_php_pool_template
   build_frontend
   build_backend
+  # Re-run AppSec wiring now that build_backend produced
+  # /usr/local/bin/jabali-panel. On a FRESH install the earlier
+  # install_crowdsec_appsec call (above, pre-clone) skipped the acquis
+  # because the binary didn't exist to render the config (GH#109 fix).
+  # This second call renders the config + writes the acquis + reloads
+  # crowdsec with AppSec live. Idempotent (write-on-diff) so on a
+  # re-install where AppSec is already wired it's a cheap no-op.
+  install_crowdsec_appsec
   write_config_file
   provision_tls_cert
   bootstrap_panel_acme_webroot

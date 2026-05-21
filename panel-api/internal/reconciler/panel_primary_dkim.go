@@ -250,7 +250,15 @@ func (r *Reconciler) syncPanelPrimaryEmailDNS(ctx context.Context, domainID, sel
 			continue
 		}
 		if conflictingDNSRecord(existing, rec.Name, rec.Type) {
-			r.log.Warn("panel-primary DKIM: DNS record conflict; leaving existing user record in place",
+			// Demoted from Warn to Debug: this is the EXPECTED steady
+			// state after a user/admin edits an M6 record (managed_by
+			// flips to NULL, our reconciler should NOT stomp). Fires every
+			// tick = 60 noise lines/hr per edited record. Real "conflict"
+			// against an outside-edit-we-can't-explain hasn't happened in
+			// practice; if it ever does, the operator can spot via
+			// `journalctl -u jabali-panel -p debug --grep "DNS record
+			// conflict"` after enabling debug.
+			r.log.Debug("panel-primary DKIM: DNS record conflict; leaving existing user record in place",
 				"zone_id", zone.ID, "name", rec.Name, "type", rec.Type)
 			continue
 		}

@@ -39,6 +39,11 @@ func dnsZoneDeleteHandler(ctx context.Context, params json.RawMessage) (any, err
 	// longer if the entry stays hot). Companion fix to dns.zone.upsert
 	// (PR #86 incident: stale CNAME served 3h after edit).
 	_ = exec.CommandContext(ctx, "pdns_control", "purge", p.Zone+"$").Run()
+	// Also wipe pdns-recursor cache — its forward-cached answer
+	// will outlast the Auth purge otherwise (incident 2026-05-21:
+	// dig still returned old CNAME after panel-edit even after pdns
+	// Auth purge; recursor held the cached forward response).
+	_ = exec.CommandContext(ctx, "rec_control", "wipe-cache", p.Zone+"$").Run()
 	// NOTIFY so any slaves drop their cached copy.
 	_ = exec.CommandContext(ctx, "pdns_control", "notify", p.Zone).Run()
 	return dnsZoneDeleteResponse{Zone: p.Zone, Deleted: true}, nil

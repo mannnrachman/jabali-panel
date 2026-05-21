@@ -33,6 +33,12 @@ func dnsZoneDeleteHandler(ctx context.Context, params json.RawMessage) (any, err
 	if err := cl.DeleteZone(p.Zone); err != nil {
 		return nil, err
 	}
+	// purge <zone>$ — flush pdns Auth in-process query cache for this
+	// zone + all names under it. Without this, NXDOMAIN-after-delete
+	// returns the cached-PRE-delete answer for cache-ttl seconds (or
+	// longer if the entry stays hot). Companion fix to dns.zone.upsert
+	// (PR #86 incident: stale CNAME served 3h after edit).
+	_ = exec.CommandContext(ctx, "pdns_control", "purge", p.Zone+"$").Run()
 	// NOTIFY so any slaves drop their cached copy.
 	_ = exec.CommandContext(ctx, "pdns_control", "notify", p.Zone).Run()
 	return dnsZoneDeleteResponse{Zone: p.Zone, Deleted: true}, nil

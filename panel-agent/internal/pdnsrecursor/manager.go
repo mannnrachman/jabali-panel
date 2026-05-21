@@ -297,6 +297,14 @@ func (m *Manager) applyChange(ctx context.Context, desired map[string]Entry, zon
 		m.rollback()
 		return fmt.Errorf("rec_control reload-zones: %w", err)
 	}
+	// Wipe cached answers for the zone that just got its forwarder
+	// (re-)bound. Without this, recursor's positive cache returns the
+	// PRE-forwarder-change answer until cache-ttl evicts (same class
+	// of bug as PRs #86/#87/#88 on pdns-server). Add path only — the
+	// remove path's negative cache is short-lived (~10s default).
+	if zoneToProbe != nil && *zoneToProbe != "" {
+		_, _ = m.opts.Exec.Run(ctx, "rec_control", "wipe-cache", *zoneToProbe+"$")
+	}
 
 	// Post-probe only on add (zoneToProbe != nil). Removals need no
 	// positive signal — absent zone = successful removal.

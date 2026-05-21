@@ -98,8 +98,8 @@ func TestAddZone_FirstWrite(t *testing.T) {
 	if !changed {
 		t.Error("first AddZone should report Changed=true")
 	}
-	if len(exec.calls) != 1 || !strings.Contains(exec.calls[0], "reload-zones") {
-		t.Errorf("exec calls = %v, want one reload-zones", exec.calls)
+	if len(exec.calls) != 2 || !strings.Contains(exec.calls[0], "reload-zones") || !strings.Contains(exec.calls[1], "wipe-cache") {
+		t.Errorf("exec calls = %v, want reload-zones then wipe-cache", exec.calls)
 	}
 	if len(probe.calls) != 1 || probe.calls[0] != "example.com" {
 		t.Errorf("probe calls = %v, want [example.com]", probe.calls)

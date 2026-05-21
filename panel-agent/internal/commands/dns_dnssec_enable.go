@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"os/exec"
 	"fmt"
 
 	"git.linux-hosting.co.il/shukivaknin/jabali2/agentwire"
@@ -45,6 +46,11 @@ func dnsDNSSECEnableHandler(ctx context.Context, params json.RawMessage) (any, e
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
+	// Flush pdns Auth cache so the next query for any name in this
+	// zone reads fresh-DNSSEC-signed records from the backend. Without
+	// this, queries continue to return un-signed answers from cache
+	// until cache-ttl evicts (same class of bug as PRs #86/#87).
+	_ = exec.CommandContext(ctx, "pdns_control", "purge", p.DomainName+"$").Run()
 	out := make([]dnsDNSSECKeyOut, 0, len(keys))
 	for _, k := range keys {
 		out = append(out, dnsDNSSECKeyOut{

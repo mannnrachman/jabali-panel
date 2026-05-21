@@ -5683,9 +5683,25 @@ install_crowdsec_appsec() {
   #    convention; bouncer talks to it over loopback). Points at our
   #    jabali-appsec config (NOT virtual-patching) so the agent can
   #    inject the geoblock pre_eval hook.
+  #
+  # GATE (fresh-install ordering fix, GH discussion #109): the acquis
+  # references appsec_config: crowdsecurity/jabali-appsec. If that
+  # config wasn't written above — which happens on a FRESH install
+  # because install_crowdsec_appsec runs BEFORE clone_or_update_repo +
+  # the Go binary build, so `jabali-panel appsec render-config` can't
+  # run yet — writing the acquis makes crowdsec fail to start
+  # ("datasource of type appsec: unable to load appsec_config: no
+  # appsec-config found"), and `set -e` kills the whole installer.
+  # Skip the acquis (+ remove any stale one) when the config is
+  # absent; `jabali update` re-runs this function after the binary is
+  # built and wires AppSec then.
   local acquis_dir="/etc/crowdsec/acquis.d"
   install -d -m 0755 "$acquis_dir"
   local acquis_file="$acquis_dir/jabali-appsec.yaml"
+  if [[ ! -f "$_appsec_cfg" ]]; then
+    _warn "appsec config not present yet (binary not built — fresh install); skipping AppSec acquis. 'jabali update' will wire it after the build."
+    rm -f "$acquis_file"   # drop any stale acquis from a prior partial run
+  else
   local desired_acquis=$'# Managed by jabali install.sh — M27 AppSec geoblock.\n# TCP loopback listener. crowdsec-nginx-bouncer dials this via\n# APPSEC_URL=http://127.0.0.1:7422. Not exposed outside the host.\nappsec_config: crowdsecurity/jabali-appsec\nlabels:\n  type: appsec\nlisten_addr: 127.0.0.1:7422\nsource: appsec\n'
   if [[ ! -f "$acquis_file" ]] || ! cmp -s <(printf '%s' "$desired_acquis") "$acquis_file"; then
     _log "writing $acquis_file"
@@ -5694,6 +5710,7 @@ install_crowdsec_appsec() {
     printf '%s' "$desired_acquis" >"$tmp"
     install -m 0644 -o root -g root "$tmp" "$acquis_file"
     rm -f "$tmp"
+  fi
   fi
 
   # 5. Nginx access-log acquisition — feeds *.access.log (COMBINED format)

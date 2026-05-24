@@ -18,6 +18,24 @@ server {
   ssl_certificate ${SSL_CERT_PATH};
   ssl_certificate_key ${SSL_KEY_PATH};
 
+  # Same-origin JMAP rewrite. Bulwark's /api/config returns
+  # jmapServerUrl=https://${PANEL_HOSTNAME} (the panel-wide setting in
+  # /etc/jabali-panel/bulwark.env), and Stalwart's /.well-known/jmap
+  # Session response advertises absolute URLs at the same host. The
+  # SPA then issues cross-origin preflights from mail.<tenant>, which
+  # fail because the panel hostname's cert / DNS isn't trusted from
+  # the user's browser. Rewriting the hostname to the requested $host
+  # keeps the SPA same-origin against the per-domain mail vhost it
+  # was loaded from.
+  #
+  # sub_filter_* inherit into every location below; Accept-Encoding=""
+  # is set per-location (nginx fully replaces proxy_set_header when a
+  # lower level defines any) so neither Bulwark nor Stalwart can gzip
+  # the body — sub_filter silently no-ops on gzipped payloads.
+  sub_filter_types application/json text/html;
+  sub_filter_once off;
+  sub_filter "${PANEL_HOSTNAME}" $host;
+
   # M25 Step 5: Bulwark moved off TCP 127.0.0.1:3000 onto a Unix socket
   # at /run/jabali-bulwark/bulwark.sock. Form D upstream — declared in
   # /etc/nginx/sites-available/jabali-bulwark.conf, reused here.
@@ -37,6 +55,7 @@ server {
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Accept-Encoding "";
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
@@ -50,6 +69,7 @@ server {
   location /jmap {
     proxy_pass http://127.0.0.1:8446;
     proxy_set_header Host $host;
+    proxy_set_header Accept-Encoding "";
     proxy_http_version 1.1;
     proxy_read_timeout 3600s;
   }
@@ -57,6 +77,7 @@ server {
   location /.well-known/jmap {
     proxy_pass http://127.0.0.1:8446;
     proxy_set_header Host $host;
+    proxy_set_header Accept-Encoding "";
   }
 
   # NOTE: /api/* is deliberately NOT proxied to Stalwart. Bulwark owns

@@ -1,13 +1,13 @@
-# Stalwart Mail Server v0.16.0 SHA-256 checksum for stalwart-x86_64-unknown-linux-gnu.tar.gz
-# Source: https://github.com/stalwartlabs/stalwart/releases/tag/v0.16.0
-# Verified: PENDING — capture on first deploy and bump this file + commit.
+# Stalwart Mail Server v0.16.6 SHA-256 checksum for stalwart-x86_64-unknown-linux-gnu.tar.gz
+# Source: https://github.com/stalwartlabs/stalwart/releases/tag/v0.16.6
+# Captured 2026-05-24 directly from the GitHub release artifact.
 #
-# Stalwart v0.16.0 replaced its REST API with a JMAP management API
+# Stalwart v0.16.x replaced its REST API with a JMAP management API
 # (see ADR-0041 + plan §1). SQL directory is supported against MariaDB
 # provided filter queries match on full email addresses (see ADR-0042).
 #
-# To capture: on the first VM where install.sh runs, take the actual
-# sha256sum of the downloaded tarball and replace the placeholder line
-# below. install.sh `_die`s if the placeholder content is still in
-# place — matches the DokuWiki/MediaWiki tarball precedent.
-1be63ae7897ff8235ad7c9a6dd361f136c68f0665bda9a1e561ab0a690503b76  stalwart-x86_64-unknown-linux-gnu.tar.gz
+# To capture on a version bump:
+#   curl -sSL https://github.com/stalwartlabs/stalwart/releases/download/v<x.y.z>/stalwart-x86_64-unknown-linux-gnu.tar.gz | sha256sum
+# install.sh `_die`s if the placeholder PLACEHOLDER_CAPTURE_ON_FIRST_DEPLOY
+# survives — matches the DokuWiki/MediaWiki tarball precedent.
+d8f9e1d418777bf91089ce8cc6efee54437667394a162b6286904a3c4f5216a9  stalwart-x86_64-unknown-linux-gnu.tar.gz

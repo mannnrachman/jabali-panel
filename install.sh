@@ -7673,7 +7673,7 @@ install_notify_template() {
 #   /etc/jabali-panel/bulwark-session.key — Bulwark SESSION_SECRET (jabali-webmail:jabali-webmail, 0640)
 
 install_stalwart() {
-  local stalwart_version="0.16.0"
+  local stalwart_version="0.16.6"
   _log "installing Stalwart Mail Server (v${stalwart_version})"
 
   # Ensure service user + group exist. Supplementary group `jabali` lets
@@ -8324,7 +8324,7 @@ _install_stalwart_binary() {
 # speaks the v0.16 JMAP management API, used by install.sh bootstrap and
 # the reconciler. Idempotent against version reported by --version.
 _install_stalwart_cli() {
-  local cli_version="1.0.0"
+  local cli_version="1.0.7"
   local cli_binary="/usr/local/bin/stalwart-cli"
   local arch="x86_64-unknown-linux-gnu"
   local tarball="stalwart-cli-${arch}.tar.xz"
@@ -8460,7 +8460,7 @@ _install_spam_rules() {
 }
 
 install_bulwark() {
-  local bulwark_version="1.4.14"
+  local bulwark_version="1.7.1"
   local arch="linux-amd64"
   local tarball="bulwark-standalone-${bulwark_version}-${arch}.tar.gz"
   local url="https://github.com/bulwarkmail/webmail/releases/download/${bulwark_version}/${tarball}"

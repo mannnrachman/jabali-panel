@@ -54,7 +54,25 @@ server {
   ssl_certificate {{.SSLCertPath}};
   ssl_certificate_key {{.SSLKeyPath}};
 
-  # Intentionally no X-Forwarded-Proto on this location — Next.js
+{{ if .PanelHostname }}  # Same-origin JMAP rewrite. Bulwark's /api/config returns
+  # jmapServerUrl=https://{{.PanelHostname}} (the panel-wide setting in
+  # /etc/jabali-panel/bulwark.env), and Stalwart's /.well-known/jmap
+  # Session response advertises absolute URLs at the same host. The
+  # SPA then issues cross-origin preflights from mail.<tenant>, which
+  # fail because the panel hostname's cert / DNS isn't trusted from
+  # the user's browser. sub_filter rewrites the hostname to the
+  # requested $host so the SPA stays same-origin against the
+  # per-domain mail vhost it was loaded from.
+  #
+  # sub_filter_* inherit into every location below; Accept-Encoding=""
+  # is set per-location (nginx fully replaces proxy_set_header when a
+  # lower level defines any) so neither Bulwark nor Stalwart can gzip
+  # the body — sub_filter silently no-ops on gzipped payloads.
+  sub_filter_types application/json text/html;
+  sub_filter_once off;
+  sub_filter "{{.PanelHostname}}" $host;
+
+{{ end }}  # Intentionally no X-Forwarded-Proto on this location — Next.js
   # middleware-rewrite uses it to build internal proxy URLs, and with
   # "https" would try to TLS-connect to Bulwark's plain-HTTP upstream.
   # See the source-of-truth template in install/nginx/jabali-mail-vhost.conf.tmpl.
@@ -66,6 +84,7 @@ server {
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Accept-Encoding "";
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
@@ -76,6 +95,7 @@ server {
   location /jmap {
     proxy_pass http://127.0.0.1:8446;
     proxy_set_header Host $host;
+    proxy_set_header Accept-Encoding "";
     proxy_http_version 1.1;
     proxy_read_timeout 3600s;
   }
@@ -83,6 +103,7 @@ server {
   location /.well-known/jmap {
     proxy_pass http://127.0.0.1:8446;
     proxy_set_header Host $host;
+    proxy_set_header Accept-Encoding "";
   }
 
   # /api/* intentionally routes to Bulwark (catch-all /) — Bulwark owns
@@ -156,6 +177,13 @@ type webmailVhostApplyParams struct {
 	// SNI deterministic when the apex vhost has a specific-IP listen.
 	ListenIPv4 string `json:"listen_ipv4,omitempty"`
 	ListenIPv6 string `json:"listen_ipv6,omitempty"`
+	// PanelHostname is server_settings.hostname (e.g. mx.jabali-panel.com).
+	// When set, the rendered vhost installs an nginx sub_filter that
+	// rewrites the panel hostname to the requested $host in Bulwark
+	// /api/config and Stalwart /.well-known/jmap response bodies, so
+	// the SPA stays same-origin on mail.<tenant-domain>. Empty value
+	// disables the rewrite (fresh install / pre-bootstrap).
+	PanelHostname string `json:"panel_hostname,omitempty"`
 }
 
 type webmailVhostResponse struct {

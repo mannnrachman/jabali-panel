@@ -118,6 +118,9 @@ func (r *Reconciler) applyWebmailVhost(ctx context.Context, d *models.Domain) {
 			params["listen_ipv6"] = v6
 		}
 	}
+	if h := r.panelHostname(ctx); h != "" {
+		params["panel_hostname"] = h
+	}
 	if _, err := r.agent.Call(callCtx, "webmail.vhost_apply", params); err != nil {
 		r.log.Error("webmail reconcile: vhost_apply failed",
 			"domain_id", d.ID, "domain", d.Name, "err", err)
@@ -138,6 +141,22 @@ func (r *Reconciler) removeWebmailVhost(ctx context.Context, domainName string) 
 		r.log.Error("webmail reconcile: vhost_remove failed",
 			"domain", domainName, "err", err)
 	}
+}
+
+// panelHostname returns server_settings.hostname (e.g. mx.jabali-panel.com).
+// Empty when settings aren't wired (fresh install). Used to install an
+// nginx sub_filter that keeps the Bulwark SPA same-origin against the
+// per-domain mail vhost it was loaded from — see the rendered vhost
+// template for the why.
+func (r *Reconciler) panelHostname(ctx context.Context) string {
+	if r.serverSettings == nil {
+		return ""
+	}
+	s, err := r.serverSettings.Get(ctx)
+	if err != nil || s == nil {
+		return ""
+	}
+	return s.Hostname
 }
 
 // webmailSSLPaths returns the cert + key paths for a domain if a usable

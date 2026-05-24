@@ -57,6 +57,14 @@ case "$kind" in
     # cert and are deliberately NOT bounced here.
     systemctl reload nginx            || echo "jabali-panel-cert.sh: nginx reload failed (continuing)" >&2
     systemctl restart jabali-stalwart || echo "jabali-panel-cert.sh: jabali-stalwart restart failed (continuing)" >&2
+    # Push the renewed PEM into Stalwart's Certificate object so
+    # IMAPS / 465 / 587 serve the LE cert instead of Stalwart's rcgen
+    # self-signed fallback. Idempotent; safe to call multiple times.
+    # The script waits for Stalwart to come up after the restart above.
+    if [[ -x /usr/local/bin/jabali-stalwart-push-cert ]]; then
+      /usr/local/bin/jabali-stalwart-push-cert || \
+        echo "jabali-panel-cert.sh: jabali-stalwart-push-cert non-zero (continuing)" >&2
+    fi
     ;;
   *)
     install -m 0640 -o root -g jabali "$src/fullchain.pem" "$dst_dir/panel.crt"

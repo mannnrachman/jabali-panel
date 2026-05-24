@@ -8148,11 +8148,36 @@ _install_stalwart_apply_plan() {
   # as idempotent success; anything else is a real error (schema drift,
   # auth failure, RocksDB corruption) and we _die.
   _log "applying plan via stalwart-cli against :${jmap_port} (--continue-on-error; primaryKeyViolation on pre-existing objects is idempotent)"
+  # stalwart-cli v1.0.7 dropped the legacy JSON-array plan format and
+  # now only accepts NDJSON (one top-level object per line). The plan
+  # template stays a pretty-printed JSON array for operator
+  # readability — feed it through `jq -c '.[]'` to flatten on the way
+  # in. Without this the CLI errors out with "invalid plan NDJSON on
+  # line 1: EOF while parsing a list" and (because the parse error
+  # produces no per-operation ✗ lines) the categorizer below mistakes
+  # the failure for an idempotent re-apply and prints _ok — silently
+  # shipping an empty Stalwart config (no Directory, no listeners, no
+  # SpamSettings). Caught 2026-05-24 on testserver after the
+  # 1.0.0 → 1.0.7 bump.
+  if ! command -v jq >/dev/null; then
+    _die "jq is required to feed the apply-plan as NDJSON (stalwart-cli >=1.0.7 dropped JSON-array support)"
+  fi
   local apply_out apply_rc=0
-  apply_out="$(STALWART_URL="http://127.0.0.1:${jmap_port}" \
+  apply_out="$(jq -c '.[]' "$plan_file" | STALWART_URL="http://127.0.0.1:${jmap_port}" \
     STALWART_USER="admin" \
     STALWART_PASSWORD="$admin_token" \
-    /usr/local/bin/stalwart-cli apply --continue-on-error --file "$plan_file" 2>&1)" || apply_rc=$?
+    /usr/local/bin/stalwart-cli apply --continue-on-error --stdin 2>&1)" || apply_rc=$?
+
+  # Detect a plan-parse failure (top-level "error: invalid plan ...")
+  # that produced zero per-operation ✗ lines, otherwise the idempotent-
+  # success branch below silently masks it. The 1.0.7 NDJSON migration
+  # surfaced this gap; keep it generic so future CLI format breakage
+  # fails loud.
+  if (( apply_rc != 0 )) && printf '%s\n' "$apply_out" | grep -qE '^error: (invalid plan|failed to parse)'; then
+    _err "stalwart-cli rejected the plan before any operation ran:"
+    printf '%s\n' "$apply_out" | grep -E '^error:' >&2
+    _die "Stalwart apply plan parse failed (CLI format change?)"
+  fi
 
   # Print the CLI's summary to the install log so operators can see what
   # was created vs already-existed in a single line. Trim to last 20

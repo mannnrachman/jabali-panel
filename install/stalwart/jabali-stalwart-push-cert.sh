@@ -95,27 +95,25 @@ fi
 cert_pem_json="$(jq -Rs . <"$CERT_PATH")"
 key_pem_json="$(jq -Rs . <"$KEY_PATH")"
 
-plan_file="$(mktemp -t jabali-stalwart-cert-plan.XXXXXX.json)"
+# stalwart-cli v1.0.7 dropped JSON-array plans and now only accepts
+# NDJSON (one top-level object per line). Emit the single create op
+# directly on one line + feed via --stdin.
+plan_file="$(mktemp -t jabali-stalwart-cert-plan.XXXXXX.ndjson)"
 trap 'rm -f "$plan_file"' EXIT
-cat >"$plan_file" <<EOF
-[
-  {
-    "@type": "create",
-    "object": "x:Certificate",
-    "value": {
-      "$CERT_NAME": {
-        "certificate": $cert_pem_json,
-        "privateKey": $key_pem_json
-      }
-    }
-  }
-]
-EOF
+jq -nc --arg name "$CERT_NAME" --argjson cert "$cert_pem_json" --argjson key "$key_pem_json" \
+  '{"@type":"create","object":"x:Certificate","value":{($name):{"certificate":$cert,"privateKey":$key}}}' \
+  >"$plan_file"
 
-STALWART_URL="$STW_URL" STALWART_USER="$admin_user" STALWART_PASSWORD="$admin_pass" \
-  "$STW_CLI" apply --continue-on-error --file "$plan_file" >/dev/null 2>&1 || {
-    log "stalwart-cli apply failed — Stalwart will keep serving the previous cert"
-    exit 0
-  }
+push_out="$(STALWART_URL="$STW_URL" STALWART_USER="$admin_user" STALWART_PASSWORD="$admin_pass" \
+  "$STW_CLI" apply --continue-on-error --stdin <"$plan_file" 2>&1)"
+push_rc=$?
+# Treat a re-push of the same certificate name as success (Certificate.name
+# is the primary key; primaryKeyViolation == cert already exists). Anything
+# else (auth, parse, RocksDB) is a real failure — surface it.
+if (( push_rc != 0 )) && ! printf '%s\n' "$push_out" | grep -q 'primaryKeyViolation'; then
+  log "stalwart-cli apply failed — Stalwart will keep serving the previous cert"
+  printf '%s\n' "$push_out" | head -5 >&2
+  exit 0
+fi
 
 log "pushed Stalwart Certificate '$CERT_NAME' from $CERT_PATH ($(stat -c %Y "$CERT_PATH" | xargs -I{} date -d @{} -Iseconds))"

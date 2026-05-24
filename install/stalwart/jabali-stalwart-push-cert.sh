@@ -100,8 +100,17 @@ key_pem_json="$(jq -Rs . <"$KEY_PATH")"
 # directly on one line + feed via --stdin.
 plan_file="$(mktemp -t jabali-stalwart-cert-plan.XXXXXX.ndjson)"
 trap 'rm -f "$plan_file"' EXIT
+# Stalwart's Certificate schema types `certificate` as object<PublicText>
+# and `privateKey` as object<SecretText> — both are tagged-enum wrappers,
+# NOT bare PEM strings. A raw string is rejected with
+#   invalidPatch | Missing or invalid '@type' property in object
+# (caught 2026-05-24 on testserver; same scar as the M6 wt-c JMAP
+# `Manual` regression — schema property KINDS matter, not just names).
 jq -nc --arg name "$CERT_NAME" --argjson cert "$cert_pem_json" --argjson key "$key_pem_json" \
-  '{"@type":"create","object":"x:Certificate","value":{($name):{"certificate":$cert,"privateKey":$key}}}' \
+  '{"@type":"create","object":"x:Certificate","value":{($name):{
+      "certificate":{"@type":"PublicText","value":$cert},
+      "privateKey":{"@type":"SecretText","value":$key}
+   }}}' \
   >"$plan_file"
 
 push_out="$(STALWART_URL="$STW_URL" STALWART_USER="$admin_user" STALWART_PASSWORD="$admin_pass" \

@@ -5547,6 +5547,18 @@ install_crowdsec_appsec() {
   # (the upstream crowdsec-nginx-bouncer package). Every vhost gets
   # AppSec evaluation automatically — no per-vhost snippet required.
   _log "configuring CrowdSec AppSec (server-wide geoblock rule)"
+  # Path to the appsec-CONFIG referenced by the acquis written below.
+  # install_crowdsec() declared the same path as a `local` on line 5410,
+  # which is function-scoped and invisible from here — referencing it
+  # under `set -u` aborted the installer at line 5701 (the [[ -f $cfg ]]
+  # presence-gate added by the GH#109 "appsec-before-binary" fix). The
+  # gate is load-bearing on a fresh install (it runs before
+  # clone_or_update_repo + build_backend, so the binary that renders
+  # this config does not exist yet); the variable just needs to be
+  # re-declared in this scope so set -u doesn't kill us before the
+  # gate can fire.
+  local _appsec_cfg="/etc/crowdsec/appsec-configs/jabali-appsec.yaml"
+
   # Flat rules dir — fixed 2026-05-20. Stale crowdsecurity/ subdir
   # path made every `jabali update` purge+reinstall 170 vpatch rules.
   local _appsec_rules_dir="/etc/crowdsec/appsec-rules"

@@ -275,3 +275,54 @@ func TestWebmailVhostRemove_NoopWhenAbsent(t *testing.T) {
 		t.Errorf("nginx reload must NOT fire for no-op remove, got %d", cap.calls)
 	}
 }
+
+func TestWebmailVhostApply_PanelHostnameEmitsSubFilter(t *testing.T) {
+	avail, _ := wireMailVhostPaths(t)
+	wireNginxReload(t)
+
+	params, _ := json.Marshal(webmailVhostApplyParams{
+		DomainName:    "example.com",
+		SSLCertPath:   "/etc/letsencrypt/live/example.com/fullchain.pem",
+		SSLKeyPath:    "/etc/letsencrypt/live/example.com/privkey.pem",
+		PanelHostname: "mx.jabali-panel.com",
+	})
+	if _, err := webmailVhostApplyHandler(context.Background(), params); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(avail, "example.com-mail.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{
+		`sub_filter "mx.jabali-panel.com" $host;`,
+		`sub_filter_types application/json text/html;`,
+		`sub_filter_once off;`,
+		`proxy_set_header Accept-Encoding "";`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("vhost missing %q\nrendered:\n%s", want, s)
+		}
+	}
+}
+
+func TestWebmailVhostApply_EmptyPanelHostnameOmitsSubFilter(t *testing.T) {
+	avail, _ := wireMailVhostPaths(t)
+	wireNginxReload(t)
+
+	params, _ := json.Marshal(webmailVhostApplyParams{
+		DomainName:  "example.com",
+		SSLCertPath: "/etc/letsencrypt/live/example.com/fullchain.pem",
+		SSLKeyPath:  "/etc/letsencrypt/live/example.com/privkey.pem",
+	})
+	if _, err := webmailVhostApplyHandler(context.Background(), params); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(avail, "example.com-mail.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "sub_filter ") {
+		t.Errorf("sub_filter must NOT be emitted when PanelHostname is empty:\n%s", string(b))
+	}
+}

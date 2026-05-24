@@ -7914,6 +7914,16 @@ install_stalwart_apply() {
   _install_stalwart_apply_plan "$stalwart_apply_plan" "$stalwart_admin_token"
   _ok "jabali-stalwart.service started + plan applied"
 
+  # Push the panel-mail LE cert into Stalwart so IMAPS/SMTP submission
+  # serve a browser-trusted cert instead of Stalwart's rcgen
+  # self-signed fallback (CN=rcgen self signed cert, SAN=localhost).
+  # No-op when the cert isn't on disk yet (fresh install before the
+  # ACME hook has run) — the deploy-hook re-runs this on first issue.
+  if [[ -x /usr/local/bin/jabali-stalwart-push-cert ]]; then
+    /usr/local/bin/jabali-stalwart-push-cert || \
+      _warn "jabali-stalwart-push-cert returned non-zero (continuing — deploy-hook will retry)"
+  fi
+
   # M25 Step 7 verification: post-apply, Stalwart's localhost-only
   # listeners (admin-http on 8080, JMAP on 8446, internal/training on
   # 18181) MUST NOT be bound to 0.0.0.0 or [::]. The public listeners
@@ -8381,6 +8391,19 @@ _install_stalwart_cli() {
   install -m 0755 -o root -g root "$bin_in_tar" "$cli_binary"
   rm -rf "$new_dir"
   _ok "stalwart-cli $cli_version installed at $cli_binary"
+
+  # Companion script that uses stalwart-cli to push the panel-mail LE
+  # cert into Stalwart's Certificate object. Called by install.sh after
+  # apply-plan AND by install/letsencrypt/jabali-panel-cert.sh on every
+  # renewal of the mail.<panel-hostname> lineage.
+  local push_src="${REPO_DIR}/install/stalwart/jabali-stalwart-push-cert.sh"
+  local push_dst="/usr/local/bin/jabali-stalwart-push-cert"
+  if [[ -f "$push_src" ]]; then
+    install -m 0755 -o root -g root "$push_src" "$push_dst"
+    _ok "jabali-stalwart-push-cert installed at $push_dst"
+  else
+    _warn "$push_src missing — Stalwart will keep serving its rcgen self-signed cert"
+  fi
 }
 
 # _install_spam_rules vendors the Stalwart spam-filter rules bundle into

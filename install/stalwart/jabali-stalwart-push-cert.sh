@@ -101,15 +101,23 @@ key_pem_json="$(jq -Rs . <"$KEY_PATH")"
 plan_file="$(mktemp -t jabali-stalwart-cert-plan.XXXXXX.ndjson)"
 trap 'rm -f "$plan_file"' EXIT
 # Stalwart's Certificate schema types `certificate` as object<PublicText>
-# and `privateKey` as object<SecretText> — both are tagged-enum wrappers,
-# NOT bare PEM strings. A raw string is rejected with
+# and `privateKey` as object<SecretText> — both are tagged-enum wrappers.
+# A raw PEM string is rejected with
 #   invalidPatch | Missing or invalid '@type' property in object
-# (caught 2026-05-24 on testserver; same scar as the M6 wt-c JMAP
-# `Manual` regression — schema property KINDS matter, not just names).
+# Both variants share @type "Text" (NOT "PublicText" / "SecretText" as
+# the schema label might suggest) — Stalwart distinguishes the two by
+# the INNER field name:
+#   PublicText: {"@type":"Text","value":"<PEM>"}
+#   SecretText: {"@type":"Text","secret":"<PEM>"}   <-- note: secret, not value
+# Probed empirically against stalwart-cli 1.0.7 + Stalwart 0.16.6 on
+# 2026-05-24. Same scar pattern as the M6 wt-c JMAP `Manual` regression
+# (feedback_schema_enumerate_kinds_not_names.md) — schema property
+# KINDS matter, and inner field names are NOT uniform across
+# tagged-enum variants of the same @type.
 jq -nc --arg name "$CERT_NAME" --argjson cert "$cert_pem_json" --argjson key "$key_pem_json" \
   '{"@type":"create","object":"x:Certificate","value":{($name):{
-      "certificate":{"@type":"PublicText","value":$cert},
-      "privateKey":{"@type":"SecretText","value":$key}
+      "certificate":{"@type":"Text","value":$cert},
+      "privateKey":{"@type":"Text","secret":$key}
    }}}' \
   >"$plan_file"
 

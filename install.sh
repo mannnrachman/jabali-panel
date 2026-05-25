@@ -5910,7 +5910,17 @@ API_URL=http://127.0.0.1:8081/
 API_KEY=$api_key
 USE_TLS_AUTH=false
 CACHE_EXPIRATION=1
-BOUNCING_ON_TYPE=all
+# Enforce ONLY active remediation types. "all" causes the bouncer to
+# treat ANY decision present for an IP (including type=whitelist) as
+# grounds for the fallback remediation (ban) — every operator-issued
+# `cscli decisions add --type whitelist` then BLOCKS the IP instead of
+# allowing it. Reproduced 2026-05-25 on testserver: whitelisting an
+# admin's home IP returned HTTP 403 CrowdSec Ban on every request until
+# this value was narrowed. Per upstream
+# https://docs.crowdsec.net/u/bouncers/nginx#bouncing_on_type the
+# correct enforce list is ban + captcha; whitelist is an allow-list
+# signal consumed by parsers/scenarios, never an enforcement type.
+BOUNCING_ON_TYPE=ban,captcha
 FALLBACK_REMEDIATION=ban
 REQUEST_TIMEOUT=3000
 UPDATE_FREQUENCY=10

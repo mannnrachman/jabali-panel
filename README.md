@@ -1,96 +1,416 @@
-# Jabali Panel (jabali2)
+<p align="center">
+  <img src="panel-ui/public/images/jabali_logo.svg" alt="Jabali Panel" width="140">
+</p>
+<h1 align="center">Jabali Panel</h1>
 
-Greenfield rewrite of Jabali Panel — a web hosting control panel for WordPress
-and PHP hosting. React (Refine + Ant Design) frontend + Go (Gin) backend,
-privileged root ops off-loaded to a separate agent over a Unix socket.
+<p align="center">
+  <img src="https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white" alt="Go 1.25">
+  <img src="https://img.shields.io/badge/Gin-HTTP-009688?logo=gin&logoColor=white" alt="Gin">
+  <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" alt="React 19">
+  <img src="https://img.shields.io/badge/Ant_Design-5-0170FE?logo=antdesign&logoColor=white" alt="Ant Design 5">
+  <img src="https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white" alt="Vite 5">
+  <img src="https://img.shields.io/badge/MariaDB-11-003545?logo=mariadb&logoColor=white" alt="MariaDB 11">
+  <img src="https://img.shields.io/badge/License-AGPL--3.0-blue" alt="AGPL-3.0">
+  <img src="https://img.shields.io/badge/Debian-13-A81D33?logo=debian&logoColor=white" alt="Debian 13">
+</p>
 
-See [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) for the full feature map and
-[`docs/adr/`](docs/adr/) for architectural decision records.
+A modern web hosting control panel for WordPress and general PHP hosting,
+rewritten end-to-end in Go + React. Jabali focuses on clean multi-tenant
+isolation, safe automation, and a consistent admin/user experience. A single
+Go process serves the panel API and the embedded SPA; a separate root-owned
+agent receives privileged operations over a Unix socket (no panel process
+ever runs as root). State lives in MariaDB as the single source of truth; an
+in-process reconciler converges host config to match the DB on every tick,
+so the box self-heals after restart, crash, or restore.
 
-## Status
+This is a release candidate. Expect rapid iteration and breaking changes
+until 1.0.
 
-**Phase 2 — Domain lifecycle + Auth enhancements + SSL.** Shipped milestones
-(as of 2026-04-17):
+## Demo and Website
 
-- **M1:** Foundations (auth, users, hosting packages)
-- **M2:** Domain lifecycle (CRUD, nginx vhosts, redirects, custom rules)
-- **M3:** Server settings (hostname, nameservers, public IPs)
-- **M4:** DNS zones + records + secondary NS (PowerDNS integration)
-- **M5:** SSL / Let's Encrypt (try-ACME-first, self-signed fallback, exponential backoff retry)
-- **M5a:** Admin impersonation (one-shot login URL in a new tab)
-- **M5b:** Break-glass CLI login (`jabali-panel admin login` / `user login`)
+- Website: https://jabali-panel.com/
+- Demo: https://jabali-panel.com/demo/
 
-See [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) for the full roadmap.
+## Installation
 
-## Layout
+One-line install on a fresh Debian 13 box:
 
 ```
-jabali2/
+curl -fsSL https://raw.githubusercontent.com/shukiv/jabali-panel/main/install.sh | sudo bash
+```
+
+The installer fetches Go 1.25, builds the panel + agent binaries, builds the
+SPA with Vite, writes systemd units, provisions MariaDB + Redis + PowerDNS +
+Stalwart + Bulwark + CrowdSec, and smoke-tests `/health`. Idempotent — re-run
+to upgrade.
+
+Optional flags:
+
+- `--debug` show full output instead of spinner
+- `--hostname <fqdn>` override auto-detected hostname
+- `JABALI_HOSTNAME=<fqdn>` env-var equivalent for unattended installs
+
+Uninstall (rolls back system packages, optionally keeps `/home`):
+
+```
+curl -fsSL https://raw.githubusercontent.com/shukiv/jabali-panel/main/install.sh | sudo bash -s -- --uninstall
+```
+
+After install:
+
+- Admin panel: `https://your-host:8443/jabali-admin`
+- User panel: `https://your-host:8443/jabali-panel`
+- Webmail: `https://mail.your-domain/`
+
+The panel API listens on a Unix socket; nginx terminates TLS on `:8443` and
+proxies upstream. If nginx goes down, the panel and agent stay running so
+operators can recover via `jabali` CLI without losing in-flight state.
+
+## Highlights
+
+- Per-user Linux accounts with per-user PHP-FPM master + cgroup v2 + POSIX quota
+- SSH shell access via nspawn containers with auto-start and idle timeout
+- Root agent for SSL, mail, DNS, backups, migrations — fronted by a typed
+  NDJSON RPC contract over `/run/jabali-agent/agent.sock` (no shelling out
+  from the panel)
+- DB-as-truth model: a 60s reconciler reads the panel DB and converges nginx
+  vhosts, PHP pools, mailboxes, DKIM, DNS, SSL, mta-sts, and per-user limits
+- cPanel and WHM migrations (analyse → fix-perms → validate → restore) with
+  preserved MySQL users + password hashes
+- IMAP sync for migrating mail from external servers
+- Stalwart Mail Server with browser-trusted IMAPS/465/587 (LE cert pushed
+  into Stalwart Certificate object) and self-deleting SSO file (Installatron
+  pattern) for one-click webmail
+- Per-mailbox forwarders, autoresponders, shared folders, disclaimers
+- Bulwark (Next.js JMAP) webmail with same-origin per-tenant routing
+  (nginx `sub_filter` rewrites panel hostname → `$host` so the SPA stays
+  same-origin on `mail.<tenant>`)
+- PowerDNS authoritative + recursor with native DNSSEC (per-domain toggle)
+- Per-domain listen-IP binding (M24 IP Manager) with reserved-word-safe
+  migrations against MariaDB 11.x
+- Per-domain opt-in nginx FastCGI micro-cache with safe-bypass for cart /
+  admin / authenticated cookies
+- Restic backups (account_full + system_backup) with encryption, dedup,
+  SFTP / S3 destinations, scheduled + on-demand
+- WordPress 1-click install / delete / clone (M10) — 15-app catalogue (M19)
+  incl. Moodle / Joomla / NextCloud / OpenCart / Mautic / Drupal
+- Per-user resource limits: cgroups v2 slice drop-in, nginx limit_req,
+  POSIX quota — admin toggleable, reconciler-converged
+- Integrated security suite: CrowdSec parsers + AppSec WAF + per-user
+  egress firewall (nftables + cgroupv2-vmap) + ModSecurity replaced by
+  CrowdSec AppSec (ADR-0060) + LMD + ClamAV-on-demand + YARA + Tetragon
+  for malware detection + jabali quarantine + M14 notifications dispatch
+- 6-channel notifications: Discord, ntfy, Web Push (VAPID), SMS,
+  Email, Webhook, Slack, in-app bell — 4 event sources incl. cert renew,
+  disk full, service down, CrowdSec spike
+- One-time login tokens (CLI + dashboard) with IP binding
+- Magic-link-free SSO between panel and webmail (no Hydra / OIDC overhead —
+  ADR-0040 supersedes the M16 Hydra rollback)
+- Audit logs, account activity feed, encrypted diagnostic-log sharing to
+  support, in-app updates + support tabs
+
+## Feature Map
+
+### Admin Panel
+
+- Dashboard with stats, health, recent activity, notifications bell
+- User management with suspension, packages, quotas, impersonation
+- Server settings (hostname, nameservers, public IPs, panel cert)
+- Service manager for systemd services + start/stop/restart
+- PHP version and per-user pool management (server-wide extensions tab)
+- DNS zones, templates, DNSSEC, secondary NS
+- SSL issuance and renewals (panel cert + per-domain)
+- IP address assignments (managed IP pool, per-domain bind)
+- Backups: account_full + system_backup, local + remote (SFTP/S3),
+  schedules, encrypted destinations
+- Migrations (cPanel restore, WHM downloads, IMAP sync)
+- Security: CrowdSec allowlists / alerts / console / captcha + UFW + AppSec
+  geoblock + per-user egress firewall + malware quarantine
+- Updates + Support tabs: live `jabali update` with transient systemd units,
+  enclosed-encrypted diagnostic sharing to webmaster
+- Server status (CPU / mem / disk / queues / 5s polling)
+- Database admin ops (curated tuner, root password, processlist,
+  pmaAdmin SSO)
+- Email queue, throttles, MTA-STS, outbound reports
+- Audit logs, notifications dispatcher, jabali-isolator events
+- Notification channel admin (test-send, scopes, throttles)
+
+### User Panel
+
+- Domains, redirects, custom nginx rules, listen-IP, FastCGI micro-cache
+- DNS records editor with conflict detection (CNAME exclusivity per
+  RFC 1034 §3.6.2) and dedup
+- Mail: domains, mailboxes, forwarders, autoresponders, catch-all,
+  disclaimers (HTML), shared folders, mail logs
+- IMAP sync (single + bulk)
+- Webmail SSO (Bulwark, Next.js JMAP)
+- WordPress (install, update, scan, SSO) + 14 other 1-click apps
+- File manager (AntD-native) + SFTP + SSH keys
+- SSH shell access via nspawn containers (idle timeout)
+- Databases (MariaDB + Postgres in tabbed view) with phpMyAdmin SSO
+- PHP settings per account
+- SSL management
+- Cron jobs (systemd-user timers + allowlist)
+- Backups + restore (account_full)
+- Logs, statistics, bandwidth usage (daily nginx-log sync)
+- Support access link generator (one-time IP-bound tokens)
+- Notification preferences (Discord, ntfy, Web Push, SMS, Email)
+
+### Platform
+
+- Root-level agent (`panel-agent`) with typed NDJSON RPC handler registry
+- Reconciler (60s tick) converges domain.create / SSL / DKIM / vhosts /
+  PHP pools / nginx rate-limits / mailboxes / mtasts / ssh keys / cron
+- Job queue: async backup + migration steps + WordPress install
+- Health monitor with notification dispatch on service down / cert near-
+  expiry / disk-full / CrowdSec spike / queue depth
+- Redis (Unix socket, ACL-scoped) for cache, sessions, notifications
+  dispatcher streams
+- Per-domain opt-in FastCGI micro-cache + manual purge
+- Multi-language UI (en default; i18n harness ready)
+
+## Architecture
+
+- **Control plane**: Go binary `panel-api` (Gin) listening on
+  `/run/jabali-panel/api.sock`. Embeds the SPA and serves it from `/`
+- **Data plane**: Go binary `panel-agent` running as root, listening on
+  `/run/jabali-agent/agent.sock` (0660, group `jabali`). Typed NDJSON RPC
+  registry — every privileged op (nginx reload, certbot, systemctl,
+  mysql DDL, file ops) is a named handler the panel calls by name. No
+  shelling out from the panel itself
+- **State plane**: MariaDB `jabali_panel` (single DB, single writer = panel-
+  api). Reconciler reads the DB every 60s and converges the host
+- **Job plane**: Redis Streams dispatcher (notifications, backups, mail-
+  scan)
+- **Frontend**: React 19 + Ant Design 5 + TanStack Query, built by Vite,
+  served from the Go binary's embedded FS — single deploy unit, no Node
+  runtime on the host
+- **Webmail**: Bulwark (Next.js JMAP) at `/opt/jabali-webmail`, served on
+  `mail.<tenant>` per-domain via nginx → Unix socket
+- **SSH shell**: nspawn containers (debian-13-v1 image) for SSH access
+  isolation; jabali-isolator handles container lifecycle
+- **Security**: CrowdSec parsers + AppSec (nginx-bouncer Lua, WAF) +
+  per-user egress firewall (nftables + cgroupv2-vmap, ADR-0084) + LMD +
+  ClamAV-on-demand + YARA + Tetragon
+- **Logging**: structured JSON via slog; nginx access logs feed CrowdSec
+- **Server metrics**: live `/proc` reads, no Prometheus exporter dependency
+
+Service stack (single-node default):
+
+- **panel-api** (Go, Unix socket, embedded SPA)
+- **panel-agent** (Go, Unix socket, root)
+- **nginx** (TLS terminator on `:8443`, user vhosts on `:80`/`:443`,
+  per-domain mail vhost on `:443`, FastCGI cache keyzone shared, AppSec
+  bouncer Lua)
+- **MariaDB** (Unix socket only — `skip-networking`)
+- **Redis** (Unix socket, mode 0660, group `jabali-sockets`)
+- **PowerDNS authoritative** (split-port :5300, MySQL backend) +
+  **pdns-recursor** (loopback :53, resolver chain)
+- **Stalwart Mail Server** (SMTP / IMAP / 465 / 587 / 993 / JMAP /
+  ManageSieve, LE-cert pushed into Certificate object)
+- **Bulwark** (Next.js JMAP webmail, Unix socket, served per-tenant)
+- **Kratos** (Unix socket admin + public, sole auth source — M20)
+- **CrowdSec** (LAPI socket + AppSec :7422 + nginx-bouncer Lua)
+- **Restic** (encrypted, dedup, backup destinations)
+- **jabali-isolator** (nspawn container lifecycle)
+- **systemd-user** (cron jobs as user-scope timers)
+
+## Requirements
+
+- Fresh Debian 13 install (no pre-existing web or mail stack)
+- 2 GB RAM minimum (4+ recommended; small VM gets auto-swap during build)
+- A domain for panel + mail (with glue records if hosting DNS)
+- PTR (reverse DNS) for mail hostname
+- Open ports: 22, 80, 443, 8443, 25, 465, 587, 993, 995, 53
+
+## Security Hardening
+
+See [`docs/adr/`](docs/adr/) for the full architectural-decision record
+(110+ ADRs covering every load-bearing design choice). Highlights:
+
+### Environment Variables
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `JABALI_HOSTNAME` | Override auto-detected panel hostname during install | (auto) |
+| `JABALI_PANEL_BIND` | Override panel-api listen socket | `/run/jabali-panel/api.sock` |
+| `JABALI_AGENT_SOCKET` | Override agent RPC socket | `/run/jabali-agent/agent.sock` |
+| `JABALI_TEST_DATABASE_URL` | Real MariaDB DSN for integration tests | (unset) |
+| `JABALI_LOG_LEVEL` | Slog level (debug / info / warn / error) | `info` |
+| `TLS_CERT` / `TLS_KEY` | Cleaned from panel.env on update — nginx terminates | (auto-cleaned) |
+
+### Key Security Features
+
+- Panel never runs as root. Every privileged op crosses the agent Unix
+  socket as a typed RPC call; agent verifies caller via `SO_PEERCRED`
+- Shell arguments validated + escaped per-handler (no `sh -c $arg`
+  patterns); domain names validated against `validateDomainNameForShell`
+- DKIM private keys + SSO tokens + mailbox plaintexts encrypted at rest
+  via AES-GCM with a per-host SSO key (`/etc/jabali-panel/sso.key`)
+- One-time admin SSO tokens are 256-bit, single-use, 5-minute TTL,
+  reaped every 30s by systemd timer (ADR-0040 webmail SSO file pattern)
+- Stalwart Certificate object pushed from LE-renewed cert on each
+  certbot deploy-hook — IMAPS / 465 / 587 always serve browser-trusted
+  cert (no rcgen self-signed fallback)
+- CrowdSec AppSec WAF + per-user egress firewall (cgroupv2-vmap, ADR-0084)
+- Self-healing reconciler — config drift on disk is reverted on next
+  tick; operator hand-edits to nginx vhosts are lost-by-design
+- CSP, HSTS, SameSite cookies, X-Forwarded-Proto handled by nginx
+- Migrations are schema-only (no app-populated tables seeded by SQL)
+- Audit log on every admin write + impersonation start/stop
+- Pre-commit + CI gates: `go vet`, `go test -race ./...`, `npx tsc -b`,
+  `bash -n install.sh`, Playwright E2E, AppSec geoblock golden tests
+
+## Updates
+
+Update the panel (code, dependencies, DB migrations, infrastructure):
+
+```
+jabali update
+```
+
+This pulls the latest code, rebuilds the panel + agent binaries, rebuilds
+the SPA, applies golang-migrate migrations, syncs nginx vhosts + systemd
+units + PHP config + CrowdSec acquis, and restarts the panel + agent.
+Safe to run on a live server — the reconciler tolerates a brief panel
+restart and converges state on the next tick.
+
+Self-heal a broken install (7 detectors, --diagnose default,
+--auto safe, --all --yes destructive):
+
+```
+jabali repair --diagnose       # report only
+jabali repair --auto           # fix safe issues
+jabali repair --all --yes      # destructive recovery
+```
+
+## CLI
+
+The `jabali` command uses a noun:verb pattern. All commands support
+`--json` for machine-readable output and `--yes` to skip confirmations.
+
+```
+jabali user        list|create|delete|show|password|suspend|unsuspend|admin
+jabali domain      list|create|delete|show|enable|disable|email-enable|email-disable
+jabali db          list|create|delete|users|user-create|user-delete|tune|root-password
+jabali mailbox     list|create|delete|passwd|set-quota|forwarder|autoresponder|shares
+jabali ssl         list|status|check|issue|renew|panel|panel-issue
+jabali dns         list|records|add|delete-record|sync|dnssec-enable|dnssec-disable
+jabali backup      list|create|delete|info|restore|password|destinations|schedules
+jabali cron        list|create|delete|toggle|run
+jabali php         list|install|uninstall|default|extensions
+jabali service     list|status|start|stop|restart|enable|disable
+jabali system      info|status|disk|memory|hostname|kill
+jabali wp          list|install|delete|update|scan|import
+jabali agent       ping|status|restart|log
+jabali cpanel      analyze|restore|fix-permissions
+jabali login       token [--user=] [--ttl=15] [--panel=]
+jabali logs        share [--raw] [--ttl=86400]
+jabali ufw         migrate-ip-bans            # M43 CrowdSec single IP-trust
+jabali repair      --diagnose|--auto|--all
+jabali panel-primary set|show                 # ADR-0048 primary mail domain
+jabali nspawn      list|build|update|delete
+jabali malware-purge                          # M33 retention sweep
+jabali update      [--force]
+```
+
+See [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) for the full repo-wide
+patterns (route families, SearchableTable, Drawer-for-CRUD, list envelope,
+rate limits) and [`docs/adr/`](docs/adr/) for every load-bearing decision.
+
+## Development
+
+```
+make build              # compile panel-api + panel-agent
+make run                # run panel-api (dev, embedded SPA)
+make test               # all Go tests, race detector on
+make test-coverage      # coverage report (internal packages)
+make test-integration   # needs JABALI_TEST_DATABASE_URL + real MariaDB
+make coverage-check     # fail if combined coverage < 80%
+make lint               # golangci-lint v2
+make fmt                # go fmt + vet
+```
+
+Frontend dev (from `panel-ui/`):
+
+```
+npm install
+npm run dev             # Vite on http://localhost:5173
+                        # proxies /api and /health to 127.0.0.1:8443
+```
+
+E2E (from `panel-ui/`):
+
+```
+npm run test:e2e        # Playwright against the dev server
+```
+
+See [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) for the full feature
+development workflow (research → plan → TDD → review → ship).
+
+### Versioning
+
+The version string lives in `VERSION` (read at build time and exposed
+via `/health`). When the installer clones the repo for a fresh install,
+it reads `VERSION` to display the installed version. Always bump `VERSION`
+in the same commit as the corresponding `install.sh` changes — drift
+shows up as a mismatched footer and installer banner.
+
+## Repository Layout
+
+```
+jabali-panel/
 ├── panel-api/          # Go HTTP server (Gin) + reconciler + agent RPC client
 │   ├── cmd/server/     # main entry
 │   ├── internal/       # api/, auth/, repository/, reconciler/, config/, ...
-│   └── migrations/     # golang-migrate SQL
-├── panel-agent/        # Go binary running as root; handler registry for privileged ops
+│   └── migrations/     # golang-migrate SQL (000xxx_*.up/.down.sql)
+├── panel-agent/        # Go binary running as root; typed NDJSON RPC handlers
 │   ├── cmd/jabali-agent/
 │   └── internal/commands/
-├── panel-ui/           # React SPA (Refine + Ant Design + TanStack Query)
+├── panel-ui/           # React SPA (AntD + TanStack Query)
 │   ├── src/            # shells/, components/, theme/, pages/, ...
 │   └── public/
-├── agentwire/          # NDJSON RPC types shared by panel-api and panel-agent
-├── docs/               # BLUEPRINT + ADRs + runbooks
-├── install.sh          # single-supported install path (curl | bash)
-├── config.example.toml # reference config (copy to /etc/jabali/config.toml)
-├── .env.example        # env var reference (overrides config.toml)
+├── agentwire/          # NDJSON RPC types shared by panel-api + panel-agent
+├── internal/           # shared Go libs (cronvalidate, dbtuning, phpext, ...)
+├── install/            # install.sh assets (nginx tmpl, stalwart plan,
+│                       # letsencrypt deploy hooks, bulwark env, ...)
+├── docs/               # CONVENTIONS, BLUEPRINT, adr/, runbooks/, KNOWN_ISSUES
+├── plans/              # per-milestone implementation blueprints
+├── .gitea/workflows/   # CI (Go + vitest + E2E)
+├── install.sh          # single-supported install path (curl | sudo bash)
+├── config.example.toml # reference config (copied to /etc/jabali-panel/)
 ├── Makefile            # build / test / lint targets
 └── go.mod              # Go workspace root
 ```
 
-## One-line install (fresh Debian 13 / Ubuntu 24.04 server)
+## License
 
-```bash
-curl -fsSL https://git.linux-hosting.co.il/shukivaknin/jabali2/raw/branch/main/install.sh | bash
-```
+AGPL-3.0 — see [LICENSE](LICENSE).
 
-Installs Go 1.25, creates a `jabali` service user, builds the binaries, writes
-systemd units, starts them, and smoke-tests `/health`. Idempotent — re-run to
-upgrade.
+## Mail Subdomain
 
-## Dev quickstart
+Visiting `mail.<your-domain>` in a browser routes to webmail (Bulwark) via
+the per-domain nginx vhost. The vhost installs an nginx `sub_filter` that
+rewrites the panel hostname to the requested `$host` in Bulwark's
+`/api/config` and Stalwart's `/.well-known/jmap` responses, so the SPA
+stays same-origin on `mail.<tenant>` and Stalwart's JMAP Session URLs
+never leak the panel hostname.
 
-<!-- AUTO-GENERATED:make-targets — regenerate via /update-docs -->
-| Target | Description |
-|--------|-------------|
-| `make build` | Compile both binaries (panel + agent) |
-| `make run` | Run the panel server (dev) |
-| `make test` | Run all Go tests across the workspace (race detector on) |
-| `make test-short` | Run only fast unit tests (skip integration) |
-| `make test-coverage` | Run tests with coverage (internal packages only) |
-| `make test-integration` | Run integration tests (requires `JABALI_TEST_DATABASE_URL` + real MariaDB) |
-| `make coverage-check` | Fail if combined (unit + integration) coverage below 80% |
-| `make lint` | Run golangci-lint across the workspace |
-| `make fmt` | Format all Go code |
-| `make vet` | Run `go vet` |
-| `make tidy` | Tidy module deps |
-| `make clean` | Remove build artefacts |
-<!-- /AUTO-GENERATED -->
+`autodiscover` / `autoconfig` paths are excluded so mail client
+auto-discovery (Thunderbird, Outlook) keeps working.
 
-```bash
-make build
-make run
-curl -s http://localhost:8443/health
-# {"status":"ok"}
-```
+## Documentation
 
-Frontend dev (from `panel-ui/`): `npm install && npm run dev` → <http://localhost:5173>
-(the Vite dev server proxies `/api` and `/health` to `127.0.0.1:8443`).
+See the [`docs/`](docs/) directory for detailed guides:
 
-## Requirements
-
-- **Go** 1.25+ (pinned in `go.mod`; `install.sh` will fetch `1.25.1` on a clean box)
-- **Node** 20+ (for `panel-ui/`; required to build the embedded SPA)
-- **golangci-lint**: `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest`
-- **MariaDB** 10.11+ (Phase 3+; the panel stores everything in one `jabali_panel` DB, PowerDNS uses a separate `jabali_pdns` DB)
-
-For contributor setup and the feature development workflow, see
-[`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md). For environment variables, see
-[`docs/ENV.md`](docs/ENV.md).
+- [Conventions](docs/CONVENTIONS.md) — repo-wide patterns (route families,
+  SearchableTable, Drawer for create+edit, icon shim, list envelope, rate
+  limits) + anti-patterns learnt the hard way
+- [Blueprint](docs/BLUEPRINT.md) — full feature map + milestone roadmap
+- [ADRs](docs/adr/) — every load-bearing architectural decision (110+)
+- [Plans](plans/) — per-milestone implementation blueprints
+- [Runbooks](plans/) — operational guides for SSL, mail, M16 rollback,
+  M22 SSO rework, M27 CrowdSec extensions, M30/M30.1 backups
+- [Known Issues](docs/KNOWN_ISSUES.md) — caveats + workarounds
+- [Contributing](docs/CONTRIBUTING.md) — feature development workflow
+- [Environment](docs/ENV.md) — full env-var reference

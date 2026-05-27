@@ -74,3 +74,14 @@ tools/aa-smoke/aa-smoke
 # Ephemeral snapshot / report files from CI or manual runs
 *-page-snapshot.yml
 *-e2e-test-report.md
+
+# Build artifacts — never commit compiled binaries
+panel-api/cmd/server/server
+panel-agent/cmd/jabali-agent/jabali-agent
+
+# Code-search index (rebuild from source as needed)
+ruvector.db
+panel-ui/ruvector.db
+
+# Local agent harness telemetry — local-only state
+.claude-flow/

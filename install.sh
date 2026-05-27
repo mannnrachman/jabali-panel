@@ -467,12 +467,26 @@ preflight() {
     _warn "no /etc/os-release; continuing blind"
   fi
 
+  # Architecture gate. jabali-panel ships amd64 only — Kratos, Stalwart,
+  # Stalwart-CLI, Bulwark webmail, and YARA-X are vendored as pinned
+  # SHA-256 amd64 release tarballs (no arm64 SHA pins, no fallback build
+  # path). On a non-amd64 host the install used to silently download the
+  # wrong-arch Kratos binary and only die ~8 steps later with a cryptic
+  # `Kratos database migrations failed` masked by `cannot execute binary
+  # file: Exec format error` from the bash log. Fail fast at preflight
+  # with a clear, actionable message instead.
   local arch
   arch="$(uname -m)"
   case "$arch" in
-    x86_64)  GO_ARCH="amd64" ;;
-    aarch64) GO_ARCH="arm64" ;;
-    *)       _die "unsupported arch: $arch" ;;
+    x86_64)
+      GO_ARCH="amd64"
+      ;;
+    aarch64|arm64)
+      _die "this host is arm64 (uname -m=$arch). jabali-panel only ships amd64 binaries today (Kratos, Stalwart, Stalwart-CLI, Bulwark, YARA-X are all pinned-SHA amd64 tarballs). Provision an amd64/x86_64 VPS image and re-run install.sh."
+      ;;
+    *)
+      _die "unsupported arch: $arch. jabali-panel requires x86_64/amd64. Provision an amd64 VPS image and re-run install.sh."
+      ;;
   esac
   export GO_ARCH
 }

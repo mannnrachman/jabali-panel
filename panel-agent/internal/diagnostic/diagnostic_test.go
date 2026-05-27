@@ -49,3 +49,39 @@ func TestBuild_RedactsBeforeTarring(t *testing.T) {
 		t.Errorf("FileCount=%d, tar entries=%d", b.FileCount, saw)
 	}
 }
+
+// TestBuild_IncludesLetsEncryptArtifacts asserts the bundle carries
+// the certbot units and the letsencrypt log entry — historically
+// missing, surfaced by the user, fixed alongside this test so a
+// future refactor that drops them fails CI instead of shipping a
+// regression silently.
+func TestBuild_IncludesLetsEncryptArtifacts(t *testing.T) {
+	b, err := Build(context.Background())
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	want := map[string]bool{
+		"10-letsencrypt.log":         false,
+		"svc/certbot.journal.txt":    false,
+		"svc/certbot.timer.journal.txt": false,
+	}
+	tr := tar.NewReader(bytes.NewReader(b.TarBytes))
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("tar next: %v", err)
+		}
+		if _, ok := want[hdr.Name]; ok {
+			want[hdr.Name] = true
+		}
+		_, _ = io.ReadAll(tr)
+	}
+	for name, present := range want {
+		if !present {
+			t.Errorf("expected entry %q missing from bundle", name)
+		}
+	}
+}

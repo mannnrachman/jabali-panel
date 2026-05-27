@@ -35,7 +35,20 @@ var servicesToCollect = []string{
 	"mariadb.service",
 	"redis-server.service",
 	"nginx.service",
+	"certbot.service",
+	"certbot.timer",
 }
+
+// letsencryptLogPath is the canonical certbot log on Debian/Ubuntu.
+// Tailed (not full-read) because successful renewals append every run
+// and the file grows unbounded between rotations.
+const letsencryptLogPath = "/var/log/letsencrypt/letsencrypt.log"
+
+// letsencryptLogTailLines is the number of trailing lines included
+// in the bundle. Enough to capture the most recent issuance attempt
+// + a few prior renewals for context, bounded so the bundle stays
+// emailable.
+const letsencryptLogTailLines = 500
 
 type collectedFile struct {
 	Name string
@@ -87,6 +100,7 @@ func collect(ctx context.Context) []collectedFile {
 		{"07-ss-tnlp.txt", runOrErr(ctx, "ss", "-tnlp")},
 		{"08-iptables-input.txt", runOrErr(ctx, "iptables", "-L", "INPUT", "-n")},
 		{"09-dpkg-list.txt", runOrErr(ctx, "dpkg-query", "-W", "-f=${Package} ${Version}\n")},
+		{"10-letsencrypt.log", tailFileOrErr(ctx, letsencryptLogPath, letsencryptLogTailLines)},
 	}
 	for _, svc := range servicesToCollect {
 		base := strings.TrimSuffix(svc, ".service")
@@ -121,6 +135,16 @@ func catFileOrErr(path string) []byte {
 	out, err := exec.Command("cat", path).Output()
 	if err != nil {
 		return []byte(fmt.Sprintf("ERROR reading %s: %v", path, err))
+	}
+	return out
+}
+
+// tailFileOrErr reads the final n lines of path. Used for log files
+// that grow unbounded between rotations (letsencrypt.log).
+func tailFileOrErr(ctx context.Context, path string, n int) []byte {
+	out, err := exec.CommandContext(ctx, "tail", "-n", fmt.Sprintf("%d", n), path).Output()
+	if err != nil {
+		return []byte(fmt.Sprintf("ERROR tailing %s: %v", path, err))
 	}
 	return out
 }

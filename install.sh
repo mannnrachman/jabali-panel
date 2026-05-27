@@ -279,6 +279,36 @@ if [[ -r "$REPO_DIR/install/scripts/socket-helpers.sh" ]]; then
   source "$REPO_DIR/install/scripts/socket-helpers.sh"
 fi
 
+# ensure_dbus brings the D-Bus system bus up if dpkg installed it but the
+# socket never activated (common on minimal LXC/OpenVZ VPS images: dbus is
+# present but dbus.socket is static and nothing pulls it in at boot, leaving
+# /run/dbus/system_bus_socket missing). Without the bus, `resolvectl`,
+# `systemctl restart` over D-Bus, and any other org.freedesktop.* client
+# fails with `sd_bus_open_system: No such file or directory` — the install
+# probes that depend on those calls then false-die.
+#
+# Returns 0 once the socket exists, 1 with a _warn if dbus is genuinely not
+# installed or refuses to start. Callers should gate D-Bus-dependent probes
+# on this and degrade gracefully (rely on direct dig/curl/file checks).
+ensure_dbus() {
+  if [[ -S /run/dbus/system_bus_socket ]]; then
+    return 0
+  fi
+  if ! command -v dbus-daemon >/dev/null 2>&1 && ! dpkg -s dbus >/dev/null 2>&1; then
+    _warn "dbus package not installed — skipping bus activation"
+    return 1
+  fi
+  _log "activating dbus.socket (was dormant; common on minimal LXC images)"
+  systemctl start dbus.socket dbus.service >/dev/null 2>&1 || true
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    [[ -S /run/dbus/system_bus_socket ]] && return 0
+    sleep 1
+  done
+  _warn "D-Bus still unavailable after start attempt (/run/dbus/system_bus_socket missing)"
+  return 1
+}
+
 # _flush_spin_log appends a wrapped command's captured output into the
 # main $LOG_FILE with a header so the post-mortem log reads top-to-bottom
 # as a sequence of {step, output} blocks. No-op when LOG_FILE is empty
@@ -2702,31 +2732,43 @@ RESOLVEDEOF
   # on this system — abort so the operator can switch to the fallback
   # (consolidate jabali.conf into zz-jabali-recursor.conf) per the
   # M6.3 plan.
-  # The `|| true` suffixes below defend against a set -e + pipefail + SIGPIPE
-  # interaction: awk's `exit` closes stdout before resolvectl finishes writing
-  # its multi-line status block, resolvectl is SIGPIPE'd (exit 141), pipefail
-  # surfaces 141, and — because these are bare assignments, not `local var=…`
-  # which would mask the command-substitution exit — set -e kills the script
-  # silently (no _die, no _ok, no trap output). Saw it on 192.168.100.150 with
-  # systemd 257 / resolvectl ~258.3. The `|| true` keeps the assignment
-  # happy; the subsequent `case` on $dns_servers is the real gate.
-  local dns_servers
-  dns_servers="$(resolvectl status 2>/dev/null | awk '/^ *DNS Servers:/{sub(/^ *DNS Servers: */,""); print; exit}')" || true
-  if [[ -z "$dns_servers" ]]; then
-    # Older systemd: "Current DNS Server:" one-liner, or global-only view.
-    # Fall back to `resolvectl dns` which returns the merged list.
-    dns_servers="$(resolvectl dns 2>/dev/null | awk '/^Global:/{print $2; exit}')" || true
+  #
+  # Requires D-Bus. On minimal LXC/OpenVZ VPS images dbus is installed
+  # but dbus.socket is dormant — `resolvectl` then dies with
+  # `sd_bus_open_system: No such file or directory` and our case-glob
+  # below sees an empty string and false-dies. ensure_dbus activates
+  # the bus when possible; when it can't (truly no dbus), Probes 1+2
+  # already verified the chain end-to-end via dig, so we skip Probe 3
+  # with a _warn and trust those.
+  if ensure_dbus; then
+    # The `|| true` suffixes below defend against a set -e + pipefail + SIGPIPE
+    # interaction: awk's `exit` closes stdout before resolvectl finishes writing
+    # its multi-line status block, resolvectl is SIGPIPE'd (exit 141), pipefail
+    # surfaces 141, and — because these are bare assignments, not `local var=…`
+    # which would mask the command-substitution exit — set -e kills the script
+    # silently (no _die, no _ok, no trap output). Saw it on 192.168.100.150 with
+    # systemd 257 / resolvectl ~258.3. The `|| true` keeps the assignment
+    # happy; the subsequent `case` on $dns_servers is the real gate.
+    local dns_servers
+    dns_servers="$(resolvectl status 2>/dev/null | awk '/^ *DNS Servers:/{sub(/^ *DNS Servers: */,""); print; exit}')" || true
+    if [[ -z "$dns_servers" ]]; then
+      # Older systemd: "Current DNS Server:" one-liner, or global-only view.
+      # Fall back to `resolvectl dns` which returns the merged list.
+      dns_servers="$(resolvectl dns 2>/dev/null | awk '/^Global:/{print $2; exit}')" || true
+    fi
+    # Accept "127.0.0.1" exactly, OR "127.0.0.1 127.0.0.1" (some systemd
+    # versions list per-interface views that repeat the loopback line).
+    # Reject anything else — any 1.1.1.1 / 9.9.9.9 / interface-upstream
+    # in the DNS Servers line means our reset didn't take globally.
+    case "$dns_servers" in
+      "127.0.0.1"|"127.0.0.1 127.0.0.1") : ;;
+      *) _die "resolvectl shows DNS Servers='$dns_servers' — expected '127.0.0.1' only. zz-jabali-recursor.conf merge isn't producing the expected state; see plans/m6.3-pdns-recursor.md §Step 2 fallback (consolidate jabali.conf into zz-jabali-recursor.conf; panel UI edits FallbackDNS= instead of DNS=)." ;;
+    esac
+    _ok "pdns-recursor running on 127.0.0.1:53 — stub + recursor + public chain verified"
+  else
+    _warn "skipping resolvectl drop-in merge check (no D-Bus); chain verified via dig only"
+    _ok "pdns-recursor running on 127.0.0.1:53 — dig probes passed (resolvectl skipped)"
   fi
-  # Accept "127.0.0.1" exactly, OR "127.0.0.1 127.0.0.1" (some systemd
-  # versions list per-interface views that repeat the loopback line).
-  # Reject anything else — any 1.1.1.1 / 9.9.9.9 / interface-upstream
-  # in the DNS Servers line means our reset didn't take globally.
-  case "$dns_servers" in
-    "127.0.0.1"|"127.0.0.1 127.0.0.1") : ;;
-    *) _die "resolvectl shows DNS Servers='$dns_servers' — expected '127.0.0.1' only. zz-jabali-recursor.conf merge isn't producing the expected state; see plans/m6.3-pdns-recursor.md §Step 2 fallback (consolidate jabali.conf into zz-jabali-recursor.conf; panel UI edits FallbackDNS= instead of DNS=)." ;;
-  esac
-
-  _ok "pdns-recursor running on 127.0.0.1:53 — stub + recursor + public chain verified"
 }
 
 # ---------- step 2.6b: bootstrap the panel's own hostname zone --------------

@@ -8105,9 +8105,25 @@ _delete_stalwart_factory_listeners() {
       STALWART_PASSWORD="$admin_token" \
       /usr/local/bin/stalwart-cli query x:NetworkListener \
         --where "name=${fname}" --json 2>/dev/null || true)"
+    # stalwart-cli query --where name=X returns a bare object for a single
+    # match (NOT a one-element list). The previous parser only handled the
+    # list case → silently dropped the id → caller logged "already removed"
+    # and skipped the delete API call → factory http listener stayed bound
+    # on [::]:8080, tripping verify_no_all_interface_binds at the next
+    # gate. Handle both list and dict shapes; fall through to empty if
+    # the payload is anything else (null, error envelope, etc.).
     id="$(printf '%s\n' "$query_out" \
-      | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d[0]["id"]) if isinstance(d,list) and d else None' \
-      2>/dev/null || true)"
+      | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+if isinstance(d, list) and d and isinstance(d[0], dict) and d[0].get("id"):
+    print(d[0]["id"])
+elif isinstance(d, dict) and d.get("id"):
+    print(d["id"])
+' 2>/dev/null || true)"
     if [[ -z "$id" ]] || [[ "$id" == "None" ]]; then
       _log "factory NetworkListener '${fname}' not found — already removed"
       continue

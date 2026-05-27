@@ -229,14 +229,21 @@ if [[ -n "$JABALI_DEBUG" ]]; then
   # with "BASH_SOURCE: unbound variable" on the NEXT statement after
   # `set -x`. The `${VAR:-default}` trick doesn't help here because
   # `##*/` and `:-` can't compose in one expansion.
-  export PS4='\033[2m+ install.sh:${LINENO}:${FUNCNAME[0]:-main}() \033[0m'
-  # When a log file is open, tee xtrace to both terminal-stderr AND the
-  # file so hangs are diagnosable post-mortem. BASH_XTRACEFD accepts a
-  # single fd; process-sub gives us both destinations via tee.
-  if [[ -n "$LOG_FILE" ]]; then
-    exec {_XTRACE_FD}> >(tee -a "$LOG_FILE" >&2)
-    export BASH_XTRACEFD=$_XTRACE_FD
+  export PS4='+ install.sh:${LINENO}:${FUNCNAME[0]:-main}() '
+  # Route xtrace to the log file only — NOT to terminal-stderr — so the
+  # operator's screen stays readable (banners, prompts, _log/_ok lines
+  # uninterrupted) while every shell command is still captured for
+  # post-mortem. Operator who wants a live trace runs
+  # `tail -f /var/log/jabali/install.log` in another shell.
+  # ${LOG_FILE:-/dev/stderr} keeps the old "trace to stderr" behaviour
+  # only when the log dir couldn't be created (the fallback case in the
+  # block above), so --debug stays useful even in fully broken envs.
+  if [[ -n "${LOG_FILE:-}" ]]; then
+    exec {_XTRACE_FD}>>"$LOG_FILE"
+  else
+    exec {_XTRACE_FD}>&2
   fi
+  export BASH_XTRACEFD=$_XTRACE_FD
   set -x
 fi
 

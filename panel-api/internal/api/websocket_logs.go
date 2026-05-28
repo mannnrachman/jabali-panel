@@ -74,6 +74,12 @@ type LogStreamHandlerConfig struct {
 func RegisterLogStreamRoutes(r gin.IRouter, cfg LogStreamHandlerConfig) {
 	handler := &logStreamHandler{cfg: cfg}
 	r.GET("/logs/stream/:stream_key", handler.streamLogs)
+	// HTTP-render goaccess endpoint — bypasses WS so the iframe loads
+	// over a fresh HTTP response that carries its own relaxed CSP
+	// (script-src includes 'unsafe-eval' for GoAccess's Function()
+	// templating). srcdoc-via-WS inherits parent CSP which forbids
+	// unsafe-eval and meta CSP can only tighten — see fix commit.
+	r.GET("/logs/stream/:stream_key/goaccess.html", handler.renderGoAccessHTTP)
 }
 
 type logStreamHandler struct{ cfg LogStreamHandlerConfig }
@@ -229,101 +235,137 @@ func (h *logStreamHandler) streamLogFile(conn *websocket.Conn, stream *models.Lo
 	}
 }
 
-// streamGoAccess streams GoAccess real-time HTML reports
+// streamGoAccess closes the WS with a redirect message — frontend should
+// use the HTTP /goaccess.html endpoint instead. Kept for back-compat in
+// case a stale frontend caches the old WS path; new frontend never opens
+// goaccess WS. The HTTP endpoint carries its own relaxed CSP allowing
+// 'unsafe-eval', which the WS-srcdoc path could not (parent CSP inherited).
 func (h *logStreamHandler) streamGoAccess(conn *websocket.Conn, stream *models.LogAccessStream) {
-	// For GoAccess, we need to generate and serve the real-time HTML report
-	// This is a more complex implementation that requires running GoAccess with --real-time-html
+	_ = stream
+	conn.WriteMessage(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseUnsupportedData,
+			"goaccess moved to HTTP /goaccess.html — refresh the panel"))
+}
 
-	// Determine access log path for GoAccess input
-	var accessLogPath string
-	var err error
-
+// goaccessAccessLogPath resolves the nginx access-log path for a stream:
+// per-domain when stream.DomainID is set, server-wide otherwise. Errors
+// when neither path can be determined.
+func (h *logStreamHandler) goaccessAccessLogPath(ctx context.Context, stream *models.LogAccessStream) (string, error) {
 	if stream.DomainID != nil {
-		domain, err := h.cfg.Domains.FindByID(context.Background(), *stream.DomainID)
+		domain, err := h.cfg.Domains.FindByID(ctx, *stream.DomainID)
 		if err != nil {
-			h.cfg.Log.Error("failed to find domain for goaccess", "domain_id", *stream.DomainID, "err", err)
-			conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "domain not found"))
-			return
+			return "", fmt.Errorf("domain lookup: %w", err)
 		}
-		accessLogPath, err = logFilePathForDomain(domain.Name, "access")
-	} else {
-		accessLogPath, err = systemLogPath("access")
+		return logFilePathForDomain(domain.Name, "access")
 	}
+	return systemLogPath("access")
+}
 
+// runGoAccess executes the goaccess binary against accessLogPath and
+// returns its HTML output. Caller is responsible for cancellation +
+// timeouts via ctx. `--no-progress` prevents progress-bar bytes from
+// corrupting the HTML stream; `--no-html-last-updated` keeps output
+// deterministic across renders (avoids spurious iframe churn).
+func runGoAccess(ctx context.Context, accessLogPath string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "goaccess",
+		accessLogPath,
+		"--log-format=COMBINED",
+		"-o", "html",
+		"--no-progress",
+		"--no-html-last-updated")
+	return cmd.Output()
+}
+
+// goaccessCSP is the per-response Content-Security-Policy that the
+// rendered GoAccess HTML carries. GoAccess's bundled JS uses
+// `new Function(...)` for HTML-template compilation, which requires
+// 'unsafe-eval'. The panel's server-scope CSP forbids unsafe-eval — by
+// returning a fresh URL-loaded response (not srcdoc), the iframe gets
+// THIS CSP instead of the parent's. nginx must NOT add its own CSP
+// add_header on this route (otherwise nginx's wins per nginx semantics).
+const goaccessCSP = "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; " +
+	"script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data: blob:; " +
+	"font-src 'self' data:; " +
+	"connect-src 'self'; " +
+	"frame-ancestors 'self'; " +
+	"form-action 'self';"
+
+// renderGoAccessHTTP serves the current GoAccess HTML snapshot over HTTP
+// (not WS). The response carries the relaxed `goaccessCSP` header so the
+// iframe's GoAccess JS can execute its `new Function()` template
+// compilation. Authentication reuses the stream-key model: the URL
+// embeds a short-lived key looked up via LogAccessStreamRepository.
+func (h *logStreamHandler) renderGoAccessHTTP(c *gin.Context) {
+	streamKey := c.Param("stream_key")
+	if streamKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "stream_key required"})
+		return
+	}
+	if err := validateStreamKey(streamKey); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid stream key"})
+		return
+	}
+	stream, err := h.cfg.LogAccessStreams.FindByStreamKey(c.Request.Context(), streamKey)
 	if err != nil {
-		h.cfg.Log.Error("failed to determine access log path for goaccess", "err", err)
-		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "invalid log path"))
+		if err == repository.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "stream not found or expired"})
+		} else {
+			h.cfg.Log.Error("failed to find stream", "err", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		}
+		return
+	}
+	if stream.LogType != "goaccess" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "stream is not goaccess type"})
+		return
+	}
+	if time.Now().After(stream.ExpiresAt) {
+		c.JSON(http.StatusGone, gin.H{"error": "stream expired"})
 		return
 	}
 
-	// Verify access log file exists. goaccess fails on missing input;
-	// surface a clear message via the iframe instead of crash-looping.
+	accessLogPath, err := h.goaccessAccessLogPath(c.Request.Context(), stream)
+	if err != nil {
+		h.cfg.Log.Error("goaccess: log path resolution failed", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid log path"})
+		return
+	}
+
+	// Per-response CSP MUST be set BEFORE any write. nginx add_header
+	// at the goaccess location is OFF (see vhost template) so this
+	// header is what the browser sees.
+	c.Header("Content-Security-Policy", goaccessCSP)
+	// frame-ancestors is set in the CSP; the legacy X-Frame-Options from
+	// server scope is overridden to SAMEORIGIN by nginx for this location.
+	c.Header("X-Frame-Options", "SAMEORIGIN")
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	// goaccess output changes every render — short cache prevents the
+	// browser from holding a stale dashboard between iframe refreshes.
+	c.Header("Cache-Control", "no-store, max-age=0")
+
 	if _, statErr := os.Stat(accessLogPath); statErr != nil {
-		conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(
-			"<html><body style='font-family:sans-serif;padding:2em;background:#1f1f1f;color:#fff'>"+
+		c.String(http.StatusOK,
+			"<!doctype html><html><body style='font-family:sans-serif;padding:2em;background:#1f1f1f;color:#fff'>"+
 				"<h2>No access log yet</h2>"+
 				"<p>File <code>%s</code> doesn't exist. "+
 				"GoAccess will start once nginx writes traffic to this domain.</p>"+
-				"</body></html>", filepath.Base(accessLogPath))))
+				"</body></html>", filepath.Base(accessLogPath))
 		return
 	}
 
-	// Generate a static GoAccess HTML report from the current log on a
-	// 10s cadence and push the full document over the WS. The frontend
-	// rewrites the iframe contents on every "<html…" message arrival
-	// (see LogStreamModal.tsx:onmessage). This is intentionally NOT
-	// real-time WS — running goaccess --real-time-html requires a
-	// second WS port + reverse proxy hop and isn't worth the complexity
-	// for the panel use case.
-	render := func() error {
-		// --no-progress: don't write progress bar to stdout (would
-		// corrupt the HTML stream). --no-html-last-updated:
-		// deterministic output so iframe doesn't churn diff-only
-		// changes. Use a 5s parse timeout via SIGTERM if goaccess
-		// hangs on a malformed line.
-		cmdCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		cmd := exec.CommandContext(cmdCtx, "goaccess",
-			accessLogPath,
-			"--log-format=COMBINED",
-			"-o", "html",
-			"--no-progress",
-			"--no-html-last-updated")
-		out, err := cmd.Output()
-		if err != nil {
-			h.cfg.Log.Warn("goaccess render failed", "err", err, "path", accessLogPath)
-			return err
-		}
-		// Set deadline BEFORE write — 700KB+ HTML over a slow link
-		// may take more than the 10s default; pick a generous cap.
-		conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
-		return conn.WriteMessage(websocket.TextMessage, out)
-	}
-
-	// Initial render — without this the UI stays on "Waiting…" until
-	// the first 10s tick fires.
-	if err := render(); err != nil {
-		conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(
-			"<html><body style='font-family:sans-serif;padding:2em;background:#1f1f1f;color:#fff'>"+
-				"<h2>GoAccess error</h2><pre>%s</pre></body></html>", err.Error())))
+	cmdCtx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	out, err := runGoAccess(cmdCtx, accessLogPath)
+	if err != nil {
+		h.cfg.Log.Warn("goaccess render failed", "err", err, "path", accessLogPath)
+		c.String(http.StatusOK,
+			"<!doctype html><html><body style='font-family:sans-serif;padding:2em;background:#1f1f1f;color:#fff'>"+
+				"<h2>GoAccess error</h2><pre>%s</pre></body></html>", err.Error())
 		return
 	}
-
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			if time.Now().After(stream.ExpiresAt) {
-				conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "stream expired"))
-				return
-			}
-			if err := render(); err != nil {
-				return
-			}
-		}
-	}
+	c.Data(http.StatusOK, "text/html; charset=utf-8", out)
 }
 
 // systemLogPath returns the path to system-wide nginx logs

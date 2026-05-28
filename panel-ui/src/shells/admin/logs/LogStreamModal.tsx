@@ -22,12 +22,39 @@ const stripTrailingNewline = (s: string): string => {
   return s;
 };
 
+// Convert the WebSocket stream URL (ws[s]://host/api/v1/logs/stream/<key>)
+// into the HTTP goaccess render URL. The HTTP route serves the GoAccess
+// HTML snapshot with its own relaxed CSP (script-src 'self' 'unsafe-inline'
+// 'unsafe-eval'), which the previous srcdoc-via-WS path could not — srcdoc
+// inherits the panel's strict parent CSP and meta CSP can only tighten.
+//
+// Returns null if streamUrl can't be parsed into the expected shape (caller
+// then shows a "no stream" placeholder instead of crashing).
+const buildGoAccessHttpUrl = (streamUrl: string): string | null => {
+  try {
+    const u = new URL(streamUrl);
+    if (u.protocol === "ws:") u.protocol = "http:";
+    else if (u.protocol === "wss:") u.protocol = "https:";
+    // Append /goaccess.html if not already present (some callers may pre-build).
+    if (!u.pathname.endsWith("/goaccess.html")) {
+      u.pathname = u.pathname.replace(/\/+$/, "") + "/goaccess.html";
+    }
+    return u.toString();
+  } catch {
+    return null;
+  }
+};
+
 export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: LogStreamModalProps) => {
   const { token } = theme.useToken();
   const [logs, setLogs] = useState<string[]>([]);
   const [connected, setConnected] = useState(false);
   const [paused, setPaused] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  // GoAccess polling cache-buster: refresh the iframe by mutating ?t=<ts>
+  // every 10s. Same cadence as the prior WS-driven render — operators see
+  // identical update latency.
+  const [goaccessTick, setGoaccessTick] = useState(() => Date.now());
   const wsRef = useRef<WebSocket | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const pausedLogsRef = useRef<string[]>([]);
@@ -39,6 +66,12 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
   };
 
   useEffect(() => {
+    // GoAccess uses the HTTP-render route (URL-loaded iframe) so the
+    // browser fetches a fresh response with its own relaxed CSP. WS is
+    // for text streaming (access/error) only.
+    if (logType === "goaccess") {
+      return;
+    }
     if (visible && streamUrl && !wsRef.current) {
       connectWebSocket();
     }
@@ -49,7 +82,24 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
         wsRef.current = null;
       }
     };
-  }, [visible, streamUrl]);
+  }, [visible, streamUrl, logType]);
+
+  // GoAccess polling effect: while the modal is open, bump goaccessTick
+  // every 10s so the iframe's src changes and the browser re-fetches.
+  // No-op when modal hidden or stream URL missing.
+  useEffect(() => {
+    if (logType !== "goaccess" || !visible || !streamUrl) return;
+    const id = setInterval(() => {
+      // Save scroll before refresh so onLoad can restore it.
+      const iframe = goAccessFrameRef.current;
+      const el = iframe?.contentDocument?.scrollingElement;
+      if (el) {
+        scrollPosRef.current = { top: el.scrollTop, left: el.scrollLeft };
+      }
+      setGoaccessTick(Date.now());
+    }, 10000);
+    return () => clearInterval(id);
+  }, [logType, visible, streamUrl]);
 
   useEffect(() => {
     if (!paused) {
@@ -150,47 +200,49 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
 
   const renderLogContent = () => {
     if (logType === "goaccess") {
-      // For GoAccess, use iframe to safely display HTML content.
-      // Fills the entire modal body — no border, no padding — so the
-      // GoAccess dashboard reads as a full-bleed surface.
+      // GoAccess iframe loaded via URL (not srcdoc) so the response's
+      // own relaxed CSP applies — srcdoc inherits parent CSP which
+      // forbids 'unsafe-eval' that GoAccess's templating requires.
+      // Cache-busted by goaccessTick (refreshed every 10s by the
+      // polling effect above); same cadence as the prior WS path.
+      const httpUrl = streamUrl ? buildGoAccessHttpUrl(streamUrl) : null;
+      if (!httpUrl) {
+        return (
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            height: "100%",
+            backgroundColor: token.colorBgLayout,
+          }}>
+            <Text type="secondary">No stream URL — open a log stream first.</Text>
+          </div>
+        );
+      }
+      const sep = httpUrl.includes("?") ? "&" : "?";
+      const src = `${httpUrl}${sep}t=${goaccessTick}`;
       return (
         <div style={{ width: "100%", height: "100%", position: "relative" }}>
-          {logs.length === 0 ? (
-            <div style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
+          <iframe
+            ref={goAccessFrameRef}
+            src={src}
+            style={{
+              width: "100%",
               height: "100%",
-              backgroundColor: token.colorBgLayout
-            }}>
-              <Spin spinning={connecting}>
-                <Text type="secondary">
-                  {connecting ? "Connecting to GoAccess..." : "Waiting for GoAccess data..."}
-                </Text>
-              </Spin>
-            </div>
-          ) : (
-            <iframe
-              ref={goAccessFrameRef}
-              srcDoc={logs[logs.length - 1]}
-              style={{
-                width: "100%",
-                height: "100%",
-                border: "none",
-                display: "block",
-              }}
-              title="GoAccess Dashboard"
-              sandbox="allow-scripts allow-same-origin"
-              onLoad={() => {
-                const iframe = goAccessFrameRef.current;
-                const el = iframe?.contentDocument?.scrollingElement;
-                if (el && scrollPosRef.current.top > 0) {
-                  el.scrollTop = scrollPosRef.current.top;
-                  el.scrollLeft = scrollPosRef.current.left;
-                }
-              }}
-            />
-          )}
+              border: "none",
+              display: "block",
+            }}
+            title="GoAccess Dashboard"
+            sandbox="allow-scripts allow-same-origin"
+            onLoad={() => {
+              const iframe = goAccessFrameRef.current;
+              const el = iframe?.contentDocument?.scrollingElement;
+              if (el && scrollPosRef.current.top > 0) {
+                el.scrollTop = scrollPosRef.current.top;
+                el.scrollLeft = scrollPosRef.current.left;
+              }
+            }}
+          />
         </div>
       );
     }

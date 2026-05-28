@@ -68,6 +68,50 @@ server {
   include /etc/nginx/sites-available/includes/phpmyadmin.conf;
   include /etc/nginx/snippets/jabali-adminer.conf;
 
+  # GoAccess iframe HTML — must execute upstream JS that uses
+  # `new Function(...)` for its template compiler. The server-scope CSP
+  # forbids 'unsafe-eval' which is correct for the panel SPA; this
+  # location overrides CSP for the goaccess endpoint only so the iframe
+  # (loaded by URL, not srcdoc) can run that script.
+  #
+  # nginx add_header semantics: if a location declares ANY add_header,
+  # parent block add_headers are NOT inherited — must re-declare every
+  # security header we still want.
+  #
+  # Sandboxed inside the panel iframe (sandbox="allow-scripts
+  # allow-same-origin"), CSP frame-ancestors 'self' limits embedding
+  # to the panel itself.
+  location ^~ /api/v1/logs/stream/ {
+    proxy_pass http://jabali_panel_api;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Host $http_host;
+    proxy_set_header X-Forwarded-Port $server_port;
+    proxy_http_version 1.1;
+    # WebSocket support — the same prefix also serves the access/error
+    # log WS stream; the upgrade headers stay so both routes work.
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+    # Re-declared security headers (parent's not inherited because of
+    # the per-location CSP override below).
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    # Scoped relaxed CSP — the panel-api response also sets this header
+    # (renderGoAccessHTTP); nginx hides the upstream copy to avoid two
+    # CSP headers in the response (browsers intersect — would re-block).
+    add_header Content-Security-Policy "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; form-action 'self';" always;
+    # SAMEORIGIN (not DENY) so the panel SPA can frame this URL.
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    proxy_hide_header Content-Security-Policy;
+    proxy_hide_header X-Frame-Options;
+  }
+
   # /.ory/* is handled by panel-api itself (in-process reverse proxy
   # to the Kratos public socket). nginx just forwards to the panel
   # upstream — no special-case for /.ory/.

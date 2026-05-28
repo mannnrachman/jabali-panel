@@ -19,7 +19,7 @@ import {
   message,
 } from "antd";
 
-import { DownloadOutlined, ReloadOutlined } from "@icons";
+import { DownloadOutlined, ReloadOutlined, LoadingOutlined } from "@icons";
 
 import { JobLogTail } from "../../../components/JobLogTail";
 import {
@@ -152,6 +152,7 @@ function JabaliUpdateCard() {
       {running ? (
         <Alert
           type="info"
+          icon={<LoadingOutlined />}
           showIcon
           message="Update in progress"
           description={
@@ -306,6 +307,7 @@ function AptUpdateCard() {
       {running ? (
         <Alert
           type="info"
+          icon={<LoadingOutlined />}
           showIcon
           message="Apt upgrade in progress"
           description={

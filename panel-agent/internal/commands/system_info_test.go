@@ -214,8 +214,14 @@ func TestApplyContainerMemory(t *testing.T) {
 }
 
 func TestInContainer_PID1Environ(t *testing.T) {
-	orig := procRoot
-	defer func() { procRoot = orig }()
+	origProc, origCE, origDE := procRoot, containerEnvPath, dockerEnvPath
+	defer func() { procRoot, containerEnvPath, dockerEnvPath = origProc, origCE, origDE }()
+	// Point the container markers at non-existent paths so both subtests
+	// isolate the PID1-environ logic regardless of whether the test host is
+	// itself a container (the CI runner is a Docker container -> /.dockerenv
+	// exists; without this the bare-metal case wrongly observes true).
+	containerEnvPath = t.TempDir() + "/absent-containerenv"
+	dockerEnvPath = t.TempDir() + "/absent-dockerenv"
 
 	t.Run("container=lxc in PID1 environ -> true", func(t *testing.T) {
 		dir := t.TempDir()
@@ -233,8 +239,6 @@ func TestInContainer_PID1Environ(t *testing.T) {
 		require.NoError(t, os.WriteFile(dir+"/1/environ",
 			[]byte("PATH=/usr/bin\x00HOME=/root\x00"), 0o644))
 		procRoot = dir
-		// Note: also depends on /run/.containerenv + /.dockerenv NOT existing
-		// on the test host, which holds in CI/dev.
 		assert.False(t, inContainer())
 	})
 }

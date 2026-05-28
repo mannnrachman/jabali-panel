@@ -42,6 +42,15 @@ type PartitionInfo struct {
 // fixture directories.
 var procRoot = "/proc"
 
+// Container-marker file paths. Package-level so tests can redirect them at
+// non-existent paths and stay hermetic — otherwise inContainer() short-
+// circuits to true whenever the TEST HOST is itself a container (e.g. a
+// Dockerized CI runner exposes /.dockerenv), breaking the bare-metal case.
+var (
+	containerEnvPath = "/run/.containerenv" // podman
+	dockerEnvPath    = "/.dockerenv"        // docker
+)
+
 func systemInfoHandler(_ context.Context, _ json.RawMessage) (any, error) {
 	hostname, _ := os.Hostname()
 
@@ -118,10 +127,10 @@ type cgroupMemStats struct {
 // also accept the docker/podman marker files. procRoot is honored so
 // tests can supply a fixture PID1 environ.
 func inContainer() bool {
-	if _, err := os.Stat("/run/.containerenv"); err == nil { // podman
+	if _, err := os.Stat(containerEnvPath); err == nil { // podman
 		return true
 	}
-	if _, err := os.Stat("/.dockerenv"); err == nil { // docker
+	if _, err := os.Stat(dockerEnvPath); err == nil { // docker
 		return true
 	}
 	if data, err := os.ReadFile(procRoot + "/1/environ"); err == nil {

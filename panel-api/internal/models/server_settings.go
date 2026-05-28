@@ -21,8 +21,8 @@ type ServerSettings struct {
 	// DefaultPHPVersion is the PHP version new user pools are seeded with
 	// (reconciler default-pool path) and the version the admin UI pre-selects.
 	// Admin changes it via POST /admin/php/versions/:version/default; agent
-	// php.version.status reports it in default_version. Schema default '8.5'.
-	DefaultPHPVersion string `gorm:"type:varchar(8);not null;default:'8.5'" json:"default_php_version"`
+	// php.version.status reports it in default_version. Schema default '8.4'.
+	DefaultPHPVersion string `gorm:"type:varchar(8);not null;default:'8.4'" json:"default_php_version"`
 	Timezone           string `gorm:"type:varchar(64);not null;default:''"   json:"timezone"`
 	SSHPort            uint16 `gorm:"type:int unsigned;not null;default:22"  json:"ssh_port"`
 	// SSHPasswordAuth governs the GLOBAL PasswordAuthentication directive

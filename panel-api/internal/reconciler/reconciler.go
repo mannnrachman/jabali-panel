@@ -804,11 +804,11 @@ func (r *Reconciler) ReconcilePHPPools(ctx context.Context) {
 		// Create default pool if missing. Version comes from the DB-
 		// backed server_settings.default_php_version (set by the admin
 		// via POST /admin/php/versions/:version/default). Falls back to
-		// 8.5 if the row is missing, the lookup fails, or the column is
+		// 8.4 if the row is missing, the lookup fails, or the column is
 		// empty — a non-authoritative fallback so first-boot before the
 		// migration ran still creates a working pool.
 		if pool == nil {
-			defaultPHP := "8.5"
+			defaultPHP := "8.4"
 			if r.serverSettings != nil {
 				settingsCtx, settingsCancel := context.WithTimeout(ctx, 5*time.Second)
 				if s, sErr := r.serverSettings.Get(settingsCtx); sErr == nil && s != nil && s.DefaultPHPVersion != "" {

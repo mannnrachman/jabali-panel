@@ -1430,7 +1430,7 @@ func TestReconcilePHPPools_CreateDefaultPool(t *testing.T) {
 	}
 	require.NotNil(t, pool)
 	require.Equal(t, user.ID, pool.UserID)
-	require.Equal(t, "8.5", pool.PHPVersion)
+	require.Equal(t, "8.4", pool.PHPVersion)
 	require.Equal(t, "active", pool.Status)
 	require.NoError(t, nil)
 }

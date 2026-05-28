@@ -4797,12 +4797,12 @@ if (substr_count($s, $old) !== 1) { fwrite(STDERR, "getContainerBuilder anchor n
 file_put_contents($p, str_replace($old, $new, $s));
 exit(0);
 PHPPATCH
-  if ! "php${pma_phpver}" "$pma_patcher" "$pma_core"; then
+  if ! php "$pma_patcher" "$pma_core"; then
     rm -f "$pma_patcher"
-    _die "failed to patch phpMyAdmin Core.php for PHP ${pma_phpver} (GH#111)"
+    _die "failed to patch phpMyAdmin Core.php (GH#111)"
   fi
   rm -f "$pma_patcher"
-  if ! "php${pma_phpver}" -l "$pma_core" >/dev/null 2>&1; then
+  if ! php -l "$pma_core" >/dev/null 2>&1; then
     _die "phpMyAdmin Core.php patch produced invalid PHP (GH#111)"
   fi
   _ok "phpMyAdmin DI patched for PHP 8.4 (GH#111)"

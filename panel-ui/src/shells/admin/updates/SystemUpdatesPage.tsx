@@ -98,6 +98,7 @@ function JabaliUpdateCard() {
           icon={<ReloadOutlined />}
           onClick={onCheck}
           loading={check.isPending}
+          disabled={running}
         >
           Check for updates
         </Button>
@@ -254,6 +255,7 @@ function AptUpdateCard() {
           icon={<ReloadOutlined />}
           onClick={onCheck}
           loading={check.isPending}
+          disabled={running}
         >
           Check for updates
         </Button>

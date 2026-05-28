@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -111,4 +112,129 @@ func TestSystemInfoHandler_Dispatch(t *testing.T) {
 	assert.GreaterOrEqual(t, resp.MemAvailKB, uint64(0))
 	assert.Greater(t, resp.CPUCount, 0)
 	assert.NotEmpty(t, resp.Partitions)
+}
+
+// --- container memory scoping (LXC /proc/meminfo == host) ----------------
+
+func TestReadCgroupValueKB(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		p := dir + "/" + name
+		require.NoError(t, os.WriteFile(p, []byte(content), 0o644))
+		return p
+	}
+
+	t.Run("numeric bytes to KB", func(t *testing.T) {
+		v, err := readCgroupValueKB(write("a", "1703936\n")) // 1664 KB
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1664), v)
+	})
+	t.Run("max -> 0 (unlimited)", func(t *testing.T) {
+		v, err := readCgroupValueKB(write("b", "max\n"))
+		require.NoError(t, err)
+		assert.Equal(t, uint64(0), v)
+	})
+	t.Run("missing file errors", func(t *testing.T) {
+		_, err := readCgroupValueKB(dir + "/nope")
+		assert.Error(t, err)
+	})
+}
+
+func TestReadCgroupMemStats(t *testing.T) {
+	t.Run("finite limit + swap", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(dir+"/memory.current", []byte("1073741824\n"), 0o644)) // 1 GiB -> 1048576 KB
+		require.NoError(t, os.WriteFile(dir+"/memory.max", []byte("2147483648\n"), 0o644))     // 2 GiB -> 2097152 KB
+		require.NoError(t, os.WriteFile(dir+"/memory.swap.current", []byte("524288000\n"), 0o644))
+		require.NoError(t, os.WriteFile(dir+"/memory.swap.max", []byte("1073741824\n"), 0o644))
+		st, ok := readCgroupMemStats(dir)
+		require.True(t, ok)
+		assert.Equal(t, uint64(1048576), st.currentKB)
+		assert.Equal(t, uint64(2097152), st.limitKB)
+		assert.True(t, st.hasSwap)
+		assert.Equal(t, uint64(512000), st.swapCurrentKB)
+		assert.Equal(t, uint64(1048576), st.swapLimitKB)
+	})
+	t.Run("unlimited (max), no swap controller", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(dir+"/memory.current", []byte("1703936\n"), 0o644)) // 1664 KB
+		require.NoError(t, os.WriteFile(dir+"/memory.max", []byte("max\n"), 0o644))
+		st, ok := readCgroupMemStats(dir)
+		require.True(t, ok)
+		assert.Equal(t, uint64(1664), st.currentKB)
+		assert.Equal(t, uint64(0), st.limitKB) // unlimited
+		assert.False(t, st.hasSwap)
+	})
+	t.Run("no memory.current -> not ok", func(t *testing.T) {
+		st, ok := readCgroupMemStats(t.TempDir())
+		assert.False(t, ok)
+		assert.Equal(t, cgroupMemStats{}, st)
+	})
+}
+
+func TestApplyContainerMemory(t *testing.T) {
+	// Host meminfo numbers (the misleading ones): 16 GiB total, 9.2 GiB used,
+	// 12 GiB swap total, 6.7 GiB swap used.
+	const hostTotal, hostUsed = 16_000_000, 9_200_000
+	const hostSwapTotal, hostSwapUsed = 12_000_000, 6_700_000
+
+	t.Run("unlimited cgroup keeps host total, scopes used to container", func(t *testing.T) {
+		// 10.0.3.14 case: memory.max == "max" (limitKB 0), current 1.6 GiB.
+		mt, mu, swt, swu := applyContainerMemory(
+			hostTotal, hostUsed, hostSwapTotal, hostSwapUsed,
+			cgroupMemStats{currentKB: 1_600_000, limitKB: 0},
+		)
+		assert.Equal(t, uint64(16_000_000), mt, "total stays host capacity when unlimited")
+		assert.Equal(t, uint64(1_600_000), mu, "used scoped to container current")
+		// no swap controller -> swap untouched
+		assert.Equal(t, uint64(12_000_000), swt)
+		assert.Equal(t, uint64(6_700_000), swu)
+	})
+
+	t.Run("finite cgroup limit becomes reported total", func(t *testing.T) {
+		mt, mu, swt, swu := applyContainerMemory(
+			hostTotal, hostUsed, hostSwapTotal, hostSwapUsed,
+			cgroupMemStats{currentKB: 800_000, limitKB: 2_000_000,
+				hasSwap: true, swapCurrentKB: 100_000, swapLimitKB: 1_000_000},
+		)
+		assert.Equal(t, uint64(2_000_000), mt)
+		assert.Equal(t, uint64(800_000), mu)
+		assert.Equal(t, uint64(1_000_000), swt)
+		assert.Equal(t, uint64(100_000), swu)
+	})
+
+	t.Run("clamps used to total when current exceeds limit", func(t *testing.T) {
+		mt, mu, _, _ := applyContainerMemory(
+			hostTotal, hostUsed, 0, 0,
+			cgroupMemStats{currentKB: 3_000_000, limitKB: 2_000_000},
+		)
+		assert.Equal(t, uint64(2_000_000), mt)
+		assert.Equal(t, uint64(2_000_000), mu, "used clamped to total")
+	})
+}
+
+func TestInContainer_PID1Environ(t *testing.T) {
+	orig := procRoot
+	defer func() { procRoot = orig }()
+
+	t.Run("container=lxc in PID1 environ -> true", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.MkdirAll(dir+"/1", 0o755))
+		// /proc/1/environ is NUL-separated key=value pairs.
+		require.NoError(t, os.WriteFile(dir+"/1/environ",
+			[]byte("PATH=/usr/bin\x00container=lxc\x00HOME=/root\x00"), 0o644))
+		procRoot = dir
+		assert.True(t, inContainer())
+	})
+
+	t.Run("bare metal (no container= marker) -> false", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.MkdirAll(dir+"/1", 0o755))
+		require.NoError(t, os.WriteFile(dir+"/1/environ",
+			[]byte("PATH=/usr/bin\x00HOME=/root\x00"), 0o644))
+		procRoot = dir
+		// Note: also depends on /run/.containerenv + /.dockerenv NOT existing
+		// on the test host, which holds in CI/dev.
+		assert.False(t, inContainer())
+	})
 }

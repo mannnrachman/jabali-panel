@@ -65,6 +65,20 @@ func systemInfoHandler(_ context.Context, _ json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("read meminfo: %w", err)
 	}
 	swapTotal, swapFree := parseMeminfoSwap(procRoot + "/meminfo")
+	memUsed := memTotal - memAvail
+	swapUsed := swapTotal - swapFree
+
+	// Container override. Inside an LXC/Docker container, /proc/meminfo
+	// reflects the HOST's memory (no lxcfs scoping), so the panel would
+	// report host-wide usage + swap on every containerized install —
+	// e.g. "9.2G/15G used" when this container's own footprint is ~1.6G.
+	// Prefer cgroup v2 accounting so Server Status shows THIS container.
+	if inContainer() {
+		if st, ok := readCgroupMemStats(cgroupRoot); ok {
+			memTotal, memUsed, swapTotal, swapUsed = applyContainerMemory(memTotal, memUsed, swapTotal, swapUsed, st)
+			memAvail = memTotal - memUsed
+		}
+	}
 
 	mounts := []string{"/", "/home", "/var", "/tmp"}
 	partitions := collectPartitions(mounts)
@@ -80,12 +94,112 @@ func systemInfoHandler(_ context.Context, _ json.RawMessage) (any, error) {
 		CPUCount:      cpuCount,
 		MemTotalKB:    memTotal,
 		MemAvailKB:    memAvail,
-		MemUsedKB:     memTotal - memAvail,
+		MemUsedKB:     memUsed,
 		SwapTotalKB:   swapTotal,
-		SwapUsedKB:    swapTotal - swapFree,
+		SwapUsedKB:    swapUsed,
 		Partitions:    partitions,
 		NTPSynced:     readNTPSynced(),
 	}, nil
+}
+
+// cgroupMemStats holds container-scoped memory accounting from cgroup v2.
+// All values in KB. limitKB / swapLimitKB are 0 when the controller file
+// reads "max" (unlimited).
+type cgroupMemStats struct {
+	currentKB     uint64
+	limitKB       uint64 // 0 = unlimited ("max")
+	swapCurrentKB uint64
+	swapLimitKB   uint64 // 0 = unlimited ("max")
+	hasSwap       bool
+}
+
+// inContainer reports whether the agent runs inside a container. systemd
+// exports container=<type> into PID1's environment under LXC/nspawn; we
+// also accept the docker/podman marker files. procRoot is honored so
+// tests can supply a fixture PID1 environ.
+func inContainer() bool {
+	if _, err := os.Stat("/run/.containerenv"); err == nil { // podman
+		return true
+	}
+	if _, err := os.Stat("/.dockerenv"); err == nil { // docker
+		return true
+	}
+	if data, err := os.ReadFile(procRoot + "/1/environ"); err == nil {
+		for _, kv := range strings.Split(string(data), "\x00") {
+			if strings.HasPrefix(kv, "container=") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// readCgroupMemStats reads cgroup v2 memory.* under root. ok=false when
+// memory.current is absent (cgroup v1 host, or controller unmounted) — the
+// caller then keeps the /proc/meminfo values.
+func readCgroupMemStats(root string) (cgroupMemStats, bool) {
+	cur, err := readCgroupValueKB(root + "/memory.current")
+	if err != nil {
+		return cgroupMemStats{}, false
+	}
+	st := cgroupMemStats{currentKB: cur}
+	if lim, err := readCgroupValueKB(root + "/memory.max"); err == nil {
+		st.limitKB = lim
+	}
+	if sc, err := readCgroupValueKB(root + "/memory.swap.current"); err == nil {
+		st.swapCurrentKB = sc
+		st.hasSwap = true
+		if sl, err := readCgroupValueKB(root + "/memory.swap.max"); err == nil {
+			st.swapLimitKB = sl
+		}
+	}
+	return st, true
+}
+
+// readCgroupValueKB reads a cgroup v2 byte-count file and returns KB.
+// "max" (or empty) → 0, signalling unlimited. Errors on unreadable or
+// non-numeric content.
+func readCgroupValueKB(path string) (uint64, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	s := strings.TrimSpace(string(data))
+	if s == "max" || s == "" {
+		return 0, nil
+	}
+	b, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return b / 1024, nil
+}
+
+// applyContainerMemory overrides host meminfo-derived figures with
+// cgroup-scoped ones. Used memory becomes the container's memory.current.
+// A finite cgroup limit becomes the reported total; an unlimited cgroup
+// keeps the host total as the capacity ceiling (the container may use all
+// of it). Swap mirrors the same logic. Pure — no I/O — for testing.
+func applyContainerMemory(memTotal, memUsed, swapTotal, swapUsed uint64, st cgroupMemStats) (mt, mu, st2, su uint64) {
+	mu = st.currentKB
+	mt = memTotal
+	if st.limitKB > 0 {
+		mt = st.limitKB
+	}
+	if mu > mt {
+		mu = mt
+	}
+	st2, su = swapTotal, swapUsed
+	if st.hasSwap {
+		su = st.swapCurrentKB
+		if st.swapLimitKB > 0 {
+			st2 = st.swapLimitKB
+		}
+		if su > st2 {
+			su = st2
+		}
+	}
+	return mt, mu, st2, su
 }
 
 // readOSPretty extracts PRETTY_NAME from /etc/os-release ("Debian GNU/Linux 13 (trixie)").

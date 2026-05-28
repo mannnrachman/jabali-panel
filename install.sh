@@ -4692,6 +4692,81 @@ install_phpmyadmin() {
     _ok "phpMyAdmin extracted and symlinked"
   fi
 
+  # --- jabali patch (GH#111): PHP 8.4-safe phpMyAdmin DI container ---
+  # phpMyAdmin 5.2.3 bundles symfony/dependency-injection 5.4, whose
+  # ContainerConfigurator DSL (driven by libraries/services_loader.php from
+  # Core::getContainerBuilder) defers service registration to configurator
+  # __destruct. On PHP 8.4+ that drops service definitions (notably "config")
+  # -> ServiceNotFoundException, breaking phpMyAdmin entirely. 5.2.3 is the
+  # latest release and symfony 5.4 is EOL, so there is no upstream fix.
+  # Rewrite getContainerBuilder to register via the direct ContainerBuilder
+  # API (eager, unaffected by the __destruct timing change). Re-applied every
+  # run because the extract above replaces Core.php; idempotent via marker.
+  _log "patching phpMyAdmin DI for PHP 8.4 (GH#111)"
+  local pma_core="${pma_link}/libraries/classes/Core.php"
+  local pma_patcher
+  pma_patcher="$(mktemp --tmpdir jabali-pma-patch.XXXXXX.php)"
+  cat > "$pma_patcher" <<'PHPPATCH'
+<?php
+$p = $argv[1] ?? '';
+if ($p === '' || !is_file($p)) { fwrite(STDERR, "Core.php not found\n"); exit(2); }
+$s = file_get_contents($p);
+if (strpos($s, 'jabali patch (GH#111)') !== false) { exit(0); }
+$old = <<<'OLD'
+        $containerBuilder = new ContainerBuilder();
+        $loader = new PhpFileLoader($containerBuilder, new FileLocator(ROOT_PATH . 'libraries'));
+        $loader->load('services_loader.php');
+
+        return $containerBuilder;
+OLD;
+$new = <<<'NEW'
+        $containerBuilder = new ContainerBuilder();
+        // jabali patch (GH#111): build via the direct ContainerBuilder API
+        // instead of the ContainerConfigurator DSL (PhpFileLoader +
+        // services_loader.php). The DSL defers registration to configurator
+        // __destruct, which on PHP 8.4+ drops service definitions (e.g.
+        // "config") -> ServiceNotFoundException. Direct API registers eagerly.
+        foreach (['libraries/services.php', 'libraries/services_controllers.php'] as $jabaliServicesFile) {
+            $jabaliServices = include ROOT_PATH . $jabaliServicesFile;
+            foreach ($jabaliServices['services'] as $jabaliName => $jabaliService) {
+                if (is_string($jabaliService)) {
+                    $containerBuilder->setAlias($jabaliName, new \Symfony\Component\DependencyInjection\Alias($jabaliService, true));
+                    continue;
+                }
+                $jabaliDef = new \Symfony\Component\DependencyInjection\Definition($jabaliService['class'] ?? null);
+                $jabaliDef->setPublic(true);
+                if (isset($jabaliService['arguments'])) {
+                    $jabaliArgs = [];
+                    foreach ($jabaliService['arguments'] as $jabaliArg) {
+                        $jabaliArgs[] = (is_string($jabaliArg) && isset($jabaliArg[0]) && $jabaliArg[0] === '@')
+                            ? new \Symfony\Component\DependencyInjection\Reference(substr($jabaliArg, 1))
+                            : $jabaliArg;
+                    }
+                    $jabaliDef->setArguments($jabaliArgs);
+                }
+                if (isset($jabaliService['factory'])) {
+                    $jabaliDef->setFactory($jabaliService['factory']);
+                }
+                $containerBuilder->setDefinition($jabaliName, $jabaliDef);
+            }
+        }
+
+        return $containerBuilder;
+NEW;
+if (substr_count($s, $old) !== 1) { fwrite(STDERR, "getContainerBuilder anchor not found/unique\n"); exit(1); }
+file_put_contents($p, str_replace($old, $new, $s));
+exit(0);
+PHPPATCH
+  if ! "php${pma_phpver}" "$pma_patcher" "$pma_core"; then
+    rm -f "$pma_patcher"
+    _die "failed to patch phpMyAdmin Core.php for PHP ${pma_phpver} (GH#111)"
+  fi
+  rm -f "$pma_patcher"
+  if ! "php${pma_phpver}" -l "$pma_core" >/dev/null 2>&1; then
+    _die "phpMyAdmin Core.php patch produced invalid PHP (GH#111)"
+  fi
+  _ok "phpMyAdmin DI patched for PHP 8.4 (GH#111)"
+
   # Write config.inc.php (idempotent: overwrite on every run to stay in sync with code)
   _log "writing phpMyAdmin config.inc.php"
   cat > "${pma_link}/config.inc.php" <<'CONFIGEOF'

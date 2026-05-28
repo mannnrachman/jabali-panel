@@ -1614,9 +1614,10 @@ PLACEHOLDER_EOF
 
 install_php() {
   _log "configuring PHP/FPM (packages installed in base batch; this runs per-version post-install config)"
-  # Default install is PHP 8.5 (current stable). Sury supports 7.4–8.5;
-  # set JABALI_PHP_VERSIONS to install additional versions side-by-side,
-  # e.g. JABALI_PHP_VERSIONS="7.4 8.2 8.5" bash install.sh
+  # Default install is PHP 8.4 — phpMyAdmin 5.2.x cannot run on PHP 8.5
+  # (GH#111), and the panel's dedicated pma FPM pool reuses this default.
+  # Sury supports 7.4–8.5; set JABALI_PHP_VERSIONS to install additional
+  # versions side-by-side, e.g. JABALI_PHP_VERSIONS="7.4 8.2 8.4" bash install.sh
   local php_versions="${JABALI_PHP_VERSIONS:-8.4}"
   local version
   for version in $php_versions; do
@@ -4353,15 +4354,28 @@ POOLEOF
   chmod 0644 /etc/php/${pma_phpver}/fpm/pool.d/jabali-pma.conf
   _ok "pool config written"
 
+  # Remove any stale jabali-pma pool left in a different PHP version's
+  # pool.d (e.g. an 8.5 pool from before the phpMyAdmin PHP pin moved to
+  # 8.4). phpMyAdmin 5.2.x cannot run on PHP 8.5 (GH#111); a leftover pool
+  # would let the FPM master keep serving the wrong version after the pin
+  # changes. Keep only the pinned version's pool.
+  local _stale_pool
+  for _stale_pool in /etc/php/*/fpm/pool.d/jabali-pma.conf; do
+    [[ -e "$_stale_pool" ]] || continue
+    [[ "$_stale_pool" == "/etc/php/${pma_phpver}/fpm/pool.d/jabali-pma.conf" ]] && continue
+    rm -f "$_stale_pool"
+    _ok "removed stale pma pool: $_stale_pool"
+  done
+
   # Write per-pool FPM master config: /etc/jabali-panel/fpm/pma.conf
   _log "writing per-pool FPM master config"
   mkdir -p /etc/jabali-panel/fpm
-  cat > /etc/jabali-panel/fpm/pma.conf <<'FPMEOF'
+  cat > /etc/jabali-panel/fpm/pma.conf <<FPMEOF
 [global]
 pid = /run/php/jabali-pma/fpm.pid
 error_log = /var/log/php-fpm-pma.log
 daemonize = no
-include=/etc/php/8.5/fpm/pool.d/jabali-pma.conf
+include=/etc/php/${pma_phpver}/fpm/pool.d/jabali-pma.conf
 FPMEOF
   chmod 0644 /etc/jabali-panel/fpm/pma.conf
   _ok "per-pool FPM master config written"
@@ -4379,12 +4393,12 @@ FPMEOF
   # Create systemd drop-in for the FPM service (sets Slice)
   _log "creating systemd drop-in for jabali-fpm@pma.service"
   mkdir -p /etc/systemd/system/jabali-fpm@pma.service.d
-  cat > /etc/systemd/system/jabali-fpm@pma.service.d/slice.conf <<'DROPINEOF'
+  cat > /etc/systemd/system/jabali-fpm@pma.service.d/slice.conf <<DROPINEOF
 [Service]
 User=www-data
 Group=www-data
 ExecStart=
-ExecStart=/usr/sbin/php-fpm8.5 --nodaemonize --fpm-config=/etc/jabali-panel/fpm/pma.conf
+ExecStart=/usr/sbin/php-fpm${pma_phpver} --nodaemonize --fpm-config=/etc/jabali-panel/fpm/pma.conf
 SyslogIdentifier=php-fpm-pma
 Slice=jabali.slice
 DROPINEOF

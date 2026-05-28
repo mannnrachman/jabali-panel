@@ -530,18 +530,25 @@ export const DNSRecordsPage = () => {
             pagination={false}
             scroll={{ x: "max-content" }}
             columns={[
+              // Pixel widths instead of percentages: scroll.x="max-content"
+              // forces table width to content, and percentages resolved
+              // against an inflated container made Name/Type swell while
+              // Content/TTL/Priority/Actions pushed off the right edge.
+              // No width on Content → flex-fills remaining viewport. Actions
+              // fixed:"right" so Edit/Delete stay reachable on narrow tabs.
               {
                 title: "Name",
                 dataIndex: "name",
                 key: "name",
-                width: "15%",
+                width: 200,
+                ellipsis: true,
                 render: (text: string) => text || "@",
               },
               {
                 title: "Type",
                 dataIndex: "type",
                 key: "type",
-                width: "10%",
+                width: 90,
                 render: (_: unknown, record: DNSRecord) => (
                   <Tag color={recordTypeColor[record.type] ?? "default"}>
                     {record.type}
@@ -552,9 +559,8 @@ export const DNSRecordsPage = () => {
                 title: "Content",
                 dataIndex: "content",
                 key: "content",
-                width: "30%",
                 render: (text: string) => (
-                  <Typography.Text style={{ fontFamily: "monospace" }}>
+                  <Typography.Text style={{ fontFamily: "monospace", wordBreak: "break-all" }}>
                     {text}
                   </Typography.Text>
                 ),
@@ -563,20 +569,21 @@ export const DNSRecordsPage = () => {
                 title: "TTL",
                 dataIndex: "ttl",
                 key: "ttl",
-                width: "10%",
+                width: 100,
               },
               {
                 title: "Priority",
                 dataIndex: "priority",
                 key: "priority",
-                width: "10%",
+                width: 110,
                 render: (priority: number | undefined) =>
                   priority !== undefined ? priority : "—",
               },
               {
                 title: "Actions",
                 key: "actions",
-                width: "25%",
+                width: 180,
+                fixed: "right" as const,
                 render: (_: unknown, record: DNSRecord) => {
                   const readonly = isRecordReadOnly(record);
 
@@ -644,18 +651,21 @@ export const DNSRecordsPage = () => {
             size="small"
             scroll={{ x: "max-content" }}
             columns={[
+              // Pixel widths — see editable-table comment above for the
+              // pct-vs-max-content interaction this avoids.
               {
                 title: "Name",
                 dataIndex: "name",
                 key: "name",
-                width: "25%",
+                width: 240,
+                ellipsis: true,
                 render: (text: string) => text || "@",
               },
               {
                 title: "Type",
                 dataIndex: "type",
                 key: "type",
-                width: "10%",
+                width: 90,
                 render: (t: string) => (
                   <Tag color={t === "NS" ? "magenta" : "default"}>{t}</Tag>
                 ),
@@ -665,7 +675,7 @@ export const DNSRecordsPage = () => {
                 dataIndex: "content",
                 key: "content",
                 render: (text: string) => (
-                  <Typography.Text style={{ fontFamily: "monospace" }}>
+                  <Typography.Text style={{ fontFamily: "monospace", wordBreak: "break-all" }}>
                     {text}
                   </Typography.Text>
                 ),
@@ -674,7 +684,7 @@ export const DNSRecordsPage = () => {
                 title: "TTL",
                 dataIndex: "ttl",
                 key: "ttl",
-                width: "10%",
+                width: 100,
               },
             ]}
           />

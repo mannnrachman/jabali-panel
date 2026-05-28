@@ -806,7 +806,7 @@ POLICYEOF
   # OPcache inside -common instead of as a standalone -opcache package).
   # Probe apt-cache for each optional extension per PHP version and
   # include only what's actually available.
-  local php_versions="${JABALI_PHP_VERSIONS:-8.5}"
+  local php_versions="${JABALI_PHP_VERSIONS:-8.4}"
   local -a php_extensions=()
   local version
   for version in $php_versions; do
@@ -1558,7 +1558,7 @@ _install_php_version() {
   # function owns the per-version post-install config: placeholder
   # pool, FPM mask, default-pool disable.
   if ! command -v "php${version}" >/dev/null 2>&1; then
-    _die "php${version} binary not found — install_base_packages should have installed it (check JABALI_PHP_VERSIONS=\"${JABALI_PHP_VERSIONS:-8.5}\")"
+    _die "php${version} binary not found — install_base_packages should have installed it (check JABALI_PHP_VERSIONS=\"${JABALI_PHP_VERSIONS:-8.4}\")"
   fi
   _ok "PHP ${version} present"
 
@@ -1617,7 +1617,7 @@ install_php() {
   # Default install is PHP 8.5 (current stable). Sury supports 7.4–8.5;
   # set JABALI_PHP_VERSIONS to install additional versions side-by-side,
   # e.g. JABALI_PHP_VERSIONS="7.4 8.2 8.5" bash install.sh
-  local php_versions="${JABALI_PHP_VERSIONS:-8.5}"
+  local php_versions="${JABALI_PHP_VERSIONS:-8.4}"
   local version
   for version in $php_versions; do
     _install_php_version "$version"
@@ -4315,7 +4315,7 @@ install_phpmyadmin_fpm_pool() {
 
   local pma_user="www-data"
   local pma_pool="pma"
-  local pma_phpver="8.5"
+  local pma_phpver="8.4"
   local pma_root="/opt/phpmyadmin/current"
 
   # Create version pin for pma pool
@@ -9333,7 +9333,7 @@ install_snuffleupagus() {
   local _php_versions="${JABALI_PHP_VERSIONS:-} ${_detected_minors}"
   _php_versions="$(echo $_php_versions | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/ $//')"
   if [[ -z "${_php_versions// /}" ]]; then
-    _php_versions="8.5"
+    _php_versions="8.4"
   fi
   local _minor _dev_pkgs=()
   for _minor in $_php_versions; do
@@ -9583,7 +9583,7 @@ provision_new_software() {
   if [[ -f "$sp_mode_file" ]] && [[ "$(cat "$sp_mode_file")" == "simulation" ]]; then
     _log "snuffleupagus: flipping simulation → enforce"
     echo "enforce" > "$sp_mode_file"
-    local _sp_php_versions="${JABALI_PHP_VERSIONS:-8.5}"
+    local _sp_php_versions="${JABALI_PHP_VERSIONS:-8.4}"
     local _sp_fpm_units=()
     for _spv in $_sp_php_versions; do
       _sp_fpm_units+=("php${_spv}-fpm")
@@ -9595,7 +9595,7 @@ provision_new_software() {
   # Ensure php alternatives still point at the jabali-configured version.
   # Idempotent and cheap — guards against any apt upgrade re-seeding the
   # php-cli meta-package (and its php8.4 priority-100 registration).
-  local _upd_php_versions="${JABALI_PHP_VERSIONS:-8.5}"
+  local _upd_php_versions="${JABALI_PHP_VERSIONS:-8.4}"
   local _upd_primary
   _upd_primary="$(echo "$_upd_php_versions" | awk '{print $NF}')"
   for _alt in php phar php-config phpize; do

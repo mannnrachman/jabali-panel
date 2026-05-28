@@ -5376,23 +5376,23 @@ install_crowdsec() {
   local _cs_attempt _cs_ok=0 _cs_installed
   for _cs_attempt in 1 2 3 4 5; do
     if ! dpkg -s crowdsec >/dev/null 2>&1; then
-      _spin "apt install crowdsec (upstream, try ${_cs_attempt}/5)" \
-        apt-get install -y -qq --no-install-recommends crowdsec || true
+      _log "apt install crowdsec (upstream, try ${_cs_attempt}/5)…"
+      apt-get install -y -qq --no-install-recommends crowdsec >>"${LOG_FILE:-/dev/null}" 2>&1 || true
     else
       _cs_installed="$(dpkg-query -W -f='${Version}\n' crowdsec 2>/dev/null)"
       if [[ "$_cs_installed" == 1.4.* ]] || [[ "$_cs_installed" == 1.3.* ]]; then
         _log "upgrading crowdsec from $_cs_installed (Debian-stock) → upstream"
-        _spin "apt upgrade crowdsec (try ${_cs_attempt}/5)" \
-          apt-get install -y -qq --only-upgrade crowdsec || true
+        _log "apt upgrade crowdsec (try ${_cs_attempt}/5)…"
+        apt-get install -y -qq --only-upgrade crowdsec >>"${LOG_FILE:-/dev/null}" 2>&1 || true
       fi
     fi
     # Finish any half-done postinst (re-attempts the hub/geoip download).
     if [[ "$(dpkg-query -W -f='${Status}' crowdsec 2>/dev/null || true)" != *"installed"* ]]; then
-      _spin "apt -f install (finish crowdsec postinst, try ${_cs_attempt}/5)" \
-        apt-get install -f -y -qq || true
+      _log "apt -f install (finish crowdsec postinst, try ${_cs_attempt}/5)…"
+      apt-get install -f -y -qq >>"${LOG_FILE:-/dev/null}" 2>&1 || true
     fi
     if [[ "$(dpkg-query -W -f='${Status}' crowdsec 2>/dev/null || true)" == *"installed"* ]]; then
-      _cs_ok=1; break
+      _cs_ok=1; _ok "crowdsec installed + configured"; break
     fi
     _warn "crowdsec not fully configured (attempt ${_cs_attempt}/5) — likely a transient hub-data.crowdsec.net download (http2 GOAWAY); retrying in $((_cs_attempt * 10))s"
     sleep $(( _cs_attempt * 10 ))

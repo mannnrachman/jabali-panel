@@ -29,6 +29,7 @@ import {
   Spin,
   Empty,
   notification,
+  Tooltip,
 } from "antd";
 import { useLocation, useNavigate, useParams } from "react-router";
 
@@ -559,10 +560,20 @@ export const DNSRecordsPage = () => {
                 title: "Content",
                 dataIndex: "content",
                 key: "content",
+                // Bounded width + ellipsis so long records (DKIM/RSA keys,
+                // SPF) truncate with "…" instead of stretching the table
+                // under the fixed Actions column. Full value on hover.
+                width: 420,
+                ellipsis: { showTitle: false },
                 render: (text: string) => (
-                  <Typography.Text style={{ fontFamily: "monospace", wordBreak: "break-all" }}>
-                    {text}
-                  </Typography.Text>
+                  <Tooltip title={text} placement="topLeft">
+                    <Typography.Text
+                      style={{ fontFamily: "monospace" }}
+                      ellipsis
+                    >
+                      {text}
+                    </Typography.Text>
+                  </Tooltip>
                 ),
               },
               {
@@ -674,10 +685,17 @@ export const DNSRecordsPage = () => {
                 title: "Content",
                 dataIndex: "content",
                 key: "content",
+                width: 420,
+                ellipsis: { showTitle: false },
                 render: (text: string) => (
-                  <Typography.Text style={{ fontFamily: "monospace", wordBreak: "break-all" }}>
-                    {text}
-                  </Typography.Text>
+                  <Tooltip title={text} placement="topLeft">
+                    <Typography.Text
+                      style={{ fontFamily: "monospace" }}
+                      ellipsis
+                    >
+                      {text}
+                    </Typography.Text>
+                  </Tooltip>
                 ),
               },
               {

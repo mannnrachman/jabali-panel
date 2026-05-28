@@ -5313,32 +5313,42 @@ install_crowdsec() {
   # run (the previous deps batch listed `crowdsec` directly), upgrade to
   # the upstream version. apt-get install with the upstream repo enabled
   # picks the candidate from packagecloud automatically.
-  if ! dpkg -s crowdsec >/dev/null 2>&1; then
-    _spin "apt install crowdsec (upstream)" \
-      apt-get install -y -qq --no-install-recommends crowdsec
-  else
-    local installed
-    installed="$(dpkg-query -W -f='${Version}\n' crowdsec 2>/dev/null)"
-    if [[ "$installed" == 1.4.* ]] || [[ "$installed" == 1.3.* ]]; then
-      _log "upgrading crowdsec from $installed (Debian-stock) → upstream"
-      _spin "apt upgrade crowdsec" \
-        apt-get install -y -qq --only-upgrade crowdsec
+  # crowdsec's postinst runs `cscli setup unattended`, which downloads hub
+  # parsers + the GeoLite2 mmdb from hub-data.crowdsec.net. That CDN
+  # intermittently drops the connection mid-transfer ("http2: server sent
+  # GOAWAY"), failing the postinst and leaving the package half-configured
+  # -> the whole apt run errors out and install.sh dies. Retry with
+  # backoff: `apt-get install -f` re-runs the unfinished postinst (which
+  # re-attempts the download) without re-fetching the .deb. Also covers a
+  # previous install left in `unpacked` state.
+  local _cs_attempt _cs_ok=0 _cs_installed
+  for _cs_attempt in 1 2 3 4 5; do
+    if ! dpkg -s crowdsec >/dev/null 2>&1; then
+      _spin "apt install crowdsec (upstream, try ${_cs_attempt}/5)" \
+        apt-get install -y -qq --no-install-recommends crowdsec || true
+    else
+      _cs_installed="$(dpkg-query -W -f='${Version}\n' crowdsec 2>/dev/null)"
+      if [[ "$_cs_installed" == 1.4.* ]] || [[ "$_cs_installed" == 1.3.* ]]; then
+        _log "upgrading crowdsec from $_cs_installed (Debian-stock) → upstream"
+        _spin "apt upgrade crowdsec (try ${_cs_attempt}/5)" \
+          apt-get install -y -qq --only-upgrade crowdsec || true
+      fi
     fi
-  fi
+    # Finish any half-done postinst (re-attempts the hub/geoip download).
+    if [[ "$(dpkg-query -W -f='${Status}' crowdsec 2>/dev/null || true)" != *"installed"* ]]; then
+      _spin "apt -f install (finish crowdsec postinst, try ${_cs_attempt}/5)" \
+        apt-get install -f -y -qq || true
+    fi
+    if [[ "$(dpkg-query -W -f='${Status}' crowdsec 2>/dev/null || true)" == *"installed"* ]]; then
+      _cs_ok=1; break
+    fi
+    _warn "crowdsec not fully configured (attempt ${_cs_attempt}/5) — likely a transient hub-data.crowdsec.net download (http2 GOAWAY); retrying in $((_cs_attempt * 10))s"
+    sleep $(( _cs_attempt * 10 ))
+  done
+  [[ "$_cs_ok" == 1 ]] || _die "crowdsec failed to configure after 5 attempts — last failure almost certainly a transient hub download (http2 GOAWAY). Re-run install.sh; if it persists, check connectivity to hub-data.crowdsec.net."
 
   if ! command -v cscli >/dev/null 2>&1; then
     _die "cscli missing after upstream crowdsec install"
-  fi
-
-  # If a previous install left the package in `unpacked` state (postinst
-  # never finished because an earlier drop-in pinned a config field the
-  # stale 1.4.x agent couldn't parse), reconfigure now. Otherwise the
-  # next systemctl restart fails before our drop-in even loads.
-  local pkg_status
-  pkg_status="$(dpkg-query -W -f='${Status}' crowdsec 2>/dev/null || true)"
-  if [[ "$pkg_status" != *"installed"* ]]; then
-    _log "crowdsec package status is '$pkg_status' — running dpkg --configure to finish postinst"
-    dpkg --configure crowdsec || _warn "dpkg --configure crowdsec returned non-zero; continuing"
   fi
 
   # The hub index (/var/lib/crowdsec/hub/.index.json) must exist before

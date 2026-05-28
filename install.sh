@@ -3861,6 +3861,46 @@ EOF
 
 # ---------- step 6b: seed admin credentials ---------------------------------
 
+# prompt_admin_account — collect the panel admin LOGIN email up-front,
+# right after the hostname prompt, so the operator answers every
+# interactive question before the long unattended phase instead of being
+# surprised by a prompt deep in the run (after crowdsec/etc — the puzzle
+# operator hit exactly that). Stores it in JABALI_ADMIN_EMAIL; the late
+# seed_admin_env consumes it without re-prompting. No-op when an env
+# override is set, when the box was already seeded (re-run/update), or
+# when there is no TTY (seed_admin_env applies the no-TTY default later).
+prompt_admin_account() {
+  [[ -n "${JABALI_BOOTSTRAP_ADMIN_EMAIL:-}${JABALI_ADMIN_EMAIL:-}" ]] && return 0
+  [[ -f /etc/jabali/.admin-seeded ]] && return 0
+  grep -q '^JABALI_BOOTSTRAP_ADMIN_EMAIL=' "${ENV_FILE:-/nonexistent}" 2>/dev/null && return 0
+
+  local _def_host _def_email _ans _email_re='^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'
+  _def_host="${JABALI_HOSTNAME:-$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo localhost)}"
+  _def_email="admin@${_def_host}"
+  if exec 3</dev/tty 2>/dev/null; then
+    {
+      printf '\n'
+      printf '  +-------------------------------------------------------+\n'
+      printf '  |  PANEL ADMIN ACCOUNT (first install only)             |\n'
+      printf '  +-------------------------------------------------------+\n'
+      printf '  This is the email you will use to LOG IN to the jabali\n'
+      printf '  web panel at https://%s:8443/\n' "$_def_host"
+      printf '  It is NOT an SSL / ACME / Let'"'"'s Encrypt contact address.\n'
+      printf '  Press Enter to accept the default.\n\n'
+      printf 'Panel admin login email [%s]: ' "$_def_email"
+    } > /dev/tty
+    read -r _ans <&3 || true
+    exec 3<&-
+    JABALI_ADMIN_EMAIL="${_ans:-$_def_email}"
+    if [[ ! "$JABALI_ADMIN_EMAIL" =~ $_email_re ]]; then
+      _warn "admin email '$JABALI_ADMIN_EMAIL' looks invalid — using $_def_email"
+      JABALI_ADMIN_EMAIL="$_def_email"
+    fi
+    export JABALI_ADMIN_EMAIL
+    _log "panel admin login email set to $JABALI_ADMIN_EMAIL (applied at first boot)"
+  fi
+}
+
 seed_admin_env() {
   # The panel-admin account is seeded ONCE, on a genuine first install.
   # A marker (`.admin-seeded`) plus the panel.env var make every later
@@ -9897,6 +9937,7 @@ main() {
   # with enough RAM.
   ensure_swap
   prompt_server_settings
+  prompt_admin_account
   install_base_packages
   # NTP / time sync — must run before anything that depends on accurate
   # wall-clock (TOTP enrolment, JWT/cookie expiry, certbot timestamps).

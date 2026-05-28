@@ -72,14 +72,6 @@ trap '__rc=$?; printf "\033[1;31m[jabali-install]\033[0m install.sh exited with 
 REPO_URL="${JABALI_REPO_URL:-https://git.linux-hosting.co.il/shukivaknin/jabali2.git}"
 REPO_BRANCH="${JABALI_REPO_BRANCH:-main}"
 REPO_DIR="${JABALI_REPO_DIR:-/opt/jabali-panel}"
-
-# Dedicated PHP version for the phpMyAdmin FPM pool. phpMyAdmin 5.2.x
-# breaks on PHP 8.4+ (its bundled Symfony 5.4 DI drops the "config"
-# service on PHP 8.4+ -> ServiceNotFoundException; GH#111). The pma
-# pool therefore runs on 8.3 regardless of the user-facing default,
-# which stays whatever JABALI_PHP_VERSIONS selects (8.4). This is
-# invisible to tenants -- pma is a panel-internal pool.
-JABALI_PMA_PHP_VERSION="${JABALI_PMA_PHP_VERSION:-8.3}"
 GO_VERSION="${JABALI_GO_VERSION:-1.25.1}"
 GO_ROOT="${JABALI_GO_ROOT:-/usr/local/go}"
 SERVICE_USER="${JABALI_SERVICE_USER:-jabali}"
@@ -815,15 +807,9 @@ POLICYEOF
   # Probe apt-cache for each optional extension per PHP version and
   # include only what's actually available.
   local php_versions="${JABALI_PHP_VERSIONS:-8.4}"
-  # Also install the dedicated phpMyAdmin PHP version (8.3) and its
-  # extensions, even when it is not in the user-facing set -- the pma
-  # FPM pool needs it (see JABALI_PMA_PHP_VERSION). Dedup so a user set
-  # that already includes it doesn't double-install.
-  local pkg_php_versions
-  pkg_php_versions="$(printf '%s\n' $php_versions "$JABALI_PMA_PHP_VERSION" | awk '!seen[$0]++' | tr '\n' ' ')"
   local -a php_extensions=()
   local version
-  for version in $pkg_php_versions; do
+  for version in $php_versions; do
     php_extensions+=("php${version}-fpm" "php${version}-cli")
     local ext
     for ext in mysql mbstring zip gd curl xml intl bcmath opcache; do
@@ -1068,10 +1054,6 @@ EARLYDNS
   # now so no stale binaries remain.
   local _purge_versions=("8.4" "8.3" "8.2" "8.1" "8.0" "7.4")
   for _pv in "${_purge_versions[@]}"; do
-    # Never purge the dedicated phpMyAdmin PHP version.
-    if [[ "$_pv" == "$JABALI_PMA_PHP_VERSION" ]]; then
-      continue
-    fi
     # Skip if this version is in the configured set
     if echo "$php_versions" | grep -qw "$_pv"; then
       continue
@@ -1641,11 +1623,6 @@ install_php() {
   for version in $php_versions; do
     _install_php_version "$version"
   done
-  # The phpMyAdmin pool runs on its own version (JABALI_PMA_PHP_VERSION,
-  # 8.3) which may not be in the user-facing set. Configure it too.
-  if ! echo "$php_versions" | grep -qw "$JABALI_PMA_PHP_VERSION"; then
-    _install_php_version "$JABALI_PMA_PHP_VERSION"
-  fi
 }
 
 
@@ -4339,7 +4316,7 @@ install_phpmyadmin_fpm_pool() {
 
   local pma_user="www-data"
   local pma_pool="pma"
-  local pma_phpver="$JABALI_PMA_PHP_VERSION"
+  local pma_phpver="8.4"
   local pma_root="/opt/phpmyadmin/current"
 
   # Create version pin for pma pool
@@ -9652,7 +9629,6 @@ provision_new_software() {
   done
   # Purge any stale PHP versions not in JABALI_PHP_VERSIONS
   for _pv in 8.4 8.3 8.2 8.1 8.0 7.4; do
-    if [[ "$_pv" == "$JABALI_PMA_PHP_VERSION" ]]; then continue; fi
     if echo "$_upd_php_versions" | grep -qw "$_pv"; then continue; fi
     if dpkg -l "php${_pv}-cli" 2>/dev/null | grep -q "^ii"; then
       _log "provision: purging stale php${_pv} (not in JABALI_PHP_VERSIONS)"

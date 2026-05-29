@@ -50,6 +50,13 @@ const letsencryptLogPath = "/var/log/letsencrypt/letsencrypt.log"
 // emailable.
 const letsencryptLogTailLines = 500
 
+// crowdsecLogPath / crowdsecLogTailLines: CrowdSec's main log. Included so
+// support can see WHY an IP was banned (scenario decisions + WAF anomaly
+// hits) when a user reports being locked out of everything (CrowdSec bans
+// are IP-scoped and, via M43 unified trust, block web + ssh at once).
+const crowdsecLogPath = "/var/log/crowdsec.log"
+const crowdsecLogTailLines = 300
+
 type collectedFile struct {
 	Name string
 	Body []byte
@@ -101,6 +108,12 @@ func collect(ctx context.Context) []collectedFile {
 		{"08-iptables-input.txt", runOrErr(ctx, "iptables", "-L", "INPUT", "-n")},
 		{"09-dpkg-list.txt", runOrErr(ctx, "dpkg-query", "-W", "-f=${Package} ${Version}\n")},
 		{"10-letsencrypt.log", tailFileOrErr(ctx, letsencryptLogPath, letsencryptLogTailLines)},
+		// CrowdSec IP-ban forensics (lockout investigations): active
+		// decisions = who is banned + scenario + expiry; alerts = what
+		// triggered each ban; the log tail gives surrounding context.
+		{"11-crowdsec-decisions.txt", runOrErr(ctx, "cscli", "decisions", "list")},
+		{"12-crowdsec-alerts.txt", runOrErr(ctx, "cscli", "alerts", "list", "--limit", "50")},
+		{"13-crowdsec.log", tailFileOrErr(ctx, crowdsecLogPath, crowdsecLogTailLines)},
 	}
 	for _, svc := range servicesToCollect {
 		base := strings.TrimSuffix(svc, ".service")

@@ -414,3 +414,11 @@ See the [`docs/`](docs/) directory for detailed guides:
 - [Known Issues](docs/KNOWN_ISSUES.md) — caveats + workarounds
 - [Contributing](docs/CONTRIBUTING.md) — feature development workflow
 - [Environment](docs/ENV.md) — full env-var reference
+
+---
+
+## Sponsors
+
+Jabali Panel is proudly supported by:
+
+[<img src="docs/sponsors/cloudblast.svg" alt="CloudBlast" height="42">](https://cloudblast.io/)

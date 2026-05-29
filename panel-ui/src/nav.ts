@@ -109,18 +109,6 @@ export const adminNav: NavItem[] = [
     path: "/jabali-admin/applications",
   },
   {
-    key: "logs",
-    label: "Logs & Statistics",
-    icon: navIcon(FileTextOutlined),
-    path: "/jabali-admin/logs",
-  },
-  {
-    key: "audit",
-    label: "Audit Log",
-    icon: navIcon(SafetyOutlined),
-    path: "/jabali-admin/audit",
-  },
-  {
     key: "settings",
     label: "Server Settings",
     icon: navIcon(SettingOutlined),
@@ -198,6 +186,18 @@ export const adminNav: NavItem[] = [
     label: "Terminal",
     icon: navIcon(SquareTerminalOutlined),
     path: "/jabali-admin/terminal",
+  },
+  {
+    key: "logs",
+    label: "Logs & Statistics",
+    icon: navIcon(FileTextOutlined),
+    path: "/jabali-admin/logs",
+  },
+  {
+    key: "audit",
+    label: "Audit Log",
+    icon: navIcon(SafetyOutlined),
+    path: "/jabali-admin/audit",
   },
 ];
 

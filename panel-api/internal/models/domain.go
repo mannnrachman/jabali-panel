@@ -203,6 +203,15 @@ type Domain struct {
 	PHPMaxExecutionTime  *int    `gorm:"type:int unsigned" json:"php_max_execution_time,omitempty"`
 	PHPMaxInputTime      *int    `gorm:"type:int unsigned" json:"php_max_input_time,omitempty"`
 
+	// RuntimeType selects the application backend strategy for this
+	// domain (migration 000148). Values: "php" (default, PHP-FPM via
+	// fastcgi_pass), "nodejs", "python", "go" (reverse proxy via
+	// proxy_pass to a managed process), "docker" (reverse proxy to a
+	// container), "static" (no backend — files only). The reconciler
+	// and agent vhost renderer branch on this field. Pinned column tag
+	// to match the other toggle-style fields.
+	RuntimeType string `gorm:"column:runtime_type;type:varchar(16);not null;default:'php'" json:"runtime_type"`
+
 	// M18: per-domain HTTP rate/conn limits. Zero = unlimited (no
 	// nginx directive emitted). RateLimitRPS is requests-per-SECOND
 	// as seen by the reconciler; the vhost renderer converts to

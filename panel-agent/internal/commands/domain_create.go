@@ -68,9 +68,18 @@ type domainCreateParams struct {
 
 	// M36 per-domain IP allow/deny rules. Already sorted by the panel
 	// (priority ASC, created_at ASC). Each rule renders as one nginx
-	// `allow <cidr>;` / `deny <cidr>;` directive in priority order
+	// `allow <cidr>` / `deny <cidr>` directive in priority order
 	// inside the server block.
 	IPACLs []domainIPACLRule `json:"ip_acls,omitempty"`
+
+	// ADR-0113 multi-runtime hosting. RuntimeType selects the nginx
+	// backend strategy: "php" (default/empty — fastcgi_pass), "nodejs",
+	// "python", "go", "docker" (proxy_pass to ProxyPort), or "static"
+	// (no backend). ProxyPort is the allocated listen port for the
+	// managed process. Both default to zero values which produce the
+	// identical PHP-only vhost (backward compatible).
+	RuntimeType string `json:"runtime_type,omitempty"`
+	ProxyPort   int    `json:"proxy_port,omitempty"`
 }
 
 // domainIPACLRule is one allow/deny entry. CIDR is canonicalised by
@@ -153,7 +162,30 @@ server {
     {{.IndexDirective}}
 
     {{.IPACLDirectives}}
-
+{{ if .HasProxy }}
+    # ADR-0113 reverse proxy for managed runtime ({{.RuntimeType}}).
+    # WebSocket upgrade support, proper forwarded headers, and a long
+    # read timeout so SSE / long-poll endpoints don't 504.
+    location / {
+        proxy_pass http://127.0.0.1:{{.ProxyPort}};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
+    }
+{{ else if .ProxyPending }}
+    # ADR-0113: managed runtime ({{.RuntimeType}}) selected but no
+    # backend port allocated yet. Serve 503 rather than exposing the
+    # docroot's raw source files via a static fallback.
+    location / {
+        return 503;
+    }
+{{ else }}
     location / {
 {{ if .HasPHP }}
         try_files $uri $uri/ /index.php?$query_string;
@@ -161,6 +193,7 @@ server {
         try_files $uri $uri/ =404;
 {{ end }}
     }
+{{ end }}
 {{ if .CacheEnabled }}
     # Long-cache static assets (immutable content; 30 days).
     location ~* \.(?:css|js|jpe?g|png|gif|ico|svg|webp|woff2?|ttf|eot)$ {
@@ -278,6 +311,17 @@ type vhostData struct {
 	CacheEnabled bool
 	CacheKeyZone string
 	CacheTTL     string
+	// ADR-0113 multi-runtime hosting. HasProxy is true when the domain
+	// uses a reverse-proxy backend (nodejs/python/go/docker) instead of
+	// PHP-FPM or static serving. RuntimeType is the human-readable
+	// discriminator emitted as a comment in the vhost for operator
+	// debugging. ProxyPort is the allocated listen port. All three
+	// default to zero values for PHP domains — the template branches
+	// produce byte-identical output to pre-ADR-0113.
+	HasProxy     bool
+	ProxyPending bool
+	RuntimeType  string
+	ProxyPort    int
 }
 
 // indexDirectiveFor maps the panel's index_priority enum to the concrete
@@ -353,11 +397,35 @@ func buildPHPValueParam(memLimit, uploadMax, postMax string, maxInputVars, maxEx
 // writeVhost generates and writes the nginx vhost configuration, then tests and reloads nginx.
 // This is the core logic shared by domain.create and domain.enable/disable.
 // If the config content is unchanged, nginx reload is skipped for efficiency.
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string, cacheEnabled bool) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, listenIPv4, listenIPv6 string, cacheEnabled bool, runtimeType string, proxyPort int) (string, error) {
 	// Generate vhost configuration
 	tmpl, err := template.New("vhost").Parse(vhostTemplate)
 	if err != nil {
 		return "", fmt.Errorf("template parse failed: %w", err)
+	}
+
+	// ADR-0113: determine whether the domain needs a reverse proxy
+	// block instead of PHP-FPM. HasProxy is true for nodejs/python/go/
+	// docker runtimes. PHP and static domains keep the existing path.
+	hasProxy := false
+	proxyPending := false
+	switch runtimeType {
+	case "nodejs", "python", "go", "docker":
+		if proxyPort > 0 {
+			hasProxy = true
+		} else {
+			// The domain wants a managed runtime but no backend port has
+			// been allocated yet. Do NOT fall back to serving the docroot
+			// as static files — that would expose raw source (server.js,
+			// .env, etc.). Render an explicit 503 until the proxy is ready.
+			proxyPending = true
+		}
+	}
+
+	// For proxy-backed runtimes, force index to html-only (no index.php).
+	idxPriority := indexPriority
+	if hasProxy {
+		idxPriority = "html_only"
 	}
 
 	vhostData := vhostData{
@@ -366,7 +434,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		HasPHP:             hasPHP,
 		PHPVersion:         phpVersion,
 		Username:           username,
-		IndexDirective:     indexDirectiveFor(indexPriority),
+		IndexDirective:     indexDirectiveFor(idxPriority),
 		RedirectDirectives: redirectDirectives,
 		RuleDirectives:     ruleDirectives,
 		CustomDirectives:   customDirectives,
@@ -387,6 +455,10 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		CacheEnabled:       cacheEnabled,
 		CacheKeyZone:       "jabali_fcgi",
 		CacheTTL:           "60s",
+		HasProxy:           hasProxy,
+		ProxyPending:       proxyPending,
+		RuntimeType:        runtimeType,
+		ProxyPort:          proxyPort,
 	}
 
 	var vhostConfig bytes.Buffer
@@ -545,7 +617,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 
 	rateLimitDirectives := BuildRateLimitDirectives(p.DomainID, p.RateLimitRPS, p.ConnectionLimit)
 	ipACLDirectives := buildIPACLDirectives(p.IPACLs)
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.RuntimeType, p.ProxyPort)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

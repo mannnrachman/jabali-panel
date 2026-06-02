@@ -18,13 +18,13 @@ import (
 
 // cronApplyParams is the input for cron.apply command.
 type cronApplyParams struct {
-	UserID         string   `json:"user_id"`
-	Username       string   `json:"username"`
-	JobID          string   `json:"job_id"`
-	Name           string   `json:"name"`
-	Command        string   `json:"command"`
-	Schedule       string   `json:"schedule"`
-	OwnedDocroots  []string `json:"owned_docroots"`
+	UserID        string   `json:"user_id"`
+	Username      string   `json:"username"`
+	JobID         string   `json:"job_id"`
+	Name          string   `json:"name"`
+	Command       string   `json:"command"`
+	Schedule      string   `json:"schedule"`
+	OwnedDocroots []string `json:"owned_docroots"`
 }
 
 // cronApplyResponse is the output from cron.apply.
@@ -262,12 +262,15 @@ func checkUserLinger(ctx context.Context, username string) error {
 
 // systemctlUserExec runs a systemctl command as the specified user.
 func systemctlUserExec(ctx context.Context, username string, runtimeDir string, args ...string) error {
-	cmd := exec.CommandContext(ctx, "sudo", "-u", username)
-	cmd.Env = append(os.Environ(),
+	cmdArgs := []string{
+		"-u", username,
+		"env",
 		fmt.Sprintf("XDG_RUNTIME_DIR=%s", runtimeDir),
-	)
-	cmd.Args = append(cmd.Args, "systemctl", "--user")
-	cmd.Args = append(cmd.Args, args...)
+		fmt.Sprintf("DBUS_SESSION_BUS_ADDRESS=unix:path=%s/bus", runtimeDir),
+		"systemctl", "--user",
+	}
+	cmdArgs = append(cmdArgs, args...)
+	cmd := exec.CommandContext(ctx, "sudo", cmdArgs...)
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

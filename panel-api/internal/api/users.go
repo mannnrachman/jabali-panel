@@ -497,6 +497,7 @@ func (h *userHandler) delete(c *gin.Context) {
 			for i := range owned {
 				d := &owned[i]
 				name := d.Name
+				runtimeType := d.RuntimeType
 				if err := h.cfg.Domains.Delete(c.Request.Context(), d.ID); err != nil {
 					slog.Warn("cascade delete: domain DB delete failed",
 						"user_id", id, "domain_id", d.ID, "domain", name, "err", err)
@@ -506,11 +507,16 @@ func (h *userHandler) delete(c *gin.Context) {
 					// Fire-and-forget — don't block the user delete on nginx
 					// teardown. Use a fresh context because c.Request.Context
 					// ends when the handler returns.
-					name := name // capture
+					name := name               // capture
+					runtimeType := runtimeType // capture
+					ownerUsername := ""        // target.Username may be nil for admins
+					if target.Username != nil {
+						ownerUsername = *target.Username
+					}
 					go func() {
 						ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 						defer cancel()
-						h.cfg.Reconciler.ReconcileDeleted(ctx, name)
+						h.cfg.Reconciler.ReconcileDeleted(ctx, name, ownerUsername, runtimeType)
 					}()
 				}
 			}

@@ -48,6 +48,8 @@ type DomainHandlerConfig struct {
 	// source of truth) and GET responses skip the denormalized
 	// listen_ipv4 / listen_ipv6 nested objects.
 	ManagedIPs repository.ManagedIPRepository
+	// RuntimeServices is the repository for non-PHP custom runtime processes.
+	RuntimeServices repository.RuntimeServiceRepository
 }
 
 const (
@@ -72,6 +74,9 @@ func RegisterDomainRoutes(g *gin.RouterGroup, cfg DomainHandlerConfig) {
 	domains.PATCH("/:id", h.update)
 	domains.DELETE("/:id", h.delete)
 	domains.GET("/:id/bandwidth", h.bandwidth)
+	domains.GET("/:id/runtime", h.getRuntimeService)
+	domains.PATCH("/:id/runtime", h.updateRuntimeService)
+	domains.POST("/:id/runtime/restart", h.restartRuntimeService)
 }
 
 type domainHandler struct{ cfg DomainHandlerConfig }
@@ -80,6 +85,10 @@ type createDomainRequest struct {
 	Name    string `json:"name" binding:"required"`
 	UserID  string `json:"user_id"`
 	DocRoot string `json:"doc_root"`
+	// RuntimeType (ADR-0113) optionally sets the backend strategy at
+	// creation time. Empty defaults to "php" (preserves prior behaviour).
+	// Validated against models.ValidRuntimeTypes; docker is admin-only.
+	RuntimeType string `json:"runtime_type,omitempty"`
 }
 
 // validateDomainName validates domain name for security and RFC compliance
@@ -145,6 +154,7 @@ type updateDomainRequest struct {
 	PageRedirects         *models.PageRedirects `json:"page_redirects,omitempty"`
 	NginxRules            *models.NginxRules    `json:"nginx_rules,omitempty"`
 	IndexPriority         *string               `json:"index_priority,omitempty"`
+	RuntimeType           *string               `json:"runtime_type,omitempty"`
 	// M24: per-domain IP binding. nullableUint64 distinguishes
 	// "absent in PATCH" (don't touch the column) from "explicitly null"
 	// (clear binding → fall back to server default for the family) from
@@ -481,6 +491,22 @@ func (h *domainHandler) create(c *gin.Context) {
 	// Sanitize domain name by removing any potential HTML tags
 	req.Name = htmlTagRe.ReplaceAllString(req.Name, "")
 
+	// ADR-0113: optional runtime_type at creation. Default "php" when
+	// absent. Validate against the closed set and gate docker to admins
+	// (same policy as the PATCH path).
+	runtimeType := models.RuntimePHP
+	if rt := strings.TrimSpace(req.RuntimeType); rt != "" {
+		if !models.IsValidRuntimeType(rt) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_runtime_type"})
+			return
+		}
+		if rt == models.RuntimeDocker && !claims.IsAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "docker_runtime_admin_only"})
+			return
+		}
+		runtimeType = rt
+	}
+
 	targetUserID := req.UserID
 	if !claims.IsAdmin {
 		targetUserID = claims.UserID
@@ -577,6 +603,7 @@ func (h *domainHandler) create(c *gin.Context) {
 		// correct). Admin can opt-out per-domain via the existing
 		// disable endpoint.
 		EmailEnabled: true,
+		RuntimeType:  runtimeType,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -718,6 +745,23 @@ func (h *domainHandler) update(c *gin.Context) {
 		domain.IndexPriority = p
 	}
 
+	if req.RuntimeType != nil {
+		rt := strings.TrimSpace(*req.RuntimeType)
+		if !models.IsValidRuntimeType(rt) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_runtime_type"})
+			return
+		}
+		// Docker runs the tenant process as a user-level `docker` invocation,
+		// which on a non-rootless host is effectively root-equivalent (docker
+		// group ~= root). Until rootless + AppArmor isolation lands (ADR-0113
+		// future phase), only admins may select the docker runtime.
+		if rt == models.RuntimeDocker && !claims.IsAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "docker_runtime_admin_only"})
+			return
+		}
+		domain.RuntimeType = rt
+	}
+
 	// M24: per-domain IP binding — validate FK + family + (for non-admin)
 	// is_user_selectable. We resolve and validate before issuing any DB
 	// write so a bad ipv4 doesn't half-succeed against ipv6.
@@ -857,10 +901,19 @@ func (h *domainHandler) delete(c *gin.Context) {
 		return
 	}
 
-	// Capture name BEFORE deleting — once the DB row is gone, the
-	// reconciler can't look it up by ID. We pass the name to
-	// ReconcileDeleted which targets the agent-side teardown directly.
+	// Capture name + runtime info BEFORE deleting — once the DB row is
+	// gone (and the runtime_services row cascade-deleted), the reconciler
+	// can't look them up. ReconcileDeleted uses these to tear down the
+	// nginx vhost AND any orphaned managed runtime (systemd unit +
+	// container + port).
 	name := domain.Name
+	runtimeType := domain.RuntimeType
+	ownerUsername := ""
+	if h.cfg.Users != nil {
+		if u, uErr := h.cfg.Users.FindByID(ctx, domain.UserID); uErr == nil && u.Username != nil {
+			ownerUsername = *u.Username
+		}
+	}
 	if err := h.cfg.Domains.Delete(ctx, domain.ID); err != nil {
 		// M6.4 (ADR-0048): the panel-primary row is delete-protected at
 		// the repo layer. Translate to 403 with a specific error code
@@ -877,7 +930,7 @@ func (h *domainHandler) delete(c *gin.Context) {
 	// sees the row gone immediately; if agent teardown fails, the next
 	// ReconcileAll tick logs the orphan for ops to investigate.
 	if h.cfg.Reconciler != nil {
-		go h.cfg.Reconciler.ReconcileDeleted(context.Background(), name)
+		go h.cfg.Reconciler.ReconcileDeleted(context.Background(), name, ownerUsername, runtimeType)
 	}
 
 	c.Status(http.StatusNoContent)

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -108,6 +109,16 @@ type Reconciler struct {
 	// sshKeysDispatchState. sync.Map = lock-free for the common
 	// "many readers, one writer per key" pattern.
 	sshKeysDispatchCache sync.Map
+	// ADR-0113 multi-runtime hosting
+	runtimeServices repository.RuntimeServiceRepository
+	// runtimeAllocator is a single shared port allocator so in-flight
+	// reservations actually prevent collisions across reconcile passes
+	// (a per-call allocator would have an always-empty reservation set).
+	runtimeAllocator *services.PortAllocator
+	// runtimeInflight tracks domains whose deploy/apply is running in a
+	// background goroutine, so the per-tick loop doesn't spawn a second
+	// one or block on a slow npm install / docker build.
+	runtimeInflight sync.Map
 }
 
 // WithPanelCertificate injects the M32 panel-cert repo + routability
@@ -231,6 +242,13 @@ func (r *Reconciler) WithDNSRepos(dnsZones repository.DNSZoneRepository, dnsReco
 // ip.bind; rows that exceed their retry budget flip to degraded=TRUE.
 func (r *Reconciler) WithManagedIPs(repo repository.ManagedIPRepository) *Reconciler {
 	r.managedIPs = repo
+	return r
+}
+
+// WithRuntimeServices registers the ADR-0113 multi-runtime services repository.
+func (r *Reconciler) WithRuntimeServices(repo repository.RuntimeServiceRepository) *Reconciler {
+	r.runtimeServices = repo
+	r.runtimeAllocator = services.NewPortAllocator(repo, 10000, 60000)
 	return r
 }
 
@@ -533,6 +551,7 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 		// code shipped (or whose insert failed mid-flight). No-op when
 		// the rows already exist; safe on every tick.
 		r.ensureTenantDKIMRecords(ctx, domain)
+		r.reconcileRuntimeService(ctx, domain)
 		r.createDomainOnAgent(ctx, domain)
 		// M6.3: ensure the recursor has a forwarder for this zone so
 		// local resolution hits pdns-server on loopback :5300. Idempotent.
@@ -554,6 +573,7 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 		if agentSites[name] {
 			r.log.Info("reconcile: disabling unwanted domain", "domain", name)
 			r.reconcileDNSZone(ctx, domain)
+			r.reconcileRuntimeService(ctx, domain)
 			r.createDomainOnAgent(ctx, domain)
 		}
 	}
@@ -692,6 +712,7 @@ func (r *Reconciler) ReconcileOne(ctx context.Context, domainID string) error {
 	// The agent handles both enabled and disabled via the is_enabled parameter.
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	r.reconcileRuntimeService(agentCtx, domain)
 	r.createDomainOnAgent(agentCtx, domain)
 
 	return nil
@@ -724,6 +745,7 @@ func (r *Reconciler) ReconcileAllForce(ctx context.Context) error {
 		sslCancel()
 
 		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		r.reconcileRuntimeService(agentCtx, d)
 		r.createDomainOnAgent(agentCtx, d)
 		cancel()
 	}
@@ -1060,7 +1082,7 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	// Determine PHP configuration from domain's pool binding
 	hasPHP := false
 	var phpVersion string
-	if domain.PHPPoolID != nil && r.phpPools != nil {
+	if (domain.RuntimeType == models.RuntimePHP || domain.RuntimeType == "") && domain.PHPPoolID != nil && r.phpPools != nil {
 		phpCtx, phpCancel := context.WithTimeout(ctx, 5*time.Second)
 		pool, err := r.phpPools.FindByID(phpCtx, *domain.PHPPoolID)
 		phpCancel()
@@ -1083,6 +1105,17 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 		// agent renders the cache + bypass directives only when true;
 		// false ⇒ vhost byte-identical to the pre-0108 shape.
 		"cache_enabled": domain.CacheEnabled,
+	}
+
+	if domain.RuntimeType != models.RuntimePHP && domain.RuntimeType != "" {
+		params["runtime_type"] = domain.RuntimeType
+		// Fetch RuntimeService to get proxy port
+		if r.runtimeServices != nil {
+			svc, err := r.runtimeServices.FindByDomainID(ctx, domain.ID)
+			if err == nil && svc != nil {
+				params["proxy_port"] = int(svc.ListenPort)
+			}
+		}
 	}
 
 	// M36 per-domain IP ACLs. Fetch + thread to agent so nginx renders
@@ -1234,10 +1267,34 @@ func (r *Reconciler) resolveListenIPAddress(ctx context.Context, id *uint64, fam
 // because once the row is gone ReconcileOne(id) can no longer find it
 // and orphan detection in ReconcileAll is intentionally conservative
 // (log-only). This is the explicit "yes, actually tear this down" path.
-func (r *Reconciler) ReconcileDeleted(ctx context.Context, domainName string) {
+// ReconcileDeleted tears down OS-level resources for a domain whose DB
+// row has already been removed. domainName drives the nginx vhost +
+// DNS zone teardown. ownerUsername and runtimeType drive the ADR-0113
+// runtime teardown: for a non-PHP runtime we ask the agent to stop +
+// remove the systemd unit, EnvironmentFile, and (docker) container,
+// since the cascade-deleted runtime_services row left the host process
+// orphaned and holding its port. Both extra args are best-effort: empty
+// ownerUsername or a php/static/empty runtimeType skips the runtime call.
+func (r *Reconciler) ReconcileDeleted(ctx context.Context, domainName, ownerUsername, runtimeType string) {
 	if domainName == "" {
 		return
 	}
+
+	// ADR-0113: remove an orphaned managed runtime first, before the
+	// vhost goes, so the proxied process is stopped while nginx can
+	// still 502 rather than the port lingering with no front door.
+	if ownerUsername != "" && models.RuntimeNeedsProxy(runtimeType) {
+		rtCtx, rtCancel := context.WithTimeout(ctx, 30*time.Second)
+		_, rtErr := r.agent.Call(rtCtx, "runtime.remove", map[string]string{
+			"username": ownerUsername,
+			"domain":   domainName,
+		})
+		rtCancel()
+		if rtErr != nil {
+			r.log.Warn("runtime teardown failed on agent", "domain", domainName, "err", rtErr)
+		}
+	}
+
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	_, err := r.agent.Call(callCtx, "domain.delete", map[string]string{"domain": domainName})
@@ -2029,4 +2086,296 @@ func (r *Reconciler) migrateBootstrapShape(ctx context.Context, zone *models.DNS
 			break // only one apex MX row, stop scanning
 		}
 	}
+}
+
+// reconcileRuntimeService handles Phase 5: Reconciler convergence for non-PHP runtimes.
+// It provisions, deploys, starts/stops and monitors systemd services for Node.js, Python, Go, and Docker.
+func (r *Reconciler) reconcileRuntimeService(ctx context.Context, domain *models.Domain) {
+	if r.runtimeServices == nil {
+		return
+	}
+
+	// 1. Skip if domain is using PHP or Static (no managed process required)
+	if domain.RuntimeType == models.RuntimePHP || domain.RuntimeType == models.RuntimeStatic || domain.RuntimeType == "" {
+		// If an old runtime service exists, stop and clean it up!
+		// This handles the transition from Node.js/Python/etc. back to PHP/Static.
+		svc, err := r.runtimeServices.FindByDomainID(ctx, domain.ID)
+		if err == nil && svc != nil {
+			r.log.Info("reconcile: cleaning up runtime service for domain returning to PHP/static", "domain", domain.Name)
+			// Fetch owner user to get username
+			user, err := r.users.FindByID(ctx, domain.UserID)
+			if err == nil && user != nil && user.Username != nil {
+				removeParams := map[string]string{
+					"username": *user.Username,
+					"domain":   domain.Name,
+				}
+				agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				_, _ = r.agent.Call(agentCtx, "runtime.remove", removeParams)
+				cancel()
+			}
+			// Delete the row from db
+			_ = r.runtimeServices.Delete(ctx, svc.ID)
+		}
+		return
+	}
+
+	// 2. Fetch or allocate RuntimeService row for this non-PHP domain
+	svc, err := r.runtimeServices.FindByDomainID(ctx, domain.ID)
+	if err != nil && err != repository.ErrNotFound {
+		r.log.Error("reconcile: failed to fetch runtime service", "domain", domain.Name, "err", err)
+		return
+	}
+
+	// Fetch owner user to get username
+	user, err := r.users.FindByID(ctx, domain.UserID)
+	if err != nil || user == nil || user.Username == nil || *user.Username == "" {
+		r.log.Error("reconcile: owner user or username not found for domain", "domain", domain.Name, "err", err)
+		return
+	}
+	username := *user.Username
+
+	// If no service row exists, allocate a port via the shared allocator
+	// (single instance so in-flight reservations actually prevent
+	// collisions) and create the row.
+	if svc == nil {
+		r.log.Info("reconcile: auto-provisioning missing runtime service row", "domain", domain.Name, "runtime", domain.RuntimeType)
+		port, err := r.runtimeAllocator.Allocate(ctx)
+		if err != nil {
+			r.log.Error("reconcile: port allocation failed", "domain", domain.Name, "err", err)
+			return
+		}
+
+		svc = &models.RuntimeService{
+			ID:          ids.NewULID(),
+			DomainID:    domain.ID,
+			UserID:      domain.UserID,
+			Runtime:     domain.RuntimeType,
+			EntryPoint:  "", // Will use runtime-specific defaults
+			ListenPort:  port,
+			EnvVars:     make(models.EnvVars),
+			Status:      models.RuntimeStatusPending,
+			CreatedAt:   time.Now().UTC(),
+			UpdatedAt:   time.Now().UTC(),
+		}
+
+		if err := r.runtimeServices.Create(ctx, svc); err != nil {
+			// Creation failed (e.g. port raced another node): release the
+			// reservation so the port can be retried next tick.
+			r.runtimeAllocator.Release(port)
+			r.log.Error("reconcile: failed to create auto-provisioned runtime service", "domain", domain.Name, "err", err)
+			return
+		}
+		// Row persisted — the port now lives in the DB, drop the in-flight
+		// reservation so the allocator map doesn't grow unbounded.
+		r.runtimeAllocator.Release(port)
+	}
+
+	// 3. Convergence state machine.
+	//
+	// deploy (npm install / pip install / go build / docker build) and
+	// the subsequent systemd apply can each take minutes. Running them
+	// inline would block the whole reconcile loop (SSL renewals, DNS,
+	// other domains) behind one slow tenant. So the slow path runs in a
+	// background goroutine, guarded by runtimeInflight so a later tick
+	// doesn't launch a second concurrent deploy for the same domain.
+	//
+	// Determine desired active state from domain.IsEnabled.
+	desiredEnabled := domain.IsEnabled
+
+	shouldConverge := svc.Status == models.RuntimeStatusPending
+	if svc.Status == models.RuntimeStatusRunning && !desiredEnabled {
+		shouldConverge = true
+	} else if svc.Status == models.RuntimeStatusStopped && desiredEnabled {
+		shouldConverge = true
+	} else if svc.Status == models.RuntimeStatusFailed && desiredEnabled {
+		// Before a heavy redeploy, probe the unit: systemd's Restart=always
+		// may have already recovered the process. If it's active again,
+		// just flip the DB back to running (self-heal) and skip the
+		// deploy. Only redeploy if it's genuinely still down.
+		if r.runtimeStatusActive(ctx, username, domain.Name) {
+			r.log.Info("reconcile: runtime service self-recovered, marking running", "domain", domain.Name)
+			_ = r.runtimeServices.SetStatus(ctx, svc.ID, models.RuntimeStatusRunning, nil)
+			svc.Status = models.RuntimeStatusRunning
+		} else {
+			shouldConverge = true
+		}
+	}
+
+	if shouldConverge {
+		r.dispatchRuntimeConverge(domain, svc, username, desiredEnabled)
+		return
+	}
+
+	// 4. Monitoring / Health Check
+	// If it is running, let's query its status to detect crashes or drift!
+	if svc.Status == models.RuntimeStatusRunning {
+		statusParams := map[string]string{
+			"username": username,
+			"domain":   domain.Name,
+		}
+		statusCtx, statusCancel := context.WithTimeout(ctx, 10*time.Second)
+		statusResult, err := r.agent.Call(statusCtx, "runtime.status", statusParams)
+		statusCancel()
+
+		if err == nil {
+			var statusResp struct {
+				Status   string `json:"status"` // active, inactive, failed, not-found
+				SubState string `json:"sub_state,omitempty"`
+				PID      int    `json:"pid,omitempty"`
+			}
+			if err := json.Unmarshal(statusResult, &statusResp); err == nil {
+				if statusResp.Status == "failed" {
+					// Oh no, the service crashed!
+					r.log.Warn("reconcile: detected crashed runtime service", "domain", domain.Name, "sub_state", statusResp.SubState)
+
+					// Fetch recent logs to show in LastError
+					logsParams := map[string]any{
+						"username": username,
+						"domain":   domain.Name,
+						"lines":    20,
+					}
+					logsCtx, logsCancel := context.WithTimeout(ctx, 10*time.Second)
+					logsResult, logsErr := r.agent.Call(logsCtx, "runtime.logs", logsParams)
+					logsCancel()
+
+					var logMsg string
+					if logsErr == nil {
+						var logsResp struct {
+							Logs string `json:"logs"`
+						}
+						_ = json.Unmarshal(logsResult, &logsResp)
+						logMsg = fmt.Sprintf("Service failed (%s). Recent logs:\n%s", statusResp.SubState, logsResp.Logs)
+					} else {
+						logMsg = fmt.Sprintf("Service failed (%s). Could not fetch logs.", statusResp.SubState)
+					}
+
+					_ = r.runtimeServices.SetStatus(ctx, svc.ID, models.RuntimeStatusFailed, &logMsg)
+				}
+			}
+		}
+	}
+}
+
+// runtimeStatusActive asks the agent for the unit's live state and
+// reports whether it is currently active. Used by the self-heal path:
+// a "failed" DB row whose unit systemd has since restarted should
+// return to "running" without a heavy redeploy. Best-effort — any
+// agent/parse error reports false (caller then redeploys).
+func (r *Reconciler) runtimeStatusActive(ctx context.Context, username, domainName string) bool {
+	statusCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	res, err := r.agent.Call(statusCtx, "runtime.status", map[string]string{
+		"username": username,
+		"domain":   domainName,
+	})
+	if err != nil {
+		return false
+	}
+	var resp struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(res, &resp); err != nil {
+		return false
+	}
+	return resp.Status == "active"
+}
+
+// dispatchRuntimeConverge runs the slow deploy + systemd apply for a
+// runtime service in a background goroutine so it never blocks the
+// reconcile loop. A per-domain in-flight guard (runtimeInflight)
+// ensures only one converge runs at a time for a given domain; later
+// ticks become no-ops until this one finishes.
+func (r *Reconciler) dispatchRuntimeConverge(domain *models.Domain, svc *models.RuntimeService, username string, desiredEnabled bool) {
+	if _, loaded := r.runtimeInflight.LoadOrStore(domain.ID, true); loaded {
+		// A converge for this domain is already running.
+		return
+	}
+
+	// Snapshot the fields the goroutine needs so it doesn't race the
+	// caller's domain/svc pointers (which the loop may mutate/reuse).
+	domainID := domain.ID
+	domainName := domain.Name
+	docRoot := domain.DocRoot
+	svcID := svc.ID
+	runtime := svc.Runtime
+	entryPoint := svc.EntryPoint
+	listenPort := int(svc.ListenPort)
+	envVars := svc.EnvVars
+
+	go func() {
+		defer r.runtimeInflight.Delete(domainID)
+		// Detached from the request/tick context: this outlives the tick
+		// on purpose. Bound each agent call with its own timeout.
+		ctx := context.Background()
+
+		// Deploy phase (npm install / pip install / go build / docker build).
+		r.log.Info("reconcile: deploying runtime service", "domain", domainName, "runtime", runtime)
+		_ = r.runtimeServices.SetStatus(ctx, svcID, models.RuntimeStatusDeploying, nil)
+
+		deployParams := map[string]any{
+			"username":     username,
+			"doc_root":     docRoot,
+			"runtime_type": runtime,
+			"entry_point":  entryPoint,
+		}
+		deployCtx, deployCancel := context.WithTimeout(ctx, 5*time.Minute)
+		deployResult, err := r.agent.Call(deployCtx, "runtime.deploy", deployParams)
+		deployCancel()
+		if err != nil {
+			errMsg := fmt.Sprintf("deploy failed: %v", err)
+			r.log.Error("reconcile: runtime deploy failed", "domain", domainName, "err", err)
+			_ = r.runtimeServices.SetStatus(ctx, svcID, models.RuntimeStatusFailed, &errMsg)
+			return
+		}
+		var deployResp struct {
+			Output string `json:"output"`
+		}
+		_ = json.Unmarshal(deployResult, &deployResp)
+		r.log.Info("reconcile: runtime deploy succeeded", "domain", domainName, "output", deployResp.Output)
+
+		// Apply phase (write + enable/start the systemd unit).
+		r.log.Info("reconcile: applying runtime systemd service", "domain", domainName, "is_enabled", desiredEnabled)
+		applyParams := map[string]any{
+			"username":     username,
+			"domain":       domainName,
+			"doc_root":     docRoot,
+			"runtime_type": runtime,
+			"entry_point":  entryPoint,
+			"listen_port":  listenPort,
+			"env_vars":     envVars,
+			"is_enabled":   desiredEnabled,
+		}
+		applyCtx, applyCancel := context.WithTimeout(ctx, 60*time.Second)
+		applyResult, err := r.agent.Call(applyCtx, "runtime.apply", applyParams)
+		applyCancel()
+		if err != nil {
+			errMsg := fmt.Sprintf("apply failed: %v", err)
+			r.log.Error("reconcile: runtime apply failed", "domain", domainName, "err", err)
+			_ = r.runtimeServices.SetStatus(ctx, svcID, models.RuntimeStatusFailed, &errMsg)
+			return
+		}
+		var applyResp struct {
+			ServicePath string `json:"service_path"`
+		}
+		_ = json.Unmarshal(applyResult, &applyResp)
+
+		nextStatus := models.RuntimeStatusStopped
+		if desiredEnabled {
+			nextStatus = models.RuntimeStatusRunning
+		}
+
+		// Re-fetch to avoid clobbering concurrent edits (e.g. a user
+		// PATCH that changed entry_point while we were deploying).
+		fresh, fErr := r.runtimeServices.FindByID(ctx, svcID)
+		if fErr != nil || fresh == nil {
+			_ = r.runtimeServices.SetStatus(ctx, svcID, nextStatus, nil)
+			r.log.Info("reconcile: runtime service converged", "domain", domainName, "status", nextStatus)
+			return
+		}
+		fresh.Status = nextStatus
+		fresh.SystemdUnit = filepath.Base(applyResp.ServicePath)
+		fresh.LastError = nil
+		_ = r.runtimeServices.Update(ctx, fresh)
+		r.log.Info("reconcile: runtime service converged successfully", "domain", domainName, "status", nextStatus)
+	}()
 }

@@ -165,6 +165,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		wordpressInstallRepo := repository.NewWordPressInstallRepository(sharedDB)
 		cronJobsRepo := repository.NewCronJobRepository(sharedDB)
 		limitOverridesRepo := repository.NewUserLimitOverrideRepository(sharedDB)
+		runtimeServiceRepo := repository.NewRuntimeServiceRepository(sharedDB)
 
 		serverSettingsRepo := repository.NewServerSettingsRepository(sharedDB)
 		pageTemplateRepo := repository.NewPageTemplateRepository(sharedDB)
@@ -240,6 +241,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		rec.WithSSO(ssoService)
 		rec.WithSSHKeys(sshKeyRepo)
 		rec.WithCronJobs(cronJobsRepo)
+		rec.WithRuntimeServices(runtimeServiceRepo)
 		// M18 wiring — packages + overrides + /home mount path so
 		// ReconcileUserLimits and ReconcileNginxRateLimits have every
 		// dep they need. Mount path resolved below after deps are set.

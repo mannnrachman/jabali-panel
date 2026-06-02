@@ -116,6 +116,21 @@ func InstallApplication(ctx context.Context, deps ApplicationHandlerConfig, p In
 		return nil, newInstallErr(http.StatusNotFound, "domain_not_found", "")
 	}
 
+	// ADR-0113: if the app descriptor declares a non-PHP runtime, persist
+	// it onto the domain so the reconciler provisions the managed runtime
+	// (systemd unit + proxy vhost) instead of binding a PHP pool. No-op
+	// for every current descriptor (all PHP, Runtime==""). Best-effort:
+	// a failure here is logged and doesn't block the install, matching
+	// the surrounding handler's tolerance.
+	if descriptor.Runtime != "" && descriptor.Runtime != models.RuntimePHP &&
+		domain.RuntimeType != descriptor.Runtime {
+		domain.RuntimeType = descriptor.Runtime
+		if err := deps.Domains.Update(ctx, domain); err != nil {
+			slog.WarnContext(ctx, "applications create: failed to set domain runtime_type",
+				"err", err, "domain_id", domain.ID, "runtime", descriptor.Runtime)
+		}
+	}
+
 	// (domain, subdirectory) precheck — at most one app per slot
 	// regardless of app_type. Migration 000046 still includes app_type
 	// in the DB UNIQUE for forward compat, so this stricter rule lives

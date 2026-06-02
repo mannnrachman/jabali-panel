@@ -65,9 +65,23 @@ type App struct {
 	// schema + grant before dispatching the install command. Flat-file
 	// apps (DokuWiki) set this false.
 	RequiresDB bool `json:"requires_db"`
+	// Runtime selects the process manager and nginx backend strategy
+	// for this app. Values: "php" (default — PHP-FPM via fastcgi_pass),
+	// "nodejs", "python", "go" (reverse proxy via proxy_pass),
+	// "docker" (container via proxy_pass), "static" (no backend).
+	// When empty, treated as "php" for backward compatibility with
+	// all M19 descriptors. Added per ADR-0033 Decision #7 extension.
+	Runtime string `json:"runtime"`
+	// DefaultPort is the port the framework allocates for non-PHP
+	// runtimes. Zero means the app uses PHP-FPM sockets (no port
+	// needed). For Node.js apps the convention is 3000, Python 8000,
+	// Go 8080. The actual port may differ — the port allocator picks
+	// a free one, using this only as a documentation hint.
+	DefaultPort int `json:"default_port,omitempty"`
 	// SupportedPHPVersions, if non-empty, is the closed set of PHP
 	// versions this app's installer can target. Empty = "any active
 	// pool". The UI uses this to filter the PHP-version picker.
+	// Ignored when Runtime != "php".
 	SupportedPHPVersions []string `json:"supported_php_versions,omitempty"`
 	// Agent command names the dispatcher in step 4 routes to. The
 	// agent registers handlers for the same command strings.

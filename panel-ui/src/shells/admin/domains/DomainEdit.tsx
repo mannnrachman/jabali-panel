@@ -8,6 +8,7 @@ import {
   Divider,
   Form,
   Input,
+  Select,
   Space,
   Spin,
   Switch,
@@ -33,6 +34,7 @@ import { DomainDeliverabilitySection } from "./DomainDeliverabilitySection";
 export type DomainEditInput = {
   is_enabled?: boolean;
   nginx_custom_directives?: string;
+  runtime_type?: string;
 };
 
 export const DomainEdit = () => {
@@ -54,6 +56,7 @@ export const DomainEdit = () => {
       form.setFieldsValue({
         is_enabled: domain.is_enabled,
         nginx_custom_directives: domain.nginx_custom_directives,
+        runtime_type: domain.runtime_type || "php",
       });
     }
   }, [domain, form]);
@@ -114,6 +117,21 @@ export const DomainEdit = () => {
           </Form.Item>
           <Typography.Text>Enabled</Typography.Text>
         </div>
+
+        <Form.Item
+          label="Runtime Type"
+          name="runtime_type"
+          tooltip="Select the execution engine strategy for this domain"
+        >
+          <Select style={{ width: 220 }}>
+            <Select.Option value="php">PHP-FPM</Select.Option>
+            <Select.Option value="nodejs">Node.js</Select.Option>
+            <Select.Option value="python">Python</Select.Option>
+            <Select.Option value="go">Go</Select.Option>
+            <Select.Option value="docker">Docker</Select.Option>
+            <Select.Option value="static">Static</Select.Option>
+          </Select>
+        </Form.Item>
 
         <Form.Item
           label="Nginx Custom Directives"

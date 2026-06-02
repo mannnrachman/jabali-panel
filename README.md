@@ -26,6 +26,14 @@ so the box self-heals after restart, crash, or restore.
 This is a release candidate. Expect rapid iteration and breaking changes
 until 1.0.
 
+## Runtime Examples
+
+Contoh siap-pakai untuk **Node.js, Python, Go, dan Docker** ada di:
+
+- `examples/runtimes/README.md`
+
+Cocok untuk uji bahwa panel tidak PHP-only.
+
 ## Demo and Website
 
 - Website: https://jabali-panel.com/

@@ -94,6 +94,7 @@ export type Domain = {
   is_enabled: boolean;
   is_panel_primary?: boolean;
   is_quota_suspended?: boolean;
+  runtime_type?: string;
   ssl_enabled?: boolean;
   ssl?: SSLBadge | null;
   bytes_30d?: number;
@@ -229,6 +230,21 @@ export const DomainList = () => {
             render={(username: string | null | undefined, record: Domain) =>
               username ?? <Typography.Text type="secondary">{record.user_id.substring(0, 8)}</Typography.Text>
             }
+          />
+          <Table.Column<Domain>
+            dataIndex="runtime_type"
+            title="Runtime"
+            render={(type?: string) => {
+              const rt = type || "php";
+              let color = "purple";
+              let label = "PHP";
+              if (rt === "nodejs") { color = "green"; label = "Node.js"; }
+              else if (rt === "python") { color = "blue"; label = "Python"; }
+              else if (rt === "go") { color = "cyan"; label = "Go"; }
+              else if (rt === "docker") { color = "geekblue"; label = "Docker"; }
+              else if (rt === "static") { color = "orange"; label = "Static"; }
+              return <Tag color={color} style={{ borderRadius: 4, textTransform: "capitalize" }}>{label}</Tag>;
+            }}
           />
           <Table.Column<Domain>
             dataIndex="is_enabled"

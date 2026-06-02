@@ -13,6 +13,7 @@ import {
   PlayCircleOutlined,
   DeleteOutlined,
 } from "@icons";
+import { ApiOutlined } from "@ant-design/icons";
 import { Button, Card, Dropdown, Modal, Space, Table, Tag, Typography, notification } from "antd";
 import { useState } from "react";
 import { useNavigate } from "react-router";
@@ -29,6 +30,7 @@ import { useTableURL } from "../../../hooks/useTableURL";
 import { DomainSettingsButton } from "../../DomainSettingsButton";
 import { DomainRedirectsButton } from "../../DomainRedirectsButton";
 import { DomainIndexButton } from "../../DomainIndexButton";
+import { DomainRuntimeSettingsModal } from "../../DomainRuntimeSettingsModal";
 import { UserDomainDrawer } from "./UserDomainDrawer";
 
 const stripHomePrefix = (path: string): string => {
@@ -111,6 +113,7 @@ export type Domain = {
   doc_root: string;
   is_enabled: boolean;
   nginx_custom_directives: string;
+  runtime_type?: string;
   redirect_all_to?: string | null;
   redirect_all_type?: string | null;
   page_redirects?:
@@ -130,7 +133,7 @@ export type Domain = {
   updated_at: string;
 };
 
-type ActiveModal = { domainId: string; type: "redirects" | "index" | "settings" } | null;
+type ActiveModal = { domainId: string; type: "redirects" | "index" | "settings" | "runtime" } | null;
 
 export const UserDomainList = () => {
   const navigate = useNavigate();
@@ -220,6 +223,21 @@ export const UserDomainList = () => {
             }
           />
           <Table.Column<Domain>
+            dataIndex="runtime_type"
+            title="Runtime"
+            render={(type?: string) => {
+              const rt = type || "php";
+              let color = "purple";
+              let label = "PHP";
+              if (rt === "nodejs") { color = "green"; label = "Node.js"; }
+              else if (rt === "python") { color = "blue"; label = "Python"; }
+              else if (rt === "go") { color = "cyan"; label = "Go"; }
+              else if (rt === "docker") { color = "geekblue"; label = "Docker"; }
+              else if (rt === "static") { color = "orange"; label = "Static"; }
+              return <Tag color={color} style={{ borderRadius: 4, textTransform: "capitalize" }}>{label}</Tag>;
+            }}
+          />
+          <Table.Column<Domain>
             dataIndex="is_enabled"
             title="Status"
             render={(enabled: boolean) =>
@@ -275,6 +293,12 @@ export const UserDomainList = () => {
                         label: "Nginx Directives",
                         icon: <SettingOutlined />,
                         onClick: () => setActiveModal({ domainId: r.id, type: "settings" }),
+                      },
+                      {
+                        key: "runtime",
+                        label: "Runtime & Environment",
+                        icon: <ApiOutlined />,
+                        onClick: () => setActiveModal({ domainId: r.id, type: "runtime" }),
                       },
                       {
                         key: "toggle",
@@ -346,6 +370,14 @@ export const UserDomainList = () => {
                     domain={r}
                     open={true}
                     onClose={() => setActiveModal(null)}
+                  />
+                )}
+                {activeModal?.domainId === r.id && activeModal.type === "runtime" && (
+                  <DomainRuntimeSettingsModal
+                    domain={r}
+                    open={true}
+                    onClose={() => setActiveModal(null)}
+                    onSuccess={() => qc.invalidateQueries({ queryKey: ["list", "domains"] })}
                   />
                 )}
               </>
